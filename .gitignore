@@ -6,3 +6,4 @@ outputs/
 produced/
 __pycache__/
 *.pyc
+*.jsonl

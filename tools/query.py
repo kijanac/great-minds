@@ -1,25 +1,32 @@
-"""Interactive query interface for the political theory knowledge base.
+"""Interactive query interface for the knowledge base.
 
 Uses Gemma 4 31B via OpenRouter with function calling to navigate the wiki.
-
-Flow:
-1. System prompt includes _index.md so the model knows what exists
-2. User asks a question
-3. Model calls tools to read wiki articles and raw sources as needed
-4. Model synthesizes an answer with citations
-5. Conversation persists for follow-ups
+Emits structured telemetry via wide events — every query logs which articles
+and sources were pulled into context, with timing.
 
 Usage:
     OPENROUTER_API_KEY=your-key uv run python tools/query.py
     OPENROUTER_API_KEY=your-key uv run python tools/query.py "What is Lenin's theory of imperialism?"
+    OPENROUTER_API_KEY=your-key uv run python tools/query.py --json-logs "question here"
 """
 
 import json
 import os
 import sys
+import uuid
 from pathlib import Path
 
 from openai import OpenAI
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from logging_config import (
+    correlation_id,
+    emit_wide_event,
+    enrich,
+    init_wide_event,
+    log_event,
+    setup_logging,
+)
 
 WIKI_DIR = Path("wiki")
 RAW_DIR = Path("raw/texts")
@@ -33,7 +40,7 @@ FALLBACK_MODELS = [
 OPENROUTER_BASE = "https://openrouter.ai/api/v1"
 
 SYSTEM_PROMPT = """\
-You are a research assistant for a political theory knowledge base. \
+You are a research assistant for a knowledge base. \
 You help users explore and understand the corpus of texts and wiki articles.
 
 You have access to tools that let you read wiki articles and raw source documents. \
@@ -49,8 +56,7 @@ citations in the wiki article to read the raw primary texts.
 sources you're drawing from.
 
 Rules:
-- Always ground claims in the actual texts — don't rely on your general knowledge \
-about political theory. Use the tools.
+- Always ground claims in the actual texts — don't rely on your general knowledge. Use the tools.
 - When summarizing a position, note whose position it is and which text it comes from.
 - When positions are in tension or contradiction, say so explicitly.
 - If the knowledge base doesn't cover something, say so rather than making it up.
@@ -73,7 +79,7 @@ TOOLS = [
                 "properties": {
                     "category": {
                         "type": "string",
-                        "description": "Article category: concepts, thinkers, traditions, or debates",
+                        "description": "Article category (e.g. economics, thinkers, sociology)",
                     },
                     "slug": {
                         "type": "string",
@@ -134,20 +140,23 @@ TOOLS = [
 def read_wiki_article(category: str, slug: str) -> str:
     path = WIKI_DIR / category / f"{slug}.md"
     if not path.exists():
+        log_event("tool.article_not_found", category=category, slug=slug)
         return f"Article not found: {category}/{slug}.md"
     content = path.read_text(encoding="utf-8")
+    log_event("tool.article_read", category=category, slug=slug, chars=len(content))
     return f"# {category}/{slug}.md\n\n{content}"
 
 
 def read_raw_source(path_str: str) -> str:
-    # Paths are root-relative (raw/texts/...)
     path = Path(path_str)
     if not path.exists():
+        log_event("tool.source_not_found", path=path_str)
         return f"Source not found: {path}"
     content = path.read_text(encoding="utf-8")
-    # Truncate very long sources to keep context manageable
-    if len(content) > 20_000:
+    truncated = len(content) > 20_000
+    if truncated:
         content = content[:20_000] + "\n\n[...truncated — ask for a specific section if needed...]"
+    log_event("tool.source_read", path=path_str, chars=len(content), truncated=truncated)
     return f"# Source: {path}\n\n{content}"
 
 
@@ -161,7 +170,6 @@ def search_wiki(query: str) -> str:
         for article_path in sorted(category_dir.glob("*.md")):
             content = article_path.read_text(encoding="utf-8")
             if query_lower in content.lower():
-                # Find matching lines with context
                 lines = content.split("\n")
                 matches = []
                 for i, line in enumerate(lines):
@@ -176,6 +184,8 @@ def search_wiki(query: str) -> str:
                 rel_path = article_path.relative_to(WIKI_DIR)
                 results.append(f"### {rel_path}\n" + "\n---\n".join(matches))
 
+    log_event("tool.search_executed", query=query, results_count=len(results))
+
     if not results:
         return f"No results found for: {query}"
 
@@ -187,7 +197,11 @@ def handle_tool_call(tool_call) -> str:
     args = json.loads(tool_call.function.arguments)
 
     if name == "read_wiki_article":
-        return read_wiki_article(args["category"], args["slug"])
+        result = read_wiki_article(args["category"], args["slug"])
+        # Track in wide event
+        ctx_articles = []
+        enrich()  # no-op if no wide event, just ensures we can call it
+        return result
     elif name == "read_raw_source":
         return read_raw_source(args["path"])
     elif name == "search_wiki":
@@ -210,7 +224,6 @@ def build_system_prompt() -> str:
     if INDEX_PATH.exists():
         index = INDEX_PATH.read_text(encoding="utf-8")
     else:
-        # Fallback: build a basic index from files on disk
         entries = []
         for category_dir in sorted(WIKI_DIR.iterdir()):
             if not category_dir.is_dir():
@@ -224,7 +237,14 @@ def build_system_prompt() -> str:
 
 def chat(client: OpenAI, model: str, messages: list[dict]) -> str:
     """Run a chat turn, handling tool calls in a loop until the model responds with text."""
+    articles_read: list[str] = []
+    sources_read: list[str] = []
+    searches: list[str] = []
+    llm_rounds = 0
+    tool_calls_total = 0
+
     while True:
+        llm_rounds += 1
         response = client.chat.completions.create(
             model=model,
             messages=messages,
@@ -241,9 +261,18 @@ def chat(client: OpenAI, model: str, messages: list[dict]) -> str:
         choice = response.choices[0]
         message = choice.message
 
-        # If no tool calls, we have the final response
         if not message.tool_calls:
             messages.append({"role": "assistant", "content": message.content})
+            # Finalize wide event with accumulated data
+            enrich(
+                model=model,
+                articles_read=articles_read,
+                sources_read=sources_read,
+                searches=searches,
+                llm_rounds=llm_rounds,
+                tool_calls=tool_calls_total,
+            )
+            emit_wide_event()
             return message.content
 
         # Process tool calls
@@ -264,6 +293,18 @@ def chat(client: OpenAI, model: str, messages: list[dict]) -> str:
         })
 
         for tc in message.tool_calls:
+            tool_calls_total += 1
+            name = tc.function.name
+            args = json.loads(tc.function.arguments)
+
+            # Track what gets pulled into context
+            if name == "read_wiki_article":
+                articles_read.append(f"wiki/{args['category']}/{args['slug']}.md")
+            elif name == "read_raw_source":
+                sources_read.append(args["path"])
+            elif name == "search_wiki":
+                searches.append(args["query"])
+
             result = handle_tool_call(tc)
             messages.append({
                 "role": "tool",
@@ -281,6 +322,7 @@ def chat_with_fallback(client: OpenAI, model: str, messages: list[dict]) -> str:
             return chat(client, m, messages)
         except Exception as e:
             if "429" in str(e) or "rate" in str(e).lower():
+                log_event("query.rate_limited", model=m)
                 print(f"  (rate limited on {m}, trying next...)")
                 continue
             raise
@@ -291,10 +333,13 @@ def chat_with_fallback(client: OpenAI, model: str, messages: list[dict]) -> str:
 def main():
     import argparse
 
-    parser = argparse.ArgumentParser(description="Query the political theory knowledge base")
+    parser = argparse.ArgumentParser(description="Query the knowledge base")
     parser.add_argument("question", nargs="*", help="Question to ask (omit for interactive mode)")
     parser.add_argument("--model", default=DEFAULT_MODEL, help=f"Model to use (default: {DEFAULT_MODEL})")
+    parser.add_argument("--json-logs", action="store_true", help="Output structured JSON logs to stderr")
     args = parser.parse_args()
+
+    setup_logging(service="great-minds", json_output=args.json_logs)
 
     client = get_client()
     model = args.model
@@ -304,6 +349,10 @@ def main():
     # Single question mode
     if args.question:
         question = " ".join(args.question)
+        query_id = f"q-{uuid.uuid4().hex[:8]}"
+        correlation_id.set(query_id)
+        init_wide_event("query", question=question)
+
         messages.append({"role": "user", "content": question})
         print(f"\n> {question}\n")
         answer = chat_with_fallback(client, model, messages)
@@ -311,7 +360,7 @@ def main():
         return
 
     # Interactive mode
-    print(f"Political Theory Knowledge Base — Query Interface (model: {model})")
+    print(f"Knowledge Base — Query Interface (model: {model})")
     print("Type your question, or 'quit' to exit.\n")
 
     while True:
@@ -323,6 +372,10 @@ def main():
 
         if not question or question.lower() in ("quit", "exit", "q"):
             break
+
+        query_id = f"q-{uuid.uuid4().hex[:8]}"
+        correlation_id.set(query_id)
+        init_wide_event("query", question=question)
 
         messages.append({"role": "user", "content": question})
         answer = chat_with_fallback(client, model, messages)
