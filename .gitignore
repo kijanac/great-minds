@@ -1,0 +1,8 @@
+.venv/
+corpus/
+raw/
+wiki/
+outputs/
+produced/
+__pycache__/
+*.pyc

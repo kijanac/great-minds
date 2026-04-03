@@ -1,0 +1,1 @@
+Write a concise, well-structured wiki article on this topic based on the source text. Include: definition/overview, how the author treats the concept, historical context, and connections to related concepts. Aim for 400-1000 words.

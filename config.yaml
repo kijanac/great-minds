@@ -1,0 +1,59 @@
+name: "Great Minds"
+
+# Wiki structure — LLM proposes categories, these are guardrails
+wiki:
+  max_categories: 10
+  min_articles_for_category: 3
+
+# Metadata fields per content type
+# "notes" is the only human-filled field (optional, never overwritten).
+# "concepts" links to specific wiki articles.
+# "tags" is free-form emergent vocabulary — AI-generated, linter-maintained.
+metadata:
+  texts:
+    - title
+    - author
+    - date
+    - source
+    - compiled
+    - genre
+    - tradition
+    - interlocutors
+    - concepts
+    - tags
+    - notes
+
+  news:
+    - outlet
+    - date
+    - source
+    - compiled
+    - relevance
+    - concepts
+    - tags
+    - notes
+
+  ideas:
+    - date
+    - compiled
+    - concepts
+    - tags
+    - status
+    - notes
+
+# AI-filled field constraints
+fields:
+  genre:
+    max_per_doc: 2
+    allow_new: true
+    min_uses_to_keep: 3
+  tradition:
+    allow_new: true
+    min_uses_to_keep: 3
+  tags:
+    allow_new: true
+    min_uses_to_keep: 2
+  concepts:
+    allow_new: true
+  interlocutors:
+    allow_new: true
