@@ -30,8 +30,8 @@ def _get_api_key() -> str:
     return api_key
 
 
-def get_async_client() -> AsyncOpenAI:
-    return AsyncOpenAI(base_url=OPENROUTER_BASE, api_key=_get_api_key())
+def get_async_client(*, max_retries: int = 2) -> AsyncOpenAI:
+    return AsyncOpenAI(base_url=OPENROUTER_BASE, api_key=_get_api_key(), max_retries=max_retries)
 
 
 def get_sync_client() -> OpenAI:

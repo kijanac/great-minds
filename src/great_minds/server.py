@@ -9,12 +9,15 @@ Compilation runs in the background via TaskManager.
 
 
 import asyncio
+import json
 import logging
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, UploadFile
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
+from . import querier
 from .brain import Brain
 from .storage import LocalStorage
 from .tasks import TaskInfo, TaskManager
@@ -135,6 +138,22 @@ def create_app(brain: Brain | None = None) -> FastAPI:
     async def query(req: QueryRequest) -> QueryResponse:
         answer = await asyncio.to_thread(brain.query, req.question, model=req.model)
         return QueryResponse(answer=answer)
+
+    @app.post("/query/stream")
+    async def query_stream(req: QueryRequest) -> StreamingResponse:
+        async def event_generator():
+            async for event in querier.run_stream_query(
+                brain.storage, req.question, model=req.model
+            ):
+                etype = event["event"]
+                data = json.dumps(event["data"])
+                yield f"event: {etype}\ndata: {data}\n\n"
+
+        return StreamingResponse(
+            event_generator(),
+            media_type="text/event-stream",
+            headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+        )
 
     # ------------------------------------------------------------------
     # Ingest

@@ -8,10 +8,11 @@ and sources were pulled into context, with timing.
 
 import json
 import uuid
+from collections.abc import AsyncGenerator
 
-from openai import OpenAI
+from openai import AsyncOpenAI, OpenAI
 
-from .llm import EXTRACT_MODEL, FALLBACK_MODELS, get_sync_client
+from .llm import EXTRACT_MODEL, FALLBACK_MODELS, get_async_client, get_sync_client
 from .storage import Storage
 from .telemetry import (
     correlation_id,
@@ -114,6 +115,38 @@ TOOLS = [
     },
 ]
 
+PROVIDER_EXTRA_BODY = {
+    "provider": {
+        "allow_fallbacks": True,
+        "sort": "throughput",
+    },
+}
+
+
+# ---------------------------------------------------------------------------
+# Shared helpers
+# ---------------------------------------------------------------------------
+
+
+def _is_rate_limited(exc: Exception) -> bool:
+    msg = str(exc)
+    return "429" in msg or "rate" in msg.lower()
+
+
+def _models_with_fallback(primary: str) -> list[str]:
+    return [primary] + [m for m in FALLBACK_MODELS if m != primary]
+
+
+def _classify_tool_call(name: str, args: dict) -> tuple[str, dict]:
+    """Return (source_type, metadata) for telemetry and SSE source events."""
+    if name == "read_wiki_article":
+        return "article", {"slug": args["slug"]}
+    elif name == "read_raw_source":
+        return "raw", {"path": args["path"]}
+    elif name == "search_wiki":
+        return "search", {"query": args["query"]}
+    return "unknown", {}
+
 
 # ---------------------------------------------------------------------------
 # Tool implementations
@@ -147,7 +180,6 @@ def search_wiki(storage: Storage, query: str) -> str:
     results = []
 
     for path in storage.glob("wiki/*.md"):
-        # Skip internal files (e.g. wiki/_index.md)
         filename = path.rsplit("/", 1)[-1]
         if filename.startswith("_"):
             continue
@@ -174,10 +206,7 @@ def search_wiki(storage: Storage, query: str) -> str:
     return f"Found {len(results)} articles matching '{query}':\n\n" + "\n\n".join(results)
 
 
-def handle_tool_call(storage: Storage, tool_call) -> str:
-    name = tool_call.function.name
-    args = json.loads(tool_call.function.arguments)
-
+def _dispatch_tool(storage: Storage, name: str, args: dict) -> str:
     if name == "read_wiki_article":
         return read_wiki_article(storage, args["slug"])
     elif name == "read_raw_source":
@@ -222,12 +251,7 @@ def chat(storage: Storage, client: OpenAI, model: str, messages: list[dict]) -> 
             messages=messages,
             tools=TOOLS,
             temperature=0.3,
-            extra_body={
-                "provider": {
-                    "allow_fallbacks": True,
-                    "sort": "throughput",
-                },
-            },
+            extra_body=PROVIDER_EXTRA_BODY,
         )
 
         choice = response.choices[0]
@@ -235,7 +259,6 @@ def chat(storage: Storage, client: OpenAI, model: str, messages: list[dict]) -> 
 
         if not message.tool_calls:
             messages.append({"role": "assistant", "content": message.content})
-            # Finalize wide event with accumulated data
             enrich(
                 model=model,
                 articles_read=articles_read,
@@ -247,7 +270,6 @@ def chat(storage: Storage, client: OpenAI, model: str, messages: list[dict]) -> 
             emit_wide_event()
             return message.content
 
-        # Process tool calls
         messages.append({
             "role": "assistant",
             "content": message.content,
@@ -269,15 +291,15 @@ def chat(storage: Storage, client: OpenAI, model: str, messages: list[dict]) -> 
             name = tc.function.name
             args = json.loads(tc.function.arguments)
 
-            # Track what gets pulled into context
-            if name == "read_wiki_article":
+            source_type, _meta = _classify_tool_call(name, args)
+            if source_type == "article":
                 articles_read.append(f"wiki/{args['slug']}.md")
-            elif name == "read_raw_source":
+            elif source_type == "raw":
                 sources_read.append(args["path"])
-            elif name == "search_wiki":
+            elif source_type == "search":
                 searches.append(args["query"])
 
-            result = handle_tool_call(storage, tc)
+            result = _dispatch_tool(storage, name, args)
             messages.append({
                 "role": "tool",
                 "tool_call_id": tc.id,
@@ -287,19 +309,175 @@ def chat(storage: Storage, client: OpenAI, model: str, messages: list[dict]) -> 
 
 def chat_with_fallback(storage: Storage, client: OpenAI, model: str, messages: list[dict]) -> str:
     """Try the primary model, fall back to alternatives on rate limit."""
-    models_to_try = [model] + [m for m in FALLBACK_MODELS if m != model]
-
-    for m in models_to_try:
+    for m in _models_with_fallback(model):
         try:
             return chat(storage, client, m, messages)
         except Exception as e:
-            if "429" in str(e) or "rate" in str(e).lower():
+            if _is_rate_limited(e):
                 log_event("query.rate_limited", model=m)
                 print(f"  (rate limited on {m}, trying next...)")
                 continue
             raise
 
     raise RuntimeError("all models rate limited — try again in a minute")
+
+
+# ---------------------------------------------------------------------------
+# Async streaming chat (for SSE endpoint)
+# ---------------------------------------------------------------------------
+
+
+async def stream_chat(
+    storage: Storage,
+    client: AsyncOpenAI,
+    model: str,
+    messages: list[dict],
+) -> AsyncGenerator[dict, None]:
+    """Yield SSE event dicts as the model traverses the knowledge base.
+
+    Events:
+      {"event": "source", "data": {"type": "article"|"raw"|"search", ...}}
+      {"event": "token",  "data": {"text": "..."}}
+      {"event": "done",   "data": {}}
+      {"event": "error",  "data": {"message": "..."}}
+    """
+    articles_read: list[str] = []
+    sources_read: list[str] = []
+    searches: list[str] = []
+    llm_rounds = 0
+    tool_calls_total = 0
+
+    while True:
+        llm_rounds += 1
+        stream = await client.chat.completions.create(
+            model=model,
+            messages=messages,
+            tools=TOOLS,
+            temperature=0.3,
+            stream=True,
+            extra_body=PROVIDER_EXTRA_BODY,
+        )
+
+        tool_calls_acc: dict[int, dict] = {}
+        content_acc = ""
+        finish_reason = None
+
+        async for chunk in stream:
+            choice = chunk.choices[0]
+            delta = choice.delta
+
+            if choice.finish_reason:
+                finish_reason = choice.finish_reason
+
+            if delta.tool_calls:
+                for tc_delta in delta.tool_calls:
+                    idx = tc_delta.index
+                    if idx not in tool_calls_acc:
+                        tool_calls_acc[idx] = {"id": "", "name": "", "arguments": ""}
+                    if tc_delta.id:
+                        tool_calls_acc[idx]["id"] = tc_delta.id
+                    if tc_delta.function:
+                        if tc_delta.function.name:
+                            tool_calls_acc[idx]["name"] = tc_delta.function.name
+                        if tc_delta.function.arguments:
+                            tool_calls_acc[idx]["arguments"] += tc_delta.function.arguments
+
+            if delta.content:
+                content_acc += delta.content
+                yield {"event": "token", "data": {"text": delta.content}}
+
+        if finish_reason == "tool_calls" and tool_calls_acc:
+            messages.append({
+                "role": "assistant",
+                "content": content_acc or None,
+                "tool_calls": [
+                    {
+                        "id": tc["id"],
+                        "type": "function",
+                        "function": {"name": tc["name"], "arguments": tc["arguments"]},
+                    }
+                    for tc in tool_calls_acc.values()
+                ],
+            })
+
+            for tc in tool_calls_acc.values():
+                tool_calls_total += 1
+                try:
+                    args = json.loads(tc["arguments"])
+                except json.JSONDecodeError:
+                    yield {"event": "error", "data": {"message": f"Malformed tool args for {tc['name']}"}}
+                    return
+                name = tc["name"]
+
+                source_type, meta = _classify_tool_call(name, args)
+                yield {"event": "source", "data": {"type": source_type, **meta}}
+
+                if source_type == "article":
+                    articles_read.append(f"wiki/{meta['slug']}.md")
+                elif source_type == "raw":
+                    sources_read.append(meta["path"])
+                elif source_type == "search":
+                    searches.append(meta["query"])
+
+                result = _dispatch_tool(storage, name, args)
+                messages.append({
+                    "role": "tool",
+                    "tool_call_id": tc["id"],
+                    "content": result,
+                })
+
+            continue
+
+        if content_acc:
+            messages.append({"role": "assistant", "content": content_acc})
+
+        enrich(
+            model=model,
+            articles_read=articles_read,
+            sources_read=sources_read,
+            searches=searches,
+            llm_rounds=llm_rounds,
+            tool_calls=tool_calls_total,
+        )
+        emit_wide_event()
+        yield {"event": "done", "data": {}}
+        return
+
+
+
+async def run_stream_query(
+    storage: Storage,
+    question: str,
+    *,
+    model: str | None = None,
+) -> AsyncGenerator[dict, None]:
+    """Stream SSE events for a single question, with model fallback on rate limit."""
+    primary = model or EXTRACT_MODEL
+    client = get_async_client(max_retries=0)
+    system_prompt = build_system_prompt(storage)
+    base_messages: list[dict] = [
+        {"role": "system", "content": system_prompt},
+        {"role": "user", "content": question},
+    ]
+
+    query_id = f"q-{uuid.uuid4().hex[:8]}"
+    correlation_id.set(query_id)
+    init_wide_event("query.stream", question=question)
+
+    for m in _models_with_fallback(primary):
+        messages = list(base_messages)
+        try:
+            async for event in stream_chat(storage, client, m, messages):
+                yield event
+            return
+        except Exception as e:
+            if _is_rate_limited(e):
+                log_event("query.stream_rate_limited", model=m)
+                continue
+            yield {"event": "error", "data": {"message": str(e)}}
+            return
+
+    yield {"event": "error", "data": {"message": "all models rate limited — try again in a minute"}}
 
 
 # ---------------------------------------------------------------------------
