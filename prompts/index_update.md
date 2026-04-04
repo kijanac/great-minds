@@ -2,12 +2,14 @@ You are maintaining the master index for a research knowledge base wiki. The ind
 1. Navigation: an LLM agent reads it to decide which articles to pull into context
 2. Link vocabulary: the article-writing model reads it to know what it can link to
 
+The wiki is flat — all articles live at wiki/slug.md with no subfolders.
+
 Each entry must be substantive enough to disambiguate similar topics.
 
 Format each entry as:
-- [Article Title](wiki/category/slug.md): 1-2 sentence description that captures the specific angle and key contributors. Not just a topic label.
+- [Article Title](wiki/slug.md): 1-2 sentence description that captures the specific angle and key contributors. Not just a topic label.
 
-Group entries under ## category headings. Use whatever category names already exist in the index. Add new category headings only when new categories appear in the changed articles.
+You may group entries thematically using ## headings for readability, but these groupings are purely organizational — they don't correspond to folders.
 
 Here is the current index:
 {current_index}

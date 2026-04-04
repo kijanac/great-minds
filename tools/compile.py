@@ -40,8 +40,6 @@ RAW_DIR = Path("raw/texts")
 WIKI_DIR = Path("wiki")
 INDEX_PATH = WIKI_DIR / "_index.md"
 CHANGELOG_PATH = WIKI_DIR / "_changelog.md"
-CONFIG_PATH = Path("config.yaml")
-
 EXTRACT_MODEL = "google/gemma-4-31b-it"
 REASON_MODEL = "deepseek/deepseek-v3.2"
 OPENROUTER_BASE = "https://openrouter.ai/api/v1"
@@ -49,42 +47,6 @@ OPENROUTER_BASE = "https://openrouter.ai/api/v1"
 MAX_SOURCE_CHARS = 30_000
 MAX_CONCURRENT = 5
 MAX_RETRIES = 2
-
-
-def load_config() -> dict:
-    """Load config.yaml guardrails."""
-    if CONFIG_PATH.exists():
-        yaml = YAML()
-        return dict(yaml.load(CONFIG_PATH.read_text(encoding="utf-8")))
-    return {}
-
-
-def validate_categories(articles: list[dict], config: dict) -> list[dict]:
-    """Validate proposed categories against config guardrails.
-
-    - Enforces max_categories by rejecting articles in new categories
-      once the limit is reached
-    """
-    wiki_cfg = config.get("wiki", {})
-    max_cats = wiki_cfg.get("max_categories", 20)
-
-    existing = {d.name for d in WIKI_DIR.iterdir() if d.is_dir()}
-
-    validated = []
-    for article in articles:
-        cat = article.get("category", "")
-        if not cat:
-            continue
-        if cat in existing:
-            validated.append(article)
-        elif len(existing) < max_cats:
-            existing.add(cat)
-            validated.append(article)
-            log.info("new wiki category proposed: %s", cat)
-        else:
-            log.warning("rejected category '%s' (max %d reached)", cat, max_cats)
-
-    return validated
 
 _FRONTMATTER_RE = re.compile(r"^---\n(.+?)\n---\n", re.DOTALL)
 
@@ -174,7 +136,7 @@ def read_index() -> str:
 type EnrichedDoc = tuple[Path, dict, str]  # (filepath, frontmatter, body)
 
 # A planned article with its source document index
-type PlannedArticle = dict  # has category, slug, action, key_points, connections, source_idx
+type PlannedArticle = dict  # has slug, action, tags, key_points, connections, source_idx
 
 
 # ---------------------------------------------------------------------------
@@ -319,27 +281,22 @@ def reconcile_plans(
     - Subsequent occurrences merge their key_points into the primary
     - connections are merged
     """
-    # Flatten all planned articles
     flat: list[PlannedArticle] = []
     for plan in all_plans:
         flat.extend(plan)
 
-    # Group by (category, normalized_slug)
-    groups: dict[tuple[str, str], list[PlannedArticle]] = defaultdict(list)
+    # Group by normalized slug
+    groups: dict[str, list[PlannedArticle]] = defaultdict(list)
     for article in flat:
-        cat = article.get("category", "")
         slug = article.get("slug", "")
-        if not cat or not slug:
+        if not slug:
             continue
-        key = (cat, normalize_slug(slug))
-        groups[key].append(article)
+        groups[normalize_slug(slug)].append(article)
 
-    # Reconcile each group
     reconciled: list[PlannedArticle] = []
     merge_count = 0
 
-    for (cat, _norm), group in groups.items():
-        # Use the first article's slug as canonical
+    for _norm, group in groups.items():
         primary = group[0].copy()
 
         if len(group) > 1:
@@ -394,24 +351,18 @@ async def write_one(
     docs: list[EnrichedDoc],
 ) -> PlannedArticle | None:
     """Write a single wiki article using the primary source document."""
-    category = article.get("category", "")
     slug = article.get("slug", "")
-    if not category or not slug:
+    if not slug:
         return None
 
-    # Gather all contributing source documents
     source_indices = article.get("source_indices", [0])
     primary_idx = source_indices[0]
     _, fm, body = docs[primary_idx]
 
-    # Build source paths for citations (relative from wiki/category/ to raw/)
-    source_paths = []
-    for idx in source_indices:
-        filepath = docs[idx][0]
-        source_paths.append(str(filepath))
+    source_paths = [str(docs[idx][0]) for idx in source_indices]
     source_paths_str = "\n".join(f"  - {p}" for p in source_paths)
 
-    article_path = WIKI_DIR / category / f"{slug}.md"
+    article_path = WIKI_DIR / f"{slug}.md"
     action = article.get("action", "create")
 
     existing_content_section = ""
@@ -424,19 +375,19 @@ async def write_one(
     action_instructions = load_prompt("create_article") if action == "create" else load_prompt("update_article")
     key_points = "\n".join(f"- {p}" for p in article.get("key_points", []))
     connections = ", ".join(article.get("connections", [])) or "none"
+    tags = ", ".join(article.get("tags", []))
 
-    # Build batch article list for cross-linking
     batch_lines = []
     for a in all_articles:
-        c, s = a.get("category", ""), a.get("slug", "")
-        if c and s:
+        s = a.get("slug", "")
+        if s:
             pts = "; ".join(a.get("key_points", [])[:2])
-            batch_lines.append(f"  wiki/{c}/{s}.md — {pts}")
+            batch_lines.append(f"  wiki/{s}.md — {pts}")
     batch_articles = "\n".join(batch_lines) if batch_lines else "  (none)"
 
     prompt = load_prompt("write_article").format(
-        category=category,
         slug=slug,
+        tags=tags,
         action=action,
         existing_content_section=existing_content_section,
         title=fm.get("title", ""),
@@ -464,12 +415,12 @@ async def write_one(
 
     content = extract_content(response)
     if not content:
-        log.error("empty response writing %s/%s", category, slug)
+        log.error("empty response writing %s", slug)
         return None
 
     article_path.parent.mkdir(parents=True, exist_ok=True)
     article_path.write_text(content, encoding="utf-8")
-    log.info("wrote %s/%s.md", category, slug)
+    log.info("wrote wiki/%s.md", slug)
     return article
 
 
@@ -482,18 +433,17 @@ async def update_index(client: AsyncOpenAI, written_articles: list[PlannedArticl
 
     summaries = []
     for a in written_articles:
-        cat = a.get("category", "")
         slug = a.get("slug", "")
-        path = WIKI_DIR / cat / f"{slug}.md"
+        path = WIKI_DIR / f"{slug}.md"
         if path.exists():
             content = path.read_text(encoding="utf-8")[:500]
-            summaries.append(f"### wiki/{cat}/{slug}.md\n{content}")
+            summaries.append(f"### wiki/{slug}.md\n{content}")
 
     if not summaries:
         return
 
     changed_list = "\n".join(
-        f"- {a.get('action', 'create')} wiki/{a.get('category', '')}/{a.get('slug', '')}.md"
+        f"- {a.get('action', 'create')} wiki/{a.get('slug', '')}.md"
         for a in written_articles
     )
 
@@ -527,41 +477,40 @@ async def update_index(client: AsyncOpenAI, written_articles: list[PlannedArticl
 # ---------------------------------------------------------------------------
 
 def insert_backlinks():
-    slug_map: dict[str, tuple[str, str]] = {}
-    for category_dir in sorted(WIKI_DIR.iterdir()):
-        if not category_dir.is_dir():
+    # Build slug → display name map from all wiki articles
+    slug_map: dict[str, str] = {}
+    for article_path in sorted(WIKI_DIR.glob("*.md")):
+        if article_path.name.startswith("_"):
             continue
-        for article_path in sorted(category_dir.glob("*.md")):
-            content = article_path.read_text(encoding="utf-8")
-            heading_match = re.search(r"^#\s+(.+)", content, re.MULTILINE)
-            display = heading_match.group(1).strip() if heading_match else article_path.stem
-            slug_map[article_path.stem] = (category_dir.name, display)
+        content = article_path.read_text(encoding="utf-8")
+        heading_match = re.search(r"^#\s+(.+)", content, re.MULTILINE)
+        display = heading_match.group(1).strip() if heading_match else article_path.stem
+        slug_map[article_path.stem] = display
 
-    for category_dir in sorted(WIKI_DIR.iterdir()):
-        if not category_dir.is_dir():
+    for article_path in sorted(WIKI_DIR.glob("*.md")):
+        if article_path.name.startswith("_"):
             continue
-        for article_path in sorted(category_dir.glob("*.md")):
-            content = article_path.read_text(encoding="utf-8")
-            own_slug = article_path.stem
-            modified = False
+        content = article_path.read_text(encoding="utf-8")
+        own_slug = article_path.stem
+        modified = False
 
-            for slug, (cat, display) in slug_map.items():
-                if slug == own_slug:
-                    continue
+        for slug, display in slug_map.items():
+            if slug == own_slug:
+                continue
 
-                link_target = f"wiki/{cat}/{slug}.md"
-                if link_target in content:
-                    continue
+            link_target = f"wiki/{slug}.md"
+            if link_target in content:
+                continue
 
-                for pattern_text in [slug.replace("-", " "), display]:
-                    bold_pattern = re.compile(
-                        r"\*\*" + re.escape(pattern_text) + r"\*\*",
-                        re.IGNORECASE,
+            for pattern_text in [slug.replace("-", " "), display]:
+                bold_pattern = re.compile(
+                    r"\*\*" + re.escape(pattern_text) + r"\*\*",
+                    re.IGNORECASE,
+                )
+                if bold_pattern.search(content):
+                    content = bold_pattern.sub(
+                        f"[{display}]({link_target})", content, count=1
                     )
-                    if bold_pattern.search(content):
-                        content = bold_pattern.sub(
-                            f"[{display}]({link_target})", content, count=1
-                        )
                         modified = True
                         break
 
@@ -587,7 +536,7 @@ def append_changelog(docs: list[EnrichedDoc], articles: list[PlannedArticle]):
         entry += f"- {t}\n"
     entry += f"\nArticles written: {len(articles)}\n"
     for a in articles:
-        entry += f"- {a.get('action', '?')} {a.get('category', '')}/{a.get('slug', '')}.md\n"
+        entry += f"- {a.get('action', '?')} wiki/{a.get('slug', '')}.md\n"
 
     if CHANGELOG_PATH.exists():
         existing = CHANGELOG_PATH.read_text(encoding="utf-8")
@@ -656,9 +605,7 @@ async def run(limit: int | None = None):
 
     # --- Phase 3: Reconcile plans + validate categories (deterministic) ---
     log.info("=== phase 3: reconciling plans ===")
-    config = load_config()
     reconciled = reconcile_plans(all_plans)
-    reconciled = validate_categories(reconciled, config)
 
     if not reconciled:
         log.info("no articles to write")

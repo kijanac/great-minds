@@ -72,21 +72,17 @@ TOOLS = [
             "name": "read_wiki_article",
             "description": (
                 "Read a wiki article from the knowledge base. "
-                "Use the category and slug from the wiki index."
+                "Use the slug from the wiki index."
             ),
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "category": {
-                        "type": "string",
-                        "description": "Article category (e.g. economics, thinkers, sociology)",
-                    },
                     "slug": {
                         "type": "string",
                         "description": "Article slug (filename without .md)",
                     },
                 },
-                "required": ["category", "slug"],
+                "required": ["slug"],
             },
         },
     },
@@ -137,14 +133,14 @@ TOOLS = [
 ]
 
 
-def read_wiki_article(category: str, slug: str) -> str:
-    path = WIKI_DIR / category / f"{slug}.md"
+def read_wiki_article(slug: str) -> str:
+    path = WIKI_DIR / f"{slug}.md"
     if not path.exists():
-        log_event("tool.article_not_found", category=category, slug=slug)
-        return f"Article not found: {category}/{slug}.md"
+        log_event("tool.article_not_found", slug=slug)
+        return f"Article not found: wiki/{slug}.md"
     content = path.read_text(encoding="utf-8")
-    log_event("tool.article_read", category=category, slug=slug, chars=len(content))
-    return f"# {category}/{slug}.md\n\n{content}"
+    log_event("tool.article_read", slug=slug, chars=len(content))
+    return f"# wiki/{slug}.md\n\n{content}"
 
 
 def read_raw_source(path_str: str) -> str:
@@ -164,25 +160,23 @@ def search_wiki(query: str) -> str:
     query_lower = query.lower()
     results = []
 
-    for category_dir in sorted(WIKI_DIR.iterdir()):
-        if not category_dir.is_dir():
+    for article_path in sorted(WIKI_DIR.glob("*.md")):
+        if article_path.name.startswith("_"):
             continue
-        for article_path in sorted(category_dir.glob("*.md")):
-            content = article_path.read_text(encoding="utf-8")
-            if query_lower in content.lower():
-                lines = content.split("\n")
-                matches = []
-                for i, line in enumerate(lines):
-                    if query_lower in line.lower():
-                        start = max(0, i - 1)
-                        end = min(len(lines), i + 2)
-                        snippet = "\n".join(lines[start:end])
-                        matches.append(snippet)
-                        if len(matches) >= 2:
-                            break
+        content = article_path.read_text(encoding="utf-8")
+        if query_lower in content.lower():
+            lines = content.split("\n")
+            matches = []
+            for i, line in enumerate(lines):
+                if query_lower in line.lower():
+                    start = max(0, i - 1)
+                    end = min(len(lines), i + 2)
+                    snippet = "\n".join(lines[start:end])
+                    matches.append(snippet)
+                    if len(matches) >= 2:
+                        break
 
-                rel_path = article_path.relative_to(WIKI_DIR)
-                results.append(f"### {rel_path}\n" + "\n---\n".join(matches))
+            results.append(f"### {article_path.name}\n" + "\n---\n".join(matches))
 
     log_event("tool.search_executed", query=query, results_count=len(results))
 
@@ -197,11 +191,7 @@ def handle_tool_call(tool_call) -> str:
     args = json.loads(tool_call.function.arguments)
 
     if name == "read_wiki_article":
-        result = read_wiki_article(args["category"], args["slug"])
-        # Track in wide event
-        ctx_articles = []
-        enrich()  # no-op if no wide event, just ensures we can call it
-        return result
+        return read_wiki_article(args["slug"])
     elif name == "read_raw_source":
         return read_raw_source(args["path"])
     elif name == "search_wiki":
@@ -225,11 +215,9 @@ def build_system_prompt() -> str:
         index = INDEX_PATH.read_text(encoding="utf-8")
     else:
         entries = []
-        for category_dir in sorted(WIKI_DIR.iterdir()):
-            if not category_dir.is_dir():
-                continue
-            for article_path in sorted(category_dir.glob("*.md")):
-                entries.append(f"  - {category_dir.name}/{article_path.stem}")
+        for article_path in sorted(WIKI_DIR.glob("*.md")):
+            if not article_path.name.startswith("_"):
+                entries.append(f"  - {article_path.stem}")
         index = "\n".join(entries) if entries else "(no articles yet)"
 
     return SYSTEM_PROMPT.format(index=index)
@@ -299,7 +287,7 @@ def chat(client: OpenAI, model: str, messages: list[dict]) -> str:
 
             # Track what gets pulled into context
             if name == "read_wiki_article":
-                articles_read.append(f"wiki/{args['category']}/{args['slug']}.md")
+                articles_read.append(f"wiki/{args['slug']}.md")
             elif name == "read_raw_source":
                 sources_read.append(args["path"])
             elif name == "search_wiki":

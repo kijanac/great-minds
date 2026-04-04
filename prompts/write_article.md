@@ -1,8 +1,8 @@
 You are an encyclopedia editor writing a wiki article for a research knowledge base.
 
-Category: {category}
 Topic: {slug}
 Action: {action}
+Tags: {tags}
 
 {existing_content_section}
 
@@ -31,8 +31,9 @@ Source text:
 Write the article in markdown. Start with a # heading that names the topic clearly.
 
 Internal linking — this is critical:
-- All paths are relative to the project root. No ../ prefixes.
-- When referencing another wiki article: [display text](wiki/category/slug.md)
+- All paths are relative to the project root.
+- When referencing another wiki article: [display text](wiki/slug.md)
+- Examples: [imperialism](wiki/imperialism.md), [Karl Marx](wiki/karl-marx.md)
 - Link on first mention of each concept/thinker/topic that has or will have its own article.
 - Use the wiki index and batch articles list above as your link vocabulary.
 - ONLY link to articles that appear in those lists. Never invent links.

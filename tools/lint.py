@@ -42,14 +42,12 @@ _FOOTNOTE_RE = re.compile(r"\[\^(\d+)\]:\s*\[([^\]]*)\]\(([^)]+)\)")
 # ---------------------------------------------------------------------------
 
 def collect_wiki_articles() -> dict[str, str]:
-    """Return {relative_path: content} for all wiki articles."""
+    """Return {filename: content} for all wiki articles (flat directory)."""
     articles = {}
-    for category_dir in sorted(WIKI_DIR.iterdir()):
-        if not category_dir.is_dir():
+    for path in sorted(WIKI_DIR.glob("*.md")):
+        if path.name.startswith("_"):
             continue
-        for path in sorted(category_dir.glob("*.md")):
-            rel = str(path.relative_to(WIKI_DIR))
-            articles[rel] = path.read_text(encoding="utf-8")
+        articles[path.name] = path.read_text(encoding="utf-8")
     return articles
 
 
@@ -178,31 +176,6 @@ def check_missing_index_entries(articles: dict[str, str]) -> list[str]:
     return issues
 
 
-def check_thin_categories(articles: dict[str, str]) -> list[str]:
-    """Find wiki categories with too few articles (per config guardrails)."""
-    from ruamel.yaml import YAML
-    config_path = Path("config.yaml")
-    if not config_path.exists():
-        return []
-
-    yaml = YAML()
-    config = dict(yaml.load(config_path.read_text(encoding="utf-8")))
-    wiki_cfg = config.get("wiki", {})
-    min_articles = wiki_cfg.get("min_articles_for_category", 3)
-
-    counts: dict[str, int] = defaultdict(int)
-    for rel_path in articles:
-        cat = rel_path.split("/")[0]
-        counts[cat] += 1
-
-    issues = []
-    for cat, count in sorted(counts.items()):
-        if count < min_articles:
-            issues.append(
-                f"  {cat}/ has {count} article(s) (min: {min_articles}) — "
-                f"consider merging into another category"
-            )
-    return issues
 
 
 def check_tag_health(raw_docs: dict[str, dict]) -> list[str]:
@@ -346,7 +319,6 @@ def main():
         ("Uncompiled documents", check_uncompiled, (raw_docs,)),
         ("Uncited sources (compiled but unreferenced)", check_uncited_sources, (articles, raw_docs)),
         ("Missing index entries", check_missing_index_entries, (articles,)),
-        ("Thin categories (below minimum)", check_thin_categories, (articles,)),
         ("Tag health", check_tag_health, (raw_docs,)),
     ]
 

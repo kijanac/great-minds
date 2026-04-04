@@ -1,10 +1,5 @@
 name: "Great Minds"
 
-# Wiki structure — LLM proposes categories, these are guardrails
-wiki:
-  max_categories: 10
-  min_articles_for_category: 3
-
 # Metadata fields per content type
 # "notes" is the only human-filled field (optional, never overwritten).
 # "concepts" links to specific wiki articles.
