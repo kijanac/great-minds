@@ -1,36 +1,29 @@
-"""Interactive query interface for the knowledge base.
+"""Query interface for the knowledge base.
 
 Uses Gemma 4 31B via OpenRouter with function calling to navigate the wiki.
 Emits structured telemetry via wide events — every query logs which articles
 and sources were pulled into context, with timing.
-
-Usage:
-    OPENROUTER_API_KEY=your-key uv run python tools/query.py
-    OPENROUTER_API_KEY=your-key uv run python tools/query.py "What is Lenin's theory of imperialism?"
-    OPENROUTER_API_KEY=your-key uv run python tools/query.py --json-logs "question here"
 """
+
+from __future__ import annotations
 
 import json
 import os
-import sys
 import uuid
-from pathlib import Path
+from typing import TYPE_CHECKING
 
 from openai import OpenAI
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from logging_config import (
+from great_minds.telemetry import (
     correlation_id,
     emit_wide_event,
     enrich,
     init_wide_event,
     log_event,
-    setup_logging,
 )
 
-WIKI_DIR = Path("wiki")
-RAW_DIR = Path("raw/texts")
-INDEX_PATH = WIKI_DIR / "_index.md"
+if TYPE_CHECKING:
+    from great_minds.brain import Brain
 
 DEFAULT_MODEL = "google/gemma-4-31b-it"
 FALLBACK_MODELS = [
@@ -133,37 +126,43 @@ TOOLS = [
 ]
 
 
-def read_wiki_article(slug: str) -> str:
-    path = WIKI_DIR / f"{slug}.md"
-    if not path.exists():
+# ---------------------------------------------------------------------------
+# Tool implementations
+# ---------------------------------------------------------------------------
+
+
+def read_wiki_article(brain: Brain, slug: str) -> str:
+    path = f"wiki/{slug}.md"
+    if not brain.storage.exists(path):
         log_event("tool.article_not_found", slug=slug)
-        return f"Article not found: wiki/{slug}.md"
-    content = path.read_text(encoding="utf-8")
+        return f"Article not found: {path}"
+    content = brain.storage.read(path)
     log_event("tool.article_read", slug=slug, chars=len(content))
-    return f"# wiki/{slug}.md\n\n{content}"
+    return f"# {path}\n\n{content}"
 
 
-def read_raw_source(path_str: str) -> str:
-    path = Path(path_str)
-    if not path.exists():
+def read_raw_source(brain: Brain, path_str: str) -> str:
+    if not brain.storage.exists(path_str):
         log_event("tool.source_not_found", path=path_str)
-        return f"Source not found: {path}"
-    content = path.read_text(encoding="utf-8")
+        return f"Source not found: {path_str}"
+    content = brain.storage.read(path_str)
     truncated = len(content) > 20_000
     if truncated:
         content = content[:20_000] + "\n\n[...truncated — ask for a specific section if needed...]"
     log_event("tool.source_read", path=path_str, chars=len(content), truncated=truncated)
-    return f"# Source: {path}\n\n{content}"
+    return f"# Source: {path_str}\n\n{content}"
 
 
-def search_wiki(query: str) -> str:
+def search_wiki(brain: Brain, query: str) -> str:
     query_lower = query.lower()
     results = []
 
-    for article_path in sorted(WIKI_DIR.glob("*.md")):
-        if article_path.name.startswith("_"):
+    for path in brain.storage.glob("wiki/*.md"):
+        # Skip internal files (e.g. wiki/_index.md)
+        filename = path.rsplit("/", 1)[-1]
+        if filename.startswith("_"):
             continue
-        content = article_path.read_text(encoding="utf-8")
+        content = brain.storage.read(path)
         if query_lower in content.lower():
             lines = content.split("\n")
             matches = []
@@ -176,7 +175,7 @@ def search_wiki(query: str) -> str:
                     if len(matches) >= 2:
                         break
 
-            results.append(f"### {article_path.name}\n" + "\n---\n".join(matches))
+            results.append(f"### {filename}\n" + "\n---\n".join(matches))
 
     log_event("tool.search_executed", query=query, results_count=len(results))
 
@@ -186,18 +185,23 @@ def search_wiki(query: str) -> str:
     return f"Found {len(results)} articles matching '{query}':\n\n" + "\n\n".join(results)
 
 
-def handle_tool_call(tool_call) -> str:
+def handle_tool_call(brain: Brain, tool_call) -> str:
     name = tool_call.function.name
     args = json.loads(tool_call.function.arguments)
 
     if name == "read_wiki_article":
-        return read_wiki_article(args["slug"])
+        return read_wiki_article(brain, args["slug"])
     elif name == "read_raw_source":
-        return read_raw_source(args["path"])
+        return read_raw_source(brain, args["path"])
     elif name == "search_wiki":
-        return search_wiki(args["query"])
+        return search_wiki(brain, args["query"])
     else:
         return f"Unknown tool: {name}"
+
+
+# ---------------------------------------------------------------------------
+# Client / prompt / chat
+# ---------------------------------------------------------------------------
 
 
 def get_client() -> OpenAI:
@@ -210,20 +214,22 @@ def get_client() -> OpenAI:
     return OpenAI(base_url=OPENROUTER_BASE, api_key=api_key)
 
 
-def build_system_prompt() -> str:
-    if INDEX_PATH.exists():
-        index = INDEX_PATH.read_text(encoding="utf-8")
+def build_system_prompt(brain: Brain) -> str:
+    if brain.storage.exists("wiki/_index.md"):
+        index = brain.storage.read("wiki/_index.md")
     else:
         entries = []
-        for article_path in sorted(WIKI_DIR.glob("*.md")):
-            if not article_path.name.startswith("_"):
-                entries.append(f"  - {article_path.stem}")
+        for path in brain.storage.glob("wiki/*.md"):
+            filename = path.rsplit("/", 1)[-1]
+            if not filename.startswith("_"):
+                stem = filename.removesuffix(".md")
+                entries.append(f"  - {stem}")
         index = "\n".join(entries) if entries else "(no articles yet)"
 
     return SYSTEM_PROMPT.format(index=index)
 
 
-def chat(client: OpenAI, model: str, messages: list[dict]) -> str:
+def chat(brain: Brain, client: OpenAI, model: str, messages: list[dict]) -> str:
     """Run a chat turn, handling tool calls in a loop until the model responds with text."""
     articles_read: list[str] = []
     sources_read: list[str] = []
@@ -293,7 +299,7 @@ def chat(client: OpenAI, model: str, messages: list[dict]) -> str:
             elif name == "search_wiki":
                 searches.append(args["query"])
 
-            result = handle_tool_call(tc)
+            result = handle_tool_call(brain, tc)
             messages.append({
                 "role": "tool",
                 "tool_call_id": tc.id,
@@ -301,13 +307,13 @@ def chat(client: OpenAI, model: str, messages: list[dict]) -> str:
             })
 
 
-def chat_with_fallback(client: OpenAI, model: str, messages: list[dict]) -> str:
+def chat_with_fallback(brain: Brain, client: OpenAI, model: str, messages: list[dict]) -> str:
     """Try the primary model, fall back to alternatives on rate limit."""
     models_to_try = [model] + [m for m in FALLBACK_MODELS if m != model]
 
     for m in models_to_try:
         try:
-            return chat(client, m, messages)
+            return chat(brain, client, m, messages)
         except Exception as e:
             if "429" in str(e) or "rate" in str(e).lower():
                 log_event("query.rate_limited", model=m)
@@ -318,36 +324,41 @@ def chat_with_fallback(client: OpenAI, model: str, messages: list[dict]) -> str:
     raise RuntimeError("all models rate limited — try again in a minute")
 
 
-def main():
-    import argparse
+# ---------------------------------------------------------------------------
+# Public entry points
+# ---------------------------------------------------------------------------
 
-    parser = argparse.ArgumentParser(description="Query the knowledge base")
-    parser.add_argument("question", nargs="*", help="Question to ask (omit for interactive mode)")
-    parser.add_argument("--model", default=DEFAULT_MODEL, help=f"Model to use (default: {DEFAULT_MODEL})")
-    parser.add_argument("--json-logs", action="store_true", help="Output structured JSON logs to stderr")
-    args = parser.parse_args()
 
-    setup_logging(service="great-minds", json_output=args.json_logs)
+def run_query(brain: Brain, question: str, *, model: str | None = None) -> str:
+    """Answer a single question against the knowledge base.
 
+    Sets up the OpenRouter client, builds the system prompt, runs chat with
+    fallback models, and returns the answer string. Caller is responsible
+    for calling setup_logging() before this.
+    """
+    model = model or DEFAULT_MODEL
     client = get_client()
-    model = args.model
-    system_prompt = build_system_prompt()
-    messages = [{"role": "system", "content": system_prompt}]
+    system_prompt = build_system_prompt(brain)
+    messages: list[dict] = [{"role": "system", "content": system_prompt}]
 
-    # Single question mode
-    if args.question:
-        question = " ".join(args.question)
-        query_id = f"q-{uuid.uuid4().hex[:8]}"
-        correlation_id.set(query_id)
-        init_wide_event("query", question=question)
+    query_id = f"q-{uuid.uuid4().hex[:8]}"
+    correlation_id.set(query_id)
+    init_wide_event("query", question=question)
 
-        messages.append({"role": "user", "content": question})
-        print(f"\n> {question}\n")
-        answer = chat_with_fallback(client, model, messages)
-        print(answer)
-        return
+    messages.append({"role": "user", "content": question})
+    return chat_with_fallback(brain, client, model, messages)
 
-    # Interactive mode
+
+def run_interactive(brain: Brain, *, model: str | None = None) -> None:
+    """Run an interactive REPL session against the knowledge base.
+
+    Caller is responsible for calling setup_logging() before this.
+    """
+    model = model or DEFAULT_MODEL
+    client = get_client()
+    system_prompt = build_system_prompt(brain)
+    messages: list[dict] = [{"role": "system", "content": system_prompt}]
+
     print(f"Knowledge Base — Query Interface (model: {model})")
     print("Type your question, or 'quit' to exit.\n")
 
@@ -366,9 +377,5 @@ def main():
         init_wide_event("query", question=question)
 
         messages.append({"role": "user", "content": question})
-        answer = chat_with_fallback(client, model, messages)
+        answer = chat_with_fallback(brain, client, model, messages)
         print(f"\n{answer}\n")
-
-
-if __name__ == "__main__":
-    main()

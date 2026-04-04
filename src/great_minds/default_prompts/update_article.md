@@ -1,0 +1,1 @@
+The existing article is shown above. Integrate new information from this source text naturally — don't just append a new section. Update or extend existing sections as needed. Preserve everything in the existing article that isn't contradicted by the new source. Maintain a coherent narrative voice throughout.

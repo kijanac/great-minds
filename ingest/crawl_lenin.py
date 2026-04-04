@@ -20,7 +20,7 @@ from crawl4ai import AsyncWebCrawler, CrawlerRunConfig
 from crawl4ai.deep_crawling import BFSDeepCrawlStrategy
 from crawl4ai.deep_crawling.filters import FilterChain, URLPatternFilter
 
-from tools.ingest import ingest_document, load_fields
+from great_minds import Brain, LocalStorage
 
 log = logging.getLogger(__name__)
 
@@ -109,6 +109,7 @@ def filepath_to_source_url(filepath: Path) -> str:
 
 def ingest():
     """Phase 2: Add frontmatter and copy to raw/texts/."""
+    brain = Brain(LocalStorage(Path.cwd()))
     processed = 0
     skipped = 0
 
@@ -122,9 +123,9 @@ def ingest():
         source_url = filepath_to_source_url(filepath)
 
         relative = filepath.relative_to(CORPUS_DIR)
-        dest = DEST_DIR / relative
+        dest = str(DEST_DIR / relative)
 
-        ingest_document(
+        brain.ingest_document(
             content,
             "texts",
             author="V.I. Lenin",

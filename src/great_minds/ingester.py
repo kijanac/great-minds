@@ -1,35 +1,30 @@
-"""Generic ingestion: add frontmatter to documents and write to raw/.
+"""Generic ingestion: add frontmatter to documents and write to brain storage.
 
-Reads config.yaml for the metadata field list per content type.
+Reads brain.config for the metadata field list per content type.
 Fills programmatic fields (date, source, compiled) from arguments.
-Leaves AI fields empty — compilation fills them.
+Leaves AI fields empty -- compilation fills them.
 
-Provides both a library function (for use by source-specific crawl scripts)
-and a CLI for ingesting individual files or directories.
+This module reads from the EXTERNAL filesystem (source corpus) and writes
+TO brain storage. It is always called via a Brain instance:
 
-Usage:
-    # Ingest a single file
-    uv run python tools/ingest.py texts paper.md --author "V.I. Lenin" --date 1916
-
-    # Ingest a directory (batch)
-    uv run python tools/ingest.py texts corpus/lenin/ --author "V.I. Lenin" --dest raw/texts/lenin/
-
-    # From another script
-    from tools.ingest import ingest_document
-    ingest_document(content, "texts", author="V.I. Lenin", date=1916, source="https://...")
+    brain.ingest_document(content, "texts", author="V.I. Lenin", date=1916)
+    brain.ingest_file(Path("corpus/lenin/ch1.md"), "texts", "raw/texts/lenin/")
 """
 
-import argparse
+from __future__ import annotations
+
 import logging
 import re
 from io import StringIO
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from ruamel.yaml import YAML
 
-log = logging.getLogger(__name__)
+if TYPE_CHECKING:
+    from .brain import Brain
 
-CONFIG_PATH = Path("config.yaml")
+log = logging.getLogger(__name__)
 
 _yaml = YAML()
 _yaml.default_flow_style = False
@@ -47,14 +42,9 @@ _LIST_FIELDS = {"interlocutors", "concepts", "tags", "topic_tags"}
 _STRING_FIELDS = {"author", "source", "genre", "tradition", "outlet", "relevance", "status"}
 
 
-def load_fields(content_type: str) -> list[str]:
-    """Load the metadata field list for a content type from config.yaml."""
-    if not CONFIG_PATH.exists():
-        raise FileNotFoundError(f"Config not found: {CONFIG_PATH}")
-
-    yaml = YAML()
-    config = yaml.load(CONFIG_PATH.read_text(encoding="utf-8"))
-    metadata = config.get("metadata", {})
+def load_fields(brain: Brain, content_type: str) -> list[str]:
+    """Load the metadata field list for a content type from brain config."""
+    metadata = brain.config.get("metadata", {})
 
     if content_type not in metadata:
         raise ValueError(
@@ -103,6 +93,7 @@ def extract_title(content: str) -> str:
 
 
 def ingest_document(
+    brain: Brain,
     content: str,
     content_type: str,
     *,
@@ -111,24 +102,25 @@ def ingest_document(
     date: int | str | None = None,
     source: str | None = None,
     outlet: str | None = None,
-    dest: Path | None = None,
+    dest: str | None = None,
 ) -> str:
     """Add frontmatter to a document and return the result.
 
     Args:
+        brain: Brain instance providing config and storage.
         content: Raw markdown content (no frontmatter).
-        content_type: One of the types in config.yaml (texts, news, ideas).
+        content_type: One of the types in config metadata (texts, news, ideas).
         title: Document title. Auto-extracted from headings if not provided.
         author: Author name.
         date: Publication date (year or full date).
         source: Source URL or path.
         outlet: News outlet (for news type).
-        dest: If provided, write the result to this path.
+        dest: If provided, a path relative to brain root; written via brain.storage.
 
     Returns:
         The document content with frontmatter prepended.
     """
-    fields = load_fields(content_type)
+    fields = load_fields(brain, content_type)
 
     # Build known values from arguments
     known: dict = {"compiled": False}
@@ -148,33 +140,57 @@ def ingest_document(
     result = frontmatter + content
 
     if dest:
-        dest.parent.mkdir(parents=True, exist_ok=True)
-        dest.write_text(result, encoding="utf-8")
+        brain.storage.write(dest, result)
 
     return result
 
 
 def ingest_file(
+    brain: Brain,
     filepath: Path,
     content_type: str,
-    dest_dir: Path,
+    dest_dir: str,
     **kwargs,
-) -> Path:
-    """Ingest a single file: read, add frontmatter, write to dest."""
+) -> str:
+    """Ingest a single file: read from filesystem, add frontmatter, write to brain storage.
+
+    Args:
+        brain: Brain instance providing config and storage.
+        filepath: Path on the external filesystem (the source file being ingested).
+        content_type: One of the types in config metadata.
+        dest_dir: Destination directory relative to brain root (e.g. "raw/texts/lenin/").
+        **kwargs: Passed through to ingest_document (author, date, source, etc.).
+
+    Returns:
+        The dest path string (relative to brain root).
+    """
     content = filepath.read_text(encoding="utf-8")
-    dest = dest_dir / filepath.name
-    ingest_document(content, content_type, dest=dest, **kwargs)
+    dest = f"{dest_dir}/{filepath.name}"
+    ingest_document(brain, content, content_type, dest=dest, **kwargs)
     return dest
 
 
 def ingest_directory(
+    brain: Brain,
     source_dir: Path,
     content_type: str,
-    dest_dir: Path,
+    dest_dir: str,
     skip_fn=None,
     **kwargs,
 ) -> tuple[int, int]:
-    """Ingest all .md files from a directory. Returns (processed, skipped)."""
+    """Ingest all .md files from a directory. Returns (processed, skipped).
+
+    Args:
+        brain: Brain instance providing config and storage.
+        source_dir: Directory on the external filesystem to read from.
+        content_type: One of the types in config metadata.
+        dest_dir: Destination directory relative to brain root.
+        skip_fn: Optional callable; if it returns True for a filepath, skip it.
+        **kwargs: Passed through to ingest_document (author, date, source, etc.).
+
+    Returns:
+        Tuple of (processed_count, skipped_count).
+    """
     processed = 0
     skipped = 0
 
@@ -184,57 +200,10 @@ def ingest_directory(
             continue
 
         relative = filepath.relative_to(source_dir)
-        dest = dest_dir / relative
+        dest = f"{dest_dir}/{relative}"
         content = filepath.read_text(encoding="utf-8")
 
-        ingest_document(content, content_type, dest=dest, **kwargs)
+        ingest_document(brain, content, content_type, dest=dest, **kwargs)
         processed += 1
 
     return processed, skipped
-
-
-def main():
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(asctime)s %(levelname)s %(message)s",
-        datefmt="%H:%M:%S",
-    )
-
-    parser = argparse.ArgumentParser(
-        description="Ingest documents into the knowledge base"
-    )
-    parser.add_argument("content_type", help="Content type (texts, news, ideas)")
-    parser.add_argument("path", type=Path, help="File or directory to ingest")
-    parser.add_argument("--dest", type=Path, help="Destination directory (default: raw/<type>/)")
-    parser.add_argument("--author", help="Author name")
-    parser.add_argument("--date", help="Publication date")
-    parser.add_argument("--source", help="Source URL")
-    parser.add_argument("--outlet", help="News outlet (for news type)")
-    args = parser.parse_args()
-
-    dest = args.dest or Path(f"raw/{args.content_type}")
-
-    kwargs = {}
-    if args.author:
-        kwargs["author"] = args.author
-    if args.date:
-        kwargs["date"] = args.date
-    if args.source:
-        kwargs["source"] = args.source
-    if args.outlet:
-        kwargs["outlet"] = args.outlet
-
-    if args.path.is_file():
-        result = ingest_file(args.path, args.content_type, dest, **kwargs)
-        log.info("ingested %s → %s", args.path, result)
-    elif args.path.is_dir():
-        processed, skipped = ingest_directory(
-            args.path, args.content_type, dest, **kwargs
-        )
-        log.info("done — %d files ingested to %s/, %d skipped", processed, dest, skipped)
-    else:
-        log.error("path not found: %s", args.path)
-
-
-if __name__ == "__main__":
-    main()

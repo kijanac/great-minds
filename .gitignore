@@ -6,4 +6,5 @@ outputs/
 produced/
 __pycache__/
 *.pyc
+*.egg-info/
 *.jsonl

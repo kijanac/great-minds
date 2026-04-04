@@ -8,29 +8,25 @@ Programmatic checks (fast, free, always run):
   - Uncited sources: raw docs that no wiki article references
   - Missing index entries: wiki articles not listed in _index.md
 
-LLM checks (slower, costs money, opt-in with --deep):
+LLM checks (slower, costs money, opt-in with deep=True):
   - Inconsistent concept naming across articles
   - Contradictions between articles
   - Coverage gaps: concepts/debates mentioned but without their own article
-
-Usage:
-    uv run python tools/lint.py              # programmatic checks only
-    uv run python tools/lint.py --deep       # include LLM checks
 """
 
-import argparse
+from __future__ import annotations
+
 import json
 import logging
 import os
 import re
 from collections import defaultdict
-from pathlib import Path
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from .brain import Brain
 
 log = logging.getLogger(__name__)
-
-WIKI_DIR = Path("wiki")
-RAW_DIR = Path("raw/texts")
-INDEX_PATH = WIKI_DIR / "_index.md"
 
 _FRONTMATTER_RE = re.compile(r"^---\n(.+?)\n---\n", re.DOTALL)
 _MD_LINK_RE = re.compile(r"\[([^\]]*)\]\(([^)]+)\)")
@@ -41,27 +37,33 @@ _FOOTNOTE_RE = re.compile(r"\[\^(\d+)\]:\s*\[([^\]]*)\]\(([^)]+)\)")
 # Data collection
 # ---------------------------------------------------------------------------
 
-def collect_wiki_articles() -> dict[str, str]:
-    """Return {filename: content} for all wiki articles (flat directory)."""
+def collect_wiki_articles(brain: Brain) -> dict[str, str]:
+    """Return {filename: content} for all wiki articles.
+
+    Keys are relative to wiki/ (e.g. "imperialism.md"), not the full
+    storage path.
+    """
     articles = {}
-    for path in sorted(WIKI_DIR.glob("*.md")):
-        if path.name.startswith("_"):
+    for path in brain.storage.glob("wiki/*.md"):
+        if path.startswith("wiki/_"):
             continue
-        articles[path.name] = path.read_text(encoding="utf-8")
+        filename = path.removeprefix("wiki/")
+        articles[filename] = brain.storage.read(path)
     return articles
 
 
-def collect_raw_docs() -> dict[str, dict]:
+def collect_raw_docs(brain: Brain) -> dict[str, dict]:
     """Return {path: frontmatter} for all raw docs."""
     from ruamel.yaml import YAML
+
     yaml = YAML()
     docs = {}
-    for path in sorted(RAW_DIR.rglob("*.md")):
-        content = path.read_text(encoding="utf-8")
+    for path in brain.storage.glob("raw/texts/**/*.md"):
+        content = brain.storage.read(path)
         match = _FRONTMATTER_RE.match(content)
         if match:
             fm = yaml.load(match.group(1))
-            docs[str(path)] = dict(fm) if fm else {}
+            docs[path] = dict(fm) if fm else {}
     return docs
 
 
@@ -69,7 +71,7 @@ def collect_raw_docs() -> dict[str, dict]:
 # Programmatic checks
 # ---------------------------------------------------------------------------
 
-def check_dead_links(articles: dict[str, str]) -> list[str]:
+def check_dead_links(brain: Brain, articles: dict[str, str]) -> list[str]:
     """Find markdown links to files that don't exist. All paths are root-relative."""
     issues = []
     for rel_path, content in articles.items():
@@ -82,19 +84,19 @@ def check_dead_links(articles: dict[str, str]) -> list[str]:
             if target.startswith("#"):
                 continue
             # All internal links should be root-relative paths
-            if not Path(target).exists():
+            if not brain.storage.exists(target):
                 issues.append(f"  {rel_path}: dead link [{match.group(1)}]({target})")
     return issues
 
 
-def check_broken_citations(articles: dict[str, str]) -> list[str]:
+def check_broken_citations(brain: Brain, articles: dict[str, str]) -> list[str]:
     """Find footnote citations pointing to raw files that don't exist."""
     issues = []
     for rel_path, content in articles.items():
         for match in _FOOTNOTE_RE.finditer(content):
             source_path = match.group(3)
             # All paths are root-relative
-            if not Path(source_path).exists():
+            if not brain.storage.exists(source_path):
                 issues.append(
                     f"  {rel_path}: footnote [^{match.group(1)}] → {source_path} (not found)"
                 )
@@ -108,7 +110,7 @@ def check_orphan_articles(articles: dict[str, str]) -> list[str]:
     for rel_path in articles:
         incoming[rel_path] = 0
 
-    # articles dict is keyed by path relative to WIKI_DIR (e.g. "concepts/foo.md")
+    # articles dict is keyed by path relative to wiki/ (e.g. "concepts/foo.md")
     # links in articles are root-relative (e.g. "wiki/concepts/foo.md")
     # so strip "wiki/" prefix to match against the articles dict
     for rel_path, content in articles.items():
@@ -161,12 +163,12 @@ def check_uncited_sources(articles: dict[str, str], raw_docs: dict[str, dict]) -
     return [f"  {p}" for p in uncited]
 
 
-def check_missing_index_entries(articles: dict[str, str]) -> list[str]:
+def check_missing_index_entries(brain: Brain, articles: dict[str, str]) -> list[str]:
     """Find wiki articles not listed in _index.md."""
-    if not INDEX_PATH.exists():
+    if not brain.storage.exists("wiki/_index.md"):
         return ["  _index.md does not exist"]
 
-    index_content = INDEX_PATH.read_text(encoding="utf-8")
+    index_content = brain.storage.read("wiki/_index.md")
     issues = []
     for rel_path in articles:
         # Index uses root-relative paths like wiki/category/slug.md
@@ -174,8 +176,6 @@ def check_missing_index_entries(articles: dict[str, str]) -> list[str]:
         if root_path not in index_content:
             issues.append(f"  {rel_path} not in _index.md")
     return issues
-
-
 
 
 def check_tag_health(raw_docs: dict[str, dict]) -> list[str]:
@@ -290,35 +290,26 @@ Respond with ONLY the JSON object."""
 
 
 # ---------------------------------------------------------------------------
-# Runner
+# Public entry point
 # ---------------------------------------------------------------------------
 
-def main():
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(message)s",
-    )
-
-    parser = argparse.ArgumentParser(description="Lint the knowledge base")
-    parser.add_argument("--deep", action="store_true",
-                        help="Include LLM-powered checks (costs money)")
-    args = parser.parse_args()
-
+def run_lint(brain: Brain, *, deep: bool = False) -> int:
+    """Run all lint checks against the brain and return total issue count."""
     log.info("Collecting wiki articles...")
-    articles = collect_wiki_articles()
+    articles = collect_wiki_articles(brain)
     log.info("Collecting raw documents...")
-    raw_docs = collect_raw_docs()
+    raw_docs = collect_raw_docs(brain)
     log.info("Found %d wiki articles, %d raw documents\n", len(articles), len(raw_docs))
 
     total_issues = 0
 
-    checks = [
-        ("Dead links", check_dead_links, (articles,)),
-        ("Broken source citations", check_broken_citations, (articles,)),
+    checks: list[tuple[str, object, tuple]] = [
+        ("Dead links", check_dead_links, (brain, articles)),
+        ("Broken source citations", check_broken_citations, (brain, articles)),
         ("Orphan articles (no incoming links)", check_orphan_articles, (articles,)),
         ("Uncompiled documents", check_uncompiled, (raw_docs,)),
         ("Uncited sources (compiled but unreferenced)", check_uncited_sources, (articles, raw_docs)),
-        ("Missing index entries", check_missing_index_entries, (articles,)),
+        ("Missing index entries", check_missing_index_entries, (brain, articles)),
         ("Tag health", check_tag_health, (raw_docs,)),
     ]
 
@@ -333,10 +324,10 @@ def main():
         else:
             log.info("--- %s: clean ---", name)
 
-    if args.deep:
+    if deep:
         if "OPENROUTER_API_KEY" not in os.environ:
             log.error("\n--deep requires OPENROUTER_API_KEY to be set")
-            return
+            return total_issues
 
         log.info("\n--- LLM consistency check (this may take a minute) ---")
         issues = check_concept_consistency(articles)
@@ -348,7 +339,4 @@ def main():
             log.info("  No issues found")
 
     log.info("\n=== %d total issues ===", total_issues)
-
-
-if __name__ == "__main__":
-    main()
+    return total_issues

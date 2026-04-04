@@ -1,10 +1,13 @@
 [project]
 name = "great-minds"
 version = "0.1.0"
-description = "Corpus of collected works stored as markdown"
+description = "LLM-powered research knowledge base framework"
 requires-python = ">=3.13"
 dependencies = [
     "crawl4ai>=0.8.0",
     "openai>=1.0.0",
     "ruamel.yaml>=0.18.0",
 ]
+
+[project.scripts]
+great-minds = "great_minds.cli:main"

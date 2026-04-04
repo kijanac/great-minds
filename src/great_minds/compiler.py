@@ -1,11 +1,15 @@
-"""Compilation script: process raw texts into the wiki knowledge base.
+"""Compiler: process raw texts into the wiki knowledge base.
+
+Library module called by Brain.compile(). Receives a ``brain`` object that
+provides storage I/O (``brain.storage``) and prompt loading
+(``brain.load_prompt``).
 
 Pipeline architecture:
-  Phase 1: Enrich all docs in parallel (Gemma — cheap extraction)
-  Phase 2: Plan all docs in parallel (Gemma — cheap planning)
-  Phase 3: Reconcile plans deterministically (no LLM — deduplicate slugs)
-  Phase 4: Write all articles in parallel (DeepSeek — expensive reasoning)
-  Phase 5: Update _index.md (Gemma — cheap summarization)
+  Phase 1: Enrich all docs in parallel (Gemma -- cheap extraction)
+  Phase 2: Plan all docs in parallel (Gemma -- cheap planning)
+  Phase 3: Reconcile plans deterministically (no LLM -- deduplicate slugs)
+  Phase 4: Write all articles in parallel (DeepSeek -- expensive reasoning)
+  Phase 5: Update _index.md (Gemma -- cheap summarization)
   Phase 6: Backlinks + mark compiled (deterministic)
 
 Two-model strategy:
@@ -17,7 +21,8 @@ The _index.md file serves dual duty:
   - Link vocabulary for the writing step (model reads it to know what to link to)
 """
 
-import argparse
+from __future__ import annotations
+
 import asyncio
 import json
 import logging
@@ -26,20 +31,19 @@ import re
 from collections import defaultdict
 from datetime import datetime, timezone
 from io import StringIO
-from pathlib import Path
+from typing import TYPE_CHECKING
 
 from openai import AsyncOpenAI
 from ruamel.yaml import YAML
+
+if TYPE_CHECKING:
+    from .brain import Brain
 
 _yaml = YAML()
 _yaml.preserve_quotes = True
 
 log = logging.getLogger(__name__)
 
-RAW_DIR = Path("raw/texts")
-WIKI_DIR = Path("wiki")
-INDEX_PATH = WIKI_DIR / "_index.md"
-CHANGELOG_PATH = WIKI_DIR / "_changelog.md"
 EXTRACT_MODEL = "google/gemma-4-31b-it"
 REASON_MODEL = "deepseek/deepseek-v3.2"
 OPENROUTER_BASE = "https://openrouter.ai/api/v1"
@@ -93,16 +97,6 @@ def serialize_frontmatter(fm: dict, body: str) -> str:
     return f"---\n{buf.getvalue()}---\n{body}"
 
 
-def find_uncompiled() -> list[Path]:
-    results = []
-    for md_file in sorted(RAW_DIR.rglob("*.md")):
-        content = md_file.read_text(encoding="utf-8")
-        fm, _ = parse_frontmatter(content)
-        if fm and fm.get("compiled") is False:
-            results.append(md_file)
-    return results
-
-
 def truncate_body(body: str, max_chars: int = MAX_SOURCE_CHARS) -> str:
     if len(body) <= max_chars:
         return body
@@ -122,40 +116,27 @@ def extract_content(response) -> str | None:
     return choice.message.content.strip()
 
 
-def read_index() -> str:
-    if INDEX_PATH.exists():
-        return INDEX_PATH.read_text(encoding="utf-8")
-    return "(no articles yet)"
+def _stem_from_path(path: str) -> str:
+    """Extract the filename stem from a relative path string.
+
+    Example: "raw/texts/lenin/works/1893/market/01.md" -> "01"
+    """
+    filename = path.rsplit("/", 1)[-1]
+    if filename.endswith(".md"):
+        return filename[:-3]
+    dot = filename.rfind(".")
+    return filename[:dot] if dot != -1 else filename
 
 
 # ---------------------------------------------------------------------------
 # Data types
 # ---------------------------------------------------------------------------
 
-# A document after enrichment
-type EnrichedDoc = tuple[Path, dict, str]  # (filepath, frontmatter, body)
+# A document after enrichment: (relative path string, frontmatter, body)
+type EnrichedDoc = tuple[str, dict, str]
 
 # A planned article with its source document index
 type PlannedArticle = dict  # has slug, action, tags, key_points, connections, source_idx
-
-
-# ---------------------------------------------------------------------------
-# Prompts (loaded from prompts/ directory)
-# ---------------------------------------------------------------------------
-
-PROMPTS_DIR = Path("prompts")
-
-_prompt_cache: dict[str, str] = {}
-
-
-def load_prompt(name: str) -> str:
-    """Load a prompt template from prompts/{name}.md, with caching."""
-    if name not in _prompt_cache:
-        path = PROMPTS_DIR / f"{name}.md"
-        if not path.exists():
-            raise FileNotFoundError(f"Prompt not found: {path}")
-        _prompt_cache[name] = path.read_text(encoding="utf-8").strip()
-    return _prompt_cache[name]
 
 
 # ---------------------------------------------------------------------------
@@ -163,16 +144,17 @@ def load_prompt(name: str) -> str:
 # ---------------------------------------------------------------------------
 
 async def enrich_one(
+    brain: Brain,
     client: AsyncOpenAI,
     sem: asyncio.Semaphore,
-    filepath: Path,
+    filepath: str,
 ) -> EnrichedDoc:
-    content = filepath.read_text(encoding="utf-8")
+    content = brain.storage.read(filepath)
     fm, body = parse_frontmatter(content)
-    title = fm.get("title", filepath.stem)
+    title = fm.get("title", _stem_from_path(filepath))
 
     async with sem:
-        prompt = load_prompt("enrich").format(author=fm["author"])
+        prompt = brain.load_prompt("enrich").format(author=fm["author"])
         response = await api_call(
             client,
             model=EXTRACT_MODEL,
@@ -195,7 +177,7 @@ async def enrich_one(
                 "concepts": data.get("concepts", []),
                 "tags": data.get("tags", []),
             })
-            log.info("enriched %s — genre=%s, concepts=%d",
+            log.info("enriched %s -- genre=%s, concepts=%d",
                      title, fm["genre"], len(fm["concepts"]))
         except json.JSONDecodeError:
             log.warning("failed to parse enrichment for %s: %s", title, raw[:200])
@@ -209,7 +191,14 @@ async def enrich_one(
 # Phase 2: Plan (parallel, cheap)
 # ---------------------------------------------------------------------------
 
+def read_index(brain: Brain) -> str:
+    if brain.storage.exists("wiki/_index.md"):
+        return brain.storage.read("wiki/_index.md")
+    return "(no articles yet)"
+
+
 async def plan_one(
+    brain: Brain,
     client: AsyncOpenAI,
     sem: asyncio.Semaphore,
     doc_idx: int,
@@ -217,7 +206,7 @@ async def plan_one(
     body: str,
 ) -> list[PlannedArticle]:
     """Plan wiki articles for one document. Returns articles tagged with source doc index."""
-    prompt = load_prompt("plan").format(
+    prompt = brain.load_prompt("plan").format(
         title=fm.get("title", ""),
         author=fm.get("author", ""),
         date=fm.get("date", ""),
@@ -225,7 +214,7 @@ async def plan_one(
         genre=fm.get("genre", ""),
         interlocutors=", ".join(fm.get("interlocutors", [])) or "none",
         concepts=", ".join(fm.get("concepts", [])) or "none",
-        wiki_index=read_index(),
+        wiki_index=read_index(brain),
     )
 
     async with sem:
@@ -303,7 +292,7 @@ def reconcile_plans(
             merge_count += 1
             slugs_seen = {a["slug"] for a in group}
             if len(slugs_seen) > 1:
-                log.info("  merged slugs: %s → %s", slugs_seen, primary["slug"])
+                log.info("  merged slugs: %s -> %s", slugs_seen, primary["slug"])
 
             # Merge key_points from all contributors
             all_points = []
@@ -344,6 +333,7 @@ def reconcile_plans(
 # ---------------------------------------------------------------------------
 
 async def write_one(
+    brain: Brain,
     client: AsyncOpenAI,
     sem: asyncio.Semaphore,
     article: PlannedArticle,
@@ -359,20 +349,20 @@ async def write_one(
     primary_idx = source_indices[0]
     _, fm, body = docs[primary_idx]
 
-    source_paths = [str(docs[idx][0]) for idx in source_indices]
+    source_paths = [docs[idx][0] for idx in source_indices]
     source_paths_str = "\n".join(f"  - {p}" for p in source_paths)
 
-    article_path = WIKI_DIR / f"{slug}.md"
+    article_path = f"wiki/{slug}.md"
     action = article.get("action", "create")
 
     existing_content_section = ""
-    if action == "update" and article_path.exists():
-        existing = article_path.read_text(encoding="utf-8")
+    if action == "update" and brain.storage.exists(article_path):
+        existing = brain.storage.read(article_path)
         existing_content_section = f"Existing article content:\n\n{existing}"
     elif action == "update":
         action = "create"
 
-    action_instructions = load_prompt("create_article") if action == "create" else load_prompt("update_article")
+    action_instructions = brain.load_prompt("create_article") if action == "create" else brain.load_prompt("update_article")
     key_points = "\n".join(f"- {p}" for p in article.get("key_points", []))
     connections = ", ".join(article.get("connections", [])) or "none"
     tags = ", ".join(article.get("tags", []))
@@ -382,10 +372,10 @@ async def write_one(
         s = a.get("slug", "")
         if s:
             pts = "; ".join(a.get("key_points", [])[:2])
-            batch_lines.append(f"  wiki/{s}.md — {pts}")
+            batch_lines.append(f"  wiki/{s}.md -- {pts}")
     batch_articles = "\n".join(batch_lines) if batch_lines else "  (none)"
 
-    prompt = load_prompt("write_article").format(
+    prompt = brain.load_prompt("write_article").format(
         slug=slug,
         tags=tags,
         action=action,
@@ -398,7 +388,7 @@ async def write_one(
         source_paths=source_paths_str,
         key_points=key_points,
         connections=connections,
-        wiki_index=read_index(),
+        wiki_index=read_index(brain),
         batch_articles=batch_articles,
         source_excerpt=truncate_body(body),
         action_instructions=action_instructions,
@@ -418,8 +408,7 @@ async def write_one(
         log.error("empty response writing %s", slug)
         return None
 
-    article_path.parent.mkdir(parents=True, exist_ok=True)
-    article_path.write_text(content, encoding="utf-8")
+    brain.storage.write(article_path, content)
     log.info("wrote wiki/%s.md", slug)
     return article
 
@@ -428,15 +417,15 @@ async def write_one(
 # Phase 5: Index update (cheap)
 # ---------------------------------------------------------------------------
 
-async def update_index(client: AsyncOpenAI, written_articles: list[PlannedArticle]):
-    current_index = read_index()
+async def update_index(brain: Brain, client: AsyncOpenAI, written_articles: list[PlannedArticle]):
+    current_index = read_index(brain)
 
     summaries = []
     for a in written_articles:
         slug = a.get("slug", "")
-        path = WIKI_DIR / f"{slug}.md"
-        if path.exists():
-            content = path.read_text(encoding="utf-8")[:500]
+        article_path = f"wiki/{slug}.md"
+        if brain.storage.exists(article_path):
+            content = brain.storage.read(article_path)[:500]
             summaries.append(f"### wiki/{slug}.md\n{content}")
 
     if not summaries:
@@ -447,7 +436,7 @@ async def update_index(client: AsyncOpenAI, written_articles: list[PlannedArticl
         for a in written_articles
     )
 
-    prompt = load_prompt("index_update").format(
+    prompt = brain.load_prompt("index_update").format(
         current_index=current_index,
         changed_articles=changed_list,
         article_summaries="\n\n".join(summaries),
@@ -466,7 +455,7 @@ async def update_index(client: AsyncOpenAI, written_articles: list[PlannedArticl
         return
 
     if new_index.startswith("# Wiki Index"):
-        INDEX_PATH.write_text(new_index + "\n", encoding="utf-8")
+        brain.storage.write("wiki/_index.md", new_index + "\n")
         log.info("updated _index.md with %d articles", len(written_articles))
     else:
         log.warning("index update returned unexpected format, skipping")
@@ -476,22 +465,25 @@ async def update_index(client: AsyncOpenAI, written_articles: list[PlannedArticl
 # Phase 6: Backlinks + mark compiled (deterministic)
 # ---------------------------------------------------------------------------
 
-def insert_backlinks():
-    # Build slug → display name map from all wiki articles
+def insert_backlinks(brain: Brain):
+    # Build slug -> display name map from all wiki articles
     slug_map: dict[str, str] = {}
-    for article_path in sorted(WIKI_DIR.glob("*.md")):
-        if article_path.name.startswith("_"):
+    for path in brain.storage.glob("wiki/*.md"):
+        # path is like "wiki/slug.md"; skip internal files
+        if path.startswith("wiki/_"):
             continue
-        content = article_path.read_text(encoding="utf-8")
+        content = brain.storage.read(path)
         heading_match = re.search(r"^#\s+(.+)", content, re.MULTILINE)
-        display = heading_match.group(1).strip() if heading_match else article_path.stem
-        slug_map[article_path.stem] = display
+        # Extract stem: strip "wiki/" prefix and ".md" suffix
+        stem = path[5:-3]  # len("wiki/") == 5, len(".md") == 3
+        display = heading_match.group(1).strip() if heading_match else stem
+        slug_map[stem] = display
 
-    for article_path in sorted(WIKI_DIR.glob("*.md")):
-        if article_path.name.startswith("_"):
+    for path in brain.storage.glob("wiki/*.md"):
+        if path.startswith("wiki/_"):
             continue
-        content = article_path.read_text(encoding="utf-8")
-        own_slug = article_path.stem
+        content = brain.storage.read(path)
+        own_slug = path[5:-3]
         modified = False
 
         for slug, display in slug_map.items():
@@ -511,25 +503,25 @@ def insert_backlinks():
                     content = bold_pattern.sub(
                         f"[{display}]({link_target})", content, count=1
                     )
-                        modified = True
-                        break
+                    modified = True
+                    break
 
             if modified:
-                article_path.write_text(content, encoding="utf-8")
+                brain.storage.write(path, content)
 
     log.info("backlink pass complete")
 
 
-def mark_compiled(docs: list[EnrichedDoc]):
+def mark_compiled(brain: Brain, docs: list[EnrichedDoc]):
     for filepath, fm, body in docs:
         fm["compiled"] = True
-        filepath.write_text(serialize_frontmatter(fm, body), encoding="utf-8")
+        brain.storage.write(filepath, serialize_frontmatter(fm, body))
     log.info("marked %d documents as compiled", len(docs))
 
 
-def append_changelog(docs: list[EnrichedDoc], articles: list[PlannedArticle]):
+def append_changelog(brain: Brain, docs: list[EnrichedDoc], articles: list[PlannedArticle]):
     timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
-    titles = [d[1].get("title", d[0].stem) for d in docs]
+    titles = [d[1].get("title", _stem_from_path(d[0])) for d in docs]
 
     entry = f"\n## {timestamp}\n\nCompiled {len(docs)} documents:\n"
     for t in titles:
@@ -538,29 +530,34 @@ def append_changelog(docs: list[EnrichedDoc], articles: list[PlannedArticle]):
     for a in articles:
         entry += f"- {a.get('action', '?')} wiki/{a.get('slug', '')}.md\n"
 
-    if CHANGELOG_PATH.exists():
-        existing = CHANGELOG_PATH.read_text(encoding="utf-8")
+    changelog_path = "wiki/_changelog.md"
+    if brain.storage.exists(changelog_path):
+        existing = brain.storage.read(changelog_path)
     else:
         existing = "# Compilation Changelog\n"
 
-    CHANGELOG_PATH.write_text(existing + entry, encoding="utf-8")
+    brain.storage.write(changelog_path, existing + entry)
+
+
+def find_uncompiled(brain: Brain) -> list[str]:
+    results = []
+    for path in brain.storage.glob("raw/texts/**/*.md"):
+        content = brain.storage.read(path)
+        fm, _ = parse_frontmatter(content)
+        if fm and fm.get("compiled") is False:
+            results.append(path)
+    return results
 
 
 # ---------------------------------------------------------------------------
 # Main pipeline
 # ---------------------------------------------------------------------------
 
-async def run(limit: int | None = None):
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(asctime)s %(levelname)s %(message)s",
-        datefmt="%H:%M:%S",
-    )
-
+async def run(brain: Brain, *, limit: int | None = None):
     client = get_client()
     sem = asyncio.Semaphore(MAX_CONCURRENT)
 
-    uncompiled = find_uncompiled()
+    uncompiled = find_uncompiled(brain)
     log.info("found %d uncompiled documents", len(uncompiled))
 
     if limit:
@@ -574,7 +571,7 @@ async def run(limit: int | None = None):
     # --- Phase 1: Enrich all docs in parallel (cheap) ---
     log.info("=== phase 1: enriching %d documents ===", len(uncompiled))
     enrichment_results = await asyncio.gather(
-        *(enrich_one(client, sem, fp) for fp in uncompiled),
+        *(enrich_one(brain, client, sem, fp) for fp in uncompiled),
         return_exceptions=True,
     )
 
@@ -590,7 +587,7 @@ async def run(limit: int | None = None):
     # --- Phase 2: Plan all docs in parallel (cheap) ---
     log.info("=== phase 2: planning %d documents ===", len(docs))
     plan_results = await asyncio.gather(
-        *(plan_one(client, sem, i, fm, body) for i, (_, fm, body) in enumerate(docs)),
+        *(plan_one(brain, client, sem, i, fm, body) for i, (_, fm, body) in enumerate(docs)),
         return_exceptions=True,
     )
 
@@ -609,13 +606,13 @@ async def run(limit: int | None = None):
 
     if not reconciled:
         log.info("no articles to write")
-        mark_compiled(docs)
+        mark_compiled(brain, docs)
         return
 
     # --- Phase 4: Write all articles in parallel (expensive) ---
     log.info("=== phase 4: writing %d articles ===", len(reconciled))
     write_results = await asyncio.gather(
-        *(write_one(client, sem, article, reconciled, docs)
+        *(write_one(brain, client, sem, article, reconciled, docs)
           for article in reconciled),
         return_exceptions=True,
     )
@@ -631,25 +628,12 @@ async def run(limit: int | None = None):
 
     # --- Phase 5: Update index (cheap) ---
     log.info("=== phase 5: updating index ===")
-    await update_index(client, written)
+    await update_index(brain, client, written)
 
     # --- Phase 6: Backlinks + mark compiled ---
     log.info("=== phase 6: backlinks + finalize ===")
-    insert_backlinks()
-    mark_compiled(docs)
-    append_changelog(docs, written)
+    insert_backlinks(brain)
+    mark_compiled(brain, docs)
+    append_changelog(brain, docs, written)
 
-    log.info("compilation complete — %d docs, %d articles", len(docs), len(written))
-
-
-def main():
-    parser = argparse.ArgumentParser(description="Compile raw texts into wiki articles")
-    parser.add_argument("--limit", type=int, default=None,
-                        help="Max documents to compile (for testing)")
-    args = parser.parse_args()
-
-    asyncio.run(run(limit=args.limit))
-
-
-if __name__ == "__main__":
-    main()
+    log.info("compilation complete -- %d docs, %d articles", len(docs), len(written))

@@ -1,17 +1,14 @@
 """Structured logging with correlation IDs and wide event support.
 
-Drop this module into any Python project. Call setup_logging() once at
-startup. Use log_event() for all structured logging.
-
 Primary API — log_event():
-    from logging_config import setup_logging, log_event, correlation_id
+    from great_minds.telemetry import setup_logging, log_event, correlation_id
 
     setup_logging(service="gateway")
     correlation_id.set("req-abc123")
     log_event("user_login_succeeded", user_id="u42", method="oauth")
 
 Wide events (accumulate fields across a request, emit once at the end):
-    from logging_config import init_wide_event, enrich, timed_op, emit_wide_event
+    from great_minds.telemetry import init_wide_event, enrich, timed_op, emit_wide_event
 
     correlation_id.set(f"msg-{msg.id}")
     init_wide_event("inbound_message", user_id="u42")
