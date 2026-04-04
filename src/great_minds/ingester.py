@@ -1,6 +1,6 @@
 """Generic ingestion: add frontmatter to documents and write to brain storage.
 
-Reads brain.config for the metadata field list per content type.
+Reads config for the metadata field list per content type.
 Fills programmatic fields (date, source, compiled) from arguments.
 Leaves AI fields empty -- compilation fills them.
 
@@ -11,18 +11,15 @@ TO brain storage. It is always called via a Brain instance:
     brain.ingest_file(Path("corpus/lenin/ch1.md"), "texts", "raw/texts/lenin/")
 """
 
-from __future__ import annotations
 
 import logging
 import re
 from io import StringIO
 from pathlib import Path
-from typing import TYPE_CHECKING
 
 from ruamel.yaml import YAML
 
-if TYPE_CHECKING:
-    from .brain import Brain
+from .storage import Storage
 
 log = logging.getLogger(__name__)
 
@@ -42,9 +39,9 @@ _LIST_FIELDS = {"interlocutors", "concepts", "tags", "topic_tags"}
 _STRING_FIELDS = {"author", "source", "genre", "tradition", "outlet", "relevance", "status"}
 
 
-def load_fields(brain: Brain, content_type: str) -> list[str]:
+def load_fields(storage: Storage, config: dict, content_type: str) -> list[str]:
     """Load the metadata field list for a content type from brain config."""
-    metadata = brain.config.get("metadata", {})
+    metadata = config.get("metadata", {})
 
     if content_type not in metadata:
         raise ValueError(
@@ -93,7 +90,7 @@ def extract_title(content: str) -> str:
 
 
 def ingest_document(
-    brain: Brain,
+    storage: Storage, config: dict,
     content: str,
     content_type: str,
     *,
@@ -107,7 +104,7 @@ def ingest_document(
     """Add frontmatter to a document and return the result.
 
     Args:
-        brain: Brain instance providing config and storage.
+        storage: Storage, config: dict instance providing config and storage.
         content: Raw markdown content (no frontmatter).
         content_type: One of the types in config metadata (texts, news, ideas).
         title: Document title. Auto-extracted from headings if not provided.
@@ -115,12 +112,12 @@ def ingest_document(
         date: Publication date (year or full date).
         source: Source URL or path.
         outlet: News outlet (for news type).
-        dest: If provided, a path relative to brain root; written via brain.storage.
+        dest: If provided, a path relative to brain root; written via storage.
 
     Returns:
         The document content with frontmatter prepended.
     """
-    fields = load_fields(brain, content_type)
+    fields = load_fields(storage, config, content_type)
 
     # Build known values from arguments
     known: dict = {"compiled": False}
@@ -140,13 +137,13 @@ def ingest_document(
     result = frontmatter + content
 
     if dest:
-        brain.storage.write(dest, result)
+        storage.write(dest, result)
 
     return result
 
 
 def ingest_file(
-    brain: Brain,
+    storage: Storage, config: dict,
     filepath: Path,
     content_type: str,
     dest_dir: str,
@@ -155,7 +152,7 @@ def ingest_file(
     """Ingest a single file: read from filesystem, add frontmatter, write to brain storage.
 
     Args:
-        brain: Brain instance providing config and storage.
+        storage: Storage, config: dict instance providing config and storage.
         filepath: Path on the external filesystem (the source file being ingested).
         content_type: One of the types in config metadata.
         dest_dir: Destination directory relative to brain root (e.g. "raw/texts/lenin/").
@@ -166,12 +163,12 @@ def ingest_file(
     """
     content = filepath.read_text(encoding="utf-8")
     dest = f"{dest_dir}/{filepath.name}"
-    ingest_document(brain, content, content_type, dest=dest, **kwargs)
+    ingest_document(storage, config, content, content_type, dest=dest, **kwargs)
     return dest
 
 
 def ingest_directory(
-    brain: Brain,
+    storage: Storage, config: dict,
     source_dir: Path,
     content_type: str,
     dest_dir: str,
@@ -181,7 +178,7 @@ def ingest_directory(
     """Ingest all .md files from a directory. Returns (processed, skipped).
 
     Args:
-        brain: Brain instance providing config and storage.
+        storage: Storage, config: dict instance providing config and storage.
         source_dir: Directory on the external filesystem to read from.
         content_type: One of the types in config metadata.
         dest_dir: Destination directory relative to brain root.
@@ -203,7 +200,7 @@ def ingest_directory(
         dest = f"{dest_dir}/{relative}"
         content = filepath.read_text(encoding="utf-8")
 
-        ingest_document(brain, content, content_type, dest=dest, **kwargs)
+        ingest_document(storage, config, content, content_type, dest=dest, **kwargs)
         processed += 1
 
     return processed, skipped

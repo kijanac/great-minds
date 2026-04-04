@@ -14,17 +14,16 @@ LLM checks (slower, costs money, opt-in with deep=True):
   - Coverage gaps: concepts/debates mentioned but without their own article
 """
 
-from __future__ import annotations
 
 import json
 import logging
-import os
 import re
 from collections import defaultdict
-from typing import TYPE_CHECKING
 
-if TYPE_CHECKING:
-    from .brain import Brain
+from ruamel.yaml import YAML
+
+from .llm import EXTRACT_MODEL, get_sync_client
+from .storage import Storage
 
 log = logging.getLogger(__name__)
 
@@ -37,29 +36,27 @@ _FOOTNOTE_RE = re.compile(r"\[\^(\d+)\]:\s*\[([^\]]*)\]\(([^)]+)\)")
 # Data collection
 # ---------------------------------------------------------------------------
 
-def collect_wiki_articles(brain: Brain) -> dict[str, str]:
+def collect_wiki_articles(storage: Storage) -> dict[str, str]:
     """Return {filename: content} for all wiki articles.
 
     Keys are relative to wiki/ (e.g. "imperialism.md"), not the full
     storage path.
     """
     articles = {}
-    for path in brain.storage.glob("wiki/*.md"):
+    for path in storage.glob("wiki/*.md"):
         if path.startswith("wiki/_"):
             continue
         filename = path.removeprefix("wiki/")
-        articles[filename] = brain.storage.read(path)
+        articles[filename] = storage.read(path)
     return articles
 
 
-def collect_raw_docs(brain: Brain) -> dict[str, dict]:
+def collect_raw_docs(storage: Storage) -> dict[str, dict]:
     """Return {path: frontmatter} for all raw docs."""
-    from ruamel.yaml import YAML
-
     yaml = YAML()
     docs = {}
-    for path in brain.storage.glob("raw/texts/**/*.md"):
-        content = brain.storage.read(path)
+    for path in storage.glob("raw/texts/**/*.md"):
+        content = storage.read(path)
         match = _FRONTMATTER_RE.match(content)
         if match:
             fm = yaml.load(match.group(1))
@@ -71,7 +68,7 @@ def collect_raw_docs(brain: Brain) -> dict[str, dict]:
 # Programmatic checks
 # ---------------------------------------------------------------------------
 
-def check_dead_links(brain: Brain, articles: dict[str, str]) -> list[str]:
+def check_dead_links(storage: Storage, articles: dict[str, str]) -> list[str]:
     """Find markdown links to files that don't exist. All paths are root-relative."""
     issues = []
     for rel_path, content in articles.items():
@@ -84,19 +81,19 @@ def check_dead_links(brain: Brain, articles: dict[str, str]) -> list[str]:
             if target.startswith("#"):
                 continue
             # All internal links should be root-relative paths
-            if not brain.storage.exists(target):
+            if not storage.exists(target):
                 issues.append(f"  {rel_path}: dead link [{match.group(1)}]({target})")
     return issues
 
 
-def check_broken_citations(brain: Brain, articles: dict[str, str]) -> list[str]:
+def check_broken_citations(storage: Storage, articles: dict[str, str]) -> list[str]:
     """Find footnote citations pointing to raw files that don't exist."""
     issues = []
     for rel_path, content in articles.items():
         for match in _FOOTNOTE_RE.finditer(content):
             source_path = match.group(3)
             # All paths are root-relative
-            if not brain.storage.exists(source_path):
+            if not storage.exists(source_path):
                 issues.append(
                     f"  {rel_path}: footnote [^{match.group(1)}] → {source_path} (not found)"
                 )
@@ -163,12 +160,11 @@ def check_uncited_sources(articles: dict[str, str], raw_docs: dict[str, dict]) -
     return [f"  {p}" for p in uncited]
 
 
-def check_missing_index_entries(brain: Brain, articles: dict[str, str]) -> list[str]:
+def check_missing_index_entries(storage: Storage, articles: dict[str, str]) -> list[str]:
     """Find wiki articles not listed in _index.md."""
-    if not brain.storage.exists("wiki/_index.md"):
+    index_content = storage.read("wiki/_index.md", default=None)
+    if index_content is None:
         return ["  _index.md does not exist"]
-
-    index_content = brain.storage.read("wiki/_index.md")
     issues = []
     for rel_path in articles:
         # Index uses root-relative paths like wiki/category/slug.md
@@ -215,12 +211,7 @@ def check_tag_health(raw_docs: dict[str, dict]) -> list[str]:
 
 def check_concept_consistency(articles: dict[str, str]) -> list[str]:
     """Use LLM to find inconsistent concept naming across articles."""
-    from openai import OpenAI
-
-    client = OpenAI(
-        base_url="https://openrouter.ai/api/v1",
-        api_key=os.environ["OPENROUTER_API_KEY"],
-    )
+    client = get_sync_client()
 
     # Build a condensed view: first 300 chars of each article
     summaries = []
@@ -249,7 +240,7 @@ Respond with ONLY the JSON object."""
     all_summaries = "\n\n".join(summaries)
 
     response = client.chat.completions.create(
-        model="google/gemma-4-31b-it",
+        model=EXTRACT_MODEL,
         messages=[
             {"role": "system", "content": prompt},
             {"role": "user", "content": all_summaries},
@@ -293,23 +284,23 @@ Respond with ONLY the JSON object."""
 # Public entry point
 # ---------------------------------------------------------------------------
 
-def run_lint(brain: Brain, *, deep: bool = False) -> int:
-    """Run all lint checks against the brain and return total issue count."""
+def run_lint(storage: Storage, *, deep: bool = False) -> int:
+    """Run all lint checks and return total issue count."""
     log.info("Collecting wiki articles...")
-    articles = collect_wiki_articles(brain)
+    articles = collect_wiki_articles(storage)
     log.info("Collecting raw documents...")
-    raw_docs = collect_raw_docs(brain)
+    raw_docs = collect_raw_docs(storage)
     log.info("Found %d wiki articles, %d raw documents\n", len(articles), len(raw_docs))
 
     total_issues = 0
 
     checks: list[tuple[str, object, tuple]] = [
-        ("Dead links", check_dead_links, (brain, articles)),
-        ("Broken source citations", check_broken_citations, (brain, articles)),
+        ("Dead links", check_dead_links, (storage, articles)),
+        ("Broken source citations", check_broken_citations, (storage, articles)),
         ("Orphan articles (no incoming links)", check_orphan_articles, (articles,)),
         ("Uncompiled documents", check_uncompiled, (raw_docs,)),
         ("Uncited sources (compiled but unreferenced)", check_uncited_sources, (articles, raw_docs)),
-        ("Missing index entries", check_missing_index_entries, (brain, articles)),
+        ("Missing index entries", check_missing_index_entries, (storage, articles)),
         ("Tag health", check_tag_health, (raw_docs,)),
     ]
 
@@ -325,10 +316,6 @@ def run_lint(brain: Brain, *, deep: bool = False) -> int:
             log.info("--- %s: clean ---", name)
 
     if deep:
-        if "OPENROUTER_API_KEY" not in os.environ:
-            log.error("\n--deep requires OPENROUTER_API_KEY to be set")
-            return total_issues
-
         log.info("\n--- LLM consistency check (this may take a minute) ---")
         issues = check_concept_consistency(articles)
         if issues:

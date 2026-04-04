@@ -6,6 +6,7 @@ Usage:
     great-minds query                            # interactive mode
     great-minds ingest texts corpus/lenin/ --author "V.I. Lenin"
     great-minds lint --deep
+    great-minds serve --port 8000
 """
 
 import argparse
@@ -13,7 +14,10 @@ import asyncio
 import logging
 from pathlib import Path
 
+import uvicorn
+
 from .brain import Brain
+from .server import create_app
 from .storage import LocalStorage
 from .telemetry import setup_logging
 
@@ -76,6 +80,12 @@ def cmd_lint(args: argparse.Namespace) -> None:
     brain.lint(deep=args.deep)
 
 
+def cmd_serve(args: argparse.Namespace) -> None:
+    setup_logging(service="great-minds")
+    app = create_app(_make_brain())
+    uvicorn.run(app, host=args.host, port=args.port)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(
         prog="great-minds",
@@ -110,6 +120,12 @@ def main() -> None:
     p_lint = subparsers.add_parser("lint", help="Lint the knowledge base")
     p_lint.add_argument("--deep", action="store_true", help="Include LLM checks (costs money)")
     p_lint.set_defaults(func=cmd_lint)
+
+    # serve
+    p_serve = subparsers.add_parser("serve", help="Start the API server")
+    p_serve.add_argument("--host", default="127.0.0.1", help="Bind host (default: 127.0.0.1)")
+    p_serve.add_argument("--port", type=int, default=8000, help="Bind port (default: 8000)")
+    p_serve.set_defaults(func=cmd_serve)
 
     args = parser.parse_args()
     args.func(args)

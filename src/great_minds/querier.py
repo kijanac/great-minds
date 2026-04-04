@@ -5,32 +5,21 @@ Emits structured telemetry via wide events — every query logs which articles
 and sources were pulled into context, with timing.
 """
 
-from __future__ import annotations
 
 import json
-import os
 import uuid
-from typing import TYPE_CHECKING
 
 from openai import OpenAI
 
-from great_minds.telemetry import (
+from .llm import EXTRACT_MODEL, FALLBACK_MODELS, get_sync_client
+from .storage import Storage
+from .telemetry import (
     correlation_id,
     emit_wide_event,
     enrich,
     init_wide_event,
     log_event,
 )
-
-if TYPE_CHECKING:
-    from great_minds.brain import Brain
-
-DEFAULT_MODEL = "google/gemma-4-31b-it"
-FALLBACK_MODELS = [
-    "deepseek/deepseek-v3.2",
-    "google/gemma-4-31b-it:free",
-]
-OPENROUTER_BASE = "https://openrouter.ai/api/v1"
 
 SYSTEM_PROMPT = """\
 You are a research assistant for a knowledge base. \
@@ -131,21 +120,21 @@ TOOLS = [
 # ---------------------------------------------------------------------------
 
 
-def read_wiki_article(brain: Brain, slug: str) -> str:
+def read_wiki_article(storage: Storage, slug: str) -> str:
     path = f"wiki/{slug}.md"
-    if not brain.storage.exists(path):
+    content = storage.read(path, default=None)
+    if content is None:
         log_event("tool.article_not_found", slug=slug)
         return f"Article not found: {path}"
-    content = brain.storage.read(path)
     log_event("tool.article_read", slug=slug, chars=len(content))
     return f"# {path}\n\n{content}"
 
 
-def read_raw_source(brain: Brain, path_str: str) -> str:
-    if not brain.storage.exists(path_str):
+def read_raw_source(storage: Storage, path_str: str) -> str:
+    content = storage.read(path_str, default=None)
+    if content is None:
         log_event("tool.source_not_found", path=path_str)
         return f"Source not found: {path_str}"
-    content = brain.storage.read(path_str)
     truncated = len(content) > 20_000
     if truncated:
         content = content[:20_000] + "\n\n[...truncated — ask for a specific section if needed...]"
@@ -153,16 +142,16 @@ def read_raw_source(brain: Brain, path_str: str) -> str:
     return f"# Source: {path_str}\n\n{content}"
 
 
-def search_wiki(brain: Brain, query: str) -> str:
+def search_wiki(storage: Storage, query: str) -> str:
     query_lower = query.lower()
     results = []
 
-    for path in brain.storage.glob("wiki/*.md"):
+    for path in storage.glob("wiki/*.md"):
         # Skip internal files (e.g. wiki/_index.md)
         filename = path.rsplit("/", 1)[-1]
         if filename.startswith("_"):
             continue
-        content = brain.storage.read(path)
+        content = storage.read(path)
         if query_lower in content.lower():
             lines = content.split("\n")
             matches = []
@@ -185,16 +174,16 @@ def search_wiki(brain: Brain, query: str) -> str:
     return f"Found {len(results)} articles matching '{query}':\n\n" + "\n\n".join(results)
 
 
-def handle_tool_call(brain: Brain, tool_call) -> str:
+def handle_tool_call(storage: Storage, tool_call) -> str:
     name = tool_call.function.name
     args = json.loads(tool_call.function.arguments)
 
     if name == "read_wiki_article":
-        return read_wiki_article(brain, args["slug"])
+        return read_wiki_article(storage, args["slug"])
     elif name == "read_raw_source":
-        return read_raw_source(brain, args["path"])
+        return read_raw_source(storage, args["path"])
     elif name == "search_wiki":
-        return search_wiki(brain, args["query"])
+        return search_wiki(storage, args["query"])
     else:
         return f"Unknown tool: {name}"
 
@@ -204,22 +193,11 @@ def handle_tool_call(brain: Brain, tool_call) -> str:
 # ---------------------------------------------------------------------------
 
 
-def get_client() -> OpenAI:
-    api_key = os.environ.get("OPENROUTER_API_KEY")
-    if not api_key:
-        raise RuntimeError(
-            "Set OPENROUTER_API_KEY environment variable. "
-            "Get one at https://openrouter.ai/keys"
-        )
-    return OpenAI(base_url=OPENROUTER_BASE, api_key=api_key)
-
-
-def build_system_prompt(brain: Brain) -> str:
-    if brain.storage.exists("wiki/_index.md"):
-        index = brain.storage.read("wiki/_index.md")
-    else:
+def build_system_prompt(storage: Storage) -> str:
+    index = storage.read("wiki/_index.md", default=None)
+    if index is None:
         entries = []
-        for path in brain.storage.glob("wiki/*.md"):
+        for path in storage.glob("wiki/*.md"):
             filename = path.rsplit("/", 1)[-1]
             if not filename.startswith("_"):
                 stem = filename.removesuffix(".md")
@@ -229,7 +207,7 @@ def build_system_prompt(brain: Brain) -> str:
     return SYSTEM_PROMPT.format(index=index)
 
 
-def chat(brain: Brain, client: OpenAI, model: str, messages: list[dict]) -> str:
+def chat(storage: Storage, client: OpenAI, model: str, messages: list[dict]) -> str:
     """Run a chat turn, handling tool calls in a loop until the model responds with text."""
     articles_read: list[str] = []
     sources_read: list[str] = []
@@ -299,7 +277,7 @@ def chat(brain: Brain, client: OpenAI, model: str, messages: list[dict]) -> str:
             elif name == "search_wiki":
                 searches.append(args["query"])
 
-            result = handle_tool_call(brain, tc)
+            result = handle_tool_call(storage, tc)
             messages.append({
                 "role": "tool",
                 "tool_call_id": tc.id,
@@ -307,13 +285,13 @@ def chat(brain: Brain, client: OpenAI, model: str, messages: list[dict]) -> str:
             })
 
 
-def chat_with_fallback(brain: Brain, client: OpenAI, model: str, messages: list[dict]) -> str:
+def chat_with_fallback(storage: Storage, client: OpenAI, model: str, messages: list[dict]) -> str:
     """Try the primary model, fall back to alternatives on rate limit."""
     models_to_try = [model] + [m for m in FALLBACK_MODELS if m != model]
 
     for m in models_to_try:
         try:
-            return chat(brain, client, m, messages)
+            return chat(storage, client, m, messages)
         except Exception as e:
             if "429" in str(e) or "rate" in str(e).lower():
                 log_event("query.rate_limited", model=m)
@@ -329,16 +307,16 @@ def chat_with_fallback(brain: Brain, client: OpenAI, model: str, messages: list[
 # ---------------------------------------------------------------------------
 
 
-def run_query(brain: Brain, question: str, *, model: str | None = None) -> str:
+def run_query(storage: Storage, question: str, *, model: str | None = None) -> str:
     """Answer a single question against the knowledge base.
 
     Sets up the OpenRouter client, builds the system prompt, runs chat with
     fallback models, and returns the answer string. Caller is responsible
     for calling setup_logging() before this.
     """
-    model = model or DEFAULT_MODEL
-    client = get_client()
-    system_prompt = build_system_prompt(brain)
+    model = model or EXTRACT_MODEL
+    client = get_sync_client()
+    system_prompt = build_system_prompt(storage)
     messages: list[dict] = [{"role": "system", "content": system_prompt}]
 
     query_id = f"q-{uuid.uuid4().hex[:8]}"
@@ -346,17 +324,17 @@ def run_query(brain: Brain, question: str, *, model: str | None = None) -> str:
     init_wide_event("query", question=question)
 
     messages.append({"role": "user", "content": question})
-    return chat_with_fallback(brain, client, model, messages)
+    return chat_with_fallback(storage, client, model, messages)
 
 
-def run_interactive(brain: Brain, *, model: str | None = None) -> None:
+def run_interactive(storage: Storage, *, model: str | None = None) -> None:
     """Run an interactive REPL session against the knowledge base.
 
     Caller is responsible for calling setup_logging() before this.
     """
-    model = model or DEFAULT_MODEL
-    client = get_client()
-    system_prompt = build_system_prompt(brain)
+    model = model or EXTRACT_MODEL
+    client = get_sync_client()
+    system_prompt = build_system_prompt(storage)
     messages: list[dict] = [{"role": "system", "content": system_prompt}]
 
     print(f"Knowledge Base — Query Interface (model: {model})")
@@ -377,5 +355,5 @@ def run_interactive(brain: Brain, *, model: str | None = None) -> None:
         init_wide_event("query", question=question)
 
         messages.append({"role": "user", "content": question})
-        answer = chat_with_fallback(brain, client, model, messages)
+        answer = chat_with_fallback(storage, client, model, messages)
         print(f"\n{answer}\n")

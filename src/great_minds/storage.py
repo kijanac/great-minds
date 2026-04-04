@@ -7,13 +7,27 @@ Example: "wiki/imperialism.md", "raw/texts/lenin/works/1893/market/01.md"
 from abc import ABC, abstractmethod
 from pathlib import Path
 
+_MISSING = object()
+
 
 class Storage(ABC):
     """Abstract interface for brain file storage."""
 
     @abstractmethod
-    def read(self, path: str) -> str:
-        """Read text content from a path relative to the brain root."""
+    def _read(self, path: str) -> str:
+        """Subclasses implement raw file reading. Raises FileNotFoundError if missing."""
+
+    def read(self, path: str, default=_MISSING) -> str:
+        """Read text content. Returns default if provided and path doesn't exist.
+
+        Raises FileNotFoundError if path is missing and no default given.
+        """
+        try:
+            return self._read(path)
+        except FileNotFoundError:
+            if default is _MISSING:
+                raise
+            return default
 
     @abstractmethod
     def write(self, path: str, content: str) -> None:
@@ -21,7 +35,7 @@ class Storage(ABC):
 
     @abstractmethod
     def exists(self, path: str) -> bool:
-        """Check whether a path exists."""
+        """Check whether a path exists (without reading). For existence-only checks."""
 
     @abstractmethod
     def glob(self, pattern: str) -> list[str]:
@@ -44,7 +58,7 @@ class LocalStorage(Storage):
     def _resolve(self, path: str) -> Path:
         return self.root / path
 
-    def read(self, path: str) -> str:
+    def _read(self, path: str) -> str:
         return self._resolve(path).read_text(encoding="utf-8")
 
     def write(self, path: str, content: str) -> None:

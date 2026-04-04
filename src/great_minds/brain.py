@@ -18,6 +18,8 @@ from ruamel.yaml import YAML
 from . import compiler, ingester, linter, querier
 from .storage import Storage
 
+__all__ = ["Brain"]
+
 log = logging.getLogger(__name__)
 
 _PACKAGE_DIR = Path(__file__).resolve().parent
@@ -31,11 +33,12 @@ class Brain:
         self.config = config if config is not None else self._load_config()
 
     def _load_config(self) -> dict:
-        if self.storage.exists("config.yaml"):
-            yaml = YAML()
-            raw = yaml.load(self.storage.read("config.yaml"))
-            return dict(raw) if raw else {}
-        return {}
+        content = self.storage.read("config.yaml", default=None)
+        if content is None:
+            return {}
+        yaml = YAML()
+        raw = yaml.load(content)
+        return dict(raw) if raw else {}
 
     def load_prompt(self, name: str) -> str:
         """Load a prompt template, checking brain overrides first.
@@ -45,8 +48,9 @@ class Brain:
           2. default_prompts/{name}.md shipped with the package
         """
         brain_path = f"prompts/{name}.md"
-        if self.storage.exists(brain_path):
-            return self.storage.read(brain_path).strip()
+        content = self.storage.read(brain_path, default=None)
+        if content is not None:
+            return content.strip()
 
         default_path = _PACKAGE_DIR / "default_prompts" / f"{name}.md"
         if default_path.exists():
@@ -61,13 +65,13 @@ class Brain:
     # ------------------------------------------------------------------
 
     async def compile(self, *, limit: int | None = None) -> None:
-        await compiler.run(self, limit=limit)
+        await compiler.run(self.storage, self.load_prompt, limit=limit)
 
     def query(self, question: str, *, model: str | None = None) -> str:
-        return querier.run_query(self, question, model=model)
+        return querier.run_query(self.storage, question, model=model)
 
     def query_interactive(self, *, model: str | None = None) -> None:
-        querier.run_interactive(self, model=model)
+        querier.run_interactive(self.storage, model=model)
 
     def ingest_document(
         self,
@@ -77,7 +81,9 @@ class Brain:
         dest: str | None = None,
         **kwargs,
     ) -> str:
-        return ingester.ingest_document(self, content, content_type, dest=dest, **kwargs)
+        return ingester.ingest_document(
+            self.storage, self.config, content, content_type, dest=dest, **kwargs
+        )
 
     def ingest_file(
         self,
@@ -86,7 +92,9 @@ class Brain:
         dest_dir: str,
         **kwargs,
     ) -> str:
-        return ingester.ingest_file(self, filepath, content_type, dest_dir, **kwargs)
+        return ingester.ingest_file(
+            self.storage, self.config, filepath, content_type, dest_dir, **kwargs
+        )
 
     def ingest_directory(
         self,
@@ -97,8 +105,9 @@ class Brain:
         **kwargs,
     ) -> tuple[int, int]:
         return ingester.ingest_directory(
-            self, source_dir, content_type, dest_dir, skip_fn=skip_fn, **kwargs
+            self.storage, self.config, source_dir, content_type, dest_dir,
+            skip_fn=skip_fn, **kwargs,
         )
 
     def lint(self, *, deep: bool = False) -> int:
-        return linter.run_lint(self, deep=deep)
+        return linter.run_lint(self.storage, deep=deep)
