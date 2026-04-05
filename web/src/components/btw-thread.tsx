@@ -49,7 +49,7 @@ export function BtwThread({ btw, onReply }: BtwThreadProps) {
           BTW
         </span>
         <span className="italic text-[length:var(--text-caption)] text-muted-foreground flex-1 text-left">
-          &ldquo;{shortAnchor}&rdquo;
+          {`"${shortAnchor}"`}
         </span>
         <span className="font-mono text-[length:var(--text-chrome)] text-interactive-dim shrink-0">
           {open ? <ChevronDown size={10} /> : <ChevronRight size={10} />}

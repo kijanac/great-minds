@@ -17,7 +17,7 @@ export async function queryKnowledgeBase(
 }
 
 export interface StreamEvent {
-  event: "thinking" | "source" | "token" | "done" | "error"
+  event: "source" | "token" | "done" | "error"
   data: Record<string, string>
 }
 

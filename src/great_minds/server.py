@@ -17,7 +17,7 @@ from fastapi import FastAPI, HTTPException, UploadFile
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
-from . import querier
+from . import querier, sessions
 from .brain import Brain
 from .storage import LocalStorage
 from .tasks import TaskInfo, TaskManager
@@ -63,6 +63,40 @@ class TaskResponse(BaseModel):
 
 class QueryResponse(BaseModel):
     answer: str
+
+
+class ExchangeData(BaseModel):
+    query: str
+    thinking: list[dict] = []
+    cards: list[str] = []
+    answer: str
+    btws: list[dict] = []
+
+
+class BtwData(BaseModel):
+    anchor: str
+    messages: list[dict]
+
+
+class CreateSessionRequest(BaseModel):
+    session_id: str
+    exchange: ExchangeData
+
+
+class SessionPathResponse(BaseModel):
+    path: str
+
+
+class SessionResponse(BaseModel):
+    id: str
+    content: str
+
+
+class SessionListItem(BaseModel):
+    id: str
+    created: str
+    updated: str
+    sources: list[str] = []
 
 
 class ArticleResponse(BaseModel):
@@ -154,6 +188,51 @@ def create_app(brain: Brain | None = None) -> FastAPI:
             media_type="text/event-stream",
             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
         )
+
+    # ------------------------------------------------------------------
+    # Sessions
+    # ------------------------------------------------------------------
+
+    @app.post("/sessions", response_model=SessionPathResponse, status_code=201)
+    async def create_session(req: CreateSessionRequest) -> SessionPathResponse:
+        path = sessions.create_session(
+            brain.storage, req.session_id, req.exchange.model_dump(),
+        )
+        return SessionPathResponse(path=path)
+
+    @app.patch("/sessions/{session_id}", response_model=SessionPathResponse)
+    async def append_to_session(session_id: str, exchange: ExchangeData) -> SessionPathResponse:
+        path = sessions.append_exchange(
+            brain.storage, session_id, exchange.model_dump(),
+        )
+        return SessionPathResponse(path=path)
+
+    @app.patch("/sessions/{session_id}/btw", response_model=SessionPathResponse)
+    async def append_btw_to_session(session_id: str, btw: BtwData) -> SessionPathResponse:
+        path = sessions.append_btw(
+            brain.storage, session_id, btw.model_dump(),
+        )
+        return SessionPathResponse(path=path)
+
+    @app.get("/sessions", response_model=list[SessionListItem])
+    async def list_all_sessions() -> list[SessionListItem]:
+        raw = sessions.list_sessions(brain.storage)
+        return [
+            SessionListItem(
+                id=s["id"],
+                created=s.get("created", ""),
+                updated=s.get("updated", ""),
+                sources=s.get("sources", []),
+            )
+            for s in raw
+        ]
+
+    @app.get("/sessions/{session_id}", response_model=SessionResponse)
+    async def read_session(session_id: str) -> SessionResponse:
+        content = brain.storage.read(f"sessions/{session_id}.md", default=None)
+        if content is None:
+            raise HTTPException(status_code=404, detail="Session not found")
+        return SessionResponse(id=session_id, content=content)
 
     # ------------------------------------------------------------------
     # Ingest

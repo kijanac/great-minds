@@ -392,12 +392,9 @@ async def stream_chat(
 
             if delta.content:
                 content_acc += delta.content
+                yield {"event": "token", "data": {"text": delta.content}}
 
-        # Tool-call round: buffer content as "thinking", yield sources
         if finish_reason == "tool_calls" and tool_calls_acc:
-            if content_acc.strip():
-                yield {"event": "thinking", "data": {"text": content_acc}}
-
             messages.append({
                 "role": "assistant",
                 "content": content_acc or None,
@@ -439,12 +436,8 @@ async def stream_chat(
 
             continue
 
-        # Final answer round: yield content in chunks for progressive rendering
         if content_acc:
             messages.append({"role": "assistant", "content": content_acc})
-            chunk_size = 20
-            for i in range(0, len(content_acc), chunk_size):
-                yield {"event": "token", "data": {"text": content_acc[i:i + chunk_size]}}
 
         enrich(
             model=model,

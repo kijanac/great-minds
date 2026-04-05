@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react"
 
 import { queryKnowledgeBase, streamQuery } from "@/api/query"
+import { appendBtw, appendExchange, createSession } from "@/api/sessions"
 import type {
   BtwThread,
   Exchange,
@@ -8,11 +9,26 @@ import type {
   SelectionInfo,
   ThinkingBlock,
 } from "@/lib/types"
+import { assistantMsg, userMsg } from "@/lib/types"
 import { genId, simulateStream } from "@/lib/utils"
 
-export function useQuerySession() {
+function exchangeToPayload(ex: Exchange) {
+  return {
+    query: ex.query,
+    thinking: ex.thinking,
+    cards: ex.cards,
+    answer: ex.answer,
+    btws: ex.btws.map((b) => ({
+      anchor: b.anchor,
+      messages: b.messages,
+    })),
+  }
+}
+
+export function useSession() {
   const [phase, setPhase] = useState<Phase>("idle")
   const [thread, setThread] = useState<Exchange[]>([])
+  const sessionIdRef = useRef<string | null>(null)
   const [liveThinking, setLiveThinking] = useState<ThinkingBlock[]>([])
   const [liveText, setLiveText] = useState("")
   const [chips, setChips] = useState<string[]>([])
@@ -41,26 +57,38 @@ export function useQuerySession() {
     const thinking: ThinkingBlock[] = []
     const cards: string[] = []
     let answer = ""
+    let pendingThinkingText = ""
+    let sawSource = false
 
     try {
       for await (const event of streamQuery(question, undefined, controller.signal)) {
-        if (event.event === "thinking") {
-          thinking.push({ text: event.data.text, sources: [] })
-          setLiveThinking([...thinking])
-        } else if (event.event === "source") {
+        if (event.event === "source") {
           const slug =
             event.data.slug ?? event.data.query ?? event.data.path ?? ""
           if (slug) {
             cards.push(slug)
-            if (thinking.length > 0) {
+            // Flush any accumulated text as a thinking block
+            if (pendingThinkingText.trim()) {
+              thinking.push({ text: pendingThinkingText.trim(), sources: [slug] })
+              pendingThinkingText = ""
+            } else if (thinking.length > 0) {
               thinking[thinking.length - 1].sources.push(slug)
-              setLiveThinking([...thinking])
+            } else {
+              thinking.push({ text: "", sources: [slug] })
             }
+            sawSource = true
+            setLiveThinking([...thinking])
           }
         } else if (event.event === "token") {
-          setPhase((p) => (p !== "streaming" ? "streaming" : p))
-          answer += event.data.text
-          setLiveText(answer)
+          if (!sawSource) {
+            // Tokens before any source = thinking text
+            pendingThinkingText += event.data.text
+          } else {
+            // Tokens after last source = answer
+            setPhase((p) => (p !== "streaming" ? "streaming" : p))
+            answer += event.data.text
+            setLiveText(answer)
+          }
         } else if (event.event === "done") {
           break
         } else if (event.event === "error") {
@@ -69,13 +97,27 @@ export function useQuerySession() {
         }
       }
 
-      setThread((prev) => [
-        ...prev,
-        { id: exId, query: question, thinking, cards, answer, btws: [] },
-      ])
+      const exchange: Exchange = {
+        id: exId, query: question, thinking, cards, answer, btws: [],
+      }
+      setThread((prev) => [...prev, exchange])
       setLiveThinking([])
       setLiveText("")
       setPhase("done")
+
+      // Auto-persist session
+      const payload = exchangeToPayload(exchange)
+      if (!sessionIdRef.current) {
+        const sid = genId("s")
+        sessionIdRef.current = sid
+        createSession(sid, payload).catch((e) =>
+          console.error("Failed to save session:", e),
+        )
+      } else {
+        appendExchange(sessionIdRef.current, payload).catch((e) =>
+          console.error("Failed to append exchange:", e),
+        )
+      }
     } catch (err) {
       if ((err as Error).name === "AbortError") return
       console.error("Query failed:", err)
@@ -109,6 +151,7 @@ export function useQuerySession() {
     abortRef.current?.abort()
     for (const fn of cleanupRef.current) fn()
     cleanupRef.current = []
+    sessionIdRef.current = null
     setPhase("idle")
     setThread([])
     setLiveThinking([])
@@ -162,7 +205,7 @@ export function useQuerySession() {
                 streamText: "",
                 messages: [
                   ...b.messages,
-                  { role: "user" as const, text: userText },
+                  userMsg(userText),
                 ],
               }
             : b,
@@ -184,24 +227,34 @@ export function useQuerySession() {
           )
         },
         () => {
-          setThread((prev) =>
-            prev.map((ex) => ({
+          setThread((prev) => {
+            const updated = prev.map((ex) => ({
               ...ex,
-              btws: ex.btws.map((b) =>
-                b.id === btwId
-                  ? {
-                      ...b,
-                      streaming: false,
-                      streamText: "",
-                      messages: [
-                        ...b.messages,
-                        { role: "assistant" as const, text: answer },
-                      ],
-                    }
-                  : b,
-              ),
-            })),
-          )
+              btws: ex.btws.map((b) => {
+                if (b.id !== btwId) return b
+                const finalBtw = {
+                  ...b,
+                  streaming: false,
+                  streamText: "",
+                  messages: [
+                    ...b.messages,
+                    assistantMsg(answer),
+                  ],
+                }
+                // Persist BTW to session
+                if (sessionIdRef.current) {
+                  appendBtw(sessionIdRef.current, {
+                    anchor: finalBtw.anchor,
+                    messages: finalBtw.messages,
+                  }).catch((e) =>
+                    console.error("Failed to save btw:", e),
+                  )
+                }
+                return finalBtw
+              }),
+            }))
+            return updated
+          })
         },
       )
       cleanupRef.current.push(cancel)

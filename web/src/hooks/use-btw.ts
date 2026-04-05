@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react"
 
 import { queryKnowledgeBase } from "@/api/query"
 import type { BtwThread, SelectionInfo } from "@/lib/types"
+import { assistantMsg, userMsg } from "@/lib/types"
 import { genId, simulateStream } from "@/lib/utils"
 
 export function useBtw() {
@@ -41,7 +42,7 @@ export function useBtw() {
               streamText: "",
               messages: [
                 ...b.messages,
-                { role: "user" as const, text: userText },
+                userMsg(userText),
               ],
             }
           : b,
@@ -68,7 +69,7 @@ export function useBtw() {
                     streamText: "",
                     messages: [
                       ...b.messages,
-                      { role: "assistant" as const, text: answer },
+                      assistantMsg(answer),
                     ],
                   }
                 : b,

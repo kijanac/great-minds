@@ -3,6 +3,14 @@ export interface BtwMessage {
   text: string
 }
 
+export function userMsg(text: string): BtwMessage {
+  return { role: "user", text }
+}
+
+export function assistantMsg(text: string): BtwMessage {
+  return { role: "assistant", text }
+}
+
 export interface BtwThread {
   id: string
   anchor: string

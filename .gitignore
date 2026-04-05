@@ -8,3 +8,6 @@ __pycache__/
 *.pyc
 *.egg-info/
 *.jsonl
+node_modules/
+dogfood-output/
+sessions/

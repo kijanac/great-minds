@@ -31,7 +31,7 @@ export function FollowUpBar({ chips, onRemoveChip, onSubmit }: FollowUpBarProps)
               className="rounded-sm h-auto bg-interactive-dim border-gold-dim py-1 pl-[11px] pr-[9px] italic text-[length:var(--text-caption)] text-warm-ghost flex items-center gap-[7px] max-w-[280px]"
             >
               <span className="overflow-hidden text-ellipsis whitespace-nowrap flex-1">
-                &ldquo;{chip.length > 42 ? chip.slice(0, 42) + "..." : chip}&rdquo;
+                {`"${chip.length > 42 ? chip.slice(0, 42) + "..." : chip}"`}
               </span>
               <Button
                 variant="ghost"
