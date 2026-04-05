@@ -28,58 +28,38 @@ export function SearchBar({
 
   return (
     <div
-      className={`shrink-0 flex flex-col items-center px-10 transition-all duration-[440ms] ease-[cubic-bezier(0.4,0,0.2,1)] ${
-        isActive
-          ? "pt-[22px] pb-[18px] border-b border-ink-subtle"
-          : "flex-1 justify-center pb-[72px]"
+      className={`w-full flex items-center bg-secondary border border-input rounded-sm overflow-hidden focus-within:border-ring ${
+        isActive ? "" : "max-w-[640px]"
       }`}
     >
-      {!isActive && (
-        <div className="font-mono text-[length:var(--text-chrome)] tracking-[0.26em] uppercase text-gold-muted mb-10">
-          ARCHIVE — KNOWLEDGE BASE
-        </div>
-      )}
+      <Input
+        ref={inputRef}
+        className="flex-1 h-auto border-none rounded-none bg-transparent font-serif text-[length:var(--text-body)] text-foreground px-[18px] py-[13px] caret-gold placeholder:text-input focus-visible:ring-0 focus-visible:border-none"
+        placeholder="Ask a question across the knowledge base..."
+        value={query}
+        onChange={(e) => onQueryChange(e.target.value)}
+        onKeyDown={(e) => e.key === "Enter" && onSubmit()}
+        disabled={isActive}
+        autoFocus={!isActive}
+      />
 
-      <div
-        className={`w-full flex items-center bg-secondary border border-input rounded-sm overflow-hidden transition-[max-width] duration-400 ease-[cubic-bezier(0.4,0,0.2,1)] focus-within:border-ring ${
-          isActive ? "max-w-full" : "max-w-[640px]"
-        }`}
-      >
-        <Input
-          ref={inputRef}
-          className="flex-1 h-auto border-none rounded-none bg-transparent font-serif text-[length:var(--text-body)] text-foreground px-[18px] py-[13px] caret-gold placeholder:text-input focus-visible:ring-0 focus-visible:border-none"
-          placeholder="Ask a question across the knowledge base..."
-          value={query}
-          onChange={(e) => onQueryChange(e.target.value)}
-          onKeyDown={(e) => e.key === "Enter" && onSubmit()}
-          disabled={isActive}
-          autoFocus
-        />
-
-        {isActive ? (
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={onReset}
-            className="rounded-none font-mono text-[length:var(--text-chrome)] tracking-[0.08em] text-muted-foreground px-3 py-[13px] h-auto hover:text-warm-faint hover:bg-transparent"
-          >
-            clear
-          </Button>
-        ) : (
-          <Button
-            onClick={onSubmit}
-            disabled={!query.trim()}
-            className="rounded-none h-auto bg-gold text-ink font-mono text-[length:var(--text-chrome)] font-medium tracking-[0.12em] px-[18px] py-[13px] hover:bg-gold-hover disabled:bg-interactive-ghost disabled:text-muted-foreground disabled:opacity-100"
-          >
-            QUERY
-          </Button>
-        )}
-      </div>
-
-      {!isActive && (
-        <div className="font-mono text-[length:var(--text-chrome)] tracking-[0.14em] text-muted-foreground mt-4">
-          return to submit · select text to follow up or digress
-        </div>
+      {isActive ? (
+        <Button
+          variant="ghost"
+          size="sm"
+          onClick={onReset}
+          className="rounded-none font-mono text-[length:var(--text-chrome)] tracking-[0.08em] text-muted-foreground px-3 py-[13px] h-auto hover:text-warm-faint hover:bg-transparent"
+        >
+          clear
+        </Button>
+      ) : (
+        <Button
+          onClick={onSubmit}
+          disabled={!query.trim()}
+          className="rounded-none h-auto bg-gold text-ink font-mono text-[length:var(--text-chrome)] font-medium tracking-[0.12em] px-[18px] py-[13px] hover:bg-gold-hover disabled:bg-interactive-ghost disabled:text-muted-foreground disabled:opacity-100"
+        >
+          QUERY
+        </Button>
       )}
     </div>
   )

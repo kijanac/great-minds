@@ -1,74 +1,77 @@
-"""Session persistence — serialize query threads as markdown files.
+"""Session persistence — JSONL event log + derived markdown.
 
-Sessions are records of query conversations including thinking blocks,
-answers, and BTW threads. They live in sessions/ and are separate from
-the knowledge graph.
+Each session is stored as two files:
+  sessions/{id}.jsonl  — append-only event log (source of truth)
+  sessions/{id}.md     — human-readable rendering (derived, never parsed)
+
+Event types:
+  {"type":"meta",     "id":"...", "query":"...", "ts":"..."}
+  {"type":"exchange", "exId":"...", "query":"...", "thinking":[...], "cards":[...], "answer":"..."}
+  {"type":"btw",      "exId":"...", "anchor":"...", "pi":N, "messages":[...]}
 """
 
+import json
+from collections import defaultdict
 from datetime import datetime, timezone
-
-from ruamel.yaml import YAML
 
 from .storage import Storage
 
-_YAML = YAML()
-_YAML.default_flow_style = False
+
+def _now() -> str:
+    return datetime.now(timezone.utc).isoformat()
 
 
-def _frontmatter(meta: dict) -> str:
-    """Render YAML frontmatter block."""
-    import io
+def _render_md(events: list[dict]) -> str:
+    """Render event log as human-readable markdown.
 
-    buf = io.StringIO()
-    _YAML.dump(meta, buf)
-    return f"---\n{buf.getvalue().strip()}\n---\n\n"
+    Groups BTWs under their parent exchange by exId.
+    """
+    exchanges: list[dict] = []
+    btws_by_ex: dict[str, list[dict]] = defaultdict(list)
 
+    for event in events:
+        if event["type"] == "exchange":
+            exchanges.append(event)
+        elif event["type"] == "btw":
+            btws_by_ex[event.get("exId", "")].append(event)
 
-def _render_thinking(thinking: list[dict]) -> str:
-    """Render thinking blocks as blockquotes."""
-    if not thinking:
-        return ""
-    lines = []
-    for block in thinking:
-        if block.get("text"):
-            lines.append(f"> {block['text']}")
-        for source in block.get("sources", []):
-            lines.append(f"> `{source}`")
-        lines.append(">")
-    # Remove trailing >
-    if lines and lines[-1] == ">":
-        lines.pop()
-    return "\n".join(lines) + "\n\n"
-
-
-def _render_btws(btws: list[dict]) -> str:
-    """Render BTW threads as blockquotes."""
-    if not btws:
-        return ""
     parts = []
-    for btw in btws:
-        anchor = btw.get("anchor", "")
-        short = anchor[:60] + "..." if len(anchor) > 60 else anchor
-        lines = [f'> **BTW** re: "{short}"', ">"]
-        for msg in btw.get("messages", []):
-            prefix = "*" if msg["role"] == "user" else ""
-            suffix = "*" if msg["role"] == "user" else ""
-            lines.append(f"> {prefix}{msg['text']}{suffix}")
-            lines.append(">")
-        if lines and lines[-1] == ">":
-            lines.pop()
-        parts.append("\n".join(lines))
-    return "\n\n".join(parts) + "\n\n"
+    for i, ex in enumerate(exchanges):
+        if i > 0:
+            parts.append("\n---\n\n")
+        parts.append(f"# {ex['query']}\n\n")
 
+        for block in ex.get("thinking", []):
+            if block.get("text"):
+                parts.append(f"> {block['text']}\n")
+            for src in block.get("sources", []):
+                parts.append(f"> `{src}`\n")
+            parts.append(">\n")
 
-def _render_exchange(exchange: dict) -> str:
-    """Render a single exchange (query + thinking + answer + btws)."""
-    parts = []
-    parts.append(f"# {exchange['query']}\n\n")
-    parts.append(_render_thinking(exchange.get("thinking", [])))
-    parts.append(exchange.get("answer", "") + "\n\n")
-    parts.append(_render_btws(exchange.get("btws", [])))
+        parts.append(ex.get("answer", "") + "\n")
+
+        for btw in btws_by_ex.get(ex.get("exId", ""), []):
+            anchor = btw.get("anchor", "")
+            short = anchor[:60] + "..." if len(anchor) > 60 else anchor
+            parts.append(f'\n> **BTW** re: "{short}"\n>\n')
+            for msg in btw.get("messages", []):
+                if msg["role"] == "user":
+                    parts.append(f"> *{msg['text']}*\n>\n")
+                else:
+                    parts.append(f"> {msg['text']}\n>\n")
+
     return "".join(parts).rstrip() + "\n"
+
+
+def _append_event(storage: Storage, session_id: str, event: dict) -> None:
+    path = f"sessions/{session_id}.jsonl"
+    storage.append(path, json.dumps(event) + "\n")
+
+
+def _rebuild_md(storage: Storage, session_id: str) -> None:
+    events = load_events(storage, session_id)
+    md = _render_md(events)
+    storage.write(f"sessions/{session_id}.md", md)
 
 
 def create_session(
@@ -76,23 +79,30 @@ def create_session(
     session_id: str,
     exchange: dict,
 ) -> str:
-    """Create a new session file with the first exchange. Returns the path."""
-    now = datetime.now(timezone.utc).isoformat()
-    sources = exchange.get("cards", [])
-
-    meta = {
-        "id": session_id,
-        "status": "session",
-        "created": now,
-        "updated": now,
-        "sources": sources,
-    }
-
-    content = _frontmatter(meta) + _render_exchange(exchange)
-    path = f"sessions/{session_id}.md"
+    """Create a new session with the first exchange."""
     storage.mkdir("sessions")
-    storage.write(path, content)
-    return path
+
+    meta_event = {
+        "type": "meta",
+        "id": session_id,
+        "query": exchange["query"],
+        "ts": _now(),
+    }
+    _append_event(storage, session_id, meta_event)
+
+    ex_event = {
+        "type": "exchange",
+        "exId": exchange.get("id", session_id),
+        "query": exchange["query"],
+        "thinking": exchange.get("thinking", []),
+        "cards": exchange.get("cards", []),
+        "answer": exchange.get("answer", ""),
+        "ts": _now(),
+    }
+    _append_event(storage, session_id, ex_event)
+
+    _rebuild_md(storage, session_id)
+    return f"sessions/{session_id}.jsonl"
 
 
 def append_exchange(
@@ -100,30 +110,19 @@ def append_exchange(
     session_id: str,
     exchange: dict,
 ) -> str:
-    """Append a follow-up exchange to an existing session. Returns the path."""
-    path = f"sessions/{session_id}.md"
-    existing = storage.read(path)
-
-    # Update the "updated" timestamp in frontmatter
-    now = datetime.now(timezone.utc).isoformat()
-    new_sources = exchange.get("cards", [])
-
-    # Parse existing frontmatter to update metadata
-    if existing.startswith("---\n"):
-        end = existing.index("\n---\n", 4)
-        fm_text = existing[4:end]
-        body = existing[end + 5:]
-        import io
-        fm = dict(_YAML.load(io.StringIO(fm_text)))
-        fm["updated"] = now
-        existing_sources = fm.get("sources", [])
-        fm["sources"] = list(dict.fromkeys(existing_sources + new_sources))
-        content = _frontmatter(fm) + body.strip() + "\n\n---\n\n" + _render_exchange(exchange)
-    else:
-        content = existing.rstrip() + "\n\n---\n\n" + _render_exchange(exchange)
-
-    storage.write(path, content)
-    return path
+    """Append a follow-up exchange to an existing session."""
+    ex_event = {
+        "type": "exchange",
+        "exId": exchange.get("id", ""),
+        "query": exchange["query"],
+        "thinking": exchange.get("thinking", []),
+        "cards": exchange.get("cards", []),
+        "answer": exchange.get("answer", ""),
+        "ts": _now(),
+    }
+    _append_event(storage, session_id, ex_event)
+    _rebuild_md(storage, session_id)
+    return f"sessions/{session_id}.jsonl"
 
 
 def append_btw(
@@ -131,25 +130,61 @@ def append_btw(
     session_id: str,
     btw: dict,
 ) -> str:
-    """Append a BTW thread to the end of an existing session. Returns the path."""
-    path = f"sessions/{session_id}.md"
-    existing = storage.read(path)
-    content = existing.rstrip() + "\n\n" + _render_btws([btw])
-    storage.write(path, content)
-    return path
+    """Append a BTW thread to an existing session."""
+    btw_event = {
+        "type": "btw",
+        "exId": btw.get("exchangeId", ""),
+        "anchor": btw["anchor"],
+        "pi": btw.get("paragraphIndex", -1),
+        "messages": btw["messages"],
+        "ts": _now(),
+    }
+    _append_event(storage, session_id, btw_event)
+    _rebuild_md(storage, session_id)
+    return f"sessions/{session_id}.jsonl"
+
+
+def load_events(storage: Storage, session_id: str) -> list[dict]:
+    """Load all events from a session's JSONL file.
+
+    Truncates at the first malformed line (partial write recovery).
+    """
+    content = storage.read(f"sessions/{session_id}.jsonl")
+    events = []
+    for line in content.strip().split("\n"):
+        if not line.strip():
+            continue
+        try:
+            events.append(json.loads(line))
+        except json.JSONDecodeError:
+            break
+    return events
 
 
 def list_sessions(storage: Storage) -> list[dict]:
-    """List all sessions with their frontmatter metadata."""
+    """List all sessions with metadata. Sorted by last activity."""
     results = []
-    for path in storage.glob("sessions/*.md"):
+    for path in storage.glob("sessions/*.jsonl"):
         content = storage.read(path)
-        if content.startswith("---\n"):
-            end = content.index("\n---\n", 4)
-            fm_text = content[4:end]
-            import io
-            fm = dict(_YAML.load(io.StringIO(fm_text)))
-            fm["path"] = path
-            results.append(fm)
+        lines = [l for l in content.strip().split("\n") if l.strip()]
+        if not lines:
+            continue
+
+        try:
+            meta = json.loads(lines[0])
+        except json.JSONDecodeError:
+            continue
+        if meta.get("type") != "meta":
+            continue
+
+        # Last event timestamp for sort order
+        try:
+            last = json.loads(lines[-1])
+            meta["updated"] = last.get("ts", meta.get("ts", ""))
+        except json.JSONDecodeError:
+            meta["updated"] = meta.get("ts", "")
+
+        results.append(meta)
+
     results.sort(key=lambda s: s.get("updated", ""), reverse=True)
     return results

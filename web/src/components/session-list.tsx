@@ -31,11 +31,13 @@ export function SessionList({
   const [filter, setFilter] = useState("")
 
   const filtered = filter.trim()
-    ? sessions.filter(
-        (s) =>
-          s.id.includes(filter.toLowerCase()) ||
-          s.sources.some((src) => src.includes(filter.toLowerCase())),
-      )
+    ? sessions.filter((s) => {
+        const q = filter.toLowerCase()
+        return (
+          s.query.toLowerCase().includes(q) ||
+          s.sources.some((src) => src.includes(q))
+        )
+      })
     : sessions
 
   return (
@@ -90,7 +92,7 @@ export function SessionList({
                   className="w-full h-auto py-3 px-3 rounded-sm justify-start hover:bg-ink-raised group flex-col items-start gap-1.5"
                 >
                   <span className="font-serif italic text-[length:var(--text-body)] text-warm-dim group-hover:text-warm transition-colors truncate w-full text-left">
-                    {s.id}
+                    {s.query}
                   </span>
                   <span className="font-mono text-[length:var(--text-chrome)] text-muted-foreground flex items-center gap-3">
                     <span>{formatDate(s.updated)}</span>

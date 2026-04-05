@@ -75,6 +75,8 @@ class ExchangeData(BaseModel):
 
 class BtwData(BaseModel):
     anchor: str
+    exchangeId: str
+    paragraphIndex: int = -1
     messages: list[dict]
 
 
@@ -89,11 +91,12 @@ class SessionPathResponse(BaseModel):
 
 class SessionResponse(BaseModel):
     id: str
-    content: str
+    events: list[dict]
 
 
 class SessionListItem(BaseModel):
     id: str
+    query: str
     created: str
     updated: str
     sources: list[str] = []
@@ -220,19 +223,20 @@ def create_app(brain: Brain | None = None) -> FastAPI:
         return [
             SessionListItem(
                 id=s["id"],
-                created=s.get("created", ""),
-                updated=s.get("updated", ""),
-                sources=s.get("sources", []),
+                query=s["query"],
+                created=s.get("ts", ""),
+                updated=s.get("updated", s.get("ts", "")),
             )
             for s in raw
         ]
 
     @app.get("/sessions/{session_id}", response_model=SessionResponse)
     async def read_session(session_id: str) -> SessionResponse:
-        content = brain.storage.read(f"sessions/{session_id}.md", default=None)
-        if content is None:
+        try:
+            events = sessions.load_events(brain.storage, session_id)
+        except FileNotFoundError:
             raise HTTPException(status_code=404, detail="Session not found")
-        return SessionResponse(id=session_id, content=content)
+        return SessionResponse(id=session_id, events=events)
 
     # ------------------------------------------------------------------
     # Ingest

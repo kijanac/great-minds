@@ -45,6 +45,10 @@ class Storage(ABC):
         """
 
     @abstractmethod
+    def append(self, path: str, content: str) -> None:
+        """Append text content to a file. Creates it if missing."""
+
+    @abstractmethod
     def mkdir(self, path: str) -> None:
         """Create a directory (and parents)."""
 
@@ -72,6 +76,12 @@ class LocalStorage(Storage):
     def glob(self, pattern: str) -> list[str]:
         matches = sorted(self.root.glob(pattern))
         return [str(m.relative_to(self.root)) for m in matches]
+
+    def append(self, path: str, content: str) -> None:
+        full = self._resolve(path)
+        full.parent.mkdir(parents=True, exist_ok=True)
+        with full.open("a", encoding="utf-8") as f:
+            f.write(content)
 
     def mkdir(self, path: str) -> None:
         self._resolve(path).mkdir(parents=True, exist_ok=True)

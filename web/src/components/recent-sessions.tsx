@@ -40,7 +40,7 @@ export function RecentSessions({
             className="w-full justify-between h-auto py-1.5 px-2 rounded-sm hover:bg-ink-raised group"
           >
             <span className="font-serif italic text-[length:var(--text-small)] text-warm-ghost group-hover:text-warm-faint transition-colors truncate text-left">
-              {s.id}
+              {s.query}
             </span>
             <span className="font-mono text-[length:var(--text-chrome)] text-muted-foreground shrink-0 ml-3">
               {formatDate(s.updated)}

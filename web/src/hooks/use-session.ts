@@ -25,10 +25,19 @@ function exchangeToPayload(ex: Exchange) {
   }
 }
 
-export function useSession() {
-  const [phase, setPhase] = useState<Phase>("idle")
-  const [thread, setThread] = useState<Exchange[]>([])
-  const sessionIdRef = useRef<string | null>(null)
+interface UseSessionOptions {
+  initialExchanges?: Exchange[]
+  sessionId?: string
+}
+
+export function useSession(options?: UseSessionOptions) {
+  const [phase, setPhase] = useState<Phase>(
+    options?.initialExchanges?.length ? "done" : "idle",
+  )
+  const [thread, setThread] = useState<Exchange[]>(
+    options?.initialExchanges ?? [],
+  )
+  const sessionIdRef = useRef<string | null>(options?.sessionId ?? null)
   const [liveThinking, setLiveThinking] = useState<ThinkingBlock[]>([])
   const [liveText, setLiveText] = useState("")
   const [chips, setChips] = useState<string[]>([])
@@ -245,6 +254,8 @@ export function useSession() {
                 if (sessionIdRef.current) {
                   appendBtw(sessionIdRef.current, {
                     anchor: finalBtw.anchor,
+                    exchangeId: finalBtw.exchangeId,
+                    paragraphIndex: finalBtw.paragraphIndex,
                     messages: finalBtw.messages,
                   }).catch((e) =>
                     console.error("Failed to save btw:", e),

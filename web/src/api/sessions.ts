@@ -10,6 +10,8 @@ export interface ExchangePayload {
 
 export interface BtwPayload {
   anchor: string
+  exchangeId: string
+  paragraphIndex: number
   messages: { role: string; text: string }[]
 }
 
@@ -57,6 +59,7 @@ export async function appendBtw(
 
 export interface SessionSummary {
   id: string
+  query: string
   created: string
   updated: string
   sources: string[]
@@ -65,5 +68,18 @@ export interface SessionSummary {
 export async function listSessions(): Promise<SessionSummary[]> {
   const res = await fetch(`${API_BASE}/sessions`)
   if (!res.ok) throw new Error(`Failed to list sessions: ${res.status}`)
+  return res.json()
+}
+
+export interface SessionEvent {
+  type: "meta" | "exchange" | "btw"
+  [key: string]: unknown
+}
+
+export async function loadSession(
+  sessionId: string,
+): Promise<{ id: string; events: SessionEvent[] }> {
+  const res = await fetch(`${API_BASE}/sessions/${sessionId}`)
+  if (!res.ok) throw new Error(`Session not found: ${res.status}`)
   return res.json()
 }
