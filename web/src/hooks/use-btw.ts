@@ -1,40 +1,21 @@
-import { useCallback, useRef, useState } from "react"
+import { useCallback, useEffect, useRef, useState } from "react"
 
 import { queryKnowledgeBase } from "@/api/query"
 import type { BtwThread, SelectionInfo } from "@/lib/types"
+import { genId, simulateStream } from "@/lib/utils"
 
-let _nextId = 0
-function genId(prefix: string) {
-  return `${prefix}-${++_nextId}`
-}
-
-function simulateStream(
-  fullText: string,
-  onChunk: (text: string) => void,
-  onDone: () => void,
-  speed = 4,
-  intervalMs = 14,
-): () => void {
-  let i = 0
-  const iv = setInterval(() => {
-    i += speed
-    onChunk(fullText.slice(0, i))
-    if (i >= fullText.length) {
-      clearInterval(iv)
-      onChunk(fullText)
-      onDone()
-    }
-  }, intervalMs)
-  return () => clearInterval(iv)
-}
-
-/**
- * Manages BTW threads for a single document context.
- * Used by both the query thread and the article reader.
- */
 export function useBtw() {
   const [btws, setBtws] = useState<BtwThread[]>([])
   const cleanupRef = useRef<(() => void)[]>([])
+
+  // Self-contained unmount cleanup — intervals are cleared
+  // regardless of what the consumer does
+  useEffect(() => {
+    return () => {
+      for (const fn of cleanupRef.current) fn()
+      cleanupRef.current = []
+    }
+  }, [])
 
   const startBtw = useCallback((info: SelectionInfo) => {
     const btwId = genId("btw")

@@ -1,39 +1,36 @@
-import { useCallback, useEffect, useState } from "react"
+import { useCallback, useEffect, useRef, useState } from "react"
 import { useNavigate } from "react-router"
 
 import { ArticleChrome } from "@/components/article-chrome"
 import { ArticleView } from "@/components/article-view"
 import { SelectionPopover } from "@/components/selection-popover"
+import { useArticle } from "@/hooks/use-article"
 import { useBtw } from "@/hooks/use-btw"
 import { useLinkInterceptor } from "@/hooks/use-link-interceptor"
+import { usePopoverDismiss } from "@/hooks/use-popover-dismiss"
+import { slugToTitle } from "@/lib/utils"
 import type { SelectionInfo } from "@/lib/types"
 
 interface ArticleReaderProps {
   slug: string
-  content: string | null
-  loading: boolean
 }
 
-export function ArticleReader({ slug, content, loading }: ArticleReaderProps) {
+export function ArticleReader({ slug }: ArticleReaderProps) {
   const navigate = useNavigate()
   const handleLinkClick = useLinkInterceptor()
+  const { content, loading } = useArticle(slug)
   const { btws, startBtw, replyBtw, cleanup } = useBtw()
   const [popover, setPopover] = useState<SelectionInfo | null>(null)
 
+  usePopoverDismiss(() => setPopover(null))
+
+  const prevSlugRef = useRef(slug)
   useEffect(() => {
-    const handler = (e: MouseEvent) => {
-      if (!(e.target as Element).closest("[data-popover]")) setPopover(null)
+    if (prevSlugRef.current !== slug) {
+      cleanup()
+      prevSlugRef.current = slug
     }
-    document.addEventListener("mousedown", handler)
-    return () => document.removeEventListener("mousedown", handler)
-  }, [])
-
-  useEffect(() => cleanup(), [slug, cleanup])
-
-  const title = slug
-    .split("-")
-    .map((w) => w[0].toUpperCase() + w.slice(1))
-    .join(" ")
+  }, [slug, cleanup])
 
   const handleBtw = useCallback(() => {
     if (!popover) return
@@ -59,7 +56,7 @@ export function ArticleReader({ slug, content, loading }: ArticleReaderProps) {
 
       {!loading && content && (
         <ArticleView
-          title={title}
+          title={slugToTitle(slug)}
           content={content}
           btws={btws}
           onSelection={setPopover}

@@ -1,4 +1,4 @@
-import { useCallback, useRef, type ComponentProps } from "react"
+import { useCallback, type ComponentProps } from "react"
 import Markdown from "react-markdown"
 import remarkGfm from "remark-gfm"
 
@@ -22,8 +22,6 @@ export function ArticleView({
   onBtwReply,
   documentId,
 }: ArticleViewProps) {
-  const paraCountRef = useRef(0)
-
   const handleMouseUp = useCallback(
     (pi: number) => (e: React.MouseEvent) => {
       e.stopPropagation()
@@ -42,8 +40,7 @@ export function ArticleView({
     [documentId, onSelection],
   )
 
-  // Reset paragraph counter at render start
-  paraCountRef.current = 0
+  let paraCount = 0
 
   const mdComponents: ComponentProps<typeof Markdown>["components"] = {
     h1: ({ children }) => (
@@ -62,7 +59,7 @@ export function ArticleView({
       </h3>
     ),
     p: ({ children }) => {
-      const pi = paraCountRef.current++
+      const pi = paraCount++
       const blockBtws = btws.filter((b) => b.paragraphIndex === pi)
       return (
         <>

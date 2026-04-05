@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react"
+import { useCallback, useMemo, useState } from "react"
 import { useNavigate } from "react-router"
 
 import { Badge } from "@/components/ui/badge"
@@ -12,6 +12,7 @@ import { SelectionPopover } from "@/components/selection-popover"
 import { ThinkingSection } from "@/components/thinking-section"
 import { useArticle } from "@/hooks/use-article"
 import { useLinkInterceptor } from "@/hooks/use-link-interceptor"
+import { usePopoverDismiss } from "@/hooks/use-popover-dismiss"
 import { useQuerySession } from "@/hooks/use-query-session"
 
 export function QueryContainer() {
@@ -24,16 +25,7 @@ export function QueryContainer() {
   const { content: panelContent, loading: panelLoading } =
     useArticle(panelSlug)
 
-  // Dismiss popover on outside click
-  useEffect(() => {
-    const handler = (e: MouseEvent) => {
-      if (!(e.target as Element).closest("[data-popover]")) {
-        session.clearPopover()
-      }
-    }
-    document.addEventListener("mousedown", handler)
-    return () => document.removeEventListener("mousedown", handler)
-  }, [session.clearPopover])
+  usePopoverDismiss(session.clearPopover)
 
   const handleSubmit = useCallback(() => {
     if (!query.trim()) return
@@ -161,19 +153,6 @@ export function QueryContainer() {
           </div>
         )}
 
-        {/* Error banner */}
-        {session.error && (
-          <div className="shrink-0 px-10 py-3 border-t border-destructive/30 bg-destructive/5 animate-[slide-up_0.28s_ease]">
-            <div className="flex items-center gap-3 max-w-[740px] mx-auto">
-              <Badge variant="destructive" className="font-mono text-[length:var(--text-chrome)] tracking-[0.08em]">
-                error
-              </Badge>
-              <p className="font-mono text-[length:var(--text-chrome)] tracking-[0.06em] text-destructive">
-                {session.error}
-              </p>
-            </div>
-          </div>
-        )}
 
         {/* Onboarding hint — shown once after first answer */}
         {showHint && (

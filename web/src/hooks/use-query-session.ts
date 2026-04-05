@@ -8,41 +8,15 @@ import type {
   SelectionInfo,
   ThinkingBlock,
 } from "@/lib/types"
-
-let _nextId = 0
-function genId(prefix: string) {
-  return `${prefix}-${++_nextId}`
-}
-
-function simulateStream(
-  fullText: string,
-  onChunk: (text: string) => void,
-  onDone: () => void,
-  speed = 4,
-  intervalMs = 14,
-): () => void {
-  let i = 0
-  const iv = setInterval(() => {
-    i += speed
-    onChunk(fullText.slice(0, i))
-    if (i >= fullText.length) {
-      clearInterval(iv)
-      onChunk(fullText)
-      onDone()
-    }
-  }, intervalMs)
-  return () => clearInterval(iv)
-}
+import { genId, simulateStream } from "@/lib/utils"
 
 export function useQuerySession() {
   const [phase, setPhase] = useState<Phase>("idle")
   const [thread, setThread] = useState<Exchange[]>([])
   const [liveThinking, setLiveThinking] = useState<ThinkingBlock[]>([])
-  const [liveCards, setLiveCards] = useState<string[]>([])
   const [liveText, setLiveText] = useState("")
   const [chips, setChips] = useState<string[]>([])
   const [popover, setPopover] = useState<SelectionInfo | null>(null)
-  const [error, setError] = useState<string | null>(null)
 
   const cleanupRef = useRef<(() => void)[]>([])
   const abortRef = useRef<AbortController | null>(null)
@@ -57,9 +31,7 @@ export function useQuerySession() {
   const runExchange = useCallback(async (question: string) => {
     const exId = genId("ex")
     setPhase("searching")
-    setError(null)
     setLiveThinking([])
-    setLiveCards([])
     setLiveText("")
 
     abortRef.current?.abort()
@@ -80,21 +52,19 @@ export function useQuerySession() {
             event.data.slug ?? event.data.query ?? event.data.path ?? ""
           if (slug) {
             cards.push(slug)
-            setLiveCards([...cards])
-            // Attach source to the last thinking block
             if (thinking.length > 0) {
               thinking[thinking.length - 1].sources.push(slug)
               setLiveThinking([...thinking])
             }
           }
         } else if (event.event === "token") {
-          if (phase !== "streaming") setPhase("streaming")
+          setPhase((p) => (p !== "streaming" ? "streaming" : p))
           answer += event.data.text
           setLiveText(answer)
         } else if (event.event === "done") {
           break
         } else if (event.event === "error") {
-          setError(event.data.message ?? "Something went wrong.")
+          console.error("Stream error:", event.data.message)
           break
         }
       }
@@ -104,12 +74,11 @@ export function useQuerySession() {
         { id: exId, query: question, thinking, cards, answer, btws: [] },
       ])
       setLiveThinking([])
-      setLiveCards([])
       setLiveText("")
       setPhase("done")
     } catch (err) {
       if ((err as Error).name === "AbortError") return
-      setError("Failed to reach the server. Check your connection and try again.")
+      console.error("Query failed:", err)
       setPhase("idle")
     }
   }, [])
@@ -143,11 +112,9 @@ export function useQuerySession() {
     setPhase("idle")
     setThread([])
     setLiveThinking([])
-    setLiveCards([])
     setLiveText("")
     setChips([])
     setPopover(null)
-    setError(null)
   }, [])
 
   const addChip = useCallback((text: string) => {
@@ -253,11 +220,9 @@ export function useQuerySession() {
     phase,
     thread,
     liveThinking,
-    liveCards,
     liveText,
     chips,
     popover,
-    error,
     submitQuery,
     submitFollowUp,
     reset,

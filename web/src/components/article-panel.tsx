@@ -3,6 +3,7 @@ import Markdown from "react-markdown"
 import remarkGfm from "remark-gfm"
 
 import { Badge } from "@/components/ui/badge"
+import { slugToTitle } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
 
 interface ArticlePanelProps {
@@ -20,10 +21,7 @@ export function ArticlePanel({
   onClose,
   onFullScreen,
 }: ArticlePanelProps) {
-  const title = slug
-    .split("-")
-    .map((w) => w[0].toUpperCase() + w.slice(1))
-    .join(" ")
+  const title = slugToTitle(slug)
 
   return (
     <div className="fixed top-0 right-0 w-[370px] h-screen bg-ink-panel border-l border-ink-subtle flex flex-col z-[200] shadow-[-24px_0_60px_rgba(0,0,0,0.6)] animate-[panel-in_0.28s_cubic-bezier(0.4,0,0.2,1)]">
