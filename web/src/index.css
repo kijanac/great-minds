@@ -13,6 +13,14 @@
   --font-mono: "JetBrains Mono Variable", ui-monospace, Consolas, monospace;
   --font-sans: "JetBrains Mono Variable", ui-monospace, monospace;
 
+  /* Type scale */
+  --text-title: 26px;
+  --text-heading: 20px;
+  --text-body: 16px;
+  --text-small: 14px;
+  --text-caption: 12px;
+  --text-chrome: 11px;
+
   --color-background: var(--background);
   --color-foreground: var(--foreground);
   --color-card: var(--card);
@@ -31,18 +39,34 @@
   --color-border: var(--border);
   --color-input: var(--input);
   --color-ring: var(--ring);
-  --color-gold: #c9a96e;
-  --color-gold-dim: #4a3820;
-  --color-gold-muted: #3a3020;
-  --color-warm: #e0d8c8;
-  --color-warm-dim: #b0a898;
-  --color-warm-faint: #9a9080;
-  --color-ink: #0c0c0c;
-  --color-ink-raised: #0f0f0f;
-  --color-ink-border: #1c1c1c;
-  --color-ink-subtle: #181818;
-  --color-btw-green: #6a8a60;
-  --color-btw-green-bright: #8aba78;
+  /* Gold accent scale */
+  --color-gold: var(--gold);
+  --color-gold-hover: var(--gold-hover);
+  --color-gold-dim: var(--gold-dim);
+  --color-gold-muted: var(--gold-muted);
+
+  /* Warm text scale (reading content) */
+  --color-warm: var(--warm);
+  --color-warm-dim: var(--warm-dim);
+  --color-warm-faint: var(--warm-faint);
+  --color-warm-ghost: var(--warm-ghost);
+
+  /* Ink surface scale (backgrounds, borders) */
+  --color-ink: var(--ink);
+  --color-ink-raised: var(--ink-raised);
+  --color-ink-subtle: var(--ink-subtle);
+  --color-ink-border: var(--ink-border);
+  --color-ink-panel: var(--ink-panel);
+
+  /* BTW accent */
+  --color-btw: var(--btw);
+  --color-btw-bright: var(--btw-bright);
+  --color-btw-bg: var(--btw-bg);
+
+  /* Interactive states */
+  --color-interactive-dim: var(--interactive-dim);
+  --color-interactive-ghost: var(--interactive-ghost);
+  --color-code-bg: var(--code-bg);
 
   --radius-sm: calc(var(--radius) * 0.6);
   --radius-md: calc(var(--radius) * 0.8);
@@ -62,14 +86,43 @@
   --secondary: #111111;
   --secondary-foreground: #e0d8c8;
   --muted: #141414;
-  --muted-foreground: #4a3e2a;
+  --muted-foreground: #7a6a50;
   --accent: #c9a96e;
   --accent-foreground: #0c0c0c;
   --destructive: #7a3030;
-  --border: #1c1c1c;
-  --input: #221a0e;
-  --ring: #4a3820;
+  --border: #2a2a2a;
+  --input: #6a5a40;
+  --ring: #6a5830;
   --radius: 0.25rem;
+
+  /* Gold accent scale */
+  --gold: #c9a96e;
+  --gold-hover: #dbbf84;
+  --gold-dim: #5a4830;
+  --gold-muted: #8a7a58;
+
+  /* Warm text scale */
+  --warm: #e0d8c8;
+  --warm-dim: #b0a898;
+  --warm-faint: #9a9080;
+  --warm-ghost: #6a5a48;
+
+  /* Ink surface scale */
+  --ink: #0c0c0c;
+  --ink-raised: #0f0f0f;
+  --ink-subtle: #181818;
+  --ink-border: #252525;
+  --ink-panel: #0e0e0e;
+
+  /* BTW accent */
+  --btw: #6a8a60;
+  --btw-bright: #8aba78;
+  --btw-bg: #0e1a0a;
+
+  /* Interactive states */
+  --interactive-dim: #3a3020;
+  --interactive-ghost: #1a1a1a;
+  --code-bg: #151510;
 }
 
 @layer base {
@@ -98,6 +151,25 @@
   ::-webkit-scrollbar-thumb {
     background: #1a1a1a;
     border-radius: 3px;
+  }
+}
+
+/* Footnotes (remark-gfm) */
+@layer base {
+  [data-footnote-ref] {
+    @apply text-gold text-[11px] no-underline ml-px;
+  }
+  [data-footnotes] {
+    @apply border-t border-ink-border mt-8 pt-4;
+  }
+  [data-footnotes] ol {
+    @apply list-decimal list-inside text-[12px] leading-[1.7] text-warm-faint space-y-2;
+  }
+  [data-footnotes] a {
+    @apply text-gold underline underline-offset-2 decoration-gold/30;
+  }
+  [data-footnote-backref] {
+    @apply text-gold no-underline ml-1 text-[10px];
   }
 }
 

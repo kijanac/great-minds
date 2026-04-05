@@ -35,7 +35,7 @@ export function SourceCards({
             <Button
               variant="ghost"
               size="sm"
-              className="p-0 h-auto text-[#2e2418] font-mono text-[9px] tracking-[0.1em] hover:text-[#6a5030] hover:bg-transparent"
+              className="p-0 h-auto text-muted-foreground font-mono text-[length:var(--text-chrome)] tracking-[0.1em] hover:text-gold-muted hover:bg-transparent"
             />
           }
         >
@@ -56,9 +56,9 @@ export function SourceCards({
                   variant="outline"
                   onClick={() => onCardClick(slug)}
                   style={{ animationDelay: `${i * 40}ms` }}
-                  className={`cursor-pointer rounded-sm h-auto px-[11px] py-[5px] font-mono text-[9.5px] tracking-[0.06em] whitespace-nowrap animate-[card-in_0.26s_ease_both] transition-all ${
+                  className={`cursor-pointer rounded-sm h-auto px-[11px] py-[5px] font-mono text-[length:var(--text-chrome)] tracking-[0.06em] whitespace-nowrap animate-[card-in_0.26s_ease_both] transition-all ${
                     activeCard === slug
-                      ? "border-gold-dim text-gold bg-[#100e08]"
+                      ? "border-gold-dim text-gold bg-interactive-dim"
                       : "bg-ink-raised border-ink-border text-card-foreground hover:border-gold-dim hover:text-gold"
                   }`}
                 >
@@ -73,7 +73,7 @@ export function SourceCards({
               <Button
                 variant="ghost"
                 size="sm"
-                className="p-0 h-auto mt-[7px] text-[#2e2418] font-mono text-[9px] tracking-[0.1em] hover:text-[#6a5030] hover:bg-transparent"
+                className="p-0 h-auto mt-[7px] text-muted-foreground font-mono text-[length:var(--text-chrome)] tracking-[0.1em] hover:text-gold-muted hover:bg-transparent"
               />
             }
           >

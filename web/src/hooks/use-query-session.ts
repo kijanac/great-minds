@@ -6,6 +6,7 @@ import type {
   Exchange,
   Phase,
   SelectionInfo,
+  ThinkingBlock,
 } from "@/lib/types"
 
 let _nextId = 0
@@ -36,11 +37,12 @@ function simulateStream(
 export function useQuerySession() {
   const [phase, setPhase] = useState<Phase>("idle")
   const [thread, setThread] = useState<Exchange[]>([])
+  const [liveThinking, setLiveThinking] = useState<ThinkingBlock[]>([])
   const [liveCards, setLiveCards] = useState<string[]>([])
   const [liveText, setLiveText] = useState("")
   const [chips, setChips] = useState<string[]>([])
   const [popover, setPopover] = useState<SelectionInfo | null>(null)
-  const [saved, setSaved] = useState(false)
+  const [error, setError] = useState<string | null>(null)
 
   const cleanupRef = useRef<(() => void)[]>([])
   const abortRef = useRef<AbortController | null>(null)
@@ -55,25 +57,35 @@ export function useQuerySession() {
   const runExchange = useCallback(async (question: string) => {
     const exId = genId("ex")
     setPhase("searching")
+    setError(null)
+    setLiveThinking([])
     setLiveCards([])
     setLiveText("")
-    setSaved(false)
 
     abortRef.current?.abort()
     const controller = new AbortController()
     abortRef.current = controller
 
+    const thinking: ThinkingBlock[] = []
     const cards: string[] = []
     let answer = ""
 
     try {
       for await (const event of streamQuery(question, undefined, controller.signal)) {
-        if (event.event === "source") {
+        if (event.event === "thinking") {
+          thinking.push({ text: event.data.text, sources: [] })
+          setLiveThinking([...thinking])
+        } else if (event.event === "source") {
           const slug =
             event.data.slug ?? event.data.query ?? event.data.path ?? ""
           if (slug) {
             cards.push(slug)
             setLiveCards([...cards])
+            // Attach source to the last thinking block
+            if (thinking.length > 0) {
+              thinking[thinking.length - 1].sources.push(slug)
+              setLiveThinking([...thinking])
+            }
           }
         } else if (event.event === "token") {
           if (phase !== "streaming") setPhase("streaming")
@@ -82,21 +94,22 @@ export function useQuerySession() {
         } else if (event.event === "done") {
           break
         } else if (event.event === "error") {
-          console.error("Stream error:", event.data.message)
+          setError(event.data.message ?? "Something went wrong.")
           break
         }
       }
 
       setThread((prev) => [
         ...prev,
-        { id: exId, query: question, cards, answer, btws: [] },
+        { id: exId, query: question, thinking, cards, answer, btws: [] },
       ])
+      setLiveThinking([])
       setLiveCards([])
       setLiveText("")
       setPhase("done")
     } catch (err) {
       if ((err as Error).name === "AbortError") return
-      console.error("Query failed:", err)
+      setError("Failed to reach the server. Check your connection and try again.")
       setPhase("idle")
     }
   }, [])
@@ -129,11 +142,12 @@ export function useQuerySession() {
     cleanupRef.current = []
     setPhase("idle")
     setThread([])
+    setLiveThinking([])
     setLiveCards([])
     setLiveText("")
     setChips([])
     setPopover(null)
-    setSaved(false)
+    setError(null)
   }, [])
 
   const addChip = useCallback((text: string) => {
@@ -146,8 +160,6 @@ export function useQuerySession() {
     setChips((prev) => prev.filter((_, i) => i !== index))
   }, [])
 
-  // BTW and replies use the non-streaming API + simulated streaming
-  // (they're short aside responses, not full traversals)
   const startBtw = useCallback((info: SelectionInfo) => {
     const btwId = genId("btw")
     const btw: BtwThread = {
@@ -156,7 +168,7 @@ export function useQuerySession() {
       paragraphIndex: info.paragraphIndex,
       exchangeId: info.exchangeId,
       messages: [],
-      streaming: true,
+      streaming: false,
       streamText: "",
     }
 
@@ -169,51 +181,6 @@ export function useQuerySession() {
     )
     setPopover(null)
     window.getSelection()?.removeAllRanges()
-
-    const btwQuestion = `Brief aside about: "${info.text}"`
-    queryKnowledgeBase(btwQuestion).then((answer) => {
-      const cancel = simulateStream(
-        answer,
-        (partial) => {
-          setThread((prev) =>
-            prev.map((ex) =>
-              ex.id === info.exchangeId
-                ? {
-                    ...ex,
-                    btws: ex.btws.map((b) =>
-                      b.id === btwId ? { ...b, streamText: partial } : b,
-                    ),
-                  }
-                : ex,
-            ),
-          )
-        },
-        () => {
-          setThread((prev) =>
-            prev.map((ex) =>
-              ex.id === info.exchangeId
-                ? {
-                    ...ex,
-                    btws: ex.btws.map((b) =>
-                      b.id === btwId
-                        ? {
-                            ...b,
-                            streaming: false,
-                            streamText: "",
-                            messages: [
-                              { role: "assistant" as const, text: answer },
-                            ],
-                          }
-                        : b,
-                    ),
-                  }
-                : ex,
-            ),
-          )
-        },
-      )
-      cleanupRef.current.push(cancel)
-    })
   }, [])
 
   const replyBtw = useCallback((btwId: string, userText: string) => {
@@ -282,18 +249,15 @@ export function useQuerySession() {
     setPopover(null)
   }, [])
 
-  const save = useCallback(() => {
-    setSaved(true)
-  }, [])
-
   return {
     phase,
     thread,
+    liveThinking,
     liveCards,
     liveText,
     chips,
     popover,
-    saved,
+    error,
     submitQuery,
     submitFollowUp,
     reset,
@@ -303,6 +267,5 @@ export function useQuerySession() {
     replyBtw,
     handleSelection,
     clearPopover,
-    save,
   }
 }

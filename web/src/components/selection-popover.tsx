@@ -15,7 +15,7 @@ export function SelectionPopover({
   return (
     <div
       data-popover
-      className="fixed z-[300] -translate-x-1/2 -translate-y-full bg-popover border border-[#3a2810] rounded-sm flex overflow-hidden shadow-[0_6px_24px_rgba(0,0,0,0.7)] animate-[pop-in_0.14s_ease] -mt-1.5"
+      className="fixed z-[300] -translate-x-1/2 -translate-y-full bg-popover border border-gold-dim rounded-sm flex overflow-hidden shadow-[0_6px_24px_rgba(0,0,0,0.7)] animate-[pop-in_0.14s_ease] -mt-1.5"
       style={{ left: info.x, top: info.y }}
     >
       <Button
@@ -23,7 +23,7 @@ export function SelectionPopover({
         size="sm"
         onMouseDown={(e) => e.preventDefault()}
         onClick={onFollowUp}
-        className="rounded-none h-auto text-popover-foreground font-mono text-[9px] tracking-[0.1em] py-[9px] px-3.5 hover:bg-[#221608] hover:text-gold"
+        className="rounded-none h-auto text-popover-foreground font-mono text-[length:var(--text-chrome)] tracking-[0.1em] py-[9px] px-3.5 hover:bg-interactive-dim hover:text-gold"
       >
         + follow up
       </Button>
@@ -32,7 +32,7 @@ export function SelectionPopover({
         size="sm"
         onMouseDown={(e) => e.preventDefault()}
         onClick={onBtw}
-        className="rounded-none h-auto text-btw-green font-mono text-[9px] tracking-[0.1em] py-[9px] px-3.5 border-l border-[#2a1e0e] hover:text-btw-green-bright hover:bg-[#0e1a0a]"
+        className="rounded-none h-auto text-btw-green font-mono text-[length:var(--text-chrome)] tracking-[0.1em] py-[9px] px-3.5 border-l border-gold-dim hover:text-btw-green-bright hover:bg-btw-bg"
       >
         btw
       </Button>

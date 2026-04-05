@@ -335,11 +335,19 @@ async def stream_chat(
 ) -> AsyncGenerator[dict, None]:
     """Yield SSE event dicts as the model traverses the knowledge base.
 
+    Tool-call rounds: content is buffered and yielded as a single "thinking"
+    event, followed by "source" events for each tool call. This keeps the
+    model's intermediate reasoning separate from the final answer.
+
+    Final round: content is yielded as "token" events in small chunks for
+    progressive rendering.
+
     Events:
-      {"event": "source", "data": {"type": "article"|"raw"|"search", ...}}
-      {"event": "token",  "data": {"text": "..."}}
-      {"event": "done",   "data": {}}
-      {"event": "error",  "data": {"message": "..."}}
+      {"event": "thinking", "data": {"text": "..."}}
+      {"event": "source",   "data": {"type": "article"|"raw"|"search", ...}}
+      {"event": "token",    "data": {"text": "..."}}
+      {"event": "done",     "data": {}}
+      {"event": "error",    "data": {"message": "..."}}
     """
     articles_read: list[str] = []
     sources_read: list[str] = []
@@ -384,9 +392,12 @@ async def stream_chat(
 
             if delta.content:
                 content_acc += delta.content
-                yield {"event": "token", "data": {"text": delta.content}}
 
+        # Tool-call round: buffer content as "thinking", yield sources
         if finish_reason == "tool_calls" and tool_calls_acc:
+            if content_acc.strip():
+                yield {"event": "thinking", "data": {"text": content_acc}}
+
             messages.append({
                 "role": "assistant",
                 "content": content_acc or None,
@@ -428,8 +439,12 @@ async def stream_chat(
 
             continue
 
+        # Final answer round: yield content in chunks for progressive rendering
         if content_acc:
             messages.append({"role": "assistant", "content": content_acc})
+            chunk_size = 20
+            for i in range(0, len(content_acc), chunk_size):
+                yield {"event": "token", "data": {"text": content_acc[i:i + chunk_size]}}
 
         enrich(
             model=model,

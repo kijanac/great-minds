@@ -1,25 +1,25 @@
-import { useCallback, useEffect, useRef, useState } from "react"
+import { useCallback, useEffect, useMemo, useState } from "react"
+import { useNavigate } from "react-router"
 
-import { Separator } from "@/components/ui/separator"
+import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
+import { Separator } from "@/components/ui/separator"
 import { AnswerBlock } from "@/components/answer-block"
 import { ArticlePanel } from "@/components/article-panel"
 import { FollowUpBar } from "@/components/follow-up-bar"
 import { SearchBar } from "@/components/search-bar"
 import { SelectionPopover } from "@/components/selection-popover"
-import { SourceCards } from "@/components/source-cards"
+import { ThinkingSection } from "@/components/thinking-section"
 import { useArticle } from "@/hooks/use-article"
+import { useLinkInterceptor } from "@/hooks/use-link-interceptor"
 import { useQuerySession } from "@/hooks/use-query-session"
 
 export function QueryContainer() {
+  const navigate = useNavigate()
   const [query, setQuery] = useState("")
   const [panelSlug, setPanelSlug] = useState<string | null>(null)
-  const [cardsCollapsed, setCardsCollapsed] = useState<Record<string, boolean>>(
-    {},
-  )
-  const [saved, setSaved] = useState(false)
-  const scrollSentinelRef = useRef<HTMLDivElement>(null)
 
+  const handleLinkClick = useLinkInterceptor()
   const session = useQuerySession()
   const { content: panelContent, loading: panelLoading } =
     useArticle(panelSlug)
@@ -35,19 +35,15 @@ export function QueryContainer() {
     return () => document.removeEventListener("mousedown", handler)
   }, [session.clearPopover])
 
-  // Auto-scroll only while actively streaming, not after done
-  const isStreaming =
-    session.phase === "searching" || session.phase === "streaming"
-  useEffect(() => {
-    if (isStreaming) {
-      scrollSentinelRef.current?.scrollIntoView({ behavior: "smooth" })
-    }
-  }, [isStreaming, session.liveText])
-
   const handleSubmit = useCallback(() => {
     if (!query.trim()) return
     session.submitQuery(query)
   }, [query, session.submitQuery])
+
+  const handleReset = useCallback(() => {
+    session.reset()
+    setQuery("")
+  }, [session.reset])
 
   const handleFollowUp = useCallback(
     (text: string) => {
@@ -70,6 +66,23 @@ export function QueryContainer() {
     session.startBtw(session.popover)
   }, [session.popover, session.startBtw])
 
+  const [hintDismissed, setHintDismissed] = useState(
+    () => localStorage.getItem("onboarding-hint-seen") === "true",
+  )
+
+  const dismissHint = useCallback(() => {
+    setHintDismissed(true)
+    localStorage.setItem("onboarding-hint-seen", "true")
+  }, [])
+
+  const showHint = useMemo(
+    () =>
+      !hintDismissed &&
+      session.phase === "done" &&
+      session.thread.length === 1,
+    [hintDismissed, session.phase, session.thread.length],
+  )
+
   const isActive = session.phase !== "idle"
   const canFollowUp = session.phase === "done"
 
@@ -82,47 +95,28 @@ export function QueryContainer() {
           phase={session.phase}
           onQueryChange={setQuery}
           onSubmit={handleSubmit}
-          onReset={session.reset}
+          onReset={handleReset}
         />
 
-        {/* Thread */}
+        {/* Thread — no auto-scroll, scrollbar appears naturally */}
         {isActive && (
-          <div className="flex-1 min-h-0 overflow-y-auto">
-            <div className="px-10 pt-7 pb-5 max-w-[740px]">
+          <div className="flex-1 min-h-0 overflow-y-auto" onClick={handleLinkClick}>
+            <div className="px-10 pt-7 pb-5 max-w-[740px] mx-auto">
               {session.thread.map((ex, ei) => (
                 <div key={ex.id}>
-                  {ei > 0 && <Separator className="my-8 bg-[#141414]" />}
+                  {ei > 0 && <Separator className="my-8 bg-ink-subtle" />}
 
                   <div className="flex items-center justify-between mb-[18px]">
-                    <span className="italic text-[12.5px] text-muted-foreground">
+                    <span className="italic text-[length:var(--text-small)] text-muted-foreground">
                       &ldquo;{ex.query}&rdquo;
                     </span>
-                    {ei === session.thread.length - 1 && canFollowUp && (
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={() => setSaved(true)}
-                        disabled={saved}
-                        className={`rounded-sm h-auto font-mono text-[9px] tracking-[0.1em] py-[5px] px-3 flex items-center gap-[5px] ${
-                          saved
-                            ? "border-[#1e3a1e] text-[#5a8a5a] cursor-default"
-                            : "border-[#1c1c1c] text-[#4a4030] hover:border-gold-dim hover:text-gold"
-                        }`}
-                      >
-                        <span className="w-1 h-1 rounded-full bg-current" />
-                        {saved ? "saved" : "save to wiki"}
-                      </Button>
-                    )}
                   </div>
 
-                  <SourceCards
-                    cards={ex.cards}
-                    activeCard={panelSlug}
-                    collapsed={cardsCollapsed[ex.id] ?? false}
-                    onCollapsedChange={(c) =>
-                      setCardsCollapsed((prev) => ({ ...prev, [ex.id]: c }))
-                    }
+                  <ThinkingSection
+                    blocks={ex.thinking}
+                    streaming={false}
                     onCardClick={togglePanel}
+                    activeCard={panelSlug}
                   />
 
                   <AnswerBlock
@@ -141,22 +135,14 @@ export function QueryContainer() {
                 session.phase === "streaming") && (
                 <div>
                   {session.thread.length > 0 && (
-                    <Separator className="my-8 bg-[#141414]" />
+                    <Separator className="my-8 bg-ink-subtle" />
                   )}
 
-                  {session.phase === "searching" &&
-                    session.liveCards.length === 0 && (
-                      <div className="font-mono text-[9.5px] tracking-[0.12em] text-gold-muted animate-[pulse-fade_1.6s_ease-in-out_infinite] py-1 pb-4">
-                        traversing knowledge base...
-                      </div>
-                    )}
-
-                  <SourceCards
-                    cards={session.liveCards}
-                    activeCard={panelSlug}
-                    collapsed={false}
-                    onCollapsedChange={() => {}}
+                  <ThinkingSection
+                    blocks={session.liveThinking}
+                    streaming={session.phase === "searching"}
                     onCardClick={togglePanel}
+                    activeCard={panelSlug}
                   />
 
                   {session.liveText && (
@@ -171,8 +157,46 @@ export function QueryContainer() {
                   )}
                 </div>
               )}
+            </div>
+          </div>
+        )}
 
-              <div ref={scrollSentinelRef} />
+        {/* Error banner */}
+        {session.error && (
+          <div className="shrink-0 px-10 py-3 border-t border-destructive/30 bg-destructive/5 animate-[slide-up_0.28s_ease]">
+            <div className="flex items-center gap-3 max-w-[740px] mx-auto">
+              <Badge variant="destructive" className="font-mono text-[length:var(--text-chrome)] tracking-[0.08em]">
+                error
+              </Badge>
+              <p className="font-mono text-[length:var(--text-chrome)] tracking-[0.06em] text-destructive">
+                {session.error}
+              </p>
+            </div>
+          </div>
+        )}
+
+        {/* Onboarding hint — shown once after first answer */}
+        {showHint && (
+          <div className="shrink-0 px-10 py-3 border-t border-ink-subtle animate-[slide-up_0.28s_ease]">
+            <div className="flex items-center justify-between max-w-[740px] mx-auto gap-4">
+              <p className="font-mono text-[length:var(--text-chrome)] tracking-[0.06em] text-warm-faint">
+                <Badge variant="outline" className="font-mono text-[length:var(--text-chrome)] tracking-[0.08em] text-gold-muted border-gold-dim mr-2">
+                  tip
+                </Badge>
+                {"select any text in the answer to "}
+                <span className="text-warm-dim">follow up</span>
+                {" or start a "}
+                <span className="text-btw">btw</span>
+                {" thread"}
+              </p>
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={dismissHint}
+                className="font-mono text-[length:var(--text-chrome)] tracking-[0.08em] text-warm-ghost hover:text-warm-faint hover:bg-transparent h-auto px-2 py-1"
+              >
+                dismiss
+              </Button>
             </div>
           </div>
         )}
@@ -208,6 +232,7 @@ export function QueryContainer() {
             content={panelContent}
             loading={panelLoading}
             onClose={() => setPanelSlug(null)}
+            onFullScreen={() => navigate(`/wiki/${panelSlug}`)}
           />
         </>
       )}

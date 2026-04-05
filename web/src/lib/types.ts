@@ -13,9 +13,15 @@ export interface BtwThread {
   streamText: string
 }
 
+export interface ThinkingBlock {
+  text: string
+  sources: string[]
+}
+
 export interface Exchange {
   id: string
   query: string
+  thinking: ThinkingBlock[]
   cards: string[]
   answer: string
   btws: BtwThread[]

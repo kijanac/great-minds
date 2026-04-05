@@ -1,5 +1,6 @@
 import { Fragment, useCallback, type ComponentProps } from "react"
 import Markdown from "react-markdown"
+import remarkGfm from "remark-gfm"
 
 import type { BtwThread as BtwThreadType, SelectionInfo } from "@/lib/types"
 import { BtwThread } from "./btw-thread"
@@ -25,39 +26,43 @@ function splitBlocks(text: string): { content: string; isParagraph: boolean }[] 
 
 const mdComponents: ComponentProps<typeof Markdown>["components"] = {
   h2: ({ children }) => (
-    <h2 className="text-[16.5px] font-bold text-foreground mt-[26px] mb-[11px] -tracking-[0.01em] first:mt-0">
+    <h2 className="text-[length:var(--text-heading)] font-bold text-foreground mt-[26px] mb-[11px] -tracking-[0.01em] first:mt-0">
       {children}
     </h2>
   ),
   h3: ({ children }) => (
-    <h3 className="font-mono text-[9.5px] font-medium text-gold mt-[18px] mb-2 tracking-[0.14em] uppercase">
+    <h3 className="font-mono text-[length:var(--text-chrome)] font-medium text-gold mt-[18px] mb-2 tracking-[0.14em] uppercase">
       {children}
     </h3>
   ),
   p: ({ children }) => (
-    <p className="text-[14px] leading-[1.82] text-warm-dim mb-0.5">
+    <p className="text-[length:var(--text-body)] leading-[1.82] text-warm-dim mb-0.5">
       {children}
     </p>
   ),
-  a: ({ children, href }) => (
-    <a
-      href={href}
-      className="text-gold underline underline-offset-2 decoration-gold/30 hover:decoration-gold/60 transition-colors"
-    >
-      {children}
-    </a>
-  ),
-  em: ({ children }) => <em className="text-[#d8d0c0]">{children}</em>,
+  a: ({ children, href }) => {
+    const isExternal = href?.startsWith("http")
+    return (
+      <a
+        href={href}
+        className="text-gold underline underline-offset-2 decoration-gold/30 hover:decoration-gold/60 transition-colors"
+        {...(isExternal ? { target: "_blank", rel: "noopener noreferrer" } : {})}
+      >
+        {children}
+      </a>
+    )
+  },
+  em: ({ children }) => <em className="text-warm">{children}</em>,
   strong: ({ children }) => (
     <strong className="text-foreground font-bold">{children}</strong>
   ),
   ul: ({ children }) => (
-    <ul className="list-disc list-inside text-[14px] leading-[1.82] text-warm-dim mb-2 ml-2">
+    <ul className="list-disc list-inside text-[length:var(--text-body)] leading-[1.82] text-warm-dim mb-2 ml-2">
       {children}
     </ul>
   ),
   ol: ({ children }) => (
-    <ol className="list-decimal list-inside text-[14px] leading-[1.82] text-warm-dim mb-2 ml-2">
+    <ol className="list-decimal list-inside text-[length:var(--text-body)] leading-[1.82] text-warm-dim mb-2 ml-2">
       {children}
     </ol>
   ),
@@ -67,7 +72,7 @@ const mdComponents: ComponentProps<typeof Markdown>["components"] = {
     </blockquote>
   ),
   code: ({ children }) => (
-    <code className="font-mono text-[12px] bg-[#151510] px-1.5 py-0.5 rounded-sm text-gold">
+    <code className="font-mono text-[length:var(--text-small)] bg-code-bg px-1.5 py-0.5 rounded-sm text-gold">
       {children}
     </code>
   ),
@@ -114,7 +119,7 @@ export function AnswerBlock({
         return (
           <Fragment key={i}>
             <div onMouseUp={pi >= 0 ? makeSelectionHandler(pi) : undefined}>
-              <Markdown components={mdComponents}>{block.content}</Markdown>
+              <Markdown remarkPlugins={[remarkGfm]} components={mdComponents}>{block.content}</Markdown>
               {streaming && isLast && (
                 <span className="inline-block w-0.5 h-[13px] bg-gold animate-[blink_1s_step-end_infinite] align-middle ml-px" />
               )}
