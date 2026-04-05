@@ -14,6 +14,7 @@ import { genId, simulateStream } from "@/lib/utils"
 
 function exchangeToPayload(ex: Exchange) {
   return {
+    id: ex.id,
     query: ex.query,
     thinking: ex.thinking,
     cards: ex.cards,
@@ -66,37 +67,48 @@ export function useSession(options?: UseSessionOptions) {
     const thinking: ThinkingBlock[] = []
     const cards: string[] = []
     let answer = ""
-    let pendingThinkingText = ""
-    let sawSource = false
+    // Tokens accumulate here until a "round" event classifies them.
+    // NOTE: This is not fully foolproof — round 1 tokens stream
+    // optimistically as answer text. If a "round: thinking"
+    // classification arrives, they get reclassified retroactively
+    // (visual jump). In practice this only affects round 1 when the
+    // model emits content alongside tool calls, which is rare and
+    // usually empty. A future fix could buffer round 1 only.
+    let pendingTokens = ""
 
     try {
       for await (const event of streamQuery(question, undefined, controller.signal)) {
-        if (event.event === "source") {
+        if (event.event === "token") {
+          pendingTokens += event.data.text
+          // Stream optimistically as answer
+          setPhase((p) => (p !== "streaming" ? "streaming" : p))
+          setLiveText(answer + pendingTokens)
+        } else if (event.event === "round") {
+          if (event.data.role === "thinking") {
+            // Reclassify pending tokens as thinking text
+            if (pendingTokens.trim()) {
+              thinking.push({ text: pendingTokens.trim(), sources: [] })
+              setLiveThinking([...thinking])
+            }
+            // Clear the optimistic answer display
+            setLiveText(answer)
+            setPhase("searching")
+          } else {
+            // Confirmed as answer
+            answer += pendingTokens
+          }
+          pendingTokens = ""
+        } else if (event.event === "source") {
           const slug =
             event.data.slug ?? event.data.query ?? event.data.path ?? ""
           if (slug) {
             cards.push(slug)
-            // Flush any accumulated text as a thinking block
-            if (pendingThinkingText.trim()) {
-              thinking.push({ text: pendingThinkingText.trim(), sources: [slug] })
-              pendingThinkingText = ""
-            } else if (thinking.length > 0) {
+            if (thinking.length > 0) {
               thinking[thinking.length - 1].sources.push(slug)
             } else {
               thinking.push({ text: "", sources: [slug] })
             }
-            sawSource = true
             setLiveThinking([...thinking])
-          }
-        } else if (event.event === "token") {
-          if (!sawSource) {
-            // Tokens before any source = thinking text
-            pendingThinkingText += event.data.text
-          } else {
-            // Tokens after last source = answer
-            setPhase((p) => (p !== "streaming" ? "streaming" : p))
-            answer += event.data.text
-            setLiveText(answer)
           }
         } else if (event.event === "done") {
           break
@@ -105,6 +117,9 @@ export function useSession(options?: UseSessionOptions) {
           break
         }
       }
+
+      // Any remaining pending tokens are answer (done arrived)
+      answer += pendingTokens
 
       const exchange: Exchange = {
         id: exId, query: question, thinking, cards, answer, btws: [],
@@ -236,8 +251,11 @@ export function useSession(options?: UseSessionOptions) {
           )
         },
         () => {
-          setThread((prev) => {
-            const updated = prev.map((ex) => ({
+          // Find the BTW to get its metadata for persistence
+          let btwToSave: { anchor: string; exchangeId: string; paragraphIndex: number; messages: { role: "user" | "assistant"; text: string }[] } | null = null
+
+          setThread((prev) =>
+            prev.map((ex) => ({
               ...ex,
               btws: ex.btws.map((b) => {
                 if (b.id !== btwId) return b
@@ -250,22 +268,22 @@ export function useSession(options?: UseSessionOptions) {
                     assistantMsg(answer),
                   ],
                 }
-                // Persist BTW to session
-                if (sessionIdRef.current) {
-                  appendBtw(sessionIdRef.current, {
-                    anchor: finalBtw.anchor,
-                    exchangeId: finalBtw.exchangeId,
-                    paragraphIndex: finalBtw.paragraphIndex,
-                    messages: finalBtw.messages,
-                  }).catch((e) =>
-                    console.error("Failed to save btw:", e),
-                  )
+                btwToSave = {
+                  anchor: finalBtw.anchor,
+                  exchangeId: finalBtw.exchangeId,
+                  paragraphIndex: finalBtw.paragraphIndex,
+                  messages: finalBtw.messages,
                 }
                 return finalBtw
               }),
-            }))
-            return updated
-          })
+            })),
+          )
+
+          if (btwToSave && sessionIdRef.current) {
+            appendBtw(sessionIdRef.current, btwToSave).catch((e) =>
+              console.error("Failed to save btw:", e),
+            )
+          }
         },
       )
       cleanupRef.current.push(cancel)

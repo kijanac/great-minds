@@ -394,6 +394,14 @@ async def stream_chat(
                 content_acc += delta.content
                 yield {"event": "token", "data": {"text": delta.content}}
 
+        # After each round completes, we know what it was.
+        # Emit a classification marker so the frontend knows how
+        # to treat the tokens it just received.
+        if finish_reason == "tool_calls" and tool_calls_acc:
+            yield {"event": "round", "data": {"role": "thinking"}}
+        else:
+            yield {"event": "round", "data": {"role": "answer"}}
+
         if finish_reason == "tool_calls" and tool_calls_acc:
             messages.append({
                 "role": "assistant",
