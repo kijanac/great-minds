@@ -16,14 +16,14 @@ from pathlib import Path
 
 import uvicorn
 
-from .brain import Brain
-from .server import create_app
-from .storage import LocalStorage
-from .telemetry import setup_logging
+from .api.server import create_app
+from .core.brain import Brain
+from .core.storage import LocalStorage
+from .core.telemetry import setup_logging
 
 
 def _make_brain() -> Brain:
-    return Brain(LocalStorage(Path.cwd()))
+    return Brain(LocalStorage(Path.cwd()), label="local")
 
 
 def cmd_compile(args: argparse.Namespace) -> None:
@@ -82,7 +82,7 @@ def cmd_lint(args: argparse.Namespace) -> None:
 
 def cmd_serve(args: argparse.Namespace) -> None:
     setup_logging(service="great-minds")
-    app = create_app(_make_brain())
+    app = create_app()
     uvicorn.run(app, host=args.host, port=args.port)
 
 

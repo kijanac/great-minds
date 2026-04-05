@@ -14,7 +14,6 @@ function replayEvents(events: SessionEvent[]): Exchange[] {
         id: (event.exId as string) || genId("ex"),
         query: event.query as string,
         thinking: (event.thinking as Exchange["thinking"]) ?? [],
-        cards: (event.cards as string[]) ?? [],
         answer: (event.answer as string) ?? "",
         btws: [],
       }

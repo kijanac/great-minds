@@ -2,8 +2,7 @@ const API_BASE = "/api"
 
 export interface ExchangePayload {
   query: string
-  thinking: { text: string; sources: string[] }[]
-  cards: string[]
+  thinking: { sources: { label: string; type: string }[] }[]
   answer: string
   btws: { anchor: string; messages: { role: string; text: string }[] }[]
 }

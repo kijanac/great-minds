@@ -5,7 +5,7 @@ operations. All interfaces (CLI, web, Telegram) create a Brain and call its meth
 
     from great_minds import Brain, LocalStorage
 
-    brain = Brain(LocalStorage("."))
+    brain = Brain(LocalStorage("."), label="my-brain")
     await brain.compile(limit=50)
     answer = brain.query("What is imperialism?")
 """
@@ -28,8 +28,9 @@ _PACKAGE_DIR = Path(__file__).resolve().parent
 class Brain:
     """A knowledge base instance backed by a Storage implementation."""
 
-    def __init__(self, storage: Storage, *, config: dict | None = None) -> None:
+    def __init__(self, storage: Storage, *, label: str, config: dict | None = None) -> None:
         self.storage = storage
+        self.label = label
         self.config = config if config is not None else self._load_config()
 
     def _load_config(self) -> dict:
@@ -64,14 +65,14 @@ class Brain:
     # Operations
     # ------------------------------------------------------------------
 
-    async def compile(self, *, limit: int | None = None) -> None:
-        await compiler.run(self.storage, self.load_prompt, limit=limit)
+    async def compile(self, *, limit: int | None = None) -> "compiler.CompilationResult":
+        return await compiler.run(self.storage, self.load_prompt, limit=limit)
 
-    def query(self, question: str, *, model: str | None = None) -> str:
-        return querier.run_query(self.storage, question, model=model)
+    def query(self, question: str, *, model: str | None = None, brains: "list[Brain] | None" = None) -> str:
+        return querier.run_query(brains or [self], question, model=model)
 
-    def query_interactive(self, *, model: str | None = None) -> None:
-        querier.run_interactive(self.storage, model=model)
+    def query_interactive(self, *, model: str | None = None, brains: "list[Brain] | None" = None) -> None:
+        querier.run_interactive(brains or [self], model=model)
 
     def ingest_document(
         self,

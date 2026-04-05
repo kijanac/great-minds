@@ -9,6 +9,7 @@ and sources were pulled into context, with timing.
 import json
 import uuid
 from collections.abc import AsyncGenerator
+from typing import TYPE_CHECKING
 
 from openai import AsyncOpenAI, OpenAI
 
@@ -21,6 +22,9 @@ from .telemetry import (
     init_wide_event,
     log_event,
 )
+
+if TYPE_CHECKING:
+    from .brain import Brain
 
 SYSTEM_PROMPT = """\
 You are a research assistant for a knowledge base. \
@@ -153,50 +157,53 @@ def _classify_tool_call(name: str, args: dict) -> tuple[str, dict]:
 # ---------------------------------------------------------------------------
 
 
-def read_wiki_article(storage: Storage, slug: str) -> str:
+def read_wiki_article(brains: list[Brain], slug: str) -> str:
     path = f"wiki/{slug}.md"
-    content = storage.read(path, default=None)
-    if content is None:
-        log_event("tool.article_not_found", slug=slug)
-        return f"Article not found: {path}"
-    log_event("tool.article_read", slug=slug, chars=len(content))
-    return f"# {path}\n\n{content}"
+    for src in brains:
+        content = src.storage.read(path, default=None)
+        if content is not None:
+            log_event("tool.article_read", slug=slug, brain=src.label, chars=len(content))
+            return f"# {path} [{src.label}]\n\n{content}"
+    log_event("tool.article_not_found", slug=slug)
+    return f"Article not found: {path}"
 
 
-def read_raw_source(storage: Storage, path_str: str) -> str:
-    content = storage.read(path_str, default=None)
-    if content is None:
-        log_event("tool.source_not_found", path=path_str)
-        return f"Source not found: {path_str}"
-    truncated = len(content) > 20_000
-    if truncated:
-        content = content[:20_000] + "\n\n[...truncated — ask for a specific section if needed...]"
-    log_event("tool.source_read", path=path_str, chars=len(content), truncated=truncated)
-    return f"# Source: {path_str}\n\n{content}"
+def read_raw_source(brains: list[Brain], path_str: str) -> str:
+    for src in brains:
+        content = src.storage.read(path_str, default=None)
+        if content is not None:
+            truncated = len(content) > 20_000
+            if truncated:
+                content = content[:20_000] + "\n\n[...truncated — ask for a specific section if needed...]"
+            log_event("tool.source_read", path=path_str, brain=src.label, chars=len(content), truncated=truncated)
+            return f"# Source: {path_str} [{src.label}]\n\n{content}"
+    log_event("tool.source_not_found", path=path_str)
+    return f"Source not found: {path_str}"
 
 
-def search_wiki(storage: Storage, query: str) -> str:
+def search_wiki(brains: list[Brain], query: str) -> str:
     query_lower = query.lower()
     results = []
 
-    for path in storage.glob("wiki/*.md"):
-        filename = path.rsplit("/", 1)[-1]
-        if filename.startswith("_"):
-            continue
-        content = storage.read(path)
-        if query_lower in content.lower():
-            lines = content.split("\n")
-            matches = []
-            for i, line in enumerate(lines):
-                if query_lower in line.lower():
-                    start = max(0, i - 1)
-                    end = min(len(lines), i + 2)
-                    snippet = "\n".join(lines[start:end])
-                    matches.append(snippet)
-                    if len(matches) >= 2:
-                        break
+    for src in brains:
+        for path in src.storage.glob("wiki/*.md"):
+            filename = path.rsplit("/", 1)[-1]
+            if filename.startswith("_"):
+                continue
+            content = src.storage.read(path)
+            if query_lower in content.lower():
+                lines = content.split("\n")
+                matches = []
+                for i, line in enumerate(lines):
+                    if query_lower in line.lower():
+                        start = max(0, i - 1)
+                        end = min(len(lines), i + 2)
+                        snippet = "\n".join(lines[start:end])
+                        matches.append(snippet)
+                        if len(matches) >= 2:
+                            break
 
-            results.append(f"### {filename}\n" + "\n---\n".join(matches))
+                results.append(f"### {filename} [{src.label}]\n" + "\n---\n".join(matches))
 
     log_event("tool.search_executed", query=query, results_count=len(results))
 
@@ -206,13 +213,13 @@ def search_wiki(storage: Storage, query: str) -> str:
     return f"Found {len(results)} articles matching '{query}':\n\n" + "\n\n".join(results)
 
 
-def _dispatch_tool(storage: Storage, name: str, args: dict) -> str:
+def _dispatch_tool(brains: list[Brain], name: str, args: dict) -> str:
     if name == "read_wiki_article":
-        return read_wiki_article(storage, args["slug"])
+        return read_wiki_article(brains, args["slug"])
     elif name == "read_raw_source":
-        return read_raw_source(storage, args["path"])
+        return read_raw_source(brains, args["path"])
     elif name == "search_wiki":
-        return search_wiki(storage, args["query"])
+        return search_wiki(brains, args["query"])
     else:
         return f"Unknown tool: {name}"
 
@@ -222,21 +229,28 @@ def _dispatch_tool(storage: Storage, name: str, args: dict) -> str:
 # ---------------------------------------------------------------------------
 
 
-def build_system_prompt(storage: Storage) -> str:
-    index = storage.read("wiki/_index.md", default=None)
-    if index is None:
-        entries = []
-        for path in storage.glob("wiki/*.md"):
-            filename = path.rsplit("/", 1)[-1]
-            if not filename.startswith("_"):
-                stem = filename.removesuffix(".md")
-                entries.append(f"  - {stem}")
-        index = "\n".join(entries) if entries else "(no articles yet)"
+def _build_index_for_brain(brain: "Brain") -> str:
+    index = brain.storage.read("wiki/_index.md", default=None)
+    if index is not None:
+        return f"## [{brain.label}]\n{index}"
+    entries = []
+    for path in brain.storage.glob("wiki/*.md"):
+        filename = path.rsplit("/", 1)[-1]
+        if not filename.startswith("_"):
+            stem = filename.removesuffix(".md")
+            entries.append(f"  - {stem}")
+    if entries:
+        return f"## [{brain.label}]\n" + "\n".join(entries)
+    return ""
 
+
+def build_system_prompt(brains: "list[Brain]") -> str:
+    parts = [_build_index_for_brain(b) for b in brains]
+    index = "\n\n".join(p for p in parts if p) or "(no articles yet)"
     return SYSTEM_PROMPT.format(index=index)
 
 
-def chat(storage: Storage, client: OpenAI, model: str, messages: list[dict]) -> str:
+def chat(brains: list[Brain], client: OpenAI, model: str, messages: list[dict]) -> str:
     """Run a chat turn, handling tool calls in a loop until the model responds with text."""
     articles_read: list[str] = []
     sources_read: list[str] = []
@@ -299,7 +313,7 @@ def chat(storage: Storage, client: OpenAI, model: str, messages: list[dict]) -> 
             elif source_type == "search":
                 searches.append(args["query"])
 
-            result = _dispatch_tool(storage, name, args)
+            result = _dispatch_tool(brains, name, args)
             messages.append({
                 "role": "tool",
                 "tool_call_id": tc.id,
@@ -307,11 +321,11 @@ def chat(storage: Storage, client: OpenAI, model: str, messages: list[dict]) -> 
             })
 
 
-def chat_with_fallback(storage: Storage, client: OpenAI, model: str, messages: list[dict]) -> str:
+def chat_with_fallback(brains: list[Brain], client: OpenAI, model: str, messages: list[dict]) -> str:
     """Try the primary model, fall back to alternatives on rate limit."""
     for m in _models_with_fallback(model):
         try:
-            return chat(storage, client, m, messages)
+            return chat(brains, client, m, messages)
         except Exception as e:
             if _is_rate_limited(e):
                 log_event("query.rate_limited", model=m)
@@ -328,22 +342,20 @@ def chat_with_fallback(storage: Storage, client: OpenAI, model: str, messages: l
 
 
 async def stream_chat(
-    storage: Storage,
+    brains: list[Brain],
     client: AsyncOpenAI,
     model: str,
     messages: list[dict],
 ) -> AsyncGenerator[dict, None]:
     """Yield SSE event dicts as the model traverses the knowledge base.
 
-    Tool-call rounds: content is buffered and yielded as a single "thinking"
-    event, followed by "source" events for each tool call. This keeps the
-    model's intermediate reasoning separate from the final answer.
-
-    Final round: content is yielded as "token" events in small chunks for
-    progressive rendering.
+    All content tokens are yielded as "token" events for progressive
+    rendering. In practice, tool-call rounds produce empty content so
+    tokens only appear during the final answer round. The frontend
+    treats all tokens as answer text and all source events as the
+    thinking/research phase (source cards only, no thinking text).
 
     Events:
-      {"event": "thinking", "data": {"text": "..."}}
       {"event": "source",   "data": {"type": "article"|"raw"|"search", ...}}
       {"event": "token",    "data": {"text": "..."}}
       {"event": "done",     "data": {}}
@@ -394,14 +406,6 @@ async def stream_chat(
                 content_acc += delta.content
                 yield {"event": "token", "data": {"text": delta.content}}
 
-        # After each round completes, we know what it was.
-        # Emit a classification marker so the frontend knows how
-        # to treat the tokens it just received.
-        if finish_reason == "tool_calls" and tool_calls_acc:
-            yield {"event": "round", "data": {"role": "thinking"}}
-        else:
-            yield {"event": "round", "data": {"role": "answer"}}
-
         if finish_reason == "tool_calls" and tool_calls_acc:
             messages.append({
                 "role": "assistant",
@@ -435,7 +439,7 @@ async def stream_chat(
                 elif source_type == "search":
                     searches.append(meta["query"])
 
-                result = _dispatch_tool(storage, name, args)
+                result = _dispatch_tool(brains, name, args)
                 messages.append({
                     "role": "tool",
                     "tool_call_id": tc["id"],
@@ -462,7 +466,7 @@ async def stream_chat(
 
 
 async def run_stream_query(
-    storage: Storage,
+    brains: list[Brain],
     question: str,
     *,
     model: str | None = None,
@@ -470,7 +474,7 @@ async def run_stream_query(
     """Stream SSE events for a single question, with model fallback on rate limit."""
     primary = model or EXTRACT_MODEL
     client = get_async_client(max_retries=0)
-    system_prompt = build_system_prompt(storage)
+    system_prompt = build_system_prompt(brains)
     base_messages: list[dict] = [
         {"role": "system", "content": system_prompt},
         {"role": "user", "content": question},
@@ -478,12 +482,12 @@ async def run_stream_query(
 
     query_id = f"q-{uuid.uuid4().hex[:8]}"
     correlation_id.set(query_id)
-    init_wide_event("query.stream", question=question)
+    init_wide_event("query.stream", question=question, brain_count=len(brains))
 
     for m in _models_with_fallback(primary):
         messages = list(base_messages)
         try:
-            async for event in stream_chat(storage, client, m, messages):
+            async for event in stream_chat(brains, client, m, messages):
                 yield event
             return
         except Exception as e:
@@ -501,34 +505,35 @@ async def run_stream_query(
 # ---------------------------------------------------------------------------
 
 
-def run_query(storage: Storage, question: str, *, model: str | None = None) -> str:
-    """Answer a single question against the knowledge base.
-
-    Sets up the OpenRouter client, builds the system prompt, runs chat with
-    fallback models, and returns the answer string. Caller is responsible
-    for calling setup_logging() before this.
-    """
+def run_query(
+    brains: list[Brain],
+    question: str,
+    *,
+    model: str | None = None,
+) -> str:
+    """Answer a single question against the knowledge base."""
     model = model or EXTRACT_MODEL
     client = get_sync_client()
-    system_prompt = build_system_prompt(storage)
+    system_prompt = build_system_prompt(brains)
     messages: list[dict] = [{"role": "system", "content": system_prompt}]
 
     query_id = f"q-{uuid.uuid4().hex[:8]}"
     correlation_id.set(query_id)
-    init_wide_event("query", question=question)
+    init_wide_event("query", question=question, brain_count=len(brains))
 
     messages.append({"role": "user", "content": question})
-    return chat_with_fallback(storage, client, model, messages)
+    return chat_with_fallback(brains, client, model, messages)
 
 
-def run_interactive(storage: Storage, *, model: str | None = None) -> None:
-    """Run an interactive REPL session against the knowledge base.
-
-    Caller is responsible for calling setup_logging() before this.
-    """
+def run_interactive(
+    brains: list[Brain],
+    *,
+    model: str | None = None,
+) -> None:
+    """Run an interactive REPL session against the knowledge base."""
     model = model or EXTRACT_MODEL
     client = get_sync_client()
-    system_prompt = build_system_prompt(storage)
+    system_prompt = build_system_prompt(brains)
     messages: list[dict] = [{"role": "system", "content": system_prompt}]
 
     print(f"Knowledge Base — Query Interface (model: {model})")
@@ -549,5 +554,5 @@ def run_interactive(storage: Storage, *, model: str | None = None) -> None:
         init_wide_event("query", question=question)
 
         messages.append({"role": "user", "content": question})
-        answer = chat_with_fallback(storage, client, model, messages)
+        answer = chat_with_fallback(brains, client, model, messages)
         print(f"\n{answer}\n")

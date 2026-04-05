@@ -19,6 +19,7 @@ import json
 import logging
 import re
 from collections import defaultdict
+from dataclasses import dataclass, field
 
 from ruamel.yaml import YAML
 
@@ -278,6 +279,52 @@ Respond with ONLY the JSON object."""
         issues.append(f"  GAP: '{topic}' ({cat}) — mentioned in: {mentioned}")
 
     return issues
+
+
+# ---------------------------------------------------------------------------
+# Targeted lint (for post-compilation checks across brains)
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class BrokenLink:
+    brain_label: str
+    article: str
+    target_slug: str
+
+
+@dataclass
+class TargetedLintResult:
+    broken_links: list[BrokenLink] = field(default_factory=list)
+
+
+def lint_links_to_slugs(brains: list, changed_slugs: list[str], source_storage: "Storage") -> TargetedLintResult:
+    """Check if any brain's articles link to changed slugs that no longer exist.
+
+    Args:
+        brains: list of Brain instances to check
+        changed_slugs: slugs that were created/updated/deleted in the source brain
+        source_storage: the storage where the slugs changed (to verify they still exist)
+    """
+    result = TargetedLintResult()
+
+    for slug in changed_slugs:
+        target_path = f"wiki/{slug}.md"
+        slug_exists = source_storage.exists(target_path)
+
+        for brain in brains:
+            articles = collect_wiki_articles(brain.storage)
+            for rel_path, content in articles.items():
+                for match in _MD_LINK_RE.finditer(content):
+                    link_target = match.group(2)
+                    if link_target == target_path and not slug_exists:
+                        result.broken_links.append(BrokenLink(
+                            brain_label=brain.label,
+                            article=rel_path,
+                            target_slug=slug,
+                        ))
+
+    return result
 
 
 # ---------------------------------------------------------------------------

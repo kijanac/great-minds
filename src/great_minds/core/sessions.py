@@ -6,7 +6,7 @@ Each session is stored as two files:
 
 Event types:
   {"type":"meta",     "id":"...", "query":"...", "ts":"..."}
-  {"type":"exchange", "exId":"...", "query":"...", "thinking":[...], "cards":[...], "answer":"..."}
+  {"type":"exchange", "exId":"...", "query":"...", "thinking":[...], "answer":"..."}
   {"type":"btw",      "exId":"...", "anchor":"...", "pi":N, "messages":[...]}
 """
 
@@ -42,10 +42,8 @@ def _render_md(events: list[dict]) -> str:
         parts.append(f"# {ex['query']}\n\n")
 
         for block in ex.get("thinking", []):
-            if block.get("text"):
-                parts.append(f"> {block['text']}\n")
             for src in block.get("sources", []):
-                parts.append(f"> `{src}`\n")
+                parts.append(f"> `{src['label']}`\n")
             parts.append(">\n")
 
         parts.append(ex.get("answer", "") + "\n")
@@ -95,7 +93,6 @@ def create_session(
         "exId": exchange.get("id", session_id),
         "query": exchange["query"],
         "thinking": exchange.get("thinking", []),
-        "cards": exchange.get("cards", []),
         "answer": exchange.get("answer", ""),
         "ts": _now(),
     }
@@ -116,7 +113,6 @@ def append_exchange(
         "exId": exchange.get("id", ""),
         "query": exchange["query"],
         "thinking": exchange.get("thinking", []),
-        "cards": exchange.get("cards", []),
         "answer": exchange.get("answer", ""),
         "ts": _now(),
     }

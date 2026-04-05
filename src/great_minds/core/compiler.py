@@ -27,6 +27,7 @@ import logging
 import re
 from collections import defaultdict
 from collections.abc import Callable
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from io import StringIO
 
@@ -533,7 +534,16 @@ def find_uncompiled(storage: Storage) -> list[str]:
 # Main pipeline
 # ---------------------------------------------------------------------------
 
-async def run(storage: Storage, load_prompt: Callable[[str], str], *, limit: int | None = None):
+@dataclass
+class CompilationResult:
+    """Structured output from a compilation run."""
+
+    docs_compiled: int = 0
+    articles_written: list[dict] = field(default_factory=list)
+    # Each entry: {"slug": str, "action": "create"|"update"}
+
+
+async def run(storage: Storage, load_prompt: Callable[[str], str], *, limit: int | None = None) -> CompilationResult:
     client = get_async_client()
     sem = asyncio.Semaphore(MAX_CONCURRENT)
 
@@ -546,7 +556,7 @@ async def run(storage: Storage, load_prompt: Callable[[str], str], *, limit: int
 
     if not uncompiled:
         log.info("nothing to compile")
-        return
+        return CompilationResult()
 
     # --- Phase 1: Enrich all docs in parallel (cheap) ---
     log.info("=== phase 1: enriching %d documents ===", len(uncompiled))
@@ -589,7 +599,7 @@ async def run(storage: Storage, load_prompt: Callable[[str], str], *, limit: int
     if not reconciled:
         log.info("no articles to write")
         mark_compiled(storage, docs)
-        return
+        return CompilationResult(docs_compiled=len(docs))
 
     # --- Phase 4: Write all articles in parallel (expensive) ---
     log.info("=== phase 4: writing %d articles ===", len(reconciled))
@@ -620,3 +630,11 @@ async def run(storage: Storage, load_prompt: Callable[[str], str], *, limit: int
     append_changelog(storage, docs, written)
 
     log.info("compilation complete -- %d docs, %d articles", len(docs), len(written))
+
+    return CompilationResult(
+        docs_compiled=len(docs),
+        articles_written=[
+            {"slug": a.get("slug", ""), "action": a.get("action", "create")}
+            for a in written
+        ],
+    )

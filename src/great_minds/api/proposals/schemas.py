@@ -1,0 +1,32 @@
+import uuid
+from datetime import datetime
+
+from pydantic import BaseModel
+
+
+class ProposalOverview(BaseModel):
+    id: uuid.UUID
+    brain_id: uuid.UUID
+    status: str
+    title: str | None
+    content_type: str
+    created_at: datetime
+
+
+class Proposal(ProposalOverview):
+    user_id: uuid.UUID
+    author: str | None
+    reviewed_by: uuid.UUID | None
+    reviewed_at: datetime | None
+
+
+class ProposalCreate(BaseModel):
+    brain_id: uuid.UUID
+    content: str
+    content_type: str = "texts"
+    title: str | None = None
+    author: str | None = None
+
+
+class ProposalReview(BaseModel):
+    status: str  # "approved" or "rejected"

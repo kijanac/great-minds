@@ -21,16 +21,19 @@ export interface BtwThread {
   streamText: string
 }
 
+export interface SourceRef {
+  label: string
+  type: "article" | "raw" | "search"
+}
+
 export interface ThinkingBlock {
-  text: string
-  sources: string[]
+  sources: SourceRef[]
 }
 
 export interface Exchange {
   id: string
   query: string
   thinking: ThinkingBlock[]
-  cards: string[]
   answer: string
   btws: BtwThread[]
 }

@@ -20,19 +20,9 @@ FALLBACK_MODELS = [
 ]
 
 
-def _get_api_key() -> str:
-    api_key = os.environ.get("OPENROUTER_API_KEY")
-    if not api_key:
-        raise RuntimeError(
-            "Set OPENROUTER_API_KEY environment variable. "
-            "Get one at https://openrouter.ai/keys"
-        )
-    return api_key
-
-
 def get_async_client(*, max_retries: int = 2) -> AsyncOpenAI:
-    return AsyncOpenAI(base_url=OPENROUTER_BASE, api_key=_get_api_key(), max_retries=max_retries)
+    return AsyncOpenAI(base_url=OPENROUTER_BASE, api_key=os.environ["OPENROUTER_API_KEY"], max_retries=max_retries)
 
 
 def get_sync_client() -> OpenAI:
-    return OpenAI(base_url=OPENROUTER_BASE, api_key=_get_api_key())
+    return OpenAI(base_url=OPENROUTER_BASE, api_key=os.environ["OPENROUTER_API_KEY"])

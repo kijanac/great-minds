@@ -21,6 +21,8 @@ import uuid
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 
+from collections.abc import Callable
+
 from .brain import Brain
 
 log = logging.getLogger(__name__)
@@ -45,10 +47,11 @@ MAX_COMPLETED_TASKS = 100
 class TaskManager:
     """Manages background brain operations with status tracking."""
 
-    def __init__(self, brain: Brain) -> None:
+    def __init__(self, brain: Brain, *, on_compile_done: Callable | None = None) -> None:
         self.brain = brain
         self._tasks: dict[str, TaskInfo] = {}
         self._compile_lock = asyncio.Lock()
+        self._on_compile_done = on_compile_done
 
     def _evict_old_tasks(self) -> None:
         completed = [
@@ -84,9 +87,16 @@ class TaskManager:
             info.started_at = datetime.now(UTC)
             log.info("task_started id=%s type=compile", info.id)
             try:
-                await self.brain.compile(limit=limit)
+                result = await self.brain.compile(limit=limit)
                 info.status = "completed"
+                info.result["articles_written"] = result.articles_written
+                info.result["docs_compiled"] = result.docs_compiled
                 log.info("task_completed id=%s type=compile", info.id)
+                if self._on_compile_done and result.articles_written:
+                    try:
+                        await self._on_compile_done(self.brain, result)
+                    except Exception as e:
+                        log.error("on_compile_done hook failed: %s", e)
             except Exception as e:
                 info.status = "failed"
                 info.error = str(e)

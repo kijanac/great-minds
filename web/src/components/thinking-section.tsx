@@ -1,5 +1,5 @@
 import { useState } from "react"
-import { ChevronDown, ChevronRight } from "lucide-react"
+import { ChevronDown, ChevronRight, Search } from "lucide-react"
 
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -48,43 +48,72 @@ export function ThinkingSection({
 
       {open && (
         <div className="mt-2 border-l-2 border-interactive-ghost pl-3.5 space-y-3">
-          {blocks.map((block, i) => (
-            <div key={i}>
-              {block.text && (
-                <p className="text-[length:var(--text-caption)] leading-[1.6] text-muted-foreground italic mb-1.5">
-                  {block.text}
-                </p>
-              )}
-              {block.sources.length > 0 && (
-                <div className="flex flex-wrap gap-[5px]">
-                  {block.sources.map((slug) => (
-                    <Badge
-                      key={slug}
-                      variant="outline"
-                      onClick={() => onCardClick(slug)}
-                      className={`cursor-pointer rounded-sm h-auto px-[9px] py-[3px] font-mono text-[length:var(--text-chrome)] tracking-[0.06em] whitespace-nowrap transition-all ${
-                        activeCard === slug
-                          ? "border-gold-dim text-gold bg-interactive-dim"
-                          : "bg-ink-raised border-ink-border text-card-foreground hover:border-gold-dim hover:text-gold"
-                      }`}
-                      role="button"
-                      tabIndex={0}
-                      onKeyDown={(e: React.KeyboardEvent) => {
-                        if (e.key === "Enter" || e.key === " ") {
-                          e.preventDefault()
-                          onCardClick(slug)
-                        }
-                      }}
-                    >
-                      {slug}
-                    </Badge>
-                  ))}
-                </div>
-              )}
-            </div>
-          ))}
+          <div className="flex flex-wrap gap-[5px]">
+            {blocks.flatMap((b) => b.sources).map((src) =>
+              src.type === "search" ? (
+                <SearchBadge key={`search:${src.label}`} query={src.label} />
+              ) : (
+                <ArticleBadge
+                  key={`${src.type}:${src.label}`}
+                  label={src.label}
+                  active={activeCard === src.label}
+                  onClick={src.type === "article" ? () => onCardClick(src.label) : undefined}
+                />
+              ),
+            )}
+          </div>
         </div>
       )}
     </div>
+  )
+}
+
+function SearchBadge({ query }: { query: string }) {
+  return (
+    <Badge
+      variant="outline"
+      className="cursor-default rounded-sm h-auto px-[9px] py-[3px] font-mono text-[length:var(--text-chrome)] tracking-[0.06em] whitespace-nowrap bg-ink-raised border-ink-border text-warm-ghost italic"
+    >
+      <Search size={9} className="mr-1.5 opacity-60" />
+      {query}
+    </Badge>
+  )
+}
+
+function ArticleBadge({
+  label,
+  active,
+  onClick,
+}: {
+  label: string
+  active: boolean
+  onClick?: () => void
+}) {
+  return (
+    <Badge
+      variant="outline"
+      onClick={onClick}
+      className={`rounded-sm h-auto px-[9px] py-[3px] font-mono text-[length:var(--text-chrome)] tracking-[0.06em] whitespace-nowrap transition-all ${
+        onClick ? "cursor-pointer" : "cursor-default"
+      } ${
+        active
+          ? "border-gold-dim text-gold bg-interactive-dim"
+          : "bg-ink-raised border-ink-border text-card-foreground hover:border-gold-dim hover:text-gold"
+      }`}
+      role={onClick ? "button" : undefined}
+      tabIndex={onClick ? 0 : undefined}
+      onKeyDown={
+        onClick
+          ? (e: React.KeyboardEvent) => {
+              if (e.key === "Enter" || e.key === " ") {
+                e.preventDefault()
+                onClick()
+              }
+            }
+          : undefined
+      }
+    >
+      {label}
+    </Badge>
   )
 }

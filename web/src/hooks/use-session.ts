@@ -7,7 +7,7 @@ import type {
   Exchange,
   Phase,
   SelectionInfo,
-  ThinkingBlock,
+  SourceRef,
 } from "@/lib/types"
 import { assistantMsg, userMsg } from "@/lib/types"
 import { genId, simulateStream } from "@/lib/utils"
@@ -17,7 +17,6 @@ function exchangeToPayload(ex: Exchange) {
     id: ex.id,
     query: ex.query,
     thinking: ex.thinking,
-    cards: ex.cards,
     answer: ex.answer,
     btws: ex.btws.map((b) => ({
       anchor: b.anchor,
@@ -64,51 +63,21 @@ export function useSession(options?: UseSessionOptions) {
     const controller = new AbortController()
     abortRef.current = controller
 
-    const thinking: ThinkingBlock[] = []
-    const cards: string[] = []
+    const sources: SourceRef[] = []
     let answer = ""
-    // Tokens accumulate here until a "round" event classifies them.
-    // NOTE: This is not fully foolproof — round 1 tokens stream
-    // optimistically as answer text. If a "round: thinking"
-    // classification arrives, they get reclassified retroactively
-    // (visual jump). In practice this only affects round 1 when the
-    // model emits content alongside tool calls, which is rare and
-    // usually empty. A future fix could buffer round 1 only.
-    let pendingTokens = ""
 
     try {
       for await (const event of streamQuery(question, undefined, controller.signal)) {
         if (event.event === "token") {
-          pendingTokens += event.data.text
-          // Stream optimistically as answer
-          setPhase((p) => (p !== "streaming" ? "streaming" : p))
-          setLiveText(answer + pendingTokens)
-        } else if (event.event === "round") {
-          if (event.data.role === "thinking") {
-            // Reclassify pending tokens as thinking text
-            if (pendingTokens.trim()) {
-              thinking.push({ text: pendingTokens.trim(), sources: [] })
-              setLiveThinking([...thinking])
-            }
-            // Clear the optimistic answer display
-            setLiveText(answer)
-            setPhase("searching")
-          } else {
-            // Confirmed as answer
-            answer += pendingTokens
-          }
-          pendingTokens = ""
+          answer += event.data.text
+          setPhase("streaming")
+          setLiveText(answer)
         } else if (event.event === "source") {
-          const slug =
-            event.data.slug ?? event.data.query ?? event.data.path ?? ""
-          if (slug) {
-            cards.push(slug)
-            if (thinking.length > 0) {
-              thinking[thinking.length - 1].sources.push(slug)
-            } else {
-              thinking.push({ text: "", sources: [slug] })
-            }
-            setLiveThinking([...thinking])
+          const label = event.data.slug ?? event.data.query ?? event.data.path
+          const type = event.data.type
+          if (label && (type === "article" || type === "raw" || type === "search")) {
+            sources.push({ label, type })
+            setLiveThinking([{ sources: [...sources] }])
           }
         } else if (event.event === "done") {
           break
@@ -118,11 +87,8 @@ export function useSession(options?: UseSessionOptions) {
         }
       }
 
-      // Any remaining pending tokens are answer (done arrived)
-      answer += pendingTokens
-
       const exchange: Exchange = {
-        id: exId, query: question, thinking, cards, answer, btws: [],
+        id: exId, query: question, thinking: [{ sources }], answer, btws: [],
       }
       setThread((prev) => [...prev, exchange])
       setLiveThinking([])
