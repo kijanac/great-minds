@@ -9,7 +9,9 @@ from fastapi import Depends, HTTPException, Query, Request, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from great_minds.core.auth.repository import resolve_api_key
+from great_minds.core.auth.repository import AuthRepository
+from great_minds.core.auth.service import AuthService
+from great_minds.core.mail import Mailer
 from great_minds.core.brains.models import MemberRole
 from great_minds.core.brains.repository import BrainRepository
 from great_minds.core.brains.schemas import Brain
@@ -20,9 +22,62 @@ from great_minds.core.proposals.service import ProposalService
 from great_minds.core.settings import Settings, get_settings
 from great_minds.core.storage import LocalStorage, Storage
 from great_minds.core.users.models import User
-from great_minds.core.users.repository import get_user_by_id
+from great_minds.core.users.repository import UserRepository
+from great_minds.core.users.service import UserService
 
 bearer_scheme = HTTPBearer()
+
+
+# ---------------------------------------------------------------------------
+# Repositories
+# ---------------------------------------------------------------------------
+
+
+def get_auth_repository(session: AsyncSession = Depends(get_session)) -> AuthRepository:
+    return AuthRepository(session)
+
+
+def get_user_repository(session: AsyncSession = Depends(get_session)) -> UserRepository:
+    return UserRepository(session)
+
+
+def get_brain_repository(session: AsyncSession = Depends(get_session)) -> BrainRepository:
+    return BrainRepository(session)
+
+
+# ---------------------------------------------------------------------------
+# Services
+# ---------------------------------------------------------------------------
+
+
+def get_user_service(brain_service: BrainService = Depends(get_brain_service)) -> UserService:
+    return UserService(brain_service)
+
+
+def get_mailer(settings: Settings = Depends(get_settings)) -> Mailer:
+    return Mailer(settings)
+
+
+def get_auth_service(
+    auth_repo: AuthRepository = Depends(get_auth_repository),
+    user_repo: UserRepository = Depends(get_user_repository),
+    user_service: UserService = Depends(get_user_service),
+    mailer: Mailer = Depends(get_mailer),
+    settings: Settings = Depends(get_settings),
+) -> AuthService:
+    return AuthService(auth_repo, user_repo, user_service, mailer, settings)
+
+
+def get_brain_service(repo: BrainRepository = Depends(get_brain_repository)) -> BrainService:
+    return BrainService(repo)
+
+
+def get_proposal_service() -> ProposalService:
+    return ProposalService()
+
+
+def get_absurd(request: Request) -> AsyncAbsurd:
+    return request.app.state.absurd
 
 
 # ---------------------------------------------------------------------------
@@ -32,7 +87,8 @@ bearer_scheme = HTTPBearer()
 
 async def get_current_user(
     credentials: HTTPAuthorizationCredentials = Depends(bearer_scheme),
-    session: AsyncSession = Depends(get_session),
+    auth_repo: AuthRepository = Depends(get_auth_repository),
+    user_repo: UserRepository = Depends(get_user_repository),
     settings: Settings = Depends(get_settings),
 ) -> User:
     token = credentials.credentials
@@ -40,39 +96,18 @@ async def get_current_user(
     # Try JWT first
     try:
         user_id = decode_access_token(token, settings)
-        user = await get_user_by_id(session, user_id)
+        user = await user_repo.get_by_id(user_id)
         if user is not None:
             return user
     except ValueError:
         pass
 
     # Fall back to API key
-    user = await resolve_api_key(session, token)
+    user = await auth_repo.resolve_api_key(token)
     if user is not None:
         return user
 
     raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid credentials")
-
-
-# ---------------------------------------------------------------------------
-# Service factories
-# ---------------------------------------------------------------------------
-
-
-def get_absurd(request: Request) -> AsyncAbsurd:
-    return request.app.state.absurd
-
-
-def get_brain_repository(session: AsyncSession = Depends(get_session)) -> BrainRepository:
-    return BrainRepository(session)
-
-
-def get_brain_service(repo: BrainRepository = Depends(get_brain_repository)) -> BrainService:
-    return BrainService(repo)
-
-
-def get_proposal_service() -> ProposalService:
-    return ProposalService()
 
 
 # ---------------------------------------------------------------------------

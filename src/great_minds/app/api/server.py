@@ -18,7 +18,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from markitdown import MarkItDown, StreamInfo
 from pydantic import BaseModel
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from great_minds.app.api.auth_routes import router as auth_router
 from great_minds.app.api.brain_routes import router as brain_router
@@ -34,7 +34,7 @@ from great_minds.core import brain as brain_ops
 from great_minds.core import querier, sessions, tasks
 from great_minds.core.brains import _ingester as ingester, _linter as linter
 from great_minds.core.brains.service import BrainService
-from great_minds.core.db import get_session
+from great_minds.core.db import engine, get_session, session_maker
 from great_minds.core.settings import get_settings
 from great_minds.core.tasks import create_absurd
 from great_minds.core.users.models import User
@@ -153,9 +153,7 @@ class LintResponse(BaseModel):
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     settings = get_settings()
-    engine = create_async_engine(settings.database_url)
-    app.state.session_maker = async_sessionmaker(engine, expire_on_commit=False)
-    absurd = create_absurd(settings.database_url)
+    absurd = create_absurd(settings.database_url, session_maker)
     app.state.absurd = absurd
     await absurd.start_worker(concurrency=2, poll_interval=0.5)
     yield

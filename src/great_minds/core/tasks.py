@@ -9,25 +9,27 @@ AsyncAbsurd instance is managed via FastAPI lifespan + DI — no globals.
 """
 
 import logging
+from contextvars import ContextVar
 from datetime import UTC, datetime
+from functools import partial
 from pathlib import Path
 from uuid import UUID
 
-from absurd_sdk import AsyncAbsurd
+from absurd_sdk import AbsurdHooks, AsyncAbsurd
 from sqlalchemy import DateTime, ForeignKey, Text, select, text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.dialects.postgresql import UUID as PG_UUID
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from sqlalchemy.orm import Mapped, mapped_column
-
-from functools import partial
 
 from great_minds.core.brain import load_prompt
 from great_minds.core.brains import _compiler as compiler
 from great_minds.core.brains._linter import lint_links_to_slugs
 from great_minds.core.brains.repository import BrainRepository
-from great_minds.core.db import Base, async_session_from_settings
+from great_minds.core.db import Base
 from great_minds.core.storage import LocalStorage
+
+_task_session: ContextVar[AsyncSession] = ContextVar("task_session")
 
 log = logging.getLogger(__name__)
 
@@ -84,9 +86,9 @@ async def compile_task(params: dict, ctx) -> dict:
             params["label"], len(changed_slugs),
         )
 
-        async with async_session_from_settings() as session:
-            repo = BrainRepository(session)
-            personal_brains = await repo.list_team_member_personal_brains(brain_id)
+        session = _task_session.get()
+        repo = BrainRepository(session)
+        personal_brains = await repo.list_team_member_personal_brains(brain_id)
 
         peer_brains = [
             (LocalStorage(Path(b.storage_root)), b.slug)
@@ -115,10 +117,20 @@ async def compile_task(params: dict, ctx) -> dict:
 # ---------------------------------------------------------------------------
 
 
-def create_absurd(database_url: str) -> AsyncAbsurd:
+def create_absurd(database_url: str, session_maker: async_sessionmaker) -> AsyncAbsurd:
     """Create and configure an AsyncAbsurd instance with all tasks registered."""
     url = database_url.replace("+asyncpg", "")
-    app = AsyncAbsurd(url, queue_name="default")
+
+    async def wrap_with_session(ctx, execute):
+        async with session_maker() as session:
+            token = _task_session.set(session)
+            try:
+                return await execute()
+            finally:
+                _task_session.reset(token)
+
+    hooks = AbsurdHooks(wrap_task_execution=wrap_with_session)
+    app = AsyncAbsurd(url, queue_name="default", hooks=hooks)
     app.register_task("compile", default_max_attempts=3)(compile_task)
     return app
 

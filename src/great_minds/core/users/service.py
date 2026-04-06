@@ -1,12 +1,13 @@
 """User service: provisioning and lifecycle."""
 
-from sqlalchemy.ext.asyncio import AsyncSession
-
-from great_minds.core.brains.repository import BrainRepository
+from great_minds.core.brains.service import BrainService
 from great_minds.core.users.models import User
 
 
-async def provision_new_user(session: AsyncSession, user: User) -> None:
-    """Set up resources for a newly created user (e.g. personal brain)."""
-    repo = BrainRepository(session)
-    await repo.create_personal_brain(user)
+class UserService:
+    def __init__(self, brain_service: BrainService) -> None:
+        self.brain_service = brain_service
+
+    async def provision_new_user(self, user: User) -> None:
+        """Set up resources for a newly created user (e.g. personal brain)."""
+        await self.brain_service.create_personal_brain(user)

@@ -8,6 +8,7 @@ from great_minds.core.brains.repository import BrainRepository
 from great_minds.core.brains.schemas import Brain
 from great_minds.core.querier import QuerySource
 from great_minds.core.storage import LocalStorage
+from great_minds.core.users.models import User
 
 log = logging.getLogger(__name__)
 
@@ -30,6 +31,9 @@ class BrainService:
 
     async def create_team_brain(self, name: str, owner_id: UUID) -> tuple[Brain, MemberRole]:
         return await self.repo.create_team_brain(name, owner_id)
+
+    async def create_personal_brain(self, user: User) -> Brain:
+        return await self.repo.create_personal_brain(user)
 
     async def get_all_query_sources(self, user_id: UUID) -> list[QuerySource]:
         """Build QuerySources for all brains a user has access to."""
