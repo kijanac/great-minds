@@ -12,41 +12,46 @@ Usage:
 import argparse
 import asyncio
 import logging
+from functools import partial
 from pathlib import Path
 
 import uvicorn
 
 from great_minds.app.api.server import create_app
-from great_minds.core.brain import Brain
+from great_minds.core import brain as brain_ops
+from great_minds.core import querier
+from great_minds.core.brains import _compiler as compiler, _ingester as ingester, _linter as linter
 from great_minds.core.storage import LocalStorage
 from great_minds.core.telemetry import setup_logging
 
 
-def _make_brain() -> Brain:
-    return Brain(LocalStorage(Path.cwd()), label="local")
+def _make_storage() -> LocalStorage:
+    return LocalStorage(Path.cwd())
 
 
 def cmd_compile(args: argparse.Namespace) -> None:
     setup_logging(service="great-minds")
-    brain = _make_brain()
-    asyncio.run(brain.compile(limit=args.limit))
+    storage = _make_storage()
+    asyncio.run(compiler.run(storage, partial(brain_ops.load_prompt, storage), limit=args.limit))
 
 
 def cmd_query(args: argparse.Namespace) -> None:
     setup_logging(service="great-minds", json_output=args.json_logs)
-    brain = _make_brain()
+    storage = _make_storage()
+    sources = [querier.QuerySource(storage=storage, label="local")]
     if args.question:
         question = " ".join(args.question)
         print(f"\n> {question}\n")
-        answer = brain.query(question, model=args.model)
+        answer = querier.run_query(sources, question, model=args.model)
         print(answer)
     else:
-        brain.query_interactive(model=args.model)
+        querier.run_interactive(sources, model=args.model)
 
 
 def cmd_ingest(args: argparse.Namespace) -> None:
     setup_logging(service="great-minds")
-    brain = _make_brain()
+    storage = _make_storage()
+    config = brain_ops.load_config(storage)
     path = Path(args.path)
     dest = args.dest or f"raw/{args.content_type}"
 
@@ -63,11 +68,11 @@ def cmd_ingest(args: argparse.Namespace) -> None:
     log = logging.getLogger(__name__)
 
     if path.is_file():
-        result = brain.ingest_file(path, args.content_type, dest, **kwargs)
+        result = ingester.ingest_file(storage, config, path, args.content_type, dest, **kwargs)
         log.info("ingested %s → %s", path, result)
     elif path.is_dir():
-        processed, skipped = brain.ingest_directory(
-            path, args.content_type, dest, **kwargs
+        processed, skipped = ingester.ingest_directory(
+            storage, config, path, args.content_type, dest, **kwargs
         )
         log.info("done — %d files ingested to %s/, %d skipped", processed, dest, skipped)
     else:
@@ -76,8 +81,8 @@ def cmd_ingest(args: argparse.Namespace) -> None:
 
 def cmd_lint(args: argparse.Namespace) -> None:
     setup_logging(service="great-minds")
-    brain = _make_brain()
-    brain.lint(deep=args.deep)
+    storage = _make_storage()
+    linter.run_lint(storage, deep=args.deep)
 
 
 def cmd_serve(args: argparse.Namespace) -> None:

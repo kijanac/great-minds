@@ -9,25 +9,34 @@ import io
 import json
 import logging
 import re
-from uuid import UUID
+from contextlib import asynccontextmanager
 
 import httpx
-from fastapi import Depends, FastAPI, HTTPException, Query, UploadFile
+from absurd_sdk import AsyncAbsurd
+from fastapi import Depends, FastAPI, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from markitdown import MarkItDown, StreamInfo
 from pydantic import BaseModel
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from great_minds.app.api.auth_routes import router as auth_router
 from great_minds.app.api.brain_routes import router as brain_router
-from great_minds.app.api.dependencies import get_brain_service, get_current_user
+from great_minds.app.api.dependencies import (
+    BrainContext,
+    get_absurd,
+    get_authorized_brain,
+    get_brain_service,
+    get_current_user,
+)
 from great_minds.app.api.proposal_routes import router as proposal_router
-from great_minds.core import querier, sessions
+from great_minds.core import brain as brain_ops
+from great_minds.core import querier, sessions, tasks
+from great_minds.core.brains import _ingester as ingester, _linter as linter
 from great_minds.core.brains.service import BrainService
-from great_minds.core.db import get_session, lifespan
+from great_minds.core.db import get_session
 from great_minds.core.settings import get_settings
-from great_minds.core.tasks import TaskInfo
+from great_minds.core.tasks import create_absurd
 from great_minds.core.users.models import User
 
 log = logging.getLogger(__name__)
@@ -82,8 +91,6 @@ class TaskResponse(BaseModel):
     type: str
     status: str
     created_at: str
-    started_at: str | None
-    completed_at: str | None
     error: str | None
     params: dict
     result: dict
@@ -139,22 +146,21 @@ class LintResponse(BaseModel):
 
 
 # ---------------------------------------------------------------------------
-# App factory
+# Lifespan + app factory
 # ---------------------------------------------------------------------------
 
 
-def _task_to_response(info: TaskInfo) -> TaskResponse:
-    return TaskResponse(
-        id=info.id,
-        type=info.type,
-        status=info.status,
-        created_at=info.created_at.isoformat(),
-        started_at=info.started_at.isoformat() if info.started_at else None,
-        completed_at=info.completed_at.isoformat() if info.completed_at else None,
-        error=info.error,
-        params=info.params,
-        result=info.result,
-    )
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    settings = get_settings()
+    engine = create_async_engine(settings.database_url)
+    app.state.session_maker = async_sessionmaker(engine, expire_on_commit=False)
+    absurd = create_absurd(settings.database_url)
+    app.state.absurd = absurd
+    await absurd.start_worker(concurrency=2, poll_interval=0.5)
+    yield
+    await absurd.close()
+    await engine.dispose()
 
 
 def create_app() -> FastAPI:
@@ -183,74 +189,66 @@ def create_app() -> FastAPI:
     @app.post("/compile", response_model=TaskResponse)
     async def compile(
         req: CompileRequest,
-        brain_id: UUID = Query(...),
-        user: User = Depends(get_current_user),
+        ctx: BrainContext = Depends(get_authorized_brain),
         session: AsyncSession = Depends(get_session),
-        brain_service: BrainService = Depends(get_brain_service),
+        absurd: AsyncAbsurd = Depends(get_absurd),
     ) -> TaskResponse:
-        brain, _role = await brain_service.get_brain(session, brain_id, user.id)
-        manager = brain_service.get_task_manager(brain)
-        task_id = await manager.compile(limit=req.limit)
-        info = manager.get(task_id)
-        return _task_to_response(info)
+        record = await tasks.spawn_compile(
+            absurd, session,
+            brain_id=ctx.brain.id,
+            storage_root=ctx.brain.storage_root,
+            label=ctx.brain.slug,
+            brain_kind=ctx.brain.kind,
+            limit=req.limit,
+        )
+        response = await tasks.fetch_task_response(absurd, record)
+        return TaskResponse(**response)
 
     @app.get("/tasks", response_model=list[TaskResponse])
     async def list_tasks(
-        brain_id: UUID = Query(...),
-        user: User = Depends(get_current_user),
+        ctx: BrainContext = Depends(get_authorized_brain),
         session: AsyncSession = Depends(get_session),
-        brain_service: BrainService = Depends(get_brain_service),
+        absurd: AsyncAbsurd = Depends(get_absurd),
     ) -> list[TaskResponse]:
-        brain, _role = await brain_service.get_brain(session, brain_id, user.id)
-        manager = brain_service.get_task_manager(brain)
-        return [_task_to_response(t) for t in manager.list_all()]
+        responses = await tasks.list_brain_tasks(absurd, session, ctx.brain.id)
+        return [TaskResponse(**r) for r in responses]
 
     @app.get("/tasks/{task_id}", response_model=TaskResponse)
     async def get_task(
         task_id: str,
-        brain_id: UUID = Query(...),
-        user: User = Depends(get_current_user),
+        ctx: BrainContext = Depends(get_authorized_brain),
         session: AsyncSession = Depends(get_session),
-        brain_service: BrainService = Depends(get_brain_service),
+        absurd: AsyncAbsurd = Depends(get_absurd),
     ) -> TaskResponse:
-        brain, _role = await brain_service.get_brain(session, brain_id, user.id)
-        manager = brain_service.get_task_manager(brain)
-        info = manager.get(task_id)
-        if not info:
+        response = await tasks.get_task(absurd, session, task_id, ctx.brain.id)
+        if response is None:
             raise HTTPException(status_code=404, detail="Task not found")
-        return _task_to_response(info)
+        return TaskResponse(**response)
 
     @app.post("/query", response_model=QueryResponse)
     async def query(
         req: QueryRequest,
-        brain_id: UUID = Query(...),
+        ctx: BrainContext = Depends(get_authorized_brain),
         user: User = Depends(get_current_user),
-        session: AsyncSession = Depends(get_session),
         brain_service: BrainService = Depends(get_brain_service),
     ) -> QueryResponse:
-        all_sources = await brain_service.get_all_query_sources(session, user.id)
-        # Put the targeted brain first
-        brain, _role = await brain_service.get_brain(session, brain_id, user.id)
-        instance = brain_service.build(brain)
-        target = instance.as_query_source()
+        all_sources = await brain_service.get_all_query_sources(user.id)
+        target = querier.QuerySource(storage=ctx.storage, label=ctx.brain.slug)
         sources = [target] + [s for s in all_sources if s.label != target.label]
         answer = await asyncio.to_thread(
-            instance.query, req.question, model=req.model, sources=sources,
+            querier.run_query, sources, req.question, model=req.model,
         )
         return QueryResponse(answer=answer)
 
     @app.post("/query/stream")
     async def query_stream(
         req: QueryRequest,
-        brain_id: UUID = Query(...),
+        ctx: BrainContext = Depends(get_authorized_brain),
         user: User = Depends(get_current_user),
-        session: AsyncSession = Depends(get_session),
         brain_service: BrainService = Depends(get_brain_service),
     ) -> StreamingResponse:
-        all_sources = await brain_service.get_all_query_sources(session, user.id)
-        brain, _role = await brain_service.get_brain(session, brain_id, user.id)
-        instance = brain_service.build(brain)
-        target = instance.as_query_source()
+        all_sources = await brain_service.get_all_query_sources(user.id)
+        target = querier.QuerySource(storage=ctx.storage, label=ctx.brain.slug)
         sources = [target] + [s for s in all_sources if s.label != target.label]
 
         async def event_generator():
@@ -270,54 +268,34 @@ def create_app() -> FastAPI:
     @app.post("/sessions", response_model=SessionPathResponse, status_code=201)
     async def create_session(
         req: CreateSessionRequest,
-        brain_id: UUID = Query(...),
-        user: User = Depends(get_current_user),
-        session: AsyncSession = Depends(get_session),
-        brain_service: BrainService = Depends(get_brain_service),
+        ctx: BrainContext = Depends(get_authorized_brain),
     ) -> SessionPathResponse:
-        brain, _role = await brain_service.get_brain(session, brain_id, user.id)
-        instance = brain_service.build(brain)
-        path = sessions.create_session(instance.storage, req.session_id, req.exchange.model_dump())
+        path = sessions.create_session(ctx.storage, req.session_id, req.exchange.model_dump())
         return SessionPathResponse(path=path)
 
     @app.patch("/sessions/{session_id}", response_model=SessionPathResponse)
     async def append_to_session(
         session_id: str,
         exchange: ExchangeData,
-        brain_id: UUID = Query(...),
-        user: User = Depends(get_current_user),
-        session: AsyncSession = Depends(get_session),
-        brain_service: BrainService = Depends(get_brain_service),
+        ctx: BrainContext = Depends(get_authorized_brain),
     ) -> SessionPathResponse:
-        brain, _role = await brain_service.get_brain(session, brain_id, user.id)
-        instance = brain_service.build(brain)
-        path = sessions.append_exchange(instance.storage, session_id, exchange.model_dump())
+        path = sessions.append_exchange(ctx.storage, session_id, exchange.model_dump())
         return SessionPathResponse(path=path)
 
     @app.patch("/sessions/{session_id}/btw", response_model=SessionPathResponse)
     async def append_btw_to_session(
         session_id: str,
         btw: BtwData,
-        brain_id: UUID = Query(...),
-        user: User = Depends(get_current_user),
-        session: AsyncSession = Depends(get_session),
-        brain_service: BrainService = Depends(get_brain_service),
+        ctx: BrainContext = Depends(get_authorized_brain),
     ) -> SessionPathResponse:
-        brain, _role = await brain_service.get_brain(session, brain_id, user.id)
-        instance = brain_service.build(brain)
-        path = sessions.append_btw(instance.storage, session_id, btw.model_dump())
+        path = sessions.append_btw(ctx.storage, session_id, btw.model_dump())
         return SessionPathResponse(path=path)
 
     @app.get("/sessions", response_model=list[SessionListItem])
     async def list_all_sessions(
-        brain_id: UUID = Query(...),
-        user: User = Depends(get_current_user),
-        session: AsyncSession = Depends(get_session),
-        brain_service: BrainService = Depends(get_brain_service),
+        ctx: BrainContext = Depends(get_authorized_brain),
     ) -> list[SessionListItem]:
-        brain, _role = await brain_service.get_brain(session, brain_id, user.id)
-        instance = brain_service.build(brain)
-        raw = sessions.list_sessions(instance.storage)
+        raw = sessions.list_sessions(ctx.storage)
         return [
             SessionListItem(id=s["id"], query=s["query"], created=s.get("ts", ""), updated=s.get("updated", s.get("ts", "")))
             for s in raw
@@ -326,15 +304,10 @@ def create_app() -> FastAPI:
     @app.get("/sessions/{session_id}", response_model=SessionResponse)
     async def read_session(
         session_id: str,
-        brain_id: UUID = Query(...),
-        user: User = Depends(get_current_user),
-        session: AsyncSession = Depends(get_session),
-        brain_service: BrainService = Depends(get_brain_service),
+        ctx: BrainContext = Depends(get_authorized_brain),
     ) -> SessionResponse:
-        brain, _role = await brain_service.get_brain(session, brain_id, user.id)
-        instance = brain_service.build(brain)
         try:
-            events = sessions.load_events(instance.storage, session_id)
+            events = sessions.load_events(ctx.storage, session_id)
         except FileNotFoundError:
             raise HTTPException(status_code=404, detail="Session not found")
         return SessionResponse(id=session_id, events=events)
@@ -342,13 +315,9 @@ def create_app() -> FastAPI:
     @app.post("/ingest")
     async def ingest(
         req: IngestRequest,
-        brain_id: UUID = Query(...),
-        user: User = Depends(get_current_user),
-        session: AsyncSession = Depends(get_session),
-        brain_service: BrainService = Depends(get_brain_service),
+        ctx: BrainContext = Depends(get_authorized_brain),
     ) -> dict:
-        brain, _role = await brain_service.get_brain(session, brain_id, user.id)
-        instance = brain_service.build(brain)
+        config = brain_ops.load_config(ctx.storage)
         kwargs = {}
         if req.title:
             kwargs["title"] = req.title
@@ -358,23 +327,19 @@ def create_app() -> FastAPI:
             kwargs["date"] = req.date
         if req.source:
             kwargs["source"] = req.source
-        result = instance.ingest_document(req.content, req.content_type, dest=req.dest, **kwargs)
+        result = ingester.ingest_document(ctx.storage, config, req.content, req.content_type, dest=req.dest, **kwargs)
         return {"status": "ingested", "chars": len(result)}
 
     @app.post("/ingest/upload")
     async def ingest_upload(
         file: UploadFile,
-        brain_id: UUID = Query(...),
+        ctx: BrainContext = Depends(get_authorized_brain),
         content_type: str = "texts",
         author: str | None = None,
         date: str | None = None,
         source: str | None = None,
-        user: User = Depends(get_current_user),
-        session: AsyncSession = Depends(get_session),
-        brain_service: BrainService = Depends(get_brain_service),
     ) -> dict:
-        brain, _role = await brain_service.get_brain(session, brain_id, user.id)
-        instance = brain_service.build(brain)
+        config = brain_ops.load_config(ctx.storage)
 
         raw_bytes = await file.read()
         filename = file.filename or "upload.md"
@@ -401,19 +366,15 @@ def create_app() -> FastAPI:
             kwargs["date"] = date
         if source:
             kwargs["source"] = source
-        ingested = instance.ingest_document(content, content_type, dest=dest, **kwargs)
+        ingested = ingester.ingest_document(ctx.storage, config, content, content_type, dest=dest, **kwargs)
         return {"status": "ingested", "name": filename, "chars": len(ingested)}
 
     @app.post("/ingest/url")
     async def ingest_url(
         req: IngestUrlRequest,
-        brain_id: UUID = Query(...),
-        user: User = Depends(get_current_user),
-        session: AsyncSession = Depends(get_session),
-        brain_service: BrainService = Depends(get_brain_service),
+        ctx: BrainContext = Depends(get_authorized_brain),
     ) -> dict:
-        brain, _role = await brain_service.get_brain(session, brain_id, user.id)
-        instance = brain_service.build(brain)
+        config = brain_ops.load_config(ctx.storage)
 
         url = _normalize_url(req.url)
         try:
@@ -438,55 +399,39 @@ def create_app() -> FastAPI:
         slug = _slugify(title)
         dest = f"raw/{req.content_type}/{slug}.md"
 
-        ingested = instance.ingest_document(
-            markdown, req.content_type, dest=dest, title=title, source=url,
+        ingested = ingester.ingest_document(
+            ctx.storage, config, markdown, req.content_type, dest=dest, title=title, source=url,
         )
         return {"status": "ingested", "name": title, "url": url, "chars": len(ingested)}
 
     @app.get("/wiki", response_model=list[str])
     async def list_articles(
-        brain_id: UUID = Query(...),
-        user: User = Depends(get_current_user),
-        session: AsyncSession = Depends(get_session),
-        brain_service: BrainService = Depends(get_brain_service),
+        ctx: BrainContext = Depends(get_authorized_brain),
     ) -> list[str]:
-        brain, _role = await brain_service.get_brain(session, brain_id, user.id)
-        return brain_service.build(brain).list_articles()
+        return brain_ops.list_articles(ctx.storage)
 
     @app.get("/wiki/{slug}", response_model=ArticleResponse)
     async def read_article(
         slug: str,
-        brain_id: UUID = Query(...),
-        user: User = Depends(get_current_user),
-        session: AsyncSession = Depends(get_session),
-        brain_service: BrainService = Depends(get_brain_service),
+        ctx: BrainContext = Depends(get_authorized_brain),
     ) -> ArticleResponse:
-        brain, _role = await brain_service.get_brain(session, brain_id, user.id)
-        content = brain_service.build(brain).read_article(slug)
+        content = brain_ops.read_article(ctx.storage, slug)
         if content is None:
             raise HTTPException(status_code=404, detail=f"Article not found: {slug}")
         return ArticleResponse(slug=slug, content=content)
 
     @app.get("/wiki/_index")
     async def read_index(
-        brain_id: UUID = Query(...),
-        user: User = Depends(get_current_user),
-        session: AsyncSession = Depends(get_session),
-        brain_service: BrainService = Depends(get_brain_service),
+        ctx: BrainContext = Depends(get_authorized_brain),
     ) -> dict:
-        brain, _role = await brain_service.get_brain(session, brain_id, user.id)
-        return {"content": brain_service.build(brain).read_index()}
+        return {"content": brain_ops.read_index(ctx.storage)}
 
     @app.get("/lint", response_model=LintResponse)
     async def lint(
-        brain_id: UUID = Query(...),
         deep: bool = False,
-        user: User = Depends(get_current_user),
-        session: AsyncSession = Depends(get_session),
-        brain_service: BrainService = Depends(get_brain_service),
+        ctx: BrainContext = Depends(get_authorized_brain),
     ) -> LintResponse:
-        brain, _role = await brain_service.get_brain(session, brain_id, user.id)
-        total = await asyncio.to_thread(brain_service.build(brain).lint, deep=deep)
+        total = await asyncio.to_thread(linter.run_lint, ctx.storage, deep=deep)
         return LintResponse(total_issues=total)
 
     return app

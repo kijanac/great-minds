@@ -5,13 +5,14 @@ from datetime import UTC, datetime
 from pathlib import Path
 from uuid import UUID
 
+from absurd_sdk import AsyncAbsurd
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from great_minds.app.api.dependencies import get_current_user, get_proposal_service
+from great_minds.app.api.dependencies import get_absurd, get_brain_service, get_current_user, get_proposal_service
 from great_minds.app.api.schemas import proposals as schemas
-from great_minds.core.brains.models import BrainType, MemberRole
-from great_minds.core.brains.repository import get_brain_with_role
+from great_minds.core.brains.models import MemberRole
+from great_minds.core.brains.service import BrainService
 from great_minds.core.db import get_session
 from great_minds.core.proposals import repository
 from great_minds.core.proposals.models import ProposalStatus, SourceProposal
@@ -30,13 +31,14 @@ async def create_proposal(
     user: User = Depends(get_current_user),
     session: AsyncSession = Depends(get_session),
     settings: Settings = Depends(get_settings),
+    brain_service: BrainService = Depends(get_brain_service),
 ) -> schemas.Proposal:
-    result = await get_brain_with_role(session, req.brain_id, user.id)
-    if result is None:
+    try:
+        brain, _role = await brain_service.get_brain(req.brain_id, user.id)
+    except ValueError:
         raise HTTPException(status_code=404, detail="Brain not found")
 
-    brain, _role = result
-    if brain.type != BrainType.TEAM:
+    if brain.kind != "team":
         raise HTTPException(status_code=400, detail="Proposals are only for team brains")
 
     proposal = await repository.create_proposal(
@@ -101,6 +103,8 @@ async def review_proposal(
     req: schemas.ProposalReview,
     user: User = Depends(get_current_user),
     session: AsyncSession = Depends(get_session),
+    absurd: AsyncAbsurd = Depends(get_absurd),
+    brain_service: BrainService = Depends(get_brain_service),
     proposal_service: ProposalService = Depends(get_proposal_service),
 ) -> schemas.Proposal:
     try:
@@ -116,17 +120,19 @@ async def review_proposal(
     if proposal.status != ProposalStatus.PENDING:
         raise HTTPException(status_code=409, detail="Proposal already reviewed")
 
-    result = await get_brain_with_role(session, proposal.brain_id, user.id)
-    if result is None or result[1] != MemberRole.OWNER:
+    try:
+        brain, role = await brain_service.get_brain(proposal.brain_id, user.id)
+    except ValueError:
         raise HTTPException(status_code=403, detail="Only brain owners can review proposals")
-    brain = result[0]
+    if role != MemberRole.OWNER:
+        raise HTTPException(status_code=403, detail="Only brain owners can review proposals")
 
     proposal.status = new_status
     proposal.reviewed_by = user.id
     proposal.reviewed_at = datetime.now(UTC)
 
     if new_status == ProposalStatus.APPROVED:
-        await proposal_service.approve(proposal, brain)
+        await proposal_service.approve(proposal, brain, absurd, session)
 
     if new_status == ProposalStatus.REJECTED:
         proposal_service.reject(proposal)

@@ -7,7 +7,7 @@ from pydantic import BaseModel
 class BrainOverview(BaseModel):
     id: uuid.UUID
     name: str
-    type: str
+    kind: str
     role: str
 
 

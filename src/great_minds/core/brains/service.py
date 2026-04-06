@@ -1,120 +1,49 @@
-"""Brain service: instance creation, task management, and post-compilation hooks."""
+"""Brain service: access control, brain lifecycle, and membership operations."""
 
 import logging
-from pathlib import Path
-from typing import ClassVar
 from uuid import UUID
 
-from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession
-
-from great_minds.core.brains.models import Brain as BrainModel, BrainMembership, BrainType, MemberRole
-from great_minds.core.brains.repository import get_brain_with_role, list_user_brains, upsert_membership
-from great_minds.core.brains._compiler import CompilationResult
-from great_minds.core.brains._linter import lint_links_to_slugs
-from great_minds.core.db import async_session_from_settings
-from great_minds.core.brain import Brain
+from great_minds.core.brains.models import BrainMembership, MemberRole
+from great_minds.core.brains.repository import BrainRepository
+from great_minds.core.brains.schemas import Brain
 from great_minds.core.querier import QuerySource
 from great_minds.core.storage import LocalStorage
-from great_minds.core.tasks import TaskManager
 
 log = logging.getLogger(__name__)
 
 
 class BrainService:
-    """Manages Brain instances, task managers, and brain lifecycle operations."""
+    """Manages brain access control, lifecycle, and membership operations."""
 
-    _manager_cache: ClassVar[dict[str, TaskManager]] = {}
+    def __init__(self, repository: BrainRepository) -> None:
+        self.repo = repository
 
-    async def get_brain(self, session: AsyncSession, brain_id: UUID, user_id: UUID) -> tuple[BrainModel, MemberRole]:
+    async def get_brain(self, brain_id: UUID, user_id: UUID) -> tuple[Brain, MemberRole]:
         """Fetch a brain by ID with access check. Raises ValueError if not found."""
-        result = await get_brain_with_role(session, brain_id, user_id)
+        result = await self.repo.get_brain_with_role(brain_id, user_id)
         if result is None:
             raise ValueError(f"Brain {brain_id} not found or not accessible")
         return result
 
-    def build(self, brain: BrainModel) -> Brain:
-        """Create a fresh Brain instance from a DB model."""
-        return Brain(LocalStorage(Path(brain.storage_root)), label=brain.slug)
+    async def list_brains(self, user_id: UUID) -> list[tuple[Brain, MemberRole]]:
+        return await self.repo.list_user_brains(user_id)
 
-    async def get_all_query_sources(self, session: AsyncSession, user_id: UUID) -> list[QuerySource]:
+    async def create_team_brain(self, name: str, owner_id: UUID) -> tuple[Brain, MemberRole]:
+        return await self.repo.create_team_brain(name, owner_id)
+
+    async def get_all_query_sources(self, user_id: UUID) -> list[QuerySource]:
         """Build QuerySources for all brains a user has access to."""
-        rows = await list_user_brains(session, user_id)
-        return [QuerySource(storage=LocalStorage(Path(brain.storage_root)), label=brain.slug) for brain, _role in rows]
+        rows = await self.repo.list_user_brains(user_id)
+        return [QuerySource(storage=LocalStorage(brain.storage_root), label=brain.slug) for brain, _role in rows]
 
-    def get_task_manager(self, brain: BrainModel) -> TaskManager:
-        if brain.storage_root not in self._manager_cache:
-            on_done = self._make_post_compile_hook(brain) if brain.type == BrainType.TEAM else None
-            self._manager_cache[brain.storage_root] = TaskManager(
-                self.build(brain),
-                on_compile_done=on_done,
-            )
-        return self._manager_cache[brain.storage_root]
+    async def get_member_count(self, brain_id: UUID) -> int:
+        return await self.repo.get_member_count(brain_id)
 
-    def get_article_count(self, brain: BrainModel) -> int:
-        return len(self.build(brain).list_articles())
+    async def list_members(self, brain_id: UUID) -> list[tuple[BrainMembership, str]]:
+        return await self.repo.list_members(brain_id)
 
-    async def create_team_brain(
-        self,
-        session: AsyncSession,
-        name: str,
-        owner_id: UUID,
-    ) -> tuple[BrainModel, MemberRole]:
-        """Create a team brain with the owner as first member."""
-        slug = name.lower().replace(" ", "-")
-        brain = BrainModel(
-            name=name,
-            slug=slug,
-            owner_id=owner_id,
-            type=BrainType.TEAM,
-            storage_root=f"brains/{slug}",
-        )
-        session.add(brain)
-        await session.flush()
-        await upsert_membership(session, brain.id, owner_id, MemberRole.OWNER)
-        return brain, MemberRole.OWNER
+    async def upsert_membership(self, brain_id: UUID, user_id: UUID, role: MemberRole) -> BrainMembership:
+        return await self.repo.upsert_membership(brain_id, user_id, role)
 
-    def _make_post_compile_hook(self, team_brain: BrainModel):
-        """Create a post-compilation hook for a team brain.
-
-        After compilation, finds personal brains of team members and checks
-        if any of their articles link to slugs that changed.
-        """
-        async def on_compile_done(brain: Brain, result: CompilationResult) -> None:
-            changed_slugs = [a["slug"] for a in result.articles_written]
-            if not changed_slugs:
-                return
-
-            log.info(
-                "team brain %s compiled, checking %d changed slugs against member personal brains",
-                brain.label, len(changed_slugs),
-            )
-
-            async with async_session_from_settings() as session:
-                member_rows = await session.execute(
-                    select(BrainModel)
-                    .join(BrainMembership, BrainMembership.user_id.in_(
-                        select(BrainMembership.user_id).where(BrainMembership.brain_id == team_brain.id)
-                    ))
-                    .where(BrainModel.type == BrainType.PERSONAL)
-                    .distinct()
-                )
-                personal_brains = member_rows.scalars().all()
-
-            instances = [self.build(row) for row in personal_brains]
-            if not instances:
-                return
-
-            lint_result = lint_links_to_slugs(instances, changed_slugs, brain.storage)
-
-            if lint_result.broken_links:
-                log.warning(
-                    "team brain %s compilation broke %d links in personal brains",
-                    brain.label, len(lint_result.broken_links),
-                )
-                for bl in lint_result.broken_links:
-                    log.warning("  %s: %s links to missing %s", bl.brain_label, bl.article, bl.target_slug)
-            else:
-                log.info("team brain %s compilation: no broken links in personal brains", brain.label)
-
-        return on_compile_done
+    async def delete_membership(self, brain_id: UUID, user_id: UUID) -> bool:
+        return await self.repo.delete_membership(brain_id, user_id)

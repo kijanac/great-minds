@@ -298,11 +298,15 @@ class TargetedLintResult:
     broken_links: list[BrokenLink] = field(default_factory=list)
 
 
-def lint_links_to_slugs(brains: list, changed_slugs: list[str], source_storage: "Storage") -> TargetedLintResult:
+def lint_links_to_slugs(
+    brains: list[tuple["Storage", str]],
+    changed_slugs: list[str],
+    source_storage: "Storage",
+) -> TargetedLintResult:
     """Check if any brain's articles link to changed slugs that no longer exist.
 
     Args:
-        brains: list of Brain instances to check
+        brains: list of (storage, label) pairs to check
         changed_slugs: slugs that were created/updated/deleted in the source brain
         source_storage: the storage where the slugs changed (to verify they still exist)
     """
@@ -312,14 +316,14 @@ def lint_links_to_slugs(brains: list, changed_slugs: list[str], source_storage: 
         target_path = f"wiki/{slug}.md"
         slug_exists = source_storage.exists(target_path)
 
-        for brain in brains:
-            articles = collect_wiki_articles(brain.storage)
+        for storage, label in brains:
+            articles = collect_wiki_articles(storage)
             for rel_path, content in articles.items():
                 for match in _MD_LINK_RE.finditer(content):
                     link_target = match.group(2)
                     if link_target == target_path and not slug_exists:
                         result.broken_links.append(BrokenLink(
-                            brain_label=brain.label,
+                            brain_label=label,
                             article=rel_path,
                             target_slug=slug,
                         ))

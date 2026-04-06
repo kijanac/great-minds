@@ -1,135 +1,60 @@
-"""Brain: the central API for a knowledge base instance.
+"""Brain utilities: config loading, prompt resolution, and wiki helpers.
 
-A Brain wraps a storage backend and config, providing compile/query/ingest/lint
-operations. All interfaces (CLI, web, Telegram) create a Brain and call its methods.
-
-    from great_minds import Brain, LocalStorage
-
-    brain = Brain(LocalStorage("."), label="my-brain")
-    await brain.compile(limit=50)
-    answer = brain.query("What is imperialism?")
+These functions operate on a Storage backend and are used by both the API
+layer (via FastAPI dependencies) and the CLI.
 """
 
-import logging
 from pathlib import Path
 
 from ruamel.yaml import YAML
 
-from great_minds.core.brains import _compiler as compiler, _ingester as ingester, _linter as linter
-from great_minds.core import querier
-from great_minds.core.querier import QuerySource
 from great_minds.core.storage import Storage
-
-__all__ = ["Brain"]
-
-log = logging.getLogger(__name__)
 
 _PACKAGE_DIR = Path(__file__).resolve().parent
 
 
-class Brain:
-    """A knowledge base instance backed by a Storage implementation."""
+def load_config(storage: Storage) -> dict:
+    """Load brain config from storage, returning empty dict if absent."""
+    content = storage.read("config.yaml", strict=False)
+    if content is None:
+        return {}
+    yaml = YAML()
+    raw = yaml.load(content)
+    return dict(raw) if raw else {}
 
-    def __init__(self, storage: Storage, *, label: str, config: dict | None = None) -> None:
-        self.storage = storage
-        self.label = label
-        self.config = config if config is not None else self._load_config()
 
-    def _load_config(self) -> dict:
-        content = self.storage.read("config.yaml", strict=False)
-        if content is None:
-            return {}
-        yaml = YAML()
-        raw = yaml.load(content)
-        return dict(raw) if raw else {}
+def load_prompt(storage: Storage, name: str) -> str:
+    """Load a prompt template, checking brain overrides first.
 
-    def load_prompt(self, name: str) -> str:
-        """Load a prompt template, checking brain overrides first.
+    Resolution order:
+      1. prompts/{name}.md in the brain's storage
+      2. default_prompts/{name}.md shipped with the package
+    """
+    brain_path = f"prompts/{name}.md"
+    content = storage.read(brain_path, strict=False)
+    if content is not None:
+        return content.strip()
 
-        Resolution order:
-          1. prompts/{name}.md in the brain's storage
-          2. default_prompts/{name}.md shipped with the package
-        """
-        brain_path = f"prompts/{name}.md"
-        content = self.storage.read(brain_path, strict=False)
-        if content is not None:
-            return content.strip()
+    default_path = _PACKAGE_DIR / "default_prompts" / f"{name}.md"
+    if default_path.exists():
+        return default_path.read_text(encoding="utf-8").strip()
 
-        default_path = _PACKAGE_DIR / "default_prompts" / f"{name}.md"
-        if default_path.exists():
-            return default_path.read_text(encoding="utf-8").strip()
+    raise FileNotFoundError(
+        f"Prompt '{name}' not found in brain storage or package defaults"
+    )
 
-        raise FileNotFoundError(
-            f"Prompt '{name}' not found in brain storage or package defaults"
-        )
 
-    # ------------------------------------------------------------------
-    # Operations
-    # ------------------------------------------------------------------
+def list_articles(storage: Storage) -> list[str]:
+    """Return wiki article slugs (excluding internal files like _index)."""
+    paths = storage.glob("wiki/*.md")
+    return [p.removeprefix("wiki/").removesuffix(".md") for p in paths if not p.startswith("wiki/_")]
 
-    async def compile(self, *, limit: int | None = None) -> "compiler.CompilationResult":
-        return await compiler.run(self.storage, self.load_prompt, limit=limit)
 
-    def as_query_source(self) -> QuerySource:
-        return QuerySource(storage=self.storage, label=self.label)
+def read_article(storage: Storage, slug: str) -> str | None:
+    """Read a single wiki article by slug, or None if missing."""
+    return storage.read(f"wiki/{slug}.md", strict=False)
 
-    def query(self, question: str, *, model: str | None = None, sources: list[QuerySource] | None = None) -> str:
-        return querier.run_query(sources or [self.as_query_source()], question, model=model)
 
-    def query_interactive(self, *, model: str | None = None, sources: list[QuerySource] | None = None) -> None:
-        querier.run_interactive(sources or [self.as_query_source()], model=model)
-
-    def ingest_document(
-        self,
-        content: str,
-        content_type: str,
-        *,
-        dest: str | None = None,
-        **kwargs,
-    ) -> str:
-        return ingester.ingest_document(
-            self.storage, self.config, content, content_type, dest=dest, **kwargs
-        )
-
-    def ingest_file(
-        self,
-        filepath: Path,
-        content_type: str,
-        dest_dir: str,
-        **kwargs,
-    ) -> str:
-        return ingester.ingest_file(
-            self.storage, self.config, filepath, content_type, dest_dir, **kwargs
-        )
-
-    def ingest_directory(
-        self,
-        source_dir: Path,
-        content_type: str,
-        dest_dir: str,
-        skip_fn=None,
-        **kwargs,
-    ) -> tuple[int, int]:
-        return ingester.ingest_directory(
-            self.storage, self.config, source_dir, content_type, dest_dir,
-            skip_fn=skip_fn, **kwargs,
-        )
-
-    def list_articles(self) -> list[str]:
-        """Return wiki article slugs (excluding internal files like _index)."""
-        paths = self.storage.glob("wiki/*.md")
-        return [p.removeprefix("wiki/").removesuffix(".md") for p in paths if not p.startswith("wiki/_")]
-
-    def read_article(self, slug: str) -> str | None:
-        """Read a single wiki article by slug, or None if missing."""
-        return self.storage.read(f"wiki/{slug}.md", strict=False)
-
-    def read_index(self) -> str:
-        """Read the wiki index file."""
-        content = self.storage.read("wiki/_index.md", strict=False)
-        if content is None:
-            content = ""
-        return content
-
-    def lint(self, *, deep: bool = False) -> int:
-        return linter.run_lint(self.storage, deep=deep)
+def read_index(storage: Storage) -> str:
+    """Read the wiki index file."""
+    return storage.read("wiki/_index.md", strict=False) or ""
