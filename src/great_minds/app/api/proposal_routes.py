@@ -107,11 +107,7 @@ async def review_proposal(
     brain_service: BrainService = Depends(get_brain_service),
     proposal_service: ProposalService = Depends(get_proposal_service),
 ) -> schemas.Proposal:
-    try:
-        new_status = ProposalStatus(req.status)
-    except ValueError:
-        raise HTTPException(status_code=422, detail=f"Invalid status: {req.status}. Must be 'approved' or 'rejected'.")
-    if new_status == ProposalStatus.PENDING:
+    if req.status == ProposalStatus.PENDING:
         raise HTTPException(status_code=400, detail="Cannot set status back to pending")
 
     proposal = await repository.get_authorized_proposal(session, proposal_id, user.id)
@@ -127,14 +123,14 @@ async def review_proposal(
     if role != MemberRole.OWNER:
         raise HTTPException(status_code=403, detail="Only brain owners can review proposals")
 
-    proposal.status = new_status
+    proposal.status = req.status
     proposal.reviewed_by = user.id
     proposal.reviewed_at = datetime.now(UTC)
 
-    if new_status == ProposalStatus.APPROVED:
+    if req.status == ProposalStatus.APPROVED:
         await proposal_service.approve(proposal, brain, absurd, session)
 
-    if new_status == ProposalStatus.REJECTED:
+    if req.status == ProposalStatus.REJECTED:
         proposal_service.reject(proposal)
 
     await session.commit()

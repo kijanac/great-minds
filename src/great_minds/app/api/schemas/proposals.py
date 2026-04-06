@@ -1,23 +1,9 @@
 import uuid
-from datetime import datetime
 
 from pydantic import BaseModel
 
-
-class ProposalOverview(BaseModel):
-    id: uuid.UUID
-    brain_id: uuid.UUID
-    status: str
-    title: str | None
-    content_type: str
-    created_at: datetime
-
-
-class Proposal(ProposalOverview):
-    user_id: uuid.UUID
-    author: str | None
-    reviewed_by: uuid.UUID | None
-    reviewed_at: datetime | None
+from great_minds.core.proposals.models import ProposalStatus
+from great_minds.core.proposals.schemas import Proposal, ProposalOverview
 
 
 class ProposalCreate(BaseModel):
@@ -29,4 +15,4 @@ class ProposalCreate(BaseModel):
 
 
 class ProposalReview(BaseModel):
-    status: str  # "approved" or "rejected"
+    status: ProposalStatus

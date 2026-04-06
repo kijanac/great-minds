@@ -1,26 +1,7 @@
-import uuid
-from datetime import datetime
-
 from pydantic import BaseModel, EmailStr
 
-
-class UserOverview(BaseModel):
-    id: uuid.UUID
-    email: str
-
-
-class User(UserOverview):
-    created_at: datetime
-
-
-class ApiKeyOverview(BaseModel):
-    id: uuid.UUID
-    label: str
-    created_at: datetime
-
-
-class ApiKey(ApiKeyOverview):
-    revoked: bool
+from great_minds.core.auth.schemas import ApiKey, ApiKeyOverview
+from great_minds.core.users.schemas import User, UserOverview
 
 
 class ApiKeyCreate(BaseModel):

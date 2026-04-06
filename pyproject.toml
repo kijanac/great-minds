@@ -4,6 +4,7 @@ version = "0.1.0"
 description = "LLM-powered research knowledge base framework"
 requires-python = ">=3.13"
 dependencies = [
+    "absurd-sdk>=0.3.0",
     "alembic>=1.18.4",
     "asyncpg>=0.31.0",
     "crawl4ai>=0.8.6",

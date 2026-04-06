@@ -14,6 +14,7 @@ import great_minds.core.users.models
 import great_minds.core.auth.models
 import great_minds.core.brains.models
 import great_minds.core.proposals.models
+import great_minds.core.tasks
 
 config = context.config
 
