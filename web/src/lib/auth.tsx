@@ -2,11 +2,12 @@ import {
   createContext,
   useCallback,
   useContext,
+  useEffect,
   useMemo,
   useSyncExternalStore,
 } from "react"
 import type { ReactNode } from "react"
-import { clearTokens } from "@/api/client"
+import { clearTokens, ensureBrainId } from "@/api/client"
 
 interface AuthContextValue {
   isAuthenticated: boolean
@@ -28,8 +29,11 @@ function getSnapshot(): boolean {
 export function AuthProvider({ children }: { children: ReactNode }) {
   const isAuthenticated = useSyncExternalStore(subscribe, getSnapshot)
 
+  useEffect(() => {
+    if (isAuthenticated) ensureBrainId()
+  }, [isAuthenticated])
+
   const login = useCallback(() => {
-    // Tokens already stored by api/client.ts — just trigger re-render
     window.dispatchEvent(new StorageEvent("storage"))
   }, [])
 

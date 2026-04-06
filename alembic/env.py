@@ -6,13 +6,14 @@ from sqlalchemy.engine import Connection
 from sqlalchemy.ext.asyncio import async_engine_from_config
 
 from alembic import context
-from great_minds.api.db import Base
-from great_minds.api.settings import get_settings
+from great_minds.core.db import Base
+from great_minds.core.settings import get_settings
 
 # Register all domain models with Base.metadata
-import great_minds.api.auth
-import great_minds.api.brains
-import great_minds.api.proposals
+import great_minds.core.users.models
+import great_minds.core.auth.models
+import great_minds.core.brains.models
+import great_minds.core.proposals.models
 
 config = context.config
 

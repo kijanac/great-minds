@@ -6,17 +6,19 @@ requires-python = ">=3.13"
 dependencies = [
     "alembic>=1.18.4",
     "asyncpg>=0.31.0",
-    "crawl4ai>=0.8.0",
+    "crawl4ai>=0.8.6",
     "fastapi>=0.135.3",
-    "openai>=1.0.0",
+    "httpx>=0.28.1",
+    "markitdown>=0.1.5",
+    "openai>=2.0.0",
     "pydantic-settings>=2.13.1",
     "pydantic[email]>=2.12.5",
-    "pyjwt>=2.8.0",
-    "python-multipart>=0.0.22",
+    "pyjwt>=2.10.0",
+    "python-multipart>=0.0.24",
     "resend>=2.27.0",
-    "ruamel.yaml>=0.18.0",
+    "ruamel.yaml>=0.19.0",
     "sqlalchemy[asyncio]>=2.0.49",
-    "uvicorn>=0.43.0",
+    "uvicorn>=0.44.0",
 ]
 
 [project.scripts]

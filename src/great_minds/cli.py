@@ -16,10 +16,10 @@ from pathlib import Path
 
 import uvicorn
 
-from .api.server import create_app
-from .core.brain import Brain
-from .core.storage import LocalStorage
-from .core.telemetry import setup_logging
+from great_minds.app.api.server import create_app
+from great_minds.core.brain import Brain
+from great_minds.core.storage import LocalStorage
+from great_minds.core.telemetry import setup_logging
 
 
 def _make_brain() -> Brain:

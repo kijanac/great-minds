@@ -15,8 +15,10 @@ from pathlib import Path
 
 from ruamel.yaml import YAML
 
-from . import compiler, ingester, linter, querier
-from .storage import Storage
+from great_minds.core.brains import _compiler as compiler, _ingester as ingester, _linter as linter
+from great_minds.core import querier
+from great_minds.core.querier import QuerySource
+from great_minds.core.storage import Storage
 
 __all__ = ["Brain"]
 
@@ -34,7 +36,7 @@ class Brain:
         self.config = config if config is not None else self._load_config()
 
     def _load_config(self) -> dict:
-        content = self.storage.read("config.yaml", default=None)
+        content = self.storage.read("config.yaml", strict=False)
         if content is None:
             return {}
         yaml = YAML()
@@ -49,7 +51,7 @@ class Brain:
           2. default_prompts/{name}.md shipped with the package
         """
         brain_path = f"prompts/{name}.md"
-        content = self.storage.read(brain_path, default=None)
+        content = self.storage.read(brain_path, strict=False)
         if content is not None:
             return content.strip()
 
@@ -68,11 +70,14 @@ class Brain:
     async def compile(self, *, limit: int | None = None) -> "compiler.CompilationResult":
         return await compiler.run(self.storage, self.load_prompt, limit=limit)
 
-    def query(self, question: str, *, model: str | None = None, brains: "list[Brain] | None" = None) -> str:
-        return querier.run_query(brains or [self], question, model=model)
+    def as_query_source(self) -> QuerySource:
+        return QuerySource(storage=self.storage, label=self.label)
 
-    def query_interactive(self, *, model: str | None = None, brains: "list[Brain] | None" = None) -> None:
-        querier.run_interactive(brains or [self], model=model)
+    def query(self, question: str, *, model: str | None = None, sources: list[QuerySource] | None = None) -> str:
+        return querier.run_query(sources or [self.as_query_source()], question, model=model)
+
+    def query_interactive(self, *, model: str | None = None, sources: list[QuerySource] | None = None) -> None:
+        querier.run_interactive(sources or [self.as_query_source()], model=model)
 
     def ingest_document(
         self,
@@ -117,11 +122,14 @@ class Brain:
 
     def read_article(self, slug: str) -> str | None:
         """Read a single wiki article by slug, or None if missing."""
-        return self.storage.read(f"wiki/{slug}.md", default=None)
+        return self.storage.read(f"wiki/{slug}.md", strict=False)
 
     def read_index(self) -> str:
         """Read the wiki index file."""
-        return self.storage.read("wiki/_index.md", default="")
+        content = self.storage.read("wiki/_index.md", strict=False)
+        if content is None:
+            content = ""
+        return content
 
     def lint(self, *, deep: bool = False) -> int:
         return linter.run_lint(self.storage, deep=deep)

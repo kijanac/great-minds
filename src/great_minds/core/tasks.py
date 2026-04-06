@@ -110,7 +110,7 @@ class TaskManager:
     def get(self, task_id: str) -> TaskInfo | None:
         return self._tasks.get(task_id)
 
-    def list(self) -> list[TaskInfo]:
+    def list_all(self) -> list[TaskInfo]:
         return sorted(self._tasks.values(), key=lambda t: t.created_at, reverse=True)
 
     def active(self) -> list[TaskInfo]:

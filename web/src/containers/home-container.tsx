@@ -1,6 +1,7 @@
 import { useCallback, useState } from "react"
 import { useNavigate } from "react-router"
 
+import { IngestionContainer } from "@/containers/ingestion-container"
 import { RecentSessions } from "@/components/recent-sessions"
 import { SearchBar } from "@/components/search-bar"
 import { SessionThread } from "@/containers/session-thread"
@@ -94,6 +95,8 @@ function HomeContent({ sessionId, initialExchanges }: HomeContentProps) {
               onSessionClick={(id) => navigate(`/sessions/${id}`)}
               onViewAll={() => navigate("/sessions")}
             />
+
+            <IngestionContainer />
           </div>
         )}
 

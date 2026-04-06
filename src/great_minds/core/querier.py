@@ -9,7 +9,7 @@ and sources were pulled into context, with timing.
 import json
 import uuid
 from collections.abc import AsyncGenerator
-from typing import TYPE_CHECKING
+from dataclasses import dataclass
 
 from openai import AsyncOpenAI, OpenAI
 
@@ -23,8 +23,12 @@ from .telemetry import (
     log_event,
 )
 
-if TYPE_CHECKING:
-    from .brain import Brain
+
+@dataclass
+class QuerySource:
+    """A labeled storage that the query engine can search across."""
+    storage: Storage
+    label: str
 
 SYSTEM_PROMPT = """\
 You are a research assistant for a knowledge base. \
@@ -157,10 +161,10 @@ def _classify_tool_call(name: str, args: dict) -> tuple[str, dict]:
 # ---------------------------------------------------------------------------
 
 
-def read_wiki_article(brains: list[Brain], slug: str) -> str:
+def read_wiki_article(brains: list[QuerySource], slug: str) -> str:
     path = f"wiki/{slug}.md"
     for src in brains:
-        content = src.storage.read(path, default=None)
+        content = src.storage.read(path, strict=False)
         if content is not None:
             log_event("tool.article_read", slug=slug, brain=src.label, chars=len(content))
             return f"# {path} [{src.label}]\n\n{content}"
@@ -168,9 +172,9 @@ def read_wiki_article(brains: list[Brain], slug: str) -> str:
     return f"Article not found: {path}"
 
 
-def read_raw_source(brains: list[Brain], path_str: str) -> str:
+def read_raw_source(brains: list[QuerySource], path_str: str) -> str:
     for src in brains:
-        content = src.storage.read(path_str, default=None)
+        content = src.storage.read(path_str, strict=False)
         if content is not None:
             truncated = len(content) > 20_000
             if truncated:
@@ -181,7 +185,7 @@ def read_raw_source(brains: list[Brain], path_str: str) -> str:
     return f"Source not found: {path_str}"
 
 
-def search_wiki(brains: list[Brain], query: str) -> str:
+def search_wiki(brains: list[QuerySource], query: str) -> str:
     query_lower = query.lower()
     results = []
 
@@ -213,7 +217,7 @@ def search_wiki(brains: list[Brain], query: str) -> str:
     return f"Found {len(results)} articles matching '{query}':\n\n" + "\n\n".join(results)
 
 
-def _dispatch_tool(brains: list[Brain], name: str, args: dict) -> str:
+def _dispatch_tool(brains: list[QuerySource], name: str, args: dict) -> str:
     if name == "read_wiki_article":
         return read_wiki_article(brains, args["slug"])
     elif name == "read_raw_source":
@@ -229,28 +233,28 @@ def _dispatch_tool(brains: list[Brain], name: str, args: dict) -> str:
 # ---------------------------------------------------------------------------
 
 
-def _build_index_for_brain(brain: "Brain") -> str:
-    index = brain.storage.read("wiki/_index.md", default=None)
+def _build_index_for_source(source: QuerySource) -> str:
+    index = source.storage.read("wiki/_index.md", strict=False)
     if index is not None:
-        return f"## [{brain.label}]\n{index}"
+        return f"## [{source.label}]\n{index}"
     entries = []
-    for path in brain.storage.glob("wiki/*.md"):
+    for path in source.storage.glob("wiki/*.md"):
         filename = path.rsplit("/", 1)[-1]
         if not filename.startswith("_"):
             stem = filename.removesuffix(".md")
             entries.append(f"  - {stem}")
     if entries:
-        return f"## [{brain.label}]\n" + "\n".join(entries)
+        return f"## [{source.label}]\n" + "\n".join(entries)
     return ""
 
 
-def build_system_prompt(brains: "list[Brain]") -> str:
-    parts = [_build_index_for_brain(b) for b in brains]
+def build_system_prompt(brains: "list[QuerySource]") -> str:
+    parts = [_build_index_for_source(b) for b in brains]
     index = "\n\n".join(p for p in parts if p) or "(no articles yet)"
     return SYSTEM_PROMPT.format(index=index)
 
 
-def chat(brains: list[Brain], client: OpenAI, model: str, messages: list[dict]) -> str:
+def chat(brains: list[QuerySource], client: OpenAI, model: str, messages: list[dict]) -> str:
     """Run a chat turn, handling tool calls in a loop until the model responds with text."""
     articles_read: list[str] = []
     sources_read: list[str] = []
@@ -321,7 +325,7 @@ def chat(brains: list[Brain], client: OpenAI, model: str, messages: list[dict]) 
             })
 
 
-def chat_with_fallback(brains: list[Brain], client: OpenAI, model: str, messages: list[dict]) -> str:
+def chat_with_fallback(brains: list[QuerySource], client: OpenAI, model: str, messages: list[dict]) -> str:
     """Try the primary model, fall back to alternatives on rate limit."""
     for m in _models_with_fallback(model):
         try:
@@ -342,7 +346,7 @@ def chat_with_fallback(brains: list[Brain], client: OpenAI, model: str, messages
 
 
 async def stream_chat(
-    brains: list[Brain],
+    brains: list[QuerySource],
     client: AsyncOpenAI,
     model: str,
     messages: list[dict],
@@ -466,7 +470,7 @@ async def stream_chat(
 
 
 async def run_stream_query(
-    brains: list[Brain],
+    brains: list[QuerySource],
     question: str,
     *,
     model: str | None = None,
@@ -506,7 +510,7 @@ async def run_stream_query(
 
 
 def run_query(
-    brains: list[Brain],
+    brains: list[QuerySource],
     question: str,
     *,
     model: str | None = None,
@@ -526,7 +530,7 @@ def run_query(
 
 
 def run_interactive(
-    brains: list[Brain],
+    brains: list[QuerySource],
     *,
     model: str | None = None,
 ) -> None:
