@@ -1,4 +1,4 @@
-"""Auth service: JWT, hashing, code generation, email sending."""
+"""Auth service: JWT, hashing, code generation, email sending, user provisioning."""
 
 import hashlib
 import logging
@@ -8,7 +8,10 @@ from uuid import UUID
 
 import jwt
 import resend
+from sqlalchemy.ext.asyncio import AsyncSession
 
+from great_minds.api.auth.models import User
+from great_minds.api.brains.repository import create_personal_brain
 from great_minds.api.settings import Settings
 
 log = logging.getLogger(__name__)
@@ -68,6 +71,11 @@ def hash_api_key(raw_key: str) -> str:
 
 def generate_auth_code() -> str:
     return f"{secrets.randbelow(1_000_000):06d}"
+
+
+async def provision_new_user(session: AsyncSession, user: User) -> None:
+    """Set up resources for a newly created user (e.g. personal brain)."""
+    await create_personal_brain(session, user)
 
 
 def send_auth_code(email: str, code: str, settings: Settings) -> None:

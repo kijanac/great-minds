@@ -1,3 +1,5 @@
+import { apiFetch } from "./client"
+
 const API_BASE = "/api"
 
 export interface ExchangePayload {
@@ -18,7 +20,7 @@ export async function createSession(
   sessionId: string,
   exchange: ExchangePayload,
 ): Promise<string> {
-  const res = await fetch(`${API_BASE}/sessions`, {
+  const res = await apiFetch(`${API_BASE}/sessions`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ session_id: sessionId, exchange }),
@@ -32,7 +34,7 @@ export async function appendExchange(
   sessionId: string,
   exchange: ExchangePayload,
 ): Promise<string> {
-  const res = await fetch(`${API_BASE}/sessions/${sessionId}`, {
+  const res = await apiFetch(`${API_BASE}/sessions/${sessionId}`, {
     method: "PATCH",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(exchange),
@@ -46,7 +48,7 @@ export async function appendBtw(
   sessionId: string,
   btw: BtwPayload,
 ): Promise<string> {
-  const res = await fetch(`${API_BASE}/sessions/${sessionId}/btw`, {
+  const res = await apiFetch(`${API_BASE}/sessions/${sessionId}/btw`, {
     method: "PATCH",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(btw),
@@ -65,7 +67,7 @@ export interface SessionSummary {
 }
 
 export async function listSessions(): Promise<SessionSummary[]> {
-  const res = await fetch(`${API_BASE}/sessions`)
+  const res = await apiFetch(`${API_BASE}/sessions`)
   if (!res.ok) throw new Error(`Failed to list sessions: ${res.status}`)
   return res.json()
 }
@@ -78,7 +80,7 @@ export interface SessionEvent {
 export async function loadSession(
   sessionId: string,
 ): Promise<{ id: string; events: SessionEvent[] }> {
-  const res = await fetch(`${API_BASE}/sessions/${sessionId}`)
+  const res = await apiFetch(`${API_BASE}/sessions/${sessionId}`)
   if (!res.ok) throw new Error(`Session not found: ${res.status}`)
   return res.json()
 }

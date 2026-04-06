@@ -1,10 +1,12 @@
+import { apiFetch } from "./client"
+
 const API_BASE = "/api"
 
 export async function queryKnowledgeBase(
   question: string,
   model?: string,
 ): Promise<string> {
-  const res = await fetch(`${API_BASE}/query`, {
+  const res = await apiFetch(`${API_BASE}/query`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ question, model }),
@@ -26,7 +28,7 @@ export async function* streamQuery(
   model?: string,
   signal?: AbortSignal,
 ): AsyncGenerator<StreamEvent> {
-  const res = await fetch(`${API_BASE}/query/stream`, {
+  const res = await apiFetch(`${API_BASE}/query/stream`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ question, model }),

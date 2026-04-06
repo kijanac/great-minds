@@ -10,7 +10,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from great_minds.api.auth import repository, schemas, service
 from great_minds.api.auth.dependencies import get_current_user
 from great_minds.api.auth.models import ApiKey, User
-from great_minds.api.brains.repository import create_personal_brain
 from great_minds.api.db import get_session
 from great_minds.api.settings import Settings, get_settings
 
@@ -25,9 +24,8 @@ async def request_code(
     session: AsyncSession = Depends(get_session),
     settings: Settings = Depends(get_settings),
 ) -> dict:
-    user, _created = await repository.get_or_create_user(session, req.email)
     code = service.generate_auth_code()
-    await repository.store_auth_code(session, user.id, code, settings)
+    await repository.store_auth_code(session, req.email, code, settings)
     await session.commit()
     service.send_auth_code(req.email, code, settings)
     return {"detail": "Code sent"}
@@ -39,13 +37,13 @@ async def verify_code(
     session: AsyncSession = Depends(get_session),
     settings: Settings = Depends(get_settings),
 ) -> schemas.TokenPair:
-    user, created = await repository.get_or_create_user(session, req.email)
-    valid = await repository.verify_auth_code(session, user.id, req.code)
+    valid = await repository.verify_auth_code(session, req.email, req.code)
     if not valid:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid or expired code")
 
+    user, created = await repository.get_or_create_user(session, req.email)
     if created:
-        await create_personal_brain(session, user)
+        await service.provision_new_user(session, user)
 
     access_token = service.create_access_token(user.id, settings)
     raw_refresh = service.create_refresh_token_value()

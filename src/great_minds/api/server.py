@@ -159,7 +159,7 @@ def create_app() -> FastAPI:
     @app.post("/query", response_model=QueryResponse)
     async def query(req: QueryRequest, resolved: ResolvedBrain = Depends(resolve_brain)) -> QueryResponse:
         answer = await asyncio.to_thread(
-            resolved.instance.query, req.question, model=req.model, sources=resolved.all_brains,
+            resolved.instance.query, req.question, model=req.model, brains=resolved.all_brains,
         )
         return QueryResponse(answer=answer)
 
@@ -239,19 +239,18 @@ def create_app() -> FastAPI:
 
     @app.get("/wiki", response_model=list[str])
     async def list_articles(resolved: ResolvedBrain = Depends(resolve_brain)) -> list[str]:
-        paths = resolved.instance.storage.glob("wiki/*.md")
-        return [p.removeprefix("wiki/").removesuffix(".md") for p in paths if not p.startswith("wiki/_")]
+        return resolved.instance.list_articles()
 
     @app.get("/wiki/{slug}", response_model=ArticleResponse)
     async def read_article(slug: str, resolved: ResolvedBrain = Depends(resolve_brain)) -> ArticleResponse:
-        content = resolved.instance.storage.read(f"wiki/{slug}.md", default=None)
+        content = resolved.instance.read_article(slug)
         if content is None:
             raise HTTPException(status_code=404, detail=f"Article not found: {slug}")
         return ArticleResponse(slug=slug, content=content)
 
     @app.get("/wiki/_index")
     async def read_index(resolved: ResolvedBrain = Depends(resolve_brain)) -> dict:
-        return {"content": resolved.instance.storage.read("wiki/_index.md", default="")}
+        return {"content": resolved.instance.read_index()}
 
     @app.get("/lint", response_model=LintResponse)
     async def lint(deep: bool = False, resolved: ResolvedBrain = Depends(resolve_brain)) -> LintResponse:

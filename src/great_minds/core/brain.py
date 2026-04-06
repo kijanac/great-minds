@@ -110,5 +110,18 @@ class Brain:
             skip_fn=skip_fn, **kwargs,
         )
 
+    def list_articles(self) -> list[str]:
+        """Return wiki article slugs (excluding internal files like _index)."""
+        paths = self.storage.glob("wiki/*.md")
+        return [p.removeprefix("wiki/").removesuffix(".md") for p in paths if not p.startswith("wiki/_")]
+
+    def read_article(self, slug: str) -> str | None:
+        """Read a single wiki article by slug, or None if missing."""
+        return self.storage.read(f"wiki/{slug}.md", default=None)
+
+    def read_index(self) -> str:
+        """Read the wiki index file."""
+        return self.storage.read("wiki/_index.md", default="")
+
     def lint(self, *, deep: bool = False) -> int:
         return linter.run_lint(self.storage, deep=deep)

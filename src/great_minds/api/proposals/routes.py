@@ -12,10 +12,11 @@ from great_minds.api.auth.dependencies import get_current_user
 from great_minds.api.auth.models import User
 from great_minds.api.brains.models import Brain, BrainType, MemberRole
 from great_minds.api.brains.repository import get_brain_with_role
-from great_minds.api.brains.service import get_brain_instance, get_task_manager
 from great_minds.api.db import get_session
 from great_minds.api.proposals import repository, schemas
+from great_minds.api.proposals.dependencies import get_proposal_service
 from great_minds.api.proposals.models import ProposalStatus, SourceProposal
+from great_minds.api.proposals.service import ProposalService
 from great_minds.api.settings import Settings, get_settings
 
 log = logging.getLogger(__name__)
@@ -100,6 +101,7 @@ async def review_proposal(
     req: schemas.ProposalReview,
     user: User = Depends(get_current_user),
     session: AsyncSession = Depends(get_session),
+    proposal_service: ProposalService = Depends(get_proposal_service),
 ) -> schemas.Proposal:
     try:
         new_status = ProposalStatus(req.status)
@@ -124,23 +126,10 @@ async def review_proposal(
     proposal.reviewed_at = datetime.now(UTC)
 
     if new_status == ProposalStatus.APPROVED:
-        content = Path(proposal.storage_path).read_text(encoding="utf-8")
-        brain_instance = get_brain_instance(brain_row)
-
-        kwargs = {}
-        if proposal.title:
-            kwargs["title"] = proposal.title
-        if proposal.author:
-            kwargs["author"] = proposal.author
-        brain_instance.ingest_document(content, proposal.content_type, **kwargs)
-
-        manager = get_task_manager(brain_row)
-        await manager.compile()
+        await proposal_service.approve(proposal, brain_row)
 
     if new_status == ProposalStatus.REJECTED:
-        path = Path(proposal.storage_path)
-        if path.exists():
-            path.unlink()
+        proposal_service.reject(proposal)
 
     await session.commit()
     await session.refresh(proposal)

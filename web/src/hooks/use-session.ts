@@ -8,6 +8,7 @@ import type {
   Phase,
   SelectionInfo,
   SourceRef,
+  ThinkingBlock,
 } from "@/lib/types"
 import { assistantMsg, userMsg } from "@/lib/types"
 import { genId, simulateStream } from "@/lib/utils"

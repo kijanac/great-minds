@@ -28,9 +28,9 @@ async def get_user_by_id(session: AsyncSession, user_id: UUID) -> User | None:
     return result.scalar_one_or_none()
 
 
-async def store_auth_code(session: AsyncSession, user_id: UUID, code: str, settings: Settings) -> AuthCode:
+async def store_auth_code(session: AsyncSession, email: str, code: str, settings: Settings) -> AuthCode:
     auth_code = AuthCode(
-        user_id=user_id,
+        email=email,
         code_hash=hash_code(code),
         expires_at=datetime.now(UTC) + timedelta(minutes=settings.auth_code_expiry_minutes),
     )
@@ -38,14 +38,14 @@ async def store_auth_code(session: AsyncSession, user_id: UUID, code: str, setti
     return auth_code
 
 
-async def verify_auth_code(session: AsyncSession, user_id: UUID, code: str) -> bool:
+async def verify_auth_code(session: AsyncSession, email: str, code: str) -> bool:
     now = datetime.now(UTC)
     code_h = hash_code(code)
     result = await session.execute(
         select(AuthCode).where(
-            AuthCode.user_id == user_id,
+            AuthCode.email == email,
             AuthCode.code_hash == code_h,
-            AuthCode.used== False,
+            AuthCode.used == False,
             AuthCode.expires_at > now,
         )
     )

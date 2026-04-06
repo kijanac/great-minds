@@ -9,8 +9,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from great_minds.api.auth.dependencies import get_current_user
 from great_minds.api.auth.models import User
 from great_minds.api.brains import repository, schemas
+from great_minds.api.brains.dependencies import get_brain_service
 from great_minds.api.brains.models import Brain, BrainType, MemberRole
-from great_minds.api.brains.service import get_brain_instance
+from great_minds.api.brains.service import BrainService
 from great_minds.api.db import get_session
 
 log = logging.getLogger(__name__)
@@ -35,23 +36,14 @@ async def create_brain(
     req: schemas.BrainCreate,
     user: User = Depends(get_current_user),
     session: AsyncSession = Depends(get_session),
+    brain_service: BrainService = Depends(get_brain_service),
 ) -> schemas.Brain:
-    slug = req.name.lower().replace(" ", "-")
-    brain = Brain(
-        name=req.name,
-        slug=slug,
-        owner_id=user.id,
-        type=BrainType.TEAM,
-        storage_root=f"brains/{slug}",
-    )
-    session.add(brain)
-    await session.flush()
-    await repository.upsert_membership(session, brain.id, user.id, MemberRole.OWNER)
+    brain, role = await brain_service.create_team_brain(session, req.name, user.id)
     await session.commit()
     await session.refresh(brain)
 
     return schemas.Brain(
-        id=brain.id, name=brain.name, type=brain.type, role=MemberRole.OWNER,
+        id=brain.id, name=brain.name, type=brain.type, role=role,
         slug=brain.slug, owner_id=brain.owner_id, created_at=brain.created_at,
     )
 
@@ -61,6 +53,7 @@ async def get_brain(
     brain_id: UUID,
     user: User = Depends(get_current_user),
     session: AsyncSession = Depends(get_session),
+    brain_service: BrainService = Depends(get_brain_service),
 ) -> schemas.BrainDetail:
     result = await repository.get_brain_with_role(session, brain_id, user.id)
     if result is None:
@@ -68,8 +61,7 @@ async def get_brain(
     brain, role = result
 
     member_count = await repository.get_member_count(session, brain.id)
-    storage = get_brain_instance(brain).storage
-    article_count = len(storage.glob("wiki/*.md"))
+    article_count = brain_service.get_article_count(brain)
 
     return schemas.BrainDetail(
         id=brain.id, name=brain.name, type=brain.type, role=role,

@@ -13,7 +13,7 @@ from typing import TYPE_CHECKING
 
 from openai import AsyncOpenAI, OpenAI
 
-from .llm import EXTRACT_MODEL, FALLBACK_MODELS, get_async_client, get_sync_client
+from .llm import FALLBACK_MODELS, QUERY_MODEL, get_async_client, get_sync_client
 from .storage import Storage
 from .telemetry import (
     correlation_id,
@@ -472,7 +472,7 @@ async def run_stream_query(
     model: str | None = None,
 ) -> AsyncGenerator[dict, None]:
     """Stream SSE events for a single question, with model fallback on rate limit."""
-    primary = model or EXTRACT_MODEL
+    primary = model or QUERY_MODEL
     client = get_async_client(max_retries=0)
     system_prompt = build_system_prompt(brains)
     base_messages: list[dict] = [
@@ -512,7 +512,7 @@ def run_query(
     model: str | None = None,
 ) -> str:
     """Answer a single question against the knowledge base."""
-    model = model or EXTRACT_MODEL
+    model = model or QUERY_MODEL
     client = get_sync_client()
     system_prompt = build_system_prompt(brains)
     messages: list[dict] = [{"role": "system", "content": system_prompt}]
@@ -531,7 +531,7 @@ def run_interactive(
     model: str | None = None,
 ) -> None:
     """Run an interactive REPL session against the knowledge base."""
-    model = model or EXTRACT_MODEL
+    model = model or QUERY_MODEL
     client = get_sync_client()
     system_prompt = build_system_prompt(brains)
     messages: list[dict] = [{"role": "system", "content": system_prompt}]

@@ -19,7 +19,6 @@ class User(Base):
     email: Mapped[str] = mapped_column(String(320), unique=True, index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
-    auth_codes: Mapped[list["AuthCode"]] = relationship("AuthCode", back_populates="user", cascade="all, delete-orphan")
     api_keys: Mapped[list["ApiKey"]] = relationship("ApiKey", back_populates="user", cascade="all, delete-orphan")
     refresh_tokens: Mapped[list["RefreshToken"]] = relationship("RefreshToken", back_populates="user", cascade="all, delete-orphan")
     memberships: Mapped[list[BrainMembership]] = relationship("BrainMembership", back_populates="user", cascade="all, delete-orphan")
@@ -29,13 +28,11 @@ class AuthCode(Base):
     __tablename__ = "auth_codes"
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"))
+    email: Mapped[str] = mapped_column(String(320), index=True)
     code_hash: Mapped[str] = mapped_column(String(64))
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     used: Mapped[bool] = mapped_column(default=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
-
-    user: Mapped["User"] = relationship("User", back_populates="auth_codes")
 
 
 class ApiKey(Base):

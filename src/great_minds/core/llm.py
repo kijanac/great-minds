@@ -10,7 +10,11 @@ from openai import AsyncOpenAI, OpenAI
 
 OPENROUTER_BASE = "https://openrouter.ai/api/v1"
 
-# Two-model strategy: cheap for extraction/planning, expensive for writing
+# Model strategy:
+#   - QUERY_MODEL: fast tool-calling for interactive queries
+#   - EXTRACT_MODEL: cheap extraction/planning during compilation
+#   - REASON_MODEL: high-quality article writing during compilation
+QUERY_MODEL = "deepseek/deepseek-v3.2"
 EXTRACT_MODEL = "google/gemma-4-31b-it"
 REASON_MODEL = "deepseek/deepseek-v3.2"
 
