@@ -54,8 +54,8 @@ async function resolvePersonalBrain(token: string): Promise<string> {
   })
   if (!res.ok) throw new Error("Failed to fetch brains")
 
-  const brains: { id: string; type: string }[] = await res.json()
-  const personal = brains.find((b) => b.type === "personal")
+  const brains: { id: string; kind: string }[] = await res.json()
+  const personal = brains.find((b) => b.kind === "PERSONAL")
   if (!personal) throw new Error("No personal brain found")
   return personal.id
 }
@@ -110,8 +110,12 @@ export async function loginWithCode(
     await res.json()
   storeTokens(data.access_token, data.refresh_token)
 
-  const brainId = await resolvePersonalBrain(data.access_token)
-  storeBrainId(brainId)
+  try {
+    const brainId = await resolvePersonalBrain(data.access_token)
+    storeBrainId(brainId)
+  } catch {
+    throw new Error("Signed in, but failed to load your workspace. Please refresh.")
+  }
 }
 
 export async function requestCode(email: string): Promise<void> {
