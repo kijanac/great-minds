@@ -34,7 +34,6 @@ projects:
           - name: great-minds-web
             type: web
             runtime: static
-            region: virginia
             buildCommand: cd web && npm install && npm run build
             staticPublishPath: web/dist
             headers:
