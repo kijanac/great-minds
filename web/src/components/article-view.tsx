@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useRef, type ComponentProps } from "react"
+import { useMemo, useRef, type ComponentProps } from "react"
 import Markdown from "react-markdown"
 
 import { BtwThread } from "@/components/btw-thread"
