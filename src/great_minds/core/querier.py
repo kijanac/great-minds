@@ -6,14 +6,19 @@ and sources were pulled into context, with timing.
 """
 
 
+import asyncio
+import enum
 import json
 import uuid
 from collections.abc import AsyncGenerator
 from dataclasses import dataclass
+from uuid import UUID
 
-from openai import AsyncOpenAI, OpenAI
+from openai import AsyncOpenAI
+from sqlalchemy.ext.asyncio import AsyncSession
 
-from .llm import FALLBACK_MODELS, QUERY_MODEL, get_async_client, get_sync_client
+from .brains._search_indexer import search as hybrid_search
+from .llm import FALLBACK_MODELS, QUERY_MODEL, get_async_client
 from .storage import Storage
 from .telemetry import (
     correlation_id,
@@ -24,11 +29,17 @@ from .telemetry import (
 )
 
 
+class QueryMode(enum.StrEnum):
+    QUERY = "query"
+    BTW = "btw"
+
+
 @dataclass
 class QuerySource:
     """A labeled storage that the query engine can search across."""
     storage: Storage
     label: str
+    brain_id: UUID | None = None
 
 SYSTEM_PROMPT = """\
 You are a research assistant for a knowledge base. \
@@ -54,6 +65,13 @@ Rules:
 
 Current wiki index:
 {index}
+"""
+
+BTW_ADDENDUM = """\
+
+This is a BTW (by the way) — a quick side question the user is asking while \
+reading. Answer concisely in 2-3 short paragraphs. Cite the most relevant \
+sources. Be direct.
 """
 
 TOOLS = [
@@ -185,45 +203,36 @@ def read_raw_source(brains: list[QuerySource], path_str: str) -> str:
     return f"Source not found: {path_str}"
 
 
-def search_wiki(brains: list[QuerySource], query: str) -> str:
-    query_lower = query.lower()
-    results = []
+async def search_wiki(brains: list[QuerySource], query: str, session: AsyncSession) -> str:
+    """Hybrid BM25 + vector search across all brains via the search index."""
+    brain_ids = [src.brain_id for src in brains if src.brain_id is not None]
+    if not brain_ids:
+        log_event("tool.search_skipped", query=query, reason="no_brain_ids")
+        return f"No results found for: {query} (search index not available)"
 
-    for src in brains:
-        for path in src.storage.glob("wiki/*.md"):
-            filename = path.rsplit("/", 1)[-1]
-            if filename.startswith("_"):
-                continue
-            content = src.storage.read(path)
-            if query_lower in content.lower():
-                lines = content.split("\n")
-                matches = []
-                for i, line in enumerate(lines):
-                    if query_lower in line.lower():
-                        start = max(0, i - 1)
-                        end = min(len(lines), i + 2)
-                        snippet = "\n".join(lines[start:end])
-                        matches.append(snippet)
-                        if len(matches) >= 2:
-                            break
-
-                results.append(f"### {filename} [{src.label}]\n" + "\n---\n".join(matches))
+    results = await hybrid_search(session, brain_ids, query)
 
     log_event("tool.search_executed", query=query, results_count=len(results))
 
     if not results:
         return f"No results found for: {query}"
 
-    return f"Found {len(results)} articles matching '{query}':\n\n" + "\n\n".join(results)
+    parts = []
+    for r in results:
+        filename = r.path.rsplit("/", 1)[-1]
+        heading = f" > {r.heading}" if r.heading else ""
+        parts.append(f"### {filename}{heading}\n{r.snippet}")
+
+    return f"Found {len(results)} results for '{query}':\n\n" + "\n\n".join(parts)
 
 
-def _dispatch_tool(brains: list[QuerySource], name: str, args: dict) -> str:
+async def _dispatch_tool(brains: list[QuerySource], name: str, args: dict, session: AsyncSession) -> str:
     if name == "read_wiki_article":
         return read_wiki_article(brains, args["slug"])
     elif name == "read_raw_source":
         return read_raw_source(brains, args["path"])
     elif name == "search_wiki":
-        return search_wiki(brains, args["query"])
+        return await search_wiki(brains, args["query"], session)
     else:
         return f"Unknown tool: {name}"
 
@@ -248,13 +257,22 @@ def _build_index_for_source(source: QuerySource) -> str:
     return ""
 
 
-def build_system_prompt(brains: "list[QuerySource]") -> str:
+def build_system_prompt(brains: "list[QuerySource]", *, mode: QueryMode = QueryMode.QUERY) -> str:
     parts = [_build_index_for_source(b) for b in brains]
     index = "\n\n".join(p for p in parts if p) or "(no articles yet)"
-    return SYSTEM_PROMPT.format(index=index)
+    prompt = SYSTEM_PROMPT.format(index=index)
+    if mode == QueryMode.BTW:
+        prompt += BTW_ADDENDUM
+    return prompt
 
 
-def chat(brains: list[QuerySource], client: OpenAI, model: str, messages: list[dict]) -> str:
+async def chat(
+    brains: list[QuerySource],
+    client: AsyncOpenAI,
+    model: str,
+    messages: list[dict],
+    session: AsyncSession,
+) -> str:
     """Run a chat turn, handling tool calls in a loop until the model responds with text."""
     articles_read: list[str] = []
     sources_read: list[str] = []
@@ -264,7 +282,7 @@ def chat(brains: list[QuerySource], client: OpenAI, model: str, messages: list[d
 
     while True:
         llm_rounds += 1
-        response = client.chat.completions.create(
+        response = await client.chat.completions.create(
             model=model,
             messages=messages,
             tools=TOOLS,
@@ -317,7 +335,7 @@ def chat(brains: list[QuerySource], client: OpenAI, model: str, messages: list[d
             elif source_type == "search":
                 searches.append(args["query"])
 
-            result = _dispatch_tool(brains, name, args)
+            result = await _dispatch_tool(brains, name, args, session)
             messages.append({
                 "role": "tool",
                 "tool_call_id": tc.id,
@@ -325,15 +343,20 @@ def chat(brains: list[QuerySource], client: OpenAI, model: str, messages: list[d
             })
 
 
-def chat_with_fallback(brains: list[QuerySource], client: OpenAI, model: str, messages: list[dict]) -> str:
+async def chat_with_fallback(
+    brains: list[QuerySource],
+    client: AsyncOpenAI,
+    model: str,
+    messages: list[dict],
+    session: AsyncSession,
+) -> str:
     """Try the primary model, fall back to alternatives on rate limit."""
     for m in _models_with_fallback(model):
         try:
-            return chat(brains, client, m, messages)
+            return await chat(brains, client, m, messages, session)
         except Exception as e:
             if _is_rate_limited(e):
                 log_event("query.rate_limited", model=m)
-                print(f"  (rate limited on {m}, trying next...)")
                 continue
             raise
 
@@ -350,14 +373,9 @@ async def stream_chat(
     client: AsyncOpenAI,
     model: str,
     messages: list[dict],
+    session: AsyncSession,
 ) -> AsyncGenerator[dict, None]:
     """Yield SSE event dicts as the model traverses the knowledge base.
-
-    All content tokens are yielded as "token" events for progressive
-    rendering. In practice, tool-call rounds produce empty content so
-    tokens only appear during the final answer round. The frontend
-    treats all tokens as answer text and all source events as the
-    thinking/research phase (source cards only, no thinking text).
 
     Events:
       {"event": "source",   "data": {"type": "article"|"raw"|"search", ...}}
@@ -443,7 +461,7 @@ async def stream_chat(
                 elif source_type == "search":
                     searches.append(meta["query"])
 
-                result = _dispatch_tool(brains, name, args)
+                result = await _dispatch_tool(brains, name, args, session)
                 messages.append({
                     "role": "tool",
                     "tool_call_id": tc["id"],
@@ -466,7 +484,6 @@ async def stream_chat(
         emit_wide_event()
         yield {"event": "done", "data": {}}
         return
-
 
 
 def _build_origin_messages(
@@ -496,22 +513,53 @@ def _build_origin_messages(
     ]
 
 
+def _build_session_context_messages(session_md: str) -> list[dict]:
+    """Build messages that inject the session transcript as conversation context."""
+    return [
+        {
+            "role": "user",
+            "content": (
+                "Here is the conversation so far in this research session. "
+                "The user is asking a side question about a specific passage.\n\n"
+                f"--- SESSION TRANSCRIPT ---\n{session_md}\n--- END TRANSCRIPT ---"
+            ),
+        },
+        {
+            "role": "assistant",
+            "content": (
+                "I've reviewed the session transcript and understand the "
+                "conversation context. I'm ready for the follow-up question."
+            ),
+        },
+    ]
+
+
+# ---------------------------------------------------------------------------
+# Public entry points
+# ---------------------------------------------------------------------------
+
+
 async def run_stream_query(
     brains: list[QuerySource],
     question: str,
+    session: AsyncSession,
     *,
     model: str | None = None,
     origin_slug: str | None = None,
+    session_context: str | None = None,
+    mode: QueryMode = QueryMode.QUERY,
 ) -> AsyncGenerator[dict, None]:
     """Stream SSE events for a single question, with model fallback on rate limit."""
     primary = model or QUERY_MODEL
     client = get_async_client(max_retries=0)
-    system_prompt = build_system_prompt(brains)
+    system_prompt = build_system_prompt(brains, mode=mode)
     base_messages: list[dict] = [
         {"role": "system", "content": system_prompt},
     ]
     if origin_slug:
         base_messages.extend(_build_origin_messages(brains, origin_slug))
+    if session_context:
+        base_messages.extend(_build_session_context_messages(session_context))
     base_messages.append({"role": "user", "content": question})
 
     query_id = f"q-{uuid.uuid4().hex[:8]}"
@@ -521,7 +569,7 @@ async def run_stream_query(
     for m in _models_with_fallback(primary):
         messages = list(base_messages)
         try:
-            async for event in stream_chat(brains, client, m, messages):
+            async for event in stream_chat(brains, client, m, messages, session):
                 yield event
             return
         except Exception as e:
@@ -534,22 +582,20 @@ async def run_stream_query(
     yield {"event": "error", "data": {"message": "all models rate limited — try again in a minute"}}
 
 
-# ---------------------------------------------------------------------------
-# Public entry points
-# ---------------------------------------------------------------------------
-
-
-def run_query(
+async def run_query(
     brains: list[QuerySource],
     question: str,
+    session: AsyncSession,
     *,
     model: str | None = None,
     origin_slug: str | None = None,
+    session_context: str | None = None,
+    mode: QueryMode = QueryMode.QUERY,
 ) -> str:
     """Answer a single question against the knowledge base."""
-    model = model or QUERY_MODEL
-    client = get_sync_client()
-    system_prompt = build_system_prompt(brains)
+    primary = model or QUERY_MODEL
+    client = get_async_client()
+    system_prompt = build_system_prompt(brains, mode=mode)
     messages: list[dict] = [{"role": "system", "content": system_prompt}]
 
     query_id = f"q-{uuid.uuid4().hex[:8]}"
@@ -558,18 +604,21 @@ def run_query(
 
     if origin_slug:
         messages.extend(_build_origin_messages(brains, origin_slug))
+    if session_context:
+        messages.extend(_build_session_context_messages(session_context))
     messages.append({"role": "user", "content": question})
-    return chat_with_fallback(brains, client, model, messages)
+    return await chat_with_fallback(brains, client, primary, messages, session)
 
 
-def run_interactive(
+async def run_interactive(
     brains: list[QuerySource],
+    session: AsyncSession,
     *,
     model: str | None = None,
 ) -> None:
     """Run an interactive REPL session against the knowledge base."""
     model = model or QUERY_MODEL
-    client = get_sync_client()
+    client = get_async_client()
     system_prompt = build_system_prompt(brains)
     messages: list[dict] = [{"role": "system", "content": system_prompt}]
 
@@ -578,7 +627,7 @@ def run_interactive(
 
     while True:
         try:
-            question = input("> ").strip()
+            question = (await asyncio.to_thread(input, "> ")).strip()
         except (EOFError, KeyboardInterrupt):
             print()
             break
@@ -591,5 +640,5 @@ def run_interactive(
         init_wide_event("query", question=question)
 
         messages.append({"role": "user", "content": question})
-        answer = chat_with_fallback(brains, client, model, messages)
+        answer = await chat_with_fallback(brains, client, model, messages, session)
         print(f"\n{answer}\n")

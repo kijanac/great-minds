@@ -1,4 +1,6 @@
 from great_minds.core.llm.providers import (
+    EMBEDDING_DIMENSIONS,
+    EMBEDDING_MODEL,
     EXTRACT_MODEL,
     FALLBACK_MODELS,
     QUERY_MODEL,
@@ -8,6 +10,8 @@ from great_minds.core.llm.providers import (
 )
 
 __all__ = [
+    "EMBEDDING_DIMENSIONS",
+    "EMBEDDING_MODEL",
     "EXTRACT_MODEL",
     "FALLBACK_MODELS",
     "QUERY_MODEL",

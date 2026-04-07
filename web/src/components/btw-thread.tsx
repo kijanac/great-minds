@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react"
+import Markdown from "react-markdown"
 import { ChevronDown, ChevronRight } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
@@ -7,12 +8,30 @@ import {
   CollapsibleContent,
   CollapsibleTrigger,
 } from "@/components/ui/collapsible"
+import { baseMdComponents, remarkPlugins } from "@/lib/markdown"
 import type { BtwThread as BtwThreadType } from "@/lib/types"
 
 interface BtwThreadProps {
   btw: BtwThreadType
   onReply: (btwId: string, text: string) => void
   onDismiss?: (btwId: string) => void
+}
+
+const btwMdComponents = {
+  ...baseMdComponents,
+  p: ({ children }: { children?: React.ReactNode }) => <p className="mb-0.5">{children}</p>,
+  ul: ({ children }: { children?: React.ReactNode }) => <ul className="list-disc list-inside mb-1 ml-2">{children}</ul>,
+  ol: ({ children }: { children?: React.ReactNode }) => <ol className="list-decimal list-inside mb-1 ml-2">{children}</ol>,
+  blockquote: ({ children }: { children?: React.ReactNode }) => (
+    <blockquote className="border-l-2 border-gold-dim pl-2.5 text-warm-faint italic my-1.5">
+      {children}
+    </blockquote>
+  ),
+  code: ({ children }: { children?: React.ReactNode }) => (
+    <code className="font-mono text-[length:var(--text-chrome)] bg-code-bg px-1 py-0.5 rounded-sm text-gold">
+      {children}
+    </code>
+  ),
 }
 
 export function BtwThread({ btw, onReply, onDismiss }: BtwThreadProps) {
@@ -37,6 +56,12 @@ export function BtwThread({ btw, onReply, onDismiss }: BtwThreadProps) {
     }
     wasStreaming.current = btw.streaming
   }, [btw.streaming])
+
+  // Sources sit between the last user message and the assistant
+  // response — whether that response is still streaming or final.
+  const lastMsg = btw.messages[btw.messages.length - 1]
+  const lastAssistant = !btw.streaming && lastMsg?.role === "assistant" ? lastMsg : null
+  const visibleMessages = lastAssistant ? btw.messages.slice(0, -1) : btw.messages
 
   return (
     <Collapsible
@@ -64,7 +89,7 @@ export function BtwThread({ btw, onReply, onDismiss }: BtwThreadProps) {
       </CollapsibleTrigger>
 
       <CollapsibleContent>
-        {btw.messages.map((m, i) => (
+        {visibleMessages.map((m, i) => (
           <div
             key={i}
             className={`text-[length:var(--text-small)] leading-[1.72] mb-[9px] ${
@@ -73,25 +98,55 @@ export function BtwThread({ btw, onReply, onDismiss }: BtwThreadProps) {
                 : "text-warm-faint"
             }`}
           >
-            {m.role === "user" && (
-              <span className="font-mono not-italic text-[length:var(--text-chrome)] tracking-[0.1em] text-interactive-dim mr-0.5">
-                you ·{" "}
-              </span>
+            {m.role === "user" ? (
+              <>
+                <span className="font-mono not-italic text-[length:var(--text-chrome)] tracking-[0.1em] text-interactive-dim mr-0.5">
+                  you ·{" "}
+                </span>
+                {m.text}
+              </>
+            ) : (
+              <Markdown remarkPlugins={remarkPlugins} components={btwMdComponents}>
+                {m.text}
+              </Markdown>
             )}
-            {m.text}
           </div>
         ))}
 
+        {btw.sources.length > 0 && (
+          <div className="flex flex-wrap gap-x-2 gap-y-0.5 mb-[7px]">
+            {btw.sources.map((s, i) => (
+              <span
+                key={i}
+                className="font-mono text-[length:var(--text-chrome)] tracking-[0.06em] text-interactive-dim"
+                title={s.thinking}
+              >
+                {s.label}
+              </span>
+            ))}
+          </div>
+        )}
+
         {btw.streaming && !btw.streamText && (
           <div className="text-[length:var(--text-small)] leading-[1.72] mb-[9px] text-warm-faint animate-[pulse-fade_1.6s_ease-in-out_infinite]">
-            thinking...
+            {btw.sources.length > 0 ? "reading..." : "thinking..."}
           </div>
         )}
 
         {btw.streaming && btw.streamText && (
           <div className="text-[length:var(--text-small)] leading-[1.72] mb-[9px] text-warm-faint">
-            {btw.streamText}
+            <Markdown remarkPlugins={remarkPlugins} components={btwMdComponents}>
+              {btw.streamText}
+            </Markdown>
             <span className="inline-block w-px h-2.5 bg-gold-muted animate-[blink_1s_step-end_infinite] align-middle ml-px" />
+          </div>
+        )}
+
+        {lastAssistant && (
+          <div className="text-[length:var(--text-small)] leading-[1.72] mb-[9px] text-warm-faint">
+            <Markdown remarkPlugins={remarkPlugins} components={btwMdComponents}>
+              {lastAssistant.text}
+            </Markdown>
           </div>
         )}
 

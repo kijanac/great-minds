@@ -30,10 +30,13 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from io import StringIO
+from uuid import UUID
 
 from openai import AsyncOpenAI
 from ruamel.yaml import YAML
+from sqlalchemy.ext.asyncio import AsyncSession
 
+from great_minds.core.brains._search_indexer import rebuild_index
 from great_minds.core.llm import EXTRACT_MODEL, REASON_MODEL, get_async_client
 from great_minds.core.storage import Storage
 
@@ -546,9 +549,17 @@ class CompilationResult:
     docs_compiled: int = 0
     articles_written: list[dict] = field(default_factory=list)
     # Each entry: {"slug": str, "action": "create"|"update"}
+    chunks_indexed: int = 0
 
 
-async def run(storage: Storage, load_prompt: Callable[[str], str], *, limit: int | None = None) -> CompilationResult:
+async def run(
+    storage: Storage,
+    load_prompt: Callable[[str], str],
+    *,
+    limit: int | None = None,
+    db_session: "AsyncSession | None" = None,
+    brain_id: "UUID | None" = None,
+) -> CompilationResult:
     client = get_async_client()
     sem = asyncio.Semaphore(MAX_CONCURRENT)
 
@@ -634,7 +645,13 @@ async def run(storage: Storage, load_prompt: Callable[[str], str], *, limit: int
     mark_compiled(storage, docs)
     append_changelog(storage, docs, written)
 
-    log.info("compilation complete -- %d docs, %d articles", len(docs), len(written))
+    # --- Phase 7: Rebuild search index ---
+    chunks_indexed = 0
+    if db_session is not None and brain_id is not None:
+        log.info("=== phase 7: rebuilding search index ===")
+        chunks_indexed = await rebuild_index(db_session, brain_id, storage)
+
+    log.info("compilation complete -- %d docs, %d articles, %d chunks indexed", len(docs), len(written), chunks_indexed)
 
     return CompilationResult(
         docs_compiled=len(docs),
@@ -642,4 +659,5 @@ async def run(storage: Storage, load_prompt: Callable[[str], str], *, limit: int
             {"slug": a.get("slug", ""), "action": a.get("action", "create")}
             for a in written
         ],
+        chunks_indexed=chunks_indexed,
     )

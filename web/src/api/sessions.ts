@@ -9,6 +9,7 @@ export interface ExchangePayload {
 
 export interface BtwPayload {
   anchor: string
+  paragraph: string
   exchangeId: string
   paragraphIndex: number
   messages: { role: string; text: string }[]

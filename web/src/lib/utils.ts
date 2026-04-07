@@ -29,22 +29,10 @@ export function formatRelativeDate(iso: string): string {
   return d.toLocaleDateString("en-US", { month: "short", day: "numeric" })
 }
 
-export function simulateStream(
-  fullText: string,
-  onChunk: (text: string) => void,
-  onDone: () => void,
-  speed = 4,
-  intervalMs = 14,
-): () => void {
-  let i = 0
-  const iv = setInterval(() => {
-    i += speed
-    onChunk(fullText.slice(0, i))
-    if (i >= fullText.length) {
-      clearInterval(iv)
-      onChunk(fullText)
-      onDone()
-    }
-  }, intervalMs)
-  return () => clearInterval(iv)
+export function buildBtwQuery(paragraph: string, anchor: string, userText: string): string {
+  const parts: string[] = []
+  if (paragraph) parts.push(`Passage:\n> ${paragraph}`)
+  if (anchor && anchor !== paragraph) parts.push(`Highlighted: "${anchor}"`)
+  parts.push(userText)
+  return parts.join("\n\n")
 }

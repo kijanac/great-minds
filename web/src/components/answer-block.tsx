@@ -1,11 +1,9 @@
 import { Fragment, useCallback, type ComponentProps } from "react"
 import Markdown from "react-markdown"
-import remarkGfm from "remark-gfm"
 
+import { baseMdComponents, remarkPlugins } from "@/lib/markdown"
 import type { BtwThread as BtwThreadType, SelectionInfo } from "@/lib/types"
 import { BtwThread } from "./btw-thread"
-
-const remarkPlugins = [remarkGfm]
 
 interface AnswerBlockProps {
   text: string
@@ -24,6 +22,7 @@ function splitBlocks(text: string): string[] {
 }
 
 const mdComponents: ComponentProps<typeof Markdown>["components"] = {
+  ...baseMdComponents,
   h2: ({ children }) => (
     <h2 className="text-[length:var(--text-heading)] font-bold text-foreground mt-[26px] mb-[11px] -tracking-[0.01em] first:mt-0">
       {children}
@@ -38,22 +37,6 @@ const mdComponents: ComponentProps<typeof Markdown>["components"] = {
     <p className="text-[length:var(--text-body)] leading-[1.82] text-warm-dim mb-0.5">
       {children}
     </p>
-  ),
-  a: ({ children, href }) => {
-    const isExternal = href?.startsWith("http")
-    return (
-      <a
-        href={href}
-        className="text-gold underline underline-offset-2 decoration-gold/30 hover:decoration-gold/60 transition-colors"
-        {...(isExternal ? { target: "_blank", rel: "noopener noreferrer" } : {})}
-      >
-        {children}
-      </a>
-    )
-  },
-  em: ({ children }) => <em className="text-warm">{children}</em>,
-  strong: ({ children }) => (
-    <strong className="text-foreground font-bold">{children}</strong>
   ),
   ul: ({ children }) => (
     <ul className="list-disc list-inside text-[length:var(--text-body)] leading-[1.82] text-warm-dim mb-2 ml-2">
@@ -90,7 +73,7 @@ export function AnswerBlock({
   let paraIndex = 0
 
   const makeSelectionHandler = useCallback(
-    (pi: number) => (e: React.MouseEvent) => {
+    (pi: number, blockText: string) => (e: React.MouseEvent) => {
       if (streaming) return
       e.stopPropagation()
 
@@ -104,6 +87,7 @@ export function AnswerBlock({
         y: rect.top - 6,
         paragraphIndex: pi,
         exchangeId,
+        paragraph: blockText,
       })
     },
     [streaming, exchangeId, onSelection],
@@ -118,7 +102,7 @@ export function AnswerBlock({
 
         return (
           <Fragment key={i}>
-            <div onMouseUp={makeSelectionHandler(pi)}>
+            <div onMouseUp={makeSelectionHandler(pi, block)}>
               <Markdown remarkPlugins={remarkPlugins} components={mdComponents}>{block}</Markdown>
               {streaming && isLast && (
                 <span className="inline-block w-0.5 h-[13px] bg-gold animate-[blink_1s_step-end_infinite] align-middle ml-px" />

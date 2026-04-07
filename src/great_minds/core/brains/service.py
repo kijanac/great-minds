@@ -1,12 +1,14 @@
 """Brain service: access control, brain lifecycle, and membership operations."""
 
 import logging
+from pathlib import Path
 from uuid import UUID
 
 from great_minds.core.brains.models import BrainMembership, MemberRole
 from great_minds.core.brains.repository import BrainRepository
 from great_minds.core.brains.schemas import Brain
 from great_minds.core.querier import QuerySource
+from great_minds.core.settings import Settings
 from great_minds.core.storage import LocalStorage
 from great_minds.core.users.models import User
 
@@ -16,8 +18,9 @@ log = logging.getLogger(__name__)
 class BrainService:
     """Manages brain access control, lifecycle, and membership operations."""
 
-    def __init__(self, repository: BrainRepository) -> None:
+    def __init__(self, repository: BrainRepository, settings: Settings) -> None:
         self.repo = repository
+        self.data_dir = Path(settings.data_dir)
 
     async def get_brain(self, brain_id: UUID, user_id: UUID) -> tuple[Brain, MemberRole]:
         """Fetch a brain by ID with access check. Raises ValueError if not found."""
@@ -38,7 +41,7 @@ class BrainService:
     async def get_all_query_sources(self, user_id: UUID) -> list[QuerySource]:
         """Build QuerySources for all brains a user has access to."""
         rows = await self.repo.list_user_brains(user_id)
-        return [QuerySource(storage=LocalStorage(brain.storage_root), label=brain.slug) for brain, _role in rows]
+        return [QuerySource(storage=LocalStorage(self.data_dir / brain.storage_root), label=brain.slug, brain_id=brain.id) for brain, _role in rows]
 
     async def get_member_count(self, brain_id: UUID) -> int:
         return await self.repo.get_member_count(brain_id)

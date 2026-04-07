@@ -1,0 +1,16 @@
+.venv/
+.git/
+__pycache__/
+*.pyc
+*.egg-info/
+node_modules/
+web/
+corpus/
+raw/
+wiki/
+outputs/
+produced/
+sessions/
+dogfood-output/
+scripts/
+ingest/

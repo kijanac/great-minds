@@ -23,9 +23,11 @@ function replayEvents(events: SessionEvent[]): Exchange[] {
       const btw: BtwThread = {
         id: genId("btw"),
         anchor: event.anchor as string,
+        paragraph: event.paragraph as string,
         paragraphIndex: (event.pi as number) ?? -1,
         exchangeId: exId,
         messages: (event.messages as BtwThread["messages"]) ?? [],
+        sources: [],
         streaming: false,
         streamText: "",
       }

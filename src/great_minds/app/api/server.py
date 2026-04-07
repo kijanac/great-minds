@@ -35,7 +35,7 @@ from great_minds.core import querier, sessions, tasks
 from great_minds.core.brains import _ingester as ingester, _linter as linter
 from great_minds.core.brains.service import BrainService
 from great_minds.core.db import engine, get_session, session_maker
-from great_minds.core.settings import get_settings
+from great_minds.core.settings import Settings, get_settings
 from great_minds.core.tasks import create_absurd
 from great_minds.core.users.models import User
 
@@ -70,6 +70,8 @@ class QueryRequest(BaseModel):
     question: str
     model: str | None = None
     origin_slug: str | None = None
+    session_context: str | None = None
+    mode: querier.QueryMode = querier.QueryMode.QUERY
 
 
 class IngestRequest(BaseModel):
@@ -110,6 +112,7 @@ class ExchangeData(BaseModel):
 
 class BtwData(BaseModel):
     anchor: str
+    paragraph: str
     exchangeId: str
     paragraphIndex: int = -1
     messages: list[dict]
@@ -162,8 +165,12 @@ async def lifespan(app: FastAPI):
         absurd.start_worker(concurrency=2, poll_interval=0.5),
     )
     yield
-    await absurd.stop_worker()
+    absurd.stop_worker()
     worker.cancel()
+    try:
+        await worker
+    except asyncio.CancelledError:
+        pass
     await absurd.close()
     await engine.dispose()
 
@@ -187,6 +194,10 @@ def create_app() -> FastAPI:
         max_age=3600,
     )
 
+    @app.get("/health")
+    async def health():
+        return {"status": "ok"}
+
     app.include_router(auth_router)
     app.include_router(brain_router)
     app.include_router(proposal_router)
@@ -197,11 +208,13 @@ def create_app() -> FastAPI:
         ctx: BrainContext = Depends(get_authorized_brain),
         session: AsyncSession = Depends(get_session),
         absurd: AsyncAbsurd = Depends(get_absurd),
+        settings: Settings = Depends(get_settings),
     ) -> TaskResponse:
         record = await tasks.spawn_compile(
             absurd, session,
             brain_id=ctx.brain.id,
             storage_root=ctx.brain.storage_root,
+            data_dir=settings.data_dir,
             label=ctx.brain.slug,
             brain_kind=ctx.brain.kind,
             limit=req.limit,
@@ -236,13 +249,16 @@ def create_app() -> FastAPI:
         ctx: BrainContext = Depends(get_authorized_brain),
         user: User = Depends(get_current_user),
         brain_service: BrainService = Depends(get_brain_service),
+        session: AsyncSession = Depends(get_session),
     ) -> QueryResponse:
         all_sources = await brain_service.get_all_query_sources(user.id)
-        target = querier.QuerySource(storage=ctx.storage, label=ctx.brain.slug)
+        target = querier.QuerySource(storage=ctx.storage, label=ctx.brain.slug, brain_id=ctx.brain.id)
         sources = [target] + [s for s in all_sources if s.label != target.label]
-        answer = await asyncio.to_thread(
-            querier.run_query, sources, req.question, model=req.model,
+        answer = await querier.run_query(
+            sources, req.question, session, model=req.model,
             origin_slug=req.origin_slug,
+            session_context=req.session_context,
+            mode=req.mode,
         )
         return QueryResponse(answer=answer)
 
@@ -252,15 +268,18 @@ def create_app() -> FastAPI:
         ctx: BrainContext = Depends(get_authorized_brain),
         user: User = Depends(get_current_user),
         brain_service: BrainService = Depends(get_brain_service),
+        session: AsyncSession = Depends(get_session),
     ) -> StreamingResponse:
         all_sources = await brain_service.get_all_query_sources(user.id)
-        target = querier.QuerySource(storage=ctx.storage, label=ctx.brain.slug)
+        target = querier.QuerySource(storage=ctx.storage, label=ctx.brain.slug, brain_id=ctx.brain.id)
         sources = [target] + [s for s in all_sources if s.label != target.label]
 
         async def event_generator():
             async for event in querier.run_stream_query(
-                sources, req.question, model=req.model,
+                sources, req.question, session, model=req.model,
                 origin_slug=req.origin_slug,
+                session_context=req.session_context,
+                mode=req.mode,
             ):
                 etype = event["event"]
                 data = json.dumps(event["data"])

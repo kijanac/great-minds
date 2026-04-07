@@ -19,7 +19,7 @@ export function ArticleReader({ slug }: ArticleReaderProps) {
   const navigate = useNavigate()
   const handleLinkClick = useLinkInterceptor()
   const { content, loading } = useArticle(slug)
-  const { btws, startBtw, replyBtw, dismissEmpty, cleanup } = useBtw()
+  const { btws, startBtw, replyBtw, dismissEmpty, cleanup } = useBtw(slug)
   const [popover, setPopover] = useState<SelectionInfo | null>(null)
 
   usePopoverDismiss(() => setPopover(null))

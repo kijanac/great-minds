@@ -63,10 +63,18 @@ async def compile_task(params: dict, ctx) -> dict:
 
     For team brains, also checks cross-brain link integrity after compilation.
     """
-    storage = LocalStorage(Path(params["storage_root"]))
+    data_dir = Path(params["data_dir"])
+    storage = LocalStorage(data_dir / params["storage_root"])
+    brain_id = UUID(params["brain_id"])
+    session = _task_session.get()
 
     await ctx.heartbeat(600)
-    result = await compiler.run(storage, partial(load_prompt, storage), limit=params.get("limit"))
+    result = await compiler.run(
+        storage, partial(load_prompt, storage),
+        limit=params.get("limit"),
+        db_session=session,
+        brain_id=brain_id,
+    )
 
     result_dict = {
         "docs_compiled": result.docs_compiled,
@@ -74,6 +82,7 @@ async def compile_task(params: dict, ctx) -> dict:
             {"slug": a["slug"], "action": a["action"]}
             for a in result.articles_written
         ],
+        "chunks_indexed": result.chunks_indexed,
     }
 
     # Post-compile: check cross-brain links for team brains
@@ -91,7 +100,7 @@ async def compile_task(params: dict, ctx) -> dict:
         personal_brains = await repo.list_team_member_personal_brains(brain_id)
 
         peer_brains = [
-            (LocalStorage(Path(b.storage_root)), b.slug)
+            (LocalStorage(data_dir / b.storage_root), b.slug)
             for b in personal_brains
         ]
 
@@ -145,6 +154,7 @@ async def spawn_compile(
     session: AsyncSession,
     brain_id: UUID,
     storage_root: str,
+    data_dir: str,
     label: str,
     brain_kind: str,
     *,
@@ -158,6 +168,7 @@ async def spawn_compile(
     params = {
         "brain_id": str(brain_id),
         "storage_root": storage_root,
+        "data_dir": data_dir,
         "label": label,
         "brain_kind": brain_kind,
         "limit": limit,

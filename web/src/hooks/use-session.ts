@@ -1,17 +1,44 @@
 import { useCallback, useEffect, useRef, useState } from "react"
 
-import { queryKnowledgeBase, streamQuery } from "@/api/query"
+import { consumeStream, streamQuery } from "@/api/query"
 import { appendBtw, appendExchange, createSession } from "@/api/sessions"
 import type {
   BtwThread,
   Exchange,
   Phase,
   SelectionInfo,
-  SourceRef,
   ThinkingBlock,
 } from "@/lib/types"
 import { assistantMsg, userMsg } from "@/lib/types"
-import { genId, simulateStream } from "@/lib/utils"
+import { buildBtwQuery, genId } from "@/lib/utils"
+
+function serializeThread(thread: Exchange[]): string {
+  const parts: string[] = []
+  for (let i = 0; i < thread.length; i++) {
+    const ex = thread[i]
+    if (i > 0) parts.push("\n---\n\n")
+    parts.push(`# ${ex.query}\n\n`)
+    for (const block of ex.thinking) {
+      for (const src of block.sources) {
+        parts.push(`> \`${src.label}\`\n`)
+      }
+      parts.push(">\n")
+    }
+    parts.push(ex.answer + "\n")
+    for (const btw of ex.btws) {
+      const short = btw.anchor.length > 60 ? btw.anchor.slice(0, 60) + "..." : btw.anchor
+      parts.push(`\n> **BTW** re: "${short}"\n>\n`)
+      for (const msg of btw.messages) {
+        if (msg.role === "user") {
+          parts.push(`> *${msg.text}*\n>\n`)
+        } else {
+          parts.push(`> ${msg.text}\n>\n`)
+        }
+      }
+    }
+  }
+  return parts.join("").trimEnd() + "\n"
+}
 
 function exchangeToPayload(ex: Exchange) {
   return {
@@ -31,6 +58,7 @@ interface UseSessionOptions {
   sessionId?: string
   originSlug?: string
   initialQuery?: string
+  onSessionCreated?: (sessionId: string) => void
 }
 
 export function useSession(options?: UseSessionOptions) {
@@ -40,7 +68,10 @@ export function useSession(options?: UseSessionOptions) {
   const [thread, setThread] = useState<Exchange[]>(
     options?.initialExchanges ?? [],
   )
+  const [sessionId, setSessionId] = useState<string | null>(options?.sessionId ?? null)
   const sessionIdRef = useRef<string | null>(options?.sessionId ?? null)
+  const threadRef = useRef(thread)
+  threadRef.current = thread
   const [liveThinking, setLiveThinking] = useState<ThinkingBlock[]>([])
   const [liveText, setLiveText] = useState("")
   const [chips, setChips] = useState<string[]>([])
@@ -58,6 +89,8 @@ export function useSession(options?: UseSessionOptions) {
 
   const originSlugRef = useRef<string | undefined>(options?.originSlug)
   const initialQueryRef = useRef<string | undefined>(options?.initialQuery)
+  const onSessionCreatedRef = useRef(options?.onSessionCreated)
+  onSessionCreatedRef.current = options?.onSessionCreated
   const isFirstExchange = useRef(true)
 
   const runExchange = useCallback(async (question: string) => {
@@ -70,31 +103,19 @@ export function useSession(options?: UseSessionOptions) {
     const controller = new AbortController()
     abortRef.current = controller
 
-    const sources: SourceRef[] = []
-    let answer = ""
-
     try {
       const originForQuery = isFirstExchange.current ? originSlugRef.current : undefined
       isFirstExchange.current = false
-      for await (const event of streamQuery(question, { signal: controller.signal, originSlug: originForQuery })) {
-        if (event.event === "token") {
-          answer += event.data.text
-          setPhase("streaming")
-          setLiveText(answer)
-        } else if (event.event === "source") {
-          const label = event.data.slug ?? event.data.query ?? event.data.path
-          const type = event.data.type
-          if (label && (type === "article" || type === "raw" || type === "search")) {
-            sources.push({ label, type })
-            setLiveThinking([{ sources: [...sources] }])
-          }
-        } else if (event.event === "done") {
-          break
-        } else if (event.event === "error") {
-          console.error("Stream error:", event.data.message)
-          break
-        }
-      }
+      const { answer, sources } = await consumeStream(
+        streamQuery(question, { signal: controller.signal, originSlug: originForQuery, mode: "query" }),
+        {
+          onSources: (s) => setLiveThinking([{ sources: s }]),
+          onToken: (text) => {
+            setPhase("streaming")
+            setLiveText(text)
+          },
+        },
+      )
 
       const exchange: Exchange = {
         id: exId, query: question, thinking: [{ sources }], answer, btws: [],
@@ -109,9 +130,12 @@ export function useSession(options?: UseSessionOptions) {
       if (!sessionIdRef.current) {
         const sid = genId("s")
         sessionIdRef.current = sid
-        createSession(sid, payload, originSlugRef.current).catch((e) =>
-          console.error("Failed to save session:", e),
-        )
+        createSession(sid, payload, originSlugRef.current)
+          .then(() => {
+            setSessionId(sid)
+            onSessionCreatedRef.current?.(sid)
+          })
+          .catch((e) => console.error("Failed to save session:", e))
       } else {
         appendExchange(sessionIdRef.current, payload).catch((e) =>
           console.error("Failed to append exchange:", e),
@@ -151,6 +175,7 @@ export function useSession(options?: UseSessionOptions) {
     for (const fn of cleanupRef.current) fn()
     cleanupRef.current = []
     sessionIdRef.current = null
+    setSessionId(null)
     setPhase("idle")
     setThread([])
     setLiveThinking([])
@@ -174,9 +199,11 @@ export function useSession(options?: UseSessionOptions) {
     const btw: BtwThread = {
       id: btwId,
       anchor: info.text,
+      paragraph: info.paragraph,
       paragraphIndex: info.paragraphIndex,
       exchangeId: info.exchangeId,
       messages: [],
+      sources: [],
       streaming: false,
       streamText: "",
     }
@@ -193,81 +220,70 @@ export function useSession(options?: UseSessionOptions) {
   }, [])
 
   const replyBtw = useCallback((btwId: string, userText: string) => {
-    let anchor = ""
+    const target = threadRef.current.flatMap((ex) => ex.btws).find((b) => b.id === btwId)
+    const anchor = target?.anchor ?? ""
+    const paragraph = target?.paragraph ?? ""
+
+    const ownerExId = target?.exchangeId ?? ""
+
     setThread((prev) =>
-      prev.map((ex) => ({
-        ...ex,
-        btws: ex.btws.map((b) => {
-          if (b.id !== btwId) return b
-          anchor = b.anchor
-          return {
-            ...b,
-            streaming: true,
-            streamText: "",
-            messages: [
-              ...b.messages,
-              userMsg(userText),
-            ],
-          }
-        }),
-      })),
+      prev.map((ex) => {
+        if (ex.id !== ownerExId) return ex
+        return {
+          ...ex,
+          btws: ex.btws.map((b) => {
+            if (b.id !== btwId) return b
+            return {
+              ...b,
+              streaming: true,
+              streamText: "",
+              messages: [...b.messages, userMsg(userText)],
+            }
+          }),
+        }
+      }),
     )
 
-    const contextualQuery = anchor
-      ? `Regarding "${anchor}": ${userText}`
-      : userText
+    const contextualQuery = buildBtwQuery(paragraph, anchor, userText)
 
-    queryKnowledgeBase(contextualQuery).then((answer) => {
-      const cancel = simulateStream(
-        answer,
-        (partial) => {
-          setThread((prev) =>
-            prev.map((ex) => ({
-              ...ex,
-              btws: ex.btws.map((b) =>
-                b.id === btwId ? { ...b, streamText: partial } : b,
-              ),
-            })),
-          )
-        },
-        () => {
-          // Find the BTW to get its metadata for persistence
-          let btwToSave: { anchor: string; exchangeId: string; paragraphIndex: number; messages: { role: "user" | "assistant"; text: string }[] } | null = null
+    const sessionContext = serializeThread(threadRef.current)
+    const controller = new AbortController()
+    cleanupRef.current.push(() => controller.abort())
 
-          setThread((prev) =>
-            prev.map((ex) => ({
-              ...ex,
-              btws: ex.btws.map((b) => {
-                if (b.id !== btwId) return b
-                const finalBtw = {
-                  ...b,
-                  streaming: false,
-                  streamText: "",
-                  messages: [
-                    ...b.messages,
-                    assistantMsg(answer),
-                  ],
-                }
-                btwToSave = {
-                  anchor: finalBtw.anchor,
-                  exchangeId: finalBtw.exchangeId,
-                  paragraphIndex: finalBtw.paragraphIndex,
-                  messages: finalBtw.messages,
-                }
-                return finalBtw
-              }),
-            })),
-          )
-
-          if (btwToSave && sessionIdRef.current) {
-            appendBtw(sessionIdRef.current, btwToSave).catch((e) =>
-              console.error("Failed to save btw:", e),
-            )
-          }
-        },
+    const updateBtw = (patch: Partial<BtwThread>) =>
+      setThread((prev) =>
+        prev.map((ex) => {
+          if (ex.id !== ownerExId) return ex
+          return { ...ex, btws: ex.btws.map((b) => (b.id === btwId ? { ...b, ...patch } : b)) }
+        }),
       )
-      cleanupRef.current.push(cancel)
-    })
+
+    ;(async () => {
+      try {
+        const { answer, sources } = await consumeStream(
+          streamQuery(contextualQuery, { sessionContext, mode: "btw", signal: controller.signal }),
+          {
+            onSources: (s) => updateBtw({ sources: s }),
+            onToken: (text) => updateBtw({ streamText: text }),
+          },
+        )
+
+        const finalMessages = [...(target ? target.messages : []), userMsg(userText), assistantMsg(answer)]
+        updateBtw({ streaming: false, streamText: "", sources, messages: finalMessages })
+
+        if (sessionIdRef.current) {
+          appendBtw(sessionIdRef.current, {
+            anchor,
+            paragraph,
+            exchangeId: ownerExId,
+            paragraphIndex: target?.paragraphIndex ?? -1,
+            messages: finalMessages,
+          }).catch((e) => console.error("Failed to save btw:", e))
+        }
+      } catch (err) {
+        if ((err as Error).name === "AbortError") return
+      }
+    })()
   }, [])
 
   const dismissBtw = useCallback((btwId: string) => {
@@ -297,6 +313,7 @@ export function useSession(options?: UseSessionOptions) {
   }, [runExchange])
 
   return {
+    sessionId,
     phase,
     thread,
     liveThinking,

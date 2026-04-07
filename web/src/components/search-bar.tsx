@@ -13,6 +13,7 @@ interface SearchBarProps {
   onSubmit: () => void
   onReset: () => void
   recentSessions?: SessionSummary[]
+  sessionsLoading?: boolean
   onSessionClick?: (id: string) => void
   onViewAllSessions?: () => void
 }
@@ -24,6 +25,7 @@ export function SearchBar({
   onSubmit,
   onReset,
   recentSessions,
+  sessionsLoading,
   onSessionClick,
   onViewAllSessions,
 }: SearchBarProps) {
@@ -34,6 +36,7 @@ export function SearchBar({
   const showDropdown =
     focused &&
     !isActive &&
+    !sessionsLoading &&
     !query.trim() &&
     recentSessions &&
     recentSessions.length > 0

@@ -11,9 +11,9 @@ class Settings(BaseSettings):
     jwt_access_expiry_minutes: int = 30
     jwt_refresh_expiry_days: int = 7
     auth_code_expiry_minutes: int = 5
-    resend_api_key: str | None = None
-    resend_from_email: str = "Great Minds <noreply@greatminds.dev>"
-    proposals_storage_root: str = "proposals"
+    mailersend_api_key: str | None = None
+    mailersend_from_email: str | None = None
+    data_dir: str = "/data"
     cors_origins: list[str] = ["http://localhost:5173"]
 
 

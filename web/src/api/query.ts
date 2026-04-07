@@ -1,33 +1,18 @@
+import type { SourceRef } from "@/lib/types"
+
 import { apiFetch } from "./client"
 
-interface QueryOptions {
+interface StreamQueryOptions {
   model?: string
   originSlug?: string
-}
-
-export async function queryKnowledgeBase(
-  question: string,
-  options?: QueryOptions,
-): Promise<string> {
-  const res = await apiFetch("/query", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ question, model: options?.model, origin_slug: options?.originSlug }),
-  })
-  if (!res.ok) {
-    throw new Error(`Query failed: ${res.status} ${res.statusText}`)
-  }
-  const data: { answer: string } = await res.json()
-  return data.answer
+  sessionContext?: string
+  mode: "query" | "btw"
+  signal?: AbortSignal
 }
 
 export interface StreamEvent {
   event: "source" | "token" | "done" | "error"
   data: Record<string, string>
-}
-
-interface StreamQueryOptions extends QueryOptions {
-  signal?: AbortSignal
 }
 
 export async function* streamQuery(
@@ -37,7 +22,7 @@ export async function* streamQuery(
   const res = await apiFetch("/query/stream", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ question, model: options?.model, origin_slug: options?.originSlug }),
+    body: JSON.stringify({ question, model: options?.model, origin_slug: options?.originSlug, session_context: options?.sessionContext, mode: options?.mode }),
     signal: options?.signal,
   })
   if (!res.ok) {
@@ -75,4 +60,47 @@ export async function* streamQuery(
       }
     }
   }
+}
+
+/**
+ * Consume a stream of query events, accumulating sources and answer text.
+ * Handles the clearOnNextToken pattern (stream text between sources is
+ * captured as per-source "thinking" then reset for the next segment).
+ */
+export async function consumeStream(
+  stream: AsyncGenerator<StreamEvent>,
+  callbacks?: {
+    onSources?: (sources: SourceRef[]) => void
+    onToken?: (text: string) => void
+  },
+): Promise<{ answer: string; sources: SourceRef[] }> {
+  const sources: SourceRef[] = []
+  let streamText = ""
+  let clearOnNextToken = false
+
+  for await (const event of stream) {
+    if (event.event === "token") {
+      if (clearOnNextToken) {
+        streamText = ""
+        clearOnNextToken = false
+      }
+      streamText += event.data.text
+      callbacks?.onToken?.(streamText)
+    } else if (event.event === "source") {
+      const label = event.data.slug ?? event.data.query ?? event.data.path
+      const type = event.data.type
+      if (label && (type === "article" || type === "raw" || type === "search")) {
+        sources.push({ label, type: type as SourceRef["type"], thinking: streamText || undefined })
+        callbacks?.onSources?.([...sources])
+        clearOnNextToken = true
+      }
+    } else if (event.event === "done") {
+      break
+    } else if (event.event === "error") {
+      console.error("Stream error:", event.data.message)
+      break
+    }
+  }
+
+  return { answer: streamText, sources }
 }

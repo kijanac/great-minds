@@ -1,6 +1,6 @@
 services:
   db:
-    image: postgres:18
+    image: pgvector/pgvector:pg18
     restart: unless-stopped
     environment:
       POSTGRES_USER: great_minds

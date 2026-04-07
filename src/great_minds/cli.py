@@ -39,13 +39,19 @@ def cmd_query(args: argparse.Namespace) -> None:
     setup_logging(service="great-minds", json_output=args.json_logs)
     storage = _make_storage()
     sources = [querier.QuerySource(storage=storage, label="local")]
-    if args.question:
-        question = " ".join(args.question)
-        print(f"\n> {question}\n")
-        answer = querier.run_query(sources, question, model=args.model)
-        print(answer)
-    else:
-        querier.run_interactive(sources, model=args.model)
+
+    async def _run() -> None:
+        from great_minds.core.db import session_maker
+        async with session_maker() as session:
+            if args.question:
+                question = " ".join(args.question)
+                print(f"\n> {question}\n")
+                answer = await querier.run_query(sources, question, session, model=args.model)
+                print(answer)
+            else:
+                await querier.run_interactive(sources, session, model=args.model)
+
+    asyncio.run(_run())
 
 
 def cmd_ingest(args: argparse.Namespace) -> None:

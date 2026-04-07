@@ -1,8 +1,8 @@
 import { Maximize2, X } from "lucide-react"
 import Markdown from "react-markdown"
-import remarkGfm from "remark-gfm"
 
 import { Badge } from "@/components/ui/badge"
+import { remarkPlugins } from "@/lib/markdown"
 import { slugToTitle } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
 
@@ -69,7 +69,7 @@ export function ArticlePanel({
           )}
           {!loading && content && (
             <div className="text-[length:var(--text-small)] leading-[1.76] text-warm-faint [&_p]:mb-[13px] [&_h2]:text-[length:var(--text-body)] [&_h2]:font-bold [&_h2]:text-foreground [&_h2]:mt-5 [&_h2]:mb-2 [&_h3]:text-[length:var(--text-caption)] [&_h3]:font-mono [&_h3]:text-gold [&_h3]:tracking-[0.1em] [&_h3]:uppercase [&_h3]:mt-4 [&_h3]:mb-2">
-              <Markdown remarkPlugins={[remarkGfm]}>{content}</Markdown>
+              <Markdown remarkPlugins={remarkPlugins}>{content}</Markdown>
             </div>
           )}
           {!loading && !content && (

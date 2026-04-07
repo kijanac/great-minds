@@ -51,7 +51,7 @@ async def create_proposal(
         storage_path="",
     )
 
-    storage_path = f"{settings.proposals_storage_root}/{proposal.id}.md"
+    storage_path = f"{settings.data_dir}/proposals/{proposal.id}.md"
     proposal.storage_path = storage_path
 
     # Write file before commit — if this fails, DB transaction rolls back

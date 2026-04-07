@@ -1,12 +1,14 @@
 import { useCallback, useEffect, useRef, useState } from "react"
 
-import { queryKnowledgeBase } from "@/api/query"
+import { consumeStream, streamQuery } from "@/api/query"
 import type { BtwThread, SelectionInfo } from "@/lib/types"
 import { assistantMsg, userMsg } from "@/lib/types"
-import { genId, simulateStream } from "@/lib/utils"
+import { buildBtwQuery, genId } from "@/lib/utils"
 
-export function useBtw() {
+export function useBtw(originSlug?: string) {
   const [btws, setBtws] = useState<BtwThread[]>([])
+  const btwsRef = useRef(btws)
+  btwsRef.current = btws
   const cleanupRef = useRef<(() => void)[]>([])
 
   // Self-contained unmount cleanup — intervals are cleared
@@ -23,9 +25,11 @@ export function useBtw() {
     const btw: BtwThread = {
       id: btwId,
       anchor: info.text,
+      paragraph: info.paragraph,
       paragraphIndex: info.paragraphIndex,
       exchangeId: info.exchangeId,
       messages: [],
+      sources: [],
       streaming: false,
       streamText: "",
     }
@@ -33,11 +37,13 @@ export function useBtw() {
   }, [])
 
   const replyBtw = useCallback((btwId: string, userText: string) => {
-    let anchor = ""
+    const target = btwsRef.current.find((b) => b.id === btwId)
+    const anchor = target?.anchor ?? ""
+    const paragraph = target?.paragraph ?? ""
+
     setBtws((prev) =>
       prev.map((b) => {
         if (b.id !== btwId) return b
-        anchor = b.anchor
         return {
           ...b,
           streaming: true,
@@ -50,40 +56,34 @@ export function useBtw() {
       }),
     )
 
-    const contextualQuery = anchor
-      ? `Regarding "${anchor}": ${userText}`
-      : userText
+    const contextualQuery = buildBtwQuery(paragraph, anchor, userText)
 
-    queryKnowledgeBase(contextualQuery).then((answer) => {
-      const cancel = simulateStream(
-        answer,
-        (partial) => {
-          setBtws((prev) =>
-            prev.map((b) =>
-              b.id === btwId ? { ...b, streamText: partial } : b,
-            ),
-          )
-        },
-        () => {
-          setBtws((prev) =>
-            prev.map((b) =>
-              b.id === btwId
-                ? {
-                    ...b,
-                    streaming: false,
-                    streamText: "",
-                    messages: [
-                      ...b.messages,
-                      assistantMsg(answer),
-                    ],
-                  }
-                : b,
-            ),
-          )
-        },
-      )
-      cleanupRef.current.push(cancel)
-    })
+    const controller = new AbortController()
+    cleanupRef.current.push(() => controller.abort())
+
+    const updateBtw = (patch: Partial<BtwThread>) =>
+      setBtws((prev) => prev.map((b) => (b.id === btwId ? { ...b, ...patch } : b)))
+
+    ;(async () => {
+      try {
+        const { answer, sources } = await consumeStream(
+          streamQuery(contextualQuery, { originSlug, mode: "btw", signal: controller.signal }),
+          {
+            onSources: (s) => updateBtw({ sources: s }),
+            onToken: (text) => updateBtw({ streamText: text }),
+          },
+        )
+
+        updateBtw({
+          streaming: false,
+          streamText: "",
+          sources,
+          messages: [...(target?.messages ?? []), userMsg(userText), assistantMsg(answer)],
+        })
+      } catch (err) {
+        if ((err as Error).name === "AbortError") return
+      }
+    })()
   }, [])
 
   const dismissEmpty = useCallback((btwId: string) => {

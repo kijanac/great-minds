@@ -8,6 +8,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from great_minds.app.api.dependencies import get_brain_service, get_current_user
+from great_minds.core.settings import Settings, get_settings
 from great_minds.app.api.schemas import brains as schemas
 from great_minds.core import brain as brain_ops
 from great_minds.core.brains.models import MemberRole
@@ -54,6 +55,7 @@ async def get_brain(
     brain_id: UUID,
     user: User = Depends(get_current_user),
     brain_service: BrainService = Depends(get_brain_service),
+    settings: Settings = Depends(get_settings),
 ) -> schemas.BrainDetail:
     try:
         brain, role = await brain_service.get_brain(brain_id, user.id)
@@ -61,7 +63,7 @@ async def get_brain(
         raise HTTPException(status_code=404, detail="Brain not found")
 
     member_count = await brain_service.get_member_count(brain.id)
-    storage = LocalStorage(Path(brain.storage_root))
+    storage = LocalStorage(Path(settings.data_dir) / brain.storage_root)
     article_count = len(brain_ops.list_articles(storage))
 
     return schemas.BrainDetail(

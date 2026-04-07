@@ -63,6 +63,7 @@ export function ThinkingSection({
                 <ArticleBadge
                   key={`${src.type}:${src.label}`}
                   label={src.label}
+                  thinking={src.thinking}
                   active={activeCard === src.label}
                   onClick={src.type === "article" ? () => onCardClick(src.label) : undefined}
                 />
@@ -89,10 +90,12 @@ function SearchBadge({ query }: { query: string }) {
 
 function ArticleBadge({
   label,
+  thinking,
   active,
   onClick,
 }: {
   label: string
+  thinking?: string
   active: boolean
   onClick?: () => void
 }) {
@@ -100,6 +103,7 @@ function ArticleBadge({
     <Badge
       variant="outline"
       onClick={onClick}
+      title={thinking}
       className={`rounded-sm h-auto px-[9px] py-[3px] font-mono text-[length:var(--text-chrome)] tracking-[0.06em] whitespace-nowrap transition-all ${
         onClick ? "cursor-pointer" : "cursor-default"
       } ${

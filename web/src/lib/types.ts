@@ -14,9 +14,11 @@ export function assistantMsg(text: string): BtwMessage {
 export interface BtwThread {
   id: string
   anchor: string
+  paragraph: string
   paragraphIndex: number
   exchangeId: string
   messages: BtwMessage[]
+  sources: SourceRef[]
   streaming: boolean
   streamText: string
 }
@@ -24,6 +26,7 @@ export interface BtwThread {
 export interface SourceRef {
   label: string
   type: "article" | "raw" | "search"
+  thinking?: string
 }
 
 export interface ThinkingBlock {
@@ -44,6 +47,7 @@ export interface SelectionInfo {
   y: number
   paragraphIndex: number
   exchangeId: string
+  paragraph: string
 }
 
 export type Phase = "idle" | "searching" | "streaming" | "done"

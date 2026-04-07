@@ -1,8 +1,8 @@
 import { useCallback, useMemo, useRef, type ComponentProps } from "react"
 import Markdown from "react-markdown"
-import remarkGfm from "remark-gfm"
 
 import { BtwThread } from "@/components/btw-thread"
+import { baseMdComponents, remarkPlugins } from "@/lib/markdown"
 import type { BtwThread as BtwThreadType, SelectionInfo } from "@/lib/types"
 
 interface ArticleViewProps {
@@ -15,7 +15,6 @@ interface ArticleViewProps {
   documentId: string
 }
 
-const remarkPlugins = [remarkGfm]
 
 export function ArticleView({
   title,
@@ -41,6 +40,7 @@ export function ArticleView({
   const paraCountRef = useRef(0)
 
   const mdComponents = useMemo<ComponentProps<typeof Markdown>["components"]>(() => ({
+    ...baseMdComponents,
     h1: ({ children }) => (
       <h1 className="text-[length:var(--text-heading)] font-bold text-foreground mt-8 mb-4 first:mt-0">
         {children}
@@ -68,12 +68,14 @@ export function ArticleView({
               const sel = window.getSelection()
               if (!sel || sel.isCollapsed || sel.toString().trim().length < 5) return
               const rect = sel.getRangeAt(0).getBoundingClientRect()
+              const paraText = (e.currentTarget as HTMLParagraphElement).textContent ?? ""
               onSelectionRef.current({
                 text: sel.toString().trim(),
                 x: rect.left + rect.width / 2,
                 y: rect.top - 6,
                 paragraphIndex: pi,
                 exchangeId: documentIdRef.current,
+                paragraph: paraText,
               })
             }}
           >
@@ -90,22 +92,6 @@ export function ArticleView({
         </>
       )
     },
-    a: ({ children, href }) => {
-      const isExternal = href?.startsWith("http")
-      return (
-        <a
-          href={href}
-          className="text-gold underline underline-offset-2 decoration-gold/30 hover:decoration-gold/60 transition-colors"
-          {...(isExternal ? { target: "_blank", rel: "noopener noreferrer" } : {})}
-        >
-          {children}
-        </a>
-      )
-    },
-    em: ({ children }) => <em className="text-warm">{children}</em>,
-    strong: ({ children }) => (
-      <strong className="text-foreground font-bold">{children}</strong>
-    ),
     ul: ({ children }) => (
       <ul className="list-disc list-inside text-[length:var(--text-body)] leading-[1.85] text-warm-dim mb-4 ml-2">
         {children}

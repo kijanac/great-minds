@@ -50,8 +50,11 @@ def get_brain_repository(session: AsyncSession = Depends(get_session)) -> BrainR
 # ---------------------------------------------------------------------------
 
 
-def get_brain_service(repo: BrainRepository = Depends(get_brain_repository)) -> BrainService:
-    return BrainService(repo)
+def get_brain_service(
+    repo: BrainRepository = Depends(get_brain_repository),
+    settings: Settings = Depends(get_settings),
+) -> BrainService:
+    return BrainService(repo, settings)
 
 
 def get_user_service(
@@ -74,8 +77,8 @@ def get_auth_service(
     return AuthService(auth_repo, user_service, mailer, settings)
 
 
-def get_proposal_service() -> ProposalService:
-    return ProposalService()
+def get_proposal_service(settings: Settings = Depends(get_settings)) -> ProposalService:
+    return ProposalService(settings)
 
 
 def get_absurd(request: Request) -> AsyncAbsurd:
@@ -128,7 +131,8 @@ async def get_authorized_brain(
     brain_id: UUID = Query(...),
     user: User = Depends(get_current_user),
     brain_service: BrainService = Depends(get_brain_service),
+    settings: Settings = Depends(get_settings),
 ) -> BrainContext:
     brain, role = await brain_service.get_brain(brain_id, user.id)
-    storage = LocalStorage(Path(brain.storage_root))
+    storage = LocalStorage(Path(settings.data_dir) / brain.storage_root)
     return BrainContext(brain=brain, storage=storage, role=role)

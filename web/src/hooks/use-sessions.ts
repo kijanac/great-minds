@@ -1,10 +1,16 @@
-import { useEffect, useState } from "react"
+import { useCallback, useEffect, useState } from "react"
 
 import { listSessions, type SessionSummary } from "@/api/sessions"
 
 export function useSessions() {
   const [sessions, setSessions] = useState<SessionSummary[]>([])
   const [loading, setLoading] = useState(true)
+
+  const refresh = useCallback(() => {
+    listSessions()
+      .then(setSessions)
+      .catch(() => setSessions([]))
+  }, [])
 
   useEffect(() => {
     listSessions()
@@ -13,5 +19,5 @@ export function useSessions() {
       .finally(() => setLoading(false))
   }, [])
 
-  return { sessions, loading }
+  return { sessions, loading, refresh }
 }

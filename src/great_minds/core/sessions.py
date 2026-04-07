@@ -135,6 +135,7 @@ def append_btw(
         "type": "btw",
         "exId": btw.get("exchangeId", ""),
         "anchor": btw["anchor"],
+        "paragraph": btw["paragraph"],
         "pi": btw.get("paragraphIndex", -1),
         "messages": btw["messages"],
         "ts": _now(),

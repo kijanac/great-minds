@@ -54,14 +54,20 @@ function HomeContent({ sessionId, initialExchanges, initialQuery, origin }: Home
   const [query, setQuery] = useState(
     initialQuery ?? initialExchanges?.[0]?.query ?? "",
   )
+  const { sessions: recentSessions, loading: sessionsLoading, refresh: refreshSessions } = useSessions()
+
+  const handleSessionCreated = useCallback((sid: string) => {
+    window.history.replaceState(null, "", `/sessions/${sid}`)
+    refreshSessions()
+  }, [refreshSessions])
+
   const session = useSession(
     initialExchanges
       ? { initialExchanges, sessionId: sessionId! }
       : (initialQuery || origin)
-        ? { initialQuery, originSlug: origin }
-        : undefined,
+        ? { initialQuery, originSlug: origin, onSessionCreated: handleSessionCreated }
+        : { onSessionCreated: handleSessionCreated },
   )
-  const { sessions: recentSessions } = useSessions()
 
   const isActive = session.phase !== "idle"
   const directionRef = useRef<"forward" | "backward">("forward")
@@ -86,10 +92,16 @@ function HomeContent({ sessionId, initialExchanges, initialQuery, origin }: Home
 
   const handleReset = useCallback(() => {
     directionRef.current = "backward"
+    const hadSession = session.sessionId
     session.reset()
     setQuery("")
-    if (sessionId) navigate("/")
-  }, [session.reset, sessionId, navigate])
+    if (sessionId) {
+      navigate("/")
+    } else if (hadSession) {
+      // URL was updated via replaceState — restore it without triggering a route change
+      window.history.replaceState(null, "", "/")
+    }
+  }, [session.reset, session.sessionId, sessionId, navigate])
 
   const searchBarProps = {
     query,
@@ -148,6 +160,7 @@ function HomeContent({ sessionId, initialExchanges, initialQuery, origin }: Home
                   <SearchBar
                     {...searchBarProps}
                     recentSessions={recentSessions}
+                    sessionsLoading={sessionsLoading}
                     onSessionClick={(id) => navigate(`/sessions/${id}`)}
                     onViewAllSessions={() => navigate("/sessions")}
                   />
