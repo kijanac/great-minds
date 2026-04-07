@@ -50,8 +50,15 @@ def get_brain_repository(session: AsyncSession = Depends(get_session)) -> BrainR
 # ---------------------------------------------------------------------------
 
 
-def get_user_service(brain_service: BrainService = Depends(get_brain_service)) -> UserService:
-    return UserService(brain_service)
+def get_brain_service(repo: BrainRepository = Depends(get_brain_repository)) -> BrainService:
+    return BrainService(repo)
+
+
+def get_user_service(
+    user_repo: UserRepository = Depends(get_user_repository),
+    brain_service: BrainService = Depends(get_brain_service),
+) -> UserService:
+    return UserService(user_repo, brain_service)
 
 
 def get_mailer(settings: Settings = Depends(get_settings)) -> Mailer:
@@ -60,16 +67,11 @@ def get_mailer(settings: Settings = Depends(get_settings)) -> Mailer:
 
 def get_auth_service(
     auth_repo: AuthRepository = Depends(get_auth_repository),
-    user_repo: UserRepository = Depends(get_user_repository),
     user_service: UserService = Depends(get_user_service),
     mailer: Mailer = Depends(get_mailer),
     settings: Settings = Depends(get_settings),
 ) -> AuthService:
-    return AuthService(auth_repo, user_repo, user_service, mailer, settings)
-
-
-def get_brain_service(repo: BrainRepository = Depends(get_brain_repository)) -> BrainService:
-    return BrainService(repo)
+    return AuthService(auth_repo, user_service, mailer, settings)
 
 
 def get_proposal_service() -> ProposalService:

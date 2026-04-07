@@ -1,13 +1,18 @@
 import { apiFetch } from "./client"
 
+interface QueryOptions {
+  model?: string
+  originSlug?: string
+}
+
 export async function queryKnowledgeBase(
   question: string,
-  model?: string,
+  options?: QueryOptions,
 ): Promise<string> {
   const res = await apiFetch("/query", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ question, model }),
+    body: JSON.stringify({ question, model: options?.model, origin_slug: options?.originSlug }),
   })
   if (!res.ok) {
     throw new Error(`Query failed: ${res.status} ${res.statusText}`)
@@ -21,16 +26,19 @@ export interface StreamEvent {
   data: Record<string, string>
 }
 
+interface StreamQueryOptions extends QueryOptions {
+  signal?: AbortSignal
+}
+
 export async function* streamQuery(
   question: string,
-  model?: string,
-  signal?: AbortSignal,
+  options?: StreamQueryOptions,
 ): AsyncGenerator<StreamEvent> {
   const res = await apiFetch("/query/stream", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ question, model }),
-    signal,
+    body: JSON.stringify({ question, model: options?.model, origin_slug: options?.originSlug }),
+    signal: options?.signal,
   })
   if (!res.ok) {
     throw new Error(`Stream query failed: ${res.status} ${res.statusText}`)

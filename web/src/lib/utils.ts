@@ -17,6 +17,18 @@ export function slugToTitle(slug: string): string {
     .join(" ")
 }
 
+export function formatRelativeDate(iso: string): string {
+  const d = new Date(iso)
+  const now = new Date()
+  const diffDays = Math.floor(
+    (now.getTime() - d.getTime()) / (1000 * 60 * 60 * 24),
+  )
+  if (diffDays === 0) return "today"
+  if (diffDays === 1) return "yesterday"
+  if (diffDays < 7) return `${diffDays}d ago`
+  return d.toLocaleDateString("en-US", { month: "short", day: "numeric" })
+}
+
 export function simulateStream(
   fullText: string,
   onChunk: (text: string) => void,

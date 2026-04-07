@@ -24,7 +24,16 @@ export function ThinkingSection({
 
   if (blocks.length === 0 && !streaming) return null
 
-  const totalSources = blocks.reduce((n, b) => n + b.sources.length, 0)
+  const allSources = blocks.flatMap((b) => b.sources)
+  const articles = allSources.filter((s) => s.type === "article").length
+  const raw = allSources.filter((s) => s.type === "raw").length
+  const searches = allSources.filter((s) => s.type === "search").length
+
+  const summaryParts: string[] = []
+  if (searches) summaryParts.push(`${searches} search${searches !== 1 ? "es" : ""}`)
+  if (articles) summaryParts.push(`${articles} article${articles !== 1 ? "s" : ""} read`)
+  if (raw) summaryParts.push(`${raw} source${raw !== 1 ? "s" : ""} read`)
+  const summary = summaryParts.join(", ") || "no sources"
 
   return (
     <div className="mb-4">
@@ -40,9 +49,7 @@ export function ThinkingSection({
             traversing knowledge base...
           </span>
         ) : (
-          <span>
-            {totalSources} source{totalSources !== 1 ? "s" : ""} traversed
-          </span>
+          <span>{summary}</span>
         )}
       </Button>
 

@@ -19,7 +19,7 @@ export function ArticleReader({ slug }: ArticleReaderProps) {
   const navigate = useNavigate()
   const handleLinkClick = useLinkInterceptor()
   const { content, loading } = useArticle(slug)
-  const { btws, startBtw, replyBtw, cleanup } = useBtw()
+  const { btws, startBtw, replyBtw, dismissEmpty, cleanup } = useBtw()
   const [popover, setPopover] = useState<SelectionInfo | null>(null)
 
   usePopoverDismiss(() => setPopover(null))
@@ -43,7 +43,7 @@ export function ArticleReader({ slug }: ArticleReaderProps) {
     <ArticleChrome
       slug={slug}
       onHome={() => navigate("/")}
-      onQuery={(q) => navigate(`/?q=${encodeURIComponent(q)}`)}
+      onQuery={(q) => navigate(`/?q=${encodeURIComponent(q)}&origin=${encodeURIComponent(slug)}`)}
       onContentClick={handleLinkClick}
     >
       {loading && (
@@ -61,6 +61,7 @@ export function ArticleReader({ slug }: ArticleReaderProps) {
           btws={btws}
           onSelection={setPopover}
           onBtwReply={replyBtw}
+          onBtwDismiss={dismissEmpty}
           documentId={slug}
         />
       )}
@@ -72,7 +73,7 @@ export function ArticleReader({ slug }: ArticleReaderProps) {
       )}
 
       {popover && (
-        <SelectionPopover info={popover} onFollowUp={handleBtw} onBtw={handleBtw} />
+        <SelectionPopover info={popover} onBtw={handleBtw} />
       )}
     </ArticleChrome>
   )

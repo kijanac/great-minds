@@ -76,16 +76,20 @@ def create_session(
     storage: Storage,
     session_id: str,
     exchange: dict,
+    *,
+    origin: str | None = None,
 ) -> str:
     """Create a new session with the first exchange."""
     storage.mkdir("sessions")
 
-    meta_event = {
+    meta_event: dict = {
         "type": "meta",
         "id": session_id,
         "query": exchange["query"],
         "ts": _now(),
     }
+    if origin is not None:
+        meta_event["origin"] = origin
     _append_event(storage, session_id, meta_event)
 
     ex_event = {

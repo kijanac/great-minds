@@ -33,23 +33,28 @@ export function useBtw() {
   }, [])
 
   const replyBtw = useCallback((btwId: string, userText: string) => {
+    let anchor = ""
     setBtws((prev) =>
-      prev.map((b) =>
-        b.id === btwId
-          ? {
-              ...b,
-              streaming: true,
-              streamText: "",
-              messages: [
-                ...b.messages,
-                userMsg(userText),
-              ],
-            }
-          : b,
-      ),
+      prev.map((b) => {
+        if (b.id !== btwId) return b
+        anchor = b.anchor
+        return {
+          ...b,
+          streaming: true,
+          streamText: "",
+          messages: [
+            ...b.messages,
+            userMsg(userText),
+          ],
+        }
+      }),
     )
 
-    queryKnowledgeBase(userText).then((answer) => {
+    const contextualQuery = anchor
+      ? `Regarding "${anchor}": ${userText}`
+      : userText
+
+    queryKnowledgeBase(contextualQuery).then((answer) => {
       const cancel = simulateStream(
         answer,
         (partial) => {
@@ -81,11 +86,21 @@ export function useBtw() {
     })
   }, [])
 
+  const dismissEmpty = useCallback((btwId: string) => {
+    setBtws((prev) => {
+      const target = prev.find((b) => b.id === btwId)
+      if (target && target.messages.length === 0 && !target.streaming) {
+        return prev.filter((b) => b.id !== btwId)
+      }
+      return prev
+    })
+  }, [])
+
   const cleanup = useCallback(() => {
     for (const fn of cleanupRef.current) fn()
     cleanupRef.current = []
     setBtws([])
   }, [])
 
-  return { btws, startBtw, replyBtw, cleanup }
+  return { btws, startBtw, replyBtw, dismissEmpty, cleanup }
 }

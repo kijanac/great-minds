@@ -17,11 +17,12 @@ export interface BtwPayload {
 export async function createSession(
   sessionId: string,
   exchange: ExchangePayload,
+  origin?: string,
 ): Promise<string> {
   const res = await apiFetch(`/sessions`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ session_id: sessionId, exchange }),
+    body: JSON.stringify({ session_id: sessionId, exchange, origin }),
   })
   if (!res.ok) throw new Error(`Failed to create session: ${res.status}`)
   const data: { path: string } = await res.json()

@@ -30,6 +30,6 @@ class SourceProposal(Base):
     reviewed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
-    brain: Mapped["Brain"] = relationship("Brain")
+    brain: Mapped["BrainORM"] = relationship("BrainORM")
     user: Mapped["User"] = relationship("User", foreign_keys=[user_id])
     reviewer: Mapped["User | None"] = relationship("User", foreign_keys=[reviewed_by])

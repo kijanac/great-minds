@@ -14,9 +14,3 @@ export async function readArticle(
   return res.json()
 }
 
-export async function readIndex(): Promise<string> {
-  const res = await apiFetch("/wiki/_index")
-  if (!res.ok) throw new Error(`Failed to read index: ${res.status}`)
-  const data: { content: string } = await res.json()
-  return data.content
-}

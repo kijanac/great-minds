@@ -91,6 +91,7 @@ export function SessionThread({ session, onFollowUp }: SessionThreadProps) {
                 streaming={false}
                 onSelection={session.handleSelection}
                 onBtwReply={session.replyBtw}
+                onBtwDismiss={session.dismissBtw}
               />
             </div>
           ))}
@@ -131,7 +132,7 @@ export function SessionThread({ session, onFollowUp }: SessionThreadProps) {
               <Badge variant="outline" className="font-mono text-[length:var(--text-chrome)] tracking-[0.08em] text-gold-muted border-gold-dim mr-2">
                 tip
               </Badge>
-              {"select any text in the answer to "}
+              {"highlight any text in the answer to "}
               <span className="text-warm-dim">follow up</span>
               {" or start a "}
               <span className="text-btw">btw</span>

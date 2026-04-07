@@ -13,7 +13,6 @@ from great_minds.core.crypto import (
 )
 from great_minds.core.mail import Mailer
 from great_minds.core.settings import Settings
-from great_minds.core.users.repository import UserRepository
 from great_minds.core.users.service import UserService
 
 log = logging.getLogger(__name__)
@@ -23,13 +22,11 @@ class AuthService:
     def __init__(
         self,
         auth_repo: AuthRepository,
-        user_repo: UserRepository,
         user_service: UserService,
         mailer: Mailer,
         settings: Settings,
     ) -> None:
         self.auth_repo = auth_repo
-        self.user_repo = user_repo
         self.user_service = user_service
         self.mailer = mailer
         self.settings = settings
@@ -50,7 +47,7 @@ class AuthService:
         if not valid:
             raise ValueError("Invalid or expired code")
 
-        user, created = await self.user_repo.get_or_create(email)
+        user, created = await self.user_service.get_or_create(email)
         if created:
             await self.user_service.provision_new_user(user)
 

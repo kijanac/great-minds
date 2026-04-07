@@ -32,7 +32,7 @@ export function IngestionZone({
   return (
     <div className="mt-8 max-w-[640px] w-full">
       {/* Label */}
-      <div className="font-mono text-[length:var(--text-chrome)] tracking-[0.08em] text-warm-ghost mb-1.5 pl-1">
+      <div className="font-mono text-[length:var(--text-chrome)] tracking-[0.1em] text-warm-ghost mb-1.5 pl-1">
         add sources
       </div>
 
@@ -75,7 +75,7 @@ export function IngestionZone({
         {isIdle && (
           <div className="flex items-center">
             <Input
-              className="flex-1 border-none bg-transparent font-mono text-[length:var(--text-chrome)] tracking-[0.08em] text-warm-faint placeholder:text-warm-ghost caret-gold focus-visible:ring-0 focus-visible:border-none h-auto py-0 px-4"
+              className="flex-1 border-none bg-transparent font-mono text-[length:var(--text-chrome)] tracking-[0.1em] text-warm-faint placeholder:text-warm-ghost caret-gold focus-visible:ring-0 focus-visible:border-none h-auto py-0 px-4"
               placeholder={
                 isDragOver
                   ? "drop to add to knowledge base"
@@ -95,7 +95,7 @@ export function IngestionZone({
 
         {/* Processing */}
         {status === "processing" && (
-          <div className="px-4 font-mono text-[length:var(--text-chrome)] tracking-[0.06em] text-gold animate-[pulse-fade_1.6s_ease-in-out_infinite]">
+          <div className="px-4 font-mono text-[length:var(--text-chrome)] tracking-[0.1em] text-gold animate-[pulse-fade_1.6s_ease-in-out_infinite]">
             ingesting…
           </div>
         )}

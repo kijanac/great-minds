@@ -5,6 +5,8 @@ import remarkGfm from "remark-gfm"
 import type { BtwThread as BtwThreadType, SelectionInfo } from "@/lib/types"
 import { BtwThread } from "./btw-thread"
 
+const remarkPlugins = [remarkGfm]
+
 interface AnswerBlockProps {
   text: string
   exchangeId: string
@@ -12,16 +14,13 @@ interface AnswerBlockProps {
   streaming: boolean
   onSelection: (info: SelectionInfo) => void
   onBtwReply: (btwId: string, text: string) => void
+  onBtwDismiss?: (btwId: string) => void
 }
 
-function splitBlocks(text: string): { content: string; isParagraph: boolean }[] {
+function splitBlocks(text: string): string[] {
   return text
     .split(/\n\n+/)
     .filter((b) => b.trim())
-    .map((block) => ({
-      content: block,
-      isParagraph: !block.startsWith("#"),
-    }))
 }
 
 const mdComponents: ComponentProps<typeof Markdown>["components"] = {
@@ -85,6 +84,7 @@ export function AnswerBlock({
   streaming,
   onSelection,
   onBtwReply,
+  onBtwDismiss,
 }: AnswerBlockProps) {
   const blocks = splitBlocks(text)
   let paraIndex = 0
@@ -112,20 +112,20 @@ export function AnswerBlock({
   return (
     <div className="select-text">
       {blocks.map((block, i) => {
-        const pi = block.isParagraph ? paraIndex++ : -1
+        const pi = paraIndex++
         const blockBtws = btws.filter((b) => b.paragraphIndex === pi)
         const isLast = i === blocks.length - 1
 
         return (
           <Fragment key={i}>
-            <div onMouseUp={pi >= 0 ? makeSelectionHandler(pi) : undefined}>
-              <Markdown remarkPlugins={[remarkGfm]} components={mdComponents}>{block.content}</Markdown>
+            <div onMouseUp={makeSelectionHandler(pi)}>
+              <Markdown remarkPlugins={remarkPlugins} components={mdComponents}>{block}</Markdown>
               {streaming && isLast && (
                 <span className="inline-block w-0.5 h-[13px] bg-gold animate-[blink_1s_step-end_infinite] align-middle ml-px" />
               )}
             </div>
             {blockBtws.map((btw) => (
-              <BtwThread key={btw.id} btw={btw} onReply={onBtwReply} />
+              <BtwThread key={btw.id} btw={btw} onReply={onBtwReply} onDismiss={onBtwDismiss} />
             ))}
           </Fragment>
         )

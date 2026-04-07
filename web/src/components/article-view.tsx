@@ -1,4 +1,4 @@
-import { useCallback, type ComponentProps } from "react"
+import { useCallback, useMemo, useRef, type ComponentProps } from "react"
 import Markdown from "react-markdown"
 import remarkGfm from "remark-gfm"
 
@@ -11,8 +11,11 @@ interface ArticleViewProps {
   btws: BtwThreadType[]
   onSelection: (info: SelectionInfo) => void
   onBtwReply: (btwId: string, text: string) => void
+  onBtwDismiss?: (btwId: string) => void
   documentId: string
 }
+
+const remarkPlugins = [remarkGfm]
 
 export function ArticleView({
   title,
@@ -20,29 +23,24 @@ export function ArticleView({
   btws,
   onSelection,
   onBtwReply,
+  onBtwDismiss,
   documentId,
 }: ArticleViewProps) {
-  const handleMouseUp = useCallback(
-    (pi: number) => (e: React.MouseEvent) => {
-      e.stopPropagation()
-      const sel = window.getSelection()
-      if (!sel || sel.isCollapsed || sel.toString().trim().length < 5) return
+  // Refs for stable callbacks — avoids recreating mdComponents on every render
+  const onSelectionRef = useRef(onSelection)
+  onSelectionRef.current = onSelection
+  const onBtwReplyRef = useRef(onBtwReply)
+  onBtwReplyRef.current = onBtwReply
+  const onBtwDismissRef = useRef(onBtwDismiss)
+  onBtwDismissRef.current = onBtwDismiss
+  const documentIdRef = useRef(documentId)
+  documentIdRef.current = documentId
+  const btwsRef = useRef(btws)
+  btwsRef.current = btws
 
-      const rect = sel.getRangeAt(0).getBoundingClientRect()
-      onSelection({
-        text: sel.toString().trim(),
-        x: rect.left + rect.width / 2,
-        y: rect.top - 6,
-        paragraphIndex: pi,
-        exchangeId: documentId,
-      })
-    },
-    [documentId, onSelection],
-  )
+  const paraCountRef = useRef(0)
 
-  let paraCount = 0
-
-  const mdComponents: ComponentProps<typeof Markdown>["components"] = {
+  const mdComponents = useMemo<ComponentProps<typeof Markdown>["components"]>(() => ({
     h1: ({ children }) => (
       <h1 className="text-[length:var(--text-heading)] font-bold text-foreground mt-8 mb-4 first:mt-0">
         {children}
@@ -59,18 +57,35 @@ export function ArticleView({
       </h3>
     ),
     p: ({ children }) => {
-      const pi = paraCount++
-      const blockBtws = btws.filter((b) => b.paragraphIndex === pi)
+      const pi = paraCountRef.current++
+      const blockBtws = btwsRef.current.filter((b) => b.paragraphIndex === pi)
       return (
         <>
           <p
             className="text-[length:var(--text-body)] leading-[1.85] text-warm-dim mb-4"
-            onMouseUp={handleMouseUp(pi)}
+            onMouseUp={(e) => {
+              e.stopPropagation()
+              const sel = window.getSelection()
+              if (!sel || sel.isCollapsed || sel.toString().trim().length < 5) return
+              const rect = sel.getRangeAt(0).getBoundingClientRect()
+              onSelectionRef.current({
+                text: sel.toString().trim(),
+                x: rect.left + rect.width / 2,
+                y: rect.top - 6,
+                paragraphIndex: pi,
+                exchangeId: documentIdRef.current,
+              })
+            }}
           >
             {children}
           </p>
           {blockBtws.map((btw) => (
-            <BtwThread key={btw.id} btw={btw} onReply={onBtwReply} />
+            <BtwThread
+              key={btw.id}
+              btw={btw}
+              onReply={(id, text) => onBtwReplyRef.current(id, text)}
+              onDismiss={onBtwDismissRef.current ? (id) => onBtwDismissRef.current!(id) : undefined}
+            />
           ))}
         </>
       )
@@ -112,12 +127,15 @@ export function ArticleView({
         {children}
       </code>
     ),
-  }
+  }), [])
+
+  // Markdown calls p() sequentially during render; reset so indices match BTW paragraphIndex
+  paraCountRef.current = 0
 
   return (
     <article className="max-w-[740px] mx-auto px-10 pt-10 pb-20 select-text">
       <h1 className="text-[length:var(--text-title)] font-bold text-foreground mb-8">{title}</h1>
-      <Markdown remarkPlugins={[remarkGfm]} components={mdComponents}>
+      <Markdown remarkPlugins={remarkPlugins} components={mdComponents}>
         {content}
       </Markdown>
     </article>

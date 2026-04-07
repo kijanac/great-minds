@@ -469,11 +469,39 @@ async def stream_chat(
 
 
 
+def _build_origin_messages(
+    brains: list[QuerySource], origin_slug: str,
+) -> list[dict]:
+    """Build synthetic tool-call messages that pre-load an origin article."""
+    content = read_wiki_article(brains, origin_slug)
+    tool_call_id = f"origin-{uuid.uuid4().hex[:8]}"
+    return [
+        {
+            "role": "assistant",
+            "content": None,
+            "tool_calls": [{
+                "id": tool_call_id,
+                "type": "function",
+                "function": {
+                    "name": "read_wiki_article",
+                    "arguments": json.dumps({"slug": origin_slug}),
+                },
+            }],
+        },
+        {
+            "role": "tool",
+            "tool_call_id": tool_call_id,
+            "content": content,
+        },
+    ]
+
+
 async def run_stream_query(
     brains: list[QuerySource],
     question: str,
     *,
     model: str | None = None,
+    origin_slug: str | None = None,
 ) -> AsyncGenerator[dict, None]:
     """Stream SSE events for a single question, with model fallback on rate limit."""
     primary = model or QUERY_MODEL
@@ -481,8 +509,10 @@ async def run_stream_query(
     system_prompt = build_system_prompt(brains)
     base_messages: list[dict] = [
         {"role": "system", "content": system_prompt},
-        {"role": "user", "content": question},
     ]
+    if origin_slug:
+        base_messages.extend(_build_origin_messages(brains, origin_slug))
+    base_messages.append({"role": "user", "content": question})
 
     query_id = f"q-{uuid.uuid4().hex[:8]}"
     correlation_id.set(query_id)
@@ -514,6 +544,7 @@ def run_query(
     question: str,
     *,
     model: str | None = None,
+    origin_slug: str | None = None,
 ) -> str:
     """Answer a single question against the knowledge base."""
     model = model or QUERY_MODEL
@@ -525,6 +556,8 @@ def run_query(
     correlation_id.set(query_id)
     init_wide_event("query", question=question, brain_count=len(brains))
 
+    if origin_slug:
+        messages.extend(_build_origin_messages(brains, origin_slug))
     messages.append({"role": "user", "content": question})
     return chat_with_fallback(brains, client, model, messages)
 

@@ -1,23 +1,11 @@
 import { Button } from "@/components/ui/button"
 import type { SessionSummary } from "@/api/sessions"
+import { formatRelativeDate } from "@/lib/utils"
 
 interface RecentSessionsProps {
   sessions: SessionSummary[]
   onSessionClick: (id: string) => void
   onViewAll: () => void
-}
-
-function formatDate(iso: string): string {
-  const d = new Date(iso)
-  const now = new Date()
-  const diffDays = Math.floor(
-    (now.getTime() - d.getTime()) / (1000 * 60 * 60 * 24),
-  )
-
-  if (diffDays === 0) return "today"
-  if (diffDays === 1) return "yesterday"
-  if (diffDays < 7) return `${diffDays}d ago`
-  return d.toLocaleDateString("en-US", { month: "short", day: "numeric" })
 }
 
 export function RecentSessions({
@@ -43,7 +31,7 @@ export function RecentSessions({
               {s.query}
             </span>
             <span className="font-mono text-[length:var(--text-chrome)] text-muted-foreground shrink-0 ml-3">
-              {formatDate(s.updated)}
+              {formatRelativeDate(s.updated)}
             </span>
           </Button>
         ))}

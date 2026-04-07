@@ -69,6 +69,7 @@ class CompileRequest(BaseModel):
 class QueryRequest(BaseModel):
     question: str
     model: str | None = None
+    origin_slug: str | None = None
 
 
 class IngestRequest(BaseModel):
@@ -117,6 +118,7 @@ class BtwData(BaseModel):
 class CreateSessionRequest(BaseModel):
     session_id: str
     exchange: ExchangeData
+    origin: str | None = None
 
 
 class SessionPathResponse(BaseModel):
@@ -134,6 +136,7 @@ class SessionListItem(BaseModel):
     created: str
     updated: str
     sources: list[str] = []
+    origin: str | None = None
 
 
 class ArticleResponse(BaseModel):
@@ -155,8 +158,12 @@ async def lifespan(app: FastAPI):
     settings = get_settings()
     absurd = create_absurd(settings.database_url, session_maker)
     app.state.absurd = absurd
-    await absurd.start_worker(concurrency=2, poll_interval=0.5)
+    worker = asyncio.create_task(
+        absurd.start_worker(concurrency=2, poll_interval=0.5),
+    )
     yield
+    await absurd.stop_worker()
+    worker.cancel()
     await absurd.close()
     await engine.dispose()
 
@@ -235,6 +242,7 @@ def create_app() -> FastAPI:
         sources = [target] + [s for s in all_sources if s.label != target.label]
         answer = await asyncio.to_thread(
             querier.run_query, sources, req.question, model=req.model,
+            origin_slug=req.origin_slug,
         )
         return QueryResponse(answer=answer)
 
@@ -252,6 +260,7 @@ def create_app() -> FastAPI:
         async def event_generator():
             async for event in querier.run_stream_query(
                 sources, req.question, model=req.model,
+                origin_slug=req.origin_slug,
             ):
                 etype = event["event"]
                 data = json.dumps(event["data"])
@@ -268,7 +277,10 @@ def create_app() -> FastAPI:
         req: CreateSessionRequest,
         ctx: BrainContext = Depends(get_authorized_brain),
     ) -> SessionPathResponse:
-        path = sessions.create_session(ctx.storage, req.session_id, req.exchange.model_dump())
+        path = sessions.create_session(
+            ctx.storage, req.session_id, req.exchange.model_dump(),
+            origin=req.origin,
+        )
         return SessionPathResponse(path=path)
 
     @app.patch("/sessions/{session_id}", response_model=SessionPathResponse)
@@ -295,7 +307,11 @@ def create_app() -> FastAPI:
     ) -> list[SessionListItem]:
         raw = sessions.list_sessions(ctx.storage)
         return [
-            SessionListItem(id=s["id"], query=s["query"], created=s.get("ts", ""), updated=s.get("updated", s.get("ts", "")))
+            SessionListItem(
+                id=s["id"], query=s["query"],
+                created=s.get("ts", ""), updated=s.get("updated", s.get("ts", "")),
+                origin=s.get("origin"),
+            )
             for s in raw
         ]
 
@@ -417,12 +433,6 @@ def create_app() -> FastAPI:
         if content is None:
             raise HTTPException(status_code=404, detail=f"Article not found: {slug}")
         return ArticleResponse(slug=slug, content=content)
-
-    @app.get("/wiki/_index")
-    async def read_index(
-        ctx: BrainContext = Depends(get_authorized_brain),
-    ) -> dict:
-        return {"content": brain_ops.read_index(ctx.storage)}
 
     @app.get("/lint", response_model=LintResponse)
     async def lint(

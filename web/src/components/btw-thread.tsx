@@ -12,9 +12,10 @@ import type { BtwThread as BtwThreadType } from "@/lib/types"
 interface BtwThreadProps {
   btw: BtwThreadType
   onReply: (btwId: string, text: string) => void
+  onDismiss?: (btwId: string) => void
 }
 
-export function BtwThread({ btw, onReply }: BtwThreadProps) {
+export function BtwThread({ btw, onReply, onDismiss }: BtwThreadProps) {
   const [input, setInput] = useState("")
   const [open, setOpen] = useState(true)
   const inputRef = useRef<HTMLInputElement>(null)
@@ -22,9 +23,15 @@ export function BtwThread({ btw, onReply }: BtwThreadProps) {
   const shortAnchor =
     btw.anchor.length > 58 ? btw.anchor.slice(0, 58) + "..." : btw.anchor
 
-  // Auto-focus the reply input when streaming finishes
+  // Auto-focus: on first render (new BTW) and when streaming finishes
   const wasStreaming = useRef(btw.streaming)
+  const isFirstRender = useRef(true)
   useEffect(() => {
+    if (isFirstRender.current) {
+      isFirstRender.current = false
+      inputRef.current?.focus()
+      return
+    }
     if (wasStreaming.current && !btw.streaming) {
       inputRef.current?.focus()
     }
@@ -75,7 +82,13 @@ export function BtwThread({ btw, onReply }: BtwThreadProps) {
           </div>
         ))}
 
-        {btw.streaming && (
+        {btw.streaming && !btw.streamText && (
+          <div className="text-[length:var(--text-small)] leading-[1.72] mb-[9px] text-warm-faint animate-[pulse-fade_1.6s_ease-in-out_infinite]">
+            thinking...
+          </div>
+        )}
+
+        {btw.streaming && btw.streamText && (
           <div className="text-[length:var(--text-small)] leading-[1.72] mb-[9px] text-warm-faint">
             {btw.streamText}
             <span className="inline-block w-px h-2.5 bg-gold-muted animate-[blink_1s_step-end_infinite] align-middle ml-px" />
@@ -93,6 +106,11 @@ export function BtwThread({ btw, onReply }: BtwThreadProps) {
               placeholder="continue..."
               value={input}
               onChange={(e) => setInput(e.target.value)}
+              onBlur={() => {
+                if (btw.messages.length === 0 && !input.trim() && onDismiss) {
+                  onDismiss(btw.id)
+                }
+              }}
               onKeyDown={(e) => {
                 if (e.key === "Enter" && input.trim()) {
                   onReply(btw.id, input.trim())

@@ -29,6 +29,8 @@ function exchangeToPayload(ex: Exchange) {
 interface UseSessionOptions {
   initialExchanges?: Exchange[]
   sessionId?: string
+  originSlug?: string
+  initialQuery?: string
 }
 
 export function useSession(options?: UseSessionOptions) {
@@ -54,6 +56,10 @@ export function useSession(options?: UseSessionOptions) {
     }
   }, [])
 
+  const originSlugRef = useRef<string | undefined>(options?.originSlug)
+  const initialQueryRef = useRef<string | undefined>(options?.initialQuery)
+  const isFirstExchange = useRef(true)
+
   const runExchange = useCallback(async (question: string) => {
     const exId = genId("ex")
     setPhase("searching")
@@ -68,7 +74,9 @@ export function useSession(options?: UseSessionOptions) {
     let answer = ""
 
     try {
-      for await (const event of streamQuery(question, undefined, controller.signal)) {
+      const originForQuery = isFirstExchange.current ? originSlugRef.current : undefined
+      isFirstExchange.current = false
+      for await (const event of streamQuery(question, { signal: controller.signal, originSlug: originForQuery })) {
         if (event.event === "token") {
           answer += event.data.text
           setPhase("streaming")
@@ -101,7 +109,7 @@ export function useSession(options?: UseSessionOptions) {
       if (!sessionIdRef.current) {
         const sid = genId("s")
         sessionIdRef.current = sid
-        createSession(sid, payload).catch((e) =>
+        createSession(sid, payload, originSlugRef.current).catch((e) =>
           console.error("Failed to save session:", e),
         )
       } else {
@@ -185,26 +193,31 @@ export function useSession(options?: UseSessionOptions) {
   }, [])
 
   const replyBtw = useCallback((btwId: string, userText: string) => {
+    let anchor = ""
     setThread((prev) =>
       prev.map((ex) => ({
         ...ex,
-        btws: ex.btws.map((b) =>
-          b.id === btwId
-            ? {
-                ...b,
-                streaming: true,
-                streamText: "",
-                messages: [
-                  ...b.messages,
-                  userMsg(userText),
-                ],
-              }
-            : b,
-        ),
+        btws: ex.btws.map((b) => {
+          if (b.id !== btwId) return b
+          anchor = b.anchor
+          return {
+            ...b,
+            streaming: true,
+            streamText: "",
+            messages: [
+              ...b.messages,
+              userMsg(userText),
+            ],
+          }
+        }),
       })),
     )
 
-    queryKnowledgeBase(userText).then((answer) => {
+    const contextualQuery = anchor
+      ? `Regarding "${anchor}": ${userText}`
+      : userText
+
+    queryKnowledgeBase(contextualQuery).then((answer) => {
       const cancel = simulateStream(
         answer,
         (partial) => {
@@ -257,6 +270,16 @@ export function useSession(options?: UseSessionOptions) {
     })
   }, [])
 
+  const dismissBtw = useCallback((btwId: string) => {
+    setThread((prev) =>
+      prev.map((ex) => {
+        const target = ex.btws.find((b) => b.id === btwId)
+        if (!target || target.messages.length > 0 || target.streaming) return ex
+        return { ...ex, btws: ex.btws.filter((b) => b.id !== btwId) }
+      }),
+    )
+  }, [])
+
   const handleSelection = useCallback((info: SelectionInfo | null) => {
     setPopover(info)
   }, [])
@@ -264,6 +287,14 @@ export function useSession(options?: UseSessionOptions) {
   const clearPopover = useCallback(() => {
     setPopover(null)
   }, [])
+
+  // Auto-submit initial query (e.g. from article reader via URL params)
+  useEffect(() => {
+    if (initialQueryRef.current) {
+      runExchange(initialQueryRef.current)
+      initialQueryRef.current = undefined
+    }
+  }, [runExchange])
 
   return {
     phase,
@@ -279,6 +310,7 @@ export function useSession(options?: UseSessionOptions) {
     removeChip,
     startBtw,
     replyBtw,
+    dismissBtw,
     handleSelection,
     clearPopover,
   }

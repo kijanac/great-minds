@@ -140,6 +140,14 @@
   }
 }
 
+/* Text selection */
+@layer base {
+  .select-text ::selection {
+    background: var(--gold);
+    color: var(--foreground);
+  }
+}
+
 /* Scrollbar styling */
 @layer base {
   ::-webkit-scrollbar {

@@ -1,11 +1,20 @@
-import { useEffect } from "react"
+import { useEffect, useRef } from "react"
 
 export function usePopoverDismiss(onDismiss: () => void) {
+  const ref = useRef(onDismiss)
+  ref.current = onDismiss
+
   useEffect(() => {
-    const handler = (e: MouseEvent) => {
-      if (!(e.target as Element).closest("[data-popover]")) onDismiss()
+    const handler = () => {
+      const sel = document.getSelection()
+      if (!sel || sel.isCollapsed) {
+        // Guard: don't dismiss if focus is inside the popover
+        const popover = document.querySelector("[data-popover]")
+        if (popover?.contains(document.activeElement)) return
+        ref.current()
+      }
     }
-    document.addEventListener("mousedown", handler)
-    return () => document.removeEventListener("mousedown", handler)
-  }, [onDismiss])
+    document.addEventListener("selectionchange", handler)
+    return () => document.removeEventListener("selectionchange", handler)
+  }, [])
 }
