@@ -144,8 +144,25 @@ class DocResponse(BaseModel):
     content: str
 
 
+class LintFixItem(BaseModel):
+    file: str
+    description: str
+
+
+class LintCountsResponse(BaseModel):
+    dead_links: int
+    broken_citations: int
+    orphans: int
+    uncompiled: int
+    uncited: int
+    missing_index: int
+    tag_issues: int
+
+
 class LintResponse(BaseModel):
-    total_issues: int
+    fixes_applied: list[LintFixItem]
+    remaining_issues: int
+    counts: LintCountsResponse
 
 
 # ---------------------------------------------------------------------------
@@ -526,12 +543,40 @@ def create_app() -> FastAPI:
             raise HTTPException(status_code=404, detail=f"Document not found: {path}")
         return DocResponse(path=path, content=content)
 
+    async def _run_lint(
+        ctx: BrainContext, deep: bool = False, fix: bool = False
+    ) -> LintResponse:
+        result = await linter.run_lint(ctx.storage, deep=deep, fix=fix)
+        c = result.counts
+        return LintResponse(
+            fixes_applied=[
+                LintFixItem(file=f.file, description=f.description)
+                for f in result.fixes_applied
+            ],
+            remaining_issues=result.remaining_issues,
+            counts=LintCountsResponse(
+                dead_links=c.dead_links,
+                broken_citations=c.broken_citations,
+                orphans=c.orphans,
+                uncompiled=c.uncompiled,
+                uncited=c.uncited,
+                missing_index=c.missing_index,
+                tag_issues=c.tag_issues,
+            ),
+        )
+
     @app.get("/lint", response_model=LintResponse)
     async def lint(
         deep: bool = False,
         ctx: BrainContext = Depends(get_authorized_brain),
     ) -> LintResponse:
-        total = await asyncio.to_thread(linter.run_lint, ctx.storage, deep=deep)
-        return LintResponse(total_issues=total)
+        return await _run_lint(ctx, deep=deep)
+
+    @app.post("/lint/fix", response_model=LintResponse)
+    async def lint_fix(
+        deep: bool = False,
+        ctx: BrainContext = Depends(get_authorized_brain),
+    ) -> LintResponse:
+        return await _run_lint(ctx, deep=deep, fix=True)
 
     return app

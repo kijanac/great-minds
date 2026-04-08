@@ -28,28 +28,27 @@ from collections import defaultdict
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from io import StringIO
 from uuid import UUID
 
 from openai import AsyncOpenAI
-from ruamel.yaml import YAML
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from great_minds.core.brain import wiki_path, wiki_slug
 from great_minds.core.brains._search_indexer import rebuild_index
+from great_minds.core.brains._utils import (
+    api_call,
+    extract_content,
+    parse_frontmatter,
+    serialize_frontmatter,
+    strip_json_fencing,
+)
 from great_minds.core.llm import EXTRACT_MODEL, REASON_MODEL, get_async_client
 from great_minds.core.storage import Storage
-
-_yaml = YAML()
-_yaml.preserve_quotes = True
 
 log = logging.getLogger(__name__)
 
 MAX_SOURCE_CHARS = 30_000
 MAX_CONCURRENT = 5
-MAX_RETRIES = 2
-
-_FRONTMATTER_RE = re.compile(r"^---\n(.+?)\n---\n", re.DOTALL)
 
 
 # ---------------------------------------------------------------------------
@@ -57,50 +56,10 @@ _FRONTMATTER_RE = re.compile(r"^---\n(.+?)\n---\n", re.DOTALL)
 # ---------------------------------------------------------------------------
 
 
-async def api_call(client: AsyncOpenAI, **kwargs):
-    """Wrap API calls with retries for transient failures."""
-    for attempt in range(1, MAX_RETRIES + 1):
-        try:
-            return await client.chat.completions.create(**kwargs)
-        except Exception as e:
-            if attempt == MAX_RETRIES:
-                raise
-            log.warning("api call failed (attempt %d/%d): %s", attempt, MAX_RETRIES, e)
-            await asyncio.sleep(2**attempt)
-
-
-def parse_frontmatter(content: str) -> tuple[dict, str]:
-    match = _FRONTMATTER_RE.match(content)
-    if not match:
-        return {}, content
-    fm = _yaml.load(match.group(1))
-    body = content[match.end() :]
-    return dict(fm) if fm else {}, body
-
-
-def serialize_frontmatter(fm: dict, body: str) -> str:
-    buf = StringIO()
-    _yaml.dump(fm, buf)
-    return f"---\n{buf.getvalue()}---\n{body}"
-
-
 def truncate_body(body: str, max_chars: int = MAX_SOURCE_CHARS) -> str:
     if len(body) <= max_chars:
         return body
     return body[:max_chars] + "\n\n[...truncated...]"
-
-
-def strip_json_fencing(raw: str) -> str:
-    raw = re.sub(r"^```(?:json)?\n?", "", raw)
-    raw = re.sub(r"\n?```$", "", raw)
-    return raw
-
-
-def extract_content(response) -> str | None:
-    choice = response.choices[0] if response.choices else None
-    if not choice or not choice.message or not choice.message.content:
-        return None
-    return choice.message.content.strip()
 
 
 def _stem_from_path(path: str) -> str:

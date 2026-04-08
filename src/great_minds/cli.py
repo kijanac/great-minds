@@ -5,7 +5,7 @@ Usage:
     great-minds query "What is imperialism?"
     great-minds query                            # interactive mode
     great-minds ingest texts corpus/lenin/ --author "V.I. Lenin"
-    great-minds lint --deep
+    great-minds lint --deep --fix
     great-minds serve --port 8000
 """
 
@@ -101,7 +101,13 @@ def cmd_ingest(args: argparse.Namespace) -> None:
 def cmd_lint(args: argparse.Namespace) -> None:
     setup_logging(service="great-minds")
     storage = _make_storage()
-    linter.run_lint(storage, deep=args.deep)
+    log = logging.getLogger(__name__)
+    result = asyncio.run(linter.run_lint(storage, deep=args.deep, fix=args.fix))
+    if result.fixes_applied:
+        log.info("applied %d fixes:", len(result.fixes_applied))
+        for f in result.fixes_applied:
+            log.info("  %s — %s", f.file, f.description)
+    log.info("%d issues remaining", result.remaining_issues)
 
 
 def cmd_serve(args: argparse.Namespace) -> None:
@@ -155,6 +161,7 @@ def main() -> None:
     p_lint.add_argument(
         "--deep", action="store_true", help="Include LLM checks (costs money)"
     )
+    p_lint.add_argument("--fix", action="store_true", help="Auto-fix resolvable issues")
     p_lint.set_defaults(func=cmd_lint)
 
     # serve
