@@ -2,38 +2,87 @@ import { useCallback, useEffect, useRef, useState } from "react"
 
 import { ingestUrl, uploadFile } from "@/api/ingest"
 
-export type IngestionStatus = "idle" | "processing" | "done" | "error"
+export type ItemStatus = "queued" | "processing" | "done" | "error"
 
-interface IngestionState {
-  status: IngestionStatus
-  name?: string
+export interface QueueItem {
+  id: string
+  name: string
+  status: ItemStatus
   error?: string
 }
 
+let nextId = 0
+
 export function useIngestion() {
-  const [state, setState] = useState<IngestionState>({ status: "idle" })
+  const [queue, setQueue] = useState<QueueItem[]>([])
   const [url, setUrl] = useState("")
   const urlRef = useRef(url)
+  const processingRef = useRef(false)
+  const promisesRef = useRef<Map<string, Promise<{ name: string }>>>(new Map())
   urlRef.current = url
 
-  useEffect(() => {
-    if (state.status !== "done") return
-    const t = setTimeout(() => setState({ status: "idle" }), 3000)
-    return () => clearTimeout(t)
-  }, [state.status])
+  const processNext = useCallback(async () => {
+    if (processingRef.current) return
 
-  const handleIngest = useCallback(
-    async (promise: Promise<{ name: string }>) => {
-      setState({ status: "processing" })
-      try {
-        const result = await promise
-        setState({ status: "done", name: result.name })
-      } catch (e) {
-        setState({
-          status: "error",
-          error: e instanceof Error ? e.message : "Ingestion failed",
-        })
-      }
+    const next = queue.find((i) => i.status === "queued")
+    if (!next) return
+
+    const promise = promisesRef.current.get(next.id)
+    if (!promise) return
+
+    processingRef.current = true
+    setQueue((q) =>
+      q.map((i) =>
+        i.id === next.id ? { ...i, status: "processing" as const } : i,
+      ),
+    )
+
+    try {
+      const result = await promise
+      setQueue((q) =>
+        q.map((i) =>
+          i.id === next.id ? { ...i, status: "done" as const, name: result.name } : i,
+        ),
+      )
+    } catch (e) {
+      setQueue((q) =>
+        q.map((i) =>
+          i.id === next.id
+            ? {
+                ...i,
+                status: "error" as const,
+                error: e instanceof Error ? e.message : "Ingestion failed",
+              }
+            : i,
+        ),
+      )
+    } finally {
+      promisesRef.current.delete(next.id)
+      processingRef.current = false
+    }
+  }, [queue])
+
+  // Drive the queue: process next item when queue changes
+  useEffect(() => {
+    processNext()
+  }, [processNext])
+
+  // Auto-dismiss done items after 3s
+  useEffect(() => {
+    const doneItems = queue.filter((i) => i.status === "done")
+    if (doneItems.length === 0) return
+    const doneIds = new Set(doneItems.map((i) => i.id))
+    const t = setTimeout(() => {
+      setQueue((q) => q.filter((i) => !doneIds.has(i.id)))
+    }, 3000)
+    return () => clearTimeout(t)
+  }, [queue])
+
+  const enqueue = useCallback(
+    (name: string, promise: Promise<{ name: string }>) => {
+      const id = `ingest-${nextId++}`
+      promisesRef.current.set(id, promise)
+      setQueue((q) => [...q, { id, name, status: "queued" }])
     },
     [],
   )
@@ -41,31 +90,29 @@ export function useIngestion() {
   const handleFileDrop = useCallback(
     (file: File) => {
       setUrl("")
-      handleIngest(uploadFile(file))
+      enqueue(file.name, uploadFile(file))
     },
-    [handleIngest],
+    [enqueue],
   )
 
   const handleUrlSubmit = useCallback(() => {
     const trimmed = urlRef.current.trim()
     if (!trimmed) return
     setUrl("")
-    handleIngest(ingestUrl(trimmed))
-  }, [handleIngest])
+    enqueue(trimmed, ingestUrl(trimmed))
+  }, [enqueue])
 
-  const handleReset = useCallback(() => {
-    setState({ status: "idle" })
-    setUrl("")
+  const dismissItem = useCallback((id: string) => {
+    promisesRef.current.delete(id)
+    setQueue((q) => q.filter((i) => i.id !== id))
   }, [])
 
   return {
-    status: state.status,
-    resultName: state.name,
-    errorMessage: state.error,
+    queue,
     url,
     setUrl,
     handleFileDrop,
     handleUrlSubmit,
-    handleReset,
+    dismissItem,
   }
 }

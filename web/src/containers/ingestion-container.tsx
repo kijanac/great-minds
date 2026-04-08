@@ -3,26 +3,22 @@ import { useIngestion } from "@/hooks/use-ingestion"
 
 export function IngestionContainer() {
   const {
-    status,
-    resultName,
-    errorMessage,
+    queue,
     url,
     setUrl,
     handleFileDrop,
     handleUrlSubmit,
-    handleReset,
+    dismissItem,
   } = useIngestion()
 
   return (
     <IngestionZone
-      status={status}
-      resultName={resultName}
-      errorMessage={errorMessage}
+      queue={queue}
       url={url}
       onUrlChange={setUrl}
       onUrlSubmit={handleUrlSubmit}
       onFileDrop={handleFileDrop}
-      onReset={handleReset}
+      onDismiss={dismissItem}
     />
   )
 }
