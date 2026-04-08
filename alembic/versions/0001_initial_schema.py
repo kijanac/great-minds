@@ -126,7 +126,7 @@ def upgrade() -> None:
     # -- Tasks -------------------------------------------------------------
     op.create_table(
         "tasks",
-        sa.Column("id", sa.Text(), nullable=False),
+        sa.Column("id", sa.UUID(), nullable=False),
         sa.Column("brain_id", sa.UUID(), nullable=False),
         sa.Column("type", sa.Text(), nullable=False),
         sa.Column("params", JSONB(), nullable=False),

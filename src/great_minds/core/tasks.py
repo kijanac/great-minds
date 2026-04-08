@@ -42,7 +42,7 @@ log = logging.getLogger(__name__)
 class TaskRecord(Base):
     __tablename__ = "tasks"
 
-    id: Mapped[str] = mapped_column(Text, primary_key=True)
+    id: Mapped[UUID] = mapped_column(PG_UUID, primary_key=True)
     brain_id: Mapped[UUID] = mapped_column(
         PG_UUID, ForeignKey("brains.id", ondelete="CASCADE"), index=True,
     )
@@ -275,7 +275,7 @@ async def list_brain_tasks(
 
 
 async def get_task(
-    absurd: AsyncAbsurd, session: AsyncSession, task_id: str, brain_id: UUID,
+    absurd: AsyncAbsurd, session: AsyncSession, task_id: UUID | str, brain_id: UUID,
 ) -> dict | None:
     """Get a single task by ID, scoped to a brain."""
     row = await session.execute(
