@@ -12,3 +12,4 @@ node_modules/
 dogfood-output/
 sessions/
 .env
+.DS_Store
