@@ -354,10 +354,27 @@ def create_app() -> FastAPI:
             raise HTTPException(status_code=404, detail="Session not found")
         return SessionResponse(id=session_id, events=events)
 
+    async def _try_compile(ctx: BrainContext, session: AsyncSession, absurd: AsyncAbsurd, settings: Settings) -> None:
+        """Best-effort compile trigger after ingestion. Skips if LLM not configured."""
+        if not settings.openrouter_api_key:
+            return
+        await tasks.spawn_compile(
+            absurd, session,
+            brain_id=ctx.brain.id,
+            storage_root=ctx.brain.storage_root,
+            data_dir=settings.data_dir,
+            label=ctx.brain.slug,
+            brain_kind=ctx.brain.kind,
+        )
+        await session.commit()
+
     @app.post("/ingest")
     async def ingest(
         req: IngestRequest,
         ctx: BrainContext = Depends(get_authorized_brain),
+        session: AsyncSession = Depends(get_session),
+        absurd: AsyncAbsurd = Depends(get_absurd),
+        settings: Settings = Depends(get_settings),
     ) -> dict:
         config = brain_ops.load_config(ctx.storage)
         kwargs = {}
@@ -370,12 +387,16 @@ def create_app() -> FastAPI:
         if req.source:
             kwargs["source"] = req.source
         result = ingester.ingest_document(ctx.storage, config, req.content, req.content_type, dest=req.dest, **kwargs)
+        await _try_compile(ctx, session, absurd, settings)
         return {"status": "ingested", "chars": len(result)}
 
     @app.post("/ingest/upload")
     async def ingest_upload(
         file: UploadFile,
         ctx: BrainContext = Depends(get_authorized_brain),
+        session: AsyncSession = Depends(get_session),
+        absurd: AsyncAbsurd = Depends(get_absurd),
+        settings: Settings = Depends(get_settings),
         content_type: str = "texts",
         author: str | None = None,
         date: str | None = None,
@@ -409,12 +430,16 @@ def create_app() -> FastAPI:
         if source:
             kwargs["source"] = source
         ingested = ingester.ingest_document(ctx.storage, config, content, content_type, dest=dest, **kwargs)
+        await _try_compile(ctx, session, absurd, settings)
         return {"status": "ingested", "name": filename, "chars": len(ingested)}
 
     @app.post("/ingest/url")
     async def ingest_url(
         req: IngestUrlRequest,
         ctx: BrainContext = Depends(get_authorized_brain),
+        session: AsyncSession = Depends(get_session),
+        absurd: AsyncAbsurd = Depends(get_absurd),
+        settings: Settings = Depends(get_settings),
     ) -> dict:
         config = brain_ops.load_config(ctx.storage)
 
@@ -444,6 +469,7 @@ def create_app() -> FastAPI:
         ingested = ingester.ingest_document(
             ctx.storage, config, markdown, req.content_type, dest=dest, title=title, source=url,
         )
+        await _try_compile(ctx, session, absurd, settings)
         return {"status": "ingested", "name": title, "url": url, "chars": len(ingested)}
 
     @app.get("/wiki", response_model=list[str])
