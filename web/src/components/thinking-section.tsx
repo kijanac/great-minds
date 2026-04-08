@@ -66,7 +66,7 @@ export function ThinkingSection({
                   label={src.label}
                   thinking={src.thinking}
                   active={activeCard === src.label}
-                  onClick={src.type !== "search" ? () => onCardClick(src.label) : undefined}
+                  onClick={() => onCardClick(src.label)}
                 />
               ),
             )}
