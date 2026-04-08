@@ -55,7 +55,7 @@ async function resolvePersonalBrain(token: string): Promise<string> {
   if (!res.ok) throw new Error("Failed to fetch brains")
 
   const brains: { id: string; kind: string }[] = await res.json()
-  const personal = brains.find((b) => b.kind === "PERSONAL")
+  const personal = brains.find((b) => b.kind === "personal")
   if (!personal) throw new Error("No personal brain found")
   return personal.id
 }
