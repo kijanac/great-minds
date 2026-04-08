@@ -1,16 +1,16 @@
-import { useRef, useState } from "react"
+import { useRef, useState } from "react";
 
-import { Button } from "@/components/ui/button"
-import { Input } from "@/components/ui/input"
-import type { QueueItem } from "@/hooks/use-ingestion"
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import type { QueueItem } from "@/hooks/use-ingestion";
 
 interface IngestionZoneProps {
-  queue: QueueItem[]
-  url: string
-  onUrlChange: (url: string) => void
-  onUrlSubmit: () => void
-  onFileDrop: (file: File) => void
-  onDismiss: (id: string) => void
+  queue: QueueItem[];
+  url: string;
+  onUrlChange: (url: string) => void;
+  onUrlSubmit: () => void;
+  onFileDrop: (file: File) => void;
+  onDismiss: (id: string) => void;
 }
 
 export function IngestionZone({
@@ -21,8 +21,8 @@ export function IngestionZone({
   onFileDrop,
   onDismiss,
 }: IngestionZoneProps) {
-  const [isDragOver, setDragOver] = useState(false)
-  const dragCounter = useRef(0)
+  const [isDragOver, setDragOver] = useState(false);
+  const dragCounter = useRef(0);
 
   return (
     <div className="mt-8 max-w-[640px] w-full">
@@ -38,38 +38,36 @@ export function IngestionZone({
           ${
             isDragOver
               ? "border border-solid border-gold-muted bg-ink-raised py-4"
-              : "border border-dashed border-ink-border py-3"
+              : "border border-dashed border-ink-border py-3 focus-within:border-gold-dim focus-within:border-solid"
           }
         `}
         onDragEnter={(e) => {
-          e.preventDefault()
-          dragCounter.current++
-          setDragOver(true)
+          e.preventDefault();
+          dragCounter.current++;
+          setDragOver(true);
         }}
         onDragOver={(e) => e.preventDefault()}
         onDragLeave={(e) => {
-          e.preventDefault()
-          dragCounter.current--
+          e.preventDefault();
+          dragCounter.current--;
           if (dragCounter.current <= 0) {
-            dragCounter.current = 0
-            setDragOver(false)
+            dragCounter.current = 0;
+            setDragOver(false);
           }
         }}
         onDrop={(e) => {
-          e.preventDefault()
-          dragCounter.current = 0
-          setDragOver(false)
-          const file = e.dataTransfer.files[0]
-          if (file) onFileDrop(file)
+          e.preventDefault();
+          dragCounter.current = 0;
+          setDragOver(false);
+          const file = e.dataTransfer.files[0];
+          if (file) onFileDrop(file);
         }}
       >
         <div className="flex items-center">
           <Input
             className="flex-1 border-none bg-transparent font-mono text-[length:var(--text-chrome)] tracking-[0.1em] text-warm-faint placeholder:text-warm-ghost caret-gold focus-visible:ring-0 focus-visible:border-none h-auto py-0 px-4"
             placeholder={
-              isDragOver
-                ? "drop to add to knowledge base"
-                : "drop a file or paste a link"
+              isDragOver ? "drop to add to knowledge base" : "drop a file or paste a link"
             }
             value={url}
             onChange={(e) => onUrlChange(e.target.value)}
@@ -92,16 +90,10 @@ export function IngestionZone({
         </div>
       )}
     </div>
-  )
+  );
 }
 
-function QueueRow({
-  item,
-  onDismiss,
-}: {
-  item: QueueItem
-  onDismiss: (id: string) => void
-}) {
+function QueueRow({ item, onDismiss }: { item: QueueItem; onDismiss: (id: string) => void }) {
   return (
     <div className="flex items-center gap-2 px-4 py-1.5 min-w-0 font-mono text-[length:var(--text-chrome)] tracking-[0.1em]">
       {item.status === "queued" && (
@@ -114,7 +106,9 @@ function QueueRow({
 
       {item.status === "processing" && (
         <>
-          <span className="text-gold animate-[pulse-fade_1.6s_ease-in-out_infinite] shrink-0">◉</span>
+          <span className="text-gold animate-[pulse-fade_1.6s_ease-in-out_infinite] shrink-0">
+            ◉
+          </span>
           <span className="text-warm-faint truncate">{item.name}</span>
           <span className="text-gold animate-[pulse-fade_1.6s_ease-in-out_infinite] ml-auto shrink-0">
             ingesting…
@@ -147,5 +141,5 @@ function QueueRow({
         </>
       )}
     </div>
-  )
+  );
 }

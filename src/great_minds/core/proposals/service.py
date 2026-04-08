@@ -40,10 +40,13 @@ class ProposalService:
             kwargs["title"] = proposal.title
         if proposal.author:
             kwargs["author"] = proposal.author
-        ingester.ingest_document(storage, config, content, proposal.content_type, **kwargs)
+        ingester.ingest_document(
+            storage, config, content, proposal.content_type, **kwargs
+        )
 
         await spawn_compile(
-            absurd, session,
+            absurd,
+            session,
             brain_id=brain.id,
             storage_root=brain.storage_root,
             data_dir=self.data_dir,

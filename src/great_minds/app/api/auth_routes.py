@@ -35,9 +35,13 @@ async def verify_code(
     auth_service: AuthService = Depends(get_auth_service),
 ) -> schemas.TokenPair:
     try:
-        access_token, refresh_token = await auth_service.verify_code(req.email, req.code)
+        access_token, refresh_token = await auth_service.verify_code(
+            req.email, req.code
+        )
     except ValueError:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid or expired code")
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid or expired code"
+        )
     await session.commit()
     return schemas.TokenPair(access_token=access_token, refresh_token=refresh_token)
 
@@ -49,14 +53,23 @@ async def refresh(
     auth_service: AuthService = Depends(get_auth_service),
 ) -> schemas.TokenPair:
     try:
-        access_token, refresh_token = await auth_service.refresh_tokens(req.refresh_token)
+        access_token, refresh_token = await auth_service.refresh_tokens(
+            req.refresh_token
+        )
     except ValueError:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid or expired refresh token")
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid or expired refresh token",
+        )
     await session.commit()
     return schemas.TokenPair(access_token=access_token, refresh_token=refresh_token)
 
 
-@router.post("/api-keys", response_model=schemas.ApiKeyCreated, status_code=status.HTTP_201_CREATED)
+@router.post(
+    "/api-keys",
+    response_model=schemas.ApiKeyCreated,
+    status_code=status.HTTP_201_CREATED,
+)
 async def create_api_key(
     req: schemas.ApiKeyCreate,
     user: User = Depends(get_current_user),
@@ -84,5 +97,7 @@ async def revoke_api_key(
     try:
         await auth_service.revoke_api_key(key_id, user.id)
     except ValueError:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="API key not found")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="API key not found"
+        )
     await session.commit()

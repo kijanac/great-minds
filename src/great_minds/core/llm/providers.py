@@ -35,7 +35,12 @@ def _api_key() -> str:
 
 
 def get_async_client(*, max_retries: int = 2, timeout: float = 120.0) -> AsyncOpenAI:
-    return AsyncOpenAI(base_url=OPENROUTER_BASE, api_key=_api_key(), max_retries=max_retries, timeout=timeout)
+    return AsyncOpenAI(
+        base_url=OPENROUTER_BASE,
+        api_key=_api_key(),
+        max_retries=max_retries,
+        timeout=timeout,
+    )
 
 
 def get_sync_client() -> OpenAI:

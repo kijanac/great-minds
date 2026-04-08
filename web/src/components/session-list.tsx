@@ -1,44 +1,36 @@
-import { useState } from "react"
-import { Home, Search } from "lucide-react"
+import { useState } from "react";
+import { Home, Search } from "lucide-react";
 
-import { Button } from "@/components/ui/button"
-import { Input } from "@/components/ui/input"
-import { Separator } from "@/components/ui/separator"
-import type { SessionSummary } from "@/api/sessions"
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Separator } from "@/components/ui/separator";
+import type { SessionSummary } from "@/api/sessions";
 
 interface SessionListProps {
-  sessions: SessionSummary[]
-  loading: boolean
-  onSessionClick: (id: string) => void
-  onHome: () => void
+  sessions: SessionSummary[];
+  loading: boolean;
+  onSessionClick: (id: string) => void;
+  onHome: () => void;
 }
 
 function formatDate(iso: string): string {
-  const d = new Date(iso)
+  const d = new Date(iso);
   return d.toLocaleDateString("en-US", {
     month: "short",
     day: "numeric",
     year: "numeric",
-  })
+  });
 }
 
-export function SessionList({
-  sessions,
-  loading,
-  onSessionClick,
-  onHome,
-}: SessionListProps) {
-  const [filter, setFilter] = useState("")
+export function SessionList({ sessions, loading, onSessionClick, onHome }: SessionListProps) {
+  const [filter, setFilter] = useState("");
 
   const filtered = filter.trim()
     ? sessions.filter((s) => {
-        const q = filter.toLowerCase()
-        return (
-          s.query.toLowerCase().includes(q) ||
-          s.sources.some((src) => src.includes(q))
-        )
+        const q = filter.toLowerCase();
+        return s.query.toLowerCase().includes(q) || s.sources.some((src) => src.includes(q));
       })
-    : sessions
+    : sessions;
 
   return (
     <div className="h-screen flex flex-col overflow-hidden">
@@ -109,5 +101,5 @@ export function SessionList({
         </div>
       </div>
     </div>
-  )
+  );
 }

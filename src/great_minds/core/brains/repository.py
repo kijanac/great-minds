@@ -5,7 +5,12 @@ from uuid import UUID
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from great_minds.core.brains.models import BrainORM, BrainMembership, BrainKind, MemberRole
+from great_minds.core.brains.models import (
+    BrainORM,
+    BrainMembership,
+    BrainKind,
+    MemberRole,
+)
 from great_minds.core.brains.schemas import Brain
 from great_minds.core.users.models import User
 
@@ -25,11 +30,15 @@ class BrainRepository:
         )
         self.session.add(brain)
         await self.session.flush()
-        self.session.add(BrainMembership(brain_id=brain.id, user_id=user.id, role=MemberRole.OWNER))
+        self.session.add(
+            BrainMembership(brain_id=brain.id, user_id=user.id, role=MemberRole.OWNER)
+        )
         await self.session.refresh(brain)
         return Brain.model_validate(brain)
 
-    async def create_team_brain(self, name: str, owner_id: UUID) -> tuple[Brain, MemberRole]:
+    async def create_team_brain(
+        self, name: str, owner_id: UUID
+    ) -> tuple[Brain, MemberRole]:
         slug = name.lower().replace(" ", "-")
         brain = BrainORM(
             name=name,
@@ -52,7 +61,9 @@ class BrainRepository:
         )
         return [(Brain.model_validate(brain), role) for brain, role in result.all()]
 
-    async def get_brain_with_role(self, brain_id: UUID, user_id: UUID) -> tuple[Brain, MemberRole] | None:
+    async def get_brain_with_role(
+        self, brain_id: UUID, user_id: UUID
+    ) -> tuple[Brain, MemberRole] | None:
         result = await self.session.execute(
             select(BrainORM, BrainMembership.role)
             .join(BrainMembership, BrainMembership.brain_id == BrainORM.id)
@@ -67,7 +78,9 @@ class BrainRepository:
         result = await self.session.execute(
             select(BrainORM)
             .join(BrainMembership, BrainMembership.brain_id == BrainORM.id)
-            .where(BrainMembership.user_id == user_id, BrainORM.kind == BrainKind.PERSONAL)
+            .where(
+                BrainMembership.user_id == user_id, BrainORM.kind == BrainKind.PERSONAL
+            )
         )
         brain = result.scalar_one_or_none()
         if brain is None:
@@ -88,7 +101,9 @@ class BrainRepository:
         )
         return result.all()
 
-    async def upsert_membership(self, brain_id: UUID, user_id: UUID, role: MemberRole) -> BrainMembership:
+    async def upsert_membership(
+        self, brain_id: UUID, user_id: UUID, role: MemberRole
+    ) -> BrainMembership:
         result = await self.session.execute(
             select(BrainMembership).where(
                 BrainMembership.brain_id == brain_id,
@@ -120,11 +135,14 @@ class BrainRepository:
         """Find personal brains of all members of the given brain."""
         result = await self.session.execute(
             select(BrainORM)
-            .join(BrainMembership, BrainMembership.user_id.in_(
-                select(BrainMembership.user_id).where(
-                    BrainMembership.brain_id == brain_id,
-                )
-            ))
+            .join(
+                BrainMembership,
+                BrainMembership.user_id.in_(
+                    select(BrainMembership.user_id).where(
+                        BrainMembership.brain_id == brain_id,
+                    )
+                ),
+            )
             .where(BrainORM.kind == BrainKind.PERSONAL)
             .distinct()
         )

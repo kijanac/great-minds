@@ -38,7 +38,9 @@ async def list_proposals(
     return list(result.scalars())
 
 
-async def get_authorized_proposal(session: AsyncSession, proposal_id: UUID, user_id: UUID) -> SourceProposal | None:
+async def get_authorized_proposal(
+    session: AsyncSession, proposal_id: UUID, user_id: UUID
+) -> SourceProposal | None:
     result = await session.execute(
         select(SourceProposal)
         .join(BrainMembership, BrainMembership.brain_id == SourceProposal.brain_id)

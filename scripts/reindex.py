@@ -5,7 +5,6 @@ Usage:
 """
 
 import asyncio
-import sys
 
 from sqlalchemy import select
 
@@ -37,10 +36,12 @@ async def main() -> None:
             storage = LocalStorage(brain.storage_root)
 
             wiki_files = storage.glob("wiki/*.md")
-            article_count = len([f for f in wiki_files if not f.rsplit("/", 1)[-1].startswith("_")])
+            article_count = len(
+                [f for f in wiki_files if not f.rsplit("/", 1)[-1].startswith("_")]
+            )
 
             if article_count == 0:
-                print(f"    -> no wiki articles, skipping\n")
+                print("    -> no wiki articles, skipping\n")
                 continue
 
             print(f"    -> {article_count} wiki articles, indexing...")

@@ -1,5 +1,5 @@
-import { useCallback } from "react"
-import { useNavigate } from "react-router"
+import { useCallback } from "react";
+import { useNavigate } from "react-router";
 
 /**
  * Returns a click handler that intercepts internal knowledge base links
@@ -13,40 +13,40 @@ import { useNavigate } from "react-router"
  *   http(s)://...       → browser default (new tab via target=_blank on the <a>)
  */
 export function useLinkInterceptor(onDocOpen?: (path: string) => void) {
-  const navigate = useNavigate()
+  const navigate = useNavigate();
 
   return useCallback(
     (e: React.MouseEvent) => {
-      const anchor = (e.target as Element).closest("a")
-      if (!anchor) return
+      const anchor = (e.target as Element).closest("a");
+      if (!anchor) return;
 
-      const href = anchor.getAttribute("href")
-      if (!href) return
+      const href = anchor.getAttribute("href");
+      if (!href) return;
 
       // External links — let browser handle (they should have target=_blank)
-      if (href.startsWith("http://") || href.startsWith("https://")) return
+      if (href.startsWith("http://") || href.startsWith("https://")) return;
 
       // Anchor links — let browser handle
-      if (href.startsWith("#")) return
+      if (href.startsWith("#")) return;
 
       // Wiki article links get full-screen navigation
       if (href.startsWith("wiki/")) {
-        e.preventDefault()
-        navigate(`/doc/${href}`)
-        return
+        e.preventDefault();
+        navigate(`/doc/${href}`);
+        return;
       }
 
       // Raw source links — open panel or navigate to full-screen doc view
       if (href.startsWith("raw/")) {
-        e.preventDefault()
+        e.preventDefault();
         if (onDocOpen) {
-          onDocOpen(href)
+          onDocOpen(href);
         } else {
-          navigate(`/doc/${href}`)
+          navigate(`/doc/${href}`);
         }
-        return
+        return;
       }
     },
     [navigate, onDocOpen],
-  )
+  );
 }

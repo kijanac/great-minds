@@ -10,11 +10,6 @@ from great_minds.core.db import Base
 from great_minds.core.settings import get_settings
 
 # Register all domain models with Base.metadata
-import great_minds.core.users.models
-import great_minds.core.auth.models
-import great_minds.core.brains.models
-import great_minds.core.proposals.models
-import great_minds.core.tasks
 
 config = context.config
 

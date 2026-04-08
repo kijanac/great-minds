@@ -1,14 +1,14 @@
 interface LoginFormProps {
-  step: "email" | "code"
-  email: string
-  code: string
-  error: string
-  loading: boolean
-  onEmailChange: (value: string) => void
-  onCodeChange: (value: string) => void
-  onRequestCode: (e: React.FormEvent) => void
-  onVerifyCode: (e: React.FormEvent) => void
-  onBack: () => void
+  step: "email" | "code";
+  email: string;
+  code: string;
+  error: string;
+  loading: boolean;
+  onEmailChange: (value: string) => void;
+  onCodeChange: (value: string) => void;
+  onRequestCode: (e: React.FormEvent) => void;
+  onVerifyCode: (e: React.FormEvent) => void;
+  onBack: () => void;
 }
 
 export default function LoginForm({
@@ -29,15 +29,11 @@ export default function LoginForm({
         <div className="text-center">
           <h1 className="font-serif text-title text-warm">Great Minds</h1>
           <p className="mt-2 text-small text-warm-faint">
-            {step === "email"
-              ? "Enter your email to sign in"
-              : `Code sent to ${email}`}
+            {step === "email" ? "Enter your email to sign in" : `Code sent to ${email}`}
           </p>
         </div>
 
-        {error && (
-          <p className="text-center text-small text-destructive">{error}</p>
-        )}
+        {error && <p className="text-center text-small text-destructive">{error}</p>}
 
         {step === "email" ? (
           <form onSubmit={onRequestCode} className="space-y-4">
@@ -48,12 +44,12 @@ export default function LoginForm({
               placeholder="you@example.com"
               required
               autoFocus
-              className="w-full rounded-md border border-ink-border bg-ink-raised px-4 py-3 font-mono text-small text-warm placeholder:text-warm-ghost outline-none focus:border-gold-dim"
+              className="w-full rounded-sm border border-ink-border bg-ink-raised px-4 py-3 font-mono text-small text-warm placeholder:text-warm-ghost outline-none focus:border-gold-dim"
             />
             <button
               type="submit"
               disabled={loading}
-              className="w-full rounded-md bg-gold px-4 py-3 font-mono text-small text-ink font-semibold hover:bg-gold-hover disabled:opacity-50 transition-colors"
+              className="w-full rounded-sm bg-gold px-4 py-3 font-mono text-small text-primary-foreground font-semibold hover:bg-gold-hover disabled:opacity-50 transition-colors"
             >
               {loading ? "Sending..." : "Send code"}
             </button>
@@ -70,12 +66,12 @@ export default function LoginForm({
               maxLength={6}
               inputMode="numeric"
               pattern="[0-9]*"
-              className="w-full rounded-md border border-ink-border bg-ink-raised px-4 py-3 font-mono text-small text-warm text-center tracking-[0.5em] placeholder:tracking-normal placeholder:text-warm-ghost outline-none focus:border-gold-dim"
+              className="w-full rounded-sm border border-ink-border bg-ink-raised px-4 py-3 font-mono text-small text-warm text-center tracking-[0.5em] placeholder:tracking-normal placeholder:text-warm-ghost outline-none focus:border-gold-dim"
             />
             <button
               type="submit"
               disabled={loading}
-              className="w-full rounded-md bg-gold px-4 py-3 font-mono text-small text-ink font-semibold hover:bg-gold-hover disabled:opacity-50 transition-colors"
+              className="w-full rounded-sm bg-gold px-4 py-3 font-mono text-small text-primary-foreground font-semibold hover:bg-gold-hover disabled:opacity-50 transition-colors"
             >
               {loading ? "Verifying..." : "Sign in"}
             </button>
@@ -90,5 +86,5 @@ export default function LoginForm({
         )}
       </div>
     </div>
-  )
+  );
 }

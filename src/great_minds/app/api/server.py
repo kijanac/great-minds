@@ -1,7 +1,7 @@
 """FastAPI server wrapping Brain operations.
 
-    great-minds serve
-    great-minds serve --port 8080
+great-minds serve
+great-minds serve --port 8080
 """
 
 import asyncio
@@ -209,7 +209,8 @@ def create_app() -> FastAPI:
         _: None = Depends(require_llm),
     ) -> TaskResponse:
         record = await tasks.spawn_compile(
-            absurd, session,
+            absurd,
+            session,
             brain_id=ctx.brain.id,
             storage_root=ctx.brain.storage_root,
             data_dir=settings.data_dir,
@@ -251,10 +252,15 @@ def create_app() -> FastAPI:
         _: None = Depends(require_llm),
     ) -> QueryResponse:
         all_sources = await brain_service.get_all_query_sources(user.id)
-        target = querier.QuerySource(storage=ctx.storage, label=ctx.brain.slug, brain_id=ctx.brain.id)
+        target = querier.QuerySource(
+            storage=ctx.storage, label=ctx.brain.slug, brain_id=ctx.brain.id
+        )
         sources = [target] + [s for s in all_sources if s.label != target.label]
         answer = await querier.run_query(
-            sources, req.question, session, model=req.model,
+            sources,
+            req.question,
+            session,
+            model=req.model,
             origin_path=req.origin_path,
             session_context=req.session_context,
             mode=req.mode,
@@ -271,12 +277,17 @@ def create_app() -> FastAPI:
         _: None = Depends(require_llm),
     ) -> StreamingResponse:
         all_sources = await brain_service.get_all_query_sources(user.id)
-        target = querier.QuerySource(storage=ctx.storage, label=ctx.brain.slug, brain_id=ctx.brain.id)
+        target = querier.QuerySource(
+            storage=ctx.storage, label=ctx.brain.slug, brain_id=ctx.brain.id
+        )
         sources = [target] + [s for s in all_sources if s.label != target.label]
 
         async def event_generator():
             async for event in querier.run_stream_query(
-                sources, req.question, session, model=req.model,
+                sources,
+                req.question,
+                session,
+                model=req.model,
                 origin_path=req.origin_path,
                 session_context=req.session_context,
                 mode=req.mode,
@@ -297,7 +308,9 @@ def create_app() -> FastAPI:
         ctx: BrainContext = Depends(get_authorized_brain),
     ) -> SessionPathResponse:
         path = sessions.create_session(
-            ctx.storage, req.session_id, req.exchange.model_dump(),
+            ctx.storage,
+            req.session_id,
+            req.exchange.model_dump(),
             origin=req.origin,
         )
         return SessionPathResponse(path=path)
@@ -327,8 +340,10 @@ def create_app() -> FastAPI:
         raw = sessions.list_sessions(ctx.storage)
         return [
             SessionListItem(
-                id=s["id"], query=s["query"],
-                created=s.get("ts", ""), updated=s.get("updated", s.get("ts", "")),
+                id=s["id"],
+                query=s["query"],
+                created=s.get("ts", ""),
+                updated=s.get("updated", s.get("ts", "")),
                 origin=s.get("origin"),
             )
             for s in raw
@@ -345,12 +360,18 @@ def create_app() -> FastAPI:
             raise HTTPException(status_code=404, detail="Session not found")
         return SessionResponse(id=session_id, events=events)
 
-    async def _try_compile(ctx: BrainContext, session: AsyncSession, absurd: AsyncAbsurd, settings: Settings) -> None:
+    async def _try_compile(
+        ctx: BrainContext,
+        session: AsyncSession,
+        absurd: AsyncAbsurd,
+        settings: Settings,
+    ) -> None:
         """Best-effort compile trigger after ingestion. Skips if LLM not configured."""
         if not settings.openrouter_api_key:
             return
         await tasks.spawn_compile(
-            absurd, session,
+            absurd,
+            session,
             brain_id=ctx.brain.id,
             storage_root=ctx.brain.storage_root,
             data_dir=settings.data_dir,
@@ -377,7 +398,9 @@ def create_app() -> FastAPI:
             kwargs["date"] = req.date
         if req.source:
             kwargs["source"] = req.source
-        result = ingest_document(ctx.storage, config, req.content, req.content_type, dest=req.dest, **kwargs)
+        result = ingest_document(
+            ctx.storage, config, req.content, req.content_type, dest=req.dest, **kwargs
+        )
         await _try_compile(ctx, session, absurd, settings)
         return {"status": "ingested", "chars": len(result)}
 
@@ -420,7 +443,9 @@ def create_app() -> FastAPI:
             kwargs["date"] = date
         if source:
             kwargs["source"] = source
-        ingested = ingest_document(ctx.storage, config, content, content_type, dest=dest, **kwargs)
+        ingested = ingest_document(
+            ctx.storage, config, content, content_type, dest=dest, **kwargs
+        )
         await _try_compile(ctx, session, absurd, settings)
         return {"status": "ingested", "name": filename, "chars": len(ingested)}
 
@@ -437,9 +462,12 @@ def create_app() -> FastAPI:
         url = normalize_url(req.url)
         try:
             async with httpx.AsyncClient(follow_redirects=True, timeout=30.0) as client:
-                response = await client.get(url, headers={
-                    "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
-                })
+                response = await client.get(
+                    url,
+                    headers={
+                        "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+                    },
+                )
                 response.raise_for_status()
         except httpx.HTTPError as exc:
             raise HTTPException(status_code=400, detail=f"Failed to fetch URL: {exc}")
@@ -448,7 +476,10 @@ def create_app() -> FastAPI:
         result = await asyncio.to_thread(
             converter.convert_stream,
             io.BytesIO(response.content),
-            stream_info=StreamInfo(extension=".html", mimetype=response.headers.get("content-type", "text/html")),
+            stream_info=StreamInfo(
+                extension=".html",
+                mimetype=response.headers.get("content-type", "text/html"),
+            ),
         )
 
         markdown = result.text_content
@@ -458,7 +489,13 @@ def create_app() -> FastAPI:
         dest = f"raw/{req.content_type}/{slug}.md"
 
         ingested = ingest_document(
-            ctx.storage, config, markdown, req.content_type, dest=dest, title=title, source=url,
+            ctx.storage,
+            config,
+            markdown,
+            req.content_type,
+            dest=dest,
+            title=title,
+            source=url,
         )
         await _try_compile(ctx, session, absurd, settings)
         return {"status": "ingested", "name": title, "url": url, "chars": len(ingested)}

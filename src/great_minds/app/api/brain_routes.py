@@ -45,8 +45,13 @@ async def create_brain(
     await session.commit()
 
     return schemas.Brain(
-        id=brain.id, name=brain.name, kind=brain.kind, role=role,
-        slug=brain.slug, owner_id=brain.owner_id, created_at=brain.created_at,
+        id=brain.id,
+        name=brain.name,
+        kind=brain.kind,
+        role=role,
+        slug=brain.slug,
+        owner_id=brain.owner_id,
+        created_at=brain.created_at,
     )
 
 
@@ -67,9 +72,15 @@ async def get_brain(
     article_count = len(brain_ops.list_articles(storage))
 
     return schemas.BrainDetail(
-        id=brain.id, name=brain.name, kind=brain.kind, role=role,
-        slug=brain.slug, owner_id=brain.owner_id, created_at=brain.created_at,
-        member_count=member_count, article_count=article_count,
+        id=brain.id,
+        name=brain.name,
+        kind=brain.kind,
+        role=role,
+        slug=brain.slug,
+        owner_id=brain.owner_id,
+        created_at=brain.created_at,
+        member_count=member_count,
+        article_count=article_count,
     )
 
 
@@ -91,7 +102,9 @@ async def list_members(
     ]
 
 
-@router.put("/{brain_id}/members/{member_user_id}", response_model=schemas.MembershipOverview)
+@router.put(
+    "/{brain_id}/members/{member_user_id}", response_model=schemas.MembershipOverview
+)
 async def set_member(
     brain_id: UUID,
     member_user_id: UUID,
@@ -119,10 +132,14 @@ async def set_member(
     await brain_service.upsert_membership(brain_id, member_user_id, new_role)
     await session.commit()
 
-    return schemas.MembershipOverview(user_id=target_user.id, email=target_user.email, role=new_role)
+    return schemas.MembershipOverview(
+        user_id=target_user.id, email=target_user.email, role=new_role
+    )
 
 
-@router.delete("/{brain_id}/members/{member_user_id}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete(
+    "/{brain_id}/members/{member_user_id}", status_code=status.HTTP_204_NO_CONTENT
+)
 async def remove_member(
     brain_id: UUID,
     member_user_id: UUID,

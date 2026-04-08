@@ -68,7 +68,9 @@ async def run_vector_only(session, brain_ids, query_embedding, limit=10):
         select(
             SearchIndexEntry.path,
             SearchIndexEntry.heading,
-            (1 - SearchIndexEntry.embedding.cosine_distance(query_embedding)).label("similarity"),
+            (1 - SearchIndexEntry.embedding.cosine_distance(query_embedding)).label(
+                "similarity"
+            ),
         )
         .where(
             SearchIndexEntry.brain_id.in_(brain_ids),
@@ -87,7 +89,9 @@ async def test_query(session, brain_ids, query):
 
     client = get_async_client()
     response = await client.embeddings.create(model=EMBEDDING_MODEL, input=[query])
-    query_embedding = _truncate_and_normalize(response.data[0].embedding, EMBEDDING_DIMENSIONS)
+    query_embedding = _truncate_and_normalize(
+        response.data[0].embedding, EMBEDDING_DIMENSIONS
+    )
 
     # BM25 only
     bm25_rows = await run_bm25_only(session, brain_ids, query)
@@ -95,7 +99,7 @@ async def test_query(session, brain_ids, query):
     for i, row in enumerate(bm25_rows):
         slug = row.path.removeprefix("wiki/").removesuffix(".md")
         heading = f" > {row.heading}" if row.heading else ""
-        print(f"  {i+1:2d}. [{row.rank:.4f}] {slug}{heading}")
+        print(f"  {i + 1:2d}. [{row.rank:.4f}] {slug}{heading}")
 
     # Vector only
     vector_rows = await run_vector_only(session, brain_ids, query_embedding)
@@ -103,7 +107,7 @@ async def test_query(session, brain_ids, query):
     for i, row in enumerate(vector_rows):
         slug = row.path.removeprefix("wiki/").removesuffix(".md")
         heading = f" > {row.heading}" if row.heading else ""
-        print(f"  {i+1:2d}. [{row.similarity:.4f}] {slug}{heading}")
+        print(f"  {i + 1:2d}. [{row.similarity:.4f}] {slug}{heading}")
 
     # Hybrid (RRF)
     hybrid_results = await search(session, brain_ids, query, limit=10)
@@ -111,7 +115,7 @@ async def test_query(session, brain_ids, query):
     for i, r in enumerate(hybrid_results):
         slug = r.path.removeprefix("wiki/").removesuffix(".md")
         heading = f" > {r.heading}" if r.heading else ""
-        print(f"  {i+1:2d}. [{r.score:.4f}] {slug}{heading}")
+        print(f"  {i + 1:2d}. [{r.score:.4f}] {slug}{heading}")
 
 
 async def main():

@@ -32,7 +32,12 @@ def upgrade() -> None:
         "users",
         sa.Column("id", sa.UUID(), nullable=False),
         sa.Column("email", sa.String(length=320), nullable=False),
-        sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
+        sa.Column(
+            "created_at",
+            sa.DateTime(timezone=True),
+            server_default=sa.text("now()"),
+            nullable=False,
+        ),
         sa.PrimaryKeyConstraint("id"),
     )
     op.create_index("ix_users_email", "users", ["email"], unique=True)
@@ -44,7 +49,12 @@ def upgrade() -> None:
         sa.Column("key_hash", sa.String(length=64), nullable=False),
         sa.Column("label", sa.Text(), nullable=False),
         sa.Column("revoked", sa.Boolean(), nullable=False),
-        sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
+        sa.Column(
+            "created_at",
+            sa.DateTime(timezone=True),
+            server_default=sa.text("now()"),
+            nullable=False,
+        ),
         sa.ForeignKeyConstraint(["user_id"], ["users.id"], ondelete="CASCADE"),
         sa.PrimaryKeyConstraint("id"),
     )
@@ -57,7 +67,12 @@ def upgrade() -> None:
         sa.Column("code_hash", sa.String(length=64), nullable=False),
         sa.Column("expires_at", sa.DateTime(timezone=True), nullable=False),
         sa.Column("used", sa.Boolean(), nullable=False),
-        sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
+        sa.Column(
+            "created_at",
+            sa.DateTime(timezone=True),
+            server_default=sa.text("now()"),
+            nullable=False,
+        ),
         sa.PrimaryKeyConstraint("id"),
     )
     op.create_index("ix_auth_codes_email", "auth_codes", ["email"], unique=False)
@@ -69,11 +84,18 @@ def upgrade() -> None:
         sa.Column("token_hash", sa.String(length=64), nullable=False),
         sa.Column("expires_at", sa.DateTime(timezone=True), nullable=False),
         sa.Column("revoked", sa.Boolean(), nullable=False),
-        sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
+        sa.Column(
+            "created_at",
+            sa.DateTime(timezone=True),
+            server_default=sa.text("now()"),
+            nullable=False,
+        ),
         sa.ForeignKeyConstraint(["user_id"], ["users.id"], ondelete="CASCADE"),
         sa.PrimaryKeyConstraint("id"),
     )
-    op.create_index("ix_refresh_tokens_token_hash", "refresh_tokens", ["token_hash"], unique=True)
+    op.create_index(
+        "ix_refresh_tokens_token_hash", "refresh_tokens", ["token_hash"], unique=True
+    )
 
     # -- Brains & memberships ----------------------------------------------
     op.create_table(
@@ -82,9 +104,16 @@ def upgrade() -> None:
         sa.Column("name", sa.String(length=255), nullable=False),
         sa.Column("slug", sa.String(length=255), nullable=False),
         sa.Column("owner_id", sa.UUID(), nullable=False),
-        sa.Column("kind", sa.Enum("PERSONAL", "TEAM", name="brain_kind"), nullable=False),
+        sa.Column(
+            "kind", sa.Enum("PERSONAL", "TEAM", name="brain_kind"), nullable=False
+        ),
         sa.Column("storage_root", sa.Text(), nullable=False),
-        sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
+        sa.Column(
+            "created_at",
+            sa.DateTime(timezone=True),
+            server_default=sa.text("now()"),
+            nullable=False,
+        ),
         sa.ForeignKeyConstraint(["owner_id"], ["users.id"], ondelete="CASCADE"),
         sa.PrimaryKeyConstraint("id"),
     )
@@ -94,8 +123,17 @@ def upgrade() -> None:
         sa.Column("id", sa.UUID(), nullable=False),
         sa.Column("brain_id", sa.UUID(), nullable=False),
         sa.Column("user_id", sa.UUID(), nullable=False),
-        sa.Column("role", sa.Enum("OWNER", "EDITOR", "VIEWER", name="member_role"), nullable=False),
-        sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
+        sa.Column(
+            "role",
+            sa.Enum("OWNER", "EDITOR", "VIEWER", name="member_role"),
+            nullable=False,
+        ),
+        sa.Column(
+            "created_at",
+            sa.DateTime(timezone=True),
+            server_default=sa.text("now()"),
+            nullable=False,
+        ),
         sa.ForeignKeyConstraint(["brain_id"], ["brains.id"], ondelete="CASCADE"),
         sa.ForeignKeyConstraint(["user_id"], ["users.id"], ondelete="CASCADE"),
         sa.PrimaryKeyConstraint("id"),
@@ -108,20 +146,31 @@ def upgrade() -> None:
         sa.Column("id", sa.UUID(), nullable=False),
         sa.Column("brain_id", sa.UUID(), nullable=False),
         sa.Column("user_id", sa.UUID(), nullable=False),
-        sa.Column("status", sa.Enum("PENDING", "APPROVED", "REJECTED", name="proposal_status"), nullable=False),
+        sa.Column(
+            "status",
+            sa.Enum("PENDING", "APPROVED", "REJECTED", name="proposal_status"),
+            nullable=False,
+        ),
         sa.Column("content_type", sa.String(length=50), nullable=False),
         sa.Column("title", sa.Text(), nullable=True),
         sa.Column("author", sa.Text(), nullable=True),
         sa.Column("storage_path", sa.Text(), nullable=False),
         sa.Column("reviewed_by", sa.UUID(), nullable=True),
         sa.Column("reviewed_at", sa.DateTime(timezone=True), nullable=True),
-        sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
+        sa.Column(
+            "created_at",
+            sa.DateTime(timezone=True),
+            server_default=sa.text("now()"),
+            nullable=False,
+        ),
         sa.ForeignKeyConstraint(["brain_id"], ["brains.id"], ondelete="CASCADE"),
         sa.ForeignKeyConstraint(["reviewed_by"], ["users.id"], ondelete="SET NULL"),
         sa.ForeignKeyConstraint(["user_id"], ["users.id"], ondelete="CASCADE"),
         sa.PrimaryKeyConstraint("id"),
     )
-    op.create_index("ix_source_proposals_brain_id", "source_proposals", ["brain_id"], unique=False)
+    op.create_index(
+        "ix_source_proposals_brain_id", "source_proposals", ["brain_id"], unique=False
+    )
 
     # -- Tasks -------------------------------------------------------------
     op.create_table(
@@ -130,14 +179,20 @@ def upgrade() -> None:
         sa.Column("brain_id", sa.UUID(), nullable=False),
         sa.Column("type", sa.Text(), nullable=False),
         sa.Column("params", JSONB(), nullable=False),
-        sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
+        sa.Column(
+            "created_at",
+            sa.DateTime(timezone=True),
+            server_default=sa.text("now()"),
+            nullable=False,
+        ),
         sa.ForeignKeyConstraint(["brain_id"], ["brains.id"], ondelete="CASCADE"),
         sa.PrimaryKeyConstraint("id"),
     )
     op.create_index("ix_tasks_brain_id", "tasks", ["brain_id"], unique=False)
 
     # -- Search index (pgvector + tsvector) --------------------------------
-    op.execute(text("""
+    op.execute(
+        text("""
         CREATE TABLE search_index (
             id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
             brain_id    UUID NOT NULL REFERENCES brains(id) ON DELETE CASCADE,
@@ -152,10 +207,15 @@ def upgrade() -> None:
 
             UNIQUE (brain_id, path, chunk_index)
         )
-    """))
+    """)
+    )
     op.execute(text("CREATE INDEX ix_search_index_brain_id ON search_index (brain_id)"))
     op.execute(text("CREATE INDEX ix_search_index_tsv ON search_index USING GIN (tsv)"))
-    op.execute(text("CREATE INDEX ix_search_index_embedding ON search_index USING hnsw (embedding vector_cosine_ops)"))
+    op.execute(
+        text(
+            "CREATE INDEX ix_search_index_embedding ON search_index USING hnsw (embedding vector_cosine_ops)"
+        )
+    )
 
     # -- Absurd (durable task queue) schema --------------------------------
     url = op.get_bind().engine.url

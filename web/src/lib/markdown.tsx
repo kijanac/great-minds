@@ -1,13 +1,13 @@
-import type { ComponentProps } from "react"
-import type Markdown from "react-markdown"
-import remarkGfm from "remark-gfm"
+import type { ComponentProps } from "react";
+import type Markdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 
-export const remarkPlugins = [remarkGfm]
+export const remarkPlugins = [remarkGfm];
 
 /** Leaf markdown overrides shared across all contexts (answer-block, article-view, btw-thread). */
 export const baseMdComponents: ComponentProps<typeof Markdown>["components"] = {
   a: ({ children, href }) => {
-    const isExternal = href?.startsWith("http")
+    const isExternal = href?.startsWith("http");
     return (
       <a
         href={href}
@@ -16,10 +16,8 @@ export const baseMdComponents: ComponentProps<typeof Markdown>["components"] = {
       >
         {children}
       </a>
-    )
+    );
   },
   em: ({ children }) => <em className="text-warm">{children}</em>,
-  strong: ({ children }) => (
-    <strong className="text-foreground font-bold">{children}</strong>
-  ),
-}
+  strong: ({ children }) => <strong className="text-foreground font-bold">{children}</strong>,
+};

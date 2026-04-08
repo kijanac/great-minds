@@ -15,8 +15,12 @@ class Mailer:
         self.from_email = settings.mailersend_from_email
 
     def send(self, to: str, subject: str, body: str) -> None:
-        if self.api_key is None:
-            log.warning("mailersend_api_key not set — logging email: to=%s subject=%s", to, subject)
+        if self.api_key is None or self.from_email is None:
+            log.warning(
+                "mailersend not configured — logging email: to=%s subject=%s",
+                to,
+                subject,
+            )
             return
 
         client = MailerSendClient(api_key=self.api_key)

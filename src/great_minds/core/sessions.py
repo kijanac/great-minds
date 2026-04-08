@@ -151,6 +151,8 @@ def load_events(storage: Storage, session_id: str) -> list[dict]:
     Truncates at the first malformed line (partial write recovery).
     """
     content = storage.read(f"sessions/{session_id}.jsonl")
+    if content is None:
+        return []
     events = []
     for line in content.strip().split("\n"):
         if not line.strip():
@@ -167,7 +169,9 @@ def list_sessions(storage: Storage) -> list[dict]:
     results = []
     for path in storage.glob("sessions/*.jsonl"):
         content = storage.read(path)
-        lines = [l for l in content.strip().split("\n") if l.strip()]
+        if content is None:
+            continue
+        lines = [line for line in content.strip().split("\n") if line.strip()]
         if not lines:
             continue
 

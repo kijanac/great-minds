@@ -20,7 +20,6 @@ The _index.md file serves dual duty:
   - Link vocabulary for the writing step (model reads it to know what to link to)
 """
 
-
 import asyncio
 import json
 import logging
@@ -57,6 +56,7 @@ _FRONTMATTER_RE = re.compile(r"^---\n(.+?)\n---\n", re.DOTALL)
 # Utilities
 # ---------------------------------------------------------------------------
 
+
 async def api_call(client: AsyncOpenAI, **kwargs):
     """Wrap API calls with retries for transient failures."""
     for attempt in range(1, MAX_RETRIES + 1):
@@ -65,9 +65,8 @@ async def api_call(client: AsyncOpenAI, **kwargs):
         except Exception as e:
             if attempt == MAX_RETRIES:
                 raise
-            log.warning("api call failed (attempt %d/%d): %s",
-                        attempt, MAX_RETRIES, e)
-            await asyncio.sleep(2 ** attempt)
+            log.warning("api call failed (attempt %d/%d): %s", attempt, MAX_RETRIES, e)
+            await asyncio.sleep(2**attempt)
 
 
 def parse_frontmatter(content: str) -> tuple[dict, str]:
@@ -75,7 +74,7 @@ def parse_frontmatter(content: str) -> tuple[dict, str]:
     if not match:
         return {}, content
     fm = _yaml.load(match.group(1))
-    body = content[match.end():]
+    body = content[match.end() :]
     return dict(fm) if fm else {}, body
 
 
@@ -124,12 +123,15 @@ def _stem_from_path(path: str) -> str:
 type EnrichedDoc = tuple[str, dict, str]
 
 # A planned article with its source document index
-type PlannedArticle = dict  # has slug, action, tags, key_points, connections, source_idx
+type PlannedArticle = (
+    dict  # has slug, action, tags, key_points, connections, source_idx
+)
 
 
 # ---------------------------------------------------------------------------
 # Phase 1: Enrich (parallel, cheap)
 # ---------------------------------------------------------------------------
+
 
 async def enrich_one(
     storage: Storage,
@@ -139,6 +141,8 @@ async def enrich_one(
     filepath: str,
 ) -> EnrichedDoc:
     content = storage.read(filepath)
+    if content is None:
+        raise FileNotFoundError(filepath)
     fm, body = parse_frontmatter(content)
     title = fm.get("title", _stem_from_path(filepath))
 
@@ -159,15 +163,21 @@ async def enrich_one(
         raw = strip_json_fencing(text)
         try:
             data = json.loads(raw)
-            fm.update({
-                "genre": data.get("genre", ""),
-                "tradition": data.get("tradition", ""),
-                "interlocutors": data.get("interlocutors", []),
-                "concepts": data.get("concepts", []),
-                "tags": data.get("tags", []),
-            })
-            log.info("enriched %s -- genre=%s, concepts=%d",
-                     title, fm["genre"], len(fm["concepts"]))
+            fm.update(
+                {
+                    "genre": data.get("genre", ""),
+                    "tradition": data.get("tradition", ""),
+                    "interlocutors": data.get("interlocutors", []),
+                    "concepts": data.get("concepts", []),
+                    "tags": data.get("tags", []),
+                }
+            )
+            log.info(
+                "enriched %s -- genre=%s, concepts=%d",
+                title,
+                fm["genre"],
+                len(fm["concepts"]),
+            )
         except json.JSONDecodeError:
             log.warning("failed to parse enrichment for %s: %s", title, raw[:200])
     else:
@@ -179,6 +189,7 @@ async def enrich_one(
 # ---------------------------------------------------------------------------
 # Phase 2: Plan (parallel, cheap)
 # ---------------------------------------------------------------------------
+
 
 def read_index(storage: Storage) -> str:
     content = storage.read("wiki/_index.md", strict=False)
@@ -241,6 +252,7 @@ async def plan_one(
 # ---------------------------------------------------------------------------
 # Phase 3: Reconcile (deterministic, no LLM)
 # ---------------------------------------------------------------------------
+
 
 def normalize_slug(slug: str) -> str:
     """Normalize a slug for deduplication comparison."""
@@ -314,8 +326,11 @@ def reconcile_plans(
 
     if merge_count:
         log.info("reconciled %d duplicate article plans", merge_count)
-    log.info("reconciled plan: %d unique articles from %d raw plans",
-             len(reconciled), len(flat))
+    log.info(
+        "reconciled plan: %d unique articles from %d raw plans",
+        len(reconciled),
+        len(flat),
+    )
 
     return reconciled
 
@@ -323,6 +338,7 @@ def reconcile_plans(
 # ---------------------------------------------------------------------------
 # Phase 4: Write (parallel, expensive)
 # ---------------------------------------------------------------------------
+
 
 async def write_one(
     storage: Storage,
@@ -357,7 +373,11 @@ async def write_one(
         else:
             action = "create"
 
-    action_instructions = load_prompt("create_article") if action == "create" else load_prompt("update_article")
+    action_instructions = (
+        load_prompt("create_article")
+        if action == "create"
+        else load_prompt("update_article")
+    )
     key_points = "\n".join(f"- {p}" for p in article.get("key_points", []))
     connections = ", ".join(article.get("connections", [])) or "none"
     tags = ", ".join(article.get("tags", []))
@@ -412,7 +432,13 @@ async def write_one(
 # Phase 5: Index update (cheap)
 # ---------------------------------------------------------------------------
 
-async def update_index(storage: Storage, load_prompt: Callable[[str], str], client: AsyncOpenAI, written_articles: list[PlannedArticle]):
+
+async def update_index(
+    storage: Storage,
+    load_prompt: Callable[[str], str],
+    client: AsyncOpenAI,
+    written_articles: list[PlannedArticle],
+):
     current_index = read_index(storage)
 
     summaries = []
@@ -460,6 +486,7 @@ async def update_index(storage: Storage, load_prompt: Callable[[str], str], clie
 # Phase 6: Backlinks + mark compiled (deterministic)
 # ---------------------------------------------------------------------------
 
+
 def insert_backlinks(storage: Storage):
     # Single pass: read all wiki articles, build slug map and content cache
     slug_map: dict[str, str] = {}
@@ -468,6 +495,8 @@ def insert_backlinks(storage: Storage):
         if path.startswith("wiki/_"):
             continue
         content = storage.read(path)
+        if content is None:
+            continue
         stem = wiki_slug(path)
         heading_match = re.search(r"^#\s+(.+)", content, re.MULTILINE)
         slug_map[stem] = heading_match.group(1).strip() if heading_match else stem
@@ -510,7 +539,9 @@ def mark_compiled(storage: Storage, docs: list[EnrichedDoc]):
     log.info("marked %d documents as compiled", len(docs))
 
 
-def append_changelog(storage: Storage, docs: list[EnrichedDoc], articles: list[PlannedArticle]):
+def append_changelog(
+    storage: Storage, docs: list[EnrichedDoc], articles: list[PlannedArticle]
+):
     timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
     titles = [d[1].get("title", _stem_from_path(d[0])) for d in docs]
 
@@ -533,6 +564,8 @@ def find_uncompiled(storage: Storage) -> list[str]:
     results = []
     for path in storage.glob("raw/texts/**/*.md"):
         content = storage.read(path)
+        if content is None:
+            continue
         fm, _ = parse_frontmatter(content)
         if fm and fm.get("compiled") is False:
             results.append(path)
@@ -542,6 +575,7 @@ def find_uncompiled(storage: Storage) -> list[str]:
 # ---------------------------------------------------------------------------
 # Main pipeline
 # ---------------------------------------------------------------------------
+
 
 @dataclass
 class CompilationResult:
@@ -595,8 +629,10 @@ async def run(
     log.info("=== phase 2: planning %d documents ===", len(docs))
     wiki_index = read_index(storage)
     plan_results = await asyncio.gather(
-        *(plan_one(storage, load_prompt, client, sem, i, fm, body, wiki_index)
-          for i, (_, fm, body) in enumerate(docs)),
+        *(
+            plan_one(storage, load_prompt, client, sem, i, fm, body, wiki_index)
+            for i, (_, fm, body) in enumerate(docs)
+        ),
         return_exceptions=True,
     )
 
@@ -622,8 +658,12 @@ async def run(
     log.info("=== phase 4: writing %d articles ===", len(reconciled))
     wiki_index = read_index(storage)
     write_results = await asyncio.gather(
-        *(write_one(storage, load_prompt, client, sem, article, reconciled, docs, wiki_index)
-          for article in reconciled),
+        *(
+            write_one(
+                storage, load_prompt, client, sem, article, reconciled, docs, wiki_index
+            )
+            for article in reconciled
+        ),
         return_exceptions=True,
     )
 
@@ -652,7 +692,12 @@ async def run(
         log.info("=== phase 7: rebuilding search index ===")
         chunks_indexed = await rebuild_index(db_session, brain_id, storage)
 
-    log.info("compilation complete -- %d docs, %d articles, %d chunks indexed", len(docs), len(written), chunks_indexed)
+    log.info(
+        "compilation complete -- %d docs, %d articles, %d chunks indexed",
+        len(docs),
+        len(written),
+        chunks_indexed,
+    )
 
     return CompilationResult(
         docs_compiled=len(docs),

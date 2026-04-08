@@ -27,8 +27,9 @@ async def main():
 
         # Sample a tsvector value
         sample = await session.execute(
-            select(SearchIndexEntry.path, SearchIndexEntry.tsv, SearchIndexEntry.body)
-            .limit(1)
+            select(
+                SearchIndexEntry.path, SearchIndexEntry.tsv, SearchIndexEntry.body
+            ).limit(1)
         )
         s = sample.one()
         print(f"\nSample path: {s.path}")
@@ -37,12 +38,16 @@ async def main():
 
         # Test a direct tsquery
         test = await session.execute(
-            text("SELECT count(*) FROM search_index WHERE tsv @@ websearch_to_tsquery('english', 'Plekhanov')")
+            text(
+                "SELECT count(*) FROM search_index WHERE tsv @@ websearch_to_tsquery('english', 'Plekhanov')"
+            )
         )
         print(f"\nMatches for 'Plekhanov': {test.scalar()}")
 
         test2 = await session.execute(
-            text("SELECT count(*) FROM search_index WHERE tsv @@ to_tsquery('english', 'peasant')")
+            text(
+                "SELECT count(*) FROM search_index WHERE tsv @@ to_tsquery('english', 'peasant')"
+            )
         )
         print(f"Matches for 'peasant': {test2.scalar()}")
 

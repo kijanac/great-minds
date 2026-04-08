@@ -1,9 +1,9 @@
 import uuid
+from datetime import datetime
 
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 
 from great_minds.core.proposals.models import ProposalStatus
-from great_minds.core.proposals.schemas import Proposal, ProposalOverview
 
 
 class ProposalCreate(BaseModel):
@@ -16,3 +16,21 @@ class ProposalCreate(BaseModel):
 
 class ProposalReview(BaseModel):
     status: ProposalStatus
+
+
+class ProposalOverview(BaseModel):
+    id: uuid.UUID
+    brain_id: uuid.UUID
+    status: ProposalStatus
+    title: str | None
+    content_type: str
+    created_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class Proposal(ProposalOverview):
+    user_id: uuid.UUID
+    author: str | None
+    reviewed_by: uuid.UUID | None
+    reviewed_at: datetime | None

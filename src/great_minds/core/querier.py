@@ -5,7 +5,6 @@ Emits structured telemetry via wide events — every query logs which articles
 and sources were pulled into context, with timing.
 """
 
-
 import asyncio
 import enum
 import json
@@ -44,9 +43,11 @@ class SourceType(enum.StrEnum):
 @dataclass
 class QuerySource:
     """A labeled storage that the query engine can search across."""
+
     storage: Storage
     label: str
     brain_id: UUID | None = None
+
 
 SYSTEM_PROMPT = """\
 You are a research assistant for a knowledge base. \
@@ -172,14 +173,25 @@ def read_document(brains: list[QuerySource], path: str) -> str:
         if content is not None:
             truncated = len(content) > 20_000
             if truncated:
-                content = content[:20_000] + "\n\n[...truncated — ask for a specific section if needed...]"
-            log_event("tool.document_read", path=path, brain=src.label, chars=len(content), truncated=truncated)
+                content = (
+                    content[:20_000]
+                    + "\n\n[...truncated — ask for a specific section if needed...]"
+                )
+            log_event(
+                "tool.document_read",
+                path=path,
+                brain=src.label,
+                chars=len(content),
+                truncated=truncated,
+            )
             return f"# {path} [{src.label}]\n\n{content}"
     log_event("tool.document_not_found", path=path)
     return f"Document not found: {path}"
 
 
-async def search_wiki(brains: list[QuerySource], query: str, session: AsyncSession) -> str:
+async def search_wiki(
+    brains: list[QuerySource], query: str, session: AsyncSession
+) -> str:
     """Hybrid BM25 + vector search across all brains via the search index."""
     brain_ids = [src.brain_id for src in brains if src.brain_id is not None]
     if not brain_ids:
@@ -202,7 +214,9 @@ async def search_wiki(brains: list[QuerySource], query: str, session: AsyncSessi
     return f"Found {len(results)} results for '{query}':\n\n" + "\n\n".join(parts)
 
 
-async def _dispatch_tool(brains: list[QuerySource], name: str, args: dict, session: AsyncSession) -> str:
+async def _dispatch_tool(
+    brains: list[QuerySource], name: str, args: dict, session: AsyncSession
+) -> str:
     if name == "read_document":
         return read_document(brains, args["path"])
     elif name == "search_wiki":
@@ -231,7 +245,9 @@ def _build_index_for_source(source: QuerySource) -> str:
     return ""
 
 
-def build_system_prompt(brains: "list[QuerySource]", *, mode: QueryMode = QueryMode.QUERY) -> str:
+def build_system_prompt(
+    brains: "list[QuerySource]", *, mode: QueryMode = QueryMode.QUERY
+) -> str:
     parts = [_build_index_for_source(b) for b in brains]
     index = "\n\n".join(p for p in parts if p) or "(no articles yet)"
     prompt = SYSTEM_PROMPT.format(index=index)
@@ -280,21 +296,23 @@ async def chat(
             emit_wide_event()
             return message.content
 
-        messages.append({
-            "role": "assistant",
-            "content": message.content,
-            "tool_calls": [
-                {
-                    "id": tc.id,
-                    "type": "function",
-                    "function": {
-                        "name": tc.function.name,
-                        "arguments": tc.function.arguments,
-                    },
-                }
-                for tc in message.tool_calls
-            ],
-        })
+        messages.append(
+            {
+                "role": "assistant",
+                "content": message.content,
+                "tool_calls": [
+                    {
+                        "id": tc.id,
+                        "type": "function",
+                        "function": {
+                            "name": tc.function.name,
+                            "arguments": tc.function.arguments,
+                        },
+                    }
+                    for tc in message.tool_calls
+                ],
+            }
+        )
 
         for tc in message.tool_calls:
             tool_calls_total += 1
@@ -304,18 +322,26 @@ async def chat(
             classified = _classify_tool_call(name, args)
             if classified:
                 source_type, meta = classified
-                label = meta["query"] if source_type is SourceType.SEARCH else meta["path"]
+                label = (
+                    meta["query"] if source_type is SourceType.SEARCH else meta["path"]
+                )
                 if source_type is SourceType.SEARCH:
                     searches.append(label)
                 else:
-                    (articles_read if source_type is SourceType.ARTICLE else sources_read).append(label)
+                    (
+                        articles_read
+                        if source_type is SourceType.ARTICLE
+                        else sources_read
+                    ).append(label)
 
             result = await _dispatch_tool(brains, name, args, session)
-            messages.append({
-                "role": "tool",
-                "tool_call_id": tc.id,
-                "content": result,
-            })
+            messages.append(
+                {
+                    "role": "tool",
+                    "tool_call_id": tc.id,
+                    "content": result,
+                }
+            )
 
 
 async def chat_with_fallback(
@@ -397,32 +423,42 @@ async def stream_chat(
                         if tc_delta.function.name:
                             tool_calls_acc[idx]["name"] = tc_delta.function.name
                         if tc_delta.function.arguments:
-                            tool_calls_acc[idx]["arguments"] += tc_delta.function.arguments
+                            tool_calls_acc[idx]["arguments"] += (
+                                tc_delta.function.arguments
+                            )
 
             if delta.content:
                 content_acc += delta.content
                 yield {"event": "token", "data": {"text": delta.content}}
 
         if finish_reason == "tool_calls" and tool_calls_acc:
-            messages.append({
-                "role": "assistant",
-                "content": content_acc or None,
-                "tool_calls": [
-                    {
-                        "id": tc["id"],
-                        "type": "function",
-                        "function": {"name": tc["name"], "arguments": tc["arguments"]},
-                    }
-                    for tc in tool_calls_acc.values()
-                ],
-            })
+            messages.append(
+                {
+                    "role": "assistant",
+                    "content": content_acc or None,
+                    "tool_calls": [
+                        {
+                            "id": tc["id"],
+                            "type": "function",
+                            "function": {
+                                "name": tc["name"],
+                                "arguments": tc["arguments"],
+                            },
+                        }
+                        for tc in tool_calls_acc.values()
+                    ],
+                }
+            )
 
             for tc in tool_calls_acc.values():
                 tool_calls_total += 1
                 try:
                     args = json.loads(tc["arguments"])
                 except json.JSONDecodeError:
-                    yield {"event": "error", "data": {"message": f"Malformed tool args for {tc['name']}"}}
+                    yield {
+                        "event": "error",
+                        "data": {"message": f"Malformed tool args for {tc['name']}"},
+                    }
                     return
                 name = tc["name"]
 
@@ -431,18 +467,28 @@ async def stream_chat(
                     source_type, meta = classified
                     yield {"event": "source", "data": {"type": source_type, **meta}}
 
-                    label = meta["query"] if source_type is SourceType.SEARCH else meta["path"]
+                    label = (
+                        meta["query"]
+                        if source_type is SourceType.SEARCH
+                        else meta["path"]
+                    )
                     if source_type is SourceType.SEARCH:
                         searches.append(label)
                     else:
-                        (articles_read if source_type is SourceType.ARTICLE else sources_read).append(label)
+                        (
+                            articles_read
+                            if source_type is SourceType.ARTICLE
+                            else sources_read
+                        ).append(label)
 
                 result = await _dispatch_tool(brains, name, args, session)
-                messages.append({
-                    "role": "tool",
-                    "tool_call_id": tc["id"],
-                    "content": result,
-                })
+                messages.append(
+                    {
+                        "role": "tool",
+                        "tool_call_id": tc["id"],
+                        "content": result,
+                    }
+                )
 
             continue
 
@@ -463,7 +509,8 @@ async def stream_chat(
 
 
 def _build_origin_messages(
-    brains: list[QuerySource], origin_path: str,
+    brains: list[QuerySource],
+    origin_path: str,
 ) -> list[dict]:
     """Build synthetic tool-call messages that pre-load the origin document."""
     content = read_document(brains, origin_path)
@@ -472,14 +519,16 @@ def _build_origin_messages(
         {
             "role": "assistant",
             "content": None,
-            "tool_calls": [{
-                "id": tool_call_id,
-                "type": "function",
-                "function": {
-                    "name": "read_document",
-                    "arguments": json.dumps({"path": origin_path}),
-                },
-            }],
+            "tool_calls": [
+                {
+                    "id": tool_call_id,
+                    "type": "function",
+                    "function": {
+                        "name": "read_document",
+                        "arguments": json.dumps({"path": origin_path}),
+                    },
+                }
+            ],
         },
         {
             "role": "tool",
@@ -555,7 +604,10 @@ async def run_stream_query(
             yield {"event": "error", "data": {"message": str(e)}}
             return
 
-    yield {"event": "error", "data": {"message": "all models rate limited — try again in a minute"}}
+    yield {
+        "event": "error",
+        "data": {"message": "all models rate limited — try again in a minute"},
+    }
 
 
 async def run_query(

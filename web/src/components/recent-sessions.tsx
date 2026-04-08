@@ -1,21 +1,17 @@
-import { Button } from "@/components/ui/button"
-import type { SessionSummary } from "@/api/sessions"
-import { formatRelativeDate } from "@/lib/utils"
+import { Button } from "@/components/ui/button";
+import type { SessionSummary } from "@/api/sessions";
+import { formatRelativeDate } from "@/lib/utils";
 
 interface RecentSessionsProps {
-  sessions: SessionSummary[]
-  onSessionClick: (id: string) => void
-  onViewAll: () => void
+  sessions: SessionSummary[];
+  onSessionClick: (id: string) => void;
+  onViewAll: () => void;
 }
 
-export function RecentSessions({
-  sessions,
-  onSessionClick,
-  onViewAll,
-}: RecentSessionsProps) {
-  if (sessions.length === 0) return null
+export function RecentSessions({ sessions, onSessionClick, onViewAll }: RecentSessionsProps) {
+  if (sessions.length === 0) return null;
 
-  const recent = sessions.slice(0, 4)
+  const recent = sessions.slice(0, 4);
 
   return (
     <div className="mt-10 max-w-[640px] w-full">
@@ -47,5 +43,5 @@ export function RecentSessions({
         </Button>
       )}
     </div>
-  )
+  );
 }

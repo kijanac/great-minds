@@ -1,84 +1,86 @@
-import { useCallback, useMemo, useState } from "react"
-import { useNavigate } from "react-router"
+import { useCallback, useMemo, useState } from "react";
+import { useNavigate } from "react-router";
 
-import { readDocument } from "@/api/doc"
-import { Badge } from "@/components/ui/badge"
-import { Button } from "@/components/ui/button"
-import { Separator } from "@/components/ui/separator"
-import { AnswerBlock } from "@/components/answer-block"
-import { ArticlePanel } from "@/components/article-panel"
-import { FollowUpBar } from "@/components/follow-up-bar"
-import { SelectionPopover } from "@/components/selection-popover"
-import { ThinkingSection } from "@/components/thinking-section"
-import { useLinkInterceptor } from "@/hooks/use-link-interceptor"
-import { usePopoverDismiss } from "@/hooks/use-popover-dismiss"
-import type { useSession } from "@/hooks/use-session"
+import { readDocument } from "@/api/doc";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Separator } from "@/components/ui/separator";
+import { AnswerBlock } from "@/components/answer-block";
+import { ArticlePanel } from "@/components/article-panel";
+import { FollowUpBar } from "@/components/follow-up-bar";
+import { SelectionPopover } from "@/components/selection-popover";
+import { ThinkingSection } from "@/components/thinking-section";
+import { useLinkInterceptor } from "@/hooks/use-link-interceptor";
+import { usePopoverDismiss } from "@/hooks/use-popover-dismiss";
+import type { useSession } from "@/hooks/use-session";
 
-type Session = ReturnType<typeof useSession>
+type Session = ReturnType<typeof useSession>;
 
 interface SessionThreadProps {
-  session: Session
-  onFollowUp: (text: string) => void
+  session: Session;
+  onFollowUp: (text: string) => void;
 }
 
 export function SessionThread({ session, onFollowUp }: SessionThreadProps) {
-  const navigate = useNavigate()
+  const navigate = useNavigate();
   const [panel, setPanel] = useState<{
-    path: string
-    content: string | null
-    loading: boolean
-  } | null>(null)
+    path: string;
+    content: string | null;
+    loading: boolean;
+  } | null>(null);
 
   const openPanel = useCallback(async (path: string) => {
-    setPanel({ path, content: null, loading: true })
+    setPanel({ path, content: null, loading: true });
     try {
-      const data = await readDocument(path)
-      setPanel((prev) => prev?.path === path ? { path, content: data.content, loading: false } : prev)
+      const data = await readDocument(path);
+      setPanel((prev) =>
+        prev?.path === path ? { path, content: data.content, loading: false } : prev,
+      );
     } catch {
-      setPanel((prev) => prev?.path === path ? { path, content: null, loading: false } : prev)
+      setPanel((prev) => (prev?.path === path ? { path, content: null, loading: false } : prev));
     }
-  }, [])
+  }, []);
 
-  const togglePanel = useCallback(async (path: string) => {
-    if (panel?.path === path) {
-      setPanel(null)
-      return
-    }
-    openPanel(path)
-  }, [panel?.path, openPanel])
+  const togglePanel = useCallback(
+    async (path: string) => {
+      if (panel?.path === path) {
+        setPanel(null);
+        return;
+      }
+      openPanel(path);
+    },
+    [panel?.path, openPanel],
+  );
 
-  const handleLinkClick = useLinkInterceptor(openPanel)
+  const handleLinkClick = useLinkInterceptor(openPanel);
 
-  usePopoverDismiss(session.clearPopover)
+  usePopoverDismiss(session.clearPopover);
 
   const handleAddChip = useCallback(() => {
-    if (!session.popover) return
-    session.addChip(session.popover.text)
-  }, [session.popover, session.addChip])
+    if (!session.popover) return;
+    session.addChip(session.popover.text);
+  }, [session.popover, session.addChip]);
 
   const handleBtw = useCallback(() => {
-    if (!session.popover) return
-    session.startBtw(session.popover)
-  }, [session.popover, session.startBtw])
+    if (!session.popover) return;
+    session.startBtw(session.popover);
+  }, [session.popover, session.startBtw]);
 
   const [hintDismissed, setHintDismissed] = useState(
     () => localStorage.getItem("onboarding-hint-seen") === "true",
-  )
+  );
 
   const dismissHint = useCallback(() => {
-    setHintDismissed(true)
-    localStorage.setItem("onboarding-hint-seen", "true")
-  }, [])
+    setHintDismissed(true);
+    localStorage.setItem("onboarding-hint-seen", "true");
+  }, []);
 
   const showHint = useMemo(
-    () =>
-      !hintDismissed &&
-      session.phase === "done" &&
-      session.thread.length === 1,
+    () => !hintDismissed && session.phase === "done" && session.thread.length === 1,
     [hintDismissed, session.phase, session.thread.length],
-  )
+  );
 
-  const canFollowUp = session.phase === "done"
+  const canFollowUp = session.phase === "done";
 
   return (
     <>
@@ -113,12 +115,9 @@ export function SessionThread({ session, onFollowUp }: SessionThreadProps) {
             </div>
           ))}
 
-          {(session.phase === "searching" ||
-            session.phase === "streaming") && (
+          {(session.phase === "searching" || session.phase === "streaming") && (
             <div>
-              {session.thread.length > 0 && (
-                <Separator className="my-8 bg-ink-subtle" />
-              )}
+              {session.thread.length > 0 && <Separator className="my-8 bg-ink-subtle" />}
 
               <ThinkingSection
                 blocks={session.liveThinking}
@@ -146,7 +145,10 @@ export function SessionThread({ session, onFollowUp }: SessionThreadProps) {
         <div className="shrink-0 px-10 py-3 border-t border-ink-subtle animate-[slide-up_0.28s_ease]">
           <div className="flex items-center justify-between max-w-[740px] mx-auto gap-4">
             <p className="font-mono text-[length:var(--text-chrome)] tracking-[0.06em] text-warm-faint">
-              <Badge variant="outline" className="font-mono text-[length:var(--text-chrome)] tracking-[0.08em] text-gold-muted border-gold-dim mr-2">
+              <Badge
+                variant="outline"
+                className="font-mono text-[length:var(--text-chrome)] tracking-[0.08em] text-gold-muted border-gold-dim mr-2"
+              >
                 tip
               </Badge>
               {"highlight any text in the answer to "}
@@ -176,19 +178,12 @@ export function SessionThread({ session, onFollowUp }: SessionThreadProps) {
       )}
 
       {session.popover && (
-        <SelectionPopover
-          info={session.popover}
-          onFollowUp={handleAddChip}
-          onBtw={handleBtw}
-        />
+        <SelectionPopover info={session.popover} onFollowUp={handleAddChip} onBtw={handleBtw} />
       )}
 
       {panel && (
         <>
-          <div
-            className="fixed inset-0 z-[199]"
-            onClick={() => setPanel(null)}
-          />
+          <div className="fixed inset-0 z-[199]" onClick={() => setPanel(null)} />
           <ArticlePanel
             path={panel.path}
             content={panel.content}
@@ -199,5 +194,5 @@ export function SessionThread({ session, onFollowUp }: SessionThreadProps) {
         </>
       )}
     </>
-  )
+  );
 }

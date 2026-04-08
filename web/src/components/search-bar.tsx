@@ -1,21 +1,21 @@
-import { useRef, useEffect, useState } from "react"
+import { useRef, useEffect, useState } from "react";
 
-import { Button } from "@/components/ui/button"
-import { Input } from "@/components/ui/input"
-import type { SessionSummary } from "@/api/sessions"
-import type { Phase } from "@/lib/types"
-import { formatRelativeDate } from "@/lib/utils"
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import type { SessionSummary } from "@/api/sessions";
+import type { Phase } from "@/lib/types";
+import { formatRelativeDate } from "@/lib/utils";
 
 interface SearchBarProps {
-  query: string
-  phase: Phase
-  onQueryChange: (query: string) => void
-  onSubmit: () => void
-  onReset: () => void
-  recentSessions?: SessionSummary[]
-  sessionsLoading?: boolean
-  onSessionClick?: (id: string) => void
-  onViewAllSessions?: () => void
+  query: string;
+  phase: Phase;
+  onQueryChange: (query: string) => void;
+  onSubmit: () => void;
+  onReset: () => void;
+  recentSessions?: SessionSummary[];
+  sessionsLoading?: boolean;
+  onSessionClick?: (id: string) => void;
+  onViewAllSessions?: () => void;
 }
 
 export function SearchBar({
@@ -29,9 +29,9 @@ export function SearchBar({
   onSessionClick,
   onViewAllSessions,
 }: SearchBarProps) {
-  const inputRef = useRef<HTMLInputElement>(null)
-  const isActive = phase !== "idle"
-  const [focused, setFocused] = useState(false)
+  const inputRef = useRef<HTMLInputElement>(null);
+  const isActive = phase !== "idle";
+  const [focused, setFocused] = useState(false);
 
   const showDropdown =
     focused &&
@@ -39,16 +39,14 @@ export function SearchBar({
     !sessionsLoading &&
     !query.trim() &&
     recentSessions &&
-    recentSessions.length > 0
+    recentSessions.length > 0;
 
   useEffect(() => {
-    if (!isActive) inputRef.current?.focus()
-  }, [isActive])
+    if (!isActive) inputRef.current?.focus();
+  }, [isActive]);
 
   return (
-    <div
-      className={`relative w-full ${isActive ? "" : "max-w-[640px]"}`}
-    >
+    <div className={`relative w-full ${isActive ? "" : "max-w-[640px]"}`}>
       <div
         className={`w-full flex items-center bg-secondary border border-input focus-within:border-ring overflow-hidden ${showDropdown ? "rounded-t-sm rounded-b-none border-b-transparent" : "rounded-sm"}`}
       >
@@ -78,7 +76,7 @@ export function SearchBar({
           <Button
             onClick={onSubmit}
             disabled={!query.trim()}
-            className="rounded-none h-auto bg-gold text-ink font-mono text-[length:var(--text-chrome)] font-medium tracking-[0.12em] px-[18px] py-[13px] hover:bg-gold-hover disabled:bg-interactive-ghost disabled:text-muted-foreground disabled:opacity-100"
+            className="rounded-none h-auto bg-gold text-primary-foreground font-mono text-[length:var(--text-chrome)] font-medium tracking-[0.12em] px-[18px] py-[13px] hover:bg-gold-hover disabled:bg-interactive-ghost disabled:text-muted-foreground disabled:opacity-100"
           >
             QUERY
           </Button>
@@ -92,10 +90,10 @@ export function SearchBar({
               key={s.id}
               onMouseDown={(e) => e.preventDefault()}
               onClick={() => {
-                setFocused(false)
-                onSessionClick?.(s.id)
+                setFocused(false);
+                onSessionClick?.(s.id);
               }}
-              className="group w-full flex items-center justify-between px-[18px] py-2.5 hover:bg-ink-raised transition-colors text-left"
+              className="group w-full flex items-center justify-between px-[18px] py-2.5 hover:bg-ink-raised focus-visible:bg-ink-raised focus-visible:outline-none transition-colors text-left"
             >
               <span className="font-serif italic text-[length:var(--text-small)] text-warm-dim group-hover:text-warm truncate">
                 {s.query}
@@ -109,10 +107,10 @@ export function SearchBar({
             <button
               onMouseDown={(e) => e.preventDefault()}
               onClick={() => {
-                setFocused(false)
-                onViewAllSessions()
+                setFocused(false);
+                onViewAllSessions();
               }}
-              className="w-full px-[18px] py-2 border-t border-ink-subtle font-mono text-[length:var(--text-chrome)] tracking-[0.1em] text-muted-foreground hover:text-gold transition-colors text-left"
+              className="w-full px-[18px] py-2 border-t border-ink-subtle font-mono text-[length:var(--text-chrome)] tracking-[0.1em] text-muted-foreground hover:text-gold focus-visible:text-gold focus-visible:outline-none transition-colors text-left"
             >
               all sessions
             </button>
@@ -120,5 +118,5 @@ export function SearchBar({
         </div>
       )}
     </div>
-  )
+  );
 }

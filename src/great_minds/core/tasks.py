@@ -44,12 +44,15 @@ class TaskRecord(Base):
 
     id: Mapped[UUID] = mapped_column(PG_UUID, primary_key=True)
     brain_id: Mapped[UUID] = mapped_column(
-        PG_UUID, ForeignKey("brains.id", ondelete="CASCADE"), index=True,
+        PG_UUID,
+        ForeignKey("brains.id", ondelete="CASCADE"),
+        index=True,
     )
     type: Mapped[str] = mapped_column(Text)
     params: Mapped[dict] = mapped_column(JSONB, default=dict)
     created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=text("now()"),
+        DateTime(timezone=True),
+        server_default=text("now()"),
     )
 
 
@@ -70,7 +73,8 @@ async def compile_task(params: dict, ctx) -> dict:
 
     await ctx.heartbeat(600)
     result = await compiler.run(
-        storage, partial(load_prompt, storage),
+        storage,
+        partial(load_prompt, storage),
         limit=params.get("limit"),
         db_session=session,
         brain_id=brain_id,
@@ -79,8 +83,7 @@ async def compile_task(params: dict, ctx) -> dict:
     result_dict = {
         "docs_compiled": result.docs_compiled,
         "articles_written": [
-            {"slug": a["slug"], "action": a["action"]}
-            for a in result.articles_written
+            {"slug": a["slug"], "action": a["action"]} for a in result.articles_written
         ],
         "chunks_indexed": result.chunks_indexed,
     }
@@ -92,7 +95,8 @@ async def compile_task(params: dict, ctx) -> dict:
 
         log.info(
             "post_compile_lint brain=%s changed_slugs=%d",
-            params["label"], len(changed_slugs),
+            params["label"],
+            len(changed_slugs),
         )
 
         session = _task_session.get()
@@ -100,8 +104,7 @@ async def compile_task(params: dict, ctx) -> dict:
         personal_brains = await repo.list_team_member_personal_brains(brain_id)
 
         peer_brains = [
-            (LocalStorage(data_dir / b.storage_root), b.slug)
-            for b in personal_brains
+            (LocalStorage(data_dir / b.storage_root), b.slug) for b in personal_brains
         ]
 
         if peer_brains:
@@ -109,12 +112,15 @@ async def compile_task(params: dict, ctx) -> dict:
             if lint_result.broken_links:
                 log.warning(
                     "post_compile_lint brain=%s broken_links=%d",
-                    params["label"], len(lint_result.broken_links),
+                    params["label"],
+                    len(lint_result.broken_links),
                 )
                 for bl in lint_result.broken_links:
                     log.warning(
                         "broken_link brain=%s article=%s target=%s",
-                        bl.brain_label, bl.article, bl.target_slug,
+                        bl.brain_label,
+                        bl.article,
+                        bl.target_slug,
                     )
                 result_dict["broken_links"] = len(lint_result.broken_links)
 
@@ -198,7 +204,9 @@ async def spawn_compile(
 
     log.info(
         "task_spawned task_id=%s type=compile brain_id=%s limit=%s",
-        record.id, brain_id, limit,
+        record.id,
+        brain_id,
+        limit,
     )
     return record
 
@@ -219,7 +227,11 @@ async def _find_active_compile(
 
     for record in records:
         snapshot = await absurd.fetch_task_result(record.id)
-        if snapshot is None or snapshot.state not in ("completed", "failed", "cancelled"):
+        if snapshot is None or snapshot.state not in (
+            "completed",
+            "failed",
+            "cancelled",
+        ):
             return record
     return None
 
@@ -261,7 +273,9 @@ async def fetch_task_response(absurd: AsyncAbsurd, record: TaskRecord) -> dict:
 
 
 async def list_brain_tasks(
-    absurd: AsyncAbsurd, session: AsyncSession, brain_id: UUID,
+    absurd: AsyncAbsurd,
+    session: AsyncSession,
+    brain_id: UUID,
 ) -> list[dict]:
     """List all tasks for a brain with current status from absurd."""
     rows = await session.execute(
@@ -275,7 +289,10 @@ async def list_brain_tasks(
 
 
 async def get_task(
-    absurd: AsyncAbsurd, session: AsyncSession, task_id: UUID, brain_id: UUID,
+    absurd: AsyncAbsurd,
+    session: AsyncSession,
+    task_id: UUID,
+    brain_id: UUID,
 ) -> dict | None:
     """Get a single task by ID, scoped to a brain."""
     row = await session.execute(

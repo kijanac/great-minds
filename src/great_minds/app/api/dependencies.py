@@ -41,7 +41,9 @@ def get_user_repository(session: AsyncSession = Depends(get_session)) -> UserRep
     return UserRepository(session)
 
 
-def get_brain_repository(session: AsyncSession = Depends(get_session)) -> BrainRepository:
+def get_brain_repository(
+    session: AsyncSession = Depends(get_session),
+) -> BrainRepository:
     return BrainRepository(session)
 
 
@@ -121,7 +123,9 @@ async def get_current_user(
     if user is not None:
         return user
 
-    raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid credentials")
+    raise HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid credentials"
+    )
 
 
 # ---------------------------------------------------------------------------

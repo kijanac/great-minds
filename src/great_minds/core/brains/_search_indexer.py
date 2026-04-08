@@ -15,12 +15,21 @@ import logging
 import math
 import re
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime
 from uuid import UUID
 
 from openai import AsyncOpenAI
 from pgvector.sqlalchemy import Vector
-from sqlalchemy import DateTime, Integer, Text, UniqueConstraint, and_, func, select, delete, tuple_
+from sqlalchemy import (
+    DateTime,
+    Integer,
+    Text,
+    UniqueConstraint,
+    func,
+    select,
+    delete,
+    tuple_,
+)
 from sqlalchemy.dialects.postgresql import TSVECTOR, UUID as PG_UUID
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Mapped, mapped_column
@@ -44,11 +53,11 @@ MAX_EMBED_RETRIES = 3
 
 class SearchIndexEntry(Base):
     __tablename__ = "search_index"
-    __table_args__ = (
-        UniqueConstraint("brain_id", "path", "chunk_index"),
-    )
+    __table_args__ = (UniqueConstraint("brain_id", "path", "chunk_index"),)
 
-    id: Mapped[UUID] = mapped_column(PG_UUID, primary_key=True, server_default=func.gen_random_uuid())
+    id: Mapped[UUID] = mapped_column(
+        PG_UUID, primary_key=True, server_default=func.gen_random_uuid()
+    )
     brain_id: Mapped[UUID] = mapped_column(PG_UUID, nullable=False, index=True)
     path: Mapped[str] = mapped_column(Text, nullable=False)
     chunk_index: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
@@ -58,7 +67,9 @@ class SearchIndexEntry(Base):
     tsv: Mapped[str] = mapped_column(TSVECTOR, nullable=False)
     embedding = mapped_column(Vector(EMBEDDING_DIMENSIONS), nullable=True)
     updated_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), nullable=False, server_default=func.now(),
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
     )
 
 
@@ -95,10 +106,12 @@ def _chunk_article(path: str, content: str) -> list[Chunk]:
 
     chunks: list[Chunk] = []
 
-    preamble = content[:headings[0].start()].strip()
+    preamble = content[: headings[0].start()].strip()
     if preamble:
         h = hashlib.sha256(preamble.encode()).hexdigest()
-        chunks.append(Chunk(path=path, chunk_index=0, heading="", body=preamble, content_hash=h))
+        chunks.append(
+            Chunk(path=path, chunk_index=0, heading="", body=preamble, content_hash=h)
+        )
 
     for i, match in enumerate(headings):
         heading_text = match.group(2).strip()
@@ -111,13 +124,15 @@ def _chunk_article(path: str, content: str) -> list[Chunk]:
 
         full_text = f"{heading_text}\n\n{body}" if body else heading_text
         h = hashlib.sha256(full_text.encode()).hexdigest()
-        chunks.append(Chunk(
-            path=path,
-            chunk_index=len(chunks),
-            heading=heading_text,
-            body=full_text,
-            content_hash=h,
-        ))
+        chunks.append(
+            Chunk(
+                path=path,
+                chunk_index=len(chunks),
+                heading=heading_text,
+                body=full_text,
+                content_hash=h,
+            )
+        )
 
     return chunks
 
@@ -151,8 +166,13 @@ async def _embed_batch(client: AsyncOpenAI, texts: list[str]) -> list[list[float
         except Exception as e:
             if attempt == MAX_EMBED_RETRIES:
                 raise
-            log.warning("embedding batch failed (attempt %d/%d): %s", attempt, MAX_EMBED_RETRIES, e)
-            await asyncio.sleep(2 ** attempt)
+            log.warning(
+                "embedding batch failed (attempt %d/%d): %s",
+                attempt,
+                MAX_EMBED_RETRIES,
+                e,
+            )
+            await asyncio.sleep(2**attempt)
 
 
 # ---------------------------------------------------------------------------
@@ -189,8 +209,11 @@ async def rebuild_index(
 
     # Load existing hashes to detect unchanged chunks
     existing = await session.execute(
-        select(SearchIndexEntry.path, SearchIndexEntry.chunk_index, SearchIndexEntry.content_hash)
-        .where(SearchIndexEntry.brain_id == brain_id)
+        select(
+            SearchIndexEntry.path,
+            SearchIndexEntry.chunk_index,
+            SearchIndexEntry.content_hash,
+        ).where(SearchIndexEntry.brain_id == brain_id)
     )
     existing_hashes: dict[tuple[str, int], str] = {
         (row.path, row.chunk_index): row.content_hash for row in existing
@@ -204,13 +227,16 @@ async def rebuild_index(
 
     log.info(
         "brain %s: %d total chunks, %d changed, %d unchanged",
-        brain_id, len(all_chunks), len(changed_chunks), len(all_chunks) - len(changed_chunks),
+        brain_id,
+        len(all_chunks),
+        len(changed_chunks),
+        len(all_chunks) - len(changed_chunks),
     )
 
     # Embed changed chunks in batches
     embeddings: dict[int, list[float]] = {}
     for batch_start in range(0, len(changed_chunks), EMBEDDING_BATCH_SIZE):
-        batch = changed_chunks[batch_start:batch_start + EMBEDDING_BATCH_SIZE]
+        batch = changed_chunks[batch_start : batch_start + EMBEDDING_BATCH_SIZE]
         texts = [c.body for c in batch]
         batch_embeddings = await _embed_batch(client, texts)
         for i, emb in enumerate(batch_embeddings):
@@ -222,10 +248,11 @@ async def rebuild_index(
     if stale_keys:
         stale_list = list(stale_keys)
         await session.execute(
-            delete(SearchIndexEntry)
-            .where(
+            delete(SearchIndexEntry).where(
                 SearchIndexEntry.brain_id == brain_id,
-                tuple_(SearchIndexEntry.path, SearchIndexEntry.chunk_index).in_(stale_list),
+                tuple_(SearchIndexEntry.path, SearchIndexEntry.chunk_index).in_(
+                    stale_list
+                ),
             )
         )
         log.info("deleted %d stale index entries", len(stale_list))
@@ -233,8 +260,7 @@ async def rebuild_index(
     # Upsert changed chunks (with new embeddings + tsvector)
     for i, chunk in enumerate(changed_chunks):
         entry = await session.execute(
-            select(SearchIndexEntry)
-            .where(
+            select(SearchIndexEntry).where(
                 SearchIndexEntry.brain_id == brain_id,
                 SearchIndexEntry.path == chunk.path,
                 SearchIndexEntry.chunk_index == chunk.chunk_index,
@@ -250,19 +276,26 @@ async def rebuild_index(
             existing_entry.embedding = embeddings[i]
             existing_entry.updated_at = func.now()
         else:
-            session.add(SearchIndexEntry(
-                brain_id=brain_id,
-                path=chunk.path,
-                chunk_index=chunk.chunk_index,
-                heading=chunk.heading,
-                body=chunk.body,
-                content_hash=chunk.content_hash,
-                tsv=func.to_tsvector("english", chunk.body),
-                embedding=embeddings[i],
-            ))
+            session.add(
+                SearchIndexEntry(
+                    brain_id=brain_id,
+                    path=chunk.path,
+                    chunk_index=chunk.chunk_index,
+                    heading=chunk.heading,
+                    body=chunk.body,
+                    content_hash=chunk.content_hash,
+                    tsv=func.to_tsvector("english", chunk.body),
+                    embedding=embeddings[i],
+                )
+            )
 
     await session.commit()
-    log.info("indexed %d chunks for brain %s (%d embedded)", len(all_chunks), brain_id, len(changed_chunks))
+    log.info(
+        "indexed %d chunks for brain %s (%d embedded)",
+        len(all_chunks),
+        brain_id,
+        len(changed_chunks),
+    )
     return len(all_chunks)
 
 
@@ -367,6 +400,8 @@ async def search(
     for (path, _chunk_index), score in ranked:
         heading, body = metadata[(path, _chunk_index)]
         snippet = body[:500] if len(body) > 500 else body
-        results.append(SearchResult(path=path, heading=heading, snippet=snippet, score=score))
+        results.append(
+            SearchResult(path=path, heading=heading, snippet=snippet, score=score)
+        )
 
     return results

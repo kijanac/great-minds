@@ -80,9 +80,11 @@ async def crawl():
         deep_crawl_strategy=BFSDeepCrawlStrategy(
             max_depth=3,
             include_external=False,
-            filter_chain=FilterChain([
-                URLPatternFilter(patterns=ALLOWED_PATTERNS),
-            ]),
+            filter_chain=FilterChain(
+                [
+                    URLPatternFilter(patterns=ALLOWED_PATTERNS),
+                ]
+            ),
         ),
         stream=True,
         verbose=True,
@@ -135,8 +137,12 @@ def ingest():
         )
         processed += 1
 
-    log.info("ingest done — %d files to %s/, %d index pages skipped",
-             processed, DEST_DIR, skipped)
+    log.info(
+        "ingest done — %d files to %s/, %d index pages skipped",
+        processed,
+        DEST_DIR,
+        skipped,
+    )
 
 
 async def main():
@@ -146,9 +152,14 @@ async def main():
         datefmt="%H:%M:%S",
     )
 
-    parser = argparse.ArgumentParser(description="Crawl and ingest Lenin's Collected Works")
-    parser.add_argument("--ingest-only", action="store_true",
-                        help="Skip crawl, just re-ingest from corpus/")
+    parser = argparse.ArgumentParser(
+        description="Crawl and ingest Lenin's Collected Works"
+    )
+    parser.add_argument(
+        "--ingest-only",
+        action="store_true",
+        help="Skip crawl, just re-ingest from corpus/",
+    )
     args = parser.parse_args()
 
     if not args.ingest_only:

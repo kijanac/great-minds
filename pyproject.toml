@@ -32,3 +32,9 @@ build-backend = "hatchling.build"
 
 [tool.ruff.lint]
 ignore = ["E712"]
+
+[dependency-groups]
+dev = [
+    "ruff>=0.15.9",
+    "ty>=0.0.29",
+]

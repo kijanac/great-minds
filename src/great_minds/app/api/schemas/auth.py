@@ -1,7 +1,6 @@
 from pydantic import BaseModel, EmailStr
 
-from great_minds.core.auth.schemas import ApiKey, ApiKeyOverview
-from great_minds.core.users.schemas import User, UserOverview
+from great_minds.core.auth.schemas import ApiKey
 
 
 class ApiKeyCreate(BaseModel):

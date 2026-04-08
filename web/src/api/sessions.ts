@@ -1,18 +1,18 @@
-import { apiFetch } from "./client"
+import { apiFetch } from "./client";
 
 export interface ExchangePayload {
-  query: string
-  thinking: { sources: { label: string; type: string }[] }[]
-  answer: string
-  btws: { anchor: string; messages: { role: string; text: string }[] }[]
+  query: string;
+  thinking: { sources: { label: string; type: string }[] }[];
+  answer: string;
+  btws: { anchor: string; messages: { role: string; text: string }[] }[];
 }
 
 export interface BtwPayload {
-  anchor: string
-  paragraph: string
-  exchangeId: string
-  paragraphIndex: number
-  messages: { role: string; text: string }[]
+  anchor: string;
+  paragraph: string;
+  exchangeId: string;
+  paragraphIndex: number;
+  messages: { role: string; text: string }[];
 }
 
 export async function createSession(
@@ -24,10 +24,10 @@ export async function createSession(
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ session_id: sessionId, exchange, origin }),
-  })
-  if (!res.ok) throw new Error(`Failed to create session: ${res.status}`)
-  const data: { path: string } = await res.json()
-  return data.path
+  });
+  if (!res.ok) throw new Error(`Failed to create session: ${res.status}`);
+  const data: { path: string } = await res.json();
+  return data.path;
 }
 
 export async function appendExchange(
@@ -38,49 +38,46 @@ export async function appendExchange(
     method: "PATCH",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(exchange),
-  })
-  if (!res.ok) throw new Error(`Failed to append exchange: ${res.status}`)
-  const data: { path: string } = await res.json()
-  return data.path
+  });
+  if (!res.ok) throw new Error(`Failed to append exchange: ${res.status}`);
+  const data: { path: string } = await res.json();
+  return data.path;
 }
 
-export async function appendBtw(
-  sessionId: string,
-  btw: BtwPayload,
-): Promise<string> {
+export async function appendBtw(sessionId: string, btw: BtwPayload): Promise<string> {
   const res = await apiFetch(`/sessions/${sessionId}/btw`, {
     method: "PATCH",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(btw),
-  })
-  if (!res.ok) throw new Error(`Failed to append btw: ${res.status}`)
-  const data: { path: string } = await res.json()
-  return data.path
+  });
+  if (!res.ok) throw new Error(`Failed to append btw: ${res.status}`);
+  const data: { path: string } = await res.json();
+  return data.path;
 }
 
 export interface SessionSummary {
-  id: string
-  query: string
-  created: string
-  updated: string
-  sources: string[]
+  id: string;
+  query: string;
+  created: string;
+  updated: string;
+  sources: string[];
 }
 
 export async function listSessions(): Promise<SessionSummary[]> {
-  const res = await apiFetch(`/sessions`)
-  if (!res.ok) throw new Error(`Failed to list sessions: ${res.status}`)
-  return res.json()
+  const res = await apiFetch(`/sessions`);
+  if (!res.ok) throw new Error(`Failed to list sessions: ${res.status}`);
+  return res.json();
 }
 
 export interface SessionEvent {
-  type: "meta" | "exchange" | "btw"
-  [key: string]: unknown
+  type: "meta" | "exchange" | "btw";
+  [key: string]: unknown;
 }
 
 export async function loadSession(
   sessionId: string,
 ): Promise<{ id: string; events: SessionEvent[] }> {
-  const res = await apiFetch(`/sessions/${sessionId}`)
-  if (!res.ok) throw new Error(`Session not found: ${res.status}`)
-  return res.json()
+  const res = await apiFetch(`/sessions/${sessionId}`);
+  if (!res.ok) throw new Error(`Session not found: ${res.status}`);
+  return res.json();
 }

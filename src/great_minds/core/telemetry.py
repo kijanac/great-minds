@@ -39,11 +39,13 @@ from datetime import UTC, datetime
 # ---------------------------------------------------------------------------
 
 correlation_id: contextvars.ContextVar[str] = contextvars.ContextVar(
-    "correlation_id", default="-",
+    "correlation_id",
+    default="-",
 )
 
 wide_event: contextvars.ContextVar[dict | None] = contextvars.ContextVar(
-    "wide_event", default=None,
+    "wide_event",
+    default=None,
 )
 
 # Set by setup_logging(), included in every structured log entry.
@@ -186,10 +188,7 @@ class ReadableFormatter(logging.Formatter):
                 if k.endswith("_ms") and k != "total_duration_ms":
                     timings.append(f"{k[:-3]}={v}ms")
             timing_str = f" ({', '.join(timings)})" if timings else ""
-            return (
-                f"[WIDE_EVENT] {event_type} [{cid}] "
-                f"total={total}ms{timing_str}"
-            )
+            return f"[WIDE_EVENT] {event_type} [{cid}] total={total}ms{timing_str}"
 
         cid = correlation_id.get("-")
         event_name = getattr(record, "event_name", None)

@@ -1,23 +1,23 @@
-import { useCallback, useRef, useState } from "react"
-import { useNavigate } from "react-router"
-import { AnimatePresence, motion, useReducedMotion } from "motion/react"
+import { useCallback, useRef, useState } from "react";
+import { useNavigate } from "react-router";
+import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 
-import { Button } from "@/components/ui/button"
-import { IngestionContainer } from "@/containers/ingestion-container"
-import { SearchBar } from "@/components/search-bar"
-import { SessionThread } from "@/containers/session-thread"
-import { useSavedSession } from "@/hooks/use-saved-session"
-import { useSession } from "@/hooks/use-session"
-import { useSessions } from "@/hooks/use-sessions"
+import { Button } from "@/components/ui/button";
+import { IngestionContainer } from "@/containers/ingestion-container";
+import { SearchBar } from "@/components/search-bar";
+import { SessionThread } from "@/containers/session-thread";
+import { useSavedSession } from "@/hooks/use-saved-session";
+import { useSession } from "@/hooks/use-session";
+import { useSessions } from "@/hooks/use-sessions";
 
 interface HomeContainerProps {
-  sessionId?: string
-  initialQuery?: string
-  origin?: string
+  sessionId?: string;
+  initialQuery?: string;
+  origin?: string;
 }
 
 export function HomeContainer({ sessionId, initialQuery, origin }: HomeContainerProps) {
-  const { exchanges, loading } = useSavedSession(sessionId ?? null)
+  const { exchanges, loading } = useSavedSession(sessionId ?? null);
 
   // Wait for saved session to load before rendering
   if (sessionId && loading) {
@@ -27,7 +27,7 @@ export function HomeContainer({ sessionId, initialQuery, origin }: HomeContainer
           Loading session...
         </p>
       </div>
-    )
+    );
   }
 
   return (
@@ -37,71 +37,71 @@ export function HomeContainer({ sessionId, initialQuery, origin }: HomeContainer
       initialQuery={initialQuery}
       origin={origin}
     />
-  )
+  );
 }
 
 interface HomeContentProps {
-  sessionId?: string
-  initialExchanges?: ReturnType<typeof useSavedSession>["exchanges"] & {}
-  initialQuery?: string
-  origin?: string
+  sessionId?: string;
+  initialExchanges?: ReturnType<typeof useSavedSession>["exchanges"] & {};
+  initialQuery?: string;
+  origin?: string;
 }
 
-const EASE_OUT: [number, number, number, number] = [0.25, 1, 0.5, 1]
+const EASE_OUT: [number, number, number, number] = [0.25, 1, 0.5, 1];
 
 function HomeContent({ sessionId, initialExchanges, initialQuery, origin }: HomeContentProps) {
-  const navigate = useNavigate()
-  const [query, setQuery] = useState(
-    initialQuery ?? initialExchanges?.[0]?.query ?? "",
-  )
-  const { sessions: recentSessions, loading: sessionsLoading, refresh: refreshSessions } = useSessions()
+  const navigate = useNavigate();
+  const [query, setQuery] = useState(initialQuery ?? initialExchanges?.[0]?.query ?? "");
+  const {
+    sessions: recentSessions,
+    loading: sessionsLoading,
+    refresh: refreshSessions,
+  } = useSessions();
 
-  const handleSessionCreated = useCallback((sid: string) => {
-    window.history.replaceState(null, "", `/sessions/${sid}`)
-    refreshSessions()
-  }, [refreshSessions])
+  const handleSessionCreated = useCallback(
+    (sid: string) => {
+      window.history.replaceState(null, "", `/sessions/${sid}`);
+      refreshSessions();
+    },
+    [refreshSessions],
+  );
 
   const session = useSession(
     initialExchanges
       ? { initialExchanges, sessionId: sessionId! }
-      : (initialQuery || origin)
+      : initialQuery || origin
         ? { initialQuery, originPath: origin, onSessionCreated: handleSessionCreated }
         : { onSessionCreated: handleSessionCreated },
-  )
+  );
 
-  const isActive = session.phase !== "idle"
-  const directionRef = useRef<"forward" | "backward">("forward")
-  const prefersReducedMotion = useReducedMotion()
-  const shouldAnimate =
-    directionRef.current === "forward" && !prefersReducedMotion
+  const isActive = session.phase !== "idle";
+  const directionRef = useRef<"forward" | "backward">("forward");
+  const prefersReducedMotion = useReducedMotion();
+  const shouldAnimate = directionRef.current === "forward" && !prefersReducedMotion;
 
-  const barTransition = shouldAnimate
-    ? { duration: 0.28, ease: EASE_OUT }
-    : { duration: 0 }
+  const barTransition = shouldAnimate ? { duration: 0.28, ease: EASE_OUT } : { duration: 0 };
 
-  const fadeIn = prefersReducedMotion ? { duration: 0 } : { duration: 0.15 }
-  const fadeOut = prefersReducedMotion
-    ? { duration: 0 }
-    : { duration: 0.15, ease: EASE_OUT }
+  const fadeIn = prefersReducedMotion ? { duration: 0 } : { duration: 0.15 };
+  const fadeOut = prefersReducedMotion ? { duration: 0 } : { duration: 0.15, ease: EASE_OUT };
 
   const handleSubmit = useCallback(() => {
-    if (!query.trim()) return
-    directionRef.current = "forward"
-    session.submitQuery(query)
-  }, [query, session.submitQuery])
+    if (!query.trim()) return;
+    directionRef.current = "forward";
+    session.submitQuery(query);
+  }, [query, session.submitQuery]);
 
   const handleReset = useCallback(() => {
-    directionRef.current = "backward"
-    const hadSession = session.sessionId
-    session.reset()
-    setQuery("")
+    directionRef.current = "backward";
+    const hadSession = session.sessionId;
+    session.reset();
+    setQuery("");
     if (sessionId) {
-      navigate("/")
+      navigate("/");
     } else if (hadSession) {
       // URL was updated via replaceState — restore it without triggering a route change
-      window.history.replaceState(null, "", "/")
+      window.history.replaceState(null, "", "/");
     }
-  }, [session.reset, session.sessionId, sessionId, navigate])
+  }, [session.reset, session.sessionId, sessionId, navigate]);
 
   const searchBarProps = {
     query,
@@ -109,7 +109,7 @@ function HomeContent({ sessionId, initialExchanges, initialQuery, origin }: Home
     onQueryChange: setQuery,
     onSubmit: handleSubmit,
     onReset: handleReset,
-  }
+  };
 
   const wikiButton = (
     <Button
@@ -119,7 +119,7 @@ function HomeContent({ sessionId, initialExchanges, initialQuery, origin }: Home
     >
       wiki ↗
     </Button>
-  )
+  );
 
   return (
     <div className="flex h-screen overflow-hidden relative">
@@ -182,19 +182,14 @@ function HomeContent({ sessionId, initialExchanges, initialQuery, origin }: Home
               animate={{ opacity: 1 }}
               exit={{ opacity: 0, transition: { duration: 0 } }}
               transition={
-                shouldAnimate
-                  ? { duration: 0.2, delay: 0.1, ease: EASE_OUT }
-                  : { duration: 0 }
+                shouldAnimate ? { duration: 0.2, delay: 0.1, ease: EASE_OUT } : { duration: 0 }
               }
             >
-              <SessionThread
-                session={session}
-                onFollowUp={session.submitFollowUp}
-              />
+              <SessionThread session={session} onFollowUp={session.submitFollowUp} />
             </motion.div>
           )}
         </AnimatePresence>
       </div>
     </div>
-  )
+  );
 }

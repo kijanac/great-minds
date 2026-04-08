@@ -11,7 +11,6 @@ TO brain storage. It is always called via a Brain instance:
     brain.ingest_file(Path("corpus/lenin/ch1.md"), "texts", "raw/texts/lenin/")
 """
 
-
 import logging
 import re
 from io import StringIO
@@ -33,6 +32,7 @@ def normalize_url(url: str) -> str:
         return url
     return f"https://{url}"
 
+
 _yaml = YAML()
 _yaml.default_flow_style = False
 
@@ -46,7 +46,15 @@ _FIELD_DEFAULTS = {
 _LIST_FIELDS = {"interlocutors", "concepts", "tags", "topic_tags"}
 
 # Fields that take string values
-_STRING_FIELDS = {"author", "source", "genre", "tradition", "outlet", "relevance", "status"}
+_STRING_FIELDS = {
+    "author",
+    "source",
+    "genre",
+    "tradition",
+    "outlet",
+    "relevance",
+    "status",
+}
 
 
 def load_fields(storage: Storage, config: dict, content_type: str) -> list[str]:
@@ -55,8 +63,7 @@ def load_fields(storage: Storage, config: dict, content_type: str) -> list[str]:
 
     if content_type not in metadata:
         raise ValueError(
-            f"Unknown content type '{content_type}'. "
-            f"Available: {list(metadata.keys())}"
+            f"Unknown content type '{content_type}'. Available: {list(metadata.keys())}"
         )
 
     return list(metadata[content_type])
@@ -100,7 +107,8 @@ def extract_title(content: str) -> str:
 
 
 def ingest_document(
-    storage: Storage, config: dict,
+    storage: Storage,
+    config: dict,
     content: str,
     content_type: str,
     *,
@@ -153,7 +161,8 @@ def ingest_document(
 
 
 def ingest_file(
-    storage: Storage, config: dict,
+    storage: Storage,
+    config: dict,
     filepath: Path,
     content_type: str,
     dest_dir: str,
@@ -178,7 +187,8 @@ def ingest_file(
 
 
 def ingest_directory(
-    storage: Storage, config: dict,
+    storage: Storage,
+    config: dict,
     source_dir: Path,
     content_type: str,
     dest_dir: str,

@@ -1,16 +1,16 @@
-import { LogOut, Moon, Settings, Sun } from "lucide-react"
+import { LogOut, Moon, Settings, Sun } from "lucide-react";
 
-import { Button } from "@/components/ui/button"
-import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
+import { Button } from "@/components/ui/button";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 
 interface CornerMenuProps {
-  theme: "light" | "dark"
-  onToggleTheme: () => void
-  onSignOut: () => void
+  theme: "light" | "dark";
+  onToggleTheme: () => void;
+  onSignOut: () => void;
 }
 
 const menuItemClass =
-  "font-mono text-[length:var(--text-chrome)] tracking-[0.1em] text-warm-faint hover:text-warm hover:bg-ink-raised rounded-sm gap-2 w-full justify-start"
+  "font-mono text-[length:var(--text-chrome)] tracking-[0.1em] text-warm-faint hover:text-warm hover:bg-ink-raised rounded-sm gap-2 w-full justify-start";
 
 export function CornerMenu({ theme, onToggleTheme, onSignOut }: CornerMenuProps) {
   return (
@@ -42,5 +42,5 @@ export function CornerMenu({ theme, onToggleTheme, onSignOut }: CornerMenuProps)
         </Button>
       </PopoverContent>
     </Popover>
-  )
+  );
 }

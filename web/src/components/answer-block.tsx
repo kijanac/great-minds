@@ -1,24 +1,22 @@
-import { Fragment, useCallback, type ComponentProps } from "react"
-import Markdown from "react-markdown"
+import { Fragment, useCallback, type ComponentProps } from "react";
+import Markdown from "react-markdown";
 
-import { baseMdComponents, remarkPlugins } from "@/lib/markdown"
-import type { BtwThread as BtwThreadType, SelectionInfo } from "@/lib/types"
-import { BtwThread } from "./btw-thread"
+import { baseMdComponents, remarkPlugins } from "@/lib/markdown";
+import type { BtwThread as BtwThreadType, SelectionInfo } from "@/lib/types";
+import { BtwThread } from "./btw-thread";
 
 interface AnswerBlockProps {
-  text: string
-  exchangeId: string
-  btws: BtwThreadType[]
-  streaming: boolean
-  onSelection: (info: SelectionInfo) => void
-  onBtwReply: (btwId: string, text: string) => void
-  onBtwDismiss?: (btwId: string) => void
+  text: string;
+  exchangeId: string;
+  btws: BtwThreadType[];
+  streaming: boolean;
+  onSelection: (info: SelectionInfo) => void;
+  onBtwReply: (btwId: string, text: string) => void;
+  onBtwDismiss?: (btwId: string) => void;
 }
 
 function splitBlocks(text: string): string[] {
-  return text
-    .split(/\n\n+/)
-    .filter((b) => b.trim())
+  return text.split(/\n\n+/).filter((b) => b.trim());
 }
 
 const mdComponents: ComponentProps<typeof Markdown>["components"] = {
@@ -34,9 +32,7 @@ const mdComponents: ComponentProps<typeof Markdown>["components"] = {
     </h3>
   ),
   p: ({ children }) => (
-    <p className="text-[length:var(--text-body)] leading-[1.82] text-warm-dim mb-0.5">
-      {children}
-    </p>
+    <p className="text-[length:var(--text-body)] leading-[1.82] text-warm-dim mb-0.5">{children}</p>
   ),
   ul: ({ children }) => (
     <ul className="list-disc list-inside text-[length:var(--text-body)] leading-[1.82] text-warm-dim mb-2 ml-2">
@@ -58,7 +54,7 @@ const mdComponents: ComponentProps<typeof Markdown>["components"] = {
       {children}
     </code>
   ),
-}
+};
 
 export function AnswerBlock({
   text,
@@ -69,18 +65,18 @@ export function AnswerBlock({
   onBtwReply,
   onBtwDismiss,
 }: AnswerBlockProps) {
-  const blocks = splitBlocks(text)
-  let paraIndex = 0
+  const blocks = splitBlocks(text);
+  let paraIndex = 0;
 
   const makeSelectionHandler = useCallback(
     (pi: number, blockText: string) => (e: React.MouseEvent) => {
-      if (streaming) return
-      e.stopPropagation()
+      if (streaming) return;
+      e.stopPropagation();
 
-      const sel = window.getSelection()
-      if (!sel || sel.isCollapsed || sel.toString().trim().length < 5) return
+      const sel = window.getSelection();
+      if (!sel || sel.isCollapsed || sel.toString().trim().length < 5) return;
 
-      const rect = sel.getRangeAt(0).getBoundingClientRect()
+      const rect = sel.getRangeAt(0).getBoundingClientRect();
       onSelection({
         text: sel.toString().trim(),
         x: rect.left + rect.width / 2,
@@ -88,22 +84,24 @@ export function AnswerBlock({
         paragraphIndex: pi,
         exchangeId,
         paragraph: blockText,
-      })
+      });
     },
     [streaming, exchangeId, onSelection],
-  )
+  );
 
   return (
     <div className="select-text">
       {blocks.map((block, i) => {
-        const pi = paraIndex++
-        const blockBtws = btws.filter((b) => b.paragraphIndex === pi)
-        const isLast = i === blocks.length - 1
+        const pi = paraIndex++;
+        const blockBtws = btws.filter((b) => b.paragraphIndex === pi);
+        const isLast = i === blocks.length - 1;
 
         return (
           <Fragment key={i}>
             <div onMouseUp={makeSelectionHandler(pi, block)}>
-              <Markdown remarkPlugins={remarkPlugins} components={mdComponents}>{block}</Markdown>
+              <Markdown remarkPlugins={remarkPlugins} components={mdComponents}>
+                {block}
+              </Markdown>
               {streaming && isLast && (
                 <span className="inline-block w-0.5 h-[13px] bg-gold animate-[blink_1s_step-end_infinite] align-middle ml-px" />
               )}
@@ -112,8 +110,8 @@ export function AnswerBlock({
               <BtwThread key={btw.id} btw={btw} onReply={onBtwReply} onDismiss={onBtwDismiss} />
             ))}
           </Fragment>
-        )
+        );
       })}
     </div>
-  )
+  );
 }

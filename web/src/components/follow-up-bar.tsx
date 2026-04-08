@@ -1,24 +1,24 @@
-import { useState } from "react"
-import { X } from "lucide-react"
+import { useState } from "react";
+import { X } from "lucide-react";
 
-import { Badge } from "@/components/ui/badge"
-import { Button } from "@/components/ui/button"
-import { Input } from "@/components/ui/input"
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 
 interface FollowUpBarProps {
-  chips: string[]
-  onRemoveChip: (index: number) => void
-  onSubmit: (text: string) => void
+  chips: string[];
+  onRemoveChip: (index: number) => void;
+  onSubmit: (text: string) => void;
 }
 
 export function FollowUpBar({ chips, onRemoveChip, onSubmit }: FollowUpBarProps) {
-  const [input, setInput] = useState("")
+  const [input, setInput] = useState("");
 
   const handleSubmit = () => {
-    if (chips.length === 0 && !input.trim()) return
-    onSubmit(input.trim())
-    setInput("")
-  }
+    if (chips.length === 0 && !input.trim()) return;
+    onSubmit(input.trim());
+    setInput("");
+  };
 
   return (
     <div className="shrink-0 border-t border-ink-subtle pl-[var(--shell-utility-inset)] pr-10 pt-3 pb-3.5 flex flex-col gap-2 animate-[slide-up_0.28s_cubic-bezier(0.4,0,0.2,1)]">
@@ -48,16 +48,12 @@ export function FollowUpBar({ chips, onRemoveChip, onSubmit }: FollowUpBarProps)
 
       <div className="flex items-center">
         <Input
-          className="flex-1 h-auto bg-transparent dark:bg-transparent border-none rounded-none text-warm-dim font-serif text-[length:var(--text-small)] py-[3px] px-0 caret-gold placeholder:text-interactive-dim focus-visible:ring-0"
-          placeholder={
-            chips.length > 0
-              ? "add context or submit selections..."
-              : "follow up..."
-          }
+          className="flex-1 h-auto bg-transparent border-none rounded-none text-warm-dim font-serif text-[length:var(--text-small)] py-[3px] px-0 caret-gold placeholder:text-interactive-dim focus-visible:ring-0"
+          placeholder={chips.length > 0 ? "add context or submit selections..." : "follow up..."}
           value={input}
           onChange={(e) => setInput(e.target.value)}
           onKeyDown={(e) => {
-            if (e.key === "Enter") handleSubmit()
+            if (e.key === "Enter") handleSubmit();
           }}
         />
         <Button
@@ -71,5 +67,5 @@ export function FollowUpBar({ chips, onRemoveChip, onSubmit }: FollowUpBarProps)
         </Button>
       </div>
     </div>
-  )
+  );
 }

@@ -1,16 +1,16 @@
-import { useState } from "react"
-import { ChevronDown, ChevronRight, Search } from "lucide-react"
+import { useState } from "react";
+import { ChevronDown, ChevronRight, Search } from "lucide-react";
 
-import { Badge } from "@/components/ui/badge"
-import { Button } from "@/components/ui/button"
-import type { ThinkingBlock } from "@/lib/types"
-import { docDisplayName } from "@/lib/utils"
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import type { ThinkingBlock } from "@/lib/types";
+import { docDisplayName } from "@/lib/utils";
 
 interface ThinkingSectionProps {
-  blocks: ThinkingBlock[]
-  streaming: boolean
-  onCardClick: (path: string) => void
-  activeCard: string | null
+  blocks: ThinkingBlock[];
+  streaming: boolean;
+  onCardClick: (path: string) => void;
+  activeCard: string | null;
 }
 
 export function ThinkingSection({
@@ -20,21 +20,21 @@ export function ThinkingSection({
   activeCard,
 }: ThinkingSectionProps) {
   // null = user hasn't overridden, follow streaming state
-  const [userOverride, setUserOverride] = useState<boolean | null>(null)
-  const open = userOverride ?? streaming
+  const [userOverride, setUserOverride] = useState<boolean | null>(null);
+  const open = userOverride ?? streaming;
 
-  if (blocks.length === 0 && !streaming) return null
+  if (blocks.length === 0 && !streaming) return null;
 
-  const allSources = blocks.flatMap((b) => b.sources)
-  const articles = allSources.filter((s) => s.type === "article").length
-  const raw = allSources.filter((s) => s.type === "raw").length
-  const searches = allSources.filter((s) => s.type === "search").length
+  const allSources = blocks.flatMap((b) => b.sources);
+  const articles = allSources.filter((s) => s.type === "article").length;
+  const raw = allSources.filter((s) => s.type === "raw").length;
+  const searches = allSources.filter((s) => s.type === "search").length;
 
-  const summaryParts: string[] = []
-  if (searches) summaryParts.push(`${searches} search${searches !== 1 ? "es" : ""}`)
-  if (articles) summaryParts.push(`${articles} article${articles !== 1 ? "s" : ""} read`)
-  if (raw) summaryParts.push(`${raw} source${raw !== 1 ? "s" : ""} read`)
-  const summary = summaryParts.join(", ") || "no sources"
+  const summaryParts: string[] = [];
+  if (searches) summaryParts.push(`${searches} search${searches !== 1 ? "es" : ""}`);
+  if (articles) summaryParts.push(`${articles} article${articles !== 1 ? "s" : ""} read`);
+  if (raw) summaryParts.push(`${raw} source${raw !== 1 ? "s" : ""} read`);
+  const summary = summaryParts.join(", ") || "no sources";
 
   return (
     <div className="mb-4">
@@ -57,24 +57,26 @@ export function ThinkingSection({
       {open && (
         <div className="mt-2 border-l-2 border-interactive-ghost pl-3.5 space-y-3">
           <div className="flex flex-wrap gap-[5px]">
-            {blocks.flatMap((b) => b.sources).map((src) =>
-              src.type === "search" ? (
-                <SearchBadge key={`search:${src.label}`} query={src.label} />
-              ) : (
-                <ArticleBadge
-                  key={`${src.type}:${src.label}`}
-                  label={src.label}
-                  thinking={src.thinking}
-                  active={activeCard === src.label}
-                  onClick={() => onCardClick(src.label)}
-                />
-              ),
-            )}
+            {blocks
+              .flatMap((b) => b.sources)
+              .map((src) =>
+                src.type === "search" ? (
+                  <SearchBadge key={`search:${src.label}`} query={src.label} />
+                ) : (
+                  <ArticleBadge
+                    key={`${src.type}:${src.label}`}
+                    label={src.label}
+                    thinking={src.thinking}
+                    active={activeCard === src.label}
+                    onClick={() => onCardClick(src.label)}
+                  />
+                ),
+              )}
           </div>
         </div>
       )}
     </div>
-  )
+  );
 }
 
 function SearchBadge({ query }: { query: string }) {
@@ -86,7 +88,7 @@ function SearchBadge({ query }: { query: string }) {
       <Search size={9} className="mr-1.5 opacity-60" />
       {query}
     </Badge>
-  )
+  );
 }
 
 function ArticleBadge({
@@ -95,10 +97,10 @@ function ArticleBadge({
   active,
   onClick,
 }: {
-  label: string
-  thinking?: string
-  active: boolean
-  onClick?: () => void
+  label: string;
+  thinking?: string;
+  active: boolean;
+  onClick?: () => void;
 }) {
   return (
     <Badge
@@ -118,8 +120,8 @@ function ArticleBadge({
         onClick
           ? (e: React.KeyboardEvent) => {
               if (e.key === "Enter" || e.key === " ") {
-                e.preventDefault()
-                onClick()
+                e.preventDefault();
+                onClick();
               }
             }
           : undefined
@@ -127,5 +129,5 @@ function ArticleBadge({
     >
       {docDisplayName(label)}
     </Badge>
-  )
+  );
 }

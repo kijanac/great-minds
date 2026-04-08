@@ -1,15 +1,15 @@
-import { useState, useCallback } from "react"
-import { Home, Search, X } from "lucide-react"
+import { useState, useCallback } from "react";
+import { Home, Search, X } from "lucide-react";
 
-import { Button } from "@/components/ui/button"
-import { Input } from "@/components/ui/input"
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 
 interface ArticleChromeProps {
-  label: string
-  onHome: () => void
-  onQuery: (question: string) => void
-  onContentClick?: React.MouseEventHandler
-  children: React.ReactNode
+  label: string;
+  onHome: () => void;
+  onQuery: (question: string) => void;
+  onContentClick?: React.MouseEventHandler;
+  children: React.ReactNode;
 }
 
 export function ArticleChrome({
@@ -19,13 +19,13 @@ export function ArticleChrome({
   onContentClick,
   children,
 }: ArticleChromeProps) {
-  const [queryExpanded, setQueryExpanded] = useState(false)
-  const [queryText, setQueryText] = useState("")
+  const [queryExpanded, setQueryExpanded] = useState(false);
+  const [queryText, setQueryText] = useState("");
 
   const handleSubmit = useCallback(() => {
-    if (!queryText.trim()) return
-    onQuery(queryText.trim())
-  }, [queryText, onQuery])
+    if (!queryText.trim()) return;
+    onQuery(queryText.trim());
+  }, [queryText, onQuery]);
 
   return (
     <div className="h-screen flex flex-col overflow-hidden">
@@ -52,10 +52,10 @@ export function ArticleChrome({
               value={queryText}
               onChange={(e) => setQueryText(e.target.value)}
               onKeyDown={(e) => {
-                if (e.key === "Enter") handleSubmit()
+                if (e.key === "Enter") handleSubmit();
                 if (e.key === "Escape") {
-                  setQueryExpanded(false)
-                  setQueryText("")
+                  setQueryExpanded(false);
+                  setQueryText("");
                 }
               }}
               autoFocus
@@ -64,8 +64,8 @@ export function ArticleChrome({
               variant="ghost"
               size="icon-xs"
               onClick={() => {
-                setQueryExpanded(false)
-                setQueryText("")
+                setQueryExpanded(false);
+                setQueryText("");
               }}
               className="text-muted-foreground hover:text-warm-faint hover:bg-transparent shrink-0"
             >
@@ -84,7 +84,9 @@ export function ArticleChrome({
         )}
       </div>
 
-      <div className="flex-1 min-h-0 overflow-y-auto" onClick={onContentClick}>{children}</div>
+      <div className="flex-1 min-h-0 overflow-y-auto" onClick={onContentClick}>
+        {children}
+      </div>
     </div>
-  )
+  );
 }

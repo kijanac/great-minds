@@ -30,7 +30,9 @@ async def main():
 
             # How many matches?
             count = await session.execute(
-                text("SELECT count(*) FROM search_index WHERE tsv @@ websearch_to_tsquery('english', :q)"),
+                text(
+                    "SELECT count(*) FROM search_index WHERE tsv @@ websearch_to_tsquery('english', :q)"
+                ),
                 {"q": q},
             )
             n = count.scalar()

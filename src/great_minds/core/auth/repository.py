@@ -16,11 +16,14 @@ class AuthRepository:
     def __init__(self, session: AsyncSession) -> None:
         self.session = session
 
-    async def store_auth_code(self, email: str, code: str, settings: Settings) -> AuthCode:
+    async def store_auth_code(
+        self, email: str, code: str, settings: Settings
+    ) -> AuthCode:
         auth_code = AuthCode(
             email=email,
             code_hash=hash_code(code),
-            expires_at=datetime.now(UTC) + timedelta(minutes=settings.auth_code_expiry_minutes),
+            expires_at=datetime.now(UTC)
+            + timedelta(minutes=settings.auth_code_expiry_minutes),
         )
         self.session.add(auth_code)
         return auth_code
@@ -42,11 +45,14 @@ class AuthRepository:
         auth_code.used = True
         return True
 
-    async def store_refresh_token(self, user_id: UUID, raw_token: str, settings: Settings) -> RefreshToken:
+    async def store_refresh_token(
+        self, user_id: UUID, raw_token: str, settings: Settings
+    ) -> RefreshToken:
         rt = RefreshToken(
             user_id=user_id,
             token_hash=hash_refresh_token(raw_token),
-            expires_at=datetime.now(UTC) + timedelta(days=settings.jwt_refresh_expiry_days),
+            expires_at=datetime.now(UTC)
+            + timedelta(days=settings.jwt_refresh_expiry_days),
         )
         self.session.add(rt)
         return rt
@@ -67,7 +73,9 @@ class AuthRepository:
         """O(1) lookup by SHA-256 hash."""
         key_h = hash_api_key(raw_key)
         result = await self.session.execute(
-            select(User).join(ApiKey, ApiKey.user_id == User.id).where(
+            select(User)
+            .join(ApiKey, ApiKey.user_id == User.id)
+            .where(
                 ApiKey.key_hash == key_h,
                 ApiKey.revoked == False,
             )

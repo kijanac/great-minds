@@ -1,42 +1,44 @@
-import { useCallback, useEffect, useState } from "react"
-import { useNavigate } from "react-router"
+import { useCallback, useEffect, useState } from "react";
+import { useNavigate } from "react-router";
 
-import { ArticleChrome } from "@/components/article-chrome"
-import { ArticleView } from "@/components/article-view"
-import { SelectionPopover } from "@/components/selection-popover"
-import { useDocument } from "@/hooks/use-document"
-import { useBtw } from "@/hooks/use-btw"
-import { useLinkInterceptor } from "@/hooks/use-link-interceptor"
-import { usePopoverDismiss } from "@/hooks/use-popover-dismiss"
-import { docDisplayName, slugToTitle } from "@/lib/utils"
-import type { SelectionInfo } from "@/lib/types"
+import { ArticleChrome } from "@/components/article-chrome";
+import { ArticleView } from "@/components/article-view";
+import { SelectionPopover } from "@/components/selection-popover";
+import { useDocument } from "@/hooks/use-document";
+import { useBtw } from "@/hooks/use-btw";
+import { useLinkInterceptor } from "@/hooks/use-link-interceptor";
+import { usePopoverDismiss } from "@/hooks/use-popover-dismiss";
+import { docDisplayName, slugToTitle } from "@/lib/utils";
+import type { SelectionInfo } from "@/lib/types";
 
 interface ArticleReaderProps {
-  path: string
+  path: string;
 }
 
 export function ArticleReader({ path }: ArticleReaderProps) {
-  const navigate = useNavigate()
-  const handleLinkClick = useLinkInterceptor()
-  const { content, loading } = useDocument(path)
-  const { btws, startBtw, replyBtw, dismissEmpty, cleanup } = useBtw(path)
-  const [popover, setPopover] = useState<SelectionInfo | null>(null)
+  const navigate = useNavigate();
+  const handleLinkClick = useLinkInterceptor();
+  const { content, loading } = useDocument(path);
+  const { btws, startBtw, replyBtw, dismissEmpty, cleanup } = useBtw(path);
+  const [popover, setPopover] = useState<SelectionInfo | null>(null);
 
-  usePopoverDismiss(() => setPopover(null))
+  usePopoverDismiss(() => setPopover(null));
 
   useEffect(() => {
-    return () => { cleanup() }
-  }, [path, cleanup])
+    return () => {
+      cleanup();
+    };
+  }, [path, cleanup]);
 
   const handleBtw = useCallback(() => {
-    if (!popover) return
-    startBtw(popover)
-    setPopover(null)
-    window.getSelection()?.removeAllRanges()
-  }, [popover, startBtw])
+    if (!popover) return;
+    startBtw(popover);
+    setPopover(null);
+    window.getSelection()?.removeAllRanges();
+  }, [popover, startBtw]);
 
-  const displayName = docDisplayName(path)
-  const title = slugToTitle(displayName)
+  const displayName = docDisplayName(path);
+  const title = slugToTitle(displayName);
 
   return (
     <ArticleChrome
@@ -71,9 +73,7 @@ export function ArticleReader({ path }: ArticleReaderProps) {
         </div>
       )}
 
-      {popover && (
-        <SelectionPopover info={popover} onBtw={handleBtw} />
-      )}
+      {popover && <SelectionPopover info={popover} onBtw={handleBtw} />}
     </ArticleChrome>
-  )
+  );
 }

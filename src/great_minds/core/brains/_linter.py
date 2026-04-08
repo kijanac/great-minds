@@ -14,7 +14,6 @@ LLM checks (slower, costs money, opt-in with deep=True):
   - Coverage gaps: concepts/debates mentioned but without their own article
 """
 
-
 import json
 import logging
 import re
@@ -38,6 +37,7 @@ _FOOTNOTE_RE = re.compile(r"\[\^(\d+)\]:\s*\[([^\]]*)\]\(([^)]+)\)")
 # Data collection
 # ---------------------------------------------------------------------------
 
+
 def collect_wiki_articles(storage: Storage) -> dict[str, str]:
     """Return {filename: content} for all wiki articles.
 
@@ -59,6 +59,8 @@ def collect_raw_docs(storage: Storage) -> dict[str, dict]:
     docs = {}
     for path in storage.glob("raw/texts/**/*.md"):
         content = storage.read(path)
+        if content is None:
+            continue
         match = _FRONTMATTER_RE.match(content)
         if match:
             fm = yaml.load(match.group(1))
@@ -69,6 +71,7 @@ def collect_raw_docs(storage: Storage) -> dict[str, dict]:
 # ---------------------------------------------------------------------------
 # Programmatic checks
 # ---------------------------------------------------------------------------
+
 
 def check_dead_links(storage: Storage, articles: dict[str, str]) -> list[str]:
     """Find markdown links to files that don't exist. All paths are root-relative."""
@@ -127,10 +130,7 @@ def check_orphan_articles(articles: dict[str, str]) -> list[str]:
 
 def check_uncompiled(raw_docs: dict[str, dict]) -> list[str]:
     """Find raw documents that haven't been compiled."""
-    uncompiled = [
-        path for path, fm in raw_docs.items()
-        if fm.get("compiled") is False
-    ]
+    uncompiled = [path for path, fm in raw_docs.items() if fm.get("compiled") is False]
     if len(uncompiled) > 20:
         return [f"  {len(uncompiled)} uncompiled documents (showing first 20)"] + [
             f"  {p}" for p in uncompiled[:20]
@@ -138,7 +138,9 @@ def check_uncompiled(raw_docs: dict[str, dict]) -> list[str]:
     return [f"  {p}" for p in uncompiled]
 
 
-def check_uncited_sources(articles: dict[str, str], raw_docs: dict[str, dict]) -> list[str]:
+def check_uncited_sources(
+    articles: dict[str, str], raw_docs: dict[str, dict]
+) -> list[str]:
     """Find compiled raw docs that no wiki article references in its Sources section."""
     # Collect all source paths mentioned in wiki articles
     cited_paths: set[str] = set()
@@ -156,13 +158,15 @@ def check_uncited_sources(articles: dict[str, str], raw_docs: dict[str, dict]) -
             uncited.append(path)
 
     if len(uncited) > 20:
-        return [f"  {len(uncited)} compiled but uncited documents (showing first 20)"] + [
-            f"  {p}" for p in uncited[:20]
-        ]
+        return [
+            f"  {len(uncited)} compiled but uncited documents (showing first 20)"
+        ] + [f"  {p}" for p in uncited[:20]]
     return [f"  {p}" for p in uncited]
 
 
-def check_missing_index_entries(storage: Storage, articles: dict[str, str]) -> list[str]:
+def check_missing_index_entries(
+    storage: Storage, articles: dict[str, str]
+) -> list[str]:
     """Find wiki articles not listed in _index.md."""
     index_content = storage.read("wiki/_index.md", strict=False)
     if index_content is None:
@@ -192,7 +196,9 @@ def check_tag_health(raw_docs: dict[str, dict]) -> list[str]:
     singletons = [t for t, c in tag_counts.items() if c == 1]
     if singletons:
         preview = singletons[:10]
-        issues.append(f"  {len(singletons)} singleton tags (used once): {', '.join(preview)}")
+        issues.append(
+            f"  {len(singletons)} singleton tags (used once): {', '.join(preview)}"
+        )
 
     # Near-duplicates (simple: check if removing hyphens creates collisions)
     normalized: dict[str, list[str]] = defaultdict(list)
@@ -210,6 +216,7 @@ def check_tag_health(raw_docs: dict[str, dict]) -> list[str]:
 # ---------------------------------------------------------------------------
 # LLM checks (opt-in)
 # ---------------------------------------------------------------------------
+
 
 def check_concept_consistency(articles: dict[str, str]) -> list[str]:
     """Use LLM to find inconsistent concept naming across articles."""
@@ -323,11 +330,13 @@ def lint_links_to_slugs(
                 for match in _MD_LINK_RE.finditer(content):
                     link_target = match.group(2)
                     if link_target == target_path and not slug_exists:
-                        result.broken_links.append(BrokenLink(
-                            brain_label=label,
-                            article=rel_path,
-                            target_slug=slug,
-                        ))
+                        result.broken_links.append(
+                            BrokenLink(
+                                brain_label=label,
+                                article=rel_path,
+                                target_slug=slug,
+                            )
+                        )
 
     return result
 
@@ -335,6 +344,7 @@ def lint_links_to_slugs(
 # ---------------------------------------------------------------------------
 # Public entry point
 # ---------------------------------------------------------------------------
+
 
 def run_lint(storage: Storage, *, deep: bool = False) -> int:
     """Run all lint checks and return total issue count."""
@@ -351,7 +361,11 @@ def run_lint(storage: Storage, *, deep: bool = False) -> int:
         ("Broken source citations", check_broken_citations, (storage, articles)),
         ("Orphan articles (no incoming links)", check_orphan_articles, (articles,)),
         ("Uncompiled documents", check_uncompiled, (raw_docs,)),
-        ("Uncited sources (compiled but unreferenced)", check_uncited_sources, (articles, raw_docs)),
+        (
+            "Uncited sources (compiled but unreferenced)",
+            check_uncited_sources,
+            (articles, raw_docs),
+        ),
         ("Missing index entries", check_missing_index_entries, (storage, articles)),
         ("Tag health", check_tag_health, (raw_docs,)),
     ]

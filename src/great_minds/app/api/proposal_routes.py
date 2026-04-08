@@ -9,7 +9,12 @@ from absurd_sdk import AsyncAbsurd
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from great_minds.app.api.dependencies import get_absurd, get_brain_service, get_current_user, get_proposal_service
+from great_minds.app.api.dependencies import (
+    get_absurd,
+    get_brain_service,
+    get_current_user,
+    get_proposal_service,
+)
 from great_minds.app.api.schemas import proposals as schemas
 from great_minds.core.brains.models import MemberRole
 from great_minds.core.brains.service import BrainService
@@ -39,7 +44,9 @@ async def create_proposal(
         raise HTTPException(status_code=404, detail="Brain not found")
 
     if brain.kind != "team":
-        raise HTTPException(status_code=400, detail="Proposals are only for team brains")
+        raise HTTPException(
+            status_code=400, detail="Proposals are only for team brains"
+        )
 
     proposal = await repository.create_proposal(
         session,
@@ -70,16 +77,22 @@ async def create_proposal(
 
 @router.get("", response_model=list[schemas.ProposalOverview])
 async def list_proposals(
-    brain: str | None = Query(None),
+    brain: UUID | None = Query(None),
     status_filter: ProposalStatus | None = Query(None, alias="status"),
     user: User = Depends(get_current_user),
     session: AsyncSession = Depends(get_session),
 ) -> list[schemas.ProposalOverview]:
-    proposals = await repository.list_proposals(session, user.id, brain_id=brain, status=status_filter)
+    proposals = await repository.list_proposals(
+        session, user.id, brain_id=brain, status=status_filter
+    )
     return [
         schemas.ProposalOverview(
-            id=p.id, brain_id=p.brain_id, status=p.status,
-            title=p.title, content_type=p.content_type, created_at=p.created_at,
+            id=p.id,
+            brain_id=p.brain_id,
+            status=p.status,
+            title=p.title,
+            content_type=p.content_type,
+            created_at=p.created_at,
         )
         for p in proposals
     ]
@@ -119,9 +132,13 @@ async def review_proposal(
     try:
         brain, role = await brain_service.get_brain(proposal.brain_id, user.id)
     except ValueError:
-        raise HTTPException(status_code=403, detail="Only brain owners can review proposals")
+        raise HTTPException(
+            status_code=403, detail="Only brain owners can review proposals"
+        )
     if role != MemberRole.OWNER:
-        raise HTTPException(status_code=403, detail="Only brain owners can review proposals")
+        raise HTTPException(
+            status_code=403, detail="Only brain owners can review proposals"
+        )
 
     proposal.status = req.status
     proposal.reviewed_by = user.id
@@ -140,7 +157,14 @@ async def review_proposal(
 
 def _to_schema(p: SourceProposal) -> schemas.Proposal:
     return schemas.Proposal(
-        id=p.id, brain_id=p.brain_id, status=p.status, title=p.title,
-        content_type=p.content_type, created_at=p.created_at, user_id=p.user_id,
-        author=p.author, reviewed_by=p.reviewed_by, reviewed_at=p.reviewed_at,
+        id=p.id,
+        brain_id=p.brain_id,
+        status=p.status,
+        title=p.title,
+        content_type=p.content_type,
+        created_at=p.created_at,
+        user_id=p.user_id,
+        author=p.author,
+        reviewed_by=p.reviewed_by,
+        reviewed_at=p.reviewed_at,
     )

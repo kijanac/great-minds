@@ -1,5 +1,5 @@
-import { SessionsContainer } from "@/containers/sessions-container"
+import { SessionsContainer } from "@/containers/sessions-container";
 
 export default function SessionsPage() {
-  return <SessionsContainer />
+  return <SessionsContainer />;
 }
