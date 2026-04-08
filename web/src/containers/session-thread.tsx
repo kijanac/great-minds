@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useState } from "react";
 import { useNavigate } from "react-router";
 
 import { readDocument } from "@/api/doc";
@@ -75,10 +75,7 @@ export function SessionThread({ session, onFollowUp }: SessionThreadProps) {
     localStorage.setItem("onboarding-hint-seen", "true");
   }, []);
 
-  const showHint = useMemo(
-    () => !hintDismissed && session.phase === "done" && session.thread.length === 1,
-    [hintDismissed, session.phase, session.thread.length],
-  );
+  const showHint = !hintDismissed && session.phase === "done" && session.thread.length === 1;
 
   const canFollowUp = session.phase === "done";
 
@@ -161,7 +158,7 @@ export function SessionThread({ session, onFollowUp }: SessionThreadProps) {
               variant="ghost"
               size="sm"
               onClick={dismissHint}
-              className="font-mono text-[length:var(--text-chrome)] tracking-[0.08em] text-warm-ghost hover:text-warm-faint hover:bg-transparent h-auto px-2 py-1"
+              className="font-mono text-[length:var(--text-chrome)] tracking-[0.08em] text-warm-ghost hover:text-warm-faint hover:bg-transparent h-auto px-2 py-1 shrink-0"
             >
               dismiss
             </Button>

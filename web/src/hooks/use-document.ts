@@ -12,20 +12,21 @@ export function useDocument(path: string | null) {
       return;
     }
 
-    let active = true;
+    const controller = new AbortController();
     setLoading(true);
-    readDocument(path)
+    readDocument(path, controller.signal)
       .then((data) => {
-        if (active) setContent(data.content);
+        setContent(data.content);
       })
-      .catch(() => {
-        if (active) setContent(null);
+      .catch((err) => {
+        if ((err as Error).name === "AbortError") return;
+        setContent(null);
       })
       .finally(() => {
-        if (active) setLoading(false);
+        if (!controller.signal.aborted) setLoading(false);
       });
     return () => {
-      active = false;
+      controller.abort();
     };
   }, [path]);
 

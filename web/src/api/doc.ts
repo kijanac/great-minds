@@ -6,8 +6,11 @@ export async function listArticles(): Promise<string[]> {
   return res.json();
 }
 
-export async function readDocument(path: string): Promise<{ path: string; content: string }> {
-  const res = await apiFetch(`/doc/${path}`);
+export async function readDocument(
+  path: string,
+  signal?: AbortSignal,
+): Promise<{ path: string; content: string }> {
+  const res = await apiFetch(`/doc/${path}`, { signal });
   if (!res.ok) throw new Error(`Document not found: ${path}`);
   return res.json();
 }

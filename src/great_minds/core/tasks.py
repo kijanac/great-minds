@@ -17,8 +17,7 @@ from uuid import UUID
 
 from absurd_sdk import AbsurdHooks, AsyncAbsurd
 from sqlalchemy import DateTime, ForeignKey, Text, select, text
-from sqlalchemy.dialects.postgresql import JSONB
-from sqlalchemy.dialects.postgresql import UUID as PG_UUID
+from sqlalchemy.dialects.postgresql import JSONB, UUID as PG_UUID, insert
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -166,11 +165,8 @@ async def spawn_compile(
     *,
     limit: int | None = None,
 ) -> TaskRecord:
-    """Spawn a compile task. Returns existing active task if one is already running."""
-    active = await _find_active_compile(absurd, session, brain_id)
-    if active is not None:
-        return active
-
+    """Spawn a compile task. Absurd handles dedup via idempotency key;
+    TaskRecord is a write-once brain_id index."""
     params = {
         "brain_id": str(brain_id),
         "storage_root": storage_root,
@@ -192,48 +188,33 @@ async def spawn_compile(
         idempotency_key=f"compile:{brain_id}",
     )
 
-    record = TaskRecord(
-        id=result["task_id"],
-        brain_id=brain_id,
-        type="compile",
-        params=params,
-        created_at=datetime.now(UTC),
+    task_id = result["task_id"]
+
+    # Upsert: absurd may return an existing task_id (idempotency),
+    # so the record may already exist — just skip the insert.
+    await session.execute(
+        insert(TaskRecord)
+        .values(
+            id=task_id,
+            brain_id=brain_id,
+            type="compile",
+            params=params,
+            created_at=datetime.now(UTC),
+        )
+        .on_conflict_do_nothing(index_elements=["id"])
     )
-    session.add(record)
-    await session.flush()
+
+    record = await session.get(TaskRecord, task_id)
+    if record is None:
+        raise RuntimeError(f"TaskRecord {task_id} missing after upsert")
 
     log.info(
         "task_spawned task_id=%s type=compile brain_id=%s limit=%s",
-        record.id,
+        task_id,
         brain_id,
         limit,
     )
     return record
-
-
-async def _find_active_compile(
-    absurd: AsyncAbsurd,
-    session: AsyncSession,
-    brain_id: UUID,
-) -> TaskRecord | None:
-    """Return an active (non-terminal) compile task for this brain, if any."""
-    rows = await session.execute(
-        select(TaskRecord)
-        .where(TaskRecord.brain_id == brain_id, TaskRecord.type == "compile")
-        .order_by(TaskRecord.created_at.desc())
-        .limit(10)
-    )
-    records = rows.scalars().all()
-
-    for record in records:
-        snapshot = await absurd.fetch_task_result(record.id)
-        if snapshot is None or snapshot.state not in (
-            "completed",
-            "failed",
-            "cancelled",
-        ):
-            return record
-    return None
 
 
 # ---------------------------------------------------------------------------
