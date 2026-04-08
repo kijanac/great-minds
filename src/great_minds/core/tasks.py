@@ -275,7 +275,7 @@ async def list_brain_tasks(
 
 
 async def get_task(
-    absurd: AsyncAbsurd, session: AsyncSession, task_id: UUID | str, brain_id: UUID,
+    absurd: AsyncAbsurd, session: AsyncSession, task_id: UUID, brain_id: UUID,
 ) -> dict | None:
     """Get a single task by ID, scoped to a brain."""
     row = await session.execute(

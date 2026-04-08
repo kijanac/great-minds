@@ -8,6 +8,7 @@ import asyncio
 import io
 import json
 import logging
+from uuid import UUID
 import re
 from contextlib import asynccontextmanager
 
@@ -240,7 +241,7 @@ def create_app() -> FastAPI:
 
     @app.get("/tasks/{task_id}", response_model=TaskResponse)
     async def get_task(
-        task_id: str,
+        task_id: UUID,
         ctx: BrainContext = Depends(get_authorized_brain),
         session: AsyncSession = Depends(get_session),
         absurd: AsyncAbsurd = Depends(get_absurd),
