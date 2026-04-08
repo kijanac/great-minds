@@ -36,7 +36,15 @@ class BrainService:
         return await self.repo.create_team_brain(name, owner_id)
 
     async def create_personal_brain(self, user: User) -> Brain:
-        return await self.repo.create_personal_brain(user)
+        brain = await self.repo.create_personal_brain(user)
+        self._init_brain_storage(brain.storage_root)
+        return brain
+
+    def _init_brain_storage(self, storage_root: str) -> None:
+        storage = LocalStorage(self.data_dir / storage_root)
+        if not storage.exists("config.yaml"):
+            default = Path(__file__).resolve().parent.parent / "default_config.yaml"
+            storage.write("config.yaml", default.read_text(encoding="utf-8"))
 
     async def get_all_query_sources(self, user_id: UUID) -> list[QuerySource]:
         """Build QuerySources for all brains a user has access to."""

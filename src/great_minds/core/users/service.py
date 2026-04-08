@@ -14,7 +14,9 @@ class UserService:
         return await self.repo.get_or_create(email)
 
     async def ensure_personal_brain(self, user: User) -> None:
-        """Ensure the user has a personal brain, creating one if missing."""
+        """Ensure the user has a personal brain with storage initialized."""
         existing = await self.brain_service.repo.get_personal_brain(user.id)
         if existing is None:
             await self.brain_service.create_personal_brain(user)
+        else:
+            self.brain_service._init_brain_storage(existing.storage_root)

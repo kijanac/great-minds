@@ -1,0 +1,49 @@
+name: "Personal Brain"
+
+metadata:
+  texts:
+    - title
+    - author
+    - date
+    - source
+    - compiled
+    - genre
+    - tradition
+    - interlocutors
+    - concepts
+    - tags
+    - notes
+
+  news:
+    - outlet
+    - date
+    - source
+    - compiled
+    - relevance
+    - concepts
+    - tags
+    - notes
+
+  ideas:
+    - date
+    - compiled
+    - concepts
+    - tags
+    - status
+    - notes
+
+fields:
+  genre:
+    max_per_doc: 2
+    allow_new: true
+    min_uses_to_keep: 3
+  tradition:
+    allow_new: true
+    min_uses_to_keep: 3
+  tags:
+    allow_new: true
+    min_uses_to_keep: 2
+  concepts:
+    allow_new: true
+  interlocutors:
+    allow_new: true
