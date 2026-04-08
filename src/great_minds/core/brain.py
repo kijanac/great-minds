@@ -44,15 +44,23 @@ def load_prompt(storage: Storage, name: str) -> str:
     )
 
 
+def wiki_path(slug: str) -> str:
+    return f"wiki/{slug}.md"
+
+
+def wiki_slug(path: str) -> str:
+    return path.removeprefix("wiki/").removesuffix(".md")
+
+
 def list_articles(storage: Storage) -> list[str]:
     """Return wiki article slugs (excluding internal files like _index)."""
     paths = storage.glob("wiki/*.md")
-    return [p.removeprefix("wiki/").removesuffix(".md") for p in paths if not p.startswith("wiki/_")]
+    return [wiki_slug(p) for p in paths if not p.startswith("wiki/_")]
 
 
 def read_article(storage: Storage, slug: str) -> str | None:
     """Read a single wiki article by slug, or None if missing."""
-    return storage.read(f"wiki/{slug}.md", strict=False)
+    return storage.read(wiki_path(slug), strict=False)
 
 
 def read_index(storage: Storage) -> str:

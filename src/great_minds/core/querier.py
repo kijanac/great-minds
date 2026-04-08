@@ -17,6 +17,7 @@ from uuid import UUID
 from openai import AsyncOpenAI
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from .brain import wiki_slug
 from .brains._search_indexer import search as hybrid_search
 from .llm import FALLBACK_MODELS, QUERY_MODEL, get_async_client
 from .storage import Storage
@@ -34,6 +35,12 @@ class QueryMode(enum.StrEnum):
     BTW = "btw"
 
 
+class SourceType(enum.StrEnum):
+    ARTICLE = "article"
+    RAW = "raw"
+    SEARCH = "search"
+
+
 @dataclass
 class QuerySource:
     """A labeled storage that the query engine can search across."""
@@ -45,17 +52,16 @@ SYSTEM_PROMPT = """\
 You are a research assistant for a knowledge base. \
 You help users explore and understand the corpus of texts and wiki articles.
 
-You have access to tools that let you read wiki articles and raw source documents. \
+You have access to tools that let you read documents and search the knowledge base. \
 Use them to ground your answers in the actual texts.
 
 Approach:
 1. When asked a question, first consider which wiki articles are relevant \
 based on the index below.
-2. Read the relevant articles using the read_wiki_article tool.
+2. Read the relevant documents using the read_document tool (e.g. wiki/slug.md).
 3. If you need more detail or want to verify a claim, follow the source \
-citations in the wiki article to read the raw primary texts.
-4. Synthesize your answer, always citing which wiki articles and/or raw \
-sources you're drawing from.
+citations in the wiki article to read the raw primary texts (e.g. raw/texts/...).
+4. Synthesize your answer, always citing which documents you're drawing from.
 
 Rules:
 - Always ground claims in the actual texts — don't rely on your general knowledge. Use the tools.
@@ -78,30 +84,11 @@ TOOLS = [
     {
         "type": "function",
         "function": {
-            "name": "read_wiki_article",
+            "name": "read_document",
             "description": (
-                "Read a wiki article from the knowledge base. "
-                "Use the slug from the wiki index."
-            ),
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "slug": {
-                        "type": "string",
-                        "description": "Article slug (filename without .md)",
-                    },
-                },
-                "required": ["slug"],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "read_raw_source",
-            "description": (
-                "Read a raw primary source document. Use paths from the "
-                "Sources or footnotes section of wiki articles."
+                "Read a document from the knowledge base by path. "
+                "Works for wiki articles (e.g. wiki/capitalism.md) "
+                "and raw sources (e.g. raw/texts/lenin/works/1893/market/02.md)."
             ),
             "parameters": {
                 "type": "object",
@@ -109,7 +96,7 @@ TOOLS = [
                     "path": {
                         "type": "string",
                         "description": (
-                            "Path to the raw source file, e.g. "
+                            "Document path, e.g. wiki/capitalism.md or "
                             "raw/texts/lenin/works/1893/market/02.md"
                         ),
                     },
@@ -123,7 +110,7 @@ TOOLS = [
         "function": {
             "name": "search_wiki",
             "description": (
-                "Search across all wiki articles for a term or phrase. "
+                "Search across wiki articles for a term or phrase. "
                 "Returns matching excerpts with article paths. Use when "
                 "you're not sure which article covers a topic."
             ),
@@ -163,15 +150,15 @@ def _models_with_fallback(primary: str) -> list[str]:
     return [primary] + [m for m in FALLBACK_MODELS if m != primary]
 
 
-def _classify_tool_call(name: str, args: dict) -> tuple[str, dict]:
+def _classify_tool_call(name: str, args: dict) -> tuple[SourceType, dict] | None:
     """Return (source_type, metadata) for telemetry and SSE source events."""
-    if name == "read_wiki_article":
-        return "article", {"slug": args["slug"]}
-    elif name == "read_raw_source":
-        return "raw", {"path": args["path"]}
-    elif name == "search_wiki":
-        return "search", {"query": args["query"]}
-    return "unknown", {}
+    if name == "read_document":
+        path = args["path"]
+        doc_type = SourceType.ARTICLE if path.startswith("wiki/") else SourceType.RAW
+        return doc_type, {"path": path}
+    if name == "search_wiki":
+        return SourceType.SEARCH, {"query": args["query"]}
+    return None
 
 
 # ---------------------------------------------------------------------------
@@ -179,28 +166,17 @@ def _classify_tool_call(name: str, args: dict) -> tuple[str, dict]:
 # ---------------------------------------------------------------------------
 
 
-def read_wiki_article(brains: list[QuerySource], slug: str) -> str:
-    path = f"wiki/{slug}.md"
+def read_document(brains: list[QuerySource], path: str) -> str:
     for src in brains:
         content = src.storage.read(path, strict=False)
-        if content is not None:
-            log_event("tool.article_read", slug=slug, brain=src.label, chars=len(content))
-            return f"# {path} [{src.label}]\n\n{content}"
-    log_event("tool.article_not_found", slug=slug)
-    return f"Article not found: {path}"
-
-
-def read_raw_source(brains: list[QuerySource], path_str: str) -> str:
-    for src in brains:
-        content = src.storage.read(path_str, strict=False)
         if content is not None:
             truncated = len(content) > 20_000
             if truncated:
                 content = content[:20_000] + "\n\n[...truncated — ask for a specific section if needed...]"
-            log_event("tool.source_read", path=path_str, brain=src.label, chars=len(content), truncated=truncated)
-            return f"# Source: {path_str} [{src.label}]\n\n{content}"
-    log_event("tool.source_not_found", path=path_str)
-    return f"Source not found: {path_str}"
+            log_event("tool.document_read", path=path, brain=src.label, chars=len(content), truncated=truncated)
+            return f"# {path} [{src.label}]\n\n{content}"
+    log_event("tool.document_not_found", path=path)
+    return f"Document not found: {path}"
 
 
 async def search_wiki(brains: list[QuerySource], query: str, session: AsyncSession) -> str:
@@ -227,10 +203,8 @@ async def search_wiki(brains: list[QuerySource], query: str, session: AsyncSessi
 
 
 async def _dispatch_tool(brains: list[QuerySource], name: str, args: dict, session: AsyncSession) -> str:
-    if name == "read_wiki_article":
-        return read_wiki_article(brains, args["slug"])
-    elif name == "read_raw_source":
-        return read_raw_source(brains, args["path"])
+    if name == "read_document":
+        return read_document(brains, args["path"])
     elif name == "search_wiki":
         return await search_wiki(brains, args["query"], session)
     else:
@@ -250,7 +224,7 @@ def _build_index_for_source(source: QuerySource) -> str:
     for path in source.storage.glob("wiki/*.md"):
         filename = path.rsplit("/", 1)[-1]
         if not filename.startswith("_"):
-            stem = filename.removesuffix(".md")
+            stem = wiki_slug(filename)
             entries.append(f"  - {stem}")
     if entries:
         return f"## [{source.label}]\n" + "\n".join(entries)
@@ -327,13 +301,14 @@ async def chat(
             name = tc.function.name
             args = json.loads(tc.function.arguments)
 
-            source_type, _meta = _classify_tool_call(name, args)
-            if source_type == "article":
-                articles_read.append(f"wiki/{args['slug']}.md")
-            elif source_type == "raw":
-                sources_read.append(args["path"])
-            elif source_type == "search":
-                searches.append(args["query"])
+            classified = _classify_tool_call(name, args)
+            if classified:
+                source_type, meta = classified
+                label = meta["query"] if source_type is SourceType.SEARCH else meta["path"]
+                if source_type is SourceType.SEARCH:
+                    searches.append(label)
+                else:
+                    (articles_read if source_type is SourceType.ARTICLE else sources_read).append(label)
 
             result = await _dispatch_tool(brains, name, args, session)
             messages.append({
@@ -451,15 +426,16 @@ async def stream_chat(
                     return
                 name = tc["name"]
 
-                source_type, meta = _classify_tool_call(name, args)
-                yield {"event": "source", "data": {"type": source_type, **meta}}
+                classified = _classify_tool_call(name, args)
+                if classified:
+                    source_type, meta = classified
+                    yield {"event": "source", "data": {"type": source_type, **meta}}
 
-                if source_type == "article":
-                    articles_read.append(f"wiki/{meta['slug']}.md")
-                elif source_type == "raw":
-                    sources_read.append(meta["path"])
-                elif source_type == "search":
-                    searches.append(meta["query"])
+                    label = meta["query"] if source_type is SourceType.SEARCH else meta["path"]
+                    if source_type is SourceType.SEARCH:
+                        searches.append(label)
+                    else:
+                        (articles_read if source_type is SourceType.ARTICLE else sources_read).append(label)
 
                 result = await _dispatch_tool(brains, name, args, session)
                 messages.append({
@@ -487,10 +463,10 @@ async def stream_chat(
 
 
 def _build_origin_messages(
-    brains: list[QuerySource], origin_slug: str,
+    brains: list[QuerySource], origin_path: str,
 ) -> list[dict]:
-    """Build synthetic tool-call messages that pre-load an origin article."""
-    content = read_wiki_article(brains, origin_slug)
+    """Build synthetic tool-call messages that pre-load the origin document."""
+    content = read_document(brains, origin_path)
     tool_call_id = f"origin-{uuid.uuid4().hex[:8]}"
     return [
         {
@@ -500,8 +476,8 @@ def _build_origin_messages(
                 "id": tool_call_id,
                 "type": "function",
                 "function": {
-                    "name": "read_wiki_article",
-                    "arguments": json.dumps({"slug": origin_slug}),
+                    "name": "read_document",
+                    "arguments": json.dumps({"path": origin_path}),
                 },
             }],
         },
@@ -545,7 +521,7 @@ async def run_stream_query(
     session: AsyncSession,
     *,
     model: str | None = None,
-    origin_slug: str | None = None,
+    origin_path: str | None = None,
     session_context: str | None = None,
     mode: QueryMode = QueryMode.QUERY,
 ) -> AsyncGenerator[dict, None]:
@@ -556,8 +532,8 @@ async def run_stream_query(
     base_messages: list[dict] = [
         {"role": "system", "content": system_prompt},
     ]
-    if origin_slug:
-        base_messages.extend(_build_origin_messages(brains, origin_slug))
+    if origin_path:
+        base_messages.extend(_build_origin_messages(brains, origin_path))
     if session_context:
         base_messages.extend(_build_session_context_messages(session_context))
     base_messages.append({"role": "user", "content": question})
@@ -588,7 +564,7 @@ async def run_query(
     session: AsyncSession,
     *,
     model: str | None = None,
-    origin_slug: str | None = None,
+    origin_path: str | None = None,
     session_context: str | None = None,
     mode: QueryMode = QueryMode.QUERY,
 ) -> str:
@@ -602,8 +578,8 @@ async def run_query(
     correlation_id.set(query_id)
     init_wide_event("query", question=question, brain_count=len(brains))
 
-    if origin_slug:
-        messages.extend(_build_origin_messages(brains, origin_slug))
+    if origin_path:
+        messages.extend(_build_origin_messages(brains, origin_path))
     if session_context:
         messages.extend(_build_session_context_messages(session_context))
     messages.append({"role": "user", "content": question})

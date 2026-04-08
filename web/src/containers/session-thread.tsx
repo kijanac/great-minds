@@ -1,6 +1,7 @@
 import { useCallback, useMemo, useState } from "react"
 import { useNavigate } from "react-router"
 
+import { readDocument } from "@/api/doc"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Separator } from "@/components/ui/separator"
@@ -9,7 +10,6 @@ import { ArticlePanel } from "@/components/article-panel"
 import { FollowUpBar } from "@/components/follow-up-bar"
 import { SelectionPopover } from "@/components/selection-popover"
 import { ThinkingSection } from "@/components/thinking-section"
-import { useArticle } from "@/hooks/use-article"
 import { useLinkInterceptor } from "@/hooks/use-link-interceptor"
 import { usePopoverDismiss } from "@/hooks/use-popover-dismiss"
 import type { useSession } from "@/hooks/use-session"
@@ -23,16 +23,33 @@ interface SessionThreadProps {
 
 export function SessionThread({ session, onFollowUp }: SessionThreadProps) {
   const navigate = useNavigate()
-  const handleLinkClick = useLinkInterceptor()
-  const [panelSlug, setPanelSlug] = useState<string | null>(null)
-  const { content: panelContent, loading: panelLoading } =
-    useArticle(panelSlug)
+  const [panel, setPanel] = useState<{
+    path: string
+    content: string | null
+    loading: boolean
+  } | null>(null)
+
+  const openPanel = useCallback(async (path: string) => {
+    setPanel({ path, content: null, loading: true })
+    try {
+      const data = await readDocument(path)
+      setPanel((prev) => prev?.path === path ? { path, content: data.content, loading: false } : prev)
+    } catch {
+      setPanel((prev) => prev?.path === path ? { path, content: null, loading: false } : prev)
+    }
+  }, [])
+
+  const togglePanel = useCallback(async (path: string) => {
+    if (panel?.path === path) {
+      setPanel(null)
+      return
+    }
+    openPanel(path)
+  }, [panel?.path, openPanel])
+
+  const handleLinkClick = useLinkInterceptor(openPanel)
 
   usePopoverDismiss(session.clearPopover)
-
-  const togglePanel = useCallback((slug: string) => {
-    setPanelSlug((prev) => (prev === slug ? null : slug))
-  }, [])
 
   const handleAddChip = useCallback(() => {
     if (!session.popover) return
@@ -81,7 +98,7 @@ export function SessionThread({ session, onFollowUp }: SessionThreadProps) {
                 blocks={ex.thinking}
                 streaming={false}
                 onCardClick={togglePanel}
-                activeCard={panelSlug}
+                activeCard={panel?.path ?? null}
               />
 
               <AnswerBlock
@@ -107,7 +124,7 @@ export function SessionThread({ session, onFollowUp }: SessionThreadProps) {
                 blocks={session.liveThinking}
                 streaming={session.phase === "searching"}
                 onCardClick={togglePanel}
-                activeCard={panelSlug}
+                activeCard={panel?.path ?? null}
               />
 
               {session.liveText && (
@@ -166,18 +183,18 @@ export function SessionThread({ session, onFollowUp }: SessionThreadProps) {
         />
       )}
 
-      {panelSlug && (
+      {panel && (
         <>
           <div
             className="fixed inset-0 z-[199]"
-            onClick={() => setPanelSlug(null)}
+            onClick={() => setPanel(null)}
           />
           <ArticlePanel
-            slug={panelSlug}
-            content={panelContent}
-            loading={panelLoading}
-            onClose={() => setPanelSlug(null)}
-            onFullScreen={() => navigate(`/wiki/${panelSlug}`)}
+            path={panel.path}
+            content={panel.content}
+            loading={panel.loading}
+            onClose={() => setPanel(null)}
+            onFullScreen={() => navigate(`/doc/${panel.path}`)}
           />
         </>
       )}

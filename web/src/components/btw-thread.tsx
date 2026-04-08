@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react"
 import Markdown from "react-markdown"
 import { ChevronDown, ChevronRight } from "lucide-react"
+import { docDisplayName } from "@/lib/utils"
 
 import { Button } from "@/components/ui/button"
 import {
@@ -121,7 +122,7 @@ export function BtwThread({ btw, onReply, onDismiss }: BtwThreadProps) {
                 className="font-mono text-[length:var(--text-chrome)] tracking-[0.06em] text-interactive-dim"
                 title={s.thinking}
               >
-                {s.label}
+                {docDisplayName(s.label)}
               </span>
             ))}
           </div>

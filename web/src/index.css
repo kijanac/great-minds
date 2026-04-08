@@ -145,6 +145,62 @@
 }
 
 :root {
+  --radius: 0.25rem;
+}
+
+/* Light theme */
+:root, .light {
+  --background: #b0a898;
+  --foreground: #1a1510;
+  --card: #b8b0a0;
+  --card-foreground: #5a4e3c;
+  --popover: #bab2a2;
+  --popover-foreground: #4a4030;
+  --primary: #6a5520;
+  --primary-foreground: #d8d0c0;
+  --secondary: #a8a090;
+  --secondary-foreground: #1a1510;
+  --muted: #a8a090;
+  --muted-foreground: #5a5040;
+  --accent: #6a5520;
+  --accent-foreground: #d8d0c0;
+  --destructive: #8a3030;
+  --border: #988a78;
+  --input: #7a6a55;
+  --ring: #7a6840;
+
+  /* Gold accent scale */
+  --gold: #6a5520;
+  --gold-hover: #4a3a10;
+  --gold-dim: #c0b498;
+  --gold-muted: #8a7850;
+
+  /* Warm text scale */
+  --warm: #1a1510;
+  --warm-dim: #3a3028;
+  --warm-faint: #5a4e40;
+  --warm-ghost: #8a8070;
+
+  /* Ink surface scale */
+  --ink: #b0a898;
+  --ink-raised: #b8b0a0;
+  --ink-subtle: #a8a090;
+  --ink-border: #988a78;
+  --ink-panel: #b5ad9d;
+
+  /* BTW accent */
+  --btw: #3a6030;
+  --btw-bright: #2a4a20;
+  --btw-bg: #a8b8a0;
+
+  /* Interactive states */
+  --interactive-dim: #a09888;
+  --interactive-ghost: #a8a090;
+  --code-bg: #a8a090;
+}
+
+/* Dark theme */
+.dark {
   --background: #0c0c0c;
   --foreground: #e0d8c8;
   --card: #0f0f0f;
@@ -163,7 +219,6 @@
   --border: #2a2a2a;
   --input: #6a5a40;
   --ring: #6a5830;
-  --radius: 0.25rem;
 
   /* Gold accent scale */
   --gold: #c9a96e;
@@ -227,7 +282,7 @@
     background: transparent;
   }
   ::-webkit-scrollbar-thumb {
-    background: #1a1a1a;
+    background: var(--ink-border);
     border-radius: 3px;
   }
 }

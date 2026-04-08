@@ -56,7 +56,7 @@ function exchangeToPayload(ex: Exchange) {
 interface UseSessionOptions {
   initialExchanges?: Exchange[]
   sessionId?: string
-  originSlug?: string
+  originPath?: string
   initialQuery?: string
   onSessionCreated?: (sessionId: string) => void
 }
@@ -87,7 +87,7 @@ export function useSession(options?: UseSessionOptions) {
     }
   }, [])
 
-  const originSlugRef = useRef<string | undefined>(options?.originSlug)
+  const originPathRef = useRef<string | undefined>(options?.originPath)
   const initialQueryRef = useRef<string | undefined>(options?.initialQuery)
   const onSessionCreatedRef = useRef(options?.onSessionCreated)
   onSessionCreatedRef.current = options?.onSessionCreated
@@ -104,10 +104,10 @@ export function useSession(options?: UseSessionOptions) {
     abortRef.current = controller
 
     try {
-      const originForQuery = isFirstExchange.current ? originSlugRef.current : undefined
+      const originForQuery = isFirstExchange.current ? originPathRef.current : undefined
       isFirstExchange.current = false
       const { answer, sources } = await consumeStream(
-        streamQuery(question, { signal: controller.signal, originSlug: originForQuery, mode: "query" }),
+        streamQuery(question, { signal: controller.signal, originPath: originForQuery, mode: "query" }),
         {
           onSources: (s) => setLiveThinking([{ sources: s }]),
           onToken: (text) => {
@@ -130,7 +130,7 @@ export function useSession(options?: UseSessionOptions) {
       if (!sessionIdRef.current) {
         const sid = genId("s")
         sessionIdRef.current = sid
-        createSession(sid, payload, originSlugRef.current)
+        createSession(sid, payload, originPathRef.current)
           .then(() => {
             setSessionId(sid)
             onSessionCreatedRef.current?.(sid)

@@ -21,7 +21,7 @@ export function FollowUpBar({ chips, onRemoveChip, onSubmit }: FollowUpBarProps)
   }
 
   return (
-    <div className="shrink-0 border-t border-ink-subtle px-10 pt-3 pb-3.5 flex flex-col gap-2 animate-[slide-up_0.28s_cubic-bezier(0.4,0,0.2,1)]">
+    <div className="shrink-0 border-t border-ink-subtle pl-[var(--shell-utility-inset)] pr-10 pt-3 pb-3.5 flex flex-col gap-2 animate-[slide-up_0.28s_cubic-bezier(0.4,0,0.2,1)]">
       {chips.length > 0 && (
         <div className="flex flex-wrap gap-[5px]">
           {chips.map((chip, i) => (
@@ -48,7 +48,7 @@ export function FollowUpBar({ chips, onRemoveChip, onSubmit }: FollowUpBarProps)
 
       <div className="flex items-center">
         <Input
-          className="flex-1 h-auto bg-transparent border-none rounded-none text-warm-dim font-serif text-[length:var(--text-small)] py-[3px] px-0 caret-gold placeholder:text-interactive-dim focus-visible:ring-0"
+          className="flex-1 h-auto bg-transparent dark:bg-transparent border-none rounded-none text-warm-dim font-serif text-[length:var(--text-small)] py-[3px] px-0 caret-gold placeholder:text-interactive-dim focus-visible:ring-0"
           placeholder={
             chips.length > 0
               ? "add context or submit selections..."

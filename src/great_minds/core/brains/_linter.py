@@ -23,6 +23,7 @@ from dataclasses import dataclass, field
 
 from ruamel.yaml import YAML
 
+from great_minds.core.brain import wiki_path
 from great_minds.core.llm import EXTRACT_MODEL, get_sync_client
 from great_minds.core.storage import Storage
 
@@ -313,7 +314,7 @@ def lint_links_to_slugs(
     result = TargetedLintResult()
 
     for slug in changed_slugs:
-        target_path = f"wiki/{slug}.md"
+        target_path = wiki_path(slug)
         slug_exists = source_storage.exists(target_path)
 
         for storage, label in brains:

@@ -1,36 +1,32 @@
-import { useCallback, useEffect, useRef, useState } from "react"
+import { useCallback, useEffect, useState } from "react"
 import { useNavigate } from "react-router"
 
 import { ArticleChrome } from "@/components/article-chrome"
 import { ArticleView } from "@/components/article-view"
 import { SelectionPopover } from "@/components/selection-popover"
-import { useArticle } from "@/hooks/use-article"
+import { useDocument } from "@/hooks/use-document"
 import { useBtw } from "@/hooks/use-btw"
 import { useLinkInterceptor } from "@/hooks/use-link-interceptor"
 import { usePopoverDismiss } from "@/hooks/use-popover-dismiss"
-import { slugToTitle } from "@/lib/utils"
+import { docDisplayName, slugToTitle } from "@/lib/utils"
 import type { SelectionInfo } from "@/lib/types"
 
 interface ArticleReaderProps {
-  slug: string
+  path: string
 }
 
-export function ArticleReader({ slug }: ArticleReaderProps) {
+export function ArticleReader({ path }: ArticleReaderProps) {
   const navigate = useNavigate()
   const handleLinkClick = useLinkInterceptor()
-  const { content, loading } = useArticle(slug)
-  const { btws, startBtw, replyBtw, dismissEmpty, cleanup } = useBtw(slug)
+  const { content, loading } = useDocument(path)
+  const { btws, startBtw, replyBtw, dismissEmpty, cleanup } = useBtw(path)
   const [popover, setPopover] = useState<SelectionInfo | null>(null)
 
   usePopoverDismiss(() => setPopover(null))
 
-  const prevSlugRef = useRef(slug)
   useEffect(() => {
-    if (prevSlugRef.current !== slug) {
-      cleanup()
-      prevSlugRef.current = slug
-    }
-  }, [slug, cleanup])
+    return () => { cleanup() }
+  }, [path, cleanup])
 
   const handleBtw = useCallback(() => {
     if (!popover) return
@@ -39,11 +35,14 @@ export function ArticleReader({ slug }: ArticleReaderProps) {
     window.getSelection()?.removeAllRanges()
   }, [popover, startBtw])
 
+  const displayName = docDisplayName(path)
+  const title = slugToTitle(displayName)
+
   return (
     <ArticleChrome
-      slug={slug}
+      label={displayName}
       onHome={() => navigate("/")}
-      onQuery={(q) => navigate(`/?q=${encodeURIComponent(q)}&origin=${encodeURIComponent(slug)}`)}
+      onQuery={(q) => navigate(`/?q=${encodeURIComponent(q)}&origin=${encodeURIComponent(path)}`)}
       onContentClick={handleLinkClick}
     >
       {loading && (
@@ -56,19 +55,19 @@ export function ArticleReader({ slug }: ArticleReaderProps) {
 
       {!loading && content && (
         <ArticleView
-          title={slugToTitle(slug)}
+          title={title}
           content={content}
           btws={btws}
           onSelection={setPopover}
           onBtwReply={replyBtw}
           onBtwDismiss={dismissEmpty}
-          documentId={slug}
+          documentId={path}
         />
       )}
 
       {!loading && !content && (
         <div className="max-w-[740px] mx-auto px-10 pt-10">
-          <p className="text-[length:var(--text-body)] text-warm-faint">Article not found.</p>
+          <p className="text-[length:var(--text-body)] text-warm-faint">Document not found.</p>
         </div>
       )}
 

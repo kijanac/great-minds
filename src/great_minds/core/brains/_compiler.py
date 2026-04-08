@@ -36,6 +36,7 @@ from openai import AsyncOpenAI
 from ruamel.yaml import YAML
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from great_minds.core.brain import wiki_path, wiki_slug
 from great_minds.core.brains._search_indexer import rebuild_index
 from great_minds.core.llm import EXTRACT_MODEL, REASON_MODEL, get_async_client
 from great_minds.core.storage import Storage
@@ -345,7 +346,7 @@ async def write_one(
     source_paths = [docs[idx][0] for idx in source_indices]
     source_paths_str = "\n".join(f"  - {p}" for p in source_paths)
 
-    article_path = f"wiki/{slug}.md"
+    article_path = wiki_path(slug)
     action = article.get("action", "create")
 
     existing_content_section = ""
@@ -417,16 +418,16 @@ async def update_index(storage: Storage, load_prompt: Callable[[str], str], clie
     summaries = []
     for a in written_articles:
         slug = a.get("slug", "")
-        article_path = f"wiki/{slug}.md"
+        article_path = wiki_path(slug)
         content = storage.read(article_path, strict=False)
         if content is not None:
-            summaries.append(f"### wiki/{slug}.md\n{content[:500]}")
+            summaries.append(f"### {article_path}\n{content[:500]}")
 
     if not summaries:
         return
 
     changed_list = "\n".join(
-        f"- {a.get('action', 'create')} wiki/{a.get('slug', '')}.md"
+        f"- {a.get('action', 'create')} {wiki_path(a.get('slug', ''))}"
         for a in written_articles
     )
 
@@ -467,20 +468,20 @@ def insert_backlinks(storage: Storage):
         if path.startswith("wiki/_"):
             continue
         content = storage.read(path)
-        stem = path.removeprefix("wiki/").removesuffix(".md")
+        stem = wiki_slug(path)
         heading_match = re.search(r"^#\s+(.+)", content, re.MULTILINE)
         slug_map[stem] = heading_match.group(1).strip() if heading_match else stem
         articles[path] = content
 
     for path, content in articles.items():
-        own_slug = path.removeprefix("wiki/").removesuffix(".md")
+        own_slug = wiki_slug(path)
         modified = False
 
         for slug, display in slug_map.items():
             if slug == own_slug:
                 continue
 
-            link_target = f"wiki/{slug}.md"
+            link_target = wiki_path(slug)
             if link_target in content:
                 continue
 

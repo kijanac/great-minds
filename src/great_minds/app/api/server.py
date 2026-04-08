@@ -9,7 +9,6 @@ import io
 import json
 import logging
 from uuid import UUID
-import re
 from contextlib import asynccontextmanager
 
 import httpx
@@ -34,7 +33,8 @@ from great_minds.app.api.dependencies import (
 from great_minds.app.api.proposal_routes import router as proposal_router
 from great_minds.core import brain as brain_ops
 from great_minds.core import querier, sessions, tasks
-from great_minds.core.brains import _ingester as ingester, _linter as linter
+from great_minds.core.brains import _linter as linter
+from great_minds.core.brains._ingester import ingest_document, normalize_url, slugify
 from great_minds.core.brains.service import BrainService
 from great_minds.core.db import engine, get_session, session_maker
 from great_minds.core.settings import Settings, get_settings
@@ -49,16 +49,6 @@ log = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 
-def _slugify(text: str, max_len: int = 80) -> str:
-    return re.sub(r"[^a-z0-9]+", "-", text.lower()).strip("-")[:max_len]
-
-
-def _normalize_url(url: str) -> str:
-    if url.startswith("http://") or url.startswith("https://"):
-        return url
-    return f"https://{url}"
-
-
 # ---------------------------------------------------------------------------
 # Request/response models
 # ---------------------------------------------------------------------------
@@ -71,7 +61,7 @@ class CompileRequest(BaseModel):
 class QueryRequest(BaseModel):
     question: str
     model: str | None = None
-    origin_slug: str | None = None
+    origin_path: str | None = None
     session_context: str | None = None
     mode: querier.QueryMode = querier.QueryMode.QUERY
 
@@ -265,7 +255,7 @@ def create_app() -> FastAPI:
         sources = [target] + [s for s in all_sources if s.label != target.label]
         answer = await querier.run_query(
             sources, req.question, session, model=req.model,
-            origin_slug=req.origin_slug,
+            origin_path=req.origin_path,
             session_context=req.session_context,
             mode=req.mode,
         )
@@ -287,7 +277,7 @@ def create_app() -> FastAPI:
         async def event_generator():
             async for event in querier.run_stream_query(
                 sources, req.question, session, model=req.model,
-                origin_slug=req.origin_slug,
+                origin_path=req.origin_path,
                 session_context=req.session_context,
                 mode=req.mode,
             ):
@@ -387,7 +377,7 @@ def create_app() -> FastAPI:
             kwargs["date"] = req.date
         if req.source:
             kwargs["source"] = req.source
-        result = ingester.ingest_document(ctx.storage, config, req.content, req.content_type, dest=req.dest, **kwargs)
+        result = ingest_document(ctx.storage, config, req.content, req.content_type, dest=req.dest, **kwargs)
         await _try_compile(ctx, session, absurd, settings)
         return {"status": "ingested", "chars": len(result)}
 
@@ -420,7 +410,7 @@ def create_app() -> FastAPI:
             )
             content = result.text_content
 
-        slug = _slugify(filename.rsplit(".", 1)[0])
+        slug = slugify(filename.rsplit(".", 1)[0])
         dest = f"raw/{content_type}/{slug}.md"
 
         kwargs: dict = {}
@@ -430,7 +420,7 @@ def create_app() -> FastAPI:
             kwargs["date"] = date
         if source:
             kwargs["source"] = source
-        ingested = ingester.ingest_document(ctx.storage, config, content, content_type, dest=dest, **kwargs)
+        ingested = ingest_document(ctx.storage, config, content, content_type, dest=dest, **kwargs)
         await _try_compile(ctx, session, absurd, settings)
         return {"status": "ingested", "name": filename, "chars": len(ingested)}
 
@@ -444,7 +434,7 @@ def create_app() -> FastAPI:
     ) -> dict:
         config = brain_ops.load_config(ctx.storage)
 
-        url = _normalize_url(req.url)
+        url = normalize_url(req.url)
         try:
             async with httpx.AsyncClient(follow_redirects=True, timeout=30.0) as client:
                 response = await client.get(url, headers={
@@ -464,10 +454,10 @@ def create_app() -> FastAPI:
         markdown = result.text_content
         title = result.title or url
 
-        slug = _slugify(title)
+        slug = slugify(title)
         dest = f"raw/{req.content_type}/{slug}.md"
 
-        ingested = ingester.ingest_document(
+        ingested = ingest_document(
             ctx.storage, config, markdown, req.content_type, dest=dest, title=title, source=url,
         )
         await _try_compile(ctx, session, absurd, settings)

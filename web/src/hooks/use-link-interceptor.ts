@@ -6,12 +6,13 @@ import { useNavigate } from "react-router"
  * and routes them through react-router instead of full page navigation.
  *
  * Handles:
- *   wiki/slug.md        → /wiki/slug
- *   raw/texts/...       → /wiki/slug (opens panel) — TODO: raw source viewer
+ *   wiki/slug.md        → /doc/wiki/slug.md
+ *   wiki/slug            → /doc/wiki/slug
+ *   raw/...             → onDocOpen callback (opens panel)
  *   #anchor             → browser default (scroll)
  *   http(s)://...       → browser default (new tab via target=_blank on the <a>)
  */
-export function useLinkInterceptor() {
+export function useLinkInterceptor(onDocOpen?: (path: string) => void) {
   const navigate = useNavigate()
 
   return useCallback(
@@ -28,23 +29,24 @@ export function useLinkInterceptor() {
       // Anchor links — let browser handle
       if (href.startsWith("#")) return
 
-      // Everything else is an internal KB path — prevent default navigation
-      e.preventDefault()
-
-      // Wiki article links: wiki/slug.md → /wiki/slug
-      if (href.startsWith("wiki/") && href.endsWith(".md")) {
-        const slug = href.slice(5, -3)
-        navigate(`/wiki/${slug}`)
+      // Wiki article links get full-screen navigation
+      if (href.startsWith("wiki/")) {
+        e.preventDefault()
+        navigate(`/doc/${href}`)
         return
       }
 
-      // Wiki article links without extension: wiki/slug → /wiki/slug
-      if (href.startsWith("wiki/")) {
-        const slug = href.slice(5)
-        navigate(`/wiki/${slug}`)
+      // Raw source links — open panel or navigate to full-screen doc view
+      if (href.startsWith("raw/")) {
+        e.preventDefault()
+        if (onDocOpen) {
+          onDocOpen(href)
+        } else {
+          navigate(`/doc/${href}`)
+        }
         return
       }
     },
-    [navigate],
+    [navigate, onDocOpen],
   )
 }

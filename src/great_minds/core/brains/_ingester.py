@@ -23,6 +23,16 @@ from great_minds.core.storage import Storage
 
 log = logging.getLogger(__name__)
 
+
+def slugify(text: str, max_len: int = 80) -> str:
+    return re.sub(r"[^a-z0-9]+", "-", text.lower()).strip("-")[:max_len]
+
+
+def normalize_url(url: str) -> str:
+    if url.startswith("http://") or url.startswith("https://"):
+        return url
+    return f"https://{url}"
+
 _yaml = YAML()
 _yaml.default_flow_style = False
 

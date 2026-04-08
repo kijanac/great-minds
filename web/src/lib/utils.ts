@@ -29,6 +29,11 @@ export function formatRelativeDate(iso: string): string {
   return d.toLocaleDateString("en-US", { month: "short", day: "numeric" })
 }
 
+export function docDisplayName(path: string): string {
+  const filename = path.split("/").pop() ?? path
+  return filename.replace(/\.md$/, "")
+}
+
 export function buildBtwQuery(paragraph: string, anchor: string, userText: string): string {
   const parts: string[] = []
   if (paragraph) parts.push(`Passage:\n> ${paragraph}`)

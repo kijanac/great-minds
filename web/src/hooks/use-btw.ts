@@ -5,7 +5,7 @@ import type { BtwThread, SelectionInfo } from "@/lib/types"
 import { assistantMsg, userMsg } from "@/lib/types"
 import { buildBtwQuery, genId } from "@/lib/utils"
 
-export function useBtw(originSlug?: string) {
+export function useBtw(originPath?: string) {
   const [btws, setBtws] = useState<BtwThread[]>([])
   const btwsRef = useRef(btws)
   btwsRef.current = btws
@@ -67,7 +67,7 @@ export function useBtw(originSlug?: string) {
     ;(async () => {
       try {
         const { answer, sources } = await consumeStream(
-          streamQuery(contextualQuery, { originSlug, mode: "btw", signal: controller.signal }),
+          streamQuery(contextualQuery, { originPath, mode: "btw", signal: controller.signal }),
           {
             onSources: (s) => updateBtw({ sources: s }),
             onToken: (text) => updateBtw({ streamText: text }),

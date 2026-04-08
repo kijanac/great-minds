@@ -4,7 +4,7 @@ import { apiFetch } from "./client"
 
 interface StreamQueryOptions {
   model?: string
-  originSlug?: string
+  originPath?: string
   sessionContext?: string
   mode: "query" | "btw"
   signal?: AbortSignal
@@ -22,7 +22,7 @@ export async function* streamQuery(
   const res = await apiFetch("/query/stream", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ question, model: options?.model, origin_slug: options?.originSlug, session_context: options?.sessionContext, mode: options?.mode }),
+    body: JSON.stringify({ question, model: options?.model, origin_path: options?.originPath, session_context: options?.sessionContext, mode: options?.mode }),
     signal: options?.signal,
   })
   if (!res.ok) {
@@ -87,7 +87,7 @@ export async function consumeStream(
       streamText += event.data.text
       callbacks?.onToken?.(streamText)
     } else if (event.event === "source") {
-      const label = event.data.slug ?? event.data.query ?? event.data.path
+      const label = event.data.path ?? event.data.query
       const type = event.data.type
       if (label && (type === "article" || type === "raw" || type === "search")) {
         sources.push({ label, type: type as SourceRef["type"], thinking: streamText || undefined })

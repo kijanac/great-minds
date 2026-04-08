@@ -6,11 +6,11 @@ export async function listArticles(): Promise<string[]> {
   return res.json()
 }
 
-export async function readArticle(
-  slug: string,
-): Promise<{ slug: string; content: string }> {
-  const res = await apiFetch(`/wiki/${slug}`)
-  if (!res.ok) throw new Error(`Article not found: ${slug}`)
+export async function readDocument(
+  path: string,
+): Promise<{ path: string; content: string }> {
+  const res = await apiFetch(`/doc/${path}`)
+  if (!res.ok) throw new Error(`Document not found: ${path}`)
   return res.json()
 }
 

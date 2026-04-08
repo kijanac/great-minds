@@ -1,11 +1,12 @@
 import { BrowserRouter, Routes, Route, Navigate } from "react-router"
 import type { ReactNode } from "react"
 
+import { AppShell } from "@/components/app-shell"
 import { CornerMenuContainer } from "@/containers/corner-menu-container"
 import { AuthProvider, useAuth } from "@/lib/auth"
 import HomePage from "@/pages/home"
 import LoginPage from "@/pages/login"
-import ArticlePage from "@/pages/article"
+import DocPage from "@/pages/doc"
 import SessionPage from "@/pages/session"
 import SessionsPage from "@/pages/sessions"
 
@@ -25,8 +26,8 @@ function App() {
   return (
     <BrowserRouter>
       <AuthProvider>
-        <CornerMenuContainer />
-        <Routes>
+        <AppShell utility={<CornerMenuContainer />}>
+          <Routes>
           <Route
             path="/login"
             element={
@@ -44,10 +45,10 @@ function App() {
             }
           />
           <Route
-            path="/wiki/:slug"
+            path="/doc/*"
             element={
               <RequireAuth>
-                <ArticlePage />
+                <DocPage />
               </RequireAuth>
             }
           />
@@ -67,7 +68,8 @@ function App() {
               </RequireAuth>
             }
           />
-        </Routes>
+          </Routes>
+        </AppShell>
       </AuthProvider>
     </BrowserRouter>
   )

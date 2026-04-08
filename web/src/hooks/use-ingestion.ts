@@ -19,12 +19,14 @@ export function useIngestion() {
   const urlRef = useRef(url)
   const processingRef = useRef(false)
   const promisesRef = useRef<Map<string, Promise<{ name: string }>>>(new Map())
+  const queueRef = useRef(queue)
   urlRef.current = url
+  queueRef.current = queue
 
   const processNext = useCallback(async () => {
     if (processingRef.current) return
 
-    const next = queue.find((i) => i.status === "queued")
+    const next = queueRef.current.find((i) => i.status === "queued")
     if (!next) return
 
     const promise = promisesRef.current.get(next.id)
@@ -59,13 +61,9 @@ export function useIngestion() {
     } finally {
       promisesRef.current.delete(next.id)
       processingRef.current = false
+      processNext()
     }
-  }, [queue])
-
-  // Drive the queue: process next item when queue changes
-  useEffect(() => {
-    processNext()
-  }, [processNext])
+  }, [])
 
   // Auto-dismiss done items after 3s
   useEffect(() => {
@@ -83,8 +81,9 @@ export function useIngestion() {
       const id = `ingest-${nextId++}`
       promisesRef.current.set(id, promise)
       setQueue((q) => [...q, { id, name, status: "queued" }])
+      processNext()
     },
-    [],
+    [processNext],
   )
 
   const handleFileDrop = useCallback(

@@ -65,7 +65,7 @@ function HomeContent({ sessionId, initialExchanges, initialQuery, origin }: Home
     initialExchanges
       ? { initialExchanges, sessionId: sessionId! }
       : (initialQuery || origin)
-        ? { initialQuery, originSlug: origin, onSessionCreated: handleSessionCreated }
+        ? { initialQuery, originPath: origin, onSessionCreated: handleSessionCreated }
         : { onSessionCreated: handleSessionCreated },
   )
 
@@ -114,7 +114,7 @@ function HomeContent({ sessionId, initialExchanges, initialQuery, origin }: Home
   const wikiButton = (
     <Button
       variant="ghost"
-      onClick={() => navigate("/wiki/_index")}
+      onClick={() => navigate("/doc/wiki/_index.md")}
       className="h-auto py-1 px-2 font-mono text-[length:var(--text-chrome)] tracking-[0.14em] uppercase text-gold-muted hover:text-gold hover:bg-transparent shrink-0"
     >
       wiki ↗

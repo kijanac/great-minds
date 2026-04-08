@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 
 interface ArticleChromeProps {
-  slug: string
+  label: string
   onHome: () => void
   onQuery: (question: string) => void
   onContentClick?: React.MouseEventHandler
@@ -13,7 +13,7 @@ interface ArticleChromeProps {
 }
 
 export function ArticleChrome({
-  slug,
+  label,
   onHome,
   onQuery,
   onContentClick,
@@ -40,7 +40,7 @@ export function ArticleChrome({
             <Home size={14} />
           </Button>
           <span className="font-mono text-[length:var(--text-chrome)] tracking-[0.14em] text-gold-muted uppercase">
-            {slug}
+            {label}
           </span>
         </div>
 

@@ -3,11 +3,11 @@ import Markdown from "react-markdown"
 
 import { Badge } from "@/components/ui/badge"
 import { remarkPlugins } from "@/lib/markdown"
-import { slugToTitle } from "@/lib/utils"
+import { docDisplayName, slugToTitle } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
 
 interface ArticlePanelProps {
-  slug: string
+  path: string
   content: string | null
   loading: boolean
   onClose: () => void
@@ -15,13 +15,13 @@ interface ArticlePanelProps {
 }
 
 export function ArticlePanel({
-  slug,
+  path,
   content,
   loading,
   onClose,
   onFullScreen,
 }: ArticlePanelProps) {
-  const title = slugToTitle(slug)
+  const title = slugToTitle(docDisplayName(path))
 
   return (
     <div className="fixed top-0 right-0 w-[370px] h-screen bg-ink-panel border-l border-ink-subtle flex flex-col z-[200] shadow-[-24px_0_60px_rgba(0,0,0,0.6)] animate-[panel-in_0.28s_cubic-bezier(0.4,0,0.2,1)]">
@@ -55,7 +55,7 @@ export function ArticlePanel({
             variant="outline"
             className="rounded-sm h-auto font-mono text-[length:var(--text-chrome)] tracking-[0.1em] px-2 py-[3px] bg-interactive-dim text-gold border-gold-dim"
           >
-            {slug}
+            {path}
           </Badge>
         </div>
       </div>
