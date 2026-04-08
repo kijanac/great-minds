@@ -140,7 +140,7 @@ function QueueRow({
             variant="ghost"
             size="xs"
             onClick={() => onDismiss(item.id)}
-            className="text-gold-dim hover:text-gold hover:bg-transparent ml-auto shrink-0"
+            className="font-mono text-[length:var(--text-chrome)] tracking-[0.1em] text-gold-dim hover:text-gold hover:bg-transparent rounded-sm h-auto px-1 py-0 ml-auto shrink-0"
           >
             dismiss
           </Button>
