@@ -28,6 +28,7 @@ from great_minds.app.api.dependencies import (
     get_authorized_brain,
     get_brain_service,
     get_current_user,
+    require_llm,
 )
 from great_minds.app.api.proposal_routes import router as proposal_router
 from great_minds.core import brain as brain_ops
@@ -147,6 +148,11 @@ class ArticleResponse(BaseModel):
     content: str
 
 
+class DocResponse(BaseModel):
+    path: str
+    content: str
+
+
 class LintResponse(BaseModel):
     total_issues: int
 
@@ -209,6 +215,7 @@ def create_app() -> FastAPI:
         session: AsyncSession = Depends(get_session),
         absurd: AsyncAbsurd = Depends(get_absurd),
         settings: Settings = Depends(get_settings),
+        _: None = Depends(require_llm),
     ) -> TaskResponse:
         record = await tasks.spawn_compile(
             absurd, session,
@@ -250,6 +257,7 @@ def create_app() -> FastAPI:
         user: User = Depends(get_current_user),
         brain_service: BrainService = Depends(get_brain_service),
         session: AsyncSession = Depends(get_session),
+        _: None = Depends(require_llm),
     ) -> QueryResponse:
         all_sources = await brain_service.get_all_query_sources(user.id)
         target = querier.QuerySource(storage=ctx.storage, label=ctx.brain.slug, brain_id=ctx.brain.id)
@@ -269,6 +277,7 @@ def create_app() -> FastAPI:
         user: User = Depends(get_current_user),
         brain_service: BrainService = Depends(get_brain_service),
         session: AsyncSession = Depends(get_session),
+        _: None = Depends(require_llm),
     ) -> StreamingResponse:
         all_sources = await brain_service.get_all_query_sources(user.id)
         target = querier.QuerySource(storage=ctx.storage, label=ctx.brain.slug, brain_id=ctx.brain.id)
@@ -452,6 +461,16 @@ def create_app() -> FastAPI:
         if content is None:
             raise HTTPException(status_code=404, detail=f"Article not found: {slug}")
         return ArticleResponse(slug=slug, content=content)
+
+    @app.get("/doc/{path:path}", response_model=DocResponse)
+    async def read_document(
+        path: str,
+        ctx: BrainContext = Depends(get_authorized_brain),
+    ) -> DocResponse:
+        content = ctx.storage.read(path, strict=False)
+        if content is None:
+            raise HTTPException(status_code=404, detail=f"Document not found: {path}")
+        return DocResponse(path=path, content=content)
 
     @app.get("/lint", response_model=LintResponse)
     async def lint(

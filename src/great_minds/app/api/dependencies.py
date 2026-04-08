@@ -85,6 +85,15 @@ def get_absurd(request: Request) -> AsyncAbsurd:
     return request.app.state.absurd
 
 
+def require_llm(settings: Settings = Depends(get_settings)) -> None:
+    """Gate endpoints that need OpenRouter. Returns 503 if not configured."""
+    if not settings.openrouter_api_key:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="LLM service not configured (OPENROUTER_API_KEY missing)",
+        )
+
+
 # ---------------------------------------------------------------------------
 # Auth
 # ---------------------------------------------------------------------------

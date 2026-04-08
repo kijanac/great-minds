@@ -18,6 +18,7 @@ class Settings(BaseSettings):
     jwt_access_expiry_minutes: int = 30
     jwt_refresh_expiry_days: int = 7
     auth_code_expiry_minutes: int = 5
+    openrouter_api_key: str | None = None
     mailersend_api_key: str | None = None
     mailersend_from_email: str | None = None
     data_dir: str = "/data"

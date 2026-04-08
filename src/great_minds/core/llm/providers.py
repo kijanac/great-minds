@@ -4,9 +4,9 @@ Shared across compiler, querier, and linter — single source of truth
 for API configuration and client setup.
 """
 
-import os
-
 from openai import AsyncOpenAI, OpenAI
+
+from great_minds.core.settings import get_settings
 
 OPENROUTER_BASE = "https://openrouter.ai/api/v1"
 
@@ -27,9 +27,16 @@ FALLBACK_MODELS = [
 ]
 
 
+def _api_key() -> str:
+    key = get_settings().openrouter_api_key
+    if not key:
+        raise RuntimeError("OPENROUTER_API_KEY is not configured")
+    return key
+
+
 def get_async_client(*, max_retries: int = 2, timeout: float = 120.0) -> AsyncOpenAI:
-    return AsyncOpenAI(base_url=OPENROUTER_BASE, api_key=os.environ["OPENROUTER_API_KEY"], max_retries=max_retries, timeout=timeout)
+    return AsyncOpenAI(base_url=OPENROUTER_BASE, api_key=_api_key(), max_retries=max_retries, timeout=timeout)
 
 
 def get_sync_client() -> OpenAI:
-    return OpenAI(base_url=OPENROUTER_BASE, api_key=os.environ["OPENROUTER_API_KEY"])
+    return OpenAI(base_url=OPENROUTER_BASE, api_key=_api_key())
