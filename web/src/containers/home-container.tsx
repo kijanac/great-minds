@@ -1,6 +1,7 @@
 import { useCallback, useRef, useState } from "react";
 import { useNavigate } from "react-router";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
+import { Home } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { IngestionContainer } from "@/containers/ingestion-container";
@@ -90,25 +91,11 @@ function HomeContent({ sessionId, initialExchanges, initialQuery, origin }: Home
     session.submitQuery(query);
   }, [query, session.submitQuery]);
 
-  const handleReset = useCallback(() => {
-    directionRef.current = "backward";
-    const hadSession = session.sessionId;
-    session.reset();
-    setQuery("");
-    if (sessionId) {
-      navigate("/");
-    } else if (hadSession) {
-      // URL was updated via replaceState — restore it without triggering a route change
-      window.history.replaceState(null, "", "/");
-    }
-  }, [session.reset, session.sessionId, sessionId, navigate]);
-
   const searchBarProps = {
     query,
     phase: session.phase,
     onQueryChange: setQuery,
     onSubmit: handleSubmit,
-    onReset: handleReset,
   };
 
   const wikiButton = (
@@ -132,6 +119,14 @@ function HomeContent({ sessionId, initialExchanges, initialQuery, origin }: Home
               layout
               transition={barTransition}
             >
+              <Button
+                variant="ghost"
+                size="icon-xs"
+                onClick={() => navigate("/")}
+                className="text-muted-foreground hover:text-gold hover:bg-transparent shrink-0"
+              >
+                <Home size={14} />
+              </Button>
               <div className="flex-1 min-w-0">
                 <SearchBar {...searchBarProps} />
               </div>

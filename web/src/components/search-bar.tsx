@@ -11,7 +11,6 @@ interface SearchBarProps {
   phase: Phase;
   onQueryChange: (query: string) => void;
   onSubmit: () => void;
-  onReset: () => void;
   recentSessions?: SessionSummary[];
   sessionsLoading?: boolean;
   onSessionClick?: (id: string) => void;
@@ -23,7 +22,6 @@ export function SearchBar({
   phase,
   onQueryChange,
   onSubmit,
-  onReset,
   recentSessions,
   sessionsLoading,
   onSessionClick,
@@ -63,16 +61,7 @@ export function SearchBar({
           autoFocus={!isActive}
         />
 
-        {isActive ? (
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={onReset}
-            className="rounded-none font-mono text-[length:var(--text-chrome)] tracking-[0.1em] text-muted-foreground px-3 py-[13px] h-auto hover:text-warm-faint hover:bg-transparent"
-          >
-            clear
-          </Button>
-        ) : (
+        {!isActive && (
           <Button
             onClick={onSubmit}
             disabled={!query.trim()}

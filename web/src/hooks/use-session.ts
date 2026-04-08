@@ -73,7 +73,6 @@ export function useSession(options?: UseSessionOptions) {
   useEffect(() => {
     return () => {
       for (const fn of cleanupRef.current) fn();
-      abortRef.current?.abort();
     };
   }, []);
 
@@ -164,20 +163,6 @@ export function useSession(options?: UseSessionOptions) {
     },
     [chips, runExchange],
   );
-
-  const reset = useCallback(() => {
-    abortRef.current?.abort();
-    for (const fn of cleanupRef.current) fn();
-    cleanupRef.current = [];
-    sessionIdRef.current = null;
-    setSessionId(null);
-    setPhase("idle");
-    setThread([]);
-    setLiveThinking([]);
-    setLiveText("");
-    setChips([]);
-    setPopover(null);
-  }, []);
 
   const addChip = useCallback((text: string) => {
     setChips((prev) => [...prev, text]);
@@ -317,7 +302,6 @@ export function useSession(options?: UseSessionOptions) {
     popover,
     submitQuery,
     submitFollowUp,
-    reset,
     addChip,
     removeChip,
     startBtw,

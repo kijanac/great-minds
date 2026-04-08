@@ -56,7 +56,7 @@ export function ThinkingSection({
 
       {open && (
         <div className="mt-2 border-l-2 border-interactive-ghost pl-3.5 space-y-3">
-          <div className="flex flex-wrap gap-[5px]">
+          <div className="relative z-[200] flex flex-wrap gap-[5px]">
             {blocks
               .flatMap((b) => b.sources)
               .map((src) =>
