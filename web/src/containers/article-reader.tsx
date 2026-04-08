@@ -48,7 +48,7 @@ export function ArticleReader({ path }: ArticleReaderProps) {
       onContentClick={handleLinkClick}
     >
       {loading && (
-        <div className="max-w-[740px] mx-auto px-10 pt-10">
+        <div className="max-w-[740px] mx-auto px-4 md:px-10 pt-6 md:pt-10">
           <p className="text-[length:var(--text-body)] text-warm-faint animate-[pulse-fade_1.6s_ease-in-out_infinite]">
             Loading...
           </p>
@@ -68,7 +68,7 @@ export function ArticleReader({ path }: ArticleReaderProps) {
       )}
 
       {!loading && !content && (
-        <div className="max-w-[740px] mx-auto px-10 pt-10">
+        <div className="max-w-[740px] mx-auto px-4 md:px-10 pt-6 md:pt-10">
           <p className="text-[length:var(--text-body)] text-warm-faint">Document not found.</p>
         </div>
       )}

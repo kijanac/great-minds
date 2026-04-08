@@ -18,7 +18,7 @@ export function ArticlePanel({ path, content, loading, onClose, onFullScreen }: 
   const title = slugToTitle(docDisplayName(path));
 
   return (
-    <div className="fixed top-0 right-0 w-[370px] h-screen bg-ink-panel border-l border-ink-subtle flex flex-col z-[200] shadow-[-24px_0_60px_rgba(80,60,30,0.12)] dark:shadow-[-24px_0_60px_rgba(0,0,0,0.6)] animate-[panel-in_0.28s_cubic-bezier(0.4,0,0.2,1)]">
+    <div className="fixed top-0 right-0 w-full md:w-[370px] h-screen bg-ink-panel border-l border-ink-subtle flex flex-col z-[200] shadow-none md:shadow-[-24px_0_60px_rgba(80,60,30,0.12)] dark:md:shadow-[-24px_0_60px_rgba(0,0,0,0.6)] animate-[panel-in_0.28s_cubic-bezier(0.4,0,0.2,1)]">
       <div className="px-5 pt-5 pb-3.5 border-b border-ink-subtle shrink-0">
         <div className="flex items-start justify-between mb-[9px]">
           <span className="text-[length:var(--text-body)] font-bold text-foreground">{title}</span>

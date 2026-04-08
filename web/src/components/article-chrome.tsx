@@ -29,7 +29,7 @@ export function ArticleChrome({
 
   return (
     <div className="h-screen flex flex-col overflow-hidden">
-      <div className="shrink-0 flex items-center justify-between px-6 pt-4 pb-3 border-b border-ink-subtle">
+      <div className="shrink-0 flex items-center justify-between px-4 md:px-6 pt-4 pb-3 border-b border-ink-subtle gap-3">
         <div className="flex items-center gap-4">
           <Button
             variant="ghost"
@@ -45,9 +45,9 @@ export function ArticleChrome({
         </div>
 
         {queryExpanded ? (
-          <div className="flex items-center gap-2 max-w-[400px] w-full">
+          <div className="flex items-center gap-2 flex-1 md:max-w-[400px] w-full">
             <Input
-              className="h-7 bg-transparent border-ink-border rounded-sm font-serif text-[length:var(--text-small)] text-foreground px-3 caret-gold placeholder:text-input focus-visible:ring-0 focus-visible:border-gold-dim"
+              className="h-7 bg-transparent dark:bg-transparent border-ink-border rounded-sm font-serif text-[length:var(--text-small)] text-foreground px-3 caret-gold placeholder:text-input focus-visible:ring-0 focus-visible:border-gold-dim"
               placeholder="Ask a question..."
               value={queryText}
               onChange={(e) => setQueryText(e.target.value)}

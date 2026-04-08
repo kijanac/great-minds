@@ -123,7 +123,7 @@ export function ArticleView({
   paraCountRef.current = 0;
 
   return (
-    <article className="max-w-[740px] mx-auto px-10 pt-10 pb-20 select-text">
+    <article className="max-w-[740px] mx-auto px-4 md:px-10 pt-6 md:pt-10 pb-20 select-text">
       <h1 className="text-[length:var(--text-title)] font-bold text-foreground mb-8">{title}</h1>
       <Markdown remarkPlugins={remarkPlugins} components={mdComponents}>
         {content}

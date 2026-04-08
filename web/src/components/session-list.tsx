@@ -34,8 +34,8 @@ export function SessionList({ sessions, loading, onSessionClick, onHome }: Sessi
 
   return (
     <div className="h-screen flex flex-col overflow-hidden">
-      <div className="shrink-0 flex items-center justify-between px-6 pt-4 pb-3 border-b border-ink-subtle">
-        <div className="flex items-center gap-4">
+      <div className="shrink-0 flex items-center justify-between px-4 md:px-6 pt-4 pb-3 border-b border-ink-subtle gap-3">
+        <div className="flex items-center gap-4 shrink-0">
           <Button
             variant="ghost"
             size="icon-xs"
@@ -44,7 +44,7 @@ export function SessionList({ sessions, loading, onSessionClick, onHome }: Sessi
           >
             <Home size={14} />
           </Button>
-          <span className="font-mono text-[length:var(--text-chrome)] tracking-[0.14em] text-gold-muted uppercase">
+          <span className="font-mono text-[length:var(--text-chrome)] tracking-[0.14em] text-gold-muted uppercase hidden md:inline">
             sessions
           </span>
         </div>
@@ -52,7 +52,7 @@ export function SessionList({ sessions, loading, onSessionClick, onHome }: Sessi
         <div className="flex items-center gap-2 max-w-[300px] w-full">
           <Search size={14} className="text-muted-foreground shrink-0" />
           <Input
-            className="h-7 bg-transparent border-ink-border rounded-sm font-serif text-[length:var(--text-small)] text-foreground px-3 caret-gold placeholder:text-input focus-visible:ring-0 focus-visible:border-gold-dim"
+            className="h-7 bg-transparent dark:bg-transparent border-ink-border rounded-sm font-serif text-[length:var(--text-small)] text-foreground px-3 caret-gold placeholder:text-input focus-visible:ring-0 focus-visible:border-gold-dim"
             placeholder="Filter..."
             value={filter}
             onChange={(e) => setFilter(e.target.value)}
@@ -61,7 +61,7 @@ export function SessionList({ sessions, loading, onSessionClick, onHome }: Sessi
       </div>
 
       <div className="flex-1 min-h-0 overflow-y-auto">
-        <div className="max-w-[740px] mx-auto px-10 pt-8 pb-20">
+        <div className="max-w-[740px] mx-auto px-4 md:px-10 pt-8 pb-20">
           {loading && (
             <p className="text-[length:var(--text-body)] text-warm-faint animate-[pulse-fade_1.6s_ease-in-out_infinite]">
               Loading...

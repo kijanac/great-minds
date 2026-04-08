@@ -85,7 +85,7 @@ export function SessionThread({ session, onFollowUp }: SessionThreadProps) {
   return (
     <>
       <div className="flex-1 min-h-0 overflow-y-auto" onClick={handleLinkClick}>
-        <div className="px-10 pt-7 pb-5 max-w-[740px] mx-auto">
+        <div className="px-4 md:px-10 pt-7 pb-5 max-w-[740px] mx-auto">
           {session.thread.map((ex, ei) => (
             <div key={ex.id}>
               {ei > 0 && <Separator className="my-8 bg-ink-subtle" />}
@@ -142,7 +142,7 @@ export function SessionThread({ session, onFollowUp }: SessionThreadProps) {
       </div>
 
       {showHint && (
-        <div className="shrink-0 px-10 py-3 border-t border-ink-subtle animate-[slide-up_0.28s_ease]">
+        <div className="shrink-0 px-4 md:px-10 py-3 border-t border-ink-subtle animate-[slide-up_0.28s_ease]">
           <div className="flex items-center justify-between max-w-[740px] mx-auto gap-4">
             <p className="font-mono text-[length:var(--text-chrome)] tracking-[0.06em] text-warm-faint">
               <Badge

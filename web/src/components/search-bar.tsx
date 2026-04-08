@@ -52,7 +52,7 @@ export function SearchBar({
       >
         <Input
           ref={inputRef}
-          className="flex-1 h-auto border-none rounded-none bg-transparent font-serif text-[length:var(--text-body)] text-foreground px-[18px] py-[13px] caret-gold placeholder:text-input focus-visible:ring-0 focus-visible:border-none disabled:opacity-100"
+          className="flex-1 h-auto border-none rounded-none bg-transparent dark:bg-transparent font-serif text-[length:var(--text-body)] text-foreground px-[18px] py-[13px] caret-gold placeholder:text-input focus-visible:ring-0 focus-visible:border-none disabled:opacity-100"
           placeholder="Ask a question across the knowledge base..."
           value={query}
           onChange={(e) => onQueryChange(e.target.value)}

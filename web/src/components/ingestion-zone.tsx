@@ -65,7 +65,7 @@ export function IngestionZone({
       >
         <div className="flex items-center">
           <Input
-            className="flex-1 border-none bg-transparent font-mono text-[length:var(--text-chrome)] tracking-[0.1em] text-warm-faint placeholder:text-warm-ghost caret-gold focus-visible:ring-0 focus-visible:border-none h-auto py-0 px-4"
+            className="flex-1 border-none bg-transparent dark:bg-transparent font-mono text-[length:var(--text-chrome)] tracking-[0.1em] text-warm-faint placeholder:text-warm-ghost caret-gold focus-visible:ring-0 focus-visible:border-none h-auto py-0 px-4"
             placeholder={
               isDragOver ? "drop to add to knowledge base" : "drop a file or paste a link"
             }

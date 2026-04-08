@@ -125,7 +125,7 @@ function HomeContent({ sessionId, initialExchanges, initialQuery, origin }: Home
     <div className="flex h-screen overflow-hidden relative">
       <div className="flex-1 flex flex-col overflow-hidden min-w-0">
         {isActive && (
-          <div className="shrink-0 px-10 pt-[22px] pb-[18px] border-b border-ink-subtle">
+          <div className="shrink-0 px-4 md:px-10 pt-[22px] pb-[18px] border-b border-ink-subtle">
             <motion.div
               className="w-full flex items-center gap-3"
               layoutId="search-bar"
@@ -144,7 +144,7 @@ function HomeContent({ sessionId, initialExchanges, initialQuery, origin }: Home
           {!isActive && (
             <motion.div
               key="home-content"
-              className="flex-1 flex flex-col items-center justify-center px-10 pb-12"
+              className="flex-1 flex flex-col items-center justify-center px-4 md:px-10 pb-12"
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
               exit={{ opacity: 0, transition: fadeOut }}
