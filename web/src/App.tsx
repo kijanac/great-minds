@@ -1,6 +1,7 @@
 import { BrowserRouter, Routes, Route, Navigate } from "react-router"
 import type { ReactNode } from "react"
 
+import { CornerMenuContainer } from "@/containers/corner-menu-container"
 import { AuthProvider, useAuth } from "@/lib/auth"
 import HomePage from "@/pages/home"
 import LoginPage from "@/pages/login"
@@ -24,6 +25,7 @@ function App() {
   return (
     <BrowserRouter>
       <AuthProvider>
+        <CornerMenuContainer />
         <Routes>
           <Route
             path="/login"
