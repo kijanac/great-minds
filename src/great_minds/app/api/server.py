@@ -83,6 +83,15 @@ class IngestUrlRequest(BaseModel):
     content_type: str = "texts"
 
 
+class BulkIngestRequest(BaseModel):
+    source_dir: str
+    content_type: str = "texts"
+    dest_dir: str | None = None
+    author: str | None = None
+    date: str | int | None = None
+    source: str | None = None
+
+
 class TaskResponse(BaseModel):
     id: str
     type: str
@@ -541,6 +550,38 @@ def create_app() -> FastAPI:
         await session.commit()
         await _try_compile(ctx, session, absurd, settings)
         return {"status": "ingested", "name": title, "url": url, "chars": len(ingested)}
+
+    @app.post("/ingest/bulk", response_model=TaskResponse)
+    async def ingest_bulk(
+        req: BulkIngestRequest,
+        ctx: BrainContext = Depends(get_authorized_brain),
+        session: AsyncSession = Depends(get_session),
+        absurd: AsyncAbsurd = Depends(get_absurd),
+        settings: Settings = Depends(get_settings),
+    ) -> TaskResponse:
+        ingest_kwargs = {}
+        if req.author:
+            ingest_kwargs["author"] = req.author
+        if req.date is not None:
+            ingest_kwargs["date"] = req.date
+        if req.source:
+            ingest_kwargs["source"] = req.source
+
+        record = await tasks.spawn_bulk_ingest(
+            absurd,
+            session,
+            brain_id=ctx.brain.id,
+            storage_root=ctx.brain.storage_root,
+            data_dir=settings.data_dir,
+            label=ctx.brain.slug,
+            source_dir=req.source_dir,
+            content_type=req.content_type,
+            dest_dir=req.dest_dir,
+            ingest_kwargs=ingest_kwargs,
+        )
+        await session.commit()
+        response = await tasks.fetch_task_response(absurd, record)
+        return TaskResponse(**response)
 
     @app.get("/wiki", response_model=list[str])
     async def list_articles(

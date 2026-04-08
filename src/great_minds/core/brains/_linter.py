@@ -337,9 +337,7 @@ def detect_tag_issues(
     # Low-use tags (below min_uses threshold, not already in a duplicate group)
     duplicate_tags = {t for issue in issues for t in issue.tags}
     low_use = [
-        t
-        for t, c in tag_counts.items()
-        if c < min_uses and t not in duplicate_tags
+        t for t, c in tag_counts.items() if c < min_uses and t not in duplicate_tags
     ]
     if low_use:
         issues.append(TagIssue(kind="low_use", tags=low_use))
@@ -355,9 +353,7 @@ def detect_promotion_candidates(
     min_uses: int = 5,
 ) -> list[ResearchSuggestion]:
     """Find tags used frequently that don't have a corresponding wiki article."""
-    existing_slugs = {
-        rel_path.removesuffix(".md") for rel_path in wiki_articles
-    }
+    existing_slugs = {rel_path.removesuffix(".md") for rel_path in wiki_articles}
 
     suggestions = []
     for tag, count in sorted(tag_counts.items(), key=lambda x: -x[1]):
@@ -728,9 +724,7 @@ def _load_tag_thresholds(storage: Storage) -> dict:
     fields = config.get("fields", {})
     return {
         "min_uses_to_keep": fields.get("tags", {}).get("min_uses_to_keep", 2),
-        "promotion_threshold": fields.get("concepts", {}).get(
-            "min_uses_to_promote", 5
-        ),
+        "promotion_threshold": fields.get("concepts", {}).get("min_uses_to_promote", 5),
     }
 
 
@@ -780,9 +774,7 @@ async def run_lint(
             len(suggestions),
         )
         for s in suggestions:
-            log.info(
-                "lint: suggestion — '%s' (used %d times)", s.tag, s.usage_count
-            )
+            log.info("lint: suggestion — '%s' (used %d times)", s.tag, s.usage_count)
 
     counts = LintCounts(
         dead_links=len(dead_links),
@@ -845,9 +837,11 @@ async def run_lint(
     links_fixed = len(link_fixes)
     citations_fixed = len(citation_fixes)
     index_fixed = len(missing_index) if index_fixes else 0
-    tags_fixed = sum(
-        1 for i in tag_issues if i.kind in ("duplicate", "low_use")
-    ) if tag_fixes else 0
+    tags_fixed = (
+        sum(1 for i in tag_issues if i.kind in ("duplicate", "low_use"))
+        if tag_fixes
+        else 0
+    )
     remaining = (
         total_detected - links_fixed - citations_fixed - index_fixed - tags_fixed
     )

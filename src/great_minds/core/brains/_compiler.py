@@ -42,7 +42,8 @@ from great_minds.core.brains._utils import (
     serialize_frontmatter,
     strip_json_fencing,
 )
-from great_minds.core.documents.repository import DOC_KIND_RAW, DOC_KIND_WIKI, DocumentRepository
+from great_minds.core.documents.repository import DocumentRepository
+from great_minds.core.documents.schemas import DOC_KIND_WIKI, DocumentCreate
 from great_minds.core.llm import EXTRACT_MODEL, REASON_MODEL, get_async_client
 from great_minds.core.storage import Storage
 
@@ -659,22 +660,10 @@ async def run(
 
         for filepath, fm, body in docs:
             content = serialize_frontmatter(fm, body)
-            await doc_repo.upsert_document(
-                brain_id=brain_id,
-                file_path=filepath,
-                content=content,
-                title=fm.get("title", ""),
-                author=fm.get("author"),
-                source_url=fm.get("source"),
-                published_date=str(fm["date"]) if fm.get("date") else None,
-                genre=fm.get("genre"),
-                tradition=fm.get("tradition"),
-                compiled=True,
-                doc_kind=DOC_KIND_RAW,
-                tags=fm.get("tags", []),
-                concepts=fm.get("concepts", []),
-                interlocutors=fm.get("interlocutors", []),
+            doc = DocumentCreate.model_validate(
+                {**fm, "file_path": filepath, "content": content, "compiled": True}
             )
+            await doc_repo.upsert(brain_id, doc)
 
         for article in written:
             slug = article.get("slug", "")
@@ -684,16 +673,16 @@ async def run(
             content = storage.read(article_path, strict=False)
             if content is None:
                 continue
-            await doc_repo.upsert_document(
-                brain_id=brain_id,
+            doc = DocumentCreate(
                 file_path=article_path,
                 content=content,
+                doc_kind=DOC_KIND_WIKI,
                 title=slug.replace("-", " ").title(),
                 compiled=True,
-                doc_kind=DOC_KIND_WIKI,
                 tags=article.get("tags", []),
                 concepts=article.get("connections", []),
             )
+            await doc_repo.upsert(brain_id, doc)
             await doc_repo.rebuild_backlinks_for_article(brain_id, slug, content)
 
         await db_session.commit()

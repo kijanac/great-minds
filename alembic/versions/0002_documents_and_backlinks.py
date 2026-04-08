@@ -72,9 +72,7 @@ def upgrade() -> None:
         "document_tags",
         sa.Column("document_id", sa.UUID(), nullable=False),
         sa.Column("tag", sa.Text(), nullable=False),
-        sa.ForeignKeyConstraint(
-            ["document_id"], ["documents.id"], ondelete="CASCADE"
-        ),
+        sa.ForeignKeyConstraint(["document_id"], ["documents.id"], ondelete="CASCADE"),
         sa.PrimaryKeyConstraint("document_id", "tag"),
     )
     op.create_index("ix_document_tags_tag", "document_tags", ["tag"])
@@ -84,9 +82,7 @@ def upgrade() -> None:
         "document_concepts",
         sa.Column("document_id", sa.UUID(), nullable=False),
         sa.Column("concept", sa.Text(), nullable=False),
-        sa.ForeignKeyConstraint(
-            ["document_id"], ["documents.id"], ondelete="CASCADE"
-        ),
+        sa.ForeignKeyConstraint(["document_id"], ["documents.id"], ondelete="CASCADE"),
         sa.PrimaryKeyConstraint("document_id", "concept"),
     )
     op.create_index("ix_document_concepts_concept", "document_concepts", ["concept"])
@@ -96,9 +92,7 @@ def upgrade() -> None:
         "document_interlocutors",
         sa.Column("document_id", sa.UUID(), nullable=False),
         sa.Column("interlocutor", sa.Text(), nullable=False),
-        sa.ForeignKeyConstraint(
-            ["document_id"], ["documents.id"], ondelete="CASCADE"
-        ),
+        sa.ForeignKeyConstraint(["document_id"], ["documents.id"], ondelete="CASCADE"),
         sa.PrimaryKeyConstraint("document_id", "interlocutor"),
     )
     op.create_index(

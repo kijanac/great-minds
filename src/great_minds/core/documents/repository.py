@@ -2,7 +2,6 @@
 
 import hashlib
 from collections import defaultdict
-from dataclasses import dataclass
 from uuid import UUID
 
 from sqlalchemy import delete, distinct, func, select
@@ -18,106 +17,81 @@ from great_minds.core.documents.models import (
     DocumentORM,
     DocumentTag,
 )
-
-DOC_KIND_RAW = "raw"
-DOC_KIND_WIKI = "wiki"
-
-
-@dataclass
-class DocumentRow:
-    id: UUID
-    brain_id: UUID
-    file_path: str
-    title: str
-    author: str | None
-    source_type: str | None
-    published_date: str | None
-    genre: str | None
-    tradition: str | None
-    compiled: bool
-    doc_kind: str
-    tags: list[str]
-    concepts: list[str]
-    interlocutors: list[str]
+from great_minds.core.documents.schemas import Document, DocumentCreate
 
 
 class DocumentRepository:
     def __init__(self, session: AsyncSession) -> None:
         self.session = session
 
-    async def upsert_document(
-        self,
-        brain_id: UUID,
-        file_path: str,
-        content: str,
-        *,
-        title: str = "",
-        author: str | None = None,
-        source_type: str | None = None,
-        source_url: str | None = None,
-        published_date: str | None = None,
-        genre: str | None = None,
-        tradition: str | None = None,
-        compiled: bool = False,
-        doc_kind: str = DOC_KIND_RAW,
-        tags: list[str] | None = None,
-        concepts: list[str] | None = None,
-        interlocutors: list[str] | None = None,
-        extra_metadata: dict | None = None,
-    ) -> UUID:
+    async def upsert(self, brain_id: UUID, doc: DocumentCreate) -> UUID:
         """Upsert a document row and sync junction tables."""
-        file_hash = hashlib.sha256(content.encode()).hexdigest()
+        file_hash = hashlib.sha256(doc.content.encode()).hexdigest()
+        published_date = str(doc.date) if doc.date is not None else None
 
-        stmt = insert(DocumentORM).values(
-            brain_id=brain_id,
-            file_path=file_path,
-            file_hash=file_hash,
-            title=title,
-            author=author,
-            source_type=source_type,
-            source_url=source_url,
-            published_date=published_date,
-            genre=genre,
-            tradition=tradition,
-            compiled=compiled,
-            doc_kind=doc_kind,
-            metadata_=extra_metadata or {},
-        )
-        stmt = stmt.on_conflict_do_update(
-            constraint="documents_brain_id_file_path_key",
-            set_={
-                "file_hash": file_hash,
-                "title": title,
-                "author": author,
-                "source_type": source_type,
-                "source_url": source_url,
-                "published_date": published_date,
-                "genre": genre,
-                "tradition": tradition,
-                "compiled": compiled,
-                "doc_kind": doc_kind,
-                "metadata": extra_metadata or {},
-                "updated_at": func.now(),
-            },
+        shared = {
+            "file_hash": file_hash,
+            "title": doc.title,
+            "author": doc.author,
+            "source_url": doc.source,
+            "published_date": published_date,
+            "genre": doc.genre,
+            "tradition": doc.tradition,
+            "compiled": doc.compiled,
+            "doc_kind": doc.doc_kind,
+        }
+
+        stmt = (
+            insert(DocumentORM)
+            .values(
+                brain_id=brain_id,
+                file_path=doc.file_path,
+                metadata_={},
+                **shared,
+            )
+            .on_conflict_do_update(
+                constraint="documents_brain_id_file_path_key",
+                set_={**shared, "metadata": {}, "updated_at": func.now()},
+            )
         )
         result = await self.session.execute(stmt.returning(DocumentORM.id))
         doc_id = result.scalar_one()
 
-        await self._sync_junction(DocumentTag, "tag", doc_id, tags or [])
-        await self._sync_junction(DocumentConcept, "concept", doc_id, concepts or [])
+        await self._sync_junction(DocumentTag, "tag", doc_id, doc.tags)
+        await self._sync_junction(DocumentConcept, "concept", doc_id, doc.concepts)
         await self._sync_junction(
-            DocumentInterlocutor, "interlocutor", doc_id, interlocutors or []
+            DocumentInterlocutor, "interlocutor", doc_id, doc.interlocutors
         )
 
         return doc_id
+
+    async def batch_upsert(
+        self, brain_id: UUID, docs: list[DocumentCreate]
+    ) -> list[UUID]:
+        """Upsert multiple documents. Returns list of document UUIDs."""
+        doc_ids = []
+        for doc in docs:
+            doc_id = await self.upsert(brain_id, doc)
+            doc_ids.append(doc_id)
+        return doc_ids
+
+    async def get_file_hashes(self, brain_id: UUID) -> dict[str, str]:
+        """Return {file_path: file_hash} for all documents in a brain.
+
+        Used for skip detection during bulk ingest.
+        """
+        result = await self.session.execute(
+            select(DocumentORM.file_path, DocumentORM.file_hash).where(
+                DocumentORM.brain_id == brain_id
+            )
+        )
+        return {row.file_path: row.file_hash for row in result}
 
     async def _sync_junction(
         self, model, value_col: str, doc_id: UUID, values: list[str]
     ) -> None:
         """Replace all junction rows for a document with the new set."""
-        await self.session.execute(
-            delete(model).where(model.document_id == doc_id)
-        )
+        await self.session.execute(delete(model).where(model.document_id == doc_id))
         rows = [{"document_id": doc_id, value_col: val} for val in values if val]
         if rows:
             await self.session.execute(insert(model).values(rows))
@@ -129,14 +103,13 @@ class DocumentRepository:
         tags: list[str] | None = None,
         concepts: list[str] | None = None,
         author: str | None = None,
-        source_type: str | None = None,
         genre: str | None = None,
         compiled: bool | None = None,
         doc_kind: str | None = None,
         date_gte: str | None = None,
         date_lte: str | None = None,
         limit: int = 50,
-    ) -> list[DocumentRow]:
+    ) -> list[Document]:
         """Structured query over the documents table with optional filters."""
         stmt = select(DocumentORM).where(DocumentORM.brain_id.in_(brain_ids))
 
@@ -160,8 +133,6 @@ class DocumentRepository:
 
         if author:
             stmt = stmt.where(DocumentORM.author.ilike(f"%{author}%"))
-        if source_type:
-            stmt = stmt.where(DocumentORM.source_type == source_type)
         if genre:
             stmt = stmt.where(DocumentORM.genre == genre)
         if compiled is not None:
@@ -183,7 +154,6 @@ class DocumentRepository:
 
         doc_ids = [doc.id for doc in docs]
 
-        # Batch-load junction data (3 queries total, not 3N)
         tag_result = await self.session.execute(
             select(DocumentTag.document_id, DocumentTag.tag).where(
                 DocumentTag.document_id.in_(doc_ids)
@@ -213,23 +183,25 @@ class DocumentRepository:
             interlocutors_by_doc[doc_id].append(interlocutor)
 
         return [
-            DocumentRow(
-                id=doc.id,
-                brain_id=doc.brain_id,
-                file_path=doc.file_path,
-                title=doc.title,
-                author=doc.author,
-                source_type=doc.source_type,
-                published_date=doc.published_date,
-                genre=doc.genre,
-                tradition=doc.tradition,
-                compiled=doc.compiled,
-                doc_kind=doc.doc_kind,
-                tags=tags_by_doc[doc.id],
-                concepts=concepts_by_doc[doc.id],
-                interlocutors=interlocutors_by_doc[doc.id],
+            Document(
+                id=orm.id,
+                brain_id=orm.brain_id,
+                file_path=orm.file_path,
+                title=orm.title,
+                author=orm.author,
+                date=orm.published_date,
+                source=orm.source_url,
+                genre=orm.genre,
+                tradition=orm.tradition,
+                compiled=orm.compiled,
+                doc_kind=orm.doc_kind,
+                tags=tags_by_doc[orm.id],
+                concepts=concepts_by_doc[orm.id],
+                interlocutors=interlocutors_by_doc[orm.id],
+                created_at=orm.created_at,
+                updated_at=orm.updated_at,
             )
-            for doc in docs
+            for orm in docs
         ]
 
     async def get_distinct_tags(self, brain_ids: list[UUID]) -> list[str]:
@@ -239,7 +211,7 @@ class DocumentRepository:
             .where(DocumentORM.brain_id.in_(brain_ids))
             .order_by(DocumentTag.tag)
         )
-        return result.scalars().all()
+        return list(result.scalars().all())
 
     async def get_distinct_concepts(self, brain_ids: list[UUID]) -> list[str]:
         result = await self.session.execute(
@@ -248,7 +220,7 @@ class DocumentRepository:
             .where(DocumentORM.brain_id.in_(brain_ids))
             .order_by(DocumentConcept.concept)
         )
-        return result.scalars().all()
+        return list(result.scalars().all())
 
     async def upsert_backlinks(
         self,
@@ -271,9 +243,7 @@ class DocumentRepository:
         if rows:
             await self.session.execute(insert(BacklinkORM).values(rows))
 
-    async def get_backlinks(
-        self, brain_ids: list[UUID], target_slug: str
-    ) -> list[str]:
+    async def get_backlinks(self, brain_ids: list[UUID], target_slug: str) -> list[str]:
         """Return source slugs that link to the given target across brains."""
         result = await self.session.execute(
             select(BacklinkORM.source_slug).where(
@@ -281,7 +251,7 @@ class DocumentRepository:
                 BacklinkORM.target_slug == target_slug,
             )
         )
-        return result.scalars().all()
+        return list(result.scalars().all())
 
     async def rebuild_backlinks_for_article(
         self,

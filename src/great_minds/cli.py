@@ -88,11 +88,44 @@ def cmd_ingest(args: argparse.Namespace) -> None:
         )
         log.info("ingested %s → %s", path, result)
     elif path.is_dir():
-        processed, skipped = ingester.ingest_directory(
-            storage, config, path, args.content_type, dest, **kwargs
-        )
+        source_files = sorted(path.rglob("*.md"))
+        total = len(source_files)
+        existing = set(storage.glob(f"{dest}/**/*.md"))
         log.info(
-            "done — %d files ingested to %s/, %d skipped", processed, dest, skipped
+            "found %d .md files in %s (%d already ingested)", total, path, len(existing)
+        )
+
+        ingested = 0
+        skipped = 0
+        for i, filepath in enumerate(source_files):
+            relative = filepath.relative_to(path)
+            file_dest = f"{dest}/{relative}"
+
+            if file_dest in existing:
+                skipped += 1
+                continue
+
+            content = filepath.read_text(encoding="utf-8")
+            ingester.ingest_document(
+                storage, config, content, args.content_type, dest=file_dest, **kwargs
+            )
+            ingested += 1
+
+            if (i + 1) % 100 == 0:
+                log.info(
+                    "progress: %d/%d (ingested=%d, skipped=%d)",
+                    i + 1,
+                    total,
+                    ingested,
+                    skipped,
+                )
+
+        log.info(
+            "done — %d/%d files ingested to %s/, %d skipped",
+            ingested,
+            total,
+            dest,
+            skipped,
         )
     else:
         log.error("path not found: %s", path)

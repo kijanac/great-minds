@@ -200,6 +200,7 @@ def build_tools(tags: list[str], concepts: list[str]) -> list[dict]:
     """Build the full tool list with vocabulary injected into query_documents."""
     return _BASE_TOOLS + [_build_query_tool(tags, concepts)]
 
+
 PROVIDER_EXTRA_BODY = {
     "provider": {
         "allow_fallbacks": True,
@@ -261,10 +262,7 @@ def read_document(brains: list[QuerySource], path: str) -> str:
             forward_links = extract_wiki_link_targets(content)
             links_section = ""
             if forward_links:
-                links_section = (
-                    "\n\n---\nForward links: "
-                    + ", ".join(forward_links)
-                )
+                links_section = "\n\n---\nForward links: " + ", ".join(forward_links)
             return f"# {path} [{src.label}]\n\n{content}{links_section}"
     log_event("tool.document_not_found", path=path)
     return f"Document not found: {path}"
@@ -286,9 +284,8 @@ async def read_document_enriched(
             backlink_slugs = await repo.get_backlinks(brain_ids, slug)
             if backlink_slugs:
                 unique = list(dict.fromkeys(backlink_slugs))
-                base += (
-                    "\nBacklinks (articles that reference this one): "
-                    + ", ".join(f"wiki/{s}.md" for s in unique)
+                base += "\nBacklinks (articles that reference this one): " + ", ".join(
+                    f"wiki/{s}.md" for s in unique
                 )
 
     return base
@@ -357,8 +354,8 @@ async def query_documents(
         meta = f"  [{doc.doc_kind}] {doc.file_path}"
         if doc.author:
             meta += f" by {doc.author}"
-        if doc.published_date:
-            meta += f" ({doc.published_date})"
+        if doc.date:
+            meta += f" ({doc.date})"
         lines = [f"### {doc.title or doc.file_path}", meta]
         if doc.genre:
             lines.append(f"  genre: {doc.genre}")

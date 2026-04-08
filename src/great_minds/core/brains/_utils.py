@@ -24,6 +24,7 @@ def extract_wiki_link_targets(content: str) -> list[str]:
     """Extract unique wiki article paths from markdown links."""
     return list(dict.fromkeys(m.group(2) for m in WIKI_LINK_RE.finditer(content)))
 
+
 MAX_RETRIES = 2
 
 
