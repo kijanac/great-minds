@@ -10,6 +10,12 @@ from great_minds.core.db import Base
 from great_minds.core.settings import get_settings
 
 # Register all domain models with Base.metadata
+import great_minds.core.brains.models  # noqa: F401
+import great_minds.core.brains._search_indexer  # noqa: F401
+import great_minds.core.documents.models  # noqa: F401
+import great_minds.core.users.models  # noqa: F401
+import great_minds.core.auth.models  # noqa: F401
+import great_minds.core.tasks  # noqa: F401
 
 config = context.config
 

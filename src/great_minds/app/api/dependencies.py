@@ -10,6 +10,8 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from great_minds.core.auth.repository import AuthRepository
+from great_minds.core.documents.repository import DocumentRepository
+from great_minds.core.documents.service import DocumentService
 from great_minds.core.auth.service import AuthService
 from great_minds.core.mail import Mailer
 from great_minds.core.brains.models import MemberRole
@@ -45,6 +47,18 @@ def get_brain_repository(
     session: AsyncSession = Depends(get_session),
 ) -> BrainRepository:
     return BrainRepository(session)
+
+
+def get_document_repository(
+    session: AsyncSession = Depends(get_session),
+) -> DocumentRepository:
+    return DocumentRepository(session)
+
+
+def get_document_service(
+    repo: DocumentRepository = Depends(get_document_repository),
+) -> DocumentService:
+    return DocumentService(repo)
 
 
 # ---------------------------------------------------------------------------

@@ -1,0 +1,113 @@
+"""ORM models for the documents index and backlinks."""
+
+from __future__ import annotations
+
+import uuid
+from datetime import datetime
+
+from sqlalchemy import (
+    Boolean,
+    DateTime,
+    ForeignKey,
+    Text,
+    UniqueConstraint,
+    func,
+)
+from sqlalchemy.dialects.postgresql import JSONB, UUID
+from sqlalchemy.orm import Mapped, mapped_column
+
+from great_minds.core.db import Base
+
+
+class DocumentORM(Base):
+    __tablename__ = "documents"
+    __table_args__ = (UniqueConstraint("brain_id", "file_path"),)
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        primary_key=True,
+        server_default=func.gen_random_uuid(),
+    )
+    brain_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("brains.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    file_path: Mapped[str] = mapped_column(Text, nullable=False)
+    file_hash: Mapped[str] = mapped_column(Text, nullable=False)
+    title: Mapped[str] = mapped_column(Text, nullable=False, server_default="")
+    author: Mapped[str | None] = mapped_column(Text, nullable=True)
+    source_type: Mapped[str | None] = mapped_column(Text, nullable=True)
+    source_url: Mapped[str | None] = mapped_column(Text, nullable=True)
+    published_date: Mapped[str | None] = mapped_column(Text, nullable=True)
+    genre: Mapped[str | None] = mapped_column(Text, nullable=True)
+    tradition: Mapped[str | None] = mapped_column(Text, nullable=True)
+    compiled: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, server_default="false"
+    )
+    doc_kind: Mapped[str] = mapped_column(Text, nullable=False, server_default="raw")
+    metadata_: Mapped[dict] = mapped_column(
+        "metadata", JSONB, nullable=False, server_default="{}"
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+
+class DocumentTag(Base):
+    __tablename__ = "document_tags"
+
+    document_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("documents.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    tag: Mapped[str] = mapped_column(Text, primary_key=True, index=True)
+
+
+class DocumentConcept(Base):
+    __tablename__ = "document_concepts"
+
+    document_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("documents.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    concept: Mapped[str] = mapped_column(Text, primary_key=True, index=True)
+
+
+class DocumentInterlocutor(Base):
+    __tablename__ = "document_interlocutors"
+
+    document_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("documents.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    interlocutor: Mapped[str] = mapped_column(Text, primary_key=True, index=True)
+
+
+class BacklinkORM(Base):
+    __tablename__ = "backlinks"
+    __table_args__ = (UniqueConstraint("brain_id", "source_slug", "target_slug"),)
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        primary_key=True,
+        server_default=func.gen_random_uuid(),
+    )
+    brain_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("brains.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    source_slug: Mapped[str] = mapped_column(Text, nullable=False)
+    target_slug: Mapped[str] = mapped_column(Text, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )

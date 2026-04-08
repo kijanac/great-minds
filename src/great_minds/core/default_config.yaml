@@ -45,5 +45,6 @@ fields:
     min_uses_to_keep: 2
   concepts:
     allow_new: true
+    min_uses_to_promote: 5
   interlocutors:
     allow_new: true

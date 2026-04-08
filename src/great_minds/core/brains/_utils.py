@@ -16,7 +16,13 @@ _yaml.preserve_quotes = True
 
 FRONTMATTER_RE = re.compile(r"^---\n(.+?)\n---\n", re.DOTALL)
 MD_LINK_RE = re.compile(r"\[([^\]]*)\]\(([^)]+)\)")
+WIKI_LINK_RE = re.compile(r"\[([^\]]*)\]\((wiki/[^)]+\.md)\)")
 FOOTNOTE_RE = re.compile(r"\[\^(\d+)\]:\s*\[([^\]]*)\]\(([^)]+)\)")
+
+
+def extract_wiki_link_targets(content: str) -> list[str]:
+    """Extract unique wiki article paths from markdown links."""
+    return list(dict.fromkeys(m.group(2) for m in WIKI_LINK_RE.finditer(content)))
 
 MAX_RETRIES = 2
 

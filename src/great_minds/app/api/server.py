@@ -28,8 +28,10 @@ from great_minds.app.api.dependencies import (
     get_authorized_brain,
     get_brain_service,
     get_current_user,
+    get_document_service,
     require_llm,
 )
+from great_minds.core.documents.service import DocumentService
 from great_minds.app.api.proposal_routes import router as proposal_router
 from great_minds.core import brain as brain_ops
 from great_minds.core import querier, sessions, tasks
@@ -159,10 +161,17 @@ class LintCountsResponse(BaseModel):
     tag_issues: int
 
 
+class ResearchSuggestionItem(BaseModel):
+    tag: str
+    usage_count: int
+    mentioned_in: list[str]
+
+
 class LintResponse(BaseModel):
     fixes_applied: list[LintFixItem]
     remaining_issues: int
     counts: LintCountsResponse
+    research_suggestions: list[ResearchSuggestionItem] = []
 
 
 # ---------------------------------------------------------------------------
@@ -404,6 +413,7 @@ def create_app() -> FastAPI:
         session: AsyncSession = Depends(get_session),
         absurd: AsyncAbsurd = Depends(get_absurd),
         settings: Settings = Depends(get_settings),
+        doc_service: DocumentService = Depends(get_document_service),
     ) -> dict:
         config = brain_ops.load_config(ctx.storage)
         kwargs = {}
@@ -418,6 +428,11 @@ def create_app() -> FastAPI:
         result = ingest_document(
             ctx.storage, config, req.content, req.content_type, dest=req.dest, **kwargs
         )
+        if req.dest:
+            await doc_service.index_from_content(
+                ctx.brain.id, req.dest, result, doc_kind=req.content_type
+            )
+            await session.commit()
         await _try_compile(ctx, session, absurd, settings)
         return {"status": "ingested", "chars": len(result)}
 
@@ -428,6 +443,7 @@ def create_app() -> FastAPI:
         session: AsyncSession = Depends(get_session),
         absurd: AsyncAbsurd = Depends(get_absurd),
         settings: Settings = Depends(get_settings),
+        doc_service: DocumentService = Depends(get_document_service),
         content_type: str = "texts",
         author: str | None = None,
         date: str | None = None,
@@ -463,6 +479,10 @@ def create_app() -> FastAPI:
         ingested = ingest_document(
             ctx.storage, config, content, content_type, dest=dest, **kwargs
         )
+        await doc_service.index_from_content(
+            ctx.brain.id, dest, ingested, doc_kind=content_type
+        )
+        await session.commit()
         await _try_compile(ctx, session, absurd, settings)
         return {"status": "ingested", "name": filename, "chars": len(ingested)}
 
@@ -473,6 +493,7 @@ def create_app() -> FastAPI:
         session: AsyncSession = Depends(get_session),
         absurd: AsyncAbsurd = Depends(get_absurd),
         settings: Settings = Depends(get_settings),
+        doc_service: DocumentService = Depends(get_document_service),
     ) -> dict:
         config = brain_ops.load_config(ctx.storage)
 
@@ -514,6 +535,10 @@ def create_app() -> FastAPI:
             title=title,
             source=url,
         )
+        await doc_service.index_from_content(
+            ctx.brain.id, dest, ingested, doc_kind=req.content_type
+        )
+        await session.commit()
         await _try_compile(ctx, session, absurd, settings)
         return {"status": "ingested", "name": title, "url": url, "chars": len(ingested)}
 
@@ -563,6 +588,14 @@ def create_app() -> FastAPI:
                 missing_index=c.missing_index,
                 tag_issues=c.tag_issues,
             ),
+            research_suggestions=[
+                ResearchSuggestionItem(
+                    tag=s.tag,
+                    usage_count=s.usage_count,
+                    mentioned_in=s.mentioned_in,
+                )
+                for s in result.research_suggestions
+            ],
         )
 
     @app.get("/lint", response_model=LintResponse)

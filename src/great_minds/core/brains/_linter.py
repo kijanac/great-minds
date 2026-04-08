@@ -27,7 +27,7 @@ from collections import defaultdict
 from dataclasses import dataclass, field
 from typing import Literal
 
-from great_minds.core.brain import read_index, wiki_path
+from great_minds.core.brain import load_config, read_index, wiki_path
 from great_minds.core.brains._utils import (
     FOOTNOTE_RE,
     MD_LINK_RE,
@@ -88,9 +88,18 @@ class MissingIndexEntry:
 
 @dataclass
 class TagIssue:
-    kind: Literal["singleton", "duplicate"]
+    kind: Literal["duplicate", "low_use"]
     tags: list[str]
     canonical: str | None = None  # for duplicates, the most common form
+
+
+@dataclass
+class ResearchSuggestion:
+    """A tag that's popular enough to warrant its own wiki article."""
+
+    tag: str
+    usage_count: int
+    mentioned_in: list[str]  # sample of raw doc paths
 
 
 @dataclass
@@ -115,6 +124,7 @@ class LintResult:
     fixes_applied: list[Fix] = field(default_factory=list)
     remaining_issues: int = 0
     counts: LintCounts = field(default_factory=LintCounts)
+    research_suggestions: list[ResearchSuggestion] = field(default_factory=list)
 
 
 # ---------------------------------------------------------------------------
@@ -289,12 +299,23 @@ def detect_missing_index_entries(
     return missing
 
 
-def detect_tag_issues(raw_docs: dict[str, dict]) -> list[TagIssue]:
+def count_tags(
+    raw_docs: dict[str, dict],
+) -> tuple[dict[str, int], dict[str, list[str]]]:
+    """Count tag usage and track which docs use each tag. Single pass."""
     tag_counts: dict[str, int] = defaultdict(int)
-    for fm in raw_docs.values():
+    tag_docs: dict[str, list[str]] = defaultdict(list)
+    for path, fm in raw_docs.items():
         for tag in fm.get("tags", []):
             tag_counts[tag] += 1
+            if len(tag_docs[tag]) < 5:
+                tag_docs[tag].append(path)
+    return dict(tag_counts), dict(tag_docs)
 
+
+def detect_tag_issues(
+    tag_counts: dict[str, int], *, min_uses: int = 2
+) -> list[TagIssue]:
     if not tag_counts:
         return []
 
@@ -313,15 +334,46 @@ def detect_tag_issues(raw_docs: dict[str, dict]) -> list[TagIssue]:
                 TagIssue(kind="duplicate", tags=variants, canonical=canonical)
             )
 
-    # Singletons (only if not already part of a duplicate group)
+    # Low-use tags (below min_uses threshold, not already in a duplicate group)
     duplicate_tags = {t for issue in issues for t in issue.tags}
-    singletons = [
-        t for t, c in tag_counts.items() if c == 1 and t not in duplicate_tags
+    low_use = [
+        t
+        for t, c in tag_counts.items()
+        if c < min_uses and t not in duplicate_tags
     ]
-    if singletons:
-        issues.append(TagIssue(kind="singleton", tags=singletons))
+    if low_use:
+        issues.append(TagIssue(kind="low_use", tags=low_use))
 
     return issues
+
+
+def detect_promotion_candidates(
+    tag_counts: dict[str, int],
+    tag_docs: dict[str, list[str]],
+    wiki_articles: dict[str, str],
+    *,
+    min_uses: int = 5,
+) -> list[ResearchSuggestion]:
+    """Find tags used frequently that don't have a corresponding wiki article."""
+    existing_slugs = {
+        rel_path.removesuffix(".md") for rel_path in wiki_articles
+    }
+
+    suggestions = []
+    for tag, count in sorted(tag_counts.items(), key=lambda x: -x[1]):
+        if count < min_uses:
+            continue
+        if tag in existing_slugs:
+            continue
+        suggestions.append(
+            ResearchSuggestion(
+                tag=tag,
+                usage_count=count,
+                mentioned_in=tag_docs.get(tag, []),
+            )
+        )
+
+    return suggestions
 
 
 # ---------------------------------------------------------------------------
@@ -572,16 +624,19 @@ def fix_tags(
     raw_docs: dict[str, dict],
     tag_issues: list[TagIssue],
 ) -> list[Fix]:
-    """Normalize duplicate tags to their canonical form. No LLM needed."""
+    """Normalize duplicate tags and prune low-use tags. No LLM needed."""
     rename_map: dict[str, str] = {}
-    for issue in tag_issues:
-        if issue.kind != "duplicate" or not issue.canonical:
-            continue
-        for tag in issue.tags:
-            if tag != issue.canonical:
-                rename_map[tag] = issue.canonical
+    prune_set: set[str] = set()
 
-    if not rename_map:
+    for issue in tag_issues:
+        if issue.kind == "duplicate" and issue.canonical:
+            for tag in issue.tags:
+                if tag != issue.canonical:
+                    rename_map[tag] = issue.canonical
+        elif issue.kind == "low_use":
+            prune_set.update(issue.tags)
+
+    if not rename_map and not prune_set:
         return []
 
     fixes: list[Fix] = []
@@ -590,7 +645,7 @@ def fix_tags(
         if not tags:
             continue
 
-        new_tags = [rename_map.get(t, t) for t in tags]
+        new_tags = [rename_map.get(t, t) for t in tags if t not in prune_set]
         if new_tags == tags:
             continue
 
@@ -602,8 +657,14 @@ def fix_tags(
         fm_parsed["tags"] = new_tags
         storage.write(path, serialize_frontmatter(fm_parsed, body))
 
+        changes = []
         renamed = [f"{old}→{new}" for old, new in rename_map.items() if old in tags]
-        fixes.append(Fix(file=path, description=f"tags: {', '.join(renamed)}"))
+        pruned = [t for t in tags if t in prune_set]
+        if renamed:
+            changes.append(f"renamed: {', '.join(renamed)}")
+        if pruned:
+            changes.append(f"pruned: {', '.join(pruned)}")
+        fixes.append(Fix(file=path, description=f"tags: {'; '.join(changes)}"))
 
     return fixes
 
@@ -661,6 +722,18 @@ def lint_links_to_slugs(
 # ---------------------------------------------------------------------------
 
 
+def _load_tag_thresholds(storage: Storage) -> dict:
+    """Load tag governance thresholds from brain config."""
+    config = load_config(storage)
+    fields = config.get("fields", {})
+    return {
+        "min_uses_to_keep": fields.get("tags", {}).get("min_uses_to_keep", 2),
+        "promotion_threshold": fields.get("concepts", {}).get(
+            "min_uses_to_promote", 5
+        ),
+    }
+
+
 async def run_lint(
     storage: Storage, *, deep: bool = False, fix: bool = False
 ) -> LintResult:
@@ -672,6 +745,11 @@ async def run_lint(
     log.info(
         "lint: found %d wiki articles, %d raw documents", len(articles), len(raw_docs)
     )
+
+    # Load governance thresholds from brain config
+    thresholds = _load_tag_thresholds(storage)
+    min_uses = thresholds["min_uses_to_keep"]
+    promotion_threshold = thresholds["promotion_threshold"]
 
     # Precompute title/summary for all articles (used by detection + fixes)
     article_meta = {
@@ -690,7 +768,21 @@ async def run_lint(
     uncompiled = detect_uncompiled(raw_docs)
     uncited = detect_uncited_sources(articles, raw_docs)
     missing_index = detect_missing_index_entries(storage, articles, article_meta)
-    tag_issues = detect_tag_issues(raw_docs)
+    tag_counts, tag_docs = count_tags(raw_docs)
+    tag_issues = detect_tag_issues(tag_counts, min_uses=min_uses)
+
+    suggestions = detect_promotion_candidates(
+        tag_counts, tag_docs, articles, min_uses=promotion_threshold
+    )
+    if suggestions:
+        log.info(
+            "lint: %d research suggestions (tags that could become articles)",
+            len(suggestions),
+        )
+        for s in suggestions:
+            log.info(
+                "lint: suggestion — '%s' (used %d times)", s.tag, s.usage_count
+            )
 
     counts = LintCounts(
         dead_links=len(dead_links),
@@ -727,12 +819,16 @@ async def run_lint(
     )
 
     if not fix:
-        return LintResult(remaining_issues=total_detected, counts=counts)
+        return LintResult(
+            remaining_issues=total_detected,
+            counts=counts,
+            research_suggestions=suggestions,
+        )
 
     # --- Auto-fix ---
     log.info("lint: applying auto-fixes")
 
-    # Tag fixes are synchronous (no LLM)
+    # Tag fixes are synchronous (no LLM): merge duplicates + prune low-use
     tag_fixes = fix_tags(storage, raw_docs, tag_issues)
 
     # LLM-assisted fixes (each is a single batched call)
@@ -746,19 +842,21 @@ async def run_lint(
         log.info("lint: fixed %s — %s", f.file, f.description)
 
     # Remaining = issues that weren't auto-fixable
-    # link/citation fixes are 1:1 with issues; index fix is one Fix for N entries
     links_fixed = len(link_fixes)
     citations_fixed = len(citation_fixes)
     index_fixed = len(missing_index) if index_fixes else 0
-    tag_dupes_fixed = (
-        sum(1 for i in tag_issues if i.kind == "duplicate") if tag_fixes else 0
-    )
+    tags_fixed = sum(
+        1 for i in tag_issues if i.kind in ("duplicate", "low_use")
+    ) if tag_fixes else 0
     remaining = (
-        total_detected - links_fixed - citations_fixed - index_fixed - tag_dupes_fixed
+        total_detected - links_fixed - citations_fixed - index_fixed - tags_fixed
     )
 
     log.info("lint: %d fixes applied, %d issues remaining", len(all_fixes), remaining)
 
     return LintResult(
-        fixes_applied=all_fixes, remaining_issues=max(0, remaining), counts=counts
+        fixes_applied=all_fixes,
+        remaining_issues=max(0, remaining),
+        counts=counts,
+        research_suggestions=suggestions,
     )

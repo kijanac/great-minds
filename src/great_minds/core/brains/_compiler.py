@@ -42,6 +42,7 @@ from great_minds.core.brains._utils import (
     serialize_frontmatter,
     strip_json_fencing,
 )
+from great_minds.core.documents.repository import DOC_KIND_RAW, DOC_KIND_WIKI, DocumentRepository
 from great_minds.core.llm import EXTRACT_MODEL, REASON_MODEL, get_async_client
 from great_minds.core.storage import Storage
 
@@ -650,6 +651,57 @@ async def run(
     if db_session is not None and brain_id is not None:
         log.info("=== phase 7: rebuilding search index ===")
         chunks_indexed = await rebuild_index(db_session, brain_id, storage)
+
+    # --- Phase 8: Sync documents table (enriched raw docs + wiki articles) ---
+    if db_session is not None and brain_id is not None:
+        log.info("=== phase 8: syncing documents table ===")
+        doc_repo = DocumentRepository(db_session)
+
+        for filepath, fm, body in docs:
+            content = serialize_frontmatter(fm, body)
+            await doc_repo.upsert_document(
+                brain_id=brain_id,
+                file_path=filepath,
+                content=content,
+                title=fm.get("title", ""),
+                author=fm.get("author"),
+                source_url=fm.get("source"),
+                published_date=str(fm["date"]) if fm.get("date") else None,
+                genre=fm.get("genre"),
+                tradition=fm.get("tradition"),
+                compiled=True,
+                doc_kind=DOC_KIND_RAW,
+                tags=fm.get("tags", []),
+                concepts=fm.get("concepts", []),
+                interlocutors=fm.get("interlocutors", []),
+            )
+
+        for article in written:
+            slug = article.get("slug", "")
+            if not slug:
+                continue
+            article_path = wiki_path(slug)
+            content = storage.read(article_path, strict=False)
+            if content is None:
+                continue
+            await doc_repo.upsert_document(
+                brain_id=brain_id,
+                file_path=article_path,
+                content=content,
+                title=slug.replace("-", " ").title(),
+                compiled=True,
+                doc_kind=DOC_KIND_WIKI,
+                tags=article.get("tags", []),
+                concepts=article.get("connections", []),
+            )
+            await doc_repo.rebuild_backlinks_for_article(brain_id, slug, content)
+
+        await db_session.commit()
+        log.info(
+            "synced %d raw docs + %d wiki articles to documents table",
+            len(docs),
+            len(written),
+        )
 
     log.info(
         "compilation complete -- %d docs, %d articles, %d chunks indexed",

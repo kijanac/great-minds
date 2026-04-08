@@ -108,6 +108,15 @@ def cmd_lint(args: argparse.Namespace) -> None:
         for f in result.fixes_applied:
             log.info("  %s — %s", f.file, f.description)
     log.info("%d issues remaining", result.remaining_issues)
+    if result.research_suggestions:
+        log.info("")
+        log.info("research suggestions:")
+        for s in result.research_suggestions:
+            log.info(
+                "  '%s' is mentioned %d times but has no wiki article",
+                s.tag,
+                s.usage_count,
+            )
 
 
 def cmd_serve(args: argparse.Namespace) -> None:
