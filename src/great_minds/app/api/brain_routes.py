@@ -16,6 +16,7 @@ from great_minds.core.brains.service import BrainService
 from great_minds.core.db import get_session
 from great_minds.core.storage import LocalStorage
 from great_minds.core.users.models import User
+from great_minds.core.users.repository import UserRepository
 
 log = logging.getLogger(__name__)
 
@@ -29,7 +30,7 @@ async def list_brains(
 ) -> list[schemas.BrainOverview]:
     rows = await brain_service.list_brains(user.id)
     return [
-        schemas.BrainOverview(id=brain.id, name=brain.name, kind=brain.kind, role=role)
+        schemas.BrainOverview(id=brain.id, name=brain.name, role=role)
         for brain, role in rows
     ]
 
@@ -41,15 +42,13 @@ async def create_brain(
     session: AsyncSession = Depends(get_session),
     brain_service: BrainService = Depends(get_brain_service),
 ) -> schemas.Brain:
-    brain, role = await brain_service.create_team_brain(req.name, user.id)
+    brain, role = await brain_service.create_brain(req.name, user.id)
     await session.commit()
 
     return schemas.Brain(
         id=brain.id,
         name=brain.name,
-        kind=brain.kind,
         role=role,
-        slug=brain.slug,
         owner_id=brain.owner_id,
         created_at=brain.created_at,
     )
@@ -74,9 +73,7 @@ async def get_brain(
     return schemas.BrainDetail(
         id=brain.id,
         name=brain.name,
-        kind=brain.kind,
         role=role,
-        slug=brain.slug,
         owner_id=brain.owner_id,
         created_at=brain.created_at,
         member_count=member_count,
@@ -100,6 +97,38 @@ async def list_members(
         schemas.MembershipOverview(user_id=m.user_id, email=email, role=m.role)
         for m, email in rows
     ]
+
+
+@router.post(
+    "/{brain_id}/members", response_model=schemas.MembershipOverview, status_code=status.HTTP_201_CREATED
+)
+async def invite_member(
+    brain_id: UUID,
+    req: schemas.MembershipInvite,
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+    brain_service: BrainService = Depends(get_brain_service),
+) -> schemas.MembershipOverview:
+    try:
+        _brain, role = await brain_service.get_brain(brain_id, user.id)
+    except ValueError:
+        raise HTTPException(status_code=404, detail="Brain not found")
+    if role != MemberRole.OWNER:
+        raise HTTPException(status_code=403, detail="Only owners can manage members")
+
+    try:
+        new_role = MemberRole(req.role)
+    except ValueError:
+        raise HTTPException(status_code=422, detail=f"Invalid role: {req.role}")
+
+    user_repo = UserRepository(session)
+    target_user, _ = await user_repo.get_or_create(req.email)
+    await brain_service.upsert_membership(brain_id, target_user.id, new_role)
+    await session.commit()
+
+    return schemas.MembershipOverview(
+        user_id=target_user.id, email=target_user.email, role=new_role
+    )
 
 
 @router.put(

@@ -3,10 +3,10 @@ import { createBrowserRouter, Navigate, Outlet, RouterProvider } from "react-rou
 import { AppShell } from "@/components/app-shell";
 import { CornerMenuContainer } from "@/containers/corner-menu-container";
 import { AuthProvider, useAuth } from "@/lib/auth";
-import { readDocument } from "@/api/doc";
 import HomePage from "@/pages/home";
 import LoginPage from "@/pages/login";
-import DocPage from "@/pages/doc";
+import DocPage, { docLoader } from "@/pages/doc";
+import ProjectSettingsPage from "@/pages/project-settings";
 import SessionPage from "@/pages/session";
 import SessionsPage from "@/pages/sessions";
 
@@ -47,16 +47,9 @@ const router = createBrowserRouter([
           {
             path: "/doc/*",
             element: <DocPage />,
-            loader: async ({ params, request }) => {
-              const path = params["*"];
-              if (!path) return null;
-              try {
-                return await readDocument(path, request.signal);
-              } catch {
-                return null;
-              }
-            },
+            loader: docLoader,
           },
+          { path: "/project/:id/settings", element: <ProjectSettingsPage /> },
           { path: "/sessions", element: <SessionsPage /> },
           { path: "/sessions/:id", element: <SessionPage /> },
         ],

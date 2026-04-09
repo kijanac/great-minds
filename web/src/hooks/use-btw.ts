@@ -3,7 +3,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { consumeStream, streamQuery } from "@/api/query";
 import type { BtwThread, SelectionInfo } from "@/lib/types";
 import { assistantMsg, userMsg } from "@/lib/types";
-import { buildBtwQuery, genId } from "@/lib/utils";
+import { buildBtwQuery, genId, isAbortError } from "@/lib/utils";
 
 export function useBtw(originPath?: string) {
   const [btws, setBtws] = useState<BtwThread[]>([]);
@@ -78,7 +78,7 @@ export function useBtw(originPath?: string) {
           messages: [...(target?.messages ?? []), userMsg(userText), assistantMsg(answer)],
         });
       } catch (err) {
-        if ((err as Error).name === "AbortError") return;
+        if (isAbortError(err)) return;
       }
     })();
   }, []);

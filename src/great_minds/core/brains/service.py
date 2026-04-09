@@ -10,7 +10,6 @@ from great_minds.core.brains.schemas import Brain
 from great_minds.core.querier import QuerySource
 from great_minds.core.settings import Settings
 from great_minds.core.storage import LocalStorage
-from great_minds.core.users.models import User
 
 log = logging.getLogger(__name__)
 
@@ -34,15 +33,12 @@ class BrainService:
     async def list_brains(self, user_id: UUID) -> list[tuple[Brain, MemberRole]]:
         return await self.repo.list_user_brains(user_id)
 
-    async def create_team_brain(
+    async def create_brain(
         self, name: str, owner_id: UUID
     ) -> tuple[Brain, MemberRole]:
-        return await self.repo.create_team_brain(name, owner_id)
-
-    async def create_personal_brain(self, user: User) -> Brain:
-        brain = await self.repo.create_personal_brain(user)
+        brain, role = await self.repo.create_brain(name, owner_id)
         self._init_brain_storage(brain.storage_root)
-        return brain
+        return brain, role
 
     def _init_brain_storage(self, storage_root: str) -> None:
         storage = LocalStorage(self.data_dir / storage_root)
@@ -56,7 +52,7 @@ class BrainService:
         return [
             QuerySource(
                 storage=LocalStorage(self.data_dir / brain.storage_root),
-                label=brain.slug,
+                label=brain.name,
                 brain_id=brain.id,
             )
             for brain, _role in rows

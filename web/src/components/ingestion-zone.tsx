@@ -14,15 +14,21 @@ interface IngestionZoneProps {
   onDismiss: (id: string) => void;
 }
 
+function isFileEntry(entry: FileSystemEntry): entry is FileSystemFileEntry {
+  return entry.isFile;
+}
+
+function isDirectoryEntry(entry: FileSystemEntry): entry is FileSystemDirectoryEntry {
+  return entry.isDirectory;
+}
+
 async function collectFiles(entry: FileSystemEntry, prefix: string): Promise<DroppedFile[]> {
-  if (entry.isFile) {
-    const file = await new Promise<File>((resolve, reject) =>
-      (entry as FileSystemFileEntry).file(resolve, reject),
-    );
+  if (isFileEntry(entry)) {
+    const file = await new Promise<File>((resolve, reject) => entry.file(resolve, reject));
     return [{ file, path: prefix ? `${prefix}/${entry.name}` : entry.name }];
   }
-  if (entry.isDirectory) {
-    const reader = (entry as FileSystemDirectoryEntry).createReader();
+  if (isDirectoryEntry(entry)) {
+    const reader = entry.createReader();
     const entries: FileSystemEntry[] = [];
     let batch: FileSystemEntry[];
     do {

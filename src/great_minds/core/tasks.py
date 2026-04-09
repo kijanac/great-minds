@@ -24,9 +24,7 @@ from sqlalchemy.orm import Mapped, mapped_column
 
 from great_minds.core.brain import load_config, load_prompt
 from great_minds.core.brains import _compiler as compiler, _ingester as ingester
-from great_minds.core.brains._linter import lint_links_to_slugs
 from great_minds.core.brains._utils import parse_frontmatter
-from great_minds.core.brains.repository import BrainRepository
 from great_minds.core.db import Base
 from great_minds.core.documents.repository import DocumentRepository
 from great_minds.core.documents.schemas import DocumentCreate
@@ -65,10 +63,7 @@ class TaskRecord(Base):
 
 
 async def compile_task(params: dict, ctx) -> dict:
-    """Run the compilation pipeline with heartbeat for long runs.
-
-    For team brains, also checks cross-brain link integrity after compilation.
-    """
+    """Run the compilation pipeline with heartbeat for long runs."""
     data_dir = Path(params["data_dir"])
     storage = LocalStorage(data_dir / params["storage_root"])
     brain_id = UUID(params["brain_id"])
@@ -83,51 +78,13 @@ async def compile_task(params: dict, ctx) -> dict:
         brain_id=brain_id,
     )
 
-    result_dict = {
+    return {
         "docs_compiled": result.docs_compiled,
         "articles_written": [
             {"slug": a["slug"], "action": a["action"]} for a in result.articles_written
         ],
         "chunks_indexed": result.chunks_indexed,
     }
-
-    # Post-compile: check cross-brain links for team brains
-    if params.get("brain_kind") == "team" and result.articles_written:
-        changed_slugs = [a["slug"] for a in result.articles_written]
-        brain_id = UUID(params["brain_id"])
-
-        log.info(
-            "post_compile_lint brain=%s changed_slugs=%d",
-            params["label"],
-            len(changed_slugs),
-        )
-
-        session = _task_session.get()
-        repo = BrainRepository(session)
-        personal_brains = await repo.list_team_member_personal_brains(brain_id)
-
-        peer_brains = [
-            (LocalStorage(data_dir / b.storage_root), b.slug) for b in personal_brains
-        ]
-
-        if peer_brains:
-            lint_result = lint_links_to_slugs(peer_brains, changed_slugs, storage)
-            if lint_result.broken_links:
-                log.warning(
-                    "post_compile_lint brain=%s broken_links=%d",
-                    params["label"],
-                    len(lint_result.broken_links),
-                )
-                for bl in lint_result.broken_links:
-                    log.warning(
-                        "broken_link brain=%s article=%s target=%s",
-                        bl.brain_label,
-                        bl.article,
-                        bl.target_slug,
-                    )
-                result_dict["broken_links"] = len(lint_result.broken_links)
-
-    return result_dict
 
 
 async def bulk_ingest_task(params: dict, ctx) -> dict:
@@ -324,7 +281,6 @@ async def spawn_compile(
     storage_root: str,
     data_dir: str,
     label: str,
-    brain_kind: str,
     *,
     limit: int | None = None,
 ) -> TaskRecord:
@@ -338,7 +294,6 @@ async def spawn_compile(
             "storage_root": storage_root,
             "data_dir": data_dir,
             "label": label,
-            "brain_kind": brain_kind,
             "limit": limit,
         },
         max_attempts=3,

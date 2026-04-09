@@ -1,10 +1,11 @@
 """initial schema
 
-Squashed from 11 migrations into a single initial migration for fresh deploy.
+Full schema: users, auth, brains, memberships, proposals, tasks,
+search index, documents, backlinks, and absurd task queue.
 
 Revision ID: 0001
 Revises:
-Create Date: 2026-04-07 00:00:00.000000
+Create Date: 2026-04-09
 """
 
 from pathlib import Path
@@ -102,11 +103,7 @@ def upgrade() -> None:
         "brains",
         sa.Column("id", sa.UUID(), nullable=False),
         sa.Column("name", sa.String(length=255), nullable=False),
-        sa.Column("slug", sa.String(length=255), nullable=False),
         sa.Column("owner_id", sa.UUID(), nullable=False),
-        sa.Column(
-            "kind", sa.Enum("PERSONAL", "TEAM", name="brain_kind"), nullable=False
-        ),
         sa.Column("storage_root", sa.Text(), nullable=False),
         sa.Column(
             "created_at",
@@ -217,6 +214,110 @@ def upgrade() -> None:
         )
     )
 
+    # -- Documents (queryable projection of frontmatter) -------------------
+    op.create_table(
+        "documents",
+        sa.Column(
+            "id",
+            sa.UUID(),
+            nullable=False,
+            server_default=sa.text("gen_random_uuid()"),
+        ),
+        sa.Column("brain_id", sa.UUID(), nullable=False),
+        sa.Column("file_path", sa.Text(), nullable=False),
+        sa.Column("file_hash", sa.Text(), nullable=False),
+        sa.Column("title", sa.Text(), nullable=False, server_default=""),
+        sa.Column("author", sa.Text(), nullable=True),
+        sa.Column("source_type", sa.Text(), nullable=True),
+        sa.Column("source_url", sa.Text(), nullable=True),
+        sa.Column("published_date", sa.Text(), nullable=True),
+        sa.Column("genre", sa.Text(), nullable=True),
+        sa.Column("tradition", sa.Text(), nullable=True),
+        sa.Column("compiled", sa.Boolean(), nullable=False, server_default="false"),
+        sa.Column("doc_kind", sa.Text(), nullable=False, server_default="raw"),
+        sa.Column("metadata", JSONB(), nullable=False, server_default="{}"),
+        sa.Column(
+            "created_at",
+            sa.DateTime(timezone=True),
+            server_default=sa.text("now()"),
+            nullable=False,
+        ),
+        sa.Column(
+            "updated_at",
+            sa.DateTime(timezone=True),
+            server_default=sa.text("now()"),
+            nullable=False,
+        ),
+        sa.ForeignKeyConstraint(["brain_id"], ["brains.id"], ondelete="CASCADE"),
+        sa.PrimaryKeyConstraint("id"),
+        sa.UniqueConstraint("brain_id", "file_path"),
+    )
+    op.create_index("ix_documents_brain_id", "documents", ["brain_id"])
+    op.create_index("ix_documents_source_type", "documents", ["source_type"])
+    op.create_index("ix_documents_published_date", "documents", ["published_date"])
+    op.create_index("ix_documents_author", "documents", ["author"])
+    op.create_index("ix_documents_compiled", "documents", ["compiled"])
+    op.create_index("ix_documents_doc_kind", "documents", ["doc_kind"])
+
+    # -- Junction: document_tags -------------------------------------------
+    op.create_table(
+        "document_tags",
+        sa.Column("document_id", sa.UUID(), nullable=False),
+        sa.Column("tag", sa.Text(), nullable=False),
+        sa.ForeignKeyConstraint(["document_id"], ["documents.id"], ondelete="CASCADE"),
+        sa.PrimaryKeyConstraint("document_id", "tag"),
+    )
+    op.create_index("ix_document_tags_tag", "document_tags", ["tag"])
+
+    # -- Junction: document_concepts ---------------------------------------
+    op.create_table(
+        "document_concepts",
+        sa.Column("document_id", sa.UUID(), nullable=False),
+        sa.Column("concept", sa.Text(), nullable=False),
+        sa.ForeignKeyConstraint(["document_id"], ["documents.id"], ondelete="CASCADE"),
+        sa.PrimaryKeyConstraint("document_id", "concept"),
+    )
+    op.create_index("ix_document_concepts_concept", "document_concepts", ["concept"])
+
+    # -- Junction: document_interlocutors ----------------------------------
+    op.create_table(
+        "document_interlocutors",
+        sa.Column("document_id", sa.UUID(), nullable=False),
+        sa.Column("interlocutor", sa.Text(), nullable=False),
+        sa.ForeignKeyConstraint(["document_id"], ["documents.id"], ondelete="CASCADE"),
+        sa.PrimaryKeyConstraint("document_id", "interlocutor"),
+    )
+    op.create_index(
+        "ix_document_interlocutors_interlocutor",
+        "document_interlocutors",
+        ["interlocutor"],
+    )
+
+    # -- Backlinks ---------------------------------------------------------
+    op.create_table(
+        "backlinks",
+        sa.Column(
+            "id",
+            sa.UUID(),
+            nullable=False,
+            server_default=sa.text("gen_random_uuid()"),
+        ),
+        sa.Column("brain_id", sa.UUID(), nullable=False),
+        sa.Column("source_slug", sa.Text(), nullable=False),
+        sa.Column("target_slug", sa.Text(), nullable=False),
+        sa.Column(
+            "updated_at",
+            sa.DateTime(timezone=True),
+            server_default=sa.text("now()"),
+            nullable=False,
+        ),
+        sa.ForeignKeyConstraint(["brain_id"], ["brains.id"], ondelete="CASCADE"),
+        sa.PrimaryKeyConstraint("id"),
+        sa.UniqueConstraint("brain_id", "source_slug", "target_slug"),
+    )
+    op.create_index("ix_backlinks_brain_id", "backlinks", ["brain_id"])
+    op.create_index("ix_backlinks_target", "backlinks", ["brain_id", "target_slug"])
+
     # -- Absurd (durable task queue) schema --------------------------------
     url = op.get_bind().engine.url
     pg_url = f"postgresql://{url.username or ''}{':%s' % url.password if url.password else ''}@{url.host or 'localhost'}:{url.port or 5432}/{url.database}"
@@ -228,6 +329,25 @@ def upgrade() -> None:
 
 def downgrade() -> None:
     op.execute(text("DROP SCHEMA IF EXISTS absurd CASCADE"))
+    op.drop_index("ix_backlinks_target", table_name="backlinks")
+    op.drop_index("ix_backlinks_brain_id", table_name="backlinks")
+    op.drop_table("backlinks")
+    op.drop_index(
+        "ix_document_interlocutors_interlocutor",
+        table_name="document_interlocutors",
+    )
+    op.drop_table("document_interlocutors")
+    op.drop_index("ix_document_concepts_concept", table_name="document_concepts")
+    op.drop_table("document_concepts")
+    op.drop_index("ix_document_tags_tag", table_name="document_tags")
+    op.drop_table("document_tags")
+    op.drop_index("ix_documents_doc_kind", table_name="documents")
+    op.drop_index("ix_documents_compiled", table_name="documents")
+    op.drop_index("ix_documents_author", table_name="documents")
+    op.drop_index("ix_documents_published_date", table_name="documents")
+    op.drop_index("ix_documents_source_type", table_name="documents")
+    op.drop_index("ix_documents_brain_id", table_name="documents")
+    op.drop_table("documents")
     op.execute(text("DROP TABLE IF EXISTS search_index"))
     op.drop_index("ix_tasks_brain_id", table_name="tasks")
     op.drop_table("tasks")
@@ -242,4 +362,6 @@ def downgrade() -> None:
     op.drop_table("api_keys")
     op.drop_index("ix_users_email", table_name="users")
     op.drop_table("users")
+    op.execute(text("DROP TYPE IF EXISTS member_role"))
+    op.execute(text("DROP TYPE IF EXISTS proposal_status"))
     op.execute(text("DROP EXTENSION IF EXISTS vector"))

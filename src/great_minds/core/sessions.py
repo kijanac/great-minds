@@ -78,6 +78,7 @@ def create_session(
     exchange: dict,
     *,
     origin: str | None = None,
+    user_id: str,
 ) -> str:
     """Create a new session with the first exchange."""
     storage.mkdir("sessions")
@@ -87,6 +88,7 @@ def create_session(
         "id": session_id,
         "query": exchange["query"],
         "ts": _now(),
+        "user_id": user_id,
     }
     if origin is not None:
         meta_event["origin"] = origin
@@ -164,8 +166,11 @@ def load_events(storage: Storage, session_id: str) -> list[dict]:
     return events
 
 
-def list_sessions(storage: Storage) -> list[dict]:
-    """List all sessions with metadata. Sorted by last activity."""
+def list_sessions(storage: Storage, *, user_id: str | None = None) -> list[dict]:
+    """List all sessions with metadata. Sorted by last activity.
+
+    If user_id is provided, only sessions belonging to that user are returned.
+    """
     results = []
     for path in storage.glob("sessions/*.jsonl"):
         content = storage.read(path)
@@ -180,6 +185,8 @@ def list_sessions(storage: Storage) -> list[dict]:
         except json.JSONDecodeError:
             continue
         if meta.get("type") != "meta":
+            continue
+        if user_id is not None and meta.get("user_id") != user_id:
             continue
 
         # Last event timestamp for sort order

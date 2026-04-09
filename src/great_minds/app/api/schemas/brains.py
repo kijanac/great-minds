@@ -7,12 +7,10 @@ from pydantic import BaseModel
 class BrainOverview(BaseModel):
     id: uuid.UUID
     name: str
-    kind: str
     role: str
 
 
 class Brain(BrainOverview):
-    slug: str
     owner_id: uuid.UUID
     created_at: datetime
 
@@ -34,6 +32,11 @@ class MembershipOverview(BaseModel):
     user_id: uuid.UUID
     email: str
     role: str
+
+
+class MembershipInvite(BaseModel):
+    email: str
+    role: str = "editor"
 
 
 class MembershipUpdate(BaseModel):

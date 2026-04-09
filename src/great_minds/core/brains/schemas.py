@@ -11,8 +11,6 @@ class Brain(BaseModel):
 
     id: uuid.UUID
     name: str
-    slug: str
     owner_id: uuid.UUID
-    kind: str
     storage_root: str
     created_at: datetime

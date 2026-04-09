@@ -12,6 +12,7 @@ Usage:
 import argparse
 import asyncio
 import logging
+import uuid
 from functools import partial
 from pathlib import Path
 
@@ -44,7 +45,7 @@ def cmd_compile(args: argparse.Namespace) -> None:
 def cmd_query(args: argparse.Namespace) -> None:
     setup_logging(service="great-minds", json_output=args.json_logs)
     storage = _make_storage()
-    sources = [querier.QuerySource(storage=storage, label="local")]
+    sources = [querier.QuerySource(storage=storage, label="local", brain_id=uuid.UUID(int=0))]
 
     async def _run() -> None:
         from great_minds.core.db import session_maker

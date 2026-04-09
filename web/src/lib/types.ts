@@ -1,7 +1,10 @@
-export interface BtwMessage {
-  role: "user" | "assistant";
-  text: string;
-}
+import type {
+  BtwMessage,
+  SourceRef,
+  ThinkingBlock,
+} from "@/api/schemas";
+
+export type { BtwMessage, SourceRef, ThinkingBlock };
 
 export function userMsg(text: string): BtwMessage {
   return { role: "user", text };
@@ -21,16 +24,6 @@ export interface BtwThread {
   sources: SourceRef[];
   streaming: boolean;
   streamText: string;
-}
-
-export interface SourceRef {
-  label: string;
-  type: "article" | "raw" | "search";
-  thinking?: string;
-}
-
-export interface ThinkingBlock {
-  sources: SourceRef[];
 }
 
 export interface Exchange {

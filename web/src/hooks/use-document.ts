@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 
 import { readDocument } from "@/api/doc";
+import { isAbortError } from "@/lib/utils";
 
 export function useDocument(path: string | null) {
   const [content, setContent] = useState<string | null>(null);
@@ -19,7 +20,7 @@ export function useDocument(path: string | null) {
         setContent(data.content);
       })
       .catch((err) => {
-        if ((err as Error).name === "AbortError") return;
+        if (isAbortError(err)) return;
         setContent(null);
       })
       .finally(() => {

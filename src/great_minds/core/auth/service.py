@@ -48,7 +48,7 @@ class AuthService:
             raise ValueError("Invalid or expired code")
 
         user, _ = await self.user_service.get_or_create(email)
-        await self.user_service.ensure_personal_brain(user)
+        await self.user_service.ensure_default_brain(user)
 
         access_token = create_access_token(user.id, self.settings)
         raw_refresh = create_refresh_token_value()

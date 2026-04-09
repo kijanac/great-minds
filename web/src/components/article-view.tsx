@@ -68,7 +68,7 @@ export function ArticleView({
                 const sel = window.getSelection();
                 if (!sel || sel.isCollapsed || sel.toString().trim().length < 5) return;
                 const rect = sel.getRangeAt(0).getBoundingClientRect();
-                const paraText = (e.currentTarget as HTMLParagraphElement).textContent ?? "";
+                const paraText = e.currentTarget.textContent ?? "";
                 onSelectionRef.current({
                   text: sel.toString().trim(),
                   x: rect.left + rect.width / 2,

@@ -2,7 +2,6 @@ import { useEffect, useState } from "react";
 
 import { loadSession, type SessionEvent } from "@/api/sessions";
 import type { BtwThread, Exchange } from "@/lib/types";
-import { genId } from "@/lib/utils";
 
 function replayEvents(events: SessionEvent[]): Exchange[] {
   const exchanges: Exchange[] = [];
@@ -11,22 +10,22 @@ function replayEvents(events: SessionEvent[]): Exchange[] {
   for (const event of events) {
     if (event.type === "exchange") {
       const ex: Exchange = {
-        id: (event.exId as string) || genId("ex"),
-        query: event.query as string,
-        thinking: (event.thinking as Exchange["thinking"]) ?? [],
-        answer: (event.answer as string) ?? "",
+        id: event.exId,
+        query: event.query,
+        thinking: event.thinking,
+        answer: event.answer,
         btws: [],
       };
       exchanges.push(ex);
     } else if (event.type === "btw") {
-      const exId = event.exId as string;
+      const exId = event.exId;
       const btw: BtwThread = {
-        id: genId("btw"),
-        anchor: event.anchor as string,
-        paragraph: event.paragraph as string,
-        paragraphIndex: (event.pi as number) ?? -1,
+        id: `${exId}:${event.pi}:${event.anchor}`,
+        anchor: event.anchor,
+        paragraph: event.paragraph,
+        paragraphIndex: event.pi,
         exchangeId: exId,
-        messages: (event.messages as BtwThread["messages"]) ?? [],
+        messages: event.messages,
         sources: [],
         streaming: false,
         streamText: "",

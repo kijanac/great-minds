@@ -248,8 +248,7 @@ def create_app() -> FastAPI:
             brain_id=ctx.brain.id,
             storage_root=ctx.brain.storage_root,
             data_dir=settings.data_dir,
-            label=ctx.brain.slug,
-            brain_kind=ctx.brain.kind,
+            label=ctx.brain.name,
             limit=req.limit,
         )
         response = await tasks.fetch_task_response(absurd, record)
@@ -287,7 +286,7 @@ def create_app() -> FastAPI:
     ) -> QueryResponse:
         all_sources = await brain_service.get_all_query_sources(user.id)
         target = querier.QuerySource(
-            storage=ctx.storage, label=ctx.brain.slug, brain_id=ctx.brain.id
+            storage=ctx.storage, label=ctx.brain.name, brain_id=ctx.brain.id
         )
         sources = [target] + [s for s in all_sources if s.label != target.label]
         answer = await querier.run_query(
@@ -312,7 +311,7 @@ def create_app() -> FastAPI:
     ) -> StreamingResponse:
         all_sources = await brain_service.get_all_query_sources(user.id)
         target = querier.QuerySource(
-            storage=ctx.storage, label=ctx.brain.slug, brain_id=ctx.brain.id
+            storage=ctx.storage, label=ctx.brain.name, brain_id=ctx.brain.id
         )
         sources = [target] + [s for s in all_sources if s.label != target.label]
 
@@ -340,12 +339,14 @@ def create_app() -> FastAPI:
     async def create_session(
         req: CreateSessionRequest,
         ctx: BrainContext = Depends(get_authorized_brain),
+        user: User = Depends(get_current_user),
     ) -> SessionPathResponse:
         path = sessions.create_session(
             ctx.storage,
             req.session_id,
             req.exchange.model_dump(),
             origin=req.origin,
+            user_id=str(user.id),
         )
         return SessionPathResponse(path=path)
 
@@ -370,8 +371,9 @@ def create_app() -> FastAPI:
     @app.get("/sessions", response_model=list[SessionListItem])
     async def list_all_sessions(
         ctx: BrainContext = Depends(get_authorized_brain),
+        user: User = Depends(get_current_user),
     ) -> list[SessionListItem]:
-        raw = sessions.list_sessions(ctx.storage)
+        raw = sessions.list_sessions(ctx.storage, user_id=str(user.id))
         return [
             SessionListItem(
                 id=s["id"],

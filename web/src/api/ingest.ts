@@ -1,10 +1,18 @@
-import { apiFetch } from "./client";
+import { z } from "zod";
+
+import { apiFetch, readJson } from "./client";
 
 export interface IngestResult {
   status: string;
   name: string;
   chars: number;
 }
+
+const ingestResultSchema: z.ZodType<IngestResult> = z.object({
+  status: z.string(),
+  name: z.string(),
+  chars: z.number(),
+});
 
 export async function uploadFile(file: File, destPath?: string): Promise<IngestResult> {
   const formData = new FormData();
@@ -23,7 +31,7 @@ export async function uploadFile(file: File, destPath?: string): Promise<IngestR
     throw new Error(detail);
   }
 
-  return res.json();
+  return readJson(res, ingestResultSchema);
 }
 
 export async function compile(): Promise<void> {
@@ -49,5 +57,5 @@ export async function ingestUrl(url: string): Promise<IngestResult> {
     throw new Error(detail);
   }
 
-  return res.json();
+  return readJson(res, ingestResultSchema);
 }

@@ -50,8 +50,7 @@ class ProposalService:
             brain_id=brain.id,
             storage_root=brain.storage_root,
             data_dir=self.data_dir,
-            label=brain.slug,
-            brain_kind=brain.kind,
+            label=brain.name,
         )
 
     def reject(self, proposal: SourceProposal) -> None:

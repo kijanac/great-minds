@@ -4,7 +4,7 @@ import { consumeStream, streamQuery } from "@/api/query";
 import { appendBtw, appendExchange, createSession } from "@/api/sessions";
 import type { BtwThread, Exchange, Phase, SelectionInfo, ThinkingBlock } from "@/lib/types";
 import { assistantMsg, userMsg } from "@/lib/types";
-import { buildBtwQuery, genId } from "@/lib/utils";
+import { buildBtwQuery, genId, isAbortError } from "@/lib/utils";
 
 function serializeThread(thread: Exchange[]): string {
   const parts: string[] = [];
@@ -139,7 +139,7 @@ export function useSession(options?: UseSessionOptions) {
         );
       }
     } catch (err) {
-      if ((err as Error).name === "AbortError") return;
+      if (isAbortError(err)) return;
       console.error("Query failed:", err);
       setPhase("idle");
     }
@@ -261,7 +261,7 @@ export function useSession(options?: UseSessionOptions) {
           }).catch((e) => console.error("Failed to save btw:", e));
         }
       } catch (err) {
-        if ((err as Error).name === "AbortError") return;
+        if (isAbortError(err)) return;
       }
     })();
   }, []);

@@ -15,11 +15,6 @@ if TYPE_CHECKING:
     from great_minds.core.users.models import User
 
 
-class BrainKind(enum.StrEnum):
-    PERSONAL = "personal"
-    TEAM = "team"
-
-
 class MemberRole(enum.StrEnum):
     OWNER = "owner"
     EDITOR = "editor"
@@ -33,11 +28,9 @@ class BrainORM(Base):
         UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
     )
     name: Mapped[str] = mapped_column(String(255))
-    slug: Mapped[str] = mapped_column(String(255))
     owner_id: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("users.id", ondelete="CASCADE")
     )
-    kind: Mapped[BrainKind] = mapped_column(Enum(BrainKind, name="brain_kind"))
     storage_root: Mapped[str] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()

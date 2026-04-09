@@ -56,7 +56,7 @@ export function ArticleChrome({
               if (e.key === "Enter") handleSubmit();
               if (e.key === "Escape") {
                 setQueryText("");
-                (e.target as HTMLInputElement).blur();
+                e.currentTarget.blur();
               }
             }}
           />

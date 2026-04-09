@@ -310,6 +310,7 @@ class SearchResult:
     heading: str
     snippet: str
     score: float
+    brain_id: UUID
 
 
 async def search(
@@ -342,6 +343,7 @@ async def search(
     rank_expr = func.ts_rank(SearchIndexEntry.tsv, tsquery)
     bm25_results = await session.execute(
         select(
+            SearchIndexEntry.brain_id,
             SearchIndexEntry.path,
             SearchIndexEntry.chunk_index,
             SearchIndexEntry.heading,
@@ -361,6 +363,7 @@ async def search(
     dist_expr = SearchIndexEntry.embedding.cosine_distance(query_embedding)
     vector_results = await session.execute(
         select(
+            SearchIndexEntry.brain_id,
             SearchIndexEntry.path,
             SearchIndexEntry.chunk_index,
             SearchIndexEntry.heading,
@@ -376,19 +379,19 @@ async def search(
     )
     vector_rows = vector_results.fetchall()
 
-    # RRF fusion — deduplicate by (path, chunk_index) across brains
-    scores: dict[tuple[str, int], float] = {}
-    metadata: dict[tuple[str, int], tuple[str, str]] = {}
+    # RRF fusion — deduplicate by (brain_id, path, chunk_index)
+    scores: dict[tuple[UUID, str, int], float] = {}
+    metadata: dict[tuple[UUID, str, int], tuple[str, str]] = {}
 
     for rank, row in enumerate(bm25_rows):
-        key = (row.path, row.chunk_index)
+        key = (row.brain_id, row.path, row.chunk_index)
         if key not in scores:
             scores[key] = 0
             metadata[key] = (row.heading, row.body)
         scores[key] += 1.0 / (RRF_K + rank + 1)
 
     for rank, row in enumerate(vector_rows):
-        key = (row.path, row.chunk_index)
+        key = (row.brain_id, row.path, row.chunk_index)
         if key not in scores:
             scores[key] = 0
             metadata[key] = (row.heading, row.body)
@@ -397,11 +400,17 @@ async def search(
     ranked = sorted(scores.items(), key=lambda x: x[1], reverse=True)[:limit]
 
     results = []
-    for (path, _chunk_index), score in ranked:
-        heading, body = metadata[(path, _chunk_index)]
+    for (brain_id, path, _chunk_index), score in ranked:
+        heading, body = metadata[(brain_id, path, _chunk_index)]
         snippet = body[:500] if len(body) > 500 else body
         results.append(
-            SearchResult(path=path, heading=heading, snippet=snippet, score=score)
+            SearchResult(
+                path=path,
+                heading=heading,
+                snippet=snippet,
+                score=score,
+                brain_id=brain_id,
+            )
         )
 
     return results

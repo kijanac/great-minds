@@ -49,7 +49,7 @@ class QuerySource:
 
     storage: Storage
     label: str
-    brain_id: UUID | None = None
+    brain_id: UUID
 
 
 SYSTEM_PROMPT = """\
@@ -247,8 +247,13 @@ def _classify_tool_call(name: str, args: dict) -> tuple[SourceType, dict] | None
 # ---------------------------------------------------------------------------
 
 
-def read_document(brains: list[QuerySource], path: str) -> str:
-    for src in brains:
+def read_document(
+    brains: list[QuerySource], path: str, *, brain_id: UUID | None = None
+) -> str:
+    sources = brains
+    if brain_id is not None:
+        sources = [s for s in brains if s.brain_id == brain_id] or brains
+    for src in sources:
         content = src.storage.read(path, strict=False)
         if content is not None:
             truncated = len(content) > 20_000
@@ -284,7 +289,7 @@ async def read_document_enriched(
 
     if path.startswith("wiki/") and path.endswith(".md"):
         slug = path.removeprefix("wiki/").removesuffix(".md")
-        brain_ids = [src.brain_id for src in brains if src.brain_id is not None]
+        brain_ids = [src.brain_id for src in brains]
         if brain_ids:
             repo = DocumentRepository(session)
             backlink_slugs = await repo.get_backlinks(brain_ids, slug)
@@ -301,7 +306,7 @@ async def search_wiki(
     brains: list[QuerySource], query: str, session: AsyncSession
 ) -> str:
     """Hybrid BM25 + vector search across all brains via the search index."""
-    brain_ids = [src.brain_id for src in brains if src.brain_id is not None]
+    brain_ids = [src.brain_id for src in brains]
     if not brain_ids:
         log_event("tool.search_skipped", query=query, reason="no_brain_ids")
         return f"No results found for: {query} (search index not available)"
@@ -326,7 +331,7 @@ async def query_documents(
     brains: list[QuerySource], args: dict, session: AsyncSession
 ) -> str:
     """Structured metadata query across all brains via the documents table."""
-    brain_ids = [src.brain_id for src in brains if src.brain_id is not None]
+    brain_ids = [src.brain_id for src in brains]
     if not brain_ids:
         return "No documents available (no indexed brains)"
 
@@ -748,7 +753,7 @@ def _build_session_context_messages(session_md: str) -> list[dict]:
 
 async def _load_tools(brains: list[QuerySource], session: AsyncSession) -> list[dict]:
     """Load tag/concept vocabulary from DB and build the full tool list."""
-    brain_ids = [src.brain_id for src in brains if src.brain_id is not None]
+    brain_ids = [src.brain_id for src in brains]
     if not brain_ids:
         return _BASE_TOOLS
     repo = DocumentRepository(session)

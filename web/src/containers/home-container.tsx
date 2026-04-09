@@ -77,6 +77,7 @@ function HomeContent({ sessionId, initialExchanges, initialQuery, origin }: Home
 
   const isActive = session.phase !== "idle";
   const prefersReducedMotion = useReducedMotion();
+  const shouldAnimate = !prefersReducedMotion;
 
   const barTransition = prefersReducedMotion ? { duration: 0 } : { duration: 0.28, ease: EASE_OUT };
   const fadeIn = prefersReducedMotion ? { duration: 0 } : { duration: 0.15 };

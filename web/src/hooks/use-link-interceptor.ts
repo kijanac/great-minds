@@ -18,7 +18,9 @@ export function useLinkInterceptor(onDocOpen?: (path: string) => void) {
 
   return useCallback(
     (e: React.MouseEvent) => {
-      const anchor = (e.target as Element).closest("a");
+      if (!(e.target instanceof Element)) return;
+
+      const anchor = e.target.closest("a");
       if (!anchor) return;
 
       const href = anchor.getAttribute("href");

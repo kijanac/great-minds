@@ -43,11 +43,6 @@ async def create_proposal(
     except ValueError:
         raise HTTPException(status_code=404, detail="Brain not found")
 
-    if brain.kind != "team":
-        raise HTTPException(
-            status_code=400, detail="Proposals are only for team brains"
-        )
-
     proposal = await repository.create_proposal(
         session,
         brain_id=req.brain_id,

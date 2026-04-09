@@ -1,3 +1,5 @@
+import { z } from "zod";
+
 import type { SourceRef } from "@/lib/types";
 
 import { apiFetch } from "./client";
@@ -10,9 +12,46 @@ interface StreamQueryOptions {
   signal?: AbortSignal;
 }
 
-export interface StreamEvent {
-  event: "source" | "token" | "done" | "error";
-  data: Record<string, string>;
+const sourceEventDataSchema = z.discriminatedUnion("type", [
+  z.object({ type: z.literal("article"), path: z.string() }),
+  z.object({ type: z.literal("raw"), path: z.string() }),
+  z.object({ type: z.literal("search"), query: z.string() }),
+  z.object({ type: z.literal("query"), filters: z.record(z.unknown()).optional() }),
+]);
+
+const tokenEventSchema = z.object({
+  event: z.literal("token"),
+  data: z.object({ text: z.string() }),
+});
+
+const errorEventSchema = z.object({
+  event: z.literal("error"),
+  data: z.object({ message: z.string() }),
+});
+
+export type StreamEvent =
+  | { event: "source"; data: z.infer<typeof sourceEventDataSchema> }
+  | z.infer<typeof tokenEventSchema>
+  | z.infer<typeof errorEventSchema>
+  | { event: "done"; data: Record<string, never> };
+
+function parseStreamEvent(eventType: string, dataStr: string): StreamEvent {
+  const data: unknown = JSON.parse(dataStr);
+
+  if (eventType === "source") {
+    return { event: "source", data: sourceEventDataSchema.parse(data) };
+  }
+  if (eventType === "token") {
+    return tokenEventSchema.parse({ event: "token", data });
+  }
+  if (eventType === "done") {
+    return { event: "done", data: {} };
+  }
+  if (eventType === "error") {
+    return errorEventSchema.parse({ event: "error", data });
+  }
+
+  throw new Error(`Unknown stream event type: ${eventType}`);
 }
 
 export async function* streamQuery(
@@ -35,7 +74,11 @@ export async function* streamQuery(
     throw new Error(`Stream query failed: ${res.status} ${res.statusText}`);
   }
 
-  const reader = res.body!.getReader();
+  if (!res.body) {
+    throw new Error("Stream query response missing body");
+  }
+
+  const reader = res.body.getReader();
   const decoder = new TextDecoder();
   let buffer = "";
   let eventType = "";
@@ -56,10 +99,7 @@ export async function* streamQuery(
         dataStr = line.slice(6);
       } else if (line === "") {
         if (eventType && dataStr) {
-          yield {
-            event: eventType as StreamEvent["event"],
-            data: JSON.parse(dataStr),
-          };
+          yield parseStreamEvent(eventType, dataStr);
         }
         eventType = "";
         dataStr = "";
@@ -93,10 +133,20 @@ export async function consumeStream(
       streamText += event.data.text;
       callbacks?.onToken?.(streamText);
     } else if (event.event === "source") {
-      const label = event.data.path ?? event.data.query;
-      const type = event.data.type;
-      if (label && (type === "article" || type === "raw" || type === "search")) {
-        sources.push({ label, type: type as SourceRef["type"], thinking: streamText || undefined });
+      if (event.data.type === "article" || event.data.type === "raw") {
+        sources.push({
+          label: event.data.path,
+          type: event.data.type,
+          thinking: streamText || undefined,
+        });
+        callbacks?.onSources?.([...sources]);
+        clearOnNextToken = true;
+      } else if (event.data.type === "search") {
+        sources.push({
+          label: event.data.query,
+          type: "search",
+          thinking: streamText || undefined,
+        });
         callbacks?.onSources?.([...sources]);
         clearOnNextToken = true;
       }

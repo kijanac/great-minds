@@ -7,10 +7,23 @@ import {
   useSyncExternalStore,
 } from "react";
 import type { ReactNode } from "react";
+import { decodeJwt } from "jose";
 import { clearTokens, ensureBrainId } from "@/api/client";
+
+function getUserIdFromToken(): string | null {
+  const token = localStorage.getItem("access_token");
+  if (!token) return null;
+  try {
+    const { sub } = decodeJwt(token);
+    return typeof sub === "string" ? sub : null;
+  } catch {
+    return null;
+  }
+}
 
 interface AuthContextValue {
   isAuthenticated: boolean;
+  userId: string | null;
   login: () => void;
   logout: () => void;
 }
@@ -28,6 +41,7 @@ function getSnapshot(): boolean {
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const isAuthenticated = useSyncExternalStore(subscribe, getSnapshot);
+  const userId = isAuthenticated ? getUserIdFromToken() : null;
 
   useEffect(() => {
     if (isAuthenticated) ensureBrainId();
@@ -43,8 +57,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const value = useMemo(
-    () => ({ isAuthenticated, login, logout }),
-    [isAuthenticated, login, logout],
+    () => ({ isAuthenticated, userId, login, logout }),
+    [isAuthenticated, userId, login, logout],
   );
 
   return <AuthContext value={value}>{children}</AuthContext>;
