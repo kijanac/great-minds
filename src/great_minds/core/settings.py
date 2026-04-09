@@ -22,8 +22,8 @@ class Settings(BaseSettings):
     jwt_refresh_expiry_days: int = 7
     auth_code_expiry_minutes: int = 5
     openrouter_api_key: str | None = None
-    mailersend_api_key: str | None = None
-    mailersend_from_email: str | None = None
+    resend_api_key: str | None = None
+    resend_from_email: str | None = None
     data_dir: str = "/data"
     cors_origins: list[str] = ["http://localhost:5173"]
 

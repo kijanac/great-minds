@@ -760,7 +760,6 @@ dependencies = [
     { name = "crawl4ai" },
     { name = "fastapi" },
     { name = "httpx" },
-    { name = "mailersend" },
     { name = "markitdown" },
     { name = "openai" },
     { name = "pgvector" },
@@ -768,6 +767,7 @@ dependencies = [
     { name = "pydantic-settings" },
     { name = "pyjwt" },
     { name = "python-multipart" },
+    { name = "resend" },
     { name = "ruamel-yaml" },
     { name = "sqlalchemy", extra = ["asyncio"] },
     { name = "uvicorn" },
@@ -787,7 +787,6 @@ requires-dist = [
     { name = "crawl4ai", specifier = ">=0.8.6" },
     { name = "fastapi", specifier = ">=0.135.3" },
     { name = "httpx", specifier = ">=0.28.1" },
-    { name = "mailersend", specifier = ">=2.0.0" },
     { name = "markitdown", specifier = ">=0.1.5" },
     { name = "openai", specifier = ">=2.0.0" },
     { name = "pgvector", specifier = ">=0.4.2" },
@@ -795,6 +794,7 @@ requires-dist = [
     { name = "pydantic-settings", specifier = ">=2.13.1" },
     { name = "pyjwt", specifier = ">=2.10.0" },
     { name = "python-multipart", specifier = ">=0.0.24" },
+    { name = "resend", specifier = ">=2.27.0" },
     { name = "ruamel-yaml", specifier = ">=0.19.0" },
     { name = "sqlalchemy", extras = ["asyncio"], specifier = ">=2.0.49" },
     { name = "uvicorn", specifier = ">=0.44.0" },
@@ -1156,19 +1156,6 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/25/8f/132b0d7cd51c02c39fd52658a5896276c30c8cc2fd453270b19db8c40f7e/magika-0.6.3-py3-none-macosx_11_0_arm64.whl", hash = "sha256:86901e64b05dde5faff408c9b8245495b2e1fd4c226e3393d3d2a3fee65c504b", size = 13358841, upload-time = "2025-10-30T15:22:27.413Z" },
     { url = "https://files.pythonhosted.org/packages/c4/03/5ed859be502903a68b7b393b17ae0283bf34195cfcca79ce2dc25b9290e7/magika-0.6.3-py3-none-manylinux_2_28_x86_64.whl", hash = "sha256:3d9661eedbdf445ac9567e97e7ceefb93545d77a6a32858139ea966b5806fb64", size = 15367335, upload-time = "2025-10-30T15:22:29.907Z" },
     { url = "https://files.pythonhosted.org/packages/7b/9e/f8ee7d644affa3b80efdd623a3d75865c8f058f3950cb87fb0c48e3559bc/magika-0.6.3-py3-none-win_amd64.whl", hash = "sha256:e57f75674447b20cab4db928ae58ab264d7d8582b55183a0b876711c2b2787f3", size = 12692831, upload-time = "2025-10-30T15:22:32.063Z" },
-]
-
-[[package]]
-name = "mailersend"
-version = "2.0.0"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "pydantic", extra = ["email"] },
-    { name = "requests" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/76/0e/3d93829741e2dfd51872874042bfd933596204fbab923e6d93797baecaf5/mailersend-2.0.0.tar.gz", hash = "sha256:9f121909eb55716197c0c64d92760091ea4c4a965eebb3245f6634d8bcce0607", size = 58922, upload-time = "2025-08-01T11:00:18.652Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/22/80/8ae2cd3681c953c940888e2c9dff13da9a8c076f0d6296b2eee90ee958eb/mailersend-2.0.0-py3-none-any.whl", hash = "sha256:a5280db088c7af11dacf6eab68da4c7d597c30e8fa6a54b20a739aa7df2acc4b", size = 101926, upload-time = "2025-08-01T11:00:17.67Z" },
 ]
 
 [[package]]
@@ -2088,6 +2075,19 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/5f/a4/98b9c7c6428a668bf7e42ebb7c79d576a1c3c1e3ae2d47e674b468388871/requests-2.33.1.tar.gz", hash = "sha256:18817f8c57c6263968bc123d237e3b8b08ac046f5456bd1e307ee8f4250d3517", size = 134120, upload-time = "2026-03-30T16:09:15.531Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/d7/8e/7540e8a2036f79a125c1d2ebadf69ed7901608859186c856fa0388ef4197/requests-2.33.1-py3-none-any.whl", hash = "sha256:4e6d1ef462f3626a1f0a0a9c42dd93c63bad33f9f1c1937509b8c5c8718ab56a", size = 64947, upload-time = "2026-03-30T16:09:13.83Z" },
+]
+
+[[package]]
+name = "resend"
+version = "2.27.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "requests" },
+    { name = "typing-extensions" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/96/da/3d342cacbde7143e36782243caa3715d9e49cadb43e804419493c784869b/resend-2.27.0.tar.gz", hash = "sha256:abc183da7566c1fdba8221ec5acd9f954c2ff516a0c2615bee2a41bc9db3e277", size = 37177, upload-time = "2026-04-01T21:19:31.823Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/b4/95/783b09d24c8f40b900a2728b67fd3c1401d4a6afcdf1db1c8475c249559d/resend-2.27.0-py2.py3-none-any.whl", hash = "sha256:5bc8ddebb0418127fc3e47eb29ab72af727861481c4b051b96cb693df8f8dc40", size = 59831, upload-time = "2026-04-01T21:19:30.471Z" },
 ]
 
 [[package]]
