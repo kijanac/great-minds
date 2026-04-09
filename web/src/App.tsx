@@ -6,6 +6,7 @@ import { AuthProvider, useAuth } from "@/lib/auth";
 import HomePage from "@/pages/home";
 import LoginPage from "@/pages/login";
 import DocPage, { docLoader } from "@/pages/doc";
+import ExplorePage from "@/pages/explore";
 import ProjectSettingsPage from "@/pages/project-settings";
 import SessionPage from "@/pages/session";
 import SessionsPage from "@/pages/sessions";
@@ -49,6 +50,7 @@ const router = createBrowserRouter([
             element: <DocPage />,
             loader: docLoader,
           },
+          { path: "/explore", element: <ExplorePage /> },
           { path: "/project/:id/settings", element: <ProjectSettingsPage /> },
           { path: "/sessions", element: <SessionsPage /> },
           { path: "/sessions/:id", element: <SessionPage /> },

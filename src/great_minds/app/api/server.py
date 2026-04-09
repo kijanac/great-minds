@@ -39,6 +39,7 @@ from great_minds.core.brains import _linter as linter
 from great_minds.core.brains._ingester import ingest_document, normalize_url, slugify
 from great_minds.core.brains.service import BrainService
 from great_minds.core.db import engine, get_session, session_maker
+from great_minds.core.documents.repository import DocumentRepository
 from great_minds.core.settings import Settings, get_settings
 from great_minds.core.tasks import create_absurd
 from great_minds.core.users.models import User
@@ -139,6 +140,13 @@ class SessionListItem(BaseModel):
 class ArticleResponse(BaseModel):
     slug: str
     content: str
+
+
+class RecentArticleItem(BaseModel):
+    title: str
+    file_path: str
+    doc_kind: str
+    updated_at: str
 
 
 class DocResponse(BaseModel):
@@ -542,6 +550,26 @@ def create_app() -> FastAPI:
         ctx: BrainContext = Depends(get_authorized_brain),
     ) -> list[str]:
         return brain_ops.list_articles(ctx.storage)
+
+    @app.get("/wiki/recent", response_model=list[RecentArticleItem])
+    async def recent_articles(
+        limit: int = 10,
+        ctx: BrainContext = Depends(get_authorized_brain),
+        session: AsyncSession = Depends(get_session),
+    ) -> list[RecentArticleItem]:
+        repo = DocumentRepository(session)
+        docs = await repo.query_documents(
+            [ctx.brain.id], doc_kind="wiki", limit=limit
+        )
+        return [
+            RecentArticleItem(
+                title=d.title or d.file_path,
+                file_path=d.file_path,
+                doc_kind=d.doc_kind,
+                updated_at=d.updated_at.isoformat() if d.updated_at else "",
+            )
+            for d in docs
+        ]
 
     @app.get("/wiki/{slug}", response_model=ArticleResponse)
     async def read_article(

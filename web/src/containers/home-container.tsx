@@ -6,6 +6,8 @@ import { Button } from "@/components/ui/button";
 import { IngestionContainer } from "@/containers/ingestion-container";
 import { SearchBar } from "@/components/search-bar";
 import { SessionThread } from "@/containers/session-thread";
+import { useBrain } from "@/hooks/use-brain";
+import { useExploreBadge } from "@/hooks/use-explore-badge";
 import { useSavedSession } from "@/hooks/use-saved-session";
 import { useSession } from "@/hooks/use-session";
 import { useSessions } from "@/hooks/use-sessions";
@@ -52,6 +54,8 @@ const EASE_OUT: [number, number, number, number] = [0.25, 1, 0.5, 1];
 
 function HomeContent({ sessionId, initialExchanges, initialQuery, origin }: HomeContentProps) {
   const navigate = useViewNavigate();
+  const { activeBrain } = useBrain();
+  const badgeCount = useExploreBadge();
   const [query, setQuery] = useState(initialQuery ?? initialExchanges?.[0]?.query ?? "");
   const {
     sessions: recentSessions,
@@ -143,6 +147,22 @@ function HomeContent({ sessionId, initialExchanges, initialQuery, origin }: Home
               exit={{ opacity: 0, transition: fadeOut }}
               transition={fadeIn}
             >
+              {activeBrain && (
+                <button
+                  onClick={() => navigate("/explore")}
+                  className="mb-6 flex items-center gap-2 group cursor-pointer"
+                >
+                  <span className="font-mono text-[length:var(--text-chrome)] tracking-[0.14em] text-warm-ghost group-hover:text-warm transition-colors">
+                    {activeBrain.name}
+                  </span>
+                  {badgeCount > 0 && (
+                    <span className="inline-flex items-center justify-center min-w-[18px] h-[18px] px-1 rounded-full bg-gold/20 text-gold font-mono text-[10px] leading-none">
+                      {badgeCount}
+                    </span>
+                  )}
+                </button>
+              )}
+
               <motion.div
                 className="w-full max-w-[680px] flex items-center gap-3"
                 layoutId="search-bar"
