@@ -95,11 +95,30 @@ class TagIssue:
 
 @dataclass
 class ResearchSuggestion:
-    """A tag that's popular enough to warrant its own wiki article."""
+    """A topic that warrants deeper coverage or its own wiki article."""
 
-    tag: str
-    usage_count: int
-    mentioned_in: list[str]  # sample of raw doc paths
+    topic: str
+    source: Literal["tag_frequency", "llm_analysis"]
+    mentioned_in: list[str]  # sample of doc paths
+    usage_count: int = 0  # for tag-based suggestions
+    suggested_category: str = ""  # for LLM-derived suggestions
+
+
+@dataclass
+class NamingIssue:
+    """Same concept appearing under different names across articles."""
+
+    variants: list[str]
+    canonical: str
+    articles: list[str]
+
+
+@dataclass
+class Contradiction:
+    """Articles describing the same thing differently."""
+
+    description: str
+    articles: list[str]
 
 
 @dataclass
@@ -125,6 +144,7 @@ class LintResult:
     remaining_issues: int = 0
     counts: LintCounts = field(default_factory=LintCounts)
     research_suggestions: list[ResearchSuggestion] = field(default_factory=list)
+    contradictions: list[Contradiction] = field(default_factory=list)
 
 
 # ---------------------------------------------------------------------------
@@ -363,9 +383,10 @@ def detect_promotion_candidates(
             continue
         suggestions.append(
             ResearchSuggestion(
-                tag=tag,
-                usage_count=count,
+                topic=tag,
+                source="tag_frequency",
                 mentioned_in=tag_docs.get(tag, []),
+                usage_count=count,
             )
         )
 
@@ -666,6 +687,139 @@ def fix_tags(
 
 
 # ---------------------------------------------------------------------------
+# Deep checks (LLM-assisted, opt-in with deep=True)
+# ---------------------------------------------------------------------------
+
+
+async def check_consistency(
+    articles: dict[str, str],
+) -> tuple[list[NamingIssue], list[Contradiction], list[ResearchSuggestion]]:
+    """Use LLM to find naming inconsistencies, contradictions, and coverage gaps."""
+    if not articles:
+        return [], [], []
+
+    # Build condensed view: first 300 chars of each article
+    summaries = "\n\n".join(
+        f"### {rel_path}\n{content[:300]}" for rel_path, content in articles.items()
+    )
+
+    prompt = f"""\
+You are a wiki consistency checker. Given summaries of all articles in a \
+research knowledge base wiki, identify:
+
+1. **Inconsistent naming**: The same concept appearing under different names \
+in different articles (e.g. "dictatorship of the proletariat" vs "proletarian \
+dictatorship", or "Narodniks" vs "Populists")
+2. **Contradictions**: Articles that describe the same position or event \
+differently
+3. **Coverage gaps**: Concepts, thinkers, or debates that are mentioned in \
+articles but don't have their own dedicated article yet — these are candidates \
+for new articles
+
+For each issue, specify which articles are involved.
+
+Return a JSON object with:
+- "naming": [{{"variants": ["name1", "name2"], "canonical": "preferred name", \
+"articles": ["article1.md", "article2.md"]}}]
+- "contradictions": [{{"description": "...", "articles": ["a.md", "b.md"]}}]
+- "gaps": [{{"topic": "...", "mentioned_in": ["a.md", "b.md"], \
+"suggested_category": "concepts|thinkers|traditions|debates"}}]
+
+Return ONLY the JSON object.
+
+{summaries}"""
+
+    client = get_async_client()
+    response = await api_call(
+        client,
+        model=EXTRACT_MODEL,
+        messages=[{"role": "user", "content": prompt}],
+        temperature=0.2,
+    )
+
+    text = extract_content(response)
+    if not text:
+        return [], [], []
+
+    data = parse_json_response(text)
+    if not data:
+        return [], [], []
+
+    naming = [
+        NamingIssue(
+            variants=item.get("variants", []),
+            canonical=item.get("canonical", ""),
+            articles=item.get("articles", []),
+        )
+        for item in data.get("naming", [])
+        if item.get("variants") and item.get("canonical")
+    ]
+
+    contradictions = [
+        Contradiction(
+            description=item.get("description", ""),
+            articles=item.get("articles", []),
+        )
+        for item in data.get("contradictions", [])
+        if item.get("description")
+    ]
+
+    gaps = [
+        ResearchSuggestion(
+            topic=item.get("topic", ""),
+            source="llm_analysis",
+            mentioned_in=item.get("mentioned_in", []),
+            suggested_category=item.get("suggested_category", ""),
+        )
+        for item in data.get("gaps", [])
+        if item.get("topic")
+    ]
+
+    return naming, contradictions, gaps
+
+
+async def fix_naming(
+    storage: Storage,
+    articles: dict[str, str],
+    naming_issues: list[NamingIssue],
+) -> list[Fix]:
+    """Standardize terminology by replacing naming variants with canonical forms."""
+    if not naming_issues:
+        return []
+
+    fixes: list[Fix] = []
+    for issue in naming_issues:
+        non_canonical = [v for v in issue.variants if v != issue.canonical]
+        if not non_canonical:
+            continue
+
+        for rel_path in issue.articles:
+            article_path = f"wiki/{rel_path}"
+            content = storage.read(article_path, strict=False)
+            if content is None:
+                continue
+
+            updated = content
+            replaced = []
+            for variant in non_canonical:
+                if variant in updated:
+                    # Replace in running text but not inside link targets or headings
+                    # Simple approach: replace the variant, preserving case of first char
+                    count = updated.count(variant)
+                    if count > 0:
+                        updated = updated.replace(variant, issue.canonical)
+                        replaced.append(f"{variant}→{issue.canonical} ({count}x)")
+
+            if updated != content:
+                storage.write(article_path, updated)
+                fixes.append(
+                    Fix(file=rel_path, description=f"naming: {', '.join(replaced)}")
+                )
+
+    return fixes
+
+
+# ---------------------------------------------------------------------------
 # Targeted lint (for post-compilation checks across brains)
 # ---------------------------------------------------------------------------
 
@@ -768,13 +922,29 @@ async def run_lint(
     suggestions = detect_promotion_candidates(
         tag_counts, tag_docs, articles, min_uses=promotion_threshold
     )
+
+    # --- Deep checks (LLM, opt-in) ---
+    naming_issues: list[NamingIssue] = []
+    contradictions: list[Contradiction] = []
+
+    if deep:
+        log.info("lint: running LLM consistency check")
+        naming_issues, contradictions, llm_gaps = await check_consistency(articles)
+        suggestions.extend(llm_gaps)
+        log.info(
+            "lint: deep check found %d naming issues, %d contradictions, %d coverage gaps",
+            len(naming_issues),
+            len(contradictions),
+            len(llm_gaps),
+        )
+
     if suggestions:
         log.info(
-            "lint: %d research suggestions (tags that could become articles)",
+            "lint: %d research suggestions total",
             len(suggestions),
         )
         for s in suggestions:
-            log.info("lint: suggestion — '%s' (used %d times)", s.tag, s.usage_count)
+            log.info("lint: suggestion — '%s' (%s)", s.topic, s.source)
 
     counts = LintCounts(
         dead_links=len(dead_links),
@@ -815,6 +985,7 @@ async def run_lint(
             remaining_issues=total_detected,
             counts=counts,
             research_suggestions=suggestions,
+            contradictions=contradictions,
         )
 
     # --- Auto-fix ---
@@ -828,7 +999,10 @@ async def run_lint(
     citation_fixes = await fix_broken_citations(storage, broken_citations)
     index_fixes = await fix_missing_index_entries(storage, missing_index)
 
-    all_fixes = tag_fixes + link_fixes + citation_fixes + index_fixes
+    # Deep fixes (only when deep=True found issues)
+    naming_fixes = await fix_naming(storage, articles, naming_issues)
+
+    all_fixes = tag_fixes + link_fixes + citation_fixes + index_fixes + naming_fixes
 
     for f in all_fixes:
         log.info("lint: fixed %s — %s", f.file, f.description)
@@ -853,4 +1027,5 @@ async def run_lint(
         remaining_issues=max(0, remaining),
         counts=counts,
         research_suggestions=suggestions,
+        contradictions=contradictions,
     )

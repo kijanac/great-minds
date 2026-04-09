@@ -1,8 +1,8 @@
 import { useState } from "react";
-import { useNavigate } from "react-router";
 import { useAuth } from "@/lib/auth";
 import { loginWithCode, requestCode } from "@/api/client";
 import LoginForm from "@/components/login-form";
+import { useViewNavigate } from "@/hooks/use-view-navigate";
 
 type Step = "email" | "code";
 
@@ -13,7 +13,7 @@ export default function LoginContainer() {
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
   const { login } = useAuth();
-  const navigate = useNavigate();
+  const navigate = useViewNavigate();
 
   async function handleRequestCode(e: React.FormEvent) {
     e.preventDefault();

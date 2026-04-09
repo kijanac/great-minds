@@ -83,15 +83,6 @@ class IngestUrlRequest(BaseModel):
     content_type: str = "texts"
 
 
-class BulkIngestRequest(BaseModel):
-    source_dir: str
-    content_type: str = "texts"
-    dest_dir: str | None = None
-    author: str | None = None
-    date: str | int | None = None
-    source: str | None = None
-
-
 class TaskResponse(BaseModel):
     id: str
     type: str
@@ -171,9 +162,16 @@ class LintCountsResponse(BaseModel):
 
 
 class ResearchSuggestionItem(BaseModel):
-    tag: str
-    usage_count: int
+    topic: str
+    source: str  # "tag_frequency" or "llm_analysis"
     mentioned_in: list[str]
+    usage_count: int = 0
+    suggested_category: str = ""
+
+
+class ContradictionItem(BaseModel):
+    description: str
+    articles: list[str]
 
 
 class LintResponse(BaseModel):
@@ -181,6 +179,7 @@ class LintResponse(BaseModel):
     remaining_issues: int
     counts: LintCountsResponse
     research_suggestions: list[ResearchSuggestionItem] = []
+    contradictions: list[ContradictionItem] = []
 
 
 # ---------------------------------------------------------------------------
@@ -395,33 +394,11 @@ def create_app() -> FastAPI:
             raise HTTPException(status_code=404, detail="Session not found")
         return SessionResponse(id=session_id, events=events)
 
-    async def _try_compile(
-        ctx: BrainContext,
-        session: AsyncSession,
-        absurd: AsyncAbsurd,
-        settings: Settings,
-    ) -> None:
-        """Best-effort compile trigger after ingestion. Skips if LLM not configured."""
-        if not settings.openrouter_api_key:
-            return
-        await tasks.spawn_compile(
-            absurd,
-            session,
-            brain_id=ctx.brain.id,
-            storage_root=ctx.brain.storage_root,
-            data_dir=settings.data_dir,
-            label=ctx.brain.slug,
-            brain_kind=ctx.brain.kind,
-        )
-        await session.commit()
-
     @app.post("/ingest")
     async def ingest(
         req: IngestRequest,
         ctx: BrainContext = Depends(get_authorized_brain),
         session: AsyncSession = Depends(get_session),
-        absurd: AsyncAbsurd = Depends(get_absurd),
-        settings: Settings = Depends(get_settings),
         doc_service: DocumentService = Depends(get_document_service),
     ) -> dict:
         config = brain_ops.load_config(ctx.storage)
@@ -442,7 +419,6 @@ def create_app() -> FastAPI:
                 ctx.brain.id, req.dest, result, doc_kind=req.content_type
             )
             await session.commit()
-        await _try_compile(ctx, session, absurd, settings)
         return {"status": "ingested", "chars": len(result)}
 
     @app.post("/ingest/upload")
@@ -450,13 +426,12 @@ def create_app() -> FastAPI:
         file: UploadFile,
         ctx: BrainContext = Depends(get_authorized_brain),
         session: AsyncSession = Depends(get_session),
-        absurd: AsyncAbsurd = Depends(get_absurd),
-        settings: Settings = Depends(get_settings),
         doc_service: DocumentService = Depends(get_document_service),
         content_type: str = "texts",
         author: str | None = None,
         date: str | None = None,
         source: str | None = None,
+        dest_path: str | None = None,
     ) -> dict:
         config = brain_ops.load_config(ctx.storage)
 
@@ -465,7 +440,13 @@ def create_app() -> FastAPI:
         ext = "." + filename.rsplit(".", 1)[-1].lower() if "." in filename else ".txt"
 
         if ext in (".md", ".txt", ".text", ".markdown"):
-            content = raw_bytes.decode("utf-8")
+            try:
+                content = raw_bytes.decode("utf-8")
+            except UnicodeDecodeError:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"File is not valid UTF-8: {filename}",
+                )
         else:
             converter = MarkItDown()
             result = await asyncio.to_thread(
@@ -475,8 +456,15 @@ def create_app() -> FastAPI:
             )
             content = result.text_content
 
-        slug = slugify(filename.rsplit(".", 1)[0])
-        dest = f"raw/{content_type}/{slug}.md"
+        if dest_path:
+            if ".." in dest_path.split("/"):
+                raise HTTPException(status_code=400, detail="Invalid path")
+            # Strip any existing extension before adding .md
+            base = dest_path.rsplit(".", 1)[0] if "." in dest_path else dest_path
+            dest = f"raw/{content_type}/{base}.md"
+        else:
+            slug = slugify(filename.rsplit(".", 1)[0])
+            dest = f"raw/{content_type}/{slug}.md"
 
         kwargs: dict = {}
         if author:
@@ -492,7 +480,6 @@ def create_app() -> FastAPI:
             ctx.brain.id, dest, ingested, doc_kind=content_type
         )
         await session.commit()
-        await _try_compile(ctx, session, absurd, settings)
         return {"status": "ingested", "name": filename, "chars": len(ingested)}
 
     @app.post("/ingest/url")
@@ -500,8 +487,6 @@ def create_app() -> FastAPI:
         req: IngestUrlRequest,
         ctx: BrainContext = Depends(get_authorized_brain),
         session: AsyncSession = Depends(get_session),
-        absurd: AsyncAbsurd = Depends(get_absurd),
-        settings: Settings = Depends(get_settings),
         doc_service: DocumentService = Depends(get_document_service),
     ) -> dict:
         config = brain_ops.load_config(ctx.storage)
@@ -548,40 +533,7 @@ def create_app() -> FastAPI:
             ctx.brain.id, dest, ingested, doc_kind=req.content_type
         )
         await session.commit()
-        await _try_compile(ctx, session, absurd, settings)
         return {"status": "ingested", "name": title, "url": url, "chars": len(ingested)}
-
-    @app.post("/ingest/bulk", response_model=TaskResponse)
-    async def ingest_bulk(
-        req: BulkIngestRequest,
-        ctx: BrainContext = Depends(get_authorized_brain),
-        session: AsyncSession = Depends(get_session),
-        absurd: AsyncAbsurd = Depends(get_absurd),
-        settings: Settings = Depends(get_settings),
-    ) -> TaskResponse:
-        ingest_kwargs = {}
-        if req.author:
-            ingest_kwargs["author"] = req.author
-        if req.date is not None:
-            ingest_kwargs["date"] = req.date
-        if req.source:
-            ingest_kwargs["source"] = req.source
-
-        record = await tasks.spawn_bulk_ingest(
-            absurd,
-            session,
-            brain_id=ctx.brain.id,
-            storage_root=ctx.brain.storage_root,
-            data_dir=settings.data_dir,
-            label=ctx.brain.slug,
-            source_dir=req.source_dir,
-            content_type=req.content_type,
-            dest_dir=req.dest_dir,
-            ingest_kwargs=ingest_kwargs,
-        )
-        await session.commit()
-        response = await tasks.fetch_task_response(absurd, record)
-        return TaskResponse(**response)
 
     @app.get("/wiki", response_model=list[str])
     async def list_articles(
@@ -631,11 +583,20 @@ def create_app() -> FastAPI:
             ),
             research_suggestions=[
                 ResearchSuggestionItem(
-                    tag=s.tag,
-                    usage_count=s.usage_count,
+                    topic=s.topic,
+                    source=s.source,
                     mentioned_in=s.mentioned_in,
+                    usage_count=s.usage_count,
+                    suggested_category=s.suggested_category,
                 )
                 for s in result.research_suggestions
+            ],
+            contradictions=[
+                ContradictionItem(
+                    description=c.description,
+                    articles=c.articles,
+                )
+                for c in result.contradictions
             ],
         )
 

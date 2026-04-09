@@ -1,19 +1,18 @@
-import { useRef } from "react";
+import { useState } from "react";
 import { useSearchParams } from "react-router";
 
 import { HomeContainer } from "@/containers/home-container";
 
 export default function HomePage() {
   const [searchParams, setSearchParams] = useSearchParams();
-  const consumed = useRef(false);
 
-  // Read params once, then clear them to prevent re-submission on back-nav
-  const initialQuery = useRef(searchParams.get("q") ?? undefined).current;
-  const origin = useRef(searchParams.get("origin") ?? undefined).current;
-  if ((initialQuery || origin) && !consumed.current) {
-    consumed.current = true;
-    setSearchParams({}, { replace: true });
-  }
+  // Capture params once on mount, then clear to prevent re-submission on back-nav
+  const [{ initialQuery, origin }] = useState(() => {
+    const q = searchParams.get("q") ?? undefined;
+    const o = searchParams.get("origin") ?? undefined;
+    if (q || o) setSearchParams({}, { replace: true });
+    return { initialQuery: q, origin: o };
+  });
 
   return <HomeContainer initialQuery={initialQuery} origin={origin} />;
 }

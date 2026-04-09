@@ -399,3 +399,58 @@
     opacity: 1;
   }
 }
+
+/* View Transitions */
+
+::view-transition-old(root),
+::view-transition-new(root) {
+  animation-duration: 0.2s;
+  animation-timing-function: cubic-bezier(0.25, 1, 0.5, 1);
+}
+
+/* Depth down: surface → doc (content rises from below) */
+[data-transition="depth-down"] ::view-transition-old(root) {
+  animation-duration: 0.15s;
+}
+[data-transition="depth-down"] ::view-transition-new(root) {
+  animation: vt-rise 0.25s cubic-bezier(0.25, 1, 0.5, 1);
+}
+
+/* Depth up: doc → surface (content settles from above) */
+[data-transition="depth-up"] ::view-transition-old(root) {
+  animation-duration: 0.15s;
+}
+[data-transition="depth-up"] ::view-transition-new(root) {
+  animation: vt-settle 0.25s cubic-bezier(0.25, 1, 0.5, 1);
+}
+
+/* Doc slide: doc → doc wiki traversal (horizontal page turn) */
+[data-transition="doc-slide"] ::view-transition-old(root) {
+  animation: vt-exit-left 0.15s cubic-bezier(0.25, 1, 0.5, 1) forwards;
+}
+[data-transition="doc-slide"] ::view-transition-new(root) {
+  animation: vt-enter-right 0.22s cubic-bezier(0.25, 1, 0.5, 1);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  ::view-transition-old(root),
+  ::view-transition-new(root) {
+    animation-duration: 0s !important;
+  }
+}
+
+@keyframes vt-rise {
+  from { opacity: 0; transform: translateY(8px); }
+}
+
+@keyframes vt-settle {
+  from { opacity: 0; transform: translateY(-8px); }
+}
+
+@keyframes vt-exit-left {
+  to { opacity: 0; transform: translateX(-16px); }
+}
+
+@keyframes vt-enter-right {
+  from { opacity: 0; transform: translateX(16px); }
+}

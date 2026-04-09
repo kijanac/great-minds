@@ -1,5 +1,6 @@
 import { useCallback } from "react";
-import { useNavigate } from "react-router";
+
+import { useViewNavigate } from "@/hooks/use-view-navigate";
 
 /**
  * Returns a click handler that intercepts internal knowledge base links
@@ -13,7 +14,7 @@ import { useNavigate } from "react-router";
  *   http(s)://...       → browser default (new tab via target=_blank on the <a>)
  */
 export function useLinkInterceptor(onDocOpen?: (path: string) => void) {
-  const navigate = useNavigate();
+  const navigate = useViewNavigate();
 
   return useCallback(
     (e: React.MouseEvent) => {

@@ -6,9 +6,12 @@ export interface IngestResult {
   chars: number;
 }
 
-export async function uploadFile(file: File): Promise<IngestResult> {
+export async function uploadFile(file: File, destPath?: string): Promise<IngestResult> {
   const formData = new FormData();
   formData.append("file", file);
+  if (destPath) {
+    formData.append("dest_path", destPath);
+  }
 
   const res = await apiFetch("/ingest/upload", {
     method: "POST",
@@ -21,6 +24,17 @@ export async function uploadFile(file: File): Promise<IngestResult> {
   }
 
   return res.json();
+}
+
+export async function compile(): Promise<void> {
+  const res = await apiFetch("/compile", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({}),
+  });
+  if (!res.ok) {
+    console.warn("compile trigger failed:", res.status);
+  }
 }
 
 export async function ingestUrl(url: string): Promise<IngestResult> {

@@ -1,26 +1,25 @@
 import { useCallback, useEffect, useState } from "react";
-import { useNavigate } from "react-router";
 
 import { ArticleChrome } from "@/components/article-chrome";
 import { ArticleView } from "@/components/article-view";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { SelectionPopover } from "@/components/selection-popover";
-import { useDocument } from "@/hooks/use-document";
 import { useBtw } from "@/hooks/use-btw";
 import { useLinkInterceptor } from "@/hooks/use-link-interceptor";
 import { usePopoverDismiss } from "@/hooks/use-popover-dismiss";
+import { useViewNavigate } from "@/hooks/use-view-navigate";
 import { docDisplayName, slugToTitle } from "@/lib/utils";
 import type { SelectionInfo } from "@/lib/types";
 
 interface ArticleReaderProps {
   path: string;
+  content: string | null;
 }
 
-export function ArticleReader({ path }: ArticleReaderProps) {
-  const navigate = useNavigate();
+export function ArticleReader({ path, content }: ArticleReaderProps) {
+  const navigate = useViewNavigate();
   const handleLinkClick = useLinkInterceptor();
-  const { content, loading } = useDocument(path);
   const { btws, startBtw, replyBtw, dismissEmpty, cleanup } = useBtw(path);
   const [popover, setPopover] = useState<SelectionInfo | null>(null);
   const [hintDismissed, setHintDismissed] = useState(
@@ -46,7 +45,7 @@ export function ArticleReader({ path }: ArticleReaderProps) {
     setHintDismissed(true);
     localStorage.setItem("onboarding-hint-seen", "true");
   }, []);
-  const showHint = !hintDismissed && !loading && !!content;
+  const showHint = !hintDismissed && !!content;
 
   const displayName = docDisplayName(path);
   const title = slugToTitle(displayName);
@@ -85,15 +84,7 @@ export function ArticleReader({ path }: ArticleReaderProps) {
       onContentClick={handleLinkClick}
       footer={hint}
     >
-      {loading && (
-        <div className="max-w-[740px] mx-auto px-4 md:px-10 pt-6 md:pt-10">
-          <p className="text-[length:var(--text-body)] text-warm-faint animate-[pulse-fade_1.6s_ease-in-out_infinite]">
-            Loading...
-          </p>
-        </div>
-      )}
-
-      {!loading && content && (
+      {content && (
         <ArticleView
           title={title}
           content={content}
@@ -105,7 +96,7 @@ export function ArticleReader({ path }: ArticleReaderProps) {
         />
       )}
 
-      {!loading && !content && (
+      {!content && (
         <div className="max-w-[740px] mx-auto px-4 md:px-10 pt-6 md:pt-10">
           <p className="text-[length:var(--text-body)] text-warm-faint">Document not found.</p>
         </div>

@@ -68,10 +68,28 @@ export function SessionList({ sessions, loading, onSessionClick, onHome }: Sessi
             </p>
           )}
 
-          {!loading && filtered.length === 0 && (
+          {!loading && filtered.length === 0 && filter && (
             <p className="text-[length:var(--text-body)] text-warm-faint">
-              {filter ? "No sessions match your filter." : "No sessions yet."}
+              No sessions match your filter.
             </p>
+          )}
+
+          {!loading && filtered.length === 0 && !filter && (
+            <div className="text-center pt-8">
+              <p className="font-serif text-[length:var(--text-body)] text-warm-dim mb-2">
+                No sessions yet
+              </p>
+              <p className="font-mono text-[length:var(--text-chrome)] tracking-[0.06em] text-warm-ghost mb-6">
+                sessions are created when you ask a question from home
+              </p>
+              <Button
+                variant="ghost"
+                onClick={onHome}
+                className="font-mono text-[length:var(--text-chrome)] tracking-[0.1em] text-gold-muted hover:text-gold hover:bg-transparent h-auto px-3 py-1.5"
+              >
+                go home →
+              </Button>
+            </div>
           )}
 
           {!loading &&

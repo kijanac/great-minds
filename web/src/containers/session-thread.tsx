@@ -1,5 +1,6 @@
 import { useCallback, useState } from "react";
-import { useNavigate } from "react-router";
+
+import { useViewNavigate } from "@/hooks/use-view-navigate";
 
 import { readDocument } from "@/api/doc";
 import { Badge } from "@/components/ui/badge";
@@ -22,7 +23,7 @@ interface SessionThreadProps {
 }
 
 export function SessionThread({ session, onFollowUp }: SessionThreadProps) {
-  const navigate = useNavigate();
+  const navigate = useViewNavigate();
   const [panel, setPanel] = useState<{
     path: string;
     content: string | null;
@@ -54,17 +55,18 @@ export function SessionThread({ session, onFollowUp }: SessionThreadProps) {
 
   const handleLinkClick = useLinkInterceptor(openPanel);
 
-  usePopoverDismiss(session.clearPopover);
+  const { popover, addChip, startBtw, clearPopover } = session;
+  usePopoverDismiss(clearPopover);
 
   const handleAddChip = useCallback(() => {
-    if (!session.popover) return;
-    session.addChip(session.popover.text);
-  }, [session.popover, session.addChip]);
+    if (!popover) return;
+    addChip(popover.text);
+  }, [popover, addChip]);
 
   const handleBtw = useCallback(() => {
-    if (!session.popover) return;
-    session.startBtw(session.popover);
-  }, [session.popover, session.startBtw]);
+    if (!popover) return;
+    startBtw(popover);
+  }, [popover, startBtw]);
 
   const [hintDismissed, setHintDismissed] = useState(
     () => localStorage.getItem("onboarding-hint-seen") === "true",

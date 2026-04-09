@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
-import { ingestUrl, uploadFile } from "@/api/ingest";
+import { compile, ingestUrl, uploadFile } from "@/api/ingest";
+import type { DroppedFile } from "@/lib/types";
 
 export type ItemStatus = "queued" | "processing" | "done" | "error";
 
@@ -18,7 +19,8 @@ export function useIngestion() {
   const [url, setUrl] = useState("");
   const urlRef = useRef(url);
   const processingRef = useRef(false);
-  const promisesRef = useRef<Map<string, Promise<{ name: string }>>>(new Map());
+  const processedCountRef = useRef(0);
+  const factoriesRef = useRef<Map<string, () => Promise<{ name: string }>>>(new Map());
   const queueRef = useRef(queue);
   urlRef.current = url;
   queueRef.current = queue;
@@ -27,20 +29,28 @@ export function useIngestion() {
     if (processingRef.current) return;
 
     const next = queueRef.current.find((i) => i.status === "queued");
-    if (!next) return;
+    if (!next) {
+      if (processedCountRef.current > 0) {
+        processedCountRef.current = 0;
+        compile();
+      }
+      return;
+    }
 
-    const promise = promisesRef.current.get(next.id);
-    if (!promise) return;
+    const factory = factoriesRef.current.get(next.id);
+    if (!factory) return;
 
     processingRef.current = true;
     setQueue((q) => q.map((i) => (i.id === next.id ? { ...i, status: "processing" as const } : i)));
 
     try {
-      const result = await promise;
+      const result = await factory();
+      processedCountRef.current++;
       setQueue((q) =>
         q.map((i) => (i.id === next.id ? { ...i, status: "done" as const, name: result.name } : i)),
       );
     } catch (e) {
+      processedCountRef.current++;
       setQueue((q) =>
         q.map((i) =>
           i.id === next.id
@@ -53,7 +63,7 @@ export function useIngestion() {
         ),
       );
     } finally {
-      promisesRef.current.delete(next.id);
+      factoriesRef.current.delete(next.id);
       processingRef.current = false;
       processNext();
     }
@@ -71,9 +81,9 @@ export function useIngestion() {
   }, [queue]);
 
   const enqueue = useCallback(
-    (name: string, promise: Promise<{ name: string }>) => {
+    (name: string, factory: () => Promise<{ name: string }>) => {
       const id = `ingest-${nextId++}`;
-      promisesRef.current.set(id, promise);
+      factoriesRef.current.set(id, factory);
       setQueue((q) => [...q, { id, name, status: "queued" }]);
       processNext();
     },
@@ -81,9 +91,11 @@ export function useIngestion() {
   );
 
   const handleFileDrop = useCallback(
-    (file: File) => {
+    (files: DroppedFile[]) => {
       setUrl("");
-      enqueue(file.name, uploadFile(file));
+      for (const { file, path } of files) {
+        enqueue(path, () => uploadFile(file, path));
+      }
     },
     [enqueue],
   );
@@ -92,11 +104,11 @@ export function useIngestion() {
     const trimmed = urlRef.current.trim();
     if (!trimmed) return;
     setUrl("");
-    enqueue(trimmed, ingestUrl(trimmed));
+    enqueue(trimmed, () => ingestUrl(trimmed));
   }, [enqueue]);
 
   const dismissItem = useCallback((id: string) => {
-    promisesRef.current.delete(id);
+    factoriesRef.current.delete(id);
     setQueue((q) => q.filter((i) => i.id !== id));
   }, []);
 

@@ -3,14 +3,50 @@ import { useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import type { QueueItem } from "@/hooks/use-ingestion";
+import type { DroppedFile } from "@/lib/types";
 
 interface IngestionZoneProps {
   queue: QueueItem[];
   url: string;
   onUrlChange: (url: string) => void;
   onUrlSubmit: () => void;
-  onFileDrop: (file: File) => void;
+  onFileDrop: (files: DroppedFile[]) => void;
   onDismiss: (id: string) => void;
+}
+
+async function collectFiles(entry: FileSystemEntry, prefix: string): Promise<DroppedFile[]> {
+  if (entry.isFile) {
+    const file = await new Promise<File>((resolve, reject) =>
+      (entry as FileSystemFileEntry).file(resolve, reject),
+    );
+    return [{ file, path: prefix ? `${prefix}/${entry.name}` : entry.name }];
+  }
+  if (entry.isDirectory) {
+    const reader = (entry as FileSystemDirectoryEntry).createReader();
+    const entries: FileSystemEntry[] = [];
+    let batch: FileSystemEntry[];
+    do {
+      batch = await new Promise((resolve) => reader.readEntries((e) => resolve(e)));
+      entries.push(...batch);
+    } while (batch.length > 0);
+    const dir = prefix ? `${prefix}/${entry.name}` : entry.name;
+    const nested = await Promise.all(entries.map((e) => collectFiles(e, dir)));
+    return nested.flat();
+  }
+  return [];
+}
+
+async function filesFromDrop(dataTransfer: DataTransfer): Promise<DroppedFile[]> {
+  const items = Array.from(dataTransfer.items);
+  const entries = items
+    .map((item) => item.webkitGetAsEntry?.())
+    .filter((e): e is FileSystemEntry => e != null);
+
+  if (entries.length > 0) {
+    const nested = await Promise.all(entries.map((e) => collectFiles(e, "")));
+    return nested.flat();
+  }
+  return Array.from(dataTransfer.files).map((f) => ({ file: f, path: f.name }));
 }
 
 export function IngestionZone({
@@ -59,8 +95,11 @@ export function IngestionZone({
           e.preventDefault();
           dragCounter.current = 0;
           setDragOver(false);
-          const file = e.dataTransfer.files[0];
-          if (file) onFileDrop(file);
+          filesFromDrop(e.dataTransfer)
+            .then((files) => {
+              if (files.length > 0) onFileDrop(files);
+            })
+            .catch((err) => console.error("Failed to read dropped files:", err));
         }}
       >
         <div className="flex items-center">

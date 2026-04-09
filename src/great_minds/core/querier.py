@@ -214,7 +214,13 @@ PROVIDER_EXTRA_BODY = {
 # ---------------------------------------------------------------------------
 
 
-def _is_rate_limited(exc: Exception) -> bool:
+class _StreamStalled(Exception):
+    """Raised when no chunks arrive within the timeout window."""
+
+
+def _is_retryable(exc: Exception) -> bool:
+    if isinstance(exc, _StreamStalled):
+        return True
     msg = str(exc)
     return "429" in msg or "rate" in msg.lower()
 
@@ -481,17 +487,14 @@ async def chat(
             classified = _classify_tool_call(name, args)
             if classified:
                 source_type, meta = classified
-                label = (
-                    meta["query"] if source_type is SourceType.SEARCH else meta["path"]
-                )
                 if source_type is SourceType.SEARCH:
-                    searches.append(label)
-                else:
+                    searches.append(meta["query"])
+                elif source_type in (SourceType.ARTICLE, SourceType.RAW):
                     (
                         articles_read
                         if source_type is SourceType.ARTICLE
                         else sources_read
-                    ).append(label)
+                    ).append(meta["path"])
 
             result = await _dispatch_tool(brains, name, args, session)
             messages.append(
@@ -517,17 +520,35 @@ async def chat_with_fallback(
         try:
             return await chat(brains, client, m, messages, session, tools=tools)
         except Exception as e:
-            if _is_rate_limited(e):
-                log_event("query.rate_limited", model=m)
+            if _is_retryable(e):
+                log_event("query.retryable_error", model=m, error=str(e))
                 continue
             raise
 
-    raise RuntimeError("all models rate limited — try again in a minute")
+    raise RuntimeError("all models failed — try again in a minute")
 
 
 # ---------------------------------------------------------------------------
 # Async streaming chat (for SSE endpoint)
 # ---------------------------------------------------------------------------
+
+
+CHUNK_TIMEOUT = 30  # seconds to wait for the next streaming chunk
+
+
+async def _iter_with_timeout(async_iter, timeout: float):
+    """Wrap an async iterator with a per-item timeout.
+
+    Raises _StreamStalled if no item arrives within `timeout` seconds.
+    """
+    ait = aiter(async_iter)
+    while True:
+        try:
+            yield await asyncio.wait_for(anext(ait), timeout)
+        except StopAsyncIteration:
+            return
+        except asyncio.TimeoutError:
+            raise _StreamStalled(f"no chunks received for {timeout}s") from None
 
 
 async def stream_chat(
@@ -569,7 +590,9 @@ async def stream_chat(
         content_acc = ""
         finish_reason = None
 
-        async for chunk in stream:
+        async for chunk in _iter_with_timeout(stream, CHUNK_TIMEOUT):
+            if not chunk.choices:
+                continue
             choice = chunk.choices[0]
             delta = choice.delta
 
@@ -631,19 +654,14 @@ async def stream_chat(
                     source_type, meta = classified
                     yield {"event": "source", "data": {"type": source_type, **meta}}
 
-                    label = (
-                        meta["query"]
-                        if source_type is SourceType.SEARCH
-                        else meta["path"]
-                    )
                     if source_type is SourceType.SEARCH:
-                        searches.append(label)
-                    else:
+                        searches.append(meta["query"])
+                    elif source_type in (SourceType.ARTICLE, SourceType.RAW):
                         (
                             articles_read
                             if source_type is SourceType.ARTICLE
                             else sources_read
-                        ).append(label)
+                        ).append(meta["path"])
 
                 result = await _dispatch_tool(brains, name, args, session)
                 messages.append(
@@ -776,15 +794,15 @@ async def run_stream_query(
                 yield event
             return
         except Exception as e:
-            if _is_rate_limited(e):
-                log_event("query.stream_rate_limited", model=m)
+            if _is_retryable(e):
+                log_event("query.stream_retryable", model=m, error=str(e))
                 continue
             yield {"event": "error", "data": {"message": str(e)}}
             return
 
     yield {
         "event": "error",
-        "data": {"message": "all models rate limited — try again in a minute"},
+        "data": {"message": "all models failed — try again in a minute"},
     }
 
 

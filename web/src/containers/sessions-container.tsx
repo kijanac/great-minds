@@ -1,10 +1,9 @@
-import { useNavigate } from "react-router";
-
 import { SessionList } from "@/components/session-list";
 import { useSessions } from "@/hooks/use-sessions";
+import { useViewNavigate } from "@/hooks/use-view-navigate";
 
 export function SessionsContainer() {
-  const navigate = useNavigate();
+  const navigate = useViewNavigate();
   const { sessions, loading } = useSessions();
 
   return (

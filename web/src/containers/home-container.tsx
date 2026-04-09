@@ -1,5 +1,4 @@
-import { useCallback, useRef, useState } from "react";
-import { useNavigate } from "react-router";
+import { useCallback, useState } from "react";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import { Home } from "lucide-react";
 
@@ -10,6 +9,7 @@ import { SessionThread } from "@/containers/session-thread";
 import { useSavedSession } from "@/hooks/use-saved-session";
 import { useSession } from "@/hooks/use-session";
 import { useSessions } from "@/hooks/use-sessions";
+import { useViewNavigate } from "@/hooks/use-view-navigate";
 
 interface HomeContainerProps {
   sessionId?: string;
@@ -51,7 +51,7 @@ interface HomeContentProps {
 const EASE_OUT: [number, number, number, number] = [0.25, 1, 0.5, 1];
 
 function HomeContent({ sessionId, initialExchanges, initialQuery, origin }: HomeContentProps) {
-  const navigate = useNavigate();
+  const navigate = useViewNavigate();
   const [query, setQuery] = useState(initialQuery ?? initialExchanges?.[0]?.query ?? "");
   const {
     sessions: recentSessions,
@@ -76,20 +76,17 @@ function HomeContent({ sessionId, initialExchanges, initialQuery, origin }: Home
   );
 
   const isActive = session.phase !== "idle";
-  const directionRef = useRef<"forward" | "backward">("forward");
   const prefersReducedMotion = useReducedMotion();
-  const shouldAnimate = directionRef.current === "forward" && !prefersReducedMotion;
 
-  const barTransition = shouldAnimate ? { duration: 0.28, ease: EASE_OUT } : { duration: 0 };
-
+  const barTransition = prefersReducedMotion ? { duration: 0 } : { duration: 0.28, ease: EASE_OUT };
   const fadeIn = prefersReducedMotion ? { duration: 0 } : { duration: 0.15 };
   const fadeOut = prefersReducedMotion ? { duration: 0 } : { duration: 0.15, ease: EASE_OUT };
 
+  const { submitQuery } = session;
   const handleSubmit = useCallback(() => {
     if (!query.trim()) return;
-    directionRef.current = "forward";
-    session.submitQuery(query);
-  }, [query, session.submitQuery]);
+    submitQuery(query);
+  }, [query, submitQuery]);
 
   const searchBarProps = {
     query,

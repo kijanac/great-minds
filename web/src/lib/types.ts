@@ -51,3 +51,8 @@ export interface SelectionInfo {
 }
 
 export type Phase = "idle" | "searching" | "streaming" | "done";
+
+export interface DroppedFile {
+  file: File;
+  path: string;
+}
