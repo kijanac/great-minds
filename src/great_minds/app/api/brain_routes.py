@@ -6,7 +6,8 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from great_minds.app.api.dependencies import get_brain_service, get_current_user
+from great_minds.app.api.dependencies import get_brain_service, get_current_user, get_mailer
+from great_minds.core.mail import Mailer
 from great_minds.app.api.schemas import brains as schemas
 from great_minds.core import brain as brain_ops
 from great_minds.core.brains.models import MemberRole
@@ -104,9 +105,10 @@ async def invite_member(
     user: User = Depends(get_current_user),
     session: AsyncSession = Depends(get_session),
     brain_service: BrainService = Depends(get_brain_service),
+    mailer: Mailer = Depends(get_mailer),
 ) -> schemas.MembershipOverview:
     try:
-        _brain, role = await brain_service.get_brain(brain_id, user.id)
+        brain, role = await brain_service.get_brain(brain_id, user.id)
     except ValueError:
         raise HTTPException(status_code=404, detail="Brain not found")
     if role != MemberRole.OWNER:
@@ -118,9 +120,19 @@ async def invite_member(
         raise HTTPException(status_code=422, detail=f"Invalid role: {req.role}")
 
     user_repo = UserRepository(session)
-    target_user, _ = await user_repo.get_or_create(req.email)
+    target_user, created = await user_repo.get_or_create(req.email)
     await brain_service.upsert_membership(brain_id, target_user.id, new_role)
     await session.commit()
+
+    mailer.send(
+        to=req.email,
+        subject=f"You've been invited to {brain.name}",
+        body=(
+            f"{user.email} invited you to the project \"{brain.name}\" "
+            f"on Great Minds as {new_role.value}.\n\n"
+            f"Sign in at https://greatmind.dev to access it."
+        ),
+    )
 
     return schemas.MembershipOverview(
         user_id=target_user.id, email=target_user.email, role=new_role
