@@ -100,16 +100,6 @@ function HomeContent({ sessionId, initialExchanges, initialQuery, origin }: Home
     onSubmit: handleSubmit,
   };
 
-  const wikiButton = (
-    <Button
-      variant="ghost"
-      onClick={() => navigate("/doc/wiki/_index.md")}
-      className="h-auto py-1 px-2 font-mono text-[length:var(--text-chrome)] tracking-[0.14em] uppercase text-gold-muted hover:text-gold hover:bg-transparent shrink-0"
-    >
-      wiki ↗
-    </Button>
-  );
-
   return (
     <div className="flex h-screen overflow-hidden relative">
       <div className="flex-1 flex flex-col overflow-hidden min-w-0">
@@ -132,7 +122,6 @@ function HomeContent({ sessionId, initialExchanges, initialQuery, origin }: Home
               <div className="flex-1 min-w-0">
                 <SearchBar {...searchBarProps} />
               </div>
-              {wikiButton}
             </motion.div>
           </div>
         )}
@@ -148,19 +137,18 @@ function HomeContent({ sessionId, initialExchanges, initialQuery, origin }: Home
               transition={fadeIn}
             >
               {activeBrain && (
-                <button
+                <Button
+                  variant="outline"
                   onClick={() => navigate("/explore")}
-                  className="mb-6 flex items-center gap-2 group cursor-pointer"
+                  className="mb-6 h-auto py-1.5 px-4 rounded-sm border-ink-border font-mono text-[length:var(--text-chrome)] tracking-[0.14em] text-warm-faint hover:text-warm hover:border-gold-dim gap-2.5"
                 >
-                  <span className="font-mono text-[length:var(--text-chrome)] tracking-[0.14em] text-warm-ghost group-hover:text-warm transition-colors">
-                    {activeBrain.name}
-                  </span>
+                  {activeBrain.name}
                   {badgeCount > 0 && (
-                    <span className="inline-flex items-center justify-center min-w-[18px] h-[18px] px-1 rounded-full bg-gold/20 text-gold font-mono text-[10px] leading-none">
+                    <span className="inline-flex items-center justify-center min-w-[18px] h-[18px] px-1 rounded-full bg-gold/20 text-gold text-[10px] leading-none">
                       {badgeCount}
                     </span>
                   )}
-                </button>
+                </Button>
               )}
 
               <motion.div
@@ -178,7 +166,6 @@ function HomeContent({ sessionId, initialExchanges, initialQuery, origin }: Home
                     onViewAllSessions={() => navigate("/sessions")}
                   />
                 </div>
-                {wikiButton}
               </motion.div>
 
               <IngestionContainer />

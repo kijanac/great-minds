@@ -41,6 +41,7 @@ export function ExploreContainer() {
       loading={loading}
       onHome={() => navigate("/")}
       onArticleClick={(path) => navigate(`/doc/${path}`)}
+      onExploreWiki={() => navigate("/doc/wiki/_index.md")}
       ingestionZone={<IngestionContainer />}
     />
   );

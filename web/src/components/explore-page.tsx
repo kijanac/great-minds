@@ -11,6 +11,7 @@ interface ExplorePageProps {
   loading: boolean;
   onHome: () => void;
   onArticleClick: (path: string) => void;
+  onExploreWiki: () => void;
   ingestionZone: ReactNode;
 }
 
@@ -27,6 +28,7 @@ export function ExplorePage({
   loading,
   onHome,
   onArticleClick,
+  onExploreWiki,
   ingestionZone,
 }: ExplorePageProps) {
   const hasSuggestions = suggestions.length > 0;
@@ -50,6 +52,13 @@ export function ExplorePage({
             explore
           </span>
         </div>
+        <Button
+          variant="ghost"
+          onClick={onExploreWiki}
+          className="h-auto py-1 px-2 font-mono text-[length:var(--text-chrome)] tracking-[0.14em] uppercase text-gold-muted hover:text-gold hover:bg-transparent shrink-0"
+        >
+          explore wiki ↗
+        </Button>
       </div>
 
       <div className="flex-1 min-h-0 overflow-y-auto">
