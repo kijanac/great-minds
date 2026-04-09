@@ -21,14 +21,12 @@ export function useIngestion() {
   const processingRef = useRef(false);
   const processedCountRef = useRef(0);
   const factoriesRef = useRef<Map<string, () => Promise<{ name: string }>>>(new Map());
-  const queueRef = useRef(queue);
   urlRef.current = url;
-  queueRef.current = queue;
 
-  const processNext = useCallback(async () => {
+  useEffect(() => {
     if (processingRef.current) return;
 
-    const next = queueRef.current.find((i) => i.status === "queued");
+    const next = queue.find((i) => i.status === "queued");
     if (!next) {
       if (processedCountRef.current > 0) {
         processedCountRef.current = 0;
@@ -43,31 +41,33 @@ export function useIngestion() {
     processingRef.current = true;
     setQueue((q) => q.map((i) => (i.id === next.id ? { ...i, status: "processing" as const } : i)));
 
-    try {
-      const result = await factory();
-      processedCountRef.current++;
-      setQueue((q) =>
-        q.map((i) => (i.id === next.id ? { ...i, status: "done" as const, name: result.name } : i)),
-      );
-    } catch (e) {
-      processedCountRef.current++;
-      setQueue((q) =>
-        q.map((i) =>
-          i.id === next.id
-            ? {
-                ...i,
-                status: "error" as const,
-                error: e instanceof Error ? e.message : "Ingestion failed",
-              }
-            : i,
-        ),
-      );
-    } finally {
-      factoriesRef.current.delete(next.id);
-      processingRef.current = false;
-      processNext();
-    }
-  }, []);
+    factory()
+      .then((result) => {
+        processedCountRef.current++;
+        setQueue((q) =>
+          q.map((i) => (i.id === next.id ? { ...i, status: "done" as const, name: result.name } : i)),
+        );
+      })
+      .catch((e) => {
+        processedCountRef.current++;
+        setQueue((q) =>
+          q.map((i) =>
+            i.id === next.id
+              ? {
+                  ...i,
+                  status: "error" as const,
+                  error: e instanceof Error ? e.message : "Ingestion failed",
+                }
+              : i,
+          ),
+        );
+      })
+      .finally(() => {
+        factoriesRef.current.delete(next.id);
+        processingRef.current = false;
+        setQueue((q) => [...q]); // trigger re-render to process next
+      });
+  }, [queue]);
 
   // Auto-dismiss done items after 3s
   useEffect(() => {
@@ -85,9 +85,8 @@ export function useIngestion() {
       const id = `ingest-${nextId++}`;
       factoriesRef.current.set(id, factory);
       setQueue((q) => [...q, { id, name, status: "queued" }]);
-      processNext();
     },
-    [processNext],
+    [],
   );
 
   const handleFileDrop = useCallback(
