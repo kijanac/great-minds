@@ -22,4 +22,4 @@ class UserService:
                 user.id,
             )
         else:
-            self.brain_service._init_brain_storage(brains[0][0].storage_root)
+            self.brain_service._init_brain_storage(brains[0][0])

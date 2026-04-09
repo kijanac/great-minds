@@ -254,7 +254,6 @@ def create_app() -> FastAPI:
             absurd,
             session,
             brain_id=ctx.brain.id,
-            storage_root=ctx.brain.storage_root,
             data_dir=settings.data_dir,
             label=ctx.brain.name,
             limit=req.limit,

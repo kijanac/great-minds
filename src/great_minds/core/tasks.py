@@ -65,7 +65,7 @@ class TaskRecord(Base):
 async def compile_task(params: dict, ctx) -> dict:
     """Run the compilation pipeline with heartbeat for long runs."""
     data_dir = Path(params["data_dir"])
-    storage = LocalStorage(data_dir / params["storage_root"])
+    storage = LocalStorage(data_dir / "brains" / params["brain_id"])
     brain_id = UUID(params["brain_id"])
     session = _task_session.get()
 
@@ -94,7 +94,7 @@ async def bulk_ingest_task(params: dict, ctx) -> dict:
     Indexes all new/changed files, then triggers compilation.
     """
     data_dir = Path(params["data_dir"])
-    storage = LocalStorage(data_dir / params["storage_root"])
+    storage = LocalStorage(data_dir / "brains" / params["brain_id"])
     brain_id = UUID(params["brain_id"])
     source_dir = Path(params["source_dir"])
     content_type = params.get("content_type", "texts")
@@ -278,7 +278,6 @@ async def spawn_compile(
     absurd: AsyncAbsurd,
     session: AsyncSession,
     brain_id: UUID,
-    storage_root: str,
     data_dir: str,
     label: str,
     *,
@@ -291,7 +290,6 @@ async def spawn_compile(
         brain_id,
         {
             "brain_id": str(brain_id),
-            "storage_root": storage_root,
             "data_dir": data_dir,
             "label": label,
             "limit": limit,
@@ -311,7 +309,6 @@ async def spawn_bulk_ingest(
     absurd: AsyncAbsurd,
     session: AsyncSession,
     brain_id: UUID,
-    storage_root: str,
     data_dir: str,
     label: str,
     source_dir: str,
@@ -326,7 +323,6 @@ async def spawn_bulk_ingest(
         brain_id,
         {
             "brain_id": str(brain_id),
-            "storage_root": storage_root,
             "data_dir": data_dir,
             "label": label,
             "source_dir": source_dir,

@@ -14,12 +14,20 @@ from great_minds.core.storage import LocalStorage
 log = logging.getLogger(__name__)
 
 
+def brain_storage_path(brain_id: UUID) -> str:
+    """Canonical storage path for a brain. Single source of truth."""
+    return f"brains/{brain_id}"
+
+
 class BrainService:
     """Manages brain access control, lifecycle, and membership operations."""
 
     def __init__(self, repository: BrainRepository, settings: Settings) -> None:
         self.repo = repository
         self.data_dir = Path(settings.data_dir)
+
+    def get_storage(self, brain: Brain) -> LocalStorage:
+        return LocalStorage(self.data_dir / brain_storage_path(brain.id))
 
     async def get_brain(
         self, brain_id: UUID, user_id: UUID
@@ -37,11 +45,11 @@ class BrainService:
         self, name: str, owner_id: UUID
     ) -> tuple[Brain, MemberRole]:
         brain, role = await self.repo.create_brain(name, owner_id)
-        self._init_brain_storage(brain.storage_root)
+        self._init_brain_storage(brain)
         return brain, role
 
-    def _init_brain_storage(self, storage_root: str) -> None:
-        storage = LocalStorage(self.data_dir / storage_root)
+    def _init_brain_storage(self, brain: Brain) -> None:
+        storage = self.get_storage(brain)
         if not storage.exists("config.yaml"):
             default = Path(__file__).resolve().parent.parent / "default_config.yaml"
             storage.write("config.yaml", default.read_text(encoding="utf-8"))
@@ -51,7 +59,7 @@ class BrainService:
         rows = await self.repo.list_user_brains(user_id)
         return [
             QuerySource(
-                storage=LocalStorage(self.data_dir / brain.storage_root),
+                storage=self.get_storage(brain),
                 label=brain.name,
                 brain_id=brain.id,
             )

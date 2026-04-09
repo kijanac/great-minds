@@ -12,5 +12,4 @@ class Brain(BaseModel):
     id: uuid.UUID
     name: str
     owner_id: uuid.UUID
-    storage_root: str
     created_at: datetime

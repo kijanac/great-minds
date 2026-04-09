@@ -104,7 +104,6 @@ def upgrade() -> None:
         sa.Column("id", sa.UUID(), nullable=False),
         sa.Column("name", sa.String(length=255), nullable=False),
         sa.Column("owner_id", sa.UUID(), nullable=False),
-        sa.Column("storage_root", sa.Text(), nullable=False),
         sa.Column(
             "created_at",
             sa.DateTime(timezone=True),

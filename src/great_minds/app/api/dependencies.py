@@ -1,7 +1,6 @@
 """FastAPI dependencies: auth and service factories."""
 
 from dataclasses import dataclass
-from pathlib import Path
 from uuid import UUID
 
 from absurd_sdk import AsyncAbsurd
@@ -22,7 +21,7 @@ from great_minds.core.crypto import decode_access_token
 from great_minds.core.db import get_session
 from great_minds.core.proposals.service import ProposalService
 from great_minds.core.settings import Settings, get_settings
-from great_minds.core.storage import LocalStorage, Storage
+from great_minds.core.storage import Storage
 from great_minds.core.users.models import User
 from great_minds.core.users.repository import UserRepository
 from great_minds.core.users.service import UserService
@@ -158,8 +157,7 @@ async def get_authorized_brain(
     brain_id: UUID = Query(...),
     user: User = Depends(get_current_user),
     brain_service: BrainService = Depends(get_brain_service),
-    settings: Settings = Depends(get_settings),
 ) -> BrainContext:
     brain, role = await brain_service.get_brain(brain_id, user.id)
-    storage = LocalStorage(Path(settings.data_dir) / brain.storage_root)
+    storage = brain_service.get_storage(brain)
     return BrainContext(brain=brain, storage=storage, role=role)

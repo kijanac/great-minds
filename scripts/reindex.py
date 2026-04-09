@@ -32,8 +32,8 @@ async def main() -> None:
 
         total = 0
         for brain in brains:
-            print(f"  {brain.slug} ({brain.id})")
-            storage = LocalStorage(brain.storage_root)
+            print(f"  {brain.name} ({brain.id})")
+            storage = LocalStorage(f"brains/{brain.id}")
 
             wiki_files = storage.glob("wiki/*.md")
             article_count = len(

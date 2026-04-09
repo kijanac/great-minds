@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from great_minds.core.brain import load_config
 from great_minds.core.brains import _ingester as ingester
 from great_minds.core.brains.schemas import Brain
+from great_minds.core.brains.service import brain_storage_path
 from great_minds.core.proposals.models import SourceProposal
 from great_minds.core.settings import Settings
 from great_minds.core.storage import LocalStorage
@@ -32,7 +33,7 @@ class ProposalService:
     ) -> None:
         """Ingest approved proposal content into the brain and trigger compilation."""
         content = Path(proposal.storage_path).read_text(encoding="utf-8")
-        storage = LocalStorage(Path(self.data_dir) / brain.storage_root)
+        storage = LocalStorage(Path(self.data_dir) / brain_storage_path(brain.id))
         config = load_config(storage)
 
         kwargs: dict[str, str] = {}
@@ -48,7 +49,6 @@ class ProposalService:
             absurd,
             session,
             brain_id=brain.id,
-            storage_root=brain.storage_root,
             data_dir=self.data_dir,
             label=brain.name,
         )

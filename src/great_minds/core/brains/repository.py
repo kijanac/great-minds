@@ -27,7 +27,6 @@ class BrainRepository:
         )
         self.session.add(brain)
         await self.session.flush()
-        brain.storage_root = f"brains/{brain.id}"
         await self.upsert_membership(brain.id, owner_id, MemberRole.OWNER)
         await self.session.refresh(brain)
         return Brain.model_validate(brain), MemberRole.OWNER
