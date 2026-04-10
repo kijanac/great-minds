@@ -2,11 +2,14 @@ import { useRef, useState } from "react";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import type { QueueItem } from "@/hooks/use-ingestion";
+import type { QueueItem, QueueSummary } from "@/hooks/use-ingestion";
 import type { DroppedFile } from "@/lib/types";
+
+const MAX_VISIBLE_ITEMS = 3;
 
 interface IngestionZoneProps {
   queue: QueueItem[];
+  summary: QueueSummary;
   url: string;
   onUrlChange: (url: string) => void;
   onUrlSubmit: () => void;
@@ -57,6 +60,7 @@ async function filesFromDrop(dataTransfer: DataTransfer): Promise<DroppedFile[]>
 
 export function IngestionZone({
   queue,
+  summary,
   url,
   onUrlChange,
   onUrlSubmit,
@@ -129,9 +133,17 @@ export function IngestionZone({
       {/* Queue */}
       {queue.length > 0 && (
         <div className="mt-2 flex flex-col gap-1">
-          {queue.map((item) => (
+          {queue.slice(-MAX_VISIBLE_ITEMS).map((item) => (
             <QueueRow key={item.id} item={item} onDismiss={onDismiss} />
           ))}
+          {summary.total > MAX_VISIBLE_ITEMS && (
+            <div className="px-4 py-1 font-mono text-[length:var(--text-chrome)] tracking-[0.1em] text-warm-ghost">
+              {summary.done} / {summary.total}
+              {summary.failed > 0 && (
+                <span className="text-warm-faint"> · {summary.failed} failed</span>
+              )}
+            </div>
+          )}
         </div>
       )}
     </div>

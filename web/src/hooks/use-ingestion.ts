@@ -12,6 +12,13 @@ export interface QueueItem {
   error?: string;
 }
 
+export interface QueueSummary {
+  total: number;
+  done: number;
+  failed: number;
+  processing: boolean;
+}
+
 let nextId = 0;
 
 export function useIngestion() {
@@ -20,9 +27,10 @@ export function useIngestion() {
   const urlRef = useRef(url);
   const processingRef = useRef(false);
   const processedCountRef = useRef(0);
-  const factoriesRef = useRef<Map<string, () => Promise<{ name: string }>>>(new Map());
+  const factoriesRef = useRef<Map<string, () => Promise<{ title: string }>>>(new Map());
   urlRef.current = url;
 
+  // Process next queued item
   useEffect(() => {
     if (processingRef.current) return;
 
@@ -45,7 +53,7 @@ export function useIngestion() {
       .then((result) => {
         processedCountRef.current++;
         setQueue((q) =>
-          q.map((i) => (i.id === next.id ? { ...i, status: "done" as const, name: result.name } : i)),
+          q.map((i) => (i.id === next.id ? { ...i, status: "done" as const, name: result.title } : i)),
         );
       })
       .catch((e) => {
@@ -65,23 +73,31 @@ export function useIngestion() {
       .finally(() => {
         factoriesRef.current.delete(next.id);
         processingRef.current = false;
-        setQueue((q) => [...q]); // trigger re-render to process next
+        setQueue((q) => [...q]);
       });
   }, [queue]);
 
-  // Auto-dismiss done items after 3s
+  // Clear entire queue once everything is done (no queued/processing items)
   useEffect(() => {
-    const doneItems = queue.filter((i) => i.status === "done");
-    if (doneItems.length === 0) return;
-    const doneIds = new Set(doneItems.map((i) => i.id));
-    const t = setTimeout(() => {
-      setQueue((q) => q.filter((i) => !doneIds.has(i.id)));
-    }, 3000);
+    if (queue.length === 0) return;
+    const hasActive = queue.some((i) => i.status === "queued" || i.status === "processing");
+    if (hasActive) return;
+    const hasErrors = queue.some((i) => i.status === "error");
+    if (hasErrors) return;
+
+    const t = setTimeout(() => setQueue([]), 3000);
     return () => clearTimeout(t);
   }, [queue]);
 
+  const summary: QueueSummary = {
+    total: queue.length,
+    done: queue.filter((i) => i.status === "done").length,
+    failed: queue.filter((i) => i.status === "error").length,
+    processing: queue.some((i) => i.status === "queued" || i.status === "processing"),
+  };
+
   const enqueue = useCallback(
-    (name: string, factory: () => Promise<{ name: string }>) => {
+    (name: string, factory: () => Promise<{ title: string }>) => {
       const id = `ingest-${nextId++}`;
       factoriesRef.current.set(id, factory);
       setQueue((q) => [...q, { id, name, status: "queued" }]);
@@ -113,6 +129,7 @@ export function useIngestion() {
 
   return {
     queue,
+    summary,
     url,
     setUrl,
     handleFileDrop,
