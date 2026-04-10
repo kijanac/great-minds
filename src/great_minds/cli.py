@@ -21,11 +21,7 @@ import uvicorn
 from great_minds.app.api.server import create_app
 from great_minds.core import brain as brain_ops
 from great_minds.core import querier
-from great_minds.core.brains import (
-    _compiler as compiler,
-    _ingester as ingester,
-    _linter as linter,
-)
+from great_minds.core import compiler, ingester, linter
 from great_minds.core.storage import LocalStorage
 from great_minds.core.telemetry import setup_logging
 
