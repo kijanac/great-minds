@@ -117,12 +117,13 @@ def ingest_document(
     date: int | str | None = None,
     source: str | None = None,
     outlet: str | None = None,
-    dest: str | None = None,
+    dest: str,
 ) -> str:
-    """Add frontmatter to a document and return the result.
+    """Add frontmatter to a document, write it, and return the result.
 
     Args:
-        storage: Storage, config: dict instance providing config and storage.
+        storage: Storage instance providing file operations.
+        config: Brain config dict.
         content: Raw markdown content (no frontmatter).
         content_type: One of the types in config metadata (texts, news, ideas).
         title: Document title. Auto-extracted from headings if not provided.
@@ -130,7 +131,7 @@ def ingest_document(
         date: Publication date (year or full date).
         source: Source URL or path.
         outlet: News outlet (for news type).
-        dest: If provided, a path relative to brain root; written via storage.
+        dest: Path relative to brain root; written via storage.
 
     Returns:
         The document content with frontmatter prepended.
@@ -154,8 +155,7 @@ def ingest_document(
     frontmatter = build_frontmatter(fields, known)
     result = frontmatter + content
 
-    if dest:
-        storage.write(dest, result)
+    storage.write(dest, result)
 
     return result
 

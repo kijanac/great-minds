@@ -17,7 +17,7 @@ import great_minds.core.brains.models  # noqa: F401
 import great_minds.core.proposals.models  # noqa: F401
 import great_minds.core.tasks  # noqa: F401
 from great_minds.core.brains.models import BrainORM
-from great_minds.core.brains._search_indexer import (
+from great_minds.core.search import (
     search,
     SearchIndexEntry,
     _truncate_and_normalize,

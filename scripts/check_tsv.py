@@ -9,7 +9,7 @@ import great_minds.core.auth.models  # noqa: F401
 import great_minds.core.brains.models  # noqa: F401
 import great_minds.core.proposals.models  # noqa: F401
 import great_minds.core.tasks  # noqa: F401
-from great_minds.core.brains._search_indexer import SearchIndexEntry
+from great_minds.core.search import SearchIndexEntry
 from great_minds.core.db import session_maker
 
 

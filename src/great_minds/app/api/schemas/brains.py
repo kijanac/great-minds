@@ -3,11 +3,13 @@ from datetime import datetime
 
 from pydantic import BaseModel
 
+from great_minds.core.brains.models import MemberRole
+
 
 class BrainOverview(BaseModel):
     id: uuid.UUID
     name: str
-    role: str
+    role: MemberRole
 
 
 class Brain(BrainOverview):
@@ -31,13 +33,13 @@ class BrainUpdate(BaseModel):
 class MembershipOverview(BaseModel):
     user_id: uuid.UUID
     email: str
-    role: str
+    role: MemberRole
 
 
 class MembershipInvite(BaseModel):
     email: str
-    role: str = "editor"
+    role: MemberRole = MemberRole.EDITOR
 
 
 class MembershipUpdate(BaseModel):
-    role: str
+    role: MemberRole

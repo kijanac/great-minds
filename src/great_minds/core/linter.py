@@ -28,7 +28,7 @@ from dataclasses import dataclass, field
 from typing import Literal
 
 from great_minds.core.brain import load_config, read_index, wiki_path
-from great_minds.core.brains._utils import (
+from great_minds.core.brain_utils import (
     FOOTNOTE_RE,
     MD_LINK_RE,
     api_call,

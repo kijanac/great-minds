@@ -14,11 +14,9 @@ from dataclasses import dataclass
 from uuid import UUID
 
 from openai import AsyncOpenAI
-from sqlalchemy.ext.asyncio import AsyncSession
-
 from .brain import wiki_slug
-from .brains._search_indexer import search as hybrid_search
-from .brains._utils import extract_wiki_link_targets
+from .search import search as hybrid_search
+from .brain_utils import extract_wiki_link_targets
 from .documents.repository import DocumentRepository
 from .llm import FALLBACK_MODELS, QUERY_MODEL, get_async_client
 from .storage import Storage
@@ -280,7 +278,7 @@ def read_document(
 
 
 async def read_document_enriched(
-    brains: list[QuerySource], path: str, session: AsyncSession
+    brains: list[QuerySource], path: str, doc_repo: DocumentRepository
 ) -> str:
     """Read a document with backlinks from the database."""
     base = read_document(brains, path)
@@ -291,8 +289,7 @@ async def read_document_enriched(
         slug = path.removeprefix("wiki/").removesuffix(".md")
         brain_ids = [src.brain_id for src in brains]
         if brain_ids:
-            repo = DocumentRepository(session)
-            backlink_slugs = await repo.get_backlinks(brain_ids, slug)
+            backlink_slugs = await doc_repo.get_backlinks(brain_ids, slug)
             if backlink_slugs:
                 unique = list(dict.fromkeys(backlink_slugs))
                 base += "\nBacklinks (articles that reference this one): " + ", ".join(
@@ -303,7 +300,7 @@ async def read_document_enriched(
 
 
 async def search_wiki(
-    brains: list[QuerySource], query: str, session: AsyncSession
+    brains: list[QuerySource], query: str, doc_repo: DocumentRepository
 ) -> str:
     """Hybrid BM25 + vector search across all brains via the search index."""
     brain_ids = [src.brain_id for src in brains]
@@ -311,7 +308,7 @@ async def search_wiki(
         log_event("tool.search_skipped", query=query, reason="no_brain_ids")
         return f"No results found for: {query} (search index not available)"
 
-    results = await hybrid_search(session, brain_ids, query)
+    results = await hybrid_search(doc_repo.session, brain_ids, query)
 
     log_event("tool.search_executed", query=query, results_count=len(results))
 
@@ -328,14 +325,12 @@ async def search_wiki(
 
 
 async def query_documents(
-    brains: list[QuerySource], args: dict, session: AsyncSession
+    brains: list[QuerySource], args: dict, doc_repo: DocumentRepository
 ) -> str:
     """Structured metadata query across all brains via the documents table."""
     brain_ids = [src.brain_id for src in brains]
     if not brain_ids:
         return "No documents available (no indexed brains)"
-
-    repo = DocumentRepository(session)
     filters = {
         k: v
         for k, v in {
@@ -352,7 +347,7 @@ async def query_documents(
         if v is not None
     }
 
-    results = await repo.query_documents(brain_ids, **filters)
+    results = await doc_repo.query_documents(brain_ids, **filters)
     log_event("tool.query_executed", filters=str(filters), results_count=len(results))
 
     if not results:
@@ -380,14 +375,14 @@ async def query_documents(
 
 
 async def _dispatch_tool(
-    brains: list[QuerySource], name: str, args: dict, session: AsyncSession
+    brains: list[QuerySource], name: str, args: dict, doc_repo: DocumentRepository
 ) -> str:
     if name == "read_document":
-        return await read_document_enriched(brains, args["path"], session)
+        return await read_document_enriched(brains, args["path"], doc_repo)
     elif name == "search_wiki":
-        return await search_wiki(brains, args["query"], session)
+        return await search_wiki(brains, args["query"], doc_repo)
     elif name == "query_documents":
-        return await query_documents(brains, args, session)
+        return await query_documents(brains, args, doc_repo)
     else:
         return f"Unknown tool: {name}"
 
@@ -428,7 +423,7 @@ async def chat(
     client: AsyncOpenAI,
     model: str,
     messages: list[dict],
-    session: AsyncSession,
+    doc_repo: DocumentRepository,
     *,
     tools: list[dict] | None = None,
 ) -> str:
@@ -501,7 +496,7 @@ async def chat(
                         else sources_read
                     ).append(meta["path"])
 
-            result = await _dispatch_tool(brains, name, args, session)
+            result = await _dispatch_tool(brains, name, args, doc_repo)
             messages.append(
                 {
                     "role": "tool",
@@ -516,14 +511,14 @@ async def chat_with_fallback(
     client: AsyncOpenAI,
     model: str,
     messages: list[dict],
-    session: AsyncSession,
+    doc_repo: DocumentRepository,
     *,
     tools: list[dict] | None = None,
 ) -> str:
     """Try the primary model, fall back to alternatives on rate limit."""
     for m in _models_with_fallback(model):
         try:
-            return await chat(brains, client, m, messages, session, tools=tools)
+            return await chat(brains, client, m, messages, doc_repo, tools=tools)
         except Exception as e:
             if _is_retryable(e):
                 log_event("query.retryable_error", model=m, error=str(e))
@@ -561,7 +556,7 @@ async def stream_chat(
     client: AsyncOpenAI,
     model: str,
     messages: list[dict],
-    session: AsyncSession,
+    doc_repo: DocumentRepository,
     *,
     tools: list[dict] | None = None,
 ) -> AsyncGenerator[dict, None]:
@@ -668,7 +663,7 @@ async def stream_chat(
                             else sources_read
                         ).append(meta["path"])
 
-                result = await _dispatch_tool(brains, name, args, session)
+                result = await _dispatch_tool(brains, name, args, doc_repo)
                 messages.append(
                     {
                         "role": "tool",
@@ -751,21 +746,22 @@ def _build_session_context_messages(session_md: str) -> list[dict]:
 # ---------------------------------------------------------------------------
 
 
-async def _load_tools(brains: list[QuerySource], session: AsyncSession) -> list[dict]:
+async def _load_tools(
+    brains: list[QuerySource], doc_repo: DocumentRepository
+) -> list[dict]:
     """Load tag/concept vocabulary from DB and build the full tool list."""
     brain_ids = [src.brain_id for src in brains]
     if not brain_ids:
         return _BASE_TOOLS
-    repo = DocumentRepository(session)
-    tags = await repo.get_distinct_tags(brain_ids)
-    concepts = await repo.get_distinct_concepts(brain_ids)
+    tags = await doc_repo.get_distinct_tags(brain_ids)
+    concepts = await doc_repo.get_distinct_concepts(brain_ids)
     return build_tools(tags, concepts)
 
 
 async def run_stream_query(
     brains: list[QuerySource],
     question: str,
-    session: AsyncSession,
+    doc_repo: DocumentRepository,
     *,
     model: str | None = None,
     origin_path: str | None = None,
@@ -776,7 +772,7 @@ async def run_stream_query(
     primary = model or QUERY_MODEL
     client = get_async_client(max_retries=0)
     system_prompt = build_system_prompt(brains, mode=mode)
-    tools = await _load_tools(brains, session)
+    tools = await _load_tools(brains, doc_repo)
     base_messages: list[dict] = [
         {"role": "system", "content": system_prompt},
     ]
@@ -794,7 +790,7 @@ async def run_stream_query(
         messages = list(base_messages)
         try:
             async for event in stream_chat(
-                brains, client, m, messages, session, tools=tools
+                brains, client, m, messages, doc_repo, tools=tools
             ):
                 yield event
             return
@@ -814,7 +810,7 @@ async def run_stream_query(
 async def run_query(
     brains: list[QuerySource],
     question: str,
-    session: AsyncSession,
+    doc_repo: DocumentRepository,
     *,
     model: str | None = None,
     origin_path: str | None = None,
@@ -825,7 +821,7 @@ async def run_query(
     primary = model or QUERY_MODEL
     client = get_async_client()
     system_prompt = build_system_prompt(brains, mode=mode)
-    tools = await _load_tools(brains, session)
+    tools = await _load_tools(brains, doc_repo)
     messages: list[dict] = [{"role": "system", "content": system_prompt}]
 
     query_id = f"q-{uuid.uuid4().hex[:8]}"
@@ -838,13 +834,13 @@ async def run_query(
         messages.extend(_build_session_context_messages(session_context))
     messages.append({"role": "user", "content": question})
     return await chat_with_fallback(
-        brains, client, primary, messages, session, tools=tools
+        brains, client, primary, messages, doc_repo, tools=tools
     )
 
 
 async def run_interactive(
     brains: list[QuerySource],
-    session: AsyncSession,
+    doc_repo: DocumentRepository,
     *,
     model: str | None = None,
 ) -> None:
@@ -852,7 +848,7 @@ async def run_interactive(
     model = model or QUERY_MODEL
     client = get_async_client()
     system_prompt = build_system_prompt(brains)
-    tools = await _load_tools(brains, session)
+    tools = await _load_tools(brains, doc_repo)
     messages: list[dict] = [{"role": "system", "content": system_prompt}]
 
     print(f"Knowledge Base — Query Interface (model: {model})")
@@ -874,6 +870,6 @@ async def run_interactive(
 
         messages.append({"role": "user", "content": question})
         answer = await chat_with_fallback(
-            brains, client, model, messages, session, tools=tools
+            brains, client, model, messages, doc_repo, tools=tools
         )
         print(f"\n{answer}\n")

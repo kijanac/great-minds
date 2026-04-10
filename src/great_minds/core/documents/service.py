@@ -2,7 +2,7 @@
 
 from uuid import UUID
 
-from great_minds.core.brains._utils import parse_frontmatter
+from great_minds.core.brain_utils import parse_frontmatter
 from great_minds.core.documents.repository import DocumentRepository
 from great_minds.core.documents.schemas import DOC_KIND_RAW, Document, DocumentCreate
 from great_minds.core.storage import Storage
@@ -11,6 +11,9 @@ from great_minds.core.storage import Storage
 class DocumentService:
     def __init__(self, repository: DocumentRepository) -> None:
         self.repo = repository
+
+    async def _commit(self) -> None:
+        await self.repo.session.commit()
 
     async def index_from_content(
         self,
@@ -25,7 +28,9 @@ class DocumentService:
         doc = DocumentCreate.model_validate(
             {**fm, "file_path": file_path, "content": content, "doc_kind": doc_kind}
         )
-        return await self.repo.upsert(brain_id, doc)
+        result = await self.repo.upsert(brain_id, doc)
+        await self._commit()
+        return result
 
     async def index_brain_file(
         self,

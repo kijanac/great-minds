@@ -1,28 +1,23 @@
-"""Source proposal routes."""
+"""Source proposal routes — nested under /brains/{brain_id}/proposals."""
 
 import logging
-from datetime import UTC, datetime
-from pathlib import Path
 from uuid import UUID
 
 from absurd_sdk import AsyncAbsurd
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from great_minds.app.api.dependencies import (
     get_absurd,
     get_brain_service,
     get_current_user,
     get_proposal_service,
+    require_brain_member,
+    require_brain_owner,
 )
 from great_minds.app.api.schemas import proposals as schemas
-from great_minds.core.brains.models import MemberRole
 from great_minds.core.brains.service import BrainService
-from great_minds.core.db import get_session
-from great_minds.core.proposals import repository
-from great_minds.core.proposals.models import ProposalStatus, SourceProposal
+from great_minds.core.proposals.models import ProposalStatus
 from great_minds.core.proposals.service import ProposalService
-from great_minds.core.settings import Settings, get_settings
 from great_minds.core.users.models import User
 
 log = logging.getLogger(__name__)
@@ -30,136 +25,72 @@ log = logging.getLogger(__name__)
 router = APIRouter(prefix="/proposals", tags=["proposals"])
 
 
-@router.post("", response_model=schemas.Proposal, status_code=status.HTTP_201_CREATED)
+@router.post("", status_code=status.HTTP_201_CREATED)
 async def create_proposal(
     req: schemas.ProposalCreate,
+    brain_id: UUID,
     user: User = Depends(get_current_user),
-    session: AsyncSession = Depends(get_session),
-    settings: Settings = Depends(get_settings),
-    brain_service: BrainService = Depends(get_brain_service),
+    proposal_service: ProposalService = Depends(get_proposal_service),
+    _auth: None = Depends(require_brain_member),
 ) -> schemas.Proposal:
-    try:
-        brain, _role = await brain_service.get_brain(req.brain_id, user.id)
-    except ValueError:
-        raise HTTPException(status_code=404, detail="Brain not found")
-
-    proposal = await repository.create_proposal(
-        session,
-        brain_id=req.brain_id,
+    proposal = await proposal_service.create(
+        brain_id=brain_id,
         user_id=user.id,
+        content=req.content,
         content_type=req.content_type,
         title=req.title,
         author=req.author,
-        storage_path="",
     )
-
-    storage_path = f"{settings.data_dir}/proposals/{proposal.id}.md"
-    proposal.storage_path = storage_path
-
-    # Write file before commit — if this fails, DB transaction rolls back
-    path = Path(storage_path)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    try:
-        path.write_text(req.content, encoding="utf-8")
-    except OSError:
-        await session.rollback()
-        raise HTTPException(status_code=500, detail="Failed to store proposal content")
-
-    await session.commit()
-    await session.refresh(proposal)
-    return _to_schema(proposal)
+    return schemas.Proposal.model_validate(proposal)
 
 
-@router.get("", response_model=list[schemas.ProposalOverview])
+@router.get("")
 async def list_proposals(
-    brain: UUID | None = Query(None),
+    brain_id: UUID,
     status_filter: ProposalStatus | None = Query(None, alias="status"),
-    user: User = Depends(get_current_user),
-    session: AsyncSession = Depends(get_session),
+    proposal_service: ProposalService = Depends(get_proposal_service),
+    _auth: None = Depends(require_brain_member),
 ) -> list[schemas.ProposalOverview]:
-    proposals = await repository.list_proposals(
-        session, user.id, brain_id=brain, status=status_filter
-    )
-    return [
-        schemas.ProposalOverview(
-            id=p.id,
-            brain_id=p.brain_id,
-            status=p.status,
-            title=p.title,
-            content_type=p.content_type,
-            created_at=p.created_at,
-        )
-        for p in proposals
-    ]
+    proposals = await proposal_service.list_for_brain(brain_id, status=status_filter)
+    return [schemas.ProposalOverview.model_validate(p) for p in proposals]
 
 
-@router.get("/{proposal_id}", response_model=schemas.Proposal)
+@router.get("/{proposal_id}")
 async def get_proposal(
     proposal_id: UUID,
-    user: User = Depends(get_current_user),
-    session: AsyncSession = Depends(get_session),
+    brain_id: UUID,
+    proposal_service: ProposalService = Depends(get_proposal_service),
+    _auth: None = Depends(require_brain_member),
 ) -> schemas.Proposal:
-    proposal = await repository.get_authorized_proposal(session, proposal_id, user.id)
+    proposal = await proposal_service.get(proposal_id, brain_id)
     if proposal is None:
         raise HTTPException(status_code=404, detail="Proposal not found")
-    return _to_schema(proposal)
+    return schemas.Proposal.model_validate(proposal)
 
 
-@router.patch("/{proposal_id}", response_model=schemas.Proposal)
+@router.patch("/{proposal_id}")
 async def review_proposal(
     proposal_id: UUID,
     req: schemas.ProposalReview,
+    brain_id: UUID,
     user: User = Depends(get_current_user),
-    session: AsyncSession = Depends(get_session),
     absurd: AsyncAbsurd = Depends(get_absurd),
     brain_service: BrainService = Depends(get_brain_service),
     proposal_service: ProposalService = Depends(get_proposal_service),
+    _auth: None = Depends(require_brain_owner),
 ) -> schemas.Proposal:
     if req.status == ProposalStatus.PENDING:
         raise HTTPException(status_code=400, detail="Cannot set status back to pending")
 
-    proposal = await repository.get_authorized_proposal(session, proposal_id, user.id)
+    proposal = await proposal_service.get(proposal_id, brain_id)
     if proposal is None:
         raise HTTPException(status_code=404, detail="Proposal not found")
     if proposal.status != ProposalStatus.PENDING:
         raise HTTPException(status_code=409, detail="Proposal already reviewed")
 
-    try:
-        brain, role = await brain_service.get_brain(proposal.brain_id, user.id)
-    except ValueError:
-        raise HTTPException(
-            status_code=403, detail="Only brain owners can review proposals"
-        )
-    if role != MemberRole.OWNER:
-        raise HTTPException(
-            status_code=403, detail="Only brain owners can review proposals"
-        )
-
-    proposal.status = req.status
-    proposal.reviewed_by = user.id
-    proposal.reviewed_at = datetime.now(UTC)
-
-    if req.status == ProposalStatus.APPROVED:
-        await proposal_service.approve(proposal, brain, absurd, session)
-
-    if req.status == ProposalStatus.REJECTED:
-        proposal_service.reject(proposal)
-
-    await session.commit()
-    await session.refresh(proposal)
-    return _to_schema(proposal)
-
-
-def _to_schema(p: SourceProposal) -> schemas.Proposal:
-    return schemas.Proposal(
-        id=p.id,
-        brain_id=p.brain_id,
-        status=p.status,
-        title=p.title,
-        content_type=p.content_type,
-        created_at=p.created_at,
-        user_id=p.user_id,
-        author=p.author,
-        reviewed_by=p.reviewed_by,
-        reviewed_at=p.reviewed_at,
+    brain = await brain_service.get_by_id(brain_id)
+    storage = brain_service.get_storage(brain)
+    proposal = await proposal_service.review(
+        proposal, user.id, req.status, brain, storage, absurd
     )
+    return schemas.Proposal.model_validate(proposal)

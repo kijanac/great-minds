@@ -14,7 +14,7 @@ import great_minds.core.brains.models  # noqa: F401
 import great_minds.core.proposals.models  # noqa: F401
 import great_minds.core.tasks  # noqa: F401
 from great_minds.core.brains.models import BrainORM
-from great_minds.core.brains._search_indexer import rebuild_index
+from great_minds.core.search import rebuild_index
 from great_minds.core.db import session_maker
 from great_minds.core.storage import LocalStorage
 

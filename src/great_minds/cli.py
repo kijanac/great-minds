@@ -45,21 +45,25 @@ def cmd_compile(args: argparse.Namespace) -> None:
 def cmd_query(args: argparse.Namespace) -> None:
     setup_logging(service="great-minds", json_output=args.json_logs)
     storage = _make_storage()
-    sources = [querier.QuerySource(storage=storage, label="local", brain_id=uuid.UUID(int=0))]
+    sources = [
+        querier.QuerySource(storage=storage, label="local", brain_id=uuid.UUID(int=0))
+    ]
 
     async def _run() -> None:
         from great_minds.core.db import session_maker
+        from great_minds.core.documents.repository import DocumentRepository
 
         async with session_maker() as session:
+            doc_repo = DocumentRepository(session)
             if args.question:
                 question = " ".join(args.question)
                 print(f"\n> {question}\n")
                 answer = await querier.run_query(
-                    sources, question, session, model=args.model
+                    sources, question, doc_repo, model=args.model
                 )
                 print(answer)
             else:
-                await querier.run_interactive(sources, session, model=args.model)
+                await querier.run_interactive(sources, doc_repo, model=args.model)
 
     asyncio.run(_run())
 

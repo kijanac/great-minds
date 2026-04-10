@@ -26,8 +26,21 @@ class BrainService:
         self.repo = repository
         self.data_dir = Path(settings.data_dir)
 
+    async def _commit(self) -> None:
+        await self.repo.session.commit()
+
     def get_storage(self, brain: Brain) -> LocalStorage:
-        return LocalStorage(self.data_dir / brain_storage_path(brain.id))
+        return self.get_storage_by_id(brain.id)
+
+    def get_storage_by_id(self, brain_id: UUID) -> LocalStorage:
+        return LocalStorage(self.data_dir / brain_storage_path(brain_id))
+
+    async def get_by_id(self, brain_id: UUID) -> Brain:
+        """Fetch a brain by ID. Raises ValueError if not found."""
+        brain = await self.repo.get_by_id(brain_id)
+        if brain is None:
+            raise ValueError(f"Brain {brain_id} not found")
+        return brain
 
     async def get_brain(
         self, brain_id: UUID, user_id: UUID
@@ -38,14 +51,28 @@ class BrainService:
             raise ValueError(f"Brain {brain_id} not found or not accessible")
         return result
 
+    async def is_member(self, brain_id: UUID, user_id: UUID) -> bool:
+        return await self.repo.is_member(brain_id, user_id)
+
+    async def require_owner(
+        self, brain_id: UUID, user_id: UUID
+    ) -> tuple[Brain, MemberRole]:
+        """Fetch a brain and verify the user is an owner. Raises PermissionError if not."""
+        result = await self.repo.get_brain_with_role(brain_id, user_id)
+        if result is None:
+            raise PermissionError(f"Brain {brain_id} not found or not accessible")
+        brain, role = result
+        if role != MemberRole.OWNER:
+            raise PermissionError("Only brain owners can perform this action")
+        return brain, role
+
     async def list_brains(self, user_id: UUID) -> list[tuple[Brain, MemberRole]]:
         return await self.repo.list_user_brains(user_id)
 
-    async def create_brain(
-        self, name: str, owner_id: UUID
-    ) -> tuple[Brain, MemberRole]:
+    async def create_brain(self, name: str, owner_id: UUID) -> tuple[Brain, MemberRole]:
         brain, role = await self.repo.create_brain(name, owner_id)
         self._init_brain_storage(brain)
+        await self._commit()
         return brain, role
 
     def _init_brain_storage(self, brain: Brain) -> None:
@@ -75,7 +102,11 @@ class BrainService:
     async def upsert_membership(
         self, brain_id: UUID, user_id: UUID, role: MemberRole
     ) -> BrainMembership:
-        return await self.repo.upsert_membership(brain_id, user_id, role)
+        membership = await self.repo.upsert_membership(brain_id, user_id, role)
+        await self._commit()
+        return membership
 
     async def delete_membership(self, brain_id: UUID, user_id: UUID) -> bool:
-        return await self.repo.delete_membership(brain_id, user_id)
+        deleted = await self.repo.delete_membership(brain_id, user_id)
+        await self._commit()
+        return deleted

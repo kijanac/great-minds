@@ -1,0 +1,32 @@
+"""v1 API router — aggregates all domain routers."""
+
+from fastapi import APIRouter
+
+from great_minds.app.api.auth_routes import router as auth_router
+from great_minds.app.api.brain_routes import router as brain_router
+from great_minds.app.api.compile_routes import router as compile_router
+from great_minds.app.api.ingest_routes import router as ingest_router
+from great_minds.app.api.lint_routes import router as lint_router
+from great_minds.app.api.proposal_routes import router as proposal_router
+from great_minds.app.api.query_routes import router as query_router
+from great_minds.app.api.session_routes import router as session_router
+from great_minds.app.api.task_routes import router as task_router
+from great_minds.app.api.wiki_routes import router as wiki_router
+
+router = APIRouter(prefix="/v1")
+
+# Non-brain-scoped routes
+router.include_router(auth_router)
+router.include_router(brain_router)
+
+# Brain-scoped routes — nested under /v1/brains/{brain_id}/
+brain_scoped = APIRouter(prefix="/brains/{brain_id}")
+brain_scoped.include_router(compile_router)
+brain_scoped.include_router(ingest_router)
+brain_scoped.include_router(lint_router)
+brain_scoped.include_router(query_router)
+brain_scoped.include_router(session_router)
+brain_scoped.include_router(task_router)
+brain_scoped.include_router(wiki_router)
+brain_scoped.include_router(proposal_router)
+router.include_router(brain_scoped)

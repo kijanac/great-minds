@@ -82,10 +82,14 @@ async function resolveDefaultBrain(token: string): Promise<string> {
   return brains[0].id;
 }
 
+export function brainPath(path: string): string {
+  const brainId = getBrainId();
+  if (!brainId) throw new Error("No brain selected");
+  return `/brains/${brainId}${path}`;
+}
+
 export async function apiFetch(path: string, init?: RequestInit): Promise<Response> {
   const url = new URL(`${API_BASE}${path}`, location.origin);
-  const brainId = getBrainId();
-  if (brainId) url.searchParams.set("brain_id", brainId);
 
   const headers = new Headers(init?.headers);
   const token = getAccessToken();

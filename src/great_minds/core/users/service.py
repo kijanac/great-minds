@@ -1,5 +1,7 @@
 """User service: provisioning and lifecycle."""
 
+from uuid import UUID
+
 from great_minds.core.brains.service import BrainService
 from great_minds.core.users.models import User
 from great_minds.core.users.repository import UserRepository
@@ -12,6 +14,9 @@ class UserService:
 
     async def get_or_create(self, email: str) -> tuple[User, bool]:
         return await self.repo.get_or_create(email)
+
+    async def get_by_id(self, user_id: UUID) -> User | None:
+        return await self.repo.get_by_id(user_id)
 
     async def ensure_default_brain(self, user: User) -> None:
         """Ensure the user has at least one brain with storage initialized."""

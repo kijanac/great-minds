@@ -12,9 +12,10 @@ export default defineConfig({
   },
   server: {
     proxy: {
-      "/api/query/stream": {
+      // Match brain-scoped SSE endpoint: /api/brains/{id}/query/stream
+      "^/api/brains/[^/]+/query/stream": {
         target: "http://localhost:8000",
-        rewrite: (path) => path.replace(/^\/api/, ""),
+        rewrite: (path) => path.replace(/^\/api/, "/v1"),
         configure: (proxy) => {
           proxy.on("proxyRes", (proxyRes) => {
             // Disable buffering for SSE
@@ -25,7 +26,7 @@ export default defineConfig({
       },
       "/api": {
         target: "http://localhost:8000",
-        rewrite: (path) => path.replace(/^\/api/, ""),
+        rewrite: (path) => path.replace(/^\/api/, "/v1"),
       },
     },
   },

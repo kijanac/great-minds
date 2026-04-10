@@ -5,45 +5,44 @@ from uuid import UUID
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from great_minds.core.brains.models import BrainMembership
 from great_minds.core.proposals.models import ProposalStatus, SourceProposal
 
 
-async def create_proposal(session: AsyncSession, **kwargs) -> SourceProposal:
-    proposal = SourceProposal(**kwargs)
-    session.add(proposal)
-    await session.flush()
-    return proposal
+class ProposalRepository:
+    def __init__(self, session: AsyncSession) -> None:
+        self.session = session
 
+    async def create(self, **kwargs) -> SourceProposal:
+        proposal = SourceProposal(**kwargs)
+        self.session.add(proposal)
+        await self.session.flush()
+        return proposal
 
-async def list_proposals(
-    session: AsyncSession,
-    user_id: UUID,
-    *,
-    brain_id: UUID | None = None,
-    status: ProposalStatus | None = None,
-) -> list[SourceProposal]:
-    query = (
-        select(SourceProposal)
-        .join(BrainMembership, BrainMembership.brain_id == SourceProposal.brain_id)
-        .where(BrainMembership.user_id == user_id)
-        .order_by(SourceProposal.created_at.desc())
-    )
-    if brain_id is not None:
-        query = query.where(SourceProposal.brain_id == brain_id)
-    if status is not None:
-        query = query.where(SourceProposal.status == status)
+    async def list_for_brain(
+        self,
+        brain_id: UUID,
+        *,
+        status: ProposalStatus | None = None,
+    ) -> list[SourceProposal]:
+        query = (
+            select(SourceProposal)
+            .where(SourceProposal.brain_id == brain_id)
+            .order_by(SourceProposal.created_at.desc())
+        )
+        if status is not None:
+            query = query.where(SourceProposal.status == status)
 
-    result = await session.execute(query)
-    return list(result.scalars())
+        result = await self.session.execute(query)
+        return list(result.scalars())
 
+    async def get(self, proposal_id: UUID, brain_id: UUID) -> SourceProposal | None:
+        result = await self.session.execute(
+            select(SourceProposal).where(
+                SourceProposal.id == proposal_id,
+                SourceProposal.brain_id == brain_id,
+            )
+        )
+        return result.scalar_one_or_none()
 
-async def get_authorized_proposal(
-    session: AsyncSession, proposal_id: UUID, user_id: UUID
-) -> SourceProposal | None:
-    result = await session.execute(
-        select(SourceProposal)
-        .join(BrainMembership, BrainMembership.brain_id == SourceProposal.brain_id)
-        .where(SourceProposal.id == proposal_id, BrainMembership.user_id == user_id)
-    )
-    return result.scalar_one_or_none()
+    async def refresh(self, proposal: SourceProposal) -> None:
+        await self.session.refresh(proposal)

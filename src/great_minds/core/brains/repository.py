@@ -18,9 +18,14 @@ class BrainRepository:
     def __init__(self, session: AsyncSession) -> None:
         self.session = session
 
-    async def create_brain(
-        self, name: str, owner_id: UUID
-    ) -> tuple[Brain, MemberRole]:
+    async def get_by_id(self, brain_id: UUID) -> Brain | None:
+        result = await self.session.execute(
+            select(BrainORM).where(BrainORM.id == brain_id)
+        )
+        row = result.scalar_one_or_none()
+        return Brain.model_validate(row) if row else None
+
+    async def create_brain(self, name: str, owner_id: UUID) -> tuple[Brain, MemberRole]:
         brain = BrainORM(
             name=name,
             owner_id=owner_id,
@@ -51,6 +56,24 @@ class BrainRepository:
         if row is None:
             return None
         return Brain.model_validate(row[0]), row[1]
+
+    async def is_member(self, brain_id: UUID, user_id: UUID) -> bool:
+        result = await self.session.execute(
+            select(BrainMembership.id).where(
+                BrainMembership.brain_id == brain_id,
+                BrainMembership.user_id == user_id,
+            )
+        )
+        return result.scalar_one_or_none() is not None
+
+    async def get_role(self, brain_id: UUID, user_id: UUID) -> MemberRole | None:
+        result = await self.session.execute(
+            select(BrainMembership.role).where(
+                BrainMembership.brain_id == brain_id,
+                BrainMembership.user_id == user_id,
+            )
+        )
+        return result.scalar_one_or_none()
 
     async def get_member_count(self, brain_id: UUID) -> int:
         result = await self.session.execute(
@@ -95,4 +118,3 @@ class BrainRepository:
             return False
         await self.session.delete(membership)
         return True
-

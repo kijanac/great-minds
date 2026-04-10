@@ -1,17 +1,15 @@
 import { z } from "zod";
 
-import { apiFetch, readJson } from "./client";
+import { apiFetch, brainPath, readJson } from "./client";
 
 export interface IngestResult {
-  status: string;
-  name: string;
-  chars: number;
+  file_path: string;
+  title: string;
 }
 
 const ingestResultSchema: z.ZodType<IngestResult> = z.object({
-  status: z.string(),
-  name: z.string(),
-  chars: z.number(),
+  file_path: z.string(),
+  title: z.string(),
 });
 
 export async function uploadFile(file: File, destPath?: string): Promise<IngestResult> {
@@ -21,7 +19,7 @@ export async function uploadFile(file: File, destPath?: string): Promise<IngestR
     formData.append("dest_path", destPath);
   }
 
-  const res = await apiFetch("/ingest/upload", {
+  const res = await apiFetch(brainPath("/ingest/upload"), {
     method: "POST",
     body: formData,
   });
@@ -35,7 +33,7 @@ export async function uploadFile(file: File, destPath?: string): Promise<IngestR
 }
 
 export async function compile(): Promise<void> {
-  const res = await apiFetch("/compile", {
+  const res = await apiFetch(brainPath("/compile"), {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({}),
@@ -46,7 +44,7 @@ export async function compile(): Promise<void> {
 }
 
 export async function ingestUrl(url: string): Promise<IngestResult> {
-  const res = await apiFetch("/ingest/url", {
+  const res = await apiFetch(brainPath("/ingest/url"), {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ url }),

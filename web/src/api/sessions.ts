@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-import { apiFetch, readJson } from "./client";
+import { apiFetch, brainPath, readJson } from "./client";
 import { btwMessageSchema, thinkingBlockSchema, type BtwMessage, type ThinkingBlock } from "./schemas";
 
 export interface ExchangePayload {
@@ -61,7 +61,6 @@ const sessionSummarySchema = z.object({
   query: z.string(),
   created: z.string(),
   updated: z.string(),
-  sources: z.array(z.string()),
 });
 
 const sessionResponseSchema = z.object({
@@ -77,7 +76,7 @@ export async function createSession(
   exchange: ExchangePayload,
   origin?: string,
 ): Promise<string> {
-  const res = await apiFetch(`/sessions`, {
+  const res = await apiFetch(brainPath(`/sessions`), {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ session_id: sessionId, exchange, origin }),
@@ -91,7 +90,7 @@ export async function appendExchange(
   sessionId: string,
   exchange: ExchangePayload,
 ): Promise<string> {
-  const res = await apiFetch(`/sessions/${sessionId}`, {
+  const res = await apiFetch(brainPath(`/sessions/${sessionId}`), {
     method: "PATCH",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(exchange),
@@ -102,7 +101,7 @@ export async function appendExchange(
 }
 
 export async function appendBtw(sessionId: string, btw: BtwPayload): Promise<string> {
-  const res = await apiFetch(`/sessions/${sessionId}/btw`, {
+  const res = await apiFetch(brainPath(`/sessions/${sessionId}/btw`), {
     method: "PATCH",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(btw),
@@ -113,7 +112,7 @@ export async function appendBtw(sessionId: string, btw: BtwPayload): Promise<str
 }
 
 export async function listSessions(): Promise<SessionSummary[]> {
-  const res = await apiFetch(`/sessions`);
+  const res = await apiFetch(brainPath(`/sessions`));
   if (!res.ok) throw new Error(`Failed to list sessions: ${res.status}`);
   return readJson(res, z.array(sessionSummarySchema));
 }
@@ -121,7 +120,7 @@ export async function listSessions(): Promise<SessionSummary[]> {
 export async function loadSession(
   sessionId: string,
 ): Promise<{ id: string; events: SessionEvent[] }> {
-  const res = await apiFetch(`/sessions/${sessionId}`);
+  const res = await apiFetch(brainPath(`/sessions/${sessionId}`));
   if (!res.ok) throw new Error(`Session not found: ${res.status}`);
   return readJson(res, sessionResponseSchema);
 }

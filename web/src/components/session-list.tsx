@@ -28,7 +28,7 @@ export function SessionList({ sessions, loading, onSessionClick, onHome }: Sessi
   const filtered = filter.trim()
     ? sessions.filter((s) => {
         const q = filter.toLowerCase();
-        return s.query.toLowerCase().includes(q) || s.sources.some((src) => src.includes(q));
+        return s.query.toLowerCase().includes(q);
       })
     : sessions;
 
@@ -106,12 +106,6 @@ export function SessionList({ sessions, loading, onSessionClick, onHome }: Sessi
                   </span>
                   <span className="font-mono text-[length:var(--text-chrome)] text-muted-foreground flex items-center gap-3">
                     <span>{formatDate(s.updated)}</span>
-                    {s.sources.length > 0 && (
-                      <span className="text-gold-muted">
-                        {s.sources.slice(0, 3).join(" · ")}
-                        {s.sources.length > 3 && ` +${s.sources.length - 3}`}
-                      </span>
-                    )}
                   </span>
                 </Button>
               </div>

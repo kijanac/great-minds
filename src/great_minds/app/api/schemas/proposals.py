@@ -7,7 +7,6 @@ from great_minds.core.proposals.models import ProposalStatus
 
 
 class ProposalCreate(BaseModel):
-    brain_id: uuid.UUID
     content: str
     content_type: str = "texts"
     title: str | None = None

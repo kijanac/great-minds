@@ -31,10 +31,14 @@ class AuthService:
         self.mailer = mailer
         self.settings = settings
 
+    async def _commit(self) -> None:
+        await self.auth_repo.session.commit()
+
     async def request_code(self, email: str) -> None:
         """Generate auth code, store it, and email it."""
         code = generate_auth_code()
         await self.auth_repo.store_auth_code(email, code, self.settings)
+        await self._commit()
         self.mailer.send(
             to=email,
             subject="Your sign-in code",
@@ -54,6 +58,7 @@ class AuthService:
         raw_refresh = create_refresh_token_value()
         await self.auth_repo.store_refresh_token(user.id, raw_refresh, self.settings)
 
+        await self._commit()
         return access_token, raw_refresh
 
     async def refresh_tokens(self, raw_refresh: str) -> tuple[str, str]:
@@ -67,12 +72,14 @@ class AuthService:
         new_refresh = create_refresh_token_value()
         await self.auth_repo.store_refresh_token(rt.user_id, new_refresh, self.settings)
 
+        await self._commit()
         return access_token, new_refresh
 
     async def create_api_key(self, user_id: UUID, label: str) -> tuple[ApiKey, str]:
         """Create an API key, return (api_key_model, raw_key)."""
         raw_key = f"gm_{secrets.token_urlsafe(32)}"
         api_key = await self.auth_repo.store_api_key(user_id, raw_key, label)
+        await self._commit()
         return api_key, raw_key
 
     async def revoke_api_key(self, key_id: UUID, user_id: UUID) -> None:
@@ -80,3 +87,4 @@ class AuthService:
         revoked = await self.auth_repo.revoke_api_key(key_id, user_id)
         if not revoked:
             raise ValueError("API key not found")
+        await self._commit()

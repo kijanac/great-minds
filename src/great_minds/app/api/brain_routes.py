@@ -4,24 +4,27 @@ import logging
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy.ext.asyncio import AsyncSession
 
-from great_minds.app.api.dependencies import get_brain_service, get_current_user, get_mailer
-from great_minds.core.mail import Mailer
+from great_minds.app.api.dependencies import (
+    get_brain_service,
+    get_current_user,
+    get_mailer,
+    get_user_service,
+    require_brain_owner,
+)
 from great_minds.app.api.schemas import brains as schemas
 from great_minds.core import brain as brain_ops
-from great_minds.core.brains.models import MemberRole
 from great_minds.core.brains.service import BrainService
-from great_minds.core.db import get_session
+from great_minds.core.mail import Mailer
 from great_minds.core.users.models import User
-from great_minds.core.users.repository import UserRepository
+from great_minds.core.users.service import UserService
 
 log = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/brains", tags=["brains"])
 
 
-@router.get("", response_model=list[schemas.BrainOverview])
+@router.get("")
 async def list_brains(
     user: User = Depends(get_current_user),
     brain_service: BrainService = Depends(get_brain_service),
@@ -33,16 +36,13 @@ async def list_brains(
     ]
 
 
-@router.post("", response_model=schemas.Brain, status_code=status.HTTP_201_CREATED)
+@router.post("", status_code=status.HTTP_201_CREATED)
 async def create_brain(
     req: schemas.BrainCreate,
     user: User = Depends(get_current_user),
-    session: AsyncSession = Depends(get_session),
     brain_service: BrainService = Depends(get_brain_service),
 ) -> schemas.Brain:
     brain, role = await brain_service.create_brain(req.name, user.id)
-    await session.commit()
-
     return schemas.Brain(
         id=brain.id,
         name=brain.name,
@@ -52,7 +52,7 @@ async def create_brain(
     )
 
 
-@router.get("/{brain_id}", response_model=schemas.BrainDetail)
+@router.get("/{brain_id}")
 async def get_brain(
     brain_id: UUID,
     user: User = Depends(get_current_user),
@@ -78,7 +78,7 @@ async def get_brain(
     )
 
 
-@router.get("/{brain_id}/members", response_model=list[schemas.MembershipOverview])
+@router.get("/{brain_id}/members")
 async def list_members(
     brain_id: UUID,
     user: User = Depends(get_current_user),
@@ -96,81 +96,53 @@ async def list_members(
     ]
 
 
-@router.post(
-    "/{brain_id}/members", response_model=schemas.MembershipOverview, status_code=status.HTTP_201_CREATED
-)
+@router.post("/{brain_id}/members", status_code=status.HTTP_201_CREATED)
 async def invite_member(
-    brain_id: UUID,
     req: schemas.MembershipInvite,
+    brain_id: UUID,
     user: User = Depends(get_current_user),
-    session: AsyncSession = Depends(get_session),
     brain_service: BrainService = Depends(get_brain_service),
+    user_service: UserService = Depends(get_user_service),
     mailer: Mailer = Depends(get_mailer),
+    _auth: None = Depends(require_brain_owner),
 ) -> schemas.MembershipOverview:
-    try:
-        brain, role = await brain_service.get_brain(brain_id, user.id)
-    except ValueError:
-        raise HTTPException(status_code=404, detail="Brain not found")
-    if role != MemberRole.OWNER:
-        raise HTTPException(status_code=403, detail="Only owners can manage members")
+    brain = await brain_service.get_by_id(brain_id)
 
-    try:
-        new_role = MemberRole(req.role)
-    except ValueError:
-        raise HTTPException(status_code=422, detail=f"Invalid role: {req.role}")
-
-    user_repo = UserRepository(session)
-    target_user, created = await user_repo.get_or_create(req.email)
-    await brain_service.upsert_membership(brain_id, target_user.id, new_role)
-    await session.commit()
+    target_user, _created = await user_service.get_or_create(req.email)
+    await brain_service.upsert_membership(brain_id, target_user.id, req.role)
 
     mailer.send(
         to=req.email,
         subject=f"You've been invited to {brain.name}",
         body=(
-            f"{user.email} invited you to the project \"{brain.name}\" "
-            f"on Great Minds as {new_role.value}.\n\n"
+            f'{user.email} invited you to the project "{brain.name}" '
+            f"on Great Minds as {req.role.value}.\n\n"
             f"Sign in at https://greatmind.dev to access it."
         ),
     )
 
     return schemas.MembershipOverview(
-        user_id=target_user.id, email=target_user.email, role=new_role
+        user_id=target_user.id, email=target_user.email, role=req.role
     )
 
 
-@router.put(
-    "/{brain_id}/members/{member_user_id}", response_model=schemas.MembershipOverview
-)
+@router.put("/{brain_id}/members/{member_user_id}")
 async def set_member(
-    brain_id: UUID,
     member_user_id: UUID,
     req: schemas.MembershipUpdate,
-    user: User = Depends(get_current_user),
-    session: AsyncSession = Depends(get_session),
+    brain_id: UUID,
     brain_service: BrainService = Depends(get_brain_service),
+    user_service: UserService = Depends(get_user_service),
+    _auth: None = Depends(require_brain_owner),
 ) -> schemas.MembershipOverview:
-    try:
-        _brain, role = await brain_service.get_brain(brain_id, user.id)
-    except ValueError:
-        raise HTTPException(status_code=404, detail="Brain not found")
-    if role != MemberRole.OWNER:
-        raise HTTPException(status_code=403, detail="Only owners can manage members")
-
-    try:
-        new_role = MemberRole(req.role)
-    except ValueError:
-        raise HTTPException(status_code=422, detail=f"Invalid role: {req.role}")
-
-    target_user = await session.get(User, member_user_id)
+    target_user = await user_service.get_by_id(member_user_id)
     if target_user is None:
         raise HTTPException(status_code=404, detail="User not found")
 
-    await brain_service.upsert_membership(brain_id, member_user_id, new_role)
-    await session.commit()
+    await brain_service.upsert_membership(brain_id, member_user_id, req.role)
 
     return schemas.MembershipOverview(
-        user_id=target_user.id, email=target_user.email, role=new_role
+        user_id=target_user.id, email=target_user.email, role=req.role
     )
 
 
@@ -178,20 +150,11 @@ async def set_member(
     "/{brain_id}/members/{member_user_id}", status_code=status.HTTP_204_NO_CONTENT
 )
 async def remove_member(
-    brain_id: UUID,
     member_user_id: UUID,
-    user: User = Depends(get_current_user),
-    session: AsyncSession = Depends(get_session),
+    brain_id: UUID,
     brain_service: BrainService = Depends(get_brain_service),
+    _auth: None = Depends(require_brain_owner),
 ) -> None:
-    try:
-        _brain, role = await brain_service.get_brain(brain_id, user.id)
-    except ValueError:
-        raise HTTPException(status_code=404, detail="Brain not found")
-    if role != MemberRole.OWNER:
-        raise HTTPException(status_code=403, detail="Only owners can manage members")
-
     deleted = await brain_service.delete_membership(brain_id, member_user_id)
     if not deleted:
         raise HTTPException(status_code=404, detail="Membership not found")
-    await session.commit()

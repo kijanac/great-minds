@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-import { apiFetch, readJson } from "./client";
+import { apiFetch, brainPath, readJson } from "./client";
 
 const researchSuggestionSchema = z.object({
   topic: z.string(),
@@ -26,7 +26,7 @@ export type Contradiction = z.infer<typeof contradictionSchema>;
 export type LintResponse = z.infer<typeof lintResponseSchema>;
 
 export async function fetchLintResults(): Promise<LintResponse> {
-  const res = await apiFetch("/lint");
+  const res = await apiFetch(brainPath("/lint"));
   if (!res.ok) throw new Error("Failed to fetch lint results");
   return readJson(res, lintResponseSchema);
 }
@@ -41,7 +41,7 @@ const recentArticleSchema = z.object({
 export type RecentArticle = z.infer<typeof recentArticleSchema>;
 
 export async function fetchRecentArticles(limit: number = 10): Promise<RecentArticle[]> {
-  const res = await apiFetch(`/wiki/recent?limit=${limit}`);
+  const res = await apiFetch(brainPath(`/wiki/recent?limit=${limit}`));
   if (!res.ok) throw new Error("Failed to fetch recent articles");
   return readJson(res, z.array(recentArticleSchema));
 }

@@ -28,14 +28,16 @@ from collections import defaultdict
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+from enum import StrEnum
 from uuid import UUID
 
 from openai import AsyncOpenAI
+from pydantic import BaseModel, ValidationError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from great_minds.core.brain import wiki_path, wiki_slug
-from great_minds.core.brains._search_indexer import rebuild_index
-from great_minds.core.brains._utils import (
+from great_minds.core.search import rebuild_index
+from great_minds.core.brain_utils import (
     api_call,
     extract_content,
     parse_frontmatter,
@@ -83,10 +85,22 @@ def _stem_from_path(path: str) -> str:
 # A document after enrichment: (relative path string, frontmatter, body)
 type EnrichedDoc = tuple[str, dict, str]
 
-# A planned article with its source document index
-type PlannedArticle = (
-    dict  # has slug, action, tags, key_points, connections, source_idx
-)
+
+class ArticleAction(StrEnum):
+    CREATE = "create"
+    UPDATE = "update"
+
+
+class PlannedArticle(BaseModel):
+    """Validated shape for a planned wiki article from the LLM planning phase."""
+
+    slug: str
+    action: ArticleAction
+    tags: list[str] = []
+    key_points: list[str] = []
+    connections: list[str] = []
+    source_idx: int = 0
+    source_indices: list[int] = []
 
 
 # ---------------------------------------------------------------------------
@@ -204,9 +218,15 @@ async def plan_one(
         log.warning("failed to parse plan for doc %d: %s", doc_idx, raw[:200])
         return []
 
-    articles = data.get("articles", [])
-    for a in articles:
-        a["source_idx"] = doc_idx
+    articles: list[PlannedArticle] = []
+    for raw_article in data.get("articles", []):
+        raw_article["source_idx"] = doc_idx
+        try:
+            articles.append(PlannedArticle.model_validate(raw_article))
+        except ValidationError as e:
+            log.warning(
+                "invalid article plan in doc %d: %s — %s", doc_idx, raw_article, e
+            )
     return articles
 
 
@@ -242,46 +262,43 @@ def reconcile_plans(
     # Group by normalized slug
     groups: dict[str, list[PlannedArticle]] = defaultdict(list)
     for article in flat:
-        slug = article.get("slug", "")
-        if not slug:
-            continue
-        groups[normalize_slug(slug)].append(article)
+        groups[normalize_slug(article.slug)].append(article)
 
     reconciled: list[PlannedArticle] = []
     merge_count = 0
 
     for _norm, group in groups.items():
-        primary = group[0].copy()
+        primary = group[0].model_copy()
 
         if len(group) > 1:
             merge_count += 1
-            slugs_seen = {a["slug"] for a in group}
+            slugs_seen = {a.slug for a in group}
             if len(slugs_seen) > 1:
-                log.info("  merged slugs: %s -> %s", slugs_seen, primary["slug"])
+                log.info("  merged slugs: %s -> %s", slugs_seen, primary.slug)
 
             # Merge key_points from all contributors
-            all_points = []
-            all_connections = set()
-            source_indices = set()
+            all_points: list[str] = []
+            all_connections: set[str] = set()
+            source_indices: set[int] = set()
             for a in group:
-                all_points.extend(a.get("key_points", []))
-                all_connections.update(a.get("connections", []))
-                source_indices.add(a.get("source_idx", 0))
+                all_points.extend(a.key_points)
+                all_connections.update(a.connections)
+                source_indices.add(a.source_idx)
 
             # Deduplicate key_points (crude: keep unique strings)
             seen_points: set[str] = set()
-            deduped_points = []
+            deduped_points: list[str] = []
             for p in all_points:
                 normalized = p.strip().lower()
                 if normalized not in seen_points:
                     seen_points.add(normalized)
                     deduped_points.append(p)
 
-            primary["key_points"] = deduped_points
-            primary["connections"] = list(all_connections)
-            primary["source_indices"] = sorted(source_indices)
+            primary.key_points = deduped_points
+            primary.connections = list(all_connections)
+            primary.source_indices = sorted(source_indices)
         else:
-            primary["source_indices"] = [primary.get("source_idx", 0)]
+            primary.source_indices = [primary.source_idx]
 
         reconciled.append(primary)
 
@@ -312,47 +329,42 @@ async def write_one(
     wiki_index: str,
 ) -> PlannedArticle | None:
     """Write a single wiki article using the primary source document."""
-    slug = article.get("slug", "")
-    if not slug:
-        return None
-
-    source_indices = article.get("source_indices", [0])
-    primary_idx = source_indices[0]
+    primary_idx = (
+        article.source_indices[0] if article.source_indices else article.source_idx
+    )
     _, fm, body = docs[primary_idx]
 
-    source_paths = [docs[idx][0] for idx in source_indices]
+    source_paths = [docs[idx][0] for idx in article.source_indices]
     source_paths_str = "\n".join(f"  - {p}" for p in source_paths)
 
-    article_path = wiki_path(slug)
-    action = article.get("action", "create")
+    article_path = wiki_path(article.slug)
+    action = article.action
 
     existing_content_section = ""
-    if action == "update":
+    if action == ArticleAction.UPDATE:
         existing = storage.read(article_path, strict=False)
         if existing is not None:
             existing_content_section = f"Existing article content:\n\n{existing}"
         else:
-            action = "create"
+            action = ArticleAction.CREATE
 
     action_instructions = (
         load_prompt("create_article")
-        if action == "create"
+        if action == ArticleAction.CREATE
         else load_prompt("update_article")
     )
-    key_points = "\n".join(f"- {p}" for p in article.get("key_points", []))
-    connections = ", ".join(article.get("connections", [])) or "none"
-    tags = ", ".join(article.get("tags", []))
+    key_points = "\n".join(f"- {p}" for p in article.key_points)
+    connections = ", ".join(article.connections) or "none"
+    tags = ", ".join(article.tags)
 
     batch_lines = []
     for a in all_articles:
-        s = a.get("slug", "")
-        if s:
-            pts = "; ".join(a.get("key_points", [])[:2])
-            batch_lines.append(f"  wiki/{s}.md -- {pts}")
+        pts = "; ".join(a.key_points[:2])
+        batch_lines.append(f"  wiki/{a.slug}.md -- {pts}")
     batch_articles = "\n".join(batch_lines) if batch_lines else "  (none)"
 
     prompt = load_prompt("write_article").format(
-        slug=slug,
+        slug=article.slug,
         tags=tags,
         action=action,
         existing_content_section=existing_content_section,
@@ -381,11 +393,11 @@ async def write_one(
 
     content = extract_content(response)
     if not content:
-        log.error("empty response writing %s", slug)
+        log.error("empty response writing %s", article.slug)
         return None
 
     storage.write(article_path, content)
-    log.info("wrote wiki/%s.md", slug)
+    log.info("wrote wiki/%s.md", article.slug)
     return article
 
 
@@ -404,8 +416,7 @@ async def update_index(
 
     summaries = []
     for a in written_articles:
-        slug = a.get("slug", "")
-        article_path = wiki_path(slug)
+        article_path = wiki_path(a.slug)
         content = storage.read(article_path, strict=False)
         if content is not None:
             summaries.append(f"### {article_path}\n{content[:500]}")
@@ -414,8 +425,7 @@ async def update_index(
         return
 
     changed_list = "\n".join(
-        f"- {a.get('action', 'create')} {wiki_path(a.get('slug', ''))}"
-        for a in written_articles
+        f"- {a.action} {wiki_path(a.slug)}" for a in written_articles
     )
 
     prompt = load_prompt("index_update").format(
@@ -511,7 +521,7 @@ def append_changelog(
         entry += f"- {t}\n"
     entry += f"\nArticles written: {len(articles)}\n"
     for a in articles:
-        entry += f"- {a.get('action', '?')} wiki/{a.get('slug', '')}.md\n"
+        entry += f"- {a.action} wiki/{a.slug}.md\n"
 
     changelog_path = "wiki/_changelog.md"
     existing = storage.read(changelog_path, strict=False)
@@ -666,10 +676,7 @@ async def run(
             await doc_repo.upsert(brain_id, doc)
 
         for article in written:
-            slug = article.get("slug", "")
-            if not slug:
-                continue
-            article_path = wiki_path(slug)
+            article_path = wiki_path(article.slug)
             content = storage.read(article_path, strict=False)
             if content is None:
                 continue
@@ -677,13 +684,15 @@ async def run(
                 file_path=article_path,
                 content=content,
                 doc_kind=DOC_KIND_WIKI,
-                title=slug.replace("-", " ").title(),
+                title=article.slug.replace("-", " ").title(),
                 compiled=True,
-                tags=article.get("tags", []),
-                concepts=article.get("connections", []),
+                tags=article.tags,
+                concepts=article.connections,
             )
             await doc_repo.upsert(brain_id, doc)
-            await doc_repo.rebuild_backlinks_for_article(brain_id, slug, content)
+            await doc_repo.rebuild_backlinks_for_article(
+                brain_id, article.slug, content
+            )
 
         await db_session.commit()
         log.info(
@@ -701,9 +710,6 @@ async def run(
 
     return CompilationResult(
         docs_compiled=len(docs),
-        articles_written=[
-            {"slug": a.get("slug", ""), "action": a.get("action", "create")}
-            for a in written
-        ],
+        articles_written=[{"slug": a.slug, "action": a.action} for a in written],
         chunks_indexed=chunks_indexed,
     )

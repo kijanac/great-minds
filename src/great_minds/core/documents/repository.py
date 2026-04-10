@@ -9,7 +9,7 @@ from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from great_minds.core.brain import wiki_slug
-from great_minds.core.brains._utils import extract_wiki_link_targets
+from great_minds.core.brain_utils import extract_wiki_link_targets
 from great_minds.core.documents.models import (
     BacklinkORM,
     DocumentConcept,
