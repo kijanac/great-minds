@@ -45,6 +45,7 @@ async def query(
         origin_path=req.origin_path,
         session_context=req.session_context,
         mode=req.mode,
+        extra_instructions=req.extra_instructions,
     )
     return schemas.QueryResponse(answer=answer)
 
@@ -73,6 +74,7 @@ async def query_stream(
             origin_path=req.origin_path,
             session_context=req.session_context,
             mode=req.mode,
+            extra_instructions=req.extra_instructions,
         ):
             etype = event["event"]
             data = json.dumps(event["data"])

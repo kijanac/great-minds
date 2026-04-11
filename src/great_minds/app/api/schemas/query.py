@@ -11,6 +11,7 @@ class QueryRequest(BaseModel):
     origin_path: str | None = None
     session_context: str | None = None
     mode: QueryMode = QueryMode.QUERY
+    extra_instructions: str | None = None
 
 
 class QueryResponse(BaseModel):

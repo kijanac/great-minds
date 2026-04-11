@@ -35,6 +35,7 @@ import sys
 os.environ.setdefault("OMP_NUM_THREADS", "1")
 try:
     import onnxruntime as ort
+
     ort.set_default_logger_severity(4)
 except ImportError:
     pass
@@ -46,7 +47,9 @@ from tqdm import tqdm
 
 DEFAULT_DOCS_DIR = "/data/scratch-fast/bzl/great-minds-datasets"
 DEFAULT_INDEX_DIR = "/data/scratch-fast/bzl/great-minds-datasets/.llama_index"
-DEFAULT_FAISS_INDEX_DIR = "/data/scratch-fast/bzl/great-minds-datasets/.llama_index_faiss"
+DEFAULT_FAISS_INDEX_DIR = (
+    "/data/scratch-fast/bzl/great-minds-datasets/.llama_index_faiss"
+)
 DEFAULT_EMBED_PROVIDER = "huggingface"
 DEFAULT_OPENAI_EMBED_MODEL = "text-embedding-3-small"
 DEFAULT_HF_EMBED_MODEL = "BAAI/bge-small-en-v1.5"
@@ -79,6 +82,7 @@ MARKITDOWN_EXTENSIONS = {".docx", ".doc", ".pdf", ".pptx", ".ppt", ".xlsx", ".xl
 def _cache_path_for(file: Path, cache_dir: Path) -> Path:
     """Stable cache path: <cache_dir>/<stem>_<sha256[:12]>.md"""
     import hashlib
+
     digest = hashlib.sha256(str(file.resolve()).encode()).hexdigest()[:12]
     return cache_dir / f"{file.stem}_{digest}.md"
 
@@ -105,12 +109,15 @@ class MarkitdownReader:
         if text is None:
             if not hasattr(self, "_converter"):
                 from markitdown import MarkItDown
+
                 self._converter = MarkItDown()
             t0 = time.perf_counter()
             result = self._converter.convert(str(file))
             elapsed = time.perf_counter() - t0
             if elapsed > 2.0:
-                print(f"  [slow] {file.name} took {elapsed:.1f}s to convert", flush=True)
+                print(
+                    f"  [slow] {file.name} took {elapsed:.1f}s to convert", flush=True
+                )
             text = result.text_content or ""
             self._write_cache(file, text)
 
@@ -136,7 +143,10 @@ class MarkitdownReader:
         try:
             _cache_path_for(file, self._cache_dir).write_text(text, encoding="utf-8")
         except OSError as exc:
-            print(f"  [warn] could not write cache for {file.name}: {exc}", file=sys.stderr)
+            print(
+                f"  [warn] could not write cache for {file.name}: {exc}",
+                file=sys.stderr,
+            )
 
 
 # ---------------------------------------------------------------------------
@@ -164,7 +174,9 @@ def _build_service_context(
 
         device = "cuda" if torch.cuda.is_available() else "cpu"
         print(f"Using HuggingFace embedding model: {embed_model} (device={device})")
-        LISettings.embed_model = HuggingFaceEmbedding(model_name=embed_model, device=device)
+        LISettings.embed_model = HuggingFaceEmbedding(
+            model_name=embed_model, device=device
+        )
     else:
         from llama_index.embeddings.openai import OpenAIEmbedding
 
@@ -239,13 +251,19 @@ def _get_nodes_timed(node_parser, documents: list) -> list:
 
 def cmd_index(args: argparse.Namespace) -> None:
     docs_dir = Path(args.docs_dir)
-    index_dir = Path(args.index_dir or (DEFAULT_FAISS_INDEX_DIR if args.faiss else DEFAULT_INDEX_DIR))
+    index_dir = Path(
+        args.index_dir or (DEFAULT_FAISS_INDEX_DIR if args.faiss else DEFAULT_INDEX_DIR)
+    )
 
     if not docs_dir.exists():
         print(f"[error] docs_dir does not exist: {docs_dir}", file=sys.stderr)
         sys.exit(1)
 
-    from llama_index.core import SimpleDirectoryReader, VectorStoreIndex, load_index_from_storage
+    from llama_index.core import (
+        SimpleDirectoryReader,
+        VectorStoreIndex,
+        load_index_from_storage,
+    )
     from llama_index.core.storage import StorageContext
 
     li_settings = _build_service_context(
@@ -264,7 +282,8 @@ def cmd_index(args: argparse.Namespace) -> None:
 
     EXCLUDE_SUFFIXES = {".mp3", ".mp4", ".wav", ".m4a", ".ogg", ".flac", ".zip"}
     all_files = sorted(
-        f for f in docs_dir.rglob("*")
+        f
+        for f in docs_dir.rglob("*")
         if f.is_file()
         and not any(part.startswith(".") for part in f.relative_to(docs_dir).parts)
         and f.suffix.lower() not in EXCLUDE_SUFFIXES
@@ -280,6 +299,7 @@ def cmd_index(args: argparse.Namespace) -> None:
         print(f"Resuming existing index at: {index_dir}")
         if args.faiss:
             from llama_index.vector_stores.faiss import FaissVectorStore
+
             storage_context = StorageContext.from_defaults(
                 persist_dir=str(index_dir),
                 vector_store=FaissVectorStore.from_persist_dir(str(index_dir)),
@@ -289,17 +309,26 @@ def cmd_index(args: argparse.Namespace) -> None:
         index = load_index_from_storage(storage_context)
         already_indexed = {
             doc.metadata.get("file_path")
-            for doc in tqdm(index.docstore.docs.values(), desc="Checking existing index", unit="doc")
+            for doc in tqdm(
+                index.docstore.docs.values(), desc="Checking existing index", unit="doc"
+            )
         }
-        all_files = [f for f in tqdm(all_files, desc="Filtering files", unit="file") if str(f) not in already_indexed]
+        all_files = [
+            f
+            for f in tqdm(all_files, desc="Filtering files", unit="file")
+            if str(f) not in already_indexed
+        ]
         if not all_files:
             print("All files already indexed. Nothing to do.")
             return
-        print(f"{len(already_indexed)} file(s) already indexed; {len(all_files)} new file(s) to add.")
+        print(
+            f"{len(already_indexed)} file(s) already indexed; {len(all_files)} new file(s) to add."
+        )
     else:
         if args.faiss:
             import faiss as _faiss
             from llama_index.vector_stores.faiss import FaissVectorStore
+
             embed_dim = args.embed_dim or EMBED_DIMS.get(args.embed_model)
             if embed_dim is None:
                 print(
@@ -317,13 +346,17 @@ def cmd_index(args: argparse.Namespace) -> None:
 
     total = len(all_files)
     batch_size = args.batch_size
-    for batch_start in tqdm(range(0, total, batch_size), desc="Indexing batches", unit="batch"):
+    for batch_start in tqdm(
+        range(0, total, batch_size), desc="Indexing batches", unit="batch"
+    ):
         batch_files = all_files[batch_start : batch_start + batch_size]
         batch_end = min(batch_start + batch_size, total)
         print(f"  Batch {batch_start + 1}–{batch_end} / {total} …")
 
         reader = SimpleDirectoryReader(
-            input_files=[str(f) for f in tqdm(batch_files, desc="Loading files", unit="file")],
+            input_files=[
+                str(f) for f in tqdm(batch_files, desc="Loading files", unit="file")
+            ],
             file_extractor=file_extractor,
         )
         try:
@@ -338,7 +371,11 @@ def cmd_index(args: argparse.Namespace) -> None:
         nodes = _get_nodes_timed(li_settings.node_parser, documents)
 
         if index is None:
-            kwargs = {"storage_context": storage_context} if storage_context is not None else {}
+            kwargs = (
+                {"storage_context": storage_context}
+                if storage_context is not None
+                else {}
+            )
             index = VectorStoreIndex(nodes, show_progress=True, **kwargs)
         else:
             index.insert_nodes(nodes, show_progress=True)
@@ -348,7 +385,9 @@ def cmd_index(args: argparse.Namespace) -> None:
             # StorageContext.persist() writes FAISS binary to default__vector_store.json
             # (wrong name). Also write to vector_store.faiss so _check_faiss_mismatch
             # and FaissVectorStore.from_persist_dir() can find it.
-            index.storage_context.vector_store.persist(str(index_dir / FAISS_STORE_FILE))
+            index.storage_context.vector_store.persist(
+                str(index_dir / FAISS_STORE_FILE)
+            )
 
     print(f"Index saved to: {index_dir}")
 
@@ -359,7 +398,9 @@ def cmd_index(args: argparse.Namespace) -> None:
 
 
 def cmd_query(args: argparse.Namespace) -> None:
-    index_dir = Path(args.index_dir or (DEFAULT_FAISS_INDEX_DIR if args.faiss else DEFAULT_INDEX_DIR))
+    index_dir = Path(
+        args.index_dir or (DEFAULT_FAISS_INDEX_DIR if args.faiss else DEFAULT_INDEX_DIR)
+    )
 
     if not index_dir.exists():
         print(
@@ -384,6 +425,7 @@ def cmd_query(args: argparse.Namespace) -> None:
 
     if args.faiss:
         from llama_index.vector_stores.faiss import FaissVectorStore
+
         storage_context = StorageContext.from_defaults(
             persist_dir=str(index_dir),
             vector_store=FaissVectorStore.from_persist_dir(str(index_dir)),
@@ -509,7 +551,9 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p_index.add_argument(
         "--preprocess-cache",
-        default=os.path.join(os.environ.get("LLAMA_DOCS_DIR", DEFAULT_DOCS_DIR), ".markitdown_cache"),
+        default=os.path.join(
+            os.environ.get("LLAMA_DOCS_DIR", DEFAULT_DOCS_DIR), ".markitdown_cache"
+        ),
         help="Directory of pre-converted .md files produced by preprocess_docs.py (default: <docs-dir>/.markitdown_cache)",
     )
     p_index.add_argument(
