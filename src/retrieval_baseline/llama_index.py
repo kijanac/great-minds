@@ -25,6 +25,7 @@ Document types handled automatically:
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import sys
 
@@ -39,6 +40,7 @@ try:
 except ImportError:
     pass
 import time
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Optional
 
@@ -202,6 +204,100 @@ def _check_faiss_mismatch(index_dir: Path, want_faiss: bool) -> None:
             file=sys.stderr,
         )
         sys.exit(1)
+
+
+# ---------------------------------------------------------------------------
+# Query expansion + retrieval
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class QueryResult:
+    answer: str
+    source_nodes: list
+    generated_queries: list[str] = field(default_factory=list)
+
+
+def _generate_queries(question: str, n: int = 3) -> list[str]:
+    """Ask the LLM to produce *n* distinct search-query reformulations."""
+    from llama_index.core import Settings as LISettings
+
+    prompt = (
+        f"Generate {n} search queries to find documents relevant to answering the question below. "
+        f"Make each query distinct in phrasing, focus, and keywords. "
+        f"Output ONLY a JSON array of {n} query strings, no other text.\n\n"
+        f"Question: {question}\n\nJSON array:"
+    )
+    try:
+        text = str(LISettings.llm.complete(prompt)).strip()
+        start, end = text.find("["), text.rfind("]") + 1
+        if 0 <= start < end:
+            queries = json.loads(text[start:end])
+            if isinstance(queries, list) and queries:
+                return [str(q) for q in queries[:n]]
+    except Exception:
+        pass
+    return []
+
+
+def _reciprocal_rank_fusion(
+    query_results: dict[str, list],
+    top_k: int,
+    k: int = 60,
+) -> list:
+    """Merge ranked node lists via Reciprocal Rank Fusion."""
+    from llama_index.core.schema import NodeWithScore
+
+    rrf_scores: dict[str, float] = {}
+    best_node: dict[str, object] = {}
+    for results in query_results.values():
+        for rank, nws in enumerate(results):
+            node_id = nws.node.node_id
+            rrf_scores[node_id] = rrf_scores.get(node_id, 0.0) + 1.0 / (k + rank + 1)
+            if node_id not in best_node:
+                best_node[node_id] = nws.node
+
+    ranked = sorted(rrf_scores.items(), key=lambda x: x[1], reverse=True)[:top_k]
+    return [NodeWithScore(node=best_node[nid], score=score) for nid, score in ranked]
+
+
+def run_query(
+    index,
+    question: str,
+    top_k: int = DEFAULT_SIMILARITY_TOP_K,
+    response_mode: str = "compact",
+    verbose: bool = False,
+    query_expansion: bool = True,
+    num_expansion_queries: int = 3,
+) -> QueryResult:
+    """Run a query against *index*, optionally expanding it via the LLM first."""
+    if query_expansion:
+        generated_queries = _generate_queries(question, n=num_expansion_queries)
+        all_queries = [question] + generated_queries
+        retriever = index.as_retriever(similarity_top_k=top_k)
+        query_results = {q: retriever.retrieve(q) for q in all_queries}
+        source_nodes = _reciprocal_rank_fusion(query_results, top_k=top_k)
+
+        from llama_index.core.response_synthesizers import get_response_synthesizer
+        synthesizer = get_response_synthesizer(
+            response_mode=response_mode, verbose=verbose
+        )
+        response = synthesizer.synthesize(question, nodes=source_nodes)
+    else:
+        generated_queries = []
+        qe = index.as_query_engine(
+            similarity_top_k=top_k,
+            response_mode=response_mode,
+            verbose=verbose,
+        )
+        response = qe.query(question)
+        source_nodes = response.source_nodes
+
+    return QueryResult(
+        answer=str(response),
+        source_nodes=source_nodes,
+        generated_queries=generated_queries,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -396,19 +492,25 @@ def cmd_query(args: argparse.Namespace) -> None:
     index = load_index_from_storage(storage_context)
     print(f"Index loaded in {time.perf_counter() - t0:.1f}s")
 
-    query_engine = index.as_query_engine(
-        similarity_top_k=args.top_k,
-        response_mode=args.response_mode,
-        verbose=args.verbose,
-    )
-
     def _run_query(question: str) -> None:
-        response = query_engine.query(question)
+        result = run_query(
+            index,
+            question,
+            top_k=args.top_k,
+            response_mode=args.response_mode,
+            verbose=args.verbose,
+            query_expansion=args.query_expansion,
+            num_expansion_queries=args.num_expansion_queries,
+        )
+        if result.generated_queries:
+            print("\n--- Generated retrieval queries ---")
+            for i, q in enumerate(result.generated_queries, 1):
+                print(f"  [{i}] {q}")
         print("\n--- Answer ---")
-        print(str(response))
+        print(result.answer)
         if args.show_sources:
             print("\n--- Sources ---")
-            for i, node in enumerate(response.source_nodes, 1):
+            for i, node in enumerate(result.source_nodes, 1):
                 meta = node.metadata
                 score = getattr(node, "score", None)
                 fname = meta.get("file_name", meta.get("source", "unknown"))
@@ -552,6 +654,19 @@ def build_parser() -> argparse.ArgumentParser:
         "--verbose",
         action="store_true",
         help="Print extra debug information",
+    )
+    p_query.add_argument(
+        "--no-query-expansion",
+        dest="query_expansion",
+        action="store_false",
+        default=True,
+        help="Disable LLM query expansion (use the raw question for retrieval)",
+    )
+    p_query.add_argument(
+        "--num-expansion-queries",
+        type=int,
+        default=3,
+        help="Number of additional queries to generate when expansion is on (default: 3)",
     )
 
     return parser

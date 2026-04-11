@@ -50,6 +50,7 @@ from retrieval_baseline.llama_index import (
     FAISS_STORE_FILE,
     _build_service_context,
     _check_faiss_mismatch,
+    run_query,
 )
 
 # ---------------------------------------------------------------------------
@@ -122,6 +123,8 @@ class QueryRequest(BaseModel):
     response_mode: str = "compact"
     show_sources: bool = True
     verbose: bool = False
+    query_expansion: bool = True
+    num_expansion_queries: int = 3
 
 
 class SourceNode(BaseModel):
@@ -135,6 +138,7 @@ class QueryResponse(BaseModel):
     answer: str
     sources: list[SourceNode]
     elapsed_ms: int
+    generated_queries: list[str] = []
 
 
 # ---------------------------------------------------------------------------
@@ -178,19 +182,22 @@ def _create_app(args: argparse.Namespace) -> FastAPI:
         index = _state["index"]
 
         def _run() -> QueryResponse:
-            qe = index.as_query_engine(
-                similarity_top_k=req.top_k,
+            t0 = time.perf_counter()
+            result = run_query(
+                index,
+                req.question,
+                top_k=req.top_k,
                 response_mode=req.response_mode,
                 verbose=req.verbose,
+                query_expansion=req.query_expansion,
+                num_expansion_queries=req.num_expansion_queries,
             )
-            t0 = time.perf_counter()
-            response = qe.query(req.question)
             elapsed_ms = int((time.perf_counter() - t0) * 1000)
 
             snippet_len = 2000 if req.verbose else 500
             sources: list[SourceNode] = []
             if req.show_sources:
-                for node in response.source_nodes:
+                for node in result.source_nodes:
                     meta = node.metadata
                     sources.append(
                         SourceNode(
@@ -202,9 +209,10 @@ def _create_app(args: argparse.Namespace) -> FastAPI:
                     )
 
             return QueryResponse(
-                answer=str(response),
+                answer=result.answer,
                 sources=sources,
                 elapsed_ms=elapsed_ms,
+                generated_queries=result.generated_queries,
             )
 
         return await asyncio.to_thread(_run)
@@ -452,6 +460,47 @@ _HTML_PAGE = """<!DOCTYPE html>
       word-break: break-word;
     }
     .src-card.open .src-snippet { display: block; }
+
+    /* ---- generated queries ---- */
+    .queries-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      margin-bottom: 1rem;
+      overflow: hidden;
+    }
+    .queries-head {
+      align-items: center;
+      cursor: pointer;
+      display: flex;
+      gap: 0.5rem;
+      padding: 0.55rem 1rem;
+      user-select: none;
+    }
+    .queries-head:hover { background: var(--surface2); }
+    .queries-head-label {
+      color: var(--muted);
+      font-size: 0.7rem;
+      font-weight: 700;
+      letter-spacing: 0.09em;
+      text-transform: uppercase;
+      flex: 1;
+    }
+    .queries-body {
+      border-top: 1px solid var(--border);
+      display: none;
+      padding: 0.6rem 1rem 0.75rem;
+    }
+    .queries-card.open .queries-body { display: block; }
+    .queries-card.open .chevron { transform: rotate(90deg); }
+    .query-item {
+      color: var(--muted);
+      font-family: var(--mono);
+      font-size: 0.76rem;
+      line-height: 1.65;
+      padding: 0.15rem 0;
+    }
+    .query-item::before { content: "›  "; color: var(--accent); }
   </style>
 </head>
 <body>
@@ -484,6 +533,10 @@ _HTML_PAGE = """<!DOCTYPE html>
             <label for="show_sources">Show sources</label>
           </div>
           <div class="opt">
+            <input type="checkbox" id="query_expansion" checked>
+            <label for="query_expansion">Query expansion</label>
+          </div>
+          <div class="opt">
             <input type="checkbox" id="verbose">
             <label for="verbose">Verbose</label>
           </div>
@@ -498,6 +551,7 @@ _HTML_PAGE = """<!DOCTYPE html>
 
     <div id="results">
       <div class="result-meta" id="result-meta"></div>
+      <div id="queries-section"></div>
       <div class="answer-card">
         <div class="card-label">Answer</div>
         <div class="answer-text" id="answer-text"></div>
@@ -515,6 +569,7 @@ _HTML_PAGE = """<!DOCTYPE html>
     const answerEl = document.getElementById('answer-text');
     const metaEl   = document.getElementById('result-meta');
     const srcsEl   = document.getElementById('sources');
+    const queriesEl= document.getElementById('queries-section');
 
     qEl.addEventListener('keydown', e => {
       if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); run(); }
@@ -536,10 +591,11 @@ _HTML_PAGE = """<!DOCTYPE html>
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             question,
-            top_k:         parseInt(document.getElementById('top_k').value) || 5,
-            response_mode: document.getElementById('response_mode').value,
-            show_sources:  document.getElementById('show_sources').checked,
-            verbose:       document.getElementById('verbose').checked,
+            top_k:           parseInt(document.getElementById('top_k').value) || 5,
+            response_mode:   document.getElementById('response_mode').value,
+            show_sources:    document.getElementById('show_sources').checked,
+            verbose:         document.getElementById('verbose').checked,
+            query_expansion: document.getElementById('query_expansion').checked,
           }),
         });
 
@@ -572,6 +628,24 @@ _HTML_PAGE = """<!DOCTYPE html>
       const n = data.sources.length;
       metaEl.textContent = (data.elapsed_ms / 1000).toFixed(1) + 's  ·  '
         + n + ' source' + (n !== 1 ? 's' : '');
+
+      // Generated queries
+      queriesEl.innerHTML = '';
+      const gq = data.generated_queries || [];
+      if (gq.length > 0) {
+        const card = document.createElement('div');
+        card.className = 'queries-card';
+        card.innerHTML =
+          '<div class="queries-head">'
+            + '<span class="queries-head-label">Retrieval queries (' + gq.length + ' generated)</span>'
+            + '<span class="chevron">&#9654;</span>'
+          + '</div>'
+          + '<div class="queries-body">'
+            + gq.map(q => '<div class="query-item">' + esc(q) + '</div>').join('')
+          + '</div>';
+        card.querySelector('.queries-head').addEventListener('click', () => card.classList.toggle('open'));
+        queriesEl.appendChild(card);
+      }
 
       const autoExpand = document.getElementById('verbose').checked;
 
