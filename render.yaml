@@ -34,7 +34,7 @@ projects:
           - name: great-minds-web
             type: web
             runtime: static
-            buildCommand: cd web && npm install && npm run build
+            buildCommand: cd web && pnpm install && pnpm run build
             staticPublishPath: web/dist
             headers:
               - path: /*
@@ -46,7 +46,7 @@ projects:
                 destination: /index.html
             envVars:
               - key: VITE_API_BASE
-                value: https://great-minds-api.onrender.com
+                value: https://great-minds-api.onrender.com/v1
 
         databases:
           - name: great-minds-db
