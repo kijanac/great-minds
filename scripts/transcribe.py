@@ -84,6 +84,7 @@ def _call_diarize_api(config: Config, audio_path: Path) -> str:
                     files={"audio_file": (audio_path.name, f, "audio/flac")},
                     headers={"Authorization": f"Bearer {auth_key}"},
                     timeout=None,
+                    follow_redirects=True,
                 ) as response,
             ):
                 if response.status_code == 200:
@@ -149,7 +150,7 @@ def transcribe(config: Config) -> str:
     """Convert the MP3 to FLAC and send it to the appropriate API."""
     with tempfile.TemporaryDirectory() as tmpdir:
         flac_path = Path(tmpdir) / config.file_path.with_suffix(".flac").name
-        config.progress(f"Converting {config.file_path.name} to FLAC...")
+        config.progress(f"         converting to FLAC...")
         _to_flac(config.file_path, flac_path)
 
         if config.mode == "diarize":
@@ -157,29 +158,25 @@ def transcribe(config: Config) -> str:
                 raise RuntimeError("DIARIZED_TRANSCRIPTION_API_URL is required for diarize mode.")
             if not config.diarized_api_key:
                 raise RuntimeError("DIARIZED_TRANSCRIPTION_API_KEY is required for diarize mode.")
-            config.progress("Transcribing with speaker separation (Parakeet + diarization)...")
+            config.progress(f"         uploading & transcribing (diarized)...")
             return _call_diarize_api(config, flac_path)
 
         if not config.api_url:
             raise RuntimeError("TRANSCRIPTION_API_URL is required for plain mode.")
-        config.progress("Transcribing...")
+        config.progress(f"         uploading & transcribing...")
         return _call_plain_api(config, flac_path)
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Diarized MP3 transcription via Modal Parakeet API")
-    parser.add_argument("mp3", help="Path to the MP3 file to transcribe")
+    parser.add_argument("mp3", nargs="+", help="Path(s) to MP3 file(s) to transcribe")
     parser.add_argument("--mode", choices=["plain", "diarize"], default="diarize")
+    parser.add_argument("--output-dir", help="Directory to save transcripts (as <name>.txt); prints to stdout if omitted")
     parser.add_argument("--api-url", default=os.environ.get("TRANSCRIPTION_API_URL"))
     parser.add_argument("--api-key", default=os.environ.get("TRANSCRIPTION_API_KEY", ""))
     parser.add_argument("--diarized-api-url", default=os.environ.get("DIARIZED_TRANSCRIPTION_API_URL"))
     parser.add_argument("--diarized-api-key", default=os.environ.get("DIARIZED_TRANSCRIPTION_API_KEY"))
     args = parser.parse_args()
-
-    file_path = Path(args.mp3)
-    if not file_path.exists():
-        print(f"Error: file not found: {args.mp3}", file=sys.stderr)
-        sys.exit(1)
 
     if args.mode == "diarize" and not args.diarized_api_url:
         print("Error: DIARIZED_TRANSCRIPTION_API_URL is required for diarize mode", file=sys.stderr)
@@ -188,16 +185,68 @@ def main() -> None:
         print("Error: TRANSCRIPTION_API_URL is required for plain mode", file=sys.stderr)
         sys.exit(1)
 
-    config = Config(
-        file_path=file_path,
-        api_url=args.api_url,
-        api_key=args.api_key or "",
-        diarized_api_url=args.diarized_api_url,
-        diarized_api_key=args.diarized_api_key,
-        mode=args.mode,
-    )
+    output_dir = Path(args.output_dir) if args.output_dir else None
+    if output_dir:
+        output_dir.mkdir(parents=True, exist_ok=True)
 
-    print(transcribe(config))
+    mp3s = args.mp3
+    total = len(mp3s)
+    done = skipped = failed = 0
+
+    def log(msg: str) -> None:
+        print(msg, file=sys.stderr)
+
+    log(f"\n{'='*60}")
+    log(f"  Transcribing {total} file(s)")
+    if output_dir:
+        log(f"  Output dir: {output_dir}")
+    log(f"{'='*60}\n")
+
+    for i, mp3 in enumerate(mp3s, 1):
+        file_path = Path(mp3)
+        prefix = f"[{i}/{total}]"
+
+        if not file_path.exists():
+            log(f"{prefix} ERROR  file not found: {mp3}")
+            failed += 1
+            continue
+
+        if output_dir:
+            out_path = output_dir / file_path.with_suffix(".txt").name
+            if out_path.exists():
+                log(f"{prefix} SKIP   {file_path.name}  (already transcribed)")
+                skipped += 1
+                continue
+
+        log(f"{prefix} START  {file_path.name}")
+
+        config = Config(
+            file_path=file_path,
+            api_url=args.api_url,
+            api_key=args.api_key or "",
+            diarized_api_url=args.diarized_api_url,
+            diarized_api_key=args.diarized_api_key,
+            mode=args.mode,
+        )
+
+        try:
+            transcript = transcribe(config)
+        except Exception as e:
+            log(f"{prefix} FAILED {file_path.name}: {e}")
+            failed += 1
+            continue
+
+        if output_dir:
+            out_path.write_text(transcript, encoding="utf-8")
+            log(f"{prefix} DONE   {file_path.name}  -> {out_path.name}")
+        else:
+            print(transcript)
+            log(f"{prefix} DONE   {file_path.name}")
+        done += 1
+
+    log(f"\n{'='*60}")
+    log(f"  Done: {done}  |  Skipped: {skipped}  |  Failed: {failed}  |  Total: {total}")
+    log(f"{'='*60}\n")
 
 
 if __name__ == "__main__":
