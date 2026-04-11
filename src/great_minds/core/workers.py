@@ -197,7 +197,7 @@ async def spawn_compile(
             "factor": 2,
             "max_seconds": 300,
         },
-        idempotency_key=f"compile:{brain_id}",
+        idempotency_key=f"compile:{brain_id}:{datetime.now(UTC).strftime('%Y-%m-%dT%H:%M')}",
     )
 
     task_id = result["task_id"]
