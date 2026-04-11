@@ -13,3 +13,6 @@ dogfood-output/
 sessions/
 .env
 .DS_Store
+*.zip
+*.mp3
+*.docx

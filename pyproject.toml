@@ -11,6 +11,7 @@ dependencies = [
     "fastapi>=0.135.3",
     "httpx>=0.28.1",
     "markitdown>=0.1.5",
+    "modal>=1.4.1",
     "openai>=2.0.0",
     "pgvector>=0.4.2",
     "pydantic-settings>=2.13.1",
