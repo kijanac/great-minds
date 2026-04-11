@@ -111,7 +111,7 @@ async def invite_member(
     target_user, _created = await user_service.get_or_create(req.email)
     await brain_service.upsert_membership(brain_id, target_user.id, req.role)
 
-    mailer.send(
+    await mailer.send(
         to=req.email,
         subject=f"You've been invited to {brain.name}",
         body=(

@@ -20,7 +20,7 @@ class Settings(BaseSettings):
     jwt_secret: str
     jwt_access_expiry_minutes: int = 30
     jwt_refresh_expiry_days: int = 7
-    auth_code_expiry_minutes: int = 5
+    auth_code_expiry_minutes: int = 10
     openrouter_api_key: str | None = None
     resend_api_key: str | None = None
     resend_from_email: str | None = None

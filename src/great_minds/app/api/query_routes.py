@@ -36,7 +36,7 @@ async def query(
     brain = await brain_service.get_by_id(brain_id)
     all_sources = await brain_service.get_all_query_sources(user.id)
     target = querier.QuerySource(storage=storage, label=brain.name, brain_id=brain_id)
-    sources = [target] + [s for s in all_sources if s.label != target.label]
+    sources = [target] + [s for s in all_sources if s.brain_id != brain_id]
     answer = await querier.run_query(
         sources,
         req.question,
@@ -62,7 +62,7 @@ async def query_stream(
     brain = await brain_service.get_by_id(brain_id)
     all_sources = await brain_service.get_all_query_sources(user.id)
     target = querier.QuerySource(storage=storage, label=brain.name, brain_id=brain_id)
-    sources = [target] + [s for s in all_sources if s.label != target.label]
+    sources = [target] + [s for s in all_sources if s.brain_id != brain_id]
 
     async def event_generator():
         async for event in querier.run_stream_query(

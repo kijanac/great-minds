@@ -9,12 +9,16 @@ from great_minds.core.settings import Settings
 log = logging.getLogger(__name__)
 
 
+def normalize_email(email: str) -> str:
+    return email.strip().lower()
+
+
 class Mailer:
     def __init__(self, settings: Settings) -> None:
         self.api_key = settings.resend_api_key
         self.from_email = settings.resend_from_email
 
-    def send(self, to: str, subject: str, body: str) -> None:
+    async def send(self, to: str, subject: str, body: str) -> None:
         if self.api_key is None or self.from_email is None:
             log.warning(
                 "resend not configured — logging email: to=%s subject=%s",
@@ -24,7 +28,7 @@ class Mailer:
             return
 
         resend.api_key = self.api_key
-        resend.Emails.send(
+        await resend.Emails.send_async(
             {
                 "from": self.from_email,
                 "to": [to],

@@ -25,7 +25,7 @@ import json
 import logging
 import re
 from collections import defaultdict
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from enum import StrEnum
@@ -35,7 +35,7 @@ from openai import AsyncOpenAI
 from pydantic import BaseModel, ValidationError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from great_minds.core.brain import wiki_path, wiki_slug
+from great_minds.core.brain import load_config, wiki_path, wiki_slug
 from great_minds.core.search import rebuild_index
 from great_minds.core.brain_utils import (
     api_call,
@@ -45,7 +45,8 @@ from great_minds.core.brain_utils import (
     strip_json_fencing,
 )
 from great_minds.core.documents.repository import DocumentRepository
-from great_minds.core.documents.schemas import DOC_KIND_WIKI, DocumentCreate
+from great_minds.core.documents.schemas import DocKind, DocumentCreate
+from great_minds.core.ingester import FieldSpec, load_field_specs
 from great_minds.core.llm import EXTRACT_MODEL, REASON_MODEL, get_async_client
 from great_minds.core.storage import Storage
 
@@ -76,6 +77,28 @@ def _stem_from_path(path: str) -> str:
         return filename[:-3]
     dot = filename.rfind(".")
     return filename[:dot] if dot != -1 else filename
+
+
+def _content_type_from_path(path: str) -> str:
+    """Infer content type from the storage path.
+
+    Example: "raw/texts/lenin/ch1.md" -> "texts"
+    """
+    parts = path.split("/")
+    if len(parts) >= 2 and parts[0] == "raw":
+        return parts[1]
+    return "texts"
+
+
+def _build_extra_fields_prompt(enriched_specs: list[FieldSpec]) -> str:
+    """Build the {extra_fields} section for the enrich prompt."""
+    if not enriched_specs:
+        return ""
+    lines = []
+    for spec in enriched_specs:
+        type_hint = "list of " if spec.type == "list" else ""
+        lines.append(f'- "{spec.name}": {type_hint}{spec.description}')
+    return "\n".join(lines)
 
 
 # ---------------------------------------------------------------------------
@@ -114,6 +137,7 @@ async def enrich_one(
     client: AsyncOpenAI,
     sem: asyncio.Semaphore,
     filepath: str,
+    config: dict,
 ) -> EnrichedDoc:
     content = storage.read(filepath)
     if content is None:
@@ -121,8 +145,16 @@ async def enrich_one(
     fm, body = parse_frontmatter(content)
     title = fm.get("title", _stem_from_path(filepath))
 
+    content_type = _content_type_from_path(filepath)
+    specs = load_field_specs(config, content_type)
+    enriched_specs = [s for s in specs if s.source == "enriched"]
+    extra_fields = _build_extra_fields_prompt(enriched_specs)
+
     async with sem:
-        prompt = load_prompt("enrich").format(author=fm["author"])
+        prompt = load_prompt("enrich").format(
+            author=fm.get("author", "unknown"),
+            extra_fields=extra_fields,
+        )
         response = await api_call(
             client,
             model=EXTRACT_MODEL,
@@ -138,20 +170,18 @@ async def enrich_one(
         raw = strip_json_fencing(text)
         try:
             data = json.loads(raw)
-            fm.update(
-                {
-                    "genre": data.get("genre", ""),
-                    "tradition": data.get("tradition", ""),
-                    "interlocutors": data.get("interlocutors", []),
-                    "concepts": data.get("concepts", []),
-                    "tags": data.get("tags", []),
-                }
-            )
+            # Universal enriched fields
+            fm["genre"] = data.get("genre", "")
+            fm["tags"] = data.get("tags", [])
+            # Config-driven enriched fields
+            for spec in enriched_specs:
+                default = [] if spec.type == "list" else ""
+                fm[spec.name] = data.get(spec.name, default)
             log.info(
-                "enriched %s -- genre=%s, concepts=%d",
+                "enriched %s -- genre=%s, tags=%d",
                 title,
                 fm["genre"],
-                len(fm["concepts"]),
+                len(fm["tags"]),
             )
         except json.JSONDecodeError:
             log.warning("failed to parse enrichment for %s: %s", title, raw[:200])
@@ -565,9 +595,11 @@ async def run(
     limit: int | None = None,
     db_session: "AsyncSession | None" = None,
     brain_id: "UUID | None" = None,
+    post_write_hook: Callable[[Storage], Awaitable[None]] | None = None,
 ) -> CompilationResult:
     client = get_async_client()
     sem = asyncio.Semaphore(MAX_CONCURRENT)
+    config = load_config(storage)
 
     uncompiled = find_uncompiled(storage)
     log.info("found %d uncompiled documents", len(uncompiled))
@@ -583,7 +615,10 @@ async def run(
     # --- Phase 1: Enrich all docs in parallel (cheap) ---
     log.info("=== phase 1: enriching %d documents ===", len(uncompiled))
     enrichment_results = await asyncio.gather(
-        *(enrich_one(storage, load_prompt, client, sem, fp) for fp in uncompiled),
+        *(
+            enrich_one(storage, load_prompt, client, sem, fp, config)
+            for fp in uncompiled
+        ),
         return_exceptions=True,
     )
 
@@ -657,6 +692,10 @@ async def run(
     mark_compiled(storage, docs)
     append_changelog(storage, docs, written)
 
+    # --- Post-write hook (e.g. lint fixes) — before index rebuild ---
+    if post_write_hook is not None:
+        await post_write_hook(storage)
+
     # --- Phase 7: Rebuild search index ---
     chunks_indexed = 0
     if db_session is not None and brain_id is not None:
@@ -668,11 +707,12 @@ async def run(
         log.info("=== phase 8: syncing documents table ===")
         doc_repo = DocumentRepository(db_session)
 
-        for filepath, fm, body in docs:
-            content = serialize_frontmatter(fm, body)
-            doc = DocumentCreate.model_validate(
-                {**fm, "file_path": filepath, "content": content, "compiled": True}
-            )
+        for filepath, _fm, _body in docs:
+            content = storage.read(filepath, strict=False)
+            if content is None:
+                continue
+            fm, _body = parse_frontmatter(content)
+            doc = DocumentCreate.from_frontmatter(fm, filepath, content, DocKind.RAW)
             await doc_repo.upsert(brain_id, doc)
 
         for article in written:
@@ -683,11 +723,11 @@ async def run(
             doc = DocumentCreate(
                 file_path=article_path,
                 content=content,
-                doc_kind=DOC_KIND_WIKI,
+                doc_kind=DocKind.WIKI,
                 title=article.slug.replace("-", " ").title(),
                 compiled=True,
                 tags=article.tags,
-                concepts=article.connections,
+                extra_metadata={"concepts": article.connections},
             )
             await doc_repo.upsert(brain_id, doc)
             await doc_repo.rebuild_backlinks_for_article(

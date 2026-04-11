@@ -24,7 +24,7 @@ projects:
               - key: DATA_DIR
                 value: /data
               - key: CORS_ORIGINS
-                value: '["https://great-minds-web.onrender.com"]'
+                value: '["https://great-minds-web.onrender.com","https://greatmind.dev","https://www.greatmind.dev"]'
               - key: MAILERSEND_API_KEY
                 sync: false
               - key: MAILERSEND_FROM_EMAIL

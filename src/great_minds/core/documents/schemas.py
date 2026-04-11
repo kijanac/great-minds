@@ -2,37 +2,75 @@
 
 import uuid
 from datetime import datetime
+from enum import StrEnum
 
 from pydantic import BaseModel, ConfigDict
 
+from great_minds.core.ingester import UNIVERSAL_ALL
 
-DOC_KIND_RAW = "raw"
-DOC_KIND_WIKI = "wiki"
+
+class DocKind(StrEnum):
+    RAW = "raw"
+    WIKI = "wiki"
+
+
+_UNIVERSAL_KEYS = frozenset(UNIVERSAL_ALL) | {"url"}
 
 
 class DocumentCreate(BaseModel):
     """Input for creating/upserting a document.
 
-    Field names match frontmatter keys so callers can do:
-        DocumentCreate.model_validate({**fm, "file_path": p, "content": c})
+    Universal frontmatter fields (title, author, origin, date, genre, tags)
+    are explicit. Config-driven fields live in extra_metadata.
     """
 
     model_config = ConfigDict(extra="ignore")
 
+    # Structural
     file_path: str
     content: str
-    doc_kind: str = DOC_KIND_RAW
+    doc_kind: str = DocKind.RAW
+    url: str | None = None
+    compiled: bool = False
 
+    # Universal frontmatter
     title: str = ""
     author: str | None = None
+    origin: str | None = None
     date: str | int | None = None
-    source: str | None = None
-    compiled: bool = False
     genre: str | None = None
-    tradition: str | None = None
-    interlocutors: list[str] = []
-    concepts: list[str] = []
     tags: list[str] = []
+
+    # Config-driven metadata (tradition, interlocutors, concepts, etc.)
+    extra_metadata: dict = {}
+
+    @staticmethod
+    def from_frontmatter(
+        fm: dict,
+        file_path: str,
+        content: str,
+        doc_kind: str = DocKind.RAW,
+    ) -> "DocumentCreate":
+        """Build a DocumentCreate from parsed frontmatter.
+
+        Splits universal fields into explicit params and everything else
+        into extra_metadata.
+        """
+        extra = {k: v for k, v in fm.items() if k not in _UNIVERSAL_KEYS}
+        return DocumentCreate(
+            file_path=file_path,
+            content=content,
+            doc_kind=doc_kind,
+            url=fm.get("url"),
+            compiled=fm.get("compiled", False),
+            title=fm.get("title", ""),
+            author=fm.get("author"),
+            origin=fm.get("origin"),
+            date=fm.get("date"),
+            genre=fm.get("genre"),
+            tags=fm.get("tags", []),
+            extra_metadata=extra,
+        )
 
 
 class Document(BaseModel):
@@ -46,13 +84,12 @@ class Document(BaseModel):
     title: str
     author: str | None
     date: str | None
-    source: str | None
+    url: str | None
+    origin: str | None
     genre: str | None
-    tradition: str | None
     compiled: bool
     doc_kind: str
     tags: list[str] = []
-    concepts: list[str] = []
-    interlocutors: list[str] = []
+    extra_metadata: dict = {}
     created_at: datetime | None = None
     updated_at: datetime | None = None

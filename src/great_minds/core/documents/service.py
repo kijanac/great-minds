@@ -4,7 +4,7 @@ from uuid import UUID
 
 from great_minds.core.brain_utils import parse_frontmatter
 from great_minds.core.documents.repository import DocumentRepository
-from great_minds.core.documents.schemas import DOC_KIND_RAW, Document, DocumentCreate
+from great_minds.core.documents.schemas import DocKind, Document, DocumentCreate
 from great_minds.core.storage import Storage
 
 
@@ -21,13 +21,11 @@ class DocumentService:
         file_path: str,
         content: str,
         *,
-        doc_kind: str = DOC_KIND_RAW,
+        doc_kind: str = DocKind.RAW,
     ) -> UUID:
         """Parse frontmatter from file content and upsert the documents table."""
         fm, _ = parse_frontmatter(content)
-        doc = DocumentCreate.model_validate(
-            {**fm, "file_path": file_path, "content": content, "doc_kind": doc_kind}
-        )
+        doc = DocumentCreate.from_frontmatter(fm, file_path, content, doc_kind)
         result = await self.repo.upsert(brain_id, doc)
         await self._commit()
         return result
@@ -38,7 +36,7 @@ class DocumentService:
         storage: Storage,
         file_path: str,
         *,
-        doc_kind: str = DOC_KIND_RAW,
+        doc_kind: str = DocKind.RAW,
     ) -> UUID:
         """Read a file from storage and index it."""
         content = storage.read(file_path)

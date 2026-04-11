@@ -69,10 +69,13 @@ class BrainService:
     async def list_brains(self, user_id: UUID) -> list[tuple[Brain, MemberRole]]:
         return await self.repo.list_user_brains(user_id)
 
-    async def create_brain(self, name: str, owner_id: UUID) -> tuple[Brain, MemberRole]:
+    async def create_brain(
+        self, name: str, owner_id: UUID, *, commit: bool = True
+    ) -> tuple[Brain, MemberRole]:
         brain, role = await self.repo.create_brain(name, owner_id)
         self._init_brain_storage(brain)
-        await self._commit()
+        if commit:
+            await self._commit()
         return brain, role
 
     def _init_brain_storage(self, brain: Brain) -> None:

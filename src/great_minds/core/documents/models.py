@@ -38,11 +38,10 @@ class DocumentORM(Base):
     file_hash: Mapped[str] = mapped_column(Text, nullable=False)
     title: Mapped[str] = mapped_column(Text, nullable=False, server_default="")
     author: Mapped[str | None] = mapped_column(Text, nullable=True)
-    source_type: Mapped[str | None] = mapped_column(Text, nullable=True)
-    source_url: Mapped[str | None] = mapped_column(Text, nullable=True)
+    url: Mapped[str | None] = mapped_column(Text, nullable=True)
+    origin: Mapped[str | None] = mapped_column(Text, nullable=True)
     published_date: Mapped[str | None] = mapped_column(Text, nullable=True)
     genre: Mapped[str | None] = mapped_column(Text, nullable=True)
-    tradition: Mapped[str | None] = mapped_column(Text, nullable=True)
     compiled: Mapped[bool] = mapped_column(
         Boolean, nullable=False, server_default="false"
     )
@@ -67,28 +66,6 @@ class DocumentTag(Base):
         primary_key=True,
     )
     tag: Mapped[str] = mapped_column(Text, primary_key=True, index=True)
-
-
-class DocumentConcept(Base):
-    __tablename__ = "document_concepts"
-
-    document_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True),
-        ForeignKey("documents.id", ondelete="CASCADE"),
-        primary_key=True,
-    )
-    concept: Mapped[str] = mapped_column(Text, primary_key=True, index=True)
-
-
-class DocumentInterlocutor(Base):
-    __tablename__ = "document_interlocutors"
-
-    document_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True),
-        ForeignKey("documents.id", ondelete="CASCADE"),
-        primary_key=True,
-    )
-    interlocutor: Mapped[str] = mapped_column(Text, primary_key=True, index=True)
 
 
 class BacklinkORM(Base):

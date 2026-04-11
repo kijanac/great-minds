@@ -32,7 +32,8 @@ async def ingest(
         title=req.title,
         author=req.author,
         date=req.date,
-        source=req.source,
+        origin=req.origin,
+        url=req.url,
     )
     return schemas.IngestResponse(file_path=file_path, title=title)
 
@@ -46,7 +47,8 @@ async def ingest_upload(
     content_type: str = "texts",
     author: str | None = None,
     date: str | None = None,
-    source: str | None = None,
+    origin: str | None = None,
+    url: str | None = None,
     dest_path: str | None = None,
 ) -> schemas.IngestResponse:
     raw_bytes = await file.read()
@@ -61,7 +63,8 @@ async def ingest_upload(
             mimetype=file.content_type or "",
             author=author,
             date=date,
-            source=source,
+            origin=origin,
+            url=url,
             dest_path=dest_path,
         )
     except UnicodeDecodeError:
