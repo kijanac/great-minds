@@ -466,7 +466,7 @@ _HTML_PAGE = """<!DOCTYPE html>
       <div class="search-footer">
         <div class="opts">
           <div class="opt">
-            <label for="top_k">Top-K</label>
+            <label for="top_k"># Documents</label>
             <input type="number" id="top_k" min="1" max="20" value="5">
           </div>
           <div class="opt">
