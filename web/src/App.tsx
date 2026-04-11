@@ -10,6 +10,7 @@ import ExplorePage from "@/pages/explore";
 import ProjectSettingsPage from "@/pages/project-settings";
 import SessionPage from "@/pages/session";
 import SessionsPage from "@/pages/sessions";
+import SummarizePage from "@/pages/summarize";
 
 function RootLayout() {
   return (
@@ -54,6 +55,7 @@ const router = createBrowserRouter([
           { path: "/project/:id/settings", element: <ProjectSettingsPage /> },
           { path: "/sessions", element: <SessionsPage /> },
           { path: "/sessions/:id", element: <SessionPage /> },
+          { path: "/summarize", element: <SummarizePage /> },
         ],
       },
     ],

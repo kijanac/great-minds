@@ -27,6 +27,12 @@ class Settings(BaseSettings):
     data_dir: str = "/data"
     cors_origins: list[str] = ["http://localhost:5173"]
 
+    # Cloudflare R2
+    r2_endpoint_url: str | None = None
+    r2_access_key_id: str | None = None
+    r2_secret_access_key: str | None = None
+    r2_bucket: str = "great-minds"
+
 
 @lru_cache(maxsize=1)
 def get_settings() -> Settings:
