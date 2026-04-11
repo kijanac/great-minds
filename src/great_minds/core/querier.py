@@ -132,9 +132,9 @@ def _build_query_tool(tags: list[str], concepts: list[str]) -> dict:
                         "type": "string",
                         "description": "Filter by author name (partial match)",
                     },
-                    "source_type": {
+                    "doc_kind": {
                         "type": "string",
-                        "description": "Filter by content type: texts, news, ideas",
+                        "description": "Document kind: raw or wiki",
                     },
                     "genre": {
                         "type": "string",
@@ -147,10 +147,6 @@ def _build_query_tool(tags: list[str], concepts: list[str]) -> dict:
                     "date_lte": {
                         "type": "string",
                         "description": "Published on or before this date/year",
-                    },
-                    "doc_kind": {
-                        "type": "string",
-                        "description": "Document kind: raw or wiki",
                     },
                     "limit": {
                         "type": "integer",
@@ -305,7 +301,6 @@ async def query_documents(
             "tags": args.get("tags"),
             "concepts": args.get("concepts"),
             "author": args.get("author"),
-            "source_type": args.get("source_type"),
             "genre": args.get("genre"),
             "date_gte": args.get("date_gte"),
             "date_lte": args.get("date_lte"),
@@ -324,7 +319,8 @@ async def query_documents(
     parts = []
     for doc in results:
         tags_str = f"  tags: {', '.join(doc.tags)}" if doc.tags else ""
-        concepts_str = f"  concepts: {', '.join(doc.concepts)}" if doc.concepts else ""
+        concepts = doc.extra_metadata.get("concepts", [])
+        concepts_str = f"  concepts: {', '.join(concepts)}" if concepts else ""
         meta = f"  [{doc.doc_kind}] {doc.file_path}"
         if doc.author:
             meta += f" by {doc.author}"

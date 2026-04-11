@@ -9,7 +9,8 @@ class IngestRequest(BaseModel):
     title: str | None = None
     author: str | None = None
     date: str | int | None = None
-    source: str | None = None
+    origin: str | None = None
+    url: str | None = None
     dest: str
 
 

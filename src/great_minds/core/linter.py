@@ -27,6 +27,8 @@ from collections import defaultdict
 from dataclasses import dataclass, field
 from typing import Literal
 
+from pydantic import BaseModel, ConfigDict
+
 from great_minds.core.brain import load_config, read_index, wiki_path
 from great_minds.core.brain_utils import (
     FOOTNOTE_RE,
@@ -145,6 +147,55 @@ class LintResult:
     counts: LintCounts = field(default_factory=LintCounts)
     research_suggestions: list[ResearchSuggestion] = field(default_factory=list)
     contradictions: list[Contradiction] = field(default_factory=list)
+
+
+LINT_STORAGE_PATH = "_lint.json"
+
+
+# ---------------------------------------------------------------------------
+# Pydantic models (used for storage serialization and API responses)
+# ---------------------------------------------------------------------------
+
+
+class LintFixItem(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    file: str
+    description: str
+
+
+class LintCountsResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    dead_links: int
+    broken_citations: int
+    orphans: int
+    uncompiled: int
+    uncited: int
+    missing_index: int
+    tag_issues: int
+
+
+class ResearchSuggestionItem(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    topic: str
+    source: str
+    mentioned_in: list[str]
+    usage_count: int = 0
+    suggested_category: str = ""
+
+
+class ContradictionItem(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    description: str
+    articles: list[str]
+
+
+class LintResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    fixes_applied: list[LintFixItem]
+    remaining_issues: int
+    counts: LintCountsResponse
+    research_suggestions: list[ResearchSuggestionItem] = []
+    contradictions: list[ContradictionItem] = []
 
 
 # ---------------------------------------------------------------------------

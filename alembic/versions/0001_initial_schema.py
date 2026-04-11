@@ -5,7 +5,7 @@ search index, documents, backlinks, and absurd task queue.
 
 Revision ID: 0001
 Revises:
-Create Date: 2026-04-09
+Create Date: 2026-04-11
 """
 
 from pathlib import Path
@@ -227,11 +227,10 @@ def upgrade() -> None:
         sa.Column("file_hash", sa.Text(), nullable=False),
         sa.Column("title", sa.Text(), nullable=False, server_default=""),
         sa.Column("author", sa.Text(), nullable=True),
-        sa.Column("source_type", sa.Text(), nullable=True),
-        sa.Column("source_url", sa.Text(), nullable=True),
+        sa.Column("url", sa.Text(), nullable=True),
+        sa.Column("origin", sa.Text(), nullable=True),
         sa.Column("published_date", sa.Text(), nullable=True),
         sa.Column("genre", sa.Text(), nullable=True),
-        sa.Column("tradition", sa.Text(), nullable=True),
         sa.Column("compiled", sa.Boolean(), nullable=False, server_default="false"),
         sa.Column("doc_kind", sa.Text(), nullable=False, server_default="raw"),
         sa.Column("metadata", JSONB(), nullable=False, server_default="{}"),
@@ -252,11 +251,13 @@ def upgrade() -> None:
         sa.UniqueConstraint("brain_id", "file_path"),
     )
     op.create_index("ix_documents_brain_id", "documents", ["brain_id"])
-    op.create_index("ix_documents_source_type", "documents", ["source_type"])
     op.create_index("ix_documents_published_date", "documents", ["published_date"])
     op.create_index("ix_documents_author", "documents", ["author"])
     op.create_index("ix_documents_compiled", "documents", ["compiled"])
     op.create_index("ix_documents_doc_kind", "documents", ["doc_kind"])
+    op.execute(
+        text("CREATE INDEX ix_documents_metadata_gin ON documents USING GIN (metadata)")
+    )
 
     # -- Junction: document_tags -------------------------------------------
     op.create_table(
@@ -267,30 +268,6 @@ def upgrade() -> None:
         sa.PrimaryKeyConstraint("document_id", "tag"),
     )
     op.create_index("ix_document_tags_tag", "document_tags", ["tag"])
-
-    # -- Junction: document_concepts ---------------------------------------
-    op.create_table(
-        "document_concepts",
-        sa.Column("document_id", sa.UUID(), nullable=False),
-        sa.Column("concept", sa.Text(), nullable=False),
-        sa.ForeignKeyConstraint(["document_id"], ["documents.id"], ondelete="CASCADE"),
-        sa.PrimaryKeyConstraint("document_id", "concept"),
-    )
-    op.create_index("ix_document_concepts_concept", "document_concepts", ["concept"])
-
-    # -- Junction: document_interlocutors ----------------------------------
-    op.create_table(
-        "document_interlocutors",
-        sa.Column("document_id", sa.UUID(), nullable=False),
-        sa.Column("interlocutor", sa.Text(), nullable=False),
-        sa.ForeignKeyConstraint(["document_id"], ["documents.id"], ondelete="CASCADE"),
-        sa.PrimaryKeyConstraint("document_id", "interlocutor"),
-    )
-    op.create_index(
-        "ix_document_interlocutors_interlocutor",
-        "document_interlocutors",
-        ["interlocutor"],
-    )
 
     # -- Backlinks ---------------------------------------------------------
     op.create_table(
@@ -331,20 +308,13 @@ def downgrade() -> None:
     op.drop_index("ix_backlinks_target", table_name="backlinks")
     op.drop_index("ix_backlinks_brain_id", table_name="backlinks")
     op.drop_table("backlinks")
-    op.drop_index(
-        "ix_document_interlocutors_interlocutor",
-        table_name="document_interlocutors",
-    )
-    op.drop_table("document_interlocutors")
-    op.drop_index("ix_document_concepts_concept", table_name="document_concepts")
-    op.drop_table("document_concepts")
     op.drop_index("ix_document_tags_tag", table_name="document_tags")
     op.drop_table("document_tags")
+    op.drop_index("ix_documents_metadata_gin", table_name="documents")
     op.drop_index("ix_documents_doc_kind", table_name="documents")
     op.drop_index("ix_documents_compiled", table_name="documents")
     op.drop_index("ix_documents_author", table_name="documents")
     op.drop_index("ix_documents_published_date", table_name="documents")
-    op.drop_index("ix_documents_source_type", table_name="documents")
     op.drop_index("ix_documents_brain_id", table_name="documents")
     op.drop_table("documents")
     op.execute(text("DROP TABLE IF EXISTS search_index"))

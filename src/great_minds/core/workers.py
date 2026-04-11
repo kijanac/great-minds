@@ -17,16 +17,23 @@ from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from great_minds.core.brain import load_config, load_prompt
-from great_minds.core import compiler, ingester
+from great_minds.core import compiler, ingester, linter
 from great_minds.core.brain_utils import parse_frontmatter
 from great_minds.core.documents.repository import DocumentRepository
 from great_minds.core.documents.schemas import DocumentCreate
-from great_minds.core.storage import LocalStorage
+from great_minds.core.storage import LocalStorage, Storage
 from great_minds.core.tasks.models import TaskRecord
 
 _task_session: ContextVar[AsyncSession] = ContextVar("task_session")
 
 log = logging.getLogger(__name__)
+
+
+async def _run_lint_and_store(storage: Storage) -> None:
+    """Run lint with auto-fix and persist results to storage."""
+    result = await linter.run_lint(storage, fix=True)
+    response = linter.LintResponse.model_validate(result, from_attributes=True)
+    storage.write(linter.LINT_STORAGE_PATH, response.model_dump_json())
 
 
 # ---------------------------------------------------------------------------
@@ -48,6 +55,7 @@ async def compile_task(params: dict, ctx) -> dict:
         limit=params.get("limit"),
         db_session=session,
         brain_id=brain_id,
+        post_write_hook=_run_lint_and_store,
     )
 
     return {
@@ -110,11 +118,7 @@ async def bulk_ingest_task(params: dict, ctx) -> dict:
         ingested += 1
 
         fm, _ = parse_frontmatter(content_with_fm)
-        batch.append(
-            DocumentCreate.model_validate(
-                {**fm, "file_path": dest, "content": content_with_fm}
-            )
-        )
+        batch.append(DocumentCreate.from_frontmatter(fm, dest, content_with_fm))
 
         if len(batch) >= batch_size:
             await doc_repo.batch_upsert(brain_id, batch)
@@ -151,6 +155,7 @@ async def bulk_ingest_task(params: dict, ctx) -> dict:
             partial(load_prompt, storage),
             db_session=session,
             brain_id=brain_id,
+            post_write_hook=_run_lint_and_store,
         )
 
     return {

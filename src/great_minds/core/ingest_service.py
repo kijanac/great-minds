@@ -29,11 +29,14 @@ class IngestService:
         title: str | None = None,
         author: str | None = None,
         date: str | int | None = None,
-        source: str | None = None,
+        origin: str | None = None,
+        url: str | None = None,
     ) -> tuple[str, str]:
         """Ingest raw text content. Returns (file_path, title)."""
         config = load_config(storage)
-        kwargs = _build_kwargs(title=title, author=author, date=date, source=source)
+        kwargs = _build_kwargs(
+            title=title, author=author, date=date, origin=origin, url=url
+        )
         result = ingest_document(
             storage, config, content, content_type, dest=dest, **kwargs
         )
@@ -53,7 +56,8 @@ class IngestService:
         mimetype: str = "",
         author: str | None = None,
         date: str | None = None,
-        source: str | None = None,
+        origin: str | None = None,
+        url: str | None = None,
         dest_path: str | None = None,
     ) -> tuple[str, str]:
         """Ingest an uploaded file. Returns (file_path, title)."""
@@ -66,7 +70,7 @@ class IngestService:
             dest = _safe_upload_dest(content_type, f"{slug}.md")
 
         config = load_config(storage)
-        kwargs = _build_kwargs(author=author, date=date, source=source)
+        kwargs = _build_kwargs(author=author, date=date, origin=origin, url=url)
         result = ingest_document(
             storage, config, content, content_type, dest=dest, **kwargs
         )
@@ -107,7 +111,7 @@ class IngestService:
             content_type,
             dest=dest,
             title=title,
-            source=url,
+            url=url,
         )
         await self.doc_service.index_from_content(
             brain_id, dest, ingested, doc_kind=content_type

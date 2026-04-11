@@ -3,7 +3,7 @@
 from datetime import UTC, datetime, timedelta
 from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from great_minds.core.auth.models import ApiKey, AuthCode, RefreshToken
@@ -19,6 +19,11 @@ class AuthRepository:
     async def store_auth_code(
         self, email: str, code: str, settings: Settings
     ) -> AuthCode:
+        await self.session.execute(
+            update(AuthCode)
+            .where(AuthCode.email == email, AuthCode.used == False)
+            .values(used=True)
+        )
         auth_code = AuthCode(
             email=email,
             code_hash=hash_code(code),

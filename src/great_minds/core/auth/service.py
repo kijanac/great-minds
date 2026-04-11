@@ -11,7 +11,7 @@ from great_minds.core.crypto import (
     create_refresh_token_value,
     generate_auth_code,
 )
-from great_minds.core.mail import Mailer
+from great_minds.core.mail import Mailer, normalize_email
 from great_minds.core.settings import Settings
 from great_minds.core.users.service import UserService
 
@@ -36,10 +36,11 @@ class AuthService:
 
     async def request_code(self, email: str) -> None:
         """Generate auth code, store it, and email it."""
+        email = normalize_email(email)
         code = generate_auth_code()
         await self.auth_repo.store_auth_code(email, code, self.settings)
         await self._commit()
-        self.mailer.send(
+        await self.mailer.send(
             to=email,
             subject="Your sign-in code",
             body=f"Your Great Minds sign-in code is: {code}\n\nExpires in {self.settings.auth_code_expiry_minutes} minutes.",
@@ -47,6 +48,7 @@ class AuthService:
 
     async def verify_code(self, email: str, code: str) -> tuple[str, str]:
         """Verify auth code, provision user if new, return (access_token, refresh_token)."""
+        email = normalize_email(email)
         valid = await self.auth_repo.verify_auth_code(email, code)
         if not valid:
             raise ValueError("Invalid or expired code")

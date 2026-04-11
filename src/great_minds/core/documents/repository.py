@@ -4,16 +4,14 @@ import hashlib
 from collections import defaultdict
 from uuid import UUID
 
-from sqlalchemy import delete, distinct, func, select
-from sqlalchemy.dialects.postgresql import insert
+from sqlalchemy import delete, distinct, func, select, type_coerce
+from sqlalchemy.dialects.postgresql import JSONB, insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from great_minds.core.brain import wiki_slug
 from great_minds.core.brain_utils import extract_wiki_link_targets
 from great_minds.core.documents.models import (
     BacklinkORM,
-    DocumentConcept,
-    DocumentInterlocutor,
     DocumentORM,
     DocumentTag,
 )
@@ -25,18 +23,18 @@ class DocumentRepository:
         self.session = session
 
     async def upsert(self, brain_id: UUID, doc: DocumentCreate) -> UUID:
-        """Upsert a document row and sync junction tables."""
+        """Upsert a document row and sync the tags junction table."""
         file_hash = hashlib.sha256(doc.content.encode()).hexdigest()
         published_date = str(doc.date) if doc.date is not None else None
 
-        shared = {
+        columns = {
             "file_hash": file_hash,
             "title": doc.title,
             "author": doc.author,
-            "source_url": doc.source,
+            "url": doc.url,
+            "origin": doc.origin,
             "published_date": published_date,
             "genre": doc.genre,
-            "tradition": doc.tradition,
             "compiled": doc.compiled,
             "doc_kind": doc.doc_kind,
         }
@@ -46,22 +44,22 @@ class DocumentRepository:
             .values(
                 brain_id=brain_id,
                 file_path=doc.file_path,
-                metadata_={},
-                **shared,
+                metadata_=doc.extra_metadata,
+                **columns,
             )
             .on_conflict_do_update(
                 constraint="documents_brain_id_file_path_key",
-                set_={**shared, "metadata": {}, "updated_at": func.now()},
+                set_={
+                    **columns,
+                    "metadata": doc.extra_metadata,
+                    "updated_at": func.now(),
+                },
             )
         )
         result = await self.session.execute(stmt.returning(DocumentORM.id))
         doc_id = result.scalar_one()
 
-        await self._sync_junction(DocumentTag, "tag", doc_id, doc.tags)
-        await self._sync_junction(DocumentConcept, "concept", doc_id, doc.concepts)
-        await self._sync_junction(
-            DocumentInterlocutor, "interlocutor", doc_id, doc.interlocutors
-        )
+        await self._sync_tags(doc_id, doc.tags)
 
         return doc_id
 
@@ -87,14 +85,14 @@ class DocumentRepository:
         )
         return {row.file_path: row.file_hash for row in result}
 
-    async def _sync_junction(
-        self, model, value_col: str, doc_id: UUID, values: list[str]
-    ) -> None:
-        """Replace all junction rows for a document with the new set."""
-        await self.session.execute(delete(model).where(model.document_id == doc_id))
-        rows = [{"document_id": doc_id, value_col: val} for val in values if val]
+    async def _sync_tags(self, doc_id: UUID, tags: list[str]) -> None:
+        """Replace all tag rows for a document with the new set."""
+        await self.session.execute(
+            delete(DocumentTag).where(DocumentTag.document_id == doc_id)
+        )
+        rows = [{"document_id": doc_id, "tag": val} for val in tags if val]
         if rows:
-            await self.session.execute(insert(model).values(rows))
+            await self.session.execute(insert(DocumentTag).values(rows))
 
     async def query_documents(
         self,
@@ -123,13 +121,12 @@ class DocumentRepository:
             stmt = stmt.where(DocumentORM.id.in_(tag_subq))
 
         if concepts:
-            concept_subq = (
-                select(DocumentConcept.document_id)
-                .where(DocumentConcept.concept.in_(concepts))
-                .group_by(DocumentConcept.document_id)
-                .having(func.count(distinct(DocumentConcept.concept)) >= len(concepts))
+            # JSONB @> containment — uses the GIN index
+            stmt = stmt.where(
+                DocumentORM.metadata_.op("@>")(
+                    type_coerce({"concepts": concepts}, JSONB)
+                )
             )
-            stmt = stmt.where(DocumentORM.id.in_(concept_subq))
 
         if author:
             stmt = stmt.where(DocumentORM.author.ilike(f"%{author}%"))
@@ -159,28 +156,10 @@ class DocumentRepository:
                 DocumentTag.document_id.in_(doc_ids)
             )
         )
-        concept_result = await self.session.execute(
-            select(DocumentConcept.document_id, DocumentConcept.concept).where(
-                DocumentConcept.document_id.in_(doc_ids)
-            )
-        )
-        interlocutor_result = await self.session.execute(
-            select(
-                DocumentInterlocutor.document_id, DocumentInterlocutor.interlocutor
-            ).where(DocumentInterlocutor.document_id.in_(doc_ids))
-        )
 
         tags_by_doc: dict[UUID, list[str]] = defaultdict(list)
         for doc_id, tag in tag_result:
             tags_by_doc[doc_id].append(tag)
-
-        concepts_by_doc: dict[UUID, list[str]] = defaultdict(list)
-        for doc_id, concept in concept_result:
-            concepts_by_doc[doc_id].append(concept)
-
-        interlocutors_by_doc: dict[UUID, list[str]] = defaultdict(list)
-        for doc_id, interlocutor in interlocutor_result:
-            interlocutors_by_doc[doc_id].append(interlocutor)
 
         return [
             Document(
@@ -190,14 +169,13 @@ class DocumentRepository:
                 title=orm.title,
                 author=orm.author,
                 date=orm.published_date,
-                source=orm.source_url,
+                url=orm.url,
+                origin=orm.origin,
                 genre=orm.genre,
-                tradition=orm.tradition,
                 compiled=orm.compiled,
                 doc_kind=orm.doc_kind,
                 tags=tags_by_doc[orm.id],
-                concepts=concepts_by_doc[orm.id],
-                interlocutors=interlocutors_by_doc[orm.id],
+                extra_metadata=orm.metadata_,
                 created_at=orm.created_at,
                 updated_at=orm.updated_at,
             )
@@ -214,13 +192,21 @@ class DocumentRepository:
         return list(result.scalars().all())
 
     async def get_distinct_concepts(self, brain_ids: list[UUID]) -> list[str]:
+        """Extract distinct concepts from JSONB metadata across brains."""
+        # Query JSONB array elements
         result = await self.session.execute(
-            select(distinct(DocumentConcept.concept))
-            .join(DocumentORM, DocumentORM.id == DocumentConcept.document_id)
-            .where(DocumentORM.brain_id.in_(brain_ids))
-            .order_by(DocumentConcept.concept)
+            select(
+                func.jsonb_array_elements_text(DocumentORM.metadata_["concepts"]).label(
+                    "concept"
+                )
+            )
+            .where(
+                DocumentORM.brain_id.in_(brain_ids),
+                func.jsonb_typeof(DocumentORM.metadata_["concepts"]) == "array",
+            )
+            .distinct()
         )
-        return list(result.scalars().all())
+        return sorted(result.scalars().all())
 
     async def upsert_backlinks(
         self,

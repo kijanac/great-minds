@@ -104,7 +104,7 @@ export function ArticleView({
           {children}
         </ol>
       ),
-      li: ({ children }) => <li className="mb-1">{children}</li>,
+      li: ({ children, id }) => <li id={id} className="mb-1">{children}</li>,
       blockquote: ({ children }) => (
         <blockquote className="border-l-2 border-gold-dim pl-4 text-warm-faint italic my-4">
           {children}

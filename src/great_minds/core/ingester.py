@@ -1,8 +1,9 @@
 """Generic ingestion: add frontmatter to documents and write to brain storage.
 
 Reads config for the metadata field list per content type.
-Fills programmatic fields (date, source, compiled) from arguments.
-Leaves AI fields empty -- compilation fills them.
+Universal fields (title, author, origin, date, url, genre, tags) are always
+included. Config-driven fields are loaded from the metadata section.
+Leaves enriched fields empty -- compilation fills them.
 
 This module reads from the EXTERNAL filesystem (source corpus) and writes
 TO brain storage. It is always called via a Brain instance:
@@ -13,8 +14,10 @@ TO brain storage. It is always called via a Brain instance:
 
 import logging
 import re
+from dataclasses import dataclass
 from io import StringIO
 from pathlib import Path
+from typing import Literal
 
 from ruamel.yaml import YAML
 
@@ -36,29 +39,50 @@ def normalize_url(url: str) -> str:
 _yaml = YAML()
 _yaml.default_flow_style = False
 
-# Default empty values by type
-_FIELD_DEFAULTS = {
+
+# ---------------------------------------------------------------------------
+# Universal fields — always present in every document's frontmatter
+# ---------------------------------------------------------------------------
+
+UNIVERSAL_PROVIDED = ["title", "author", "origin", "date", "url"]
+UNIVERSAL_ENRICHED = ["genre", "tags"]
+STRUCTURAL = ["compiled"]
+UNIVERSAL_ALL = UNIVERSAL_PROVIDED + UNIVERSAL_ENRICHED + STRUCTURAL
+
+# Default empty values for universal fields
+_UNIVERSAL_DEFAULTS: dict[str, object] = {
+    "title": "",
+    "author": "",
+    "origin": "",
+    "date": "",
+    "url": "",
+    "genre": "",
+    "tags": [],
     "compiled": False,
-    "notes": "",
-}
-
-# Fields that take list values
-_LIST_FIELDS = {"interlocutors", "concepts", "tags", "topic_tags"}
-
-# Fields that take string values
-_STRING_FIELDS = {
-    "author",
-    "source",
-    "genre",
-    "tradition",
-    "outlet",
-    "relevance",
-    "status",
 }
 
 
-def load_fields(storage: Storage, config: dict, content_type: str) -> list[str]:
-    """Load the metadata field list for a content type from brain config."""
+# ---------------------------------------------------------------------------
+# Config-driven field specs
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class FieldSpec:
+    """A metadata field definition read from config."""
+
+    name: str
+    type: Literal["string", "list"]
+    source: Literal["provided", "enriched"]
+    description: str = ""
+    default: str | list | None = None
+
+
+def load_field_specs(config: dict, content_type: str) -> list[FieldSpec]:
+    """Load config-driven field specs for a content type.
+
+    Universal fields are NOT included — they're handled separately.
+    """
     metadata = config.get("metadata", {})
 
     if content_type not in metadata:
@@ -66,27 +90,50 @@ def load_fields(storage: Storage, config: dict, content_type: str) -> list[str]:
             f"Unknown content type '{content_type}'. Available: {list(metadata.keys())}"
         )
 
-    return list(metadata[content_type])
+    ct_fields = metadata[content_type]
+    specs = []
+    for name, defn in ct_fields.items():
+        if isinstance(defn, dict):
+            specs.append(
+                FieldSpec(
+                    name=name,
+                    type=defn.get("type", "string"),
+                    source=defn.get("source", "provided"),
+                    description=defn.get("description", ""),
+                    default=defn.get("default"),
+                )
+            )
+    return specs
 
 
-def build_frontmatter(fields: list[str], known: dict) -> str:
-    """Build YAML frontmatter from a field list and known values.
+def build_frontmatter(
+    field_specs: list[FieldSpec],
+    known: dict,
+) -> str:
+    """Build YAML frontmatter from universal fields + config-driven specs.
 
-    Fields present in `known` get their value. Fields not in `known`
-    get a type-appropriate default (empty string, empty list, or False).
+    Universal fields are always emitted first, then config-driven fields.
+    Values present in `known` are used; others get type-appropriate defaults.
     """
-    fm = {}
-    for field in fields:
+    fm: dict = {}
+
+    # Universal fields first
+    for field in UNIVERSAL_ALL:
         if field in known:
             fm[field] = known[field]
-        elif field in _FIELD_DEFAULTS:
-            fm[field] = _FIELD_DEFAULTS[field]
-        elif field in _LIST_FIELDS:
-            fm[field] = []
-        elif field == "date":
-            fm[field] = ""
         else:
-            fm[field] = ""
+            fm[field] = _UNIVERSAL_DEFAULTS[field]
+
+    # Config-driven fields
+    for spec in field_specs:
+        if spec.name in known:
+            fm[spec.name] = known[spec.name]
+        elif spec.default is not None:
+            fm[spec.name] = spec.default
+        elif spec.type == "list":
+            fm[spec.name] = []
+        else:
+            fm[spec.name] = ""
 
     buf = StringIO()
     _yaml.dump(fm, buf)
@@ -115,9 +162,10 @@ def ingest_document(
     title: str | None = None,
     author: str | None = None,
     date: int | str | None = None,
-    source: str | None = None,
-    outlet: str | None = None,
+    origin: str | None = None,
+    url: str | None = None,
     dest: str,
+    **extra,
 ) -> str:
     """Add frontmatter to a document, write it, and return the result.
 
@@ -129,30 +177,35 @@ def ingest_document(
         title: Document title. Auto-extracted from headings if not provided.
         author: Author name.
         date: Publication date (year or full date).
-        source: Source URL or path.
-        outlet: News outlet (for news type).
+        origin: Publication or organization name.
+        url: Source URL (stored in frontmatter as 'url' for reference).
         dest: Path relative to brain root; written via storage.
+        **extra: Additional config-driven field values (e.g. outlet="NYT").
 
     Returns:
         The document content with frontmatter prepended.
     """
-    fields = load_fields(storage, config, content_type)
+    field_specs = load_field_specs(config, content_type)
 
     # Build known values from arguments
     known: dict = {"compiled": False}
 
-    if title or "title" in fields:
-        known["title"] = title or extract_title(content) or ""
+    known["title"] = title or extract_title(content) or ""
     if author:
         known["author"] = author
     if date is not None:
         known["date"] = date
-    if source:
-        known["source"] = source
-    if outlet:
-        known["outlet"] = outlet
+    if origin:
+        known["origin"] = origin
+    if url:
+        known["url"] = url
 
-    frontmatter = build_frontmatter(fields, known)
+    # Pass through any config-driven field values
+    for spec in field_specs:
+        if spec.name in extra:
+            known[spec.name] = extra[spec.name]
+
+    frontmatter = build_frontmatter(field_specs, known)
     result = frontmatter + content
 
     storage.write(dest, result)
@@ -175,7 +228,7 @@ def ingest_file(
         filepath: Path on the external filesystem (the source file being ingested).
         content_type: One of the types in config metadata.
         dest_dir: Destination directory relative to brain root (e.g. "raw/texts/lenin/").
-        **kwargs: Passed through to ingest_document (author, date, source, etc.).
+        **kwargs: Passed through to ingest_document (author, date, origin, etc.).
 
     Returns:
         The dest path string (relative to brain root).
@@ -203,7 +256,7 @@ def ingest_directory(
         content_type: One of the types in config metadata.
         dest_dir: Destination directory relative to brain root.
         skip_fn: Optional callable; if it returns True for a filepath, skip it.
-        **kwargs: Passed through to ingest_document (author, date, source, etc.).
+        **kwargs: Passed through to ingest_document (author, date, origin, etc.).
 
     Returns:
         Tuple of (processed_count, skipped_count).
