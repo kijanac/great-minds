@@ -114,7 +114,7 @@ def _summarize_stream(document: str, context_prompt: str, model_id: str):
         {"role": "system", "content": system},
         {"role": "user", "content": document},
     ]
-    text = tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
+    text = tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True, enable_thinking=False)
     inputs = tokenizer([text], return_tensors="pt").to(model.device)
     streamer = TextIteratorStreamer(tokenizer, skip_prompt=True, skip_special_tokens=True)
     t = threading.Thread(
