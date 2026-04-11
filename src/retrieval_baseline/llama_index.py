@@ -5,6 +5,10 @@ Commands:
     index   — load documents from DOCS_DIR and build/save a VectorStoreIndex
     query   — load the saved index and answer questions interactively or once
 
+Recommended workflow for large corpora:
+    1. uv run python -m retrieval_baseline.preprocess_docs   # convert PDFs/DOCX once
+    2. uv run python -m retrieval_baseline.llama_index index  # uses cache, much faster
+
 Usage:
     uv run python -m retrieval_baseline.llama_index index [OPTIONS]
     uv run python -m retrieval_baseline.llama_index query  "your question here" [OPTIONS]
@@ -72,8 +76,23 @@ MARKITDOWN_EXTENSIONS = {".docx", ".doc", ".pdf", ".pptx", ".ppt", ".xlsx", ".xl
 # ---------------------------------------------------------------------------
 
 
+def _cache_path_for(file: Path, cache_dir: Path) -> Path:
+    """Stable cache path: <cache_dir>/<stem>_<sha256[:12]>.md"""
+    import hashlib
+    digest = hashlib.sha256(str(file.resolve()).encode()).hexdigest()[:12]
+    return cache_dir / f"{file.stem}_{digest}.md"
+
+
 class MarkitdownReader:
-    """LlamaIndex-compatible file reader that converts rich documents to text via markitdown."""
+    """LlamaIndex-compatible file reader that converts rich documents to text via markitdown.
+
+    If cache_dir is set, pre-converted .md files written by preprocess_docs.py are used
+    directly, skipping markitdown entirely for already-processed files. The converter is
+    initialized lazily so that this object remains picklable.
+    """
+
+    def __init__(self, cache_dir: Optional[Path] = None) -> None:
+        self._cache_dir = cache_dir
 
     def load_data(
         self,
@@ -81,14 +100,43 @@ class MarkitdownReader:
         extra_info: Optional[dict[str, Any]] = None,
     ) -> list:
         from llama_index.core.schema import Document
-        from markitdown import MarkItDown
 
-        result = MarkItDown().convert(str(file))
-        text = result.text_content or ""
+        text = self._read_cache(file)
+        if text is None:
+            if not hasattr(self, "_converter"):
+                from markitdown import MarkItDown
+                self._converter = MarkItDown()
+            t0 = time.perf_counter()
+            result = self._converter.convert(str(file))
+            elapsed = time.perf_counter() - t0
+            if elapsed > 2.0:
+                print(f"  [slow] {file.name} took {elapsed:.1f}s to convert", flush=True)
+            text = result.text_content or ""
+            self._write_cache(file, text)
+
         metadata: dict[str, Any] = {"file_path": str(file), "file_name": file.name}
         if extra_info:
             metadata.update(extra_info)
         return [Document(text=text, metadata=metadata)]
+
+    def _read_cache(self, file: Path) -> Optional[str]:
+        if self._cache_dir is None:
+            return None
+        cp = _cache_path_for(file, self._cache_dir)
+        if not cp.exists():
+            return None
+        if cp.stat().st_mtime < file.stat().st_mtime:
+            return None  # source file is newer — stale cache
+        return cp.read_text(encoding="utf-8")
+
+    def _write_cache(self, file: Path, text: str) -> None:
+        if self._cache_dir is None:
+            return
+        self._cache_dir.mkdir(parents=True, exist_ok=True)
+        try:
+            _cache_path_for(file, self._cache_dir).write_text(text, encoding="utf-8")
+        except OSError as exc:
+            print(f"  [warn] could not write cache for {file.name}: {exc}", file=sys.stderr)
 
 
 # ---------------------------------------------------------------------------
@@ -161,6 +209,34 @@ def _check_faiss_mismatch(index_dir: Path, want_faiss: bool) -> None:
 # ---------------------------------------------------------------------------
 
 
+def _get_nodes_timed(node_parser, documents: list) -> list:
+    """Parse documents into nodes one at a time, printing timing for slow ones.
+
+    Running per-document rather than in one batch makes it obvious which file
+    is hanging (very large text, degenerate content, tiktoken cold-start, etc.).
+    """
+    nodes = []
+    for doc in documents:
+        fname = doc.metadata.get("file_name", doc.metadata.get("file_path", "?"))
+        chars = len(doc.text)
+        if chars > 500_000:
+            print(f"  Parsing {fname} ({chars:,} chars) … ", end="", flush=True)
+            breakpoint()
+        t0 = time.perf_counter()
+        # try:
+        doc_nodes = node_parser.get_nodes_from_documents([doc])
+        # except:
+        #     breakpoint()
+        elapsed = time.perf_counter() - t0
+        if elapsed > 2.0:
+            print(
+                f"  [slow parse] {fname}  {chars:,} chars → {len(doc_nodes)} nodes  ({elapsed:.1f}s)",
+                flush=True,
+            )
+        nodes.extend(doc_nodes)
+    return nodes
+
+
 def cmd_index(args: argparse.Namespace) -> None:
     docs_dir = Path(args.docs_dir)
     index_dir = Path(args.index_dir or (DEFAULT_FAISS_INDEX_DIR if args.faiss else DEFAULT_INDEX_DIR))
@@ -180,13 +256,18 @@ def cmd_index(args: argparse.Namespace) -> None:
         chunk_overlap=args.chunk_overlap,
     )
 
-    _md_reader = MarkitdownReader()
+    cache_dir = Path(args.preprocess_cache) if args.preprocess_cache else None
+    if cache_dir and cache_dir.exists():
+        print(f"Using preprocess cache: {cache_dir}")
+    _md_reader = MarkitdownReader(cache_dir=cache_dir)
     file_extractor = {ext: _md_reader for ext in MARKITDOWN_EXTENSIONS}
 
     EXCLUDE_SUFFIXES = {".mp3", ".mp4", ".wav", ".m4a", ".ogg", ".flac", ".zip"}
     all_files = sorted(
         f for f in docs_dir.rglob("*")
-        if f.is_file() and not f.name.startswith(".") and f.suffix.lower() not in EXCLUDE_SUFFIXES
+        if f.is_file()
+        and not any(part.startswith(".") for part in f.relative_to(docs_dir).parts)
+        and f.suffix.lower() not in EXCLUDE_SUFFIXES
     )
     total = len(all_files)
     print(f"Found {total} file(s) to index.")
@@ -246,7 +327,7 @@ def cmd_index(args: argparse.Namespace) -> None:
             file_extractor=file_extractor,
         )
         try:
-            documents = reader.load_data()
+            documents = reader.load_data(show_progress=True)
         except Exception as exc:
             print(f"  [warn] batch failed to load: {exc}", file=sys.stderr)
             continue
@@ -254,7 +335,7 @@ def cmd_index(args: argparse.Namespace) -> None:
         if not documents:
             continue
 
-        nodes = li_settings.node_parser.get_nodes_from_documents(documents)
+        nodes = _get_nodes_timed(li_settings.node_parser, documents)
 
         if index is None:
             kwargs = {"storage_context": storage_context} if storage_context is not None else {}
@@ -263,6 +344,11 @@ def cmd_index(args: argparse.Namespace) -> None:
             index.insert_nodes(nodes, show_progress=True)
 
         index.storage_context.persist(persist_dir=str(index_dir))
+        if args.faiss:
+            # StorageContext.persist() writes FAISS binary to default__vector_store.json
+            # (wrong name). Also write to vector_store.faiss so _check_faiss_mismatch
+            # and FaissVectorStore.from_persist_dir() can find it.
+            index.storage_context.vector_store.persist(str(index_dir / FAISS_STORE_FILE))
 
     print(f"Index saved to: {index_dir}")
 
@@ -420,6 +506,11 @@ def build_parser() -> argparse.ArgumentParser:
         type=int,
         default=200,
         help="Number of files to load and embed per batch (default: 200)",
+    )
+    p_index.add_argument(
+        "--preprocess-cache",
+        default=os.path.join(os.environ.get("LLAMA_DOCS_DIR", DEFAULT_DOCS_DIR), ".markitdown_cache"),
+        help="Directory of pre-converted .md files produced by preprocess_docs.py (default: <docs-dir>/.markitdown_cache)",
     )
     p_index.add_argument(
         "--embed-dim",
