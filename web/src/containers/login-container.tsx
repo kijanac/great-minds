@@ -21,7 +21,13 @@ export default function LoginContainer() {
     setLoading(true);
     try {
       await requestCode(email);
-      setStep("code");
+      if (import.meta.env.VITE_SUPPRESS_AUTH) {
+        await loginWithCode(email, "000000");
+        login();
+        navigate("/");
+      } else {
+        setStep("code");
+      }
     } catch {
       setError("Failed to send code. Check your email and try again.");
     } finally {

@@ -371,6 +371,29 @@ def _build_index_for_source(source: QuerySource) -> str:
     return ""
 
 
+_RETRIEVAL_CORE = """\
+You have access to tools that let you read documents and search the knowledge \
+base. Use them to answer questions based on the actual texts in the knowledge base.
+
+Approach:
+1. When asked a question, first consider which wiki articles are relevant \
+based on the index below.
+2. Read the relevant documents using the read_document tool \
+(e.g. wiki/slug.md).
+3. If you need more detail or want to verify a claim, follow the source \
+citations in the wiki article to read the raw primary texts \
+(e.g. raw/texts/...).
+
+Rules:
+- Always ground your answers in the actual texts — do not rely on your \
+general knowledge. Use the tools.
+- If the knowledge base doesn't cover something, say so rather than making \
+it up.
+
+Current wiki index:
+{index}"""
+
+
 def build_system_prompt(
     brains: "list[QuerySource]",
     *,
@@ -379,12 +402,21 @@ def build_system_prompt(
 ) -> str:
     parts = [_build_index_for_source(b) for b in brains]
     index = "\n\n".join(p for p in parts if p) or "(no articles yet)"
+
+    # Layer 1: retrieval discipline (not overridable)
+    prompt = _RETRIEVAL_CORE.format(index=index)
+
+    # Layer 2: per-brain default persona
     storage = brains[0].storage
-    prompt = load_prompt(storage, "query").format(index=index)
+    prompt += "\n\n" + load_prompt(storage, "query")
+
     if mode == QueryMode.BTW:
-        prompt += "\n" + load_prompt(storage, "query_btw")
+        prompt += "\n\n" + load_prompt(storage, "query_btw")
+
+    # Layer 3: per-request consumer instructions
     if extra_instructions:
         prompt += "\n\n" + extra_instructions
+
     return prompt
 
 
@@ -742,7 +774,9 @@ async def run_stream_query(
     """Stream SSE events for a single question, with model fallback on rate limit."""
     primary = model or QUERY_MODEL
     client = get_async_client(max_retries=0)
-    system_prompt = build_system_prompt(brains, mode=mode, extra_instructions=extra_instructions)
+    system_prompt = build_system_prompt(
+        brains, mode=mode, extra_instructions=extra_instructions
+    )
     tools = await _load_tools(brains, doc_repo)
     base_messages: list[dict] = [
         {"role": "system", "content": system_prompt},
@@ -792,7 +826,9 @@ async def run_query(
     """Answer a single question against the knowledge base."""
     primary = model or QUERY_MODEL
     client = get_async_client()
-    system_prompt = build_system_prompt(brains, mode=mode, extra_instructions=extra_instructions)
+    system_prompt = build_system_prompt(
+        brains, mode=mode, extra_instructions=extra_instructions
+    )
     tools = await _load_tools(brains, doc_repo)
     messages: list[dict] = [{"role": "system", "content": system_prompt}]
 
