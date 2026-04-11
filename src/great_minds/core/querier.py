@@ -14,7 +14,7 @@ from dataclasses import dataclass
 from uuid import UUID
 
 from openai import AsyncOpenAI
-from .brain import wiki_slug
+from .brain import load_prompt, wiki_slug
 from .search import search as hybrid_search
 from .brain_utils import extract_wiki_link_targets
 from .documents.repository import DocumentRepository
@@ -49,38 +49,6 @@ class QuerySource:
     label: str
     brain_id: UUID
 
-
-SYSTEM_PROMPT = """\
-You are a research assistant for a knowledge base. \
-You help users explore and understand the corpus of texts and wiki articles.
-
-You have access to tools that let you read documents and search the knowledge base. \
-Use them to ground your answers in the actual texts.
-
-Approach:
-1. When asked a question, first consider which wiki articles are relevant \
-based on the index below.
-2. Read the relevant documents using the read_document tool (e.g. wiki/slug.md).
-3. If you need more detail or want to verify a claim, follow the source \
-citations in the wiki article to read the raw primary texts (e.g. raw/texts/...).
-4. Synthesize your answer, always citing which documents you're drawing from.
-
-Rules:
-- Always ground claims in the actual texts — don't rely on your general knowledge. Use the tools.
-- When summarizing a position, note whose position it is and which text it comes from.
-- When positions are in tension or contradiction, say so explicitly.
-- If the knowledge base doesn't cover something, say so rather than making it up.
-
-Current wiki index:
-{index}
-"""
-
-BTW_ADDENDUM = """\
-
-This is a BTW (by the way) — a quick side question the user is asking while \
-reading. Answer concisely in 2-3 short paragraphs. Cite the most relevant \
-sources. Be direct.
-"""
 
 _BASE_TOOLS = [
     {
@@ -412,9 +380,10 @@ def build_system_prompt(
 ) -> str:
     parts = [_build_index_for_source(b) for b in brains]
     index = "\n\n".join(p for p in parts if p) or "(no articles yet)"
-    prompt = SYSTEM_PROMPT.format(index=index)
+    storage = brains[0].storage
+    prompt = load_prompt(storage, "query").format(index=index)
     if mode == QueryMode.BTW:
-        prompt += BTW_ADDENDUM
+        prompt += "\n" + load_prompt(storage, "query_btw")
     return prompt
 
 
