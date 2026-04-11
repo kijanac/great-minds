@@ -1,6 +1,6 @@
 """Session request/response schemas."""
 
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 
 from great_minds.core.sessions import (
     BtwMessage,
@@ -40,6 +40,8 @@ class SessionResponse(BaseModel):
 
 
 class SessionListItem(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
     id: str
     query: str
     created: str
