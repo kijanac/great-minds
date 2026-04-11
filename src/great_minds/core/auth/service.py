@@ -37,6 +37,11 @@ class AuthService:
     async def request_code(self, email: str) -> None:
         """Generate auth code, store it, and email it."""
         email = normalize_email(email)
+        if self.settings.suppress_auth:
+            log.warning(
+                "SUPPRESS_AUTH is active — skipping code generation for %s", email
+            )
+            return
         code = generate_auth_code()
         await self.auth_repo.store_auth_code(email, code, self.settings)
         await self._commit()
@@ -49,9 +54,14 @@ class AuthService:
     async def verify_code(self, email: str, code: str) -> tuple[str, str]:
         """Verify auth code, provision user if new, return (access_token, refresh_token)."""
         email = normalize_email(email)
-        valid = await self.auth_repo.verify_auth_code(email, code)
-        if not valid:
-            raise ValueError("Invalid or expired code")
+        if self.settings.suppress_auth:
+            log.warning(
+                "SUPPRESS_AUTH is active — bypassing code verification for %s", email
+            )
+        else:
+            valid = await self.auth_repo.verify_auth_code(email, code)
+            if not valid:
+                raise ValueError("Invalid or expired code")
 
         user, _ = await self.user_service.get_or_create(email)
         await self.user_service.ensure_default_brain(user)

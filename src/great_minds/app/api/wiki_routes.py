@@ -11,6 +11,7 @@ from great_minds.app.api.dependencies import (
 )
 from great_minds.app.api.schemas import wiki as schemas
 from great_minds.core import brain as brain_ops
+from great_minds.core.documents.schemas import DocKind
 from great_minds.core.documents.service import DocumentService
 from great_minds.core.storage import Storage
 
@@ -31,16 +32,38 @@ async def recent_articles(
     doc_service: DocumentService = Depends(get_document_service),
     _auth: None = Depends(get_brain_storage),
 ) -> list[schemas.RecentArticleItem]:
-    docs = await doc_service.query_documents([brain_id], doc_kind="wiki", limit=limit)
-    return [
-        schemas.RecentArticleItem(
-            title=d.title or d.file_path,
-            file_path=d.file_path,
-            doc_kind=d.doc_kind,
-            updated_at=d.updated_at.isoformat() if d.updated_at else "",
-        )
-        for d in docs
-    ]
+    docs = await doc_service.query_documents(
+        [brain_id], doc_kind=DocKind.WIKI, limit=limit
+    )
+    return [schemas.RecentArticleItem.model_validate(d) for d in docs]
+
+
+@router.get("/raw/sources")
+async def list_raw_sources(
+    brain_id: UUID,
+    content_type: str | None = None,
+    search: str | None = None,
+    compiled: bool | None = None,
+    limit: int = 50,
+    offset: int = 0,
+    doc_service: DocumentService = Depends(get_document_service),
+    _auth: None = Depends(get_brain_storage),
+) -> schemas.RawSourcesResponse:
+    docs, content_types = await doc_service.list_raw_sources(
+        brain_id,
+        content_type=content_type,
+        search=search,
+        compiled=compiled,
+        limit=limit,
+        offset=offset,
+    )
+    return schemas.RawSourcesResponse(
+        items=[schemas.RawSourceItem.model_validate(d) for d in docs],
+        content_types=[
+            schemas.ContentTypeCount(content_type=ct, count=cnt)
+            for ct, cnt in content_types
+        ],
+    )
 
 
 @router.get("/wiki/{slug}")

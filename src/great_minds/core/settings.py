@@ -26,6 +26,7 @@ class Settings(BaseSettings):
     resend_from_email: str | None = None
     data_dir: str = "/data"
     cors_origins: list[str] = ["http://localhost:5173"]
+    suppress_auth: bool = False
 
 
 @lru_cache(maxsize=1)

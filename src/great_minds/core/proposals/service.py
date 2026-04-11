@@ -116,6 +116,7 @@ class ProposalService:
             absurd,
             self.repo.session,
             brain_id=brain.id,
+            storage=storage,
             data_dir=self.data_dir,
             label=brain.name,
         )

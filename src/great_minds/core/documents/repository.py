@@ -15,7 +15,7 @@ from great_minds.core.documents.models import (
     DocumentORM,
     DocumentTag,
 )
-from great_minds.core.documents.schemas import Document, DocumentCreate
+from great_minds.core.documents.schemas import DocKind, Document, DocumentCreate
 
 
 class DocumentRepository:
@@ -25,7 +25,6 @@ class DocumentRepository:
     async def upsert(self, brain_id: UUID, doc: DocumentCreate) -> UUID:
         """Upsert a document row and sync the tags junction table."""
         file_hash = hashlib.sha256(doc.content.encode()).hexdigest()
-        published_date = str(doc.date) if doc.date is not None else None
 
         columns = {
             "file_hash": file_hash,
@@ -33,7 +32,7 @@ class DocumentRepository:
             "author": doc.author,
             "url": doc.url,
             "origin": doc.origin,
-            "published_date": published_date,
+            "published_date": doc.published_date,
             "genre": doc.genre,
             "compiled": doc.compiled,
             "doc_kind": doc.doc_kind,
@@ -44,7 +43,7 @@ class DocumentRepository:
             .values(
                 brain_id=brain_id,
                 file_path=doc.file_path,
-                metadata_=doc.extra_metadata,
+                extra_metadata=doc.extra_metadata,
                 **columns,
             )
             .on_conflict_do_update(
@@ -103,10 +102,13 @@ class DocumentRepository:
         author: str | None = None,
         genre: str | None = None,
         compiled: bool | None = None,
-        doc_kind: str | None = None,
+        doc_kind: DocKind | None = None,
+        content_type: str | None = None,
+        search: str | None = None,
         date_gte: str | None = None,
         date_lte: str | None = None,
         limit: int = 50,
+        offset: int = 0,
     ) -> list[Document]:
         """Structured query over the documents table with optional filters."""
         stmt = select(DocumentORM).where(DocumentORM.brain_id.in_(brain_ids))
@@ -123,7 +125,7 @@ class DocumentRepository:
         if concepts:
             # JSONB @> containment — uses the GIN index
             stmt = stmt.where(
-                DocumentORM.metadata_.op("@>")(
+                DocumentORM.extra_metadata.op("@>")(
                     type_coerce({"concepts": concepts}, JSONB)
                 )
             )
@@ -136,12 +138,19 @@ class DocumentRepository:
             stmt = stmt.where(DocumentORM.compiled == compiled)
         if doc_kind:
             stmt = stmt.where(DocumentORM.doc_kind == doc_kind)
+        if content_type:
+            stmt = stmt.where(DocumentORM.file_path.like(f"raw/{content_type}/%"))
+        if search:
+            stmt = stmt.where(
+                DocumentORM.title.ilike(f"%{search}%")
+                | DocumentORM.author.ilike(f"%{search}%")
+            )
         if date_gte:
             stmt = stmt.where(DocumentORM.published_date >= date_gte)
         if date_lte:
             stmt = stmt.where(DocumentORM.published_date <= date_lte)
 
-        stmt = stmt.order_by(DocumentORM.updated_at.desc()).limit(limit)
+        stmt = stmt.order_by(DocumentORM.updated_at.desc()).offset(offset).limit(limit)
 
         result = await self.session.execute(stmt)
         docs = result.scalars().all()
@@ -162,25 +171,31 @@ class DocumentRepository:
             tags_by_doc[doc_id].append(tag)
 
         return [
-            Document(
-                id=orm.id,
-                brain_id=orm.brain_id,
-                file_path=orm.file_path,
-                title=orm.title,
-                author=orm.author,
-                date=orm.published_date,
-                url=orm.url,
-                origin=orm.origin,
-                genre=orm.genre,
-                compiled=orm.compiled,
-                doc_kind=orm.doc_kind,
-                tags=tags_by_doc[orm.id],
-                extra_metadata=orm.metadata_,
-                created_at=orm.created_at,
-                updated_at=orm.updated_at,
-            )
+            Document.model_validate(orm, update={"tags": tags_by_doc[orm.id]})
             for orm in docs
         ]
+
+    async def get_content_type_counts(
+        self, brain_ids: list[UUID]
+    ) -> list[tuple[str, int]]:
+        """Return (content_type, count) for raw documents grouped by folder.
+
+        Extracts the content type from file_path: raw/{content_type}/...
+        """
+        # split_part(file_path, '/', 2) extracts the second path segment
+        content_type_col = func.split_part(DocumentORM.file_path, "/", 2).label(
+            "content_type"
+        )
+        result = await self.session.execute(
+            select(content_type_col, func.count().label("cnt"))
+            .where(
+                DocumentORM.brain_id.in_(brain_ids),
+                DocumentORM.doc_kind == DocKind.RAW,
+            )
+            .group_by(content_type_col)
+            .order_by(func.count().desc())
+        )
+        return [(row.content_type, row.cnt) for row in result]
 
     async def get_distinct_tags(self, brain_ids: list[UUID]) -> list[str]:
         result = await self.session.execute(
@@ -196,13 +211,13 @@ class DocumentRepository:
         # Query JSONB array elements
         result = await self.session.execute(
             select(
-                func.jsonb_array_elements_text(DocumentORM.metadata_["concepts"]).label(
-                    "concept"
-                )
+                func.jsonb_array_elements_text(
+                    DocumentORM.extra_metadata["concepts"]
+                ).label("concept")
             )
             .where(
                 DocumentORM.brain_id.in_(brain_ids),
-                func.jsonb_typeof(DocumentORM.metadata_["concepts"]) == "array",
+                func.jsonb_typeof(DocumentORM.extra_metadata["concepts"]) == "array",
             )
             .distinct()
         )

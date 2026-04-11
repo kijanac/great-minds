@@ -28,7 +28,7 @@ class IngestService:
         *,
         title: str | None = None,
         author: str | None = None,
-        date: str | int | None = None,
+        date: str | None = None,
         origin: str | None = None,
         url: str | None = None,
     ) -> tuple[str, str]:

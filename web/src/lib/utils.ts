@@ -21,6 +21,12 @@ export function slugToTitle(slug: string): string {
     .join(" ");
 }
 
+export function formatShortDate(iso: string | null): string {
+  if (!iso) return "";
+  const d = new Date(iso);
+  return d.toLocaleDateString("en-US", { month: "short", day: "numeric" });
+}
+
 export function formatRelativeDate(iso: string): string {
   const d = new Date(iso);
   const now = new Date();

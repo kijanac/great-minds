@@ -161,7 +161,7 @@ def ingest_document(
     *,
     title: str | None = None,
     author: str | None = None,
-    date: int | str | None = None,
+    date: str | None = None,
     origin: str | None = None,
     url: str | None = None,
     dest: str,

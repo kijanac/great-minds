@@ -2,63 +2,58 @@ import { Home } from "lucide-react";
 import type { ReactNode } from "react";
 
 import type { Contradiction, RecentArticle, ResearchSuggestion } from "@/api/explore";
+import type { ContentTypeCount } from "@/api/sources";
 import { Button } from "@/components/ui/button";
+import { formatShortDate } from "@/lib/utils";
 
 interface ExplorePageProps {
   suggestions: ResearchSuggestion[];
   contradictions: Contradiction[];
   recentArticles: RecentArticle[];
+  contentTypes: ContentTypeCount[];
   loading: boolean;
   onHome: () => void;
   onArticleClick: (path: string) => void;
   onExploreWiki: () => void;
+  onExploreSources: (type?: string) => void;
   ingestionZone: ReactNode;
 }
 
-function formatDate(iso: string): string {
-  if (!iso) return "";
-  const d = new Date(iso);
-  return d.toLocaleDateString("en-US", { month: "short", day: "numeric" });
-}
+const CHIP_CLASS =
+  "font-mono text-[length:var(--text-chrome)] tracking-[0.08em] px-3 py-1 rounded-sm border border-ink-border text-warm-ghost hover:border-gold-dim hover:text-warm-faint transition-colors";
 
 export function ExplorePage({
   suggestions,
   contradictions,
   recentArticles,
+  contentTypes,
   loading,
   onHome,
   onArticleClick,
   onExploreWiki,
+  onExploreSources,
   ingestionZone,
 }: ExplorePageProps) {
   const hasSuggestions = suggestions.length > 0;
   const hasContradictions = contradictions.length > 0;
   const hasArticles = recentArticles.length > 0;
-  const hasContent = hasSuggestions || hasContradictions || hasArticles;
+  const hasSourceTypes = contentTypes.length > 0;
+  const hasContent = hasSuggestions || hasContradictions || hasArticles || hasSourceTypes;
 
   return (
     <div className="h-screen flex flex-col overflow-hidden">
-      <div className="shrink-0 flex items-center justify-between px-4 md:px-6 pt-4 pb-3 border-b border-ink-subtle gap-3">
-        <div className="flex items-center gap-4 shrink-0">
-          <Button
-            variant="ghost"
-            size="icon-xs"
-            onClick={onHome}
-            className="text-muted-foreground hover:text-gold hover:bg-transparent"
-          >
-            <Home size={14} />
-          </Button>
-          <span className="font-mono text-[length:var(--text-chrome)] tracking-[0.14em] text-gold-muted uppercase hidden md:inline">
-            explore
-          </span>
-        </div>
+      <div className="shrink-0 flex items-center px-4 md:px-6 pt-4 pb-3 border-b border-ink-subtle gap-4">
         <Button
           variant="ghost"
-          onClick={onExploreWiki}
-          className="h-auto py-1 px-2 font-mono text-[length:var(--text-chrome)] tracking-[0.14em] uppercase text-gold-muted hover:text-gold hover:bg-transparent shrink-0"
+          size="icon-xs"
+          onClick={onHome}
+          className="text-muted-foreground hover:text-gold hover:bg-transparent"
         >
-          explore wiki ↗
+          <Home size={14} />
         </Button>
+        <span className="font-mono text-[length:var(--text-chrome)] tracking-[0.14em] text-gold-muted uppercase hidden md:inline">
+          explore
+        </span>
       </div>
 
       <div className="flex-1 min-h-0 overflow-y-auto">
@@ -78,6 +73,39 @@ export function ExplorePage({
             </div>
           ) : (
             <>
+              <section className="mb-10">
+                <div className="flex flex-wrap items-center gap-2">
+                  {hasSourceTypes && (
+                    <>
+                      <button
+                        onClick={() => onExploreSources()}
+                        className={CHIP_CLASS}
+                      >
+                        all sources ·{" "}
+                        {contentTypes.reduce((s, ct) => s + ct.count, 0)}
+                      </button>
+                      {contentTypes.map((ct) => (
+                        <button
+                          key={ct.content_type}
+                          onClick={() => onExploreSources(ct.content_type)}
+                          className={CHIP_CLASS}
+                        >
+                          {ct.content_type} · {ct.count}
+                        </button>
+                      ))}
+                    </>
+                  )}
+                  {hasArticles && (
+                    <button
+                      onClick={onExploreWiki}
+                      className={CHIP_CLASS}
+                    >
+                      explore wiki
+                    </button>
+                  )}
+                </div>
+              </section>
+
               {hasSuggestions && (
                 <section className="mb-10">
                   <h2 className="font-mono text-[length:var(--text-chrome)] tracking-[0.14em] text-gold-muted uppercase mb-4">
@@ -150,7 +178,7 @@ export function ExplorePage({
                           {a.title}
                         </span>
                         <span className="font-mono text-[length:var(--text-chrome)] text-warm-ghost shrink-0 ml-4">
-                          {formatDate(a.updated_at)}
+                          {formatShortDate(a.updated_at)}
                         </span>
                       </Button>
                     ))}

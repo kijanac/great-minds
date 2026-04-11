@@ -49,6 +49,29 @@ class DocumentService:
     async def query_documents(self, brain_ids: list[UUID], **filters) -> list[Document]:
         return await self.repo.query_documents(brain_ids, **filters)
 
+    async def list_raw_sources(
+        self,
+        brain_id: UUID,
+        *,
+        content_type: str | None = None,
+        search: str | None = None,
+        compiled: bool | None = None,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> tuple[list[Document], list[tuple[str, int]]]:
+        """Return raw documents and content-type folder counts."""
+        docs = await self.repo.query_documents(
+            [brain_id],
+            doc_kind=DocKind.RAW,
+            content_type=content_type,
+            search=search,
+            compiled=compiled,
+            limit=limit,
+            offset=offset,
+        )
+        content_types = await self.repo.get_content_type_counts([brain_id])
+        return docs, content_types
+
     async def get_distinct_tags(self, brain_ids: list[UUID]) -> list[str]:
         return await self.repo.get_distinct_tags(brain_ids)
 

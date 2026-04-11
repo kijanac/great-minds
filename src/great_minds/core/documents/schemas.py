@@ -37,7 +37,7 @@ class DocumentCreate(BaseModel):
     title: str = ""
     author: str | None = None
     origin: str | None = None
-    date: str | int | None = None
+    published_date: str | None = None
     genre: str | None = None
     tags: list[str] = []
 
@@ -66,7 +66,7 @@ class DocumentCreate(BaseModel):
             title=fm.get("title", ""),
             author=fm.get("author"),
             origin=fm.get("origin"),
-            date=fm.get("date"),
+            published_date=str(fm["date"]) if "date" in fm else None,
             genre=fm.get("genre"),
             tags=fm.get("tags", []),
             extra_metadata=extra,
@@ -83,7 +83,7 @@ class Document(BaseModel):
     file_path: str
     title: str
     author: str | None
-    date: str | None
+    published_date: str | None
     url: str | None
     origin: str | None
     genre: str | None

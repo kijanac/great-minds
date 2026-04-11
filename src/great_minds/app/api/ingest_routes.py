@@ -31,7 +31,7 @@ async def ingest(
         req.dest,
         title=req.title,
         author=req.author,
-        date=req.date,
+        date=req.published_date,
         origin=req.origin,
         url=req.url,
     )

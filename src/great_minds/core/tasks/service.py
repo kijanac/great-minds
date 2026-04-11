@@ -5,6 +5,8 @@ from uuid import UUID
 
 from absurd_sdk import AsyncAbsurd
 
+from great_minds.core.compiler import compile_idempotency_key
+from great_minds.core.storage import Storage
 from great_minds.core.tasks.schemas import TaskDetail, TaskStatus
 from great_minds.core.tasks.models import TaskRecord
 from great_minds.core.tasks.repository import TaskRepository
@@ -66,13 +68,14 @@ class TaskService:
         *,
         max_attempts: int,
         retry_strategy: dict,
+        idempotency_key: str,
     ) -> TaskDetail:
         result = await self.absurd.spawn(
             task_type,
             params,
             max_attempts=max_attempts,
             retry_strategy=retry_strategy,
-            idempotency_key=f"{task_type}:{brain_id}",
+            idempotency_key=idempotency_key,
         )
         record = await self.repo.create(result["task_id"], brain_id, task_type, params)
         await self._commit()
@@ -87,6 +90,7 @@ class TaskService:
     async def spawn_compile(
         self,
         brain_id: UUID,
+        storage: Storage,
         data_dir: str,
         label: str,
         *,
@@ -103,6 +107,7 @@ class TaskService:
             },
             max_attempts=3,
             retry_strategy=COMPILE_RETRY,
+            idempotency_key=compile_idempotency_key(brain_id, storage),
         )
 
     async def list_for_brain(self, brain_id: UUID) -> list[TaskDetail]:

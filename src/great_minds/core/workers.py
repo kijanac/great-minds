@@ -181,6 +181,7 @@ async def spawn_compile(
     absurd: AsyncAbsurd,
     session: AsyncSession,
     brain_id: UUID,
+    storage: Storage,
     data_dir: str,
     label: str,
     *,
@@ -202,7 +203,7 @@ async def spawn_compile(
             "factor": 2,
             "max_seconds": 300,
         },
-        idempotency_key=f"compile:{brain_id}:{datetime.now(UTC).strftime('%Y-%m-%dT%H:%M')}",
+        idempotency_key=compiler.compile_idempotency_key(brain_id, storage),
     )
 
     task_id = result["task_id"]

@@ -35,7 +35,7 @@ const recentArticleSchema = z.object({
   title: z.string(),
   file_path: z.string(),
   doc_kind: z.string(),
-  updated_at: z.string(),
+  updated_at: z.string().nullable(),
 });
 
 export type RecentArticle = z.infer<typeof recentArticleSchema>;

@@ -21,6 +21,7 @@ The _index.md file serves dual duty:
 """
 
 import asyncio
+import hashlib
 import json
 import logging
 import re
@@ -559,6 +560,13 @@ def append_changelog(
         existing = "# Compilation Changelog\n"
 
     storage.write(changelog_path, existing + entry)
+
+
+def compile_idempotency_key(brain_id: UUID, storage: Storage) -> str:
+    """Content-based key: changes when new raw docs are ingested."""
+    paths = sorted(storage.glob("raw/texts/**/*.md"))
+    fingerprint = hashlib.sha256("\n".join(paths).encode()).hexdigest()[:16]
+    return f"compile:{brain_id}:{fingerprint}"
 
 
 def find_uncompiled(storage: Storage) -> list[str]:
