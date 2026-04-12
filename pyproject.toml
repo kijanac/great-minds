@@ -2,7 +2,7 @@
 name = "great-minds"
 version = "0.1.0"
 description = "LLM-powered research knowledge base framework"
-requires-python = ">=3.13"
+requires-python = ">=3.13, <3.14"
 dependencies = [
     "absurd-sdk>=0.3.0",
     "alembic>=1.18.4",

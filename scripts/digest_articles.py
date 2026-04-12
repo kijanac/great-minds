@@ -21,23 +21,39 @@ MODEL = "openai/gpt-5.4-nano"
 SYSTEM_PROMPT = """\
 You are an analyst synthesizing a news digest from a batch of article summaries.
 
-Your job:
-1. Identify the KEY EVENTS.
-2. GROUP related articles under each event — multiple articles often cover the same story.
-3. Assign a CATEGORY to each event (e.g. foreign_policy, domestic_politics, economy, \
-health, law_justice, science, society, entertainment, conflict).
-4. Assign a PRIORITY: high / medium / low based on significance and breadth of impact.
-5. List article IDs to IGNORE — duplicates, fluff, celebrity gossip, or items with \
-no substantive news content.
+Work in two phases before producing output:
+
+PHASE 1 — LANDSCAPE (do not assign articles yet)
+Simultaneously identify:
+  - EVENTS: specific, concrete happenings anchored in time and place.
+    If two articles clearly cover the same story, that is one event.
+  - TRENDS: broader patterns, waves, or ongoing situations that span multiple events
+    (e.g. "wave of labor strikes across the country", "escalating US-China trade tensions").
+    Only create a trend when it genuinely ties several events together.
+    Events and trends are mutually informing — let them shape each other before you commit.
+
+PHASE 2 — ASSIGNMENT
+With the event/trend landscape settled, assign article IDs to events.
 
 Respond with ONLY valid JSON. Schema:
 {
+  "trends": [
+    {
+      "id": "<short snake_case id, e.g. 'labor_unrest'>",
+      "title": "<concise trend title>",
+      "category": "<category: foreign_policy, domestic_politics, economy, health, \
+law_justice, science, society, entertainment, conflict>",
+      "priority": "high|medium|low",
+      "summary": "<2-3 sentence description of the broader pattern or wave>"
+    }
+  ],
   "events": [
     {
       "title": "<concise event title>",
       "category": "<category>",
       "priority": "high|medium|low",
       "summary": "<2-3 sentence synthesis of what's happening>",
+      "trend_id": "<trend id from above, or null if standalone>",
       "article_ids": [<list of integer IDs from the input>]
     }
   ],
@@ -46,7 +62,8 @@ Respond with ONLY valid JSON. Schema:
 
 Rules:
 - Every article ID must appear in exactly one event OR in ignored_ids.
-- Order events by priority (high first), then by number of articles.
+- Order trends by priority (high first).
+- Order events: trend-linked before standalone, then by priority, then by article count.
 - Be aggressive about grouping: if two articles are clearly the same story, put them together.
 - Be aggressive about ignoring low-value content.
 """
@@ -136,30 +153,64 @@ def call_model(user_message: str) -> dict:
     return json.loads(content)
 
 
+def render_event(event: dict, id_to_article: dict, indent: str = "") -> None:
+    """Print a single event block."""
+    priority_icon = {"high": "!!!", "medium": "-- ", "low": "   "}
+    icon = priority_icon.get(event.get("priority", "low"), "   ")
+    print(f"{indent}{icon} [{event.get('priority','?').upper()}] {event['title']}")
+    print(f"{indent}    Category : {event.get('category','')}")
+    print(f"{indent}    Summary  : {event.get('summary','')}")
+    art_ids = event.get("article_ids", [])
+    print(f"{indent}    Articles ({len(art_ids)}):")
+    for aid in art_ids:
+        a = id_to_article.get(aid)
+        if a:
+            src = f"[{a['source']}] " if a["source"] else ""
+            print(f"{indent}      [{aid}] {src}{a['title']}")
+    print()
+
+
 def render_digest(result: dict, articles: list[dict]) -> None:
     id_to_article = {a["id"]: a for a in articles}
+    trends = result.get("trends", [])
     events = result.get("events", [])
     ignored = result.get("ignored_ids", [])
+
+    trend_map: dict[str, list[dict]] = {}
+    standalone: list[dict] = []
+    for event in events:
+        tid = event.get("trend_id")
+        if tid:
+            trend_map.setdefault(tid, []).append(event)
+        else:
+            standalone.append(event)
 
     priority_icon = {"high": "!!!", "medium": "-- ", "low": "   "}
 
     print(f"\n{'='*70}")
-    print(f"  NEWS DIGEST  ({len(events)} events from {len(articles)} articles)")
+    print(
+        f"  NEWS DIGEST  "
+        f"({len(trends)} trends, {len(events)} events from {len(articles)} articles)"
+    )
     print(f"{'='*70}\n")
 
-    for event in events:
-        icon = priority_icon.get(event.get("priority", "low"), "   ")
-        print(f"{icon} [{event.get('priority','?').upper()}] {event['title']}")
-        print(f"    Category : {event.get('category','')}")
-        print(f"    Summary  : {event.get('summary','')}")
-        art_ids = event.get("article_ids", [])
-        print(f"    Articles ({len(art_ids)}):")
-        for aid in art_ids:
-            a = id_to_article.get(aid)
-            if a:
-                src = f"[{a['source']}] " if a["source"] else ""
-                print(f"      [{aid}] {src}{a['title']}")
+    # Trend-linked events grouped under their trend
+    for trend in trends:
+        tid = trend.get("id", "")
+        icon = priority_icon.get(trend.get("priority", "low"), "   ")
+        print(f"{icon} TREND [{trend.get('priority','?').upper()}] {trend['title']}")
+        print(f"    Category : {trend.get('category','')}")
+        print(f"    Summary  : {trend.get('summary','')}")
         print()
+        for event in trend_map.get(tid, []):
+            render_event(event, id_to_article, indent="  ")
+
+    # Standalone events
+    if standalone:
+        if trends:
+            print(f"--- STANDALONE EVENTS ---\n")
+        for event in standalone:
+            render_event(event, id_to_article)
 
     if ignored:
         print(f"--- IGNORED ({len(ignored)} articles) ---")
