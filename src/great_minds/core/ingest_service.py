@@ -9,8 +9,9 @@ import httpx
 from markitdown import MarkItDown, StreamInfo
 
 from great_minds.core.brain import load_config
-from great_minds.core.ingester import ingest_document, normalize_url, slugify
+from great_minds.core.documents.schemas import DocKind
 from great_minds.core.documents.service import DocumentService
+from great_minds.core.ingester import ingest_document, normalize_url, slugify
 from great_minds.core.storage import Storage
 
 
@@ -41,7 +42,7 @@ class IngestService:
             storage, config, content, content_type, dest=dest, **kwargs
         )
         await self.doc_service.index_from_content(
-            brain_id, dest, result, doc_kind=content_type
+            brain_id, dest, result, doc_kind=DocKind.RAW
         )
         return dest, title or dest
 
@@ -75,7 +76,7 @@ class IngestService:
             storage, config, content, content_type, dest=dest, **kwargs
         )
         await self.doc_service.index_from_content(
-            brain_id, dest, result, doc_kind=content_type
+            brain_id, dest, result, doc_kind=DocKind.RAW
         )
         return dest, filename
 
@@ -114,7 +115,7 @@ class IngestService:
             url=url,
         )
         await self.doc_service.index_from_content(
-            brain_id, dest, ingested, doc_kind=content_type
+            brain_id, dest, ingested, doc_kind=DocKind.RAW
         )
         return dest, title
 
