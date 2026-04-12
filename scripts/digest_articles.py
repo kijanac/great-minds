@@ -1,16 +1,43 @@
-"""Extract summaries from article MD files and produce a digest via OpenRouter.
+"""News digest pipeline: clusters article summaries into events and trends via OpenRouter.
 
 Usage:
     uv run scripts/digest_articles.py [articles_dir]
 
-Phase 1a: identify events from articles.
-Phase 1b: identify trends over those events (many-to-many mapping).
-Phase 2:  tag each article with all associated events and trends.
+The pipeline runs in three phases:
+
+  Phase 1a — Events
+    Reads all .md files in `articles/` (title + summary from frontmatter), sends them in
+    a single prompt to the landscape model, and receives a list of discrete EVENTS: named,
+    categorized, prioritized happenings. Articles that cover the same story are collapsed
+    into one event. Celebrity news, sports, and entertainment without political significance
+    are excluded.
+
+  Phase 1b — Trends
+    Sends the event list to the same model and asks it to identify TRENDS: broader patterns
+    that span multiple events (e.g. "escalating trade war", "wave of labor strikes"). Each
+    trend carries a list of event IDs — the mapping is many-to-many, so one event can belong
+    to multiple trends.
+
+  Phase 2 — Article tagging
+    Iterates through every article one at a time, sending the compact event+trend landscape
+    alongside the article to a (potentially different) tagging model. The tagger returns
+    which event IDs and trend IDs the article is associated with, or marks it ignored.
+    This produces article_ids lists on both events and trends.
+
+Output:
+  - digest.json          full structured result (events, trends, ignored_ids, article_ids)
+  - logs/YYYYMMDD_HHMMSS.json  per-run prompt log: every call's system prompt, user message,
+                               raw model response, model name, and elapsed time — for
+                               iterating on prompts by diffing runs
+
+Editorial focus: geopolitics, domestic politics, social movements, consequential economics,
+science/health/tech with societal impact. Low-value content is aggressively ignored.
 """
 
 import json
 import os
 import re
+import sqlite3
 import sys
 import time
 from datetime import datetime
@@ -21,7 +48,8 @@ from tqdm import tqdm
 
 OPENROUTER_BASE = "https://openrouter.ai/api/v1"
 MODEL = "deepseek/deepseek-v3.2"
-TAG_MODEL = "nvidia/nemotron-3-super-120b-a12b:free"
+TAG_MODEL = "google/gemma-4-31b-it"
+SAVE_FILE_NAME = "digest2"
 
 EDITORIAL_FOCUS = """\
 EDITORIAL FOCUS — give high priority to:
@@ -67,7 +95,7 @@ You are an analyst identifying trends across a set of pre-identified news events
 A TREND is a broader pattern, wave, or ongoing situation that spans multiple events
 (e.g. "wave of labor strikes", "escalating US-China trade tensions").
 Only create a trend when it genuinely ties several events together.
-Each trend maps to one or more events. Each event can belong to multiple trends.
+Each trend maps to more than one event. Each event can belong to multiple trends.
 
 Respond with ONLY valid JSON. Schema:
 {
@@ -92,14 +120,10 @@ Rules:
 TAG_SYSTEM_PROMPT = """\
 You are tagging a single news article against a pre-identified landscape of events and trends.
 
-The digest prioritizes geopolitics, domestic politics, social movements, and consequential
-economics. Celebrity news, entertainment gossip, and sports without political significance
-should be ignored.
+The digest prioritizes geopolitics, domestic politics, social movements, and consequential economics. Celebrity news, entertainment gossip, and sports without political significance should be ignored.
 
-Given the article and the landscape, return which events and trends this article is associated
-with. An article may belong to multiple events and/or multiple trends.
-If the article is low-value, off-topic, or clearly unrelated to any identified event or trend,
-set ignore to true.
+Given the article and the landscape, return which events and trends this article is associated with. An article may belong to multiple events and/or multiple trends.
+If the article is low-value, off-topic, or clearly unrelated to any identified event or trend, set ignore to true.
 
 Respond with ONLY valid JSON:
 {
@@ -108,6 +132,26 @@ Respond with ONLY valid JSON:
   "ignore": false
 }
 """
+
+TAG_BATCH_SYSTEM_PROMPT = """\
+You are tagging a batch of news articles against a pre-identified landscape of events and trends.
+
+The digest prioritizes geopolitics, domestic politics, social movements, and consequential economics. Celebrity news, entertainment gossip, and sports without political significance should be ignored.
+
+For EACH article in the batch, return which events and trends it is associated with. An article may belong to multiple events and/or multiple trends. If an article is low-value, off-topic, or clearly unrelated to any identified event or trend, set ignore to true.
+
+Respond with ONLY valid JSON mapping each article ID (as a string) to its tags:
+{
+  "articles": {
+    "<article_id>": {"event_ids": ["<event id>", ...], "trend_ids": ["<trend id>", ...], "ignore": false},
+    ...
+  }
+}
+
+Every article ID in the input must have a corresponding entry in the output.
+"""
+
+TAG_BATCH_SIZE = 10
 
 
 def strip_html(text: str) -> str:
@@ -211,6 +255,152 @@ def build_tag_message(article: dict, events: list[dict], trends: list[dict]) -> 
     return "\n".join(lines)
 
 
+DB_PATH = Path(f"{SAVE_FILE_NAME}.db")
+
+SCHEMA = """
+CREATE TABLE IF NOT EXISTS runs (
+    run_ts      TEXT PRIMARY KEY,
+    created_at  TEXT NOT NULL,
+    n_articles  INTEGER,
+    n_events    INTEGER,
+    n_trends    INTEGER,
+    n_ignored   INTEGER
+);
+CREATE TABLE IF NOT EXISTS articles (
+    run_ts   TEXT NOT NULL,
+    id       INTEGER NOT NULL,
+    title    TEXT,
+    source   TEXT,
+    summary  TEXT,
+    path     TEXT,
+    ignored  INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (run_ts, id)
+);
+CREATE TABLE IF NOT EXISTS events (
+    run_ts          TEXT NOT NULL,
+    id              TEXT NOT NULL,
+    title           TEXT,
+    category        TEXT,
+    priority        TEXT,
+    summary         TEXT,
+    article_ids     TEXT,
+    score           REAL,
+    score_reasoning TEXT,
+    PRIMARY KEY (run_ts, id)
+);
+CREATE TABLE IF NOT EXISTS trends (
+    run_ts          TEXT NOT NULL,
+    id              TEXT NOT NULL,
+    title           TEXT,
+    category        TEXT,
+    priority        TEXT,
+    summary         TEXT,
+    event_ids       TEXT,
+    article_ids     TEXT,
+    score           REAL,
+    score_reasoning TEXT,
+    PRIMARY KEY (run_ts, id)
+);
+"""
+
+
+def _open_db(db_path: Path) -> sqlite3.Connection:
+    con = sqlite3.connect(db_path)
+    con.executescript(SCHEMA)
+    return con
+
+
+def db_init_run(db_path: Path, run_ts: str, articles: list[dict]) -> None:
+    """Create the run row and save articles. Called before any LLM work."""
+    con = _open_db(db_path)
+    con.execute(
+        "INSERT OR REPLACE INTO runs VALUES (?,?,?,?,?,?)",
+        (run_ts, datetime.now().isoformat(), len(articles), 0, 0, 0),
+    )
+    con.executemany(
+        "INSERT OR REPLACE INTO articles VALUES (?,?,?,?,?,?,?)",
+        [(run_ts, a["id"], a["title"], a["source"], a["summary"], a["path"], 0) for a in articles],
+    )
+    con.commit()
+    con.close()
+
+
+def db_save_events(db_path: Path, run_ts: str, events: list[dict]) -> None:
+    con = _open_db(db_path)
+    con.executemany(
+        "INSERT OR REPLACE INTO events (run_ts,id,title,category,priority,summary,article_ids) VALUES (?,?,?,?,?,?,?)",
+        [(run_ts, e["id"], e["title"], e.get("category"), e.get("priority"), e.get("summary"), "[]") for e in events],
+    )
+    con.execute("UPDATE runs SET n_events=? WHERE run_ts=?", (len(events), run_ts))
+    con.commit()
+    con.close()
+
+
+def db_save_trends(db_path: Path, run_ts: str, trends: list[dict]) -> None:
+    con = _open_db(db_path)
+    con.executemany(
+        "INSERT OR REPLACE INTO trends (run_ts,id,title,category,priority,summary,event_ids,article_ids) VALUES (?,?,?,?,?,?,?,?)",
+        [(run_ts, t["id"], t["title"], t.get("category"), t.get("priority"), t.get("summary"), json.dumps(t.get("event_ids", [])), "[]") for t in trends],
+    )
+    con.execute("UPDATE runs SET n_trends=? WHERE run_ts=?", (len(trends), run_ts))
+    con.commit()
+    con.close()
+
+
+def db_update_tagging(
+    db_path: Path,
+    run_ts: str,
+    events: list[dict],
+    trends: list[dict],
+    ignored_ids: list[int],
+) -> None:
+    """Write article_ids back to events/trends and mark ignored articles."""
+    con = _open_db(db_path)
+    for e in events:
+        con.execute(
+            "UPDATE events SET article_ids=? WHERE run_ts=? AND id=?",
+            (json.dumps(e.get("article_ids", [])), run_ts, e["id"]),
+        )
+    for t in trends:
+        con.execute(
+            "UPDATE trends SET article_ids=? WHERE run_ts=? AND id=?",
+            (json.dumps(t.get("article_ids", [])), run_ts, t["id"]),
+        )
+    for aid in ignored_ids:
+        con.execute("UPDATE articles SET ignored=1 WHERE run_ts=? AND id=?", (run_ts, aid))
+    con.execute(
+        "UPDATE runs SET n_ignored=? WHERE run_ts=?",
+        (len(ignored_ids), run_ts),
+    )
+    con.commit()
+    con.close()
+
+
+def db_load_latest(db_path: Path) -> tuple[str | None, list[dict], list[dict]]:
+    """Return (run_ts, events, trends) from the most recent run that has events saved.
+    Returns (None, [], []) if nothing is cached."""
+    if not db_path.exists():
+        return None, [], []
+    con = sqlite3.connect(db_path)
+    con.row_factory = sqlite3.Row
+    row = con.execute(
+        "SELECT run_ts FROM runs WHERE n_events > 0 ORDER BY run_ts DESC LIMIT 1"
+    ).fetchone()
+    if not row:
+        con.close()
+        return None, [], []
+    run_ts = row["run_ts"]
+    events = [dict(r) for r in con.execute("SELECT * FROM events WHERE run_ts=?", (run_ts,))]
+    trends = [dict(r) for r in con.execute("SELECT * FROM trends WHERE run_ts=?", (run_ts,))]
+    con.close()
+    for e in events:
+        e["article_ids"] = json.loads(e["article_ids"] or "[]")
+    for t in trends:
+        t["event_ids"] = json.loads(t["event_ids"] or "[]")
+        t["article_ids"] = json.loads(t["article_ids"] or "[]")
+    return run_ts, events, trends
+
+
 def make_client() -> OpenAI:
     api_key = os.environ.get("OPENROUTER_API_KEY")
     if not api_key:
@@ -264,6 +454,45 @@ def call_trends(client: OpenAI, user_message: str, log: list) -> tuple[list[dict
 def call_tag_article(client: OpenAI, tag_message: str, article_id: int, log: list) -> tuple[dict, float]:
     content, elapsed = _chat(client, TAG_MODEL, TAG_SYSTEM_PROMPT, tag_message, log, f"tag_{article_id}")
     return json.loads(content), elapsed
+
+
+def build_tag_batch_message(articles: list[dict], events: list[dict], trends: list[dict]) -> str:
+    # Build reverse map: event_id -> [trend_ids]
+    event_trend_map: dict[str, list[str]] = {}
+    for t in trends:
+        for eid in t.get("event_ids", []):
+            event_trend_map.setdefault(eid, []).append(t["id"])
+
+    lines = ["LANDSCAPE EVENTS:"]
+    for e in events:
+        trend_tags = event_trend_map.get(e["id"], [])
+        tags_str = f"trends: {trend_tags}" if trend_tags else "standalone"
+        lines.append(f'  {e["id"]}: {e["title"]} ({tags_str})')
+
+    lines.append("\nLANDSCAPE TRENDS:")
+    for t in trends:
+        lines.append(f'  {t["id"]}: {t["title"]}')
+
+    lines.append(f"\nARTICLES TO TAG ({len(articles)}):")
+    for article in articles:
+        lines.append(f'\n  [{article["id"]}] {article["title"]}')
+        if article["source"]:
+            lines.append(f'  Source: {article["source"]}')
+        if article["summary"]:
+            lines.append(f'  Summary: {article["summary"]}')
+
+    return "\n".join(lines)
+
+
+def call_tag_batch(
+    client: OpenAI, tag_message: str, article_ids: list[int], log: list
+) -> tuple[dict[int, dict], float]:
+    """Tag a batch of articles. Returns a dict mapping article_id -> tags."""
+    phase = f"tag_batch_{'_'.join(str(i) for i in article_ids)}"
+    content, elapsed = _chat(client, TAG_MODEL, TAG_BATCH_SYSTEM_PROMPT, tag_message, log, phase)
+    raw = json.loads(content).get("articles", {})
+    # Normalise keys to int
+    return {int(k): v for k, v in raw.items()}, elapsed
 
 
 def print_landscape(events: list[dict], trends: list[dict]) -> None:
@@ -381,54 +610,72 @@ def main() -> None:
         print("No articles found.")
         sys.exit(0)
 
+    fresh = "--fresh" in sys.argv
     client = make_client()
     run_log: list[dict] = []
-    run_ts = datetime.now().strftime("%Y%m%d_%H%M%S")
 
-    # Phase 1a: Identify events
-    articles_message = build_articles_message(articles)
-    token_estimate = len(articles_message.split()) * 1.3
-    print(f"\nPhase 1a: events via {MODEL} (~{token_estimate:,.0f} tokens estimated) …")
-    events, elapsed = call_events(client, articles_message, run_log)
-    print(f"  → {len(events)} events ({elapsed:.1f}s)")
+    # Check for a cached landscape from a previous run
+    cached_ts, cached_events, cached_trends = db_load_latest(DB_PATH)
+    if cached_ts and not fresh:
+        run_ts = cached_ts
+        print(f"  (resuming run {run_ts})")
+    else:
+        run_ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+        db_init_run(DB_PATH, run_ts, articles)
 
-    # Phase 1b: Identify trends over those events
-    trends_message = build_trends_message(events)
-    print(f"\nPhase 1b: trends via {MODEL} …")
-    trends, elapsed = call_trends(client, trends_message, run_log)
-    print(f"  → {len(trends)} trends ({elapsed:.1f}s)")
+    # Phase 1a: Identify events (skip if cached)
+    if cached_events and not fresh:
+        events = cached_events
+        print(f"\nPhase 1a: using {len(events)} cached events from {run_ts}")
+    else:
+        articles_message = build_articles_message(articles)
+        token_estimate = len(articles_message.split()) * 1.3
+        print(f"\nPhase 1a: events via {MODEL} (~{token_estimate:,.0f} tokens estimated) …")
+        events, elapsed = call_events(client, articles_message, run_log)
+        print(f"  → {len(events)} events ({elapsed:.1f}s)")
+        db_save_events(DB_PATH, run_ts, events)
+
+    # Phase 1b: Identify trends (skip if cached)
+    if cached_trends and not fresh:
+        trends = cached_trends
+        print(f"Phase 1b: using {len(trends)} cached trends from {run_ts}")
+    else:
+        trends_message = build_trends_message(events)
+        print(f"\nPhase 1b: trends via {MODEL} …")
+        trends, elapsed = call_trends(client, trends_message, run_log)
+        print(f"  → {len(trends)} trends ({elapsed:.1f}s)")
+        db_save_trends(DB_PATH, run_ts, trends)
 
     print_landscape(events, trends)
+    sys.exit(0)
 
-    # Phase 2: Tag each article with all associated events and trends
+    # Phase 2: Tag articles in batches
     events_map: dict[str, dict] = {e["id"]: {**e, "article_ids": []} for e in events}
     trends_map: dict[str, dict] = {t["id"]: {**t, "article_ids": []} for t in trends}
     ignored_ids: list[int] = []
 
-    print(f"Phase 2: tagging {len(articles)} articles …")
-    for article in tqdm(articles):
-        print(f"  [{article['id']}/{len(articles)}] {article['title'][:60]} …", end=" ", flush=True)
-        tag_message = build_tag_message(article, events, trends)
-        tags, elapsed = call_tag_article(client, tag_message, article["id"], run_log)
+    batches = [articles[i:i + TAG_BATCH_SIZE] for i in range(0, len(articles), TAG_BATCH_SIZE)]
+    print(f"Phase 2: tagging {len(articles)} articles in {len(batches)} batches (batch_size={TAG_BATCH_SIZE}) …")
+    for batch in tqdm(batches):
+        batch_ids = [a["id"] for a in batch]
+        print(f"  batch {batch_ids} …", end=" ", flush=True)
+        tag_message = build_tag_batch_message(batch, events, trends)
+        tags_by_id, elapsed = call_tag_batch(client, tag_message, batch_ids, run_log)
 
-        if tags.get("ignore"):
-            ignored_ids.append(article["id"])
-            print(f"ignored ({elapsed:.1f}s)")
-        else:
-            tagged_event_ids = tags.get("event_ids", [])
-            tagged_trend_ids = tags.get("trend_ids", [])
-            for eid in tagged_event_ids:
-                if eid in events_map:
-                    events_map[eid]["article_ids"].append(article["id"])
-            for tid in tagged_trend_ids:
-                if tid in trends_map:
-                    trends_map[tid]["article_ids"].append(article["id"])
-            parts = []
-            if tagged_event_ids:
-                parts.append(f"events={tagged_event_ids}")
-            if tagged_trend_ids:
-                parts.append(f"trends={tagged_trend_ids}")
-            print(f"{', '.join(parts) if parts else 'untagged'} ({elapsed:.1f}s)")
+        for article in batch:
+            tags = tags_by_id.get(article["id"], {})
+            if tags.get("ignore"):
+                ignored_ids.append(article["id"])
+            else:
+                for eid in tags.get("event_ids", []):
+                    if eid in events_map:
+                        events_map[eid]["article_ids"].append(article["id"])
+                for tid in tags.get("trend_ids", []):
+                    if tid in trends_map:
+                        trends_map[tid]["article_ids"].append(article["id"])
+
+        n_ignored = sum(1 for a in batch if tags_by_id.get(a["id"], {}).get("ignore"))
+        print(f"{len(batch)} tagged, {n_ignored} ignored ({elapsed:.1f}s)")
 
     final_events = list(events_map.values())
     final_trends = list(trends_map.values())
@@ -439,9 +686,12 @@ def main() -> None:
         "ignored_ids": ignored_ids,
     }
 
-    out_path = Path("digest.json")
+    out_path = Path(f"{SAVE_FILE_NAME}.json")
     out_path.write_text(json.dumps(result, indent=2), encoding="utf-8")
     print(f"\nRaw JSON saved to {out_path.resolve()}")
+
+    db_update_tagging(DB_PATH, run_ts, final_events, final_trends, ignored_ids)
+    print(f"DB saved to {DB_PATH.resolve()}")
 
     logs_dir = Path("logs")
     logs_dir.mkdir(exist_ok=True)

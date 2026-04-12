@@ -12,7 +12,8 @@ dependencies = [
     "fastapi>=0.135.3",
     "httpx>=0.28.1",
     "llama-index-core>=0.12.0",
-    "llama-index-embeddings-huggingface>=0.5.0",
+    # torch has no cp313/x86_64 wheels, so exclude on Intel Mac
+    "llama-index-embeddings-huggingface>=0.5.0; sys_platform != 'darwin' or platform_machine != 'x86_64'",
     "llama-index-embeddings-openai>=0.3.0",
     "llama-index-llms-openai>=0.4.0",
     "llama-index-readers-file>=0.4.0",
@@ -38,6 +39,8 @@ dependencies = [
     "ruamel.yaml>=0.19.0",
     "sqlalchemy[asyncio]>=2.0.49",
     "uvicorn>=0.44.0",
+    "scikit-learn>=1.8.0",
+    "plotly>=6.7.0",
 ]
 
 [project.scripts]
