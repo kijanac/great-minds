@@ -68,7 +68,9 @@ async def api_call(client: AsyncOpenAI, **kwargs):
                 duration_ms=round((time.monotonic() - call_started) * 1000),
                 attempts=rl_attempts + generic_attempts + 1,
                 input_tokens=getattr(usage, "prompt_tokens", None) if usage else None,
-                output_tokens=getattr(usage, "completion_tokens", None) if usage else None,
+                output_tokens=getattr(usage, "completion_tokens", None)
+                if usage
+                else None,
             )
             return response
         except RateLimitError as e:

@@ -189,12 +189,15 @@ async def _stream_bulk_events(
         except Exception as exc:
             log.exception("failed to spawn compile after bulk ingest: %s", exc)
 
-    yield json.dumps(
-        {
-            "event": "done",
-            "ingested": ingested,
-            "skipped": skipped,
-            "failed": failed,
-            "compile_spawned": compile_spawned,
-        }
-    ) + "\n"
+    yield (
+        json.dumps(
+            {
+                "event": "done",
+                "ingested": ingested,
+                "skipped": skipped,
+                "failed": failed,
+                "compile_spawned": compile_spawned,
+            }
+        )
+        + "\n"
+    )

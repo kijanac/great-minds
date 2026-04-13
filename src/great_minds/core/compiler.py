@@ -66,7 +66,9 @@ from great_minds.core.telemetry import (
 log = logging.getLogger(__name__)
 
 MAX_SOURCE_CHARS = 30_000
-MIN_SOURCE_EXCERPT_CHARS = 4_000  # floor per-source when budget split across many sources
+MIN_SOURCE_EXCERPT_CHARS = (
+    4_000  # floor per-source when budget split across many sources
+)
 
 
 # ---------------------------------------------------------------------------
@@ -276,9 +278,7 @@ async def plan_one(
 
     text = extract_content(response)
     if not text:
-        log_event(
-            "plan_empty", level=logging.WARNING, doc_idx=doc_idx
-        )
+        log_event("plan_empty", level=logging.WARNING, doc_idx=doc_idx)
         return []
 
     raw = strip_json_fencing(text)
@@ -370,7 +370,9 @@ async def reconcile_plans(
     for raw in data.get("articles", []):
         # source_indices already populated by the LLM; set source_idx to
         # the first one for backward-compat with write_one's fallback.
-        raw.setdefault("source_idx", raw["source_indices"][0] if raw.get("source_indices") else 0)
+        raw.setdefault(
+            "source_idx", raw["source_indices"][0] if raw.get("source_indices") else 0
+        )
         articles.append(PlannedArticle.model_validate(raw))
 
     log_event(
@@ -730,7 +732,9 @@ async def run(
     async with timed_op("plan"):
         plan_results = await asyncio.gather(
             *(
-                plan_one(storage, load_prompt, client, plan_sem, i, fm, body, wiki_index)
+                plan_one(
+                    storage, load_prompt, client, plan_sem, i, fm, body, wiki_index
+                )
                 for i, (_, fm, body) in enumerate(docs)
             ),
             return_exceptions=True,
@@ -777,7 +781,14 @@ async def run(
         write_results = await asyncio.gather(
             *(
                 write_one(
-                    storage, load_prompt, client, write_sem, article, reconciled, docs, wiki_index
+                    storage,
+                    load_prompt,
+                    client,
+                    write_sem,
+                    article,
+                    reconciled,
+                    docs,
+                    wiki_index,
                 )
                 for article in reconciled
             ),
