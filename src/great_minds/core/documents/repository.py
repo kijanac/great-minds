@@ -171,7 +171,9 @@ class DocumentRepository:
             tags_by_doc[doc_id].append(tag)
 
         return [
-            Document.model_validate(orm).model_copy(update={"tags": tags_by_doc[orm.id]})
+            Document.model_validate(orm).model_copy(
+                update={"tags": tags_by_doc[orm.id]}
+            )
             for orm in docs
         ]
 

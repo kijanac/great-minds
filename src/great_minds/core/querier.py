@@ -497,9 +497,7 @@ async def chat(
             emit_wide_event()
             return ChatResult(
                 answer=message.content,
-                sources_consulted=_build_sources_consulted(
-                    articles_read, sources_read
-                ),
+                sources_consulted=_build_sources_consulted(articles_read, sources_read),
             )
 
         messages.append(
