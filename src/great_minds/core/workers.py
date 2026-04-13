@@ -7,13 +7,11 @@ Storage/session from serialized params — they don't use the DI chain.
 import hashlib
 import logging
 from contextvars import ContextVar
-from datetime import UTC, datetime
 from functools import partial
 from pathlib import Path
 from uuid import UUID
 
 from absurd_sdk import AbsurdHooks, AsyncAbsurd
-from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from great_minds.core.brain import load_config, load_prompt
@@ -22,7 +20,13 @@ from great_minds.core.brain_utils import parse_frontmatter
 from great_minds.core.documents.repository import DocumentRepository
 from great_minds.core.documents.schemas import DocumentCreate
 from great_minds.core.storage import LocalStorage, Storage
-from great_minds.core.tasks.models import TaskRecord
+from great_minds.core.telemetry import (
+    correlation_id,
+    emit_wide_event,
+    enrich,
+    init_wide_event,
+    timed_op,
+)
 
 _task_session: ContextVar[AsyncSession] = ContextVar("task_session")
 
@@ -43,6 +47,7 @@ async def _run_lint_and_store(storage: Storage) -> None:
 
 async def compile_task(params: dict, ctx) -> dict:
     """Run the compilation pipeline with heartbeat for long runs."""
+    correlation_id.set(f"task-{ctx.task_id}")
     data_dir = Path(params["data_dir"])
     storage = LocalStorage(data_dir / "brains" / params["brain_id"])
     brain_id = UUID(params["brain_id"])
@@ -69,6 +74,7 @@ async def compile_task(params: dict, ctx) -> dict:
 
 async def bulk_ingest_task(params: dict, ctx) -> dict:
     """Bulk ingest a directory of files into a brain."""
+    correlation_id.set(f"task-{ctx.task_id}")
     data_dir = Path(params["data_dir"])
     storage = LocalStorage(data_dir / "brains" / params["brain_id"])
     brain_id = UUID(params["brain_id"])
@@ -90,6 +96,14 @@ async def bulk_ingest_task(params: dict, ctx) -> dict:
     batch: list[DocumentCreate] = []
     batch_size = 50
 
+    init_wide_event(
+        "bulk_ingested",
+        brain_id=str(brain_id),
+        source_dir=str(source_dir),
+        content_type=content_type,
+        total_files=total,
+    )
+
     log.info(
         "bulk_ingest brain=%s source=%s files=%d",
         params.get("label"),
@@ -97,47 +111,49 @@ async def bulk_ingest_task(params: dict, ctx) -> dict:
         total,
     )
 
-    for i, filepath in enumerate(source_files):
-        if i % 100 == 0:
-            await ctx.heartbeat(600)
+    async with timed_op("ingest"):
+        for i, filepath in enumerate(source_files):
+            if i % 100 == 0:
+                await ctx.heartbeat(600)
 
-        relative = filepath.relative_to(source_dir)
-        dest = f"{dest_dir}/{relative}"
+            relative = filepath.relative_to(source_dir)
+            dest = f"{dest_dir}/{relative}"
 
-        raw_content = filepath.read_text(encoding="utf-8")
-        content_with_fm = ingester.ingest_document(
-            storage, config, raw_content, content_type, dest=dest, **ingest_kwargs
-        )
-        file_hash = hashlib.sha256(content_with_fm.encode()).hexdigest()
+            raw_content = filepath.read_text(encoding="utf-8")
+            content_with_fm = ingester.ingest_document(
+                storage, config, raw_content, content_type, dest=dest, **ingest_kwargs
+            )
+            file_hash = hashlib.sha256(content_with_fm.encode()).hexdigest()
 
-        if existing_hashes.get(dest) == file_hash:
-            skipped += 1
-            continue
+            if existing_hashes.get(dest) == file_hash:
+                skipped += 1
+                continue
 
-        storage.write(dest, content_with_fm)
-        ingested += 1
+            storage.write(dest, content_with_fm)
+            ingested += 1
 
-        fm, _ = parse_frontmatter(content_with_fm)
-        batch.append(DocumentCreate.from_frontmatter(fm, dest, content_with_fm))
+            fm, _ = parse_frontmatter(content_with_fm)
+            batch.append(DocumentCreate.from_frontmatter(fm, dest, content_with_fm))
 
-        if len(batch) >= batch_size:
+            if len(batch) >= batch_size:
+                await doc_repo.batch_upsert(brain_id, batch)
+                await session.commit()
+                batch.clear()
+
+            if ingested % 100 == 0:
+                log.info(
+                    "bulk_ingest progress=%d/%d ingested=%d skipped=%d",
+                    i + 1,
+                    total,
+                    ingested,
+                    skipped,
+                )
+
+        if batch:
             await doc_repo.batch_upsert(brain_id, batch)
             await session.commit()
-            batch.clear()
 
-        if ingested % 100 == 0:
-            log.info(
-                "bulk_ingest progress=%d/%d ingested=%d skipped=%d",
-                i + 1,
-                total,
-                ingested,
-                skipped,
-            )
-
-    if batch:
-        await doc_repo.batch_upsert(brain_id, batch)
-        await session.commit()
-
+    enrich(ingested=ingested, skipped=skipped)
     log.info(
         "bulk_ingest complete brain=%s ingested=%d skipped=%d total=%d",
         params.get("label"),
@@ -145,6 +161,7 @@ async def bulk_ingest_task(params: dict, ctx) -> dict:
         skipped,
         total,
     )
+    emit_wide_event()
 
     compile_result = None
     if ingested > 0:
@@ -170,61 +187,6 @@ async def bulk_ingest_task(params: dict, ctx) -> dict:
         if compile_result
         else None,
     }
-
-
-# ---------------------------------------------------------------------------
-# Spawn helpers (used by ProposalService — routes use TaskService instead)
-# ---------------------------------------------------------------------------
-
-
-async def spawn_compile(
-    absurd: AsyncAbsurd,
-    session: AsyncSession,
-    brain_id: UUID,
-    storage: Storage,
-    data_dir: str,
-    label: str,
-    *,
-    limit: int | None = None,
-) -> TaskRecord:
-    params = {
-        "brain_id": str(brain_id),
-        "data_dir": data_dir,
-        "label": label,
-        "limit": limit,
-    }
-    result = await absurd.spawn(
-        "compile",
-        params,
-        max_attempts=3,
-        retry_strategy={
-            "kind": "exponential",
-            "base_seconds": 10,
-            "factor": 2,
-            "max_seconds": 300,
-        },
-        idempotency_key=compiler.compile_idempotency_key(brain_id, storage),
-    )
-
-    task_id = result["task_id"]
-    await session.execute(
-        insert(TaskRecord)
-        .values(
-            id=task_id,
-            brain_id=brain_id,
-            type="compile",
-            params=params,
-            created_at=datetime.now(UTC),
-        )
-        .on_conflict_do_nothing(index_elements=["id"])
-    )
-
-    record = await session.get(TaskRecord, task_id)
-    if record is None:
-        raise RuntimeError(f"TaskRecord {task_id} missing after upsert")
-
-    log.info("task_spawned task_id=%s type=compile brain_id=%s", task_id, brain_id)
-    return record
 
 
 # ---------------------------------------------------------------------------

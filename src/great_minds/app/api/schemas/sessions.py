@@ -10,6 +10,7 @@ from great_minds.core.sessions import (
 
 
 class ExchangeData(BaseModel):
+    id: str
     query: str
     thinking: list[ThinkingBlock] = []
     answer: str

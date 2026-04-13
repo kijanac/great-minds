@@ -28,6 +28,10 @@ class Settings(BaseSettings):
     cors_origins: list[str] = ["http://localhost:5173"]
     suppress_auth: bool = False
 
+    compile_enrich_concurrency: int = 20
+    compile_plan_concurrency: int = 10
+    compile_write_concurrency: int = 3
+
 
 @lru_cache(maxsize=1)
 def get_settings() -> Settings:

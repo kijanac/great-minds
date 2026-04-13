@@ -9,6 +9,17 @@ import {
 import type { ReactNode } from "react";
 import { decodeJwt } from "jose";
 import { clearTokens, ensureBrainId } from "@/api/client";
+import { queryClient } from "@/lib/query-client";
+
+function isTokenValid(token: string | null): boolean {
+  if (!token) return false;
+  try {
+    const { exp } = decodeJwt(token);
+    return typeof exp === "number" && exp * 1000 > Date.now();
+  } catch {
+    return false;
+  }
+}
 
 function getUserIdFromToken(): string | null {
   const token = localStorage.getItem("access_token");
@@ -31,12 +42,19 @@ interface AuthContextValue {
 const AuthContext = createContext<AuthContextValue | null>(null);
 
 function subscribe(callback: () => void) {
+  window.addEventListener("auth:changed", callback);
   window.addEventListener("storage", callback);
-  return () => window.removeEventListener("storage", callback);
+  return () => {
+    window.removeEventListener("auth:changed", callback);
+    window.removeEventListener("storage", callback);
+  };
 }
 
 function getSnapshot(): boolean {
-  return localStorage.getItem("access_token") !== null;
+  return (
+    isTokenValid(localStorage.getItem("access_token")) ||
+    isTokenValid(localStorage.getItem("refresh_token"))
+  );
 }
 
 export function AuthProvider({ children }: { children: ReactNode }) {
@@ -48,12 +66,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [isAuthenticated]);
 
   const login = useCallback(() => {
-    window.dispatchEvent(new StorageEvent("storage"));
+    window.dispatchEvent(new Event("auth:changed"));
   }, []);
 
   const logout = useCallback(() => {
+    queryClient.clear();
     clearTokens();
-    window.dispatchEvent(new StorageEvent("storage"));
   }, []);
 
   const value = useMemo(

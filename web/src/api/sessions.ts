@@ -28,7 +28,7 @@ const sessionMetaEventSchema = z.object({
   query: z.string(),
   ts: z.string(),
   user_id: z.string().optional(),
-  origin: z.string().optional(),
+  origin: z.string().nullish(),
 });
 
 const sessionExchangeEventSchema = z.object({

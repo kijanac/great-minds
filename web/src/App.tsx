@@ -1,8 +1,11 @@
+import { QueryClientProvider } from "@tanstack/react-query";
+import { ReactQueryDevtools } from "@tanstack/react-query-devtools";
 import { createBrowserRouter, Navigate, Outlet, RouterProvider } from "react-router";
 
 import { AppShell } from "@/components/app-shell";
 import { CornerMenuContainer } from "@/containers/corner-menu-container";
 import { AuthProvider, useAuth } from "@/lib/auth";
+import { queryClient } from "@/lib/query-client";
 import HomePage from "@/pages/home";
 import LoginPage from "@/pages/login";
 import DocPage, { docLoader } from "@/pages/doc";
@@ -14,11 +17,14 @@ import SourcesPage from "@/pages/sources";
 
 function RootLayout() {
   return (
-    <AuthProvider>
-      <AppShell utility={<CornerMenuContainer />}>
-        <Outlet />
-      </AppShell>
-    </AuthProvider>
+    <QueryClientProvider client={queryClient}>
+      <AuthProvider>
+        <AppShell utility={<CornerMenuContainer />}>
+          <Outlet />
+        </AppShell>
+      </AuthProvider>
+      {import.meta.env.DEV && <ReactQueryDevtools initialIsOpen={false} />}
+    </QueryClientProvider>
   );
 }
 

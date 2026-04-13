@@ -42,16 +42,19 @@ function storeTokens(accessToken: string, refreshToken: string) {
 
 export function storeBrainId(brainId: string) {
   localStorage.setItem("brain_id", brainId);
-  window.dispatchEvent(new StorageEvent("storage", { key: "brain_id" }));
+  window.dispatchEvent(new Event("auth:changed"));
 }
 
 export function clearTokens() {
   localStorage.removeItem("access_token");
   localStorage.removeItem("refresh_token");
   localStorage.removeItem("brain_id");
+  window.dispatchEvent(new Event("auth:changed"));
 }
 
-async function refreshAccessToken(): Promise<string | null> {
+let refreshInFlight: Promise<string | null> | null = null;
+
+async function doRefresh(): Promise<string | null> {
   const rt = getRefreshToken();
   if (!rt) return null;
 
@@ -71,10 +74,16 @@ async function refreshAccessToken(): Promise<string | null> {
   return data.access_token;
 }
 
-async function resolveDefaultBrain(token: string): Promise<string> {
-  const res = await fetch(`${API_BASE}/brains`, {
-    headers: { Authorization: `Bearer ${token}` },
+function refreshAccessToken(): Promise<string | null> {
+  if (refreshInFlight) return refreshInFlight;
+  refreshInFlight = doRefresh().finally(() => {
+    refreshInFlight = null;
   });
+  return refreshInFlight;
+}
+
+async function resolveDefaultBrain(): Promise<string> {
+  const res = await apiFetch("/brains");
   if (!res.ok) throw new Error("Failed to fetch brains");
 
   const brains = await readJson(res, brainIdListSchema);
@@ -112,9 +121,8 @@ export async function apiFetch(path: string, init?: RequestInit): Promise<Respon
 
 export async function ensureBrainId(): Promise<void> {
   if (getBrainId()) return;
-  const token = getAccessToken();
-  if (!token) return;
-  const brainId = await resolveDefaultBrain(token);
+  if (!getAccessToken()) return;
+  const brainId = await resolveDefaultBrain();
   storeBrainId(brainId);
 }
 
@@ -130,7 +138,7 @@ export async function loginWithCode(email: string, code: string): Promise<void> 
   storeTokens(data.access_token, data.refresh_token);
 
   try {
-    const brainId = await resolveDefaultBrain(data.access_token);
+    const brainId = await resolveDefaultBrain();
     storeBrainId(brainId);
   } catch {
     throw new Error("Signed in, but failed to load your workspace. Please refresh.");

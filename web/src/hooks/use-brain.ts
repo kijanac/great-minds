@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useState, useSyncExternalStore } from "react";
+import { useCallback, useSyncExternalStore } from "react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import {
   type BrainOverview,
@@ -8,39 +9,55 @@ import {
   storeBrainId,
 } from "@/api/client";
 
-function subscribe(callback: () => void) {
-  window.addEventListener("storage", callback);
-  return () => window.removeEventListener("storage", callback);
+function subscribeBrainId(cb: () => void) {
+  window.addEventListener("auth:changed", cb);
+  window.addEventListener("storage", cb);
+  return () => {
+    window.removeEventListener("auth:changed", cb);
+    window.removeEventListener("storage", cb);
+  };
 }
 
-function getSnapshot(): string | null {
-  return getBrainId();
+export function useActiveBrainId(): string | null {
+  return useSyncExternalStore(subscribeBrainId, getBrainId);
 }
 
-export function useBrain() {
-  const activeBrainId = useSyncExternalStore(subscribe, getSnapshot);
-  const [brains, setBrains] = useState<BrainOverview[]>([]);
+export function useBrains() {
+  return useQuery({
+    queryKey: ["brains"],
+    queryFn: fetchBrains,
+  });
+}
 
-  useEffect(() => {
-    fetchBrains().then(setBrains).catch(() => setBrains([]));
-  }, []);
+export function useActiveBrain() {
+  const brains = useBrains();
+  const activeBrainId = useActiveBrainId();
+  const activeBrain = brains.data?.find((b) => b.id === activeBrainId) ?? null;
+  return { ...brains, activeBrain, activeBrainId };
+}
 
-  const switchBrain = useCallback(
-    (brainId: string) => {
-      if (brainId === activeBrainId) return;
-      storeBrainId(brainId);
+export function useCreateBrain() {
+  const qc = useQueryClient();
+  return useMutation<BrainOverview, Error, string>({
+    mutationFn: async (name) => {
+      const brain = await apiCreateBrain(name);
+      storeBrainId(brain.id);
+      return brain;
     },
-    [activeBrainId],
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["brains"] });
+    },
+  });
+}
+
+export function useSwitchBrain() {
+  const qc = useQueryClient();
+  return useCallback(
+    (brainId: string) => {
+      if (brainId === getBrainId()) return;
+      storeBrainId(brainId);
+      qc.invalidateQueries({ queryKey: ["brain"] });
+    },
+    [qc],
   );
-
-  const createBrain = useCallback(async (name: string) => {
-    const brain = await apiCreateBrain(name);
-    setBrains((prev) => [...prev, brain]);
-    storeBrainId(brain.id);
-    return brain;
-  }, []);
-
-  const activeBrain = brains.find((b) => b.id === activeBrainId) ?? null;
-
-  return { brains, activeBrain, activeBrainId, switchBrain, createBrain };
 }

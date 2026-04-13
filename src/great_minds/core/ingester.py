@@ -153,8 +153,7 @@ def extract_title(content: str) -> str:
     return ""
 
 
-def ingest_document(
-    storage: Storage,
+def build_document(
     config: dict,
     content: str,
     content_type: str,
@@ -164,32 +163,16 @@ def ingest_document(
     date: str | None = None,
     origin: str | None = None,
     url: str | None = None,
-    dest: str,
     **extra,
 ) -> str:
-    """Add frontmatter to a document, write it, and return the result.
+    """Prepend frontmatter to raw content. Pure — no I/O.
 
-    Args:
-        storage: Storage instance providing file operations.
-        config: Brain config dict.
-        content: Raw markdown content (no frontmatter).
-        content_type: One of the types in config metadata (texts, news, ideas).
-        title: Document title. Auto-extracted from headings if not provided.
-        author: Author name.
-        date: Publication date (year or full date).
-        origin: Publication or organization name.
-        url: Source URL (stored in frontmatter as 'url' for reference).
-        dest: Path relative to brain root; written via storage.
-        **extra: Additional config-driven field values (e.g. outlet="NYT").
-
-    Returns:
-        The document content with frontmatter prepended.
+    The built content is a deterministic function of inputs (config +
+    metadata + raw content) and is safe to hash for dedup.
     """
     field_specs = load_field_specs(config, content_type)
 
-    # Build known values from arguments
     known: dict = {"compiled": False}
-
     known["title"] = title or extract_title(content) or ""
     if author:
         known["author"] = author
@@ -200,17 +183,42 @@ def ingest_document(
     if url:
         known["url"] = url
 
-    # Pass through any config-driven field values
     for spec in field_specs:
         if spec.name in extra:
             known[spec.name] = extra[spec.name]
 
     frontmatter = build_frontmatter(field_specs, known)
-    result = frontmatter + content
+    return frontmatter + content
 
-    storage.write(dest, result)
 
-    return result
+def ingest_document(
+    storage: Storage,
+    config: dict,
+    content: str,
+    content_type: str,
+    *,
+    dest: str,
+    title: str | None = None,
+    author: str | None = None,
+    date: str | None = None,
+    origin: str | None = None,
+    url: str | None = None,
+    **extra,
+) -> str:
+    """Build a document with frontmatter and persist it to storage."""
+    built = build_document(
+        config,
+        content,
+        content_type,
+        title=title,
+        author=author,
+        date=date,
+        origin=origin,
+        url=url,
+        **extra,
+    )
+    storage.write(dest, built)
+    return built
 
 
 def ingest_file(

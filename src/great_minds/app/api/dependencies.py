@@ -144,6 +144,7 @@ def require_llm(settings: Settings = Depends(get_settings)) -> None:
 
 
 async def get_current_user(
+    request: Request,
     credentials: HTTPAuthorizationCredentials = Depends(bearer_scheme),
     auth_repo: AuthRepository = Depends(get_auth_repository),
     user_repo: UserRepository = Depends(get_user_repository),
@@ -156,6 +157,7 @@ async def get_current_user(
         user_id = decode_access_token(token, settings)
         user = await user_repo.get_by_id(user_id)
         if user is not None:
+            request.state.user_id = user.id
             return user
     except ValueError:
         pass
@@ -163,6 +165,7 @@ async def get_current_user(
     # Fall back to API key
     user = await auth_repo.resolve_api_key(token)
     if user is not None:
+        request.state.user_id = user.id
         return user
 
     raise HTTPException(

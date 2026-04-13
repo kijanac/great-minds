@@ -52,3 +52,18 @@ class TaskRepository:
             )
         )
         return row.scalar_one_or_none()
+
+    async def list_for_brain_by_type(
+        self, brain_id: UUID, task_type: str, limit: int = 10
+    ) -> list[TaskRecord]:
+        """Most-recent-first list of tasks of a given type for a brain."""
+        rows = await self.session.execute(
+            select(TaskRecord)
+            .where(
+                TaskRecord.brain_id == brain_id,
+                TaskRecord.type == task_type,
+            )
+            .order_by(TaskRecord.created_at.desc())
+            .limit(limit)
+        )
+        return list(rows.scalars().all())

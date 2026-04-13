@@ -41,6 +41,7 @@ from great_minds.core.brain_utils import (
 )
 from great_minds.core.llm import EXTRACT_MODEL, get_async_client
 from great_minds.core.storage import Storage
+from great_minds.core.telemetry import log_event
 
 log = logging.getLogger(__name__)
 
@@ -487,6 +488,7 @@ Return ONLY a JSON array with one entry per dead link, in the same order:
         model=EXTRACT_MODEL,
         messages=[{"role": "user", "content": prompt}],
         temperature=0.0,
+        extra_body={"reasoning": {"enabled": False}},
     )
 
     text = extract_content(response)
@@ -495,8 +497,11 @@ Return ONLY a JSON array with one entry per dead link, in the same order:
 
     data = parse_json_response(text)
     if not isinstance(data, list) or len(data) != len(dead_links):
-        log.warning(
-            "dead link fix: expected %d matches, got %s", len(dead_links), type(data)
+        log_event(
+            "lint_dead_link_fix_malformed",
+            level=logging.WARNING,
+            expected=len(dead_links),
+            got_type=type(data).__name__,
         )
         return []
 
@@ -596,6 +601,7 @@ Return ONLY a JSON array with one entry per citation, in the same order:
         model=EXTRACT_MODEL,
         messages=[{"role": "user", "content": prompt}],
         temperature=0.0,
+        extra_body={"reasoning": {"enabled": False}},
     )
 
     text = extract_content(response)
@@ -604,8 +610,11 @@ Return ONLY a JSON array with one entry per citation, in the same order:
 
     data = parse_json_response(text)
     if not isinstance(data, list) or len(data) != len(broken):
-        log.warning(
-            "citation fix: expected %d matches, got %s", len(broken), type(data)
+        log_event(
+            "lint_citation_fix_malformed",
+            level=logging.WARNING,
+            expected=len(broken),
+            got_type=type(data).__name__,
         )
         return []
 
@@ -675,11 +684,12 @@ existing entries exactly as they are."""
         model=EXTRACT_MODEL,
         messages=[{"role": "user", "content": prompt}],
         temperature=0.2,
+        extra_body={"reasoning": {"enabled": False}},
     )
 
     text = extract_content(response)
     if not text or not text.startswith("# Wiki Index"):
-        log.warning("index fix returned unexpected format, skipping")
+        log_event("lint_index_fix_malformed", level=logging.WARNING)
         return []
 
     storage.write("wiki/_index.md", text + "\n")
@@ -786,6 +796,7 @@ Return ONLY the JSON object.
         model=EXTRACT_MODEL,
         messages=[{"role": "user", "content": prompt}],
         temperature=0.2,
+        extra_body={"reasoning": {"enabled": False}},
     )
 
     text = extract_content(response)
@@ -937,12 +948,12 @@ async def run_lint(
     storage: Storage, *, deep: bool = False, fix: bool = False
 ) -> LintResult:
     """Run all lint checks and optionally auto-fix resolvable issues."""
-    log.info("lint: collecting wiki articles")
     articles = collect_wiki_articles(storage)
-    log.info("lint: collecting raw documents")
     raw_docs = collect_raw_docs(storage)
-    log.info(
-        "lint: found %d wiki articles, %d raw documents", len(articles), len(raw_docs)
+    log_event(
+        "lint_collected_inputs",
+        wiki_articles=len(articles),
+        raw_docs=len(raw_docs),
     )
 
     # Load governance thresholds from brain config
@@ -979,23 +990,22 @@ async def run_lint(
     contradictions: list[Contradiction] = []
 
     if deep:
-        log.info("lint: running LLM consistency check")
+        log_event("lint_deep_check_started")
         naming_issues, contradictions, llm_gaps = await check_consistency(articles)
         suggestions.extend(llm_gaps)
-        log.info(
-            "lint: deep check found %d naming issues, %d contradictions, %d coverage gaps",
-            len(naming_issues),
-            len(contradictions),
-            len(llm_gaps),
+        log_event(
+            "lint_deep_check_completed",
+            naming_issues=len(naming_issues),
+            contradictions=len(contradictions),
+            coverage_gaps=len(llm_gaps),
         )
 
     if suggestions:
-        log.info(
-            "lint: %d research suggestions total",
-            len(suggestions),
+        log_event(
+            "lint_research_suggestions",
+            count=len(suggestions),
+            topics=[s.topic for s in suggestions],
         )
-        for s in suggestions:
-            log.info("lint: suggestion — '%s' (%s)", s.topic, s.source)
 
     counts = LintCounts(
         dead_links=len(dead_links),
@@ -1018,17 +1028,16 @@ async def run_lint(
         ]
     )
 
-    log.info(
-        "lint: detected %d issues (dead_links=%d broken_citations=%d orphans=%d "
-        "uncompiled=%d uncited=%d missing_index=%d tag_issues=%d)",
-        total_detected,
-        counts.dead_links,
-        counts.broken_citations,
-        counts.orphans,
-        counts.uncompiled,
-        counts.uncited,
-        counts.missing_index,
-        counts.tag_issues,
+    log_event(
+        "lint_issues_detected",
+        total=total_detected,
+        dead_links=counts.dead_links,
+        broken_citations=counts.broken_citations,
+        orphans=counts.orphans,
+        uncompiled=counts.uncompiled,
+        uncited=counts.uncited,
+        missing_index=counts.missing_index,
+        tag_issues=counts.tag_issues,
     )
 
     if not fix:
@@ -1040,7 +1049,7 @@ async def run_lint(
         )
 
     # --- Auto-fix ---
-    log.info("lint: applying auto-fixes")
+    log_event("lint_autofix_started")
 
     # Tag fixes are synchronous (no LLM): merge duplicates + prune low-use
     tag_fixes = fix_tags(storage, raw_docs, tag_issues)
@@ -1056,7 +1065,11 @@ async def run_lint(
     all_fixes = tag_fixes + link_fixes + citation_fixes + index_fixes + naming_fixes
 
     for f in all_fixes:
-        log.info("lint: fixed %s — %s", f.file, f.description)
+        log_event(
+            "lint_fix_applied",
+            file=f.file,
+            description=f.description,
+        )
 
     # Remaining = issues that weren't auto-fixable
     links_fixed = len(link_fixes)
@@ -1071,7 +1084,11 @@ async def run_lint(
         total_detected - links_fixed - citations_fixed - index_fixed - tags_fixed
     )
 
-    log.info("lint: %d fixes applied, %d issues remaining", len(all_fixes), remaining)
+    log_event(
+        "lint_completed",
+        fixes_applied=len(all_fixes),
+        remaining_issues=max(0, remaining),
+    )
 
     return LintResult(
         fixes_applied=all_fixes,

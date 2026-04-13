@@ -1,35 +1,13 @@
-import { useEffect, useState } from "react";
+import { useQuery } from "@tanstack/react-query";
 
 import { readDocument } from "@/api/doc";
-import { isAbortError } from "@/lib/utils";
+import { useActiveBrainId } from "@/hooks/use-brain";
 
 export function useDocument(path: string | null) {
-  const [content, setContent] = useState<string | null>(null);
-  const [loading, setLoading] = useState(false);
-
-  useEffect(() => {
-    if (!path) {
-      setContent(null);
-      return;
-    }
-
-    const controller = new AbortController();
-    setLoading(true);
-    readDocument(path, controller.signal)
-      .then((data) => {
-        setContent(data.content);
-      })
-      .catch((err) => {
-        if (isAbortError(err)) return;
-        setContent(null);
-      })
-      .finally(() => {
-        if (!controller.signal.aborted) setLoading(false);
-      });
-    return () => {
-      controller.abort();
-    };
-  }, [path]);
-
-  return { content, loading };
+  const brainId = useActiveBrainId();
+  return useQuery({
+    queryKey: ["brain", brainId, "doc", path],
+    queryFn: ({ signal }) => readDocument(path!, signal),
+    enabled: !!path && !!brainId,
+  });
 }

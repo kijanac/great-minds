@@ -1,31 +1,13 @@
-import { useCallback, useEffect, useState, useSyncExternalStore } from "react";
+import { useQuery } from "@tanstack/react-query";
 
-import { getBrainId } from "@/api/client";
-import { listSessions, type SessionSummary } from "@/api/sessions";
-
-function subscribe(cb: () => void) {
-  window.addEventListener("storage", cb);
-  return () => window.removeEventListener("storage", cb);
-}
+import { listSessions } from "@/api/sessions";
+import { useActiveBrainId } from "@/hooks/use-brain";
 
 export function useSessions() {
-  const brainId = useSyncExternalStore(subscribe, getBrainId);
-  const [sessions, setSessions] = useState<SessionSummary[]>([]);
-  const [loading, setLoading] = useState(true);
-
-  const refresh = useCallback(() => {
-    listSessions()
-      .then(setSessions)
-      .catch(() => setSessions([]));
-  }, []);
-
-  useEffect(() => {
-    setLoading(true);
-    listSessions()
-      .then(setSessions)
-      .catch(() => setSessions([]))
-      .finally(() => setLoading(false));
-  }, [brainId]);
-
-  return { sessions, loading, refresh };
+  const brainId = useActiveBrainId();
+  return useQuery({
+    queryKey: ["brain", brainId, "sessions"],
+    queryFn: listSessions,
+    enabled: !!brainId,
+  });
 }

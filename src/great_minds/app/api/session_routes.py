@@ -22,6 +22,7 @@ async def create_session(
         storage,
         req.session_id,
         ExchangeInput(
+            id=req.exchange.id,
             query=req.exchange.query,
             thinking=req.exchange.thinking,
             answer=req.exchange.answer,
@@ -42,6 +43,7 @@ async def append_to_session(
         storage,
         session_id,
         ExchangeInput(
+            id=exchange.id,
             query=exchange.query,
             thinking=exchange.thinking,
             answer=exchange.answer,

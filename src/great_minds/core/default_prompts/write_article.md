@@ -23,8 +23,8 @@ Existing wiki articles you can link to (path — description):
 New articles being created in this same batch (also linkable):
 {batch_articles}
 
-Source text:
-{source_excerpt}
+Source texts (one section per contributing document, labeled by path):
+{source_excerpts}
 
 {action_instructions}
 
@@ -41,7 +41,8 @@ Internal linking — this is critical:
 
 Source citations — this is critical for provenance:
 - Use markdown footnotes to cite specific claims back to the raw source documents.
-- When stating a specific position, argument, or claim from the source, add a footnote: [^1], [^2], etc.
+- When stating a specific position, argument, or claim from ANY of the source documents above, add a footnote: [^1], [^2], etc.
+- **You MUST cite across all contributing sources**, not only the first one. Every source document listed above should be referenced via at least one footnote somewhere in the article.
 - At the bottom of the article, resolve footnotes to the source document paths listed above.
 - All source paths are relative to the project root. No ../../ prefixes.
 - Format: [^1]: [Title (Date)](raw/texts/path/to/file.md) — brief context of what's cited

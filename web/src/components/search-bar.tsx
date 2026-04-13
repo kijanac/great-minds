@@ -65,9 +65,9 @@ export function SearchBar({
           <Button
             onClick={onSubmit}
             disabled={!query.trim()}
-            className="rounded-none h-auto bg-gold text-primary-foreground font-mono text-[length:var(--text-chrome)] font-medium tracking-[0.12em] px-[18px] py-[13px] hover:bg-gold-hover disabled:bg-interactive-ghost disabled:text-muted-foreground disabled:opacity-100"
+            className="rounded-none h-auto bg-gold text-primary-foreground font-mono text-[length:var(--text-chrome)] font-medium tracking-[0.1em] px-[18px] py-[13px] hover:bg-gold-hover disabled:bg-interactive-ghost disabled:text-muted-foreground disabled:opacity-100"
           >
-            QUERY
+            query
           </Button>
         )}
       </div>

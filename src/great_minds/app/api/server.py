@@ -5,15 +5,57 @@ great-minds serve --port 8080
 """
 
 import asyncio
+import uuid
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from starlette.middleware.base import BaseHTTPMiddleware
 
 from great_minds.app.api.v1 import router as v1_router
 from great_minds.core.db import engine, session_maker
 from great_minds.core.settings import get_settings
+from great_minds.core.telemetry import (
+    correlation_id,
+    emit_wide_event,
+    enrich,
+    init_wide_event,
+)
 from great_minds.core.workers import create_absurd
+
+
+# ---------------------------------------------------------------------------
+# Telemetry middleware — one wide event per HTTP request
+# ---------------------------------------------------------------------------
+
+
+class TelemetryMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request: Request, call_next):
+        cid = request.headers.get("x-request-id") or f"req-{uuid.uuid4().hex[:8]}"
+        correlation_id.set(cid)
+        init_wide_event(
+            "http_request",
+            method=request.method,
+            path=request.url.path,
+        )
+        try:
+            response = await call_next(request)
+        except Exception as e:
+            enrich(status=500, error=type(e).__name__)
+            emit_wide_event()
+            raise
+
+        route = request.scope.get("route")
+        if route is not None and getattr(route, "path", None):
+            enrich(route=route.path)
+        user_id = getattr(request.state, "user_id", None)
+        if user_id is not None:
+            enrich(user_id=str(user_id))
+        enrich(status=response.status_code)
+
+        response.headers["x-request-id"] = cid
+        emit_wide_event()
+        return response
 
 
 # ---------------------------------------------------------------------------
@@ -50,6 +92,7 @@ def create_app() -> FastAPI:
         lifespan=lifespan,
     )
 
+    app.add_middleware(TelemetryMiddleware)
     app.add_middleware(
         CORSMiddleware,
         allow_origins=settings.cors_origins,

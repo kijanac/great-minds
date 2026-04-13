@@ -2,6 +2,7 @@ import { useState } from "react";
 import { Home, Search } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
+import { ErrorState } from "@/components/ui/feedback";
 import { Input } from "@/components/ui/input";
 import { Separator } from "@/components/ui/separator";
 import type { SessionSummary } from "@/api/sessions";
@@ -9,6 +10,8 @@ import type { SessionSummary } from "@/api/sessions";
 interface SessionListProps {
   sessions: SessionSummary[];
   loading: boolean;
+  error?: Error | null;
+  onRetry?: () => void;
   onSessionClick: (id: string) => void;
   onHome: () => void;
 }
@@ -22,7 +25,14 @@ function formatDate(iso: string): string {
   });
 }
 
-export function SessionList({ sessions, loading, onSessionClick, onHome }: SessionListProps) {
+export function SessionList({
+  sessions,
+  loading,
+  error,
+  onRetry,
+  onSessionClick,
+  onHome,
+}: SessionListProps) {
   const [filter, setFilter] = useState("");
 
   const filtered = filter.trim()
@@ -62,19 +72,23 @@ export function SessionList({ sessions, loading, onSessionClick, onHome }: Sessi
 
       <div className="flex-1 min-h-0 overflow-y-auto">
         <div className="max-w-[740px] mx-auto px-4 md:px-10 pt-8 pb-20">
-          {loading && (
+          {error && (
+            <ErrorState message="Couldn't load your sessions." onRetry={onRetry} />
+          )}
+
+          {!error && loading && (
             <p className="text-[length:var(--text-body)] text-warm-faint animate-[pulse-fade_1.6s_ease-in-out_infinite]">
               Loading...
             </p>
           )}
 
-          {!loading && filtered.length === 0 && filter && (
+          {!error && !loading && filtered.length === 0 && filter && (
             <p className="text-[length:var(--text-body)] text-warm-faint">
               No sessions match your filter.
             </p>
           )}
 
-          {!loading && filtered.length === 0 && !filter && (
+          {!error && !loading && filtered.length === 0 && !filter && (
             <div className="text-center pt-8">
               <p className="font-serif text-[length:var(--text-body)] text-warm-dim mb-2">
                 No sessions yet
@@ -92,7 +106,8 @@ export function SessionList({ sessions, loading, onSessionClick, onHome }: Sessi
             </div>
           )}
 
-          {!loading &&
+          {!error &&
+            !loading &&
             filtered.map((s, i) => (
               <div key={s.id}>
                 {i > 0 && <Separator className="my-4 bg-ink-subtle" />}
