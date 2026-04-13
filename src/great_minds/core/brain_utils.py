@@ -3,11 +3,15 @@
 import asyncio
 import json
 import logging
+import random
 import re
+import time
 from io import StringIO
 
-from openai import AsyncOpenAI
+from openai import AsyncOpenAI, RateLimitError
 from ruamel.yaml import YAML
+
+from great_minds.core.telemetry import log_event
 
 log = logging.getLogger(__name__)
 
@@ -25,19 +29,94 @@ def extract_wiki_link_targets(content: str) -> list[str]:
     return list(dict.fromkeys(m.group(2) for m in WIKI_LINK_RE.finditer(content)))
 
 
-MAX_RETRIES = 2
+RATE_LIMIT_RETRIES = 6
+GENERIC_RETRIES = 2
+MAX_BACKOFF_SECONDS = 60
+
+
+def _retry_after_seconds(err: RateLimitError) -> float | None:
+    resp = getattr(err, "response", None)
+    if resp is None:
+        return None
+    header = resp.headers.get("retry-after") or resp.headers.get("Retry-After")
+    if not header:
+        return None
+    try:
+        return float(header)
+    except ValueError:
+        return None
 
 
 async def api_call(client: AsyncOpenAI, **kwargs):
-    """Wrap API calls with retries for transient failures."""
-    for attempt in range(1, MAX_RETRIES + 1):
+    """Wrap API calls with rate-limit-aware retries.
+
+    429s get a larger retry budget, honor Retry-After when present, and use
+    jittered exponential backoff to avoid thundering-herd retries across
+    concurrent callers.
+    """
+    rl_attempts = 0
+    generic_attempts = 0
+    model = kwargs["model"]
+    call_started = time.monotonic()
+    while True:
         try:
-            return await client.chat.completions.create(**kwargs)
-        except Exception as e:
-            if attempt == MAX_RETRIES:
+            response = await client.chat.completions.create(**kwargs)
+            usage = getattr(response, "usage", None)
+            log_event(
+                "llm_call_completed",
+                model=model,
+                duration_ms=round((time.monotonic() - call_started) * 1000),
+                attempts=rl_attempts + generic_attempts + 1,
+                input_tokens=getattr(usage, "prompt_tokens", None) if usage else None,
+                output_tokens=getattr(usage, "completion_tokens", None) if usage else None,
+            )
+            return response
+        except RateLimitError as e:
+            rl_attempts += 1
+            if rl_attempts > RATE_LIMIT_RETRIES:
+                log_event(
+                    "llm_rate_limit_exhausted",
+                    level=logging.ERROR,
+                    model=model,
+                    attempts=rl_attempts,
+                    error=str(e)[:500],
+                )
                 raise
-            log.warning("api call failed (attempt %d/%d): %s", attempt, MAX_RETRIES, e)
-            await asyncio.sleep(2**attempt)
+            sleep = _retry_after_seconds(e)
+            if sleep is None:
+                sleep = min(MAX_BACKOFF_SECONDS, 2**rl_attempts) + random.uniform(0, 1)
+            log_event(
+                "llm_rate_limited",
+                level=logging.WARNING,
+                model=model,
+                attempt=rl_attempts,
+                max_attempts=RATE_LIMIT_RETRIES,
+                sleep_seconds=round(sleep, 1),
+                error=str(e)[:500],
+            )
+            await asyncio.sleep(sleep)
+        except Exception as e:
+            generic_attempts += 1
+            if generic_attempts > GENERIC_RETRIES:
+                log_event(
+                    "llm_call_failed_exhausted",
+                    level=logging.ERROR,
+                    model=model,
+                    attempts=generic_attempts,
+                    error_class=type(e).__name__,
+                    error=str(e)[:500],
+                )
+                raise
+            log_event(
+                "llm_call_retry",
+                level=logging.WARNING,
+                model=model,
+                attempt=generic_attempts,
+                max_attempts=GENERIC_RETRIES,
+                error_class=type(e).__name__,
+                error=str(e)[:500],
+            )
+            await asyncio.sleep(2**generic_attempts + random.uniform(0, 0.5))
 
 
 def extract_content(response) -> str | None:

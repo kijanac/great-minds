@@ -37,7 +37,7 @@ async def query(
     all_sources = await brain_service.get_all_query_sources(user.id)
     target = querier.QuerySource(storage=storage, label=brain.name, brain_id=brain_id)
     sources = [target] + [s for s in all_sources if s.brain_id != brain_id]
-    answer = await querier.run_query(
+    result = await querier.run_query(
         sources,
         req.question,
         doc_repo,
@@ -47,7 +47,13 @@ async def query(
         mode=req.mode,
         extra_instructions=req.extra_instructions,
     )
-    return schemas.QueryResponse(answer=answer)
+    return schemas.QueryResponse(
+        answer=result.answer,
+        sources_consulted=[
+            schemas.SourceConsultedItem(kind=s.kind, path=s.path)
+            for s in result.sources_consulted
+        ],
+    )
 
 
 @router.post("/stream")

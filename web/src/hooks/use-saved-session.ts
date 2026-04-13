@@ -1,6 +1,7 @@
-import { useEffect, useState } from "react";
+import { useQuery } from "@tanstack/react-query";
 
 import { loadSession, type SessionEvent } from "@/api/sessions";
+import { useActiveBrainId } from "@/hooks/use-brain";
 import type { BtwThread, Exchange } from "@/lib/types";
 
 function replayEvents(events: SessionEvent[]): Exchange[] {
@@ -43,20 +44,13 @@ function replayEvents(events: SessionEvent[]): Exchange[] {
 }
 
 export function useSavedSession(sessionId: string | null) {
-  const [exchanges, setExchanges] = useState<Exchange[] | null>(null);
-  const [loading, setLoading] = useState(false);
-
-  useEffect(() => {
-    if (!sessionId) {
-      setExchanges(null);
-      return;
-    }
-    setLoading(true);
-    loadSession(sessionId)
-      .then((data) => setExchanges(replayEvents(data.events)))
-      .catch(() => setExchanges(null))
-      .finally(() => setLoading(false));
-  }, [sessionId]);
-
-  return { exchanges, loading };
+  const brainId = useActiveBrainId();
+  return useQuery({
+    queryKey: ["brain", brainId, "session", sessionId],
+    queryFn: async () => {
+      const data = await loadSession(sessionId!);
+      return replayEvents(data.events);
+    },
+    enabled: !!sessionId && !!brainId,
+  });
 }

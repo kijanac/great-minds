@@ -341,11 +341,17 @@ POST /v1/brains/{brain_id}/query
 
 ```json
 {
-  "answer": "According to [Imperialism, the Highest Stage](wiki/imperialism.md)..."
+  "answer": "According to [Imperialism, the Highest Stage](wiki/imperialism.md)...",
+  "sources_consulted": [
+    { "kind": "wiki", "path": "wiki/imperialism.md" },
+    { "kind": "raw", "path": "raw/texts/lenin/imp/01.md" }
+  ]
 }
 ```
 
 The `answer` field contains markdown with internal links to wiki articles and raw sources.
+
+The `sources_consulted` field lists every document the engine read while producing the answer, deduplicated and in the order first consulted. `kind` is either `"wiki"` (a compiled wiki article) or `"raw"` (a primary source document). Use this to render a bibliography or fetch full source content via `GET /v1/brains/{brain_id}/doc/{path}`.
 
 ### Query (streaming)
 
@@ -364,7 +370,7 @@ Same request body as the non-streaming endpoint. Returns a `text/event-stream` S
 | `source` | `{"type": "search", "query": "..."}` | The engine searched the wiki |
 | `source` | `{"type": "query", "filters": {...}}` | The engine ran a structured metadata query |
 | `token`  | `{"text": "..."}` | A chunk of the response text |
-| `done`   | `{}` | Stream complete |
+| `done`   | `{"sources_consulted": [...]}` | Stream complete; includes the final deduplicated list of documents read |
 | `error`  | `{"message": "..."}` | Something went wrong |
 
 **Example SSE stream:**
@@ -383,7 +389,7 @@ event: token
 data: {"text": "Lenin's analysis..."}
 
 event: done
-data: {}
+data: {"sources_consulted": [{"kind": "wiki", "path": "wiki/imperialism.md"}, {"kind": "raw", "path": "raw/texts/lenin/imp/01.md"}]}
 ```
 
 ### Using `extra_instructions`

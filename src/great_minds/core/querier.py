@@ -10,7 +10,7 @@ import enum
 import json
 import uuid
 from collections.abc import AsyncGenerator
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from uuid import UUID
 
 from openai import AsyncOpenAI
@@ -18,6 +18,7 @@ from .brain import load_prompt, wiki_slug
 from .search import search as hybrid_search
 from .brain_utils import extract_wiki_link_targets
 from .documents.repository import DocumentRepository
+from .documents.schemas import DocKind
 from .llm import FALLBACK_MODELS, QUERY_MODEL, get_async_client
 from .storage import Storage
 from .telemetry import (
@@ -39,6 +40,39 @@ class SourceType(enum.StrEnum):
     RAW = "raw"
     SEARCH = "search"
     QUERY = "query"
+
+
+@dataclass
+class SourceConsulted:
+    """A document the query engine read while answering."""
+
+    kind: DocKind
+    path: str
+
+
+@dataclass
+class ChatResult:
+    """Answer text plus provenance metadata."""
+
+    answer: str
+    sources_consulted: list[SourceConsulted]
+
+
+def _build_sources_consulted(
+    articles_read: list[str],
+    sources_read: list[str],
+) -> list[SourceConsulted]:
+    seen: set[str] = set()
+    out: list[SourceConsulted] = []
+    for path in articles_read:
+        if path not in seen:
+            seen.add(path)
+            out.append(SourceConsulted(kind=DocKind.WIKI, path=path))
+    for path in sources_read:
+        if path not in seen:
+            seen.add(path)
+            out.append(SourceConsulted(kind=DocKind.RAW, path=path))
+    return out
 
 
 @dataclass
@@ -428,7 +462,7 @@ async def chat(
     doc_repo: DocumentRepository,
     *,
     tools: list[dict] | None = None,
-) -> str:
+) -> ChatResult:
     """Run a chat turn, handling tool calls in a loop until the model responds with text."""
     active_tools = tools or _BASE_TOOLS
     articles_read: list[str] = []
@@ -461,7 +495,12 @@ async def chat(
                 tool_calls=tool_calls_total,
             )
             emit_wide_event()
-            return message.content
+            return ChatResult(
+                answer=message.content,
+                sources_consulted=_build_sources_consulted(
+                    articles_read, sources_read
+                ),
+            )
 
         messages.append(
             {
@@ -516,7 +555,7 @@ async def chat_with_fallback(
     doc_repo: DocumentRepository,
     *,
     tools: list[dict] | None = None,
-) -> str:
+) -> ChatResult:
     """Try the primary model, fall back to alternatives on rate limit."""
     for m in _models_with_fallback(model):
         try:
@@ -567,7 +606,7 @@ async def stream_chat(
     Events:
       {"event": "source",   "data": {"type": "article"|"raw"|"search"|"query", ...}}
       {"event": "token",    "data": {"text": "..."}}
-      {"event": "done",     "data": {}}
+      {"event": "done",     "data": {"sources_consulted": [...]}}
       {"event": "error",    "data": {"message": "..."}}
     """
     active_tools = tools or _BASE_TOOLS
@@ -688,7 +727,13 @@ async def stream_chat(
             tool_calls=tool_calls_total,
         )
         emit_wide_event()
-        yield {"event": "done", "data": {}}
+        sources = _build_sources_consulted(articles_read, sources_read)
+        yield {
+            "event": "done",
+            "data": {
+                "sources_consulted": [asdict(s) for s in sources],
+            },
+        }
         return
 
 
@@ -822,7 +867,7 @@ async def run_query(
     session_context: str | None = None,
     mode: QueryMode = QueryMode.QUERY,
     extra_instructions: str | None = None,
-) -> str:
+) -> ChatResult:
     """Answer a single question against the knowledge base."""
     primary = model or QUERY_MODEL
     client = get_async_client()
@@ -877,7 +922,7 @@ async def run_interactive(
         init_wide_event("query", question=question)
 
         messages.append({"role": "user", "content": question})
-        answer = await chat_with_fallback(
+        result = await chat_with_fallback(
             brains, client, model, messages, doc_repo, tools=tools
         )
-        print(f"\n{answer}\n")
+        print(f"\n{result.answer}\n")

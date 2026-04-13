@@ -52,10 +52,10 @@ async def _run_query(args: argparse.Namespace) -> None:
         if args.question:
             question = " ".join(args.question)
             print(f"\n> {question}\n")
-            answer = await querier.run_query(
+            result = await querier.run_query(
                 sources, question, doc_repo, model=args.model
             )
-            print(answer)
+            print(result.answer)
         else:
             await querier.run_interactive(sources, doc_repo, model=args.model)
 
@@ -208,9 +208,18 @@ def cmd_reset(args: argparse.Namespace) -> None:
 
 
 def cmd_serve(args: argparse.Namespace) -> None:
-    setup_logging(service="great-minds")
-    app = create_app()
-    uvicorn.run(app, host=args.host, port=args.port)
+    setup_logging(service="great-minds", json_output=True)
+    if args.reload:
+        uvicorn.run(
+            "great_minds.app.api.server:create_app",
+            factory=True,
+            host=args.host,
+            port=args.port,
+            reload=True,
+            reload_dirs=["src"],
+        )
+    else:
+        uvicorn.run(create_app(), host=args.host, port=args.port)
 
 
 def main() -> None:
@@ -282,6 +291,9 @@ def main() -> None:
     )
     p_serve.add_argument(
         "--port", type=int, default=8000, help="Bind port (default: 8000)"
+    )
+    p_serve.add_argument(
+        "--reload", action="store_true", help="Auto-reload on source changes (dev only)"
     )
     p_serve.set_defaults(func=cmd_serve)
 

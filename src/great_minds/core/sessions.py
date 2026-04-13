@@ -92,8 +92,8 @@ type SessionEvent = MetaEvent | ExchangeEvent | BtwEvent
 
 
 class ExchangeInput(BaseModel):
+    id: str
     query: str
-    id: str = ""
     thinking: list[ThinkingBlock] = []
     answer: str = ""
 
@@ -224,7 +224,7 @@ def create_session(
     _append_event(storage, session_id, meta)
 
     ex = ExchangeEvent(
-        exId=exchange.id or session_id,
+        exId=exchange.id,
         query=exchange.query,
         thinking=exchange.thinking,
         answer=exchange.answer,
@@ -243,7 +243,7 @@ def append_exchange(
 ) -> str:
     """Append a follow-up exchange to an existing session."""
     ex = ExchangeEvent(
-        exId=exchange.id or session_id,
+        exId=exchange.id,
         query=exchange.query,
         thinking=exchange.thinking,
         answer=exchange.answer,

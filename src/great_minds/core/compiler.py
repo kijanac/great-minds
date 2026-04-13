@@ -4,12 +4,16 @@ Library module called by Brain.compile(). Receives a Storage instance
 for I/O and a load_prompt callable for prompt resolution.
 
 Pipeline architecture:
-  Phase 1: Enrich all docs in parallel (Gemma -- cheap extraction)
-  Phase 2: Plan all docs in parallel (Gemma -- cheap planning)
-  Phase 3: Reconcile plans deterministically (no LLM -- deduplicate slugs)
+  Phase 1: Enrich all docs in parallel (cheap extraction)
+  Phase 2: Plan all docs in parallel (cheap planning)
+  Phase 3: Reconcile plans via LLM (semantic clustering of slugs)
   Phase 4: Write all articles in parallel (DeepSeek -- expensive reasoning)
-  Phase 5: Update _index.md (Gemma -- cheap summarization)
-  Phase 6: Backlinks + mark compiled (deterministic)
+  Phase 5: Update _index.md (cheap summarization)
+  Phase 6: Backlinks + changelog (deterministic, storage-only)
+  Phase 7: Rebuild search index (DB)
+  Phase 8: Sync documents table (DB)
+  Phase 9: Mark raw docs compiled (storage flag — last, so retries see
+           uncompiled state if any earlier phase crashes mid-run)
 
 Two-model strategy:
   - Gemma 4 31B: enrichment, planning, index updates (cheap, fast)
@@ -21,11 +25,10 @@ The _index.md file serves dual duty:
 """
 
 import asyncio
-import hashlib
 import json
 import logging
 import re
-from collections import defaultdict
+import uuid
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -46,15 +49,24 @@ from great_minds.core.brain_utils import (
     strip_json_fencing,
 )
 from great_minds.core.documents.repository import DocumentRepository
-from great_minds.core.documents.schemas import DocKind, DocumentCreate
+from great_minds.core.documents.service import DocumentService
 from great_minds.core.ingester import FieldSpec, load_field_specs
 from great_minds.core.llm import EXTRACT_MODEL, REASON_MODEL, get_async_client
+from great_minds.core.settings import get_settings
 from great_minds.core.storage import Storage
+from great_minds.core.telemetry import (
+    correlation_id,
+    emit_wide_event,
+    enrich,
+    init_wide_event,
+    log_event,
+    timed_op,
+)
 
 log = logging.getLogger(__name__)
 
 MAX_SOURCE_CHARS = 30_000
-MAX_CONCURRENT = 5
+MIN_SOURCE_EXCERPT_CHARS = 4_000  # floor per-source when budget split across many sources
 
 
 # ---------------------------------------------------------------------------
@@ -164,6 +176,8 @@ async def enrich_one(
                 {"role": "user", "content": truncate_body(body)},
             ],
             temperature=0.2,
+            extra_body={"reasoning": {"enabled": False}},
+            response_format={"type": "json_object"},
         )
 
     text = extract_content(response)
@@ -178,16 +192,28 @@ async def enrich_one(
             for spec in enriched_specs:
                 default = [] if spec.type == "list" else ""
                 fm[spec.name] = data.get(spec.name, default)
-            log.info(
-                "enriched %s -- genre=%s, tags=%d",
-                title,
-                fm["genre"],
-                len(fm["tags"]),
+            log_event(
+                "doc_enriched",
+                doc_path=filepath,
+                title=title,
+                genre=fm["genre"],
+                tag_count=len(fm["tags"]),
             )
         except json.JSONDecodeError:
-            log.warning("failed to parse enrichment for %s: %s", title, raw[:200])
+            log_event(
+                "enrichment_parse_failed",
+                level=logging.WARNING,
+                doc_path=filepath,
+                title=title,
+                raw_preview=raw[:200],
+            )
     else:
-        log.warning("empty enrichment response for %s", title)
+        log_event(
+            "enrichment_empty",
+            level=logging.WARNING,
+            doc_path=filepath,
+            title=title,
+        )
 
     return filepath, fm, body
 
@@ -202,6 +228,15 @@ def read_index(storage: Storage) -> str:
     if content is None:
         content = "(no articles yet)"
     return content
+
+
+def _wiki_index_slugs(storage: Storage) -> list[str]:
+    """List all existing wiki article slugs (excludes _index, _changelog)."""
+    return [
+        wiki_slug(path.rsplit("/", 1)[-1])
+        for path in storage.glob("wiki/*.md")
+        if not path.rsplit("/", 1)[-1].startswith("_")
+    ]
 
 
 async def plan_one(
@@ -235,18 +270,27 @@ async def plan_one(
                 {"role": "user", "content": truncate_body(body)},
             ],
             temperature=0.3,
+            extra_body={"reasoning": {"enabled": False}},
+            response_format={"type": "json_object"},
         )
 
     text = extract_content(response)
     if not text:
-        log.warning("empty planning response for doc %d", doc_idx)
+        log_event(
+            "plan_empty", level=logging.WARNING, doc_idx=doc_idx
+        )
         return []
 
     raw = strip_json_fencing(text)
     try:
         data = json.loads(raw)
     except json.JSONDecodeError:
-        log.warning("failed to parse plan for doc %d: %s", doc_idx, raw[:200])
+        log_event(
+            "plan_parse_failed",
+            level=logging.WARNING,
+            doc_idx=doc_idx,
+            raw_preview=raw[:200],
+        )
         return []
 
     articles: list[PlannedArticle] = []
@@ -255,8 +299,12 @@ async def plan_one(
         try:
             articles.append(PlannedArticle.model_validate(raw_article))
         except ValidationError as e:
-            log.warning(
-                "invalid article plan in doc %d: %s — %s", doc_idx, raw_article, e
+            log_event(
+                "plan_invalid_article",
+                level=logging.WARNING,
+                doc_idx=doc_idx,
+                raw_article=raw_article,
+                error=str(e),
             )
     return articles
 
@@ -266,82 +314,73 @@ async def plan_one(
 # ---------------------------------------------------------------------------
 
 
-def normalize_slug(slug: str) -> str:
-    """Normalize a slug for deduplication comparison."""
-    # Remove common prefixes/suffixes, sort words
-    words = slug.lower().replace("-", " ").split()
-    # Drop filler words
-    filler = {"the", "a", "an", "of", "in", "on", "and", "for", "to", "by"}
-    words = [w for w in words if w not in filler]
-    return " ".join(sorted(words))
-
-
-def reconcile_plans(
+async def reconcile_plans(
     all_plans: list[list[PlannedArticle]],
+    load_prompt: Callable[[str], str],
+    client: AsyncOpenAI,
+    wiki_index_slugs: list[str],
 ) -> list[PlannedArticle]:
-    """Merge plans from all documents, deduplicating slugs.
+    """Cluster raw plans into canonical articles via one LLM call.
 
-    When multiple documents plan the same article:
-    - First occurrence becomes the primary (action="create")
-    - Subsequent occurrences merge their key_points into the primary
-    - connections are merged
+    Each source doc's planner produced its own slug proposals. This step
+    merges semantically equivalent plans — `finance-capital` +
+    `imperialism-21st-century` → one article, even though exact-match
+    reconciliation wouldn't catch that.
+
+    Raises on malformed JSON; absurd retries handle transient failures.
     """
-    flat: list[PlannedArticle] = []
-    for plan in all_plans:
-        flat.extend(plan)
+    flat: list[PlannedArticle] = [a for plan in all_plans for a in plan]
+    if not flat:
+        return []
 
-    # Group by normalized slug
-    groups: dict[str, list[PlannedArticle]] = defaultdict(list)
-    for article in flat:
-        groups[normalize_slug(article.slug)].append(article)
-
-    reconciled: list[PlannedArticle] = []
-    merge_count = 0
-
-    for _norm, group in groups.items():
-        primary = group[0].model_copy()
-
-        if len(group) > 1:
-            merge_count += 1
-            slugs_seen = {a.slug for a in group}
-            if len(slugs_seen) > 1:
-                log.info("  merged slugs: %s -> %s", slugs_seen, primary.slug)
-
-            # Merge key_points from all contributors
-            all_points: list[str] = []
-            all_connections: set[str] = set()
-            source_indices: set[int] = set()
-            for a in group:
-                all_points.extend(a.key_points)
-                all_connections.update(a.connections)
-                source_indices.add(a.source_idx)
-
-            # Deduplicate key_points (crude: keep unique strings)
-            seen_points: set[str] = set()
-            deduped_points: list[str] = []
-            for p in all_points:
-                normalized = p.strip().lower()
-                if normalized not in seen_points:
-                    seen_points.add(normalized)
-                    deduped_points.append(p)
-
-            primary.key_points = deduped_points
-            primary.connections = list(all_connections)
-            primary.source_indices = sorted(source_indices)
-        else:
-            primary.source_indices = [primary.source_idx]
-
-        reconciled.append(primary)
-
-    if merge_count:
-        log.info("reconciled %d duplicate article plans", merge_count)
-    log.info(
-        "reconciled plan: %d unique articles from %d raw plans",
-        len(reconciled),
-        len(flat),
+    plans_json = json.dumps(
+        [
+            {
+                "slug": a.slug,
+                "action": a.action.value,
+                "tags": a.tags,
+                "key_points": a.key_points,
+                "connections": a.connections,
+                "source_idx": a.source_idx,
+            }
+            for a in flat
+        ],
+        ensure_ascii=False,
+    )
+    prompt = load_prompt("reconcile").format(
+        plans=plans_json,
+        existing_slugs=", ".join(wiki_index_slugs) if wiki_index_slugs else "(none)",
     )
 
-    return reconciled
+    response = await api_call(
+        client,
+        model=EXTRACT_MODEL,
+        messages=[{"role": "user", "content": prompt}],
+        temperature=0.1,
+        extra_body={"reasoning": {"enabled": False}},
+        response_format={"type": "json_object"},
+    )
+
+    text = extract_content(response)
+    if not text:
+        raise RuntimeError("reconcile_plans: empty LLM response")
+
+    data = json.loads(strip_json_fencing(text))
+    articles: list[PlannedArticle] = []
+    for raw in data.get("articles", []):
+        # source_indices already populated by the LLM; set source_idx to
+        # the first one for backward-compat with write_one's fallback.
+        raw.setdefault("source_idx", raw["source_indices"][0] if raw.get("source_indices") else 0)
+        articles.append(PlannedArticle.model_validate(raw))
+
+    log_event(
+        "plans_reconciled",
+        unique_articles=len(articles),
+        raw_plan_count=len(flat),
+        duplicates_merged=len(flat) - len(articles),
+    )
+
+    return articles
 
 
 # ---------------------------------------------------------------------------
@@ -359,14 +398,27 @@ async def write_one(
     docs: list[EnrichedDoc],
     wiki_index: str,
 ) -> PlannedArticle | None:
-    """Write a single wiki article using the primary source document."""
-    primary_idx = (
-        article.source_indices[0] if article.source_indices else article.source_idx
-    )
-    _, fm, body = docs[primary_idx]
+    """Write a single wiki article from all contributing source documents."""
+    source_indices = article.source_indices or [article.source_idx]
+    primary_idx = source_indices[0]
+    _, primary_fm, _primary_body = docs[primary_idx]
 
-    source_paths = [docs[idx][0] for idx in article.source_indices]
+    source_paths = [docs[idx][0] for idx in source_indices]
     source_paths_str = "\n".join(f"  - {p}" for p in source_paths)
+
+    # Distribute the body-excerpt budget across contributing sources so the
+    # article can cite across docs, not just the primary. Each source gets
+    # (total_budget / N) chars; labeled with its path for the LLM to footnote.
+    per_source_chars = max(
+        MIN_SOURCE_EXCERPT_CHARS, MAX_SOURCE_CHARS // len(source_indices)
+    )
+    excerpt_blocks: list[str] = []
+    for idx in source_indices:
+        path, _fm, body = docs[idx]
+        excerpt_blocks.append(
+            f"### {path}\n{truncate_body(body, max_chars=per_source_chars)}"
+        )
+    source_excerpts = "\n\n".join(excerpt_blocks)
 
     article_path = wiki_path(article.slug)
     action = article.action
@@ -399,17 +451,17 @@ async def write_one(
         tags=tags,
         action=action,
         existing_content_section=existing_content_section,
-        title=fm.get("title", ""),
-        author=fm.get("author", ""),
-        date=fm.get("date", ""),
-        genre=fm.get("genre", ""),
-        concepts=", ".join(fm.get("concepts", [])),
+        title=primary_fm.get("title", ""),
+        author=primary_fm.get("author", ""),
+        date=primary_fm.get("date", ""),
+        genre=primary_fm.get("genre", ""),
+        concepts=", ".join(primary_fm.get("concepts", [])),
         source_paths=source_paths_str,
         key_points=key_points,
         connections=connections,
         wiki_index=wiki_index,
         batch_articles=batch_articles,
-        source_excerpt=truncate_body(body),
+        source_excerpts=source_excerpts,
         action_instructions=action_instructions,
     )
 
@@ -424,11 +476,21 @@ async def write_one(
 
     content = extract_content(response)
     if not content:
-        log.error("empty response writing %s", article.slug)
+        log_event(
+            "article_write_empty",
+            level=logging.ERROR,
+            slug=article.slug,
+            action=action.value,
+        )
         return None
 
     storage.write(article_path, content)
-    log.info("wrote wiki/%s.md", article.slug)
+    log_event(
+        "article_written",
+        slug=article.slug,
+        action=action.value,
+        source_count=len(article.source_indices),
+    )
     return article
 
 
@@ -470,18 +532,23 @@ async def update_index(
         model=EXTRACT_MODEL,
         messages=[{"role": "user", "content": prompt}],
         temperature=0.2,
+        extra_body={"reasoning": {"enabled": False}},
     )
 
     new_index = extract_content(response)
     if not new_index:
-        log.warning("empty response from index update, skipping")
+        log_event("index_update_empty", level=logging.WARNING)
         return
 
     if new_index.startswith("# Wiki Index"):
         storage.write("wiki/_index.md", new_index + "\n")
-        log.info("updated _index.md with %d articles", len(written_articles))
+        log_event("index_updated", article_count=len(written_articles))
     else:
-        log.warning("index update returned unexpected format, skipping")
+        log_event(
+            "index_update_malformed",
+            level=logging.WARNING,
+            preview=new_index[:200],
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -531,14 +598,14 @@ def insert_backlinks(storage: Storage):
         if modified:
             storage.write(path, content)
 
-    log.info("backlink pass complete")
+    log_event("backlink_pass_completed")
 
 
 def mark_compiled(storage: Storage, docs: list[EnrichedDoc]):
     for filepath, fm, body in docs:
         fm["compiled"] = True
         storage.write(filepath, serialize_frontmatter(fm, body))
-    log.info("marked %d documents as compiled", len(docs))
+    log_event("docs_marked_compiled", doc_count=len(docs))
 
 
 def append_changelog(
@@ -560,13 +627,6 @@ def append_changelog(
         existing = "# Compilation Changelog\n"
 
     storage.write(changelog_path, existing + entry)
-
-
-def compile_idempotency_key(brain_id: UUID, storage: Storage) -> str:
-    """Content-based key: changes when new raw docs are ingested."""
-    paths = sorted(storage.glob("raw/texts/**/*.md"))
-    fingerprint = hashlib.sha256("\n".join(paths).encode()).hexdigest()[:16]
-    return f"compile:{brain_id}:{fingerprint}"
 
 
 def find_uncompiled(storage: Storage) -> list[str]:
@@ -606,155 +666,211 @@ async def run(
     post_write_hook: Callable[[Storage], Awaitable[None]] | None = None,
 ) -> CompilationResult:
     client = get_async_client()
-    sem = asyncio.Semaphore(MAX_CONCURRENT)
+    settings = get_settings()
+    enrich_sem = asyncio.Semaphore(settings.compile_enrich_concurrency)
+    plan_sem = asyncio.Semaphore(settings.compile_plan_concurrency)
+    write_sem = asyncio.Semaphore(settings.compile_write_concurrency)
     config = load_config(storage)
 
     uncompiled = find_uncompiled(storage)
-    log.info("found %d uncompiled documents", len(uncompiled))
+    log_event("compile_found_uncompiled", doc_count=len(uncompiled))
 
     if limit:
         uncompiled = uncompiled[:limit]
-        log.info("limiting to %d documents", limit)
+        log_event("compile_limit_applied", limit=limit)
 
     if not uncompiled:
-        log.info("nothing to compile")
+        log_event("compile_nothing_to_do")
         return CompilationResult()
 
-    # --- Phase 1: Enrich all docs in parallel (cheap) ---
-    log.info("=== phase 1: enriching %d documents ===", len(uncompiled))
-    enrichment_results = await asyncio.gather(
-        *(
-            enrich_one(storage, load_prompt, client, sem, fp, config)
-            for fp in uncompiled
-        ),
-        return_exceptions=True,
+    if correlation_id.get() == "-":
+        correlation_id.set(f"c-{uuid.uuid4().hex[:8]}")
+    init_wide_event(
+        "brain_compiled",
+        brain_id=str(brain_id) if brain_id else None,
+        doc_count=len(uncompiled),
     )
 
+    # --- Phase 1: Enrich all docs in parallel (cheap) ---
+    log_event("phase_started", phase="enrich", doc_count=len(uncompiled))
+    async with timed_op("enrich"):
+        enrichment_results = await asyncio.gather(
+            *(
+                enrich_one(storage, load_prompt, client, enrich_sem, fp, config)
+                for fp in uncompiled
+            ),
+            return_exceptions=True,
+        )
+
     docs: list[EnrichedDoc] = []
+    enrich_failures = 0
     for r in enrichment_results:
         if isinstance(r, Exception):
-            log.error("enrichment failed: %s", r)
+            log_event(
+                "enrichment_task_failed",
+                level=logging.ERROR,
+                error=str(r),
+                error_class=type(r).__name__,
+            )
+            enrich_failures += 1
         else:
             docs.append(r)
 
-    log.info("enriched %d/%d documents", len(docs), len(uncompiled))
-
-    # --- Phase 2: Plan all docs in parallel (cheap) ---
-    log.info("=== phase 2: planning %d documents ===", len(docs))
-    wiki_index = read_index(storage)
-    plan_results = await asyncio.gather(
-        *(
-            plan_one(storage, load_prompt, client, sem, i, fm, body, wiki_index)
-            for i, (_, fm, body) in enumerate(docs)
-        ),
-        return_exceptions=True,
+    enrich(docs_enriched=len(docs), enrich_failures=enrich_failures)
+    log_event(
+        "phase_completed",
+        phase="enrich",
+        docs_enriched=len(docs),
+        failures=enrich_failures,
     )
 
+    # --- Phase 2: Plan all docs in parallel (cheap) ---
+    log_event("phase_started", phase="plan", doc_count=len(docs))
+    wiki_index = read_index(storage)
+    async with timed_op("plan"):
+        plan_results = await asyncio.gather(
+            *(
+                plan_one(storage, load_prompt, client, plan_sem, i, fm, body, wiki_index)
+                for i, (_, fm, body) in enumerate(docs)
+            ),
+            return_exceptions=True,
+        )
+
     all_plans: list[list[PlannedArticle]] = []
+    plan_failures = 0
     for i, r in enumerate(plan_results):
         if isinstance(r, Exception):
-            log.error("planning failed for doc %d: %s", i, r)
+            log_event(
+                "planning_task_failed",
+                level=logging.ERROR,
+                doc_idx=i,
+                error=str(r),
+                error_class=type(r).__name__,
+            )
             all_plans.append([])
+            plan_failures += 1
         else:
-            log.info("doc %d planned %d articles", i, len(r))
+            log_event("doc_planned", doc_idx=i, article_count=len(r))
             all_plans.append(r)
 
-    # --- Phase 3: Reconcile plans + validate categories (deterministic) ---
-    log.info("=== phase 3: reconciling plans ===")
-    reconciled = reconcile_plans(all_plans)
+    # --- Phase 3: Reconcile plans (LLM-driven semantic clustering) ---
+    log_event("phase_started", phase="reconcile")
+    async with timed_op("reconcile"):
+        reconciled = await reconcile_plans(
+            all_plans,
+            load_prompt,
+            client,
+            wiki_index_slugs=_wiki_index_slugs(storage),
+        )
+    enrich(articles_planned=len(reconciled), plan_failures=plan_failures)
 
     if not reconciled:
-        log.info("no articles to write")
+        log_event("compile_no_articles_planned", doc_count=len(docs))
         mark_compiled(storage, docs)
+        emit_wide_event()
         return CompilationResult(docs_compiled=len(docs))
 
     # --- Phase 4: Write all articles in parallel (expensive) ---
-    log.info("=== phase 4: writing %d articles ===", len(reconciled))
+    log_event("phase_started", phase="write", article_count=len(reconciled))
     wiki_index = read_index(storage)
-    write_results = await asyncio.gather(
-        *(
-            write_one(
-                storage, load_prompt, client, sem, article, reconciled, docs, wiki_index
-            )
-            for article in reconciled
-        ),
-        return_exceptions=True,
-    )
+    async with timed_op("write"):
+        write_results = await asyncio.gather(
+            *(
+                write_one(
+                    storage, load_prompt, client, write_sem, article, reconciled, docs, wiki_index
+                )
+                for article in reconciled
+            ),
+            return_exceptions=True,
+        )
 
     written: list[PlannedArticle] = []
+    write_failures = 0
     for r in write_results:
         if isinstance(r, Exception):
-            log.error("write failed: %s", r)
+            log_event(
+                "article_write_task_failed",
+                level=logging.ERROR,
+                error=str(r),
+                error_class=type(r).__name__,
+            )
+            write_failures += 1
         elif r is not None:
             written.append(r)
 
-    log.info("wrote %d/%d articles", len(written), len(reconciled))
+    enrich(articles_written=len(written), write_failures=write_failures)
+    log_event(
+        "phase_completed",
+        phase="write",
+        articles_written=len(written),
+        failures=write_failures,
+    )
 
     # --- Phase 5: Update index (cheap) ---
-    log.info("=== phase 5: updating index ===")
-    await update_index(storage, load_prompt, client, written)
+    log_event("phase_started", phase="index_update")
+    async with timed_op("index_update"):
+        await update_index(storage, load_prompt, client, written)
 
-    # --- Phase 6: Backlinks + mark compiled ---
-    log.info("=== phase 6: backlinks + finalize ===")
-    insert_backlinks(storage)
-    mark_compiled(storage, docs)
-    append_changelog(storage, docs, written)
+    # --- Phase 6: Backlinks + changelog ---
+    log_event("phase_started", phase="finalize")
+    async with timed_op("backlinks"):
+        insert_backlinks(storage)
+        append_changelog(storage, docs, written)
 
     # --- Post-write hook (e.g. lint fixes) — before index rebuild ---
     if post_write_hook is not None:
-        await post_write_hook(storage)
+        async with timed_op("post_write_hook"):
+            await post_write_hook(storage)
 
     # --- Phase 7: Rebuild search index ---
     chunks_indexed = 0
     if db_session is not None and brain_id is not None:
-        log.info("=== phase 7: rebuilding search index ===")
-        chunks_indexed = await rebuild_index(db_session, brain_id, storage)
+        log_event("phase_started", phase="search_index")
+        async with timed_op("search_index"):
+            chunks_indexed = await rebuild_index(db_session, brain_id, storage)
+        enrich(chunks_indexed=chunks_indexed)
 
     # --- Phase 8: Sync documents table (enriched raw docs + wiki articles) ---
     if db_session is not None and brain_id is not None:
-        log.info("=== phase 8: syncing documents table ===")
-        doc_repo = DocumentRepository(db_session)
+        log_event("phase_started", phase="sync_docs")
+        async with timed_op("sync_docs"):
+            doc_service = DocumentService(DocumentRepository(db_session))
 
-        for filepath, _fm, _body in docs:
-            content = storage.read(filepath, strict=False)
-            if content is None:
-                continue
-            fm, _body = parse_frontmatter(content)
-            doc = DocumentCreate.from_frontmatter(fm, filepath, content, DocKind.RAW)
-            await doc_repo.upsert(brain_id, doc)
+            for filepath, _fm, _body in docs:
+                content = storage.read(filepath, strict=False)
+                if content is None:
+                    continue
+                await doc_service.index_raw_doc(brain_id, filepath, content)
 
-        for article in written:
-            article_path = wiki_path(article.slug)
-            content = storage.read(article_path, strict=False)
-            if content is None:
-                continue
-            doc = DocumentCreate(
-                file_path=article_path,
-                content=content,
-                doc_kind=DocKind.WIKI,
-                title=article.slug.replace("-", " ").title(),
-                compiled=True,
-                tags=article.tags,
-                extra_metadata={"concepts": article.connections},
-            )
-            await doc_repo.upsert(brain_id, doc)
-            await doc_repo.rebuild_backlinks_for_article(
-                brain_id, article.slug, content
-            )
+            for article in written:
+                content = storage.read(wiki_path(article.slug), strict=False)
+                if content is None:
+                    continue
+                await doc_service.index_wiki_article(
+                    brain_id,
+                    article.slug,
+                    content,
+                    tags=article.tags,
+                    concepts=article.connections,
+                )
 
-        await db_session.commit()
-        log.info(
-            "synced %d raw docs + %d wiki articles to documents table",
-            len(docs),
-            len(written),
+        log_event(
+            "docs_synced",
+            raw_docs=len(docs),
+            wiki_articles=len(written),
         )
 
-    log.info(
-        "compilation complete -- %d docs, %d articles, %d chunks indexed",
-        len(docs),
-        len(written),
-        chunks_indexed,
+    # --- Phase 9: Mark compiled (storage flag — only after everything durable) ---
+    mark_compiled(storage, docs)
+
+    log_event(
+        "compile_completed",
+        docs=len(docs),
+        articles=len(written),
+        chunks_indexed=chunks_indexed,
     )
+
+    emit_wide_event()
 
     return CompilationResult(
         docs_compiled=len(docs),

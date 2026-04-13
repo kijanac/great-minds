@@ -2,6 +2,7 @@
 
 from pydantic import BaseModel
 
+from great_minds.core.documents.schemas import DocKind
 from great_minds.core.querier import QueryMode
 
 
@@ -14,5 +15,11 @@ class QueryRequest(BaseModel):
     extra_instructions: str | None = None
 
 
+class SourceConsultedItem(BaseModel):
+    kind: DocKind
+    path: str
+
+
 class QueryResponse(BaseModel):
     answer: str
+    sources_consulted: list[SourceConsultedItem] = []

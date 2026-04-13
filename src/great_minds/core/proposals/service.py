@@ -14,7 +14,8 @@ from great_minds.core.proposals.models import ProposalStatus, SourceProposal
 from great_minds.core.proposals.repository import ProposalRepository
 from great_minds.core.settings import Settings
 from great_minds.core.storage import Storage
-from great_minds.core.workers import spawn_compile
+from great_minds.core.tasks.repository import TaskRepository
+from great_minds.core.tasks.service import TaskService
 
 log = logging.getLogger(__name__)
 
@@ -112,11 +113,9 @@ class ProposalService:
             storage, config, content, proposal.content_type, **kwargs
         )
 
-        await spawn_compile(
-            absurd,
-            self.repo.session,
+        task_service = TaskService(TaskRepository(self.repo.session), absurd)
+        await task_service.spawn_compile(
             brain_id=brain.id,
-            storage=storage,
             data_dir=self.data_dir,
             label=brain.name,
         )

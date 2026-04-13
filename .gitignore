@@ -13,3 +13,9 @@ dogfood-output/
 sessions/
 .env
 .DS_Store
+.claude/
+brains/
+test_data_old/
+test_data_old_2/
+test_data_old_3/
+great_minds_product_overview.pdf

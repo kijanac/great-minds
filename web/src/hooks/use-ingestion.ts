@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
-import { compile, ingestUrl, uploadFile } from "@/api/ingest";
+import { ingestBulk, ingestUrl } from "@/api/ingest";
 import type { DroppedFile } from "@/lib/types";
 
 export type ItemStatus = "queued" | "processing" | "done" | "error";
@@ -21,61 +21,102 @@ export interface QueueSummary {
 
 let nextId = 0;
 
+function makeId(): string {
+  return `ingest-${nextId++}`;
+}
+
 export function useIngestion() {
   const [queue, setQueue] = useState<QueueItem[]>([]);
   const [url, setUrl] = useState("");
   const urlRef = useRef(url);
-  const processingRef = useRef(false);
-  const processedCountRef = useRef(0);
-  const factoriesRef = useRef<Map<string, () => Promise<{ title: string }>>>(new Map());
   urlRef.current = url;
 
-  // Process next queued item
-  useEffect(() => {
-    if (processingRef.current) return;
+  const batchInFlightRef = useRef(false);
+  const filesById = useRef<Map<string, File>>(new Map());
+  const urlsById = useRef<Map<string, string>>(new Map());
 
-    const next = queue.find((i) => i.status === "queued");
-    if (!next) {
-      if (processedCountRef.current > 0) {
-        processedCountRef.current = 0;
-        compile();
-      }
-      return;
-    }
+  const flushFileBatch = useCallback(async () => {
+    if (batchInFlightRef.current) return;
+    const batch = Array.from(filesById.current.entries());
+    if (batch.length === 0) return;
 
-    const factory = factoriesRef.current.get(next.id);
-    if (!factory) return;
+    batchInFlightRef.current = true;
+    const queuedFileIds = batch.map(([id]) => id);
+    const files = batch.map(([, file]) => file);
 
-    processingRef.current = true;
-    setQueue((q) => q.map((i) => (i.id === next.id ? { ...i, status: "processing" as const } : i)));
+    setQueue((q) =>
+      q.map((i) =>
+        queuedFileIds.includes(i.id) ? { ...i, status: "processing" as const } : i,
+      ),
+    );
 
-    factory()
-      .then((result) => {
-        processedCountRef.current++;
-        setQueue((q) =>
-          q.map((i) => (i.id === next.id ? { ...i, status: "done" as const, name: result.title } : i)),
-        );
-      })
-      .catch((e) => {
-        processedCountRef.current++;
+    try {
+      for await (const event of ingestBulk(files)) {
+        if (event.event !== "file") continue;
+        const id = queuedFileIds[event.index];
+        if (!id) continue;
         setQueue((q) =>
           q.map((i) =>
-            i.id === next.id
+            i.id === id
               ? {
                   ...i,
-                  status: "error" as const,
-                  error: e instanceof Error ? e.message : "Ingestion failed",
+                  status: event.status === "error" ? "error" : "done",
+                  error: event.status === "error" ? event.error ?? "Ingestion failed" : undefined,
+                  name: event.title ?? i.name,
                 }
               : i,
           ),
         );
-      })
-      .finally(() => {
-        factoriesRef.current.delete(next.id);
-        processingRef.current = false;
-        setQueue((q) => [...q]);
-      });
-  }, [queue]);
+        filesById.current.delete(id);
+      }
+    } catch (e) {
+      const message = e instanceof Error ? e.message : "Bulk ingest failed";
+      setQueue((q) =>
+        q.map((i) =>
+          queuedFileIds.includes(i.id) && i.status === "processing"
+            ? { ...i, status: "error" as const, error: message }
+            : i,
+        ),
+      );
+      queuedFileIds.forEach((id) => filesById.current.delete(id));
+    } finally {
+      batchInFlightRef.current = false;
+    }
+
+    // If new files arrived while this batch was in flight, fire again.
+    if (filesById.current.size > 0) {
+      flushFileBatch();
+    }
+  }, []);
+
+  const processNextUrl = useCallback(async () => {
+    const entry = firstQueuedUrl(urlsById.current);
+    if (!entry) return;
+    const { id, urlValue } = entry;
+
+    setQueue((q) =>
+      q.map((i) => (i.id === id ? { ...i, status: "processing" as const } : i)),
+    );
+
+    try {
+      const result = await ingestUrl(urlValue);
+      setQueue((q) =>
+        q.map((i) =>
+          i.id === id ? { ...i, status: "done" as const, name: result.title } : i,
+        ),
+      );
+    } catch (e) {
+      const message = e instanceof Error ? e.message : "URL ingest failed";
+      setQueue((q) =>
+        q.map((i) =>
+          i.id === id ? { ...i, status: "error" as const, error: message } : i,
+        ),
+      );
+    } finally {
+      urlsById.current.delete(id);
+      if (urlsById.current.size > 0) processNextUrl();
+    }
+  }, []);
 
   // Clear entire queue once everything is done (no queued/processing items)
   useEffect(() => {
@@ -96,34 +137,34 @@ export function useIngestion() {
     processing: queue.some((i) => i.status === "queued" || i.status === "processing"),
   };
 
-  const enqueue = useCallback(
-    (name: string, factory: () => Promise<{ title: string }>) => {
-      const id = `ingest-${nextId++}`;
-      factoriesRef.current.set(id, factory);
-      setQueue((q) => [...q, { id, name, status: "queued" }]);
-    },
-    [],
-  );
-
   const handleFileDrop = useCallback(
     (files: DroppedFile[]) => {
       setUrl("");
+      const newItems: QueueItem[] = [];
       for (const { file, path } of files) {
-        enqueue(path, () => uploadFile(file, path));
+        const id = makeId();
+        filesById.current.set(id, file);
+        newItems.push({ id, name: path, status: "queued" });
       }
+      setQueue((q) => [...q, ...newItems]);
+      flushFileBatch();
     },
-    [enqueue],
+    [flushFileBatch],
   );
 
   const handleUrlSubmit = useCallback(() => {
     const trimmed = urlRef.current.trim();
     if (!trimmed) return;
     setUrl("");
-    enqueue(trimmed, () => ingestUrl(trimmed));
-  }, [enqueue]);
+    const id = makeId();
+    urlsById.current.set(id, trimmed);
+    setQueue((q) => [...q, { id, name: trimmed, status: "queued" }]);
+    processNextUrl();
+  }, [processNextUrl]);
 
   const dismissItem = useCallback((id: string) => {
-    factoriesRef.current.delete(id);
+    filesById.current.delete(id);
+    urlsById.current.delete(id);
     setQueue((q) => q.filter((i) => i.id !== id));
   }, []);
 
@@ -136,4 +177,13 @@ export function useIngestion() {
     handleUrlSubmit,
     dismissItem,
   };
+}
+
+function firstQueuedUrl(
+  urlsById: Map<string, string>,
+): { id: string; urlValue: string } | null {
+  for (const [id, urlValue] of urlsById) {
+    return { id, urlValue };
+  }
+  return null;
 }

@@ -16,14 +16,13 @@ OPENROUTER_BASE = "https://openrouter.ai/api/v1"
 #   - REASON_MODEL: high-quality article writing during compilation
 #   - EMBEDDING_MODEL: text embeddings for hybrid search index
 QUERY_MODEL = "deepseek/deepseek-v3.2"
-EXTRACT_MODEL = "google/gemma-4-31b-it"
+EXTRACT_MODEL = "deepseek/deepseek-v3.2"
 REASON_MODEL = "deepseek/deepseek-v3.2"
 EMBEDDING_MODEL = "qwen/qwen3-embedding-8b"
 EMBEDDING_DIMENSIONS = 1024  # MRL truncation from native 4096
 
 FALLBACK_MODELS = [
     "deepseek/deepseek-v3.2",
-    "google/gemma-4-31b-it:free",
 ]
 
 
