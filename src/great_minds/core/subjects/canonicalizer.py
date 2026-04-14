@@ -31,7 +31,13 @@ from great_minds.core.brain_utils import (
     extract_content,
     strip_json_fencing,
 )
+from great_minds.core.db import session_maker
 from great_minds.core.llm import EMBEDDING_DIMENSIONS, EMBEDDING_MODEL, EXTRACT_MODEL
+from great_minds.core.subjects.embedding_store import (
+    DEFAULT_TOP_K,
+    query_neighbor_edges,
+    upsert_idea_embeddings,
+)
 from great_minds.core.subjects.schemas import (
     ArticleStatus,
     Idea,
@@ -46,6 +52,7 @@ EMBED_BATCH_SIZE = 50
 EMBED_MAX_RETRIES = 3
 REFINE_CONCURRENCY = 10
 REFINE_MAX_TOKENS = 4000
+NEIGHBOR_TOP_K = DEFAULT_TOP_K
 
 _PROMPT_PATH = Path(__file__).parent.parent / "default_prompts" / "canonicalize.md"
 
@@ -82,11 +89,11 @@ async def canonicalize(
     threshold: float = SIMILARITY_THRESHOLD,
     refine_concurrency: int = REFINE_CONCURRENCY,
 ) -> CanonicalizationResult:
-    """Run the full canonicalization pipeline for a brain's source cards.
+    """Full canonicalization pipeline for a brain's source cards.
 
-    Steps: load cards → embed Ideas → threshold graph → connected
-    components → LLM refine each multi-member cluster → write
-    subjects.jsonl and back-fill source_cards.jsonl.
+    Loads ideas from source_cards.jsonl, runs the clustering pipeline,
+    writes subjects.jsonl and back-fills source_cards.jsonl with
+    subject_id references.
     """
     cards = _load_source_cards(brain_id)
     ideas_flat = [
@@ -100,10 +107,69 @@ async def canonicalize(
             subjects=[], idea_to_subject={}, n_clusters=0, n_singletons=0
         )
 
+    extraction_version = cards[0].extraction_version
+    result = await cluster_ideas(
+        client,
+        brain_id=brain_id,
+        ideas_flat=ideas_flat,
+        threshold=threshold,
+        refine_concurrency=refine_concurrency,
+        extraction_version=extraction_version,
+    )
+
+    _dedupe_slugs(result.subjects)
+    _write_subjects(brain_id, result.subjects)
+    _backfill_idea_subject_ids(brain_id, result.idea_to_subject)
+
+    log_event(
+        "canonicalize_completed",
+        brain_id=str(brain_id),
+        ideas=len(ideas_flat),
+        subjects=len(result.subjects),
+    )
+    return result
+
+
+async def cluster_ideas(
+    client: AsyncOpenAI,
+    *,
+    brain_id: uuid.UUID,
+    ideas_flat: list[tuple[uuid.UUID, Idea]],
+    threshold: float,
+    refine_concurrency: int = REFINE_CONCURRENCY,
+    extraction_version: int = 1,
+) -> CanonicalizationResult:
+    """Core ANN-based clustering: embed → upsert → top-K query → LLM refine.
+
+    No file IO. Callers (including canonicalize() and tests) use this
+    directly with pre-loaded ideas. Always uses pgvector; no in-memory
+    fallback.
+    """
+    if not ideas_flat:
+        return CanonicalizationResult(
+            subjects=[], idea_to_subject={}, n_clusters=0, n_singletons=0
+        )
+
     texts = [f"{idea.label}. {idea.scope_note}" for _, idea in ideas_flat]
     vectors = await _embed_ideas(client, texts)
 
-    clusters = _cluster_by_threshold(vectors, threshold)
+    async with session_maker() as session:
+        await upsert_idea_embeddings(
+            session,
+            brain_id=brain_id,
+            ideas_flat=ideas_flat,
+            vectors=vectors,
+            extraction_version=extraction_version,
+        )
+
+    edges = await query_neighbor_edges(
+        brain_id=brain_id,
+        ideas_flat=ideas_flat,
+        vectors=vectors,
+        k=NEIGHBOR_TOP_K,
+        threshold=threshold,
+    )
+    clusters = _clusters_from_edges(len(ideas_flat), edges)
 
     log_event(
         "canonicalize_clusters_formed",
@@ -113,14 +179,16 @@ async def canonicalize(
         singletons=sum(1 for c in clusters if len(c) == 1),
         largest=max(len(c) for c in clusters),
         threshold=threshold,
+        top_k=NEIGHBOR_TOP_K,
     )
 
     sem = asyncio.Semaphore(refine_concurrency)
-    cluster_tasks = [
-        _subject_from_cluster(client, sem, cluster_indices, ideas_flat, brain_id)
-        for cluster_indices in clusters
-    ]
-    per_cluster_results = await asyncio.gather(*cluster_tasks)
+    per_cluster_results = await asyncio.gather(
+        *(
+            _subject_from_cluster(client, sem, cluster_indices, ideas_flat, brain_id)
+            for cluster_indices in clusters
+        )
+    )
 
     subjects: list[WikiSubject] = []
     idea_to_subject: dict[uuid.UUID, uuid.UUID] = {}
@@ -129,17 +197,6 @@ async def canonicalize(
             subjects.append(subj)
             for iid in member_idea_ids:
                 idea_to_subject[iid] = subj.subject_id
-
-    _dedupe_slugs(subjects)
-    _write_subjects(brain_id, subjects)
-    _backfill_idea_subject_ids(brain_id, idea_to_subject)
-
-    log_event(
-        "canonicalize_completed",
-        brain_id=str(brain_id),
-        ideas=len(ideas_flat),
-        subjects=len(subjects),
-    )
 
     return CanonicalizationResult(
         subjects=subjects,
@@ -195,16 +252,19 @@ def _truncate_and_normalize(embedding: list[float], dims: int) -> list[float]:
 # --- Clustering -------------------------------------------------------------
 
 
-def _cluster_by_threshold(vectors: np.ndarray, threshold: float) -> list[list[int]]:
-    """Threshold similarity graph → connected components.
-
-    Returns list of clusters; each cluster is a list of Idea indices
-    into the input vectors matrix.
-    """
-    sim = vectors @ vectors.T
-    adj = sim >= threshold
-    np.fill_diagonal(adj, False)
-    n, labels = connected_components(csr_matrix(adj), directed=False)
+def _clusters_from_edges(
+    n: int, edges: list[tuple[int, int]]
+) -> list[list[int]]:
+    """Build cluster index list from a sparse edge set via connected components."""
+    if not edges:
+        return [[i] for i in range(n)]
+    rows, cols = zip(*edges)
+    # Build symmetric sparse adjacency
+    data = np.ones(len(edges) * 2, dtype=np.int8)
+    rr = np.array(rows + cols, dtype=np.int64)
+    cc = np.array(cols + rows, dtype=np.int64)
+    adj = csr_matrix((data, (rr, cc)), shape=(n, n))
+    _, labels = connected_components(adj, directed=False)
 
     clusters: dict[int, list[int]] = {}
     for idx, cluster_id in enumerate(labels):
