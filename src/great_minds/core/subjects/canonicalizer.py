@@ -130,6 +130,7 @@ async def canonicalize(
             for cid in member_cand_ids:
                 candidate_to_subject[cid] = subj.subject_id
 
+    _dedupe_slugs(subjects)
     _write_subjects(brain_id, subjects)
     _backfill_candidate_subject_ids(brain_id, candidate_to_subject)
 
@@ -389,6 +390,37 @@ def _slugify(label: str) -> str:
     slug = _SLUG_STRIP_RE.sub("", label.lower().strip())
     slug = _SLUG_DASH_RE.sub("-", slug).strip("-")
     return slug or "unnamed"
+
+
+def _dedupe_slugs(subjects: list[WikiSubject]) -> None:
+    """Mutate subjects in place so every slug is unique.
+
+    Collisions occur when canonicalization emits two subjects whose
+    canonical_labels slugify identically — either from two parallel
+    cluster refinements or from a polysemy split that keeps the same
+    label. First occurrence keeps the base slug; later occurrences get
+    a kind suffix (e.g. 'socialist-reconstruction-work') or, if that
+    still collides, a short subject_id suffix.
+    """
+    seen: set[str] = set()
+    for subj in subjects:
+        base = subj.slug
+        candidate = base
+        if candidate in seen:
+            candidate = f"{base}-{subj.kind.value}"
+            if candidate in seen:
+                candidate = f"{base}-{str(subj.subject_id)[:6]}"
+        if candidate != base:
+            log_event(
+                "slug_collision_resolved",
+                level=30,
+                subject_id=str(subj.subject_id),
+                original_slug=base,
+                new_slug=candidate,
+                kind=subj.kind.value,
+            )
+            subj.slug = candidate
+        seen.add(candidate)
 
 
 # --- IO ---------------------------------------------------------------------
