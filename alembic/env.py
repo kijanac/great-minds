@@ -16,6 +16,7 @@ import great_minds.core.documents.models  # noqa: F401
 import great_minds.core.users.models  # noqa: F401
 import great_minds.core.auth.models  # noqa: F401
 import great_minds.core.tasks.models  # noqa: F401
+import great_minds.core.subjects.models  # noqa: F401
 
 config = context.config
 

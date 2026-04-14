@@ -1,10 +1,13 @@
 """Quantify the convergent-incremental-compilation claims.
 
-Test 1: run canonicalization twice on the same source cards, measure
+Test 1: run the clustering pipeline twice on the same ideas, measure
 how stable the cluster structure is across runs.
 
-Test 2: run canonicalization on a subset of docs vs all docs, measure
-whether subset clusters are preserved under full-corpus re-run.
+Test 2: run on a subset of docs vs all docs, measure whether subset
+clusters are preserved under full-corpus re-run.
+
+Uses the same ANN-backed clustering as production (cluster_ideas); no
+parallel in-memory path.
 
 Usage:
     uv run python scripts/test_convergence.py [--brain-id UUID] [--threshold F]
@@ -17,52 +20,38 @@ from itertools import combinations
 
 from great_minds.core.llm import get_async_client
 from great_minds.core.subjects.canonicalizer import (
-    _cluster_by_threshold,
-    _embed_ideas,
     _load_source_cards,
-    _subject_from_cluster,
+    cluster_ideas,
 )
 from great_minds.core.telemetry import setup_logging
 
 PROTOTYPE_BRAIN_ID = uuid.UUID("11111111-1111-1111-1111-111111111111")
 
 
-async def canonicalize_in_memory(client, ideas_flat, brain_id, threshold):
-    """Run the canonicalization pipeline without writing any files."""
-    if not ideas_flat:
-        return []
-    texts = [f"{idea.label}. {idea.scope_note}" for _, idea in ideas_flat]
-    V = await _embed_ideas(client, texts)
-    clusters = _cluster_by_threshold(V, threshold)
-    import asyncio as _aio
-    sem = _aio.Semaphore(10)
-    per_cluster = await _aio.gather(
-        *(
-            _subject_from_cluster(client, sem, idx_list, ideas_flat, brain_id)
-            for idx_list in clusters
-        )
+async def run_partition(client, ideas_flat, brain_id, threshold):
+    """Run cluster_ideas and return subjects-with-member-sets for comparison."""
+    result = await cluster_ideas(
+        client,
+        brain_id=brain_id,
+        ideas_flat=ideas_flat,
+        threshold=threshold,
     )
-    out = []
-    for result in per_cluster:
-        for subj, member_idea_ids in result:
-            out.append((subj, {str(m) for m in member_idea_ids}))
-    return out
+    # Group member idea_ids by their assigned subject
+    by_subject: dict[uuid.UUID, set[str]] = {}
+    for iid, sid in result.idea_to_subject.items():
+        by_subject.setdefault(sid, set()).add(str(iid))
+    return [(sid, members) for sid, members in by_subject.items()]
 
 
 def idea_to_subject_map(subjects_with_members):
     m = {}
-    for subj, members in subjects_with_members:
+    for sid, members in subjects_with_members:
         for mid in members:
-            m[mid] = str(subj.subject_id)
+            m[mid] = str(sid)
     return m
 
 
 def partition_metrics(p1, p2, idea_ids):
-    """For all pairs of idea_ids, compare same/different across two partitions.
-
-    Returns (total_pairs, agree, together_together, separate_separate,
-             only_in_p1_together, only_in_p2_together).
-    """
     m1 = idea_to_subject_map(p1)
     m2 = idea_to_subject_map(p2)
     ids = [i for i in idea_ids if i in m1 and i in m2]
@@ -92,12 +81,12 @@ async def test1_rerun(client, brain_id, threshold):
     ideas_flat = [(card.document_id, idea) for card in cards for idea in card.ideas]
     print(f"Ideas: {len(ideas_flat)}")
 
-    print("Running canonicalize (run A)...")
-    pA = await canonicalize_in_memory(client, ideas_flat, brain_id, threshold)
+    print("Running cluster_ideas (run A)...")
+    pA = await run_partition(client, ideas_flat, brain_id, threshold)
     print(f"  Run A:  {len(pA)} subjects")
 
-    print("Running canonicalize (run B)...")
-    pB = await canonicalize_in_memory(client, ideas_flat, brain_id, threshold)
+    print("Running cluster_ideas (run B)...")
+    pB = await run_partition(client, ideas_flat, brain_id, threshold)
     print(f"  Run B:  {len(pB)} subjects")
 
     ids = [str(idea.idea_id) for _, idea in ideas_flat]
@@ -124,12 +113,12 @@ async def test2_batch_vs_all(client, brain_id, threshold):
     print(f"8-doc ideas:  {len(subset_ideas)}")
     print(f"16-doc ideas: {len(all_ideas)}")
 
-    print("Canonicalizing 8-doc subset...")
-    p_8 = await canonicalize_in_memory(client, subset_ideas, brain_id, threshold)
+    print("Clustering 8-doc subset...")
+    p_8 = await run_partition(client, subset_ideas, brain_id, threshold)
     print(f"  8-doc run:  {len(p_8)} subjects")
 
-    print("Canonicalizing all 16 docs...")
-    p_16 = await canonicalize_in_memory(client, all_ideas, brain_id, threshold)
+    print("Clustering all 16 docs...")
+    p_16 = await run_partition(client, all_ideas, brain_id, threshold)
     print(f"  16-doc run: {len(p_16)} subjects")
 
     subset_ids = [str(idea.idea_id) for _, idea in subset_ideas]
