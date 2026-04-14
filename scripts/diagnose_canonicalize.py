@@ -1,7 +1,7 @@
 """Print pairwise similarity diagnostics for canonicalization tuning.
 
-Shows the similarity distribution over all candidate pairs and lists
-the most-similar pairs so we can pick a threshold empirically.
+Shows the similarity distribution over all Idea pairs and lists the
+most-similar pairs so we can pick a threshold empirically.
 
 Usage:
     uv run python scripts/diagnose_canonicalize.py [--brain-id UUID]
@@ -15,7 +15,7 @@ import numpy as np
 
 from great_minds.core.llm import get_async_client
 from great_minds.core.subjects.canonicalizer import (
-    _embed_candidates,
+    _embed_ideas,
     _load_source_cards,
 )
 from great_minds.core.telemetry import setup_logging
@@ -25,22 +25,22 @@ PROTOTYPE_BRAIN_ID = uuid.UUID("11111111-1111-1111-1111-111111111111")
 
 async def run(brain_id: uuid.UUID) -> None:
     cards = _load_source_cards(brain_id)
-    cands = [(card.document_id, c) for card in cards for c in card.candidates]
-    if not cands:
-        print("No candidates.")
+    ideas = [(card.document_id, idea) for card in cards for idea in card.ideas]
+    if not ideas:
+        print("No ideas.")
         return
 
-    texts = [f"{c.label}. {c.scope_note}" for _, c in cands]
+    texts = [f"{idea.label}. {idea.scope_note}" for _, idea in ideas]
     client = get_async_client()
-    print(f"Embedding {len(texts)} candidates...")
-    V = await _embed_candidates(client, texts)
+    print(f"Embedding {len(texts)} ideas...")
+    V = await _embed_ideas(client, texts)
 
     sim = V @ V.T
     np.fill_diagonal(sim, -1)
     tri = sim[np.triu_indices_from(sim, k=1)]
 
-    print(f"\nN candidates: {len(cands)}")
-    print(f"N pairs:      {len(tri)}\n")
+    print(f"\nN ideas: {len(ideas)}")
+    print(f"N pairs: {len(tri)}\n")
 
     print("Similarity percentiles:")
     for p in [50, 75, 90, 95, 99, 99.5, 99.9]:
@@ -54,16 +54,16 @@ async def run(brain_id: uuid.UUID) -> None:
     print("\nTop 40 most-similar pairs:")
     flat = [
         (i, j, sim[i, j])
-        for i in range(len(cands))
-        for j in range(i + 1, len(cands))
+        for i in range(len(ideas))
+        for j in range(i + 1, len(ideas))
     ]
     flat.sort(key=lambda x: -x[2])
     for i, j, s in flat[:40]:
-        _, ci = cands[i]
-        _, cj = cands[j]
-        same_doc = cands[i][0] == cands[j][0]
+        _, a = ideas[i]
+        _, b = ideas[j]
+        same_doc = ideas[i][0] == ideas[j][0]
         mark = "*SAME-DOC*" if same_doc else ""
-        print(f"  {s:.3f}  {mark}  [{ci.label}]  <->  [{cj.label}]")
+        print(f"  {s:.3f}  {mark}  [{a.label}]  <->  [{b.label}]")
 
 
 def main() -> None:

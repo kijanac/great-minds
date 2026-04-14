@@ -17,9 +17,8 @@ from itertools import combinations
 
 from great_minds.core.llm import get_async_client
 from great_minds.core.subjects.canonicalizer import (
-    SIMILARITY_THRESHOLD,
     _cluster_by_threshold,
-    _embed_candidates,
+    _embed_ideas,
     _load_source_cards,
     _subject_from_cluster,
 )
@@ -28,29 +27,29 @@ from great_minds.core.telemetry import setup_logging
 PROTOTYPE_BRAIN_ID = uuid.UUID("11111111-1111-1111-1111-111111111111")
 
 
-async def canonicalize_in_memory(client, candidates_flat, brain_id, threshold):
+async def canonicalize_in_memory(client, ideas_flat, brain_id, threshold):
     """Run the canonicalization pipeline without writing any files."""
-    if not candidates_flat:
+    if not ideas_flat:
         return []
-    texts = [f"{c.label}. {c.scope_note}" for _, c in candidates_flat]
-    V = await _embed_candidates(client, texts)
+    texts = [f"{idea.label}. {idea.scope_note}" for _, idea in ideas_flat]
+    V = await _embed_ideas(client, texts)
     clusters = _cluster_by_threshold(V, threshold)
     import asyncio as _aio
     sem = _aio.Semaphore(10)
     per_cluster = await _aio.gather(
         *(
-            _subject_from_cluster(client, sem, idx_list, candidates_flat, brain_id)
+            _subject_from_cluster(client, sem, idx_list, ideas_flat, brain_id)
             for idx_list in clusters
         )
     )
     out = []
     for result in per_cluster:
-        for subj, member_cand_ids in result:
-            out.append((subj, {str(m) for m in member_cand_ids}))
+        for subj, member_idea_ids in result:
+            out.append((subj, {str(m) for m in member_idea_ids}))
     return out
 
 
-def candidate_to_subject_map(subjects_with_members):
+def idea_to_subject_map(subjects_with_members):
     m = {}
     for subj, members in subjects_with_members:
         for mid in members:
@@ -58,15 +57,15 @@ def candidate_to_subject_map(subjects_with_members):
     return m
 
 
-def partition_metrics(p1, p2, candidate_ids):
-    """For all pairs of candidate_ids, compare same/different across two partitions.
+def partition_metrics(p1, p2, idea_ids):
+    """For all pairs of idea_ids, compare same/different across two partitions.
 
     Returns (total_pairs, agree, together_together, separate_separate,
              only_in_p1_together, only_in_p2_together).
     """
-    m1 = candidate_to_subject_map(p1)
-    m2 = candidate_to_subject_map(p2)
-    ids = [c for c in candidate_ids if c in m1 and c in m2]
+    m1 = idea_to_subject_map(p1)
+    m2 = idea_to_subject_map(p2)
+    ids = [i for i in idea_ids if i in m1 and i in m2]
     total = agree = tt = ss = p1_only = p2_only = 0
     for a, b in combinations(ids, 2):
         total += 1
@@ -90,18 +89,18 @@ async def test1_rerun(client, brain_id, threshold):
     print("TEST 1: Same-data rerun")
     print("=" * 60)
     cards = _load_source_cards(brain_id)
-    candidates_flat = [(card.document_id, c) for card in cards for c in card.candidates]
-    print(f"Candidates: {len(candidates_flat)}")
+    ideas_flat = [(card.document_id, idea) for card in cards for idea in card.ideas]
+    print(f"Ideas: {len(ideas_flat)}")
 
     print("Running canonicalize (run A)...")
-    pA = await canonicalize_in_memory(client, candidates_flat, brain_id, threshold)
+    pA = await canonicalize_in_memory(client, ideas_flat, brain_id, threshold)
     print(f"  Run A:  {len(pA)} subjects")
 
     print("Running canonicalize (run B)...")
-    pB = await canonicalize_in_memory(client, candidates_flat, brain_id, threshold)
+    pB = await canonicalize_in_memory(client, ideas_flat, brain_id, threshold)
     print(f"  Run B:  {len(pB)} subjects")
 
-    ids = [str(c.candidate_id) for _, c in candidates_flat]
+    ids = [str(idea.idea_id) for _, idea in ideas_flat]
     total, agree, tt, ss, only_A, only_B = partition_metrics(pA, pB, ids)
     print(f"\nPair-wise agreement: {agree}/{total} ({100 * agree / total:.2f}%)")
     print(f"  together in both:    {tt}")
@@ -120,22 +119,22 @@ async def test2_batch_vs_all(client, brain_id, threshold):
     sorted_cards = sorted(cards, key=lambda c: str(c.document_id))
     first_8 = {str(c.document_id) for c in sorted_cards[:8]}
 
-    all_cands = [(card.document_id, c) for card in cards for c in card.candidates]
-    subset_cands = [(d, c) for (d, c) in all_cands if str(d) in first_8]
-    print(f"8-doc candidates:  {len(subset_cands)}")
-    print(f"16-doc candidates: {len(all_cands)}")
+    all_ideas = [(card.document_id, idea) for card in cards for idea in card.ideas]
+    subset_ideas = [(d, idea) for (d, idea) in all_ideas if str(d) in first_8]
+    print(f"8-doc ideas:  {len(subset_ideas)}")
+    print(f"16-doc ideas: {len(all_ideas)}")
 
     print("Canonicalizing 8-doc subset...")
-    p_8 = await canonicalize_in_memory(client, subset_cands, brain_id, threshold)
+    p_8 = await canonicalize_in_memory(client, subset_ideas, brain_id, threshold)
     print(f"  8-doc run:  {len(p_8)} subjects")
 
     print("Canonicalizing all 16 docs...")
-    p_16 = await canonicalize_in_memory(client, all_cands, brain_id, threshold)
+    p_16 = await canonicalize_in_memory(client, all_ideas, brain_id, threshold)
     print(f"  16-doc run: {len(p_16)} subjects")
 
-    subset_ids = [str(c.candidate_id) for _, c in subset_cands]
+    subset_ids = [str(idea.idea_id) for _, idea in subset_ideas]
     total, agree, tt, ss, only_8, only_16 = partition_metrics(p_8, p_16, subset_ids)
-    print(f"\nAmong the 8-doc candidates, pair-wise agreement: {agree}/{total} ({100 * agree / total:.2f}%)")
+    print(f"\nAmong the 8-doc ideas, pair-wise agreement: {agree}/{total} ({100 * agree / total:.2f}%)")
     print(f"  together in both:     {tt}  (preserved merges)")
     print(f"  separate in both:     {ss}")
     print(f"  together only 8-doc:  {only_8}  (breakage: previously-merged pairs split in 16-doc)")

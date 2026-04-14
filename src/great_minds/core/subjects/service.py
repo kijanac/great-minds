@@ -1,11 +1,11 @@
 """Source card extraction service.
 
 Reads a raw document, runs the source_card LLM prompt, and produces:
-- a SourceCard (candidates + anchors) written to
+- a SourceCard (Ideas + Anchors) written to
   .compile/<brain_id>/source_cards.jsonl
 - a doc_metadata dict for Document.extra_metadata
 
-The LLM emits scratch IDs (c1/a1) for cross-referencing within its own
+The LLM emits scratch IDs (i1/a1) for cross-referencing within its own
 output; this service rewrites them to deterministic uuid5s before writing
 anything persistent. SourceCard is always UUID-shaped.
 
@@ -30,7 +30,7 @@ from great_minds.core.brain_utils import (
 )
 from great_minds.core.llm import EXTRACT_MODEL
 from great_minds.core.subjects.schemas import (
-    CandidateSubject,
+    Idea,
     SourceAnchor,
     SourceCard,
     SubjectKind,
@@ -41,7 +41,7 @@ from great_minds.core.telemetry import log_event
 # Picked once; do not change — downstream IDs depend on these.
 _DOCUMENT_NAMESPACE = uuid.UUID("d2f9e61b-2a3b-4a3e-9e6a-6f7d1a2c5b40")
 _ANCHOR_NAMESPACE = uuid.UUID("6b3f4ef2-7a1a-4b0e-9e2a-1c0f4d8a7e30")
-_CANDIDATE_NAMESPACE = uuid.UUID("8d1f7a04-2c85-4e72-b9c1-3f8d7a5e4b90")
+_IDEA_NAMESPACE = uuid.UUID("8d1f7a04-2c85-4e72-b9c1-3f8d7a5e4b90")
 
 EXTRACTION_VERSION = 1
 MAX_OUTPUT_TOKENS = 8000
@@ -60,7 +60,7 @@ class _RawAnchor(BaseModel):
     quote: str
 
 
-class _RawCandidate(BaseModel):
+class _RawIdea(BaseModel):
     id: str
     kind: SubjectKind
     label: str
@@ -70,7 +70,7 @@ class _RawCandidate(BaseModel):
 
 class _RawExtraction(BaseModel):
     doc_metadata: dict
-    candidates: list[_RawCandidate]
+    ideas: list[_RawIdea]
     anchors: list[_RawAnchor]
 
 
@@ -100,9 +100,9 @@ async def extract_source_card(
 ) -> ExtractionResult:
     """Run the extraction prompt on one doc and build a SourceCard.
 
-    Candidates whose anchor_refs all miss the anchors list are dropped
-    with a log. No quote resolution is performed — anchors are trusted
-    at the LLM's word.
+    Ideas whose anchor_refs all miss the anchors list are dropped with a
+    log. No quote resolution is performed — anchors are trusted at the
+    LLM's word.
     """
     system_prompt = _PROMPT_PATH.read_text(encoding="utf-8")
     user_content = (
@@ -140,9 +140,9 @@ async def extract_source_card(
         "source_card_extracted",
         document_id=str(document_id),
         brain_id=str(brain_id),
-        candidates=len(card.candidates),
+        ideas=len(card.ideas),
         anchors=len(card.anchors),
-        raw_candidates=len(parsed.candidates),
+        raw_ideas=len(parsed.ideas),
         raw_anchors=len(parsed.anchors),
     )
 
@@ -214,23 +214,23 @@ def write_source_card(*, brain_id: uuid.UUID, card: SourceCard) -> None:
 
 
 def _coerce_unknown_kinds(data: dict, document_id: uuid.UUID) -> None:
-    """Replace candidate kinds not in SubjectKind with 'other' before validation.
+    """Replace Idea kinds not in SubjectKind with 'other' before validation.
 
     The LLM occasionally invents finer-grained kinds ('initiative',
     'strategy'). Rather than failing the whole extraction, fall back to
     'other' and log so we can see how often it happens.
     """
-    for cand in data.get("candidates", []):
-        kind = cand.get("kind")
+    for idea in data.get("ideas", []):
+        kind = idea.get("kind")
         if kind not in _VALID_KINDS:
             log_event(
-                "candidate_kind_coerced",
+                "idea_kind_coerced",
                 level=30,  # WARNING
                 document_id=str(document_id),
                 original_kind=kind,
-                label=cand.get("label"),
+                label=idea.get("label"),
             )
-            cand["kind"] = SubjectKind.OTHER.value
+            idea["kind"] = SubjectKind.OTHER.value
 
 
 def _build_source_card(
@@ -242,7 +242,9 @@ def _build_source_card(
     anchor_id_map: dict[str, uuid.UUID] = {}
     resolved_anchors: list[SourceAnchor] = []
     for raw_anchor in raw.anchors:
-        anchor_id = uuid.uuid5(_ANCHOR_NAMESPACE, f"{document_id}:{raw_anchor.claim}")
+        anchor_id = uuid.uuid5(
+            _ANCHOR_NAMESPACE, f"{document_id}:{raw_anchor.claim}"
+        )
         anchor_id_map[raw_anchor.id] = anchor_id
         resolved_anchors.append(
             SourceAnchor(
@@ -253,30 +255,32 @@ def _build_source_card(
             )
         )
 
-    candidates: list[CandidateSubject] = []
-    for raw_cand in raw.candidates:
+    ideas: list[Idea] = []
+    for raw_idea in raw.ideas:
         mapped_refs = [
-            anchor_id_map[ref] for ref in raw_cand.anchor_refs if ref in anchor_id_map
+            anchor_id_map[ref]
+            for ref in raw_idea.anchor_refs
+            if ref in anchor_id_map
         ]
         if not mapped_refs:
             log_event(
-                "candidate_dropped_no_anchors",
+                "idea_dropped_no_anchors",
                 level=30,  # WARNING
                 document_id=str(document_id),
-                scratch_id=raw_cand.id,
-                label=raw_cand.label,
+                scratch_id=raw_idea.id,
+                label=raw_idea.label,
             )
             continue
-        candidate_id = uuid.uuid5(
-            _CANDIDATE_NAMESPACE,
-            f"{document_id}:{raw_cand.label}:{raw_cand.kind}",
+        idea_id = uuid.uuid5(
+            _IDEA_NAMESPACE,
+            f"{document_id}:{raw_idea.label}:{raw_idea.kind}",
         )
-        candidates.append(
-            CandidateSubject(
-                candidate_id=candidate_id,
-                kind=raw_cand.kind,
-                label=raw_cand.label,
-                scope_note=raw_cand.scope_note,
+        ideas.append(
+            Idea(
+                idea_id=idea_id,
+                kind=raw_idea.kind,
+                label=raw_idea.label,
+                scope_note=raw_idea.scope_note,
                 anchor_ids=mapped_refs,
             )
         )
@@ -285,6 +289,6 @@ def _build_source_card(
         document_id=document_id,
         brain_id=brain_id,
         extraction_version=EXTRACTION_VERSION,
-        candidates=candidates,
+        ideas=ideas,
         anchors=resolved_anchors,
     )

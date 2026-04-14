@@ -35,7 +35,7 @@ async def run(brain_id: uuid.UUID, threshold: float, concurrency: int) -> None:
     print()
     print(f"Subjects:      .compile/{brain_id}/subjects.jsonl")
     print(f"Source cards:  .compile/{brain_id}/source_cards.jsonl (subject_ids filled)")
-    print(f"Candidates:    {len(result.candidate_to_subject)}")
+    print(f"Ideas:         {len(result.idea_to_subject)}")
     print(f"Clusters:      {result.n_clusters}  (singletons: {result.n_singletons})")
     print(f"Subjects out:  {len(result.subjects)}")
     if result.subjects:

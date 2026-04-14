@@ -1,13 +1,14 @@
 """Subject domain schemas.
 
 WikiSubject is the canonical record for anything the wiki may cover
-(concept, person, event, work, place, movement, organization). SourceCard
-holds per-doc extraction artifacts; SourceAnchor is a citable passage in
-a raw doc; CandidateSubject is a pre-canonicalization local contribution
-from one source.
+(concept, person, event, work, place, movement, organization). A
+WikiSubject is composed (via embedding clustering) of one or more
+Ideas — per-doc contributions extracted from source material.
+SourceCard holds a doc's Ideas and Anchors together. SourceAnchor is
+a citable passage in a raw doc.
 
-Authoritative storage is JSONL under .compile/<brain_id>/. Postgres is a
-rebuildable cache (wiki_subjects table, candidate_embeddings via pgvector).
+Authoritative storage is JSONL under .compile/<brain_id>/. Postgres is
+a rebuildable cache (wiki_subjects table, idea_embeddings via pgvector).
 """
 
 import uuid
@@ -34,7 +35,7 @@ class ArticleStatus(StrEnum):
 
 
 class SourceAnchor(BaseModel):
-    """An LLM-identified supporting passage for a candidate.
+    """An LLM-identified supporting passage for an Idea.
 
     Doc-level citation: anchors point to their source document via
     document_id; quote is the LLM's excerpt kept for writer context but
@@ -48,17 +49,19 @@ class SourceAnchor(BaseModel):
     quote: str
 
 
-class CandidateSubject(BaseModel):
-    """A subject contribution identified in one source doc, pre-canonicalization.
+class Idea(BaseModel):
+    """A per-doc concept, person, event, etc. contribution.
 
-    label and scope_note are LLM-generated. scope_note is the primary
-    disambiguator during canonicalization (e.g. distinguishing Marx's
-    "Capital" the work from "capital" the economic concept).
-    subject_id is filled when canonicalization assigns the candidate to
-    a WikiSubject.
+    A doc expresses many Ideas about different subjects; one or more
+    Ideas from across docs cluster into a single WikiSubject during
+    canonicalization. label and scope_note are LLM-generated.
+    scope_note is the primary disambiguator during canonicalization
+    (e.g. distinguishing Marx's "Capital" the work from "capital" the
+    economic concept). subject_id is filled when canonicalization
+    assigns the Idea to a WikiSubject.
     """
 
-    candidate_id: uuid.UUID
+    idea_id: uuid.UUID
     kind: SubjectKind
     label: str
     scope_note: str
@@ -76,17 +79,18 @@ class SourceCard(BaseModel):
     document_id: uuid.UUID
     brain_id: uuid.UUID
     extraction_version: int
-    candidates: list[CandidateSubject]
+    ideas: list[Idea]
     anchors: list[SourceAnchor]
 
 
 class WikiSubject(BaseModel):
     """Canonical record for a wiki subject.
 
-    Produced by canonicalization across many SourceCards. Written to
-    .compile/<brain_id>/subjects.jsonl. When article_status is RENDERED,
-    wiki/<slug>.md exists with minimal frontmatter mirroring subject_id,
-    slug, canonical_label, article_status.
+    Produced by canonicalization clustering Ideas across many
+    SourceCards. Written to .compile/<brain_id>/subjects.jsonl. When
+    article_status is RENDERED, wiki/<slug>.md exists with minimal
+    frontmatter mirroring subject_id, slug, canonical_label,
+    article_status.
     """
 
     subject_id: uuid.UUID

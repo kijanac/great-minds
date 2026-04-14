@@ -37,7 +37,7 @@ async def _extract_one(
             )
             print(
                 f"  {file_path.name} ... OK  "
-                f"{len(result.source_card.candidates)} candidates, "
+                f"{len(result.source_card.ideas)} ideas, "
                 f"{len(result.source_card.anchors)} anchors",
                 flush=True,
             )
@@ -78,14 +78,14 @@ async def run(
         print("\nNo successful extractions.")
         return
 
-    cand_counts = [len(r.source_card.candidates) for r in successes]
+    idea_counts = [len(r.source_card.ideas) for r in successes]
     anch_counts = [len(r.source_card.anchors) for r in successes]
     print()
     print(f"Source cards: .compile/{brain_id}/source_cards.jsonl")
     print(f"Successful:   {len(successes)}/{len(files)}")
     print(
-        f"Candidates/doc  min={min(cand_counts)} max={max(cand_counts)} "
-        f"mean={sum(cand_counts) / len(cand_counts):.1f}"
+        f"Ideas/doc       min={min(idea_counts)} max={max(idea_counts)} "
+        f"mean={sum(idea_counts) / len(idea_counts):.1f}"
     )
     print(
         f"Anchors/doc     min={min(anch_counts)} max={max(anch_counts)} "
