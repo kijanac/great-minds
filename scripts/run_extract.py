@@ -111,8 +111,8 @@ def main() -> None:
     parser.add_argument(
         "--concurrency",
         type=int,
-        default=5,
-        help="max concurrent LLM calls (default: 5)",
+        default=20,
+        help="max concurrent LLM calls (default: 20)",
     )
     args = parser.parse_args()
 
