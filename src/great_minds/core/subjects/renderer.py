@@ -15,6 +15,7 @@ level via markdown footnotes.
 
 import asyncio
 import json
+import re
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
@@ -103,7 +104,13 @@ async def render_brain(
         for subject in selected
     ]
     outcomes = await asyncio.gather(*tasks)
-    return [p for p in outcomes if isinstance(p, Path)]
+    successful = [p for p in outcomes if isinstance(p, Path)]
+
+    valid_slugs = {s.slug for s in subjects}
+    stripped = _fix_broken_wiki_links(successful, valid_slugs)
+    if stripped:
+        print(f"Post-render: stripped {stripped} broken wiki link(s)")
+    return successful
 
 
 # --- Core render step --------------------------------------------------------
@@ -366,6 +373,42 @@ def _build_anchor_lookup(
         for anchor in card.anchors:
             lookup[anchor.anchor_id] = AnchorWithContext(anchor=anchor, doc=doc)
     return lookup
+
+
+_WIKI_LINK_RE = re.compile(r"\[([^\]]+)\]\(wiki/([^)]+)\.md\)")
+
+
+def _fix_broken_wiki_links(paths: list[Path], valid_slugs: set[str]) -> int:
+    """Scan rendered articles; unwrap wiki links whose target slug is not
+    in the registry. Returns total links stripped across all files.
+
+    Writers occasionally invent links to subjects that don't exist — most
+    often for common generic concepts or well-known entities the model
+    assumes "should" have an article. Stripping preserves the display
+    text as plain prose so the article stays readable.
+    """
+    total = 0
+    for path in paths:
+        text = path.read_text(encoding="utf-8")
+        counter = [0]
+
+        def replace(m: re.Match) -> str:
+            if m.group(2) in valid_slugs:
+                return m.group(0)
+            counter[0] += 1
+            return m.group(1)
+
+        new_text = _WIKI_LINK_RE.sub(replace, text)
+        if counter[0] > 0:
+            path.write_text(new_text, encoding="utf-8")
+            total += counter[0]
+            log_event(
+                "broken_wiki_links_stripped",
+                level=30,
+                article=path.name,
+                stripped=counter[0],
+            )
+    return total
 
 
 def _write_article_file(
