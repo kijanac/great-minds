@@ -20,7 +20,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from openai import AsyncOpenAI
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 
 from great_minds.core.brain_utils import (
     api_call,
@@ -45,6 +45,7 @@ _IDEA_NAMESPACE = uuid.UUID("8d1f7a04-2c85-4e72-b9c1-3f8d7a5e4b90")
 
 EXTRACTION_VERSION = 1
 MAX_OUTPUT_TOKENS = 8000
+PARSE_MAX_RETRIES = 2  # includes the first attempt
 
 _VALID_KINDS = {k.value for k in SubjectKind}
 
@@ -112,27 +113,12 @@ async def extract_source_card(
         f"---\n\n{body}"
     )
 
-    response = await api_call(
+    parsed = await _call_and_parse(
         client,
-        model=EXTRACT_MODEL,
-        messages=[
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": user_content},
-        ],
-        temperature=0.2,
-        max_tokens=MAX_OUTPUT_TOKENS,
-        extra_body={"reasoning": {"enabled": False}},
-        response_format={"type": "json_object"},
+        document_id=document_id,
+        system_prompt=system_prompt,
+        user_content=user_content,
     )
-
-    text = extract_content(response)
-    if not text:
-        raise RuntimeError(f"empty extraction response for document {document_id}")
-
-    raw = strip_json_fencing(text)
-    data = json.loads(raw)
-    _coerce_unknown_kinds(data, document_id)
-    parsed = _RawExtraction(**data)
 
     card = _build_source_card(raw=parsed, document_id=document_id, brain_id=brain_id)
 
@@ -211,6 +197,66 @@ def write_source_card(*, brain_id: uuid.UUID, card: SourceCard) -> None:
 
 
 # --- Internal ---------------------------------------------------------------
+
+
+async def _call_and_parse(
+    client: AsyncOpenAI,
+    *,
+    document_id: uuid.UUID,
+    system_prompt: str,
+    user_content: str,
+) -> "_RawExtraction":
+    """Make the extraction call; retry on JSON parse or validation error.
+
+    LLM output is occasionally malformed (truncated strings, invalid
+    structure) in a way that's transient — same inputs often succeed on
+    the next call. Retry once to absorb that noise.
+    """
+    last_err: Exception | None = None
+    for attempt in range(1, PARSE_MAX_RETRIES + 1):
+        response = await api_call(
+            client,
+            model=EXTRACT_MODEL,
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_content},
+            ],
+            temperature=0.2,
+            max_tokens=MAX_OUTPUT_TOKENS,
+            extra_body={"reasoning": {"enabled": False}},
+            response_format={"type": "json_object"},
+        )
+        text = extract_content(response)
+        if not text:
+            raise RuntimeError(f"empty extraction response for document {document_id}")
+
+        choice = response.choices[0] if response.choices else None
+        finish_reason = getattr(choice, "finish_reason", None) if choice else None
+        usage = getattr(response, "usage", None)
+        output_tokens = getattr(usage, "completion_tokens", None) if usage else None
+
+        raw = strip_json_fencing(text)
+        try:
+            data = json.loads(raw)
+            _coerce_unknown_kinds(data, document_id)
+            return _RawExtraction(**data)
+        except (json.JSONDecodeError, ValidationError) as e:
+            last_err = e
+            log_event(
+                "extraction_parse_retry",
+                level=30,  # WARNING
+                document_id=str(document_id),
+                attempt=attempt,
+                max_attempts=PARSE_MAX_RETRIES,
+                error_class=type(e).__name__,
+                finish_reason=finish_reason,
+                output_tokens=output_tokens,
+                raw_tail=raw[-200:],
+            )
+    raise RuntimeError(
+        f"extraction parse failed after {PARSE_MAX_RETRIES} attempts "
+        f"for document {document_id}"
+    ) from last_err
 
 
 def _coerce_unknown_kinds(data: dict, document_id: uuid.UUID) -> None:

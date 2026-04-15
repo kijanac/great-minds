@@ -5,11 +5,12 @@ extraction service on each (concurrently), writes source cards to
 .compile/<brain_id>/source_cards.jsonl, prints per-doc and summary stats.
 
 Usage:
-    uv run python scripts/run_extract.py <corpus_dir> [--limit N] [--brain-id UUID] [--concurrency N]
+    uv run python scripts/run_extract.py <corpus_dir> [--limit N] [--sample N --seed S] [--brain-id UUID] [--concurrency N]
 """
 
 import argparse
 import asyncio
+import random
 import uuid
 from pathlib import Path
 
@@ -51,14 +52,23 @@ async def run(
     corpus_dir: Path,
     brain_id: uuid.UUID,
     limit: int | None,
+    sample: int | None,
+    seed: int,
     concurrency: int,
 ) -> None:
-    files = sorted(corpus_dir.glob("*.md"))
+    all_files = sorted(corpus_dir.rglob("*.md"))
+    if sample is not None:
+        rng = random.Random(seed)
+        files = rng.sample(all_files, k=min(sample, len(all_files)))
+        files.sort()
+    else:
+        files = all_files
     if limit is not None:
         files = files[:limit]
     print(
         f"Extracting {len(files)} file(s) from {corpus_dir} "
-        f"(brain={brain_id}, concurrency={concurrency})"
+        f"(brain={brain_id}, concurrency={concurrency}"
+        f"{f', sample={sample} seed={seed}' if sample else ''})"
     )
 
     client = get_async_client()
@@ -106,7 +116,19 @@ def main() -> None:
         "--limit",
         type=int,
         default=None,
-        help="only process the first N files",
+        help="only process the first N files (applied after --sample if both set)",
+    )
+    parser.add_argument(
+        "--sample",
+        type=int,
+        default=None,
+        help="randomly sample N files from the corpus (representative picks)",
+    )
+    parser.add_argument(
+        "--seed",
+        type=int,
+        default=42,
+        help="random seed for --sample (default: 42)",
     )
     parser.add_argument(
         "--concurrency",
@@ -117,7 +139,16 @@ def main() -> None:
     args = parser.parse_args()
 
     setup_logging(service="great-minds")
-    asyncio.run(run(args.corpus_dir, args.brain_id, args.limit, args.concurrency))
+    asyncio.run(
+        run(
+            args.corpus_dir,
+            args.brain_id,
+            args.limit,
+            args.sample,
+            args.seed,
+            args.concurrency,
+        )
+    )
 
 
 if __name__ == "__main__":

@@ -165,7 +165,6 @@ async def cluster_ideas(
     edges = await query_neighbor_edges(
         brain_id=brain_id,
         ideas_flat=ideas_flat,
-        vectors=vectors,
         k=NEIGHBOR_TOP_K,
         threshold=threshold,
     )

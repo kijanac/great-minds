@@ -2,38 +2,53 @@
 
 You are reviewing a cluster of Ideas that an embedding-based clustering
 step grouped together as potentially describing the same wiki subject.
-Your job: confirm them as one canonical subject, or split them into
-multiple subjects if the cluster conflates distinct concepts.
+Your job: confirm them as ONE canonical subject, or split them into
+multiple subjects if the cluster genuinely conflates distinct concepts.
+
+Each subject you emit will become a wiki article. Aim for rich,
+multi-faceted articles. Ideas merged together contribute their distinct
+emphases to a richer canonical scope.
 
 Given Ideas (each with a local `id`, `kind`, `label`, and `scope_note`),
 emit one or more subjects.
 
 ## Decision rules
 
-- **Same subject → one output.** If all Ideas describe the same subject
-  in different words or emphases, emit ONE subject whose members are
-  all of them.
-- **Distinct subjects (polysemy) → multiple outputs.** If Ideas split
-  into two or more distinct subjects — e.g., same label but divergent
-  `scope_note` meanings, like "socialist reconstruction" (the book) vs
-  "socialist reconstruction" (the political program) — emit one subject
-  per distinct meaning, assigning each Idea to the right one.
-- **Borderline → prefer splitting.** When unsure whether two Ideas are
-  the same subject, emit them as separate subjects. Future consolidation
-  can merge; over-merging is harder to undo.
+- **Same subject → one output.** If all Ideas describe the same
+  subject in different words or emphases, emit ONE subject whose
+  members are all of them.
+
+- **Default: merge.** Ideas that share a general topic — even when
+  scope_notes emphasize different angles, time periods, geographic
+  contexts, or aspects of that topic — should merge into ONE canonical
+  subject. Their distinct emphases become the richness of the
+  canonical scope_note, not grounds for separation.
+
+- **When in doubt, merge.** A rich multi-facet article is more
+  valuable than two thin articles with overlapping scope. Over-
+  splitting is harder to undo because it fragments the evidence across
+  multiple thin records.
 
 ## Field rules
 
-- `canonical_label`: the preferred human-readable name. Prefer the
-  shortest clearest member label, or synthesize a cleaner one if none
-  fits well. Lowercase except proper nouns and titles of works.
-- `canonical_scope_note`: one sentence that captures the shared meaning
-  across members. Synthesize — do not just copy one member's scope.
-- `kind`: the dominant kind across members. If members are mixed and no
-  kind dominates, use `other`.
-- `member_ids`: local `id`s of the Ideas belonging to this subject.
-  Every Idea in the input must appear in exactly one subject's
-  `member_ids`.
+- `canonical_label`: the preferred human-readable name for the merged
+  subject. Prefer the shortest clearest member label, or synthesize a
+  cleaner one that captures the whole. Lowercase except proper nouns
+  and titles of works.
+
+- `canonical_scope_note`: one sentence capturing the full subject
+  across all member Ideas' angles. Synthesize richly — don't flatten
+  to just the intersection. A good scope_note reflects the union of
+  what members contribute.
+
+- `kind`: the dominant kind across members. If members are genuinely
+  mixed (e.g., some treat something as a `movement` and others as a
+  `concept`), pick the broader framing that best represents the
+  canonical meaning. Use `other` only when truly mixed and no kind
+  dominates.
+
+- `member_ids`: local `id`s of the Ideas in this subject. Every Idea
+  in the input must appear in exactly one subject's `member_ids`.
 
 ## Output
 
