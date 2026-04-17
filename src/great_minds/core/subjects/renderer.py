@@ -1,13 +1,13 @@
 """Article rendering service.
 
-For each WikiSubject, assemble an evidence pack + supporting doc excerpts
-+ subject registry, call the writer LLM, and write a markdown article
+For each Concept, assemble an evidence pack + supporting doc excerpts
++ concept registry, call the writer LLM, and write a markdown article
 with YAML frontmatter to wiki/<slug>.md.
 
 The writer gets three kinds of input:
-- Evidence anchors (claim + quote) resolved from subject.evidence_anchor_ids
+- Evidence anchors (claim + quote) resolved from concept.evidence_anchor_ids
 - Full text of each supporting document, budgeted
-- The full subject registry for cross-linking (works up to ~1000 subjects)
+- The full concept registry for cross-linking (works up to ~1000 concepts)
 
 Links are standard markdown `[label](wiki/slug.md)`. Citations are doc-
 level via markdown footnotes.
@@ -31,9 +31,9 @@ from great_minds.core.brain_utils import (
 from great_minds.core.llm import REASON_MODEL
 from great_minds.core.subjects.schemas import (
     ArticleStatus,
+    Concept,
     SourceAnchor,
     SourceCard,
-    WikiSubject,
 )
 from great_minds.core.subjects.service import document_id_for
 from great_minds.core.telemetry import log_event
@@ -82,31 +82,31 @@ async def render_brain(
     raw_link_prefix is used when composing footnote paths in output articles
     (so citations look like `raw/texts/foo.md` regardless of filesystem layout).
     """
-    subjects = _load_subjects(brain_id)
+    concepts = _load_concepts(brain_id)
     cards = _load_source_cards(brain_id)
     doc_contexts = _build_doc_contexts(brain_id, raw_dir, raw_link_prefix)
     anchor_lookup = _build_anchor_lookup(cards, doc_contexts)
 
-    selected = subjects
+    selected = concepts
     if only_multi_doc:
-        selected = [s for s in selected if len(s.supporting_document_ids) > 1]
+        selected = [c for c in selected if len(c.supporting_document_ids) > 1]
     if limit is not None:
         selected = selected[:limit]
 
     print(
-        f"Rendering {len(selected)} subject(s) of {len(subjects)} "
+        f"Rendering {len(selected)} concept(s) of {len(concepts)} "
         f"(only_multi_doc={only_multi_doc}, concurrency={concurrency})"
     )
 
     sem = asyncio.Semaphore(concurrency)
     tasks = [
-        _render_one(client, sem, subject, subjects, anchor_lookup, doc_contexts, wiki_dir)
-        for subject in selected
+        _render_one(client, sem, concept, concepts, anchor_lookup, doc_contexts, wiki_dir)
+        for concept in selected
     ]
     outcomes = await asyncio.gather(*tasks)
     successful = [p for p in outcomes if isinstance(p, Path)]
 
-    valid_slugs = {s.slug for s in subjects}
+    valid_slugs = {c.slug for c in concepts}
     stripped = _fix_broken_wiki_links(successful, valid_slugs)
     if stripped:
         print(f"Post-render: stripped {stripped} broken wiki link(s)")
@@ -119,8 +119,8 @@ async def render_brain(
 async def _render_one(
     client: AsyncOpenAI,
     sem: asyncio.Semaphore,
-    subject: WikiSubject,
-    all_subjects: list[WikiSubject],
+    concept: Concept,
+    all_concepts: list[Concept],
     anchor_lookup: dict[uuid.UUID, AnchorWithContext],
     doc_contexts: dict[uuid.UUID, DocContext],
     wiki_dir: Path,
@@ -129,37 +129,37 @@ async def _render_one(
         try:
             anchors = [
                 anchor_lookup[aid]
-                for aid in subject.evidence_anchor_ids
+                for aid in concept.evidence_anchor_ids
                 if aid in anchor_lookup
             ]
             supporting_docs = [
                 doc_contexts[did]
-                for did in subject.supporting_document_ids
+                for did in concept.supporting_document_ids
                 if did in doc_contexts
             ]
             supporting_docs = _apply_char_budget(
                 supporting_docs, MAX_SOURCE_CHARS, MIN_PER_SOURCE_CHARS
             )
-            registry = [s for s in all_subjects if s.subject_id != subject.subject_id]
+            registry = [c for c in all_concepts if c.concept_id != concept.concept_id]
 
             body = await _call_writer(
                 client,
-                subject=subject,
+                concept=concept,
                 anchors=anchors,
                 supporting_docs=supporting_docs,
-                subject_registry=registry,
+                concept_registry=registry,
             )
-            path = _write_article_file(wiki_dir=wiki_dir, subject=subject, body=body)
+            path = _write_article_file(wiki_dir=wiki_dir, concept=concept, body=body)
             log_event(
                 "article_rendered",
-                subject_id=str(subject.subject_id),
-                slug=subject.slug,
+                concept_id=str(concept.concept_id),
+                slug=concept.slug,
                 supporting_docs=len(supporting_docs),
                 anchors=len(anchors),
                 output_chars=len(body),
             )
             print(
-                f"  {subject.slug}.md  OK  "
+                f"  {concept.slug}.md  OK  "
                 f"{len(supporting_docs)} docs, {len(anchors)} anchors, "
                 f"{len(body)} chars",
                 flush=True,
@@ -169,12 +169,12 @@ async def _render_one(
             log_event(
                 "article_render_failed",
                 level=40,
-                subject_id=str(subject.subject_id),
-                slug=subject.slug,
+                concept_id=str(concept.concept_id),
+                slug=concept.slug,
                 error=str(e)[:300],
             )
             print(
-                f"  {subject.slug}.md  FAIL  {type(e).__name__}: {e}",
+                f"  {concept.slug}.md  FAIL  {type(e).__name__}: {e}",
                 flush=True,
             )
             return e
@@ -183,17 +183,17 @@ async def _render_one(
 async def _call_writer(
     client: AsyncOpenAI,
     *,
-    subject: WikiSubject,
+    concept: Concept,
     anchors: list[AnchorWithContext],
     supporting_docs: list[DocContext],
-    subject_registry: list[WikiSubject],
+    concept_registry: list[Concept],
 ) -> str:
     system_prompt = _PROMPT_PATH.read_text(encoding="utf-8")
     user_content = _build_user_content(
-        subject=subject,
+        concept=concept,
         anchors=anchors,
         supporting_docs=supporting_docs,
-        subject_registry=subject_registry,
+        concept_registry=concept_registry,
     )
 
     response = await api_call(
@@ -209,7 +209,7 @@ async def _call_writer(
     )
     text = extract_content(response)
     if not text:
-        raise RuntimeError(f"empty writer response for {subject.subject_id}")
+        raise RuntimeError(f"empty writer response for {concept.concept_id}")
     return text.strip()
 
 
@@ -218,18 +218,18 @@ async def _call_writer(
 
 def _build_user_content(
     *,
-    subject: WikiSubject,
+    concept: Concept,
     anchors: list[AnchorWithContext],
     supporting_docs: list[DocContext],
-    subject_registry: list[WikiSubject],
+    concept_registry: list[Concept],
 ) -> str:
     parts = [
-        "# Subject",
+        "# Concept",
         "",
-        f"- Kind: {subject.kind}",
-        f"- Canonical label: \"{subject.canonical_label}\"",
-        f"- Slug: {subject.slug}",
-        f"- Scope: {subject.scope_note}",
+        f"- Kind: {concept.kind}",
+        f"- Canonical label: \"{concept.canonical_label}\"",
+        f"- Slug: {concept.slug}",
+        f"- Description: {concept.description}",
         "",
         "# Evidence anchors",
         "",
@@ -266,15 +266,15 @@ def _build_user_content(
         parts.append("---")
         parts.append("")
 
-    parts.append("# Wiki subject registry (link vocabulary)")
+    parts.append("# Wiki concept registry (link vocabulary)")
     parts.append("")
     parts.append(
-        "Other wiki subjects you may link to via "
-        "[display text](wiki/slug.md). Only link to subjects in this list."
+        "Other wiki concepts you may link to via "
+        "[display text](wiki/slug.md). Only link to concepts in this list."
     )
     parts.append("")
-    for s in subject_registry:
-        parts.append(f"- [{s.canonical_label}](wiki/{s.slug}.md) — {s.kind}: {s.scope_note}")
+    for c in concept_registry:
+        parts.append(f"- [{c.canonical_label}](wiki/{c.slug}.md) — {c.kind}: {c.description}")
     parts.append("")
 
     return "\n".join(parts)
@@ -323,10 +323,10 @@ def _compile_dir(brain_id: uuid.UUID) -> Path:
     return Path(".compile") / str(brain_id)
 
 
-def _load_subjects(brain_id: uuid.UUID) -> list[WikiSubject]:
+def _load_concepts(brain_id: uuid.UUID) -> list[Concept]:
     path = _compile_dir(brain_id) / "subjects.jsonl"
     with path.open("r", encoding="utf-8") as f:
-        return [WikiSubject(**json.loads(line)) for line in f if line.strip()]
+        return [Concept(**json.loads(line)) for line in f if line.strip()]
 
 
 def _load_source_cards(brain_id: uuid.UUID) -> list[SourceCard]:
@@ -412,18 +412,20 @@ def _fix_broken_wiki_links(paths: list[Path], valid_slugs: set[str]) -> int:
 
 
 def _write_article_file(
-    *, wiki_dir: Path, subject: WikiSubject, body: str
+    *, wiki_dir: Path, concept: Concept, body: str
 ) -> Path:
     fm = {
-        "subject_id": str(subject.subject_id),
-        "kind": str(subject.kind),
-        "slug": subject.slug,
-        "canonical_label": subject.canonical_label,
+        "concept_id": str(concept.concept_id),
+        "kind": str(concept.kind),
+        "slug": concept.slug,
+        "canonical_label": concept.canonical_label,
+        "description": concept.description,
+        "compiled_from_hash": concept.compiled_from_hash,
         "article_status": str(ArticleStatus.RENDERED),
         "writer_version": WRITER_VERSION,
     }
     content = serialize_frontmatter(fm, "\n" + body + "\n")
     wiki_dir.mkdir(parents=True, exist_ok=True)
-    path = wiki_dir / f"{subject.slug}.md"
+    path = wiki_dir / f"{concept.slug}.md"
     path.write_text(content, encoding="utf-8")
     return path

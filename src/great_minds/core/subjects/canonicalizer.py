@@ -1,11 +1,11 @@
 """Canonicalization service.
 
-Reads source_cards.jsonl, embeds each Idea on `label + scope_note`,
+Reads source_cards.jsonl, embeds each Idea on `label + description`,
 builds a similarity-threshold graph, finds connected components, and
-lets an LLM refine each component into one or more WikiSubjects
-(handling polysemy splits where scope_notes diverge).
+lets an LLM refine each component into one or more Concepts (handling
+polysemy splits where descriptions diverge).
 
-Writes subjects.jsonl (authoritative) and back-fills Idea.subject_id
+Writes subjects.jsonl (authoritative) and back-fills Idea.concept_id
 into source_cards.jsonl.
 
 Storage invariant matches the extractor: JSONL in .compile/<brain_id>/.
@@ -13,6 +13,7 @@ Postgres is a rebuildable cache; not written here.
 """
 
 import asyncio
+import hashlib
 import json
 import math
 import re
@@ -32,6 +33,7 @@ from great_minds.core.brain_utils import (
     strip_json_fencing,
 )
 from great_minds.core.db import session_maker
+from great_minds.core.ids import uuid7
 from great_minds.core.llm import EMBEDDING_DIMENSIONS, EMBEDDING_MODEL, EXTRACT_MODEL
 from great_minds.core.subjects.embedding_store import (
     DEFAULT_TOP_K,
@@ -40,10 +42,10 @@ from great_minds.core.subjects.embedding_store import (
 )
 from great_minds.core.subjects.schemas import (
     ArticleStatus,
+    Concept,
     Idea,
     SourceCard,
     SubjectKind,
-    WikiSubject,
 )
 from great_minds.core.telemetry import log_event
 
@@ -60,21 +62,21 @@ _PROMPT_PATH = Path(__file__).parent.parent / "default_prompts" / "canonicalize.
 # --- LLM output shape (internal) ---------------------------------------------
 
 
-class _RefinedSubject(BaseModel):
+class _RefinedConcept(BaseModel):
     canonical_label: str
     kind: SubjectKind
-    canonical_scope_note: str
+    description: str
     member_ids: list[str]
 
 
 class _RefinementResponse(BaseModel):
-    subjects: list[_RefinedSubject]
+    subjects: list[_RefinedConcept]
 
 
 @dataclass
 class CanonicalizationResult:
-    subjects: list[WikiSubject]
-    idea_to_subject: dict[uuid.UUID, uuid.UUID]
+    concepts: list[Concept]
+    idea_to_concept: dict[uuid.UUID, uuid.UUID]
     n_clusters: int
     n_singletons: int
 
@@ -93,7 +95,7 @@ async def canonicalize(
 
     Loads ideas from source_cards.jsonl, runs the clustering pipeline,
     writes subjects.jsonl and back-fills source_cards.jsonl with
-    subject_id references.
+    concept_id references.
     """
     cards = _load_source_cards(brain_id)
     ideas_flat = [
@@ -104,7 +106,7 @@ async def canonicalize(
     if not ideas_flat:
         log_event("canonicalize_empty_input", brain_id=str(brain_id))
         return CanonicalizationResult(
-            subjects=[], idea_to_subject={}, n_clusters=0, n_singletons=0
+            concepts=[], idea_to_concept={}, n_clusters=0, n_singletons=0
         )
 
     extraction_version = cards[0].extraction_version
@@ -117,15 +119,15 @@ async def canonicalize(
         extraction_version=extraction_version,
     )
 
-    _dedupe_slugs(result.subjects)
-    _write_subjects(brain_id, result.subjects)
-    _backfill_idea_subject_ids(brain_id, result.idea_to_subject)
+    _dedupe_slugs(result.concepts)
+    _write_concepts(brain_id, result.concepts)
+    _backfill_idea_concept_ids(brain_id, result.idea_to_concept)
 
     log_event(
         "canonicalize_completed",
         brain_id=str(brain_id),
         ideas=len(ideas_flat),
-        subjects=len(result.subjects),
+        concepts=len(result.concepts),
     )
     return result
 
@@ -147,10 +149,10 @@ async def cluster_ideas(
     """
     if not ideas_flat:
         return CanonicalizationResult(
-            subjects=[], idea_to_subject={}, n_clusters=0, n_singletons=0
+            concepts=[], idea_to_concept={}, n_clusters=0, n_singletons=0
         )
 
-    texts = [f"{idea.label}. {idea.scope_note}" for _, idea in ideas_flat]
+    texts = [f"{idea.label}. {idea.description}" for _, idea in ideas_flat]
     vectors = await _embed_ideas(client, texts)
 
     async with session_maker() as session:
@@ -184,22 +186,22 @@ async def cluster_ideas(
     sem = asyncio.Semaphore(refine_concurrency)
     per_cluster_results = await asyncio.gather(
         *(
-            _subject_from_cluster(client, sem, cluster_indices, ideas_flat, brain_id)
+            _concepts_from_cluster(client, sem, cluster_indices, ideas_flat, brain_id)
             for cluster_indices in clusters
         )
     )
 
-    subjects: list[WikiSubject] = []
-    idea_to_subject: dict[uuid.UUID, uuid.UUID] = {}
-    for cluster_subjects in per_cluster_results:
-        for subj, member_idea_ids in cluster_subjects:
-            subjects.append(subj)
-            for iid in member_idea_ids:
-                idea_to_subject[iid] = subj.subject_id
+    concepts: list[Concept] = []
+    idea_to_concept: dict[uuid.UUID, uuid.UUID] = {}
+    for cluster_concepts in per_cluster_results:
+        for concept in cluster_concepts:
+            concepts.append(concept)
+            for iid in concept.member_idea_ids:
+                idea_to_concept[iid] = concept.concept_id
 
     return CanonicalizationResult(
-        subjects=subjects,
-        idea_to_subject=idea_to_subject,
+        concepts=concepts,
+        idea_to_concept=idea_to_concept,
         n_clusters=len(clusters),
         n_singletons=sum(1 for c in clusters if len(c) == 1),
     )
@@ -274,31 +276,31 @@ def _clusters_from_edges(
 # --- Cluster → subject(s) ---------------------------------------------------
 
 
-async def _subject_from_cluster(
+async def _concepts_from_cluster(
     client: AsyncOpenAI,
     sem: asyncio.Semaphore,
     indices: list[int],
     ideas_flat: list[tuple[uuid.UUID, Idea]],
     brain_id: uuid.UUID,
-) -> list[tuple[WikiSubject, list[uuid.UUID]]]:
-    """Produce 1+ WikiSubjects from a cluster.
+) -> list[Concept]:
+    """Produce 1+ Concepts from a cluster.
 
     Singletons skip the LLM call. Multi-member clusters are refined via
-    the canonicalize prompt, which may split into multiple subjects for
+    the canonicalize prompt, which may split into multiple concepts for
     polysemy.
     """
     members = [ideas_flat[i] for i in indices]
 
     if len(members) == 1:
         doc_id, idea = members[0]
-        subject = _build_subject(
+        concept = _build_concept(
             brain_id=brain_id,
             canonical_label=idea.label,
             kind=idea.kind,
-            scope_note=idea.scope_note,
+            description=idea.description,
             members=[(doc_id, idea)],
         )
-        return [(subject, [idea.idea_id])]
+        return [concept]
 
     async with sem:
         refined = await _refine_cluster_with_llm(client, members)
@@ -306,11 +308,10 @@ async def _subject_from_cluster(
     # Map local scratch ids (i0, i1, ...) back to members
     idea_by_local_id = {f"i{i}": members[i] for i in range(len(members))}
     assigned: set[str] = set()
-    out: list[tuple[WikiSubject, list[uuid.UUID]]] = []
-    for rs in refined.subjects:
+    out: list[Concept] = []
+    for rc in refined.subjects:
         member_pairs: list[tuple[uuid.UUID, Idea]] = []
-        member_idea_ids: list[uuid.UUID] = []
-        for local_id in rs.member_ids:
+        for local_id in rc.member_ids:
             if local_id not in idea_by_local_id:
                 log_event(
                     "canonicalize_unknown_member_id",
@@ -326,40 +327,38 @@ async def _subject_from_cluster(
                 )
                 continue
             assigned.add(local_id)
-            pair = idea_by_local_id[local_id]
-            member_pairs.append(pair)
-            member_idea_ids.append(pair[1].idea_id)
+            member_pairs.append(idea_by_local_id[local_id])
         if not member_pairs:
             continue
-        subject = _build_subject(
+        concept = _build_concept(
             brain_id=brain_id,
-            canonical_label=rs.canonical_label,
-            kind=rs.kind,
-            scope_note=rs.canonical_scope_note,
+            canonical_label=rc.canonical_label,
+            kind=rc.kind,
+            description=rc.description,
             members=member_pairs,
         )
-        out.append((subject, member_idea_ids))
+        out.append(concept)
 
-    # Any unassigned Ideas get their own subject (shouldn't happen if
+    # Any unassigned Ideas get their own concept (shouldn't happen if
     # the LLM follows the prompt, but be safe)
     for local_id, pair in idea_by_local_id.items():
         if local_id in assigned:
             continue
-        doc_id, idea = pair
+        _, idea = pair
         log_event(
             "canonicalize_unassigned_idea",
             level=30,
             local_id=local_id,
             label=idea.label,
         )
-        fallback = _build_subject(
+        fallback = _build_concept(
             brain_id=brain_id,
             canonical_label=idea.label,
             kind=idea.kind,
-            scope_note=idea.scope_note,
+            description=idea.description,
             members=[pair],
         )
-        out.append((fallback, [idea.idea_id]))
+        out.append(fallback)
 
     return out
 
@@ -374,7 +373,7 @@ async def _refine_cluster_with_llm(
         lines.append(f"id: i{i}")
         lines.append(f"kind: {idea.kind}")
         lines.append(f"label: {idea.label}")
-        lines.append(f"scope: {idea.scope_note}")
+        lines.append(f"description: {idea.description}")
         lines.append("")
     user_content = "\n".join(lines)
 
@@ -416,29 +415,55 @@ def _coerce_unknown_kinds_in_refinement(data: dict) -> None:
 # --- Subject building -------------------------------------------------------
 
 
-def _build_subject(
+def _build_concept(
     *,
     brain_id: uuid.UUID,
     canonical_label: str,
     kind: SubjectKind,
-    scope_note: str,
+    description: str,
     members: list[tuple[uuid.UUID, Idea]],
-) -> WikiSubject:
+) -> Concept:
     supporting_docs = sorted({doc_id for doc_id, _ in members})
+    member_idea_ids = sorted({idea.idea_id for _, idea in members})
     evidence_anchors = sorted(
         {aid for _, idea in members for aid in idea.anchor_ids}
     )
-    return WikiSubject(
-        subject_id=uuid.uuid4(),
+    compiled_from_hash = _compute_compiled_from_hash(
+        member_idea_ids=member_idea_ids,
+        canonical_label=canonical_label,
+        description=description,
+    )
+    return Concept(
+        concept_id=uuid7(),
         brain_id=brain_id,
         kind=kind,
         canonical_label=canonical_label,
         slug=_slugify(canonical_label),
-        scope_note=scope_note,
+        description=description,
         supporting_document_ids=supporting_docs,
+        member_idea_ids=member_idea_ids,
         evidence_anchor_ids=evidence_anchors,
+        compiled_from_hash=compiled_from_hash,
         article_status=ArticleStatus.NO_ARTICLE,
     )
+
+
+def _compute_compiled_from_hash(
+    *,
+    member_idea_ids: list[uuid.UUID],
+    canonical_label: str,
+    description: str,
+) -> str:
+    """sha256 over the Concept's rendering inputs.
+
+    Drives Phase 3 dirty-flagging (M5): a Concept whose member set,
+    label, or description is unchanged since its last render keeps the
+    same hash and can be served from cache. Member IDs are pre-sorted by
+    the caller for stability.
+    """
+    parts = [str(uid) for uid in member_idea_ids] + [canonical_label, description]
+    joined = "\x1f".join(parts).encode("utf-8")
+    return hashlib.sha256(joined).hexdigest()
 
 
 _SLUG_STRIP_RE = re.compile(r"[^\w\s-]")
@@ -451,34 +476,34 @@ def _slugify(label: str) -> str:
     return slug or "unnamed"
 
 
-def _dedupe_slugs(subjects: list[WikiSubject]) -> None:
-    """Mutate subjects in place so every slug is unique.
+def _dedupe_slugs(concepts: list[Concept]) -> None:
+    """Mutate concepts in place so every slug is unique.
 
-    Collisions occur when canonicalization emits two subjects whose
+    Collisions occur when canonicalization emits two concepts whose
     canonical_labels slugify identically — either from two parallel
     cluster refinements or from a polysemy split that keeps the same
     label. First occurrence keeps the base slug; later occurrences get
     a kind suffix (e.g. 'socialist-reconstruction-work') or, if that
-    still collides, a short subject_id suffix.
+    still collides, a short concept_id suffix.
     """
     seen: set[str] = set()
-    for subj in subjects:
-        base = subj.slug
+    for concept in concepts:
+        base = concept.slug
         candidate = base
         if candidate in seen:
-            candidate = f"{base}-{subj.kind.value}"
+            candidate = f"{base}-{concept.kind.value}"
             if candidate in seen:
-                candidate = f"{base}-{str(subj.subject_id)[:6]}"
+                candidate = f"{base}-{str(concept.concept_id)[:6]}"
         if candidate != base:
             log_event(
                 "slug_collision_resolved",
                 level=30,
-                subject_id=str(subj.subject_id),
+                concept_id=str(concept.concept_id),
                 original_slug=base,
                 new_slug=candidate,
-                kind=subj.kind.value,
+                kind=concept.kind.value,
             )
-            subj.slug = candidate
+            concept.slug = candidate
         seen.add(candidate)
 
 
@@ -500,19 +525,19 @@ def _load_source_cards(brain_id: uuid.UUID) -> list[SourceCard]:
     return cards
 
 
-def _write_subjects(brain_id: uuid.UUID, subjects: list[WikiSubject]) -> None:
+def _write_concepts(brain_id: uuid.UUID, concepts: list[Concept]) -> None:
     path = _compile_dir(brain_id) / "subjects.jsonl"
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("w", encoding="utf-8") as f:
-        for subj in subjects:
-            f.write(subj.model_dump_json() + "\n")
+        for concept in concepts:
+            f.write(concept.model_dump_json() + "\n")
 
 
-def _backfill_idea_subject_ids(
+def _backfill_idea_concept_ids(
     brain_id: uuid.UUID,
-    idea_to_subject: dict[uuid.UUID, uuid.UUID],
+    idea_to_concept: dict[uuid.UUID, uuid.UUID],
 ) -> None:
-    """Read source_cards.jsonl, fill Idea.subject_id, write back."""
+    """Read source_cards.jsonl, fill Idea.concept_id, write back."""
     path = _compile_dir(brain_id) / "source_cards.jsonl"
     cards: list[dict] = []
     with path.open("r", encoding="utf-8") as f:
@@ -521,12 +546,12 @@ def _backfill_idea_subject_ids(
             if stripped:
                 cards.append(json.loads(stripped))
 
-    lookup = {str(k): str(v) for k, v in idea_to_subject.items()}
+    lookup = {str(k): str(v) for k, v in idea_to_concept.items()}
     for card in cards:
         for idea in card.get("ideas", []):
             iid = idea.get("idea_id")
             if iid in lookup:
-                idea["subject_id"] = lookup[iid]
+                idea["concept_id"] = lookup[iid]
 
     with path.open("w", encoding="utf-8") as f:
         for card in cards:

@@ -30,7 +30,7 @@ async def run(brain_id: uuid.UUID) -> None:
         print("No ideas.")
         return
 
-    texts = [f"{idea.label}. {idea.scope_note}" for _, idea in ideas]
+    texts = [f"{idea.label}. {idea.description}" for _, idea in ideas]
     client = get_async_client()
     print(f"Embedding {len(texts)} ideas...")
     V = await _embed_ideas(client, texts)
