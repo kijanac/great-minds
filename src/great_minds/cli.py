@@ -5,7 +5,6 @@ Usage:
     great-minds query "What is imperialism?"
     great-minds query                            # interactive mode
     great-minds ingest texts corpus/lenin/ --author "V.I. Lenin"
-    great-minds lint --deep --fix
     great-minds serve --port 8000
 """
 
@@ -14,7 +13,6 @@ import asyncio
 import logging
 import shutil
 import uuid
-from functools import partial
 from pathlib import Path
 
 import uvicorn
@@ -22,8 +20,7 @@ from sqlalchemy import text
 
 from great_minds.app.api.server import create_app
 from great_minds.core import brain as brain_ops
-from great_minds.core import querier
-from great_minds.core import compiler, ingester, linter
+from great_minds.core import compile_pipeline, ingester, querier
 from great_minds.core.db import session_maker
 from great_minds.core.documents.repository import DocumentRepository
 from great_minds.core.storage import LocalStorage
@@ -34,12 +31,20 @@ def _make_storage() -> LocalStorage:
     return LocalStorage(Path.cwd())
 
 
+async def _run_compile(brain_id: uuid.UUID, limit: int | None) -> None:
+    storage = _make_storage()
+    async with session_maker() as session:
+        await compile_pipeline.run(
+            storage,
+            brain_id=brain_id,
+            session=session,
+            limit=limit,
+        )
+
+
 def cmd_compile(args: argparse.Namespace) -> None:
     setup_logging(service="great-minds")
-    storage = _make_storage()
-    asyncio.run(
-        compiler.run(storage, partial(brain_ops.load_prompt, storage), limit=args.limit)
-    )
+    asyncio.run(_run_compile(args.brain_id, args.limit))
 
 
 async def _run_query(args: argparse.Namespace) -> None:
@@ -135,27 +140,6 @@ def cmd_ingest(args: argparse.Namespace) -> None:
         log.error("path not found: %s", path)
 
 
-def cmd_lint(args: argparse.Namespace) -> None:
-    setup_logging(service="great-minds")
-    storage = _make_storage()
-    log = logging.getLogger(__name__)
-    result = asyncio.run(linter.run_lint(storage, deep=args.deep, fix=args.fix))
-    if result.fixes_applied:
-        log.info("applied %d fixes:", len(result.fixes_applied))
-        for f in result.fixes_applied:
-            log.info("  %s — %s", f.file, f.description)
-    log.info("%d issues remaining", result.remaining_issues)
-    if result.research_suggestions:
-        log.info("")
-        log.info("research suggestions:")
-        for s in result.research_suggestions:
-            log.info(
-                "  '%s' is mentioned %d times but has no wiki article",
-                s.tag,
-                s.usage_count,
-            )
-
-
 async def _run_reset(brain_id: str, brain_root: Path) -> None:
     log = logging.getLogger(__name__)
 
@@ -234,6 +218,9 @@ def main() -> None:
         "compile", help="Compile raw texts into wiki articles"
     )
     p_compile.add_argument(
+        "brain_id", type=uuid.UUID, help="UUID of the brain to compile"
+    )
+    p_compile.add_argument(
         "--limit", type=int, default=None, help="Max documents to compile"
     )
     p_compile.set_defaults(func=cmd_compile)
@@ -262,14 +249,6 @@ def main() -> None:
     p_ingest.add_argument("--url", help="Source URL")
     p_ingest.add_argument("--outlet", help="News outlet (for news type)")
     p_ingest.set_defaults(func=cmd_ingest)
-
-    # lint
-    p_lint = subparsers.add_parser("lint", help="Lint the knowledge base")
-    p_lint.add_argument(
-        "--deep", action="store_true", help="Include LLM checks (costs money)"
-    )
-    p_lint.add_argument("--fix", action="store_true", help="Auto-fix resolvable issues")
-    p_lint.set_defaults(func=cmd_lint)
 
     # reset
     p_reset = subparsers.add_parser(
