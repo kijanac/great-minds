@@ -1,11 +1,19 @@
 """Run the source card extractor on a corpus of raw markdown files.
 
-Prototype iteration tool. Reads *.md files from a directory, runs the
-extraction service on each (concurrently), writes source cards to
-.compile/<brain_id>/source_cards.jsonl, prints per-doc and summary stats.
+Prototype iteration tool for dev loops that bypass the full ingestion
+pipeline. Reads *.md files from a directory, parses any YAML frontmatter
+they already carry for title/author/date, and calls the core extraction
+primitive with the --source-type provided on the CLI. Writes source
+cards to .compile/<brain_id>/source_cards.jsonl.
+
+Production ingestion lives at `ingest_service` and writes full
+frontmatter (including source_type) through the ingester. Use this
+script when you want fast extraction iteration on a raw corpus dir
+without spinning up the API + DB + workers path.
 
 Usage:
-    uv run python scripts/run_extract.py <corpus_dir> [--limit N] [--sample N --seed S] [--brain-id UUID] [--concurrency N]
+    uv run python scripts/run_extract.py <corpus_dir> [--source-type T]
+        [--limit N] [--sample N --seed S] [--brain-id UUID] [--concurrency N]
 """
 
 import argparse
@@ -14,10 +22,13 @@ import random
 import uuid
 from pathlib import Path
 
+from great_minds.core.brain_utils import parse_frontmatter
 from great_minds.core.llm import get_async_client
+from great_minds.core.subjects.schemas import SourceType
 from great_minds.core.subjects.service import (
     ExtractionResult,
-    extract_from_file,
+    document_id_for,
+    extract_source_card,
     write_source_card,
 )
 from great_minds.core.telemetry import setup_logging
@@ -29,12 +40,23 @@ async def _extract_one(
     sem: asyncio.Semaphore,
     client,
     brain_id: uuid.UUID,
+    source_type: SourceType,
     file_path: Path,
 ) -> tuple[Path, ExtractionResult | Exception]:
     async with sem:
         try:
-            result = await extract_from_file(
-                client, brain_id=brain_id, file_path=file_path, write_card=False
+            content = file_path.read_text(encoding="utf-8")
+            fm, body = parse_frontmatter(content)
+            document_id = document_id_for(brain_id, file_path.as_posix())
+            result = await extract_source_card(
+                client,
+                document_id=document_id,
+                brain_id=brain_id,
+                source_type=source_type,
+                title=fm.get("title") or "",
+                author=fm.get("author") or "",
+                date=str(fm.get("date") or ""),
+                body=body,
             )
             anchor_total = sum(
                 len(idea.anchors) for idea in result.source_card.ideas
@@ -54,6 +76,7 @@ async def _extract_one(
 async def run(
     corpus_dir: Path,
     brain_id: uuid.UUID,
+    source_type: SourceType,
     limit: int | None,
     sample: int | None,
     seed: int,
@@ -70,14 +93,15 @@ async def run(
         files = files[:limit]
     print(
         f"Extracting {len(files)} file(s) from {corpus_dir} "
-        f"(brain={brain_id}, concurrency={concurrency}"
+        f"(brain={brain_id}, source_type={source_type.value}, "
+        f"concurrency={concurrency}"
         f"{f', sample={sample} seed={seed}' if sample else ''})"
     )
 
     client = get_async_client()
     sem = asyncio.Semaphore(concurrency)
     outcomes = await asyncio.gather(
-        *(_extract_one(sem, client, brain_id, fp) for fp in files)
+        *(_extract_one(sem, client, brain_id, source_type, fp) for fp in files)
     )
 
     # Serial write after all extractions (avoids read-all-replace-all race).
@@ -118,6 +142,13 @@ def main() -> None:
         help="brain id (default: prototype UUID)",
     )
     parser.add_argument(
+        "--source-type",
+        type=SourceType,
+        choices=list(SourceType),
+        default=SourceType.DOCUMENT,
+        help="source_type tag applied to every card (default: document)",
+    )
+    parser.add_argument(
         "--limit",
         type=int,
         default=None,
@@ -148,6 +179,7 @@ def main() -> None:
         run(
             args.corpus_dir,
             args.brain_id,
+            args.source_type,
             args.limit,
             args.sample,
             args.seed,

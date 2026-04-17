@@ -1,11 +1,11 @@
 """Extract one doc with full diagnostics.
 
-Intended for investigating extraction failures — runs the extractor on
-a single file and prints finish_reason, output_tokens, raw head/tail,
-and any parse error. Does not write source cards.
+Intended for investigating extraction failures. Runs the core extraction
+primitive on a single file with the --source-type provided on the CLI,
+bypassing the ingestion pipeline. Does not write source cards.
 
 Usage:
-    uv run python scripts/debug_extract.py <path/to/file.md>
+    uv run python scripts/debug_extract.py <path/to/file.md> [--source-type T]
 """
 
 import argparse
@@ -13,6 +13,7 @@ import asyncio
 import uuid
 from pathlib import Path
 
+from great_minds.core.brain_utils import parse_frontmatter
 from great_minds.core.llm import get_async_client
 from great_minds.core.subjects.schemas import SourceType
 from great_minds.core.subjects.service import (
@@ -20,22 +21,21 @@ from great_minds.core.subjects.service import (
     extract_source_card,
 )
 from great_minds.core.telemetry import setup_logging
-from great_minds.core.brain_utils import parse_frontmatter
 
 PROTOTYPE_BRAIN_ID = uuid.UUID("11111111-1111-1111-1111-111111111111")
 
 
-async def run(file_path: Path) -> None:
+async def run(file_path: Path, source_type: SourceType) -> None:
     content = file_path.read_text(encoding="utf-8")
     fm, body = parse_frontmatter(content)
     document_id = document_id_for(PROTOTYPE_BRAIN_ID, file_path.as_posix())
 
     print(f"doc:          {file_path.name}")
     print(f"document_id:  {document_id}")
+    print(f"source_type:  {source_type.value}")
     print(f"body length:  {len(body):,} chars")
     print()
 
-    source_type = SourceType(fm["source_type"])
     client = get_async_client()
     try:
         result = await extract_source_card(
@@ -58,9 +58,16 @@ async def run(file_path: Path) -> None:
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("path", type=Path)
+    parser.add_argument(
+        "--source-type",
+        type=SourceType,
+        choices=list(SourceType),
+        default=SourceType.DOCUMENT,
+        help="source_type tag applied to the card (default: document)",
+    )
     args = parser.parse_args()
     setup_logging(service="great-minds")
-    asyncio.run(run(args.path))
+    asyncio.run(run(args.path, args.source_type))
 
 
 if __name__ == "__main__":
