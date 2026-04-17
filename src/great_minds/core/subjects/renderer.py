@@ -349,13 +349,14 @@ def _build_doc_contexts(
     if the prototype's raw_dir is elsewhere.
     """
     contexts: dict[uuid.UUID, DocContext] = {}
-    for raw_file in sorted(raw_dir.glob("*.md")):
+    for raw_file in sorted(raw_dir.rglob("*.md")):
         doc_id = document_id_for(brain_id, raw_file.as_posix())
         content = raw_file.read_text(encoding="utf-8")
         fm, body = parse_frontmatter(content)
+        rel = raw_file.relative_to(raw_dir).as_posix()
         contexts[doc_id] = DocContext(
             document_id=doc_id,
-            file_path=f"{raw_link_prefix.rstrip('/')}/{raw_file.name}",
+            file_path=f"{raw_link_prefix.rstrip('/')}/{rel}",
             title=fm.get("title") or "",
             author=fm.get("author") or "",
             date=str(fm.get("date") or ""),
