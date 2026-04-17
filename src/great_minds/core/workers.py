@@ -7,19 +7,18 @@ Storage/session from serialized params — they don't use the DI chain.
 import hashlib
 import logging
 from contextvars import ContextVar
-from functools import partial
 from pathlib import Path
 from uuid import UUID
 
 from absurd_sdk import AbsurdHooks, AsyncAbsurd
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from great_minds.core.brain import load_config, load_prompt
-from great_minds.core import compiler, ingester, linter
+from great_minds.core import compile_pipeline, ingester
+from great_minds.core.brain import load_config
 from great_minds.core.brain_utils import parse_frontmatter
 from great_minds.core.documents.repository import DocumentRepository
 from great_minds.core.documents.schemas import DocumentCreate
-from great_minds.core.storage import LocalStorage, Storage
+from great_minds.core.storage import LocalStorage
 from great_minds.core.telemetry import (
     correlation_id,
     emit_wide_event,
@@ -31,13 +30,6 @@ from great_minds.core.telemetry import (
 _task_session: ContextVar[AsyncSession] = ContextVar("task_session")
 
 log = logging.getLogger(__name__)
-
-
-async def _run_lint_and_store(storage: Storage) -> None:
-    """Run lint with auto-fix and persist results to storage."""
-    result = await linter.run_lint(storage, fix=True)
-    response = linter.LintResponse.model_validate(result, from_attributes=True)
-    storage.write(linter.LINT_STORAGE_PATH, response.model_dump_json())
 
 
 # ---------------------------------------------------------------------------
@@ -54,13 +46,11 @@ async def compile_task(params: dict, ctx) -> dict:
     session = _task_session.get()
 
     await ctx.heartbeat(600)
-    result = await compiler.run(
+    result = await compile_pipeline.run(
         storage,
-        partial(load_prompt, storage),
-        limit=params.get("limit"),
-        db_session=session,
         brain_id=brain_id,
-        post_write_hook=_run_lint_and_store,
+        session=session,
+        limit=params.get("limit"),
     )
 
     return {
@@ -167,12 +157,10 @@ async def bulk_ingest_task(params: dict, ctx) -> dict:
     if ingested > 0:
         log.info("bulk_ingest: triggering compilation")
         await ctx.heartbeat(600)
-        compile_result = await compiler.run(
+        compile_result = await compile_pipeline.run(
             storage,
-            partial(load_prompt, storage),
-            db_session=session,
             brain_id=brain_id,
-            post_write_hook=_run_lint_and_store,
+            session=session,
         )
 
     return {
