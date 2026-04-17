@@ -5,7 +5,8 @@ For each Concept, assemble an evidence pack + supporting doc excerpts
 with YAML frontmatter to wiki/<slug>.md.
 
 The writer gets three kinds of input:
-- Evidence anchors (claim + quote) resolved from concept.evidence_anchor_ids
+- Evidence anchors (claim + quote) gathered by walking the concept's
+  member ideas and collecting each idea's anchors
 - Full text of each supporting document, budgeted
 - The full concept registry for cross-linking (works up to ~1000 concepts)
 
@@ -85,7 +86,7 @@ async def render_brain(
     concepts = _load_concepts(brain_id)
     cards = _load_source_cards(brain_id)
     doc_contexts = _build_doc_contexts(brain_id, raw_dir, raw_link_prefix)
-    anchor_lookup = _build_anchor_lookup(cards, doc_contexts)
+    idea_anchor_lookup = _build_idea_anchor_lookup(cards, doc_contexts)
 
     selected = concepts
     if only_multi_doc:
@@ -100,7 +101,9 @@ async def render_brain(
 
     sem = asyncio.Semaphore(concurrency)
     tasks = [
-        _render_one(client, sem, concept, concepts, anchor_lookup, doc_contexts, wiki_dir)
+        _render_one(
+            client, sem, concept, concepts, idea_anchor_lookup, doc_contexts, wiki_dir
+        )
         for concept in selected
     ]
     outcomes = await asyncio.gather(*tasks)
@@ -121,17 +124,16 @@ async def _render_one(
     sem: asyncio.Semaphore,
     concept: Concept,
     all_concepts: list[Concept],
-    anchor_lookup: dict[uuid.UUID, AnchorWithContext],
+    idea_anchor_lookup: dict[uuid.UUID, list[AnchorWithContext]],
     doc_contexts: dict[uuid.UUID, DocContext],
     wiki_dir: Path,
 ) -> Path | Exception:
     async with sem:
         try:
-            anchors = [
-                anchor_lookup[aid]
-                for aid in concept.evidence_anchor_ids
-                if aid in anchor_lookup
-            ]
+            anchors: list[AnchorWithContext] = []
+            for iid in concept.member_idea_ids:
+                anchors.extend(idea_anchor_lookup.get(iid, []))
+
             supporting_docs = [
                 doc_contexts[did]
                 for did in concept.supporting_document_ids
@@ -362,16 +364,24 @@ def _build_doc_contexts(
     return contexts
 
 
-def _build_anchor_lookup(
+def _build_idea_anchor_lookup(
     cards: list[SourceCard], doc_contexts: dict[uuid.UUID, DocContext]
-) -> dict[uuid.UUID, AnchorWithContext]:
-    lookup: dict[uuid.UUID, AnchorWithContext] = {}
+) -> dict[uuid.UUID, list[AnchorWithContext]]:
+    """Map each Idea's id to its anchors, resolved against doc contexts.
+
+    Anchors now live inside Ideas on SourceCard, so the lookup is keyed
+    by idea_id: Phase 3 gathers a Concept's anchors by walking its
+    member_idea_ids through this map.
+    """
+    lookup: dict[uuid.UUID, list[AnchorWithContext]] = {}
     for card in cards:
         doc = doc_contexts.get(card.document_id)
         if doc is None:
             continue
-        for anchor in card.anchors:
-            lookup[anchor.anchor_id] = AnchorWithContext(anchor=anchor, doc=doc)
+        for idea in card.ideas:
+            lookup[idea.idea_id] = [
+                AnchorWithContext(anchor=anchor, doc=doc) for anchor in idea.anchors
+            ]
     return lookup
 
 

@@ -1,13 +1,14 @@
 """Source card extraction service.
 
 Reads a raw document, runs the source_card LLM prompt, and produces:
-- a SourceCard (Ideas + Anchors) written to
+- a SourceCard (Ideas with their anchors nested inline) written to
   .compile/<brain_id>/source_cards.jsonl
 - a doc_metadata dict for Document.extra_metadata
 
-The LLM emits scratch IDs (i1/a1) for cross-referencing within its own
-output; this service rewrites them to deterministic uuid5s before writing
-anything persistent. SourceCard is always UUID-shaped.
+The LLM emits scratch IDs (i1) for ideas within its own output; this
+service rewrites them to deterministic uuid5s and mints anchor UUIDs
+from (document_id, claim) before writing anything persistent.
+SourceCard is always UUID-shaped.
 
 Citation is doc-level: each anchor carries document_id and the LLM's
 quote text (for writer context), but no precise offsets. Passage-level
@@ -33,6 +34,7 @@ from great_minds.core.subjects.schemas import (
     Idea,
     SourceAnchor,
     SourceCard,
+    SourceType,
     SubjectKind,
 )
 from great_minds.core.telemetry import log_event
@@ -56,7 +58,6 @@ _PROMPT_PATH = Path(__file__).parent.parent / "default_prompts" / "source_card.m
 
 
 class _RawAnchor(BaseModel):
-    id: str
     claim: str
     quote: str
 
@@ -66,13 +67,12 @@ class _RawIdea(BaseModel):
     kind: SubjectKind
     label: str
     description: str
-    anchor_refs: list[str]
+    anchors: list[_RawAnchor]
 
 
 class _RawExtraction(BaseModel):
     doc_metadata: dict
     ideas: list[_RawIdea]
-    anchors: list[_RawAnchor]
 
 
 @dataclass
@@ -94,6 +94,7 @@ async def extract_source_card(
     *,
     document_id: uuid.UUID,
     brain_id: uuid.UUID,
+    source_type: SourceType,
     title: str,
     author: str,
     date: str,
@@ -101,9 +102,9 @@ async def extract_source_card(
 ) -> ExtractionResult:
     """Run the extraction prompt on one doc and build a SourceCard.
 
-    Ideas whose anchor_refs all miss the anchors list are dropped with a
-    log. No quote resolution is performed — anchors are trusted at the
-    LLM's word.
+    Ideas with zero anchors are dropped with a log (the prompt forbids
+    zero-anchor ideas, but we defend in depth). No quote resolution is
+    performed — anchors are trusted at the LLM's word.
     """
     system_prompt = _PROMPT_PATH.read_text(encoding="utf-8")
     user_content = (
@@ -120,16 +121,24 @@ async def extract_source_card(
         user_content=user_content,
     )
 
-    card = _build_source_card(raw=parsed, document_id=document_id, brain_id=brain_id)
+    card = _build_source_card(
+        raw=parsed,
+        document_id=document_id,
+        brain_id=brain_id,
+        source_type=source_type,
+    )
 
+    total_anchors = sum(len(idea.anchors) for idea in card.ideas)
+    raw_anchors = sum(len(idea.anchors) for idea in parsed.ideas)
     log_event(
         "source_card_extracted",
         document_id=str(document_id),
         brain_id=str(brain_id),
+        source_type=source_type.value,
         ideas=len(card.ideas),
-        anchors=len(card.anchors),
+        anchors=total_anchors,
         raw_ideas=len(parsed.ideas),
-        raw_anchors=len(parsed.anchors),
+        raw_anchors=raw_anchors,
     )
 
     return ExtractionResult(source_card=card, doc_metadata=parsed.doc_metadata)
@@ -152,10 +161,12 @@ async def extract_from_file(
     fm, body = parse_frontmatter(content)
 
     document_id = document_id_for(brain_id, file_path.as_posix())
+    source_type = SourceType(fm.get("source_type") or SourceType.DOCUMENT.value)
     result = await extract_source_card(
         client,
         document_id=document_id,
         brain_id=brain_id,
+        source_type=source_type,
         title=fm.get("title") or "",
         author=fm.get("author") or "",
         date=str(fm.get("date") or ""),
@@ -284,31 +295,11 @@ def _build_source_card(
     raw: _RawExtraction,
     document_id: uuid.UUID,
     brain_id: uuid.UUID,
+    source_type: SourceType,
 ) -> SourceCard:
-    anchor_id_map: dict[str, uuid.UUID] = {}
-    resolved_anchors: list[SourceAnchor] = []
-    for raw_anchor in raw.anchors:
-        anchor_id = uuid.uuid5(
-            _ANCHOR_NAMESPACE, f"{document_id}:{raw_anchor.claim}"
-        )
-        anchor_id_map[raw_anchor.id] = anchor_id
-        resolved_anchors.append(
-            SourceAnchor(
-                anchor_id=anchor_id,
-                document_id=document_id,
-                claim=raw_anchor.claim,
-                quote=raw_anchor.quote,
-            )
-        )
-
     ideas: list[Idea] = []
     for raw_idea in raw.ideas:
-        mapped_refs = [
-            anchor_id_map[ref]
-            for ref in raw_idea.anchor_refs
-            if ref in anchor_id_map
-        ]
-        if not mapped_refs:
+        if not raw_idea.anchors:
             log_event(
                 "idea_dropped_no_anchors",
                 level=30,  # WARNING
@@ -321,13 +312,24 @@ def _build_source_card(
             _IDEA_NAMESPACE,
             f"{document_id}:{raw_idea.label}:{raw_idea.kind}",
         )
+        anchors = [
+            SourceAnchor(
+                anchor_id=uuid.uuid5(
+                    _ANCHOR_NAMESPACE, f"{document_id}:{raw_anchor.claim}"
+                ),
+                document_id=document_id,
+                claim=raw_anchor.claim,
+                quote=raw_anchor.quote,
+            )
+            for raw_anchor in raw_idea.anchors
+        ]
         ideas.append(
             Idea(
                 idea_id=idea_id,
                 kind=raw_idea.kind,
                 label=raw_idea.label,
                 description=raw_idea.description,
-                anchor_ids=mapped_refs,
+                anchors=anchors,
             )
         )
 
@@ -335,6 +337,6 @@ def _build_source_card(
         document_id=document_id,
         brain_id=brain_id,
         extraction_version=EXTRACTION_VERSION,
+        source_type=source_type,
         ideas=ideas,
-        anchors=resolved_anchors,
     )

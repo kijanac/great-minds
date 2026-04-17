@@ -2,7 +2,7 @@
 
 You are analyzing a primary source text for knowledge-base compilation.
 Read the document and return a single JSON object with exactly these
-fields: `doc_metadata`, `ideas`, `anchors`.
+fields: `doc_metadata`, `ideas`.
 
 ## `doc_metadata`
 
@@ -27,6 +27,11 @@ toward a potential wiki subject. Emit as many as the document
 meaningfully supports, up to 15. Prefer fewer strong ideas to many weak
 ones. Order by importance to the document.
 
+Each idea owns its own supporting passages from the document. A passage
+may support exactly one idea — if two ideas rely on the same passage,
+either the ideas should be merged or one should have a different
+grounding passage.
+
 - `id`: short local identifier for cross-referencing within this output
   only (convention: `i1`, `i2`, ...). Not a persistent ID.
 - `label`: short canonical name. Prefer lowercase; preserve proper nouns
@@ -36,22 +41,14 @@ ones. Order by importance to the document.
 - `description`: one sentence saying what this idea is. Write it as a
   plain definition a reader could understand without having seen the
   document. Name what it is and what makes it itself.
-- `anchor_refs`: 1-3 anchor `id`s from the `anchors` section that ground
-  this idea. At least one is required.
-
-## `anchors`
-
-Supporting passages from the document. Each anchor is attached to the
-whole source document (doc-level citation); no character offsets are
-needed.
-
-- `id`: short local identifier (convention: `a1`, `a2`, ...). Not a
-  persistent ID.
-- `claim`: one sentence describing what this passage establishes.
-- `quote`: exact contiguous text from the document. Copy verbatim — do
-  not paraphrase, trim, or alter punctuation or spacing. Must appear
-  word-for-word in the source. Aim for 1-3 sentences of coherent
-  content.
+- `anchors`: 1-3 supporting passages from the document that ground this
+  idea. At least one is required. Each anchor has:
+  - `claim`: one sentence describing what the passage establishes about
+    this idea.
+  - `quote`: exact contiguous text from the document. Copy verbatim —
+    do not paraphrase, trim, or alter punctuation or spacing. Must
+    appear word-for-word in the source. Aim for 1-3 sentences of
+    coherent content.
 
 ## Rules
 
