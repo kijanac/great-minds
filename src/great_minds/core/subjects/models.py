@@ -1,7 +1,7 @@
 """ORM models for the subjects domain.
 
 Currently holds only the idea_embeddings table — a persistent cache of
-per-Idea embedding vectors. Written during canonicalization, queried for
+per-Idea embedding vectors. Written during distillation, queried for
 ANN top-K neighbor lookup.
 
 Idea itself is file-authoritative (SourceCard JSONL) per the files-first

@@ -1,4 +1,4 @@
-# Cluster refinement for canonicalization
+# Cluster refinement for distillation
 
 You are reviewing a cluster of Ideas that an embedding-based clustering
 step grouped together as potentially describing the same concept. Your

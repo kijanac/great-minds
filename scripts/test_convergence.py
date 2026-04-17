@@ -19,7 +19,7 @@ import uuid
 from itertools import combinations
 
 from great_minds.core.llm import get_async_client
-from great_minds.core.subjects.canonicalizer import (
+from great_minds.core.subjects.distiller import (
     _load_source_cards,
     cluster_ideas,
 )

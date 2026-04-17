@@ -35,7 +35,7 @@ async def run(file_path: Path) -> None:
     print(f"body length:  {len(body):,} chars")
     print()
 
-    source_type = SourceType(fm.get("source_type") or SourceType.DOCUMENT.value)
+    source_type = SourceType(fm["source_type"])
     client = get_async_client()
     try:
         result = await extract_source_card(
