@@ -46,7 +46,7 @@ _yaml.default_flow_style = False
 
 UNIVERSAL_PROVIDED = ["title", "author", "origin", "date", "url"]
 UNIVERSAL_ENRICHED = ["genre", "tags"]
-STRUCTURAL = ["compiled"]
+STRUCTURAL = ["compiled", "source_type"]
 UNIVERSAL_ALL = UNIVERSAL_PROVIDED + UNIVERSAL_ENRICHED + STRUCTURAL
 
 # Default empty values for universal fields
@@ -59,6 +59,7 @@ _UNIVERSAL_DEFAULTS: dict[str, object] = {
     "genre": "",
     "tags": [],
     "compiled": False,
+    "source_type": "document",
 }
 
 
@@ -163,6 +164,7 @@ def build_document(
     date: str | None = None,
     origin: str | None = None,
     url: str | None = None,
+    source_type: str = "document",
     **extra,
 ) -> str:
     """Prepend frontmatter to raw content. Pure — no I/O.
@@ -172,7 +174,7 @@ def build_document(
     """
     field_specs = load_field_specs(config, content_type)
 
-    known: dict = {"compiled": False}
+    known: dict = {"compiled": False, "source_type": source_type}
     known["title"] = title or extract_title(content) or ""
     if author:
         known["author"] = author
@@ -203,6 +205,7 @@ def ingest_document(
     date: str | None = None,
     origin: str | None = None,
     url: str | None = None,
+    source_type: str = "document",
     **extra,
 ) -> str:
     """Build a document with frontmatter and persist it to storage."""
@@ -215,6 +218,7 @@ def ingest_document(
         date=date,
         origin=origin,
         url=url,
+        source_type=source_type,
         **extra,
     )
     storage.write(dest, built)

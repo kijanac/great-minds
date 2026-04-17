@@ -30,6 +30,7 @@ class DocumentCreate(BaseModel):
     file_path: str
     content: str
     doc_kind: str = DocKind.RAW
+    source_type: str = "document"
     url: str | None = None
     compiled: bool = False
 
@@ -61,6 +62,7 @@ class DocumentCreate(BaseModel):
             file_path=file_path,
             content=content,
             doc_kind=doc_kind,
+            source_type=fm.get("source_type", "document"),
             url=fm.get("url"),
             compiled=fm.get("compiled", False),
             title=fm.get("title", ""),
@@ -89,6 +91,7 @@ class Document(BaseModel):
     genre: str | None
     compiled: bool
     doc_kind: str
+    source_type: str = "document"
     tags: list[str] = []
     extra_metadata: dict = {}
     created_at: datetime | None = None

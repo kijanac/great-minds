@@ -5,6 +5,7 @@ import hashlib
 import io
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from enum import StrEnum
 from pathlib import PurePosixPath
 from uuid import UUID
@@ -23,6 +24,13 @@ from great_minds.core.ingester import (
     slugify,
 )
 from great_minds.core.storage import Storage
+
+
+class UserSuggestionIntent(StrEnum):
+    DISAGREE = "disagree"
+    CORRECT = "correct"
+    ADD_CONTEXT = "add_context"
+    RESTRUCTURE = "restructure"
 
 
 BULK_CONVERT_CONCURRENCY = 4
@@ -69,6 +77,7 @@ class IngestService:
         date: str | None = None,
         origin: str | None = None,
         url: str | None = None,
+        source_type: str = "document",
     ) -> tuple[str, str]:
         """Ingest raw text content. Returns (file_path, title)."""
         config = load_config(storage)
@@ -76,7 +85,13 @@ class IngestService:
             title=title, author=author, date=date, origin=origin, url=url
         )
         result = ingest_document(
-            storage, config, content, content_type, dest=dest, **kwargs
+            storage,
+            config,
+            content,
+            content_type,
+            dest=dest,
+            source_type=source_type,
+            **kwargs,
         )
         await self.doc_service.index_raw_doc(brain_id, dest, result)
         return dest, title or dest
@@ -95,6 +110,7 @@ class IngestService:
         origin: str | None = None,
         url: str | None = None,
         dest_path: str | None = None,
+        source_type: str = "document",
     ) -> tuple[str, str]:
         """Ingest an uploaded file. Returns (file_path, title)."""
         content = await _convert_to_markdown(raw_bytes, filename, mimetype)
@@ -108,7 +124,13 @@ class IngestService:
         config = load_config(storage)
         kwargs = _build_kwargs(author=author, date=date, origin=origin, url=url)
         result = ingest_document(
-            storage, config, content, content_type, dest=dest, **kwargs
+            storage,
+            config,
+            content,
+            content_type,
+            dest=dest,
+            source_type=source_type,
+            **kwargs,
         )
         await self.doc_service.index_raw_doc(brain_id, dest, result)
         return dest, filename
@@ -119,6 +141,8 @@ class IngestService:
         storage: Storage,
         files: list[BulkFileInput],
         content_type: str,
+        *,
+        source_type: str = "document",
     ) -> AsyncIterator[BulkFileEvent]:
         """Ingest N uploaded files, yielding a per-file event as each completes.
 
@@ -140,6 +164,7 @@ class IngestService:
                     storage=storage,
                     config=config,
                     content_type=content_type,
+                    source_type=source_type,
                     existing_hashes=existing_hashes,
                     semaphore=semaphore,
                 )
@@ -160,12 +185,93 @@ class IngestService:
         if pending_docs:
             await self.doc_service.batch_index_raw_docs(brain_id, pending_docs)
 
+    async def ingest_user_suggestion(
+        self,
+        brain_id: UUID,
+        storage: Storage,
+        *,
+        body: str,
+        intent: UserSuggestionIntent,
+        anchored_to: str = "",
+        anchored_section: str = "",
+    ) -> tuple[str, str]:
+        """Persist a user suggestion as a source document.
+
+        Writes to raw/user/<ts>-<slug>.md with source_type=user. body is
+        expected to be substantive prose (either user-written or
+        UI-reframed); this method does no reframing — it persists the
+        authored content as a first-class source that enters the
+        pipeline through the same rail as ingested documents.
+        """
+        if not body.strip():
+            raise ValueError("body is empty")
+
+        ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+        anchor_slug = slugify(anchored_to) if anchored_to else "general"
+        filename = f"{ts}-{anchor_slug}-{intent.value}.md"
+        dest = _safe_upload_dest("user", filename)
+
+        config = load_config(storage)
+        result = ingest_document(
+            storage,
+            config,
+            body,
+            "user",
+            dest=dest,
+            origin="user-suggestion",
+            source_type="user",
+            intent=intent.value,
+            anchored_to=anchored_to,
+            anchored_section=anchored_section,
+        )
+        await self.doc_service.index_raw_doc(brain_id, dest, result)
+        return dest, filename
+
+    async def ingest_lint_finding(
+        self,
+        brain_id: UUID,
+        storage: Storage,
+        *,
+        body: str,
+        anchored_to: str = "",
+    ) -> tuple[str, str]:
+        """Persist an LLM-authored lint finding as a source document.
+
+        Writes to raw/lint/<ts>-<slug>.md with source_type=lint. body is
+        expected to be substantive prose authored by the lint agent —
+        framed as primary content, not meta-commentary — so that Phase
+        1 extraction produces Ideas that cluster on their own merit.
+        """
+        if not body.strip():
+            raise ValueError("body is empty")
+
+        ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+        anchor_slug = slugify(anchored_to) if anchored_to else "general"
+        filename = f"{ts}-{anchor_slug}.md"
+        dest = _safe_upload_dest("lint", filename)
+
+        config = load_config(storage)
+        result = ingest_document(
+            storage,
+            config,
+            body,
+            "lint",
+            dest=dest,
+            origin="lint-agent",
+            source_type="lint",
+            anchored_to=anchored_to,
+        )
+        await self.doc_service.index_raw_doc(brain_id, dest, result)
+        return dest, filename
+
     async def ingest_url(
         self,
         brain_id: UUID,
         storage: Storage,
         url: str,
         content_type: str,
+        *,
+        source_type: str = "document",
     ) -> tuple[str, str]:
         """Fetch a URL, convert to markdown, and ingest. Returns (file_path, title)."""
         url = normalize_url(url)
@@ -193,6 +299,7 @@ class IngestService:
             dest=dest,
             title=title,
             url=url,
+            source_type=source_type,
         )
         await self.doc_service.index_raw_doc(brain_id, dest, ingested)
         return dest, title
@@ -205,6 +312,7 @@ async def _process_bulk_file(
     storage: Storage,
     config: dict,
     content_type: str,
+    source_type: str,
     existing_hashes: dict[str, str],
     semaphore: asyncio.Semaphore,
 ) -> tuple[BulkFileEvent, DocumentCreate | None]:
@@ -219,7 +327,9 @@ async def _process_bulk_file(
             )
             slug = slugify(item.filename.rsplit(".", 1)[0])
             dest = _safe_upload_dest(content_type, f"{slug}.md")
-            content_with_fm = build_document(config, content, content_type)
+            content_with_fm = build_document(
+                config, content, content_type, source_type=source_type
+            )
         except Exception as exc:
             return (
                 BulkFileEvent(

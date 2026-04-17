@@ -46,6 +46,9 @@ class DocumentORM(Base):
         Boolean, nullable=False, server_default="false"
     )
     doc_kind: Mapped[str] = mapped_column(Text, nullable=False, server_default="raw")
+    source_type: Mapped[str] = mapped_column(
+        Text, nullable=False, server_default="document"
+    )
     extra_metadata: Mapped[dict] = mapped_column(
         "metadata", JSONB, nullable=False, server_default="{}"
     )
