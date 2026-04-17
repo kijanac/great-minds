@@ -36,6 +36,7 @@ class DocumentRepository:
             "genre": doc.genre,
             "compiled": doc.compiled,
             "doc_kind": doc.doc_kind,
+            "source_type": doc.source_type,
         }
 
         stmt = (
@@ -103,6 +104,7 @@ class DocumentRepository:
         genre: str | None = None,
         compiled: bool | None = None,
         doc_kind: DocKind | None = None,
+        source_type: str | None = None,
         content_type: str | None = None,
         search: str | None = None,
         date_gte: str | None = None,
@@ -138,6 +140,8 @@ class DocumentRepository:
             stmt = stmt.where(DocumentORM.compiled == compiled)
         if doc_kind:
             stmt = stmt.where(DocumentORM.doc_kind == doc_kind)
+        if source_type:
+            stmt = stmt.where(DocumentORM.source_type == source_type)
         if content_type:
             stmt = stmt.where(DocumentORM.file_path.like(f"raw/{content_type}/%"))
         if search:

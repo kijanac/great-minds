@@ -51,7 +51,30 @@ async def ingest(
         date=req.published_date,
         origin=req.origin,
         url=req.url,
+        source_type=req.source_type,
     )
+    return schemas.IngestResponse(file_path=file_path, title=title)
+
+
+@router.post("/user-suggestion", status_code=201)
+async def ingest_user_suggestion(
+    req: schemas.UserSuggestionRequest,
+    brain_id: UUID,
+    storage: Storage = Depends(get_brain_storage),
+    ingest_service: IngestService = Depends(get_ingest_service),
+    _auth: None = Depends(require_brain_member),
+) -> schemas.IngestResponse:
+    try:
+        file_path, title = await ingest_service.ingest_user_suggestion(
+            brain_id,
+            storage,
+            body=req.body,
+            intent=req.intent,
+            anchored_to=req.anchored_to,
+            anchored_section=req.anchored_section,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
     return schemas.IngestResponse(file_path=file_path, title=title)
 
 
@@ -67,6 +90,7 @@ async def ingest_upload(
     origin: str | None = None,
     url: str | None = None,
     dest_path: str | None = None,
+    source_type: str = "document",
 ) -> schemas.IngestResponse:
     raw_bytes = await file.read()
     filename = file.filename or "upload.md"
@@ -83,6 +107,7 @@ async def ingest_upload(
             origin=origin,
             url=url,
             dest_path=dest_path,
+            source_type=source_type,
         )
     except UnicodeDecodeError:
         raise HTTPException(
@@ -106,6 +131,7 @@ async def ingest_url(
             storage,
             req.url,
             req.content_type,
+            source_type=req.source_type,
         )
     except httpx.HTTPError as exc:
         raise HTTPException(status_code=400, detail=f"Failed to fetch URL: {exc}")

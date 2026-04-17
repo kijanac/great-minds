@@ -61,6 +61,36 @@ metadata:
       source: provided
       default: ""
 
+  user:
+    anchored_to:
+      type: string
+      source: provided
+      description: >-
+        slug of the wiki concept this suggestion is attached to, if any.
+      default: ""
+    anchored_section:
+      type: string
+      source: provided
+      description: >-
+        section header within the anchored article this suggestion
+        targets, if any.
+      default: ""
+    intent:
+      type: string
+      source: provided
+      description: >-
+        what the user is doing with this suggestion (e.g. disagree,
+        correct, add_context, restructure).
+      default: ""
+
+  lint:
+    anchored_to:
+      type: string
+      source: provided
+      description: >-
+        slug of the wiki concept this lint finding is attached to, if any.
+      default: ""
+
 fields:
   genre:
     max_per_doc: 2
