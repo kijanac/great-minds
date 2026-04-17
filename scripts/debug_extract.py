@@ -14,6 +14,7 @@ import uuid
 from pathlib import Path
 
 from great_minds.core.llm import get_async_client
+from great_minds.core.subjects.schemas import SourceType
 from great_minds.core.subjects.service import (
     document_id_for,
     extract_source_card,
@@ -34,19 +35,22 @@ async def run(file_path: Path) -> None:
     print(f"body length:  {len(body):,} chars")
     print()
 
+    source_type = SourceType(fm.get("source_type") or SourceType.DOCUMENT.value)
     client = get_async_client()
     try:
         result = await extract_source_card(
             client,
             document_id=document_id,
             brain_id=PROTOTYPE_BRAIN_ID,
+            source_type=source_type,
             title=fm.get("title") or "",
             author=fm.get("author") or "",
             date=str(fm.get("date") or ""),
             body=body,
         )
-        print(f"SUCCESS — {len(result.source_card.ideas)} ideas, "
-              f"{len(result.source_card.anchors)} anchors")
+        ideas = result.source_card.ideas
+        anchors = sum(len(idea.anchors) for idea in ideas)
+        print(f"SUCCESS — {len(ideas)} ideas, {anchors} anchors")
     except Exception as e:
         print(f"FAIL — {type(e).__name__}: {e}")
 

@@ -425,9 +425,6 @@ def _build_concept(
 ) -> Concept:
     supporting_docs = sorted({doc_id for doc_id, _ in members})
     member_idea_ids = sorted({idea.idea_id for _, idea in members})
-    evidence_anchors = sorted(
-        {aid for _, idea in members for aid in idea.anchor_ids}
-    )
     compiled_from_hash = _compute_compiled_from_hash(
         member_idea_ids=member_idea_ids,
         canonical_label=canonical_label,
@@ -442,7 +439,6 @@ def _build_concept(
         description=description,
         supporting_document_ids=supporting_docs,
         member_idea_ids=member_idea_ids,
-        evidence_anchor_ids=evidence_anchors,
         compiled_from_hash=compiled_from_hash,
         article_status=ArticleStatus.NO_ARTICLE,
     )

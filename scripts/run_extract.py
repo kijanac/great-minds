@@ -36,10 +36,13 @@ async def _extract_one(
             result = await extract_from_file(
                 client, brain_id=brain_id, file_path=file_path, write_card=False
             )
+            anchor_total = sum(
+                len(idea.anchors) for idea in result.source_card.ideas
+            )
             print(
                 f"  {file_path.name} ... OK  "
                 f"{len(result.source_card.ideas)} ideas, "
-                f"{len(result.source_card.anchors)} anchors",
+                f"{anchor_total} anchors",
                 flush=True,
             )
             return file_path, result
@@ -89,7 +92,9 @@ async def run(
         return
 
     idea_counts = [len(r.source_card.ideas) for r in successes]
-    anch_counts = [len(r.source_card.anchors) for r in successes]
+    anch_counts = [
+        sum(len(idea.anchors) for idea in r.source_card.ideas) for r in successes
+    ]
     print()
     print(f"Source cards: .compile/{brain_id}/source_cards.jsonl")
     print(f"Successful:   {len(successes)}/{len(files)}")

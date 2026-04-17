@@ -80,15 +80,17 @@ class Idea(BaseModel):
     Ideas from across docs cluster into a single Concept during
     canonicalization. label and description are LLM-generated.
     description answers "what is this?" in one sentence and is embedded
-    alongside the label for clustering. concept_id is filled when
-    canonicalization assigns the Idea to a Concept.
+    alongside the label for clustering. Anchors are the specific
+    passages that ground this Idea; each Idea owns its own anchors so
+    the claim↔concept relationship survives into Phase 3. concept_id
+    is filled when canonicalization assigns the Idea to a Concept.
     """
 
     idea_id: uuid.UUID
     kind: SubjectKind
     label: str
     description: str
-    anchor_ids: list[uuid.UUID]
+    anchors: list[SourceAnchor]
     concept_id: uuid.UUID | None = None
 
 
@@ -98,7 +100,7 @@ class SourceCard(BaseModel):
     One card per (document_id, extraction_version). Written to
     .compile/<brain_id>/source_cards.jsonl as one object per line.
     source_type propagates from the ingested document's frontmatter
-    and flows through to Phase 3 citation filtering.
+    and flows through each Idea's anchors to Phase 3 citation filtering.
     """
 
     document_id: uuid.UUID
@@ -106,7 +108,6 @@ class SourceCard(BaseModel):
     extraction_version: int
     source_type: SourceType = SourceType.DOCUMENT
     ideas: list[Idea]
-    anchors: list[SourceAnchor]
 
 
 class Concept(BaseModel):
@@ -138,7 +139,6 @@ class Concept(BaseModel):
     description: str
     supporting_document_ids: list[uuid.UUID]
     member_idea_ids: list[uuid.UUID]
-    evidence_anchor_ids: list[uuid.UUID]
     compiled_from_hash: str
     article_status: ArticleStatus
     supersedes: uuid.UUID | None = None
