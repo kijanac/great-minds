@@ -1,10 +1,10 @@
-"""Print pairwise similarity diagnostics for canonicalization tuning.
+"""Print pairwise similarity diagnostics for distillation tuning.
 
 Shows the similarity distribution over all Idea pairs and lists the
 most-similar pairs so we can pick a threshold empirically.
 
 Usage:
-    uv run python scripts/diagnose_canonicalize.py [--brain-id UUID]
+    uv run python scripts/diagnose_distill.py [--brain-id UUID]
 """
 
 import argparse
@@ -14,7 +14,7 @@ import uuid
 import numpy as np
 
 from great_minds.core.llm import get_async_client
-from great_minds.core.subjects.canonicalizer import (
+from great_minds.core.subjects.distiller import (
     _embed_ideas,
     _load_source_cards,
 )

@@ -161,7 +161,7 @@ async def extract_from_file(
     fm, body = parse_frontmatter(content)
 
     document_id = document_id_for(brain_id, file_path.as_posix())
-    source_type = SourceType(fm.get("source_type") or SourceType.DOCUMENT.value)
+    source_type = SourceType(fm["source_type"])
     result = await extract_source_card(
         client,
         document_id=document_id,

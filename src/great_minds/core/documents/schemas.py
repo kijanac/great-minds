@@ -62,7 +62,7 @@ class DocumentCreate(BaseModel):
             file_path=file_path,
             content=content,
             doc_kind=doc_kind,
-            source_type=fm.get("source_type", "document"),
+            source_type=fm["source_type"],
             url=fm.get("url"),
             compiled=fm.get("compiled", False),
             title=fm.get("title", ""),

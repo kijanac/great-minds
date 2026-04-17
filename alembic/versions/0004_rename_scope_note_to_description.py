@@ -2,7 +2,7 @@
 
 Aligns the embeddings table with the renamed field on the Idea pydantic
 schema. Embedding input is now f"{label}. {description}" at the
-canonicalizer.
+distiller.
 
 Revision ID: 0004
 Revises: 0003

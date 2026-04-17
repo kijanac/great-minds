@@ -13,9 +13,9 @@ a rebuildable cache (concepts table, idea_embeddings via pgvector).
 Identifier scheme (mixed by purpose):
 - document_id, idea_id, anchor_id: UUID5 (content-addressable, derived
   from natural keys at their call sites)
-- concept_id: UUID7 (minted at canonicalization; identity is assigned,
+- concept_id: UUID7 (minted at distillation; identity is assigned,
   not derived). Stability across runs comes from slug continuity: on
-  re-canonicalization, an existing (brain_id, slug) reuses its
+  re-distillation, an existing (brain_id, slug) reuses its
   concept_id.
 """
 
@@ -78,12 +78,12 @@ class Idea(BaseModel):
 
     A doc expresses many Ideas about different subjects; one or more
     Ideas from across docs cluster into a single Concept during
-    canonicalization. label and description are LLM-generated.
+    distillation. label and description are LLM-generated.
     description answers "what is this?" in one sentence and is embedded
     alongside the label for clustering. Anchors are the specific
     passages that ground this Idea; each Idea owns its own anchors so
     the claim↔concept relationship survives into Phase 3. concept_id
-    is filled when canonicalization assigns the Idea to a Concept.
+    is filled when distillation assigns the Idea to a Concept.
     """
 
     idea_id: uuid.UUID
@@ -113,7 +113,7 @@ class SourceCard(BaseModel):
 class Concept(BaseModel):
     """Canonical record for a wiki subject.
 
-    Produced by canonicalization clustering Ideas across many
+    Produced by distillation clustering Ideas across many
     SourceCards. Written to .compile/<brain_id>/subjects.jsonl. When
     article_status is RENDERED, wiki/<slug>.md exists with frontmatter
     mirroring concept_id, slug, canonical_label, description,

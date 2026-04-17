@@ -1,4 +1,4 @@
-"""Render wiki articles for a brain's canonicalized subjects.
+"""Render wiki articles for a brain's distilled concepts.
 
 Reads .compile/<brain_id>/subjects.jsonl and .compile/<brain_id>/source_cards.jsonl,
 scans raw_dir for source doc bodies, writes markdown articles to wiki_dir.

@@ -1,4 +1,4 @@
-"""Canonicalization service.
+"""Distillation service.
 
 Reads source_cards.jsonl, embeds each Idea on `label + description`,
 builds a similarity-threshold graph, finds connected components, and
@@ -56,7 +56,7 @@ REFINE_CONCURRENCY = 10
 REFINE_MAX_TOKENS = 4000
 NEIGHBOR_TOP_K = DEFAULT_TOP_K
 
-_PROMPT_PATH = Path(__file__).parent.parent / "default_prompts" / "canonicalize.md"
+_PROMPT_PATH = Path(__file__).parent.parent / "default_prompts" / "distill.md"
 
 
 # --- LLM output shape (internal) ---------------------------------------------
@@ -74,7 +74,7 @@ class _RefinementResponse(BaseModel):
 
 
 @dataclass
-class CanonicalizationResult:
+class DistillationResult:
     concepts: list[Concept]
     idea_to_concept: dict[uuid.UUID, uuid.UUID]
     n_clusters: int
@@ -84,14 +84,14 @@ class CanonicalizationResult:
 # --- Public API --------------------------------------------------------------
 
 
-async def canonicalize(
+async def distill(
     client: AsyncOpenAI,
     *,
     brain_id: uuid.UUID,
     threshold: float = SIMILARITY_THRESHOLD,
     refine_concurrency: int = REFINE_CONCURRENCY,
-) -> CanonicalizationResult:
-    """Full canonicalization pipeline for a brain's source cards.
+) -> DistillationResult:
+    """Full distillation pipeline for a brain's source cards.
 
     Loads ideas from source_cards.jsonl, runs the clustering pipeline,
     writes subjects.jsonl and back-fills source_cards.jsonl with
@@ -104,8 +104,8 @@ async def canonicalize(
         for idea in card.ideas
     ]
     if not ideas_flat:
-        log_event("canonicalize_empty_input", brain_id=str(brain_id))
-        return CanonicalizationResult(
+        log_event("distill_empty_input", brain_id=str(brain_id))
+        return DistillationResult(
             concepts=[], idea_to_concept={}, n_clusters=0, n_singletons=0
         )
 
@@ -124,7 +124,7 @@ async def canonicalize(
     _backfill_idea_concept_ids(brain_id, result.idea_to_concept)
 
     log_event(
-        "canonicalize_completed",
+        "distill_completed",
         brain_id=str(brain_id),
         ideas=len(ideas_flat),
         concepts=len(result.concepts),
@@ -140,15 +140,15 @@ async def cluster_ideas(
     threshold: float,
     refine_concurrency: int = REFINE_CONCURRENCY,
     extraction_version: int = 1,
-) -> CanonicalizationResult:
+) -> DistillationResult:
     """Core ANN-based clustering: embed → upsert → top-K query → LLM refine.
 
-    No file IO. Callers (including canonicalize() and tests) use this
+    No file IO. Callers (including distill() and tests) use this
     directly with pre-loaded ideas. Always uses pgvector; no in-memory
     fallback.
     """
     if not ideas_flat:
-        return CanonicalizationResult(
+        return DistillationResult(
             concepts=[], idea_to_concept={}, n_clusters=0, n_singletons=0
         )
 
@@ -173,7 +173,7 @@ async def cluster_ideas(
     clusters = _clusters_from_edges(len(ideas_flat), edges)
 
     log_event(
-        "canonicalize_clusters_formed",
+        "distill_clusters_formed",
         brain_id=str(brain_id),
         ideas=len(ideas_flat),
         clusters=len(clusters),
@@ -199,7 +199,7 @@ async def cluster_ideas(
             for iid in concept.member_idea_ids:
                 idea_to_concept[iid] = concept.concept_id
 
-    return CanonicalizationResult(
+    return DistillationResult(
         concepts=concepts,
         idea_to_concept=idea_to_concept,
         n_clusters=len(clusters),
@@ -233,7 +233,7 @@ async def _embed_batch(client: AsyncOpenAI, texts: list[str]) -> list[list[float
             if attempt == EMBED_MAX_RETRIES:
                 raise
             log_event(
-                "canonicalize_embed_retry",
+                "distill_embed_retry",
                 level=30,
                 attempt=attempt,
                 max_attempts=EMBED_MAX_RETRIES,
@@ -286,7 +286,7 @@ async def _concepts_from_cluster(
     """Produce 1+ Concepts from a cluster.
 
     Singletons skip the LLM call. Multi-member clusters are refined via
-    the canonicalize prompt, which may split into multiple concepts for
+    the distill prompt, which may split into multiple concepts for
     polysemy.
     """
     members = [ideas_flat[i] for i in indices]
@@ -314,14 +314,14 @@ async def _concepts_from_cluster(
         for local_id in rc.member_ids:
             if local_id not in idea_by_local_id:
                 log_event(
-                    "canonicalize_unknown_member_id",
+                    "distill_unknown_member_id",
                     level=30,
                     local_id=local_id,
                 )
                 continue
             if local_id in assigned:
                 log_event(
-                    "canonicalize_duplicate_member_id",
+                    "distill_duplicate_member_id",
                     level=30,
                     local_id=local_id,
                 )
@@ -346,7 +346,7 @@ async def _concepts_from_cluster(
             continue
         _, idea = pair
         log_event(
-            "canonicalize_unassigned_idea",
+            "distill_unassigned_idea",
             level=30,
             local_id=local_id,
             label=idea.label,
@@ -404,7 +404,7 @@ def _coerce_unknown_kinds_in_refinement(data: dict) -> None:
     for subj in data.get("subjects", []):
         if subj.get("kind") not in valid:
             log_event(
-                "canonicalize_kind_coerced",
+                "distill_kind_coerced",
                 level=30,
                 original_kind=subj.get("kind"),
                 label=subj.get("canonical_label"),
@@ -475,7 +475,7 @@ def _slugify(label: str) -> str:
 def _dedupe_slugs(concepts: list[Concept]) -> None:
     """Mutate concepts in place so every slug is unique.
 
-    Collisions occur when canonicalization emits two concepts whose
+    Collisions occur when distillation emits two concepts whose
     canonical_labels slugify identically — either from two parallel
     cluster refinements or from a polysemy split that keeps the same
     label. First occurrence keeps the base slug; later occurrences get

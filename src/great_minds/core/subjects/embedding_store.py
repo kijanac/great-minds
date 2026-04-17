@@ -1,7 +1,7 @@
 """pgvector-backed store for Idea embeddings.
 
 Persists per-Idea embedding vectors and exposes ANN top-K neighbor
-queries for canonicalization clustering. Enables:
+queries for distillation clustering. Enables:
 - Memory-bounded clustering at scale (no full N x N similarity matrix)
 - Embedding caching across re-runs (incremental compilation)
 """
@@ -32,7 +32,7 @@ async def upsert_idea_embeddings(
     vectors: np.ndarray,
     extraction_version: int,
 ) -> None:
-    """Insert or update idea_embeddings rows for all Ideas in a canonicalization batch.
+    """Insert or update idea_embeddings rows for all Ideas in a distillation batch.
 
     Uses ON CONFLICT DO UPDATE on idea_id. Safe to re-run — updates
     embeddings/metadata for existing Ideas.
@@ -94,7 +94,7 @@ async def query_neighbor_edges(
     threshold and brain scope are applied in SQL. Edges are deduplicated
     (canonical direction i < j) and filtered to Ideas present in
     ideas_flat (excludes any stale pg rows from prior batches that
-    aren't in this canonicalization call).
+    aren't in this distillation call).
     """
     a = aliased(IdeaEmbeddingORM, name="a")
     b = aliased(IdeaEmbeddingORM, name="b")

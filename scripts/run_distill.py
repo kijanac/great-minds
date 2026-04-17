@@ -1,11 +1,11 @@
-"""Run the canonicalization pipeline over a brain's source cards.
+"""Run the distillation pipeline over a brain's source cards.
 
 Reads .compile/<brain_id>/source_cards.jsonl, runs embedding + threshold
 clustering + LLM refinement, writes .compile/<brain_id>/subjects.jsonl
 and back-fills concept_id into source_cards.jsonl.
 
 Usage:
-    uv run python scripts/run_canonicalize.py [--brain-id UUID] [--threshold F] [--concurrency N]
+    uv run python scripts/run_distill.py [--brain-id UUID] [--threshold F] [--concurrency N]
 """
 
 import argparse
@@ -13,10 +13,10 @@ import asyncio
 import uuid
 
 from great_minds.core.llm import get_async_client
-from great_minds.core.subjects.canonicalizer import (
+from great_minds.core.subjects.distiller import (
     REFINE_CONCURRENCY,
     SIMILARITY_THRESHOLD,
-    canonicalize,
+    distill,
 )
 from great_minds.core.telemetry import setup_logging
 
@@ -24,9 +24,9 @@ PROTOTYPE_BRAIN_ID = uuid.UUID("11111111-1111-1111-1111-111111111111")
 
 
 async def run(brain_id: uuid.UUID, threshold: float, concurrency: int) -> None:
-    print(f"Canonicalizing brain={brain_id} threshold={threshold} concurrency={concurrency}")
+    print(f"Distilling brain={brain_id} threshold={threshold} concurrency={concurrency}")
     client = get_async_client()
-    result = await canonicalize(
+    result = await distill(
         client,
         brain_id=brain_id,
         threshold=threshold,
