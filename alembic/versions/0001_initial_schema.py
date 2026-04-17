@@ -1,11 +1,12 @@
 """initial schema
 
 Full schema: users, auth, brains, memberships, proposals, tasks,
-search index, documents, backlinks, and absurd task queue.
+search index, documents, backlinks, idea embeddings, and absurd task
+queue.
 
 Revision ID: 0001
 Revises:
-Create Date: 2026-04-11
+Create Date: 2026-04-17
 """
 
 from pathlib import Path
@@ -233,6 +234,9 @@ def upgrade() -> None:
         sa.Column("genre", sa.Text(), nullable=True),
         sa.Column("compiled", sa.Boolean(), nullable=False, server_default="false"),
         sa.Column("doc_kind", sa.Text(), nullable=False, server_default="raw"),
+        sa.Column(
+            "source_type", sa.Text(), nullable=False, server_default="document"
+        ),
         sa.Column("metadata", JSONB(), nullable=False, server_default="{}"),
         sa.Column(
             "created_at",
@@ -294,6 +298,34 @@ def upgrade() -> None:
     op.create_index("ix_backlinks_brain_id", "backlinks", ["brain_id"])
     op.create_index("ix_backlinks_target", "backlinks", ["brain_id", "target_slug"])
 
+    # -- Idea embeddings (per-Idea vectors, pgvector-backed) ---------------
+    op.execute(
+        text(
+            """
+            CREATE TABLE idea_embeddings (
+                idea_id            uuid PRIMARY KEY,
+                brain_id           uuid NOT NULL,
+                document_id        uuid NOT NULL,
+                label              text NOT NULL,
+                description        text NOT NULL,
+                kind               text NOT NULL,
+                embedding          vector(1024) NOT NULL,
+                extraction_version integer NOT NULL,
+                created_at         timestamptz NOT NULL DEFAULT now()
+            )
+            """
+        )
+    )
+    op.execute(
+        text("CREATE INDEX ix_idea_embeddings_brain_id ON idea_embeddings (brain_id)")
+    )
+    op.execute(
+        text(
+            "CREATE INDEX ix_idea_embeddings_embedding ON idea_embeddings "
+            "USING hnsw (embedding vector_cosine_ops)"
+        )
+    )
+
     # -- Absurd (durable task queue) schema --------------------------------
     url = op.get_bind().engine.url
     pg_url = f"postgresql://{url.username or ''}{':%s' % url.password if url.password else ''}@{url.host or 'localhost'}:{url.port or 5432}/{url.database}"
@@ -304,33 +336,11 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    op.execute(text("DROP SCHEMA IF EXISTS absurd CASCADE"))
-    op.drop_index("ix_backlinks_target", table_name="backlinks")
-    op.drop_index("ix_backlinks_brain_id", table_name="backlinks")
-    op.drop_table("backlinks")
-    op.drop_index("ix_document_tags_tag", table_name="document_tags")
-    op.drop_table("document_tags")
-    op.drop_index("ix_documents_metadata_gin", table_name="documents")
-    op.drop_index("ix_documents_doc_kind", table_name="documents")
-    op.drop_index("ix_documents_compiled", table_name="documents")
-    op.drop_index("ix_documents_author", table_name="documents")
-    op.drop_index("ix_documents_published_date", table_name="documents")
-    op.drop_index("ix_documents_brain_id", table_name="documents")
-    op.drop_table("documents")
-    op.execute(text("DROP TABLE IF EXISTS search_index"))
-    op.drop_index("ix_tasks_brain_id", table_name="tasks")
-    op.drop_table("tasks")
-    op.drop_index("ix_source_proposals_brain_id", table_name="source_proposals")
-    op.drop_table("source_proposals")
-    op.drop_table("brain_memberships")
-    op.drop_table("brains")
-    op.drop_index("ix_refresh_tokens_token_hash", table_name="refresh_tokens")
-    op.drop_table("refresh_tokens")
-    op.drop_table("auth_codes")
-    op.drop_index("ix_api_keys_key_hash", table_name="api_keys")
-    op.drop_table("api_keys")
-    op.drop_index("ix_users_email", table_name="users")
-    op.drop_table("users")
-    op.execute(text("DROP TYPE IF EXISTS member_role"))
-    op.execute(text("DROP TYPE IF EXISTS proposal_status"))
-    op.execute(text("DROP EXTENSION IF EXISTS vector"))
+    # Rolling back the initial schema would drop every table, the
+    # vector extension, and the absurd queue schema — a destructive
+    # operation better expressed as DROP DATABASE + CREATE DATABASE +
+    # alembic upgrade head. Raising here keeps accidental downgrades
+    # from silently destroying the schema.
+    raise NotImplementedError(
+        "initial schema is not reversible; drop and recreate the database instead"
+    )
