@@ -1,14 +1,22 @@
 """Subject domain schemas.
 
-WikiSubject is the canonical record for anything the wiki may cover
+A Concept is the canonical record for anything the wiki may cover
 (concept, person, event, work, place, movement, organization). A
-WikiSubject is composed (via embedding clustering) of one or more
-Ideas — per-doc contributions extracted from source material.
-SourceCard holds a doc's Ideas and Anchors together. SourceAnchor is
-a citable passage in a raw doc.
+Concept is composed (via embedding clustering) of one or more Ideas —
+per-doc contributions extracted from source material. SourceCard holds
+a doc's Ideas and Anchors together. SourceAnchor is a citable passage
+in a raw doc.
 
 Authoritative storage is JSONL under .compile/<brain_id>/. Postgres is
-a rebuildable cache (wiki_subjects table, idea_embeddings via pgvector).
+a rebuildable cache (concepts table, idea_embeddings via pgvector).
+
+Identifier scheme (mixed by purpose):
+- document_id, idea_id, anchor_id: UUID5 (content-addressable, derived
+  from natural keys at their call sites)
+- concept_id: UUID7 (minted at canonicalization; identity is assigned,
+  not derived). Stability across runs comes from slug continuity: on
+  re-canonicalization, an existing (brain_id, slug) reuses its
+  concept_id.
 """
 
 import uuid
@@ -34,6 +42,22 @@ class ArticleStatus(StrEnum):
     NEEDS_REVISION = "needs_revision"
 
 
+class SourceType(StrEnum):
+    """Provenance class for a source document and every artifact derived
+    from it. Drives Phase 3 citation filtering and downstream UI filters.
+
+    - document: primary source material ingested by the user
+    - user: user suggestion authored through the structured UI
+    - lint: LLM-authored finding written as a substantive-prose source
+
+    All three flow through the same Phase 1 → Phase 2 → Phase 3 rail.
+    """
+
+    DOCUMENT = "document"
+    USER = "user"
+    LINT = "lint"
+
+
 class SourceAnchor(BaseModel):
     """An LLM-identified supporting passage for an Idea.
 
@@ -53,20 +77,19 @@ class Idea(BaseModel):
     """A per-doc concept, person, event, etc. contribution.
 
     A doc expresses many Ideas about different subjects; one or more
-    Ideas from across docs cluster into a single WikiSubject during
-    canonicalization. label and scope_note are LLM-generated.
-    scope_note is the primary disambiguator during canonicalization
-    (e.g. distinguishing Marx's "Capital" the work from "capital" the
-    economic concept). subject_id is filled when canonicalization
-    assigns the Idea to a WikiSubject.
+    Ideas from across docs cluster into a single Concept during
+    canonicalization. label and description are LLM-generated.
+    description answers "what is this?" in one sentence and is embedded
+    alongside the label for clustering. concept_id is filled when
+    canonicalization assigns the Idea to a Concept.
     """
 
     idea_id: uuid.UUID
     kind: SubjectKind
     label: str
-    scope_note: str
+    description: str
     anchor_ids: list[uuid.UUID]
-    subject_id: uuid.UUID | None = None
+    concept_id: uuid.UUID | None = None
 
 
 class SourceCard(BaseModel):
@@ -74,31 +97,49 @@ class SourceCard(BaseModel):
 
     One card per (document_id, extraction_version). Written to
     .compile/<brain_id>/source_cards.jsonl as one object per line.
+    source_type propagates from the ingested document's frontmatter
+    and flows through to Phase 3 citation filtering.
     """
 
     document_id: uuid.UUID
     brain_id: uuid.UUID
     extraction_version: int
+    source_type: SourceType = SourceType.DOCUMENT
     ideas: list[Idea]
     anchors: list[SourceAnchor]
 
 
-class WikiSubject(BaseModel):
+class Concept(BaseModel):
     """Canonical record for a wiki subject.
 
     Produced by canonicalization clustering Ideas across many
     SourceCards. Written to .compile/<brain_id>/subjects.jsonl. When
-    article_status is RENDERED, wiki/<slug>.md exists with minimal
-    frontmatter mirroring subject_id, slug, canonical_label,
+    article_status is RENDERED, wiki/<slug>.md exists with frontmatter
+    mirroring concept_id, slug, canonical_label, description,
     article_status.
+
+    description serves triple duty: editorial brief for Phase 3
+    rendering, entry text for the mechanical index.md assembly in
+    Phase 5, and frontmatter display.
+
+    compiled_from_hash is sha256 of the sorted member_idea_ids +
+    canonical_label + description; drives dirty-flagging (Phase 3
+    re-renders when the hash changes).
+
+    supersedes / superseded_by record archive flow linkage when a slug
+    retires and a new concept covers its content.
     """
 
-    subject_id: uuid.UUID
+    concept_id: uuid.UUID
     brain_id: uuid.UUID
     kind: SubjectKind
     canonical_label: str
     slug: str
-    scope_note: str
+    description: str
     supporting_document_ids: list[uuid.UUID]
+    member_idea_ids: list[uuid.UUID]
     evidence_anchor_ids: list[uuid.UUID]
+    compiled_from_hash: str
     article_status: ArticleStatus
+    supersedes: uuid.UUID | None = None
+    superseded_by: uuid.UUID | None = None

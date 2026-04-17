@@ -65,7 +65,7 @@ class _RawIdea(BaseModel):
     id: str
     kind: SubjectKind
     label: str
-    scope_note: str
+    description: str
     anchor_refs: list[str]
 
 
@@ -326,7 +326,7 @@ def _build_source_card(
                 idea_id=idea_id,
                 kind=raw_idea.kind,
                 label=raw_idea.label,
-                scope_note=raw_idea.scope_note,
+                description=raw_idea.description,
                 anchor_ids=mapped_refs,
             )
         )

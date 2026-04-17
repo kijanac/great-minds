@@ -2,7 +2,7 @@
 
 Reads .compile/<brain_id>/source_cards.jsonl, runs embedding + threshold
 clustering + LLM refinement, writes .compile/<brain_id>/subjects.jsonl
-and back-fills subject_id into source_cards.jsonl.
+and back-fills concept_id into source_cards.jsonl.
 
 Usage:
     uv run python scripts/run_canonicalize.py [--brain-id UUID] [--threshold F] [--concurrency N]
@@ -33,18 +33,18 @@ async def run(brain_id: uuid.UUID, threshold: float, concurrency: int) -> None:
         refine_concurrency=concurrency,
     )
     print()
-    print(f"Subjects:      .compile/{brain_id}/subjects.jsonl")
-    print(f"Source cards:  .compile/{brain_id}/source_cards.jsonl (subject_ids filled)")
-    print(f"Ideas:         {len(result.idea_to_subject)}")
-    print(f"Clusters:      {result.n_clusters}  (singletons: {result.n_singletons})")
-    print(f"Subjects out:  {len(result.subjects)}")
-    if result.subjects:
+    print(f"Concepts:       .compile/{brain_id}/subjects.jsonl")
+    print(f"Source cards:   .compile/{brain_id}/source_cards.jsonl (concept_ids filled)")
+    print(f"Ideas:          {len(result.idea_to_concept)}")
+    print(f"Clusters:       {result.n_clusters}  (singletons: {result.n_singletons})")
+    print(f"Concepts out:   {len(result.concepts)}")
+    if result.concepts:
         multi = sum(
-            1 for s in result.subjects if len(s.supporting_document_ids) > 1
+            1 for c in result.concepts if len(c.supporting_document_ids) > 1
         )
-        max_docs = max(len(s.supporting_document_ids) for s in result.subjects)
-        print(f"Multi-doc subj: {multi}/{len(result.subjects)}")
-        print(f"Max docs/subj:  {max_docs}")
+        max_docs = max(len(c.supporting_document_ids) for c in result.concepts)
+        print(f"Multi-doc:      {multi}/{len(result.concepts)}")
+        print(f"Max docs/cpt:   {max_docs}")
 
 
 def main() -> None:

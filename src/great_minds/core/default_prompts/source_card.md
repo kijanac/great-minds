@@ -33,9 +33,9 @@ ones. Order by importance to the document.
   and titles of works. Use the author's own terminology where possible.
 - `kind`: one of `concept`, `person`, `event`, `organization`, `work`,
   `place`, `movement`, `other`.
-- `scope_note`: one sentence defining what this idea is *as treated in
-  this document*. Must distinguish it from related ideas. Do not
-  restate the label.
+- `description`: one sentence saying what this idea is. Write it as a
+  plain definition a reader could understand without having seen the
+  document. Name what it is and what makes it itself.
 - `anchor_refs`: 1-3 anchor `id`s from the `anchors` section that ground
   this idea. At least one is required.
 
@@ -58,6 +58,6 @@ needed.
 - Return ONLY the JSON object. No markdown fencing, no preamble.
 - Quotes must be exact substrings of the source text. If you cannot find
   a verbatim passage to support an idea, omit that idea.
-- Scope notes must disambiguate, not paraphrase the label. If two ideas
-  would share a scope_note, merge them into one.
+- Each description is one sentence. If two ideas would have the same
+  description, merge them into one idea.
 - An idea with zero anchors is invalid.

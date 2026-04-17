@@ -36,7 +36,7 @@ class IdeaEmbeddingORM(Base):
         UUID(as_uuid=True), nullable=False
     )
     label: Mapped[str] = mapped_column(Text, nullable=False)
-    scope_note: Mapped[str] = mapped_column(Text, nullable=False)
+    description: Mapped[str] = mapped_column(Text, nullable=False)
     kind: Mapped[str] = mapped_column(Text, nullable=False)
     embedding = mapped_column(Vector(EMBEDDING_DIMENSIONS), nullable=False)
     extraction_version: Mapped[int] = mapped_column(Integer, nullable=False)
