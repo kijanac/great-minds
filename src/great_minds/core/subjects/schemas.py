@@ -111,24 +111,25 @@ class SourceCard(BaseModel):
 
 
 class Concept(BaseModel):
-    """Canonical record for a wiki subject.
+    """Canonical record for a wiki subject — the intrinsic concept.
 
-    Produced by distillation clustering Ideas across many
-    SourceCards. Written to .compile/<brain_id>/subjects.jsonl. When
-    article_status is RENDERED, wiki/<slug>.md exists with frontmatter
-    mirroring concept_id, slug, canonical_label, description,
-    article_status.
+    Produced by distillation clustering Ideas across many SourceCards.
+    Written to .compile/<brain_id>/subjects.jsonl (authoritative) and
+    mirrored to ConceptORM.
 
     description serves triple duty: editorial brief for Phase 3
     rendering, entry text for the mechanical index.md assembly in
-    Phase 5, and frontmatter display.
+    Phase 5, and the canonical summary shown in UIs.
 
     compiled_from_hash is sha256 of the sorted member_idea_ids +
-    canonical_label + description; drives dirty-flagging (Phase 3
-    re-renders when the hash changes).
+    canonical_label + description — the intrinsic identity of a
+    concept's inputs. Stable for a given cluster; changes when
+    clustering shifts. Drives dirty-flagging downstream.
 
-    supersedes / superseded_by record archive flow linkage when a slug
-    retires and a new concept covers its content.
+    Render lifecycle state (article_status, rendered_from_hash) and
+    archive lineage (supersedes, superseded_by) live on ConceptORM
+    only: they describe pipeline state rather than properties of the
+    concept itself.
     """
 
     concept_id: uuid.UUID
@@ -140,6 +141,3 @@ class Concept(BaseModel):
     supporting_document_ids: list[uuid.UUID]
     member_idea_ids: list[uuid.UUID]
     compiled_from_hash: str
-    article_status: ArticleStatus
-    supersedes: uuid.UUID | None = None
-    superseded_by: uuid.UUID | None = None

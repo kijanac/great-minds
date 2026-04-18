@@ -1,9 +1,10 @@
 """Six-phase compilation orchestrator.
 
 Reads raw docs from a brain's storage, produces source cards (Phase 1),
-distills them into a concept registry (Phase 2), and renders articles
-to wiki/*.md (Phase 3). Phases 4–6 (cross-linking, index, lint) and
-the archive flow are slotted in by later milestones.
+distills them into a concept registry (Phase 2), renders articles
+(Phase 3), cross-links the wiki + refreshes backlinks (Phase 4), and
+assembles the mechanical index + run log (Phase 5). Phase 6 (lint) and
+the archive flow (M7) slot in as follow-on milestones.
 
 Entry point:
     from great_minds.core.compile_pipeline import run
@@ -24,11 +25,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from great_minds.core.llm import get_async_client
 from great_minds.core.search import rebuild_index
 from great_minds.core.storage import Storage
+from great_minds.core.subjects.concept_repository import mark_rendered
+from great_minds.core.subjects.crosslinker import crosslink_wiki
 from great_minds.core.subjects.distiller import (
     REFINE_CONCURRENCY,
     SIMILARITY_THRESHOLD,
     distill,
 )
+from great_minds.core.subjects.indexer import append_log, write_index
 from great_minds.core.subjects.renderer import render_brain
 from great_minds.core.subjects.service import (
     ExtractionResult,
@@ -92,35 +96,68 @@ async def run(
     enrich(docs_compiled=docs_compiled)
 
     async with timed_op("distill"):
-        await distill(
+        distillation = await distill(
             client,
             brain_id=brain_id,
             threshold=similarity_threshold,
             refine_concurrency=refine_concurrency,
         )
 
+    concepts = distillation.concepts
+
     async with timed_op("render"):
-        article_paths = await render_brain(
+        rendered = await render_brain(
             client,
             brain_id=brain_id,
             raw_dir=raw_dir,
             wiki_dir=wiki_dir,
             concurrency=render_concurrency,
         )
+    if rendered:
+        await mark_rendered(
+            session,
+            brain_id,
+            {c.concept_id: c.compiled_from_hash for c, _ in rendered},
+        )
     articles_written = [
-        {"slug": path.stem, "action": "rendered"} for path in article_paths
+        {"slug": concept.slug, "action": "rendered"} for concept, _ in rendered
     ]
     enrich(articles_written=len(articles_written))
+
+    async with timed_op("crosslink"):
+        await crosslink_wiki(
+            wiki_dir=wiki_dir,
+            concepts=concepts,
+            session=session,
+            brain_id=brain_id,
+        )
+
+    async with timed_op("index"):
+        write_index(wiki_dir=wiki_dir, concepts=concepts)
 
     chunks_indexed = 0
     async with timed_op("rebuild_search_index"):
         chunks_indexed = await rebuild_index(session, brain_id, storage)
     enrich(chunks_indexed=chunks_indexed)
 
+    append_log(
+        compile_dir=Path(".compile") / str(brain_id),
+        brain_id=brain_id,
+        added=distillation.added,
+        dirty=distillation.dirty,
+        retired=distillation.retired,
+        articles_rendered=len(articles_written),
+        chunks_indexed=chunks_indexed,
+    )
+
     log_event(
         "compile_completed",
         brain_id=str(brain_id),
         docs_compiled=docs_compiled,
+        concepts_added=len(distillation.added),
+        concepts_dirty=len(distillation.dirty),
+        concepts_unchanged=len(distillation.unchanged),
+        retired=len(distillation.retired),
         articles_written=len(articles_written),
         chunks_indexed=chunks_indexed,
     )
@@ -129,6 +166,8 @@ async def run(
         articles_written=articles_written,
         chunks_indexed=chunks_indexed,
     )
+
+
 
 
 async def _extract_phase(

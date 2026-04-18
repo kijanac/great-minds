@@ -18,7 +18,7 @@ import json
 import math
 import re
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 import numpy as np
@@ -35,13 +35,19 @@ from great_minds.core.brain_utils import (
 from great_minds.core.db import session_maker
 from great_minds.core.ids import uuid7
 from great_minds.core.llm import EMBEDDING_DIMENSIONS, EMBEDDING_MODEL, EXTRACT_MODEL
+from great_minds.core.subjects.concept_repository import (
+    existing_slugs,
+    reconcile_concept_ids,
+    registry_diff,
+    retired_slugs,
+    upsert_concepts,
+)
 from great_minds.core.subjects.embedding_store import (
     DEFAULT_TOP_K,
     query_neighbor_edges,
     upsert_idea_embeddings,
 )
 from great_minds.core.subjects.schemas import (
-    ArticleStatus,
     Concept,
     Idea,
     SourceCard,
@@ -79,6 +85,10 @@ class DistillationResult:
     idea_to_concept: dict[uuid.UUID, uuid.UUID]
     n_clusters: int
     n_singletons: int
+    added: list[Concept] = field(default_factory=list)
+    dirty: list[Concept] = field(default_factory=list)
+    unchanged: list[Concept] = field(default_factory=list)
+    retired: list[tuple[uuid.UUID, str]] = field(default_factory=list)
 
 
 # --- Public API --------------------------------------------------------------
@@ -120,6 +130,31 @@ async def distill(
     )
 
     _dedupe_slugs(result.concepts)
+
+    async with session_maker() as session:
+        cached = await existing_slugs(session, brain_id)
+        remap = reconcile_concept_ids(result.concepts, cached)
+        if remap:
+            _remap_idea_to_concept(result.idea_to_concept, remap)
+            log_event(
+                "distill_slug_continuity_reused_ids",
+                brain_id=str(brain_id),
+                count=len(remap),
+            )
+        # Snapshot the diff BEFORE upserting so "added" and "dirty" reflect
+        # the prior registry state, not our own upsert.
+        added, dirty, unchanged = await registry_diff(
+            session, brain_id, result.concepts
+        )
+        live_slugs = {c.slug for c in result.concepts}
+        retired = await retired_slugs(session, brain_id, live_slugs)
+        await upsert_concepts(session, brain_id, result.concepts)
+
+    result.added = added
+    result.dirty = dirty
+    result.unchanged = unchanged
+    result.retired = retired
+
     _write_concepts(brain_id, result.concepts)
     _backfill_idea_concept_ids(brain_id, result.idea_to_concept)
 
@@ -128,8 +163,23 @@ async def distill(
         brain_id=str(brain_id),
         ideas=len(ideas_flat),
         concepts=len(result.concepts),
+        added=len(added),
+        dirty=len(dirty),
+        unchanged=len(unchanged),
+        retired=len(retired),
     )
     return result
+
+
+def _remap_idea_to_concept(
+    idea_to_concept: dict[uuid.UUID, uuid.UUID],
+    remap: dict[uuid.UUID, uuid.UUID],
+) -> None:
+    """Replace any speculative concept_ids with their reconciled durable ids."""
+    for iid, old_cid in list(idea_to_concept.items()):
+        durable = remap.get(old_cid)
+        if durable is not None:
+            idea_to_concept[iid] = durable
 
 
 async def cluster_ideas(
@@ -440,7 +490,6 @@ def _build_concept(
         supporting_document_ids=supporting_docs,
         member_idea_ids=member_idea_ids,
         compiled_from_hash=compiled_from_hash,
-        article_status=ArticleStatus.NO_ARTICLE,
     )
 
 
