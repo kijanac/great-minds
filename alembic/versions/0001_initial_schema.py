@@ -1,8 +1,8 @@
 """initial schema
 
 Full schema: users, auth, brains, memberships, proposals, tasks,
-search index, documents, backlinks, idea embeddings, and absurd task
-queue.
+search index, documents, backlinks, idea embeddings, concepts, and
+absurd task queue.
 
 Revision ID: 0001
 Revises:
@@ -325,6 +325,32 @@ def upgrade() -> None:
             "USING hnsw (embedding vector_cosine_ops)"
         )
     )
+
+    # -- Concepts (Postgres mirror of the concept registry) ----------------
+    op.execute(
+        text(
+            """
+            CREATE TABLE concepts (
+                concept_id          uuid PRIMARY KEY,
+                brain_id            uuid NOT NULL REFERENCES brains(id) ON DELETE CASCADE,
+                kind                text NOT NULL,
+                canonical_label     text NOT NULL,
+                slug                text NOT NULL,
+                description         text NOT NULL,
+                article_status      text NOT NULL DEFAULT 'no_article',
+                compiled_from_hash  text NOT NULL,
+                rendered_from_hash  text NULL,
+                supersedes          uuid NULL,
+                superseded_by       uuid NULL,
+                created_at          timestamptz NOT NULL DEFAULT now(),
+                updated_at          timestamptz NOT NULL DEFAULT now(),
+                UNIQUE (brain_id, slug)
+            )
+            """
+        )
+    )
+    op.execute(text("CREATE INDEX ix_concepts_brain_id ON concepts (brain_id)"))
+    op.execute(text("CREATE INDEX ix_concepts_kind ON concepts (kind)"))
 
     # -- Absurd (durable task queue) schema --------------------------------
     url = op.get_bind().engine.url

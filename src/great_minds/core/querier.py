@@ -14,6 +14,8 @@ from dataclasses import asdict, dataclass
 from uuid import UUID
 
 from openai import AsyncOpenAI
+from sqlalchemy import or_, select
+
 from .brain import load_prompt, wiki_slug
 from .search import search as hybrid_search
 from .brain_utils import extract_wiki_link_targets
@@ -21,6 +23,7 @@ from .documents.repository import DocumentRepository
 from .documents.schemas import DocKind
 from .llm import FALLBACK_MODELS, QUERY_MODEL, get_async_client
 from .storage import Storage
+from .subjects.models import ConceptORM
 from .telemetry import (
     correlation_id,
     emit_wide_event,
@@ -192,9 +195,47 @@ def _build_query_tool(tags: list[str], concepts: list[str]) -> dict:
     }
 
 
+_QUERY_WIKI_ARTICLES_TOOL: dict = {
+    "type": "function",
+    "function": {
+        "name": "query_wiki_articles",
+        "description": (
+            "Find wiki articles by metadata. Use to locate articles by kind "
+            "(concept/person/event/organization/work/place/movement/other), "
+            "by text in the title or description, or by slug. Returns "
+            "article paths you can pass to read_document to fetch content."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "kind": {
+                    "type": "string",
+                    "description": "Article kind to filter by",
+                },
+                "query": {
+                    "type": "string",
+                    "description": (
+                        "Text match against title and description "
+                        "(case-insensitive, partial match)"
+                    ),
+                },
+                "slug": {
+                    "type": "string",
+                    "description": "Exact slug match",
+                },
+                "limit": {
+                    "type": "integer",
+                    "description": "Max results (default 20)",
+                },
+            },
+        },
+    },
+}
+
+
 def build_tools(tags: list[str], concepts: list[str]) -> list[dict]:
     """Build the full tool list with vocabulary injected into query_documents."""
-    return _BASE_TOOLS + [_build_query_tool(tags, concepts)]
+    return _BASE_TOOLS + [_build_query_tool(tags, concepts), _QUERY_WIKI_ARTICLES_TOOL]
 
 
 PROVIDER_EXTRA_BODY = {
@@ -234,6 +275,8 @@ def _classify_tool_call(name: str, args: dict) -> tuple[SourceType, dict] | None
     if name == "search_wiki":
         return SourceType.SEARCH, {"query": args["query"]}
     if name == "query_documents":
+        return SourceType.QUERY, {"filters": {k: v for k, v in args.items() if v}}
+    if name == "query_wiki_articles":
         return SourceType.QUERY, {"filters": {k: v for k, v in args.items() if v}}
     return None
 
@@ -372,6 +415,62 @@ async def query_documents(
     return f"Found {len(results)} documents:\n\n" + "\n\n".join(parts)
 
 
+async def query_wiki_articles(
+    brains: list[QuerySource], args: dict, doc_repo: DocumentRepository
+) -> str:
+    """Structured metadata query over the wiki article registry.
+
+    Backed by ConceptORM (1 Concept = 1 Article). Filtered strictly to
+    rendered articles so the agent only ever receives paths it can
+    successfully read_document on. The concept-vs-article distinction
+    is a compilation internal; the agent sees a clean article layer.
+    """
+    brain_ids = [src.brain_id for src in brains]
+    if not brain_ids:
+        return "No wiki articles available (no indexed brains)"
+
+    stmt = (
+        select(ConceptORM)
+        .where(ConceptORM.brain_id.in_(brain_ids))
+        .where(ConceptORM.article_status == "rendered")
+    )
+    if args.get("kind"):
+        stmt = stmt.where(ConceptORM.kind == args["kind"])
+    if args.get("slug"):
+        stmt = stmt.where(ConceptORM.slug == args["slug"])
+    if args.get("query"):
+        q = f"%{args['query']}%"
+        stmt = stmt.where(
+            or_(
+                ConceptORM.canonical_label.ilike(q),
+                ConceptORM.description.ilike(q),
+            )
+        )
+    limit = args.get("limit") or 20
+    stmt = stmt.order_by(ConceptORM.canonical_label).limit(limit)
+
+    result = await doc_repo.session.execute(stmt)
+    rows = list(result.scalars().all())
+    log_event(
+        "tool.query_wiki_articles_executed",
+        filters=str(args),
+        results_count=len(rows),
+    )
+
+    if not rows:
+        return f"No wiki articles match: {json.dumps(args)}"
+
+    parts = []
+    for row in rows:
+        archived = " [archived]" if row.superseded_by else ""
+        parts.append(
+            f"### {row.canonical_label}{archived}\n"
+            f"  kind: {row.kind}  path: wiki/{row.slug}.md\n"
+            f"  {row.description}"
+        )
+    return f"Found {len(rows)} wiki articles:\n\n" + "\n\n".join(parts)
+
+
 async def _dispatch_tool(
     brains: list[QuerySource], name: str, args: dict, doc_repo: DocumentRepository
 ) -> str:
@@ -381,6 +480,8 @@ async def _dispatch_tool(
         return await search_wiki(brains, args["query"], doc_repo)
     elif name == "query_documents":
         return await query_documents(brains, args, doc_repo)
+    elif name == "query_wiki_articles":
+        return await query_wiki_articles(brains, args, doc_repo)
     else:
         return f"Unknown tool: {name}"
 

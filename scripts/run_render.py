@@ -29,7 +29,7 @@ async def run(
     raw_link_prefix: str,
 ) -> None:
     client = get_async_client()
-    paths = await render_brain(
+    rendered = await render_brain(
         client,
         brain_id=brain_id,
         raw_dir=raw_dir,
@@ -40,7 +40,7 @@ async def run(
         raw_link_prefix=raw_link_prefix,
     )
     print()
-    print(f"Rendered {len(paths)} article(s) to {wiki_dir}")
+    print(f"Rendered {len(rendered)} article(s) to {wiki_dir}")
 
 
 def main() -> None:

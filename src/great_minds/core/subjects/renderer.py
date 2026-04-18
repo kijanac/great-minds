@@ -11,12 +11,12 @@ The writer gets three kinds of input:
 - The full concept registry for cross-linking (works up to ~1000 concepts)
 
 Links are standard markdown `[label](wiki/slug.md)`. Citations are doc-
-level via markdown footnotes.
+level via markdown footnotes. Broken-link cleanup and fuzzy-match
+link insertion across the full wiki run as Phase 4 in the crosslinker.
 """
 
 import asyncio
 import json
-import re
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
@@ -31,7 +31,6 @@ from great_minds.core.brain_utils import (
 )
 from great_minds.core.llm import REASON_MODEL
 from great_minds.core.subjects.schemas import (
-    ArticleStatus,
     Concept,
     SourceAnchor,
     SourceCard,
@@ -42,7 +41,6 @@ from great_minds.core.telemetry import log_event
 MAX_SOURCE_CHARS = 30_000
 MIN_PER_SOURCE_CHARS = 4_000
 WRITER_MAX_TOKENS = 6000
-WRITER_VERSION = 1
 
 _PROMPT_PATH = Path(__file__).parent.parent / "default_prompts" / "render_article.md"
 
@@ -107,12 +105,9 @@ async def render_brain(
         for concept in selected
     ]
     outcomes = await asyncio.gather(*tasks)
-    successful = [p for p in outcomes if isinstance(p, Path)]
-
-    valid_slugs = {c.slug for c in concepts}
-    stripped = _fix_broken_wiki_links(successful, valid_slugs)
-    if stripped:
-        print(f"Post-render: stripped {stripped} broken wiki link(s)")
+    successful: list[tuple[Concept, Path]] = [
+        pair for pair in outcomes if isinstance(pair, tuple)
+    ]
     return successful
 
 
@@ -127,7 +122,7 @@ async def _render_one(
     idea_anchor_lookup: dict[uuid.UUID, list[AnchorWithContext]],
     doc_contexts: dict[uuid.UUID, DocContext],
     wiki_dir: Path,
-) -> Path | Exception:
+) -> tuple[Concept, Path] | Exception:
     async with sem:
         try:
             anchors: list[AnchorWithContext] = []
@@ -166,7 +161,7 @@ async def _render_one(
                 f"{len(body)} chars",
                 flush=True,
             )
-            return path
+            return (concept, path)
         except Exception as e:
             log_event(
                 "article_render_failed",
@@ -386,54 +381,20 @@ def _build_idea_anchor_lookup(
     return lookup
 
 
-_WIKI_LINK_RE = re.compile(r"\[([^\]]+)\]\(wiki/([^)]+)\.md\)")
-
-
-def _fix_broken_wiki_links(paths: list[Path], valid_slugs: set[str]) -> int:
-    """Scan rendered articles; unwrap wiki links whose target slug is not
-    in the registry. Returns total links stripped across all files.
-
-    Writers occasionally invent links to subjects that don't exist — most
-    often for common generic concepts or well-known entities the model
-    assumes "should" have an article. Stripping preserves the display
-    text as plain prose so the article stays readable.
-    """
-    total = 0
-    for path in paths:
-        text = path.read_text(encoding="utf-8")
-        counter = [0]
-
-        def replace(m: re.Match) -> str:
-            if m.group(2) in valid_slugs:
-                return m.group(0)
-            counter[0] += 1
-            return m.group(1)
-
-        new_text = _WIKI_LINK_RE.sub(replace, text)
-        if counter[0] > 0:
-            path.write_text(new_text, encoding="utf-8")
-            total += counter[0]
-            log_event(
-                "broken_wiki_links_stripped",
-                level=30,
-                article=path.name,
-                stripped=counter[0],
-            )
-    return total
-
-
 def _write_article_file(
     *, wiki_dir: Path, concept: Concept, body: str
 ) -> Path:
+    """Write the article with minimal user-facing frontmatter.
+
+    Pipeline state (article_status, rendered_from_hash) lives on
+    ConceptORM, not here. Archive lineage (supersedes, superseded_by)
+    is written only to archived articles' frontmatter by the M7 flow.
+    """
     fm = {
         "concept_id": str(concept.concept_id),
         "kind": str(concept.kind),
-        "slug": concept.slug,
         "canonical_label": concept.canonical_label,
         "description": concept.description,
-        "compiled_from_hash": concept.compiled_from_hash,
-        "article_status": str(ArticleStatus.RENDERED),
-        "writer_version": WRITER_VERSION,
     }
     content = serialize_frontmatter(fm, "\n" + body + "\n")
     wiki_dir.mkdir(parents=True, exist_ok=True)
