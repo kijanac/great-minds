@@ -19,3 +19,7 @@ test_data_old/
 test_data_old_2/
 test_data_old_3/
 great_minds_product_overview.pdf
+.compile/
+architecture_notes_and_convo_snippets.md
+refactor_plan.md
+upgrade_compilation_plan.md

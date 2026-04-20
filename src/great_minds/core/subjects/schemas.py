@@ -45,18 +45,16 @@ class ArticleStatus(StrEnum):
 
 class SourceType(StrEnum):
     """Provenance class for a source document and every artifact derived
-    from it. Drives Phase 3 citation filtering and downstream UI filters.
+    from it. Drives downstream UI filtering.
 
     - document: primary source material ingested by the user
     - user: user suggestion authored through the structured UI
-    - lint: LLM-authored finding written as a substantive-prose source
 
-    All three flow through the same Phase 1 → Phase 2 → Phase 3 rail.
+    Both flow through the same Phase 1 → Phase 2 → Phase 3 rail.
     """
 
     DOCUMENT = "document"
     USER = "user"
-    LINT = "lint"
 
 
 class SourceAnchor(BaseModel):
