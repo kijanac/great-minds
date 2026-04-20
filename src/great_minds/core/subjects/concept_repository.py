@@ -177,8 +177,4 @@ async def retired_slugs(
             ConceptORM.brain_id == brain_id
         )
     )
-    return [
-        (row.concept_id, row.slug)
-        for row in result
-        if row.slug not in live_slugs
-    ]
+    return [(row.concept_id, row.slug) for row in result if row.slug not in live_slugs]

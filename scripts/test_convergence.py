@@ -97,7 +97,9 @@ async def test1_rerun(client, brain_id, threshold):
     print(f"  together only in A:  {only_A}")
     print(f"  together only in B:  {only_B}")
     if only_A or only_B:
-        print("  (non-zero disagreement = LLM refinement producing different polysemy splits)")
+        print(
+            "  (non-zero disagreement = LLM refinement producing different polysemy splits)"
+        )
 
 
 async def test2_batch_vs_all(client, brain_id, threshold):
@@ -123,11 +125,17 @@ async def test2_batch_vs_all(client, brain_id, threshold):
 
     subset_ids = [str(idea.idea_id) for _, idea in subset_ideas]
     total, agree, tt, ss, only_8, only_16 = partition_metrics(p_8, p_16, subset_ids)
-    print(f"\nAmong the 8-doc ideas, pair-wise agreement: {agree}/{total} ({100 * agree / total:.2f}%)")
+    print(
+        f"\nAmong the 8-doc ideas, pair-wise agreement: {agree}/{total} ({100 * agree / total:.2f}%)"
+    )
     print(f"  together in both:     {tt}  (preserved merges)")
     print(f"  separate in both:     {ss}")
-    print(f"  together only 8-doc:  {only_8}  (breakage: previously-merged pairs split in 16-doc)")
-    print(f"  together only 16-doc: {only_16}  (emergent merges: new docs bridged them)")
+    print(
+        f"  together only 8-doc:  {only_8}  (breakage: previously-merged pairs split in 16-doc)"
+    )
+    print(
+        f"  together only 16-doc: {only_16}  (emergent merges: new docs bridged them)"
+    )
     if only_8 == 0:
         print("  [no breakage — 16-doc run preserves all 8-doc merges]")
 

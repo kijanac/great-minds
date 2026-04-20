@@ -1,7 +1,7 @@
 """OpenRouter client construction and model constants.
 
-Shared across compiler, querier, and linter — single source of truth
-for API configuration and client setup.
+Shared across the compile pipeline and querier — single source of
+truth for API configuration and client setup.
 """
 
 from openai import AsyncOpenAI, OpenAI

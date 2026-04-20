@@ -4,10 +4,8 @@ import { apiFetch, brainPath, readJson } from "./client";
 
 const researchSuggestionSchema = z.object({
   topic: z.string(),
-  source: z.string(),
   mentioned_in: z.array(z.string()),
   usage_count: z.number(),
-  suggested_category: z.string(),
 });
 
 const contradictionSchema = z.object({
@@ -15,14 +13,21 @@ const contradictionSchema = z.object({
   articles: z.array(z.string()),
 });
 
+const orphanSchema = z.object({
+  slug: z.string(),
+  canonical_label: z.string(),
+});
+
 const lintResponseSchema = z.object({
   research_suggestions: z.array(researchSuggestionSchema),
+  orphans: z.array(orphanSchema),
+  dirty_concepts: z.array(z.string()),
   contradictions: z.array(contradictionSchema),
-  remaining_issues: z.number(),
 });
 
 export type ResearchSuggestion = z.infer<typeof researchSuggestionSchema>;
 export type Contradiction = z.infer<typeof contradictionSchema>;
+export type Orphan = z.infer<typeof orphanSchema>;
 export type LintResponse = z.infer<typeof lintResponseSchema>;
 
 export async function fetchLintResults(): Promise<LintResponse> {

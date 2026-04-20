@@ -40,6 +40,7 @@ class ArticleStatus(StrEnum):
     NO_ARTICLE = "no_article"
     RENDERED = "rendered"
     NEEDS_REVISION = "needs_revision"
+    ARCHIVED = "archived"
 
 
 class SourceType(StrEnum):

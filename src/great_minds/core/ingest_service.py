@@ -227,43 +227,6 @@ class IngestService:
         await self.doc_service.index_raw_doc(brain_id, dest, result)
         return dest, filename
 
-    async def ingest_lint_finding(
-        self,
-        brain_id: UUID,
-        storage: Storage,
-        *,
-        body: str,
-        anchored_to: str = "",
-    ) -> tuple[str, str]:
-        """Persist an LLM-authored lint finding as a source document.
-
-        Writes to raw/lint/<ts>-<slug>.md with source_type=lint. body is
-        expected to be substantive prose authored by the lint agent —
-        framed as primary content, not meta-commentary — so that Phase
-        1 extraction produces Ideas that cluster on their own merit.
-        """
-        if not body.strip():
-            raise ValueError("body is empty")
-
-        ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-        anchor_slug = slugify(anchored_to) if anchored_to else "general"
-        filename = f"{ts}-{anchor_slug}.md"
-        dest = _safe_upload_dest("lint", filename)
-
-        config = load_config(storage)
-        result = ingest_document(
-            storage,
-            config,
-            body,
-            "lint",
-            dest=dest,
-            origin="lint-agent",
-            source_type="lint",
-            anchored_to=anchored_to,
-        )
-        await self.doc_service.index_raw_doc(brain_id, dest, result)
-        return dest, filename
-
     async def ingest_url(
         self,
         brain_id: UUID,

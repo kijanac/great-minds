@@ -1,4 +1,4 @@
-"""Shared utilities for brain operations (compiler, linter, etc.)."""
+"""Shared utilities for brain operations (compile pipeline, querier, etc.)."""
 
 import asyncio
 import json

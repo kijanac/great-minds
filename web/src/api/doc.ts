@@ -7,7 +7,11 @@ const articleListSchema = z.array(z.string());
 const documentResponseSchema = z.object({
   path: z.string(),
   content: z.string(),
+  archived: z.boolean().default(false),
+  superseded_by: z.string().nullable().default(null),
 });
+
+export type DocumentResponse = z.infer<typeof documentResponseSchema>;
 
 export async function listArticles(): Promise<string[]> {
   const res = await apiFetch(brainPath("/wiki"));
@@ -18,7 +22,7 @@ export async function listArticles(): Promise<string[]> {
 export async function readDocument(
   path: string,
   signal?: AbortSignal,
-): Promise<{ path: string; content: string }> {
+): Promise<DocumentResponse> {
   const res = await apiFetch(brainPath(`/doc/${path}`), { signal });
   if (!res.ok) throw new Error(`Document not found: ${path}`);
   return readJson(res, documentResponseSchema);

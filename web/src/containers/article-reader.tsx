@@ -1,10 +1,12 @@
 import { useCallback, useEffect, useState } from "react";
 
+import { postUserSuggestion } from "@/api/ingest";
 import { ArticleChrome } from "@/components/article-chrome";
 import { ArticleView } from "@/components/article-view";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { SelectionPopover } from "@/components/selection-popover";
+import { SuggestionForm, type SuggestionPayload } from "@/components/suggestion-form";
 import { useBtw } from "@/hooks/use-btw";
 import { useLinkInterceptor } from "@/hooks/use-link-interceptor";
 import { usePopoverDismiss } from "@/hooks/use-popover-dismiss";
@@ -15,18 +17,34 @@ import type { SelectionInfo } from "@/lib/types";
 interface ArticleReaderProps {
   path: string;
   content: string | null;
+  archived?: boolean;
+  supersededBy?: string | null;
 }
 
-export function ArticleReader({ path, content }: ArticleReaderProps) {
+export function ArticleReader({
+  path,
+  content,
+  archived = false,
+  supersededBy = null,
+}: ArticleReaderProps) {
   const navigate = useViewNavigate();
   const handleLinkClick = useLinkInterceptor();
   const { btws, startBtw, replyBtw, dismissEmpty, cleanup } = useBtw(path);
   const [popover, setPopover] = useState<SelectionInfo | null>(null);
+  const [suggestionTarget, setSuggestionTarget] = useState<SelectionInfo | null>(
+    null,
+  );
+  const [suggestionSubmitted, setSuggestionSubmitted] = useState(false);
   const [hintDismissed, setHintDismissed] = useState(
     () => localStorage.getItem("onboarding-hint-seen") === "true",
   );
 
   usePopoverDismiss(() => setPopover(null));
+
+  const wikiSlug =
+    path.startsWith("wiki/") && path.endsWith(".md")
+      ? path.slice("wiki/".length, -".md".length)
+      : null;
 
   useEffect(() => {
     return () => {
@@ -40,6 +58,28 @@ export function ArticleReader({ path, content }: ArticleReaderProps) {
     setPopover(null);
     window.getSelection()?.removeAllRanges();
   }, [popover, startBtw]);
+
+  const handleSuggest = useCallback(() => {
+    if (!popover) return;
+    setSuggestionTarget(popover);
+    setPopover(null);
+    window.getSelection()?.removeAllRanges();
+  }, [popover]);
+
+  const handleSuggestionSubmit = useCallback(
+    async (payload: SuggestionPayload) => {
+      if (!wikiSlug) return;
+      await postUserSuggestion({
+        body: payload.body,
+        intent: payload.intent,
+        anchoredTo: wikiSlug,
+        anchoredSection: suggestionTarget?.text ?? "",
+      });
+      setSuggestionSubmitted(true);
+      window.setTimeout(() => setSuggestionSubmitted(false), 3000);
+    },
+    [wikiSlug, suggestionTarget],
+  );
 
   const dismissHint = useCallback(() => {
     setHintDismissed(true);
@@ -93,6 +133,9 @@ export function ArticleReader({ path, content }: ArticleReaderProps) {
           onBtwReply={replyBtw}
           onBtwDismiss={dismissEmpty}
           documentId={path}
+          archived={archived}
+          supersededBy={supersededBy}
+          onSupersessorClick={(slug) => navigate(`/doc/wiki/${slug}.md`)}
         />
       )}
 
@@ -102,7 +145,33 @@ export function ArticleReader({ path, content }: ArticleReaderProps) {
         </div>
       )}
 
-      {popover && <SelectionPopover info={popover} onBtw={handleBtw} />}
+      {popover && (
+        <SelectionPopover
+          info={popover}
+          onBtw={handleBtw}
+          onSuggest={wikiSlug ? handleSuggest : undefined}
+        />
+      )}
+
+      {wikiSlug && suggestionTarget && (
+        <SuggestionForm
+          open={suggestionTarget !== null}
+          onOpenChange={(open) => {
+            if (!open) setSuggestionTarget(null);
+          }}
+          anchoredTo={wikiSlug}
+          anchoredSection={suggestionTarget.text}
+          onSubmit={handleSuggestionSubmit}
+        />
+      )}
+
+      {suggestionSubmitted && (
+        <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-[400] bg-popover border border-gold-dim rounded-sm px-4 py-2 shadow-lg animate-[pop-in_0.14s_ease_forwards]">
+          <p className="font-mono text-[length:var(--text-chrome)] tracking-[0.08em] text-gold-muted">
+            suggestion submitted · will land on the next compile
+          </p>
+        </div>
+      )}
     </ArticleChrome>
   );
 }

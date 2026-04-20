@@ -20,5 +20,12 @@ export default function DocPage() {
 
   if (!path) return <Navigate to="/" replace />;
 
-  return <ArticleReader path={path} content={data?.content ?? null} />;
+  return (
+    <ArticleReader
+      path={path}
+      content={data?.content ?? null}
+      archived={data?.archived ?? false}
+      supersededBy={data?.superseded_by ?? null}
+    />
+  );
 }

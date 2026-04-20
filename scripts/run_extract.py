@@ -58,9 +58,7 @@ async def _extract_one(
                 date=str(fm.get("date") or ""),
                 body=body,
             )
-            anchor_total = sum(
-                len(idea.anchors) for idea in result.source_card.ideas
-            )
+            anchor_total = sum(len(idea.anchors) for idea in result.source_card.ideas)
             print(
                 f"  {file_path.name} ... OK  "
                 f"{len(result.source_card.ideas)} ideas, "

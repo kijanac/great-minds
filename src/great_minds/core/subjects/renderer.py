@@ -224,7 +224,7 @@ def _build_user_content(
         "# Concept",
         "",
         f"- Kind: {concept.kind}",
-        f"- Canonical label: \"{concept.canonical_label}\"",
+        f'- Canonical label: "{concept.canonical_label}"',
         f"- Slug: {concept.slug}",
         f"- Description: {concept.description}",
         "",
@@ -271,7 +271,9 @@ def _build_user_content(
     )
     parts.append("")
     for c in concept_registry:
-        parts.append(f"- [{c.canonical_label}](wiki/{c.slug}.md) — {c.kind}: {c.description}")
+        parts.append(
+            f"- [{c.canonical_label}](wiki/{c.slug}.md) — {c.kind}: {c.description}"
+        )
     parts.append("")
 
     return "\n".join(parts)
@@ -381,9 +383,7 @@ def _build_idea_anchor_lookup(
     return lookup
 
 
-def _write_article_file(
-    *, wiki_dir: Path, concept: Concept, body: str
-) -> Path:
+def _write_article_file(*, wiki_dir: Path, concept: Concept, body: str) -> Path:
     """Write the article with minimal user-facing frontmatter.
 
     Pipeline state (article_status, rendered_from_hash) lives on
