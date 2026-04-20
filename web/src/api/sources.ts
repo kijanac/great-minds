@@ -9,7 +9,7 @@ const rawSourceItemSchema = z.object({
   origin: z.string().nullable(),
   published_date: z.string().nullable(),
   compiled: z.boolean(),
-  source_type: z.enum(["document", "user", "lint"]),
+  source_type: z.enum(["document", "user"]),
   updated_at: z.string().nullable(),
 });
 

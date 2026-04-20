@@ -280,11 +280,28 @@ Fetches and ingests content from a URL.
 
 **Response (201):** Same as text ingest.
 
+### Ingest user suggestion
+
+```
+POST /v1/brains/{brain_id}/ingest/user-suggestion
+```
+
+Persists a structured user suggestion as a source document under `raw/user/` with `source_type: "user"`. The suggestion enters the pipeline through the same rail as any other document and influences the next compile.
+
+| Field              | Type   | Required | Description                                        |
+|--------------------|--------|----------|----------------------------------------------------|
+| `body`             | string | yes      | Substantive prose in the user's own words          |
+| `intent`           | string | yes      | One of `disagree`, `correct`, `add_context`, `restructure` |
+| `anchored_to`      | string | no       | Slug of the wiki concept the suggestion targets    |
+| `anchored_section` | string | no       | Highlighted passage or section header for context  |
+
+**Response (201):** Same as text ingest.
+
 ---
 
 ## Compilation
 
-Compilation processes raw sources into wiki articles. It runs as a background task through a multi-phase pipeline: enrich, plan, reconcile, write, index, and backlinks.
+Compilation processes raw sources into wiki articles. It runs as a background task through the six-phase pipeline: extract per-document cards, distill into a concept registry, archive retired slugs, render articles, cross-link the wiki, and assemble the mechanical index.
 
 ### Trigger compilation
 
@@ -471,11 +488,21 @@ GET /v1/brains/{brain_id}/wiki/{slug}
 ```json
 {
   "slug": "imperialism",
-  "content": "# Imperialism\n\nImperialism, as analyzed by..."
+  "content": "# Imperialism\n\nImperialism, as analyzed by...",
+  "archived": false,
+  "superseded_by": null
 }
 ```
 
-Returns `404` if the article doesn't exist.
+If the slug's active article is missing but a retired concept with that slug exists in the archive, the archived article is returned with `archived: true` and `superseded_by` set to the successor slug (or `null` if no successor was identified). Returns `404` only when no active or archived article matches.
+
+### Read an archived article by concept_id
+
+```
+GET /v1/brains/{brain_id}/wiki/archive/{concept_id}
+```
+
+Fetches an archived article directly by its concept_id. Returns the same shape as above with `archived: true`. Returns `404` if the concept is not archived or its archive file is missing.
 
 ### Read any document by path
 
@@ -494,9 +521,13 @@ Read any wiki article or raw source by its full path. The path must start with `
 ```json
 {
   "path": "raw/texts/lenin/imp/01.md",
-  "content": "---\ntitle: Imperialism...\n---\n\n..."
+  "content": "---\ntitle: Imperialism...\n---\n\n...",
+  "archived": false,
+  "superseded_by": null
 }
 ```
+
+Wiki paths (`wiki/<slug>.md`) follow the same archive-fallback rule as `GET /wiki/{slug}`: a miss on the active file resolves against the archive with `archived: true` and `superseded_by` set when a successor exists.
 
 ### List raw sources
 
@@ -524,6 +555,7 @@ GET /v1/brains/{brain_id}/raw/sources
       "origin": "marxists.org",
       "published_date": "1867",
       "compiled": true,
+      "source_type": "document",
       "updated_at": "2026-01-10T08:00:00Z"
     }
   ],
@@ -533,6 +565,8 @@ GET /v1/brains/{brain_id}/raw/sources
   ]
 }
 ```
+
+`source_type` is `"document"` for ingested materials and `"user"` for structured user suggestions authored via `POST /ingest/user-suggestion`.
 
 ---
 
@@ -686,9 +720,9 @@ Approved proposals are automatically ingested into the brain and trigger a compi
 
 ## Lint
 
-Returns pre-computed lint results for the brain's wiki. Lint runs automatically after each compilation.
+Returns a detection-only report over the current brain state. Computed on demand from the compile artifacts — no LLM calls, no mutation. The report surfaces four kinds of signal the caller can act on.
 
-### Get lint results
+### Get lint report
 
 ```
 GET /v1/brains/{brain_id}/lint
@@ -698,36 +732,29 @@ GET /v1/brains/{brain_id}/lint
 
 ```json
 {
-  "fixes_applied": [
-    { "file": "wiki/imperialism.md", "description": "Fixed dead link to wiki/finance-capital.md" }
-  ],
-  "remaining_issues": 3,
-  "counts": {
-    "dead_links": 1,
-    "broken_citations": 0,
-    "orphans": 2,
-    "uncompiled": 0,
-    "uncited": 0,
-    "missing_index": 0,
-    "tag_issues": 0
-  },
   "research_suggestions": [
     {
       "topic": "Finance Capital",
-      "source": "Rudolf Hilferding",
-      "mentioned_in": ["wiki/imperialism.md", "wiki/monopoly.md"],
-      "usage_count": 5,
-      "suggested_category": "texts"
+      "mentioned_in": ["raw/texts/imperialism-01.md", "raw/texts/monopoly-02.md"],
+      "usage_count": 5
     }
   ],
-  "contradictions": [
-    {
-      "description": "Differing accounts of the role of banks in imperialism",
-      "articles": ["wiki/imperialism.md", "wiki/finance-capital.md"]
-    }
-  ]
+  "orphans": [
+    { "slug": "narodniks", "canonical_label": "Narodniks" }
+  ],
+  "dirty_concepts": [
+    "019da12d-8a05-7d7d-88e4-8ff9df3a70db"
+  ],
+  "contradictions": []
 }
 ```
+
+| Field                  | Meaning |
+|------------------------|---------|
+| `research_suggestions` | Topics the corpus mentions in document frontmatter but never clustered into a first-class concept. Each entry gives the topic, a sample of documents that mentioned it, and total mention count. |
+| `orphans`              | Rendered articles whose slug has no incoming wiki backlinks. |
+| `dirty_concepts`       | `concept_id`s whose rendered article has drifted from the current compile inputs (e.g. cluster members changed since the last render). These will be refreshed on the next compile. |
+| `contradictions`       | Reserved for future tool-grounded lint. Currently always empty. |
 
 ---
 
