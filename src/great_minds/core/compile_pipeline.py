@@ -1,10 +1,12 @@
 """Six-phase compilation orchestrator.
 
 Reads raw docs from a brain's storage, produces source cards (Phase 1),
-distills them into a concept registry (Phase 2), renders articles
-(Phase 3), cross-links the wiki + refreshes backlinks (Phase 4), and
-assembles the mechanical index + run log (Phase 5). Phase 6 (lint) and
-the archive flow (M7) slot in as follow-on milestones.
+distills them into a concept registry (Phase 2), archives retired
+articles so session links still resolve (archive sub-phase, between 2
+and 3), renders live articles (Phase 3), cross-links the wiki +
+refreshes backlinks (Phase 4), and assembles the mechanical index + run
+log (Phase 5). Phase 6 (lint) is a detection-only report served on
+demand via GET /lint — it is not a stage of the compile pipeline.
 
 Entry point:
     from great_minds.core.compile_pipeline import run
@@ -25,6 +27,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from great_minds.core.llm import get_async_client
 from great_minds.core.search import rebuild_index
 from great_minds.core.storage import Storage
+from great_minds.core.subjects.archive import archive_retired_concepts
 from great_minds.core.subjects.concept_repository import mark_rendered
 from great_minds.core.subjects.crosslinker import crosslink_wiki
 from great_minds.core.subjects.distiller import (
@@ -54,6 +57,7 @@ class CompileResult:
     docs_compiled: int = 0
     articles_written: list[dict] = field(default_factory=list)
     chunks_indexed: int = 0
+    archived: list[dict] = field(default_factory=list)
 
 
 async def run(
@@ -105,6 +109,15 @@ async def run(
 
     concepts = distillation.concepts
 
+    async with timed_op("archive"):
+        archive_entries = await archive_retired_concepts(
+            session=session,
+            brain_id=brain_id,
+            live_concepts=concepts,
+            wiki_dir=wiki_dir,
+        )
+    enrich(archived=len(archive_entries))
+
     async with timed_op("render"):
         rendered = await render_brain(
             client,
@@ -150,6 +163,15 @@ async def run(
         chunks_indexed=chunks_indexed,
     )
 
+    archived_summary = [
+        {
+            "concept_id": str(e.concept_id),
+            "old_slug": e.old_slug,
+            "superseded_by": e.superseded_by_slug,
+        }
+        for e in archive_entries
+    ]
+
     log_event(
         "compile_completed",
         brain_id=str(brain_id),
@@ -160,14 +182,14 @@ async def run(
         retired=len(distillation.retired),
         articles_written=len(articles_written),
         chunks_indexed=chunks_indexed,
+        archived=len(archived_summary),
     )
     return CompileResult(
         docs_compiled=docs_compiled,
         articles_written=articles_written,
         chunks_indexed=chunks_indexed,
+        archived=archived_summary,
     )
-
-
 
 
 async def _extract_phase(

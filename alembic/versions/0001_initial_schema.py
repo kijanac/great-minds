@@ -234,9 +234,7 @@ def upgrade() -> None:
         sa.Column("genre", sa.Text(), nullable=True),
         sa.Column("compiled", sa.Boolean(), nullable=False, server_default="false"),
         sa.Column("doc_kind", sa.Text(), nullable=False, server_default="raw"),
-        sa.Column(
-            "source_type", sa.Text(), nullable=False, server_default="document"
-        ),
+        sa.Column("source_type", sa.Text(), nullable=False, server_default="document"),
         sa.Column("metadata", JSONB(), nullable=False, server_default="{}"),
         sa.Column(
             "created_at",

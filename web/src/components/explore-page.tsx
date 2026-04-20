@@ -1,44 +1,63 @@
 import { Home } from "lucide-react";
 import type { ReactNode } from "react";
 
-import type { Contradiction, RecentArticle, ResearchSuggestion } from "@/api/explore";
+import type {
+  Contradiction,
+  Orphan,
+  RecentArticle,
+  ResearchSuggestion,
+} from "@/api/explore";
 import type { ContentTypeCount } from "@/api/sources";
 import { Button } from "@/components/ui/button";
-import { formatShortDate } from "@/lib/utils";
+import { CHIP_BASE, CHIP_INACTIVE } from "@/lib/chip";
+import { cn, formatShortDate } from "@/lib/utils";
 
 interface ExplorePageProps {
   suggestions: ResearchSuggestion[];
   contradictions: Contradiction[];
+  orphans: Orphan[];
+  dirtyCount: number;
   recentArticles: RecentArticle[];
   contentTypes: ContentTypeCount[];
   loading: boolean;
   onHome: () => void;
   onArticleClick: (path: string) => void;
+  onOrphanClick: (slug: string) => void;
   onExploreWiki: () => void;
   onExploreSources: (type?: string) => void;
   ingestionZone: ReactNode;
 }
 
-const CHIP_CLASS =
-  "font-mono text-[length:var(--text-chrome)] tracking-[0.08em] px-3 py-1 rounded-sm border border-ink-border text-warm-ghost hover:border-gold-dim hover:text-warm-faint transition-colors";
+const CHIP_CLASS = cn(CHIP_BASE, CHIP_INACTIVE);
 
 export function ExplorePage({
   suggestions,
   contradictions,
+  orphans,
+  dirtyCount,
   recentArticles,
   contentTypes,
   loading,
   onHome,
   onArticleClick,
+  onOrphanClick,
   onExploreWiki,
   onExploreSources,
   ingestionZone,
 }: ExplorePageProps) {
   const hasSuggestions = suggestions.length > 0;
   const hasContradictions = contradictions.length > 0;
+  const hasOrphans = orphans.length > 0;
+  const hasDirty = dirtyCount > 0;
   const hasArticles = recentArticles.length > 0;
   const hasSourceTypes = contentTypes.length > 0;
-  const hasContent = hasSuggestions || hasContradictions || hasArticles || hasSourceTypes;
+  const hasContent =
+    hasSuggestions ||
+    hasContradictions ||
+    hasOrphans ||
+    hasDirty ||
+    hasArticles ||
+    hasSourceTypes;
 
   return (
     <div className="h-screen flex flex-col overflow-hidden">
@@ -133,6 +152,47 @@ export function ExplorePage({
                           )}
                         </div>
                       </div>
+                    ))}
+                  </div>
+                </section>
+              )}
+
+              {hasDirty && (
+                <section className="mb-10">
+                  <h2 className="font-mono text-[length:var(--text-chrome)] tracking-[0.14em] text-gold-muted uppercase mb-4">
+                    needs recompile
+                  </h2>
+                  <p className="font-serif text-[length:var(--text-body)] text-warm-dim">
+                    {dirtyCount} article{dirtyCount === 1 ? "" : "s"} drifted from
+                    the current concept registry and will be refreshed on the next
+                    compile.
+                  </p>
+                </section>
+              )}
+
+              {hasOrphans && (
+                <section className="mb-10">
+                  <h2 className="font-mono text-[length:var(--text-chrome)] tracking-[0.14em] text-gold-muted uppercase mb-4">
+                    orphan articles
+                  </h2>
+                  <p className="font-mono text-[length:var(--text-chrome)] tracking-[0.04em] text-warm-ghost mb-5">
+                    rendered articles that no other article links to
+                  </p>
+                  <div className="space-y-1">
+                    {orphans.map((o) => (
+                      <Button
+                        key={o.slug}
+                        variant="ghost"
+                        onClick={() => onOrphanClick(o.slug)}
+                        className="w-full h-auto py-2.5 px-3 rounded-sm justify-between hover:bg-ink-raised group"
+                      >
+                        <span className="font-serif text-[length:var(--text-body)] text-warm-dim group-hover:text-warm transition-colors truncate text-left">
+                          {o.canonical_label}
+                        </span>
+                        <span className="font-mono text-[length:var(--text-chrome)] text-warm-ghost shrink-0 ml-4">
+                          {o.slug}
+                        </span>
+                      </Button>
                     ))}
                   </div>
                 </section>

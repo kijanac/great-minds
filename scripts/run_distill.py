@@ -24,7 +24,9 @@ PROTOTYPE_BRAIN_ID = uuid.UUID("11111111-1111-1111-1111-111111111111")
 
 
 async def run(brain_id: uuid.UUID, threshold: float, concurrency: int) -> None:
-    print(f"Distilling brain={brain_id} threshold={threshold} concurrency={concurrency}")
+    print(
+        f"Distilling brain={brain_id} threshold={threshold} concurrency={concurrency}"
+    )
     client = get_async_client()
     result = await distill(
         client,
@@ -34,14 +36,14 @@ async def run(brain_id: uuid.UUID, threshold: float, concurrency: int) -> None:
     )
     print()
     print(f"Concepts:       .compile/{brain_id}/subjects.jsonl")
-    print(f"Source cards:   .compile/{brain_id}/source_cards.jsonl (concept_ids filled)")
+    print(
+        f"Source cards:   .compile/{brain_id}/source_cards.jsonl (concept_ids filled)"
+    )
     print(f"Ideas:          {len(result.idea_to_concept)}")
     print(f"Clusters:       {result.n_clusters}  (singletons: {result.n_singletons})")
     print(f"Concepts out:   {len(result.concepts)}")
     if result.concepts:
-        multi = sum(
-            1 for c in result.concepts if len(c.supporting_document_ids) > 1
-        )
+        multi = sum(1 for c in result.concepts if len(c.supporting_document_ids) > 1)
         max_docs = max(len(c.supporting_document_ids) for c in result.concepts)
         print(f"Multi-doc:      {multi}/{len(result.concepts)}")
         print(f"Max docs/cpt:   {max_docs}")
@@ -49,9 +51,7 @@ async def run(brain_id: uuid.UUID, threshold: float, concurrency: int) -> None:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument(
-        "--brain-id", type=uuid.UUID, default=PROTOTYPE_BRAIN_ID
-    )
+    parser.add_argument("--brain-id", type=uuid.UUID, default=PROTOTYPE_BRAIN_ID)
     parser.add_argument(
         "--threshold",
         type=float,

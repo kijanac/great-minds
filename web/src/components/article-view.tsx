@@ -13,6 +13,9 @@ interface ArticleViewProps {
   onBtwReply: (btwId: string, text: string) => void;
   onBtwDismiss?: (btwId: string) => void;
   documentId: string;
+  archived?: boolean;
+  supersededBy?: string | null;
+  onSupersessorClick?: (slug: string) => void;
 }
 
 export function ArticleView({
@@ -23,6 +26,9 @@ export function ArticleView({
   onBtwReply,
   onBtwDismiss,
   documentId,
+  archived = false,
+  supersededBy = null,
+  onSupersessorClick,
 }: ArticleViewProps) {
   // Refs for stable callbacks — avoids recreating mdComponents on every render
   const onSelectionRef = useRef(onSelection);
@@ -124,6 +130,30 @@ export function ArticleView({
 
   return (
     <article className="max-w-[740px] mx-auto px-4 md:px-10 pt-6 md:pt-10 pb-20 select-text">
+      {archived && (
+        <div className="mb-8 px-4 py-3 rounded-sm border border-gold-dim bg-ink-raised">
+          <p className="font-mono text-[length:var(--text-chrome)] tracking-[0.08em] text-gold-muted uppercase mb-1">
+            archived article
+          </p>
+          <p className="font-serif text-[length:var(--text-body)] text-warm-dim">
+            {supersededBy ? (
+              <>
+                This concept has been retired. See{" "}
+                <button
+                  type="button"
+                  onClick={() => onSupersessorClick?.(supersededBy)}
+                  className="text-gold hover:text-gold-bright underline underline-offset-2"
+                >
+                  {supersededBy}
+                </button>{" "}
+                for the current version.
+              </>
+            ) : (
+              <>This concept has been retired. No successor has been identified.</>
+            )}
+          </p>
+        </div>
+      )}
       <h1 className="text-[length:var(--text-title)] font-bold text-foreground mb-8">{title}</h1>
       <Markdown remarkPlugins={remarkPlugins} components={mdComponents}>
         {content}

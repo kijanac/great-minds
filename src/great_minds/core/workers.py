@@ -59,6 +59,7 @@ async def compile_task(params: dict, ctx) -> dict:
             {"slug": a["slug"], "action": a["action"]} for a in result.articles_written
         ],
         "chunks_indexed": result.chunks_indexed,
+        "archived": result.archived,
     }
 
 

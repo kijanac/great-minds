@@ -5,9 +5,15 @@ interface SelectionPopoverProps {
   info: SelectionInfo;
   onFollowUp?: () => void;
   onBtw: () => void;
+  onSuggest?: () => void;
 }
 
-export function SelectionPopover({ info, onFollowUp, onBtw }: SelectionPopoverProps) {
+export function SelectionPopover({
+  info,
+  onFollowUp,
+  onBtw,
+  onSuggest,
+}: SelectionPopoverProps) {
   return (
     <div
       data-popover
@@ -34,6 +40,17 @@ export function SelectionPopover({ info, onFollowUp, onBtw }: SelectionPopoverPr
       >
         btw
       </Button>
+      {onSuggest && (
+        <Button
+          variant="ghost"
+          size="sm"
+          onMouseDown={(e) => e.preventDefault()}
+          onClick={onSuggest}
+          className="rounded-none h-auto text-gold-muted font-mono text-[length:var(--text-chrome)] tracking-[0.1em] py-[9px] px-3.5 hover:text-gold hover:bg-interactive-dim border-l border-gold-dim"
+        >
+          suggest
+        </Button>
+      )}
     </div>
   );
 }

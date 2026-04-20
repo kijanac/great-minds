@@ -127,6 +127,37 @@ async function* readLines(
   }
 }
 
+export type UserSuggestionIntent =
+  | "disagree"
+  | "correct"
+  | "add_context"
+  | "restructure";
+
+export async function postUserSuggestion(params: {
+  body: string;
+  intent: UserSuggestionIntent;
+  anchoredTo: string;
+  anchoredSection: string;
+}): Promise<IngestResult> {
+  const res = await apiFetch(brainPath("/ingest/user-suggestion"), {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      body: params.body,
+      intent: params.intent,
+      anchored_to: params.anchoredTo,
+      anchored_section: params.anchoredSection,
+    }),
+  });
+
+  if (!res.ok) {
+    const detail = await res.text();
+    throw new Error(detail);
+  }
+
+  return readJson(res, ingestResultSchema);
+}
+
 export async function ingestUrl(url: string): Promise<IngestResult> {
   const res = await apiFetch(brainPath("/ingest/url"), {
     method: "POST",

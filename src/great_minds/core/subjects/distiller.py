@@ -108,11 +108,7 @@ async def distill(
     concept_id references.
     """
     cards = _load_source_cards(brain_id)
-    ideas_flat = [
-        (card.document_id, idea)
-        for card in cards
-        for idea in card.ideas
-    ]
+    ideas_flat = [(card.document_id, idea) for card in cards for idea in card.ideas]
     if not ideas_flat:
         log_event("distill_empty_input", brain_id=str(brain_id))
         return DistillationResult(
@@ -303,9 +299,7 @@ def _truncate_and_normalize(embedding: list[float], dims: int) -> list[float]:
 # --- Clustering -------------------------------------------------------------
 
 
-def _clusters_from_edges(
-    n: int, edges: list[tuple[int, int]]
-) -> list[list[int]]:
+def _clusters_from_edges(n: int, edges: list[tuple[int, int]]) -> list[list[int]]:
     """Build cluster index list from a sparse edge set via connected components."""
     if not edges:
         return [[i] for i in range(n)]
@@ -485,7 +479,7 @@ def _build_concept(
         brain_id=brain_id,
         kind=kind,
         canonical_label=canonical_label,
-        slug=_slugify(canonical_label),
+        slug=slugify_concept_label(canonical_label),
         description=description,
         supporting_document_ids=supporting_docs,
         member_idea_ids=member_idea_ids,
@@ -515,7 +509,12 @@ _SLUG_STRIP_RE = re.compile(r"[^\w\s-]")
 _SLUG_DASH_RE = re.compile(r"[\s_-]+")
 
 
-def _slugify(label: str) -> str:
+def slugify_concept_label(label: str) -> str:
+    """Canonicalize a concept label into its slug form.
+
+    Shared with lint's research-suggestion detector so that raw-doc
+    concept strings can be matched against ConceptORM.slug values.
+    """
     slug = _SLUG_STRIP_RE.sub("", label.lower().strip())
     slug = _SLUG_DASH_RE.sub("-", slug).strip("-")
     return slug or "unnamed"

@@ -53,9 +53,7 @@ async def run(brain_id: uuid.UUID) -> None:
 
     print("\nTop 40 most-similar pairs:")
     flat = [
-        (i, j, sim[i, j])
-        for i in range(len(ideas))
-        for j in range(i + 1, len(ideas))
+        (i, j, sim[i, j]) for i in range(len(ideas)) for j in range(i + 1, len(ideas))
     ]
     flat.sort(key=lambda x: -x[2])
     for i, j, s in flat[:40]:

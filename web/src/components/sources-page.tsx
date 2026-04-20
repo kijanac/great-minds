@@ -3,6 +3,7 @@ import { Home, Search } from "lucide-react";
 import type { ContentTypeCount, RawSourceItem } from "@/api/sources";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { CHIP_ACTIVE, CHIP_BASE, CHIP_INACTIVE } from "@/lib/chip";
 import { cn, formatShortDate } from "@/lib/utils";
 
 interface SourcesPageProps {
@@ -18,12 +19,6 @@ interface SourcesPageProps {
   onSearchChange: (query: string) => void;
   onLoadMore: () => void;
 }
-
-const CHIP_BASE =
-  "font-mono text-[length:var(--text-chrome)] tracking-[0.08em] px-3 py-1 rounded-sm border transition-colors";
-const CHIP_ACTIVE = "border-gold-dim text-gold bg-gold/10";
-const CHIP_INACTIVE =
-  "border-ink-border text-warm-ghost hover:border-gold-dim hover:text-warm-faint";
 
 export function SourcesPage({
   items,

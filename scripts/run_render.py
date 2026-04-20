@@ -46,9 +46,7 @@ async def run(
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("raw_dir", type=Path, help="directory of raw *.md source docs")
-    parser.add_argument(
-        "--brain-id", type=uuid.UUID, default=PROTOTYPE_BRAIN_ID
-    )
+    parser.add_argument("--brain-id", type=uuid.UUID, default=PROTOTYPE_BRAIN_ID)
     parser.add_argument(
         "--wiki-dir",
         type=Path,
@@ -76,9 +74,7 @@ def main() -> None:
     )
     args = parser.parse_args()
 
-    wiki_dir = args.wiki_dir or (
-        Path(".compile") / str(args.brain_id) / "wiki"
-    )
+    wiki_dir = args.wiki_dir or (Path(".compile") / str(args.brain_id) / "wiki")
 
     setup_logging(service="great-minds")
     asyncio.run(

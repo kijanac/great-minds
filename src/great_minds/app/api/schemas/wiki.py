@@ -8,6 +8,8 @@ from pydantic import BaseModel, ConfigDict
 class ArticleResponse(BaseModel):
     slug: str
     content: str
+    archived: bool = False
+    superseded_by: str | None = None
 
 
 class RecentArticleItem(BaseModel):
@@ -28,6 +30,7 @@ class RawSourceItem(BaseModel):
     origin: str | None
     published_date: str | None
     compiled: bool
+    source_type: str
     updated_at: datetime | None
 
 
@@ -44,3 +47,5 @@ class RawSourcesResponse(BaseModel):
 class DocResponse(BaseModel):
     path: str
     content: str
+    archived: bool = False
+    superseded_by: str | None = None
