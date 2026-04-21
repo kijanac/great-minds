@@ -13,7 +13,7 @@ from uuid import UUID
 from absurd_sdk import AbsurdHooks, AsyncAbsurd
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from great_minds.core import compile_pipeline, ingester
+from great_minds.core import ingester
 from great_minds.core.brain import load_config
 from great_minds.core.brain_utils import parse_frontmatter
 from great_minds.core.documents.repository import DocumentRepository
@@ -38,29 +38,17 @@ log = logging.getLogger(__name__)
 
 
 async def compile_task(params: dict, ctx) -> dict:
-    """Run the compilation pipeline with heartbeat for long runs."""
+    """Compile is being rewritten on the seven-phase pipeline.
+
+    See target_architecture.md. The task shape (params, return dict) will
+    be refilled once the new orchestrator is wired; until then, fail loud
+    so a stale compile trigger can't silently succeed against the old
+    registry.
+    """
     correlation_id.set(f"task-{ctx.task_id}")
-    data_dir = Path(params["data_dir"])
-    storage = LocalStorage(data_dir / "brains" / params["brain_id"])
-    brain_id = UUID(params["brain_id"])
-    session = _task_session.get()
-
-    await ctx.heartbeat(600)
-    result = await compile_pipeline.run(
-        storage,
-        brain_id=brain_id,
-        session=session,
-        limit=params.get("limit"),
+    raise NotImplementedError(
+        "compile is being rewritten on the seven-phase pipeline"
     )
-
-    return {
-        "docs_compiled": result.docs_compiled,
-        "articles_written": [
-            {"slug": a["slug"], "action": a["action"]} for a in result.articles_written
-        ],
-        "chunks_indexed": result.chunks_indexed,
-        "archived": result.archived,
-    }
 
 
 async def bulk_ingest_task(params: dict, ctx) -> dict:
@@ -154,27 +142,14 @@ async def bulk_ingest_task(params: dict, ctx) -> dict:
     )
     emit_wide_event()
 
-    compile_result = None
-    if ingested > 0:
-        log.info("bulk_ingest: triggering compilation")
-        await ctx.heartbeat(600)
-        compile_result = await compile_pipeline.run(
-            storage,
-            brain_id=brain_id,
-            session=session,
-        )
+    # Compile auto-trigger is disabled during the seven-phase refactor.
+    # Callers must invoke compile separately once the new orchestrator ships.
 
     return {
         "total_files": total,
         "ingested": ingested,
         "skipped": skipped,
-        "compiled": {
-            "docs": compile_result.docs_compiled,
-            "articles": len(compile_result.articles_written),
-            "chunks_indexed": compile_result.chunks_indexed,
-        }
-        if compile_result
-        else None,
+        "compiled": None,
     }
 
 

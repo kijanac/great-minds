@@ -1,20 +1,17 @@
-"""Lint route — serves the Phase 6 detection report on demand.
+"""Lint route — stubbed during the seven-phase refactor.
 
-Lint never authors source material. GET /lint runs a set of mechanical
-SQL queries over the post-compile state and returns a report the user
-can act on from the Explore page. See core/subjects/lint.py for the
-detection logic.
+Lint remains a detection-only on-demand endpoint per the target
+architecture, but the queries it runs depend on post-compile state
+(topic_links vs backlinks divergence, orphan topics, etc.) that doesn't
+exist yet. Returns an empty report until verify + publish are wired.
 """
 
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Path
 from pydantic import BaseModel
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from great_minds.app.api.dependencies import require_brain_member
-from great_minds.core.db import get_session
-from great_minds.core.subjects.lint import build_lint_report
 
 router = APIRouter(prefix="/lint", tags=["lint"])
 
@@ -38,30 +35,18 @@ class ContradictionResponse(BaseModel):
 class LintReportResponse(BaseModel):
     research_suggestions: list[ResearchSuggestionResponse]
     orphans: list[OrphanResponse]
-    dirty_concepts: list[UUID]
+    dirty_topics: list[UUID]
     contradictions: list[ContradictionResponse]
 
 
 @router.get("")
 async def lint(
     brain_id: UUID = Path(...),
-    session: AsyncSession = Depends(get_session),
     _auth: None = Depends(require_brain_member),
 ) -> LintReportResponse:
-    report = await build_lint_report(session, brain_id)
     return LintReportResponse(
-        research_suggestions=[
-            ResearchSuggestionResponse(
-                topic=s.topic,
-                mentioned_in=s.mentioned_in,
-                usage_count=s.usage_count,
-            )
-            for s in report.research_suggestions
-        ],
-        orphans=[
-            OrphanResponse(slug=o.slug, canonical_label=o.canonical_label)
-            for o in report.orphans
-        ],
-        dirty_concepts=report.dirty_concepts,
+        research_suggestions=[],
+        orphans=[],
+        dirty_topics=[],
         contradictions=[],
     )

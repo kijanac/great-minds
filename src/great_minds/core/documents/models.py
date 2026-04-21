@@ -1,4 +1,4 @@
-"""ORM models for the documents index and backlinks."""
+"""ORM models for the documents index."""
 
 from __future__ import annotations
 
@@ -49,6 +49,7 @@ class DocumentORM(Base):
     source_type: Mapped[str] = mapped_column(
         Text, nullable=False, server_default="document"
     )
+    precis: Mapped[str | None] = mapped_column(Text, nullable=True)
     extra_metadata: Mapped[dict] = mapped_column(
         "metadata", JSONB, nullable=False, server_default="{}"
     )
@@ -69,25 +70,3 @@ class DocumentTag(Base):
         primary_key=True,
     )
     tag: Mapped[str] = mapped_column(Text, primary_key=True, index=True)
-
-
-class BacklinkORM(Base):
-    __tablename__ = "backlinks"
-    __table_args__ = (UniqueConstraint("brain_id", "source_slug", "target_slug"),)
-
-    id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True),
-        primary_key=True,
-        server_default=func.gen_random_uuid(),
-    )
-    brain_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True),
-        ForeignKey("brains.id", ondelete="CASCADE"),
-        nullable=False,
-        index=True,
-    )
-    source_slug: Mapped[str] = mapped_column(Text, nullable=False)
-    target_slug: Mapped[str] = mapped_column(Text, nullable=False)
-    updated_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now(), nullable=False
-    )
