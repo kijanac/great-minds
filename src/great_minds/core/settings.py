@@ -32,6 +32,8 @@ class Settings(BaseSettings):
     compile_plan_concurrency: int = 10
     compile_write_concurrency: int = 3
 
+    log_json: bool = False
+
 
 @lru_cache(maxsize=1)
 def get_settings() -> Settings:

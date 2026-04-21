@@ -20,6 +20,7 @@ from great_minds.core.telemetry import (
     emit_wide_event,
     enrich,
     init_wide_event,
+    setup_logging,
 )
 from great_minds.core.workers import create_absurd
 
@@ -84,6 +85,7 @@ async def lifespan(app: FastAPI):
 
 def create_app() -> FastAPI:
     settings = get_settings()
+    setup_logging(service="great-minds", json_output=settings.log_json)
 
     app = FastAPI(
         title="Great Minds",

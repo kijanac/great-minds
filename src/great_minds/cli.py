@@ -149,7 +149,8 @@ async def _run_reset(brain_id: str, brain_root: Path) -> None:
             "backlinks",
             "tasks",
             "source_proposals",
-            "document_tags",
+            "concepts",
+            "idea_embeddings",
             "documents",
         ]
         for table in tables:
@@ -192,7 +193,6 @@ def cmd_reset(args: argparse.Namespace) -> None:
 
 
 def cmd_serve(args: argparse.Namespace) -> None:
-    setup_logging(service="great-minds", json_output=True)
     if args.reload:
         uvicorn.run(
             "great_minds.app.api.server:create_app",
