@@ -1,8 +1,9 @@
 """initial schema
 
-Full schema: users, auth, brains, memberships, proposals, tasks,
-search index, documents, backlinks, idea embeddings, concepts, and
-absurd task queue.
+Full schema for the seven-phase pipeline: users, auth, brains,
+memberships, proposals, tasks, search index, documents, idea_embeddings,
+topics + topic_membership + topic_links + topic_related, backlinks (keyed
+by topic_id), and the absurd task queue.
 
 Revision ID: 0001
 Revises:
@@ -235,6 +236,7 @@ def upgrade() -> None:
         sa.Column("compiled", sa.Boolean(), nullable=False, server_default="false"),
         sa.Column("doc_kind", sa.Text(), nullable=False, server_default="raw"),
         sa.Column("source_type", sa.Text(), nullable=False, server_default="document"),
+        sa.Column("precis", sa.Text(), nullable=True),
         sa.Column("metadata", JSONB(), nullable=False, server_default="{}"),
         sa.Column(
             "created_at",
@@ -271,45 +273,19 @@ def upgrade() -> None:
     )
     op.create_index("ix_document_tags_tag", "document_tags", ["tag"])
 
-    # -- Backlinks ---------------------------------------------------------
-    op.create_table(
-        "backlinks",
-        sa.Column(
-            "id",
-            sa.UUID(),
-            nullable=False,
-            server_default=sa.text("gen_random_uuid()"),
-        ),
-        sa.Column("brain_id", sa.UUID(), nullable=False),
-        sa.Column("source_slug", sa.Text(), nullable=False),
-        sa.Column("target_slug", sa.Text(), nullable=False),
-        sa.Column(
-            "updated_at",
-            sa.DateTime(timezone=True),
-            server_default=sa.text("now()"),
-            nullable=False,
-        ),
-        sa.ForeignKeyConstraint(["brain_id"], ["brains.id"], ondelete="CASCADE"),
-        sa.PrimaryKeyConstraint("id"),
-        sa.UniqueConstraint("brain_id", "source_slug", "target_slug"),
-    )
-    op.create_index("ix_backlinks_brain_id", "backlinks", ["brain_id"])
-    op.create_index("ix_backlinks_target", "backlinks", ["brain_id", "target_slug"])
-
     # -- Idea embeddings (per-Idea vectors, pgvector-backed) ---------------
     op.execute(
         text(
             """
             CREATE TABLE idea_embeddings (
-                idea_id            uuid PRIMARY KEY,
-                brain_id           uuid NOT NULL,
-                document_id        uuid NOT NULL,
-                label              text NOT NULL,
-                description        text NOT NULL,
-                kind               text NOT NULL,
-                embedding          vector(1024) NOT NULL,
-                extraction_version integer NOT NULL,
-                created_at         timestamptz NOT NULL DEFAULT now()
+                idea_id       uuid PRIMARY KEY,
+                brain_id      uuid NOT NULL,
+                document_id   uuid NOT NULL,
+                kind          text NOT NULL,
+                label         text NOT NULL,
+                description   text NOT NULL,
+                embedding     vector(1024) NOT NULL,
+                created_at    timestamptz NOT NULL DEFAULT now()
             )
             """
         )
@@ -319,24 +295,29 @@ def upgrade() -> None:
     )
     op.execute(
         text(
+            "CREATE INDEX ix_idea_embeddings_document_id "
+            "ON idea_embeddings (document_id)"
+        )
+    )
+    op.execute(
+        text(
             "CREATE INDEX ix_idea_embeddings_embedding ON idea_embeddings "
             "USING hnsw (embedding vector_cosine_ops)"
         )
     )
 
-    # -- Concepts (Postgres mirror of the concept registry) ----------------
+    # -- Topics (canonical theme registry) ---------------------------------
     op.execute(
         text(
             """
-            CREATE TABLE concepts (
-                concept_id          uuid PRIMARY KEY,
+            CREATE TABLE topics (
+                topic_id            uuid PRIMARY KEY,
                 brain_id            uuid NOT NULL REFERENCES brains(id) ON DELETE CASCADE,
-                kind                text NOT NULL,
-                canonical_label     text NOT NULL,
                 slug                text NOT NULL,
+                title               text NOT NULL,
                 description         text NOT NULL,
                 article_status      text NOT NULL DEFAULT 'no_article',
-                compiled_from_hash  text NOT NULL,
+                compiled_from_hash  text NULL,
                 rendered_from_hash  text NULL,
                 supersedes          uuid NULL,
                 superseded_by       uuid NULL,
@@ -347,8 +328,91 @@ def upgrade() -> None:
             """
         )
     )
-    op.execute(text("CREATE INDEX ix_concepts_brain_id ON concepts (brain_id)"))
-    op.execute(text("CREATE INDEX ix_concepts_kind ON concepts (kind)"))
+    op.execute(text("CREATE INDEX ix_topics_brain_id ON topics (brain_id)"))
+    op.execute(
+        text("CREATE INDEX ix_topics_article_status ON topics (article_status)")
+    )
+
+    # -- Topic membership (topic <-> idea edges, derived) ------------------
+    op.execute(
+        text(
+            """
+            CREATE TABLE topic_membership (
+                topic_id   uuid NOT NULL REFERENCES topics(topic_id) ON DELETE CASCADE,
+                idea_id    uuid NOT NULL,
+                PRIMARY KEY (topic_id, idea_id)
+            )
+            """
+        )
+    )
+    op.execute(
+        text(
+            "CREATE INDEX ix_topic_membership_idea_id "
+            "ON topic_membership (idea_id)"
+        )
+    )
+
+    # -- Topic links (intentional citations from reduce's link_targets) ---
+    op.execute(
+        text(
+            """
+            CREATE TABLE topic_links (
+                source_topic_id  uuid NOT NULL REFERENCES topics(topic_id) ON DELETE CASCADE,
+                target_topic_id  uuid NOT NULL REFERENCES topics(topic_id) ON DELETE CASCADE,
+                PRIMARY KEY (source_topic_id, target_topic_id)
+            )
+            """
+        )
+    )
+    op.execute(
+        text(
+            "CREATE INDEX ix_topic_links_target "
+            "ON topic_links (target_topic_id)"
+        )
+    )
+
+    # -- Topic related (shared-idea Jaccard, for sidebar UI) ---------------
+    op.execute(
+        text(
+            """
+            CREATE TABLE topic_related (
+                topic_id         uuid NOT NULL REFERENCES topics(topic_id) ON DELETE CASCADE,
+                related_topic_id uuid NOT NULL REFERENCES topics(topic_id) ON DELETE CASCADE,
+                shared_ideas     integer NOT NULL,
+                jaccard          double precision NOT NULL,
+                PRIMARY KEY (topic_id, related_topic_id)
+            )
+            """
+        )
+    )
+    op.execute(
+        text(
+            "CREATE INDEX ix_topic_related_topic_id "
+            "ON topic_related (topic_id, jaccard DESC)"
+        )
+    )
+
+    # -- Backlinks (article-level reality from verify) ---------------------
+    # Built by phase 5 verify from actual [title](wiki/<slug>.md) citations
+    # in rendered prose. Separate from topic_links (topic-level intent).
+    op.execute(
+        text(
+            """
+            CREATE TABLE backlinks (
+                target_topic_id     uuid NOT NULL REFERENCES topics(topic_id) ON DELETE CASCADE,
+                source_topic_id     uuid NOT NULL REFERENCES topics(topic_id) ON DELETE CASCADE,
+                source_article_path text NOT NULL,
+                PRIMARY KEY (target_topic_id, source_topic_id)
+            )
+            """
+        )
+    )
+    op.execute(
+        text(
+            "CREATE INDEX ix_backlinks_source_topic_id "
+            "ON backlinks (source_topic_id)"
+        )
+    )
 
     # -- Absurd (durable task queue) schema --------------------------------
     url = op.get_bind().engine.url

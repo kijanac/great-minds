@@ -14,16 +14,14 @@ from dataclasses import asdict, dataclass
 from uuid import UUID
 
 from openai import AsyncOpenAI
-from sqlalchemy import or_, select
 
 from .brain import load_prompt, wiki_slug
 from .search import search as hybrid_search
-from .brain_utils import extract_wiki_link_targets
+from .brain_utils import extract_wiki_link_targets, parse_frontmatter
 from .documents.repository import DocumentRepository
 from .documents.schemas import DocKind
 from .llm import FALLBACK_MODELS, QUERY_MODEL, get_async_client
 from .storage import Storage
-from .subjects.models import ConceptORM
 from .telemetry import (
     correlation_id,
     emit_wide_event,
@@ -136,12 +134,9 @@ _BASE_TOOLS = [
 ]
 
 
-def _build_query_tool(tags: list[str], concepts: list[str]) -> dict:
+def _build_query_tool(tags: list[str]) -> dict:
     """Build the query_documents tool definition with available vocabulary."""
     tags_desc = f"Available tags: {', '.join(tags)}" if tags else "No tags yet"
-    concepts_desc = (
-        f"Available concepts: {', '.join(concepts)}" if concepts else "No concepts yet"
-    )
     return {
         "type": "function",
         "function": {
@@ -149,8 +144,8 @@ def _build_query_tool(tags: list[str], concepts: list[str]) -> dict:
             "description": (
                 "Search documents by structured metadata filters. "
                 "Use when you need to find documents by tag, author, date, genre, "
-                "type, or concept — not by content similarity. "
-                f"{tags_desc}. {concepts_desc}."
+                "or type — not by content similarity. "
+                f"{tags_desc}."
             ),
             "parameters": {
                 "type": "object",
@@ -159,11 +154,6 @@ def _build_query_tool(tags: list[str], concepts: list[str]) -> dict:
                         "type": "array",
                         "items": {"type": "string"},
                         "description": "Filter by tags (all must match)",
-                    },
-                    "concepts": {
-                        "type": "array",
-                        "items": {"type": "string"},
-                        "description": "Filter by concepts (all must match)",
                     },
                     "author": {
                         "type": "string",
@@ -200,18 +190,12 @@ _QUERY_WIKI_ARTICLES_TOOL: dict = {
     "function": {
         "name": "query_wiki_articles",
         "description": (
-            "Find wiki articles by metadata. Use to locate articles by kind "
-            "(concept/person/event/organization/work/place/movement/other), "
-            "by text in the title or description, or by slug. Returns "
-            "article paths you can pass to read_document to fetch content."
+            "Find wiki articles by title/description or slug. Returns article "
+            "paths you can pass to read_document to fetch content."
         ),
         "parameters": {
             "type": "object",
             "properties": {
-                "kind": {
-                    "type": "string",
-                    "description": "Article kind to filter by",
-                },
                 "query": {
                     "type": "string",
                     "description": (
@@ -233,9 +217,9 @@ _QUERY_WIKI_ARTICLES_TOOL: dict = {
 }
 
 
-def build_tools(tags: list[str], concepts: list[str]) -> list[dict]:
+def build_tools(tags: list[str]) -> list[dict]:
     """Build the full tool list with vocabulary injected into query_documents."""
-    return _BASE_TOOLS + [_build_query_tool(tags, concepts), _QUERY_WIKI_ARTICLES_TOOL]
+    return _BASE_TOOLS + [_build_query_tool(tags), _QUERY_WIKI_ARTICLES_TOOL]
 
 
 PROVIDER_EXTRA_BODY = {
@@ -321,23 +305,13 @@ def read_document(
 async def read_document_enriched(
     brains: list[QuerySource], path: str, doc_repo: DocumentRepository
 ) -> str:
-    """Read a document with backlinks from the database."""
-    base = read_document(brains, path)
-    if base.startswith("Document not found"):
-        return base
+    """Read a document.
 
-    if path.startswith("wiki/") and path.endswith(".md"):
-        slug = path.removeprefix("wiki/").removesuffix(".md")
-        brain_ids = [src.brain_id for src in brains]
-        if brain_ids:
-            backlink_slugs = await doc_repo.get_backlinks(brain_ids, slug)
-            if backlink_slugs:
-                unique = list(dict.fromkeys(backlink_slugs))
-                base += "\nBacklinks (articles that reference this one): " + ", ".join(
-                    f"wiki/{s}.md" for s in unique
-                )
-
-    return base
+    Backlinks will be attached here once phase 5 verify populates the
+    topic-id-keyed backlinks table from rendered prose. Until then this
+    is a straight pass-through to read_document.
+    """
+    return read_document(brains, path)
 
 
 async def search_wiki(
@@ -376,7 +350,6 @@ async def query_documents(
         k: v
         for k, v in {
             "tags": args.get("tags"),
-            "concepts": args.get("concepts"),
             "author": args.get("author"),
             "genre": args.get("genre"),
             "date_gte": args.get("date_gte"),
@@ -396,20 +369,16 @@ async def query_documents(
     parts = []
     for doc in results:
         tags_str = f"  tags: {', '.join(doc.tags)}" if doc.tags else ""
-        concepts = doc.extra_metadata.get("concepts", [])
-        concepts_str = f"  concepts: {', '.join(concepts)}" if concepts else ""
         meta = f"  [{doc.doc_kind}] {doc.file_path}"
         if doc.author:
             meta += f" by {doc.author}"
-        if doc.date:
-            meta += f" ({doc.date})"
+        if doc.published_date:
+            meta += f" ({doc.published_date})"
         lines = [f"### {doc.title or doc.file_path}", meta]
         if doc.genre:
             lines.append(f"  genre: {doc.genre}")
         if tags_str:
             lines.append(tags_str)
-        if concepts_str:
-            lines.append(concepts_str)
         parts.append("\n".join(lines))
 
     return f"Found {len(results)} documents:\n\n" + "\n\n".join(parts)
@@ -418,39 +387,43 @@ async def query_documents(
 async def query_wiki_articles(
     brains: list[QuerySource], args: dict, doc_repo: DocumentRepository
 ) -> str:
-    """Structured metadata query over the wiki article registry.
+    """Structured query over the wiki article registry.
 
-    Backed by ConceptORM (1 Concept = 1 Article). Filtered strictly to
-    rendered articles so the agent only ever receives paths it can
-    successfully read_document on. The concept-vs-article distinction
-    is a compilation internal; the agent sees a clean article layer.
+    Walks each brain's wiki/ directory, reads frontmatter for title +
+    description, filters by slug/query args. The topics table will back
+    this once the seven-phase pipeline lands; the filesystem view is the
+    transitional source of truth.
     """
-    brain_ids = [src.brain_id for src in brains]
-    if not brain_ids:
-        return "No wiki articles available (no indexed brains)"
+    if not brains:
+        return "No wiki articles available (no brains)"
 
-    stmt = (
-        select(ConceptORM)
-        .where(ConceptORM.brain_id.in_(brain_ids))
-        .where(ConceptORM.article_status == "rendered")
-    )
-    if args.get("kind"):
-        stmt = stmt.where(ConceptORM.kind == args["kind"])
-    if args.get("slug"):
-        stmt = stmt.where(ConceptORM.slug == args["slug"])
-    if args.get("query"):
-        q = f"%{args['query']}%"
-        stmt = stmt.where(
-            or_(
-                ConceptORM.canonical_label.ilike(q),
-                ConceptORM.description.ilike(q),
-            )
-        )
+    slug_filter = args.get("slug")
+    query_str = (args.get("query") or "").strip().lower()
     limit = args.get("limit") or 20
-    stmt = stmt.order_by(ConceptORM.canonical_label).limit(limit)
 
-    result = await doc_repo.session.execute(stmt)
-    rows = list(result.scalars().all())
+    rows: list[tuple[str, str, str, str]] = []
+    for src in brains:
+        for path in src.storage.glob("wiki/*.md"):
+            filename = path.rsplit("/", 1)[-1]
+            if filename.startswith("_"):
+                continue
+            slug = filename.removesuffix(".md")
+            if slug_filter and slug != slug_filter:
+                continue
+            content = src.storage.read(path, strict=False)
+            if content is None:
+                continue
+            fm, _ = parse_frontmatter(content)
+            title = fm.get("title") or slug.replace("-", " ").title()
+            description = fm.get("description") or ""
+            if query_str and query_str not in title.lower() and query_str not in description.lower():
+                continue
+            rows.append((src.label, slug, title, description))
+            if len(rows) >= limit:
+                break
+        if len(rows) >= limit:
+            break
+
     log_event(
         "tool.query_wiki_articles_executed",
         filters=str(args),
@@ -460,14 +433,10 @@ async def query_wiki_articles(
     if not rows:
         return f"No wiki articles match: {json.dumps(args)}"
 
-    parts = []
-    for row in rows:
-        archived = " [archived]" if row.superseded_by else ""
-        parts.append(
-            f"### {row.canonical_label}{archived}\n"
-            f"  kind: {row.kind}  path: wiki/{row.slug}.md\n"
-            f"  {row.description}"
-        )
+    parts = [
+        f"### {title}\n  path: wiki/{slug}.md\n  {description}"
+        for _, slug, title, description in rows
+    ]
     return f"Found {len(rows)} wiki articles:\n\n" + "\n\n".join(parts)
 
 
@@ -895,13 +864,12 @@ def _build_session_context_messages(session_md: str) -> list[dict]:
 async def _load_tools(
     brains: list[QuerySource], doc_repo: DocumentRepository
 ) -> list[dict]:
-    """Load tag/concept vocabulary from DB and build the full tool list."""
+    """Load tag vocabulary from DB and build the full tool list."""
     brain_ids = [src.brain_id for src in brains]
     if not brain_ids:
         return _BASE_TOOLS
     tags = await doc_repo.get_distinct_tags(brain_ids)
-    concepts = await doc_repo.get_distinct_concepts(brain_ids)
-    return build_tools(tags, concepts)
+    return build_tools(tags)
 
 
 async def run_stream_query(

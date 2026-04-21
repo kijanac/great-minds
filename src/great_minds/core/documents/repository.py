@@ -4,14 +4,11 @@ import hashlib
 from collections import defaultdict
 from uuid import UUID
 
-from sqlalchemy import delete, distinct, func, select, type_coerce
-from sqlalchemy.dialects.postgresql import JSONB, insert
+from sqlalchemy import delete, distinct, func, select
+from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from great_minds.core.brain import wiki_slug
-from great_minds.core.brain_utils import extract_wiki_link_targets
 from great_minds.core.documents.models import (
-    BacklinkORM,
     DocumentORM,
     DocumentTag,
 )
@@ -99,7 +96,6 @@ class DocumentRepository:
         brain_ids: list[UUID],
         *,
         tags: list[str] | None = None,
-        concepts: list[str] | None = None,
         author: str | None = None,
         genre: str | None = None,
         compiled: bool | None = None,
@@ -123,14 +119,6 @@ class DocumentRepository:
                 .having(func.count(distinct(DocumentTag.tag)) >= len(tags))
             )
             stmt = stmt.where(DocumentORM.id.in_(tag_subq))
-
-        if concepts:
-            # JSONB @> containment — uses the GIN index
-            stmt = stmt.where(
-                DocumentORM.extra_metadata.op("@>")(
-                    type_coerce({"concepts": concepts}, JSONB)
-                )
-            )
 
         if author:
             stmt = stmt.where(DocumentORM.author.ilike(f"%{author}%"))
@@ -212,62 +200,3 @@ class DocumentRepository:
         )
         return list(result.scalars().all())
 
-    async def get_distinct_concepts(self, brain_ids: list[UUID]) -> list[str]:
-        """Extract distinct concepts from JSONB metadata across brains."""
-        # Query JSONB array elements
-        result = await self.session.execute(
-            select(
-                func.jsonb_array_elements_text(
-                    DocumentORM.extra_metadata["concepts"]
-                ).label("concept")
-            )
-            .where(
-                DocumentORM.brain_id.in_(brain_ids),
-                func.jsonb_typeof(DocumentORM.extra_metadata["concepts"]) == "array",
-            )
-            .distinct()
-        )
-        return sorted(result.scalars().all())
-
-    async def upsert_backlinks(
-        self,
-        brain_id: UUID,
-        source_slug: str,
-        target_slugs: list[str],
-    ) -> None:
-        """Replace all outgoing backlinks for a source article."""
-        await self.session.execute(
-            delete(BacklinkORM).where(
-                BacklinkORM.brain_id == brain_id,
-                BacklinkORM.source_slug == source_slug,
-            )
-        )
-        rows = [
-            {"brain_id": brain_id, "source_slug": source_slug, "target_slug": t}
-            for t in target_slugs
-            if t != source_slug
-        ]
-        if rows:
-            await self.session.execute(insert(BacklinkORM).values(rows))
-
-    async def get_backlinks(self, brain_ids: list[UUID], target_slug: str) -> list[str]:
-        """Return source slugs that link to the given target across brains."""
-        result = await self.session.execute(
-            select(BacklinkORM.source_slug).where(
-                BacklinkORM.brain_id.in_(brain_ids),
-                BacklinkORM.target_slug == target_slug,
-            )
-        )
-        return list(result.scalars().all())
-
-    async def rebuild_backlinks_for_article(
-        self,
-        brain_id: UUID,
-        slug: str,
-        article_content: str,
-    ) -> None:
-        """Parse outgoing wiki links from an article and upsert backlinks."""
-        targets = [
-            wiki_slug(path) for path in extract_wiki_link_targets(article_content)
-        ]
-        await self.upsert_backlinks(brain_id, slug, targets)

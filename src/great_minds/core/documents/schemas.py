@@ -42,7 +42,7 @@ class DocumentCreate(BaseModel):
     genre: str | None = None
     tags: list[str] = []
 
-    # Config-driven metadata (tradition, interlocutors, concepts, etc.)
+    # Config-driven metadata (tradition, interlocutors, etc.)
     extra_metadata: dict = {}
 
     @staticmethod

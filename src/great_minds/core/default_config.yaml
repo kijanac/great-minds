@@ -15,13 +15,6 @@ metadata:
       description: >-
         names of thinkers, writers, or figures this text is responding to,
         arguing against, or in direct dialogue with. Empty list if none.
-    concepts:
-      type: list
-      source: enriched
-      description: >-
-        3-10 key concepts addressed in this text that could correspond to wiki
-        articles. Use consistent naming (lowercase, prefer the author's own
-        terminology).
     notes:
       type: string
       source: provided
@@ -37,11 +30,6 @@ metadata:
       description: >-
         a short label describing why this news item is relevant to the
         knowledge base.
-    concepts:
-      type: list
-      source: enriched
-      description: >-
-        3-10 key concepts addressed that could correspond to wiki articles.
     notes:
       type: string
       source: provided
@@ -51,11 +39,6 @@ metadata:
     status:
       type: string
       source: provided
-    concepts:
-      type: list
-      source: enriched
-      description: >-
-        3-10 key concepts addressed that could correspond to wiki articles.
     notes:
       type: string
       source: provided
@@ -66,7 +49,7 @@ metadata:
       type: string
       source: provided
       description: >-
-        slug of the wiki concept this suggestion is attached to, if any.
+        slug of the wiki article this suggestion is attached to, if any.
       default: ""
     anchored_section:
       type: string
@@ -94,8 +77,5 @@ fields:
   tags:
     allow_new: true
     min_uses_to_keep: 2
-  concepts:
-    allow_new: true
-    min_uses_to_promote: 5
   interlocutors:
     allow_new: true

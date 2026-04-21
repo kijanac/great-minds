@@ -20,7 +20,7 @@ from sqlalchemy import text
 
 from great_minds.app.api.server import create_app
 from great_minds.core import brain as brain_ops
-from great_minds.core import compile_pipeline, ingester, querier
+from great_minds.core import ingester, querier
 from great_minds.core.db import session_maker
 from great_minds.core.documents.repository import DocumentRepository
 from great_minds.core.storage import LocalStorage
@@ -31,20 +31,12 @@ def _make_storage() -> LocalStorage:
     return LocalStorage(Path.cwd())
 
 
-async def _run_compile(brain_id: uuid.UUID, limit: int | None) -> None:
-    storage = _make_storage()
-    async with session_maker() as session:
-        await compile_pipeline.run(
-            storage,
-            brain_id=brain_id,
-            session=session,
-            limit=limit,
-        )
-
-
 def cmd_compile(args: argparse.Namespace) -> None:
     setup_logging(service="great-minds")
-    asyncio.run(_run_compile(args.brain_id, args.limit))
+    raise NotImplementedError(
+        "compile is being rewritten on the seven-phase pipeline; "
+        "see target_architecture.md"
+    )
 
 
 async def _run_query(args: argparse.Namespace) -> None:
@@ -149,7 +141,10 @@ async def _run_reset(brain_id: str, brain_root: Path) -> None:
             "backlinks",
             "tasks",
             "source_proposals",
-            "concepts",
+            "topic_related",
+            "topic_links",
+            "topic_membership",
+            "topics",
             "idea_embeddings",
             "documents",
         ]
