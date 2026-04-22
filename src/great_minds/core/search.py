@@ -180,22 +180,27 @@ async def _embed_batch(client: AsyncOpenAI, texts: list[str]) -> list[list[float
 # ---------------------------------------------------------------------------
 
 
-async def rebuild_index(
+async def _rebuild_scope(
     session: AsyncSession,
     brain_id: UUID,
     storage: Storage,
+    *,
+    glob_pattern: str,
+    path_prefix: str,
+    client: AsyncOpenAI | None = None,
 ) -> int:
-    """Rebuild the search index for a brain from its wiki markdown files.
+    """Rebuild search_index rows whose path is inside path_prefix/.
 
-    Uses content hashing to skip re-embedding unchanged chunks.
-    Embeddings are only computed for new/changed chunks (expensive).
-
-    Returns the number of chunks indexed.
+    Scoping is load-bearing: without it, rebuilding one scope (say
+    wiki/) would delete rows of another scope (raw/) as "stale." Every
+    existing-row query and stale-deletion is constrained to
+    path LIKE path_prefix%.
     """
-    client = get_async_client()
+    if client is None:
+        client = get_async_client()
 
     all_chunks: list[Chunk] = []
-    for path in storage.glob("wiki/*.md"):
+    for path in storage.glob(glob_pattern):
         filename = path.rsplit("/", 1)[-1]
         if filename.startswith("_"):
             continue
@@ -203,21 +208,25 @@ async def rebuild_index(
         if content:
             all_chunks.extend(_chunk_article(path, content))
 
-    if not all_chunks:
-        log.info("no wiki content to index for brain %s", brain_id)
-        return 0
-
-    # Load existing hashes to detect unchanged chunks
     existing = await session.execute(
         select(
             SearchIndexEntry.path,
             SearchIndexEntry.chunk_index,
             SearchIndexEntry.content_hash,
-        ).where(SearchIndexEntry.brain_id == brain_id)
+        ).where(
+            SearchIndexEntry.brain_id == brain_id,
+            SearchIndexEntry.path.like(f"{path_prefix}%"),
+        )
     )
     existing_hashes: dict[tuple[str, int], str] = {
         (row.path, row.chunk_index): row.content_hash for row in existing
     }
+
+    if not all_chunks and not existing_hashes:
+        log.info(
+            "no %s content to index for brain %s", path_prefix.rstrip("/"), brain_id
+        )
+        return 0
 
     changed_chunks: list[Chunk] = []
     for chunk in all_chunks:
@@ -226,14 +235,14 @@ async def rebuild_index(
             changed_chunks.append(chunk)
 
     log.info(
-        "brain %s: %d total chunks, %d changed, %d unchanged",
+        "brain %s scope=%s: %d total chunks, %d changed, %d unchanged",
         brain_id,
+        path_prefix.rstrip("/"),
         len(all_chunks),
         len(changed_chunks),
         len(all_chunks) - len(changed_chunks),
     )
 
-    # Embed changed chunks in batches
     embeddings: dict[int, list[float]] = {}
     for batch_start in range(0, len(changed_chunks), EMBEDDING_BATCH_SIZE):
         batch = changed_chunks[batch_start : batch_start + EMBEDDING_BATCH_SIZE]
@@ -242,7 +251,6 @@ async def rebuild_index(
         for i, emb in enumerate(batch_embeddings):
             embeddings[batch_start + i] = emb
 
-    # Bulk delete stale entries (paths/chunks that no longer exist)
     current_keys = {(c.path, c.chunk_index) for c in all_chunks}
     stale_keys = set(existing_hashes.keys()) - current_keys
     if stale_keys:
@@ -255,9 +263,12 @@ async def rebuild_index(
                 ),
             )
         )
-        log.info("deleted %d stale index entries", len(stale_list))
+        log.info(
+            "deleted %d stale index entries (scope=%s)",
+            len(stale_list),
+            path_prefix.rstrip("/"),
+        )
 
-    # Upsert changed chunks (with new embeddings + tsvector)
     for i, chunk in enumerate(changed_chunks):
         entry = await session.execute(
             select(SearchIndexEntry).where(
@@ -291,12 +302,47 @@ async def rebuild_index(
 
     await session.commit()
     log.info(
-        "indexed %d chunks for brain %s (%d embedded)",
+        "indexed %d chunks for brain %s scope=%s (%d embedded)",
         len(all_chunks),
         brain_id,
+        path_prefix.rstrip("/"),
         len(changed_chunks),
     )
     return len(all_chunks)
+
+
+async def rebuild_raw_index(
+    session: AsyncSession,
+    brain_id: UUID,
+    storage: Storage,
+    *,
+    client: AsyncOpenAI | None = None,
+) -> int:
+    return await _rebuild_scope(
+        session,
+        brain_id,
+        storage,
+        glob_pattern="raw/**/*.md",
+        path_prefix="raw/",
+        client=client,
+    )
+
+
+async def rebuild_wiki_index(
+    session: AsyncSession,
+    brain_id: UUID,
+    storage: Storage,
+    *,
+    client: AsyncOpenAI | None = None,
+) -> int:
+    return await _rebuild_scope(
+        session,
+        brain_id,
+        storage,
+        glob_pattern="wiki/*.md",
+        path_prefix="wiki/",
+        client=client,
+    )
 
 
 # ---------------------------------------------------------------------------
