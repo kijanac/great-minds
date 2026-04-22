@@ -1,5 +1,18 @@
 name: "Personal Brain"
 
+# Idea-level kind taxonomy. Constrains what the extract LLM can classify
+# ideas as; "other" is always accepted as fallback.
+kinds:
+  - person
+  - event
+  - organization
+  - concept
+
+# Optional free-text steer prepended to reduce's prompt. Shapes how the
+# reducer frames canonical topics (e.g. "prefer events and debates over
+# biographical framings"). Empty string disables the steer.
+thematic_hint: ""
+
 metadata:
   texts:
     tradition:

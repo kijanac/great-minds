@@ -15,6 +15,7 @@ from openai import AsyncOpenAI
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from great_minds.core.brain_config import BrainConfig
+from great_minds.core.pipeline.cache import ContentHashCache
 from great_minds.core.storage import Storage
 
 
@@ -25,3 +26,4 @@ class PipelineContext:
     session: AsyncSession
     client: AsyncOpenAI
     config: BrainConfig
+    cache: ContentHashCache
