@@ -10,14 +10,18 @@ from great_minds.core.settings import get_settings
 
 OPENROUTER_BASE = "https://openrouter.ai/api/v1"
 
-# Model strategy:
-#   - QUERY_MODEL: fast tool-calling for interactive queries
-#   - EXTRACT_MODEL: cheap extraction/planning during compilation
-#   - REASON_MODEL: high-quality article writing during compilation
-#   - EMBEDDING_MODEL: text embeddings for hybrid search index
+# Model strategy (seven-phase pipeline):
+#   - QUERY_MODEL:   fast tool-calling for interactive queries
+#   - EXTRACT_MODEL: per-doc extraction; cheap, volume-heavy
+#   - MAP_MODEL:     per-chunk thematic synthesis; same model as extract
+#   - REDUCE_MODEL:  one call, canonicalizes local themes
+#   - RENDER_MODEL:  per-topic article writing
+#   - EMBEDDING_MODEL: idea + chunk embeddings
 QUERY_MODEL = "deepseek/deepseek-v3.2"
 EXTRACT_MODEL = "deepseek/deepseek-v3.2"
-REASON_MODEL = "deepseek/deepseek-v3.2"
+MAP_MODEL = "deepseek/deepseek-v3.2"
+REDUCE_MODEL = "qwen/qwen3.6-plus"
+RENDER_MODEL = "qwen/qwen3.6-plus"
 EMBEDDING_MODEL = "qwen/qwen3-embedding-8b"
 EMBEDDING_DIMENSIONS = 1024  # MRL truncation from native 4096
 
