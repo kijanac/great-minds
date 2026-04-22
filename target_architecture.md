@@ -6,7 +6,7 @@
 2. **Topics are the article unit.** One article per topic. Topics are thematic abstractions, not entities. A single real-world person, event, or work may appear in many topics' articles; a topic may span many real-world entities.
 3. **Ideas ↔ topics is many-to-many.** Derived from map/reduce provenance, not from clustering or retrieval.
 4. **No intermediate concept/entity layer.** Entity identity is not a first-class structural concern. It's handled implicitly inside render when the LLM writes about a person/event across its contributing idea fragments.
-5. **Batch-agnosticism is a structural property.** Full re-compile and incremental compile produce the same output from the same corpus. Identity stability across compiles comes from slug continuity, not from sticky assignments or stored cluster state.
+5. **Batch-agnosticism is a structural property (within a cache snapshot).** Given a cache C recording the LLM's outputs for corpus state S, any incremental compile drawing from a subset of C produces the same canonical topics as a full compile over C. Convergence across independent LLM passes is not claimed — nor achievable — because extract/map/reduce/render are stochastic. Identity stability across compiles comes from slug continuity for topics and from the cache returning recorded outputs for everything below the LLM surfaces. UUIDs themselves are opaque identifiers; they carry no semantic content.
 6. **Stochastic surfaces are bounded and named.** Exactly four LLM-call types: extract, map, reduce, render. Everything else is mechanical.
 7. **Raw markdown is immutable.** User feedback and lint findings re-enter the pipeline as new source documents.
 8. **Per-brain configuration shapes the pipeline.** The `kind` taxonomy and the thematic-schema hint to the reducer are declared at brain creation. Defaults exist; overrides are cheap.
@@ -50,13 +50,15 @@ The `concepts` table and its associated code (`distiller.py` clustering, `concep
 ## Ideas — schema (from extract)
 
 ```
-idea_id           uuid5(document_id, label, kind)
+idea_id           uuid7 (minted at extract time; opaque)
 document_id       uuid
 kind              one of brain's configured kinds (fallback: other)
 label             short canonical name as it appears in this doc
 description       one-sentence description of what this is, as treated in this doc
 anchors           list of {anchor_id, claim, quote}
 ```
+
+Idea rows are rewritten on every extract re-run for a document: delete-then-insert keyed on `document_id`. Cache hits on `sha256(doc_content + prompt_version + kinds_config + extract_model)` short-circuit extract entirely and return the stored `source_card` verbatim, so `idea_id`s stay stable across incremental compiles without any derivation trick. On cache miss the LLM re-draws and fresh ids are minted — that's expected, not a regression.
 
 `kind` lives at the idea layer because ideas describe specific factual things (a person, an event) and kind is useful for idea-level filtering and as a partition hint. Topics are thematic abstractions that span multiple kinds by design, so they have no `kind` field.
 
@@ -235,7 +237,7 @@ doc changes
   → verify + publish re-run
 ```
 
-**Convergence property**: a compile-from-scratch and an incremental compile from the same final corpus produce the same canonical topics (identity stable via slug continuity; content identical). Caching is optimization, not semantics.
+**Convergence property (within a cache snapshot)**: given a cache C, any incremental compile drawing from a subset of C produces the same canonical topics as a full compile over C — identity stable via slug continuity for topics and via cache-returned outputs for everything else. Convergence across independent LLM passes (i.e., a full recompile with C cleared) is not claimed: extract/map/reduce/render are stochastic surfaces, and a fresh pass is a fresh recording. The cache is therefore both optimization (skip the LLM call) and semantics (define the authoritative recording of this corpus state's LLM outputs).
 
 **Partition stability**: k-means centroids shift when new ideas are added. Chunk composition near cluster boundaries is unstable, causing some map cache misses. Stable corpus regions form stable chunks and cache-hit across compiles. This is acceptable because re-mapping unchanged chunks is cheap.
 
