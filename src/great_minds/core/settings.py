@@ -32,6 +32,10 @@ class Settings(BaseSettings):
     compile_plan_concurrency: int = 10
     compile_write_concurrency: int = 3
 
+    compile_partition_target_tokens: int = 100_000
+    compile_partition_max_factor: float = 1.5
+    compile_partition_min_factor: float = 0.3
+
     log_json: bool = False
 
 
