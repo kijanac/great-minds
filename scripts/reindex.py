@@ -14,7 +14,7 @@ import great_minds.core.brains.models  # noqa: F401
 import great_minds.core.proposals.models  # noqa: F401
 import great_minds.core.tasks  # noqa: F401
 from great_minds.core.brains.models import BrainORM
-from great_minds.core.search import rebuild_index
+from great_minds.core.search import rebuild_raw_index, rebuild_wiki_index
 from great_minds.core.db import session_maker
 from great_minds.core.storage import LocalStorage
 
@@ -35,19 +35,26 @@ async def main() -> None:
             print(f"  {brain.name} ({brain.id})")
             storage = LocalStorage(f"brains/{brain.id}")
 
-            wiki_files = storage.glob("wiki/*.md")
-            article_count = len(
-                [f for f in wiki_files if not f.rsplit("/", 1)[-1].startswith("_")]
+            raw_count = len(storage.glob("raw/**/*.md"))
+            wiki_count = len(
+                [
+                    f
+                    for f in storage.glob("wiki/*.md")
+                    if not f.rsplit("/", 1)[-1].startswith("_")
+                ]
             )
 
-            if article_count == 0:
-                print("    -> no wiki articles, skipping\n")
+            if raw_count == 0 and wiki_count == 0:
+                print("    -> no raw or wiki content, skipping\n")
                 continue
 
-            print(f"    -> {article_count} wiki articles, indexing...")
-            chunks = await rebuild_index(session, brain.id, storage)
-            print(f"    -> {chunks} chunks indexed\n")
-            total += chunks
+            print(f"    -> {raw_count} raw docs, {wiki_count} wiki articles")
+            raw_chunks = await rebuild_raw_index(session, brain.id, storage)
+            wiki_chunks = await rebuild_wiki_index(session, brain.id, storage)
+            print(
+                f"    -> {raw_chunks} raw chunks + {wiki_chunks} wiki chunks indexed\n"
+            )
+            total += raw_chunks + wiki_chunks
 
         print(f"Done. {total} total chunks indexed across {len(brains)} brain(s).")
 
