@@ -24,7 +24,6 @@ from sklearn.cluster import KMeans
 
 from great_minds.core.ideas.repository import IdeaEmbeddingRepository
 from great_minds.core.ideas.schemas import Idea, SourceCard
-from great_minds.core.ideas.source_cards import SourceCardStore
 from great_minds.core.pipeline.context import PipelineContext
 from great_minds.core.settings import get_settings
 from great_minds.core.telemetry import enrich, log_event
@@ -45,13 +44,14 @@ class PartitionResult:
     total_tokens: int = 0
 
 
-async def run(ctx: PipelineContext) -> PartitionResult:
+async def run(
+    ctx: PipelineContext, source_cards: list[SourceCard]
+) -> PartitionResult:
     settings = get_settings()
     target = settings.compile_partition_target_tokens
     max_tokens = int(target * settings.compile_partition_max_factor)
     min_tokens = int(target * settings.compile_partition_min_factor)
 
-    source_cards = SourceCardStore.for_brain(ctx.brain_id).load_all()
     idea_index = _index_ideas(source_cards)
 
     repo = IdeaEmbeddingRepository(ctx.session)
