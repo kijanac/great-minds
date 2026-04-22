@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from uuid import UUID, uuid5
+from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict
 
@@ -22,8 +22,11 @@ class Anchor(BaseModel):
 class Idea(BaseModel):
     """A per-document extraction unit: claim-set plus anchors.
 
-    idea_id is uuid5(document_id, f"{label}|{kind}"). This gives
-    stable IDs across re-extractions as long as label + kind agree.
+    idea_id is a fresh uuid7 minted at extract time. Stability across
+    cache-hit incremental compiles comes from the extract cache
+    returning the cached source_card (id included), not from the uuid
+    scheme. On cache miss the LLM re-draws and fresh ids are minted;
+    delete-then-insert keyed on document_id handles cleanup.
     """
 
     idea_id: UUID
@@ -32,10 +35,6 @@ class Idea(BaseModel):
     label: str
     description: str
     anchors: list[Anchor] = []
-
-    @staticmethod
-    def mint_id(document_id: UUID, label: str, kind: str) -> UUID:
-        return uuid5(document_id, f"{label}|{kind}")
 
 
 class DocMetadata(BaseModel):
