@@ -34,6 +34,7 @@ from sqlalchemy.dialects.postgresql import TSVECTOR, UUID as PG_UUID
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Mapped, mapped_column
 
+from great_minds.core.brain_utils import parse_frontmatter
 from great_minds.core.db import Base
 from great_minds.core.llm import EMBEDDING_DIMENSIONS, EMBEDDING_MODEL, get_async_client
 from great_minds.core.storage import Storage
@@ -77,7 +78,8 @@ class SearchIndexEntry(Base):
 # Chunking
 # ---------------------------------------------------------------------------
 
-_HEADING_RE = re.compile(r"^(#{1,3})\s+(.+)$", re.MULTILINE)
+_HEADING_LINE_RE = re.compile(r"^(#{1,6})\s+(.+)$")
+_PARA_SPLIT_RE = re.compile(r"\n\s*\n")
 
 
 @dataclass
@@ -89,46 +91,44 @@ class Chunk:
     content_hash: str
 
 
-def _chunk_article(path: str, content: str) -> list[Chunk]:
-    """Split a wiki article into chunks by heading boundaries.
+def _chunk_paragraphs(path: str, content: str) -> list[Chunk]:
+    """Paragraph-level chunking with heading metadata carried forward.
 
-    Each chunk contains the heading and all text until the next heading
-    of equal or higher level. Articles with no headings become a single chunk.
+    Walks blank-line-separated blocks. Heading blocks (`# Foo`) update
+    the running section context and produce no chunk of their own; body
+    blocks emit a chunk whose `heading` column is the nearest preceding
+    heading. The heading text is prepended to `body` for tsvector +
+    embedding so retrieval ranks section context, while the `heading`
+    column stays clean for display.
+
+    One chunker for both raw and wiki — differences are scope (path
+    prefix), not chunking strategy.
     """
-    headings = list(_HEADING_RE.finditer(content))
-
-    if not headings:
-        body = content.strip()
-        if not body:
-            return []
-        h = hashlib.sha256(body.encode()).hexdigest()
-        return [Chunk(path=path, chunk_index=0, heading="", body=body, content_hash=h)]
-
     chunks: list[Chunk] = []
+    current_heading = ""
 
-    preamble = content[: headings[0].start()].strip()
-    if preamble:
-        h = hashlib.sha256(preamble.encode()).hexdigest()
-        chunks.append(
-            Chunk(path=path, chunk_index=0, heading="", body=preamble, content_hash=h)
-        )
-
-    for i, match in enumerate(headings):
-        heading_text = match.group(2).strip()
-        start = match.end()
-        end = headings[i + 1].start() if i + 1 < len(headings) else len(content)
-        body = content[start:end].strip()
-
-        if not body and not heading_text:
+    for block in _PARA_SPLIT_RE.split(content):
+        block = block.strip()
+        if not block:
             continue
 
-        full_text = f"{heading_text}\n\n{body}" if body else heading_text
+        first_line, _, rest = block.partition("\n")
+        heading_match = _HEADING_LINE_RE.match(first_line)
+        if heading_match:
+            current_heading = heading_match.group(2).strip()
+            body = rest.strip()
+            if not body:
+                continue
+        else:
+            body = block
+
+        full_text = f"{current_heading}\n\n{body}" if current_heading else body
         h = hashlib.sha256(full_text.encode()).hexdigest()
         chunks.append(
             Chunk(
                 path=path,
                 chunk_index=len(chunks),
-                heading=heading_text,
+                heading=current_heading,
                 body=full_text,
                 content_hash=h,
             )
@@ -206,7 +206,8 @@ async def _rebuild_scope(
             continue
         content = storage.read(path)
         if content:
-            all_chunks.extend(_chunk_article(path, content))
+            _, body = parse_frontmatter(content)
+            all_chunks.extend(_chunk_paragraphs(path, body))
 
     existing = await session.execute(
         select(
