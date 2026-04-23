@@ -95,7 +95,7 @@ def _write_wiki_index(ctx: PipelineContext, topics: list[TopicORM]) -> None:
 
 
 def _write_raw_index(ctx: PipelineContext, docs: list[DocumentORM]) -> None:
-    ordered = sorted(docs, key=lambda d: (d.title or d.file_path).lower())
+    ordered = sorted(docs, key=lambda d: d.title.lower())
     lines = [
         "# Raw Sources",
         "",
@@ -103,7 +103,6 @@ def _write_raw_index(ctx: PipelineContext, docs: list[DocumentORM]) -> None:
         "",
     ]
     for d in ordered:
-        title = (d.title or "").strip() or _filename(d.file_path)
         meta_bits: list[str] = []
         if d.genre:
             meta_bits.append(d.genre)
@@ -114,13 +113,9 @@ def _write_raw_index(ctx: PipelineContext, docs: list[DocumentORM]) -> None:
         meta_suffix = f" — {', '.join(meta_bits)}" if meta_bits else ""
         precis = (d.precis or "").strip().replace("\n", " ")
         precis_suffix = f"  \n  {precis}" if precis else ""
-        lines.append(f"- [{title}]({d.file_path}){meta_suffix}{precis_suffix}")
+        lines.append(f"- [{d.title}]({d.file_path}){meta_suffix}{precis_suffix}")
     lines.append("")
     ctx.storage.write(RAW_INDEX_PATH, "\n".join(lines))
-
-
-def _filename(path: str) -> str:
-    return path.rsplit("/", 1)[-1]
 
 
 # ---------------------------------------------------------------------------
