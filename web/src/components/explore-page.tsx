@@ -150,14 +150,14 @@ export function ExplorePage({
                     {unresolvedCitations.map((u, i) => (
                       <div
                         key={`${u.source_slug}-${u.missing_slug}-${i}`}
-                        className="py-2.5 px-3 rounded-sm flex items-center justify-between"
+                        className="py-2.5 px-3 rounded-sm"
                       >
-                        <span className="font-serif text-[length:var(--text-body)] text-warm-dim truncate">
-                          {u.source_slug}
-                        </span>
-                        <span className="font-mono text-[length:var(--text-chrome)] text-warm-ghost shrink-0 ml-4">
+                        <div className="font-serif text-[length:var(--text-body)] text-warm-dim">
+                          {u.source_title}
+                        </div>
+                        <div className="font-mono text-[length:var(--text-chrome)] text-warm-ghost mt-0.5">
                           → {u.missing_slug}
-                        </span>
+                        </div>
                       </div>
                     ))}
                   </div>
@@ -204,14 +204,14 @@ export function ExplorePage({
                     {unmentionedLinks.map((u, i) => (
                       <div
                         key={`${u.source_slug}-${u.target_slug}-${i}`}
-                        className="py-2.5 px-3 rounded-sm flex items-center justify-between"
+                        className="py-2.5 px-3 rounded-sm"
                       >
-                        <span className="font-serif text-[length:var(--text-body)] text-warm-dim truncate">
-                          {u.source_slug}
-                        </span>
-                        <span className="font-mono text-[length:var(--text-chrome)] text-warm-ghost shrink-0 ml-4">
-                          → {u.target_slug}
-                        </span>
+                        <div className="font-serif text-[length:var(--text-body)] text-warm-dim">
+                          {u.source_title}
+                        </div>
+                        <div className="font-mono text-[length:var(--text-chrome)] text-warm-ghost mt-0.5">
+                          → {u.target_title}
+                        </div>
                       </div>
                     ))}
                   </div>

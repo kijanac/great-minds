@@ -47,13 +47,16 @@ class Orphan:
 @dataclass
 class UnresolvedCitation:
     source_slug: str
+    source_title: str
     missing_slug: str
 
 
 @dataclass
 class UnmentionedLink:
     source_slug: str
+    source_title: str
     target_slug: str
+    target_title: str
 
 
 @dataclass
@@ -74,7 +77,7 @@ async def build_lint_report(
         dirty = await _dirty_topics(session, brain_id)
         return LintReport(dirty_topics=dirty)
 
-    slug_by_topic_id = {t.topic_id: t.slug for t in rendered}
+    topic_by_id = {t.topic_id: t for t in rendered}
     slug_to_topic = {t.slug: t for t in rendered}
 
     orphans = await _orphans(session, brain_id, rendered)
@@ -86,7 +89,7 @@ async def build_lint_report(
     )
     unmentioned = await _unmentioned_intended_links(
         session=session,
-        slug_by_topic_id=slug_by_topic_id,
+        topic_by_id=topic_by_id,
         cited_by_source=cited_by_source,
     )
 
@@ -190,7 +193,9 @@ def _walk_articles(
             if target is None:
                 unresolved.append(
                     UnresolvedCitation(
-                        source_slug=topic.slug, missing_slug=slug
+                        source_slug=topic.slug,
+                        source_title=topic.title,
+                        missing_slug=slug,
                     )
                 )
                 continue
@@ -206,7 +211,7 @@ def _walk_articles(
 async def _unmentioned_intended_links(
     *,
     session: AsyncSession,
-    slug_by_topic_id: dict[uuid.UUID, str],
+    topic_by_id: dict[uuid.UUID, TopicORM],
     cited_by_source: dict[uuid.UUID, set[str]],
 ) -> list[UnmentionedLink]:
     """topic_links edges whose target isn't in the source article's prose.
@@ -227,16 +232,19 @@ async def _unmentioned_intended_links(
 
     out: list[UnmentionedLink] = []
     for source_id, target_id in edges:
-        target_slug = slug_by_topic_id.get(target_id)
-        if target_slug is None:
+        source = topic_by_id.get(source_id)
+        target = topic_by_id.get(target_id)
+        if source is None or target is None:
             continue
-        if target_slug in cited_by_source.get(source_id, set()):
-            continue
-        source_slug = slug_by_topic_id.get(source_id)
-        if source_slug is None:
+        if target.slug in cited_by_source.get(source_id, set()):
             continue
         out.append(
-            UnmentionedLink(source_slug=source_slug, target_slug=target_slug)
+            UnmentionedLink(
+                source_slug=source.slug,
+                source_title=source.title,
+                target_slug=target.slug,
+                target_title=target.title,
+            )
         )
     out.sort(key=lambda u: (u.source_slug, u.target_slug))
     return out
