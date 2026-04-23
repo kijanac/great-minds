@@ -12,11 +12,17 @@ class Anchor(BaseModel):
 
     anchor_id is whatever the LLM assigned (stable within this idea);
     render normalizes to sequential [^n] footnotes at article time.
+
+    chunk_index is the paragraph in the source doc where the quote
+    lives — resolved post-extract via substring match against the
+    doc's paragraphs. Render uses it to emit deep-link footnote URLs
+    (`raw/.../file.md#^pN`). None if the quote couldn't be localized.
     """
 
     anchor_id: str
     claim: str
     quote: str
+    chunk_index: int | None = None
 
 
 class Idea(BaseModel):

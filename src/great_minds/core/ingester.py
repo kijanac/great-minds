@@ -21,6 +21,7 @@ from typing import Literal
 
 from ruamel.yaml import YAML
 
+from great_minds.core.chunking import inject_anchors
 from great_minds.core.storage import Storage
 
 log = logging.getLogger(__name__)
@@ -190,7 +191,11 @@ def build_document(
             known[spec.name] = extra[spec.name]
 
     frontmatter = build_frontmatter(field_specs, known)
-    return frontmatter + content
+    # Obsidian-style paragraph anchors (`^pN`) get baked into raw
+    # content at ingest time. Render's footnote URLs deep-link to them
+    # via `raw/.../file.md#^p12`, which works natively in Obsidian and
+    # in the web viewer (frontend renders `^pN` as HTML anchors).
+    return frontmatter + inject_anchors(content)
 
 
 def ingest_document(

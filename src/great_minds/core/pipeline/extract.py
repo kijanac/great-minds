@@ -28,6 +28,7 @@ from uuid6 import uuid7
 
 from great_minds.core.brain import load_prompt
 from great_minds.core.brain_utils import json_llm_call, parse_frontmatter
+from great_minds.core.chunking import paragraph_for_quote, paragraphs
 from great_minds.core.documents.models import DocumentORM
 from great_minds.core.ideas.repository import IdeaEmbeddingRepository
 from great_minds.core.ideas.schemas import (
@@ -249,6 +250,7 @@ async def _extract_one(
             document_id=document_id,
             allowed_kinds=ctx.config.kinds,
         )
+        _localize_anchors(outcome.source_card, body)
     except json.JSONDecodeError as e:
         outcome.error = f"json_parse_exhausted:{e}"
     except ValidationError as e:
@@ -313,6 +315,21 @@ def _build_extra_fields(config_raw: dict, source_type: str) -> str:
         desc = spec.description.strip() if spec.description else f"{spec.name} value"
         lines.append(f"    - `{spec.name}` ({kind_hint}): {desc}")
     return "\n".join(lines)
+
+
+def _localize_anchors(source_card: SourceCard, body: str) -> None:
+    """Fill anchor.chunk_index via substring match against body paragraphs.
+
+    Mutates in place. Unmatchable quotes (LLM normalized whitespace,
+    punctuation drift, etc.) leave chunk_index=None — render will still
+    emit the footnote, just without a deep-link fragment.
+    """
+    paras = paragraphs(body)
+    if not paras:
+        return
+    for idea in source_card.ideas:
+        for anchor in idea.anchors:
+            anchor.chunk_index = paragraph_for_quote(anchor.quote, paras)
 
 
 def _validate_extract_output(

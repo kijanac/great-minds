@@ -5,6 +5,12 @@ import { BtwThread } from "@/components/btw-thread";
 import { baseMdComponents, remarkPlugins } from "@/lib/markdown";
 import type { BtwThread as BtwThreadType, SelectionInfo } from "@/lib/types";
 
+// Obsidian-style block ref markers (`^pN`) get baked into raw markdown at
+// ingest time. We strip them from the visible prose and rely on the
+// sequential <p> counter to reassign them as anchor ids, so footnote URLs
+// like `raw/.../file.md#^p12` scroll to the right paragraph.
+const BLOCK_REF_RE = /\s*\^p\d+(?=\n|$)/gm;
+
 interface ArticleViewProps {
   title: string;
   content: string;
@@ -68,7 +74,8 @@ export function ArticleView({
         return (
           <>
             <p
-              className="text-[length:var(--text-body)] leading-[1.85] text-warm-dim mb-4"
+              id={`^p${pi}`}
+              className="text-[length:var(--text-body)] leading-[1.85] text-warm-dim mb-4 scroll-mt-20 target:bg-gold/10 target:border-l-2 target:border-gold target:pl-3"
               onMouseUp={(e) => {
                 e.stopPropagation();
                 const sel = window.getSelection();
@@ -128,6 +135,13 @@ export function ArticleView({
   // Markdown calls p() sequentially during render; reset so indices match BTW paragraphIndex
   paraCountRef.current = 0;
 
+  // Strip `^pN` block-ref markers from visible prose — they're metadata
+  // for deep-link fragments, not content.
+  const displayContent = useMemo(
+    () => content.replace(BLOCK_REF_RE, ""),
+    [content],
+  );
+
   return (
     <article className="max-w-[740px] mx-auto px-4 md:px-10 pt-6 md:pt-10 pb-20 select-text">
       {archived && (
@@ -156,7 +170,7 @@ export function ArticleView({
       )}
       <h1 className="text-[length:var(--text-title)] font-bold text-foreground mb-8">{title}</h1>
       <Markdown remarkPlugins={remarkPlugins} components={mdComponents}>
-        {content}
+        {displayContent}
       </Markdown>
     </article>
   );
