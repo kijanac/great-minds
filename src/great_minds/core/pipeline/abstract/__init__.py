@@ -17,19 +17,24 @@ rather than mutating a bag keeps each sub-phase's contract explicit.
 from __future__ import annotations
 
 from great_minds.core.ideas.source_cards import SourceCardStore
-from great_minds.core.pipeline.abstract import partition, premerge, synthesize
-from great_minds.core.pipeline.abstract.premerge import PremergeResult
+from great_minds.core.pipeline.abstract import (
+    canonicalize,
+    partition,
+    premerge,
+    synthesize,
+)
+from great_minds.core.pipeline.abstract.canonicalize import CanonicalizeResult
 from great_minds.core.pipeline.context import PipelineContext
 from great_minds.core.settings import get_settings
 from great_minds.core.telemetry import log_event
 
 
-async def run(ctx: PipelineContext) -> PremergeResult:
-    """Phase 2 orchestrator. Returns premerge's result for now.
+async def run(ctx: PipelineContext) -> CanonicalizeResult:
+    """Phase 2 orchestrator. Returns canonicalize's result for now.
 
     The real return shape will be list[ValidatedCanonicalTopic] once
-    2d canonicalize + 2e validate land — that's what phase 3 derive
-    consumes. Intermediate partition/synthesize state stays local to
+    2e validate lands — that's what phase 3 derive consumes.
+    Intermediate partition/synthesize/premerge state stays local to
     the orchestrator.
     """
     settings = get_settings()
@@ -42,7 +47,7 @@ async def run(ctx: PipelineContext) -> PremergeResult:
             brain_id=str(ctx.brain_id),
             reason="no_chunks",
         )
-        return PremergeResult([], 0, 0, 0, 0, 0)
+        return CanonicalizeResult()
 
     synthesize_result = await synthesize.run(
         ctx, source_cards, partition_result.chunks
@@ -51,6 +56,9 @@ async def run(ctx: PipelineContext) -> PremergeResult:
         synthesize_result.local_topics,
         jaccard_threshold=settings.compile_premerge_jaccard_threshold,
     )
+    canonicalize_result = await canonicalize.run(
+        ctx, premerge_result.merged_topics
+    )
 
     log_event(
         "pipeline.abstract_completed",
@@ -58,5 +66,6 @@ async def run(ctx: PipelineContext) -> PremergeResult:
         chunks=len(partition_result.chunks),
         local_topics=len(synthesize_result.local_topics),
         merged_topics=premerge_result.final_count,
+        canonical_topics=len(canonicalize_result.canonical_topics),
     )
-    return premerge_result
+    return canonicalize_result
