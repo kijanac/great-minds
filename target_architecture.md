@@ -35,7 +35,7 @@ thematic_hint: |
 
 | table | authoritative | purpose |
 |---|---|---|
-| `documents` | Postgres | one row per ingested raw file; title, doc_metadata, precis |
+| `documents` | Postgres | one row per on-disk file — both ingested raw (`doc_kind=raw`) and rendered wiki articles (`doc_kind=wiki`); title, doc_metadata, precis. Raw rows are written by ingest + updated by extract; wiki rows are written by render (precis = topic.description). Topics is the editorial plan; documents is the artifact metadata index. |
 | `source_cards` (`.compile/<brain>/source_cards.jsonl`) | JSONL on disk | per-document extraction output: ideas, anchors |
 | `idea_embeddings` | Postgres (pgvector) | one vector per idea; used for partition |
 | `topics` | Postgres | canonical theme registry: slug, title, description, lifecycle |

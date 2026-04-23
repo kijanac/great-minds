@@ -30,7 +30,9 @@ class DocumentCreate(BaseModel):
     file_path: str
     content: str
     doc_kind: str = DocKind.RAW
-    source_type: str = "document"
+    # None for rendered wiki articles; populated (texts/news/ideas/...)
+    # for raw docs per brain config.
+    source_type: str | None = None
     url: str | None = None
     compiled: bool = False
 
@@ -41,6 +43,10 @@ class DocumentCreate(BaseModel):
     published_date: str | None = None
     genre: str | None = None
     tags: list[str] = []
+
+    # Precis: 2-3 sentence summary. Raw docs get this from extract;
+    # rendered wiki articles get it from the topic's description.
+    precis: str | None = None
 
     # Config-driven metadata (tradition, interlocutors, etc.)
     extra_metadata: dict = {}
