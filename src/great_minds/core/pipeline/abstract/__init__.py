@@ -22,20 +22,20 @@ from great_minds.core.pipeline.abstract import (
     partition,
     premerge,
     synthesize,
+    validate,
 )
-from great_minds.core.pipeline.abstract.canonicalize import CanonicalizeResult
+from great_minds.core.pipeline.abstract.schemas import ValidatedCanonicalTopic
 from great_minds.core.pipeline.context import PipelineContext
 from great_minds.core.settings import get_settings
 from great_minds.core.telemetry import log_event
 
 
-async def run(ctx: PipelineContext) -> CanonicalizeResult:
-    """Phase 2 orchestrator. Returns canonicalize's result for now.
+async def run(ctx: PipelineContext) -> list[ValidatedCanonicalTopic]:
+    """Phase 2 orchestrator.
 
-    The real return shape will be list[ValidatedCanonicalTopic] once
-    2e validate lands — that's what phase 3 derive consumes.
-    Intermediate partition/synthesize/premerge state stays local to
-    the orchestrator.
+    Threads shared state (source_cards) through the sub-phases and
+    returns what phase 3 derive consumes: a list of validated
+    canonical topics with topic_ids resolved and link_targets cleaned.
     """
     settings = get_settings()
     source_cards = SourceCardStore.for_brain(ctx.brain_id).load_all()
@@ -47,7 +47,7 @@ async def run(ctx: PipelineContext) -> CanonicalizeResult:
             brain_id=str(ctx.brain_id),
             reason="no_chunks",
         )
-        return CanonicalizeResult()
+        return []
 
     synthesize_result = await synthesize.run(
         ctx, source_cards, partition_result.chunks
@@ -59,6 +59,7 @@ async def run(ctx: PipelineContext) -> CanonicalizeResult:
     canonicalize_result = await canonicalize.run(
         ctx, premerge_result.merged_topics
     )
+    validated = await validate.run(ctx, canonicalize_result.canonical_topics)
 
     log_event(
         "pipeline.abstract_completed",
@@ -67,5 +68,6 @@ async def run(ctx: PipelineContext) -> CanonicalizeResult:
         local_topics=len(synthesize_result.local_topics),
         merged_topics=premerge_result.final_count,
         canonical_topics=len(canonicalize_result.canonical_topics),
+        validated_topics=len(validated),
     )
-    return canonicalize_result
+    return validated
