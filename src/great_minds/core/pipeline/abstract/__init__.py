@@ -17,19 +17,22 @@ rather than mutating a bag keeps each sub-phase's contract explicit.
 from __future__ import annotations
 
 from great_minds.core.ideas.source_cards import SourceCardStore
-from great_minds.core.pipeline.abstract import partition, synthesize
-from great_minds.core.pipeline.abstract.synthesize import SynthesizeResult
+from great_minds.core.pipeline.abstract import partition, premerge, synthesize
+from great_minds.core.pipeline.abstract.premerge import PremergeResult
 from great_minds.core.pipeline.context import PipelineContext
+from great_minds.core.settings import get_settings
 from great_minds.core.telemetry import log_event
 
 
-async def run(ctx: PipelineContext) -> SynthesizeResult:
-    """Phase 2 orchestrator. Returns synthesize's result for now.
+async def run(ctx: PipelineContext) -> PremergeResult:
+    """Phase 2 orchestrator. Returns premerge's result for now.
 
     The real return shape will be list[ValidatedCanonicalTopic] once
-    2c/2d/2e land — that's what phase 3 derive consumes. Intermediate
-    partition/synthesize state stays internal to this orchestrator.
+    2d canonicalize + 2e validate land — that's what phase 3 derive
+    consumes. Intermediate partition/synthesize state stays local to
+    the orchestrator.
     """
+    settings = get_settings()
     source_cards = SourceCardStore.for_brain(ctx.brain_id).load_all()
 
     partition_result = await partition.run(ctx, source_cards)
@@ -39,10 +42,14 @@ async def run(ctx: PipelineContext) -> SynthesizeResult:
             brain_id=str(ctx.brain_id),
             reason="no_chunks",
         )
-        return SynthesizeResult()
+        return PremergeResult([], 0, 0, 0, 0, 0)
 
     synthesize_result = await synthesize.run(
         ctx, source_cards, partition_result.chunks
+    )
+    premerge_result = premerge.run(
+        synthesize_result.local_topics,
+        jaccard_threshold=settings.compile_premerge_jaccard_threshold,
     )
 
     log_event(
@@ -50,5 +57,6 @@ async def run(ctx: PipelineContext) -> SynthesizeResult:
         brain_id=str(ctx.brain_id),
         chunks=len(partition_result.chunks),
         local_topics=len(synthesize_result.local_topics),
+        merged_topics=premerge_result.final_count,
     )
-    return synthesize_result
+    return premerge_result
