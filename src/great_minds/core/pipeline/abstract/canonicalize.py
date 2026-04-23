@@ -21,13 +21,12 @@ a lossy registry still beats no registry, and the user can re-run.
 from __future__ import annotations
 
 import hashlib
-import json
 import logging
 from dataclasses import dataclass, field
 from uuid import UUID
 
 from great_minds.core.brain import load_prompt
-from great_minds.core.brain_utils import strip_json_fencing
+from great_minds.core.brain_utils import json_llm_call
 from great_minds.core.llm import REDUCE_MODEL
 from great_minds.core.pipeline.abstract.schemas import LocalTopic
 from great_minds.core.pipeline.context import PipelineContext
@@ -100,14 +99,12 @@ async def run(
         local_topic_block=local_topic_block,
     )
 
-    response = await ctx.client.chat.completions.create(
+    data = await json_llm_call(
+        ctx.client,
         model=REDUCE_MODEL,
         messages=[{"role": "user", "content": prompt}],
-        response_format={"type": "json_object"},
         temperature=0.2,
     )
-    raw_text = response.choices[0].message.content or ""
-    data = json.loads(strip_json_fencing(raw_text))
 
     canonical_topics, unknown_tag_count = _parse_canonicals(
         data=data, tag_to_uuid=tag_to_uuid
