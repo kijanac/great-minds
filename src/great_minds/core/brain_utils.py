@@ -11,7 +11,7 @@ from io import StringIO
 from openai import AsyncOpenAI, RateLimitError
 from ruamel.yaml import YAML
 
-from great_minds.core.telemetry import log_event
+from great_minds.core.telemetry import accumulate_cost, log_event
 
 log = logging.getLogger(__name__)
 
@@ -53,7 +53,15 @@ async def api_call(client: AsyncOpenAI, **kwargs):
     429s get a larger retry budget, honor Retry-After when present, and use
     jittered exponential backoff to avoid thundering-herd retries across
     concurrent callers.
+
+    Auto-injects OpenRouter's usage={"include": true} extension into
+    extra_body so response.usage.cost is populated with USD cost.
+    Per-call cost is logged and accumulated into the current wide event.
     """
+    extra_body = dict(kwargs.get("extra_body") or {})
+    extra_body.setdefault("usage", {"include": True})
+    kwargs["extra_body"] = extra_body
+
     rl_attempts = 0
     generic_attempts = 0
     model = kwargs["model"]
@@ -62,6 +70,9 @@ async def api_call(client: AsyncOpenAI, **kwargs):
         try:
             response = await client.chat.completions.create(**kwargs)
             usage = getattr(response, "usage", None)
+            cost = getattr(usage, "cost", None) if usage else None
+            if cost is not None:
+                accumulate_cost(float(cost))
             log_event(
                 "llm_call_completed",
                 model=model,
@@ -71,6 +82,7 @@ async def api_call(client: AsyncOpenAI, **kwargs):
                 output_tokens=getattr(usage, "completion_tokens", None)
                 if usage
                 else None,
+                cost_usd=cost,
             )
             return response
         except RateLimitError as e:

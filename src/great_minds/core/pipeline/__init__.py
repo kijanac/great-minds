@@ -35,7 +35,7 @@ from great_minds.core.pipeline import (
     verify,
 )
 from great_minds.core.pipeline.context import PipelineContext, build_context
-from great_minds.core.telemetry import log_event
+from great_minds.core.telemetry import log_event, wide_event
 
 __all__ = ["CompileResult", "PipelineContext", "build_context", "run"]
 
@@ -55,6 +55,7 @@ class CompileResult:
     wiki_chunks_indexed: int = 0
     backlink_edges: int = 0
     unresolved_citations: int = 0
+    cost_usd: float = 0.0
 
 
 async def run(ctx: PipelineContext) -> CompileResult:
@@ -96,6 +97,10 @@ async def run(ctx: PipelineContext) -> CompileResult:
     result.unresolved_citations = verify_result.unresolved_citations
 
     await publish.run(ctx)
+
+    ctx_event = wide_event.get()
+    if ctx_event is not None:
+        result.cost_usd = float(ctx_event.get("cost_usd", 0.0))
 
     log_event(
         "pipeline.compile_completed",

@@ -106,6 +106,20 @@ def enrich(**fields) -> None:
         ctx.update(fields)
 
 
+def accumulate_cost(cost_usd: float) -> None:
+    """Add to the wide event's cumulative cost_usd field. No-op if not initialized.
+
+    Used by api_call to aggregate per-LLM-call cost (from OpenRouter's
+    response.usage.cost) into compile-run or query-run totals.
+    """
+    if cost_usd <= 0:
+        return
+    ctx = wide_event.get()
+    if ctx is None:
+        return
+    ctx["cost_usd"] = ctx.get("cost_usd", 0.0) + cost_usd
+
+
 @contextlib.asynccontextmanager
 async def timed_op(name: str) -> AsyncIterator[None]:
     """Record ``{name}_ms`` and ``{name}_error`` into the wide event."""

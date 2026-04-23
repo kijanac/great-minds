@@ -23,6 +23,7 @@ from .documents.schemas import DocKind
 from .llm import FALLBACK_MODELS, QUERY_MODEL, get_async_client
 from .storage import Storage
 from .telemetry import (
+    accumulate_cost,
     correlation_id,
     emit_wide_event,
     enrich,
@@ -227,6 +228,9 @@ PROVIDER_EXTRA_BODY = {
         "allow_fallbacks": True,
         "sort": "throughput",
     },
+    # OpenRouter extension: include response.usage.cost (USD) for
+    # per-call spend tracking in the query wide event.
+    "usage": {"include": True},
 }
 
 
@@ -248,6 +252,16 @@ def _is_retryable(exc: Exception) -> bool:
 
 def _models_with_fallback(primary: str) -> list[str]:
     return [primary] + [m for m in FALLBACK_MODELS if m != primary]
+
+
+def _accumulate_cost_from_response(response) -> None:
+    """Pull response.usage.cost (OpenRouter extension) into the wide event."""
+    usage = getattr(response, "usage", None)
+    if usage is None:
+        return
+    cost = getattr(usage, "cost", None)
+    if cost is not None:
+        accumulate_cost(float(cost))
 
 
 def _classify_tool_call(name: str, args: dict) -> tuple[SourceType, dict] | None:
@@ -550,6 +564,7 @@ async def chat(
             temperature=0.3,
             extra_body=PROVIDER_EXTRA_BODY,
         )
+        _accumulate_cost_from_response(response)
 
         choice = response.choices[0]
         message = choice.message
@@ -692,6 +707,7 @@ async def stream_chat(
             tools=active_tools,
             temperature=0.3,
             stream=True,
+            stream_options={"include_usage": True},
             extra_body=PROVIDER_EXTRA_BODY,
         )
 
@@ -700,6 +716,10 @@ async def stream_chat(
         finish_reason = None
 
         async for chunk in _iter_with_timeout(stream, CHUNK_TIMEOUT):
+            # Final usage chunk (from stream_options.include_usage).
+            # Comes after all content chunks; choices is usually empty.
+            if getattr(chunk, "usage", None) is not None:
+                _accumulate_cost_from_response(chunk)
             if not chunk.choices:
                 continue
             choice = chunk.choices[0]
