@@ -103,8 +103,6 @@ class TaskService:
         brain_id: UUID,
         data_dir: str,
         label: str,
-        *,
-        limit: int | None = None,
     ) -> TaskDetail:
         """Spawn a compile task for this brain, at most one in flight.
 
@@ -133,7 +131,6 @@ class TaskService:
                 "brain_id": str(brain_id),
                 "data_dir": data_dir,
                 "label": label,
-                "limit": limit,
             },
             max_attempts=3,
             retry_strategy=COMPILE_RETRY,

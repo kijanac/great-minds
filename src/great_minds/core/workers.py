@@ -13,11 +13,12 @@ from uuid import UUID
 from absurd_sdk import AbsurdHooks, AsyncAbsurd
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from great_minds.core import ingester
+from great_minds.core import ingester, pipeline
 from great_minds.core.brain import load_config
 from great_minds.core.brain_utils import parse_frontmatter
 from great_minds.core.documents.repository import DocumentRepository
 from great_minds.core.documents.schemas import DocumentCreate
+from great_minds.core.llm import get_async_client
 from great_minds.core.storage import LocalStorage
 from great_minds.core.telemetry import (
     correlation_id,
@@ -38,17 +39,25 @@ log = logging.getLogger(__name__)
 
 
 async def compile_task(params: dict, ctx) -> dict:
-    """Compile is being rewritten on the seven-phase pipeline.
-
-    See target_architecture.md. The task shape (params, return dict) will
-    be refilled once the new orchestrator is wired; until then, fail loud
-    so a stale compile trigger can't silently succeed against the old
-    registry.
-    """
+    """Run the seven-phase compile pipeline with heartbeat for long runs."""
     correlation_id.set(f"task-{ctx.task_id}")
-    raise NotImplementedError(
-        "compile is being rewritten on the seven-phase pipeline"
+    data_dir = Path(params["data_dir"])
+    storage = LocalStorage(data_dir / "brains" / params["brain_id"])
+    brain_id = UUID(params["brain_id"])
+    session = _task_session.get()
+    client = get_async_client()
+
+    init_wide_event("compile", brain_id=str(brain_id))
+    await ctx.heartbeat(600)
+
+    pipeline_ctx = pipeline.build_context(
+        brain_id=brain_id, storage=storage, session=session, client=client
     )
+    result = await pipeline.run(pipeline_ctx)
+
+    enrich(**result.__dict__)
+    emit_wide_event()
+    return result.__dict__
 
 
 async def bulk_ingest_task(params: dict, ctx) -> dict:
