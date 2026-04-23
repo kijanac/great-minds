@@ -1,10 +1,10 @@
 import { useEffect, useState } from "react";
 
 import {
-  type Contradiction,
   type Orphan,
   type RecentArticle,
-  type ResearchSuggestion,
+  type UnmentionedLink,
+  type UnresolvedCitation,
   fetchLintResults,
   fetchRecentArticles,
 } from "@/api/explore";
@@ -15,10 +15,10 @@ import { useViewNavigate } from "@/hooks/use-view-navigate";
 
 export function ExploreContainer() {
   const navigate = useViewNavigate();
-  const [suggestions, setSuggestions] = useState<ResearchSuggestion[]>([]);
-  const [contradictions, setContradictions] = useState<Contradiction[]>([]);
   const [orphans, setOrphans] = useState<Orphan[]>([]);
   const [dirtyCount, setDirtyCount] = useState(0);
+  const [unresolvedCitations, setUnresolvedCitations] = useState<UnresolvedCitation[]>([]);
+  const [unmentionedLinks, setUnmentionedLinks] = useState<UnmentionedLink[]>([]);
   const [recentArticles, setRecentArticles] = useState<RecentArticle[]>([]);
   const [contentTypes, setContentTypes] = useState<ContentTypeCount[]>([]);
   const [loading, setLoading] = useState(true);
@@ -30,18 +30,18 @@ export function ExploreContainer() {
       fetchRawSources({ limit: 0 }),
     ])
       .then(([lint, articles, sources]) => {
-        setSuggestions(lint.research_suggestions);
-        setContradictions(lint.contradictions);
         setOrphans(lint.orphans);
-        setDirtyCount(lint.dirty_concepts.length);
+        setDirtyCount(lint.dirty_topics.length);
+        setUnresolvedCitations(lint.unresolved_citations);
+        setUnmentionedLinks(lint.unmentioned_links);
         setRecentArticles(articles);
         setContentTypes(sources.content_types);
       })
       .catch(() => {
-        setSuggestions([]);
-        setContradictions([]);
         setOrphans([]);
         setDirtyCount(0);
+        setUnresolvedCitations([]);
+        setUnmentionedLinks([]);
         setRecentArticles([]);
         setContentTypes([]);
       })
@@ -50,10 +50,10 @@ export function ExploreContainer() {
 
   return (
     <ExplorePage
-      suggestions={suggestions}
-      contradictions={contradictions}
       orphans={orphans}
       dirtyCount={dirtyCount}
+      unresolvedCitations={unresolvedCitations}
+      unmentionedLinks={unmentionedLinks}
       recentArticles={recentArticles}
       contentTypes={contentTypes}
       loading={loading}
