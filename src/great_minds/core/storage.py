@@ -18,6 +18,7 @@ class Storage(Protocol):
     def glob(self, pattern: str) -> list[str]: ...
     def append(self, path: str, content: str) -> None: ...
     def mkdir(self, path: str) -> None: ...
+    def delete(self, path: str, *, missing_ok: bool = True) -> None: ...
 
 
 class LocalStorage:
@@ -61,3 +62,6 @@ class LocalStorage:
 
     def mkdir(self, path: str) -> None:
         self._resolve(path).mkdir(parents=True, exist_ok=True)
+
+    def delete(self, path: str, *, missing_ok: bool = True) -> None:
+        self._resolve(path).unlink(missing_ok=missing_ok)

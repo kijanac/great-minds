@@ -26,3 +26,20 @@ class LocalTopic(BaseModel):
     title: str
     description: str
     subsumed_idea_ids: list[UUID]
+
+
+class ValidatedCanonicalTopic(BaseModel):
+    """Canonical topic after phase 2e validate: link_targets filtered,
+    slug collisions resolved, topic_id assigned via slug continuity.
+
+    This is what phase 3 derive consumes — topic_id is the stable
+    Postgres key, slug is the final article slug.
+    """
+
+    topic_id: UUID
+    slug: str
+    title: str
+    description: str
+    merged_local_topic_ids: list[UUID]
+    link_targets: list[str]
+    is_new: bool
