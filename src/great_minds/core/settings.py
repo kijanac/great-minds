@@ -29,7 +29,6 @@ class Settings(BaseSettings):
     suppress_auth: bool = False
 
     compile_enrich_concurrency: int = 20
-    compile_plan_concurrency: int = 10
     compile_write_concurrency: int = 3
 
     compile_partition_target_tokens: int = 100_000
