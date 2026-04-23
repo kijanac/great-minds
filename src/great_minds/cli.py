@@ -167,14 +167,13 @@ async def _run_reset(brain_id: str, brain_root: Path) -> None:
     log = logging.getLogger(__name__)
 
     async with session_maker() as session:
+        # topic_membership, topic_links, topic_related, backlinks all cascade
+        # from topics (they FK topic_id with ON DELETE CASCADE), so deleting
+        # topics cleans them up automatically.
         tables = [
             "search_index",
-            "backlinks",
             "tasks",
             "source_proposals",
-            "topic_related",
-            "topic_links",
-            "topic_membership",
             "topics",
             "idea_embeddings",
             "documents",
