@@ -36,6 +36,8 @@ class Settings(BaseSettings):
     compile_partition_max_factor: float = 1.5
     compile_partition_min_factor: float = 0.3
 
+    compile_premerge_jaccard_threshold: float = 0.8
+
     log_json: bool = False
 
 
