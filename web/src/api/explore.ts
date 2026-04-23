@@ -2,32 +2,31 @@ import { z } from "zod";
 
 import { apiFetch, brainPath, readJson } from "./client";
 
-const researchSuggestionSchema = z.object({
-  topic: z.string(),
-  mentioned_in: z.array(z.string()),
-  usage_count: z.number(),
-});
-
-const contradictionSchema = z.object({
-  description: z.string(),
-  articles: z.array(z.string()),
-});
-
 const orphanSchema = z.object({
   slug: z.string(),
-  canonical_label: z.string(),
+  title: z.string(),
+});
+
+const unresolvedCitationSchema = z.object({
+  source_slug: z.string(),
+  missing_slug: z.string(),
+});
+
+const unmentionedLinkSchema = z.object({
+  source_slug: z.string(),
+  target_slug: z.string(),
 });
 
 const lintResponseSchema = z.object({
-  research_suggestions: z.array(researchSuggestionSchema),
   orphans: z.array(orphanSchema),
-  dirty_concepts: z.array(z.string()),
-  contradictions: z.array(contradictionSchema),
+  dirty_topics: z.array(z.string()),
+  unresolved_citations: z.array(unresolvedCitationSchema),
+  unmentioned_links: z.array(unmentionedLinkSchema),
 });
 
-export type ResearchSuggestion = z.infer<typeof researchSuggestionSchema>;
-export type Contradiction = z.infer<typeof contradictionSchema>;
 export type Orphan = z.infer<typeof orphanSchema>;
+export type UnresolvedCitation = z.infer<typeof unresolvedCitationSchema>;
+export type UnmentionedLink = z.infer<typeof unmentionedLinkSchema>;
 export type LintResponse = z.infer<typeof lintResponseSchema>;
 
 export async function fetchLintResults(): Promise<LintResponse> {

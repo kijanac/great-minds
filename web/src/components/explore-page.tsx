@@ -2,10 +2,10 @@ import { Home } from "lucide-react";
 import type { ReactNode } from "react";
 
 import type {
-  Contradiction,
   Orphan,
   RecentArticle,
-  ResearchSuggestion,
+  UnmentionedLink,
+  UnresolvedCitation,
 } from "@/api/explore";
 import type { ContentTypeCount } from "@/api/sources";
 import { Button } from "@/components/ui/button";
@@ -13,10 +13,10 @@ import { CHIP_BASE, CHIP_INACTIVE } from "@/lib/chip";
 import { cn, formatShortDate } from "@/lib/utils";
 
 interface ExplorePageProps {
-  suggestions: ResearchSuggestion[];
-  contradictions: Contradiction[];
   orphans: Orphan[];
   dirtyCount: number;
+  unresolvedCitations: UnresolvedCitation[];
+  unmentionedLinks: UnmentionedLink[];
   recentArticles: RecentArticle[];
   contentTypes: ContentTypeCount[];
   loading: boolean;
@@ -31,10 +31,10 @@ interface ExplorePageProps {
 const CHIP_CLASS = cn(CHIP_BASE, CHIP_INACTIVE);
 
 export function ExplorePage({
-  suggestions,
-  contradictions,
   orphans,
   dirtyCount,
+  unresolvedCitations,
+  unmentionedLinks,
   recentArticles,
   contentTypes,
   loading,
@@ -45,17 +45,17 @@ export function ExplorePage({
   onExploreSources,
   ingestionZone,
 }: ExplorePageProps) {
-  const hasSuggestions = suggestions.length > 0;
-  const hasContradictions = contradictions.length > 0;
   const hasOrphans = orphans.length > 0;
   const hasDirty = dirtyCount > 0;
+  const hasUnresolved = unresolvedCitations.length > 0;
+  const hasUnmentioned = unmentionedLinks.length > 0;
   const hasArticles = recentArticles.length > 0;
   const hasSourceTypes = contentTypes.length > 0;
   const hasContent =
-    hasSuggestions ||
-    hasContradictions ||
     hasOrphans ||
     hasDirty ||
+    hasUnresolved ||
+    hasUnmentioned ||
     hasArticles ||
     hasSourceTypes;
 
@@ -125,38 +125,6 @@ export function ExplorePage({
                 </div>
               </section>
 
-              {hasSuggestions && (
-                <section className="mb-10">
-                  <h2 className="font-mono text-[length:var(--text-chrome)] tracking-[0.14em] text-gold-muted uppercase mb-4">
-                    research suggestions
-                  </h2>
-                  <p className="font-mono text-[length:var(--text-chrome)] tracking-[0.04em] text-warm-ghost mb-5">
-                    topics your knowledge base mentions but doesn't cover deeply
-                  </p>
-                  <div className="space-y-3">
-                    {suggestions.map((s) => (
-                      <div
-                        key={s.topic}
-                        className="py-3 px-4 rounded-sm border border-ink-border hover:border-gold-dim transition-colors"
-                      >
-                        <span className="font-serif text-[length:var(--text-body)] text-warm">
-                          {s.topic}
-                        </span>
-                        <div className="mt-1 font-mono text-[length:var(--text-chrome)] tracking-[0.04em] text-warm-ghost">
-                          mentioned in {s.usage_count} document{s.usage_count !== 1 && "s"}
-                          {s.mentioned_in.length > 0 && (
-                            <span className="text-warm-ghost">
-                              {" "}· {s.mentioned_in.slice(0, 3).join(", ")}
-                              {s.mentioned_in.length > 3 && ` +${s.mentioned_in.length - 3}`}
-                            </span>
-                          )}
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </section>
-              )}
-
               {hasDirty && (
                 <section className="mb-10">
                   <h2 className="font-mono text-[length:var(--text-chrome)] tracking-[0.14em] text-gold-muted uppercase mb-4">
@@ -164,9 +132,35 @@ export function ExplorePage({
                   </h2>
                   <p className="font-serif text-[length:var(--text-body)] text-warm-dim">
                     {dirtyCount} article{dirtyCount === 1 ? "" : "s"} drifted from
-                    the current concept registry and will be refreshed on the next
+                    the current topic registry and will be refreshed on the next
                     compile.
                   </p>
+                </section>
+              )}
+
+              {hasUnresolved && (
+                <section className="mb-10">
+                  <h2 className="font-mono text-[length:var(--text-chrome)] tracking-[0.14em] text-gold-muted uppercase mb-4">
+                    broken links
+                  </h2>
+                  <p className="font-mono text-[length:var(--text-chrome)] tracking-[0.04em] text-warm-ghost mb-5">
+                    articles citing wiki slugs that have no matching topic
+                  </p>
+                  <div className="space-y-1">
+                    {unresolvedCitations.map((u, i) => (
+                      <div
+                        key={`${u.source_slug}-${u.missing_slug}-${i}`}
+                        className="py-2.5 px-3 rounded-sm flex items-center justify-between"
+                      >
+                        <span className="font-serif text-[length:var(--text-body)] text-warm-dim truncate">
+                          {u.source_slug}
+                        </span>
+                        <span className="font-mono text-[length:var(--text-chrome)] text-warm-ghost shrink-0 ml-4">
+                          → {u.missing_slug}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
                 </section>
               )}
 
@@ -187,7 +181,7 @@ export function ExplorePage({
                         className="w-full h-auto py-2.5 px-3 rounded-sm justify-between hover:bg-ink-raised group"
                       >
                         <span className="font-serif text-[length:var(--text-body)] text-warm-dim group-hover:text-warm transition-colors truncate text-left">
-                          {o.canonical_label}
+                          {o.title}
                         </span>
                         <span className="font-mono text-[length:var(--text-chrome)] text-warm-ghost shrink-0 ml-4">
                           {o.slug}
@@ -198,23 +192,26 @@ export function ExplorePage({
                 </section>
               )}
 
-              {hasContradictions && (
+              {hasUnmentioned && (
                 <section className="mb-10">
                   <h2 className="font-mono text-[length:var(--text-chrome)] tracking-[0.14em] text-gold-muted uppercase mb-4">
-                    contradictions
+                    missing connections
                   </h2>
-                  <div className="space-y-3">
-                    {contradictions.map((c, i) => (
+                  <p className="font-mono text-[length:var(--text-chrome)] tracking-[0.04em] text-warm-ghost mb-5">
+                    links the topic registry intended but the article doesn't include
+                  </p>
+                  <div className="space-y-1">
+                    {unmentionedLinks.map((u, i) => (
                       <div
-                        key={i}
-                        className="py-3 px-4 rounded-sm border border-ink-border"
+                        key={`${u.source_slug}-${u.target_slug}-${i}`}
+                        className="py-2.5 px-3 rounded-sm flex items-center justify-between"
                       >
-                        <p className="font-serif text-[length:var(--text-body)] text-warm-dim">
-                          {c.description}
-                        </p>
-                        <div className="mt-1 font-mono text-[length:var(--text-chrome)] tracking-[0.04em] text-warm-ghost">
-                          {c.articles.join(" · ")}
-                        </div>
+                        <span className="font-serif text-[length:var(--text-body)] text-warm-dim truncate">
+                          {u.source_slug}
+                        </span>
+                        <span className="font-mono text-[length:var(--text-chrome)] text-warm-ghost shrink-0 ml-4">
+                          → {u.target_slug}
+                        </span>
                       </div>
                     ))}
                   </div>
