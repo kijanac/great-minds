@@ -59,7 +59,11 @@ async def run(ctx: PipelineContext) -> list[ValidatedCanonicalTopic]:
     canonicalize_result = await canonicalize.run(
         ctx, premerge_result.merged_topics
     )
-    validated = await validate.run(ctx, canonicalize_result.canonical_topics)
+    validated = await validate.run(
+        ctx,
+        canonicalize_result.canonical_topics,
+        premerge_result.merged_topics,
+    )
 
     log_event(
         "pipeline.abstract_completed",
