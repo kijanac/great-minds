@@ -20,9 +20,10 @@ from sqlalchemy import text
 
 from great_minds.app.api.server import create_app
 from great_minds.core import brain as brain_ops
-from great_minds.core import ingester, querier
+from great_minds.core import ingester, pipeline, querier
 from great_minds.core.db import session_maker
 from great_minds.core.documents.repository import DocumentRepository
+from great_minds.core.llm import get_async_client
 from great_minds.core.storage import LocalStorage
 from great_minds.core.telemetry import setup_logging
 
@@ -31,12 +32,33 @@ def _make_storage() -> LocalStorage:
     return LocalStorage(Path.cwd())
 
 
+async def _run_compile(brain_id: uuid.UUID, data_dir: Path) -> pipeline.CompileResult:
+    storage = LocalStorage(data_dir / "brains" / str(brain_id))
+    client = get_async_client()
+    async with session_maker() as session:
+        ctx = pipeline.build_context(
+            brain_id=brain_id, storage=storage, session=session, client=client
+        )
+        return await pipeline.run(ctx)
+
+
 def cmd_compile(args: argparse.Namespace) -> None:
     setup_logging(service="great-minds")
-    raise NotImplementedError(
-        "compile is being rewritten on the seven-phase pipeline; "
-        "see target_architecture.md"
+    result = asyncio.run(_run_compile(args.brain_id, Path(args.data_dir)))
+    print("compile complete:")
+    print(f"  raw chunks indexed:   {result.raw_chunks_indexed}")
+    print(
+        f"  docs extracted:       {result.docs_extracted} "
+        f"({result.docs_failed} failed)"
     )
+    print(f"  topics:               {result.topics}")
+    print(
+        f"  articles rendered:    {result.articles_rendered} "
+        f"({result.articles_failed} failed)"
+    )
+    print(f"  wiki chunks indexed:  {result.wiki_chunks_indexed}")
+    print(f"  backlink edges:       {result.backlink_edges}")
+    print(f"  unresolved citations: {result.unresolved_citations}")
 
 
 async def _run_query(args: argparse.Namespace) -> None:
@@ -216,7 +238,7 @@ def main() -> None:
         "brain_id", type=uuid.UUID, help="UUID of the brain to compile"
     )
     p_compile.add_argument(
-        "--limit", type=int, default=None, help="Max documents to compile"
+        "--data-dir", default="/data", help="Data directory (default: /data)"
     )
     p_compile.set_defaults(func=cmd_compile)
 

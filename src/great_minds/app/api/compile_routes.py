@@ -29,10 +29,10 @@ async def compile(
     _auth: None = Depends(require_brain_member),
     _llm: None = Depends(require_llm),
 ) -> TaskDetail:
+    del req  # reserved for future compile options
     brain = await brain_service.get_by_id(brain_id)
     return await task_service.spawn_compile(
         brain_id=brain_id,
         data_dir=settings.data_dir,
         label=brain.name,
-        limit=req.limit,
     )
