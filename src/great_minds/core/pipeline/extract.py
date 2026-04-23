@@ -27,7 +27,7 @@ from sqlalchemy import select, update
 from uuid6 import uuid7
 
 from great_minds.core.brain import load_prompt
-from great_minds.core.brain_utils import parse_frontmatter, strip_json_fencing
+from great_minds.core.brain_utils import json_llm_call, parse_frontmatter
 from great_minds.core.documents.models import DocumentORM
 from great_minds.core.ideas.repository import IdeaEmbeddingRepository
 from great_minds.core.ideas.schemas import (
@@ -238,22 +238,19 @@ async def _extract_one(
                 doc_content=body,
                 config_raw=ctx.config.raw,
             )
-            response = await ctx.client.chat.completions.create(
+            data = await json_llm_call(
+                ctx.client,
                 model=EXTRACT_MODEL,
                 messages=[{"role": "user", "content": prompt}],
-                response_format={"type": "json_object"},
                 temperature=0.2,
             )
-            raw_text = response.choices[0].message.content or ""
-
-        data = json.loads(strip_json_fencing(raw_text))
         outcome.source_card = _validate_extract_output(
             data=data,
             document_id=document_id,
             allowed_kinds=ctx.config.kinds,
         )
     except json.JSONDecodeError as e:
-        outcome.error = f"json_parse:{e}"
+        outcome.error = f"json_parse_exhausted:{e}"
     except ValidationError as e:
         outcome.error = f"schema_invalid:{str(e)[:200]}"
     except Exception as e:
