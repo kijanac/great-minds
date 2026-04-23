@@ -34,6 +34,7 @@ class DocumentRepository:
             "compiled": doc.compiled,
             "doc_kind": doc.doc_kind,
             "source_type": doc.source_type,
+            "precis": doc.precis,
         }
 
         stmt = (

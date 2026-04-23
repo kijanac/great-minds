@@ -46,9 +46,10 @@ class DocumentORM(Base):
         Boolean, nullable=False, server_default="false"
     )
     doc_kind: Mapped[str] = mapped_column(Text, nullable=False, server_default="raw")
-    source_type: Mapped[str] = mapped_column(
-        Text, nullable=False, server_default="document"
-    )
+    # source_type is the brain-config metadata bucket for raw docs
+    # (texts/news/ideas). It has no meaning for rendered wiki articles,
+    # so those rows set source_type = NULL.
+    source_type: Mapped[str | None] = mapped_column(Text, nullable=True)
     precis: Mapped[str | None] = mapped_column(Text, nullable=True)
     extra_metadata: Mapped[dict] = mapped_column(
         "metadata", JSONB, nullable=False, server_default="{}"

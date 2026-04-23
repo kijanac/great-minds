@@ -36,6 +36,8 @@ from great_minds.core.brain_utils import (
     serialize_frontmatter,
 )
 from great_minds.core.documents.models import DocumentORM
+from great_minds.core.documents.repository import DocumentRepository
+from great_minds.core.documents.schemas import DocKind, DocumentCreate
 from great_minds.core.ideas.schemas import Anchor, Idea, SourceCard
 from great_minds.core.ideas.source_cards import SourceCardStore
 from great_minds.core.llm import RENDER_MODEL
@@ -241,7 +243,27 @@ async def _render_one(
         "title": topic.title,
         "description": topic.description,
     }
-    ctx.storage.write(wiki_path, serialize_frontmatter(fm, body))
+    full_content = serialize_frontmatter(fm, body)
+    ctx.storage.write(wiki_path, full_content)
+
+    # Index the rendered article in the documents table so /wiki/recent,
+    # /raw/sources, and search.rebuild_wiki_index all have consistent
+    # metadata. topics is the editorial plan; documents holds the
+    # on-disk artifacts (raw + wiki).
+    doc_repo = DocumentRepository(ctx.session)
+    await doc_repo.upsert(
+        ctx.brain_id,
+        DocumentCreate(
+            file_path=wiki_path,
+            content=full_content,
+            doc_kind=DocKind.WIKI,
+            compiled=True,
+            title=topic.title,
+            precis=topic.description,
+            extra_metadata={"topic_id": str(topic.topic_id)},
+        ),
+    )
+
     ctx.cache.put(PHASE, cache_key, {"body": body})
     outcome.rendered_from_hash = compiled_from_hash
     return outcome
