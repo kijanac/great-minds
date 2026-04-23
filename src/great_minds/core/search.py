@@ -35,6 +35,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Mapped, mapped_column
 
 from great_minds.core.brain_utils import parse_frontmatter
+from great_minds.core.chunking import paragraphs
 from great_minds.core.db import Base
 from great_minds.core.llm import EMBEDDING_DIMENSIONS, EMBEDDING_MODEL, get_async_client
 from great_minds.core.storage import Storage
@@ -78,10 +79,6 @@ class SearchIndexEntry(Base):
 # Chunking
 # ---------------------------------------------------------------------------
 
-_HEADING_LINE_RE = re.compile(r"^(#{1,6})\s+(.+)$")
-_PARA_SPLIT_RE = re.compile(r"\n\s*\n")
-
-
 @dataclass
 class Chunk:
     path: str
@@ -92,48 +89,27 @@ class Chunk:
 
 
 def _chunk_paragraphs(path: str, content: str) -> list[Chunk]:
-    """Paragraph-level chunking with heading metadata carried forward.
+    """Build search-index chunks from shared paragraph chunking.
 
-    Walks blank-line-separated blocks. Heading blocks (`# Foo`) update
-    the running section context and produce no chunk of their own; body
-    blocks emit a chunk whose `heading` column is the nearest preceding
-    heading. The heading text is prepended to `body` for tsvector +
-    embedding so retrieval ranks section context, while the `heading`
-    column stays clean for display.
-
-    One chunker for both raw and wiki — differences are scope (path
-    prefix), not chunking strategy.
+    chunk_index aligns with ingest's `^pN` anchors and extract's
+    anchor.chunk_index, since all three consumers share `chunking.
+    paragraphs()`. Heading text is prepended to body for tsvector +
+    embedding so retrieval ranks section context; the `heading` column
+    stays clean for display.
     """
     chunks: list[Chunk] = []
-    current_heading = ""
-
-    for block in _PARA_SPLIT_RE.split(content):
-        block = block.strip()
-        if not block:
-            continue
-
-        first_line, _, rest = block.partition("\n")
-        heading_match = _HEADING_LINE_RE.match(first_line)
-        if heading_match:
-            current_heading = heading_match.group(2).strip()
-            body = rest.strip()
-            if not body:
-                continue
-        else:
-            body = block
-
-        full_text = f"{current_heading}\n\n{body}" if current_heading else body
+    for p in paragraphs(content):
+        full_text = f"{p.heading}\n\n{p.body}" if p.heading else p.body
         h = hashlib.sha256(full_text.encode()).hexdigest()
         chunks.append(
             Chunk(
                 path=path,
-                chunk_index=len(chunks),
-                heading=current_heading,
+                chunk_index=p.index,
+                heading=p.heading,
                 body=full_text,
                 content_hash=h,
             )
         )
-
     return chunks
 
 
