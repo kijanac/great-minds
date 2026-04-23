@@ -38,6 +38,8 @@ class Settings(BaseSettings):
 
     compile_premerge_jaccard_threshold: float = 0.8
 
+    compile_derive_related_limit: int = 20
+
     log_json: bool = False
 
 

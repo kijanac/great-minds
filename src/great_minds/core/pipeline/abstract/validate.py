@@ -39,7 +39,10 @@ from great_minds.core.brain_utils import (
     serialize_frontmatter,
 )
 from great_minds.core.llm import REDUCE_MODEL
-from great_minds.core.pipeline.abstract.schemas import ValidatedCanonicalTopic
+from great_minds.core.pipeline.abstract.schemas import (
+    LocalTopic,
+    ValidatedCanonicalTopic,
+)
 from great_minds.core.pipeline.context import PipelineContext
 from great_minds.core.telemetry import enrich, log_event
 from great_minds.core.topics.repository import TopicRepository
@@ -57,6 +60,7 @@ class _CleanupOutput:
 async def run(
     ctx: PipelineContext,
     canonical_topics: list[CanonicalTopic],
+    local_topics: list[LocalTopic],
 ) -> list[ValidatedCanonicalTopic]:
     if not canonical_topics:
         log_event(
@@ -67,6 +71,7 @@ async def run(
         return []
 
     canonical_topics = _intersect_link_targets(canonical_topics)
+    local_by_id = {t.local_topic_id: t for t in local_topics}
 
     repo = TopicRepository(ctx.session)
     existing = await repo.list_all(ctx.brain_id)
@@ -91,7 +96,10 @@ async def run(
     _assert_no_collision(renamed_canonicals)
 
     validated = await _assign_topic_ids(
-        brain_id=ctx.brain_id, repo=repo, canonicals=renamed_canonicals
+        brain_id=ctx.brain_id,
+        repo=repo,
+        canonicals=renamed_canonicals,
+        local_by_id=local_by_id,
     )
 
     await _archive_candidates(
@@ -103,6 +111,7 @@ async def run(
     )
 
     await _upsert_topics(repo=repo, brain_id=ctx.brain_id, validated=validated)
+    await ctx.session.commit()
 
     enrich(
         validate_canonical_count=len(validated),
@@ -318,6 +327,7 @@ async def _assign_topic_ids(
     brain_id: UUID,
     repo: TopicRepository,
     canonicals: list[CanonicalTopic],
+    local_by_id: dict[UUID, LocalTopic],
 ) -> list[ValidatedCanonicalTopic]:
     out: list[ValidatedCanonicalTopic] = []
     for c in canonicals:
@@ -328,10 +338,17 @@ async def _assign_topic_ids(
         else:
             topic_id = uuid7()
             is_new = True
-        try:
-            merged_uuids = [UUID(s) for s in c.merged_local_topic_ids]
-        except (ValueError, TypeError):
-            merged_uuids = []
+        merged_uuids: list[UUID] = []
+        for s in c.merged_local_topic_ids:
+            try:
+                merged_uuids.append(UUID(s))
+            except (ValueError, TypeError):
+                continue
+        subsumed: set[UUID] = set()
+        for lt_id in merged_uuids:
+            lt = local_by_id.get(lt_id)
+            if lt is not None:
+                subsumed.update(lt.subsumed_idea_ids)
         out.append(
             ValidatedCanonicalTopic(
                 topic_id=topic_id,
@@ -339,6 +356,7 @@ async def _assign_topic_ids(
                 title=c.title,
                 description=c.description,
                 merged_local_topic_ids=merged_uuids,
+                subsumed_idea_ids=sorted(subsumed, key=str),
                 link_targets=c.link_targets,
                 is_new=is_new,
             )
@@ -418,9 +436,10 @@ async def _upsert_topics(
 
 
 def _topic_content_hash(v: ValidatedCanonicalTopic) -> str:
+    """Content hash per architecture: topic_membership + title + description."""
     parts = [
         v.title,
         v.description,
-        *sorted(str(i) for i in v.merged_local_topic_ids),
+        *sorted(str(i) for i in v.subsumed_idea_ids),
     ]
     return hashlib.sha256("\n".join(parts).encode()).hexdigest()[:16]
