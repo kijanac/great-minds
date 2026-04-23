@@ -27,7 +27,7 @@ from pydantic import ValidationError
 from uuid6 import uuid7
 
 from great_minds.core.brain import load_prompt
-from great_minds.core.brain_utils import strip_json_fencing
+from great_minds.core.brain_utils import json_llm_call
 from great_minds.core.ideas.schemas import Idea, SourceCard
 from great_minds.core.llm import MAP_MODEL
 from great_minds.core.pipeline.abstract.schemas import LocalTopic
@@ -180,22 +180,19 @@ async def _synthesize_one(
 
     try:
         async with sem:
-            response = await ctx.client.chat.completions.create(
+            data = await json_llm_call(
+                ctx.client,
                 model=MAP_MODEL,
                 messages=[{"role": "user", "content": prompt}],
-                response_format={"type": "json_object"},
                 temperature=0.3,
             )
-            raw_text = response.choices[0].message.content or ""
-
-        data = json.loads(strip_json_fencing(raw_text))
         outcome.local_topics = _parse_topics(
             data=data,
             chunk_idx=chunk_idx,
             tag_to_uuid=tag_to_uuid,
         )
     except json.JSONDecodeError as e:
-        outcome.error = f"json_parse:{e}"
+        outcome.error = f"json_parse_exhausted:{e}"
     except Exception as e:
         outcome.error = f"llm_call:{repr(e)[:200]}"
         log_event(

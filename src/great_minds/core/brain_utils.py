@@ -157,3 +157,51 @@ def parse_json_response(text: str) -> dict | None:
     except json.JSONDecodeError:
         log.warning("failed to parse LLM JSON: %s", raw[:200])
         return None
+
+
+async def json_llm_call(
+    client: AsyncOpenAI,
+    *,
+    model: str,
+    messages: list[dict],
+    max_parse_retries: int = 1,
+    **kwargs,
+) -> dict:
+    """api_call + JSON parsing with retry on body malformation.
+
+    HTTP-layer retries (rate limits, transient errors) are handled by
+    api_call. This layer adds a shallow retry for the case where HTTP
+    returns 200 but the body fails to parse as JSON — stray commas,
+    mid-output truncation, occasional markdown fencing. One retry
+    absorbs flakes cheaply; persistent parse failures still surface
+    after max_parse_retries, with the raw response in the log.
+
+    response_format defaults to json_object; callers can override via
+    kwargs to pass a json_schema constraint instead.
+    """
+    kwargs.setdefault("response_format", {"type": "json_object"})
+    total_attempts = max_parse_retries + 1
+    for attempt in range(1, total_attempts + 1):
+        response = await api_call(
+            client, model=model, messages=messages, **kwargs
+        )
+        raw = extract_content(response) or ""
+        try:
+            return json.loads(strip_json_fencing(raw))
+        except json.JSONDecodeError as e:
+            is_final = attempt == total_attempts
+            log_event(
+                "json_llm_parse_exhausted"
+                if is_final
+                else "json_llm_parse_retry",
+                level=logging.ERROR if is_final else logging.WARNING,
+                model=model,
+                attempt=attempt,
+                max_attempts=total_attempts,
+                error=str(e),
+                raw_preview=raw[:500],
+            )
+            if is_final:
+                raise
+    # Unreachable — loop always exits via return or raise above.
+    raise AssertionError("json_llm_call loop exited without resolution")
