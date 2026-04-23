@@ -97,7 +97,8 @@ class Document(BaseModel):
     genre: str | None
     compiled: bool
     doc_kind: str
-    source_type: str = "document"
+    # NULL for rendered wiki rows; populated for raw docs.
+    source_type: str | None = None
     tags: list[str] = []
     extra_metadata: dict = {}
     created_at: datetime | None = None
