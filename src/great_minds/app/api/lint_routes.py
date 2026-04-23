@@ -38,12 +38,15 @@ class OrphanResponse(BaseModel):
 
 class UnresolvedCitationResponse(BaseModel):
     source_slug: str
+    source_title: str
     missing_slug: str
 
 
 class UnmentionedLinkResponse(BaseModel):
     source_slug: str
+    source_title: str
     target_slug: str
+    target_title: str
 
 
 class LintReportResponse(BaseModel):
@@ -69,13 +72,18 @@ async def lint(
         dirty_topics=report.dirty_topics,
         unresolved_citations=[
             UnresolvedCitationResponse(
-                source_slug=u.source_slug, missing_slug=u.missing_slug
+                source_slug=u.source_slug,
+                source_title=u.source_title,
+                missing_slug=u.missing_slug,
             )
             for u in report.unresolved_citations
         ],
         unmentioned_links=[
             UnmentionedLinkResponse(
-                source_slug=u.source_slug, target_slug=u.target_slug
+                source_slug=u.source_slug,
+                source_title=u.source_title,
+                target_slug=u.target_slug,
+                target_title=u.target_title,
             )
             for u in report.unmentioned_links
         ],

@@ -9,12 +9,15 @@ const orphanSchema = z.object({
 
 const unresolvedCitationSchema = z.object({
   source_slug: z.string(),
+  source_title: z.string(),
   missing_slug: z.string(),
 });
 
 const unmentionedLinkSchema = z.object({
   source_slug: z.string(),
+  source_title: z.string(),
   target_slug: z.string(),
+  target_title: z.string(),
 });
 
 const lintResponseSchema = z.object({
