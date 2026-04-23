@@ -25,7 +25,11 @@ from great_minds.core.db import session_maker
 from great_minds.core.documents.repository import DocumentRepository
 from great_minds.core.llm import get_async_client
 from great_minds.core.storage import LocalStorage
-from great_minds.core.telemetry import setup_logging
+from great_minds.core.telemetry import (
+    emit_wide_event,
+    init_wide_event,
+    setup_logging,
+)
 
 
 def _make_storage() -> LocalStorage:
@@ -35,11 +39,15 @@ def _make_storage() -> LocalStorage:
 async def _run_compile(brain_id: uuid.UUID, data_dir: Path) -> pipeline.CompileResult:
     storage = LocalStorage(data_dir / "brains" / str(brain_id))
     client = get_async_client()
-    async with session_maker() as session:
-        ctx = pipeline.build_context(
-            brain_id=brain_id, storage=storage, session=session, client=client
-        )
-        return await pipeline.run(ctx)
+    init_wide_event("compile", brain_id=str(brain_id))
+    try:
+        async with session_maker() as session:
+            ctx = pipeline.build_context(
+                brain_id=brain_id, storage=storage, session=session, client=client
+            )
+            return await pipeline.run(ctx)
+    finally:
+        emit_wide_event()
 
 
 def cmd_compile(args: argparse.Namespace) -> None:
@@ -59,6 +67,7 @@ def cmd_compile(args: argparse.Namespace) -> None:
     print(f"  wiki chunks indexed:  {result.wiki_chunks_indexed}")
     print(f"  backlink edges:       {result.backlink_edges}")
     print(f"  unresolved citations: {result.unresolved_citations}")
+    print(f"  cost (USD):           ${result.cost_usd:.4f}")
 
 
 async def _run_query(args: argparse.Namespace) -> None:
