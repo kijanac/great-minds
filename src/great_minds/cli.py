@@ -21,6 +21,7 @@ from sqlalchemy import text
 from great_minds.app.api.server import create_app
 from great_minds.core import brain as brain_ops
 from great_minds.core import ingester, pipeline, querier
+from great_minds.core.brain_config import compile_root
 from great_minds.core.db import session_maker
 from great_minds.core.documents.repository import DocumentRepository
 from great_minds.core.llm import get_async_client
@@ -196,6 +197,70 @@ async def _run_reset(brain_id: str, brain_root: Path) -> None:
     log.info("reset complete for brain %s", brain_id)
 
 
+async def _run_delete_brain(brain_id: str, brain_root: Path) -> None:
+    log = logging.getLogger(__name__)
+
+    async with session_maker() as session:
+        # idea_embeddings lacks an FK to brains so it doesn't cascade.
+        # Delete explicitly first, then drop the brain row — that
+        # cascades to memberships, documents (→ tags), proposals, tasks,
+        # search_index, topics (→ topic_membership, topic_links,
+        # topic_related, backlinks).
+        idea_result = await session.execute(
+            text("DELETE FROM idea_embeddings WHERE brain_id = :bid"),
+            {"bid": brain_id},
+        )
+        log.info("deleted %d rows from idea_embeddings", idea_result.rowcount)
+
+        brain_result = await session.execute(
+            text("DELETE FROM brains WHERE id = :bid"),
+            {"bid": brain_id},
+        )
+        if brain_result.rowcount == 0:
+            log.warning("no brain row found with id=%s", brain_id)
+        else:
+            log.info(
+                "deleted brain row (FK cascades cleared memberships, "
+                "documents, tasks, proposals, search_index, topics, "
+                "backlinks, etc.)"
+            )
+        await session.commit()
+
+    if brain_root.exists():
+        shutil.rmtree(brain_root)
+        log.info("removed brain storage %s", brain_root)
+
+    compile_sidecar = compile_root(uuid.UUID(brain_id))
+    if compile_sidecar.exists():
+        shutil.rmtree(compile_sidecar)
+        log.info("removed compile sidecar %s", compile_sidecar)
+
+    log.info("brain %s fully deleted", brain_id)
+
+
+def cmd_delete_brain(args: argparse.Namespace) -> None:
+    setup_logging(service="great-minds")
+
+    brain_id = args.brain_id
+    data_dir = Path(args.data_dir)
+    brain_root = data_dir / "brains" / brain_id
+
+    if not args.yes:
+        print(f"This will PERMANENTLY DELETE brain {brain_id}:")
+        print("  - Database: the brains row + all FK-cascaded content")
+        print("              (documents, topics, backlinks, idea_embeddings, tasks, ...)")
+        print(f"  - Disk:     {brain_root}")
+        print(f"  - Compile:  {compile_root(uuid.UUID(brain_id))}")
+        print("\nThe brain row itself is removed — not just its content.")
+        print("Use `great-minds reset` if you only want to clear content.")
+        confirm = input("\nType 'yes' to continue: ")
+        if confirm != "yes":
+            print("Aborted.")
+            return
+
+    asyncio.run(_run_delete_brain(brain_id, brain_root))
+
+
 def cmd_reset(args: argparse.Namespace) -> None:
     setup_logging(service="great-minds")
 
@@ -287,6 +352,21 @@ def main() -> None:
         "-y", "--yes", action="store_true", help="Skip confirmation prompt"
     )
     p_reset.set_defaults(func=cmd_reset)
+
+    # delete-brain
+    p_delete = subparsers.add_parser(
+        "delete-brain",
+        help="Permanently delete a brain (row + content + sidecar). "
+        "For content-only clear, use `reset`.",
+    )
+    p_delete.add_argument("brain_id", help="UUID of the brain to delete")
+    p_delete.add_argument(
+        "--data-dir", default="/data", help="Data directory (default: /data)"
+    )
+    p_delete.add_argument(
+        "-y", "--yes", action="store_true", help="Skip confirmation prompt"
+    )
+    p_delete.set_defaults(func=cmd_delete_brain)
 
     # serve
     p_serve = subparsers.add_parser("serve", help="Start the API server")
