@@ -12,6 +12,7 @@ import argparse
 import logging
 import os
 import re
+import shutil
 from pathlib import Path
 
 import boto3
@@ -139,8 +140,6 @@ def main() -> None:
     if not args.copy:
         log.info("DRY RUN — pass --copy to copy matching files to %s", CORE_DIR)
         return
-
-    import shutil
 
     CORE_DIR.mkdir(parents=True, exist_ok=True)
 
