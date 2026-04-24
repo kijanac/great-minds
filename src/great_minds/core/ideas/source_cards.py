@@ -38,9 +38,6 @@ class SourceCardStore:
                 out.append(SourceCard.model_validate_json(line))
         return out
 
-    def load_by_document(self) -> dict[UUID, SourceCard]:
-        return {c.document_id: c for c in self.load_all()}
-
     def get(self, document_id: UUID) -> SourceCard | None:
         for card in self.load_all():
             if card.document_id == document_id:
@@ -48,7 +45,7 @@ class SourceCardStore:
         return None
 
     def upsert_many(self, cards: list[SourceCard]) -> None:
-        existing = self.load_by_document()
+        existing = {c.document_id: c for c in self.load_all()}
         for c in cards:
             existing[c.document_id] = c
         self.write_all(list(existing.values()))
