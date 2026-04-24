@@ -152,7 +152,7 @@ async def run(ctx: PipelineContext) -> None:
     idea_service = IdeaService(
         brain_id=ctx.brain_id,
         embedding_repo=idea_repo,
-        brain_root=ctx.brain_root,
+        sidecar_root=ctx.sidecar_root,
     )
     for outcome in fresh_outcomes:
         await idea_repo.delete_for_document(outcome.document_id)

@@ -1,6 +1,8 @@
 """Content-hash disk cache for per-phase LLM outputs.
 
-One JSON file per (phase, key) under ``<brain_root>/.compile/cache/<phase>/<key>.json``.
+One JSON file per (phase, key) under ``<sidecar>/cache/<phase>/<key>.json``
+where sidecar is the machine-local compile sidecar
+(``<data_dir>/.compile/<brain_id>/``).
 Keys are content hashes (phase-specific): extract uses sha256 over
 (doc_content + prompt_hash + kinds_config + extract_model); map uses
 sha256 over sorted idea_ids in chunk; etc.
@@ -27,11 +29,11 @@ from great_minds.core.paths import cache_root
 
 @dataclass
 class ContentHashCache:
-    root: Path  # <brain_root>/.compile/cache/
+    root: Path  # <sidecar>/cache/
 
     @classmethod
-    def for_brain(cls, brain_root: Path) -> "ContentHashCache":
-        return cls(cache_root(brain_root))
+    def for_brain(cls, sidecar: Path) -> "ContentHashCache":
+        return cls(cache_root(sidecar))
 
     def _path(self, phase: str, key: str) -> Path:
         return self.root / phase / f"{key}.json"

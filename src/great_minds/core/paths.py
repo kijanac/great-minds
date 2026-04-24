@@ -1,6 +1,7 @@
 """Single source of truth for the brain's on-disk hierarchy.
 
-Layout under ``<data_dir>/brains/<brain_id>/``::
+Brain content lives under ``<data_dir>/brains/<brain_id>/`` (or, for
+R2 storage, under ``<bucket>/brains/<brain_id>/``)::
 
     config.yaml                     user config
     prompts/<name>.md               optional prompt overrides
@@ -8,16 +9,21 @@ Layout under ``<data_dir>/brains/<brain_id>/``::
     wiki/<slug>.md                  rendered articles
     wiki/_index.md                  wiki index
     raw/_index.md                   raw index
-    .compile/                       compile sidecar (machine-local)
-      cache/<phase>/<key>.json      per-phase content-hash cache
-      source_cards.jsonl            extract output stream
-      log.md                        human-readable compile timeline
+
+Compile sidecar is always machine-local, regardless of storage backend
+— it's build-cache state (think ``node_modules/``), regeneratable from
+content-hash inputs. It lives under ``<data_dir>/.compile/<brain_id>/``::
+
+    cache/<phase>/<key>.json        per-phase content-hash cache
+    source_cards.jsonl              extract output stream
+    log.md                          human-readable compile timeline
 
 Two helper families:
 
 - **Storage-relative** (``str``): for ``Storage.read/write/glob`` calls.
+  Work identically against LocalStorage and R2Storage.
 - **Filesystem-absolute** (``Path``): for raw ``Path`` I/O on the compile
-  sidecar, whose files don't flow through Storage.
+  sidecar, which never flows through Storage.
 """
 
 from __future__ import annotations
@@ -77,23 +83,24 @@ def prompts_path(name: str) -> str:
 
 
 # ---------------------------------------------------------------------------
-# Compile sidecar (filesystem-absolute, rooted at brain_root)
+# Compile sidecar (filesystem-absolute, machine-local)
 # ---------------------------------------------------------------------------
 
 COMPILE_DIR = ".compile"
 
 
-def compile_root(brain_root_path: Path) -> Path:
-    return brain_root_path / COMPILE_DIR
+def sidecar_root(data_dir: Path, brain_id: UUID | str) -> Path:
+    """Absolute path to a brain's compile sidecar on local disk."""
+    return Path(data_dir) / COMPILE_DIR / str(brain_id)
 
 
-def cache_root(brain_root_path: Path) -> Path:
-    return compile_root(brain_root_path) / "cache"
+def cache_root(sidecar: Path) -> Path:
+    return sidecar / "cache"
 
 
-def source_cards_path(brain_root_path: Path) -> Path:
-    return compile_root(brain_root_path) / "source_cards.jsonl"
+def source_cards_path(sidecar: Path) -> Path:
+    return sidecar / "source_cards.jsonl"
 
 
-def compile_log_path(brain_root_path: Path) -> Path:
-    return compile_root(brain_root_path) / "log.md"
+def compile_log_path(sidecar: Path) -> Path:
+    return sidecar / "log.md"

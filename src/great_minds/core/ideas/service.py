@@ -21,11 +21,11 @@ class IdeaService:
         *,
         brain_id: UUID,
         embedding_repo: IdeaEmbeddingRepository,
-        brain_root: Path,
+        sidecar_root: Path,
     ) -> None:
         self.brain_id = brain_id
         self.embedding_repo = embedding_repo
-        self.source_cards = SourceCardStore.for_brain(brain_root)
+        self.source_cards = SourceCardStore.for_brain(sidecar_root)
 
     async def record_extractions(
         self,
