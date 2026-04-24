@@ -18,12 +18,18 @@ content-hash inputs. It lives under ``<data_dir>/.compile/<brain_id>/``::
     source_cards.jsonl              extract output stream
     log.md                          human-readable compile timeline
 
-Two helper families:
+Package-bundled defaults (``default_config.yaml``, ``default_prompts/``)
+ship with the installed package under ``great_minds/core/`` and serve
+as fallbacks when a brain hasn't authored an override.
+
+Three helper families:
 
 - **Storage-relative** (``str``): for ``Storage.read/write/glob`` calls.
   Work identically against LocalStorage and R2Storage.
 - **Filesystem-absolute** (``Path``): for raw ``Path`` I/O on the compile
   sidecar, which never flows through Storage.
+- **Package-resource** (``Path``): shipped-with-the-code defaults. Read
+  directly; never written.
 """
 
 from __future__ import annotations
@@ -104,3 +110,16 @@ def source_cards_path(sidecar: Path) -> Path:
 
 def compile_log_path(sidecar: Path) -> Path:
     return sidecar / "log.md"
+
+
+# ---------------------------------------------------------------------------
+# Package-bundled defaults (read-only, shipped with the installed package)
+# ---------------------------------------------------------------------------
+
+PACKAGE_DIR = Path(__file__).resolve().parent  # great_minds/core/
+DEFAULT_CONFIG_PATH = PACKAGE_DIR / "default_config.yaml"
+DEFAULT_PROMPTS_DIR = PACKAGE_DIR / "default_prompts"
+
+
+def default_prompt_path(name: str) -> Path:
+    return DEFAULT_PROMPTS_DIR / f"{name}.md"
