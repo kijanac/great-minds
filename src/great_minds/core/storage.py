@@ -27,6 +27,9 @@ import fnmatch
 from pathlib import Path
 from typing import Protocol, runtime_checkable
 
+import boto3
+from botocore.exceptions import ClientError
+
 
 @runtime_checkable
 class Storage(Protocol):
@@ -109,8 +112,6 @@ class R2Storage:
         bucket: str,
         prefix: str,
     ) -> None:
-        import boto3
-
         self.bucket = bucket
         self.prefix = prefix.rstrip("/")
         self._client = boto3.client(
@@ -128,8 +129,6 @@ class R2Storage:
         return key[len(self.prefix) + 1 :]
 
     def _read_sync(self, path: str, *, strict: bool) -> str | None:
-        from botocore.exceptions import ClientError
-
         try:
             resp = self._client.get_object(Bucket=self.bucket, Key=self._key(path))
         except ClientError as e:
@@ -155,8 +154,6 @@ class R2Storage:
         await asyncio.to_thread(self._write_sync, path, content)
 
     def _exists_sync(self, path: str) -> bool:
-        from botocore.exceptions import ClientError
-
         try:
             self._client.head_object(Bucket=self.bucket, Key=self._key(path))
         except ClientError as e:
@@ -213,8 +210,6 @@ class R2Storage:
         """No-op: R2 has no directory concept."""
 
     def _delete_sync(self, path: str, *, missing_ok: bool) -> None:
-        from botocore.exceptions import ClientError
-
         try:
             self._client.delete_object(Bucket=self.bucket, Key=self._key(path))
         except ClientError as e:
