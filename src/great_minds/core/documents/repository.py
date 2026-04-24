@@ -86,7 +86,7 @@ class DocumentRepository:
 
     async def list_by_kind(
         self, brain_id: UUID, kind: DocKind
-    ) -> list[DocumentORM]:
+    ) -> list[Document]:
         """Return all documents of a given kind, ordered by file_path.
 
         Used by extract (iterate raw docs) and render (resolve footnote
@@ -100,7 +100,7 @@ class DocumentRepository:
             )
             .order_by(DocumentORM.file_path)
         )
-        return list(rows.scalars().all())
+        return [Document.model_validate(r) for r in rows.scalars().all()]
 
     async def count_by_kind(self, brain_id: UUID, kind: DocKind) -> int:
         return (

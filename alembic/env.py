@@ -11,7 +11,7 @@ from great_minds.core.settings import get_settings
 
 # Register all domain models with Base.metadata
 import great_minds.core.brains.models  # noqa: F401
-import great_minds.core.search  # noqa: F401
+import great_minds.core.search.models  # noqa: F401
 import great_minds.core.documents.models  # noqa: F401
 import great_minds.core.users.models  # noqa: F401
 import great_minds.core.auth.models  # noqa: F401

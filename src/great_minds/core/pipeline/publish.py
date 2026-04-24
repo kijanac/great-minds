@@ -15,9 +15,8 @@ from __future__ import annotations
 import logging
 from datetime import datetime, timezone
 
-from great_minds.core.documents.models import DocumentORM
 from great_minds.core.documents.repository import DocumentRepository
-from great_minds.core.documents.schemas import DocKind
+from great_minds.core.documents.schemas import DocKind, Document
 from great_minds.core.paths import (
     RAW_INDEX_PATH,
     RAW_PREFIX,
@@ -84,7 +83,7 @@ def _write_wiki_index(ctx: PipelineContext, topics: list[Topic]) -> None:
 # ---------------------------------------------------------------------------
 
 
-def _write_raw_index(ctx: PipelineContext, docs: list[DocumentORM]) -> None:
+def _write_raw_index(ctx: PipelineContext, docs: list[Document]) -> None:
     ordered = sorted(docs, key=lambda d: d.title.lower())
     lines = [
         "# Raw Sources",
@@ -160,7 +159,7 @@ def _append_compile_log(ctx: PipelineContext, counts: dict) -> None:
 # ---------------------------------------------------------------------------
 
 
-async def _load_raw_documents(ctx: PipelineContext) -> list[DocumentORM]:
+async def _load_raw_documents(ctx: PipelineContext) -> list[Document]:
     return await DocumentRepository(ctx.session).list_by_kind(
         ctx.brain_id, DocKind.RAW
     )

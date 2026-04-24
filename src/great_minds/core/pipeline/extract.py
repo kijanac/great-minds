@@ -35,7 +35,7 @@ from great_minds.core.markdown import (
 )
 from great_minds.core.documents.models import DocumentORM
 from great_minds.core.documents.repository import DocumentRepository
-from great_minds.core.documents.schemas import DocKind
+from great_minds.core.documents.schemas import DocKind, Document
 from great_minds.core.ideas.repository import IdeaEmbeddingRepository
 from great_minds.core.ideas.schemas import (
     Anchor,
@@ -420,7 +420,7 @@ async def _embed_ideas(
 # ---------------------------------------------------------------------------
 
 
-async def _load_documents(session, brain_id: UUID) -> list[DocumentORM]:
+async def _load_documents(session, brain_id: UUID) -> list[Document]:
     """Load all raw documents for a brain in deterministic path order."""
     return await DocumentRepository(session).list_by_kind(brain_id, DocKind.RAW)
 

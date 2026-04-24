@@ -95,6 +95,7 @@ class Document(BaseModel):
     url: str | None
     origin: str | None
     genre: str | None
+    precis: str | None = None
     compiled: bool
     doc_kind: str
     # NULL for rendered wiki rows; populated for raw docs.
