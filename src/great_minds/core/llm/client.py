@@ -1,4 +1,21 @@
-"""Shared utilities for brain operations (compile pipeline, querier, etc.)."""
+"""LLM HTTP client with rate-limit-aware retries and JSON-parse retries.
+
+Two call layers:
+
+- :func:`api_call` wraps ``client.chat.completions.create`` with retry
+  on 429s (larger budget, honors Retry-After) and transient errors
+  (short budget, jittered backoff). Auto-injects OpenRouter's
+  ``usage={"include": true}`` extension so the response carries USD
+  cost. Per-call cost is logged and accumulated into the current wide
+  event.
+- :func:`json_llm_call` wraps :func:`api_call` with a shallow retry
+  loop for the case where HTTP returns 200 but the body fails to
+  parse as JSON (stray commas, mid-output truncation, markdown
+  fencing). Persistent parse failures raise with the raw response in
+  the log.
+"""
+
+from __future__ import annotations
 
 import asyncio
 import json
@@ -6,32 +23,19 @@ import logging
 import random
 import re
 import time
-from io import StringIO
 
 from openai import AsyncOpenAI, RateLimitError
-from ruamel.yaml import YAML
 
 from great_minds.core.telemetry import accumulate_cost, log_event
 
 log = logging.getLogger(__name__)
 
-_yaml = YAML()
-_yaml.preserve_quotes = True
-
-FRONTMATTER_RE = re.compile(r"^---\n(.+?)\n---\n", re.DOTALL)
-MD_LINK_RE = re.compile(r"\[([^\]]*)\]\(([^)]+)\)")
-WIKI_LINK_RE = re.compile(r"\[([^\]]*)\]\((wiki/[^)]+\.md)\)")
-FOOTNOTE_RE = re.compile(r"\[\^(\d+)\]:\s*\[([^\]]*)\]\(([^)]+)\)")
-
-
-def extract_wiki_link_targets(content: str) -> list[str]:
-    """Extract unique wiki article paths from markdown links."""
-    return list(dict.fromkeys(m.group(2) for m in WIKI_LINK_RE.finditer(content)))
-
-
 RATE_LIMIT_RETRIES = 6
 GENERIC_RETRIES = 2
 MAX_BACKOFF_SECONDS = 60
+
+_JSON_FENCE_OPEN_RE = re.compile(r"^```(?:json)?\n?")
+_JSON_FENCE_CLOSE_RE = re.compile(r"\n?```$")
 
 
 def _retry_after_seconds(err: RateLimitError) -> float | None:
@@ -48,16 +52,6 @@ def _retry_after_seconds(err: RateLimitError) -> float | None:
 
 
 async def api_call(client: AsyncOpenAI, **kwargs):
-    """Wrap API calls with rate-limit-aware retries.
-
-    429s get a larger retry budget, honor Retry-After when present, and use
-    jittered exponential backoff to avoid thundering-herd retries across
-    concurrent callers.
-
-    Auto-injects OpenRouter's usage={"include": true} extension into
-    extra_body so response.usage.cost is populated with USD cost.
-    Per-call cost is logged and accumulated into the current wide event.
-    """
     extra_body = dict(kwargs.get("extra_body") or {})
     extra_body.setdefault("usage", {"include": True})
     kwargs["extra_body"] = extra_body
@@ -140,35 +134,10 @@ def extract_content(response) -> str | None:
     return choice.message.content.strip()
 
 
-def strip_json_fencing(raw: str) -> str:
-    raw = re.sub(r"^```(?:json)?\n?", "", raw)
-    raw = re.sub(r"\n?```$", "", raw)
+def _strip_json_fencing(raw: str) -> str:
+    raw = _JSON_FENCE_OPEN_RE.sub("", raw)
+    raw = _JSON_FENCE_CLOSE_RE.sub("", raw)
     return raw
-
-
-def parse_frontmatter(content: str) -> tuple[dict, str]:
-    match = FRONTMATTER_RE.match(content)
-    if not match:
-        return {}, content
-    fm = _yaml.load(match.group(1))
-    body = content[match.end() :]
-    return dict(fm) if fm else {}, body
-
-
-def serialize_frontmatter(fm: dict, body: str) -> str:
-    buf = StringIO()
-    _yaml.dump(fm, buf)
-    return f"---\n{buf.getvalue()}---\n{body}"
-
-
-def parse_json_response(text: str) -> dict | None:
-    """Parse a JSON response from an LLM, stripping fencing."""
-    raw = strip_json_fencing(text)
-    try:
-        return json.loads(raw)
-    except json.JSONDecodeError:
-        log.warning("failed to parse LLM JSON: %s", raw[:200])
-        return None
 
 
 async def json_llm_call(
@@ -179,14 +148,14 @@ async def json_llm_call(
     max_parse_retries: int = 1,
     **kwargs,
 ) -> dict:
-    """api_call + JSON parsing with retry on body malformation.
+    """``api_call`` + JSON parsing with retry on body malformation.
 
     HTTP-layer retries (rate limits, transient errors) are handled by
-    api_call. This layer adds a shallow retry for the case where HTTP
-    returns 200 but the body fails to parse as JSON — stray commas,
-    mid-output truncation, occasional markdown fencing. One retry
-    absorbs flakes cheaply; persistent parse failures still surface
-    after max_parse_retries, with the raw response in the log.
+    ``api_call``. This layer adds a shallow retry for 200s where the
+    body fails to parse as JSON — stray commas, mid-output truncation,
+    occasional markdown fencing. One retry absorbs flakes cheaply;
+    persistent parse failures still surface after max_parse_retries,
+    with the raw response in the log.
 
     response_format defaults to json_object; callers can override via
     kwargs to pass a json_schema constraint instead.
@@ -199,7 +168,7 @@ async def json_llm_call(
         )
         raw = extract_content(response) or ""
         try:
-            return json.loads(strip_json_fencing(raw))
+            return json.loads(_strip_json_fencing(raw))
         except json.JSONDecodeError as e:
             is_final = attempt == total_attempts
             log_event(

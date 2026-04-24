@@ -15,7 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from great_minds.core import ingester, pipeline
 from great_minds.core.brain import load_config
-from great_minds.core.brain_utils import parse_frontmatter
+from great_minds.core.markdown import parse_frontmatter
 from great_minds.core.documents.repository import DocumentRepository
 from great_minds.core.documents.schemas import DocumentCreate
 from great_minds.core.llm import get_async_client

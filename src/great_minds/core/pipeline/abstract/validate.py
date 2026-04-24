@@ -33,12 +33,9 @@ from uuid import UUID
 from uuid6 import uuid7
 
 from great_minds.core.brain import load_prompt
-from great_minds.core.brain_utils import (
-    json_llm_call,
-    parse_frontmatter,
-    serialize_frontmatter,
-)
+from great_minds.core.llm.client import json_llm_call
 from great_minds.core.llm import REDUCE_MODEL
+from great_minds.core.markdown import parse_frontmatter, serialize_frontmatter
 from great_minds.core.pipeline.abstract.schemas import (
     LocalTopic,
     ValidatedCanonicalTopic,

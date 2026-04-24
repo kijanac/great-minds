@@ -2,7 +2,7 @@
 
 from uuid import UUID
 
-from great_minds.core.brain_utils import parse_frontmatter
+from great_minds.core.markdown import parse_frontmatter
 from great_minds.core.documents.repository import DocumentRepository
 from great_minds.core.documents.schemas import DocKind, Document, DocumentCreate
 

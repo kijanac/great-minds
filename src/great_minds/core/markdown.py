@@ -1,26 +1,69 @@
-"""Paragraph-level chunking, shared across ingest / search / extract.
+"""Markdown I/O utilities.
 
-One source of truth for "what is a paragraph" so chunk_index values
-stay aligned across:
+One source of truth for reading, writing, and chunking the brain's
+markdown files. Covers three related concerns:
 
-- Ingest: appends `^pN` Obsidian-style block anchors to each paragraph
-  before writing raw markdown to disk (makes raw files Obsidian-
-  native: cross-file block references work).
-- Search: builds the BM25+vector index row per paragraph.
-- Extract: maps each anchor's verbatim quote back to the paragraph
-  that contains it, so render can emit deep-link footnote URLs
-  (`raw/.../file.md#^p12`).
+- Frontmatter parsing + serialization (YAML between ``---`` fences)
+- Wiki-link extraction (``[label](wiki/<slug>.md)`` citations in
+  rendered articles)
+- Paragraph-level chunking with Obsidian-style ``^pN`` block anchors,
+  shared across ingest (bakes anchors into raw files), search (one
+  index row per paragraph), and extract (maps LLM-emitted verbatim
+  quotes back to their paragraph for deep-link footnotes).
 
 Paragraph boundaries are blank-line separated. Pure-heading blocks
-(e.g. `# Chapter` on its own with nothing beneath before the next
-blank line) are preserved in walk output but don't increment the
-paragraph counter and don't get `^pN` anchors.
+(``# Chapter`` on its own before the next blank line) are preserved
+in walk output but don't increment the paragraph counter and don't
+get ``^pN`` anchors.
 """
 
 from __future__ import annotations
 
 import re
 from dataclasses import dataclass
+from io import StringIO
+
+from ruamel.yaml import YAML
+
+# ---------------------------------------------------------------------------
+# Frontmatter
+# ---------------------------------------------------------------------------
+
+_FRONTMATTER_RE = re.compile(r"^---\n(.+?)\n---\n", re.DOTALL)
+_yaml = YAML()
+_yaml.preserve_quotes = True
+
+
+def parse_frontmatter(content: str) -> tuple[dict, str]:
+    match = _FRONTMATTER_RE.match(content)
+    if not match:
+        return {}, content
+    fm = _yaml.load(match.group(1))
+    body = content[match.end() :]
+    return dict(fm) if fm else {}, body
+
+
+def serialize_frontmatter(fm: dict, body: str) -> str:
+    buf = StringIO()
+    _yaml.dump(fm, buf)
+    return f"---\n{buf.getvalue()}---\n{body}"
+
+
+# ---------------------------------------------------------------------------
+# Wiki-link citations
+# ---------------------------------------------------------------------------
+
+_WIKI_LINK_RE = re.compile(r"\[([^\]]*)\]\((wiki/[^)]+\.md)\)")
+
+
+def extract_wiki_link_targets(content: str) -> list[str]:
+    """Extract unique wiki article paths from markdown links."""
+    return list(dict.fromkeys(m.group(2) for m in _WIKI_LINK_RE.finditer(content)))
+
+
+# ---------------------------------------------------------------------------
+# Paragraph chunking + Obsidian block anchors
+# ---------------------------------------------------------------------------
 
 _PARA_SPLIT_RE = re.compile(r"\n\s*\n")
 _HEADING_LINE_RE = re.compile(r"^(#{1,6})\s+(.+)$")
@@ -50,7 +93,7 @@ class Paragraph:
 def walk(content: str) -> list[Block]:
     """Walk content block-by-block, preserving structure.
 
-    Strips any prior `^pN` markers so re-running on anchored content is
+    Strips any prior ``^pN`` markers so re-running on anchored content is
     idempotent: you'll get the same chunk_index values.
     """
     out: list[Block] = []
@@ -94,7 +137,7 @@ def paragraphs(content: str) -> list[Paragraph]:
 
 
 def inject_anchors(content: str) -> str:
-    """Return content with `^pN` appended to each paragraph body.
+    """Return content with ``^pN`` appended to each paragraph body.
 
     Pure heading blocks and blank-line separators are preserved. Safe
     to re-run on already-anchored content.
@@ -112,7 +155,7 @@ def inject_anchors(content: str) -> str:
 
 
 def paragraph_for_quote(quote: str, paras: list[Paragraph]) -> int | None:
-    """Return the chunk_index of the paragraph containing `quote`.
+    """Return the chunk_index of the paragraph containing ``quote``.
 
     Whitespace-normalized substring match. None if the quote can't be
     localized — render emits the footnote without a deep-link fragment.
