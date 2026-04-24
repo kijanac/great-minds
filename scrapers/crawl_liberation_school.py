@@ -16,7 +16,7 @@ import re
 from pathlib import Path
 from urllib.parse import urlparse
 
-from crawl4ai import AsyncWebCrawler, CrawlerRunConfig
+from crawl4ai import AsyncWebCrawler, CrawlerRunConfig, DefaultMarkdownGenerator
 
 log = logging.getLogger(__name__)
 
@@ -61,6 +61,9 @@ async def crawl(urls: list[str]) -> None:
     config = CrawlerRunConfig(
         word_count_threshold=10,
         excluded_tags=["nav", "footer", "header", "aside"],
+        markdown_generator=DefaultMarkdownGenerator(
+            options={"single_line_break": False},
+        ),
     )
 
     to_fetch = [u for u in urls if not url_to_filepath(u).exists()]

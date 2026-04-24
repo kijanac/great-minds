@@ -16,7 +16,7 @@ import re
 from pathlib import Path
 from urllib.parse import urlparse
 
-from crawl4ai import AsyncWebCrawler, CrawlerRunConfig
+from crawl4ai import AsyncWebCrawler, CrawlerRunConfig, DefaultMarkdownGenerator
 from crawl4ai.deep_crawling import BFSDeepCrawlStrategy
 from crawl4ai.deep_crawling.filters import FilterChain, URLPatternFilter
 
@@ -45,6 +45,11 @@ async def save_result(url: str, markdown: str) -> None:
         log.warning("skipped empty page: %s", url)
         return
 
+    path = urlparse(url).path.rstrip("/")
+    if path.endswith("/index.htm") or path.endswith("/index.html"):
+        log.info("skipped index page: %s", url)
+        return
+
     filepath = url_to_filepath(url)
 
     if filepath.parent not in _created_dirs:
@@ -62,6 +67,9 @@ async def crawl() -> None:
             max_depth=3,
             include_external=False,
             filter_chain=FilterChain([URLPatternFilter(patterns=ALLOWED_PATTERNS)]),
+        ),
+        markdown_generator=DefaultMarkdownGenerator(
+            options={"single_line_break": False},
         ),
         stream=True,
         verbose=True,

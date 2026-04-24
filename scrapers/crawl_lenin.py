@@ -19,7 +19,7 @@ from pathlib import Path
 from urllib.parse import urljoin, urlparse
 
 import httpx
-from crawl4ai import AsyncWebCrawler, CrawlerRunConfig
+from crawl4ai import AsyncWebCrawler, CrawlerRunConfig, DefaultMarkdownGenerator
 from crawl4ai.deep_crawling import BFSDeepCrawlStrategy
 from crawl4ai.deep_crawling.filters import FilterChain, URLPatternFilter
 
@@ -54,6 +54,11 @@ def filepath_to_relative(filepath: Path) -> str:
 async def save_result(url: str, markdown: str) -> None:
     if not markdown or not markdown.strip():
         log.warning("skipped empty page: %s", url)
+        return
+
+    path = urlparse(url).path.rstrip("/")
+    if path.endswith("/index.htm") or path.endswith("/index.html"):
+        log.info("skipped index page: %s", url)
         return
 
     filepath = url_to_filepath(url)
@@ -97,6 +102,9 @@ async def crawl() -> None:
             max_depth=3,
             include_external=False,
             filter_chain=FilterChain([URLPatternFilter(patterns=ALLOWED_PATTERNS)]),
+        ),
+        markdown_generator=DefaultMarkdownGenerator(
+            options={"single_line_break": False},
         ),
         stream=True,
         verbose=True,
