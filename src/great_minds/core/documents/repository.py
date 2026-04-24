@@ -85,6 +85,19 @@ class DocumentRepository:
         )
         return {row.file_path: row.file_hash for row in result}
 
+    async def get_by_path(
+        self, brain_id: UUID, file_path: str
+    ) -> Document | None:
+        """Return the single document at ``file_path`` for this brain, or None."""
+        result = await self.session.execute(
+            select(DocumentORM).where(
+                DocumentORM.brain_id == brain_id,
+                DocumentORM.file_path == file_path,
+            )
+        )
+        row = result.scalar_one_or_none()
+        return Document.model_validate(row) if row is not None else None
+
     async def list_by_kind(
         self, brain_id: UUID, kind: DocKind
     ) -> list[Document]:

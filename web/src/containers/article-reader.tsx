@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 
+import type { Document } from "@/api/doc";
 import { postUserSuggestion } from "@/api/ingest";
 import { ArticleChrome } from "@/components/article-chrome";
 import { ArticleView } from "@/components/article-view";
@@ -11,19 +12,21 @@ import { useBtw } from "@/hooks/use-btw";
 import { useLinkInterceptor } from "@/hooks/use-link-interceptor";
 import { usePopoverDismiss } from "@/hooks/use-popover-dismiss";
 import { useViewNavigate } from "@/hooks/use-view-navigate";
-import { docDisplayName, slugToTitle } from "@/lib/utils";
+import { docDisplayName } from "@/lib/utils";
 import type { SelectionInfo } from "@/lib/types";
 
 interface ArticleReaderProps {
   path: string;
-  content: string | null;
+  document: Document | null;
+  body: string | null;
   archived?: boolean;
   supersededBy?: string | null;
 }
 
 export function ArticleReader({
   path,
-  content,
+  document,
+  body,
   archived = false,
   supersededBy = null,
 }: ArticleReaderProps) {
@@ -85,10 +88,9 @@ export function ArticleReader({
     setHintDismissed(true);
     localStorage.setItem("onboarding-hint-seen", "true");
   }, []);
-  const showHint = !hintDismissed && !!content;
+  const showHint = !hintDismissed && body !== null;
 
   const displayName = docDisplayName(path);
-  const title = slugToTitle(displayName);
 
   const hint = showHint ? (
     <div className="shrink-0 px-4 md:px-10 py-3 border-t border-ink-subtle animate-[slide-up_0.28s_ease]">
@@ -124,10 +126,10 @@ export function ArticleReader({
       onContentClick={handleLinkClick}
       footer={hint}
     >
-      {content && (
+      {document && body !== null ? (
         <ArticleView
-          title={title}
-          content={content}
+          document={document}
+          body={body}
           btws={btws}
           onSelection={setPopover}
           onBtwReply={replyBtw}
@@ -137,9 +139,7 @@ export function ArticleReader({
           supersededBy={supersededBy}
           onSupersessorClick={(slug) => navigate(`/doc/wiki/${slug}.md`)}
         />
-      )}
-
-      {!content && (
+      ) : (
         <div className="max-w-[740px] mx-auto px-4 md:px-10 pt-6 md:pt-10">
           <p className="text-[length:var(--text-body)] text-warm-faint">Document not found.</p>
         </div>

@@ -4,6 +4,8 @@ from datetime import datetime
 
 from pydantic import BaseModel, ConfigDict
 
+from great_minds.core.documents.schemas import Document
+
 
 class ArticleResponse(BaseModel):
     slug: str
@@ -45,7 +47,15 @@ class RawSourcesResponse(BaseModel):
 
 
 class DocResponse(BaseModel):
-    path: str
-    content: str
+    """Full read-view for a single document.
+
+    Metadata comes from the DB (``Document`` — populated by ingest and
+    updated by extract's LLM enrichment). Body comes from storage with
+    the YAML frontmatter stripped. Re-parsing frontmatter at read time
+    would duplicate work the DB has already done, so we don't.
+    """
+
+    document: Document
+    body: str
     archived: bool = False
     superseded_by: str | None = None
