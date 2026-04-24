@@ -54,6 +54,7 @@ ignore = ["E712"]
 
 [dependency-groups]
 dev = [
+    "moto[s3]>=5.1.22",
     "ruff>=0.15.9",
     "ty>=0.0.29",
 ]
