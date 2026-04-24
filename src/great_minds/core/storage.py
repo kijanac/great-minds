@@ -8,6 +8,13 @@ Two backends implement the Storage protocol:
 - LocalStorage: filesystem directory.
 - R2Storage: Cloudflare R2 bucket with a per-brain key prefix.
 
+The Protocol is async throughout because R2 calls block on network I/O;
+under async FastAPI handlers that would stall the event loop. LocalStorage
+keeps sync filesystem calls inside ``async def`` — filesystem latency is
+microseconds, so wrapping in ``asyncio.to_thread`` would add more overhead
+than it saves. R2Storage wraps each boto3 call in ``asyncio.to_thread``
+because boto3 is fully synchronous.
+
 Compile-sidecar paths (``.compile/...``) never flow through Storage —
 they're machine-local filesystem paths managed directly. See
 ``great_minds.core.paths`` for the split.
@@ -15,6 +22,7 @@ they're machine-local filesystem paths managed directly. See
 
 from __future__ import annotations
 
+import asyncio
 import fnmatch
 from pathlib import Path
 from typing import Protocol, runtime_checkable
@@ -24,13 +32,13 @@ from typing import Protocol, runtime_checkable
 class Storage(Protocol):
     """Structural interface for brain file storage."""
 
-    def read(self, path: str, *, strict: bool = True) -> str | None: ...
-    def write(self, path: str, content: str) -> None: ...
-    def exists(self, path: str) -> bool: ...
-    def glob(self, pattern: str) -> list[str]: ...
-    def append(self, path: str, content: str) -> None: ...
-    def mkdir(self, path: str) -> None: ...
-    def delete(self, path: str, *, missing_ok: bool = True) -> None: ...
+    async def read(self, path: str, *, strict: bool = True) -> str | None: ...
+    async def write(self, path: str, content: str) -> None: ...
+    async def exists(self, path: str) -> bool: ...
+    async def glob(self, pattern: str) -> list[str]: ...
+    async def append(self, path: str, content: str) -> None: ...
+    async def mkdir(self, path: str) -> None: ...
+    async def delete(self, path: str, *, missing_ok: bool = True) -> None: ...
 
 
 class LocalStorage:
@@ -45,7 +53,7 @@ class LocalStorage:
             raise ValueError(f"Path escapes storage root: {path}")
         return resolved
 
-    def read(self, path: str, *, strict: bool = True) -> str | None:
+    async def read(self, path: str, *, strict: bool = True) -> str | None:
         """Read text content. Returns None if strict=False and path doesn't exist."""
         try:
             return self._resolve(path).read_text(encoding="utf-8")
@@ -54,28 +62,28 @@ class LocalStorage:
                 raise
             return None
 
-    def write(self, path: str, content: str) -> None:
+    async def write(self, path: str, content: str) -> None:
         full = self._resolve(path)
         full.parent.mkdir(parents=True, exist_ok=True)
         full.write_text(content, encoding="utf-8")
 
-    def exists(self, path: str) -> bool:
+    async def exists(self, path: str) -> bool:
         return self._resolve(path).exists()
 
-    def glob(self, pattern: str) -> list[str]:
+    async def glob(self, pattern: str) -> list[str]:
         matches = sorted(self.root.glob(pattern))
         return [str(m.relative_to(self.root)) for m in matches]
 
-    def append(self, path: str, content: str) -> None:
+    async def append(self, path: str, content: str) -> None:
         full = self._resolve(path)
         full.parent.mkdir(parents=True, exist_ok=True)
         with full.open("a", encoding="utf-8") as f:
             f.write(content)
 
-    def mkdir(self, path: str) -> None:
+    async def mkdir(self, path: str) -> None:
         self._resolve(path).mkdir(parents=True, exist_ok=True)
 
-    def delete(self, path: str, *, missing_ok: bool = True) -> None:
+    async def delete(self, path: str, *, missing_ok: bool = True) -> None:
         self._resolve(path).unlink(missing_ok=missing_ok)
 
 
@@ -85,10 +93,11 @@ class R2Storage:
     All keys are written under a per-brain prefix (e.g. ``brains/<id>/``).
     R2 has no concept of directories — ``mkdir`` is a no-op.
 
-    Uses synchronous boto3 under the hood. Calls block the event loop;
-    at the pipeline's bounded concurrency (``compile_enrich_concurrency``,
-    etc.) this is acceptable for MVP. If it becomes a bottleneck, wrap
-    individual calls in ``asyncio.to_thread`` at the call site.
+    Uses synchronous boto3 wrapped in ``asyncio.to_thread`` so that
+    network calls don't block the event loop. This is the FastAPI-idiomatic
+    bridge for sync SDKs; ``aioboto3`` has known issues where aiobotocore
+    internally calls sync boto3 functions in several paths (see deferred-
+    infra memory).
     """
 
     def __init__(
@@ -118,7 +127,7 @@ class R2Storage:
     def _strip_prefix(self, key: str) -> str:
         return key[len(self.prefix) + 1 :]
 
-    def read(self, path: str, *, strict: bool = True) -> str | None:
+    def _read_sync(self, path: str, *, strict: bool) -> str | None:
         from botocore.exceptions import ClientError
 
         try:
@@ -131,7 +140,10 @@ class R2Storage:
             raise
         return resp["Body"].read().decode("utf-8")
 
-    def write(self, path: str, content: str) -> None:
+    async def read(self, path: str, *, strict: bool = True) -> str | None:
+        return await asyncio.to_thread(self._read_sync, path, strict=strict)
+
+    def _write_sync(self, path: str, content: str) -> None:
         self._client.put_object(
             Bucket=self.bucket,
             Key=self._key(path),
@@ -139,7 +151,10 @@ class R2Storage:
             ContentType="text/markdown" if path.endswith(".md") else "text/plain",
         )
 
-    def exists(self, path: str) -> bool:
+    async def write(self, path: str, content: str) -> None:
+        await asyncio.to_thread(self._write_sync, path, content)
+
+    def _exists_sync(self, path: str) -> bool:
         from botocore.exceptions import ClientError
 
         try:
@@ -150,14 +165,10 @@ class R2Storage:
             raise
         return True
 
-    def glob(self, pattern: str) -> list[str]:
-        """Match a glob pattern against keys under the brain prefix.
+    async def exists(self, path: str) -> bool:
+        return await asyncio.to_thread(self._exists_sync, path)
 
-        Supports patterns like ``raw/**/*.md`` (recursive) and
-        ``wiki/*.md`` (single-level). The pattern's leading path segment
-        becomes the R2 prefix; the trailing filename portion is matched
-        via fnmatch against each object's basename.
-        """
+    def _glob_sync(self, pattern: str) -> list[str]:
         if "**/" in pattern:
             list_prefix, filename_pattern = pattern.split("**/", 1)
             recursive = True
@@ -183,15 +194,25 @@ class R2Storage:
                     matches.append(rel)
         return sorted(matches)
 
-    def append(self, path: str, content: str) -> None:
-        """R2 has no native append — read, concatenate, write."""
-        existing = self.read(path, strict=False) or ""
-        self.write(path, existing + content)
+    async def glob(self, pattern: str) -> list[str]:
+        """Match a glob pattern against keys under the brain prefix.
 
-    def mkdir(self, path: str) -> None:
+        Supports patterns like ``raw/**/*.md`` (recursive) and
+        ``wiki/*.md`` (single-level). The pattern's leading path segment
+        becomes the R2 prefix; the trailing filename portion is matched
+        via fnmatch against each object's basename.
+        """
+        return await asyncio.to_thread(self._glob_sync, pattern)
+
+    async def append(self, path: str, content: str) -> None:
+        """R2 has no native append — read, concatenate, write."""
+        existing = await self.read(path, strict=False) or ""
+        await self.write(path, existing + content)
+
+    async def mkdir(self, path: str) -> None:
         """No-op: R2 has no directory concept."""
 
-    def delete(self, path: str, *, missing_ok: bool = True) -> None:
+    def _delete_sync(self, path: str, *, missing_ok: bool) -> None:
         from botocore.exceptions import ClientError
 
         try:
@@ -204,3 +225,6 @@ class R2Storage:
                 raise FileNotFoundError(path) from e
             if e.response["Error"]["Code"] not in ("NoSuchKey", "404"):
                 raise
+
+    async def delete(self, path: str, *, missing_ok: bool = True) -> None:
+        await asyncio.to_thread(self._delete_sync, path, missing_ok=missing_ok)

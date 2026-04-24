@@ -68,7 +68,7 @@ async def run(
     doc_by_id = {d.id: d for d in docs}
     topic_by_slug = {v.slug: v for v in validated}
 
-    prompt_template = load_prompt(ctx.storage, "render")
+    prompt_template = await load_prompt(ctx.storage, "render")
     prompt_hash = hashlib.sha256(prompt_template.encode()).hexdigest()
 
     settings = get_settings()
@@ -173,7 +173,7 @@ async def _render_one(
     )
 
     cached = ctx.cache.get(PHASE, cache_key)
-    if cached is not None and ctx.storage.exists(article_path):
+    if cached is not None and await ctx.storage.exists(article_path):
         outcome.cache_hit = True
         outcome.rendered_from_hash = compiled_from_hash
         return outcome
@@ -234,7 +234,7 @@ async def _render_one(
         "description": topic.description,
     }
     full_content = serialize_frontmatter(fm, body)
-    ctx.storage.write(article_path, full_content)
+    await ctx.storage.write(article_path, full_content)
 
     # Index the rendered article in the documents table so /wiki/recent,
     # /raw/sources, and search.rebuild_wiki_index all have consistent

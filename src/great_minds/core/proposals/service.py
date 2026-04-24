@@ -102,14 +102,14 @@ class ProposalService:
     ) -> None:
         """Ingest approved proposal content into the brain and trigger compilation."""
         content = Path(proposal.storage_path).read_text(encoding="utf-8")
-        config = load_config(storage)
+        config = await load_config(storage)
 
         kwargs: dict[str, str] = {}
         if proposal.title:
             kwargs["title"] = proposal.title
         if proposal.author:
             kwargs["author"] = proposal.author
-        ingester.ingest_document(
+        await ingester.ingest_document(
             storage, config, content, proposal.content_type, **kwargs
         )
 

@@ -33,7 +33,7 @@ class PipelineContext:
     cache: ContentHashCache
 
 
-def build_context(
+async def build_context(
     *,
     brain_id: UUID,
     storage: Storage,
@@ -54,6 +54,6 @@ def build_context(
         sidecar_root=sidecar,
         session=session,
         client=client,
-        config=load_brain_config(storage),
+        config=await load_brain_config(storage),
         cache=ContentHashCache.for_brain(sidecar),
     )

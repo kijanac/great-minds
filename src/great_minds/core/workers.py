@@ -51,7 +51,7 @@ async def compile_task(params: dict, ctx) -> dict:
     init_wide_event("compile", brain_id=str(brain_id))
     await ctx.heartbeat(600)
 
-    pipeline_ctx = pipeline.build_context(
+    pipeline_ctx = await pipeline.build_context(
         brain_id=brain_id, storage=storage, session=session, client=client
     )
     await pipeline.run(pipeline_ctx)
@@ -72,7 +72,7 @@ async def bulk_ingest_task(params: dict, ctx) -> dict:
     ingest_kwargs = params.get("ingest_kwargs", {})
 
     session = _task_session.get()
-    config = load_config(storage)
+    config = await load_config(storage)
 
     doc_repo = DocumentRepository(session)
     existing_hashes = await doc_repo.get_file_hashes(brain_id)
@@ -108,7 +108,7 @@ async def bulk_ingest_task(params: dict, ctx) -> dict:
             dest = f"{dest_dir}/{relative}"
 
             raw_content = filepath.read_text(encoding="utf-8")
-            content_with_fm = ingester.ingest_document(
+            content_with_fm = await ingester.ingest_document(
                 storage, config, raw_content, content_type, dest=dest, **ingest_kwargs
             )
             file_hash = hashlib.sha256(content_with_fm.encode()).hexdigest()
@@ -117,7 +117,7 @@ async def bulk_ingest_task(params: dict, ctx) -> dict:
                 skipped += 1
                 continue
 
-            storage.write(dest, content_with_fm)
+            await storage.write(dest, content_with_fm)
             ingested += 1
 
             fm, _ = parse_frontmatter(content_with_fm)

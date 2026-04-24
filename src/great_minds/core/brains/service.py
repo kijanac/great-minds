@@ -68,15 +68,15 @@ class BrainService:
         self, name: str, owner_id: UUID, *, commit: bool = True
     ) -> tuple[Brain, MemberRole]:
         brain, role = await self.repo.create_brain(name, owner_id)
-        self._init_brain_storage(brain)
+        await self._init_brain_storage(brain)
         if commit:
             await self._commit()
         return brain, role
 
-    def _init_brain_storage(self, brain: Brain) -> None:
+    async def _init_brain_storage(self, brain: Brain) -> None:
         storage = self.get_storage(brain)
-        if not storage.exists(CONFIG_PATH):
-            storage.write(CONFIG_PATH, load_default_config_text())
+        if not await storage.exists(CONFIG_PATH):
+            await storage.write(CONFIG_PATH, load_default_config_text())
 
     async def get_all_query_sources(self, user_id: UUID) -> list[QuerySource]:
         """Build QuerySources for all brains a user has access to."""

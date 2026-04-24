@@ -176,7 +176,7 @@ async def _cleanup_llm_call(
     collisions: dict[str, list[int]],
     archive_candidates: list[Topic],
 ) -> _CleanupOutput:
-    prompt_template = load_prompt(ctx.storage, "cleanup")
+    prompt_template = await load_prompt(ctx.storage, "cleanup")
 
     canonical_block = _render_canonical_block(canonical_topics)
     collision_block = _render_collision_block(collisions)
@@ -381,21 +381,21 @@ async def _archive_candidates(
             validated[successor_idx].topic_id if successor_idx is not None else None
         )
         await repo.set_archived(candidate.topic_id, superseded_by=successor_topic_id)
-        _move_wiki_to_archive(
+        await _move_wiki_to_archive(
             storage=ctx.storage,
             topic=candidate,
             successor_topic_id=successor_topic_id,
         )
 
 
-def _move_wiki_to_archive(
+async def _move_wiki_to_archive(
     *,
     storage,
     topic: Topic,
     successor_topic_id: UUID | None,
 ) -> None:
     article_path = wiki_path(topic.slug)
-    content = storage.read(article_path, strict=False)
+    content = await storage.read(article_path, strict=False)
     if content is None:
         # Topic had no rendered article yet (e.g., archived before render ran).
         # Nothing on disk to move.
@@ -406,8 +406,8 @@ def _move_wiki_to_archive(
         fm["superseded_by"] = str(successor_topic_id)
     updated = serialize_frontmatter(fm, body)
     archive_path = f"archive/{topic.topic_id}/{topic.slug}.md"
-    storage.write(archive_path, updated)
-    storage.delete(article_path)
+    await storage.write(archive_path, updated)
+    await storage.delete(article_path)
 
 
 # ---------------------------------------------------------------------------

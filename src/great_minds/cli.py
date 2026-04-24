@@ -64,7 +64,7 @@ async def _run_compile(brain_id: uuid.UUID, data_dir: Path) -> dict:
     init_wide_event("compile", brain_id=str(brain_id))
     try:
         async with session_maker() as session:
-            ctx = pipeline.build_context(
+            ctx = await pipeline.build_context(
                 brain_id=brain_id, storage=storage, session=session, client=client
             )
             await pipeline.run(ctx)
@@ -117,10 +117,9 @@ def cmd_query(args: argparse.Namespace) -> None:
     asyncio.run(_run_query(args))
 
 
-def cmd_ingest(args: argparse.Namespace) -> None:
-    setup_logging(service="great-minds")
+async def _run_ingest(args: argparse.Namespace) -> None:
     storage = _make_storage()
-    config = brain_ops.load_config(storage)
+    config = await brain_ops.load_config(storage)
     path = Path(args.path)
     dest = args.dest or raw_prefix(args.content_type)
 
@@ -139,14 +138,14 @@ def cmd_ingest(args: argparse.Namespace) -> None:
     log = logging.getLogger(__name__)
 
     if path.is_file():
-        result = ingester.ingest_file(
+        result = await ingester.ingest_file(
             storage, config, path, args.content_type, dest, **kwargs
         )
         log.info("ingested %s → %s", path, result)
     elif path.is_dir():
         source_files = sorted(path.rglob("*.md"))
         total = len(source_files)
-        existing = set(storage.glob(f"{dest}/**/*.md"))
+        existing = set(await storage.glob(f"{dest}/**/*.md"))
         log.info(
             "found %d .md files in %s (%d already ingested)", total, path, len(existing)
         )
@@ -162,7 +161,7 @@ def cmd_ingest(args: argparse.Namespace) -> None:
                 continue
 
             content = filepath.read_text(encoding="utf-8")
-            ingester.ingest_document(
+            await ingester.ingest_document(
                 storage, config, content, args.content_type, dest=file_dest, **kwargs
             )
             ingested += 1
@@ -185,6 +184,11 @@ def cmd_ingest(args: argparse.Namespace) -> None:
         )
     else:
         log.error("path not found: %s", path)
+
+
+def cmd_ingest(args: argparse.Namespace) -> None:
+    setup_logging(service="great-minds")
+    asyncio.run(_run_ingest(args))
 
 
 async def _run_reset(brain_id: str, brain_root: Path) -> None:

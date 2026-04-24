@@ -30,7 +30,7 @@ router = APIRouter(tags=["wiki"])
 async def list_articles(
     storage: Storage = Depends(get_brain_storage),
 ) -> list[str]:
-    return brain_ops.list_articles(storage)
+    return await brain_ops.list_articles(storage)
 
 
 @router.get("/wiki/recent")
@@ -80,7 +80,7 @@ async def read_article(
     slug: str,
     storage: Storage = Depends(get_brain_storage),
 ) -> schemas.ArticleResponse:
-    content = brain_ops.read_article(storage, slug)
+    content = await brain_ops.read_article(storage, slug)
     if content is not None:
         return schemas.ArticleResponse(slug=slug, content=content)
     raise HTTPException(status_code=404, detail=f"Article not found: {slug}")
@@ -98,7 +98,7 @@ async def read_document(
     except ValueError:
         raise HTTPException(status_code=400, detail=f"Invalid document path: {path}")
 
-    content = storage.read(path, strict=False)
+    content = await storage.read(path, strict=False)
     if content is None:
         raise HTTPException(status_code=404, detail=f"Document not found: {path}")
     _, body = parse_frontmatter(content)

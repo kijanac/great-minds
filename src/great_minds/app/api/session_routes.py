@@ -18,7 +18,7 @@ async def create_session(
     storage: Storage = Depends(get_brain_storage),
     user: User = Depends(get_current_user),
 ) -> schemas.SessionPathResponse:
-    path = sessions.create_session(
+    path = await sessions.create_session(
         storage,
         req.session_id,
         ExchangeInput(
@@ -39,7 +39,7 @@ async def append_to_session(
     exchange: schemas.ExchangeData,
     storage: Storage = Depends(get_brain_storage),
 ) -> schemas.SessionPathResponse:
-    path = sessions.append_exchange(
+    path = await sessions.append_exchange(
         storage,
         session_id,
         ExchangeInput(
@@ -58,7 +58,7 @@ async def append_btw_to_session(
     btw: schemas.BtwData,
     storage: Storage = Depends(get_brain_storage),
 ) -> schemas.SessionPathResponse:
-    path = sessions.append_btw(
+    path = await sessions.append_btw(
         storage,
         session_id,
         BtwInput(
@@ -77,7 +77,7 @@ async def list_all_sessions(
     storage: Storage = Depends(get_brain_storage),
     user: User = Depends(get_current_user),
 ) -> list[schemas.SessionListItem]:
-    summaries = sessions.list_sessions(storage, user_id=str(user.id))
+    summaries = await sessions.list_sessions(storage, user_id=str(user.id))
     return [schemas.SessionListItem.model_validate(s) for s in summaries]
 
 
@@ -87,7 +87,7 @@ async def read_session(
     storage: Storage = Depends(get_brain_storage),
 ) -> schemas.SessionResponse:
     try:
-        events = sessions.load_events(storage, session_id)
+        events = await sessions.load_events(storage, session_id)
     except FileNotFoundError:
         raise HTTPException(status_code=404, detail="Session not found")
     return schemas.SessionResponse(id=session_id, events=events)
