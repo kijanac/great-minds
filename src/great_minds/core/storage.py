@@ -24,11 +24,18 @@ from __future__ import annotations
 
 import asyncio
 import fnmatch
+import logging
+import time
+from collections.abc import Callable
 from pathlib import Path
-from typing import Protocol, runtime_checkable
+from typing import Protocol, TypeVar, runtime_checkable
 
 import boto3
 from botocore.exceptions import ClientError
+
+from great_minds.core.telemetry import log_event
+
+T = TypeVar("T")
 
 
 @runtime_checkable
@@ -128,6 +135,33 @@ class R2Storage:
     def _strip_prefix(self, key: str) -> str:
         return key[len(self.prefix) + 1 :]
 
+    async def _timed(
+        self,
+        op: str,
+        path: str,
+        sync_fn: Callable[[], T],
+    ) -> tuple[T, int]:
+        """Run a boto3 op in a thread, log on failure, return (result, latency_ms).
+
+        Success-path logging lives at the call site so each op can emit
+        op-specific fields (hit, bytes, match_count) without a dict-spread
+        helper that fights the type checker.
+        """
+        t0 = time.perf_counter()
+        try:
+            result = await asyncio.to_thread(sync_fn)
+        except Exception as e:
+            log_event(
+                "storage.r2_op",
+                level=logging.WARNING,
+                op=op,
+                path=path,
+                latency_ms=int((time.perf_counter() - t0) * 1000),
+                error=type(e).__name__,
+            )
+            raise
+        return result, int((time.perf_counter() - t0) * 1000)
+
     def _read_sync(self, path: str, *, strict: bool) -> str | None:
         try:
             resp = self._client.get_object(Bucket=self.bucket, Key=self._key(path))
@@ -140,7 +174,18 @@ class R2Storage:
         return resp["Body"].read().decode("utf-8")
 
     async def read(self, path: str, *, strict: bool = True) -> str | None:
-        return await asyncio.to_thread(self._read_sync, path, strict=strict)
+        result, latency_ms = await self._timed(
+            "read", path, lambda: self._read_sync(path, strict=strict)
+        )
+        log_event(
+            "storage.r2_op",
+            op="read",
+            path=path,
+            latency_ms=latency_ms,
+            hit=result is not None,
+            bytes=len(result) if result else 0,
+        )
+        return result
 
     def _write_sync(self, path: str, content: str) -> None:
         self._client.put_object(
@@ -151,7 +196,16 @@ class R2Storage:
         )
 
     async def write(self, path: str, content: str) -> None:
-        await asyncio.to_thread(self._write_sync, path, content)
+        _, latency_ms = await self._timed(
+            "write", path, lambda: self._write_sync(path, content)
+        )
+        log_event(
+            "storage.r2_op",
+            op="write",
+            path=path,
+            latency_ms=latency_ms,
+            bytes=len(content),
+        )
 
     def _exists_sync(self, path: str) -> bool:
         try:
@@ -163,7 +217,17 @@ class R2Storage:
         return True
 
     async def exists(self, path: str) -> bool:
-        return await asyncio.to_thread(self._exists_sync, path)
+        result, latency_ms = await self._timed(
+            "exists", path, lambda: self._exists_sync(path)
+        )
+        log_event(
+            "storage.r2_op",
+            op="exists",
+            path=path,
+            latency_ms=latency_ms,
+            hit=result,
+        )
+        return result
 
     def _glob_sync(self, pattern: str) -> list[str]:
         if "**/" in pattern:
@@ -199,7 +263,17 @@ class R2Storage:
         becomes the R2 prefix; the trailing filename portion is matched
         via fnmatch against each object's basename.
         """
-        return await asyncio.to_thread(self._glob_sync, pattern)
+        result, latency_ms = await self._timed(
+            "glob", pattern, lambda: self._glob_sync(pattern)
+        )
+        log_event(
+            "storage.r2_op",
+            op="glob",
+            path=pattern,
+            latency_ms=latency_ms,
+            match_count=len(result),
+        )
+        return result
 
     async def append(self, path: str, content: str) -> None:
         """R2 has no native append — read, concatenate, write."""
@@ -222,4 +296,12 @@ class R2Storage:
                 raise
 
     async def delete(self, path: str, *, missing_ok: bool = True) -> None:
-        await asyncio.to_thread(self._delete_sync, path, missing_ok=missing_ok)
+        _, latency_ms = await self._timed(
+            "delete", path, lambda: self._delete_sync(path, missing_ok=missing_ok)
+        )
+        log_event(
+            "storage.r2_op",
+            op="delete",
+            path=path,
+            latency_ms=latency_ms,
+        )
