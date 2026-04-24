@@ -31,9 +31,8 @@ from great_minds.core.brain import load_prompt
 from great_minds.core.llm.client import api_call, extract_content
 from great_minds.core.markdown import serialize_frontmatter
 from great_minds.core.paths import wiki_path
-from great_minds.core.documents.models import DocumentORM
 from great_minds.core.documents.repository import DocumentRepository
-from great_minds.core.documents.schemas import DocKind, DocumentCreate
+from great_minds.core.documents.schemas import DocKind, Document, DocumentCreate
 from great_minds.core.ideas.schemas import Anchor, Idea, SourceCard
 from great_minds.core.ideas.source_cards import SourceCardStore, index_ideas_by_id
 from great_minds.core.llm import RENDER_MODEL
@@ -156,7 +155,7 @@ async def _render_one(
     sem: asyncio.Semaphore,
     topic: ValidatedCanonicalTopic,
     idea_by_id: dict[UUID, tuple[Idea, SourceCard]],
-    doc_by_id: dict[UUID, DocumentORM],
+    doc_by_id: dict[UUID, Document],
     topic_by_slug: dict[str, ValidatedCanonicalTopic],
     prompt_template: str,
     prompt_hash: str,
@@ -270,13 +269,13 @@ class _NumberedAnchor:
     number: int
     anchor: Anchor
     idea: Idea
-    doc: DocumentORM | None
+    doc: Document | None
 
 
 def _build_numbered_anchors(
     topic: ValidatedCanonicalTopic,
     idea_by_id: dict[UUID, tuple[Idea, SourceCard]],
-    doc_by_id: dict[UUID, DocumentORM],
+    doc_by_id: dict[UUID, Document],
 ) -> list[_NumberedAnchor]:
     out: list[_NumberedAnchor] = []
     counter = 0
@@ -301,7 +300,7 @@ def _render_idea_block(
     topic: ValidatedCanonicalTopic,
     numbered_anchors: list[_NumberedAnchor],
     idea_by_id: dict[UUID, tuple[Idea, SourceCard]],
-    doc_by_id: dict[UUID, DocumentORM],
+    doc_by_id: dict[UUID, Document],
 ) -> str:
     anchors_by_idea: dict[UUID, list[_NumberedAnchor]] = {}
     for na in numbered_anchors:
@@ -345,7 +344,7 @@ def _render_link_targets_block(
     return "\n".join(lines)
 
 
-def _source_label(doc: DocumentORM) -> str:
+def _source_label(doc: Document) -> str:
     title = (doc.title or "").strip() or "Untitled"
     date = (doc.published_date or "").strip()
     return f"{title} ({date})" if date else title
@@ -448,7 +447,7 @@ def _cache_key(
 # ---------------------------------------------------------------------------
 
 
-async def _load_documents(session, brain_id: UUID) -> list[DocumentORM]:
+async def _load_documents(session, brain_id: UUID) -> list[Document]:
     """Load raw documents used by anchor footnotes.
 
     Render's footnotes cite source documents (raw), not wiki articles,
