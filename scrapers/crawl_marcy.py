@@ -45,8 +45,7 @@ async def save_result(url: str, markdown: str) -> None:
         log.warning("skipped empty page: %s", url)
         return
 
-    path = urlparse(url).path.rstrip("/")
-    if path.endswith("/index.htm") or path.endswith("/index.html"):
+    if urlparse(url).path.rstrip("/").endswith(("/index.htm", "/index.html")):
         log.info("skipped index page: %s", url)
         return
 
