@@ -28,6 +28,7 @@ from uuid6 import uuid7
 from great_minds.core.brain import load_prompt
 from great_minds.core.llm.client import json_llm_call
 from great_minds.core.markdown import (
+    normalized_bodies,
     paragraph_for_quote,
     paragraphs,
     parse_frontmatter,
@@ -328,9 +329,10 @@ def _localize_anchors(source_card: SourceCard, body: str) -> None:
     paras = paragraphs(body)
     if not paras:
         return
+    bodies = normalized_bodies(paras)
     for idea in source_card.ideas:
         for anchor in idea.anchors:
-            anchor.chunk_index = paragraph_for_quote(anchor.quote, paras)
+            anchor.chunk_index = paragraph_for_quote(anchor.quote, bodies)
 
 
 def _validate_extract_output(

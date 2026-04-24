@@ -74,11 +74,18 @@ _ANCHOR_TAG = "^p"
 
 @dataclass
 class Block:
-    """One markdown block: either a pure heading or a paragraph."""
+    """One markdown block: either a pure heading or a paragraph.
+
+    ``heading`` is populated whenever the block's first line is a
+    markdown heading — for both pure-heading blocks and mixed blocks
+    that open with a heading followed by content — so downstream code
+    doesn't need to re-match the heading regex.
+    """
 
     raw: str
     is_paragraph: bool
     chunk_index: int | None  # None for pure-heading blocks
+    heading: str | None  # Heading text if the block opens with one
 
 
 @dataclass
@@ -104,12 +111,20 @@ def walk(content: str) -> list[Block]:
             continue
         first_line, _, rest = raw.partition("\n")
         heading_match = _HEADING_LINE_RE.match(first_line)
-        is_heading_only = bool(heading_match) and not rest.strip()
+        heading = heading_match.group(2).strip() if heading_match else None
+        is_heading_only = heading is not None and not rest.strip()
         if is_heading_only:
-            out.append(Block(raw=raw, is_paragraph=False, chunk_index=None))
+            out.append(
+                Block(raw=raw, is_paragraph=False, chunk_index=None, heading=heading)
+            )
         else:
             out.append(
-                Block(raw=raw, is_paragraph=True, chunk_index=para_counter)
+                Block(
+                    raw=raw,
+                    is_paragraph=True,
+                    chunk_index=para_counter,
+                    heading=heading,
+                )
             )
             para_counter += 1
     return out
@@ -120,10 +135,8 @@ def paragraphs(content: str) -> list[Paragraph]:
     out: list[Paragraph] = []
     current_heading = ""
     for b in walk(content):
-        first_line, _, _ = b.raw.partition("\n")
-        hm = _HEADING_LINE_RE.match(first_line)
-        if hm:
-            current_heading = hm.group(2).strip()
+        if b.heading is not None:
+            current_heading = b.heading
         if b.is_paragraph:
             assert b.chunk_index is not None
             out.append(
@@ -154,18 +167,31 @@ def inject_anchors(content: str) -> str:
     return "\n\n".join(parts) + "\n"
 
 
-def paragraph_for_quote(quote: str, paras: list[Paragraph]) -> int | None:
-    """Return the chunk_index of the paragraph containing ``quote``.
+def normalized_bodies(paras: list[Paragraph]) -> list[tuple[int, str]]:
+    """Precompute whitespace-normalized paragraph bodies for quote matching.
 
-    Whitespace-normalized substring match. None if the quote can't be
+    Callers that look up many quotes against the same paragraph list
+    (e.g. extract's per-anchor localization loop) build this once and
+    pass it to :func:`paragraph_for_quote` to avoid O(N×M) normalization.
+    """
+    return [(p.index, _normalize(p.body)) for p in paras]
+
+
+def paragraph_for_quote(
+    quote: str, bodies: list[tuple[int, str]]
+) -> int | None:
+    """Return the paragraph index whose body contains ``quote``.
+
+    Whitespace-normalized substring match against pre-normalized bodies
+    (produced by :func:`normalized_bodies`). None if the quote can't be
     localized — render emits the footnote without a deep-link fragment.
     """
-    normalized = _normalize(quote)
-    if not normalized:
+    normalized_quote = _normalize(quote)
+    if not normalized_quote:
         return None
-    for p in paras:
-        if normalized in _normalize(p.body):
-            return p.index
+    for index, body in bodies:
+        if normalized_quote in body:
+            return index
     return None
 
 
