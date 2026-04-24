@@ -55,7 +55,6 @@ async def compile_task(params: dict, ctx) -> dict:
     )
     result = await pipeline.run(pipeline_ctx)
 
-    enrich(**result.__dict__)
     emit_wide_event()
     return result.__dict__
 

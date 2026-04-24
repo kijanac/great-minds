@@ -55,17 +55,7 @@ PHASE = "extract"
 EMBEDDING_BATCH_SIZE = 50
 
 
-@dataclass
-class ExtractResult:
-    docs_extracted: int = 0
-    cache_hits: int = 0
-    cache_misses: int = 0
-    docs_failed: int = 0
-    ideas_emitted: int = 0
-    failures: list[dict] = field(default_factory=list)
-
-
-async def run(ctx: PipelineContext) -> ExtractResult:
+async def run(ctx: PipelineContext) -> None:
     """Extract all raw/**/*.md docs for this brain.
 
     Reads DocumentORM rows so each raw file has a known document_id,
@@ -109,27 +99,35 @@ async def run(ctx: PipelineContext) -> ExtractResult:
 
     outcomes = await asyncio.gather(*tasks, return_exceptions=False)
 
-    result = ExtractResult()
     cards: list[SourceCard] = []
     fresh_outcomes: list[_ExtractOutcome] = []
     cached_embeddings: list[IdeaEmbedding] = []
     embedding_inputs: list[tuple[UUID, UUID, Idea]] = []
+    docs_extracted = 0
+    cache_hits = 0
+    cache_misses = 0
+    docs_failed = 0
+    ideas_emitted = 0
 
     for outcome in outcomes:
         if outcome.error is not None:
-            result.docs_failed += 1
-            result.failures.append(
-                {"path": outcome.raw_path, "error": outcome.error}
+            docs_failed += 1
+            log_event(
+                "extract.doc_failed",
+                level=logging.WARNING,
+                brain_id=str(ctx.brain_id),
+                path=outcome.raw_path,
+                error=outcome.error,
             )
             continue
-        result.docs_extracted += 1
+        docs_extracted += 1
         cards.append(outcome.source_card)
-        result.ideas_emitted += len(outcome.source_card.ideas)
+        ideas_emitted += len(outcome.source_card.ideas)
         if outcome.cache_hit:
-            result.cache_hits += 1
+            cache_hits += 1
             cached_embeddings.extend(outcome.embeddings)
         else:
-            result.cache_misses += 1
+            cache_misses += 1
             fresh_outcomes.append(outcome)
             for idea in outcome.source_card.ideas:
                 embedding_inputs.append((ctx.brain_id, outcome.document_id, idea))
@@ -160,23 +158,22 @@ async def run(ctx: PipelineContext) -> ExtractResult:
         _write_cache(ctx, outcome)
 
     enrich(
-        docs_extracted=result.docs_extracted,
-        cache_hits=result.cache_hits,
-        cache_misses=result.cache_misses,
-        docs_failed=result.docs_failed,
-        ideas_emitted=result.ideas_emitted,
+        docs_extracted=docs_extracted,
+        cache_hits=cache_hits,
+        cache_misses=cache_misses,
+        docs_failed=docs_failed,
+        ideas_emitted=ideas_emitted,
         docs_skipped_no_row=skipped,
     )
     log_event(
         "pipeline.extract_completed",
         brain_id=str(ctx.brain_id),
-        docs_extracted=result.docs_extracted,
-        cache_hits=result.cache_hits,
-        cache_misses=result.cache_misses,
-        docs_failed=result.docs_failed,
-        ideas_emitted=result.ideas_emitted,
+        docs_extracted=docs_extracted,
+        cache_hits=cache_hits,
+        cache_misses=cache_misses,
+        docs_failed=docs_failed,
+        ideas_emitted=ideas_emitted,
     )
-    return result
 
 
 # ---------------------------------------------------------------------------

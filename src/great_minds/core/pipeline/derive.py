@@ -19,7 +19,6 @@ here.
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass
 from uuid import UUID
 
 from great_minds.core.pipeline.abstract.schemas import ValidatedCanonicalTopic
@@ -31,25 +30,17 @@ from great_minds.core.topics.repository import TopicRepository
 log = logging.getLogger(__name__)
 
 
-@dataclass
-class DeriveResult:
-    topic_count: int = 0
-    membership_rows: int = 0
-    link_edges: int = 0
-    related_rows: int = 0
-
-
 async def run(
     ctx: PipelineContext,
     validated: list[ValidatedCanonicalTopic],
-) -> DeriveResult:
+) -> None:
     if not validated:
         log_event(
             "pipeline.derive_skipped",
             brain_id=str(ctx.brain_id),
             reason="no_topics",
         )
-        return DeriveResult()
+        return
 
     settings = get_settings()
     related_limit = settings.compile_derive_related_limit
@@ -70,12 +61,6 @@ async def run(
     log_event(
         "pipeline.derive_completed",
         brain_id=str(ctx.brain_id),
-        topic_count=len(validated),
-        membership_rows=membership_rows,
-        link_edges=link_edges,
-        related_rows=related_rows,
-    )
-    return DeriveResult(
         topic_count=len(validated),
         membership_rows=membership_rows,
         link_edges=link_edges,

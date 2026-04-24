@@ -27,7 +27,7 @@ from great_minds.core.pipeline.abstract import (
 from great_minds.core.pipeline.abstract.schemas import ValidatedCanonicalTopic
 from great_minds.core.pipeline.context import PipelineContext
 from great_minds.core.settings import get_settings
-from great_minds.core.telemetry import log_event
+from great_minds.core.telemetry import enrich, log_event
 
 
 async def run(ctx: PipelineContext) -> list[ValidatedCanonicalTopic]:
@@ -40,8 +40,8 @@ async def run(ctx: PipelineContext) -> list[ValidatedCanonicalTopic]:
     settings = get_settings()
     source_cards = SourceCardStore.for_brain(ctx.brain_id).load_all()
 
-    partition_result = await partition.run(ctx, source_cards)
-    if not partition_result.chunks:
+    chunks = await partition.run(ctx, source_cards)
+    if not chunks:
         log_event(
             "pipeline.abstract_skipped",
             brain_id=str(ctx.brain_id),
@@ -49,29 +49,22 @@ async def run(ctx: PipelineContext) -> list[ValidatedCanonicalTopic]:
         )
         return []
 
-    synthesize_result = await synthesize.run(
-        ctx, source_cards, partition_result.chunks
-    )
-    premerge_result = premerge.run(
-        synthesize_result.local_topics,
+    local_topics = await synthesize.run(ctx, source_cards, chunks)
+    merged_topics = premerge.run(
+        local_topics,
         jaccard_threshold=settings.compile_premerge_jaccard_threshold,
     )
-    canonicalize_result = await canonicalize.run(
-        ctx, premerge_result.merged_topics
-    )
-    validated = await validate.run(
-        ctx,
-        canonicalize_result.canonical_topics,
-        premerge_result.merged_topics,
-    )
+    canonical_topics = await canonicalize.run(ctx, merged_topics)
+    validated = await validate.run(ctx, canonical_topics, merged_topics)
 
+    enrich(validated_topics=len(validated))
     log_event(
         "pipeline.abstract_completed",
         brain_id=str(ctx.brain_id),
-        chunks=len(partition_result.chunks),
-        local_topics=len(synthesize_result.local_topics),
-        merged_topics=premerge_result.final_count,
-        canonical_topics=len(canonicalize_result.canonical_topics),
+        chunks=len(chunks),
+        local_topics=len(local_topics),
+        merged_topics=len(merged_topics),
+        canonical_topics=len(canonical_topics),
         validated_topics=len(validated),
     )
     return validated
