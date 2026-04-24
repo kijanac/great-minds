@@ -74,18 +74,19 @@ _ANCHOR_TAG = "^p"
 
 @dataclass
 class Block:
-    """One markdown block: either a pure heading or a paragraph.
+    """One markdown block.
 
-    ``heading`` is populated whenever the block's first line is a
-    markdown heading — for both pure-heading blocks and mixed blocks
-    that open with a heading followed by content — so downstream code
-    doesn't need to re-match the heading regex.
+    ``chunk_index`` discriminates the variant: ``None`` means a pure
+    heading block (``# Chapter`` on its own line), ``int`` means a
+    paragraph block with that position. ``heading`` is populated
+    whenever the block's first line is a markdown heading — for both
+    pure-heading blocks and mixed blocks that open with a heading —
+    so downstream code doesn't need to re-match the regex.
     """
 
     raw: str
-    is_paragraph: bool
-    chunk_index: int | None  # None for pure-heading blocks
-    heading: str | None  # Heading text if the block opens with one
+    chunk_index: int | None
+    heading: str | None
 
 
 @dataclass
@@ -112,20 +113,10 @@ def walk(content: str) -> list[Block]:
         first_line, _, rest = raw.partition("\n")
         heading_match = _HEADING_LINE_RE.match(first_line)
         heading = heading_match.group(2).strip() if heading_match else None
-        is_heading_only = heading is not None and not rest.strip()
-        if is_heading_only:
-            out.append(
-                Block(raw=raw, is_paragraph=False, chunk_index=None, heading=heading)
-            )
+        if heading is not None and not rest.strip():
+            out.append(Block(raw=raw, chunk_index=None, heading=heading))
         else:
-            out.append(
-                Block(
-                    raw=raw,
-                    is_paragraph=True,
-                    chunk_index=para_counter,
-                    heading=heading,
-                )
-            )
+            out.append(Block(raw=raw, chunk_index=para_counter, heading=heading))
             para_counter += 1
     return out
 
@@ -137,15 +128,16 @@ def paragraphs(content: str) -> list[Paragraph]:
     for b in walk(content):
         if b.heading is not None:
             current_heading = b.heading
-        if b.is_paragraph:
-            assert b.chunk_index is not None
-            out.append(
-                Paragraph(
-                    index=b.chunk_index,
-                    heading=current_heading,
-                    body=b.raw,
-                )
+        if b.chunk_index is None:
+            continue
+        # chunk_index narrowed to int by the None check above
+        out.append(
+            Paragraph(
+                index=b.chunk_index,
+                heading=current_heading,
+                body=b.raw,
             )
+        )
     return out
 
 
@@ -160,10 +152,10 @@ def inject_anchors(content: str) -> str:
         return content
     parts: list[str] = []
     for b in blocks:
-        if b.is_paragraph:
-            parts.append(f"{b.raw} {_ANCHOR_TAG}{b.chunk_index}")
-        else:
+        if b.chunk_index is None:
             parts.append(b.raw)
+        else:
+            parts.append(f"{b.raw} {_ANCHOR_TAG}{b.chunk_index}")
     return "\n\n".join(parts) + "\n"
 
 
