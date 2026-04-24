@@ -30,6 +30,7 @@ from great_minds.core.telemetry import (
     emit_wide_event,
     init_wide_event,
     setup_logging,
+    wide_event,
 )
 
 
@@ -37,7 +38,7 @@ def _make_storage() -> LocalStorage:
     return LocalStorage(Path.cwd())
 
 
-async def _run_compile(brain_id: uuid.UUID, data_dir: Path) -> pipeline.CompileResult:
+async def _run_compile(brain_id: uuid.UUID, data_dir: Path) -> dict:
     storage = LocalStorage(data_dir / "brains" / str(brain_id))
     client = get_async_client()
     init_wide_event("compile", brain_id=str(brain_id))
@@ -46,29 +47,30 @@ async def _run_compile(brain_id: uuid.UUID, data_dir: Path) -> pipeline.CompileR
             ctx = pipeline.build_context(
                 brain_id=brain_id, storage=storage, session=session, client=client
             )
-            return await pipeline.run(ctx)
+            await pipeline.run(ctx)
+            return dict(wide_event.get() or {})
     finally:
         emit_wide_event()
 
 
 def cmd_compile(args: argparse.Namespace) -> None:
     setup_logging(service="great-minds")
-    result = asyncio.run(_run_compile(args.brain_id, Path(args.data_dir)))
+    e = asyncio.run(_run_compile(args.brain_id, Path(args.data_dir)))
     print("compile complete:")
-    print(f"  raw chunks indexed:   {result.raw_chunks_indexed}")
+    print(f"  raw chunks indexed:   {e.get('raw_chunks_indexed', 0)}")
     print(
-        f"  docs extracted:       {result.docs_extracted} "
-        f"({result.docs_failed} failed)"
+        f"  docs extracted:       {e.get('docs_extracted', 0)} "
+        f"({e.get('docs_failed', 0)} failed)"
     )
-    print(f"  topics:               {result.topics}")
+    print(f"  topics:               {e.get('validated_topics', 0)}")
     print(
-        f"  articles rendered:    {result.articles_rendered} "
-        f"({result.articles_failed} failed)"
+        f"  articles rendered:    {e.get('render_topics_rendered', 0)} "
+        f"({e.get('render_topics_failed', 0)} failed)"
     )
-    print(f"  wiki chunks indexed:  {result.wiki_chunks_indexed}")
-    print(f"  backlink edges:       {result.backlink_edges}")
-    print(f"  unresolved citations: {result.unresolved_citations}")
-    print(f"  cost (USD):           ${result.cost_usd:.4f}")
+    print(f"  wiki chunks indexed:  {e.get('render_wiki_chunks_indexed', 0)}")
+    print(f"  backlink edges:       {e.get('verify_backlink_edges', 0)}")
+    print(f"  unresolved citations: {e.get('verify_unresolved_citations', 0)}")
+    print(f"  cost (USD):           ${float(e.get('cost_usd', 0.0)):.4f}")
 
 
 async def _run_query(args: argparse.Namespace) -> None:

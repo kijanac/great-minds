@@ -16,15 +16,12 @@ Stages (named per target_architecture.md):
     6. publish     — wiki/_index.md, raw/_index.md, compile log
 
 Per-phase caching + DB persistence happens inside each phase. Phases
-are side-effectful (write to storage + DB) and emit their own counts
-via enrich() into the wide event. The orchestrator doesn't aggregate
-per-phase Result objects; CompileResult is a slim view that the CLI
-prints, populated from the wide event at the end.
+are side-effectful and emit counts into the wide event via enrich().
+Callers that want a summary (CLI, task worker) read wide_event
+directly — no typed Result flows through.
 """
 
 from __future__ import annotations
-
-from dataclasses import dataclass
 
 from great_minds.core.pipeline import (
     abstract,
@@ -36,36 +33,18 @@ from great_minds.core.pipeline import (
     verify,
 )
 from great_minds.core.pipeline.context import PipelineContext, build_context
-from great_minds.core.telemetry import log_event, wide_event
+from great_minds.core.telemetry import log_event
 
-__all__ = ["CompileResult", "PipelineContext", "build_context", "run"]
-
-
-@dataclass
-class CompileResult:
-    """Slim per-run summary for CLI/task callers.
-
-    Populated from the wide event at run end. Per-phase detail lives in
-    telemetry events.
-    """
-
-    raw_chunks_indexed: int = 0
-    docs_extracted: int = 0
-    docs_failed: int = 0
-    topics: int = 0
-    articles_rendered: int = 0
-    articles_failed: int = 0
-    wiki_chunks_indexed: int = 0
-    backlink_edges: int = 0
-    unresolved_citations: int = 0
-    cost_usd: float = 0.0
+__all__ = ["PipelineContext", "build_context", "run"]
 
 
-async def run(ctx: PipelineContext) -> CompileResult:
+async def run(ctx: PipelineContext) -> None:
     """Run all seven phases end-to-end.
 
     Each phase's cache-first semantics mean unchanged work is
-    automatically skipped.
+    automatically skipped. Side effects (storage writes, DB rows) are
+    the business outputs; per-phase counts accumulate in the wide
+    event via enrich().
     """
     await ingest.run(ctx)
     await extract.run(ctx)
@@ -77,34 +56,11 @@ async def run(ctx: PipelineContext) -> CompileResult:
             brain_id=str(ctx.brain_id),
             reason="no_validated_topics",
         )
-        return _snapshot()
+        return
 
     await derive.run(ctx, validated)
     await render.run(ctx, validated)
     await verify.run(ctx)
     await publish.run(ctx)
 
-    result = _snapshot()
-    log_event(
-        "pipeline.compile_completed",
-        brain_id=str(ctx.brain_id),
-        **result.__dict__,
-    )
-    return result
-
-
-def _snapshot() -> CompileResult:
-    """Read counts accumulated in the wide event into CompileResult."""
-    ctx = wide_event.get() or {}
-    return CompileResult(
-        raw_chunks_indexed=ctx.get("raw_chunks_indexed", 0),
-        docs_extracted=ctx.get("docs_extracted", 0),
-        docs_failed=ctx.get("docs_failed", 0),
-        topics=ctx.get("validated_topics", 0),
-        articles_rendered=ctx.get("render_topics_rendered", 0),
-        articles_failed=ctx.get("render_topics_failed", 0),
-        wiki_chunks_indexed=ctx.get("render_wiki_chunks_indexed", 0),
-        backlink_edges=ctx.get("verify_backlink_edges", 0),
-        unresolved_citations=ctx.get("verify_unresolved_citations", 0),
-        cost_usd=float(ctx.get("cost_usd", 0.0)),
-    )
+    log_event("pipeline.compile_completed", brain_id=str(ctx.brain_id))
