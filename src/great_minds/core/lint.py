@@ -21,21 +21,17 @@ reserved — the endpoint returns empty arrays for both.
 
 from __future__ import annotations
 
-import logging
 import uuid
 from dataclasses import dataclass, field
 
-from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from great_minds.core.articles.models import BacklinkORM
-from great_minds.core.paths import wiki_path, wiki_slug
+from great_minds.core.articles.repository import BacklinkRepository
 from great_minds.core.markdown import extract_wiki_link_targets
+from great_minds.core.paths import wiki_path, wiki_slug
 from great_minds.core.storage import Storage
-from great_minds.core.topics.models import TopicLinkORM, TopicORM
-from great_minds.core.topics.schemas import ArticleStatus
-
-log = logging.getLogger(__name__)
+from great_minds.core.topics.repository import TopicRepository
+from great_minds.core.topics.schemas import ArticleStatus, Topic
 
 
 @dataclass
@@ -72,23 +68,27 @@ async def build_lint_report(
     brain_id: uuid.UUID,
     storage: Storage,
 ) -> LintReport:
-    rendered = await _load_rendered_topics(session, brain_id)
+    topic_repo = TopicRepository(session)
+    backlink_repo = BacklinkRepository(session)
+
+    rendered = await topic_repo.list_by_status(brain_id, ArticleStatus.RENDERED)
     if not rendered:
-        dirty = await _dirty_topics(session, brain_id)
+        dirty = await topic_repo.list_dirty_topic_ids(brain_id)
         return LintReport(dirty_topics=dirty)
 
     topic_by_id = {t.topic_id: t for t in rendered}
     slug_to_topic = {t.slug: t for t in rendered}
 
-    orphans = await _orphans(session, brain_id, rendered)
-    dirty = await _dirty_topics(session, brain_id)
+    orphans = await _orphans(backlink_repo, rendered)
+    dirty = await topic_repo.list_dirty_topic_ids(brain_id)
     unresolved, cited_by_source = _walk_articles(
         storage=storage,
         rendered=rendered,
         slug_to_topic=slug_to_topic,
     )
     unmentioned = await _unmentioned_intended_links(
-        session=session,
+        topic_repo=topic_repo,
+        brain_id=brain_id,
         topic_by_id=topic_by_id,
         cited_by_source=cited_by_source,
     )
@@ -101,66 +101,19 @@ async def build_lint_report(
     )
 
 
-async def _load_rendered_topics(
-    session: AsyncSession, brain_id: uuid.UUID
-) -> list[TopicORM]:
-    rows = (
-        await session.execute(
-            select(TopicORM).where(
-                TopicORM.brain_id == brain_id,
-                TopicORM.article_status == ArticleStatus.RENDERED.value,
-            )
-        )
-    ).scalars().all()
-    return list(rows)
-
-
-async def _dirty_topics(
-    session: AsyncSession, brain_id: uuid.UUID
-) -> list[uuid.UUID]:
-    """Topics where rendered output doesn't reflect current compiled inputs.
-
-    Never-rendered topics (rendered_from_hash IS NULL) but with a
-    compiled_from_hash are also dirty — they've been derived but never
-    written.
-    """
-    result = await session.execute(
-        select(TopicORM.topic_id)
-        .where(TopicORM.brain_id == brain_id)
-        .where(TopicORM.article_status != ArticleStatus.ARCHIVED.value)
-        .where(TopicORM.compiled_from_hash.is_not(None))
-        .where(
-            or_(
-                TopicORM.rendered_from_hash.is_(None),
-                TopicORM.rendered_from_hash != TopicORM.compiled_from_hash,
-            )
-        )
-    )
-    return [row.topic_id for row in result]
-
-
 async def _orphans(
-    session: AsyncSession,
-    brain_id: uuid.UUID,
-    rendered: list[TopicORM],
+    backlink_repo: BacklinkRepository,
+    rendered: list[Topic],
 ) -> list[Orphan]:
     """Rendered topics with zero incoming backlinks."""
     if not rendered:
         return []
     rendered_ids = [t.topic_id for t in rendered]
-    # Topics that appear as target in at least one backlink
-    has_incoming = (
-        await session.execute(
-            select(BacklinkORM.target_topic_id)
-            .where(BacklinkORM.target_topic_id.in_(rendered_ids))
-            .distinct()
-        )
-    ).scalars().all()
-    has_incoming_set = set(has_incoming)
+    has_incoming = await backlink_repo.filter_targets_with_incoming(rendered_ids)
     orphans = [
         Orphan(slug=t.slug, title=t.title)
         for t in rendered
-        if t.topic_id not in has_incoming_set
+        if t.topic_id not in has_incoming
     ]
     orphans.sort(key=lambda o: o.title.lower())
     return orphans
@@ -169,8 +122,8 @@ async def _orphans(
 def _walk_articles(
     *,
     storage: Storage,
-    rendered: list[TopicORM],
-    slug_to_topic: dict[str, TopicORM],
+    rendered: list[Topic],
+    slug_to_topic: dict[str, Topic],
 ) -> tuple[list[UnresolvedCitation], dict[uuid.UUID, set[str]]]:
     """Parse citations from every rendered article's prose.
 
@@ -209,8 +162,9 @@ def _walk_articles(
 
 async def _unmentioned_intended_links(
     *,
-    session: AsyncSession,
-    topic_by_id: dict[uuid.UUID, TopicORM],
+    topic_repo: TopicRepository,
+    brain_id: uuid.UUID,
+    topic_by_id: dict[uuid.UUID, Topic],
     cited_by_source: dict[uuid.UUID, set[str]],
 ) -> list[UnmentionedLink]:
     """topic_links edges whose target isn't in the source article's prose.
@@ -221,13 +175,9 @@ async def _unmentioned_intended_links(
     """
     if not cited_by_source:
         return []
-    source_ids = list(cited_by_source.keys())
-    edges = (
-        await session.execute(
-            select(TopicLinkORM.source_topic_id, TopicLinkORM.target_topic_id)
-            .where(TopicLinkORM.source_topic_id.in_(source_ids))
-        )
-    ).all()
+    edges = await topic_repo.list_links_for_brain(
+        brain_id, source_topic_ids=list(cited_by_source.keys())
+    )
 
     out: list[UnmentionedLink] = []
     for source_id, target_id in edges:

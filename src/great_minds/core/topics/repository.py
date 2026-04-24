@@ -132,6 +132,27 @@ class TopicRepository:
             )
         ) or 0
 
+    async def list_dirty_topic_ids(self, brain_id: UUID) -> list[UUID]:
+        """Return topic_ids whose rendered output lags the compiled inputs.
+
+        Non-archived topics where rendered_from_hash is NULL (never
+        rendered) or differs from compiled_from_hash (inputs shifted
+        since last render).
+        """
+        result = await self.session.execute(
+            select(TopicORM.topic_id)
+            .where(
+                TopicORM.brain_id == brain_id,
+                TopicORM.article_status != ArticleStatus.ARCHIVED.value,
+                TopicORM.compiled_from_hash.is_not(None),
+                or_(
+                    TopicORM.rendered_from_hash.is_(None),
+                    TopicORM.rendered_from_hash != TopicORM.compiled_from_hash,
+                ),
+            )
+        )
+        return [row.topic_id for row in result]
+
     async def count_dirty(self, brain_id: UUID) -> int:
         """Non-archived topics whose rendered output lags the compiled inputs."""
         return (

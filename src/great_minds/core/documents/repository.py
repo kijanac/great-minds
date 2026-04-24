@@ -4,7 +4,7 @@ import hashlib
 from collections import defaultdict
 from uuid import UUID
 
-from sqlalchemy import delete, distinct, func, select
+from sqlalchemy import delete, distinct, func, select, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -13,6 +13,7 @@ from great_minds.core.documents.models import (
     DocumentTag,
 )
 from great_minds.core.documents.schemas import DocKind, Document, DocumentCreate
+from great_minds.core.ideas.schemas import SourceCard
 from great_minds.core.paths import raw_prefix
 
 
@@ -101,6 +102,28 @@ class DocumentRepository:
             .order_by(DocumentORM.file_path)
         )
         return [Document.model_validate(r) for r in rows.scalars().all()]
+
+    async def update_metadata_from_cards(
+        self, brain_id: UUID, cards: list[SourceCard]
+    ) -> None:
+        """Push LLM-produced title, precis, doc_metadata back to DB rows.
+
+        extra_metadata is replaced wholesale — the LLM output is the
+        authoritative source for per-doc enriched fields.
+        """
+        for card in cards:
+            await self.session.execute(
+                update(DocumentORM)
+                .where(
+                    DocumentORM.brain_id == brain_id,
+                    DocumentORM.id == card.document_id,
+                )
+                .values(
+                    title=card.title,
+                    precis=card.precis,
+                    extra_metadata=card.doc_metadata.model_dump(mode="json"),
+                )
+            )
 
     async def count_by_kind(self, brain_id: UUID, kind: DocKind) -> int:
         return (

@@ -22,10 +22,11 @@ from dataclasses import dataclass, field
 from uuid import UUID
 
 from pydantic import ValidationError
-from sqlalchemy import update
 from uuid6 import uuid7
 
 from great_minds.core.brain import load_prompt
+from great_minds.core.documents.repository import DocumentRepository
+from great_minds.core.documents.schemas import DocKind, Document
 from great_minds.core.llm.client import json_llm_call
 from great_minds.core.markdown import (
     normalized_bodies,
@@ -33,9 +34,6 @@ from great_minds.core.markdown import (
     paragraphs,
     parse_frontmatter,
 )
-from great_minds.core.documents.models import DocumentORM
-from great_minds.core.documents.repository import DocumentRepository
-from great_minds.core.documents.schemas import DocKind, Document
 from great_minds.core.ideas.repository import IdeaEmbeddingRepository
 from great_minds.core.ideas.schemas import (
     Anchor,
@@ -65,10 +63,11 @@ EMBEDDING_BATCH_SIZE = 50
 async def run(ctx: PipelineContext) -> None:
     """Extract every raw document registered in the DB for this brain.
 
-    DocumentORM is the authoritative registry — ingest writes the file
-    and the DB row together, so iterating the registry catches every
-    document. If a DB row points at a file that's missing from storage,
-    _extract_one records file_not_found via storage.read(strict=False).
+    The documents table is the authoritative registry — ingest writes
+    the file and the DB row together, so iterating the registry catches
+    every document. If a DB row points at a file that's missing from
+    storage, _extract_one records file_not_found via
+    storage.read(strict=False).
     """
     settings = get_settings()
     prompt_template = load_prompt(ctx.storage, "extract")
@@ -148,7 +147,9 @@ async def run(ctx: PipelineContext) -> None:
     await idea_service.record_extractions(
         cards, cached_embeddings + fresh_embeddings
     )
-    await _update_documents(ctx.session, ctx.brain_id, cards)
+    await DocumentRepository(ctx.session).update_metadata_from_cards(
+        ctx.brain_id, cards
+    )
     await ctx.session.commit()
 
     # Cache lands after DB commit so a mid-persist crash doesn't create
@@ -423,28 +424,6 @@ async def _embed_ideas(
 async def _load_documents(session, brain_id: UUID) -> list[Document]:
     """Load all raw documents for a brain in deterministic path order."""
     return await DocumentRepository(session).list_by_kind(brain_id, DocKind.RAW)
-
-
-async def _update_documents(
-    session, brain_id: UUID, cards: list[SourceCard]
-) -> None:
-    """Push LLM-produced title, precis, and doc_metadata back onto the
-    documents row. extra_metadata is replaced wholesale (LLM output is
-    authoritative for this column).
-    """
-    for card in cards:
-        await session.execute(
-            update(DocumentORM)
-            .where(
-                DocumentORM.brain_id == brain_id,
-                DocumentORM.id == card.document_id,
-            )
-            .values(
-                title=card.title,
-                precis=card.precis,
-                extra_metadata=card.doc_metadata.model_dump(mode="json"),
-            )
-        )
 
 
 def _write_cache(ctx: PipelineContext, outcome: _ExtractOutcome) -> None:
