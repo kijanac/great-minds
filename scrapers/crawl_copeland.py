@@ -21,6 +21,8 @@ from crawl4ai import AsyncWebCrawler, CrawlerRunConfig, DefaultMarkdownGenerator
 from crawl4ai.deep_crawling import BFSDeepCrawlStrategy
 from crawl4ai.deep_crawling.filters import FilterChain, URLPatternFilter
 
+from scrapers._filters import should_skip
+
 log = logging.getLogger(__name__)
 
 BASE_URL = "https://www.marxists.org/history/etol/writers/copeland/index.htm"
@@ -50,8 +52,9 @@ async def save_result(url: str, markdown: str) -> None:
         log.warning("skipped empty page: %s", url)
         return
 
-    if urlparse(url).path.rstrip("/").endswith(("/index.htm", "/index.html")):
-        log.info("skipped index page: %s", url)
+    skip = should_skip(url, markdown)
+    if skip is not None:
+        log.info("skipped %s: %s", skip, url)
         return
 
     filepath = url_to_filepath(url)
