@@ -15,6 +15,8 @@ from __future__ import annotations
 import logging
 from datetime import datetime, timezone
 
+from pydantic import BaseModel
+
 from great_minds.core.documents.repository import DocumentRepository
 from great_minds.core.documents.schemas import DocKind, Document
 from great_minds.core.paths import (
@@ -32,6 +34,19 @@ from great_minds.core.topics.repository import TopicRepository
 from great_minds.core.topics.schemas import ArticleStatus, Topic
 
 log = logging.getLogger(__name__)
+
+
+class CompileLogCounts(BaseModel):
+    """Counts rolled up at publish time for the compile log.md artifact."""
+
+    topics_total: int
+    topics_rendered: int
+    topics_archived: int
+    topics_dirty: int
+    docs_raw: int
+    chunks_raw: int
+    chunks_wiki: int
+
 
 async def run(ctx: PipelineContext) -> None:
     rendered_topics = await TopicRepository(ctx.session).list_by_status(
@@ -54,7 +69,7 @@ async def run(ctx: PipelineContext) -> None:
         brain_id=str(ctx.brain_id),
         wiki_index_topics=len(rendered_topics),
         raw_index_docs=len(raw_docs),
-        **counts,
+        **counts.model_dump(),
     )
 
 
@@ -112,41 +127,41 @@ def _write_raw_index(ctx: PipelineContext, docs: list[Document]) -> None:
 # ---------------------------------------------------------------------------
 
 
-async def _gather_log_counts(ctx: PipelineContext) -> dict:
+async def _gather_log_counts(ctx: PipelineContext) -> CompileLogCounts:
     topic_repo = TopicRepository(ctx.session)
     doc_repo = DocumentRepository(ctx.session)
-    return {
-        "topics_total": await topic_repo.count_all(ctx.brain_id),
-        "topics_rendered": await topic_repo.count_by_status(
+    return CompileLogCounts(
+        topics_total=await topic_repo.count_all(ctx.brain_id),
+        topics_rendered=await topic_repo.count_by_status(
             ctx.brain_id, ArticleStatus.RENDERED
         ),
-        "topics_archived": await topic_repo.count_by_status(
+        topics_archived=await topic_repo.count_by_status(
             ctx.brain_id, ArticleStatus.ARCHIVED
         ),
-        "topics_dirty": await topic_repo.count_dirty(ctx.brain_id),
-        "docs_raw": await doc_repo.count_by_kind(ctx.brain_id, DocKind.RAW),
-        "chunks_raw": await count_chunks_by_prefix(
+        topics_dirty=await topic_repo.count_dirty(ctx.brain_id),
+        docs_raw=await doc_repo.count_by_kind(ctx.brain_id, DocKind.RAW),
+        chunks_raw=await count_chunks_by_prefix(
             ctx.session, ctx.brain_id, RAW_PREFIX
         ),
-        "chunks_wiki": await count_chunks_by_prefix(
+        chunks_wiki=await count_chunks_by_prefix(
             ctx.session, ctx.brain_id, WIKI_PREFIX
         ),
-    }
+    )
 
 
-def _append_compile_log(ctx: PipelineContext, counts: dict) -> None:
+def _append_compile_log(ctx: PipelineContext, counts: CompileLogCounts) -> None:
     log_path = compile_log_path(ctx.sidecar_root)
     log_path.parent.mkdir(parents=True, exist_ok=True)
 
     ts = datetime.now(timezone.utc).isoformat(timespec="seconds")
     lines = [
         f"## {ts}",
-        f"- topics: {counts['topics_total']} "
-        f"(rendered {counts['topics_rendered']}, "
-        f"archived {counts['topics_archived']}, "
-        f"dirty {counts['topics_dirty']})",
-        f"- raw docs: {counts['docs_raw']}",
-        f"- chunks: {counts['chunks_raw']} raw + {counts['chunks_wiki']} wiki",
+        f"- topics: {counts.topics_total} "
+        f"(rendered {counts.topics_rendered}, "
+        f"archived {counts.topics_archived}, "
+        f"dirty {counts.topics_dirty})",
+        f"- raw docs: {counts.docs_raw}",
+        f"- chunks: {counts.chunks_raw} raw + {counts.chunks_wiki} wiki",
         "",
     ]
 
