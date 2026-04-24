@@ -20,9 +20,9 @@ from great_minds.core.paths import (
 from great_minds.core.storage import Storage
 
 
-def load_config(storage: Storage) -> dict:
+async def load_config(storage: Storage) -> dict:
     """Load brain config from storage, returning empty dict if absent."""
-    content = storage.read(CONFIG_PATH, strict=False)
+    content = await storage.read(CONFIG_PATH, strict=False)
     if content is None:
         return {}
     yaml = YAML()
@@ -35,14 +35,14 @@ def load_default_config_text() -> str:
     return DEFAULT_CONFIG_PATH.read_text(encoding="utf-8")
 
 
-def load_prompt(storage: Storage, name: str) -> str:
+async def load_prompt(storage: Storage, name: str) -> str:
     """Load a prompt template, checking brain overrides first.
 
     Resolution order:
       1. prompts/{name}.md in the brain's storage
       2. default_prompts/{name}.md shipped with the package
     """
-    content = storage.read(prompts_path(name), strict=False)
+    content = await storage.read(prompts_path(name), strict=False)
     if content is not None:
         return content.strip()
 
@@ -55,17 +55,17 @@ def load_prompt(storage: Storage, name: str) -> str:
     )
 
 
-def list_articles(storage: Storage) -> list[str]:
+async def list_articles(storage: Storage) -> list[str]:
     """Return wiki article slugs (excluding internal files like _index)."""
-    paths = storage.glob(WIKI_GLOB)
+    paths = await storage.glob(WIKI_GLOB)
     return [wiki_slug(p) for p in paths if not p.startswith(f"{WIKI_PREFIX}_")]
 
 
-def read_article(storage: Storage, slug: str) -> str | None:
+async def read_article(storage: Storage, slug: str) -> str | None:
     """Read a single wiki article by slug, or None if missing."""
-    return storage.read(wiki_path(slug), strict=False)
+    return await storage.read(wiki_path(slug), strict=False)
 
 
-def read_index(storage: Storage) -> str:
+async def read_index(storage: Storage) -> str:
     """Read the wiki index file."""
-    return storage.read(WIKI_INDEX_PATH, strict=False) or ""
+    return await storage.read(WIKI_INDEX_PATH, strict=False) or ""

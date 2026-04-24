@@ -54,7 +54,7 @@ async def run(
         )
         return []
 
-    prompt_template = load_prompt(ctx.storage, "canonicalize")
+    prompt_template = await load_prompt(ctx.storage, "canonicalize")
     prompt_hash = hashlib.sha256(prompt_template.encode()).hexdigest()
 
     ordered = sorted(local_topics, key=lambda t: str(t.local_topic_id))

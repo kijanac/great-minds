@@ -111,11 +111,11 @@ async def _rebuild_scope(
     repo = SearchIndexRepository(session)
 
     all_chunks: list[Chunk] = []
-    for path in storage.glob(glob_pattern):
+    for path in await storage.glob(glob_pattern):
         filename = path.rsplit("/", 1)[-1]
         if filename.startswith("_"):
             continue
-        content = storage.read(path)
+        content = await storage.read(path)
         if content:
             _, body = parse_frontmatter(content)
             all_chunks.extend(_chunk_paragraphs(path, body))

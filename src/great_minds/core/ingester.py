@@ -198,7 +198,7 @@ def build_document(
     return frontmatter + inject_anchors(content)
 
 
-def ingest_document(
+async def ingest_document(
     storage: Storage,
     config: dict,
     content: str,
@@ -226,11 +226,11 @@ def ingest_document(
         source_type=source_type,
         **extra,
     )
-    storage.write(dest, built)
+    await storage.write(dest, built)
     return built
 
 
-def ingest_file(
+async def ingest_file(
     storage: Storage,
     config: dict,
     filepath: Path,
@@ -252,5 +252,5 @@ def ingest_file(
     """
     content = filepath.read_text(encoding="utf-8")
     dest = f"{dest_dir}/{filepath.name}"
-    ingest_document(storage, config, content, content_type, dest=dest, **kwargs)
+    await ingest_document(storage, config, content, content_type, dest=dest, **kwargs)
     return dest

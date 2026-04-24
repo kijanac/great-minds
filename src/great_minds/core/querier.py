@@ -285,14 +285,14 @@ def _classify_tool_call(name: str, args: dict) -> tuple[SourceType, dict] | None
 # ---------------------------------------------------------------------------
 
 
-def read_document(
+async def read_document(
     brains: list[QuerySource], path: str, *, brain_id: UUID | None = None
 ) -> str:
     sources = brains
     if brain_id is not None:
         sources = [s for s in brains if s.brain_id == brain_id] or brains
     for src in sources:
-        content = src.storage.read(path, strict=False)
+        content = await src.storage.read(path, strict=False)
         if content is not None:
             truncated = len(content) > 20_000
             if truncated:
@@ -326,7 +326,7 @@ async def read_document_enriched(
     topic-id-keyed backlinks table from rendered prose. Until then this
     is a straight pass-through to read_document.
     """
-    return read_document(brains, path)
+    return await read_document(brains, path)
 
 
 async def search_wiki(
@@ -418,14 +418,14 @@ async def query_wiki_articles(
 
     rows: list[tuple[str, str, str, str]] = []
     for src in brains:
-        for path in src.storage.glob("wiki/*.md"):
+        for path in await src.storage.glob("wiki/*.md"):
             filename = path.rsplit("/", 1)[-1]
             if filename.startswith("_"):
                 continue
             slug = filename.removesuffix(".md")
             if slug_filter and slug != slug_filter:
                 continue
-            content = src.storage.read(path, strict=False)
+            content = await src.storage.read(path, strict=False)
             if content is None:
                 continue
             fm, _ = parse_frontmatter(content)
@@ -475,12 +475,12 @@ async def _dispatch_tool(
 # ---------------------------------------------------------------------------
 
 
-def _build_index_for_source(source: QuerySource) -> str:
-    index = source.storage.read("wiki/_index.md", strict=False)
+async def _build_index_for_source(source: QuerySource) -> str:
+    index = await source.storage.read("wiki/_index.md", strict=False)
     if index is not None:
         return f"## [{source.label}]\n{index}"
     entries = []
-    for path in source.storage.glob("wiki/*.md"):
+    for path in await source.storage.glob("wiki/*.md"):
         filename = path.rsplit("/", 1)[-1]
         if not filename.startswith("_"):
             stem = wiki_slug(filename)
@@ -513,13 +513,13 @@ Current wiki index:
 {index}"""
 
 
-def build_system_prompt(
+async def build_system_prompt(
     brains: "list[QuerySource]",
     *,
     mode: QueryMode = QueryMode.QUERY,
     extra_instructions: str | None = None,
 ) -> str:
-    parts = [_build_index_for_source(b) for b in brains]
+    parts = [await _build_index_for_source(b) for b in brains]
     index = "\n\n".join(p for p in parts if p) or "(no articles yet)"
 
     # Layer 1: retrieval discipline (not overridable)
@@ -527,10 +527,10 @@ def build_system_prompt(
 
     # Layer 2: per-brain default persona
     storage = brains[0].storage
-    prompt += "\n\n" + load_prompt(storage, "query")
+    prompt += "\n\n" + await load_prompt(storage, "query")
 
     if mode == QueryMode.BTW:
-        prompt += "\n\n" + load_prompt(storage, "query_btw")
+        prompt += "\n\n" + await load_prompt(storage, "query_btw")
 
     # Layer 3: per-request consumer instructions
     if extra_instructions:
@@ -907,7 +907,7 @@ async def run_stream_query(
     """Stream SSE events for a single question, with model fallback on rate limit."""
     primary = model or QUERY_MODEL
     client = get_async_client(max_retries=0)
-    system_prompt = build_system_prompt(
+    system_prompt = await build_system_prompt(
         brains, mode=mode, extra_instructions=extra_instructions
     )
     tools = await _load_tools(brains, doc_repo)
@@ -959,7 +959,7 @@ async def run_query(
     """Answer a single question against the knowledge base."""
     primary = model or QUERY_MODEL
     client = get_async_client()
-    system_prompt = build_system_prompt(
+    system_prompt = await build_system_prompt(
         brains, mode=mode, extra_instructions=extra_instructions
     )
     tools = await _load_tools(brains, doc_repo)
@@ -988,7 +988,7 @@ async def run_interactive(
     """Run an interactive REPL session against the knowledge base."""
     model = model or QUERY_MODEL
     client = get_async_client()
-    system_prompt = build_system_prompt(brains)
+    system_prompt = await build_system_prompt(brains)
     tools = await _load_tools(brains, doc_repo)
     messages: list[dict] = [{"role": "system", "content": system_prompt}]
 

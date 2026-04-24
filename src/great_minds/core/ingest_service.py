@@ -81,11 +81,11 @@ class IngestService:
         source_type: str = "document",
     ) -> tuple[str, str]:
         """Ingest raw text content. Returns (file_path, title)."""
-        config = load_config(storage)
+        config = await load_config(storage)
         kwargs = _build_kwargs(
             title=title, author=author, date=date, origin=origin, url=url
         )
-        result = ingest_document(
+        result = await ingest_document(
             storage,
             config,
             content,
@@ -122,9 +122,9 @@ class IngestService:
             slug = slugify(filename.rsplit(".", 1)[0])
             dest = _safe_upload_dest(content_type, f"{slug}.md")
 
-        config = load_config(storage)
+        config = await load_config(storage)
         kwargs = _build_kwargs(author=author, date=date, origin=origin, url=url)
-        result = ingest_document(
+        result = await ingest_document(
             storage,
             config,
             content,
@@ -153,7 +153,7 @@ class IngestService:
 
         Caller is responsible for compile-spawn after the iterator is exhausted.
         """
-        config = load_config(storage)
+        config = await load_config(storage)
         existing_hashes = await self.doc_service.get_raw_file_hashes(brain_id)
         semaphore = asyncio.Semaphore(BULK_CONVERT_CONCURRENCY)
 
@@ -212,8 +212,8 @@ class IngestService:
         filename = f"{ts}-{anchor_slug}-{intent.value}.md"
         dest = _safe_upload_dest("user", filename)
 
-        config = load_config(storage)
-        result = ingest_document(
+        config = await load_config(storage)
+        result = await ingest_document(
             storage,
             config,
             body,
@@ -254,8 +254,8 @@ class IngestService:
         title = result.title or url
         dest = raw_path(content_type, f"{slugify(title)}.md")
 
-        config = load_config(storage)
-        ingested = ingest_document(
+        config = await load_config(storage)
+        ingested = await ingest_document(
             storage,
             config,
             result.text_content,
@@ -317,7 +317,7 @@ async def _process_bulk_file(
             None,
         )
 
-    storage.write(dest, content_with_fm)
+    await storage.write(dest, content_with_fm)
     fm, _ = parse_frontmatter(content_with_fm)
     doc = DocumentCreate.from_frontmatter(fm, dest, content_with_fm)
     return (

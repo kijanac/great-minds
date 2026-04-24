@@ -187,15 +187,17 @@ def _render_md(events: list[SessionEvent]) -> str:
     return "".join(parts).rstrip() + "\n"
 
 
-def _append_event(storage: Storage, session_id: str, event: SessionEvent) -> None:
+async def _append_event(
+    storage: Storage, session_id: str, event: SessionEvent
+) -> None:
     path = f"sessions/{session_id}.jsonl"
-    storage.append(path, json.dumps(event.model_dump()) + "\n")
+    await storage.append(path, json.dumps(event.model_dump()) + "\n")
 
 
-def _rebuild_md(storage: Storage, session_id: str) -> None:
-    events = load_events(storage, session_id)
+async def _rebuild_md(storage: Storage, session_id: str) -> None:
+    events = await load_events(storage, session_id)
     md = _render_md(events)
-    storage.write(f"sessions/{session_id}.md", md)
+    await storage.write(f"sessions/{session_id}.md", md)
 
 
 # ---------------------------------------------------------------------------
@@ -203,7 +205,7 @@ def _rebuild_md(storage: Storage, session_id: str) -> None:
 # ---------------------------------------------------------------------------
 
 
-def create_session(
+async def create_session(
     storage: Storage,
     session_id: str,
     exchange: ExchangeInput,
@@ -212,7 +214,7 @@ def create_session(
     user_id: str,
 ) -> str:
     """Create a new session with the first exchange."""
-    storage.mkdir("sessions")
+    await storage.mkdir("sessions")
 
     meta = MetaEvent(
         id=session_id,
@@ -221,7 +223,7 @@ def create_session(
         user_id=user_id,
         origin=origin,
     )
-    _append_event(storage, session_id, meta)
+    await _append_event(storage, session_id, meta)
 
     ex = ExchangeEvent(
         exId=exchange.id,
@@ -230,13 +232,13 @@ def create_session(
         answer=exchange.answer,
         ts=_now(),
     )
-    _append_event(storage, session_id, ex)
+    await _append_event(storage, session_id, ex)
 
-    _rebuild_md(storage, session_id)
+    await _rebuild_md(storage, session_id)
     return f"sessions/{session_id}.jsonl"
 
 
-def append_exchange(
+async def append_exchange(
     storage: Storage,
     session_id: str,
     exchange: ExchangeInput,
@@ -249,12 +251,12 @@ def append_exchange(
         answer=exchange.answer,
         ts=_now(),
     )
-    _append_event(storage, session_id, ex)
-    _rebuild_md(storage, session_id)
+    await _append_event(storage, session_id, ex)
+    await _rebuild_md(storage, session_id)
     return f"sessions/{session_id}.jsonl"
 
 
-def append_btw(
+async def append_btw(
     storage: Storage,
     session_id: str,
     btw: BtwInput,
@@ -268,18 +270,20 @@ def append_btw(
         messages=btw.messages,
         ts=_now(),
     )
-    _append_event(storage, session_id, event)
-    _rebuild_md(storage, session_id)
+    await _append_event(storage, session_id, event)
+    await _rebuild_md(storage, session_id)
     return f"sessions/{session_id}.jsonl"
 
 
-def load_events(storage: Storage, session_id: str) -> list[SessionEvent]:
+async def load_events(
+    storage: Storage, session_id: str
+) -> list[SessionEvent]:
     """Load all events from a session's JSONL file.
 
     Truncates at the first malformed line (partial write recovery).
     Invalid events are skipped with a warning.
     """
-    content = storage.read(f"sessions/{session_id}.jsonl")
+    content = await storage.read(f"sessions/{session_id}.jsonl")
     if content is None:
         return []
     events: list[SessionEvent] = []
@@ -296,7 +300,7 @@ def load_events(storage: Storage, session_id: str) -> list[SessionEvent]:
     return events
 
 
-def list_sessions(
+async def list_sessions(
     storage: Storage, *, user_id: str | None = None
 ) -> list[SessionSummary]:
     """List all sessions with metadata. Sorted by last activity.
@@ -304,8 +308,8 @@ def list_sessions(
     If user_id is provided, only sessions belonging to that user are returned.
     """
     results: list[SessionSummary] = []
-    for path in storage.glob("sessions/*.jsonl"):
-        content = storage.read(path)
+    for path in await storage.glob("sessions/*.jsonl"):
+        content = await storage.read(path)
         if content is None:
             continue
         lines = [line for line in content.strip().split("\n") if line.strip()]

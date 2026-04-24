@@ -70,7 +70,7 @@ async def run(ctx: PipelineContext) -> None:
     storage.read(strict=False).
     """
     settings = get_settings()
-    prompt_template = load_prompt(ctx.storage, "extract")
+    prompt_template = await load_prompt(ctx.storage, "extract")
     prompt_hash = hashlib.sha256(prompt_template.encode()).hexdigest()
     kinds_key = "|".join(sorted(ctx.config.kinds))
 
@@ -211,7 +211,7 @@ async def _extract_one(
 ) -> _ExtractOutcome:
     outcome = _ExtractOutcome(raw_path=raw_path, document_id=document_id)
     try:
-        content = ctx.storage.read(raw_path, strict=False)
+        content = await ctx.storage.read(raw_path, strict=False)
         if content is None:
             outcome.error = "file_not_found"
             return outcome

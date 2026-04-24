@@ -65,7 +65,7 @@ async def get_brain(
 
     member_count = await brain_service.get_member_count(brain.id)
     storage = brain_service.get_storage(brain)
-    article_count = len(brain_ops.list_articles(storage))
+    article_count = len(await brain_ops.list_articles(storage))
 
     return schemas.BrainDetail(
         id=brain.id,

@@ -56,7 +56,7 @@ async def run(ctx: PipelineContext) -> None:
 
     for topic in rendered:
         article_path = wiki_path(topic.slug)
-        content = ctx.storage.read(article_path, strict=False)
+        content = await ctx.storage.read(article_path, strict=False)
         if content is None:
             # Article status says rendered but file is gone. Skip and log.
             log_event(

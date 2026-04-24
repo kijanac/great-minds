@@ -55,7 +55,7 @@ async def run(
         return []
 
     settings = get_settings()
-    prompt_template = load_prompt(ctx.storage, "synthesize")
+    prompt_template = await load_prompt(ctx.storage, "synthesize")
     prompt_hash = hashlib.sha256(prompt_template.encode()).hexdigest()
     idea_index: dict[UUID, tuple[Idea, SourceCard]] = {}
     for card in source_cards:

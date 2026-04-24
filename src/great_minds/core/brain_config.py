@@ -55,8 +55,8 @@ class BrainConfig:
     raw: dict = field(default_factory=dict)
 
 
-def load_brain_config(storage: Storage) -> BrainConfig:
-    content = storage.read(CONFIG_PATH, strict=False)
+async def load_brain_config(storage: Storage) -> BrainConfig:
+    content = await storage.read(CONFIG_PATH, strict=False)
     if content is None:
         return BrainConfig()
     data = _yaml.load(content) or {}

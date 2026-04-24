@@ -54,8 +54,8 @@ async def run(ctx: PipelineContext) -> None:
     )
     raw_docs = await _load_raw_documents(ctx)
 
-    _write_wiki_index(ctx, rendered_topics)
-    _write_raw_index(ctx, raw_docs)
+    await _write_wiki_index(ctx, rendered_topics)
+    await _write_raw_index(ctx, raw_docs)
 
     counts = await _gather_log_counts(ctx)
     _append_compile_log(ctx, counts)
@@ -78,7 +78,7 @@ async def run(ctx: PipelineContext) -> None:
 # ---------------------------------------------------------------------------
 
 
-def _write_wiki_index(ctx: PipelineContext, topics: list[Topic]) -> None:
+async def _write_wiki_index(ctx: PipelineContext, topics: list[Topic]) -> None:
     ordered = sorted(topics, key=lambda t: t.title.lower())
     lines = [
         "# Wiki Index",
@@ -90,7 +90,7 @@ def _write_wiki_index(ctx: PipelineContext, topics: list[Topic]) -> None:
         description = (t.description or "").strip().replace("\n", " ")
         lines.append(f"- [{t.title}]({wiki_path(t.slug)}) — {description}")
     lines.append("")
-    ctx.storage.write(WIKI_INDEX_PATH, "\n".join(lines))
+    await ctx.storage.write(WIKI_INDEX_PATH, "\n".join(lines))
 
 
 # ---------------------------------------------------------------------------
@@ -98,7 +98,7 @@ def _write_wiki_index(ctx: PipelineContext, topics: list[Topic]) -> None:
 # ---------------------------------------------------------------------------
 
 
-def _write_raw_index(ctx: PipelineContext, docs: list[Document]) -> None:
+async def _write_raw_index(ctx: PipelineContext, docs: list[Document]) -> None:
     ordered = sorted(docs, key=lambda d: d.title.lower())
     lines = [
         "# Raw Sources",
@@ -119,7 +119,7 @@ def _write_raw_index(ctx: PipelineContext, docs: list[Document]) -> None:
         precis_suffix = f"  \n  {precis}" if precis else ""
         lines.append(f"- [{d.title}]({d.file_path}){meta_suffix}{precis_suffix}")
     lines.append("")
-    ctx.storage.write(RAW_INDEX_PATH, "\n".join(lines))
+    await ctx.storage.write(RAW_INDEX_PATH, "\n".join(lines))
 
 
 # ---------------------------------------------------------------------------

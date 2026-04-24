@@ -81,7 +81,7 @@ async def build_lint_report(
 
     orphans = await _orphans(backlink_repo, rendered)
     dirty = await topic_repo.list_dirty_topic_ids(brain_id)
-    unresolved, cited_by_source = _walk_articles(
+    unresolved, cited_by_source = await _walk_articles(
         storage=storage,
         rendered=rendered,
         slug_to_topic=slug_to_topic,
@@ -119,7 +119,7 @@ async def _orphans(
     return orphans
 
 
-def _walk_articles(
+async def _walk_articles(
     *,
     storage: Storage,
     rendered: list[Topic],
@@ -135,7 +135,7 @@ def _walk_articles(
     cited_by_source: dict[uuid.UUID, set[str]] = {}
 
     for topic in rendered:
-        content = storage.read(wiki_path(topic.slug), strict=False)
+        content = await storage.read(wiki_path(topic.slug), strict=False)
         if content is None:
             continue
         cited_slugs: set[str] = set()

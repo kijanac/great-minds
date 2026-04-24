@@ -8,6 +8,7 @@ Usage:
     uv run python scripts/test_r2_storage.py
 """
 
+import asyncio
 import os
 import sys
 
@@ -46,70 +47,74 @@ def _make_storage() -> R2Storage:
     )
 
 
+async def _run_checks() -> None:
+    boto3.client("s3", region_name="us-east-1").create_bucket(Bucket=BUCKET)
+    s = _make_storage()
+
+    await s.write("wiki/foo.md", "hello")
+    _check("write then read roundtrip", await s.read("wiki/foo.md") == "hello")
+
+    _check(
+        "read missing strict=False returns None",
+        await s.read("wiki/missing.md", strict=False) is None,
+    )
+
+    try:
+        await s.read("wiki/missing.md", strict=True)
+        _check("read missing strict=True raises FileNotFoundError", False)
+    except FileNotFoundError:
+        _check("read missing strict=True raises FileNotFoundError", True)
+
+    _check("exists existing", await s.exists("wiki/foo.md") is True)
+    _check("exists missing", await s.exists("wiki/missing.md") is False)
+
+    await s.write("wiki/bar.md", "x")
+    await s.write("wiki/subdir/baz.md", "y")
+    _check(
+        "glob single-level excludes subdirectories",
+        sorted(await s.glob("wiki/*.md")) == ["wiki/bar.md", "wiki/foo.md"],
+    )
+
+    await s.write("raw/lenin/01.md", "a")
+    await s.write("raw/lenin/works/1893/02.md", "b")
+    _check(
+        "glob recursive descends all levels",
+        sorted(await s.glob("raw/**/*.md"))
+        == ["raw/lenin/01.md", "raw/lenin/works/1893/02.md"],
+    )
+
+    await s.append("log.md", "line1\n")
+    _check("append creates file when missing", await s.read("log.md") == "line1\n")
+    await s.append("log.md", "line2\n")
+    _check(
+        "append concatenates onto existing file",
+        await s.read("log.md") == "line1\nline2\n",
+    )
+
+    await s.mkdir("some/dir")
+    _check("mkdir is a no-op and does not raise", True)
+
+    await s.delete("wiki/foo.md")
+    _check("delete removes the file", await s.exists("wiki/foo.md") is False)
+
+    try:
+        await s.delete("wiki/never-existed.md", missing_ok=True)
+        _check("delete missing with missing_ok=True is a no-op", True)
+    except Exception:
+        _check("delete missing with missing_ok=True is a no-op", False)
+
+    raw = boto3.client("s3", region_name="us-east-1").get_object(
+        Bucket=BUCKET, Key=f"{PREFIX}/log.md"
+    )
+    _check(
+        "keys land under the brain prefix",
+        raw["Body"].read().decode("utf-8") == "line1\nline2\n",
+    )
+
+
 def main() -> int:
     with mock_aws():
-        boto3.client("s3", region_name="us-east-1").create_bucket(Bucket=BUCKET)
-        s = _make_storage()
-
-        s.write("wiki/foo.md", "hello")
-        _check("write then read roundtrip", s.read("wiki/foo.md") == "hello")
-
-        _check(
-            "read missing strict=False returns None",
-            s.read("wiki/missing.md", strict=False) is None,
-        )
-
-        try:
-            s.read("wiki/missing.md", strict=True)
-            _check("read missing strict=True raises FileNotFoundError", False)
-        except FileNotFoundError:
-            _check("read missing strict=True raises FileNotFoundError", True)
-
-        _check("exists existing", s.exists("wiki/foo.md") is True)
-        _check("exists missing", s.exists("wiki/missing.md") is False)
-
-        s.write("wiki/bar.md", "x")
-        s.write("wiki/subdir/baz.md", "y")
-        _check(
-            "glob single-level excludes subdirectories",
-            sorted(s.glob("wiki/*.md")) == ["wiki/bar.md", "wiki/foo.md"],
-        )
-
-        s.write("raw/lenin/01.md", "a")
-        s.write("raw/lenin/works/1893/02.md", "b")
-        _check(
-            "glob recursive descends all levels",
-            sorted(s.glob("raw/**/*.md"))
-            == ["raw/lenin/01.md", "raw/lenin/works/1893/02.md"],
-        )
-
-        s.append("log.md", "line1\n")
-        _check("append creates file when missing", s.read("log.md") == "line1\n")
-        s.append("log.md", "line2\n")
-        _check(
-            "append concatenates onto existing file",
-            s.read("log.md") == "line1\nline2\n",
-        )
-
-        s.mkdir("some/dir")
-        _check("mkdir is a no-op and does not raise", True)
-
-        s.delete("wiki/foo.md")
-        _check("delete removes the file", s.exists("wiki/foo.md") is False)
-
-        try:
-            s.delete("wiki/never-existed.md", missing_ok=True)
-            _check("delete missing with missing_ok=True is a no-op", True)
-        except Exception:
-            _check("delete missing with missing_ok=True is a no-op", False)
-
-        raw = boto3.client("s3", region_name="us-east-1").get_object(
-            Bucket=BUCKET, Key=f"{PREFIX}/log.md"
-        )
-        _check(
-            "keys land under the brain prefix",
-            raw["Body"].read().decode("utf-8") == "line1\nline2\n",
-        )
+        asyncio.run(_run_checks())
 
     if _failures:
         print(f"\n{len(_failures)} failing check(s):")
