@@ -155,7 +155,14 @@ async def run(ctx: PipelineContext) -> None:
     # Cache lands after DB commit so a mid-persist crash doesn't create
     # a cached entry for a half-written state.
     for outcome in fresh_outcomes:
-        _write_cache(ctx, outcome)
+        if outcome.source_card is None:
+            continue
+        _write_cache(
+            ctx,
+            cache_key=outcome.cache_key,
+            source_card=outcome.source_card,
+            embeddings=outcome.embeddings,
+        )
 
     enrich(
         docs_extracted=docs_extracted,
@@ -426,13 +433,18 @@ async def _load_documents(session, brain_id: UUID) -> list[Document]:
     return await DocumentRepository(session).list_by_kind(brain_id, DocKind.RAW)
 
 
-def _write_cache(ctx: PipelineContext, outcome: _ExtractOutcome) -> None:
-    assert outcome.source_card is not None
+def _write_cache(
+    ctx: PipelineContext,
+    *,
+    cache_key: str,
+    source_card: SourceCard,
+    embeddings: list[IdeaEmbedding],
+) -> None:
     ctx.cache.put(
         PHASE,
-        outcome.cache_key,
+        cache_key,
         {
-            "source_card": outcome.source_card.model_dump(mode="json"),
-            "embeddings": [e.model_dump(mode="json") for e in outcome.embeddings],
+            "source_card": source_card.model_dump(mode="json"),
+            "embeddings": [e.model_dump(mode="json") for e in embeddings],
         },
     )
