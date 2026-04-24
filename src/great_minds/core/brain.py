@@ -4,22 +4,20 @@ These functions operate on a Storage backend and are used by both the API
 layer (via FastAPI dependencies) and the CLI.
 """
 
-from pathlib import Path
-
 from ruamel.yaml import YAML
 
 from great_minds.core.paths import (
     CONFIG_PATH,
+    DEFAULT_CONFIG_PATH,
     WIKI_GLOB,
     WIKI_INDEX_PATH,
     WIKI_PREFIX,
+    default_prompt_path,
     prompts_path,
     wiki_path,
     wiki_slug,
 )
 from great_minds.core.storage import Storage
-
-_PACKAGE_DIR = Path(__file__).resolve().parent
 
 
 def load_config(storage: Storage) -> dict:
@@ -30,6 +28,11 @@ def load_config(storage: Storage) -> dict:
     yaml = YAML()
     raw = yaml.load(content)
     return dict(raw) if raw else {}
+
+
+def load_default_config_text() -> str:
+    """Read the package-bundled default config.yaml."""
+    return DEFAULT_CONFIG_PATH.read_text(encoding="utf-8")
 
 
 def load_prompt(storage: Storage, name: str) -> str:
@@ -43,7 +46,7 @@ def load_prompt(storage: Storage, name: str) -> str:
     if content is not None:
         return content.strip()
 
-    default_path = _PACKAGE_DIR / "default_prompts" / f"{name}.md"
+    default_path = default_prompt_path(name)
     if default_path.exists():
         return default_path.read_text(encoding="utf-8").strip()
 
