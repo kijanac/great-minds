@@ -34,6 +34,7 @@ from great_minds.core.markdown import (
     parse_frontmatter,
 )
 from great_minds.core.documents.models import DocumentORM
+from great_minds.core.documents.schemas import DocKind
 from great_minds.core.ideas.repository import IdeaEmbeddingRepository
 from great_minds.core.ideas.schemas import (
     Anchor,
@@ -49,7 +50,6 @@ from great_minds.core.llm.providers import (
     EMBEDDING_DIMENSIONS,
     EMBEDDING_MODEL,
 )
-from great_minds.core.paths import RAW_GLOB
 from great_minds.core.pipeline.context import PipelineContext
 from great_minds.core.search import _truncate_and_normalize
 from great_minds.core.settings import get_settings
@@ -62,46 +62,34 @@ EMBEDDING_BATCH_SIZE = 50
 
 
 async def run(ctx: PipelineContext) -> None:
-    """Extract all raw/**/*.md docs for this brain.
+    """Extract every raw document registered in the DB for this brain.
 
-    Reads DocumentORM rows so each raw file has a known document_id,
-    title, and source_type. Files on disk without a DocumentORM row are
-    skipped — that's an ingest-path bug, not extract's concern.
+    DocumentORM is the authoritative registry — ingest writes the file
+    and the DB row together, so iterating the registry catches every
+    document. If a DB row points at a file that's missing from storage,
+    _extract_one records file_not_found via storage.read(strict=False).
     """
     settings = get_settings()
     prompt_template = load_prompt(ctx.storage, "extract")
     prompt_hash = hashlib.sha256(prompt_template.encode()).hexdigest()
     kinds_key = "|".join(sorted(ctx.config.kinds))
 
-    docs_by_path = await _load_documents(ctx.session, ctx.brain_id)
-    raw_paths = ctx.storage.glob(RAW_GLOB)
+    docs = await _load_documents(ctx.session, ctx.brain_id)
 
     sem = asyncio.Semaphore(settings.compile_enrich_concurrency)
-    tasks = []
-    skipped = 0
-    for raw_path in raw_paths:
-        doc_row = docs_by_path.get(raw_path)
-        if doc_row is None:
-            log_event(
-                "extract.doc_missing",
-                level=logging.WARNING,
-                brain_id=str(ctx.brain_id),
-                path=raw_path,
-            )
-            skipped += 1
-            continue
-        tasks.append(
-            _extract_one(
-                ctx=ctx,
-                sem=sem,
-                raw_path=raw_path,
-                document_id=doc_row.id,
-                source_type=doc_row.source_type,
-                prompt_template=prompt_template,
-                prompt_hash=prompt_hash,
-                kinds_key=kinds_key,
-            )
+    tasks = [
+        _extract_one(
+            ctx=ctx,
+            sem=sem,
+            raw_path=doc.file_path,
+            document_id=doc.id,
+            source_type=doc.source_type,
+            prompt_template=prompt_template,
+            prompt_hash=prompt_hash,
+            kinds_key=kinds_key,
         )
+        for doc in docs
+    ]
 
     outcomes = await asyncio.gather(*tasks, return_exceptions=False)
 
@@ -173,7 +161,6 @@ async def run(ctx: PipelineContext) -> None:
         cache_misses=cache_misses,
         docs_failed=docs_failed,
         ideas_emitted=ideas_emitted,
-        docs_skipped_no_row=skipped,
     )
     log_event(
         "pipeline.extract_completed",
@@ -432,11 +419,17 @@ async def _embed_ideas(
 # ---------------------------------------------------------------------------
 
 
-async def _load_documents(session, brain_id: UUID) -> dict[str, DocumentORM]:
+async def _load_documents(session, brain_id: UUID) -> list[DocumentORM]:
+    """Load all raw documents for a brain in deterministic path order."""
     rows = await session.execute(
-        select(DocumentORM).where(DocumentORM.brain_id == brain_id)
+        select(DocumentORM)
+        .where(
+            DocumentORM.brain_id == brain_id,
+            DocumentORM.doc_kind == DocKind.RAW.value,
+        )
+        .order_by(DocumentORM.file_path)
     )
-    return {row.file_path: row for row in rows.scalars().all()}
+    return list(rows.scalars().all())
 
 
 async def _update_documents(
