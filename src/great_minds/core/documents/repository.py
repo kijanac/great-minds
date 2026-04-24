@@ -84,6 +84,36 @@ class DocumentRepository:
         )
         return {row.file_path: row.file_hash for row in result}
 
+    async def list_by_kind(
+        self, brain_id: UUID, kind: DocKind
+    ) -> list[DocumentORM]:
+        """Return all documents of a given kind, ordered by file_path.
+
+        Used by extract (iterate raw docs) and render (resolve footnote
+        source metadata) — both want a deterministic ordering.
+        """
+        rows = await self.session.execute(
+            select(DocumentORM)
+            .where(
+                DocumentORM.brain_id == brain_id,
+                DocumentORM.doc_kind == kind.value,
+            )
+            .order_by(DocumentORM.file_path)
+        )
+        return list(rows.scalars().all())
+
+    async def count_by_kind(self, brain_id: UUID, kind: DocKind) -> int:
+        return (
+            await self.session.scalar(
+                select(func.count())
+                .select_from(DocumentORM)
+                .where(
+                    DocumentORM.brain_id == brain_id,
+                    DocumentORM.doc_kind == kind.value,
+                )
+            )
+        ) or 0
+
     async def _sync_tags(self, doc_id: UUID, tags: list[str]) -> None:
         """Replace all tag rows for a document with the new set."""
         await self.session.execute(

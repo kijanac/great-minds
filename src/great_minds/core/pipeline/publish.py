@@ -15,8 +15,9 @@ from __future__ import annotations
 import logging
 from datetime import datetime, timezone
 
-from sqlalchemy import func, or_, select
-
+from great_minds.core.documents.models import DocumentORM
+from great_minds.core.documents.repository import DocumentRepository
+from great_minds.core.documents.schemas import DocKind
 from great_minds.core.paths import (
     RAW_INDEX_PATH,
     RAW_PREFIX,
@@ -25,12 +26,9 @@ from great_minds.core.paths import (
     compile_log_path,
     wiki_path,
 )
-from great_minds.core.documents.models import DocumentORM
-from great_minds.core.documents.schemas import DocKind
 from great_minds.core.pipeline.context import PipelineContext
-from great_minds.core.search import SearchIndexEntry
+from great_minds.core.search import count_chunks_by_prefix
 from great_minds.core.telemetry import enrich, log_event
-from great_minds.core.topics.models import TopicORM
 from great_minds.core.topics.repository import TopicRepository
 from great_minds.core.topics.schemas import ArticleStatus, Topic
 
@@ -116,72 +114,24 @@ def _write_raw_index(ctx: PipelineContext, docs: list[DocumentORM]) -> None:
 
 
 async def _gather_log_counts(ctx: PipelineContext) -> dict:
-    topics_total = await ctx.session.scalar(
-        select(func.count())
-        .select_from(TopicORM)
-        .where(TopicORM.brain_id == ctx.brain_id)
-    )
-    rendered = await ctx.session.scalar(
-        select(func.count())
-        .select_from(TopicORM)
-        .where(
-            TopicORM.brain_id == ctx.brain_id,
-            TopicORM.article_status == ArticleStatus.RENDERED.value,
-        )
-    )
-    archived = await ctx.session.scalar(
-        select(func.count())
-        .select_from(TopicORM)
-        .where(
-            TopicORM.brain_id == ctx.brain_id,
-            TopicORM.article_status == ArticleStatus.ARCHIVED.value,
-        )
-    )
-    dirty = await ctx.session.scalar(
-        select(func.count())
-        .select_from(TopicORM)
-        .where(
-            TopicORM.brain_id == ctx.brain_id,
-            TopicORM.article_status != ArticleStatus.ARCHIVED.value,
-            TopicORM.compiled_from_hash.is_not(None),
-            or_(
-                TopicORM.rendered_from_hash.is_(None),
-                TopicORM.rendered_from_hash != TopicORM.compiled_from_hash,
-            ),
-        )
-    )
-    docs_total = await ctx.session.scalar(
-        select(func.count())
-        .select_from(DocumentORM)
-        .where(
-            DocumentORM.brain_id == ctx.brain_id,
-            DocumentORM.doc_kind == DocKind.RAW.value,
-        )
-    )
-    chunks_raw = await ctx.session.scalar(
-        select(func.count())
-        .select_from(SearchIndexEntry)
-        .where(
-            SearchIndexEntry.brain_id == ctx.brain_id,
-            SearchIndexEntry.path.like(f"{RAW_PREFIX}%"),
-        )
-    )
-    chunks_wiki = await ctx.session.scalar(
-        select(func.count())
-        .select_from(SearchIndexEntry)
-        .where(
-            SearchIndexEntry.brain_id == ctx.brain_id,
-            SearchIndexEntry.path.like(f"{WIKI_PREFIX}%"),
-        )
-    )
+    topic_repo = TopicRepository(ctx.session)
+    doc_repo = DocumentRepository(ctx.session)
     return {
-        "topics_total": topics_total or 0,
-        "topics_rendered": rendered or 0,
-        "topics_archived": archived or 0,
-        "topics_dirty": dirty or 0,
-        "docs_raw": docs_total or 0,
-        "chunks_raw": chunks_raw or 0,
-        "chunks_wiki": chunks_wiki or 0,
+        "topics_total": await topic_repo.count_all(ctx.brain_id),
+        "topics_rendered": await topic_repo.count_by_status(
+            ctx.brain_id, ArticleStatus.RENDERED
+        ),
+        "topics_archived": await topic_repo.count_by_status(
+            ctx.brain_id, ArticleStatus.ARCHIVED
+        ),
+        "topics_dirty": await topic_repo.count_dirty(ctx.brain_id),
+        "docs_raw": await doc_repo.count_by_kind(ctx.brain_id, DocKind.RAW),
+        "chunks_raw": await count_chunks_by_prefix(
+            ctx.session, ctx.brain_id, RAW_PREFIX
+        ),
+        "chunks_wiki": await count_chunks_by_prefix(
+            ctx.session, ctx.brain_id, WIKI_PREFIX
+        ),
     }
 
 
@@ -211,12 +161,6 @@ def _append_compile_log(ctx: PipelineContext, counts: dict) -> None:
 
 
 async def _load_raw_documents(ctx: PipelineContext) -> list[DocumentORM]:
-    rows = (
-        await ctx.session.execute(
-            select(DocumentORM).where(
-                DocumentORM.brain_id == ctx.brain_id,
-                DocumentORM.doc_kind == DocKind.RAW.value,
-            )
-        )
-    ).scalars().all()
-    return list(rows)
+    return await DocumentRepository(ctx.session).list_by_kind(
+        ctx.brain_id, DocKind.RAW
+    )

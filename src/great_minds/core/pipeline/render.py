@@ -27,8 +27,6 @@ import re
 from dataclasses import dataclass
 from uuid import UUID
 
-from sqlalchemy import select
-
 from great_minds.core.brain import load_prompt
 from great_minds.core.llm.client import api_call, extract_content
 from great_minds.core.markdown import serialize_frontmatter
@@ -458,10 +456,4 @@ async def _load_documents(session, brain_id: UUID) -> list[DocumentORM]:
     table (render writes them via DocumentRepository.upsert) but would
     never be referenced by anchor.document_id.
     """
-    rows = await session.execute(
-        select(DocumentORM).where(
-            DocumentORM.brain_id == brain_id,
-            DocumentORM.doc_kind == DocKind.RAW.value,
-        )
-    )
-    return list(rows.scalars().all())
+    return await DocumentRepository(session).list_by_kind(brain_id, DocKind.RAW)
