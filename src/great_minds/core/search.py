@@ -322,6 +322,26 @@ async def rebuild_wiki_index(
     )
 
 
+async def count_chunks_by_prefix(
+    session: AsyncSession, brain_id: UUID, path_prefix: str
+) -> int:
+    """Count indexed chunks in a brain whose path starts with ``path_prefix``.
+
+    Used for compile-log reporting (raw vs wiki chunk counts). Path
+    prefix is matched via SQL LIKE — pass e.g. RAW_PREFIX or WIKI_PREFIX.
+    """
+    return (
+        await session.scalar(
+            select(func.count())
+            .select_from(SearchIndexEntry)
+            .where(
+                SearchIndexEntry.brain_id == brain_id,
+                SearchIndexEntry.path.like(f"{path_prefix}%"),
+            )
+        )
+    ) or 0
+
+
 # ---------------------------------------------------------------------------
 # Hybrid search (BM25 + vector via RRF)
 # ---------------------------------------------------------------------------

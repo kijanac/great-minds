@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from uuid import UUID
 
-from sqlalchemy import delete, select
+from sqlalchemy import delete, func, or_, select
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -108,6 +108,65 @@ class TopicRepository:
             )
         ).scalars().all()
         return [Topic.model_validate(r) for r in rows]
+
+    async def count_all(self, brain_id: UUID) -> int:
+        return (
+            await self.session.scalar(
+                select(func.count())
+                .select_from(TopicORM)
+                .where(TopicORM.brain_id == brain_id)
+            )
+        ) or 0
+
+    async def count_by_status(
+        self, brain_id: UUID, status: ArticleStatus
+    ) -> int:
+        return (
+            await self.session.scalar(
+                select(func.count())
+                .select_from(TopicORM)
+                .where(
+                    TopicORM.brain_id == brain_id,
+                    TopicORM.article_status == status.value,
+                )
+            )
+        ) or 0
+
+    async def count_dirty(self, brain_id: UUID) -> int:
+        """Non-archived topics whose rendered output lags the compiled inputs."""
+        return (
+            await self.session.scalar(
+                select(func.count())
+                .select_from(TopicORM)
+                .where(
+                    TopicORM.brain_id == brain_id,
+                    TopicORM.article_status != ArticleStatus.ARCHIVED.value,
+                    TopicORM.compiled_from_hash.is_not(None),
+                    or_(
+                        TopicORM.rendered_from_hash.is_(None),
+                        TopicORM.rendered_from_hash != TopicORM.compiled_from_hash,
+                    ),
+                )
+            )
+        ) or 0
+
+    async def list_links_for_brain(
+        self, brain_id: UUID, source_topic_ids: list[UUID] | None = None
+    ) -> list[tuple[UUID, UUID]]:
+        """Return (source_topic_id, target_topic_id) edges for a brain.
+
+        Pass source_topic_ids to restrict to edges whose source is in
+        the set (e.g., rendered topics only).
+        """
+        stmt = (
+            select(TopicLinkORM.source_topic_id, TopicLinkORM.target_topic_id)
+            .join(TopicORM, TopicORM.topic_id == TopicLinkORM.source_topic_id)
+            .where(TopicORM.brain_id == brain_id)
+        )
+        if source_topic_ids is not None:
+            stmt = stmt.where(TopicLinkORM.source_topic_id.in_(source_topic_ids))
+        rows = (await self.session.execute(stmt)).all()
+        return [(src, tgt) for src, tgt in rows]
 
     async def set_archived(
         self, topic_id: UUID, superseded_by: UUID | None = None

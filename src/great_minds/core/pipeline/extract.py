@@ -22,7 +22,7 @@ from dataclasses import dataclass, field
 from uuid import UUID
 
 from pydantic import ValidationError
-from sqlalchemy import select, update
+from sqlalchemy import update
 from uuid6 import uuid7
 
 from great_minds.core.brain import load_prompt
@@ -34,6 +34,7 @@ from great_minds.core.markdown import (
     parse_frontmatter,
 )
 from great_minds.core.documents.models import DocumentORM
+from great_minds.core.documents.repository import DocumentRepository
 from great_minds.core.documents.schemas import DocKind
 from great_minds.core.ideas.repository import IdeaEmbeddingRepository
 from great_minds.core.ideas.schemas import (
@@ -421,15 +422,7 @@ async def _embed_ideas(
 
 async def _load_documents(session, brain_id: UUID) -> list[DocumentORM]:
     """Load all raw documents for a brain in deterministic path order."""
-    rows = await session.execute(
-        select(DocumentORM)
-        .where(
-            DocumentORM.brain_id == brain_id,
-            DocumentORM.doc_kind == DocKind.RAW.value,
-        )
-        .order_by(DocumentORM.file_path)
-    )
-    return list(rows.scalars().all())
+    return await DocumentRepository(session).list_by_kind(brain_id, DocKind.RAW)
 
 
 async def _update_documents(

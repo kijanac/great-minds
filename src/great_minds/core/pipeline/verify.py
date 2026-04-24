@@ -22,14 +22,11 @@ from __future__ import annotations
 import logging
 from uuid import UUID
 
-from sqlalchemy import select
-
 from great_minds.core.articles.repository import BacklinkRepository
 from great_minds.core.markdown import extract_wiki_link_targets
 from great_minds.core.paths import wiki_path, wiki_slug
 from great_minds.core.pipeline.context import PipelineContext
 from great_minds.core.telemetry import enrich, log_event
-from great_minds.core.topics.models import TopicLinkORM
 from great_minds.core.topics.repository import TopicRepository
 from great_minds.core.topics.schemas import ArticleStatus
 
@@ -135,13 +132,9 @@ async def _detect_unmentioned_links(
 ) -> int:
     if not topic_id_set:
         return 0
-    edges = (
-        await ctx.session.execute(
-            select(
-                TopicLinkORM.source_topic_id, TopicLinkORM.target_topic_id
-            ).where(TopicLinkORM.source_topic_id.in_(list(topic_id_set)))
-        )
-    ).all()
+    edges = await TopicRepository(ctx.session).list_links_for_brain(
+        ctx.brain_id, source_topic_ids=list(topic_id_set)
+    )
 
     unmentioned = 0
     for source_id, target_id in edges:
