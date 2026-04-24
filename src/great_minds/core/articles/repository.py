@@ -74,3 +74,22 @@ class BacklinkRepository:
             )
         ).scalars().all()
         return list(rows)
+
+    async def filter_targets_with_incoming(
+        self, target_topic_ids: list[UUID]
+    ) -> set[UUID]:
+        """Return the subset of ``target_topic_ids`` that has ≥1 backlink.
+
+        Used by lint's orphan detection: the complement (ids not in the
+        returned set) is the set of rendered topics nothing cites.
+        """
+        if not target_topic_ids:
+            return set()
+        rows = (
+            await self.session.execute(
+                select(BacklinkORM.target_topic_id)
+                .where(BacklinkORM.target_topic_id.in_(target_topic_ids))
+                .distinct()
+            )
+        ).scalars().all()
+        return set(rows)
