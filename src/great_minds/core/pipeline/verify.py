@@ -30,7 +30,8 @@ from great_minds.core.brain import wiki_slug
 from great_minds.core.brain_utils import extract_wiki_link_targets
 from great_minds.core.pipeline.context import PipelineContext
 from great_minds.core.telemetry import enrich, log_event
-from great_minds.core.topics.models import TopicLinkORM, TopicORM
+from great_minds.core.topics.models import TopicLinkORM
+from great_minds.core.topics.repository import TopicRepository
 from great_minds.core.topics.schemas import ArticleStatus
 
 log = logging.getLogger(__name__)
@@ -45,7 +46,9 @@ class VerifyResult:
 
 
 async def run(ctx: PipelineContext) -> VerifyResult:
-    rendered = await _load_rendered_topics(ctx)
+    rendered = await TopicRepository(ctx.session).list_by_status(
+        ctx.brain_id, ArticleStatus.RENDERED
+    )
     if not rendered:
         log_event(
             "pipeline.verify_skipped",
@@ -136,18 +139,6 @@ async def run(ctx: PipelineContext) -> VerifyResult:
         unresolved_citations=unresolved_count,
         unmentioned_links=unmentioned_count,
     )
-
-
-async def _load_rendered_topics(ctx: PipelineContext) -> list[TopicORM]:
-    rows = (
-        await ctx.session.execute(
-            select(TopicORM).where(
-                TopicORM.brain_id == ctx.brain_id,
-                TopicORM.article_status == ArticleStatus.RENDERED.value,
-            )
-        )
-    ).scalars().all()
-    return list(rows)
 
 
 async def _detect_unmentioned_links(

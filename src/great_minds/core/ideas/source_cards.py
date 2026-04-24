@@ -12,7 +12,13 @@ from pathlib import Path
 from uuid import UUID
 
 from great_minds.core.brain_config import COMPILE_BASE_DIR, compile_root
-from great_minds.core.ideas.schemas import SourceCard
+from great_minds.core.ideas.schemas import Idea, SourceCard
+
+
+def index_ideas_by_id(
+    cards: list[SourceCard],
+) -> dict[UUID, tuple[Idea, SourceCard]]:
+    return {idea.idea_id: (idea, card) for card in cards for idea in card.ideas}
 
 
 class SourceCardStore:

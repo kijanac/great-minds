@@ -39,7 +39,7 @@ from great_minds.core.documents.models import DocumentORM
 from great_minds.core.documents.repository import DocumentRepository
 from great_minds.core.documents.schemas import DocKind, DocumentCreate
 from great_minds.core.ideas.schemas import Anchor, Idea, SourceCard
-from great_minds.core.ideas.source_cards import SourceCardStore
+from great_minds.core.ideas.source_cards import SourceCardStore, index_ideas_by_id
 from great_minds.core.llm import RENDER_MODEL
 from great_minds.core.pipeline.abstract.schemas import ValidatedCanonicalTopic
 from great_minds.core.pipeline.context import PipelineContext
@@ -77,7 +77,7 @@ async def run(
         return RenderResult()
 
     source_cards = SourceCardStore.for_brain(ctx.brain_id).load_all()
-    idea_by_id = _index_ideas(source_cards)
+    idea_by_id = index_ideas_by_id(source_cards)
     doc_by_id = await _load_documents(ctx.session, ctx.brain_id)
     topic_by_slug = {v.slug: v for v in validated}
 
@@ -455,16 +455,6 @@ def _cache_key(
 # ---------------------------------------------------------------------------
 # Shared state loaders
 # ---------------------------------------------------------------------------
-
-
-def _index_ideas(
-    cards: list[SourceCard],
-) -> dict[UUID, tuple[Idea, SourceCard]]:
-    out: dict[UUID, tuple[Idea, SourceCard]] = {}
-    for card in cards:
-        for idea in card.ideas:
-            out[idea.idea_id] = (idea, card)
-    return out
 
 
 async def _load_documents(session, brain_id: UUID) -> dict[UUID, DocumentORM]:
