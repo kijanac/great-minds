@@ -7,6 +7,7 @@ from uuid import UUID
 from great_minds.core.brains.models import BrainMembership, MemberRole
 from great_minds.core.brains.repository import BrainRepository
 from great_minds.core.brains.schemas import Brain
+from great_minds.core.paths import CONFIG_PATH
 from great_minds.core.querier import QuerySource
 from great_minds.core.storage import Storage
 from great_minds.core.storage_factory import make_storage
@@ -74,9 +75,9 @@ class BrainService:
 
     def _init_brain_storage(self, brain: Brain) -> None:
         storage = self.get_storage(brain)
-        if not storage.exists("config.yaml"):
+        if not storage.exists(CONFIG_PATH):
             default = Path(__file__).resolve().parent.parent / "default_config.yaml"
-            storage.write("config.yaml", default.read_text(encoding="utf-8"))
+            storage.write(CONFIG_PATH, default.read_text(encoding="utf-8"))
 
     async def get_all_query_sources(self, user_id: UUID) -> list[QuerySource]:
         """Build QuerySources for all brains a user has access to."""
