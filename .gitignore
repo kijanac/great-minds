@@ -14,7 +14,8 @@ sessions/
 .env
 .DS_Store
 .claude/
-brains/
+/data/
+/test_data/
 test_data_old/
 test_data_old_2/
 test_data_old_3/
