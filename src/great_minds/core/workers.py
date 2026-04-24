@@ -26,6 +26,7 @@ from great_minds.core.telemetry import (
     enrich,
     init_wide_event,
     timed_op,
+    wide_event,
 )
 
 _task_session: ContextVar[AsyncSession] = ContextVar("task_session")
@@ -53,10 +54,11 @@ async def compile_task(params: dict, ctx) -> dict:
     pipeline_ctx = pipeline.build_context(
         brain_id=brain_id, storage=storage, session=session, client=client
     )
-    result = await pipeline.run(pipeline_ctx)
+    await pipeline.run(pipeline_ctx)
 
+    snapshot = dict(wide_event.get() or {})
     emit_wide_event()
-    return result.__dict__
+    return snapshot
 
 
 async def bulk_ingest_task(params: dict, ctx) -> dict:
