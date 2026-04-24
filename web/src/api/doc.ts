@@ -16,7 +16,7 @@ const documentSchema = z.object({
   genre: z.string().nullable(),
   precis: z.string().nullable().default(null),
   compiled: z.boolean(),
-  doc_kind: z.string(),
+  doc_kind: z.enum(["raw", "wiki"]),
   source_type: z.string().nullable().default(null),
   tags: z.array(z.string()).default([]),
   extra_metadata: z.record(z.string(), z.unknown()).default({}),

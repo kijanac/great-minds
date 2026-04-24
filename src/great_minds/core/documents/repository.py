@@ -96,7 +96,14 @@ class DocumentRepository:
             )
         )
         row = result.scalar_one_or_none()
-        return Document.model_validate(row) if row is not None else None
+        if row is None:
+            return None
+
+        tag_rows = await self.session.execute(
+            select(DocumentTag.tag).where(DocumentTag.document_id == row.id)
+        )
+        tags = list(tag_rows.scalars().all())
+        return Document.model_validate(row).model_copy(update={"tags": tags})
 
     async def list_by_kind(
         self, brain_id: UUID, kind: DocKind
