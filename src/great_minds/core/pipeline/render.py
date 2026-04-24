@@ -32,6 +32,7 @@ from sqlalchemy import select
 from great_minds.core.brain import load_prompt
 from great_minds.core.llm.client import api_call, extract_content
 from great_minds.core.markdown import serialize_frontmatter
+from great_minds.core.paths import wiki_path
 from great_minds.core.documents.models import DocumentORM
 from great_minds.core.documents.repository import DocumentRepository
 from great_minds.core.documents.schemas import DocKind, DocumentCreate
@@ -64,7 +65,7 @@ async def run(
         )
         return
 
-    source_cards = SourceCardStore.for_brain(ctx.brain_id).load_all()
+    source_cards = SourceCardStore.for_brain(ctx.brain_root).load_all()
     idea_by_id = index_ideas_by_id(source_cards)
     doc_by_id = await _load_documents(ctx.session, ctx.brain_id)
     topic_by_slug = {v.slug: v for v in validated}
@@ -162,7 +163,7 @@ async def _render_one(
     prompt_hash: str,
 ) -> _RenderOutcome:
     outcome = _RenderOutcome(topic_id=topic.topic_id)
-    wiki_path = f"wiki/{topic.slug}.md"
+    article_path = wiki_path(topic.slug)
 
     numbered_anchors = _build_numbered_anchors(topic, idea_by_id, doc_by_id)
     compiled_from_hash = _topic_content_hash(topic)
@@ -174,7 +175,7 @@ async def _render_one(
     )
 
     cached = ctx.cache.get(PHASE, cache_key)
-    if cached is not None and ctx.storage.exists(wiki_path):
+    if cached is not None and ctx.storage.exists(article_path):
         outcome.cache_hit = True
         outcome.rendered_from_hash = compiled_from_hash
         return outcome
@@ -235,7 +236,7 @@ async def _render_one(
         "description": topic.description,
     }
     full_content = serialize_frontmatter(fm, body)
-    ctx.storage.write(wiki_path, full_content)
+    ctx.storage.write(article_path, full_content)
 
     # Index the rendered article in the documents table so /wiki/recent,
     # /raw/sources, and search.rebuild_wiki_index all have consistent
@@ -245,7 +246,7 @@ async def _render_one(
     await doc_repo.upsert(
         ctx.brain_id,
         DocumentCreate(
-            file_path=wiki_path,
+            file_path=article_path,
             content=full_content,
             doc_kind=DocKind.WIKI,
             compiled=True,
@@ -341,7 +342,7 @@ def _render_link_targets_block(
         target = topic_by_slug.get(slug)
         if target is None:
             continue
-        lines.append(f"- [{target.title}](wiki/{slug}.md) — {target.description}")
+        lines.append(f"- [{target.title}]({wiki_path(slug)}) — {target.description}")
     return "\n".join(lines)
 
 

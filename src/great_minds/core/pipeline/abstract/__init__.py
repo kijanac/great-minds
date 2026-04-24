@@ -38,7 +38,7 @@ async def run(ctx: PipelineContext) -> list[ValidatedCanonicalTopic]:
     canonical topics with topic_ids resolved and link_targets cleaned.
     """
     settings = get_settings()
-    source_cards = SourceCardStore.for_brain(ctx.brain_id).load_all()
+    source_cards = SourceCardStore.for_brain(ctx.brain_root).load_all()
 
     chunks = await partition.run(ctx, source_cards)
     if not chunks:

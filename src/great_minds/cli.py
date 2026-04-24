@@ -21,7 +21,7 @@ from sqlalchemy import text
 from great_minds.app.api.server import create_app
 from great_minds.core import brain as brain_ops
 from great_minds.core import ingester, pipeline, querier
-from great_minds.core.brain_config import compile_root
+from great_minds.core.paths import BRAIN_SUBDIRS, brain_dir, raw_prefix
 from great_minds.core.db import session_maker
 from great_minds.core.documents.repository import DocumentRepository
 from great_minds.core.llm import get_async_client
@@ -39,7 +39,7 @@ def _make_storage() -> LocalStorage:
 
 
 async def _run_compile(brain_id: uuid.UUID, data_dir: Path) -> dict:
-    storage = LocalStorage(data_dir / "brains" / str(brain_id))
+    storage = LocalStorage(brain_dir(data_dir, brain_id))
     client = get_async_client()
     init_wide_event("compile", brain_id=str(brain_id))
     try:
@@ -101,7 +101,7 @@ def cmd_ingest(args: argparse.Namespace) -> None:
     storage = _make_storage()
     config = brain_ops.load_config(storage)
     path = Path(args.path)
-    dest = args.dest or f"raw/{args.content_type}"
+    dest = args.dest or raw_prefix(args.content_type)
 
     kwargs = {}
     if args.author:
@@ -189,7 +189,7 @@ async def _run_reset(brain_id: str, brain_root: Path) -> None:
             log.info("deleted %d rows from %s", result.rowcount, table)
         await session.commit()
 
-    for subdir in ("raw", "wiki"):
+    for subdir in BRAIN_SUBDIRS:
         target = brain_root / subdir
         if target.exists():
             shutil.rmtree(target)
@@ -230,12 +230,7 @@ async def _run_delete_brain(brain_id: str, brain_root: Path) -> None:
 
     if brain_root.exists():
         shutil.rmtree(brain_root)
-        log.info("removed brain storage %s", brain_root)
-
-    compile_sidecar = compile_root(uuid.UUID(brain_id))
-    if compile_sidecar.exists():
-        shutil.rmtree(compile_sidecar)
-        log.info("removed compile sidecar %s", compile_sidecar)
+        log.info("removed brain directory %s", brain_root)
 
     log.info("brain %s fully deleted", brain_id)
 
@@ -245,14 +240,13 @@ def cmd_delete_brain(args: argparse.Namespace) -> None:
 
     brain_id = args.brain_id
     data_dir = Path(args.data_dir)
-    brain_root = data_dir / "brains" / brain_id
+    brain_root = brain_dir(data_dir, brain_id)
 
     if not args.yes:
         print(f"This will PERMANENTLY DELETE brain {brain_id}:")
         print("  - Database: the brains row + all FK-cascaded content")
         print("              (documents, topics, backlinks, idea_embeddings, tasks, ...)")
-        print(f"  - Disk:     {brain_root}")
-        print(f"  - Compile:  {compile_root(uuid.UUID(brain_id))}")
+        print(f"  - Disk:     {brain_root} (includes .compile/ sidecar)")
         print("\nThe brain row itself is removed — not just its content.")
         print("Use `great-minds reset` if you only want to clear content.")
         confirm = input("\nType 'yes' to continue: ")
@@ -268,14 +262,15 @@ def cmd_reset(args: argparse.Namespace) -> None:
 
     brain_id = args.brain_id
     data_dir = Path(args.data_dir)
-    brain_root = data_dir / "brains" / brain_id
+    brain_root = brain_dir(data_dir, brain_id)
 
     if not args.yes:
         print(f"This will delete ALL content for brain {brain_id}:")
         print(
             "  - Database: documents, search_index, backlinks, tasks, source_proposals"
         )
-        print(f"  - Disk: {brain_root / 'raw'}, {brain_root / 'wiki'}")
+        subdir_display = ", ".join(str(brain_root / s) for s in BRAIN_SUBDIRS)
+        print(f"  - Disk: {subdir_display}")
         confirm = input("\nType 'yes' to continue: ")
         if confirm != "yes":
             print("Aborted.")

@@ -29,7 +29,7 @@ from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from great_minds.core.articles.models import BacklinkORM
-from great_minds.core.brain import wiki_slug
+from great_minds.core.paths import wiki_path, wiki_slug
 from great_minds.core.markdown import extract_wiki_link_targets
 from great_minds.core.storage import Storage
 from great_minds.core.topics.models import TopicLinkORM, TopicORM
@@ -182,8 +182,7 @@ def _walk_articles(
     cited_by_source: dict[uuid.UUID, set[str]] = {}
 
     for topic in rendered:
-        wiki_path = f"wiki/{topic.slug}.md"
-        content = storage.read(wiki_path, strict=False)
+        content = storage.read(wiki_path(topic.slug), strict=False)
         if content is None:
             continue
         cited_slugs: set[str] = set()

@@ -22,25 +22,19 @@ Shape:
       news:
         outlet: {type: string, source: provided}
         ...
-
-`.compile/<brain_id>/` holds compile-generated artifacts only
-(cache, source_cards.jsonl, log.md) — never user-authored settings.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from pathlib import Path
-from uuid import UUID
 
 from ruamel.yaml import YAML
 
+from great_minds.core.paths import CONFIG_PATH
 from great_minds.core.storage import Storage
 
 DEFAULT_KINDS: tuple[str, ...] = ("person", "event", "organization", "concept")
 DEFAULT_THEMATIC_HINT: str = ""
-
-COMPILE_BASE_DIR = Path(".compile")
 
 _yaml = YAML()
 _yaml.preserve_quotes = True
@@ -61,12 +55,8 @@ class BrainConfig:
     raw: dict = field(default_factory=dict)
 
 
-def compile_root(brain_id: UUID, base_dir: Path = COMPILE_BASE_DIR) -> Path:
-    return base_dir / str(brain_id)
-
-
 def load_brain_config(storage: Storage) -> BrainConfig:
-    content = storage.read("config.yaml", strict=False)
+    content = storage.read(CONFIG_PATH, strict=False)
     if content is None:
         return BrainConfig()
     data = _yaml.load(content) or {}

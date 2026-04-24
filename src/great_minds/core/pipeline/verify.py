@@ -25,8 +25,8 @@ from uuid import UUID
 from sqlalchemy import select
 
 from great_minds.core.articles.repository import BacklinkRepository
-from great_minds.core.brain import wiki_slug
 from great_minds.core.markdown import extract_wiki_link_targets
+from great_minds.core.paths import wiki_path, wiki_slug
 from great_minds.core.pipeline.context import PipelineContext
 from great_minds.core.telemetry import enrich, log_event
 from great_minds.core.topics.models import TopicLinkORM
@@ -58,8 +58,8 @@ async def run(ctx: PipelineContext) -> None:
     articles_walked = 0
 
     for topic in rendered:
-        wiki_path = f"wiki/{topic.slug}.md"
-        content = ctx.storage.read(wiki_path, strict=False)
+        article_path = wiki_path(topic.slug)
+        content = ctx.storage.read(article_path, strict=False)
         if content is None:
             # Article status says rendered but file is gone. Skip and log.
             log_event(
@@ -75,8 +75,8 @@ async def run(ctx: PipelineContext) -> None:
         link_paths = extract_wiki_link_targets(content)
         cited_slugs: set[str] = set()
 
-        for path in link_paths:
-            slug = wiki_slug(path.rsplit("/", 1)[-1])
+        for link in link_paths:
+            slug = wiki_slug(link.rsplit("/", 1)[-1])
             target = slug_to_topic.get(slug)
             if target is None:
                 unresolved_count += 1
@@ -92,7 +92,7 @@ async def run(ctx: PipelineContext) -> None:
                 # Self-reference — skip (not a semantic backlink)
                 continue
             cited_slugs.add(slug)
-            backlinks.append((target.topic_id, topic.topic_id, wiki_path))
+            backlinks.append((target.topic_id, topic.topic_id, article_path))
 
         cited_by_source[topic.topic_id] = cited_slugs
 

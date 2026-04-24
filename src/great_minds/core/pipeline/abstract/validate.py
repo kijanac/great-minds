@@ -36,6 +36,7 @@ from great_minds.core.brain import load_prompt
 from great_minds.core.llm.client import json_llm_call
 from great_minds.core.llm import REDUCE_MODEL
 from great_minds.core.markdown import parse_frontmatter, serialize_frontmatter
+from great_minds.core.paths import wiki_path
 from great_minds.core.pipeline.abstract.schemas import (
     LocalTopic,
     ValidatedCanonicalTopic,
@@ -393,8 +394,8 @@ def _move_wiki_to_archive(
     topic: Topic,
     successor_topic_id: UUID | None,
 ) -> None:
-    wiki_path = f"wiki/{topic.slug}.md"
-    content = storage.read(wiki_path, strict=False)
+    article_path = wiki_path(topic.slug)
+    content = storage.read(article_path, strict=False)
     if content is None:
         # Topic had no rendered article yet (e.g., archived before render ran).
         # Nothing on disk to move.
@@ -406,7 +407,7 @@ def _move_wiki_to_archive(
     updated = serialize_frontmatter(fm, body)
     archive_path = f"archive/{topic.topic_id}/{topic.slug}.md"
     storage.write(archive_path, updated)
-    storage.delete(wiki_path)
+    storage.delete(article_path)
 
 
 # ---------------------------------------------------------------------------

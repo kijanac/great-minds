@@ -7,16 +7,12 @@ from uuid import UUID
 from great_minds.core.brains.models import BrainMembership, MemberRole
 from great_minds.core.brains.repository import BrainRepository
 from great_minds.core.brains.schemas import Brain
+from great_minds.core.paths import brain_dir
 from great_minds.core.querier import QuerySource
 from great_minds.core.settings import Settings
 from great_minds.core.storage import LocalStorage
 
 log = logging.getLogger(__name__)
-
-
-def brain_storage_path(brain_id: UUID) -> str:
-    """Canonical storage path for a brain. Single source of truth."""
-    return f"brains/{brain_id}"
 
 
 class BrainService:
@@ -33,7 +29,7 @@ class BrainService:
         return self.get_storage_by_id(brain.id)
 
     def get_storage_by_id(self, brain_id: UUID) -> LocalStorage:
-        return LocalStorage(self.data_dir / brain_storage_path(brain_id))
+        return LocalStorage(brain_dir(self.data_dir, brain_id))
 
     async def get_by_id(self, brain_id: UUID) -> Brain:
         """Fetch a brain by ID. Raises ValueError if not found."""

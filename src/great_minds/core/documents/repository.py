@@ -13,6 +13,7 @@ from great_minds.core.documents.models import (
     DocumentTag,
 )
 from great_minds.core.documents.schemas import DocKind, Document, DocumentCreate
+from great_minds.core.paths import raw_prefix
 
 
 class DocumentRepository:
@@ -132,7 +133,7 @@ class DocumentRepository:
         if source_type:
             stmt = stmt.where(DocumentORM.source_type == source_type)
         if content_type:
-            stmt = stmt.where(DocumentORM.file_path.like(f"raw/{content_type}/%"))
+            stmt = stmt.where(DocumentORM.file_path.like(f"{raw_prefix(content_type)}/%"))
         if search:
             stmt = stmt.where(
                 DocumentORM.title.ilike(f"%{search}%")
