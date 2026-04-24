@@ -26,7 +26,7 @@ from sqlalchemy import select
 
 from great_minds.core.articles.repository import BacklinkRepository
 from great_minds.core.brain import wiki_slug
-from great_minds.core.brain_utils import extract_wiki_link_targets
+from great_minds.core.markdown import extract_wiki_link_targets
 from great_minds.core.pipeline.context import PipelineContext
 from great_minds.core.telemetry import enrich, log_event
 from great_minds.core.topics.models import TopicLinkORM

@@ -26,8 +26,12 @@ from sqlalchemy import select, update
 from uuid6 import uuid7
 
 from great_minds.core.brain import load_prompt
-from great_minds.core.brain_utils import json_llm_call, parse_frontmatter
-from great_minds.core.chunking import paragraph_for_quote, paragraphs
+from great_minds.core.llm.client import json_llm_call
+from great_minds.core.markdown import (
+    paragraph_for_quote,
+    paragraphs,
+    parse_frontmatter,
+)
 from great_minds.core.documents.models import DocumentORM
 from great_minds.core.ideas.repository import IdeaEmbeddingRepository
 from great_minds.core.ideas.schemas import (

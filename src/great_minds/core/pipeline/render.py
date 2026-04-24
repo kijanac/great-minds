@@ -30,11 +30,8 @@ from uuid import UUID
 from sqlalchemy import select
 
 from great_minds.core.brain import load_prompt
-from great_minds.core.brain_utils import (
-    api_call,
-    extract_content,
-    serialize_frontmatter,
-)
+from great_minds.core.llm.client import api_call, extract_content
+from great_minds.core.markdown import serialize_frontmatter
 from great_minds.core.documents.models import DocumentORM
 from great_minds.core.documents.repository import DocumentRepository
 from great_minds.core.documents.schemas import DocKind, DocumentCreate

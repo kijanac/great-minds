@@ -30,7 +30,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from great_minds.core.articles.models import BacklinkORM
 from great_minds.core.brain import wiki_slug
-from great_minds.core.brain_utils import extract_wiki_link_targets
+from great_minds.core.markdown import extract_wiki_link_targets
 from great_minds.core.storage import Storage
 from great_minds.core.topics.models import TopicLinkORM, TopicORM
 from great_minds.core.topics.schemas import ArticleStatus

@@ -17,7 +17,7 @@ from openai import AsyncOpenAI
 
 from .brain import load_prompt, wiki_slug
 from .search import search as hybrid_search
-from .brain_utils import extract_wiki_link_targets, parse_frontmatter
+from .markdown import extract_wiki_link_targets, parse_frontmatter
 from .documents.repository import DocumentRepository
 from .documents.schemas import DocKind
 from .llm import FALLBACK_MODELS, QUERY_MODEL, get_async_client

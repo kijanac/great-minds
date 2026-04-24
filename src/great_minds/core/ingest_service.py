@@ -14,7 +14,7 @@ import httpx
 from markitdown import MarkItDown, StreamInfo
 
 from great_minds.core.brain import load_config
-from great_minds.core.brain_utils import parse_frontmatter
+from great_minds.core.markdown import parse_frontmatter
 from great_minds.core.documents.schemas import DocumentCreate
 from great_minds.core.documents.service import DocumentService
 from great_minds.core.ingester import (

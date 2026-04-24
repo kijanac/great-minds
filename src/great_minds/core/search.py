@@ -34,8 +34,8 @@ from sqlalchemy.dialects.postgresql import TSVECTOR, UUID as PG_UUID
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Mapped, mapped_column
 
-from great_minds.core.brain_utils import parse_frontmatter
-from great_minds.core.chunking import paragraphs
+from great_minds.core.markdown import parse_frontmatter
+from great_minds.core.markdown import paragraphs
 from great_minds.core.db import Base
 from great_minds.core.llm import EMBEDDING_DIMENSIONS, EMBEDDING_MODEL, get_async_client
 from great_minds.core.storage import Storage
@@ -92,7 +92,7 @@ def _chunk_paragraphs(path: str, content: str) -> list[Chunk]:
     """Build search-index chunks from shared paragraph chunking.
 
     chunk_index aligns with ingest's `^pN` anchors and extract's
-    anchor.chunk_index, since all three consumers share `chunking.
+    anchor.chunk_index, since all three consumers share `markdown.
     paragraphs()`. Heading text is prepended to body for tsvector +
     embedding so retrieval ranks section context; the `heading` column
     stays clean for display.

@@ -21,7 +21,7 @@ from typing import Literal
 
 from ruamel.yaml import YAML
 
-from great_minds.core.chunking import inject_anchors
+from great_minds.core.markdown import inject_anchors
 from great_minds.core.storage import Storage
 
 log = logging.getLogger(__name__)
