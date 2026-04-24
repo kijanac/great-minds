@@ -19,7 +19,6 @@ import hashlib
 import json
 import logging
 from dataclasses import dataclass, field
-from pathlib import Path
 from uuid import UUID
 
 from pydantic import ValidationError
@@ -39,13 +38,14 @@ from great_minds.core.ideas.schemas import (
     SourceCard,
 )
 from great_minds.core.ideas.service import IdeaService
-from great_minds.core.ingester import FieldSpec, load_field_specs
+from great_minds.core.ingester import load_field_specs
 from great_minds.core.llm import EXTRACT_MODEL
 from great_minds.core.llm.providers import (
     EMBEDDING_DIMENSIONS,
     EMBEDDING_MODEL,
 )
 from great_minds.core.pipeline.context import PipelineContext
+from great_minds.core.search import _truncate_and_normalize
 from great_minds.core.settings import get_settings
 from great_minds.core.telemetry import enrich, log_event
 
@@ -399,7 +399,9 @@ async def _embed_ideas(
             model=EMBEDDING_MODEL, input=batch
         )
         for item in response.data:
-            vectors.append(_truncate_and_normalize(item.embedding))
+            vectors.append(
+                _truncate_and_normalize(item.embedding, EMBEDDING_DIMENSIONS)
+            )
 
     out: list[IdeaEmbedding] = []
     for (brain_id, document_id, idea), vec in zip(inputs, vectors):
@@ -415,19 +417,6 @@ async def _embed_ideas(
             )
         )
     return out
-
-
-def _truncate_and_normalize(embedding: list[float]) -> list[float]:
-    """MRL truncation + L2 normalize, matching search.py's treatment so
-    idea vectors and chunk vectors live in the same normalized space.
-    """
-    import math
-
-    truncated = embedding[:EMBEDDING_DIMENSIONS]
-    norm = math.sqrt(sum(x * x for x in truncated))
-    if norm == 0:
-        return truncated
-    return [x / norm for x in truncated]
 
 
 # ---------------------------------------------------------------------------
