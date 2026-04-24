@@ -67,7 +67,8 @@ async def run(
 
     source_cards = SourceCardStore.for_brain(ctx.sidecar_root).load_all()
     idea_by_id = index_ideas_by_id(source_cards)
-    doc_by_id = await _load_documents(ctx.session, ctx.brain_id)
+    docs = await _load_documents(ctx.session, ctx.brain_id)
+    doc_by_id = {d.id: d for d in docs}
     topic_by_slug = {v.slug: v for v in validated}
 
     prompt_template = load_prompt(ctx.storage, "render")
@@ -449,8 +450,18 @@ def _cache_key(
 # ---------------------------------------------------------------------------
 
 
-async def _load_documents(session, brain_id: UUID) -> dict[UUID, DocumentORM]:
+async def _load_documents(session, brain_id: UUID) -> list[DocumentORM]:
+    """Load raw documents used by anchor footnotes.
+
+    Render's footnotes cite source documents (raw), not wiki articles,
+    so the loader filters doc_kind=RAW. Wiki rows exist in the same
+    table (render writes them via DocumentRepository.upsert) but would
+    never be referenced by anchor.document_id.
+    """
     rows = await session.execute(
-        select(DocumentORM).where(DocumentORM.brain_id == brain_id)
+        select(DocumentORM).where(
+            DocumentORM.brain_id == brain_id,
+            DocumentORM.doc_kind == DocKind.RAW.value,
+        )
     )
-    return {row.id: row for row in rows.scalars().all()}
+    return list(rows.scalars().all())
