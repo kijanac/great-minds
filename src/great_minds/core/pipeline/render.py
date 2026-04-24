@@ -55,26 +55,17 @@ _FOOTNOTE_RE = re.compile(r"\[\^(\d+)\]")
 _HEADING_RE = re.compile(r"^# ", re.MULTILINE)
 
 
-@dataclass
-class RenderResult:
-    topics_rendered: int = 0
-    cache_hits: int = 0
-    cache_misses: int = 0
-    topics_failed: int = 0
-    wiki_chunks_indexed: int = 0
-
-
 async def run(
     ctx: PipelineContext,
     validated: list[ValidatedCanonicalTopic],
-) -> RenderResult:
+) -> None:
     if not validated:
         log_event(
             "pipeline.render_skipped",
             brain_id=str(ctx.brain_id),
             reason="no_topics",
         )
-        return RenderResult()
+        return
 
     source_cards = SourceCardStore.for_brain(ctx.brain_id).load_all()
     idea_by_id = index_ideas_by_id(source_cards)
@@ -103,17 +94,20 @@ async def run(
     outcomes = await asyncio.gather(*tasks)
 
     repo = TopicRepository(ctx.session)
-    result = RenderResult()
+    topics_rendered = 0
+    cache_hits = 0
+    cache_misses = 0
+    topics_failed = 0
     any_rendered = False
     for outcome in outcomes:
         if outcome.error is not None:
-            result.topics_failed += 1
+            topics_failed += 1
             continue
-        result.topics_rendered += 1
+        topics_rendered += 1
         if outcome.cache_hit:
-            result.cache_hits += 1
+            cache_hits += 1
         else:
-            result.cache_misses += 1
+            cache_misses += 1
             await repo.set_rendered(
                 outcome.topic_id,
                 rendered_from_hash=outcome.rendered_from_hash,
@@ -122,28 +116,28 @@ async def run(
 
     await ctx.session.commit()
 
+    wiki_chunks_indexed = 0
     if any_rendered:
-        result.wiki_chunks_indexed = await rebuild_wiki_index(
+        wiki_chunks_indexed = await rebuild_wiki_index(
             ctx.session, ctx.brain_id, ctx.storage, client=ctx.client
         )
 
     enrich(
-        render_topics_rendered=result.topics_rendered,
-        render_cache_hits=result.cache_hits,
-        render_cache_misses=result.cache_misses,
-        render_topics_failed=result.topics_failed,
-        render_wiki_chunks_indexed=result.wiki_chunks_indexed,
+        render_topics_rendered=topics_rendered,
+        render_cache_hits=cache_hits,
+        render_cache_misses=cache_misses,
+        render_topics_failed=topics_failed,
+        render_wiki_chunks_indexed=wiki_chunks_indexed,
     )
     log_event(
         "pipeline.render_completed",
         brain_id=str(ctx.brain_id),
-        topics_rendered=result.topics_rendered,
-        cache_hits=result.cache_hits,
-        cache_misses=result.cache_misses,
-        topics_failed=result.topics_failed,
-        wiki_chunks_indexed=result.wiki_chunks_indexed,
+        topics_rendered=topics_rendered,
+        cache_hits=cache_hits,
+        cache_misses=cache_misses,
+        topics_failed=topics_failed,
+        wiki_chunks_indexed=wiki_chunks_indexed,
     )
-    return result
 
 
 # ---------------------------------------------------------------------------

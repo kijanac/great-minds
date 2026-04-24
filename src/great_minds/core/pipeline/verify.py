@@ -20,7 +20,6 @@ needing to hit the endpoint.
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass
 from uuid import UUID
 
 from sqlalchemy import select
@@ -37,15 +36,7 @@ from great_minds.core.topics.schemas import ArticleStatus
 log = logging.getLogger(__name__)
 
 
-@dataclass
-class VerifyResult:
-    articles_walked: int = 0
-    backlink_edges: int = 0
-    unresolved_citations: int = 0
-    unmentioned_links: int = 0
-
-
-async def run(ctx: PipelineContext) -> VerifyResult:
+async def run(ctx: PipelineContext) -> None:
     rendered = await TopicRepository(ctx.session).list_by_status(
         ctx.brain_id, ArticleStatus.RENDERED
     )
@@ -55,7 +46,7 @@ async def run(ctx: PipelineContext) -> VerifyResult:
             brain_id=str(ctx.brain_id),
             reason="no_rendered_topics",
         )
-        return VerifyResult()
+        return
 
     slug_to_topic = {t.slug: t for t in rendered}
     topic_id_set = {t.topic_id for t in rendered}
@@ -128,12 +119,6 @@ async def run(ctx: PipelineContext) -> VerifyResult:
     log_event(
         "pipeline.verify_completed",
         brain_id=str(ctx.brain_id),
-        articles_walked=articles_walked,
-        backlink_edges=len(backlinks),
-        unresolved_citations=unresolved_count,
-        unmentioned_links=unmentioned_count,
-    )
-    return VerifyResult(
         articles_walked=articles_walked,
         backlink_edges=len(backlinks),
         unresolved_citations=unresolved_count,

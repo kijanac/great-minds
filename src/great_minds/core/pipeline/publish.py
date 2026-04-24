@@ -13,7 +13,6 @@ registry drift between compiles.
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass
 from datetime import datetime, timezone
 
 from sqlalchemy import func, or_, select
@@ -34,14 +33,7 @@ WIKI_INDEX_PATH = "wiki/_index.md"
 RAW_INDEX_PATH = "raw/_index.md"
 
 
-@dataclass
-class PublishResult:
-    topics_in_wiki_index: int = 0
-    docs_in_raw_index: int = 0
-    log_entry_written: bool = False
-
-
-async def run(ctx: PipelineContext) -> PublishResult:
+async def run(ctx: PipelineContext) -> None:
     rendered_topics = await TopicRepository(ctx.session).list_by_status(
         ctx.brain_id, ArticleStatus.RENDERED
     )
@@ -63,11 +55,6 @@ async def run(ctx: PipelineContext) -> PublishResult:
         wiki_index_topics=len(rendered_topics),
         raw_index_docs=len(raw_docs),
         **counts,
-    )
-    return PublishResult(
-        topics_in_wiki_index=len(rendered_topics),
-        docs_in_raw_index=len(raw_docs),
-        log_entry_written=True,
     )
 
 

@@ -16,7 +16,6 @@ from __future__ import annotations
 import hashlib
 import logging
 import math
-from dataclasses import dataclass, field
 from uuid import UUID
 
 import numpy as np
@@ -36,18 +35,9 @@ KMEANS_SEED = 42
 KMEANS_N_INIT = 10
 
 
-@dataclass
-class PartitionResult:
-    chunks: list[list[UUID]] = field(default_factory=list)
-    cache_hit: bool = False
-    k_initial: int = 0
-    k_final: int = 0
-    total_tokens: int = 0
-
-
 async def run(
     ctx: PipelineContext, source_cards: list[SourceCard]
-) -> PartitionResult:
+) -> list[list[UUID]]:
     settings = get_settings()
     target = settings.compile_partition_target_tokens
     max_tokens = int(target * settings.compile_partition_max_factor)
@@ -65,7 +55,7 @@ async def run(
             brain_id=str(ctx.brain_id),
             reason="no_embeddings",
         )
-        return PartitionResult()
+        return []
 
     cache_key = _cache_key(id_order, target)
     cached = ctx.cache.get(PHASE, cache_key)
@@ -80,13 +70,7 @@ async def run(
             brain_id=str(ctx.brain_id),
             chunk_count=len(chunks),
         )
-        return PartitionResult(
-            chunks=chunks,
-            cache_hit=True,
-            k_initial=cached.get("k_initial", len(chunks)),
-            k_final=len(chunks),
-            total_tokens=cached.get("total_tokens", 0),
-        )
+        return chunks
 
     tokens_per_idea = {
         iid: _estimate_idea_tokens(idea_index[iid])
@@ -137,13 +121,7 @@ async def run(
         chunk_count=len(chunks),
         total_tokens=total_tokens,
     )
-    return PartitionResult(
-        chunks=chunks,
-        cache_hit=False,
-        k_initial=k,
-        k_final=len(chunks),
-        total_tokens=total_tokens,
-    )
+    return chunks
 
 
 # ---------------------------------------------------------------------------

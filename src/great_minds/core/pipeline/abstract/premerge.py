@@ -19,30 +19,19 @@ where N is "local topics across all chunks" (~600 at 10K-doc scale).
 from __future__ import annotations
 
 from collections import defaultdict
-from dataclasses import dataclass
 from uuid import UUID
 
 from great_minds.core.pipeline.abstract.schemas import LocalTopic
 from great_minds.core.telemetry import enrich, log_event
 
 
-@dataclass
-class PremergeResult:
-    merged_topics: list[LocalTopic]
-    initial_count: int
-    final_count: int
-    merges_by_slug: int
-    merges_by_title: int
-    merges_by_jaccard: int
-
-
 def run(
     local_topics: list[LocalTopic],
     *,
     jaccard_threshold: float,
-) -> PremergeResult:
+) -> list[LocalTopic]:
     if not local_topics:
-        return PremergeResult([], 0, 0, 0, 0, 0)
+        return []
 
     # Sort for deterministic representative selection — the first member
     # of a union group (by this key) donates slug/title/description/id.
@@ -134,15 +123,6 @@ def run(
 
     merged.sort(key=lambda t: t.slug)
 
-    result = PremergeResult(
-        merged_topics=merged,
-        initial_count=n,
-        final_count=len(merged),
-        merges_by_slug=merges_by_slug,
-        merges_by_title=merges_by_title,
-        merges_by_jaccard=merges_by_jaccard,
-    )
-
     enrich(
         premerge_initial=n,
         premerge_final=len(merged),
@@ -158,4 +138,4 @@ def run(
         merges_by_title=merges_by_title,
         merges_by_jaccard=merges_by_jaccard,
     )
-    return result
+    return merged

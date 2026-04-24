@@ -41,28 +41,18 @@ PHASE = "synthesize"
 _SLUG_RE = re.compile(r"[^a-z0-9-]+")
 
 
-@dataclass
-class SynthesizeResult:
-    local_topics: list[LocalTopic] = field(default_factory=list)
-    chunks_processed: int = 0
-    cache_hits: int = 0
-    cache_misses: int = 0
-    chunks_failed: int = 0
-    failures: list[dict] = field(default_factory=list)
-
-
 async def run(
     ctx: PipelineContext,
     source_cards: list[SourceCard],
     chunks: list[list[UUID]],
-) -> SynthesizeResult:
+) -> list[LocalTopic]:
     """Synthesize local topics for each chunk.
 
     Chunks come from partition; source_cards are loaded once by the
     phase-2 orchestrator and passed through so we don't re-read jsonl.
     """
     if not chunks:
-        return SynthesizeResult()
+        return []
 
     settings = get_settings()
     prompt_template = load_prompt(ctx.storage, "synthesize")
@@ -87,38 +77,46 @@ async def run(
     ]
     outcomes = await asyncio.gather(*tasks)
 
-    result = SynthesizeResult()
+    local_topics: list[LocalTopic] = []
+    chunks_processed = 0
+    cache_hits = 0
+    cache_misses = 0
+    chunks_failed = 0
     for outcome in outcomes:
         if outcome.error is not None:
-            result.chunks_failed += 1
-            result.failures.append(
-                {"chunk_idx": outcome.chunk_idx, "error": outcome.error}
+            chunks_failed += 1
+            log_event(
+                "synthesize.chunk_failed",
+                level=logging.WARNING,
+                brain_id=str(ctx.brain_id),
+                chunk_idx=outcome.chunk_idx,
+                error=outcome.error,
             )
             continue
-        result.chunks_processed += 1
+        chunks_processed += 1
         if outcome.cache_hit:
-            result.cache_hits += 1
+            cache_hits += 1
         else:
-            result.cache_misses += 1
-        result.local_topics.extend(outcome.local_topics)
+            cache_misses += 1
+        local_topics.extend(outcome.local_topics)
 
     enrich(
-        synthesize_chunks_processed=result.chunks_processed,
-        synthesize_cache_hits=result.cache_hits,
-        synthesize_cache_misses=result.cache_misses,
-        synthesize_chunks_failed=result.chunks_failed,
-        synthesize_local_topics=len(result.local_topics),
+        synthesize_chunks_processed=chunks_processed,
+        synthesize_cache_hits=cache_hits,
+        synthesize_cache_misses=cache_misses,
+        synthesize_chunks_failed=chunks_failed,
+        synthesize_local_topics=len(local_topics),
     )
     log_event(
         "pipeline.synthesize_completed",
         brain_id=str(ctx.brain_id),
-        chunks_processed=result.chunks_processed,
-        cache_hits=result.cache_hits,
-        cache_misses=result.cache_misses,
-        chunks_failed=result.chunks_failed,
-        local_topics=len(result.local_topics),
+        chunks_processed=chunks_processed,
+        cache_hits=cache_hits,
+        cache_misses=cache_misses,
+        chunks_failed=chunks_failed,
+        local_topics=len(local_topics),
     )
-    return result
+    return local_topics
 
 
 # ---------------------------------------------------------------------------
@@ -193,15 +191,9 @@ async def _synthesize_one(
         )
     except json.JSONDecodeError as e:
         outcome.error = f"json_parse_exhausted:{e}"
+        return outcome
     except Exception as e:
         outcome.error = f"llm_call:{repr(e)[:200]}"
-        log_event(
-            "synthesize.chunk_failed",
-            level=logging.WARNING,
-            brain_id=str(ctx.brain_id),
-            chunk_idx=chunk_idx,
-            error=outcome.error,
-        )
         return outcome
 
     ctx.cache.put(

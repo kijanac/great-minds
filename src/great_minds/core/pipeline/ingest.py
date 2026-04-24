@@ -11,19 +11,12 @@ after writing articles.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-
 from great_minds.core.pipeline.context import PipelineContext
 from great_minds.core.search import rebuild_raw_index
 from great_minds.core.telemetry import enrich, log_event
 
 
-@dataclass
-class IngestResult:
-    raw_chunks_indexed: int
-
-
-async def run(ctx: PipelineContext) -> IngestResult:
+async def run(ctx: PipelineContext) -> None:
     count = await rebuild_raw_index(
         ctx.session, ctx.brain_id, ctx.storage, client=ctx.client
     )
@@ -33,4 +26,3 @@ async def run(ctx: PipelineContext) -> IngestResult:
         brain_id=str(ctx.brain_id),
         raw_chunks_indexed=count,
     )
-    return IngestResult(raw_chunks_indexed=count)

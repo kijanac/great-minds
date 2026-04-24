@@ -22,7 +22,6 @@ from __future__ import annotations
 
 import hashlib
 import logging
-from dataclasses import dataclass, field
 from uuid import UUID
 
 from great_minds.core.brain import load_prompt
@@ -38,17 +37,9 @@ log = logging.getLogger(__name__)
 PHASE = "canonicalize"
 
 
-@dataclass
-class CanonicalizeResult:
-    canonical_topics: list[CanonicalTopic] = field(default_factory=list)
-    cache_hit: bool = False
-    orphan_count: int = 0
-    unknown_tag_count: int = 0
-
-
 async def run(
     ctx: PipelineContext, local_topics: list[LocalTopic]
-) -> CanonicalizeResult:
+) -> list[CanonicalTopic]:
     """Consolidate local topics into canonical registry.
 
     One LLM call, no retries at this layer — failure propagates. Local
@@ -61,7 +52,7 @@ async def run(
             brain_id=str(ctx.brain_id),
             reason="no_local_topics",
         )
-        return CanonicalizeResult()
+        return []
 
     prompt_template = load_prompt(ctx.storage, "canonicalize")
     prompt_hash = hashlib.sha256(prompt_template.encode()).hexdigest()
@@ -80,18 +71,21 @@ async def run(
         canonical_topics = [
             CanonicalTopic.model_validate(c) for c in cached["canonical_topics"]
         ]
+        covered = _covered_local_ids(canonical_topics, set(tag_to_uuid.values()))
+        orphans = len(tag_to_uuid) - len(covered)
+        enrich(
+            canonicalize_cache_hit=True,
+            canonicalize_input_local_topics=len(local_topics),
+            canonicalize_output_canonical_topics=len(canonical_topics),
+            canonicalize_orphan_count=orphans,
+        )
         log_event(
             "pipeline.canonicalize_cached",
             brain_id=str(ctx.brain_id),
             canonical_count=len(canonical_topics),
-        )
-        covered = _covered_local_ids(canonical_topics, set(tag_to_uuid.values()))
-        orphans = len(tag_to_uuid) - len(covered)
-        return CanonicalizeResult(
-            canonical_topics=canonical_topics,
-            cache_hit=True,
             orphan_count=orphans,
         )
+        return canonical_topics
 
     prompt = _render_prompt(
         prompt_template=prompt_template,
@@ -124,6 +118,7 @@ async def run(
     )
 
     enrich(
+        canonicalize_cache_hit=False,
         canonicalize_input_local_topics=len(local_topics),
         canonicalize_output_canonical_topics=len(canonical_topics),
         canonicalize_orphan_count=orphans,
@@ -137,12 +132,7 @@ async def run(
         orphan_count=orphans,
         unknown_tag_count=unknown_tag_count,
     )
-    return CanonicalizeResult(
-        canonical_topics=canonical_topics,
-        cache_hit=False,
-        orphan_count=orphans,
-        unknown_tag_count=unknown_tag_count,
-    )
+    return canonical_topics
 
 
 # ---------------------------------------------------------------------------
