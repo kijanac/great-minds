@@ -1,6 +1,7 @@
 """Brain service: access control, brain lifecycle, and membership operations."""
 
 import logging
+from pathlib import Path
 from uuid import UUID
 
 from great_minds.core.brains.models import BrainMembership, MemberRole
