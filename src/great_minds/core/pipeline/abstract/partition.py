@@ -24,6 +24,7 @@ from sklearn.cluster import KMeans
 
 from great_minds.core.ideas.repository import IdeaEmbeddingRepository
 from great_minds.core.ideas.schemas import Idea, SourceCard
+from great_minds.core.ideas.source_cards import index_ideas_by_id
 from great_minds.core.pipeline.context import PipelineContext
 from great_minds.core.settings import get_settings
 from great_minds.core.telemetry import enrich, log_event
@@ -52,7 +53,7 @@ async def run(
     max_tokens = int(target * settings.compile_partition_max_factor)
     min_tokens = int(target * settings.compile_partition_min_factor)
 
-    idea_index = _index_ideas(source_cards)
+    idea_index = index_ideas_by_id(source_cards)
 
     repo = IdeaEmbeddingRepository(ctx.session)
     embeddings = await repo.load_embeddings(ctx.brain_id)
@@ -150,14 +151,6 @@ async def run(
 # ---------------------------------------------------------------------------
 
 
-def _index_ideas(cards: list[SourceCard]) -> dict[UUID, tuple[Idea, SourceCard]]:
-    out: dict[UUID, tuple[Idea, SourceCard]] = {}
-    for card in cards:
-        for idea in card.ideas:
-            out[idea.idea_id] = (idea, card)
-    return out
-
-
 def _estimate_idea_tokens(item: tuple[Idea, SourceCard]) -> int:
     """Approximate tokens for one idea rendered with doc provenance.
 
@@ -225,28 +218,17 @@ def _rebalance(
     """Split oversize chunks by sub-k-means; merge undersize chunks into
     nearest centroid. Deterministic: ties broken by sorted idea_id.
     """
-    chunks = _split_oversize(chunks, tokens_per_idea, embeddings, max_tokens)
+    chunks = [
+        split
+        for chunk in chunks
+        for split in _split_recursively(chunk, tokens_per_idea, embeddings, max_tokens)
+    ]
     chunks = _merge_undersize(chunks, tokens_per_idea, embeddings, min_tokens, max_tokens)
     return chunks
 
 
 def _chunk_tokens(chunk: list[UUID], tokens_per_idea: dict[UUID, int]) -> int:
     return sum(tokens_per_idea[i] for i in chunk)
-
-
-def _split_oversize(
-    chunks: list[list[UUID]],
-    tokens_per_idea: dict[UUID, int],
-    embeddings: dict[UUID, list[float]],
-    max_tokens: int,
-) -> list[list[UUID]]:
-    out: list[list[UUID]] = []
-    for chunk in chunks:
-        if _chunk_tokens(chunk, tokens_per_idea) <= max_tokens or len(chunk) < 2:
-            out.append(chunk)
-            continue
-        out.extend(_split_recursively(chunk, tokens_per_idea, embeddings, max_tokens))
-    return out
 
 
 def _split_recursively(

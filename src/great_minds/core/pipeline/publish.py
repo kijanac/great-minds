@@ -15,7 +15,6 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from uuid import UUID
 
 from sqlalchemy import func, or_, select
 
@@ -26,7 +25,8 @@ from great_minds.core.pipeline.context import PipelineContext
 from great_minds.core.search import SearchIndexEntry
 from great_minds.core.telemetry import enrich, log_event
 from great_minds.core.topics.models import TopicORM
-from great_minds.core.topics.schemas import ArticleStatus
+from great_minds.core.topics.repository import TopicRepository
+from great_minds.core.topics.schemas import ArticleStatus, Topic
 
 log = logging.getLogger(__name__)
 
@@ -42,7 +42,9 @@ class PublishResult:
 
 
 async def run(ctx: PipelineContext) -> PublishResult:
-    rendered_topics = await _load_rendered_topics(ctx)
+    rendered_topics = await TopicRepository(ctx.session).list_by_status(
+        ctx.brain_id, ArticleStatus.RENDERED
+    )
     raw_docs = await _load_raw_documents(ctx)
 
     _write_wiki_index(ctx, rendered_topics)
@@ -74,7 +76,7 @@ async def run(ctx: PipelineContext) -> PublishResult:
 # ---------------------------------------------------------------------------
 
 
-def _write_wiki_index(ctx: PipelineContext, topics: list[TopicORM]) -> None:
+def _write_wiki_index(ctx: PipelineContext, topics: list[Topic]) -> None:
     ordered = sorted(topics, key=lambda t: t.title.lower())
     lines = [
         "# Wiki Index",
@@ -216,18 +218,6 @@ def _append_compile_log(ctx: PipelineContext, counts: dict) -> None:
 # ---------------------------------------------------------------------------
 # Loaders
 # ---------------------------------------------------------------------------
-
-
-async def _load_rendered_topics(ctx: PipelineContext) -> list[TopicORM]:
-    rows = (
-        await ctx.session.execute(
-            select(TopicORM).where(
-                TopicORM.brain_id == ctx.brain_id,
-                TopicORM.article_status == ArticleStatus.RENDERED.value,
-            )
-        )
-    ).scalars().all()
-    return list(rows)
 
 
 async def _load_raw_documents(ctx: PipelineContext) -> list[DocumentORM]:
