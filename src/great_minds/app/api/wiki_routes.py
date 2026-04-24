@@ -12,12 +12,15 @@ from fastapi import APIRouter, Depends, HTTPException
 
 from great_minds.app.api.dependencies import (
     get_brain_storage,
+    get_document_repository,
     get_document_service,
 )
 from great_minds.app.api.schemas import wiki as schemas
 from great_minds.core import brain as brain_ops
+from great_minds.core.documents.repository import DocumentRepository
 from great_minds.core.documents.schemas import DocKind
 from great_minds.core.documents.service import DocumentService
+from great_minds.core.markdown import parse_frontmatter
 from great_minds.core.storage import Storage
 
 router = APIRouter(tags=["wiki"])
@@ -88,6 +91,7 @@ async def read_document(
     brain_id: UUID,
     path: str,
     storage: Storage = Depends(get_brain_storage),
+    doc_repo: DocumentRepository = Depends(get_document_repository),
 ) -> schemas.DocResponse:
     try:
         path = _safe_document_read_path(path)
@@ -95,10 +99,20 @@ async def read_document(
         raise HTTPException(status_code=400, detail=f"Invalid document path: {path}")
 
     content = storage.read(path, strict=False)
-    if content is not None:
-        return schemas.DocResponse(path=path, content=content)
+    if content is None:
+        raise HTTPException(status_code=404, detail=f"Document not found: {path}")
+    _, body = parse_frontmatter(content)
 
-    raise HTTPException(status_code=404, detail=f"Document not found: {path}")
+    document = await doc_repo.get_by_path(brain_id, path)
+    if document is None:
+        # File exists on disk without a DB row — an ingest invariant
+        # violation. Surface loudly; a reconciliation pass would repair.
+        raise HTTPException(
+            status_code=500,
+            detail=f"Document on disk lacks a registry row: {path}",
+        )
+
+    return schemas.DocResponse(document=document, body=body)
 
 
 def _safe_document_read_path(path: str) -> str:

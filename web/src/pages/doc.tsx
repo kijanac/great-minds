@@ -23,7 +23,8 @@ export default function DocPage() {
   return (
     <ArticleReader
       path={path}
-      content={data?.content ?? null}
+      document={data?.document ?? null}
+      body={data?.body ?? null}
       archived={data?.archived ?? false}
       supersededBy={data?.superseded_by ?? null}
     />

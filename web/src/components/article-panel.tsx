@@ -8,13 +8,13 @@ import { Button } from "@/components/ui/button";
 
 interface ArticlePanelProps {
   path: string;
-  content: string | null;
+  body: string | null;
   loading: boolean;
   onClose: () => void;
   onFullScreen: () => void;
 }
 
-export function ArticlePanel({ path, content, loading, onClose, onFullScreen }: ArticlePanelProps) {
+export function ArticlePanel({ path, body, loading, onClose, onFullScreen }: ArticlePanelProps) {
   const title = slugToTitle(docDisplayName(path));
 
   return (
@@ -59,12 +59,12 @@ export function ArticlePanel({ path, content, loading, onClose, onFullScreen }: 
               Loading...
             </p>
           )}
-          {!loading && content && (
+          {!loading && body && (
             <div className="text-[length:var(--text-small)] leading-[1.76] text-warm-faint [&_p]:mb-[13px] [&_h2]:text-[length:var(--text-body)] [&_h2]:font-bold [&_h2]:text-foreground [&_h2]:mt-5 [&_h2]:mb-2 [&_h3]:text-[length:var(--text-caption)] [&_h3]:font-mono [&_h3]:text-gold [&_h3]:tracking-[0.1em] [&_h3]:uppercase [&_h3]:mt-4 [&_h3]:mb-2">
-              <Markdown remarkPlugins={remarkPlugins}>{content}</Markdown>
+              <Markdown remarkPlugins={remarkPlugins}>{body}</Markdown>
             </div>
           )}
-          {!loading && !content && (
+          {!loading && !body && (
             <p className="text-[length:var(--text-small)] text-warm-faint">Article not found.</p>
           )}
         </div>
