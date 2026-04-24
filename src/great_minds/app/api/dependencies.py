@@ -74,9 +74,8 @@ def get_ingest_service(
 
 def get_brain_service(
     repo: BrainRepository = Depends(get_brain_repository),
-    settings: Settings = Depends(get_settings),
 ) -> BrainService:
-    return BrainService(repo, settings)
+    return BrainService(repo)
 
 
 def get_user_service(

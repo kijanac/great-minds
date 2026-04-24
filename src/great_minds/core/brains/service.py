@@ -1,16 +1,14 @@
 """Brain service: access control, brain lifecycle, and membership operations."""
 
 import logging
-from pathlib import Path
 from uuid import UUID
 
 from great_minds.core.brains.models import BrainMembership, MemberRole
 from great_minds.core.brains.repository import BrainRepository
 from great_minds.core.brains.schemas import Brain
-from great_minds.core.paths import brain_dir
 from great_minds.core.querier import QuerySource
-from great_minds.core.settings import Settings
-from great_minds.core.storage import LocalStorage
+from great_minds.core.storage import Storage
+from great_minds.core.storage_factory import make_storage
 
 log = logging.getLogger(__name__)
 
@@ -18,18 +16,17 @@ log = logging.getLogger(__name__)
 class BrainService:
     """Manages brain access control, lifecycle, and membership operations."""
 
-    def __init__(self, repository: BrainRepository, settings: Settings) -> None:
+    def __init__(self, repository: BrainRepository) -> None:
         self.repo = repository
-        self.data_dir = Path(settings.data_dir)
 
     async def _commit(self) -> None:
         await self.repo.session.commit()
 
-    def get_storage(self, brain: Brain) -> LocalStorage:
+    def get_storage(self, brain: Brain) -> Storage:
         return self.get_storage_by_id(brain.id)
 
-    def get_storage_by_id(self, brain_id: UUID) -> LocalStorage:
-        return LocalStorage(brain_dir(self.data_dir, brain_id))
+    def get_storage_by_id(self, brain_id: UUID) -> Storage:
+        return make_storage(brain_id)
 
     async def get_by_id(self, brain_id: UUID) -> Brain:
         """Fetch a brain by ID. Raises ValueError if not found."""

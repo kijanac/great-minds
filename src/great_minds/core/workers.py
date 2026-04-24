@@ -19,8 +19,8 @@ from great_minds.core.documents.repository import DocumentRepository
 from great_minds.core.documents.schemas import DocumentCreate
 from great_minds.core.llm import get_async_client
 from great_minds.core.markdown import parse_frontmatter
-from great_minds.core.paths import brain_dir, raw_prefix
-from great_minds.core.storage import LocalStorage
+from great_minds.core.paths import raw_prefix
+from great_minds.core.storage_factory import make_storage
 from great_minds.core.telemetry import (
     correlation_id,
     emit_wide_event,
@@ -43,9 +43,8 @@ log = logging.getLogger(__name__)
 async def compile_task(params: dict, ctx) -> dict:
     """Run the seven-phase compile pipeline with heartbeat for long runs."""
     correlation_id.set(f"task-{ctx.task_id}")
-    data_dir = Path(params["data_dir"])
     brain_id = UUID(params["brain_id"])
-    storage = LocalStorage(brain_dir(data_dir, brain_id))
+    storage = make_storage(brain_id)
     session = _task_session.get()
     client = get_async_client()
 
@@ -65,9 +64,8 @@ async def compile_task(params: dict, ctx) -> dict:
 async def bulk_ingest_task(params: dict, ctx) -> dict:
     """Bulk ingest a directory of files into a brain."""
     correlation_id.set(f"task-{ctx.task_id}")
-    data_dir = Path(params["data_dir"])
     brain_id = UUID(params["brain_id"])
-    storage = LocalStorage(brain_dir(data_dir, brain_id))
+    storage = make_storage(brain_id)
     source_dir = Path(params["source_dir"])
     content_type = params.get("content_type", "texts")
     dest_dir = params.get("dest_dir", raw_prefix(content_type))

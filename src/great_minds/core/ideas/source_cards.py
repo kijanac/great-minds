@@ -26,8 +26,8 @@ class SourceCardStore:
         self.path = path
 
     @classmethod
-    def for_brain(cls, brain_root: Path) -> "SourceCardStore":
-        return cls(source_cards_path(brain_root))
+    def for_brain(cls, sidecar: Path) -> "SourceCardStore":
+        return cls(source_cards_path(sidecar))
 
     def load_all(self) -> list[SourceCard]:
         if not self.path.exists():

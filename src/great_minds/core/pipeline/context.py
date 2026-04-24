@@ -16,15 +16,17 @@ from openai import AsyncOpenAI
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from great_minds.core.brain_config import BrainConfig, load_brain_config
+from great_minds.core.paths import sidecar_root
 from great_minds.core.pipeline.cache import ContentHashCache
-from great_minds.core.storage import LocalStorage, Storage
+from great_minds.core.settings import get_settings
+from great_minds.core.storage import Storage
 
 
 @dataclass
 class PipelineContext:
     brain_id: UUID
     storage: Storage
-    brain_root: Path  # Filesystem path for compile-sidecar I/O (.compile/)
+    sidecar_root: Path  # Machine-local path for compile-sidecar I/O
     session: AsyncSession
     client: AsyncOpenAI
     config: BrainConfig
@@ -41,24 +43,17 @@ def build_context(
     """Assemble the context a pipeline run needs from its inputs.
 
     Loads per-brain config from storage and builds a compile-sidecar
-    cache rooted at ``<brain_root>/.compile/cache/``. Session and client
-    are passed in so the caller controls their lifetimes.
-
-    The compile sidecar uses raw ``Path`` I/O (not the Storage
-    abstraction), so we require a ``LocalStorage`` to derive the
-    filesystem brain root.
+    cache rooted at ``<data_dir>/.compile/<brain_id>/cache/`` — always
+    local, regardless of the Storage backend. Session and client are
+    passed in so the caller controls their lifetimes.
     """
-    if not isinstance(storage, LocalStorage):
-        raise TypeError(
-            "Compile pipeline requires LocalStorage; "
-            f"got {type(storage).__name__}"
-        )
+    sidecar = sidecar_root(Path(get_settings().data_dir), brain_id)
     return PipelineContext(
         brain_id=brain_id,
         storage=storage,
-        brain_root=storage.root,
+        sidecar_root=sidecar,
         session=session,
         client=client,
         config=load_brain_config(storage),
-        cache=ContentHashCache.for_brain(storage.root),
+        cache=ContentHashCache.for_brain(sidecar),
     )

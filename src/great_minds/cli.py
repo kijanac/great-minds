@@ -11,6 +11,7 @@ Usage:
 import argparse
 import asyncio
 import logging
+import os
 import shutil
 import uuid
 from pathlib import Path
@@ -21,11 +22,18 @@ from sqlalchemy import text
 from great_minds.app.api.server import create_app
 from great_minds.core import brain as brain_ops
 from great_minds.core import ingester, pipeline, querier
-from great_minds.core.paths import BRAIN_SUBDIRS, brain_dir, raw_prefix
 from great_minds.core.db import session_maker
 from great_minds.core.documents.repository import DocumentRepository
 from great_minds.core.llm import get_async_client
+from great_minds.core.paths import (
+    BRAIN_SUBDIRS,
+    brain_dir,
+    raw_prefix,
+    sidecar_root,
+)
+from great_minds.core.settings import get_settings
 from great_minds.core.storage import LocalStorage
+from great_minds.core.storage_factory import make_storage
 from great_minds.core.telemetry import (
     emit_wide_event,
     init_wide_event,
@@ -34,12 +42,24 @@ from great_minds.core.telemetry import (
 )
 
 
+def _sync_data_dir(data_dir: str) -> None:
+    """Align DATA_DIR env var with --data-dir CLI flag.
+
+    Settings are read via get_settings() across the codebase; the CLI
+    flag must flow through the same channel so both direct Path I/O
+    and Storage-factory construction see the same root. Call before
+    any code path that touches Settings.
+    """
+    os.environ["DATA_DIR"] = data_dir
+    get_settings.cache_clear()
+
+
 def _make_storage() -> LocalStorage:
     return LocalStorage(Path.cwd())
 
 
 async def _run_compile(brain_id: uuid.UUID, data_dir: Path) -> dict:
-    storage = LocalStorage(brain_dir(data_dir, brain_id))
+    storage = make_storage(brain_id)
     client = get_async_client()
     init_wide_event("compile", brain_id=str(brain_id))
     try:
@@ -54,6 +74,7 @@ async def _run_compile(brain_id: uuid.UUID, data_dir: Path) -> dict:
 
 
 def cmd_compile(args: argparse.Namespace) -> None:
+    _sync_data_dir(args.data_dir)
     setup_logging(service="great-minds")
     e = asyncio.run(_run_compile(args.brain_id, Path(args.data_dir)))
     print("compile complete:")
@@ -199,7 +220,7 @@ async def _run_reset(brain_id: str, brain_root: Path) -> None:
     log.info("reset complete for brain %s", brain_id)
 
 
-async def _run_delete_brain(brain_id: str, brain_root: Path) -> None:
+async def _run_delete_brain(brain_id: str, brain_root: Path, sidecar: Path) -> None:
     log = logging.getLogger(__name__)
 
     async with session_maker() as session:
@@ -232,21 +253,33 @@ async def _run_delete_brain(brain_id: str, brain_root: Path) -> None:
         shutil.rmtree(brain_root)
         log.info("removed brain directory %s", brain_root)
 
+    if sidecar.exists():
+        shutil.rmtree(sidecar)
+        log.info("removed compile sidecar %s", sidecar)
+
     log.info("brain %s fully deleted", brain_id)
 
 
 def cmd_delete_brain(args: argparse.Namespace) -> None:
+    _sync_data_dir(args.data_dir)
     setup_logging(service="great-minds")
+
+    if get_settings().storage_backend != "local":
+        raise SystemExit(
+            "delete-brain is local-backend only; R2 brain deletion not yet implemented"
+        )
 
     brain_id = args.brain_id
     data_dir = Path(args.data_dir)
     brain_root = brain_dir(data_dir, brain_id)
+    sidecar = sidecar_root(data_dir, brain_id)
 
     if not args.yes:
         print(f"This will PERMANENTLY DELETE brain {brain_id}:")
         print("  - Database: the brains row + all FK-cascaded content")
         print("              (documents, topics, backlinks, idea_embeddings, tasks, ...)")
-        print(f"  - Disk:     {brain_root} (includes .compile/ sidecar)")
+        print(f"  - Disk:     {brain_root}")
+        print(f"  - Sidecar:  {sidecar}")
         print("\nThe brain row itself is removed — not just its content.")
         print("Use `great-minds reset` if you only want to clear content.")
         confirm = input("\nType 'yes' to continue: ")
@@ -254,11 +287,17 @@ def cmd_delete_brain(args: argparse.Namespace) -> None:
             print("Aborted.")
             return
 
-    asyncio.run(_run_delete_brain(brain_id, brain_root))
+    asyncio.run(_run_delete_brain(brain_id, brain_root, sidecar))
 
 
 def cmd_reset(args: argparse.Namespace) -> None:
+    _sync_data_dir(args.data_dir)
     setup_logging(service="great-minds")
+
+    if get_settings().storage_backend != "local":
+        raise SystemExit(
+            "reset is local-backend only; R2 brain reset not yet implemented"
+        )
 
     brain_id = args.brain_id
     data_dir = Path(args.data_dir)

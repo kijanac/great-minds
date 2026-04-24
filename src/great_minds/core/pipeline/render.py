@@ -65,7 +65,7 @@ async def run(
         )
         return
 
-    source_cards = SourceCardStore.for_brain(ctx.brain_root).load_all()
+    source_cards = SourceCardStore.for_brain(ctx.sidecar_root).load_all()
     idea_by_id = index_ideas_by_id(source_cards)
     doc_by_id = await _load_documents(ctx.session, ctx.brain_id)
     topic_by_slug = {v.slug: v for v in validated}

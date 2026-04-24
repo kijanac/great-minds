@@ -186,7 +186,7 @@ async def _gather_log_counts(ctx: PipelineContext) -> dict:
 
 
 def _append_compile_log(ctx: PipelineContext, counts: dict) -> None:
-    log_path = compile_log_path(ctx.brain_root)
+    log_path = compile_log_path(ctx.sidecar_root)
     log_path.parent.mkdir(parents=True, exist_ok=True)
 
     ts = datetime.now(timezone.utc).isoformat(timespec="seconds")
