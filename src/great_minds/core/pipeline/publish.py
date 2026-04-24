@@ -17,7 +17,14 @@ from datetime import datetime, timezone
 
 from sqlalchemy import func, or_, select
 
-from great_minds.core.brain_config import compile_root
+from great_minds.core.paths import (
+    RAW_INDEX_PATH,
+    RAW_PREFIX,
+    WIKI_INDEX_PATH,
+    WIKI_PREFIX,
+    compile_log_path,
+    wiki_path,
+)
 from great_minds.core.documents.models import DocumentORM
 from great_minds.core.documents.schemas import DocKind
 from great_minds.core.pipeline.context import PipelineContext
@@ -28,10 +35,6 @@ from great_minds.core.topics.repository import TopicRepository
 from great_minds.core.topics.schemas import ArticleStatus, Topic
 
 log = logging.getLogger(__name__)
-
-WIKI_INDEX_PATH = "wiki/_index.md"
-RAW_INDEX_PATH = "raw/_index.md"
-
 
 async def run(ctx: PipelineContext) -> None:
     rendered_topics = await TopicRepository(ctx.session).list_by_status(
@@ -73,7 +76,7 @@ def _write_wiki_index(ctx: PipelineContext, topics: list[Topic]) -> None:
     ]
     for t in ordered:
         description = (t.description or "").strip().replace("\n", " ")
-        lines.append(f"- [{t.title}](wiki/{t.slug}.md) — {description}")
+        lines.append(f"- [{t.title}]({wiki_path(t.slug)}) — {description}")
     lines.append("")
     ctx.storage.write(WIKI_INDEX_PATH, "\n".join(lines))
 
@@ -160,7 +163,7 @@ async def _gather_log_counts(ctx: PipelineContext) -> dict:
         .select_from(SearchIndexEntry)
         .where(
             SearchIndexEntry.brain_id == ctx.brain_id,
-            SearchIndexEntry.path.like("raw/%"),
+            SearchIndexEntry.path.like(f"{RAW_PREFIX}%"),
         )
     )
     chunks_wiki = await ctx.session.scalar(
@@ -168,7 +171,7 @@ async def _gather_log_counts(ctx: PipelineContext) -> dict:
         .select_from(SearchIndexEntry)
         .where(
             SearchIndexEntry.brain_id == ctx.brain_id,
-            SearchIndexEntry.path.like("wiki/%"),
+            SearchIndexEntry.path.like(f"{WIKI_PREFIX}%"),
         )
     )
     return {
@@ -183,7 +186,7 @@ async def _gather_log_counts(ctx: PipelineContext) -> dict:
 
 
 def _append_compile_log(ctx: PipelineContext, counts: dict) -> None:
-    log_path = compile_root(ctx.brain_id) / "log.md"
+    log_path = compile_log_path(ctx.brain_root)
     log_path.parent.mkdir(parents=True, exist_ok=True)
 
     ts = datetime.now(timezone.utc).isoformat(timespec="seconds")

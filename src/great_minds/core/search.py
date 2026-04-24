@@ -34,10 +34,10 @@ from sqlalchemy.dialects.postgresql import TSVECTOR, UUID as PG_UUID
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Mapped, mapped_column
 
-from great_minds.core.markdown import parse_frontmatter
-from great_minds.core.markdown import paragraphs
 from great_minds.core.db import Base
 from great_minds.core.llm import EMBEDDING_DIMENSIONS, EMBEDDING_MODEL, get_async_client
+from great_minds.core.markdown import paragraphs, parse_frontmatter
+from great_minds.core.paths import RAW_GLOB, RAW_PREFIX, WIKI_GLOB, WIKI_PREFIX
 from great_minds.core.storage import Storage
 
 log = logging.getLogger(__name__)
@@ -299,8 +299,8 @@ async def rebuild_raw_index(
         session,
         brain_id,
         storage,
-        glob_pattern="raw/**/*.md",
-        path_prefix="raw/",
+        glob_pattern=RAW_GLOB,
+        path_prefix=RAW_PREFIX,
         client=client,
     )
 
@@ -316,8 +316,8 @@ async def rebuild_wiki_index(
         session,
         brain_id,
         storage,
-        glob_pattern="wiki/*.md",
-        path_prefix="wiki/",
+        glob_pattern=WIKI_GLOB,
+        path_prefix=WIKI_PREFIX,
         client=client,
     )
 

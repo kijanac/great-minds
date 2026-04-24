@@ -14,9 +14,10 @@ import httpx
 from markitdown import MarkItDown, StreamInfo
 
 from great_minds.core.brain import load_config
-from great_minds.core.markdown import parse_frontmatter
 from great_minds.core.documents.schemas import DocumentCreate
 from great_minds.core.documents.service import DocumentService
+from great_minds.core.markdown import parse_frontmatter
+from great_minds.core.paths import raw_path
 from great_minds.core.ingester import (
     build_document,
     ingest_document,
@@ -251,7 +252,7 @@ class IngestService:
         )
 
         title = result.title or url
-        dest = f"raw/{content_type}/{slugify(title)}.md"
+        dest = raw_path(content_type, f"{slugify(title)}.md")
 
         config = load_config(storage)
         ingested = ingest_document(

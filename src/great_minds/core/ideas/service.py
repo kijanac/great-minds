@@ -10,7 +10,6 @@ from __future__ import annotations
 from pathlib import Path
 from uuid import UUID
 
-from great_minds.core.brain_config import COMPILE_BASE_DIR
 from great_minds.core.ideas.repository import IdeaEmbeddingRepository
 from great_minds.core.ideas.schemas import IdeaEmbedding, SourceCard
 from great_minds.core.ideas.source_cards import SourceCardStore
@@ -22,11 +21,11 @@ class IdeaService:
         *,
         brain_id: UUID,
         embedding_repo: IdeaEmbeddingRepository,
-        base_dir: Path = COMPILE_BASE_DIR,
+        brain_root: Path,
     ) -> None:
         self.brain_id = brain_id
         self.embedding_repo = embedding_repo
-        self.source_cards = SourceCardStore.for_brain(brain_id, base_dir)
+        self.source_cards = SourceCardStore.for_brain(brain_root)
 
     async def record_extractions(
         self,

@@ -9,24 +9,22 @@ that flow back through the orchestrator, not by mutating context.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from pathlib import Path
 from uuid import UUID
 
 from openai import AsyncOpenAI
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from great_minds.core.brain_config import (
-    COMPILE_BASE_DIR,
-    BrainConfig,
-    load_brain_config,
-)
+from great_minds.core.brain_config import BrainConfig, load_brain_config
 from great_minds.core.pipeline.cache import ContentHashCache
-from great_minds.core.storage import Storage
+from great_minds.core.storage import LocalStorage, Storage
 
 
 @dataclass
 class PipelineContext:
     brain_id: UUID
     storage: Storage
+    brain_root: Path  # Filesystem path for compile-sidecar I/O (.compile/)
     session: AsyncSession
     client: AsyncOpenAI
     config: BrainConfig
@@ -39,19 +37,28 @@ def build_context(
     storage: Storage,
     session: AsyncSession,
     client: AsyncOpenAI,
-    base_dir=COMPILE_BASE_DIR,
 ) -> PipelineContext:
     """Assemble the context a pipeline run needs from its inputs.
 
-    Loads per-brain config from storage, builds a compile-sidecar cache
-    rooted at `.compile/<brain_id>/cache/`. Session and client are
-    passed in so the caller controls their lifetimes.
+    Loads per-brain config from storage and builds a compile-sidecar
+    cache rooted at ``<brain_root>/.compile/cache/``. Session and client
+    are passed in so the caller controls their lifetimes.
+
+    The compile sidecar uses raw ``Path`` I/O (not the Storage
+    abstraction), so we require a ``LocalStorage`` to derive the
+    filesystem brain root.
     """
+    if not isinstance(storage, LocalStorage):
+        raise TypeError(
+            "Compile pipeline requires LocalStorage; "
+            f"got {type(storage).__name__}"
+        )
     return PipelineContext(
         brain_id=brain_id,
         storage=storage,
+        brain_root=storage.root,
         session=session,
         client=client,
         config=load_brain_config(storage),
-        cache=ContentHashCache.for_brain(brain_id, base_dir),
+        cache=ContentHashCache.for_brain(storage.root),
     )

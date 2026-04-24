@@ -8,6 +8,15 @@ from pathlib import Path
 
 from ruamel.yaml import YAML
 
+from great_minds.core.paths import (
+    CONFIG_PATH,
+    WIKI_GLOB,
+    WIKI_INDEX_PATH,
+    WIKI_PREFIX,
+    prompts_path,
+    wiki_path,
+    wiki_slug,
+)
 from great_minds.core.storage import Storage
 
 _PACKAGE_DIR = Path(__file__).resolve().parent
@@ -15,7 +24,7 @@ _PACKAGE_DIR = Path(__file__).resolve().parent
 
 def load_config(storage: Storage) -> dict:
     """Load brain config from storage, returning empty dict if absent."""
-    content = storage.read("config.yaml", strict=False)
+    content = storage.read(CONFIG_PATH, strict=False)
     if content is None:
         return {}
     yaml = YAML()
@@ -30,8 +39,7 @@ def load_prompt(storage: Storage, name: str) -> str:
       1. prompts/{name}.md in the brain's storage
       2. default_prompts/{name}.md shipped with the package
     """
-    brain_path = f"prompts/{name}.md"
-    content = storage.read(brain_path, strict=False)
+    content = storage.read(prompts_path(name), strict=False)
     if content is not None:
         return content.strip()
 
@@ -44,18 +52,10 @@ def load_prompt(storage: Storage, name: str) -> str:
     )
 
 
-def wiki_path(slug: str) -> str:
-    return f"wiki/{slug}.md"
-
-
-def wiki_slug(path: str) -> str:
-    return path.removeprefix("wiki/").removesuffix(".md")
-
-
 def list_articles(storage: Storage) -> list[str]:
     """Return wiki article slugs (excluding internal files like _index)."""
-    paths = storage.glob("wiki/*.md")
-    return [wiki_slug(p) for p in paths if not p.startswith("wiki/_")]
+    paths = storage.glob(WIKI_GLOB)
+    return [wiki_slug(p) for p in paths if not p.startswith(f"{WIKI_PREFIX}_")]
 
 
 def read_article(storage: Storage, slug: str) -> str | None:
@@ -65,4 +65,4 @@ def read_article(storage: Storage, slug: str) -> str | None:
 
 def read_index(storage: Storage) -> str:
     """Read the wiki index file."""
-    return storage.read("wiki/_index.md", strict=False) or ""
+    return storage.read(WIKI_INDEX_PATH, strict=False) or ""

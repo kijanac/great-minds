@@ -11,8 +11,8 @@ from __future__ import annotations
 from pathlib import Path
 from uuid import UUID
 
-from great_minds.core.brain_config import COMPILE_BASE_DIR, compile_root
 from great_minds.core.ideas.schemas import Idea, SourceCard
+from great_minds.core.paths import source_cards_path
 
 
 def index_ideas_by_id(
@@ -26,10 +26,8 @@ class SourceCardStore:
         self.path = path
 
     @classmethod
-    def for_brain(
-        cls, brain_id: UUID, base_dir: Path = COMPILE_BASE_DIR
-    ) -> "SourceCardStore":
-        return cls(compile_root(brain_id, base_dir) / "source_cards.jsonl")
+    def for_brain(cls, brain_root: Path) -> "SourceCardStore":
+        return cls(source_cards_path(brain_root))
 
     def load_all(self) -> list[SourceCard]:
         if not self.path.exists():

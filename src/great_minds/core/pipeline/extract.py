@@ -49,6 +49,7 @@ from great_minds.core.llm.providers import (
     EMBEDDING_DIMENSIONS,
     EMBEDDING_MODEL,
 )
+from great_minds.core.paths import RAW_GLOB
 from great_minds.core.pipeline.context import PipelineContext
 from great_minds.core.search import _truncate_and_normalize
 from great_minds.core.settings import get_settings
@@ -73,7 +74,7 @@ async def run(ctx: PipelineContext) -> None:
     kinds_key = "|".join(sorted(ctx.config.kinds))
 
     docs_by_path = await _load_documents(ctx.session, ctx.brain_id)
-    raw_paths = ctx.storage.glob("raw/**/*.md")
+    raw_paths = ctx.storage.glob(RAW_GLOB)
 
     sem = asyncio.Semaphore(settings.compile_enrich_concurrency)
     tasks = []
@@ -148,7 +149,11 @@ async def run(ctx: PipelineContext) -> None:
         outcome.embeddings = fresh_by_doc.get(outcome.document_id, [])
 
     idea_repo = IdeaEmbeddingRepository(ctx.session)
-    idea_service = IdeaService(brain_id=ctx.brain_id, embedding_repo=idea_repo)
+    idea_service = IdeaService(
+        brain_id=ctx.brain_id,
+        embedding_repo=idea_repo,
+        brain_root=ctx.brain_root,
+    )
     for outcome in fresh_outcomes:
         await idea_repo.delete_for_document(outcome.document_id)
     await idea_service.record_extractions(
