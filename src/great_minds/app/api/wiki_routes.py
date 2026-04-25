@@ -28,9 +28,11 @@ router = APIRouter(tags=["wiki"])
 
 @router.get("/wiki")
 async def list_articles(
-    storage: Storage = Depends(get_brain_storage),
+    brain_id: UUID,
+    doc_repo: DocumentRepository = Depends(get_document_repository),
+    _auth: None = Depends(get_brain_storage),
 ) -> list[str]:
-    return await brain_ops.list_articles(storage)
+    return await brain_ops.list_articles(brain_id, doc_repo)
 
 
 @router.get("/wiki/recent")
