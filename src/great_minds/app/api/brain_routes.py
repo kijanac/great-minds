@@ -8,13 +8,15 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from great_minds.app.api.dependencies import (
     get_brain_service,
     get_current_user,
+    get_document_repository,
     get_mailer,
     get_user_service,
     require_brain_owner,
 )
 from great_minds.app.api.schemas import brains as schemas
-from great_minds.core import brain as brain_ops
 from great_minds.core.brains.service import BrainService
+from great_minds.core.documents.repository import DocumentRepository
+from great_minds.core.documents.schemas import DocKind
 from great_minds.core.mail import Mailer
 from great_minds.core.users.models import User
 from great_minds.core.users.service import UserService
@@ -57,6 +59,7 @@ async def get_brain(
     brain_id: UUID,
     user: User = Depends(get_current_user),
     brain_service: BrainService = Depends(get_brain_service),
+    doc_repo: DocumentRepository = Depends(get_document_repository),
 ) -> schemas.BrainDetail:
     try:
         brain, role = await brain_service.get_brain(brain_id, user.id)
@@ -64,8 +67,7 @@ async def get_brain(
         raise HTTPException(status_code=404, detail="Brain not found")
 
     member_count = await brain_service.get_member_count(brain.id)
-    storage = brain_service.get_storage(brain)
-    article_count = len(await brain_ops.list_articles(storage))
+    article_count = await doc_repo.count_by_kind(brain.id, DocKind.WIKI)
 
     return schemas.BrainDetail(
         id=brain.id,

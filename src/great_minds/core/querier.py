@@ -18,7 +18,7 @@ from openai import AsyncOpenAI
 from .brain import load_prompt
 from .paths import wiki_slug
 from .search import search as hybrid_search
-from .markdown import extract_wiki_link_targets, parse_frontmatter
+from .markdown import extract_wiki_link_targets
 from .documents.repository import DocumentRepository
 from .documents.schemas import DocKind
 from .llm import FALLBACK_MODELS, QUERY_MODEL, get_async_client
@@ -404,10 +404,10 @@ async def query_wiki_articles(
 ) -> str:
     """Structured query over the wiki article registry.
 
-    Walks each brain's wiki/ directory, reads frontmatter for title +
-    description, filters by slug/query args. The topics table will back
-    this once the seven-phase pipeline lands; the filesystem view is the
-    transitional source of truth.
+    Pulls title + precis straight from the documents table — the DB is
+    the authoritative registry, populated by ingest and enriched by
+    extract. Avoids globbing storage and re-parsing frontmatter on every
+    tool call.
     """
     if not brains:
         return "No wiki articles available (no brains)"
@@ -418,19 +418,15 @@ async def query_wiki_articles(
 
     rows: list[tuple[str, str, str, str]] = []
     for src in brains:
-        for path in await src.storage.glob("wiki/*.md"):
-            filename = path.rsplit("/", 1)[-1]
-            if filename.startswith("_"):
+        docs = await doc_repo.list_by_kind(src.brain_id, DocKind.WIKI)
+        for doc in docs:
+            slug = wiki_slug(doc.file_path)
+            if slug.startswith("_"):
                 continue
-            slug = filename.removesuffix(".md")
             if slug_filter and slug != slug_filter:
                 continue
-            content = await src.storage.read(path, strict=False)
-            if content is None:
-                continue
-            fm, _ = parse_frontmatter(content)
-            title = fm.get("title") or slug.replace("-", " ").title()
-            description = fm.get("description") or ""
+            title = doc.title
+            description = doc.precis or ""
             if query_str and query_str not in title.lower() and query_str not in description.lower():
                 continue
             rows.append((src.label, slug, title, description))
@@ -475,16 +471,24 @@ async def _dispatch_tool(
 # ---------------------------------------------------------------------------
 
 
-async def _build_index_for_source(source: QuerySource) -> str:
+async def _build_index_for_source(
+    source: QuerySource, doc_repo: DocumentRepository
+) -> str:
+    """Render a per-brain section of the system-prompt wiki index.
+
+    A curated ``wiki/_index.md`` wins when present (compile pipeline
+    writes one). Otherwise we fall back to the documents table — the
+    authoritative registry — rather than globbing storage.
+    """
     index = await source.storage.read("wiki/_index.md", strict=False)
     if index is not None:
         return f"## [{source.label}]\n{index}"
-    entries = []
-    for path in await source.storage.glob("wiki/*.md"):
-        filename = path.rsplit("/", 1)[-1]
-        if not filename.startswith("_"):
-            stem = wiki_slug(filename)
-            entries.append(f"  - {stem}")
+    docs = await doc_repo.list_by_kind(source.brain_id, DocKind.WIKI)
+    entries = [
+        f"  - {wiki_slug(d.file_path)}"
+        for d in docs
+        if not wiki_slug(d.file_path).startswith("_")
+    ]
     if entries:
         return f"## [{source.label}]\n" + "\n".join(entries)
     return ""
@@ -515,11 +519,12 @@ Current wiki index:
 
 async def build_system_prompt(
     brains: "list[QuerySource]",
+    doc_repo: DocumentRepository,
     *,
     mode: QueryMode = QueryMode.QUERY,
     extra_instructions: str | None = None,
 ) -> str:
-    parts = [await _build_index_for_source(b) for b in brains]
+    parts = [await _build_index_for_source(b, doc_repo) for b in brains]
     index = "\n\n".join(p for p in parts if p) or "(no articles yet)"
 
     # Layer 1: retrieval discipline (not overridable)
@@ -908,7 +913,7 @@ async def run_stream_query(
     primary = model or QUERY_MODEL
     client = get_async_client(max_retries=0)
     system_prompt = await build_system_prompt(
-        brains, mode=mode, extra_instructions=extra_instructions
+        brains, doc_repo, mode=mode, extra_instructions=extra_instructions
     )
     tools = await _load_tools(brains, doc_repo)
     base_messages: list[dict] = [
@@ -960,7 +965,7 @@ async def run_query(
     primary = model or QUERY_MODEL
     client = get_async_client()
     system_prompt = await build_system_prompt(
-        brains, mode=mode, extra_instructions=extra_instructions
+        brains, doc_repo, mode=mode, extra_instructions=extra_instructions
     )
     tools = await _load_tools(brains, doc_repo)
     messages: list[dict] = [{"role": "system", "content": system_prompt}]
@@ -988,7 +993,7 @@ async def run_interactive(
     """Run an interactive REPL session against the knowledge base."""
     model = model or QUERY_MODEL
     client = get_async_client()
-    system_prompt = await build_system_prompt(brains)
+    system_prompt = await build_system_prompt(brains, doc_repo)
     tools = await _load_tools(brains, doc_repo)
     messages: list[dict] = [{"role": "system", "content": system_prompt}]
 
