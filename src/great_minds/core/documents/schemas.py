@@ -89,6 +89,7 @@ class Document(BaseModel):
     id: uuid.UUID
     brain_id: uuid.UUID
     file_path: str
+    body_hash: str
     title: str
     author: str | None
     published_date: str | None

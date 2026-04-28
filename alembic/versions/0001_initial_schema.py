@@ -227,6 +227,7 @@ def upgrade() -> None:
         sa.Column("brain_id", sa.UUID(), nullable=False),
         sa.Column("file_path", sa.Text(), nullable=False),
         sa.Column("file_hash", sa.Text(), nullable=False),
+        sa.Column("body_hash", sa.Text(), nullable=False),
         sa.Column("title", sa.Text(), nullable=False, server_default=""),
         sa.Column("author", sa.Text(), nullable=True),
         sa.Column("url", sa.Text(), nullable=True),
