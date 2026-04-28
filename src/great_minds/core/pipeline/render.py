@@ -62,14 +62,56 @@ async def run(
         )
         return
 
+    prompt_template = await load_prompt(ctx.storage, "render")
+    prompt_hash = hashlib.sha256(prompt_template.encode()).hexdigest()
+
+    # Pre-pass: one storage list + N in-memory cache checks decides which
+    # topics actually need rendering. On a full-cache-hit replay this
+    # short-circuits before any sidecar / DB load — single network
+    # roundtrip instead of N storage.exists HEADs.
+    existing_wiki = set(await ctx.storage.glob("wiki/*.md"))
+    to_render: list[ValidatedCanonicalTopic] = []
+    cache_hits = 0
+    for topic in validated:
+        cache_key = _cache_key(
+            topic_id=topic.topic_id,
+            compiled_from_hash=_topic_content_hash(topic),
+            link_targets=topic.link_targets,
+            prompt_hash=prompt_hash,
+        )
+        if (
+            ctx.cache.has(PHASE, cache_key)
+            and wiki_path(topic.slug) in existing_wiki
+        ):
+            cache_hits += 1
+            continue
+        to_render.append(topic)
+
+    if not to_render:
+        enrich(
+            render_topics_rendered=cache_hits,
+            render_cache_hits=cache_hits,
+            render_cache_misses=0,
+            render_topics_failed=0,
+            render_wiki_chunks_indexed=0,
+        )
+        log_event(
+            "pipeline.render_completed",
+            brain_id=str(ctx.brain_id),
+            topics_rendered=cache_hits,
+            cache_hits=cache_hits,
+            cache_misses=0,
+            topics_failed=0,
+            wiki_chunks_indexed=0,
+        )
+        return
+
+    # Heavy context loaded only when at least one topic needs rendering.
     source_cards = SourceCardStore.for_brain(ctx.sidecar_root).load_all()
     idea_by_id = index_ideas_by_id(source_cards)
     docs = await _load_documents(ctx.session, ctx.brain_id)
     doc_by_id = {d.id: d for d in docs}
     topic_by_slug = {v.slug: v for v in validated}
-
-    prompt_template = await load_prompt(ctx.storage, "render")
-    prompt_hash = hashlib.sha256(prompt_template.encode()).hexdigest()
 
     settings = get_settings()
     sem = asyncio.Semaphore(settings.compile_write_concurrency)
@@ -85,39 +127,32 @@ async def run(
             prompt_template=prompt_template,
             prompt_hash=prompt_hash,
         )
-        for v in validated
+        for v in to_render
     ]
     outcomes = await asyncio.gather(*tasks)
 
     repo = TopicRepository(ctx.session)
-    topics_rendered = 0
-    cache_hits = 0
     cache_misses = 0
     topics_failed = 0
-    any_rendered = False
     for outcome in outcomes:
         if outcome.error is not None:
             topics_failed += 1
             continue
-        topics_rendered += 1
-        if outcome.cache_hit:
-            cache_hits += 1
-        else:
-            cache_misses += 1
-            await repo.set_rendered(
-                outcome.topic_id,
-                rendered_from_hash=outcome.rendered_from_hash,
-            )
-            any_rendered = True
+        cache_misses += 1
+        await repo.set_rendered(
+            outcome.topic_id,
+            rendered_from_hash=outcome.rendered_from_hash,
+        )
 
     await ctx.session.commit()
 
     wiki_chunks_indexed = 0
-    if any_rendered:
+    if cache_misses:
         wiki_chunks_indexed = await rebuild_wiki_index(
             ctx.session, ctx.brain_id, ctx.storage, client=ctx.client
         )
 
+    topics_rendered = cache_hits + cache_misses
     enrich(
         render_topics_rendered=topics_rendered,
         render_cache_hits=cache_hits,
@@ -144,7 +179,6 @@ async def run(
 @dataclass
 class _RenderOutcome:
     topic_id: UUID
-    cache_hit: bool = False
     error: str | None = None
     rendered_from_hash: str = ""
 
@@ -160,6 +194,7 @@ async def _render_one(
     prompt_template: str,
     prompt_hash: str,
 ) -> _RenderOutcome:
+    """Render one topic. Caller has already determined this is a cache miss."""
     outcome = _RenderOutcome(topic_id=topic.topic_id)
     article_path = wiki_path(topic.slug)
 
@@ -171,12 +206,6 @@ async def _render_one(
         link_targets=topic.link_targets,
         prompt_hash=prompt_hash,
     )
-
-    cached = ctx.cache.get(PHASE, cache_key)
-    if cached is not None and await ctx.storage.exists(article_path):
-        outcome.cache_hit = True
-        outcome.rendered_from_hash = compiled_from_hash
-        return outcome
 
     idea_block = _render_idea_block(
         topic=topic,

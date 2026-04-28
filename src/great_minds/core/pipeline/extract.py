@@ -18,6 +18,7 @@ import asyncio
 import hashlib
 import json
 import logging
+from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
 from uuid import UUID
 
@@ -84,6 +85,7 @@ async def run(ctx: PipelineContext) -> None:
             raw_path=doc.file_path,
             document_id=doc.id,
             source_type=doc.source_type,
+            body_hash=doc.body_hash,
             prompt_template=prompt_template,
             prompt_hash=prompt_hash,
             kinds_key=kinds_key,
@@ -93,10 +95,15 @@ async def run(ctx: PipelineContext) -> None:
 
     outcomes = await asyncio.gather(*tasks, return_exceptions=False)
 
+    # Per-doc trackers for the embedding loop. Populated only inside
+    # the success branch below where source_card is narrowed to non-None.
     cards: list[SourceCard] = []
-    fresh_outcomes: list[_ExtractOutcome] = []
     cached_embeddings: list[IdeaEmbedding] = []
     embedding_inputs: list[tuple[UUID, UUID, Idea]] = []
+    fresh_source_cards: dict[UUID, SourceCard] = {}
+    fresh_cache_keys: dict[UUID, str] = {}
+    pending_per_doc: dict[UUID, int] = {}
+    embeddings_by_doc: dict[UUID, list[IdeaEmbedding]] = {}
     docs_extracted = 0
     cache_hits = 0
     cache_misses = 0
@@ -114,27 +121,61 @@ async def run(ctx: PipelineContext) -> None:
                 error=outcome.error,
             )
             continue
+        source_card = outcome.source_card
+        if source_card is None:
+            # Unreachable in practice: success path always sets source_card.
+            continue
         docs_extracted += 1
-        cards.append(outcome.source_card)
-        ideas_emitted += len(outcome.source_card.ideas)
+        cards.append(source_card)
+        ideas_emitted += len(source_card.ideas)
         if outcome.cache_hit:
             cache_hits += 1
             cached_embeddings.extend(outcome.embeddings)
         else:
             cache_misses += 1
-            fresh_outcomes.append(outcome)
-            for idea in outcome.source_card.ideas:
+            fresh_source_cards[outcome.document_id] = source_card
+            fresh_cache_keys[outcome.document_id] = outcome.cache_key
+            pending_per_doc[outcome.document_id] = len(source_card.ideas)
+            embeddings_by_doc[outcome.document_id] = []
+            for idea in source_card.ideas:
                 embedding_inputs.append((ctx.brain_id, outcome.document_id, idea))
 
-    fresh_embeddings = await _embed_ideas(ctx.client, embedding_inputs)
+    # Write each fresh doc's cache entry as soon as all its ideas are
+    # embedded. A mid-phase crash preserves LLM + embedding work for
+    # every doc that completed before the crash; only docs whose
+    # embeddings spanned the failing batch lose work and re-LLM next
+    # attempt. DB writes that follow are idempotent upserts, so caching
+    # ahead of commit can't produce a state the DB won't agree with on
+    # the next run.
+    fresh_embeddings: list[IdeaEmbedding] = []
 
-    # Attach fresh embeddings back to their outcomes so the cache write
-    # below carries them. Cache hits already have outcome.embeddings set.
-    fresh_by_doc: dict[UUID, list[IdeaEmbedding]] = {}
-    for e in fresh_embeddings:
-        fresh_by_doc.setdefault(e.document_id, []).append(e)
-    for outcome in fresh_outcomes:
-        outcome.embeddings = fresh_by_doc.get(outcome.document_id, [])
+    # Cache empty-idea docs immediately (no embeddings to wait on).
+    for doc_id, remaining in list(pending_per_doc.items()):
+        if remaining == 0:
+            _write_cache(
+                ctx,
+                cache_key=fresh_cache_keys[doc_id],
+                source_card=fresh_source_cards[doc_id],
+                embeddings=[],
+            )
+            del pending_per_doc[doc_id]
+
+    async for batch in _embed_in_batches(ctx.client, embedding_inputs):
+        fresh_embeddings.extend(batch)
+        completed: list[UUID] = []
+        for emb in batch:
+            embeddings_by_doc[emb.document_id].append(emb)
+            pending_per_doc[emb.document_id] -= 1
+            if pending_per_doc[emb.document_id] == 0:
+                completed.append(emb.document_id)
+        for doc_id in completed:
+            _write_cache(
+                ctx,
+                cache_key=fresh_cache_keys[doc_id],
+                source_card=fresh_source_cards[doc_id],
+                embeddings=embeddings_by_doc[doc_id],
+            )
+            del pending_per_doc[doc_id]
 
     idea_repo = IdeaEmbeddingRepository(ctx.session)
     idea_service = IdeaService(
@@ -142,8 +183,8 @@ async def run(ctx: PipelineContext) -> None:
         embedding_repo=idea_repo,
         sidecar_root=ctx.sidecar_root,
     )
-    for outcome in fresh_outcomes:
-        await idea_repo.delete_for_document(outcome.document_id)
+    for doc_id in fresh_source_cards:
+        await idea_repo.delete_for_document(doc_id)
     await idea_service.record_extractions(
         cards, cached_embeddings + fresh_embeddings
     )
@@ -151,18 +192,6 @@ async def run(ctx: PipelineContext) -> None:
         ctx.brain_id, cards
     )
     await ctx.session.commit()
-
-    # Cache lands after DB commit so a mid-persist crash doesn't create
-    # a cached entry for a half-written state.
-    for outcome in fresh_outcomes:
-        if outcome.source_card is None:
-            continue
-        _write_cache(
-            ctx,
-            cache_key=outcome.cache_key,
-            source_card=outcome.source_card,
-            embeddings=outcome.embeddings,
-        )
 
     enrich(
         docs_extracted=docs_extracted,
@@ -205,20 +234,15 @@ async def _extract_one(
     raw_path: str,
     document_id: UUID,
     source_type: str,
+    body_hash: str,
     prompt_template: str,
     prompt_hash: str,
     kinds_key: str,
 ) -> _ExtractOutcome:
     outcome = _ExtractOutcome(raw_path=raw_path, document_id=document_id)
     try:
-        content = await ctx.storage.read(raw_path, strict=False)
-        if content is None:
-            outcome.error = "file_not_found"
-            return outcome
-        _, body = parse_frontmatter(content)
-
         cache_key = _cache_key(
-            doc_content=body,
+            body_hash=body_hash,
             prompt_hash=prompt_hash,
             kinds_key=kinds_key,
             source_type=source_type,
@@ -233,6 +257,13 @@ async def _extract_one(
             ]
             outcome.cache_hit = True
             return outcome
+
+        # Cache miss: only now do we need the body to feed the LLM.
+        content = await ctx.storage.read(raw_path, strict=False)
+        if content is None:
+            outcome.error = "file_not_found"
+            return outcome
+        _, body = parse_frontmatter(content)
 
         async with sem:
             prompt = _render_prompt(
@@ -271,10 +302,10 @@ async def _extract_one(
 
 
 def _cache_key(
-    *, doc_content: str, prompt_hash: str, kinds_key: str, source_type: str
+    *, body_hash: str, prompt_hash: str, kinds_key: str, source_type: str
 ) -> str:
     key_input = (
-        f"{doc_content}\n::prompt={prompt_hash}::kinds={kinds_key}"
+        f"{body_hash}::prompt={prompt_hash}::kinds={kinds_key}"
         f"::source_type={source_type}::model={EXTRACT_MODEL}"
     )
     return hashlib.sha256(key_input.encode()).hexdigest()
@@ -390,37 +421,40 @@ def _validate_extract_output(
 # ---------------------------------------------------------------------------
 
 
-async def _embed_ideas(
+async def _embed_in_batches(
     client, inputs: list[tuple[UUID, UUID, Idea]]
-) -> list[IdeaEmbedding]:
-    if not inputs:
-        return []
-    texts = [f"{idea.label}. {idea.description}".strip() for _, _, idea in inputs]
-    vectors: list[list[float]] = []
-    for start in range(0, len(texts), EMBEDDING_BATCH_SIZE):
-        batch = texts[start : start + EMBEDDING_BATCH_SIZE]
-        response = await client.embeddings.create(
-            model=EMBEDDING_MODEL, input=batch
-        )
-        for item in response.data:
-            vectors.append(
-                _truncate_and_normalize(item.embedding, EMBEDDING_DIMENSIONS)
-            )
+) -> AsyncIterator[list[IdeaEmbedding]]:
+    """Yield IdeaEmbedding lists one batch at a time.
 
-    out: list[IdeaEmbedding] = []
-    for (brain_id, document_id, idea), vec in zip(inputs, vectors):
-        out.append(
-            IdeaEmbedding(
-                idea_id=idea.idea_id,
-                brain_id=brain_id,
-                document_id=document_id,
-                kind=idea.kind,
-                label=idea.label,
-                description=idea.description,
-                embedding=vec,
-            )
+    Per-batch yielding lets the caller checkpoint cache writes as docs
+    finish embedding, instead of waiting for the whole list to complete.
+    """
+    for start in range(0, len(inputs), EMBEDDING_BATCH_SIZE):
+        batch_inputs = inputs[start : start + EMBEDDING_BATCH_SIZE]
+        texts = [
+            f"{idea.label}. {idea.description}".strip()
+            for _, _, idea in batch_inputs
+        ]
+        response = await client.embeddings.create(
+            model=EMBEDDING_MODEL, input=texts
         )
-    return out
+        out: list[IdeaEmbedding] = []
+        for (brain_id, document_id, idea), item in zip(
+            batch_inputs, response.data
+        ):
+            vec = _truncate_and_normalize(item.embedding, EMBEDDING_DIMENSIONS)
+            out.append(
+                IdeaEmbedding(
+                    idea_id=idea.idea_id,
+                    brain_id=brain_id,
+                    document_id=document_id,
+                    kind=idea.kind,
+                    label=idea.label,
+                    description=idea.description,
+                    embedding=vec,
+                )
+            )
+        yield out
 
 
 # ---------------------------------------------------------------------------

@@ -36,6 +36,9 @@ class DocumentORM(Base):
     )
     file_path: Mapped[str] = mapped_column(Text, nullable=False)
     file_hash: Mapped[str] = mapped_column(Text, nullable=False)
+    # sha256 of body only (post-frontmatter, post-anchor-injection). Used as
+    # extract's cache key without re-reading raw bytes from storage.
+    body_hash: Mapped[str] = mapped_column(Text, nullable=False)
     title: Mapped[str] = mapped_column(Text, nullable=False, server_default="")
     author: Mapped[str | None] = mapped_column(Text, nullable=True)
     url: Mapped[str | None] = mapped_column(Text, nullable=True)

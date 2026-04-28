@@ -14,6 +14,7 @@ from great_minds.core.documents.models import (
 )
 from great_minds.core.documents.schemas import DocKind, Document, DocumentCreate
 from great_minds.core.ideas.schemas import SourceCard
+from great_minds.core.markdown import parse_frontmatter
 from great_minds.core.paths import raw_prefix
 
 
@@ -24,9 +25,12 @@ class DocumentRepository:
     async def upsert(self, brain_id: UUID, doc: DocumentCreate) -> UUID:
         """Upsert a document row and sync the tags junction table."""
         file_hash = hashlib.sha256(doc.content.encode()).hexdigest()
+        _, body = parse_frontmatter(doc.content)
+        body_hash = hashlib.sha256(body.encode()).hexdigest()
 
         columns = {
             "file_hash": file_hash,
+            "body_hash": body_hash,
             "title": doc.title,
             "author": doc.author,
             "url": doc.url,
