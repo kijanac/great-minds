@@ -5,24 +5,36 @@ great-minds serve --port 8080
 """
 
 import asyncio
+import logging
 import uuid
 from contextlib import asynccontextmanager
 
+from absurd_sdk import AsyncAbsurd
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from sqlalchemy.ext.asyncio import async_sessionmaker
 from starlette.middleware.base import BaseHTTPMiddleware
 
 from great_minds.app.api.v1 import router as v1_router
+from great_minds.core.brains.repository import BrainRepository
+from great_minds.core.brains.service import BrainService
+from great_minds.core.compile_intents.reconciler import reconcile_once
+from great_minds.core.compile_intents.repository import CompileIntentRepository
 from great_minds.core.db import engine, session_maker
-from great_minds.core.settings import get_settings
+from great_minds.core.settings import Settings, get_settings
+from great_minds.core.tasks.repository import TaskRepository
+from great_minds.core.tasks.service import TaskService
 from great_minds.core.telemetry import (
     correlation_id,
     emit_wide_event,
     enrich,
     init_wide_event,
+    log_event,
     setup_logging,
 )
 from great_minds.core.workers import create_absurd
+
+RECONCILER_INTERVAL_SECONDS = 5.0
 
 
 # ---------------------------------------------------------------------------
@@ -72,7 +84,22 @@ async def lifespan(app: FastAPI):
     worker = asyncio.create_task(
         absurd.start_worker(concurrency=2, poll_interval=0.5),
     )
+
+    # Compile-intent reconciler — single-process choice; tied to API
+    # lifespan. To extract for multi-instance deployment, lift the loop
+    # to a separate worker process or convert to a self-respawning
+    # Absurd task. `reconcile_once` is the reusable unit.
+    reconciler = asyncio.create_task(
+        _reconciler_loop(session_maker, absurd, settings)
+    )
+
     yield
+
+    reconciler.cancel()
+    try:
+        await reconciler
+    except asyncio.CancelledError:
+        pass
     absurd.stop_worker()
     worker.cancel()
     try:
@@ -81,6 +108,35 @@ async def lifespan(app: FastAPI):
         pass
     await absurd.close()
     await engine.dispose()
+
+
+async def _reconciler_loop(
+    sm: async_sessionmaker,
+    absurd: AsyncAbsurd,
+    settings: Settings,
+) -> None:
+    log_event(
+        "intent_reconciler_loop_started",
+        interval_seconds=RECONCILER_INTERVAL_SECONDS,
+    )
+    while True:
+        try:
+            async with sm() as session:
+                intent_repo = CompileIntentRepository(session)
+                task_service = TaskService(TaskRepository(session), absurd)
+                brain_service = BrainService(BrainRepository(session))
+                await reconcile_once(
+                    intent_repo, task_service, brain_service, settings
+                )
+                await session.commit()
+        except Exception as exc:
+            log_event(
+                "intent_reconciler_tick_failed",
+                error_type=type(exc).__name__,
+                error=str(exc),
+                level=logging.WARNING,
+            )
+        await asyncio.sleep(RECONCILER_INTERVAL_SECONDS)
 
 
 def create_app() -> FastAPI:

@@ -5,17 +5,15 @@ from datetime import UTC, datetime
 from pathlib import Path
 from uuid import UUID
 
-from absurd_sdk import AsyncAbsurd
-
 from great_minds.core.brain import load_config
 from great_minds.core import ingester
 from great_minds.core.brains.schemas import Brain
+from great_minds.core.compile_intents.repository import CompileIntentRepository
 from great_minds.core.proposals.models import ProposalStatus, SourceProposal
 from great_minds.core.proposals.repository import ProposalRepository
 from great_minds.core.settings import Settings
 from great_minds.core.storage import Storage
-from great_minds.core.tasks.repository import TaskRepository
-from great_minds.core.tasks.service import TaskService
+from great_minds.core.telemetry import log_event
 
 log = logging.getLogger(__name__)
 
@@ -77,14 +75,13 @@ class ProposalService:
         new_status: ProposalStatus,
         brain: Brain,
         storage: Storage,
-        absurd: AsyncAbsurd,
     ) -> SourceProposal:
         proposal.status = new_status
         proposal.reviewed_by = reviewer_id
         proposal.reviewed_at = datetime.now(UTC)
 
         if new_status == ProposalStatus.APPROVED:
-            await self._approve(proposal, brain, storage, absurd)
+            await self._approve(proposal, brain, storage)
 
         if new_status == ProposalStatus.REJECTED:
             self._reject(proposal)
@@ -98,9 +95,8 @@ class ProposalService:
         proposal: SourceProposal,
         brain: Brain,
         storage: Storage,
-        absurd: AsyncAbsurd,
     ) -> None:
-        """Ingest approved proposal content into the brain and trigger compilation."""
+        """Ingest approved content and write a compile intent (reconciler dispatches)."""
         content = Path(proposal.storage_path).read_text(encoding="utf-8")
         config = await load_config(storage)
 
@@ -113,12 +109,15 @@ class ProposalService:
             storage, config, content, proposal.content_type, **kwargs
         )
 
-        task_service = TaskService(TaskRepository(self.repo.session), absurd)
-        await task_service.spawn_compile(
-            brain_id=brain.id,
-            data_dir=self.data_dir,
-            label=brain.name,
-        )
+        intent_repo = CompileIntentRepository(self.repo.session)
+        intent = await intent_repo.upsert_pending(brain.id)
+        if intent is not None:
+            log_event(
+                "intent_created",
+                intent_id=str(intent.id),
+                brain_id=str(brain.id),
+                trigger="proposal_approved",
+            )
 
     def _reject(self, proposal: SourceProposal) -> None:
         """Clean up stored content for a rejected proposal."""

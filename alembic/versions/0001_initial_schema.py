@@ -1,9 +1,9 @@
 """initial schema
 
 Full schema for the seven-phase pipeline: users, auth, brains,
-memberships, proposals, tasks, search index, documents, idea_embeddings,
-topics + topic_membership + topic_links + topic_related, backlinks (keyed
-by topic_id), and the absurd task queue.
+memberships, proposals, tasks, compile_intents (outbox), search index,
+documents, idea_embeddings, topics + topic_membership + topic_links +
+topic_related, backlinks (keyed by topic_id), and the absurd task queue.
 
 Revision ID: 0001
 Revises:
@@ -187,6 +187,53 @@ def upgrade() -> None:
         sa.PrimaryKeyConstraint("id"),
     )
     op.create_index("ix_tasks_brain_id", "tasks", ["brain_id"], unique=False)
+
+    # -- Compile intents (outbox: domain-change → eventual compile) --------
+    # Lifecycle: pending → dispatched → satisfied. The partial unique index
+    # on (brain_id) WHERE dispatched_at IS NULL coalesces concurrent ingests
+    # to one pending intent per brain, enforced at the DB level.
+    op.create_table(
+        "compile_intents",
+        sa.Column(
+            "id",
+            sa.UUID(),
+            nullable=False,
+            server_default=sa.text("gen_random_uuid()"),
+        ),
+        sa.Column("brain_id", sa.UUID(), nullable=False),
+        sa.Column(
+            "created_at",
+            sa.DateTime(timezone=True),
+            server_default=sa.text("now()"),
+            nullable=False,
+        ),
+        sa.Column("dispatched_at", sa.DateTime(timezone=True), nullable=True),
+        sa.Column("dispatched_task_id", sa.UUID(), nullable=True),
+        sa.Column("satisfied_at", sa.DateTime(timezone=True), nullable=True),
+        sa.ForeignKeyConstraint(["brain_id"], ["brains.id"], ondelete="CASCADE"),
+        sa.PrimaryKeyConstraint("id"),
+    )
+    op.create_index(
+        "ix_compile_intents_one_pending",
+        "compile_intents",
+        ["brain_id"],
+        unique=True,
+        postgresql_where=sa.text("dispatched_at IS NULL"),
+    )
+    op.create_index(
+        "ix_compile_intents_pending",
+        "compile_intents",
+        ["created_at"],
+        postgresql_where=sa.text("dispatched_at IS NULL"),
+    )
+    op.create_index(
+        "ix_compile_intents_dispatched_unsatisfied",
+        "compile_intents",
+        ["dispatched_at"],
+        postgresql_where=sa.text(
+            "dispatched_at IS NOT NULL AND satisfied_at IS NULL"
+        ),
+    )
 
     # -- Search index (pgvector + tsvector) --------------------------------
     op.execute(

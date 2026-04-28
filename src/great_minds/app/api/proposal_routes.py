@@ -3,11 +3,9 @@
 import logging
 from uuid import UUID
 
-from absurd_sdk import AsyncAbsurd
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 
 from great_minds.app.api.dependencies import (
-    get_absurd,
     get_brain_service,
     get_current_user,
     get_proposal_service,
@@ -74,7 +72,6 @@ async def review_proposal(
     req: schemas.ProposalReview,
     brain_id: UUID,
     user: User = Depends(get_current_user),
-    absurd: AsyncAbsurd = Depends(get_absurd),
     brain_service: BrainService = Depends(get_brain_service),
     proposal_service: ProposalService = Depends(get_proposal_service),
     _auth: None = Depends(require_brain_owner),
@@ -91,6 +88,6 @@ async def review_proposal(
     brain = await brain_service.get_by_id(brain_id)
     storage = brain_service.get_storage(brain)
     proposal = await proposal_service.review(
-        proposal, user.id, req.status, brain, storage, absurd
+        proposal, user.id, req.status, brain, storage
     )
     return schemas.Proposal.model_validate(proposal)

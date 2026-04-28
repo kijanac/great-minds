@@ -1,11 +1,13 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { useCompileIntent } from "@/hooks/use-compile-intent";
 import type { QueueItem, QueueSummary } from "@/hooks/use-ingestion";
 import type { DroppedFile } from "@/lib/types";
 
 const MAX_VISIBLE_ITEMS = 3;
+const COMPILE_DISMISS_DELAY_MS = 3000;
 
 interface IngestionZoneProps {
   queue: QueueItem[];
@@ -15,6 +17,8 @@ interface IngestionZoneProps {
   onUrlSubmit: () => void;
   onFileDrop: (files: DroppedFile[]) => void;
   onDismiss: (id: string) => void;
+  compileIntentIds: string[];
+  onDismissCompile: (id: string) => void;
 }
 
 function isFileEntry(entry: FileSystemEntry): entry is FileSystemFileEntry {
@@ -66,6 +70,8 @@ export function IngestionZone({
   onUrlSubmit,
   onFileDrop,
   onDismiss,
+  compileIntentIds,
+  onDismissCompile,
 }: IngestionZoneProps) {
   const [isDragOver, setDragOver] = useState(false);
   const dragCounter = useRef(0);
@@ -145,6 +151,73 @@ export function IngestionZone({
             </div>
           )}
         </div>
+      )}
+
+      {/* Compile intents — one row per in-flight or recently-finished compile */}
+      {compileIntentIds.length > 0 && (
+        <div className="mt-2 flex flex-col gap-1">
+          {compileIntentIds.map((id) => (
+            <CompileRow key={id} intentId={id} onDismiss={onDismissCompile} />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function CompileRow({
+  intentId,
+  onDismiss,
+}: {
+  intentId: string;
+  onDismiss: (id: string) => void;
+}) {
+  const { data, error } = useCompileIntent(intentId);
+  const status = data?.status;
+
+  // Auto-dismiss a satisfied compile after a short pause, mirroring the
+  // file-queue clear behavior.
+  useEffect(() => {
+    if (status !== "satisfied") return;
+    const t = setTimeout(() => onDismiss(intentId), COMPILE_DISMISS_DELAY_MS);
+    return () => clearTimeout(t);
+  }, [status, intentId, onDismiss]);
+
+  if (error) {
+    return (
+      <div className="flex items-center gap-2 px-4 py-1.5 min-w-0 font-mono text-[length:var(--text-chrome)] tracking-[0.1em]">
+        <span className="text-warm-faint shrink-0">✗</span>
+        <span className="text-warm-ghost truncate">compile status unavailable</span>
+        <Button
+          variant="ghost"
+          size="xs"
+          onClick={() => onDismiss(intentId)}
+          className="font-mono text-[length:var(--text-chrome)] tracking-[0.1em] text-gold-dim hover:text-gold hover:bg-transparent rounded-sm h-auto px-1 py-0 ml-auto shrink-0"
+        >
+          dismiss
+        </Button>
+      </div>
+    );
+  }
+
+  return (
+    <div className="flex items-center gap-2 px-4 py-1.5 min-w-0 font-mono text-[length:var(--text-chrome)] tracking-[0.1em]">
+      {status === "satisfied" ? (
+        <>
+          <span className="text-gold-dim shrink-0">✓</span>
+          <span className="font-serif italic text-[length:var(--text-small)] text-warm-faint truncate">
+            compile complete
+          </span>
+        </>
+      ) : (
+        <>
+          <span className="text-gold animate-[pulse-fade_1.6s_ease-in-out_infinite] shrink-0">
+            ◉
+          </span>
+          <span className="text-warm-faint truncate">
+            {status === "dispatched" ? "compiling…" : "queued for compile…"}
+          </span>
+        </>
       )}
     </div>
   );

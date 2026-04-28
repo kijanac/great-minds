@@ -25,4 +25,3 @@ class Task(BaseModel):
 class TaskDetail(Task):
     status: TaskStatus
     error: str | None
-    result: dict

@@ -15,6 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from great_minds.core import ingester, pipeline
 from great_minds.core.brain import load_config
+from great_minds.core.compile_intents.repository import CompileIntentRepository
 from great_minds.core.documents.repository import DocumentRepository
 from great_minds.core.documents.schemas import DocumentCreate
 from great_minds.core.llm import get_async_client
@@ -27,7 +28,6 @@ from great_minds.core.telemetry import (
     enrich,
     init_wide_event,
     timed_op,
-    wide_event,
 )
 
 _task_session: ContextVar[AsyncSession] = ContextVar("task_session")
@@ -40,8 +40,13 @@ log = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 
-async def compile_task(params: dict, ctx) -> dict:
-    """Run the seven-phase compile pipeline with heartbeat for long runs."""
+async def compile_task(params: dict, ctx) -> None:
+    """Run the seven-phase compile pipeline with heartbeat for long runs.
+
+    Telemetry (per-phase counters, cost, duration) is emitted via
+    `emit_wide_event` for the structured-log pipeline; nothing is
+    returned through the task result.
+    """
     correlation_id.set(f"task-{ctx.task_id}")
     brain_id = UUID(params["brain_id"])
     storage = make_storage(brain_id)
@@ -56,12 +61,10 @@ async def compile_task(params: dict, ctx) -> dict:
     )
     await pipeline.run(pipeline_ctx)
 
-    snapshot = dict(wide_event.get() or {})
     emit_wide_event()
-    return snapshot
 
 
-async def bulk_ingest_task(params: dict, ctx) -> dict:
+async def bulk_ingest_task(params: dict, ctx) -> None:
     """Bulk ingest a directory of files into a brain."""
     correlation_id.set(f"task-{ctx.task_id}")
     brain_id = UUID(params["brain_id"])
@@ -75,6 +78,7 @@ async def bulk_ingest_task(params: dict, ctx) -> dict:
     config = await load_config(storage)
 
     doc_repo = DocumentRepository(session)
+    intent_repo = CompileIntentRepository(session)
     existing_hashes = await doc_repo.get_file_hashes(brain_id)
 
     source_files = sorted(source_dir.rglob("*.md"))
@@ -125,6 +129,9 @@ async def bulk_ingest_task(params: dict, ctx) -> dict:
 
             if len(batch) >= batch_size:
                 await doc_repo.batch_upsert(brain_id, batch)
+                # Outbox: every commit that persists docs also persists the
+                # intent (idempotent — the partial unique index coalesces).
+                await intent_repo.upsert_pending(brain_id)
                 await session.commit()
                 batch.clear()
 
@@ -139,6 +146,7 @@ async def bulk_ingest_task(params: dict, ctx) -> dict:
 
         if batch:
             await doc_repo.batch_upsert(brain_id, batch)
+            await intent_repo.upsert_pending(brain_id)
             await session.commit()
 
     enrich(ingested=ingested, skipped=skipped)
@@ -150,16 +158,6 @@ async def bulk_ingest_task(params: dict, ctx) -> dict:
         total,
     )
     emit_wide_event()
-
-    # Compile auto-trigger is disabled during the seven-phase refactor.
-    # Callers must invoke compile separately once the new orchestrator ships.
-
-    return {
-        "total_files": total,
-        "ingested": ingested,
-        "skipped": skipped,
-        "compiled": None,
-    }
 
 
 # ---------------------------------------------------------------------------
