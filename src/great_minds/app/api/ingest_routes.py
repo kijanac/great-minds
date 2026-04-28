@@ -11,22 +11,20 @@ from fastapi import APIRouter, Depends, Form, HTTPException, UploadFile
 from fastapi.responses import StreamingResponse
 
 from great_minds.app.api.dependencies import (
-    get_brain_service,
     get_brain_storage,
+    get_compile_intent_repository,
     get_ingest_service,
-    get_task_service,
     require_brain_member,
 )
 from great_minds.app.api.schemas import ingest as schemas
-from great_minds.core.brains.service import BrainService
 from great_minds.core.ingest_service import (
     BulkFileInput,
     BulkFileStatus,
     IngestService,
 )
-from great_minds.core.settings import Settings, get_settings
+from great_minds.core.compile_intents.repository import CompileIntentRepository
 from great_minds.core.storage import Storage
-from great_minds.core.tasks.service import TaskService
+from great_minds.core.telemetry import log_event
 
 log = logging.getLogger(__name__)
 
@@ -145,12 +143,12 @@ async def ingest_bulk(
     content_type: str = Form("texts"),
     storage: Storage = Depends(get_brain_storage),
     ingest_service: IngestService = Depends(get_ingest_service),
-    task_service: TaskService = Depends(get_task_service),
-    brain_service: BrainService = Depends(get_brain_service),
-    settings: Settings = Depends(get_settings),
+    intent_repo: CompileIntentRepository = Depends(get_compile_intent_repository),
     _auth: None = Depends(require_brain_member),
 ) -> StreamingResponse:
-    """Bulk ingest N files. Streams NDJSON per-file events, triggers compile at end."""
+    """Bulk ingest N files. Streams NDJSON per-file events; on success writes
+    a compile intent (reconciler dispatches to Absurd within ~5s).
+    """
     bulk_inputs = [
         BulkFileInput(
             filename=f.filename or f"upload-{i}.md",
@@ -159,18 +157,15 @@ async def ingest_bulk(
         )
         for i, f in enumerate(files)
     ]
-    brain = await brain_service.get_by_id(brain_id)
 
     return StreamingResponse(
         _stream_bulk_events(
             brain_id=brain_id,
-            brain_name=brain.name,
-            data_dir=settings.data_dir,
             bulk_inputs=bulk_inputs,
             content_type=content_type,
             storage=storage,
             ingest_service=ingest_service,
-            task_service=task_service,
+            intent_repo=intent_repo,
         ),
         media_type="application/x-ndjson",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
@@ -180,13 +175,11 @@ async def ingest_bulk(
 async def _stream_bulk_events(
     *,
     brain_id: UUID,
-    brain_name: str,
-    data_dir: str,
     bulk_inputs: list[BulkFileInput],
     content_type: str,
     storage: Storage,
     ingest_service: IngestService,
-    task_service: TaskService,
+    intent_repo: CompileIntentRepository,
 ) -> AsyncIterator[str]:
     yield json.dumps({"event": "start", "total": len(bulk_inputs)}) + "\n"
 
@@ -205,15 +198,22 @@ async def _stream_bulk_events(
         payload = {**asdict(event), "event": "file", "status": event.status.value}
         yield json.dumps(payload) + "\n"
 
-    compile_spawned = False
+    intent_id: str | None = None
     if ingested > 0:
-        try:
-            await task_service.spawn_compile(
-                brain_id=brain_id, data_dir=data_dir, label=brain_name
+        intent = await intent_repo.upsert_pending(brain_id)
+        if intent is None:
+            # Coalesced into an existing pending intent — return its id so
+            # the frontend can poll the same one.
+            intent = await intent_repo.get_pending_for_brain(brain_id)
+        await intent_repo.session.commit()
+        if intent is not None:
+            intent_id = str(intent.id)
+            log_event(
+                "intent_created",
+                intent_id=intent_id,
+                brain_id=str(brain_id),
+                trigger="bulk_ingest",
             )
-            compile_spawned = True
-        except Exception as exc:
-            log.exception("failed to spawn compile after bulk ingest: %s", exc)
 
     yield (
         json.dumps(
@@ -222,7 +222,7 @@ async def _stream_bulk_events(
                 "ingested": ingested,
                 "skipped": skipped,
                 "failed": failed,
-                "compile_spawned": compile_spawned,
+                "compile_intent_id": intent_id,
             }
         )
         + "\n"

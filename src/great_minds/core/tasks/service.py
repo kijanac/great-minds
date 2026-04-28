@@ -1,49 +1,49 @@
-"""Task service: spawn, list, and fetch task status."""
+"""Task service: spawn (for the reconciler), list, and fetch task status.
+
+Direct callers should NOT spawn compiles — they write a CompileIntent
+and let the reconciler dispatch. `spawn_compile_for_intent` is the
+reconciler's entry point and uses `idempotency_key=str(intent_id)` so a
+crash between spawn and `mark_dispatched` is safe to retry.
+"""
 
 import logging
-from uuid import UUID, uuid4
+from typing import Literal, get_args
+from uuid import UUID
 
-from absurd_sdk import AsyncAbsurd
-from sqlalchemy import text
+from absurd_sdk import AsyncAbsurd, RetryStrategy
 
-from great_minds.core.tasks.schemas import TaskDetail, TaskStatus
 from great_minds.core.tasks.models import TaskRecord
 from great_minds.core.tasks.repository import TaskRepository
+from great_minds.core.tasks.schemas import TaskDetail, TaskStatus
 
 log = logging.getLogger(__name__)
 
-COMPILE_RETRY = {
+COMPILE_RETRY: RetryStrategy = {
     "kind": "exponential",
-    "base_seconds": 10,
-    "factor": 2,
-    "max_seconds": 300,
+    "base_seconds": 10.0,
+    "factor": 2.0,
+    "max_seconds": 300.0,
 }
 
-# Absurd task states that count as "still in flight" for our dedup purposes.
-ACTIVE_STATES = {"pending", "running", "sleeping"}
-
-
-def _brain_lock_key(brain_id: UUID) -> int:
-    """Stable signed int64 derived from the UUID's first 8 bytes.
-
-    Used with pg_advisory_xact_lock to serialize compile-spawn decisions
-    for a single brain across concurrent requests.
-    """
-    return int.from_bytes(brain_id.bytes[:8], "big", signed=True)
+ActiveAbsurdState = Literal["pending", "running", "sleeping"]
+_ACTIVE: tuple[str, ...] = get_args(ActiveAbsurdState)
 
 
 async def fetch_task_response(absurd: AsyncAbsurd, record: TaskRecord) -> TaskDetail:
-    """Build a TaskDetail by fetching current status from absurd."""
-    snapshot = await absurd.fetch_task_result(record.id)
+    """Build a TaskDetail by fetching current status from absurd.
+
+    Detailed task results (compile telemetry, bulk-ingest counts) live
+    in structured logs via `emit_wide_event` — they are not surfaced
+    here. This response carries lifecycle state only.
+    """
+    snapshot = await absurd.fetch_task_result(str(record.id))
 
     status = TaskStatus.PENDING
     error = None
-    result = {}
 
     if snapshot is not None:
         if snapshot.state == "completed":
             status = TaskStatus.COMPLETED
-            result = snapshot.result or {}
         elif snapshot.state == "failed":
             status = TaskStatus.FAILED
             error = str(snapshot.failure) if snapshot.failure else "unknown error"
@@ -59,7 +59,6 @@ async def fetch_task_response(absurd: AsyncAbsurd, record: TaskRecord) -> TaskDe
         created_at=record.created_at,
         error=error,
         params=record.params,
-        result=result,
     )
 
 
@@ -68,83 +67,51 @@ class TaskService:
         self.repo = repo
         self.absurd = absurd
 
-    async def _commit(self) -> None:
-        await self.repo.session.commit()
-
-    async def _spawn(
+    async def spawn_compile_for_intent(
         self,
-        task_type: str,
-        brain_id: UUID,
-        params: dict,
         *,
-        max_attempts: int,
-        retry_strategy: dict,
-        idempotency_key: str,
-    ) -> TaskDetail:
-        result = await self.absurd.spawn(
-            task_type,
-            params,
-            max_attempts=max_attempts,
-            retry_strategy=retry_strategy,
-            idempotency_key=idempotency_key,
-        )
-        record = await self.repo.create(result["task_id"], brain_id, task_type, params)
-        await self._commit()
-        log.info(
-            "task_spawned task_id=%s type=%s brain_id=%s",
-            record.id,
-            task_type,
-            brain_id,
-        )
-        return await fetch_task_response(self.absurd, record)
-
-    async def spawn_compile(
-        self,
+        intent_id: UUID,
         brain_id: UUID,
         data_dir: str,
         label: str,
     ) -> TaskDetail:
-        """Spawn a compile task for this brain, at most one in flight.
+        """Spawn a compile task for a CompileIntent.
 
-        Takes a per-brain advisory lock, checks for an existing active compile,
-        and if one is found returns it without spawning. Otherwise spawns a new
-        compile with a fresh uuid-based idempotency key.
+        `idempotency_key=str(intent_id)` makes this safe to call N times
+        for the same intent — Absurd returns the same task each time.
         """
-        await self.repo.session.execute(
-            text("SELECT pg_advisory_xact_lock(:k)"),
-            {"k": _brain_lock_key(brain_id)},
-        )
-
-        existing = await self._find_active_compile(brain_id)
-        if existing is not None:
-            log.info(
-                "compile already active for brain=%s task_id=%s — skipping spawn",
-                brain_id,
-                existing.id,
-            )
-            return existing
-
-        return await self._spawn(
+        params: dict[str, str] = {
+            "brain_id": str(brain_id),
+            "data_dir": data_dir,
+            "label": label,
+        }
+        result = await self.absurd.spawn(
             "compile",
-            brain_id,
-            {
-                "brain_id": str(brain_id),
-                "data_dir": data_dir,
-                "label": label,
-            },
+            params,
             max_attempts=3,
             retry_strategy=COMPILE_RETRY,
-            idempotency_key=f"compile:{brain_id}:{uuid4()}",
+            idempotency_key=str(intent_id),
         )
+        record = await self.repo.create(
+            UUID(result["task_id"]), brain_id, "compile", params
+        )
+        await self.repo.session.commit()
+        log.info(
+            "compile_spawned task_id=%s brain_id=%s intent_id=%s",
+            record.id,
+            brain_id,
+            intent_id,
+        )
+        return await fetch_task_response(self.absurd, record)
 
-    async def _find_active_compile(self, brain_id: UUID) -> TaskDetail | None:
-        """Return the most recent compile task still in pending/running/sleeping."""
+    async def find_active_compile(self, brain_id: UUID) -> TaskDetail | None:
+        """Most recent compile task for this brain still in pending/running/sleeping."""
         records = await self.repo.list_for_brain_by_type(brain_id, "compile")
         for record in records:
-            snapshot = await self.absurd.fetch_task_result(record.id)
+            snapshot = await self.absurd.fetch_task_result(str(record.id))
             if snapshot is None:
                 continue
-            if snapshot.state in ACTIVE_STATES:
+            if snapshot.state in _ACTIVE:
                 return await fetch_task_response(self.absurd, record)
         return None
 

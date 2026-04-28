@@ -8,6 +8,7 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from great_minds.core.auth.repository import AuthRepository
+from great_minds.core.compile_intents.repository import CompileIntentRepository
 from great_minds.core.documents.repository import DocumentRepository
 from great_minds.core.documents.service import DocumentService
 from great_minds.core.ingest_service import IngestService
@@ -126,6 +127,12 @@ def get_task_service(
     absurd: AsyncAbsurd = Depends(get_absurd),
 ) -> TaskService:
     return TaskService(repo, absurd)
+
+
+def get_compile_intent_repository(
+    session: AsyncSession = Depends(get_session),
+) -> CompileIntentRepository:
+    return CompileIntentRepository(session)
 
 
 def require_llm(settings: Settings = Depends(get_settings)) -> None:

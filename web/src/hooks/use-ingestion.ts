@@ -27,9 +27,20 @@ function makeId(): string {
 
 export function useIngestion() {
   const [queue, setQueue] = useState<QueueItem[]>([]);
+  const [compileIntentIds, setCompileIntentIds] = useState<string[]>([]);
   const [url, setUrl] = useState("");
   const urlRef = useRef(url);
   urlRef.current = url;
+
+  const trackCompileIntent = useCallback((intentId: string) => {
+    setCompileIntentIds((ids) =>
+      ids.includes(intentId) ? ids : [...ids, intentId],
+    );
+  }, []);
+
+  const dismissCompileIntent = useCallback((intentId: string) => {
+    setCompileIntentIds((ids) => ids.filter((id) => id !== intentId));
+  }, []);
 
   const batchInFlightRef = useRef(false);
   const filesById = useRef<Map<string, File>>(new Map());
@@ -52,6 +63,10 @@ export function useIngestion() {
 
     try {
       for await (const event of ingestBulk(files)) {
+        if (event.event === "done" && event.compile_intent_id) {
+          trackCompileIntent(event.compile_intent_id);
+          continue;
+        }
         if (event.event !== "file") continue;
         const id = queuedFileIds[event.index];
         if (!id) continue;
@@ -87,7 +102,7 @@ export function useIngestion() {
     if (filesById.current.size > 0) {
       flushFileBatch();
     }
-  }, []);
+  }, [trackCompileIntent]);
 
   const processNextUrl = useCallback(async () => {
     const entry = firstQueuedUrl(urlsById.current);
@@ -176,6 +191,8 @@ export function useIngestion() {
     handleFileDrop,
     handleUrlSubmit,
     dismissItem,
+    compileIntentIds,
+    dismissCompileIntent,
   };
 }
 

@@ -2,8 +2,17 @@ import { IngestionZone } from "@/components/ingestion-zone";
 import { useIngestion } from "@/hooks/use-ingestion";
 
 export function IngestionContainer() {
-  const { queue, summary, url, setUrl, handleFileDrop, handleUrlSubmit, dismissItem } =
-    useIngestion();
+  const {
+    queue,
+    summary,
+    url,
+    setUrl,
+    handleFileDrop,
+    handleUrlSubmit,
+    dismissItem,
+    compileIntentIds,
+    dismissCompileIntent,
+  } = useIngestion();
 
   return (
     <IngestionZone
@@ -14,6 +23,8 @@ export function IngestionContainer() {
       onUrlSubmit={handleUrlSubmit}
       onFileDrop={handleFileDrop}
       onDismiss={dismissItem}
+      compileIntentIds={compileIntentIds}
+      onDismissCompile={dismissCompileIntent}
     />
   );
 }
