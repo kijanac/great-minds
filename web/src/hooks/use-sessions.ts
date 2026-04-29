@@ -7,7 +7,7 @@ export function useSessions() {
   const brainId = useActiveBrainId();
   return useQuery({
     queryKey: ["brain", brainId, "sessions"],
-    queryFn: listSessions,
+    queryFn: () => listSessions(),
     enabled: !!brainId,
   });
 }

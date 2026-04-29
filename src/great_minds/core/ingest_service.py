@@ -18,6 +18,7 @@ from great_minds.core.documents.schemas import DocumentCreate
 from great_minds.core.documents.service import DocumentService
 from great_minds.core.markdown import parse_frontmatter
 from great_minds.core.paths import raw_path
+from great_minds.core.sources import SourceMetadata
 from great_minds.core.ingester import (
     build_document,
     ingest_document,
@@ -70,32 +71,26 @@ class IngestService:
         brain_id: UUID,
         storage: Storage,
         content: str,
-        content_type: str,
         dest: str,
-        *,
-        title: str | None = None,
-        author: str | None = None,
-        date: str | None = None,
-        origin: str | None = None,
-        url: str | None = None,
-        source_type: str = "document",
+        metadata: SourceMetadata,
     ) -> tuple[str, str]:
         """Ingest raw text content. Returns (file_path, title)."""
         config = await load_config(storage)
-        kwargs = _build_kwargs(
-            title=title, author=author, date=date, origin=origin, url=url
-        )
         result = await ingest_document(
             storage,
             config,
             content,
-            content_type,
+            metadata.content_type,
             dest=dest,
-            source_type=source_type,
-            **kwargs,
+            source_type=metadata.source_type,
+            **metadata.model_dump(
+                by_alias=True,
+                exclude_none=True,
+                exclude={"content_type", "source_type"},
+            ),
         )
         await self.doc_service.index_raw_doc(brain_id, dest, result)
-        return dest, title or dest
+        return dest, metadata.title or dest
 
     async def ingest_upload(
         self,
@@ -103,38 +98,36 @@ class IngestService:
         storage: Storage,
         raw_bytes: bytes,
         filename: str,
-        content_type: str,
+        metadata: SourceMetadata,
         *,
         mimetype: str = "",
-        author: str | None = None,
-        date: str | None = None,
-        origin: str | None = None,
-        url: str | None = None,
         dest_path: str | None = None,
-        source_type: str = "document",
     ) -> tuple[str, str]:
         """Ingest an uploaded file. Returns (file_path, title)."""
         content = await _convert_to_markdown(raw_bytes, filename, mimetype)
 
         if dest_path:
-            dest = _safe_upload_dest(content_type, dest_path)
+            dest = _safe_upload_dest(metadata.content_type, dest_path)
         else:
             slug = slugify(filename.rsplit(".", 1)[0])
-            dest = _safe_upload_dest(content_type, f"{slug}.md")
+            dest = _safe_upload_dest(metadata.content_type, f"{slug}.md")
 
         config = await load_config(storage)
-        kwargs = _build_kwargs(author=author, date=date, origin=origin, url=url)
         result = await ingest_document(
             storage,
             config,
             content,
-            content_type,
+            metadata.content_type,
             dest=dest,
-            source_type=source_type,
-            **kwargs,
+            source_type=metadata.source_type,
+            **metadata.model_dump(
+                by_alias=True,
+                exclude_none=True,
+                exclude={"content_type", "source_type"},
+            ),
         )
         await self.doc_service.index_raw_doc(brain_id, dest, result)
-        return dest, filename
+        return dest, metadata.title or filename
 
     async def ingest_bulk(
         self,
@@ -233,9 +226,7 @@ class IngestService:
         brain_id: UUID,
         storage: Storage,
         url: str,
-        content_type: str,
-        *,
-        source_type: str = "document",
+        metadata: SourceMetadata,
     ) -> tuple[str, str]:
         """Fetch a URL, convert to markdown, and ingest. Returns (file_path, title)."""
         url = normalize_url(url)
@@ -251,19 +242,24 @@ class IngestService:
             ),
         )
 
-        title = result.title or url
-        dest = raw_path(content_type, f"{slugify(title)}.md")
+        title = metadata.title or result.title or url
+        dest = raw_path(metadata.content_type, f"{slugify(title)}.md")
+        frontmatter = metadata.model_dump(
+            by_alias=True,
+            exclude_none=True,
+            exclude={"content_type", "source_type", "title"},
+        )
 
         config = await load_config(storage)
         ingested = await ingest_document(
             storage,
             config,
             result.text_content,
-            content_type,
+            metadata.content_type,
             dest=dest,
             title=title,
-            url=url,
-            source_type=source_type,
+            source_type=metadata.source_type,
+            **frontmatter,
         )
         await self.doc_service.index_raw_doc(brain_id, dest, ingested)
         return dest, title
@@ -330,10 +326,6 @@ async def _process_bulk_file(
         ),
         doc,
     )
-
-
-def _build_kwargs(**fields: str | int | None) -> dict:
-    return {k: v for k, v in fields.items() if v is not None}
 
 
 def _safe_upload_dest(content_type: str, dest_path: str) -> str:

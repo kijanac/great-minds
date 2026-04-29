@@ -11,18 +11,24 @@ from fastapi import APIRouter, Depends, Form, HTTPException, UploadFile
 from fastapi.responses import StreamingResponse
 
 from great_minds.app.api.dependencies import (
-    get_brain_storage,
+    BrainMemberGuard,
+    BrainStorageDep,
     get_compile_intent_repository,
     get_ingest_service,
-    require_brain_member,
 )
-from great_minds.app.api.schemas import ingest as schemas
+from great_minds.app.api.schemas.ingest import (
+    IngestResult,
+    RawSource,
+    URLSource,
+    UserSuggestion,
+)
 from great_minds.core.ingest_service import (
     BulkFileInput,
     BulkFileStatus,
     IngestService,
 )
-from great_minds.core.compile_intents.repository import CompileIntentRepository
+from great_minds.core.compile_intents import CompileIntentRepository
+from great_minds.core.sources import SourceMetadata
 from great_minds.core.storage import Storage
 from great_minds.core.telemetry import log_event
 
@@ -33,54 +39,48 @@ router = APIRouter(prefix="/ingest", tags=["ingest"])
 
 @router.post("", status_code=201)
 async def ingest(
-    req: schemas.IngestRequest,
+    source: RawSource,
     brain_id: UUID,
-    storage: Storage = Depends(get_brain_storage),
+    storage: BrainStorageDep,
     ingest_service: IngestService = Depends(get_ingest_service),
-) -> schemas.IngestResponse:
+) -> IngestResult:
     file_path, title = await ingest_service.ingest_text(
         brain_id,
         storage,
-        req.content,
-        req.content_type,
-        req.dest,
-        title=req.title,
-        author=req.author,
-        date=req.published_date,
-        origin=req.origin,
-        url=req.url,
-        source_type=req.source_type,
+        source.content,
+        source.dest,
+        source.metadata,
     )
-    return schemas.IngestResponse(file_path=file_path, title=title)
+    return IngestResult(file_path=file_path, title=title)
 
 
 @router.post("/user-suggestion", status_code=201)
 async def ingest_user_suggestion(
-    req: schemas.UserSuggestionRequest,
+    suggestion: UserSuggestion,
     brain_id: UUID,
-    storage: Storage = Depends(get_brain_storage),
+    storage: BrainStorageDep,
+    _auth: BrainMemberGuard,
     ingest_service: IngestService = Depends(get_ingest_service),
-    _auth: None = Depends(require_brain_member),
-) -> schemas.IngestResponse:
+) -> IngestResult:
     try:
         file_path, title = await ingest_service.ingest_user_suggestion(
             brain_id,
             storage,
-            body=req.body,
-            intent=req.intent,
-            anchored_to=req.anchored_to,
-            anchored_section=req.anchored_section,
+            body=suggestion.body,
+            intent=suggestion.intent,
+            anchored_to=suggestion.anchored_to,
+            anchored_section=suggestion.anchored_section,
         )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
-    return schemas.IngestResponse(file_path=file_path, title=title)
+    return IngestResult(file_path=file_path, title=title)
 
 
 @router.post("/upload", status_code=201)
 async def ingest_upload(
     file: UploadFile,
     brain_id: UUID,
-    storage: Storage = Depends(get_brain_storage),
+    storage: BrainStorageDep,
     ingest_service: IngestService = Depends(get_ingest_service),
     content_type: str = "texts",
     author: str | None = None,
@@ -89,23 +89,28 @@ async def ingest_upload(
     url: str | None = None,
     dest_path: str | None = None,
     source_type: str = "document",
-) -> schemas.IngestResponse:
+) -> IngestResult:
     raw_bytes = await file.read()
-    filename = file.filename or "upload.md"
+    if not file.filename:
+        raise HTTPException(status_code=400, detail="Uploaded file must have a filename")
+    filename = file.filename
+    metadata = SourceMetadata(
+        content_type=content_type,
+        source_type=source_type,
+        author=author,
+        published_date=date,
+        origin=origin,
+        url=url,
+    )
     try:
         file_path, title = await ingest_service.ingest_upload(
             brain_id,
             storage,
             raw_bytes,
             filename,
-            content_type,
+            metadata,
             mimetype=file.content_type or "",
-            author=author,
-            date=date,
-            origin=origin,
-            url=url,
             dest_path=dest_path,
-            source_type=source_type,
         )
     except UnicodeDecodeError:
         raise HTTPException(
@@ -113,38 +118,37 @@ async def ingest_upload(
         )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
-    return schemas.IngestResponse(file_path=file_path, title=title)
+    return IngestResult(file_path=file_path, title=title)
 
 
 @router.post("/url", status_code=201)
 async def ingest_url(
-    req: schemas.IngestUrlRequest,
+    source: URLSource,
     brain_id: UUID,
-    storage: Storage = Depends(get_brain_storage),
+    storage: BrainStorageDep,
     ingest_service: IngestService = Depends(get_ingest_service),
-) -> schemas.IngestResponse:
+) -> IngestResult:
     try:
         file_path, title = await ingest_service.ingest_url(
             brain_id,
             storage,
-            req.url,
-            req.content_type,
-            source_type=req.source_type,
+            source.url,
+            source.metadata,
         )
     except httpx.HTTPError as exc:
         raise HTTPException(status_code=400, detail=f"Failed to fetch URL: {exc}")
-    return schemas.IngestResponse(file_path=file_path, title=title)
+    return IngestResult(file_path=file_path, title=title)
 
 
 @router.post("/bulk")
 async def ingest_bulk(
     brain_id: UUID,
     files: list[UploadFile],
+    storage: BrainStorageDep,
+    _auth: BrainMemberGuard,
     content_type: str = Form("texts"),
-    storage: Storage = Depends(get_brain_storage),
     ingest_service: IngestService = Depends(get_ingest_service),
     intent_repo: CompileIntentRepository = Depends(get_compile_intent_repository),
-    _auth: None = Depends(require_brain_member),
 ) -> StreamingResponse:
     """Bulk ingest N files. Streams NDJSON per-file events; on success writes
     a compile intent (reconciler dispatches to Absurd within ~5s).

@@ -5,7 +5,7 @@ Frontend polls this endpoint via useExploreBadge; the Explore page
 surfaces findings as automatic notifications (no "run lint" button).
 
 Shape reflects the topic-based architecture directly:
-- orphans: rendered topics with no incoming backlinks
+- orphans: rendered articles with no incoming backlinks
 - dirty_topics: topic_ids whose rendered output lags behind current
   compiled_from_hash
 - unresolved_citations: article body cites a slug with no matching
@@ -21,12 +21,11 @@ from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from great_minds.app.api.dependencies import (
-    get_brain_storage,
-    require_brain_member,
+    BrainMemberGuard,
+    BrainStorageDep,
 )
 from great_minds.core.db import get_session
 from great_minds.core.lint import build_lint_report
-from great_minds.core.storage import Storage
 
 router = APIRouter(prefix="/lint", tags=["lint"])
 
@@ -58,10 +57,10 @@ class LintReportResponse(BaseModel):
 
 @router.get("")
 async def lint(
+    storage: BrainStorageDep,
+    _auth: BrainMemberGuard,
     brain_id: UUID = Path(...),
     session: AsyncSession = Depends(get_session),
-    storage: Storage = Depends(get_brain_storage),
-    _auth: None = Depends(require_brain_member),
 ) -> LintReportResponse:
     report = await build_lint_report(session, brain_id, storage)
     return LintReportResponse(

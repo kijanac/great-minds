@@ -36,26 +36,30 @@ class BrainRepository:
         await self.session.refresh(brain)
         return Brain.model_validate(brain), MemberRole.OWNER
 
-    async def list_user_brains(self, user_id: UUID) -> list[tuple[Brain, MemberRole]]:
-        result = await self.session.execute(
+    async def list_user_brains(
+        self, user_id: UUID, *, limit: int | None = 50, offset: int = 0
+    ) -> list[tuple[Brain, MemberRole]]:
+        stmt = (
             select(BrainORM, BrainMembership.role)
             .join(BrainMembership, BrainMembership.brain_id == BrainORM.id)
             .where(BrainMembership.user_id == user_id)
+            .order_by(BrainORM.created_at.desc())
+            .offset(offset)
         )
+        if limit is not None:
+            stmt = stmt.limit(limit)
+        result = await self.session.execute(stmt)
         return [(Brain.model_validate(brain), role) for brain, role in result.all()]
 
-    async def get_brain_with_role(
-        self, brain_id: UUID, user_id: UUID
-    ) -> tuple[Brain, MemberRole] | None:
-        result = await self.session.execute(
-            select(BrainORM, BrainMembership.role)
-            .join(BrainMembership, BrainMembership.brain_id == BrainORM.id)
-            .where(BrainORM.id == brain_id, BrainMembership.user_id == user_id)
-        )
-        row = result.one_or_none()
-        if row is None:
-            return None
-        return Brain.model_validate(row[0]), row[1]
+    async def count_user_brains(self, user_id: UUID) -> int:
+        return (
+            await self.session.scalar(
+                select(func.count())
+                .select_from(BrainORM)
+                .join(BrainMembership, BrainMembership.brain_id == BrainORM.id)
+                .where(BrainMembership.user_id == user_id)
+            )
+        ) or 0
 
     async def is_member(self, brain_id: UUID, user_id: UUID) -> bool:
         result = await self.session.execute(
@@ -81,11 +85,16 @@ class BrainRepository:
         )
         return result.scalar_one()
 
-    async def list_members(self, brain_id: UUID) -> list[tuple[BrainMembership, str]]:
+    async def list_members(
+        self, brain_id: UUID, *, limit: int = 50, offset: int = 0
+    ) -> list[tuple[BrainMembership, str]]:
         result = await self.session.execute(
             select(BrainMembership, User.email)
             .join(User, User.id == BrainMembership.user_id)
             .where(BrainMembership.brain_id == brain_id)
+            .order_by(User.email)
+            .offset(offset)
+            .limit(limit)
         )
         return result.all()
 

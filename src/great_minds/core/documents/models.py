@@ -74,3 +74,20 @@ class DocumentTag(Base):
         primary_key=True,
     )
     tag: Mapped[str] = mapped_column(Text, primary_key=True, index=True)
+
+
+class BacklinkORM(Base):
+    """Article-to-article link derived from rendered wiki prose."""
+
+    __tablename__ = "backlinks"
+
+    source_document_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("documents.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    target_document_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("documents.id", ondelete="CASCADE"),
+        primary_key=True,
+    )

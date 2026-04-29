@@ -33,13 +33,14 @@ export function DocHeader({
   onSupersessorClick,
 }: DocHeaderProps) {
   const [extraOpen, setExtraOpen] = useState(false);
+  const metadata = document.metadata;
 
   const metaParts: string[] = [];
-  if (document.author) metaParts.push(document.author);
-  if (document.published_date) metaParts.push(document.published_date);
-  if (document.genre) metaParts.push(document.genre);
+  if (metadata.author) metaParts.push(metadata.author);
+  if (metadata.published_date) metaParts.push(metadata.published_date);
+  if (metadata.genre) metaParts.push(metadata.genre);
 
-  const extraEntries = Object.entries(document.extra_metadata ?? {}).filter(
+  const extraEntries = Object.entries(metadata.extra_metadata ?? {}).filter(
     ([k]) => k !== "topic_id", // internal identifier, not for display
   );
 
@@ -71,12 +72,12 @@ export function DocHeader({
       )}
 
       <h1 className="text-[length:var(--text-title)] font-bold text-foreground mb-3">
-        {document.title}
+        {metadata.title}
       </h1>
 
-      {document.precis && (
+      {metadata.precis && (
         <p className="font-serif text-[length:var(--text-body)] text-warm-dim italic leading-[1.6] mb-4">
-          {document.precis}
+          {metadata.precis}
         </p>
       )}
 
@@ -86,9 +87,9 @@ export function DocHeader({
         </p>
       )}
 
-      {document.tags.length > 0 && (
+      {metadata.tags.length > 0 && (
         <div className="flex flex-wrap gap-2 mb-3">
-          {document.tags.map((tag) => (
+          {metadata.tags.map((tag) => (
             <span key={tag} className={cn(CHIP_BASE, CHIP_INACTIVE)}>
               {tag}
             </span>
@@ -96,20 +97,20 @@ export function DocHeader({
         </div>
       )}
 
-      {(document.url || document.origin) && (
+      {(metadata.url || metadata.origin) && (
         <p className="font-mono text-[length:var(--text-chrome)] tracking-[0.06em] text-warm-ghost mb-3">
-          {document.url ? (
+          {metadata.url ? (
             <a
-              href={document.url}
+              href={metadata.url}
               target="_blank"
               rel="noopener noreferrer"
               className="inline-flex items-center gap-1 text-gold-muted hover:text-gold underline underline-offset-2 decoration-gold/30"
             >
-              from {document.origin || document.url}
+              from {metadata.origin || metadata.url}
               <ExternalLink size={11} />
             </a>
           ) : (
-            <>from {document.origin}</>
+            <>from {metadata.origin}</>
           )}
         </p>
       )}

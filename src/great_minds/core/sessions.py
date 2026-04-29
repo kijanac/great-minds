@@ -19,6 +19,8 @@ from typing import Literal
 
 from pydantic import BaseModel, ValidationError
 
+from great_minds.core.pagination import Page, PageInfo, PageParams
+
 from .storage import Storage
 
 log = logging.getLogger(__name__)
@@ -301,8 +303,11 @@ async def load_events(
 
 
 async def list_sessions(
-    storage: Storage, *, user_id: str | None = None
-) -> list[SessionSummary]:
+    storage: Storage,
+    *,
+    user_id: str | None = None,
+    pagination: PageParams,
+) -> Page[SessionSummary]:
     """List all sessions with metadata. Sorted by last activity.
 
     If user_id is provided, only sessions belonging to that user are returned.
@@ -351,4 +356,12 @@ async def list_sessions(
         )
 
     results.sort(key=lambda s: s.updated, reverse=True)
-    return results
+    total = len(results)
+    return Page(
+        items=results[pagination.offset : pagination.offset + pagination.limit],
+        pagination=PageInfo(
+            limit=pagination.limit,
+            offset=pagination.offset,
+            total=total,
+        ),
+    )

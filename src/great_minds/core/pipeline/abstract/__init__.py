@@ -17,6 +17,7 @@ rather than mutating a bag keeps each sub-phase's contract explicit.
 from __future__ import annotations
 
 from great_minds.core.ideas.source_cards import SourceCardStore
+from great_minds.core.paths import source_cards_path
 from great_minds.core.pipeline.abstract import (
     canonicalize,
     partition,
@@ -38,7 +39,7 @@ async def run(ctx: PipelineContext) -> list[ValidatedCanonicalTopic]:
     canonical topics with topic_ids resolved and link_targets cleaned.
     """
     settings = get_settings()
-    source_cards = SourceCardStore.for_brain(ctx.sidecar_root).load_all()
+    source_cards = SourceCardStore(source_cards_path(ctx.sidecar_root)).load_all()
 
     chunks = await partition.run(ctx, source_cards)
     if not chunks:

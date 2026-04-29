@@ -1,14 +1,14 @@
 import { Home, Search } from "lucide-react";
 
-import type { ContentTypeCount, RawSourceItem } from "@/api/sources";
+import type { ContentTypeFacet, SourceDocumentSummary } from "@/api/sources";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { CHIP_ACTIVE, CHIP_BASE, CHIP_INACTIVE } from "@/lib/chip";
 import { cn, formatShortDate } from "@/lib/utils";
 
 interface SourcesPageProps {
-  items: RawSourceItem[];
-  contentTypes: ContentTypeCount[];
+  items: SourceDocumentSummary[];
+  contentTypes: ContentTypeFacet[];
   activeType: string | null;
   search: string;
   loading: boolean;
@@ -75,18 +75,18 @@ export function SourcesPage({
               </button>
               {contentTypes.map((ct) => (
                 <button
-                  key={ct.content_type}
+                  key={ct.value}
                   onClick={() =>
                     onTypeFilter(
-                      activeType === ct.content_type ? null : ct.content_type,
+                      activeType === ct.value ? null : ct.value,
                     )
                   }
                   className={cn(
                     CHIP_BASE,
-                    activeType === ct.content_type ? CHIP_ACTIVE : CHIP_INACTIVE,
+                    activeType === ct.value ? CHIP_ACTIVE : CHIP_INACTIVE,
                   )}
                 >
-                  {ct.content_type} · {ct.count}
+                  {ct.value} · {ct.count}
                 </button>
               ))}
             </div>
@@ -122,11 +122,11 @@ export function SourcesPage({
                 >
                   <div className="flex flex-col items-start gap-0.5 min-w-0 flex-1">
                     <span className="font-serif text-[length:var(--text-body)] text-warm-dim group-hover:text-warm transition-colors truncate w-full text-left">
-                      {item.title}
+                      {item.metadata.title}
                     </span>
-                    {(item.author || item.origin) && (
+                    {(item.metadata.author || item.metadata.origin) && (
                       <span className="font-mono text-[length:var(--text-chrome)] tracking-[0.04em] text-warm-ghost truncate w-full text-left">
-                        {[item.author, item.origin]
+                        {[item.metadata.author, item.metadata.origin]
                           .filter(Boolean)
                           .join(" · ")}
                       </span>

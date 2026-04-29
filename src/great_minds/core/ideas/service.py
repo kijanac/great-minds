@@ -13,6 +13,7 @@ from uuid import UUID
 from great_minds.core.ideas.repository import IdeaEmbeddingRepository
 from great_minds.core.ideas.schemas import IdeaEmbedding, SourceCard
 from great_minds.core.ideas.source_cards import SourceCardStore
+from great_minds.core.paths import source_cards_path
 
 
 class IdeaService:
@@ -25,7 +26,7 @@ class IdeaService:
     ) -> None:
         self.brain_id = brain_id
         self.embedding_repo = embedding_repo
-        self.source_cards = SourceCardStore.for_brain(sidecar_root)
+        self.source_cards = SourceCardStore(source_cards_path(sidecar_root))
 
     async def record_extractions(
         self,

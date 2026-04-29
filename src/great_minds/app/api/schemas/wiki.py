@@ -4,7 +4,7 @@ from datetime import datetime
 
 from pydantic import BaseModel, ConfigDict
 
-from great_minds.core.documents.schemas import Document
+from great_minds.core.documents.schemas import Document, DocumentMetadata
 
 
 class ArticleResponse(BaseModel):
@@ -17,33 +17,19 @@ class ArticleResponse(BaseModel):
 class RecentArticleItem(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
-    title: str
     file_path: str
     doc_kind: str
+    metadata: DocumentMetadata
     updated_at: datetime | None
 
 
-class RawSourceItem(BaseModel):
+class SourceDocumentSummary(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
-    title: str
     file_path: str
-    author: str | None
-    origin: str | None
-    published_date: str | None
     compiled: bool
-    source_type: str
+    metadata: DocumentMetadata
     updated_at: datetime | None
-
-
-class ContentTypeCount(BaseModel):
-    content_type: str
-    count: int
-
-
-class RawSourcesResponse(BaseModel):
-    items: list[RawSourceItem]
-    content_types: list[ContentTypeCount]
 
 
 class DocResponse(BaseModel):

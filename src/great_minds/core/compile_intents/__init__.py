@@ -17,3 +17,14 @@ Invariants (enforced by schema + reconciler):
   5. Spawning the same intent_id N times yields one Absurd task
      (idempotency_key = str(intent.id)).
 """
+
+from great_minds.core.compile_intents.models import CompileIntentRecord
+from great_minds.core.compile_intents.repository import CompileIntentRepository
+from great_minds.core.compile_intents.schemas import CompileIntent, IntentStatus
+
+__all__ = [
+    "CompileIntent",
+    "CompileIntentRecord",
+    "CompileIntentRepository",
+    "IntentStatus",
+]

@@ -82,7 +82,7 @@ async def _dispatch_pending(
     for intent in pending:
         if await task_service.find_active_compile(intent.brain_id) is not None:
             continue
-        brain = await brain_service.get_by_id(intent.brain_id)
+        brain = await brain_service.get_brain(intent.brain_id)
         task = await task_service.spawn_compile_for_intent(
             intent_id=intent.id,
             brain_id=intent.brain_id,

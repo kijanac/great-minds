@@ -42,7 +42,7 @@ thematic_hint: |
 | `topic_membership` | Postgres | derived: `(topic_id, idea_id)` edges |
 | `topic_links` | Postgres | derived from reduce's validated link_targets |
 | `topic_related` | Postgres | derived: shared-idea relatedness for sidebar UI |
-| `backlinks` | Postgres | derived: reverse of `topic_links` |
+| `backlinks` | Postgres | derived: article-to-article links found in rendered prose |
 | `chunks` (raw + wiki) | Postgres | paragraph/heading-level anchors + embeddings for agent RAG |
 
 The `concepts` table and its associated code (`distiller.py` clustering, `concept_repository.py`) are retired.
@@ -208,7 +208,7 @@ Re-chunk rendered articles and update wiki-article chunks in `chunks` (retains e
 Verify operates on article-level reality — what rendered prose actually contains.
 
 - Walk rendered articles, extract `[title](wiki/<slug>.md)` citations from each body
-- Build `backlinks` table from actual article citations: `(target_topic_id, source_topic_id, source_article_path)` reflecting real article-to-article links
+- Build `backlinks` table from actual article citations: `(source_document_id, target_document_id)` reflecting real article-to-article links
 - Log unresolved links (citation points to a nonexistent slug) as lint signals
 - Log intended-but-unmentioned discrepancies (link_target from `topic_links` that doesn't appear in the article body) as quality signals
 

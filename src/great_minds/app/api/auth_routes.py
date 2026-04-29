@@ -5,10 +5,9 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, status
 
-from great_minds.app.api.dependencies import get_auth_service, get_current_user
+from great_minds.app.api.dependencies import CurrentUser, get_auth_service
 from great_minds.app.api.schemas import auth as schemas
 from great_minds.core.auth.service import AuthService
-from great_minds.core.users.models import User
 
 log = logging.getLogger(__name__)
 
@@ -62,7 +61,7 @@ async def refresh(
 )
 async def create_api_key(
     req: schemas.ApiKeyCreate,
-    user: User = Depends(get_current_user),
+    user: CurrentUser,
     auth_service: AuthService = Depends(get_auth_service),
 ) -> schemas.ApiKeyCreated:
     api_key, raw_key = await auth_service.create_api_key(user.id, req.label)
@@ -78,7 +77,7 @@ async def create_api_key(
 @router.delete("/api-keys/{key_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def revoke_api_key(
     key_id: UUID,
-    user: User = Depends(get_current_user),
+    user: CurrentUser,
     auth_service: AuthService = Depends(get_auth_service),
 ) -> None:
     try:
