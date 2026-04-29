@@ -6,20 +6,33 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, status
 
 from great_minds.app.api.dependencies import (
+    BrainMemberGuard,
+    BrainOwnerGuard,
+    CurrentUser,
+    get_brain_access,
     get_brain_service,
-    get_current_user,
     get_document_repository,
     get_mailer,
     get_user_service,
-    require_brain_owner,
+    PageParamsQuery,
 )
 from great_minds.app.api.schemas import brains as schemas
-from great_minds.core.brains.service import BrainService
-from great_minds.core.documents.repository import DocumentRepository
-from great_minds.core.documents.schemas import DocKind
+from great_minds.app.api.schemas.brains import (
+    Brain,
+    BrainConfigUpdate,
+    BrainConfig,
+    BrainCreate,
+    BrainDetail,
+    BrainOverview,
+    Membership,
+)
+from great_minds.core.brain_config import draft_thematic_hint, load_brain_config
+from great_minds.core.brains import BrainAccess, BrainService
+from great_minds.core.documents import DocKind, DocumentRepository
+from great_minds.core.llm import get_async_client
 from great_minds.core.mail import Mailer
-from great_minds.core.users.models import User
-from great_minds.core.users.service import UserService
+from great_minds.core.pagination import Page
+from great_minds.core.users import UserService
 
 log = logging.getLogger(__name__)
 
@@ -28,24 +41,33 @@ router = APIRouter(prefix="/brains", tags=["brains"])
 
 @router.get("")
 async def list_brains(
-    user: User = Depends(get_current_user),
+    pagination: PageParamsQuery,
+    user: CurrentUser,
     brain_service: BrainService = Depends(get_brain_service),
-) -> list[schemas.BrainOverview]:
-    rows = await brain_service.list_brains(user.id)
-    return [
-        schemas.BrainOverview(id=brain.id, name=brain.name, role=role)
-        for brain, role in rows
-    ]
+) -> Page[BrainOverview]:
+    result = await brain_service.list_brains_page(user.id, pagination=pagination)
+    return Page(
+        items=[
+            BrainOverview(id=item.brain.id, name=item.brain.name, role=item.role)
+            for item in result.items
+        ],
+        pagination=result.pagination,
+    )
 
 
 @router.post("", status_code=status.HTTP_201_CREATED)
 async def create_brain(
-    req: schemas.BrainCreate,
-    user: User = Depends(get_current_user),
+    req: BrainCreate,
+    user: CurrentUser,
     brain_service: BrainService = Depends(get_brain_service),
-) -> schemas.Brain:
-    brain, role = await brain_service.create_brain(req.name, user.id)
-    return schemas.Brain(
+) -> Brain:
+    brain, role = await brain_service.create_brain(
+        req.name,
+        user.id,
+        thematic_hint=req.thematic_hint,
+        kinds=req.kinds,
+    )
+    return Brain(
         id=brain.id,
         name=brain.name,
         role=role,
@@ -54,22 +76,39 @@ async def create_brain(
     )
 
 
+@router.post("/draft-hint")
+async def draft_hint(
+    req: schemas.DraftHintRequest,
+    _user: CurrentUser,
+) -> schemas.DraftHintResponse:
+    description = req.description.strip()
+    if not description:
+        raise HTTPException(status_code=400, detail="description required")
+    hint = await draft_thematic_hint(get_async_client(), description)
+    return schemas.DraftHintResponse(thematic_hint=hint)
+
+
 @router.get("/{brain_id}")
 async def get_brain(
     brain_id: UUID,
-    user: User = Depends(get_current_user),
+    user: CurrentUser,
     brain_service: BrainService = Depends(get_brain_service),
+    brain_access: BrainAccess = Depends(get_brain_access),
     doc_repo: DocumentRepository = Depends(get_document_repository),
-) -> schemas.BrainDetail:
+) -> BrainDetail:
     try:
-        brain, role = await brain_service.get_brain(brain_id, user.id)
+        brain = await brain_service.get_brain(brain_id)
     except ValueError:
         raise HTTPException(status_code=404, detail="Brain not found")
-
+    
+    role = await brain_access.get_member_role(brain_id, user.id)
+    if role is None:
+        raise HTTPException(status_code=403, detail="Not a member of this brain")
+        
     member_count = await brain_service.get_member_count(brain.id)
     article_count = await doc_repo.count_by_kind(brain.id, DocKind.WIKI)
 
-    return schemas.BrainDetail(
+    return BrainDetail(
         id=brain.id,
         name=brain.name,
         role=role,
@@ -80,35 +119,78 @@ async def get_brain(
     )
 
 
+@router.get("/{brain_id}/config")
+async def get_brain_config(
+    brain_id: UUID,
+    _auth: BrainMemberGuard,
+    brain_service: BrainService = Depends(get_brain_service),
+) -> BrainConfig:
+    try:
+        brain = await brain_service.get_brain(brain_id)
+    except ValueError:
+        raise HTTPException(status_code=404, detail="Brain not found")
+    
+    cfg = await load_brain_config(brain_service.get_storage(brain))
+    return BrainConfig(
+        thematic_hint=cfg.thematic_hint,
+        kinds=list(cfg.kinds),
+    )
+
+
+@router.patch("/{brain_id}/config")
+async def update_brain_config(
+    brain_id: UUID,
+    req: BrainConfigUpdate,
+    user: CurrentUser,
+    _auth: BrainOwnerGuard,
+    brain_service: BrainService = Depends(get_brain_service),
+) -> BrainConfig:
+    await brain_service.update_config(
+        brain_id,
+        thematic_hint=req.thematic_hint,
+        kinds=req.kinds,
+    )
+    brain = await brain_service.get_brain(brain_id)
+    cfg = await load_brain_config(brain_service.get_storage(brain))
+    return BrainConfig(
+        thematic_hint=cfg.thematic_hint,
+        kinds=list(cfg.kinds),
+    )
+
+
 @router.get("/{brain_id}/members")
 async def list_members(
     brain_id: UUID,
-    user: User = Depends(get_current_user),
+    pagination: PageParamsQuery,
+    _auth: BrainOwnerGuard,
     brain_service: BrainService = Depends(get_brain_service),
-) -> list[schemas.MembershipOverview]:
+) -> Page[Membership]:
     try:
-        await brain_service.get_brain(brain_id, user.id)
+        await brain_service.get_brain(brain_id)
     except ValueError:
         raise HTTPException(status_code=404, detail="Brain not found")
 
-    rows = await brain_service.list_members(brain_id)
-    return [
-        schemas.MembershipOverview(user_id=m.user_id, email=email, role=m.role)
-        for m, email in rows
-    ]
+    result = await brain_service.list_members_page(brain_id, pagination=pagination)
+    return Page(
+        items=[
+            Membership(user_id=item.user_id, email=item.email, role=item.role)
+            for item in result.items
+        ],
+        pagination=result.pagination,
+    )
 
 
 @router.post("/{brain_id}/members", status_code=status.HTTP_201_CREATED)
 async def invite_member(
     req: schemas.MembershipInvite,
     brain_id: UUID,
-    user: User = Depends(get_current_user),
+    user: CurrentUser,
+    _auth: BrainOwnerGuard,
     brain_service: BrainService = Depends(get_brain_service),
     user_service: UserService = Depends(get_user_service),
     mailer: Mailer = Depends(get_mailer),
-    _auth: None = Depends(require_brain_owner),
-) -> schemas.MembershipOverview:
-    brain = await brain_service.get_by_id(brain_id)
+) -> Membership:
+    brain = await brain_service.get_brain(brain_id)
 
     target_user, _created = await user_service.get_or_create(req.email)
     await brain_service.upsert_membership(brain_id, target_user.id, req.role)
@@ -123,7 +205,7 @@ async def invite_member(
         ),
     )
 
-    return schemas.MembershipOverview(
+    return Membership(
         user_id=target_user.id, email=target_user.email, role=req.role
     )
 
@@ -133,17 +215,17 @@ async def set_member(
     member_user_id: UUID,
     req: schemas.MembershipUpdate,
     brain_id: UUID,
+    _auth: BrainOwnerGuard,
     brain_service: BrainService = Depends(get_brain_service),
     user_service: UserService = Depends(get_user_service),
-    _auth: None = Depends(require_brain_owner),
-) -> schemas.MembershipOverview:
+) -> Membership:
     target_user = await user_service.get_by_id(member_user_id)
     if target_user is None:
         raise HTTPException(status_code=404, detail="User not found")
 
     await brain_service.upsert_membership(brain_id, member_user_id, req.role)
 
-    return schemas.MembershipOverview(
+    return Membership(
         user_id=target_user.id, email=target_user.email, role=req.role
     )
 
@@ -154,8 +236,8 @@ async def set_member(
 async def remove_member(
     member_user_id: UUID,
     brain_id: UUID,
+    _auth: BrainOwnerGuard,
     brain_service: BrainService = Depends(get_brain_service),
-    _auth: None = Depends(require_brain_owner),
 ) -> None:
     deleted = await brain_service.delete_membership(brain_id, member_user_id)
     if not deleted:

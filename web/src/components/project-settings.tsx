@@ -1,19 +1,25 @@
 import { useState } from "react";
 import { Home, X } from "lucide-react";
 
-import type { BrainDetail, Membership } from "@/api/brains";
+import type { BrainConfig, BrainDetail, Membership } from "@/api/brains";
+import {
+  BrainConfigForm,
+  type BrainConfigFormSubmit,
+} from "@/components/brain-config-form";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 
 interface ProjectSettingsProps {
   project: BrainDetail | null;
   members: Membership[];
+  config: BrainConfig | null;
   isOwner: boolean;
   loading: boolean;
   onHome: () => void;
   onInvite: (email: string) => Promise<void>;
   onChangeRole: (userId: string, role: string) => Promise<void>;
   onRemoveMember: (userId: string) => Promise<void>;
+  onSaveConfig: (thematic_hint: string) => Promise<void>;
 }
 
 const ROLES = ["owner", "editor", "viewer"] as const;
@@ -27,15 +33,18 @@ function nextRole(current: string): string {
 export function ProjectSettings({
   project,
   members,
+  config,
   isOwner,
   loading,
   onHome,
   onInvite,
   onChangeRole,
   onRemoveMember,
+  onSaveConfig,
 }: ProjectSettingsProps) {
   const [email, setEmail] = useState("");
   const [inviting, setInviting] = useState(false);
+  const [savingConfig, setSavingConfig] = useState(false);
 
   async function handleInvite(e: React.FormEvent) {
     e.preventDefault();
@@ -47,6 +56,15 @@ export function ProjectSettings({
       setEmail("");
     } finally {
       setInviting(false);
+    }
+  }
+
+  async function handleSaveConfig(data: BrainConfigFormSubmit) {
+    setSavingConfig(true);
+    try {
+      await onSaveConfig(data.thematic_hint);
+    } finally {
+      setSavingConfig(false);
     }
   }
 
@@ -138,6 +156,21 @@ export function ProjectSettings({
                     ↵
                   </span>
                 </form>
+              )}
+
+              {config && (
+                <div className="mt-12">
+                  <h2 className="font-mono text-[length:var(--text-chrome)] tracking-[0.14em] text-gold-muted uppercase mb-4">
+                    configuration
+                  </h2>
+                  <BrainConfigForm
+                    mode="edit"
+                    initialThematicHint={config.thematic_hint}
+                    submitting={savingConfig}
+                    onSubmit={handleSaveConfig}
+                    submitLabel="save changes"
+                  />
+                </div>
               )}
             </>
           )}

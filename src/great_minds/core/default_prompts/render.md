@@ -40,4 +40,15 @@ Description: {description}
 
 ## Output
 
-Return ONLY the article body as markdown, starting with `# ` heading naming the topic. End with the final content paragraph — the system appends the footnote resolution section.
+Return a JSON object with two fields:
+
+```json
+{
+  "body": "# Topic Title\n\n...the markdown article body, starting with the # heading and ending at the final content paragraph (no footnote section, no frontmatter)...",
+  "tags": ["tag-1", "tag-2", "tag-3"]
+}
+```
+
+`body` is the article's markdown body following all the rules above.
+
+`tags` is 3-6 short, lowercase, hyphen-separated keywords describing the article's subject (e.g. `imperialism`, `monopoly-capitalism`, `1916`, `lenin`). These power tag-based browsing and agent retrieval — pick concrete topical anchors, not generic categories. Avoid adjectives, full sentences, and umbrella terms like `concept` or `theory`.

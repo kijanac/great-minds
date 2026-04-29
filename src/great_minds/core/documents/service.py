@@ -1,10 +1,23 @@
-"""Document index service: frontmatter sync, structured queries, backlinks."""
+"""Document index service: frontmatter sync and structured queries."""
 
 from uuid import UUID
 
 from great_minds.core.markdown import parse_frontmatter
 from great_minds.core.documents.repository import DocumentRepository
-from great_minds.core.documents.schemas import DocKind, Document, DocumentCreate
+from great_minds.core.documents.schemas import (
+    DocKind,
+    Document,
+    DocumentCreate,
+    SourceDocumentFacets,
+    WikiArticleSummary,
+)
+from great_minds.core.pagination import (
+    FacetCount,
+    FacetedPage,
+    Page,
+    PageInfo,
+    PageParams,
+)
 
 
 class DocumentService:
@@ -48,16 +61,31 @@ class DocumentService:
     async def query_documents(self, brain_ids: list[UUID], **filters) -> list[Document]:
         return await self.repo.query_documents(brain_ids, **filters)
 
+    async def list_wiki_articles(
+        self, brain_id: UUID, *, pagination: PageParams
+    ) -> Page[WikiArticleSummary]:
+        items = await self.repo.list_wiki_summaries(
+            brain_id, limit=pagination.limit, offset=pagination.offset
+        )
+        total = await self.repo.count_wiki_article_paths(brain_id)
+        return Page(
+            items=items,
+            pagination=PageInfo(
+                limit=pagination.limit,
+                offset=pagination.offset,
+                total=total,
+            ),
+        )
+
     async def list_raw_sources(
         self,
         brain_id: UUID,
         *,
+        pagination: PageParams,
         content_type: str | None = None,
         search: str | None = None,
         compiled: bool | None = None,
-        limit: int = 50,
-        offset: int = 0,
-    ) -> tuple[list[Document], list[tuple[str, int]]]:
+    ) -> FacetedPage[Document, SourceDocumentFacets]:
         """Return raw documents and content-type folder counts."""
         docs = await self.repo.query_documents(
             [brain_id],
@@ -65,11 +93,31 @@ class DocumentService:
             content_type=content_type,
             search=search,
             compiled=compiled,
-            limit=limit,
-            offset=offset,
+            limit=pagination.limit,
+            offset=pagination.offset,
+        )
+        total = await self.repo.count_documents(
+            [brain_id],
+            doc_kind=DocKind.RAW,
+            content_type=content_type,
+            search=search,
+            compiled=compiled,
         )
         content_types = await self.repo.get_content_type_counts([brain_id])
-        return docs, content_types
+        return FacetedPage(
+            items=docs,
+            pagination=PageInfo(
+                limit=pagination.limit,
+                offset=pagination.offset,
+                total=total,
+            ),
+            facets=SourceDocumentFacets(
+                content_types=[
+                    FacetCount(value=ct, count=count)
+                    for ct, count in content_types
+                ],
+            ),
+        )
 
     async def get_distinct_tags(self, brain_ids: list[UUID]) -> list[str]:
         return await self.repo.get_distinct_tags(brain_ids)

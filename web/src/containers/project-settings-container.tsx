@@ -2,12 +2,15 @@ import { useCallback, useEffect, useState } from "react";
 import { useParams } from "react-router";
 
 import {
+  type BrainConfig,
   type BrainDetail,
   type Membership,
+  getBrainConfig,
   getBrainDetail,
   inviteMember,
   listMembers,
   removeMember,
+  updateBrainConfig,
   updateMemberRole,
 } from "@/api/brains";
 import { ProjectSettings } from "@/components/project-settings";
@@ -20,18 +23,21 @@ export function ProjectSettingsContainer() {
   const navigate = useViewNavigate();
   const [project, setProject] = useState<BrainDetail | null>(null);
   const [members, setMembers] = useState<Membership[]>([]);
+  const [config, setConfig] = useState<BrainConfig | null>(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     if (!id) return;
-    Promise.all([getBrainDetail(id), listMembers(id)])
-      .then(([detail, memberList]) => {
+    Promise.all([getBrainDetail(id), listMembers(id), getBrainConfig(id)])
+      .then(([detail, memberList, cfg]) => {
         setProject(detail);
         setMembers(memberList);
+        setConfig(cfg);
       })
       .catch(() => {
         setProject(null);
         setMembers([]);
+        setConfig(null);
       })
       .finally(() => setLoading(false));
   }, [id]);
@@ -65,16 +71,27 @@ export function ProjectSettingsContainer() {
     [id],
   );
 
+  const handleSaveConfig = useCallback(
+    async (thematic_hint: string) => {
+      if (!id) return;
+      const updated = await updateBrainConfig(id, { thematic_hint });
+      setConfig(updated);
+    },
+    [id],
+  );
+
   return (
     <ProjectSettings
       project={project}
       members={members}
+      config={config}
       isOwner={isOwner}
       loading={loading}
       onHome={() => navigate("/")}
       onInvite={handleInvite}
       onChangeRole={handleChangeRole}
       onRemoveMember={handleRemoveMember}
+      onSaveConfig={handleSaveConfig}
     />
   );
 }

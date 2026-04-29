@@ -7,11 +7,12 @@ crash between spawn and `mark_dispatched` is safe to retry.
 """
 
 import logging
-from typing import Literal, get_args
+from typing import Literal, cast, get_args
 from uuid import UUID
 
 from absurd_sdk import AsyncAbsurd, RetryStrategy
 
+from great_minds.core.pagination import Page, PageInfo, PageParams
 from great_minds.core.tasks.models import TaskRecord
 from great_minds.core.tasks.repository import TaskRepository
 from great_minds.core.tasks.schemas import TaskDetail, TaskStatus
@@ -92,8 +93,13 @@ class TaskService:
             retry_strategy=COMPILE_RETRY,
             idempotency_key=str(intent_id),
         )
+        # absurd_sdk's SpawnResult types task_id as str, but psycopg's
+        # UUID adapter returns a uuid.UUID at runtime. Cast bridges the
+        # type lie at zero runtime cost; if the SDK ever switches to
+        # actually returning str, SQLAlchemy will surface the mismatch
+        # at insert time.
         record = await self.repo.create(
-            UUID(result["task_id"]), brain_id, "compile", params
+            cast(UUID, result["task_id"]), brain_id, "compile", params
         )
         await self.repo.session.commit()
         log.info(
@@ -115,9 +121,21 @@ class TaskService:
                 return await fetch_task_response(self.absurd, record)
         return None
 
-    async def list_for_brain(self, brain_id: UUID) -> list[TaskDetail]:
-        records = await self.repo.list_for_brain(brain_id)
-        return [await fetch_task_response(self.absurd, r) for r in records]
+    async def list_for_brain(
+        self, brain_id: UUID, *, pagination: PageParams
+    ) -> Page[TaskDetail]:
+        records = await self.repo.list_for_brain(
+            brain_id, limit=pagination.limit, offset=pagination.offset
+        )
+        total = await self.repo.count_for_brain(brain_id)
+        return Page(
+            items=[await fetch_task_response(self.absurd, r) for r in records],
+            pagination=PageInfo(
+                limit=pagination.limit,
+                offset=pagination.offset,
+                total=total,
+            ),
+        )
 
     async def get(self, task_id: UUID, brain_id: UUID) -> TaskDetail | None:
         record = await self.repo.get(task_id, brain_id)

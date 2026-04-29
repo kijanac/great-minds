@@ -6,7 +6,7 @@ what the user should look at. No LLM calls, no writes, no persistence
 current DB state + wiki files on disk.
 
 Signals:
-- orphans: rendered topics with zero incoming backlinks
+- orphans: rendered articles with zero incoming backlinks
 - dirty_topics: topics whose rendered_from_hash drifts from current
   compiled_from_hash (compiled inputs shifted since last render)
 - unresolved_citations: wiki article body cites wiki/<slug>.md for
@@ -26,18 +26,12 @@ from dataclasses import dataclass, field
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from great_minds.core.articles.repository import BacklinkRepository
+from great_minds.core.documents import DocumentRepository, WikiArticleSummary
 from great_minds.core.markdown import extract_wiki_link_targets
 from great_minds.core.paths import wiki_path, wiki_slug
 from great_minds.core.storage import Storage
 from great_minds.core.topics.repository import TopicRepository
 from great_minds.core.topics.schemas import ArticleStatus, Topic
-
-
-@dataclass
-class Orphan:
-    slug: str
-    title: str
 
 
 @dataclass
@@ -57,7 +51,7 @@ class UnmentionedLink:
 
 @dataclass
 class LintReport:
-    orphans: list[Orphan] = field(default_factory=list)
+    orphans: list[WikiArticleSummary] = field(default_factory=list)
     dirty_topics: list[uuid.UUID] = field(default_factory=list)
     unresolved_citations: list[UnresolvedCitation] = field(default_factory=list)
     unmentioned_links: list[UnmentionedLink] = field(default_factory=list)
@@ -68,18 +62,18 @@ async def build_lint_report(
     brain_id: uuid.UUID,
     storage: Storage,
 ) -> LintReport:
+    doc_repo = DocumentRepository(session)
     topic_repo = TopicRepository(session)
-    backlink_repo = BacklinkRepository(session)
 
+    orphans = await doc_repo.list_orphan_wiki_documents(brain_id)
     rendered = await topic_repo.list_by_status(brain_id, ArticleStatus.RENDERED)
     if not rendered:
         dirty = await topic_repo.list_dirty_topic_ids(brain_id)
-        return LintReport(dirty_topics=dirty)
+        return LintReport(orphans=orphans, dirty_topics=dirty)
 
     topic_by_id = {t.topic_id: t for t in rendered}
     slug_to_topic = {t.slug: t for t in rendered}
 
-    orphans = await _orphans(backlink_repo, rendered)
     dirty = await topic_repo.list_dirty_topic_ids(brain_id)
     unresolved, cited_by_source = await _walk_articles(
         storage=storage,
@@ -99,24 +93,6 @@ async def build_lint_report(
         unresolved_citations=unresolved,
         unmentioned_links=unmentioned,
     )
-
-
-async def _orphans(
-    backlink_repo: BacklinkRepository,
-    rendered: list[Topic],
-) -> list[Orphan]:
-    """Rendered topics with zero incoming backlinks."""
-    if not rendered:
-        return []
-    rendered_ids = [t.topic_id for t in rendered]
-    has_incoming = await backlink_repo.filter_targets_with_incoming(rendered_ids)
-    orphans = [
-        Orphan(slug=t.slug, title=t.title)
-        for t in rendered
-        if t.topic_id not in has_incoming
-    ]
-    orphans.sort(key=lambda o: o.title.lower())
-    return orphans
 
 
 async def _walk_articles(
