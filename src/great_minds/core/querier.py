@@ -16,6 +16,7 @@ from uuid import UUID
 from openai import AsyncOpenAI
 
 from .brain import load_prompt
+from .brain_config import load_brain_config
 from .paths import wiki_slug
 from .search import search as hybrid_search
 from .markdown import extract_wiki_link_targets
@@ -322,9 +323,9 @@ async def read_document_enriched(
 ) -> str:
     """Read a document.
 
-    Backlinks will be attached here once phase 5 verify populates the
-    topic-id-keyed backlinks table from rendered prose. Until then this
-    is a straight pass-through to read_document.
+    Backlinks will be attached here once the retrieval surface consumes
+    verify's document-keyed backlinks table. Until then this is a straight
+    pass-through to read_document.
     """
     return await read_document(brains, path)
 
@@ -383,15 +384,16 @@ async def query_documents(
 
     parts = []
     for doc in results:
-        tags_str = f"  tags: {', '.join(doc.tags)}" if doc.tags else ""
+        metadata = doc.metadata
+        tags_str = f"  tags: {', '.join(metadata.tags)}" if metadata.tags else ""
         meta = f"  [{doc.doc_kind}] {doc.file_path}"
-        if doc.author:
-            meta += f" by {doc.author}"
-        if doc.published_date:
-            meta += f" ({doc.published_date})"
-        lines = [f"### {doc.title or doc.file_path}", meta]
-        if doc.genre:
-            lines.append(f"  genre: {doc.genre}")
+        if metadata.author:
+            meta += f" by {metadata.author}"
+        if metadata.published_date:
+            meta += f" ({metadata.published_date})"
+        lines = [f"### {metadata.title or doc.file_path}", meta]
+        if metadata.genre:
+            lines.append(f"  genre: {metadata.genre}")
         if tags_str:
             lines.append(tags_str)
         parts.append("\n".join(lines))
@@ -425,8 +427,8 @@ async def query_wiki_articles(
                 continue
             if slug_filter and slug != slug_filter:
                 continue
-            title = doc.title
-            description = doc.precis or ""
+            title = doc.metadata.title
+            description = doc.metadata.precis or ""
             if query_str and query_str not in title.lower() and query_str not in description.lower():
                 continue
             rows.append((src.label, slug, title, description))
@@ -471,50 +473,51 @@ async def _dispatch_tool(
 # ---------------------------------------------------------------------------
 
 
-async def _build_index_for_source(
+async def _build_identity_for_source(
     source: QuerySource, doc_repo: DocumentRepository
 ) -> str:
-    """Render a per-brain section of the system-prompt wiki index.
+    """Render a per-brain identity block for the system prompt.
 
-    A curated ``wiki/_index.md`` wins when present (compile pipeline
-    writes one). Otherwise we fall back to the documents table — the
-    authoritative registry — rather than globbing storage.
+    Identity gives the agent shape awareness (brain name, editorial
+    focus, corpus size) without listing every article. Article-level
+    discovery happens via tools: search_wiki, query_wiki_articles,
+    query_documents.
     """
-    index = await source.storage.read("wiki/_index.md", strict=False)
-    if index is not None:
-        return f"## [{source.label}]\n{index}"
-    docs = await doc_repo.list_by_kind(source.brain_id, DocKind.WIKI)
-    entries = [
-        f"  - {wiki_slug(d.file_path)}"
-        for d in docs
-        if not wiki_slug(d.file_path).startswith("_")
-    ]
-    if entries:
-        return f"## [{source.label}]\n" + "\n".join(entries)
-    return ""
+    config = await load_brain_config(source.storage)
+    wiki_count = await doc_repo.count_by_kind(source.brain_id, DocKind.WIKI)
+    raw_count = await doc_repo.count_by_kind(source.brain_id, DocKind.RAW)
+
+    focus = config.thematic_hint.strip() or "(no editorial focus set)"
+    return (
+        f"### {source.label}\n"
+        f"Focus: {focus}\n"
+        f"Coverage: {wiki_count} wiki article"
+        f"{'s' if wiki_count != 1 else ''}, "
+        f"{raw_count} raw source"
+        f"{'s' if raw_count != 1 else ''}."
+    )
 
 
 _RETRIEVAL_CORE = """\
-You have access to tools that let you read documents and search the knowledge \
-base. Use them to answer questions based on the actual texts in the knowledge base.
+You have access to tools that let you search and read documents in the \
+knowledge base. Use them to answer questions based on the actual texts.
 
 Approach:
-1. When asked a question, first consider which wiki articles are relevant \
-based on the index below.
-2. Read the relevant documents using the read_document tool \
-(e.g. wiki/slug.md).
-3. If you need more detail or want to verify a claim, follow the source \
-citations in the wiki article to read the raw primary texts \
-(e.g. raw/texts/...).
+1. Use `search_wiki` or `query_wiki_articles` to find articles relevant to \
+the question.
+2. Read the relevant articles via `read_document` (e.g. wiki/slug.md).
+3. To verify a claim or get more depth, follow source citations in the wiki \
+article to read raw primary texts (e.g. raw/texts/...).
+4. Use `query_documents` when filtering by tag, author, date, or kind.
 
 Rules:
-- Always ground your answers in the actual texts — do not rely on your \
-general knowledge. Use the tools.
+- Always ground answers in the actual texts via tools — do not rely on your \
+general knowledge.
 - If the knowledge base doesn't cover something, say so rather than making \
 it up.
 
-Current wiki index:
-{index}"""
+Knowledge base:
+{identity}"""
 
 
 async def build_system_prompt(
@@ -524,11 +527,11 @@ async def build_system_prompt(
     mode: QueryMode = QueryMode.QUERY,
     extra_instructions: str | None = None,
 ) -> str:
-    parts = [await _build_index_for_source(b, doc_repo) for b in brains]
-    index = "\n\n".join(p for p in parts if p) or "(no articles yet)"
+    parts = [await _build_identity_for_source(b, doc_repo) for b in brains]
+    identity = "\n\n".join(p for p in parts if p) or "(no brains configured)"
 
     # Layer 1: retrieval discipline (not overridable)
-    prompt = _RETRIEVAL_CORE.format(index=index)
+    prompt = _RETRIEVAL_CORE.format(identity=identity)
 
     # Layer 2: per-brain default persona
     storage = brains[0].storage

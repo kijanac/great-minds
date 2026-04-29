@@ -27,12 +27,19 @@ import re
 from dataclasses import dataclass
 from uuid import UUID
 
+from pydantic import BaseModel, ValidationError, field_validator
+
 from great_minds.core.brain import load_prompt
-from great_minds.core.llm.client import api_call, extract_content
+from great_minds.core.llm.client import json_llm_call
 from great_minds.core.markdown import serialize_frontmatter
-from great_minds.core.paths import wiki_path
+from great_minds.core.paths import source_cards_path, wiki_path
 from great_minds.core.documents.repository import DocumentRepository
-from great_minds.core.documents.schemas import DocKind, Document, DocumentCreate
+from great_minds.core.documents.schemas import (
+    DocKind,
+    Document,
+    DocumentCreate,
+    DocumentMetadata,
+)
 from great_minds.core.ideas.schemas import Anchor, Idea, SourceCard
 from great_minds.core.ideas.source_cards import SourceCardStore, index_ideas_by_id
 from great_minds.core.llm import RENDER_MODEL
@@ -48,6 +55,31 @@ log = logging.getLogger(__name__)
 PHASE = "render"
 _FOOTNOTE_RE = re.compile(r"\[\^(\d+)\]")
 _HEADING_RE = re.compile(r"^# ", re.MULTILINE)
+
+
+class _RenderOutput(BaseModel):
+    """LLM output contract for render. Transient — body is written to
+    storage, tags become DocumentMetadata.tags. Never persisted as a
+    bundle, so it lives here rather than in a domain schemas module.
+    """
+
+    body: str
+    tags: list[str]
+
+    @field_validator("tags")
+    @classmethod
+    def _normalize(cls, raw: list[str]) -> list[str]:
+        out: list[str] = []
+        seen: set[str] = set()
+        for item in raw:
+            tag = item.strip().lower().replace(" ", "-")
+            if not tag:
+                raise ValueError("tag is empty after normalization")
+            if tag in seen:
+                continue
+            seen.add(tag)
+            out.append(tag)
+        return out
 
 
 async def run(
@@ -107,7 +139,7 @@ async def run(
         return
 
     # Heavy context loaded only when at least one topic needs rendering.
-    source_cards = SourceCardStore.for_brain(ctx.sidecar_root).load_all()
+    source_cards = SourceCardStore(source_cards_path(ctx.sidecar_root)).load_all()
     idea_by_id = index_ideas_by_id(source_cards)
     docs = await _load_documents(ctx.session, ctx.brain_id)
     doc_by_id = {d.id: d for d in docs}
@@ -225,13 +257,12 @@ async def _render_one(
 
     try:
         async with sem:
-            response = await api_call(
+            data = await json_llm_call(
                 ctx.client,
                 model=RENDER_MODEL,
                 messages=[{"role": "user", "content": prompt}],
                 temperature=0.3,
             )
-            raw_body = extract_content(response) or ""
     except Exception as e:
         outcome.error = f"llm_call:{repr(e)[:200]}"
         log_event(
@@ -244,18 +275,21 @@ async def _render_one(
         return outcome
 
     try:
-        body = _validate_and_postprocess(raw_body, numbered_anchors)
-    except ValueError as e:
-        outcome.error = f"body_invalid:{str(e)[:200]}"
+        output = _RenderOutput.model_validate(data)
+        body = _validate_and_postprocess(output.body, numbered_anchors)
+    except (ValidationError, ValueError) as e:
+        outcome.error = f"body_invalid:{type(e).__name__}:{str(e)[:200]}"
         log_event(
             "render.body_invalid",
             level=logging.WARNING,
             brain_id=str(ctx.brain_id),
             topic_slug=topic.slug,
             error=outcome.error,
-            body_preview=raw_body[:300],
+            response_preview=str(data)[:300],
         )
         return outcome
+
+    tags = output.tags
 
     fm = {
         "topic_id": str(topic.topic_id),
@@ -277,13 +311,21 @@ async def _render_one(
             content=full_content,
             doc_kind=DocKind.WIKI,
             compiled=True,
-            title=topic.title,
-            precis=topic.description,
-            extra_metadata={"topic_id": str(topic.topic_id)},
+            metadata=DocumentMetadata(
+                title=topic.title,
+                author=None,
+                published_date=None,
+                url=None,
+                origin=None,
+                genre=None,
+                precis=topic.description,
+                tags=tags,
+                extra_metadata={"topic_id": str(topic.topic_id)},
+            ),
         ),
     )
 
-    ctx.cache.put(PHASE, cache_key, {"body": body})
+    ctx.cache.put(PHASE, cache_key, {"body": body, "tags": tags})
     outcome.rendered_from_hash = compiled_from_hash
     return outcome
 
@@ -374,8 +416,8 @@ def _render_link_targets_block(
 
 
 def _source_label(doc: Document) -> str:
-    title = (doc.title or "").strip() or "Untitled"
-    date = (doc.published_date or "").strip()
+    title = (doc.metadata.title or "").strip() or "Untitled"
+    date = (doc.metadata.published_date or "").strip()
     return f"{title} ({date})" if date else title
 
 

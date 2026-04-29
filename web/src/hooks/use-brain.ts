@@ -3,6 +3,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import {
   type BrainOverview,
+  type CreateBrainInput,
   createBrain as apiCreateBrain,
   fetchBrains,
   getBrainId,
@@ -38,9 +39,9 @@ export function useActiveBrain() {
 
 export function useCreateBrain() {
   const qc = useQueryClient();
-  return useMutation<BrainOverview, Error, string>({
-    mutationFn: async (name) => {
-      const brain = await apiCreateBrain(name);
+  return useMutation<BrainOverview, Error, CreateBrainInput>({
+    mutationFn: async (input) => {
+      const brain = await apiCreateBrain(input);
       storeBrainId(brain.id);
       return brain;
     },

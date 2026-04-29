@@ -4,9 +4,15 @@ import logging
 from uuid import UUID
 
 from great_minds.core.brain import load_default_config_text
+from great_minds.core.brain_config import apply_brain_config_overrides
 from great_minds.core.brains.models import BrainMembership, MemberRole
 from great_minds.core.brains.repository import BrainRepository
-from great_minds.core.brains.schemas import Brain
+from great_minds.core.brains.schemas import (
+    Brain,
+    BrainWithRole,
+    MemberWithEmail,
+)
+from great_minds.core.pagination import Page, PageInfo, PageParams
 from great_minds.core.paths import CONFIG_PATH
 from great_minds.core.querier import QuerySource
 from great_minds.core.storage import Storage
@@ -30,48 +36,70 @@ class BrainService:
     def get_storage_by_id(self, brain_id: UUID) -> Storage:
         return make_storage(brain_id)
 
-    async def get_by_id(self, brain_id: UUID) -> Brain:
+    async def get_brain(self, brain_id: UUID) -> Brain:
         """Fetch a brain by ID. Raises ValueError if not found."""
         brain = await self.repo.get_by_id(brain_id)
         if brain is None:
             raise ValueError(f"Brain {brain_id} not found")
         return brain
 
-    async def get_brain(
-        self, brain_id: UUID, user_id: UUID
-    ) -> tuple[Brain, MemberRole]:
-        """Fetch a brain by ID with access check. Raises ValueError if not found."""
-        result = await self.repo.get_brain_with_role(brain_id, user_id)
-        if result is None:
-            raise ValueError(f"Brain {brain_id} not found or not accessible")
-        return result
+    async def list_brains(
+        self, user_id: UUID, *, limit: int = 50, offset: int = 0
+    ) -> list[tuple[Brain, MemberRole]]:
+        return await self.repo.list_user_brains(user_id, limit=limit, offset=offset)
 
-    async def is_member(self, brain_id: UUID, user_id: UUID) -> bool:
-        return await self.repo.is_member(brain_id, user_id)
-
-    async def require_owner(
-        self, brain_id: UUID, user_id: UUID
-    ) -> tuple[Brain, MemberRole]:
-        """Fetch a brain and verify the user is an owner. Raises PermissionError if not."""
-        result = await self.repo.get_brain_with_role(brain_id, user_id)
-        if result is None:
-            raise PermissionError(f"Brain {brain_id} not found or not accessible")
-        brain, role = result
-        if role != MemberRole.OWNER:
-            raise PermissionError("Only brain owners can perform this action")
-        return brain, role
-
-    async def list_brains(self, user_id: UUID) -> list[tuple[Brain, MemberRole]]:
-        return await self.repo.list_user_brains(user_id)
+    async def list_brains_page(
+        self, user_id: UUID, *, pagination: PageParams
+    ) -> Page[BrainWithRole]:
+        rows = await self.repo.list_user_brains(
+            user_id, limit=pagination.limit, offset=pagination.offset
+        )
+        total = await self.repo.count_user_brains(user_id)
+        return Page(
+            items=[
+                BrainWithRole(brain=brain, role=role)
+                for brain, role in rows
+            ],
+            pagination=PageInfo(
+                limit=pagination.limit,
+                offset=pagination.offset,
+                total=total,
+            ),
+        )
 
     async def create_brain(
-        self, name: str, owner_id: UUID, *, commit: bool = True
+        self,
+        name: str,
+        owner_id: UUID,
+        *,
+        thematic_hint: str | None = None,
+        kinds: list[str] | None = None,
+        commit: bool = True,
     ) -> tuple[Brain, MemberRole]:
         brain, role = await self.repo.create_brain(name, owner_id)
         await self._init_brain_storage(brain)
+        if thematic_hint is not None or kinds is not None:
+            await apply_brain_config_overrides(
+                self.get_storage(brain),
+                thematic_hint=thematic_hint,
+                kinds=kinds,
+            )
         if commit:
             await self._commit()
         return brain, role
+
+    async def update_config(
+        self,
+        brain_id: UUID,
+        *,
+        thematic_hint: str | None = None,
+        kinds: list[str] | None = None,
+    ) -> None:
+        await apply_brain_config_overrides(
+            self.get_storage_by_id(brain_id),
+            thematic_hint=thematic_hint,
+            kinds=kinds,
+        )
 
     async def _init_brain_storage(self, brain: Brain) -> None:
         storage = self.get_storage(brain)
@@ -80,7 +108,7 @@ class BrainService:
 
     async def get_all_query_sources(self, user_id: UUID) -> list[QuerySource]:
         """Build QuerySources for all brains a user has access to."""
-        rows = await self.repo.list_user_brains(user_id)
+        rows = await self.repo.list_user_brains(user_id, limit=None, offset=0)
         return [
             QuerySource(
                 storage=self.get_storage(brain),
@@ -93,8 +121,33 @@ class BrainService:
     async def get_member_count(self, brain_id: UUID) -> int:
         return await self.repo.get_member_count(brain_id)
 
-    async def list_members(self, brain_id: UUID) -> list[tuple[BrainMembership, str]]:
-        return await self.repo.list_members(brain_id)
+    async def list_members(
+        self, brain_id: UUID, *, limit: int = 50, offset: int = 0
+    ) -> list[tuple[BrainMembership, str]]:
+        return await self.repo.list_members(brain_id, limit=limit, offset=offset)
+
+    async def list_members_page(
+        self, brain_id: UUID, *, pagination: PageParams
+    ) -> Page[MemberWithEmail]:
+        rows = await self.repo.list_members(
+            brain_id, limit=pagination.limit, offset=pagination.offset
+        )
+        total = await self.repo.get_member_count(brain_id)
+        return Page(
+            items=[
+                MemberWithEmail(
+                    user_id=membership.user_id,
+                    role=membership.role,
+                    email=email,
+                )
+                for membership, email in rows
+            ],
+            pagination=PageInfo(
+                limit=pagination.limit,
+                offset=pagination.offset,
+                total=total,
+            ),
+        )
 
     async def upsert_membership(
         self, brain_id: UUID, user_id: UUID, role: MemberRole

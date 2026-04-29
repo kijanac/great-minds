@@ -4,9 +4,10 @@ import uuid
 from datetime import datetime
 from enum import StrEnum
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 from great_minds.core.ingester import UNIVERSAL_ALL
+from great_minds.core.pagination import FacetCount
 
 
 class DocKind(StrEnum):
@@ -15,6 +16,22 @@ class DocKind(StrEnum):
 
 
 _UNIVERSAL_KEYS = frozenset(UNIVERSAL_ALL) | {"url"}
+
+
+class DocumentMetadata(BaseModel):
+    """Source and enrichment metadata for an indexed document."""
+
+    title: str = ""
+    author: str | None = None
+    published_date: str | None = None
+    url: str | None = None
+    origin: str | None = None
+    genre: str | None = None
+    precis: str | None = None
+    # NULL for rendered wiki rows; populated for raw docs.
+    source_type: str | None = None
+    tags: list[str] = Field(default_factory=list)
+    extra_metadata: dict = Field(default_factory=dict)
 
 
 class DocumentCreate(BaseModel):
@@ -26,30 +43,11 @@ class DocumentCreate(BaseModel):
 
     model_config = ConfigDict(extra="ignore")
 
-    # Structural
     file_path: str
     content: str
     doc_kind: str = DocKind.RAW
-    # None for rendered wiki articles; populated (texts/news/ideas/...)
-    # for raw docs per brain config.
-    source_type: str | None = None
-    url: str | None = None
     compiled: bool = False
-
-    # Universal frontmatter
-    title: str = ""
-    author: str | None = None
-    origin: str | None = None
-    published_date: str | None = None
-    genre: str | None = None
-    tags: list[str] = []
-
-    # Precis: 2-3 sentence summary. Raw docs get this from extract;
-    # rendered wiki articles get it from the topic's description.
-    precis: str | None = None
-
-    # Config-driven metadata (tradition, interlocutors, etc.)
-    extra_metadata: dict = {}
+    metadata: DocumentMetadata = Field(default_factory=DocumentMetadata)
 
     @staticmethod
     def from_frontmatter(
@@ -68,21 +66,23 @@ class DocumentCreate(BaseModel):
             file_path=file_path,
             content=content,
             doc_kind=doc_kind,
-            source_type=fm["source_type"],
-            url=fm.get("url"),
             compiled=fm.get("compiled", False),
-            title=fm.get("title", ""),
-            author=fm.get("author"),
-            origin=fm.get("origin"),
-            published_date=str(fm["date"]) if "date" in fm else None,
-            genre=fm.get("genre"),
-            tags=fm.get("tags", []),
-            extra_metadata=extra,
+            metadata=DocumentMetadata(
+                source_type=fm.get("source_type"),
+                url=fm.get("url"),
+                title=fm.get("title", ""),
+                author=fm.get("author"),
+                origin=fm.get("origin"),
+                published_date=str(fm["date"]) if "date" in fm else None,
+                genre=fm.get("genre"),
+                tags=fm.get("tags", []),
+                extra_metadata=extra,
+            ),
         )
 
 
 class Document(BaseModel):
-    """Full document domain model. Returned by queries."""
+    """Indexed document record. Body content lives in storage."""
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -90,18 +90,31 @@ class Document(BaseModel):
     brain_id: uuid.UUID
     file_path: str
     body_hash: str
-    title: str
-    author: str | None
-    published_date: str | None
-    url: str | None
-    origin: str | None
-    genre: str | None
-    precis: str | None = None
     compiled: bool
     doc_kind: str
-    # NULL for rendered wiki rows; populated for raw docs.
-    source_type: str | None = None
-    tags: list[str] = []
-    extra_metadata: dict = {}
+    metadata: DocumentMetadata
     created_at: datetime | None = None
     updated_at: datetime | None = None
+
+
+class WikiArticleSummary(BaseModel):
+    """Wiki article browse-row shape.
+
+    Slug is what URLs use; title is the headline. precis and updated_at
+    are optional — populated for the wiki browse page, left None for
+    surfaces (like lint orphans) that only need the slug+title pair.
+    """
+
+    slug: str
+    title: str
+    precis: str | None = None
+    updated_at: datetime | None = None
+
+
+class Backlink(BaseModel):
+    source_document_id: uuid.UUID
+    target_document_id: uuid.UUID
+
+
+class SourceDocumentFacets(BaseModel):
+    content_types: list[FacetCount] = Field(default_factory=list)

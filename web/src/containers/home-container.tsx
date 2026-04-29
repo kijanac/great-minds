@@ -1,10 +1,10 @@
 import { useCallback, useState } from "react";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import { Home } from "lucide-react";
+import { Navigate } from "react-router";
 
 import { Button } from "@/components/ui/button";
 import { ErrorState, Spinner } from "@/components/ui/feedback";
-import { FirstRun } from "@/containers/first-run";
 import { IngestionContainer } from "@/containers/ingestion-container";
 import { ProjectSwitcher } from "@/containers/project-switcher";
 import { SearchBar } from "@/components/search-bar";
@@ -39,7 +39,7 @@ export function HomeContainer({ sessionId, initialQuery, origin }: HomeContainer
   if (brains.isLoading) return <Spinner label="Loading…" />;
 
   if ((brains.data?.length ?? 0) === 0 && !sessionId) {
-    return <FirstRun />;
+    return <Navigate to="/brains/new" replace />;
   }
 
   if (sessionId) {
@@ -185,7 +185,7 @@ function HomeContent({ sessionId, initialExchanges, initialQuery, origin }: Home
                 <div className="flex-1 min-w-0">
                   <SearchBar
                     {...searchBarProps}
-                    recentSessions={sessions.data ?? []}
+                    recentSessions={sessions.data?.items ?? []}
                     sessionsLoading={sessions.isLoading}
                     onSessionClick={(id) => navigate(`/sessions/${id}`)}
                     onViewAllSessions={() => navigate("/sessions")}

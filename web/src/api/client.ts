@@ -1,6 +1,10 @@
 import { z } from "zod";
 
-import { brainOverviewSchema, type BrainOverview } from "./schemas";
+import {
+  brainOverviewListSchema,
+  brainOverviewSchema,
+  type BrainOverview,
+} from "./schemas";
 
 export type { BrainOverview } from "./schemas";
 
@@ -14,14 +18,6 @@ const authTokensSchema = z.object({
   access_token: z.string(),
   refresh_token: z.string(),
 });
-
-const brainIdListSchema = z.array(
-  z.object({
-    id: z.string(),
-  }),
-);
-
-const brainOverviewListSchema = z.array(brainOverviewSchema);
 
 function getAccessToken(): string | null {
   return localStorage.getItem("access_token");
@@ -86,9 +82,9 @@ async function resolveDefaultBrain(): Promise<string> {
   const res = await apiFetch("/brains");
   if (!res.ok) throw new Error("Failed to fetch brains");
 
-  const brains = await readJson(res, brainIdListSchema);
-  if (!brains.length) throw new Error("No brains found");
-  return brains[0].id;
+  const brains = await readJson(res, brainOverviewListSchema);
+  if (!brains.items.length) throw new Error("No brains found");
+  return brains.items[0].id;
 }
 
 export function brainPath(path: string): string {
@@ -148,14 +144,21 @@ export async function loginWithCode(email: string, code: string): Promise<void> 
 export async function fetchBrains(): Promise<BrainOverview[]> {
   const res = await apiFetch("/brains");
   if (!res.ok) throw new Error("Failed to fetch brains");
-  return readJson(res, brainOverviewListSchema);
+  const parsed = await readJson(res, brainOverviewListSchema);
+  return parsed.items;
 }
 
-export async function createBrain(name: string): Promise<BrainOverview> {
+export interface CreateBrainInput {
+  name: string;
+  thematic_hint?: string;
+  kinds?: string[];
+}
+
+export async function createBrain(input: CreateBrainInput): Promise<BrainOverview> {
   const res = await apiFetch("/brains", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ name }),
+    body: JSON.stringify(input),
   });
   if (!res.ok) throw new Error("Failed to create project");
   return readJson(res, brainOverviewSchema);

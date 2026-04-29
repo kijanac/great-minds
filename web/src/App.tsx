@@ -6,6 +6,7 @@ import { AppShell } from "@/components/app-shell";
 import { CornerMenuContainer } from "@/containers/corner-menu-container";
 import { AuthProvider, useAuth } from "@/lib/auth";
 import { queryClient } from "@/lib/query-client";
+import BrainNewPage from "@/pages/brain-new";
 import HomePage from "@/pages/home";
 import LoginPage from "@/pages/login";
 import DocPage, { docLoader } from "@/pages/doc";
@@ -14,6 +15,7 @@ import ProjectSettingsPage from "@/pages/project-settings";
 import SessionPage from "@/pages/session";
 import SessionsPage from "@/pages/sessions";
 import SourcesPage from "@/pages/sources";
+import WikiPage from "@/pages/wiki";
 
 function RootLayout() {
   return (
@@ -52,6 +54,7 @@ const router = createBrowserRouter([
         element: <RequireAuth />,
         children: [
           { path: "/", element: <HomePage /> },
+          { path: "/brains/new", element: <BrainNewPage /> },
           {
             path: "/doc/*",
             element: <DocPage />,
@@ -59,6 +62,7 @@ const router = createBrowserRouter([
           },
           { path: "/explore", element: <ExplorePage /> },
           { path: "/sources", element: <SourcesPage /> },
+          { path: "/wiki", element: <WikiPage /> },
           { path: "/project/:id/settings", element: <ProjectSettingsPage /> },
           { path: "/sessions", element: <SessionsPage /> },
           { path: "/sessions/:id", element: <SessionPage /> },

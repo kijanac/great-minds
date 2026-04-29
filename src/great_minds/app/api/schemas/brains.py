@@ -24,13 +24,33 @@ class BrainDetail(Brain):
 
 class BrainCreate(BaseModel):
     name: str
+    thematic_hint: str | None = None
+    kinds: list[str] | None = None
 
 
 class BrainUpdate(BaseModel):
     name: str | None = None
 
 
-class MembershipOverview(BaseModel):
+class BrainConfigUpdate(BaseModel):
+    thematic_hint: str | None = None
+    kinds: list[str] | None = None
+
+
+class BrainConfig(BaseModel):
+    thematic_hint: str
+    kinds: list[str]
+
+
+class DraftHintRequest(BaseModel):
+    description: str
+
+
+class DraftHintResponse(BaseModel):
+    thematic_hint: str
+
+
+class Membership(BaseModel):
     user_id: uuid.UUID
     email: str
     role: MemberRole
