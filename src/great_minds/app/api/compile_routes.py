@@ -10,13 +10,12 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, status
 
 from great_minds.app.api.dependencies import (
+    BrainMemberGuard,
     get_compile_intent_repository,
-    require_brain_member,
     require_llm,
 )
 from great_minds.app.api.schemas.tasks import CompileRequest
-from great_minds.core.compile_intents.repository import CompileIntentRepository
-from great_minds.core.compile_intents.schemas import CompileIntent
+from great_minds.core.compile_intents import CompileIntent, CompileIntentRepository
 from great_minds.core.telemetry import log_event
 
 router = APIRouter(prefix="/compile", tags=["compile"])
@@ -26,8 +25,8 @@ router = APIRouter(prefix="/compile", tags=["compile"])
 async def request_compile(
     req: CompileRequest,
     brain_id: UUID,
+    _auth: BrainMemberGuard,
     intent_repo: CompileIntentRepository = Depends(get_compile_intent_repository),
-    _auth: None = Depends(require_brain_member),
     _llm: None = Depends(require_llm),
 ) -> CompileIntent:
     del req  # reserved for future compile options
@@ -55,8 +54,8 @@ async def request_compile(
 async def get_compile_intent(
     intent_id: UUID,
     brain_id: UUID,
+    _auth: BrainMemberGuard,
     intent_repo: CompileIntentRepository = Depends(get_compile_intent_repository),
-    _auth: None = Depends(require_brain_member),
 ) -> CompileIntent:
     record = await intent_repo.get(intent_id)
     if record is None or record.brain_id != brain_id:

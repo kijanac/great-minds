@@ -7,7 +7,7 @@ import type {
   UnmentionedLink,
   UnresolvedCitation,
 } from "@/api/explore";
-import type { ContentTypeCount } from "@/api/sources";
+import type { ContentTypeFacet } from "@/api/sources";
 import { Button } from "@/components/ui/button";
 import { CHIP_BASE, CHIP_INACTIVE } from "@/lib/chip";
 import { cn, formatShortDate } from "@/lib/utils";
@@ -18,7 +18,7 @@ interface ExplorePageProps {
   unresolvedCitations: UnresolvedCitation[];
   unmentionedLinks: UnmentionedLink[];
   recentArticles: RecentArticle[];
-  contentTypes: ContentTypeCount[];
+  contentTypes: ContentTypeFacet[];
   loading: boolean;
   onHome: () => void;
   onArticleClick: (path: string) => void;
@@ -105,11 +105,11 @@ export function ExplorePage({
                       </button>
                       {contentTypes.map((ct) => (
                         <button
-                          key={ct.content_type}
-                          onClick={() => onExploreSources(ct.content_type)}
+                          key={ct.value}
+                          onClick={() => onExploreSources(ct.value)}
                           className={CHIP_CLASS}
                         >
-                          {ct.content_type} · {ct.count}
+                          {ct.value} · {ct.count}
                         </button>
                       ))}
                     </>
@@ -232,7 +232,7 @@ export function ExplorePage({
                         className="w-full h-auto py-2.5 px-3 rounded-sm justify-between hover:bg-ink-raised group"
                       >
                         <span className="font-serif text-[length:var(--text-body)] text-warm-dim group-hover:text-warm transition-colors truncate text-left">
-                          {a.title}
+                          {a.metadata.title}
                         </span>
                         <span className="font-mono text-[length:var(--text-chrome)] text-warm-ghost shrink-0 ml-4">
                           {formatShortDate(a.updated_at)}

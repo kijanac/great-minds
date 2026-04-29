@@ -22,7 +22,7 @@ from __future__ import annotations
 import logging
 from uuid import UUID
 
-from great_minds.core.articles.repository import BacklinkRepository
+from great_minds.core.documents import Backlink, DocKind, Document, DocumentRepository
 from great_minds.core.markdown import extract_wiki_link_targets
 from great_minds.core.paths import wiki_path, wiki_slug
 from great_minds.core.pipeline.context import PipelineContext
@@ -47,11 +47,14 @@ async def run(ctx: PipelineContext) -> None:
 
     slug_to_topic = {t.slug: t for t in rendered}
     topic_id_set = {t.topic_id for t in rendered}
+    article_by_path = await _load_wiki_articles(ctx)
 
-    backlinks: list[tuple[UUID, UUID, str]] = []
+    backlinks: list[Backlink] = []
+    source_document_ids: list[UUID] = []
     # source_topic_id -> set of cited slugs found in its prose (for unmentioned check)
     cited_by_source: dict[UUID, set[str]] = {}
     unresolved_count = 0
+    missing_document_count = 0
     articles_walked = 0
 
     for topic in rendered:
@@ -68,6 +71,19 @@ async def run(ctx: PipelineContext) -> None:
             )
             continue
 
+        source_article = article_by_path.get(article_path)
+        if source_article is None:
+            missing_document_count += 1
+            log_event(
+                "verify.missing_source_article_document",
+                level=logging.WARNING,
+                brain_id=str(ctx.brain_id),
+                topic_slug=topic.slug,
+                article_path=article_path,
+            )
+            continue
+
+        source_document_ids.append(source_article.id)
         articles_walked += 1
         link_paths = extract_wiki_link_targets(content)
         cited_slugs: set[str] = set()
@@ -88,8 +104,24 @@ async def run(ctx: PipelineContext) -> None:
             if target.topic_id == topic.topic_id:
                 # Self-reference — skip (not a semantic backlink)
                 continue
+            target_article = article_by_path.get(wiki_path(target.slug))
+            if target_article is None:
+                missing_document_count += 1
+                log_event(
+                    "verify.missing_target_article_document",
+                    level=logging.WARNING,
+                    brain_id=str(ctx.brain_id),
+                    source_slug=topic.slug,
+                    target_slug=target.slug,
+                )
+                continue
             cited_slugs.add(slug)
-            backlinks.append((target.topic_id, topic.topic_id, article_path))
+            backlinks.append(
+                Backlink(
+                    source_document_id=source_article.id,
+                    target_document_id=target_article.id,
+                )
+            )
 
         cited_by_source[topic.topic_id] = cited_slugs
 
@@ -103,8 +135,11 @@ async def run(ctx: PipelineContext) -> None:
         cited_by_source=cited_by_source,
     )
 
-    backlink_repo = BacklinkRepository(ctx.session)
-    await backlink_repo.replace_for_brain(ctx.brain_id, backlinks)
+    doc_repo = DocumentRepository(ctx.session)
+    await doc_repo.update_wiki_backlinks(
+        source_document_ids=source_document_ids,
+        backlinks=backlinks,
+    )
     await ctx.session.commit()
 
     enrich(
@@ -112,6 +147,7 @@ async def run(ctx: PipelineContext) -> None:
         verify_backlink_edges=len(backlinks),
         verify_unresolved_citations=unresolved_count,
         verify_unmentioned_links=unmentioned_count,
+        verify_missing_article_documents=missing_document_count,
     )
     log_event(
         "pipeline.verify_completed",
@@ -120,7 +156,13 @@ async def run(ctx: PipelineContext) -> None:
         backlink_edges=len(backlinks),
         unresolved_citations=unresolved_count,
         unmentioned_links=unmentioned_count,
+        missing_article_documents=missing_document_count,
     )
+
+
+async def _load_wiki_articles(ctx: PipelineContext) -> dict[str, Document]:
+    docs = await DocumentRepository(ctx.session).list_by_kind(ctx.brain_id, DocKind.WIKI)
+    return {doc.file_path: doc for doc in docs}
 
 
 async def _detect_unmentioned_links(

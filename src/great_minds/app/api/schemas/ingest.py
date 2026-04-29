@@ -1,35 +1,29 @@
 """Ingest request/response schemas."""
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from great_minds.core.ingest_service import UserSuggestionIntent
+from great_minds.core.sources import SourceMetadata
 
 
-class IngestRequest(BaseModel):
+class RawSource(BaseModel):
     content: str
-    content_type: str = "texts"
-    title: str | None = None
-    author: str | None = None
-    published_date: str | None = None
-    origin: str | None = None
-    url: str | None = None
-    source_type: str = "document"
     dest: str
+    metadata: SourceMetadata = Field(default_factory=SourceMetadata)
 
 
-class IngestUrlRequest(BaseModel):
+class URLSource(BaseModel):
     url: str
-    content_type: str = "texts"
-    source_type: str = "document"
+    metadata: SourceMetadata = Field(default_factory=SourceMetadata)
 
 
-class UserSuggestionRequest(BaseModel):
+class UserSuggestion(BaseModel):
     body: str
     intent: UserSuggestionIntent
     anchored_to: str = ""
     anchored_section: str = ""
 
 
-class IngestResponse(BaseModel):
+class IngestResult(BaseModel):
     file_path: str
     title: str

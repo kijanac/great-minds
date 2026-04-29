@@ -1,6 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 
-import { getCompileIntent, type CompileIntent } from "@/api/ingest";
+import { getCompileIntent, type CompileIntent } from "@/api/compile";
 import { useActiveBrainId } from "@/hooks/use-brain";
 
 const POLL_MS = 2000;

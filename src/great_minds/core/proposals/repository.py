@@ -2,7 +2,7 @@
 
 from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import Select, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from great_minds.core.proposals.models import ProposalStatus, SourceProposal
@@ -23,17 +23,28 @@ class ProposalRepository:
         brain_id: UUID,
         *,
         status: ProposalStatus | None = None,
+        limit: int = 50,
+        offset: int = 0,
     ) -> list[SourceProposal]:
         query = (
-            select(SourceProposal)
-            .where(SourceProposal.brain_id == brain_id)
+            _proposal_query(brain_id, status=status)
             .order_by(SourceProposal.created_at.desc())
+            .offset(offset)
+            .limit(limit)
         )
-        if status is not None:
-            query = query.where(SourceProposal.status == status)
-
         result = await self.session.execute(query)
         return list(result.scalars())
+
+    async def count_for_brain(
+        self,
+        brain_id: UUID,
+        *,
+        status: ProposalStatus | None = None,
+    ) -> int:
+        filtered = _proposal_query(brain_id, status=status).subquery()
+        return (
+            await self.session.scalar(select(func.count()).select_from(filtered))
+        ) or 0
 
     async def get(self, proposal_id: UUID, brain_id: UUID) -> SourceProposal | None:
         result = await self.session.execute(
@@ -46,3 +57,12 @@ class ProposalRepository:
 
     async def refresh(self, proposal: SourceProposal) -> None:
         await self.session.refresh(proposal)
+
+
+def _proposal_query(
+    brain_id: UUID, *, status: ProposalStatus | None = None
+) -> Select[tuple[SourceProposal]]:
+    query = select(SourceProposal).where(SourceProposal.brain_id == brain_id)
+    if status is not None:
+        query = query.where(SourceProposal.status == status)
+    return query

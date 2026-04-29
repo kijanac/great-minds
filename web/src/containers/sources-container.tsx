@@ -2,9 +2,9 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useSearchParams } from "react-router";
 
 import {
-  type ContentTypeCount,
-  type RawSourceItem,
-  fetchRawSources,
+  type ContentTypeFacet,
+  type SourceDocumentSummary,
+  fetchSourceDocuments,
 } from "@/api/sources";
 import { SourcesPage } from "@/components/sources-page";
 import { useViewNavigate } from "@/hooks/use-view-navigate";
@@ -18,8 +18,8 @@ export function SourcesContainer() {
 
   const initialType = searchParams.get("type") || null;
 
-  const [items, setItems] = useState<RawSourceItem[]>([]);
-  const [contentTypes, setContentTypes] = useState<ContentTypeCount[]>([]);
+  const [items, setItems] = useState<SourceDocumentSummary[]>([]);
+  const [contentTypes, setContentTypes] = useState<ContentTypeFacet[]>([]);
   const [activeType, setActiveType] = useState<string | null>(initialType);
   const [search, setSearch] = useState("");
   const [loading, setLoading] = useState(true);
@@ -43,7 +43,7 @@ export function SourcesContainer() {
     }) => {
       setLoading(true);
       try {
-        const data = await fetchRawSources({
+        const data = await fetchSourceDocuments({
           content_type: params.content_type || undefined,
           search: params.search || undefined,
           limit: PAGE_SIZE,
@@ -53,9 +53,11 @@ export function SourcesContainer() {
           params.append ? [...prev, ...data.items] : data.items,
         );
         if (!params.append) {
-          setContentTypes(data.content_types);
+          setContentTypes(data.facets.content_types ?? []);
         }
-        setHasMore(data.items.length === PAGE_SIZE);
+        setHasMore(
+          data.pagination.offset + data.items.length < data.pagination.total,
+        );
       } catch {
         if (!params.append) {
           setItems([]);

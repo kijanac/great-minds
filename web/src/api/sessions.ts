@@ -1,7 +1,13 @@
 import { z } from "zod";
 
 import { apiFetch, brainPath, readJson } from "./client";
-import { btwMessageSchema, thinkingBlockSchema, type BtwMessage, type ThinkingBlock } from "./schemas";
+import {
+  btwMessageSchema,
+  paginatedSchema,
+  thinkingBlockSchema,
+  type BtwMessage,
+  type ThinkingBlock,
+} from "./schemas";
 
 export interface ExchangePayload {
   query: string;
@@ -68,8 +74,11 @@ const sessionResponseSchema = z.object({
   events: z.array(sessionEventSchema),
 });
 
+const sessionListSchema = paginatedSchema(sessionSummarySchema);
+
 export type SessionEvent = z.infer<typeof sessionEventSchema>;
 export type SessionSummary = z.infer<typeof sessionSummarySchema>;
+export type SessionList = z.infer<typeof sessionListSchema>;
 
 export async function createSession(
   sessionId: string,
@@ -111,10 +120,18 @@ export async function appendBtw(sessionId: string, btw: BtwPayload): Promise<str
   return data.path;
 }
 
-export async function listSessions(): Promise<SessionSummary[]> {
-  const res = await apiFetch(brainPath(`/sessions`));
+export async function listSessions(params?: {
+  limit?: number;
+  offset?: number;
+}): Promise<SessionList> {
+  const query = new URLSearchParams();
+  if (params?.limit !== undefined) query.set("limit", String(params.limit));
+  if (params?.offset !== undefined) query.set("offset", String(params.offset));
+
+  const qs = query.toString();
+  const res = await apiFetch(brainPath(`/sessions${qs ? `?${qs}` : ""}`));
   if (!res.ok) throw new Error(`Failed to list sessions: ${res.status}`);
-  return readJson(res, z.array(sessionSummarySchema));
+  return readJson(res, sessionListSchema);
 }
 
 export async function loadSession(

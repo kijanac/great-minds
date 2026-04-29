@@ -24,16 +24,10 @@ import json
 from dataclasses import dataclass
 from pathlib import Path
 
-from great_minds.core.paths import cache_root
-
 
 @dataclass
 class ContentHashCache:
     root: Path  # <sidecar>/cache/
-
-    @classmethod
-    def for_brain(cls, sidecar: Path) -> "ContentHashCache":
-        return cls(cache_root(sidecar))
 
     def _path(self, phase: str, key: str) -> Path:
         return self.root / phase / f"{key}.json"

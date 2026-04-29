@@ -3,7 +3,7 @@
 from datetime import UTC, datetime
 from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -34,15 +34,23 @@ class TaskRepository:
         return record
 
     async def list_for_brain(
-        self, brain_id: UUID, limit: int = 100
+        self, brain_id: UUID, limit: int = 50, offset: int = 0
     ) -> list[TaskRecord]:
         rows = await self.session.execute(
             select(TaskRecord)
             .where(TaskRecord.brain_id == brain_id)
             .order_by(TaskRecord.created_at.desc())
+            .offset(offset)
             .limit(limit)
         )
         return list(rows.scalars().all())
+
+    async def count_for_brain(self, brain_id: UUID) -> int:
+        return (
+            await self.session.scalar(
+                select(func.count()).where(TaskRecord.brain_id == brain_id)
+            )
+        ) or 0
 
     async def get(self, task_id: UUID, brain_id: UUID) -> TaskRecord | None:
         row = await self.session.execute(

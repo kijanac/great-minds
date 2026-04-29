@@ -11,9 +11,11 @@ interface SessionListProps {
   sessions: SessionSummary[];
   loading: boolean;
   error?: Error | null;
+  hasMore: boolean;
   onRetry?: () => void;
   onSessionClick: (id: string) => void;
   onHome: () => void;
+  onLoadMore: () => void;
 }
 
 function formatDate(iso: string): string {
@@ -29,9 +31,11 @@ export function SessionList({
   sessions,
   loading,
   error,
+  hasMore,
   onRetry,
   onSessionClick,
   onHome,
+  onLoadMore,
 }: SessionListProps) {
   const [filter, setFilter] = useState("");
 
@@ -125,6 +129,18 @@ export function SessionList({
                 </Button>
               </div>
             ))}
+
+          {!error && !filter && hasMore && !loading && (
+            <div className="mt-6 text-center">
+              <Button
+                variant="ghost"
+                onClick={onLoadMore}
+                className="font-mono text-[length:var(--text-chrome)] tracking-[0.1em] text-gold-muted hover:text-gold hover:bg-transparent h-auto px-3 py-1.5"
+              >
+                load more
+              </Button>
+            </div>
+          )}
         </div>
       </div>
     </div>

@@ -3,7 +3,7 @@
 Full schema for the seven-phase pipeline: users, auth, brains,
 memberships, proposals, tasks, compile_intents (outbox), search index,
 documents, idea_embeddings, topics + topic_membership + topic_links +
-topic_related, backlinks (keyed by topic_id), and the absurd task queue.
+topic_related, backlinks (keyed by document_id), and the absurd task queue.
 
 Revision ID: 0001
 Revises:
@@ -450,18 +450,23 @@ def upgrade() -> None:
         text(
             """
             CREATE TABLE backlinks (
-                target_topic_id     uuid NOT NULL REFERENCES topics(topic_id) ON DELETE CASCADE,
-                source_topic_id     uuid NOT NULL REFERENCES topics(topic_id) ON DELETE CASCADE,
-                source_article_path text NOT NULL,
-                PRIMARY KEY (target_topic_id, source_topic_id)
+                source_document_id uuid NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
+                target_document_id uuid NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
+                PRIMARY KEY (source_document_id, target_document_id)
             )
             """
         )
     )
     op.execute(
         text(
-            "CREATE INDEX ix_backlinks_source_topic_id "
-            "ON backlinks (source_topic_id)"
+            "CREATE INDEX ix_backlinks_source_document_id "
+            "ON backlinks (source_document_id)"
+        )
+    )
+    op.execute(
+        text(
+            "CREATE INDEX ix_backlinks_target_document_id "
+            "ON backlinks (target_document_id)"
         )
     )
 

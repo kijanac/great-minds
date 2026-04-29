@@ -12,7 +12,6 @@ from pathlib import Path
 from uuid import UUID
 
 from great_minds.core.ideas.schemas import Idea, SourceCard
-from great_minds.core.paths import source_cards_path
 
 
 def index_ideas_by_id(
@@ -24,10 +23,6 @@ def index_ideas_by_id(
 class SourceCardStore:
     def __init__(self, path: Path) -> None:
         self.path = path
-
-    @classmethod
-    def for_brain(cls, sidecar: Path) -> "SourceCardStore":
-        return cls(source_cards_path(sidecar))
 
     def load_all(self) -> list[SourceCard]:
         if not self.path.exists():

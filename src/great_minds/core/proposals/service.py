@@ -9,8 +9,10 @@ from great_minds.core.brain import load_config
 from great_minds.core import ingester
 from great_minds.core.brains.schemas import Brain
 from great_minds.core.compile_intents.repository import CompileIntentRepository
+from great_minds.core.pagination import Page, PageInfo, PageParams
 from great_minds.core.proposals.models import ProposalStatus, SourceProposal
 from great_minds.core.proposals.repository import ProposalRepository
+from great_minds.core.proposals.schemas import Proposal
 from great_minds.core.settings import Settings
 from great_minds.core.storage import Storage
 from great_minds.core.telemetry import log_event
@@ -62,8 +64,35 @@ class ProposalService:
         brain_id: UUID,
         *,
         status: ProposalStatus | None = None,
+        limit: int = 50,
+        offset: int = 0,
     ) -> list[SourceProposal]:
-        return await self.repo.list_for_brain(brain_id, status=status)
+        return await self.repo.list_for_brain(
+            brain_id, status=status, limit=limit, offset=offset
+        )
+
+    async def list_for_brain_page(
+        self,
+        brain_id: UUID,
+        *,
+        pagination: PageParams,
+        status: ProposalStatus | None = None,
+    ) -> Page[Proposal]:
+        proposals = await self.repo.list_for_brain(
+            brain_id,
+            status=status,
+            limit=pagination.limit,
+            offset=pagination.offset,
+        )
+        total = await self.repo.count_for_brain(brain_id, status=status)
+        return Page(
+            items=[Proposal.model_validate(proposal) for proposal in proposals],
+            pagination=PageInfo(
+                limit=pagination.limit,
+                offset=pagination.offset,
+                total=total,
+            ),
+        )
 
     async def get(self, proposal_id: UUID, brain_id: UUID) -> SourceProposal | None:
         return await self.repo.get(proposal_id, brain_id)

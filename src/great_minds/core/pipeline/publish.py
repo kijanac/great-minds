@@ -99,7 +99,7 @@ async def _write_wiki_index(ctx: PipelineContext, topics: list[Topic]) -> None:
 
 
 async def _write_raw_index(ctx: PipelineContext, docs: list[Document]) -> None:
-    ordered = sorted(docs, key=lambda d: d.title.lower())
+    ordered = sorted(docs, key=lambda d: d.metadata.title.lower())
     lines = [
         "# Raw Sources",
         "",
@@ -107,17 +107,20 @@ async def _write_raw_index(ctx: PipelineContext, docs: list[Document]) -> None:
         "",
     ]
     for d in ordered:
+        metadata = d.metadata
         meta_bits: list[str] = []
-        if d.genre:
-            meta_bits.append(d.genre)
-        if d.published_date:
-            meta_bits.append(d.published_date)
-        if d.author:
-            meta_bits.append(d.author)
+        if metadata.genre:
+            meta_bits.append(metadata.genre)
+        if metadata.published_date:
+            meta_bits.append(metadata.published_date)
+        if metadata.author:
+            meta_bits.append(metadata.author)
         meta_suffix = f" — {', '.join(meta_bits)}" if meta_bits else ""
-        precis = (d.precis or "").strip().replace("\n", " ")
+        precis = (metadata.precis or "").strip().replace("\n", " ")
         precis_suffix = f"  \n  {precis}" if precis else ""
-        lines.append(f"- [{d.title}]({d.file_path}){meta_suffix}{precis_suffix}")
+        lines.append(
+            f"- [{metadata.title}]({d.file_path}){meta_suffix}{precis_suffix}"
+        )
     lines.append("")
     await ctx.storage.write(RAW_INDEX_PATH, "\n".join(lines))
 
