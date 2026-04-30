@@ -104,3 +104,13 @@ class AuthRepository:
             return False
         api_key.revoked = True
         return True
+
+    async def list_api_keys(self, user_id: UUID) -> list[ApiKey]:
+        """All API keys for a user, newest first. Includes revoked rows
+        so the UI can show full history."""
+        result = await self.session.execute(
+            select(ApiKey)
+            .where(ApiKey.user_id == user_id)
+            .order_by(ApiKey.created_at.desc())
+        )
+        return list(result.scalars().all())

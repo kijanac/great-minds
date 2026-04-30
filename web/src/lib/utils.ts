@@ -1,6 +1,8 @@
 import { clsx, type ClassValue } from "clsx";
 import { twMerge } from "tailwind-merge";
 
+import type { BtwMessage, HistoryMessage } from "@/lib/types";
+
 export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
 }
@@ -37,9 +39,21 @@ export function formatRelativeDate(iso: string): string {
   return d.toLocaleDateString("en-US", { month: "short", day: "numeric" });
 }
 
+// Fallback used only when no LLM-generated title is available. Include
+// parent dir for nested paths so numbered chapter files (e.g.
+// .../market/02.md) don't collapse to ambiguous labels like "02".
 export function docDisplayName(path: string): string {
-  const filename = path.split("/").pop() ?? path;
-  return filename.replace(/\.md$/, "");
+  const parts = path.split("/").filter(Boolean);
+  if (parts.length === 0) return path;
+  const last = parts[parts.length - 1].replace(/\.md$/, "");
+  if (parts.length >= 3) {
+    return `${parts[parts.length - 2]}/${last}`;
+  }
+  return last;
+}
+
+export function displayTitle(path: string, title?: string | null): string {
+  return title || docDisplayName(path);
 }
 
 export function buildBtwQuery(paragraph: string, anchor: string, userText: string): string {
@@ -48,4 +62,17 @@ export function buildBtwQuery(paragraph: string, anchor: string, userText: strin
   if (anchor && anchor !== paragraph) parts.push(`Highlighted: "${anchor}"`);
   parts.push(userText);
   return parts.join("\n\n");
+}
+
+// First user turn carries the passage prefix so the model has the BTW anchor
+// in conversation history; later turns are raw text since context is established.
+export function buildBtwHistory(
+  priorBtw: BtwMessage[],
+  paragraph: string,
+  anchor: string,
+): HistoryMessage[] {
+  return priorBtw.map((m, i) => ({
+    role: m.role,
+    content: i === 0 && m.role === "user" ? buildBtwQuery(paragraph, anchor, m.text) : m.text,
+  }));
 }

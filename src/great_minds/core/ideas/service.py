@@ -47,5 +47,5 @@ class IdeaService:
     def load_source_cards(self) -> list[SourceCard]:
         return self.source_cards.load_all()
 
-    async def load_embeddings(self) -> list[tuple[UUID, list[float]]]:
-        return await self.embedding_repo.load_embeddings(self.brain_id)
+    async def list_embeddings(self) -> list[IdeaEmbedding]:
+        return await self.embedding_repo.list_for_brain(self.brain_id)

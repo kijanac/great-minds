@@ -19,6 +19,7 @@ from great_minds.core.compile_intents.repository import CompileIntentRepository
 from great_minds.core.documents.repository import DocumentRepository
 from great_minds.core.documents.schemas import DocumentCreate
 from great_minds.core.llm import get_async_client
+from great_minds.core.llm_costs import record_wide_event_cost
 from great_minds.core.markdown import parse_frontmatter
 from great_minds.core.paths import raw_prefix
 from great_minds.core.storage_factory import make_storage
@@ -61,6 +62,8 @@ async def compile_task(params: dict, ctx) -> None:
     )
     await pipeline.run(pipeline_ctx)
 
+    await record_wide_event_cost(session, user_id=None, brain_id=brain_id)
+    await session.commit()
     emit_wide_event()
 
 

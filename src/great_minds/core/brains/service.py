@@ -14,7 +14,6 @@ from great_minds.core.brains.schemas import (
 )
 from great_minds.core.pagination import Page, PageInfo, PageParams
 from great_minds.core.paths import CONFIG_PATH
-from great_minds.core.querier import QuerySource
 from great_minds.core.storage import Storage
 from great_minds.core.storage_factory import make_storage
 
@@ -105,18 +104,6 @@ class BrainService:
         storage = self.get_storage(brain)
         if not await storage.exists(CONFIG_PATH):
             await storage.write(CONFIG_PATH, load_default_config_text())
-
-    async def get_all_query_sources(self, user_id: UUID) -> list[QuerySource]:
-        """Build QuerySources for all brains a user has access to."""
-        rows = await self.repo.list_user_brains(user_id, limit=None, offset=0)
-        return [
-            QuerySource(
-                storage=self.get_storage(brain),
-                label=brain.name,
-                brain_id=brain.id,
-            )
-            for brain, _role in rows
-        ]
 
     async def get_member_count(self, brain_id: UUID) -> int:
         return await self.repo.get_member_count(brain_id)

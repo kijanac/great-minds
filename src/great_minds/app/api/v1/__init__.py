@@ -5,6 +5,7 @@ from fastapi import APIRouter
 from great_minds.app.api.auth_routes import router as auth_router
 from great_minds.app.api.brain_routes import router as brain_router
 from great_minds.app.api.compile_routes import router as compile_router
+from great_minds.app.api.cost_routes import router as cost_router
 from great_minds.app.api.ingest_routes import router as ingest_router
 from great_minds.app.api.lint_routes import router as lint_router
 from great_minds.app.api.proposal_routes import router as proposal_router
@@ -18,6 +19,7 @@ router = APIRouter(prefix="/v1")
 # Non-brain-scoped routes
 router.include_router(auth_router)
 router.include_router(brain_router)
+router.include_router(cost_router)
 
 # Brain-scoped routes — nested under /v1/brains/{brain_id}/
 brain_scoped = APIRouter(prefix="/brains/{brain_id}")

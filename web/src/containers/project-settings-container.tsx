@@ -14,6 +14,8 @@ import {
   updateMemberRole,
 } from "@/api/brains";
 import { ProjectSettings } from "@/components/project-settings";
+import { ApiKeysSectionContainer } from "@/containers/api-keys-section-container";
+import { ProposalsSectionContainer } from "@/containers/proposals-section-container";
 import { useViewNavigate } from "@/hooks/use-view-navigate";
 import { useAuth } from "@/lib/auth";
 
@@ -87,6 +89,12 @@ export function ProjectSettingsContainer() {
       config={config}
       isOwner={isOwner}
       loading={loading}
+      proposalsSlot={
+        id ? (
+          <ProposalsSectionContainer brainId={id} isOwner={isOwner} />
+        ) : null
+      }
+      apiKeysSlot={<ApiKeysSectionContainer />}
       onHome={() => navigate("/")}
       onInvite={handleInvite}
       onChangeRole={handleChangeRole}

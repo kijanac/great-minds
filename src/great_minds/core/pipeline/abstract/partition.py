@@ -46,8 +46,9 @@ async def run(
     idea_index = index_ideas_by_id(source_cards)
 
     repo = IdeaEmbeddingRepository(ctx.session)
-    embeddings = await repo.load_embeddings(ctx.brain_id)
-    id_order = sorted(e[0] for e in embeddings)  # deterministic order
+    idea_embeddings = await repo.list_for_brain(ctx.brain_id)
+    embedding_vectors = {e.idea_id: e.embedding for e in idea_embeddings}
+    id_order = sorted(embedding_vectors)  # deterministic order
 
     if not id_order:
         log_event(
@@ -87,13 +88,13 @@ async def run(
     k = max(1, math.ceil(total_tokens / target))
     k = min(k, len(id_order))
 
-    labels = _seeded_kmeans(embeddings, id_order, k)
+    labels = _seeded_kmeans(embedding_vectors, id_order, k)
 
     chunks = _group_by_label(id_order, labels)
     chunks = _rebalance(
         chunks=chunks,
         tokens_per_idea=tokens_per_idea,
-        embeddings=dict(embeddings),
+        embeddings=embedding_vectors,
         max_tokens=max_tokens,
         min_tokens=min_tokens,
     )
@@ -160,15 +161,14 @@ def _estimate_idea_tokens(item: tuple[Idea, SourceCard]) -> int:
 
 
 def _seeded_kmeans(
-    embeddings: list[tuple[UUID, list[float]]],
+    embeddings: dict[UUID, list[float]],
     id_order: list[UUID],
     k: int,
 ) -> dict[UUID, int]:
     if k == 1:
         return {iid: 0 for iid in id_order}
 
-    lookup = dict(embeddings)
-    matrix = np.array([lookup[iid] for iid in id_order], dtype=np.float32)
+    matrix = np.array([embeddings[iid] for iid in id_order], dtype=np.float32)
     km = KMeans(n_clusters=k, random_state=KMEANS_SEED, n_init=KMEANS_N_INIT)
     labels = km.fit_predict(matrix)
     return {iid: int(lab) for iid, lab in zip(id_order, labels)}

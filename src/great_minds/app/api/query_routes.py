@@ -32,23 +32,22 @@ async def query(
     _llm: None = Depends(require_llm),
 ) -> schemas.QueryResponse:
     brain = await brain_service.get_brain(brain_id)
-    all_sources = await brain_service.get_all_query_sources(user.id)
-    target = querier.QuerySource(storage=storage, label=brain.name, brain_id=brain_id)
-    sources = [target] + [s for s in all_sources if s.brain_id != brain_id]
+    source = querier.QuerySource(storage=storage, label=brain.name, brain_id=brain_id)
     result = await querier.run_query(
-        sources,
+        source,
         req.question,
         doc_repo,
+        user_id=user.id,
         model=req.model,
         origin_path=req.origin_path,
-        session_context=req.session_context,
+        history=req.history,
         mode=req.mode,
         extra_instructions=req.extra_instructions,
     )
     return schemas.QueryResponse(
         answer=result.answer,
         sources_consulted=[
-            schemas.SourceConsultedItem(kind=s.kind, path=s.path)
+            schemas.SourceConsultedItem(kind=s.kind, path=s.path, title=s.title)
             for s in result.sources_consulted
         ],
     )
@@ -65,18 +64,17 @@ async def query_stream(
     _llm: None = Depends(require_llm),
 ) -> StreamingResponse:
     brain = await brain_service.get_brain(brain_id)
-    all_sources = await brain_service.get_all_query_sources(user.id)
-    target = querier.QuerySource(storage=storage, label=brain.name, brain_id=brain_id)
-    sources = [target] + [s for s in all_sources if s.brain_id != brain_id]
+    source = querier.QuerySource(storage=storage, label=brain.name, brain_id=brain_id)
 
     async def event_generator():
         async for event in querier.run_stream_query(
-            sources,
+            source,
             req.question,
             doc_repo,
+            user_id=user.id,
             model=req.model,
             origin_path=req.origin_path,
-            session_context=req.session_context,
+            history=req.history,
             mode=req.mode,
             extra_instructions=req.extra_instructions,
         ):

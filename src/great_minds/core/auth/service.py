@@ -100,3 +100,6 @@ class AuthService:
         if not revoked:
             raise ValueError("API key not found")
         await self._commit()
+
+    async def list_api_keys(self, user_id: UUID) -> list[ApiKey]:
+        return await self.auth_repo.list_api_keys(user_id)

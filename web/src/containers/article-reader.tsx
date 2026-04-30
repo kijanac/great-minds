@@ -12,7 +12,7 @@ import { useBtw } from "@/hooks/use-btw";
 import { useLinkInterceptor } from "@/hooks/use-link-interceptor";
 import { usePopoverDismiss } from "@/hooks/use-popover-dismiss";
 import { useViewNavigate } from "@/hooks/use-view-navigate";
-import { docDisplayName } from "@/lib/utils";
+import { displayTitle } from "@/lib/utils";
 import type { SelectionInfo } from "@/lib/types";
 
 interface ArticleReaderProps {
@@ -90,7 +90,7 @@ export function ArticleReader({
   }, []);
   const showHint = !hintDismissed && body !== null;
 
-  const displayName = docDisplayName(path);
+  const displayName = displayTitle(path, document?.metadata.title);
 
   const hint = showHint ? (
     <div className="shrink-0 px-4 md:px-10 py-3 border-t border-ink-subtle animate-[slide-up_0.28s_ease]">

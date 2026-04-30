@@ -11,9 +11,11 @@ import json
 import uuid
 from collections.abc import AsyncGenerator
 from dataclasses import asdict, dataclass
+from typing import Literal
 from uuid import UUID
 
 from openai import AsyncOpenAI
+from pydantic import BaseModel
 
 from .brain import load_prompt
 from .brain_config import load_brain_config
@@ -23,6 +25,7 @@ from .markdown import extract_wiki_link_targets
 from .documents.repository import DocumentRepository
 from .documents.schemas import DocKind
 from .llm import FALLBACK_MODELS, QUERY_MODEL, get_async_client
+from .llm_costs import record_wide_event_cost
 from .storage import Storage
 from .telemetry import (
     accumulate_cost,
@@ -39,6 +42,13 @@ class QueryMode(enum.StrEnum):
     BTW = "btw"
 
 
+class HistoryMessage(BaseModel):
+    """A prior turn in the conversation, fed back to the model as real history."""
+
+    role: Literal["user", "assistant"]
+    content: str
+
+
 class SourceType(enum.StrEnum):
     ARTICLE = "article"
     RAW = "raw"
@@ -52,6 +62,7 @@ class SourceConsulted:
 
     kind: DocKind
     path: str
+    title: str | None = None
 
 
 @dataclass
@@ -62,7 +73,9 @@ class ChatResult:
     sources_consulted: list[SourceConsulted]
 
 
-def _build_sources_consulted(
+async def _build_sources_consulted(
+    brain: "QuerySource",
+    doc_repo: DocumentRepository,
     articles_read: list[str],
     sources_read: list[str],
 ) -> list[SourceConsulted]:
@@ -71,11 +84,13 @@ def _build_sources_consulted(
     for path in articles_read:
         if path not in seen:
             seen.add(path)
-            out.append(SourceConsulted(kind=DocKind.WIKI, path=path))
+            title = await doc_repo.get_title_by_path(brain.brain_id, path)
+            out.append(SourceConsulted(kind=DocKind.WIKI, path=path, title=title))
     for path in sources_read:
         if path not in seen:
             seen.add(path)
-            out.append(SourceConsulted(kind=DocKind.RAW, path=path))
+            title = await doc_repo.get_title_by_path(brain.brain_id, path)
+            out.append(SourceConsulted(kind=DocKind.RAW, path=path, title=title))
     return out
 
 
@@ -286,40 +301,33 @@ def _classify_tool_call(name: str, args: dict) -> tuple[SourceType, dict] | None
 # ---------------------------------------------------------------------------
 
 
-async def read_document(
-    brains: list[QuerySource], path: str, *, brain_id: UUID | None = None
-) -> str:
-    sources = brains
-    if brain_id is not None:
-        sources = [s for s in brains if s.brain_id == brain_id] or brains
-    for src in sources:
-        content = await src.storage.read(path, strict=False)
-        if content is not None:
-            truncated = len(content) > 20_000
-            if truncated:
-                content = (
-                    content[:20_000]
-                    + "\n\n[...truncated — ask for a specific section if needed...]"
-                )
-            log_event(
-                "tool.document_read",
-                path=path,
-                brain=src.label,
-                chars=len(content),
-                truncated=truncated,
-            )
-            # Extract forward links for navigation context
-            forward_links = extract_wiki_link_targets(content)
-            links_section = ""
-            if forward_links:
-                links_section = "\n\n---\nForward links: " + ", ".join(forward_links)
-            return f"# {path} [{src.label}]\n\n{content}{links_section}"
-    log_event("tool.document_not_found", path=path)
-    return f"Document not found: {path}"
+async def read_document(brain: QuerySource, path: str) -> str:
+    content = await brain.storage.read(path, strict=False)
+    if content is None:
+        log_event("tool.document_not_found", path=path)
+        return f"Document not found: {path}"
+    truncated = len(content) > 20_000
+    if truncated:
+        content = (
+            content[:20_000]
+            + "\n\n[...truncated — ask for a specific section if needed...]"
+        )
+    log_event(
+        "tool.document_read",
+        path=path,
+        brain=brain.label,
+        chars=len(content),
+        truncated=truncated,
+    )
+    forward_links = extract_wiki_link_targets(content)
+    links_section = (
+        "\n\n---\nForward links: " + ", ".join(forward_links) if forward_links else ""
+    )
+    return f"# {path} [{brain.label}]\n\n{content}{links_section}"
 
 
 async def read_document_enriched(
-    brains: list[QuerySource], path: str, doc_repo: DocumentRepository
+    brain: QuerySource, path: str, doc_repo: DocumentRepository
 ) -> str:
     """Read a document.
 
@@ -327,19 +335,14 @@ async def read_document_enriched(
     verify's document-keyed backlinks table. Until then this is a straight
     pass-through to read_document.
     """
-    return await read_document(brains, path)
+    return await read_document(brain, path)
 
 
 async def search_wiki(
-    brains: list[QuerySource], query: str, doc_repo: DocumentRepository
+    brain: QuerySource, query: str, doc_repo: DocumentRepository
 ) -> str:
-    """Hybrid BM25 + vector search across all brains via the search index."""
-    brain_ids = [src.brain_id for src in brains]
-    if not brain_ids:
-        log_event("tool.search_skipped", query=query, reason="no_brain_ids")
-        return f"No results found for: {query} (search index not available)"
-
-    results = await hybrid_search(doc_repo.session, brain_ids, query)
+    """Hybrid BM25 + vector search via the search index."""
+    results = await hybrid_search(doc_repo.session, [brain.brain_id], query)
 
     log_event("tool.search_executed", query=query, results_count=len(results))
 
@@ -356,12 +359,9 @@ async def search_wiki(
 
 
 async def query_documents(
-    brains: list[QuerySource], args: dict, doc_repo: DocumentRepository
+    brain: QuerySource, args: dict, doc_repo: DocumentRepository
 ) -> str:
-    """Structured metadata query across all brains via the documents table."""
-    brain_ids = [src.brain_id for src in brains]
-    if not brain_ids:
-        return "No documents available (no indexed brains)"
+    """Structured metadata query via the documents table."""
     filters = {
         k: v
         for k, v in {
@@ -376,7 +376,7 @@ async def query_documents(
         if v is not None
     }
 
-    results = await doc_repo.query_documents(brain_ids, **filters)
+    results = await doc_repo.query_documents([brain.brain_id], **filters)
     log_event("tool.query_executed", filters=str(filters), results_count=len(results))
 
     if not results:
@@ -402,7 +402,7 @@ async def query_documents(
 
 
 async def query_wiki_articles(
-    brains: list[QuerySource], args: dict, doc_repo: DocumentRepository
+    brain: QuerySource, args: dict, doc_repo: DocumentRepository
 ) -> str:
     """Structured query over the wiki article registry.
 
@@ -411,29 +411,27 @@ async def query_wiki_articles(
     extract. Avoids globbing storage and re-parsing frontmatter on every
     tool call.
     """
-    if not brains:
-        return "No wiki articles available (no brains)"
-
     slug_filter = args.get("slug")
     query_str = (args.get("query") or "").strip().lower()
     limit = args.get("limit") or 20
 
-    rows: list[tuple[str, str, str, str]] = []
-    for src in brains:
-        docs = await doc_repo.list_by_kind(src.brain_id, DocKind.WIKI)
-        for doc in docs:
-            slug = wiki_slug(doc.file_path)
-            if slug.startswith("_"):
-                continue
-            if slug_filter and slug != slug_filter:
-                continue
-            title = doc.metadata.title
-            description = doc.metadata.precis or ""
-            if query_str and query_str not in title.lower() and query_str not in description.lower():
-                continue
-            rows.append((src.label, slug, title, description))
-            if len(rows) >= limit:
-                break
+    docs = await doc_repo.list_by_kind(brain.brain_id, DocKind.WIKI)
+    rows: list[tuple[str, str, str]] = []
+    for doc in docs:
+        slug = wiki_slug(doc.file_path)
+        if slug.startswith("_"):
+            continue
+        if slug_filter and slug != slug_filter:
+            continue
+        title = doc.metadata.title
+        description = doc.metadata.precis or ""
+        if (
+            query_str
+            and query_str not in title.lower()
+            and query_str not in description.lower()
+        ):
+            continue
+        rows.append((slug, title, description))
         if len(rows) >= limit:
             break
 
@@ -448,22 +446,22 @@ async def query_wiki_articles(
 
     parts = [
         f"### {title}\n  path: wiki/{slug}.md\n  {description}"
-        for _, slug, title, description in rows
+        for slug, title, description in rows
     ]
     return f"Found {len(rows)} wiki articles:\n\n" + "\n\n".join(parts)
 
 
 async def _dispatch_tool(
-    brains: list[QuerySource], name: str, args: dict, doc_repo: DocumentRepository
+    brain: QuerySource, name: str, args: dict, doc_repo: DocumentRepository
 ) -> str:
     if name == "read_document":
-        return await read_document_enriched(brains, args["path"], doc_repo)
+        return await read_document_enriched(brain, args["path"], doc_repo)
     elif name == "search_wiki":
-        return await search_wiki(brains, args["query"], doc_repo)
+        return await search_wiki(brain, args["query"], doc_repo)
     elif name == "query_documents":
-        return await query_documents(brains, args, doc_repo)
+        return await query_documents(brain, args, doc_repo)
     elif name == "query_wiki_articles":
-        return await query_wiki_articles(brains, args, doc_repo)
+        return await query_wiki_articles(brain, args, doc_repo)
     else:
         return f"Unknown tool: {name}"
 
@@ -521,24 +519,22 @@ Knowledge base:
 
 
 async def build_system_prompt(
-    brains: "list[QuerySource]",
+    brain: "QuerySource",
     doc_repo: DocumentRepository,
     *,
     mode: QueryMode = QueryMode.QUERY,
     extra_instructions: str | None = None,
 ) -> str:
-    parts = [await _build_identity_for_source(b, doc_repo) for b in brains]
-    identity = "\n\n".join(p for p in parts if p) or "(no brains configured)"
+    identity = await _build_identity_for_source(brain, doc_repo) or "(empty brain)"
 
     # Layer 1: retrieval discipline (not overridable)
     prompt = _RETRIEVAL_CORE.format(identity=identity)
 
     # Layer 2: per-brain default persona
-    storage = brains[0].storage
-    prompt += "\n\n" + await load_prompt(storage, "query")
+    prompt += "\n\n" + await load_prompt(brain.storage, "query")
 
     if mode == QueryMode.BTW:
-        prompt += "\n\n" + await load_prompt(storage, "query_btw")
+        prompt += "\n\n" + await load_prompt(brain.storage, "query_btw")
 
     # Layer 3: per-request consumer instructions
     if extra_instructions:
@@ -548,7 +544,7 @@ async def build_system_prompt(
 
 
 async def chat(
-    brains: list[QuerySource],
+    brain: QuerySource,
     client: AsyncOpenAI,
     model: str,
     messages: list[dict],
@@ -588,10 +584,11 @@ async def chat(
                 llm_rounds=llm_rounds,
                 tool_calls=tool_calls_total,
             )
-            emit_wide_event()
             return ChatResult(
                 answer=message.content,
-                sources_consulted=_build_sources_consulted(articles_read, sources_read),
+                sources_consulted=await _build_sources_consulted(
+                    brain, doc_repo, articles_read, sources_read
+                ),
             )
 
         messages.append(
@@ -629,7 +626,7 @@ async def chat(
                         else sources_read
                     ).append(meta["path"])
 
-            result = await _dispatch_tool(brains, name, args, doc_repo)
+            result = await _dispatch_tool(brain, name, args, doc_repo)
             messages.append(
                 {
                     "role": "tool",
@@ -640,7 +637,7 @@ async def chat(
 
 
 async def chat_with_fallback(
-    brains: list[QuerySource],
+    brain: QuerySource,
     client: AsyncOpenAI,
     model: str,
     messages: list[dict],
@@ -651,7 +648,7 @@ async def chat_with_fallback(
     """Try the primary model, fall back to alternatives on rate limit."""
     for m in _models_with_fallback(model):
         try:
-            return await chat(brains, client, m, messages, doc_repo, tools=tools)
+            return await chat(brain, client, m, messages, doc_repo, tools=tools)
         except Exception as e:
             if _is_retryable(e):
                 log_event("query.retryable_error", model=m, error=str(e))
@@ -685,7 +682,7 @@ async def _iter_with_timeout(async_iter, timeout: float):
 
 
 async def stream_chat(
-    brains: list[QuerySource],
+    brain: QuerySource,
     client: AsyncOpenAI,
     model: str,
     messages: list[dict],
@@ -790,7 +787,12 @@ async def stream_chat(
                 classified = _classify_tool_call(name, args)
                 if classified:
                     source_type, meta = classified
-                    yield {"event": "source", "data": {"type": source_type, **meta}}
+                    event_data: dict = {"type": source_type, **meta}
+                    if source_type in (SourceType.ARTICLE, SourceType.RAW):
+                        event_data["title"] = await doc_repo.get_title_by_path(
+                            brain.brain_id, meta["path"]
+                        )
+                    yield {"event": "source", "data": event_data}
 
                     if source_type is SourceType.SEARCH:
                         searches.append(meta["query"])
@@ -801,7 +803,7 @@ async def stream_chat(
                             else sources_read
                         ).append(meta["path"])
 
-                result = await _dispatch_tool(brains, name, args, doc_repo)
+                result = await _dispatch_tool(brain, name, args, doc_repo)
                 messages.append(
                     {
                         "role": "tool",
@@ -823,8 +825,9 @@ async def stream_chat(
             llm_rounds=llm_rounds,
             tool_calls=tool_calls_total,
         )
-        emit_wide_event()
-        sources = _build_sources_consulted(articles_read, sources_read)
+        sources = await _build_sources_consulted(
+            brain, doc_repo, articles_read, sources_read
+        )
         yield {
             "event": "done",
             "data": {
@@ -834,12 +837,12 @@ async def stream_chat(
         return
 
 
-def _build_origin_messages(
-    brains: list[QuerySource],
+async def _build_origin_messages(
+    brain: QuerySource,
     origin_path: str,
 ) -> list[dict]:
     """Build synthetic tool-call messages that pre-load the origin document."""
-    content = read_document(brains, origin_path)
+    content = await read_document(brain, origin_path)
     tool_call_id = f"origin-{uuid.uuid4().hex[:8]}"
     return [
         {
@@ -864,51 +867,28 @@ def _build_origin_messages(
     ]
 
 
-def _build_session_context_messages(session_md: str) -> list[dict]:
-    """Build messages that inject the session transcript as conversation context."""
-    return [
-        {
-            "role": "user",
-            "content": (
-                "Here is the conversation so far in this research session. "
-                "The user is asking a side question about a specific passage.\n\n"
-                f"--- SESSION TRANSCRIPT ---\n{session_md}\n--- END TRANSCRIPT ---"
-            ),
-        },
-        {
-            "role": "assistant",
-            "content": (
-                "I've reviewed the session transcript and understand the "
-                "conversation context. I'm ready for the follow-up question."
-            ),
-        },
-    ]
-
-
 # ---------------------------------------------------------------------------
 # Public entry points
 # ---------------------------------------------------------------------------
 
 
 async def _load_tools(
-    brains: list[QuerySource], doc_repo: DocumentRepository
+    brain: QuerySource, doc_repo: DocumentRepository
 ) -> list[dict]:
     """Load tag vocabulary from DB and build the full tool list."""
-    brain_ids = [src.brain_id for src in brains]
-    if not brain_ids:
-        return _BASE_TOOLS
-    tags = await doc_repo.get_distinct_tags(brain_ids)
+    tags = await doc_repo.get_distinct_tags([brain.brain_id])
     return build_tools(tags)
 
 
 async def run_stream_query(
-    brains: list[QuerySource],
+    brain: QuerySource,
     question: str,
     doc_repo: DocumentRepository,
     *,
+    user_id: UUID | None = None,
     model: str | None = None,
     origin_path: str | None = None,
-    session_context: str | None = None,
+    history: list[HistoryMessage] | None = None,
     mode: QueryMode = QueryMode.QUERY,
     extra_instructions: str | None = None,
 ) -> AsyncGenerator[dict, None]:
@@ -916,51 +896,55 @@ async def run_stream_query(
     primary = model or QUERY_MODEL
     client = get_async_client(max_retries=0)
     system_prompt = await build_system_prompt(
-        brains, doc_repo, mode=mode, extra_instructions=extra_instructions
+        brain, doc_repo, mode=mode, extra_instructions=extra_instructions
     )
-    tools = await _load_tools(brains, doc_repo)
+    tools = await _load_tools(brain, doc_repo)
     base_messages: list[dict] = [
         {"role": "system", "content": system_prompt},
     ]
     if origin_path:
-        base_messages.extend(_build_origin_messages(brains, origin_path))
-    if session_context:
-        base_messages.extend(_build_session_context_messages(session_context))
+        base_messages.extend(await _build_origin_messages(brain, origin_path))
+    if history:
+        base_messages.extend(m.model_dump() for m in history)
     base_messages.append({"role": "user", "content": question})
 
     query_id = f"q-{uuid.uuid4().hex[:8]}"
     correlation_id.set(query_id)
-    init_wide_event("query.stream", question=question, brain_count=len(brains))
+    init_wide_event("query.stream", question=question, brain_id=str(brain.brain_id))
 
-    for m in _models_with_fallback(primary):
-        messages = list(base_messages)
-        try:
-            async for event in stream_chat(
-                brains, client, m, messages, doc_repo, tools=tools
-            ):
-                yield event
-            return
-        except Exception as e:
-            if _is_retryable(e):
-                log_event("query.stream_retryable", model=m, error=str(e))
-                continue
-            yield {"event": "error", "data": {"message": str(e)}}
-            return
+    try:
+        for m in _models_with_fallback(primary):
+            messages = list(base_messages)
+            try:
+                async for event in stream_chat(
+                    brain, client, m, messages, doc_repo, tools=tools
+                ):
+                    yield event
+                return
+            except Exception as e:
+                if _is_retryable(e):
+                    log_event("query.stream_retryable", model=m, error=str(e))
+                    continue
+                yield {"event": "error", "data": {"message": str(e)}}
+                return
 
-    yield {
-        "event": "error",
-        "data": {"message": "all models failed — try again in a minute"},
-    }
+        yield {
+            "event": "error",
+            "data": {"message": "all models failed — try again in a minute"},
+        }
+    finally:
+        await _finalize_wide_event(doc_repo, user_id=user_id, brain_id=brain.brain_id)
 
 
 async def run_query(
-    brains: list[QuerySource],
+    brain: QuerySource,
     question: str,
     doc_repo: DocumentRepository,
     *,
+    user_id: UUID | None = None,
     model: str | None = None,
     origin_path: str | None = None,
-    session_context: str | None = None,
+    history: list[HistoryMessage] | None = None,
     mode: QueryMode = QueryMode.QUERY,
     extra_instructions: str | None = None,
 ) -> ChatResult:
@@ -968,27 +952,30 @@ async def run_query(
     primary = model or QUERY_MODEL
     client = get_async_client()
     system_prompt = await build_system_prompt(
-        brains, doc_repo, mode=mode, extra_instructions=extra_instructions
+        brain, doc_repo, mode=mode, extra_instructions=extra_instructions
     )
-    tools = await _load_tools(brains, doc_repo)
+    tools = await _load_tools(brain, doc_repo)
     messages: list[dict] = [{"role": "system", "content": system_prompt}]
 
     query_id = f"q-{uuid.uuid4().hex[:8]}"
     correlation_id.set(query_id)
-    init_wide_event("query", question=question, brain_count=len(brains))
+    init_wide_event("query", question=question, brain_id=str(brain.brain_id))
 
-    if origin_path:
-        messages.extend(_build_origin_messages(brains, origin_path))
-    if session_context:
-        messages.extend(_build_session_context_messages(session_context))
-    messages.append({"role": "user", "content": question})
-    return await chat_with_fallback(
-        brains, client, primary, messages, doc_repo, tools=tools
-    )
+    try:
+        if origin_path:
+            messages.extend(await _build_origin_messages(brain, origin_path))
+        if history:
+            messages.extend(m.model_dump() for m in history)
+        messages.append({"role": "user", "content": question})
+        return await chat_with_fallback(
+            brain, client, primary, messages, doc_repo, tools=tools
+        )
+    finally:
+        await _finalize_wide_event(doc_repo, user_id=user_id, brain_id=brain.brain_id)
 
 
 async def run_interactive(
-    brains: list[QuerySource],
+    brain: QuerySource,
     doc_repo: DocumentRepository,
     *,
     model: str | None = None,
@@ -996,8 +983,8 @@ async def run_interactive(
     """Run an interactive REPL session against the knowledge base."""
     model = model or QUERY_MODEL
     client = get_async_client()
-    system_prompt = await build_system_prompt(brains, doc_repo)
-    tools = await _load_tools(brains, doc_repo)
+    system_prompt = await build_system_prompt(brain, doc_repo)
+    tools = await _load_tools(brain, doc_repo)
     messages: list[dict] = [{"role": "system", "content": system_prompt}]
 
     print(f"Knowledge Base — Query Interface (model: {model})")
@@ -1018,7 +1005,28 @@ async def run_interactive(
         init_wide_event("query", question=question)
 
         messages.append({"role": "user", "content": question})
-        result = await chat_with_fallback(
-            brains, client, model, messages, doc_repo, tools=tools
-        )
+        try:
+            result = await chat_with_fallback(
+                brain, client, model, messages, doc_repo, tools=tools
+            )
+        finally:
+            await _finalize_wide_event(doc_repo, user_id=None, brain_id=brain.brain_id)
         print(f"\n{result.answer}\n")
+
+
+async def _finalize_wide_event(
+    doc_repo: DocumentRepository,
+    *,
+    user_id: UUID | None,
+    brain_id: UUID | None,
+) -> None:
+    """Persist accumulated cost as one cost row, then emit the wide event.
+
+    Pulls the same in-memory accumulator the log entry will read, so the
+    persisted row and the structured-log event carry identical numbers.
+    """
+    await record_wide_event_cost(
+        doc_repo.session, user_id=user_id, brain_id=brain_id
+    )
+    await doc_repo.session.commit()
+    emit_wide_event()

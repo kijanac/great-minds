@@ -96,20 +96,20 @@ def cmd_compile(args: argparse.Namespace) -> None:
 
 async def _run_query(args: argparse.Namespace) -> None:
     storage = _make_storage()
-    sources = [
-        querier.QuerySource(storage=storage, label="local", brain_id=uuid.UUID(int=0))
-    ]
+    source = querier.QuerySource(
+        storage=storage, label="local", brain_id=uuid.UUID(int=0)
+    )
     async with session_maker() as session:
         doc_repo = DocumentRepository(session)
         if args.question:
             question = " ".join(args.question)
             print(f"\n> {question}\n")
             result = await querier.run_query(
-                sources, question, doc_repo, model=args.model
+                source, question, doc_repo, model=args.model
             )
             print(result.answer)
         else:
-            await querier.run_interactive(sources, doc_repo, model=args.model)
+            await querier.run_interactive(source, doc_repo, model=args.model)
 
 
 def cmd_query(args: argparse.Namespace) -> None:

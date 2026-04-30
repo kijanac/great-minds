@@ -3,26 +3,36 @@ import Markdown from "react-markdown";
 
 import { Badge } from "@/components/ui/badge";
 import { remarkPlugins } from "@/lib/markdown";
-import { docDisplayName, slugToTitle } from "@/lib/utils";
+import { displayTitle } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 
 interface ArticlePanelProps {
   path: string;
+  title: string | null;
   body: string | null;
   loading: boolean;
   onClose: () => void;
   onFullScreen: () => void;
 }
 
-export function ArticlePanel({ path, body, loading, onClose, onFullScreen }: ArticlePanelProps) {
-  const title = slugToTitle(docDisplayName(path));
+export function ArticlePanel({
+  path,
+  title,
+  body,
+  loading,
+  onClose,
+  onFullScreen,
+}: ArticlePanelProps) {
+  const headingTitle = displayTitle(path, title);
 
   return (
     <div className="fixed top-0 right-0 w-full md:w-[370px] h-screen bg-ink-panel border-l border-ink-subtle flex flex-col z-[200] shadow-none md:shadow-[-24px_0_60px_rgba(80,60,30,0.12)] dark:md:shadow-[-24px_0_60px_rgba(0,0,0,0.6)] animate-[panel-in_0.28s_cubic-bezier(0.4,0,0.2,1)]">
       <div className="px-5 pt-5 pb-3.5 border-b border-ink-subtle shrink-0">
-        <div className="flex items-start justify-between mb-[9px]">
-          <span className="text-[length:var(--text-body)] font-bold text-foreground">{title}</span>
-          <div className="flex items-center gap-1">
+        <div className="flex items-start justify-between gap-2 mb-[9px]">
+          <span className="text-[length:var(--text-body)] font-bold text-foreground min-w-0 break-words">
+            {headingTitle}
+          </span>
+          <div className="flex items-center gap-1 shrink-0">
             <Button
               variant="ghost"
               size="icon-xs"
@@ -42,10 +52,11 @@ export function ArticlePanel({ path, body, loading, onClose, onFullScreen }: Art
             </Button>
           </div>
         </div>
-        <div className="flex gap-[7px]">
+        <div className="flex gap-[7px] min-w-0">
           <Badge
             variant="outline"
-            className="rounded-sm h-auto font-mono text-[length:var(--text-chrome)] tracking-[0.1em] px-2 py-[3px] bg-interactive-dim text-gold border-gold-dim"
+            title={path}
+            className="rounded-sm h-auto font-mono text-[length:var(--text-chrome)] tracking-[0.1em] px-2 py-[3px] bg-interactive-dim text-gold border-gold-dim min-w-0 max-w-full truncate"
           >
             {path}
           </Badge>
