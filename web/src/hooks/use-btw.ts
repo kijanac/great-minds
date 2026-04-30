@@ -3,7 +3,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { consumeStream, streamQuery } from "@/api/query";
 import type { BtwThread, SelectionInfo } from "@/lib/types";
 import { assistantMsg, userMsg } from "@/lib/types";
-import { buildBtwQuery, genId, isAbortError } from "@/lib/utils";
+import { buildBtwHistory, buildBtwQuery, genId, isAbortError } from "@/lib/utils";
 
 export function useBtw(originPath?: string) {
   const [btws, setBtws] = useState<BtwThread[]>([]);
@@ -40,6 +40,8 @@ export function useBtw(originPath?: string) {
     const target = btwsRef.current.find((b) => b.id === btwId);
     const anchor = target?.anchor ?? "";
     const paragraph = target?.paragraph ?? "";
+    const priorBtw = target?.messages ?? [];
+    const isFirst = priorBtw.length === 0;
 
     setBtws((prev) =>
       prev.map((b) => {
@@ -53,7 +55,10 @@ export function useBtw(originPath?: string) {
       }),
     );
 
-    const contextualQuery = buildBtwQuery(paragraph, anchor, userText);
+    // First turn: passage prefix on the question.
+    // Follow-ups: passage prefix re-attached to turn 1 of priorBtw history (in buildBtwHistory).
+    const question = isFirst ? buildBtwQuery(paragraph, anchor, userText) : userText;
+    const history = buildBtwHistory(priorBtw, paragraph, anchor);
 
     const controller = new AbortController();
     cleanupRef.current.push(() => controller.abort());
@@ -64,7 +69,7 @@ export function useBtw(originPath?: string) {
     (async () => {
       try {
         const { answer, sources } = await consumeStream(
-          streamQuery(contextualQuery, { originPath, mode: "btw", signal: controller.signal }),
+          streamQuery(question, { originPath, history, mode: "btw", signal: controller.signal }),
           {
             onSources: (s) => updateBtw({ sources: s }),
             onToken: (text) => updateBtw({ streamText: text }),

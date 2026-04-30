@@ -4,7 +4,7 @@ import { ChevronDown, ChevronRight, Search } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import type { ThinkingBlock } from "@/lib/types";
-import { docDisplayName } from "@/lib/utils";
+import { displayTitle } from "@/lib/utils";
 
 interface ThinkingSectionProps {
   blocks: ThinkingBlock[];
@@ -66,6 +66,7 @@ export function ThinkingSection({
                   <ArticleBadge
                     key={`${src.type}:${src.label}`}
                     label={src.label}
+                    title={src.title}
                     thinking={src.thinking}
                     active={activeCard === src.label}
                     onClick={() => onCardClick(src.label)}
@@ -93,11 +94,13 @@ function SearchBadge({ query }: { query: string }) {
 
 function ArticleBadge({
   label,
+  title,
   thinking,
   active,
   onClick,
 }: {
   label: string;
+  title?: string | null;
   thinking?: string;
   active: boolean;
   onClick?: () => void;
@@ -127,7 +130,7 @@ function ArticleBadge({
           : undefined
       }
     >
-      {docDisplayName(label)}
+      {displayTitle(label, title)}
     </Badge>
   );
 }

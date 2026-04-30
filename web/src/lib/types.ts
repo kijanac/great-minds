@@ -6,6 +6,11 @@ import type {
 
 export type { BtwMessage, SourceRef, ThinkingBlock };
 
+export interface HistoryMessage {
+  role: "user" | "assistant";
+  content: string;
+}
+
 export function userMsg(text: string): BtwMessage {
   return { role: "user", text };
 }

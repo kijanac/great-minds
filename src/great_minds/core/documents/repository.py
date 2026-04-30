@@ -97,6 +97,21 @@ class DocumentRepository:
         )
         return {row.file_path: row.file_hash for row in result}
 
+    async def get_title_by_path(
+        self, brain_id: UUID, file_path: str
+    ) -> str | None:
+        """Return just the LLM-generated title for a path, or None if the
+        document isn't indexed or hasn't been extracted yet. Single
+        indexed query — no tag JOIN, no full row hydration."""
+        result = await self.session.execute(
+            select(DocumentORM.title).where(
+                DocumentORM.brain_id == brain_id,
+                DocumentORM.file_path == file_path,
+            )
+        )
+        title = result.scalar_one_or_none()
+        return title or None
+
     async def get_by_path(
         self, brain_id: UUID, file_path: str
     ) -> Document | None:

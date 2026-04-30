@@ -1,20 +1,28 @@
 import { z } from "zod";
 
-import type { SourceRef } from "@/lib/types";
+import type { HistoryMessage, SourceRef } from "@/lib/types";
 
 import { apiFetch, brainPath } from "./client";
 
 interface StreamQueryOptions {
   model?: string;
   originPath?: string;
-  sessionContext?: string;
+  history?: HistoryMessage[];
   mode: "query" | "btw";
   signal?: AbortSignal;
 }
 
 const sourceEventDataSchema = z.discriminatedUnion("type", [
-  z.object({ type: z.literal("article"), path: z.string() }),
-  z.object({ type: z.literal("raw"), path: z.string() }),
+  z.object({
+    type: z.literal("article"),
+    path: z.string(),
+    title: z.string().nullable().optional(),
+  }),
+  z.object({
+    type: z.literal("raw"),
+    path: z.string(),
+    title: z.string().nullable().optional(),
+  }),
   z.object({ type: z.literal("search"), query: z.string() }),
   z.object({ type: z.literal("query"), filters: z.record(z.unknown()).optional() }),
 ]);
@@ -65,7 +73,7 @@ export async function* streamQuery(
       question,
       model: options?.model,
       origin_path: options?.originPath,
-      session_context: options?.sessionContext,
+      history: options?.history,
       mode: options?.mode,
     }),
     signal: options?.signal,
@@ -137,6 +145,7 @@ export async function consumeStream(
         sources.push({
           label: event.data.path,
           type: event.data.type,
+          title: event.data.title ?? null,
           thinking: streamText || undefined,
         });
         callbacks?.onSources?.([...sources]);

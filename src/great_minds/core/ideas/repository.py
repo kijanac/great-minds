@@ -60,17 +60,13 @@ class IdeaEmbeddingRepository:
             delete(IdeaEmbeddingORM).where(IdeaEmbeddingORM.brain_id == brain_id)
         )
 
-    async def load_embeddings(
-        self, brain_id: UUID
-    ) -> list[tuple[UUID, list[float]]]:
+    async def list_for_brain(self, brain_id: UUID) -> list[IdeaEmbedding]:
         rows = (
             await self.session.execute(
-                select(
-                    IdeaEmbeddingORM.idea_id, IdeaEmbeddingORM.embedding
-                ).where(IdeaEmbeddingORM.brain_id == brain_id)
+                select(IdeaEmbeddingORM).where(IdeaEmbeddingORM.brain_id == brain_id)
             )
-        ).all()
-        return [(r.idea_id, list(r.embedding)) for r in rows]
+        ).scalars().all()
+        return [IdeaEmbedding.model_validate(row) for row in rows]
 
     async def get_ids_for_brain(self, brain_id: UUID) -> list[UUID]:
         rows = (

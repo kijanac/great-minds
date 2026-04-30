@@ -14,6 +14,7 @@ from great_minds.core.brains import BrainAccess, BrainRepository, BrainService
 from great_minds.core.compile_intents import CompileIntentRepository
 from great_minds.core.documents import DocumentRepository, DocumentService
 from great_minds.core.ingest_service import IngestService
+from great_minds.core.llm_costs import LlmCostEventRepository, LlmCostService
 from great_minds.core.mail import Mailer
 from great_minds.core.pagination import PageParams
 from great_minds.core.crypto import decode_access_token
@@ -66,6 +67,12 @@ def get_document_service(
     repo: DocumentRepository = Depends(get_document_repository),
 ) -> DocumentService:
     return DocumentService(repo)
+
+
+def get_llm_cost_service(
+    session: AsyncSession = Depends(get_session),
+) -> LlmCostService:
+    return LlmCostService(LlmCostEventRepository(session))
 
 
 def get_ingest_service(

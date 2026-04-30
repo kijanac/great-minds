@@ -235,6 +235,44 @@ def upgrade() -> None:
         ),
     )
 
+    # -- LLM cost events (one row per cost-bearing wide_event) ------------
+    # Sink for billing/quota aggregation. Source-of-truth lives upstream
+    # in the wide_event contextvar (accumulated via accumulate_cost from
+    # api_call); this table is the persisted readout at end-of-request.
+    op.create_table(
+        "llm_cost_events",
+        sa.Column(
+            "id",
+            sa.UUID(),
+            nullable=False,
+            server_default=sa.text("gen_random_uuid()"),
+        ),
+        sa.Column(
+            "created_at",
+            sa.DateTime(timezone=True),
+            server_default=sa.text("now()"),
+            nullable=False,
+        ),
+        sa.Column("user_id", sa.UUID(), nullable=True),
+        sa.Column("brain_id", sa.UUID(), nullable=True),
+        sa.Column("event_type", sa.Text(), nullable=False),
+        sa.Column("cost_usd", sa.Numeric(precision=12, scale=6), nullable=False),
+        sa.Column("correlation_id", sa.Text(), nullable=True),
+        sa.ForeignKeyConstraint(["user_id"], ["users.id"], ondelete="SET NULL"),
+        sa.ForeignKeyConstraint(["brain_id"], ["brains.id"], ondelete="CASCADE"),
+        sa.PrimaryKeyConstraint("id"),
+    )
+    op.create_index(
+        "ix_llm_cost_events_user_created",
+        "llm_cost_events",
+        ["user_id", "created_at"],
+    )
+    op.create_index(
+        "ix_llm_cost_events_brain_created",
+        "llm_cost_events",
+        ["brain_id", "created_at"],
+    )
+
     # -- Search index (pgvector + tsvector) --------------------------------
     op.execute(
         text("""

@@ -74,6 +74,15 @@ async def create_api_key(
     )
 
 
+@router.get("/api-keys")
+async def list_api_keys(
+    user: CurrentUser,
+    auth_service: AuthService = Depends(get_auth_service),
+) -> list[schemas.ApiKey]:
+    rows = await auth_service.list_api_keys(user.id)
+    return [schemas.ApiKey.model_validate(k) for k in rows]
+
+
 @router.delete("/api-keys/{key_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def revoke_api_key(
     key_id: UUID,

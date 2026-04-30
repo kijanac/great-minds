@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 import { Home, X } from "lucide-react";
 
 import type { BrainConfig, BrainDetail, Membership } from "@/api/brains";
@@ -15,6 +15,8 @@ interface ProjectSettingsProps {
   config: BrainConfig | null;
   isOwner: boolean;
   loading: boolean;
+  proposalsSlot: ReactNode;
+  apiKeysSlot: ReactNode;
   onHome: () => void;
   onInvite: (email: string) => Promise<void>;
   onChangeRole: (userId: string, role: string) => Promise<void>;
@@ -36,6 +38,8 @@ export function ProjectSettings({
   config,
   isOwner,
   loading,
+  proposalsSlot,
+  apiKeysSlot,
   onHome,
   onInvite,
   onChangeRole,
@@ -172,6 +176,9 @@ export function ProjectSettings({
                   />
                 </div>
               )}
+
+              {proposalsSlot}
+              {apiKeysSlot}
             </>
           )}
         </div>

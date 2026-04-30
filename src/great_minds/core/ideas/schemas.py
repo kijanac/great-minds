@@ -71,6 +71,8 @@ class SourceCard(BaseModel):
 class IdeaEmbedding(BaseModel):
     """Projection of one row in idea_embeddings."""
 
+    model_config = ConfigDict(from_attributes=True)
+
     idea_id: UUID
     brain_id: UUID
     document_id: UUID

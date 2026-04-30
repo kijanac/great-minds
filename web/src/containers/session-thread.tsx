@@ -26,19 +26,31 @@ export function SessionThread({ session, onFollowUp }: SessionThreadProps) {
   const navigate = useViewNavigate();
   const [panel, setPanel] = useState<{
     path: string;
+    title: string | null;
     body: string | null;
     loading: boolean;
   } | null>(null);
 
   const openPanel = useCallback(async (path: string) => {
-    setPanel({ path, body: null, loading: true });
+    setPanel({ path, title: null, body: null, loading: true });
     try {
       const data = await readDocument(path);
       setPanel((prev) =>
-        prev?.path === path ? { path, body: data.body, loading: false } : prev,
+        prev?.path === path
+          ? {
+              path,
+              title: data.document.metadata.title || null,
+              body: data.body,
+              loading: false,
+            }
+          : prev,
       );
     } catch {
-      setPanel((prev) => (prev?.path === path ? { path, body: null, loading: false } : prev));
+      setPanel((prev) =>
+        prev?.path === path
+          ? { path, title: null, body: null, loading: false }
+          : prev,
+      );
     }
   }, []);
 
@@ -185,6 +197,7 @@ export function SessionThread({ session, onFollowUp }: SessionThreadProps) {
           <div className="fixed inset-0 z-[199]" onClick={() => setPanel(null)} />
           <ArticlePanel
             path={panel.path}
+            title={panel.title}
             body={panel.body}
             loading={panel.loading}
             onClose={() => setPanel(null)}

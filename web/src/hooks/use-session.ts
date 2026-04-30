@@ -2,36 +2,24 @@ import { useCallback, useEffect, useRef, useState } from "react";
 
 import { consumeStream, streamQuery } from "@/api/query";
 import { appendBtw, appendExchange, createSession } from "@/api/sessions";
-import type { BtwThread, Exchange, Phase, SelectionInfo, ThinkingBlock } from "@/lib/types";
+import type {
+  BtwThread,
+  Exchange,
+  HistoryMessage,
+  Phase,
+  SelectionInfo,
+  ThinkingBlock,
+} from "@/lib/types";
 import { assistantMsg, userMsg } from "@/lib/types";
-import { buildBtwQuery, genId, isAbortError } from "@/lib/utils";
+import { buildBtwHistory, buildBtwQuery, genId, isAbortError } from "@/lib/utils";
 
-function serializeThread(thread: Exchange[]): string {
-  const parts: string[] = [];
-  for (let i = 0; i < thread.length; i++) {
-    const ex = thread[i];
-    if (i > 0) parts.push("\n---\n\n");
-    parts.push(`# ${ex.query}\n\n`);
-    for (const block of ex.thinking) {
-      for (const src of block.sources) {
-        parts.push(`> \`${src.label}\`\n`);
-      }
-      parts.push(">\n");
-    }
-    parts.push(ex.answer + "\n");
-    for (const btw of ex.btws) {
-      const short = btw.anchor.length > 60 ? btw.anchor.slice(0, 60) + "..." : btw.anchor;
-      parts.push(`\n> **BTW** re: "${short}"\n>\n`);
-      for (const msg of btw.messages) {
-        if (msg.role === "user") {
-          parts.push(`> *${msg.text}*\n>\n`);
-        } else {
-          parts.push(`> ${msg.text}\n>\n`);
-        }
-      }
-    }
+function threadToHistory(thread: Exchange[]): HistoryMessage[] {
+  const history: HistoryMessage[] = [];
+  for (const ex of thread) {
+    history.push({ role: "user", content: ex.query });
+    history.push({ role: "assistant", content: ex.answer });
   }
-  return parts.join("").trimEnd() + "\n";
+  return history;
 }
 
 function exchangeToPayload(ex: Exchange) {
@@ -95,10 +83,12 @@ export function useSession(options?: UseSessionOptions) {
     try {
       const originForQuery = isFirstExchange.current ? originPathRef.current : undefined;
       isFirstExchange.current = false;
+      const history = threadToHistory(threadRef.current);
       const { answer, sources } = await consumeStream(
         streamQuery(question, {
           signal: controller.signal,
           originPath: originForQuery,
+          history,
           mode: "query",
         }),
         {
@@ -199,6 +189,8 @@ export function useSession(options?: UseSessionOptions) {
     const target = threadRef.current.flatMap((ex) => ex.btws).find((b) => b.id === btwId);
     const anchor = target?.anchor ?? "";
     const paragraph = target?.paragraph ?? "";
+    const priorBtw = target?.messages ?? [];
+    const isFirst = priorBtw.length === 0;
 
     const ownerExId = target?.exchangeId ?? "";
 
@@ -220,9 +212,14 @@ export function useSession(options?: UseSessionOptions) {
       }),
     );
 
-    const contextualQuery = buildBtwQuery(paragraph, anchor, userText);
+    // First BTW turn: passage prefix on the question itself.
+    // Follow-ups: passage prefix lives in turn 1 of priorBtw history (re-attached in buildBtwHistory).
+    const question = isFirst ? buildBtwQuery(paragraph, anchor, userText) : userText;
+    const history = [
+      ...threadToHistory(threadRef.current),
+      ...buildBtwHistory(priorBtw, paragraph, anchor),
+    ];
 
-    const sessionContext = serializeThread(threadRef.current);
     const controller = new AbortController();
     cleanupRef.current.push(() => controller.abort());
 
@@ -237,7 +234,7 @@ export function useSession(options?: UseSessionOptions) {
     (async () => {
       try {
         const { answer, sources } = await consumeStream(
-          streamQuery(contextualQuery, { sessionContext, mode: "btw", signal: controller.signal }),
+          streamQuery(question, { history, mode: "btw", signal: controller.signal }),
           {
             onSources: (s) => updateBtw({ sources: s }),
             onToken: (text) => updateBtw({ streamText: text }),
