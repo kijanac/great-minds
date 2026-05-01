@@ -4,7 +4,7 @@ from typing import Annotated
 from uuid import UUID
 
 from absurd_sdk import AsyncAbsurd
-from fastapi import Depends, HTTPException, Path, Query, Request, status
+from fastapi import Depends, HTTPException, Query, Request, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -12,25 +12,34 @@ from great_minds.core.auth import AuthRepository, AuthService
 from great_minds.core.authz import Forbidden
 from great_minds.core.brains import BrainAccess, BrainRepository, BrainService
 from great_minds.core.compile_intents import CompileIntentRepository
+from great_minds.core.crypto import decode_access_token
+from great_minds.core.db import get_session
 from great_minds.core.documents import DocumentRepository, DocumentService
 from great_minds.core.ingest_service import IngestService
 from great_minds.core.llm_costs import LlmCostEventRepository, LlmCostService
 from great_minds.core.mail import Mailer
 from great_minds.core.pagination import PageParams
-from great_minds.core.crypto import decode_access_token
-from great_minds.core.db import get_session
 from great_minds.core.proposals import ProposalRepository, ProposalService
 from great_minds.core.settings import Settings, get_settings
-from great_minds.core.tasks import TaskRepository, TaskService
 from great_minds.core.storage import Storage
+from great_minds.core.tasks import TaskRepository, TaskService
 from great_minds.core.users import User, UserRepository, UserService
 
 bearer_scheme = HTTPBearer()
 
 
+# ---------------------------------------------------------------------------
+# Primitives
+# ---------------------------------------------------------------------------
+
+SessionDep = Annotated[AsyncSession, Depends(get_session)]
+SettingsDep = Annotated[Settings, Depends(get_settings)]
+BearerCredsDep = Annotated[HTTPAuthorizationCredentials, Depends(bearer_scheme)]
+
+
 def get_page_params(
-    limit: int = Query(50, ge=0, le=200),
-    offset: int = Query(0, ge=0),
+    limit: Annotated[int, Query(ge=0, le=200)] = 50,
+    offset: Annotated[int, Query(ge=0)] = 0,
 ) -> PageParams:
     return PageParams(limit=limit, offset=offset)
 
@@ -43,42 +52,55 @@ PageParamsQuery = Annotated[PageParams, Depends(get_page_params)]
 # ---------------------------------------------------------------------------
 
 
-def get_auth_repository(session: AsyncSession = Depends(get_session)) -> AuthRepository:
+def get_auth_repository(session: SessionDep) -> AuthRepository:
     return AuthRepository(session)
 
 
-def get_user_repository(session: AsyncSession = Depends(get_session)) -> UserRepository:
+AuthRepositoryDep = Annotated[AuthRepository, Depends(get_auth_repository)]
+
+
+def get_user_repository(session: SessionDep) -> UserRepository:
     return UserRepository(session)
 
 
-def get_brain_repository(
-    session: AsyncSession = Depends(get_session),
-) -> BrainRepository:
+UserRepositoryDep = Annotated[UserRepository, Depends(get_user_repository)]
+
+
+def get_brain_repository(session: SessionDep) -> BrainRepository:
     return BrainRepository(session)
 
 
-def get_document_repository(
-    session: AsyncSession = Depends(get_session),
-) -> DocumentRepository:
+BrainRepositoryDep = Annotated[BrainRepository, Depends(get_brain_repository)]
+
+
+def get_document_repository(session: SessionDep) -> DocumentRepository:
     return DocumentRepository(session)
 
 
-def get_document_service(
-    repo: DocumentRepository = Depends(get_document_repository),
-) -> DocumentService:
-    return DocumentService(repo)
+DocumentRepositoryDep = Annotated[DocumentRepository, Depends(get_document_repository)]
 
 
-def get_llm_cost_service(
-    session: AsyncSession = Depends(get_session),
-) -> LlmCostService:
-    return LlmCostService(LlmCostEventRepository(session))
+def get_proposal_repository(session: SessionDep) -> ProposalRepository:
+    return ProposalRepository(session)
 
 
-def get_ingest_service(
-    doc_service: DocumentService = Depends(get_document_service),
-) -> IngestService:
-    return IngestService(doc_service)
+ProposalRepositoryDep = Annotated[ProposalRepository, Depends(get_proposal_repository)]
+
+
+def get_task_repository(session: SessionDep) -> TaskRepository:
+    return TaskRepository(session)
+
+
+TaskRepositoryDep = Annotated[TaskRepository, Depends(get_task_repository)]
+
+
+def get_compile_intent_repository(session: SessionDep) -> CompileIntentRepository:
+    return CompileIntentRepository(session)
+
+
+CompileIntentRepositoryDep = Annotated[
+    CompileIntentRepository, Depends(get_compile_intent_repository)
+]
 
 
 # ---------------------------------------------------------------------------
@@ -86,75 +108,98 @@ def get_ingest_service(
 # ---------------------------------------------------------------------------
 
 
-def get_brain_service(
-    repo: BrainRepository = Depends(get_brain_repository),
-) -> BrainService:
+def get_document_service(repo: DocumentRepositoryDep) -> DocumentService:
+    return DocumentService(repo)
+
+
+DocumentServiceDep = Annotated[DocumentService, Depends(get_document_service)]
+
+
+def get_llm_cost_service(session: SessionDep) -> LlmCostService:
+    return LlmCostService(LlmCostEventRepository(session))
+
+
+LlmCostServiceDep = Annotated[LlmCostService, Depends(get_llm_cost_service)]
+
+
+def get_ingest_service(doc_service: DocumentServiceDep) -> IngestService:
+    return IngestService(doc_service)
+
+
+IngestServiceDep = Annotated[IngestService, Depends(get_ingest_service)]
+
+
+def get_brain_service(repo: BrainRepositoryDep) -> BrainService:
     return BrainService(repo)
 
 
-def get_user_service(
-    user_repo: UserRepository = Depends(get_user_repository),
-    brain_service: BrainService = Depends(get_brain_service),
-) -> UserService:
-    return UserService(user_repo, brain_service)
+BrainServiceDep = Annotated[BrainService, Depends(get_brain_service)]
 
 
-def get_mailer(settings: Settings = Depends(get_settings)) -> Mailer:
+def get_user_service(user_repo: UserRepositoryDep) -> UserService:
+    return UserService(user_repo)
+
+
+UserServiceDep = Annotated[UserService, Depends(get_user_service)]
+
+
+def get_mailer(settings: SettingsDep) -> Mailer:
     return Mailer(settings)
 
 
+MailerDep = Annotated[Mailer, Depends(get_mailer)]
+
+
 def get_auth_service(
-    auth_repo: AuthRepository = Depends(get_auth_repository),
-    user_service: UserService = Depends(get_user_service),
-    mailer: Mailer = Depends(get_mailer),
-    settings: Settings = Depends(get_settings),
+    auth_repo: AuthRepositoryDep,
+    user_service: UserServiceDep,
+    mailer: MailerDep,
+    settings: SettingsDep,
 ) -> AuthService:
     return AuthService(auth_repo, user_service, mailer, settings)
 
 
-def get_proposal_repository(
-    session: AsyncSession = Depends(get_session),
-) -> ProposalRepository:
-    return ProposalRepository(session)
+AuthServiceDep = Annotated[AuthService, Depends(get_auth_service)]
 
 
 def get_proposal_service(
-    repo: ProposalRepository = Depends(get_proposal_repository),
-    settings: Settings = Depends(get_settings),
+    repo: ProposalRepositoryDep,
+    doc_service: DocumentServiceDep,
+    settings: SettingsDep,
 ) -> ProposalService:
-    return ProposalService(repo, settings)
+    return ProposalService(repo, doc_service, settings)
+
+
+ProposalServiceDep = Annotated[ProposalService, Depends(get_proposal_service)]
 
 
 def get_absurd(request: Request) -> AsyncAbsurd:
     return request.app.state.absurd
 
 
-def get_task_repository(
-    session: AsyncSession = Depends(get_session),
-) -> TaskRepository:
-    return TaskRepository(session)
+AbsurdDep = Annotated[AsyncAbsurd, Depends(get_absurd)]
 
 
 def get_task_service(
-    repo: TaskRepository = Depends(get_task_repository),
-    absurd: AsyncAbsurd = Depends(get_absurd),
+    repo: TaskRepositoryDep,
+    absurd: AbsurdDep,
 ) -> TaskService:
     return TaskService(repo, absurd)
 
 
-def get_compile_intent_repository(
-    session: AsyncSession = Depends(get_session),
-) -> CompileIntentRepository:
-    return CompileIntentRepository(session)
+TaskServiceDep = Annotated[TaskService, Depends(get_task_service)]
 
 
-def require_llm(settings: Settings = Depends(get_settings)) -> None:
+def require_llm(settings: SettingsDep) -> None:
     """Gate endpoints that need OpenRouter. Returns 503 if not configured."""
     if not settings.openrouter_api_key:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="LLM service not configured (OPENROUTER_API_KEY missing)",
         )
+
+
+LlmGuard = Annotated[None, Depends(require_llm)]
 
 
 # ---------------------------------------------------------------------------
@@ -164,10 +209,10 @@ def require_llm(settings: Settings = Depends(get_settings)) -> None:
 
 async def get_current_user(
     request: Request,
-    credentials: HTTPAuthorizationCredentials = Depends(bearer_scheme),
-    auth_repo: AuthRepository = Depends(get_auth_repository),
-    user_repo: UserRepository = Depends(get_user_repository),
-    settings: Settings = Depends(get_settings),
+    credentials: BearerCredsDep,
+    auth_repo: AuthRepositoryDep,
+    user_repo: UserRepositoryDep,
+    settings: SettingsDep,
 ) -> User:
     token = credentials.credentials
 
@@ -200,13 +245,17 @@ CurrentUser = Annotated[User, Depends(get_current_user)]
 # ---------------------------------------------------------------------------
 
 
-def get_brain_access(repo: BrainRepository = Depends(get_brain_repository)) -> BrainAccess:
+def get_brain_access(repo: BrainRepositoryDep) -> BrainAccess:
     return BrainAccess(repo)
 
+
+BrainAccessDep = Annotated[BrainAccess, Depends(get_brain_access)]
+
+
 async def require_brain_member(
-    brain_id: UUID = Path(...),
-    user: User = Depends(get_current_user),
-    access: BrainAccess = Depends(get_brain_access),
+    brain_id: UUID,
+    user: CurrentUser,
+    access: BrainAccessDep,
 ) -> None:
     """Raises 403 if user is not a member of this brain."""
     try:
@@ -219,9 +268,9 @@ async def require_brain_member(
 
 
 async def require_brain_owner(
-    brain_id: UUID = Path(...),
-    user: User = Depends(get_current_user),
-    access: BrainAccess = Depends(get_brain_access),
+    brain_id: UUID,
+    user: CurrentUser,
+    access: BrainAccessDep,
 ) -> None:
     """Raises 403 if user is not the brain owner."""
     try:
@@ -238,9 +287,9 @@ BrainOwnerGuard = Annotated[None, Depends(require_brain_owner)]
 
 
 async def get_brain_storage(
-    brain_id: UUID = Path(...),
-    brain_service: BrainService = Depends(get_brain_service),
-    _auth: None = Depends(require_brain_member),
+    brain_id: UUID,
+    brain_service: BrainServiceDep,
+    _auth: BrainMemberGuard,
 ) -> Storage:
     return brain_service.get_storage_by_id(brain_id)
 

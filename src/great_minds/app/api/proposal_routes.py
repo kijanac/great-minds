@@ -1,22 +1,22 @@
 """Source proposal routes — nested under /brains/{brain_id}/proposals."""
 
 import logging
+from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, HTTPException, Query, status
 
 from great_minds.app.api.dependencies import (
-    BrainMemberGuard,
     BrainOwnerGuard,
+    BrainServiceDep,
+    BrainStorageDep,
     CurrentUser,
-    get_brain_service,
-    get_proposal_service,
     PageParamsQuery,
+    ProposalServiceDep,
 )
 from great_minds.app.api.schemas import proposals as schemas
 from great_minds.core.pagination import Page
-from great_minds.core.brains import BrainService
-from great_minds.core.proposals import ProposalService, ProposalStatus
+from great_minds.core.proposals import ProposalStatus
 
 log = logging.getLogger(__name__)
 
@@ -28,12 +28,13 @@ async def create_proposal(
     req: schemas.ProposalCreate,
     brain_id: UUID,
     user: CurrentUser,
-    _auth: BrainMemberGuard,
-    proposal_service: ProposalService = Depends(get_proposal_service),
+    storage: BrainStorageDep,
+    proposal_service: ProposalServiceDep,
 ) -> schemas.Proposal:
     proposal = await proposal_service.create(
         brain_id=brain_id,
         user_id=user.id,
+        storage=storage,
         content=req.content,
         content_type=req.content_type,
         title=req.title,
@@ -46,9 +47,8 @@ async def create_proposal(
 async def list_proposals(
     brain_id: UUID,
     pagination: PageParamsQuery,
-    _auth: BrainMemberGuard,
-    status_filter: ProposalStatus | None = Query(None, alias="status"),
-    proposal_service: ProposalService = Depends(get_proposal_service),
+    proposal_service: ProposalServiceDep,
+    status_filter: Annotated[ProposalStatus | None, Query(alias="status")] = None,
 ) -> Page[schemas.ProposalOverview]:
     result = await proposal_service.list_for_brain_page(
         brain_id, status=status_filter, pagination=pagination
@@ -63,8 +63,7 @@ async def list_proposals(
 async def get_proposal(
     proposal_id: UUID,
     brain_id: UUID,
-    _auth: BrainMemberGuard,
-    proposal_service: ProposalService = Depends(get_proposal_service),
+    proposal_service: ProposalServiceDep,
 ) -> schemas.Proposal:
     proposal = await proposal_service.get(proposal_id, brain_id)
     if proposal is None:
@@ -79,8 +78,8 @@ async def review_proposal(
     brain_id: UUID,
     user: CurrentUser,
     _auth: BrainOwnerGuard,
-    brain_service: BrainService = Depends(get_brain_service),
-    proposal_service: ProposalService = Depends(get_proposal_service),
+    brain_service: BrainServiceDep,
+    proposal_service: ProposalServiceDep,
 ) -> schemas.Proposal:
     if req.status == ProposalStatus.PENDING:
         raise HTTPException(status_code=400, detail="Cannot set status back to pending")

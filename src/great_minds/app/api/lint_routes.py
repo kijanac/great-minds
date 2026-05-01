@@ -16,15 +16,13 @@ Shape reflects the topic-based architecture directly:
 
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Path
+from fastapi import APIRouter
 from pydantic import BaseModel
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from great_minds.app.api.dependencies import (
-    BrainMemberGuard,
     BrainStorageDep,
+    SessionDep,
 )
-from great_minds.core.db import get_session
 from great_minds.core.lint import build_lint_report
 
 router = APIRouter(prefix="/lint", tags=["lint"])
@@ -57,10 +55,9 @@ class LintReportResponse(BaseModel):
 
 @router.get("")
 async def lint(
+    brain_id: UUID,
     storage: BrainStorageDep,
-    _auth: BrainMemberGuard,
-    brain_id: UUID = Path(...),
-    session: AsyncSession = Depends(get_session),
+    session: SessionDep,
 ) -> LintReportResponse:
     report = await build_lint_report(session, brain_id, storage)
     return LintReportResponse(
