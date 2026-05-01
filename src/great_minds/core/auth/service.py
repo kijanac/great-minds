@@ -51,8 +51,12 @@ class AuthService:
             body=f"Your Great Minds sign-in code is: {code}\n\nExpires in {self.settings.auth_code_expiry_minutes} minutes.",
         )
 
-    async def verify_code(self, email: str, code: str) -> tuple[str, str]:
-        """Verify auth code, provision user if new, return (access_token, refresh_token)."""
+    async def verify_code(self, email: str, code: str) -> tuple[UUID, str, str]:
+        """Verify auth code, ensure user row exists, mint tokens.
+
+        Returns ``(user_id, access_token, refresh_token)``. Brain
+        provisioning is the route's job, not auth's.
+        """
         email = normalize_email(email)
         if self.settings.suppress_auth:
             log.warning(
@@ -64,14 +68,13 @@ class AuthService:
                 raise ValueError("Invalid or expired code")
 
         user, _ = await self.user_service.get_or_create(email)
-        await self.user_service.ensure_default_brain(user)
 
         access_token = create_access_token(user.id, self.settings)
         raw_refresh = create_refresh_token_value()
         await self.auth_repo.store_refresh_token(user.id, raw_refresh, self.settings)
 
         await self._commit()
-        return access_token, raw_refresh
+        return user.id, access_token, raw_refresh
 
     async def refresh_tokens(self, raw_refresh: str) -> tuple[str, str]:
         """Validate refresh token, rotate it, return new (access_token, refresh_token)."""

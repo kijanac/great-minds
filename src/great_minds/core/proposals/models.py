@@ -41,6 +41,7 @@ class SourceProposal(Base):
     title: Mapped[str | None] = mapped_column(Text)
     author: Mapped[str | None] = mapped_column(Text)
     storage_path: Mapped[str] = mapped_column(Text)
+    dest_path: Mapped[str] = mapped_column(Text, nullable=False, server_default="")
     reviewed_by: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey("users.id", ondelete="SET NULL")
     )

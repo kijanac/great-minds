@@ -9,6 +9,7 @@ import { Separator } from "@/components/ui/separator";
 import { AnswerBlock } from "@/components/answer-block";
 import { ArticlePanel } from "@/components/article-panel";
 import { FollowUpBar } from "@/components/follow-up-bar";
+import { PromoteButton } from "@/components/promote-button";
 import { SelectionPopover } from "@/components/selection-popover";
 import { ThinkingSection } from "@/components/thinking-section";
 import { useLinkInterceptor } from "@/hooks/use-link-interceptor";
@@ -27,12 +28,13 @@ export function SessionThread({ session, onFollowUp }: SessionThreadProps) {
   const [panel, setPanel] = useState<{
     path: string;
     title: string | null;
+    kind: "raw" | "wiki" | null;
     body: string | null;
     loading: boolean;
   } | null>(null);
 
   const openPanel = useCallback(async (path: string) => {
-    setPanel({ path, title: null, body: null, loading: true });
+    setPanel({ path, title: null, kind: null, body: null, loading: true });
     try {
       const data = await readDocument(path);
       setPanel((prev) =>
@@ -40,6 +42,7 @@ export function SessionThread({ session, onFollowUp }: SessionThreadProps) {
           ? {
               path,
               title: data.document.metadata.title || null,
+              kind: data.document.doc_kind,
               body: data.body,
               loading: false,
             }
@@ -48,7 +51,7 @@ export function SessionThread({ session, onFollowUp }: SessionThreadProps) {
     } catch {
       setPanel((prev) =>
         prev?.path === path
-          ? { path, title: null, body: null, loading: false }
+          ? { path, title: null, kind: null, body: null, loading: false }
           : prev,
       );
     }
@@ -101,10 +104,16 @@ export function SessionThread({ session, onFollowUp }: SessionThreadProps) {
             <div key={ex.id}>
               {ei > 0 && <Separator className="my-8 bg-ink-subtle" />}
 
-              <div className="flex items-center justify-between mb-[18px]">
+              <div className="flex items-center justify-between mb-[18px] gap-3">
                 <span className="italic text-[length:var(--text-small)] text-muted-foreground">
                   {`"${ex.query}"`}
                 </span>
+                {session.sessionId && ex.answer && (
+                  <PromoteButton
+                    sessionId={session.sessionId}
+                    exchangeId={ex.id}
+                  />
+                )}
               </div>
 
               <ThinkingSection
@@ -198,6 +207,7 @@ export function SessionThread({ session, onFollowUp }: SessionThreadProps) {
           <ArticlePanel
             path={panel.path}
             title={panel.title}
+            kind={panel.kind}
             body={panel.body}
             loading={panel.loading}
             onClose={() => setPanel(null)}

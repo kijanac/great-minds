@@ -12,6 +12,9 @@ interface BtwThreadProps {
   btw: BtwThreadType;
   onReply: (btwId: string, text: string) => void;
   onDismiss?: (btwId: string) => void;
+  // When provided, this BTW is ephemeral and offers a "save as session" action.
+  // Session-attached BTWs (which auto-persist) leave this undefined.
+  onSpinOff?: (btwId: string) => void;
 }
 
 const btwMdComponents = {
@@ -35,7 +38,7 @@ const btwMdComponents = {
   ),
 };
 
-export function BtwThread({ btw, onReply, onDismiss }: BtwThreadProps) {
+export function BtwThread({ btw, onReply, onDismiss, onSpinOff }: BtwThreadProps) {
   const [input, setInput] = useState("");
   const [open, setOpen] = useState(true);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -56,12 +59,6 @@ export function BtwThread({ btw, onReply, onDismiss }: BtwThreadProps) {
     }
     wasStreaming.current = btw.streaming;
   }, [btw.streaming]);
-
-  // Sources sit between the last user message and the assistant
-  // response — whether that response is still streaming or final.
-  const lastMsg = btw.messages[btw.messages.length - 1];
-  const lastAssistant = !btw.streaming && lastMsg?.role === "assistant" ? lastMsg : null;
-  const visibleMessages = lastAssistant ? btw.messages.slice(0, -1) : btw.messages;
 
   return (
     <Collapsible
@@ -89,29 +86,47 @@ export function BtwThread({ btw, onReply, onDismiss }: BtwThreadProps) {
       </CollapsibleTrigger>
 
       <CollapsibleContent>
-        {visibleMessages.map((m, i) => (
-          <div
-            key={i}
-            className={`text-[length:var(--text-small)] leading-[1.72] mb-[9px] ${
-              m.role === "user" ? "text-warm-ghost italic" : "text-warm-faint"
-            }`}
-          >
-            {m.role === "user" ? (
-              <>
-                <span className="font-mono not-italic text-[length:var(--text-chrome)] tracking-[0.1em] text-interactive-dim mr-0.5">
-                  you ·{" "}
-                </span>
-                {m.text}
-              </>
-            ) : (
-              <Markdown remarkPlugins={remarkPlugins} components={btwMdComponents}>
-                {m.text}
-              </Markdown>
+        {btw.exchanges.map((ex) => (
+          <div key={ex.id}>
+            <div className="text-[length:var(--text-small)] leading-[1.72] mb-[9px] text-warm-ghost italic">
+              <span className="font-mono not-italic text-[length:var(--text-chrome)] tracking-[0.1em] text-interactive-dim mr-0.5">
+                you ·{" "}
+              </span>
+              {ex.query}
+            </div>
+            {ex.thinking.flatMap((block) => block.sources).length > 0 && (
+              <div className="flex flex-wrap gap-x-2 gap-y-0.5 mb-[7px]">
+                {ex.thinking.flatMap((block, bi) =>
+                  block.sources.map((s, si) => (
+                    <span
+                      key={`${bi}:${si}`}
+                      className="font-mono text-[length:var(--text-chrome)] tracking-[0.06em] text-interactive-dim"
+                      title={s.thinking}
+                    >
+                      {displayTitle(s.label, s.title)}
+                    </span>
+                  )),
+                )}
+              </div>
             )}
+            <div className="text-[length:var(--text-small)] leading-[1.72] mb-[9px] text-warm-faint">
+              <Markdown remarkPlugins={remarkPlugins} components={btwMdComponents}>
+                {ex.answer}
+              </Markdown>
+            </div>
           </div>
         ))}
 
-        {btw.sources.length > 0 && (
+        {btw.streaming && btw.pendingQuery && (
+          <div className="text-[length:var(--text-small)] leading-[1.72] mb-[9px] text-warm-ghost italic">
+            <span className="font-mono not-italic text-[length:var(--text-chrome)] tracking-[0.1em] text-interactive-dim mr-0.5">
+              you ·{" "}
+            </span>
+            {btw.pendingQuery}
+          </div>
+        )}
+
+        {btw.streaming && btw.sources.length > 0 && (
           <div className="flex flex-wrap gap-x-2 gap-y-0.5 mb-[7px]">
             {btw.sources.map((s, i) => (
               <span
@@ -140,11 +155,16 @@ export function BtwThread({ btw, onReply, onDismiss }: BtwThreadProps) {
           </div>
         )}
 
-        {lastAssistant && (
-          <div className="text-[length:var(--text-small)] leading-[1.72] mb-[9px] text-warm-faint">
-            <Markdown remarkPlugins={remarkPlugins} components={btwMdComponents}>
-              {lastAssistant.text}
-            </Markdown>
+        {onSpinOff && btw.exchanges.length > 0 && !btw.streaming && (
+          <div className="text-[length:var(--text-chrome)] tracking-[0.06em] text-interactive-dim italic mb-[6px]">
+            ephemeral ·{" "}
+            <button
+              type="button"
+              onClick={() => onSpinOff(btw.id)}
+              className="not-italic font-mono tracking-[0.1em] uppercase text-gold hover:text-foreground transition-colors"
+            >
+              save as session
+            </button>
           </div>
         )}
 
@@ -157,7 +177,7 @@ export function BtwThread({ btw, onReply, onDismiss }: BtwThreadProps) {
               value={input}
               onChange={(e) => setInput(e.target.value)}
               onBlur={() => {
-                if (btw.messages.length === 0 && !input.trim() && onDismiss) {
+                if (btw.exchanges.length === 0 && !input.trim() && onDismiss) {
                   onDismiss(btw.id);
                 }
               }}

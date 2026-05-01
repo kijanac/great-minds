@@ -12,12 +12,16 @@ from uuid import UUID
 
 import httpx
 from markitdown import MarkItDown, StreamInfo
+from openai import AsyncOpenAI
 
 from great_minds.core.brain import load_config
 from great_minds.core.documents.schemas import DocumentCreate
 from great_minds.core.documents.service import DocumentService
+from great_minds.core.llm import QUERY_MODEL
+from great_minds.core.llm.client import api_call, extract_content
 from great_minds.core.markdown import parse_frontmatter
-from great_minds.core.paths import raw_path
+from great_minds.core.paths import raw_path, session_exchange_path
+from great_minds.core.sessions import ExchangeEvent, SessionOrigin
 from great_minds.core.sources import SourceMetadata
 from great_minds.core.ingester import (
     build_document,
@@ -60,6 +64,70 @@ class BulkFileEvent:
     file_path: str | None = None
     title: str | None = None
     error: str | None = None
+
+
+_SESSION_TITLE_SYSTEM = (
+    "You generate concise titles for distilled Q&A excerpts that have "
+    "been promoted to a knowledge base. Output a 3-7 word noun phrase "
+    "in Title Case, no question marks, no leading articles, no quotes. "
+    "Output ONLY the title text — no preamble, no explanation."
+)
+
+
+async def generate_session_title(
+    client: AsyncOpenAI, query: str, answer: str
+) -> str:
+    """One-shot title for a promoted session exchange."""
+    response = await api_call(
+        client,
+        model=QUERY_MODEL,
+        messages=[
+            {"role": "system", "content": _SESSION_TITLE_SYSTEM},
+            {"role": "user", "content": f"Q: {query}\n\nA: {answer}"},
+        ],
+        temperature=0.4,
+    )
+    title = (extract_content(response) or "").strip().strip('"').strip()
+    if not title:
+        raise ValueError("LLM returned empty title")
+    return title
+
+
+def render_session_exchange_source(
+    config: dict,
+    *,
+    session_id: str,
+    exchange: ExchangeEvent,
+    title: str,
+    session_origin: SessionOrigin | None,
+) -> str:
+    """Build the full markdown (frontmatter + body) for a promoted exchange.
+
+    Pure — used by both the owner-direct ingest path and the member
+    proposal-create path so the proposal stages exactly what would
+    have been ingested.
+    """
+    extra: dict[str, str] = {
+        "source_session_id": session_id,
+        "source_exchange_id": exchange.exId,
+        "source_query": exchange.query,
+    }
+    if session_origin is not None:
+        extra["source_doc_path"] = session_origin.doc_path
+        if session_origin.anchor:
+            extra["source_anchor"] = session_origin.anchor
+        if session_origin.paragraph_index is not None:
+            extra["source_paragraph_index"] = str(session_origin.paragraph_index)
+
+    return build_document(
+        config,
+        exchange.answer,
+        "sessions",
+        title=title,
+        origin="session-exchange",
+        source_type="user",
+        **extra,
+    )
 
 
 class IngestService:
@@ -220,6 +288,35 @@ class IngestService:
         )
         await self.doc_service.index_raw_doc(brain_id, dest, result)
         return dest, filename
+
+    async def ingest_session_exchange(
+        self,
+        brain_id: UUID,
+        storage: Storage,
+        *,
+        session_id: str,
+        exchange: ExchangeEvent,
+        title: str,
+        session_origin: SessionOrigin | None = None,
+    ) -> tuple[str, UUID]:
+        """Persist a promoted session exchange as a raw/sessions/ source.
+
+        Returns (dest_path, document_id). The path is content-addressable
+        on ``exchange.exId`` so the documents-table upsert is idempotent
+        on re-promotion.
+        """
+        dest = session_exchange_path(exchange.exId)
+        config = await load_config(storage)
+        rendered = render_session_exchange_source(
+            config,
+            session_id=session_id,
+            exchange=exchange,
+            title=title,
+            session_origin=session_origin,
+        )
+        await storage.write(dest, rendered)
+        document_id = await self.doc_service.index_raw_doc(brain_id, dest, rendered)
+        return dest, document_id
 
     async def ingest_url(
         self,

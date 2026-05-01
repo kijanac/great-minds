@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import { consumeStream, streamQuery } from "@/api/query";
-import { appendBtw, appendExchange, createSession } from "@/api/sessions";
+import { appendBtw, appendExchange, createSession, type ExchangePayload } from "@/api/sessions";
 import type {
   BtwThread,
   Exchange,
@@ -10,7 +10,6 @@ import type {
   SelectionInfo,
   ThinkingBlock,
 } from "@/lib/types";
-import { assistantMsg, userMsg } from "@/lib/types";
 import { buildBtwHistory, buildBtwQuery, genId, isAbortError } from "@/lib/utils";
 
 function threadToHistory(thread: Exchange[]): HistoryMessage[] {
@@ -22,16 +21,12 @@ function threadToHistory(thread: Exchange[]): HistoryMessage[] {
   return history;
 }
 
-function exchangeToPayload(ex: Exchange) {
+function exchangeToPayload(ex: Exchange): ExchangePayload {
   return {
     id: ex.id,
     query: ex.query,
     thinking: ex.thinking,
     answer: ex.answer,
-    btws: ex.btws.map((b) => ({
-      anchor: b.anchor,
-      messages: b.messages,
-    })),
   };
 }
 
@@ -117,7 +112,10 @@ export function useSession(options?: UseSessionOptions) {
       if (!sessionIdRef.current) {
         const sid = genId("s");
         sessionIdRef.current = sid;
-        createSession(sid, payload, originPathRef.current)
+        const origin = originPathRef.current
+          ? { doc_path: originPathRef.current }
+          : undefined;
+        createSession(sid, payload, origin)
           .then(() => {
             setSessionId(sid);
             onSessionCreatedRef.current?.(sid);
@@ -172,7 +170,8 @@ export function useSession(options?: UseSessionOptions) {
       paragraph: info.paragraph,
       paragraphIndex: info.paragraphIndex,
       exchangeId: info.exchangeId,
-      messages: [],
+      exchanges: [],
+      pendingQuery: null,
       sources: [],
       streaming: false,
       streamText: "",
@@ -189,39 +188,9 @@ export function useSession(options?: UseSessionOptions) {
     const target = threadRef.current.flatMap((ex) => ex.btws).find((b) => b.id === btwId);
     const anchor = target?.anchor ?? "";
     const paragraph = target?.paragraph ?? "";
-    const priorBtw = target?.messages ?? [];
-    const isFirst = priorBtw.length === 0;
-
+    const priorExchanges = target?.exchanges ?? [];
+    const isFirst = priorExchanges.length === 0;
     const ownerExId = target?.exchangeId ?? "";
-
-    setThread((prev) =>
-      prev.map((ex) => {
-        if (ex.id !== ownerExId) return ex;
-        return {
-          ...ex,
-          btws: ex.btws.map((b) => {
-            if (b.id !== btwId) return b;
-            return {
-              ...b,
-              streaming: true,
-              streamText: "",
-              messages: [...b.messages, userMsg(userText)],
-            };
-          }),
-        };
-      }),
-    );
-
-    // First BTW turn: passage prefix on the question itself.
-    // Follow-ups: passage prefix lives in turn 1 of priorBtw history (re-attached in buildBtwHistory).
-    const question = isFirst ? buildBtwQuery(paragraph, anchor, userText) : userText;
-    const history = [
-      ...threadToHistory(threadRef.current),
-      ...buildBtwHistory(priorBtw, paragraph, anchor),
-    ];
-
-    const controller = new AbortController();
-    cleanupRef.current.push(() => controller.abort());
 
     const updateBtw = (patch: Partial<BtwThread>) =>
       setThread((prev) =>
@@ -230,6 +199,24 @@ export function useSession(options?: UseSessionOptions) {
           return { ...ex, btws: ex.btws.map((b) => (b.id === btwId ? { ...b, ...patch } : b)) };
         }),
       );
+
+    updateBtw({
+      streaming: true,
+      streamText: "",
+      pendingQuery: userText,
+      sources: [],
+    });
+
+    // First BTW turn: passage prefix on the question itself.
+    // Follow-ups: passage prefix lives in turn 1 of priorExchanges (re-attached in buildBtwHistory).
+    const question = isFirst ? buildBtwQuery(paragraph, anchor, userText) : userText;
+    const history = [
+      ...threadToHistory(threadRef.current),
+      ...buildBtwHistory(priorExchanges, paragraph, anchor),
+    ];
+
+    const controller = new AbortController();
+    cleanupRef.current.push(() => controller.abort());
 
     (async () => {
       try {
@@ -241,12 +228,21 @@ export function useSession(options?: UseSessionOptions) {
           },
         );
 
-        const finalMessages = [
-          ...(target ? target.messages : []),
-          userMsg(userText),
-          assistantMsg(answer),
-        ];
-        updateBtw({ streaming: false, streamText: "", sources, messages: finalMessages });
+        const newExchange: Exchange = {
+          id: genId("ex"),
+          query: userText,
+          thinking: sources.length > 0 ? [{ sources }] : [],
+          answer,
+          btws: [],
+        };
+        const finalExchanges = [...priorExchanges, newExchange];
+        updateBtw({
+          streaming: false,
+          streamText: "",
+          pendingQuery: null,
+          sources: [],
+          exchanges: finalExchanges,
+        });
 
         if (sessionIdRef.current) {
           appendBtw(sessionIdRef.current, {
@@ -254,7 +250,11 @@ export function useSession(options?: UseSessionOptions) {
             paragraph,
             exchangeId: ownerExId,
             paragraphIndex: target?.paragraphIndex ?? -1,
-            messages: finalMessages,
+            exchanges: finalExchanges.map((ex) => ({
+              query: ex.query,
+              thinking: ex.thinking,
+              answer: ex.answer,
+            })),
           }).catch((e) => console.error("Failed to save btw:", e));
         }
       } catch (err) {
@@ -267,7 +267,7 @@ export function useSession(options?: UseSessionOptions) {
     setThread((prev) =>
       prev.map((ex) => {
         const target = ex.btws.find((b) => b.id === btwId);
-        if (!target || target.messages.length > 0 || target.streaming) return ex;
+        if (!target || target.exchanges.length > 0 || target.streaming) return ex;
         return { ...ex, btws: ex.btws.filter((b) => b.id !== btwId) };
       }),
     );

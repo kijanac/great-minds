@@ -179,11 +179,11 @@ async def _detect_unmentioned_links(
     )
 
     unmentioned = 0
-    for source_id, target_id in edges:
-        target_slug = slug_by_topic_id.get(target_id)
+    for edge in edges:
+        target_slug = slug_by_topic_id.get(edge.target_topic_id)
         if target_slug is None:
             continue
-        cited = cited_by_source.get(source_id, set())
+        cited = cited_by_source.get(edge.source_topic_id, set())
         if target_slug in cited:
             continue
         unmentioned += 1
@@ -191,7 +191,7 @@ async def _detect_unmentioned_links(
             "verify.unmentioned_link",
             level=logging.INFO,
             brain_id=str(ctx.brain_id),
-            source_slug=slug_by_topic_id.get(source_id, "?"),
+            source_slug=slug_by_topic_id[edge.source_topic_id],
             missing_target_slug=target_slug,
         )
     return unmentioned

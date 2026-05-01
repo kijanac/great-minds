@@ -55,6 +55,13 @@ class ReduceOutput(BaseModel):
     canonical_topics: list[CanonicalTopic]
 
 
+class TopicLink(BaseModel):
+    """A directed edge between two topics in a brain's link graph."""
+
+    source_topic_id: UUID
+    target_topic_id: UUID
+
+
 class RelatedTopic(BaseModel):
     """A related-topic row for the sidebar UI."""
 

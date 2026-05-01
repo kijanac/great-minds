@@ -19,7 +19,7 @@ from great_minds.core.topics.models import (
     TopicORM,
     TopicRelatedORM,
 )
-from great_minds.core.topics.schemas import ArticleStatus, RelatedTopic, Topic
+from great_minds.core.topics.schemas import ArticleStatus, RelatedTopic, Topic, TopicLink
 
 
 class TopicRepository:
@@ -173,8 +173,8 @@ class TopicRepository:
 
     async def list_links_for_brain(
         self, brain_id: UUID, source_topic_ids: list[UUID] | None = None
-    ) -> list[tuple[UUID, UUID]]:
-        """Return (source_topic_id, target_topic_id) edges for a brain.
+    ) -> list[TopicLink]:
+        """Return directed link edges for a brain.
 
         Pass source_topic_ids to restrict to edges whose source is in
         the set (e.g., rendered topics only).
@@ -187,7 +187,10 @@ class TopicRepository:
         if source_topic_ids is not None:
             stmt = stmt.where(TopicLinkORM.source_topic_id.in_(source_topic_ids))
         rows = (await self.session.execute(stmt)).all()
-        return [(src, tgt) for src, tgt in rows]
+        return [
+            TopicLink(source_topic_id=src, target_topic_id=tgt)
+            for src, tgt in rows
+        ]
 
     async def set_archived(
         self, topic_id: UUID, superseded_by: UUID | None = None

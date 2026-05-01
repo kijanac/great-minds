@@ -41,9 +41,32 @@ class ThinkingBlock(BaseModel):
     sources: list[ThinkingSource] = []
 
 
-class BtwMessage(BaseModel):
-    role: str
-    text: str
+class BtwExchange(BaseModel):
+    """One Q/A round inside a BTW thread.
+
+    Mirrors ExchangeEvent but without exId/ts — those live on the parent
+    BtwEvent, since a BTW is a sequence of turns sharing one anchor and
+    one position in the parent session.
+    """
+
+    query: str
+    thinking: list[ThinkingBlock] = []
+    answer: str = ""
+
+
+class SessionOrigin(BaseModel):
+    """Where this session was anchored when it was created.
+
+    For sessions started by opening a doc, only ``doc_path`` is set.
+    For sessions spun off from a document BTW, the passage triple
+    (anchor + paragraph + paragraph_index) is also recorded so the
+    UI can scroll back to the source highlight.
+    """
+
+    doc_path: str
+    anchor: str | None = None
+    paragraph: str | None = None
+    paragraph_index: int | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -62,8 +85,8 @@ class MetaEvent(BaseModel):
     id: str
     query: str
     ts: str
-    user_id: str = ""
-    origin: str | None = None
+    user_id: str
+    origin: SessionOrigin | None = None
 
 
 class ExchangeEvent(BaseModel):
@@ -81,7 +104,7 @@ class BtwEvent(BaseModel):
     anchor: str
     paragraph: str
     pi: int = -1
-    messages: list[BtwMessage]
+    exchanges: list[BtwExchange]
     ts: str
 
 
@@ -105,7 +128,7 @@ class BtwInput(BaseModel):
     anchor: str
     paragraph: str
     paragraphIndex: int = -1
-    messages: list[BtwMessage]
+    exchanges: list[BtwExchange]
 
 
 # ---------------------------------------------------------------------------
@@ -118,8 +141,8 @@ class SessionSummary(BaseModel):
     query: str
     created: str
     updated: str
-    user_id: str = ""
-    origin: str | None = None
+    user_id: str
+    origin: SessionOrigin | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -153,16 +176,26 @@ def _parse_event(data: dict) -> SessionEvent | None:
 def _render_md(events: list[SessionEvent]) -> str:
     """Render event log as human-readable markdown.
 
-    Groups BTWs under their parent exchange by exId.
+    Each BTW reply writes a fresh BtwEvent with the full thread history,
+    so multiple BtwEvents per (exId, anchor) accumulate in the JSONL.
+    Dedup to the latest by ts before rendering so the markdown shows one
+    block per BTW thread, not N progressively-longer blocks.
     """
     exchanges: list[ExchangeEvent] = []
-    btws_by_ex: dict[str, list[BtwEvent]] = defaultdict(list)
+    latest_btw: dict[tuple[str, str], BtwEvent] = {}
 
     for event in events:
         if isinstance(event, ExchangeEvent):
             exchanges.append(event)
         elif isinstance(event, BtwEvent):
-            btws_by_ex[event.exId].append(event)
+            key = (event.exId, event.anchor)
+            existing = latest_btw.get(key)
+            if existing is None or event.ts > existing.ts:
+                latest_btw[key] = event
+
+    btws_by_ex: dict[str, list[BtwEvent]] = defaultdict(list)
+    for btw in latest_btw.values():
+        btws_by_ex[btw.exId].append(btw)
 
     parts: list[str] = []
     for i, ex in enumerate(exchanges):
@@ -180,11 +213,9 @@ def _render_md(events: list[SessionEvent]) -> str:
         for btw in btws_by_ex.get(ex.exId, []):
             short = btw.anchor[:60] + "..." if len(btw.anchor) > 60 else btw.anchor
             parts.append(f'\n> **BTW** re: "{short}"\n>\n')
-            for msg in btw.messages:
-                if msg.role == "user":
-                    parts.append(f"> *{msg.text}*\n>\n")
-                else:
-                    parts.append(f"> {msg.text}\n>\n")
+            for inner in btw.exchanges:
+                parts.append(f"> *{inner.query}*\n>\n")
+                parts.append(f"> {inner.answer}\n>\n")
 
     return "".join(parts).rstrip() + "\n"
 
@@ -212,7 +243,7 @@ async def create_session(
     session_id: str,
     exchange: ExchangeInput,
     *,
-    origin: str | None = None,
+    origin: SessionOrigin | None = None,
     user_id: str,
 ) -> str:
     """Create a new session with the first exchange."""
@@ -269,7 +300,7 @@ async def append_btw(
         anchor=btw.anchor,
         paragraph=btw.paragraph,
         pi=btw.paragraphIndex,
-        messages=btw.messages,
+        exchanges=btw.exchanges,
         ts=_now(),
     )
     await _append_event(storage, session_id, event)
@@ -300,6 +331,24 @@ async def load_events(
         if event is not None:
             events.append(event)
     return events
+
+
+def find_meta(events: list[SessionEvent]) -> MetaEvent | None:
+    """Return the session's MetaEvent, or None if missing/malformed."""
+    for event in events:
+        if isinstance(event, MetaEvent):
+            return event
+    return None
+
+
+def find_exchange(
+    events: list[SessionEvent], exchange_id: str
+) -> ExchangeEvent | None:
+    """Return the ExchangeEvent with this exId, or None if missing."""
+    for event in events:
+        if isinstance(event, ExchangeEvent) and event.exId == exchange_id:
+            return event
+    return None
 
 
 async def list_sessions(

@@ -11,11 +11,6 @@ export const thinkingBlockSchema = z.object({
   sources: z.array(sourceRefSchema),
 });
 
-export const btwMessageSchema = z.object({
-  role: z.enum(["user", "assistant"]),
-  text: z.string(),
-});
-
 export const brainOverviewSchema = z.object({
   id: z.string(),
   name: z.string(),
@@ -112,7 +107,6 @@ export const proposalListSchema = paginatedSchema(proposalOverviewSchema);
 
 export type SourceRef = z.infer<typeof sourceRefSchema>;
 export type ThinkingBlock = z.infer<typeof thinkingBlockSchema>;
-export type BtwMessage = z.infer<typeof btwMessageSchema>;
 export type BrainOverview = z.infer<typeof brainOverviewSchema>;
 export type PageInfo = z.infer<typeof pageInfoSchema>;
 export type FacetCount = z.infer<typeof facetCountSchema>;
