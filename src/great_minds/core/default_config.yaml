@@ -79,6 +79,46 @@ metadata:
         correct, add_context, restructure).
       default: ""
 
+  sessions:
+    source_session_id:
+      type: string
+      source: provided
+      description: >-
+        id of the session this exchange was promoted from.
+    source_exchange_id:
+      type: string
+      source: provided
+      description: >-
+        id of the specific exchange (Q/A pair) within that session.
+    source_query:
+      type: string
+      source: provided
+      description: >-
+        the verbatim user question this answer responded to.
+    source_doc_path:
+      type: string
+      source: provided
+      default: ""
+      description: >-
+        if the originating session was BTW-spun off an article, the
+        path of that article. Empty for ordinary query sessions.
+    source_anchor:
+      type: string
+      source: provided
+      default: ""
+      description: >-
+        the anchor passage on the originating article, if BTW-spun.
+    source_paragraph_index:
+      type: string
+      source: provided
+      default: ""
+      description: >-
+        paragraph index of the anchor, if BTW-spun.
+    notes:
+      type: string
+      source: provided
+      default: ""
+
 fields:
   genre:
     max_per_doc: 2

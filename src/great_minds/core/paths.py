@@ -84,6 +84,11 @@ def raw_path(content_type: str, rel: str) -> str:
     return f"{RAW_PREFIX}{content_type}/{rel}"
 
 
+def session_exchange_path(exchange_id: str) -> str:
+    """Path for a session exchange promoted into the raw corpus."""
+    return raw_path("sessions", f"{exchange_id}.md")
+
+
 def prompts_path(name: str) -> str:
     return f"{PROMPTS_DIR}/{name}.md"
 

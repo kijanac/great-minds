@@ -1,7 +1,7 @@
 import { clsx, type ClassValue } from "clsx";
 import { twMerge } from "tailwind-merge";
 
-import type { BtwMessage, HistoryMessage } from "@/lib/types";
+import type { Exchange, HistoryMessage } from "@/lib/types";
 
 export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
@@ -64,15 +64,22 @@ export function buildBtwQuery(paragraph: string, anchor: string, userText: strin
   return parts.join("\n\n");
 }
 
-// First user turn carries the passage prefix so the model has the BTW anchor
+// Flatten BTW exchanges into the LLM's alternating role/content history. The
+// first user turn carries the passage prefix so the model has the BTW anchor
 // in conversation history; later turns are raw text since context is established.
 export function buildBtwHistory(
-  priorBtw: BtwMessage[],
+  priorExchanges: Exchange[],
   paragraph: string,
   anchor: string,
 ): HistoryMessage[] {
-  return priorBtw.map((m, i) => ({
-    role: m.role,
-    content: i === 0 && m.role === "user" ? buildBtwQuery(paragraph, anchor, m.text) : m.text,
-  }));
+  const history: HistoryMessage[] = [];
+  for (let i = 0; i < priorExchanges.length; i++) {
+    const ex = priorExchanges[i];
+    history.push({
+      role: "user",
+      content: i === 0 ? buildBtwQuery(paragraph, anchor, ex.query) : ex.query,
+    });
+    history.push({ role: "assistant", content: ex.answer });
+  }
+  return history;
 }

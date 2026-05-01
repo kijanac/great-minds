@@ -12,7 +12,6 @@ from great_minds.core.documents.schemas import (
     WikiArticleSummary,
 )
 from great_minds.core.pagination import (
-    FacetCount,
     FacetedPage,
     Page,
     PageInfo,
@@ -111,12 +110,7 @@ class DocumentService:
                 offset=pagination.offset,
                 total=total,
             ),
-            facets=SourceDocumentFacets(
-                content_types=[
-                    FacetCount(value=ct, count=count)
-                    for ct, count in content_types
-                ],
-            ),
+            facets=SourceDocumentFacets(content_types=content_types),
         )
 
     async def get_distinct_tags(self, brain_ids: list[UUID]) -> list[str]:

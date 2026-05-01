@@ -2,18 +2,22 @@ import { z } from "zod";
 
 import { apiFetch, brainPath, readJson } from "./client";
 import {
-  btwMessageSchema,
   paginatedSchema,
   thinkingBlockSchema,
-  type BtwMessage,
   type ThinkingBlock,
 } from "./schemas";
 
-export interface ExchangePayload {
+export interface BtwExchange {
   query: string;
   thinking: ThinkingBlock[];
   answer: string;
-  btws: { anchor: string; messages: BtwMessage[] }[];
+}
+
+export interface ExchangePayload {
+  id: string;
+  query: string;
+  thinking: ThinkingBlock[];
+  answer: string;
 }
 
 export interface BtwPayload {
@@ -21,20 +25,29 @@ export interface BtwPayload {
   paragraph: string;
   exchangeId: string;
   paragraphIndex: number;
-  messages: BtwMessage[];
+  exchanges: BtwExchange[];
 }
 
 const pathResponseSchema = z.object({
   path: z.string(),
 });
 
+const sessionOriginSchema = z.object({
+  doc_path: z.string(),
+  anchor: z.string().nullable().optional(),
+  paragraph: z.string().nullable().optional(),
+  paragraph_index: z.number().nullable().optional(),
+});
+
+export type SessionOrigin = z.infer<typeof sessionOriginSchema>;
+
 const sessionMetaEventSchema = z.object({
   type: z.literal("meta"),
   id: z.string(),
   query: z.string(),
   ts: z.string(),
-  user_id: z.string().optional(),
-  origin: z.string().nullish(),
+  user_id: z.string(),
+  origin: sessionOriginSchema.nullish(),
 });
 
 const sessionExchangeEventSchema = z.object({
@@ -46,13 +59,19 @@ const sessionExchangeEventSchema = z.object({
   ts: z.string(),
 });
 
+const btwExchangeSchema = z.object({
+  query: z.string(),
+  thinking: z.array(thinkingBlockSchema).default([]),
+  answer: z.string().default(""),
+});
+
 const sessionBtwEventSchema = z.object({
   type: z.literal("btw"),
   exId: z.string(),
   anchor: z.string(),
   paragraph: z.string(),
   pi: z.number(),
-  messages: z.array(btwMessageSchema),
+  exchanges: z.array(btwExchangeSchema),
   ts: z.string(),
 });
 
@@ -67,6 +86,8 @@ const sessionSummarySchema = z.object({
   query: z.string(),
   created: z.string(),
   updated: z.string(),
+  user_id: z.string(),
+  origin: sessionOriginSchema.nullish(),
 });
 
 const sessionResponseSchema = z.object({
@@ -83,7 +104,7 @@ export type SessionList = z.infer<typeof sessionListSchema>;
 export async function createSession(
   sessionId: string,
   exchange: ExchangePayload,
-  origin?: string,
+  origin?: SessionOrigin,
 ): Promise<string> {
   const res = await apiFetch(brainPath(`/sessions`), {
     method: "POST",
@@ -140,4 +161,30 @@ export async function loadSession(
   const res = await apiFetch(brainPath(`/sessions/${sessionId}`));
   if (!res.ok) throw new Error(`Session not found: ${res.status}`);
   return readJson(res, sessionResponseSchema);
+}
+
+const promoteResponseSchema = z.object({
+  mode: z.enum(["ingested", "proposed"]),
+  path: z.string(),
+  title: z.string(),
+  document_id: z.string().nullable().optional(),
+  proposal_id: z.string().nullable().optional(),
+});
+
+export type PromoteResult = z.infer<typeof promoteResponseSchema>;
+
+export async function promoteExchange(
+  sessionId: string,
+  exchangeId: string,
+): Promise<PromoteResult> {
+  const res = await apiFetch(
+    brainPath(`/sessions/${sessionId}/exchanges/${exchangeId}/promote`),
+    { method: "POST" },
+  );
+  if (!res.ok) {
+    if (res.status === 400) throw new Error("Exchange has no answer yet");
+    if (res.status === 404) throw new Error("Exchange not found");
+    throw new Error(`Failed to promote: ${res.status}`);
+  }
+  return readJson(res, promoteResponseSchema);
 }

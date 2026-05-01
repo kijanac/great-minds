@@ -1,7 +1,6 @@
 import { Maximize2, X } from "lucide-react";
 import Markdown from "react-markdown";
 
-import { Badge } from "@/components/ui/badge";
 import { remarkPlugins } from "@/lib/markdown";
 import { displayTitle } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
@@ -9,6 +8,7 @@ import { Button } from "@/components/ui/button";
 interface ArticlePanelProps {
   path: string;
   title: string | null;
+  kind: "raw" | "wiki" | null;
   body: string | null;
   loading: boolean;
   onClose: () => void;
@@ -18,6 +18,7 @@ interface ArticlePanelProps {
 export function ArticlePanel({
   path,
   title,
+  kind,
   body,
   loading,
   onClose,
@@ -52,15 +53,14 @@ export function ArticlePanel({
             </Button>
           </div>
         </div>
-        <div className="flex gap-[7px] min-w-0">
-          <Badge
-            variant="outline"
+        {kind && (
+          <span
             title={path}
-            className="rounded-sm h-auto font-mono text-[length:var(--text-chrome)] tracking-[0.1em] px-2 py-[3px] bg-interactive-dim text-gold border-gold-dim min-w-0 max-w-full truncate"
+            className="font-mono text-[length:var(--text-chrome)] tracking-[0.1em] uppercase text-interactive-dim"
           >
-            {path}
-          </Badge>
-        </div>
+            {kind}
+          </span>
+        )}
       </div>
 
       <div className="flex-1 min-h-0 overflow-y-auto">

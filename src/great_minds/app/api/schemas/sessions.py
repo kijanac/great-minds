@@ -1,10 +1,13 @@
 """Session request/response schemas."""
 
+from typing import Literal
+
 from pydantic import BaseModel, ConfigDict
 
 from great_minds.core.sessions import (
-    BtwMessage,
+    BtwExchange,
     SessionEvent,
+    SessionOrigin,
     ThinkingBlock,
 )
 
@@ -22,13 +25,13 @@ class BtwData(BaseModel):
     paragraph: str
     exchangeId: str
     paragraphIndex: int = -1
-    messages: list[BtwMessage]
+    exchanges: list[BtwExchange]
 
 
 class CreateSessionRequest(BaseModel):
     session_id: str
     exchange: ExchangeData
-    origin: str | None = None
+    origin: SessionOrigin | None = None
 
 
 class SessionPathResponse(BaseModel):
@@ -47,4 +50,19 @@ class SessionListItem(BaseModel):
     query: str
     created: str
     updated: str
-    origin: str | None = None
+    origin: SessionOrigin | None = None
+
+
+class PromoteExchangeResponse(BaseModel):
+    """Result of promoting a session exchange to a raw/sessions/ source.
+
+    ``mode`` discriminates owner-direct ingest from member-proposal:
+    - ``ingested``: ``document_id`` populated, source is in the corpus.
+    - ``proposed``: ``proposal_id`` populated, awaiting owner review.
+    """
+
+    mode: Literal["ingested", "proposed"]
+    path: str
+    title: str
+    document_id: str | None = None
+    proposal_id: str | None = None

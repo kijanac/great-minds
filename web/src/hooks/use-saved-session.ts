@@ -6,34 +6,51 @@ import type { BtwThread, Exchange } from "@/lib/types";
 
 function replayEvents(events: SessionEvent[]): Exchange[] {
   const exchanges: Exchange[] = [];
-  const btwsByEx = new Map<string, BtwThread[]>();
+
+  // Each BTW reply persists a fresh full-thread BtwEvent, so multiple events
+  // accumulate per (exId, anchor). Dedup to the latest by ts.
+  const latestBtw = new Map<string, Extract<SessionEvent, { type: "btw" }>>();
 
   for (const event of events) {
     if (event.type === "exchange") {
-      const ex: Exchange = {
+      exchanges.push({
         id: event.exId,
         query: event.query,
         thinking: event.thinking,
         answer: event.answer,
         btws: [],
-      };
-      exchanges.push(ex);
+      });
     } else if (event.type === "btw") {
-      const exId = event.exId;
-      const btw: BtwThread = {
-        id: `${exId}:${event.pi}:${event.anchor}`,
-        anchor: event.anchor,
-        paragraph: event.paragraph,
-        paragraphIndex: event.pi,
-        exchangeId: exId,
-        messages: event.messages,
-        sources: [],
-        streaming: false,
-        streamText: "",
-      };
-      if (!btwsByEx.has(exId)) btwsByEx.set(exId, []);
-      btwsByEx.get(exId)!.push(btw);
+      const key = `${event.exId}\0${event.anchor}`;
+      const existing = latestBtw.get(key);
+      if (!existing || event.ts > existing.ts) {
+        latestBtw.set(key, event);
+      }
     }
+  }
+
+  const btwsByEx = new Map<string, BtwThread[]>();
+  for (const event of latestBtw.values()) {
+    const btw: BtwThread = {
+      id: `${event.exId}:${event.pi}:${event.anchor}`,
+      anchor: event.anchor,
+      paragraph: event.paragraph,
+      paragraphIndex: event.pi,
+      exchangeId: event.exId,
+      exchanges: event.exchanges.map((ex) => ({
+        id: `${event.exId}:${event.pi}:${event.anchor}:${ex.query}`,
+        query: ex.query,
+        thinking: ex.thinking,
+        answer: ex.answer,
+        btws: [],
+      })),
+      pendingQuery: null,
+      sources: [],
+      streaming: false,
+      streamText: "",
+    };
+    if (!btwsByEx.has(event.exId)) btwsByEx.set(event.exId, []);
+    btwsByEx.get(event.exId)!.push(btw);
   }
 
   for (const ex of exchanges) {

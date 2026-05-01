@@ -4,6 +4,7 @@ import Markdown from "react-markdown";
 import type { Document } from "@/api/doc";
 import { BtwThread } from "@/components/btw-thread";
 import { DocHeader } from "@/components/doc-header";
+import { useLatest } from "@/hooks/use-latest";
 import { baseMdComponents, remarkPlugins } from "@/lib/markdown";
 import type { BtwThread as BtwThreadType, SelectionInfo } from "@/lib/types";
 
@@ -20,6 +21,7 @@ interface ArticleViewProps {
   onSelection: (info: SelectionInfo) => void;
   onBtwReply: (btwId: string, text: string) => void;
   onBtwDismiss?: (btwId: string) => void;
+  onBtwSpinOff?: (btwId: string) => void;
   documentId: string;
   archived?: boolean;
   supersededBy?: string | null;
@@ -33,22 +35,20 @@ export function ArticleView({
   onSelection,
   onBtwReply,
   onBtwDismiss,
+  onBtwSpinOff,
   documentId,
   archived = false,
   supersededBy = null,
   onSupersessorClick,
 }: ArticleViewProps) {
-  // Refs for stable callbacks — avoids recreating mdComponents on every render
-  const onSelectionRef = useRef(onSelection);
-  onSelectionRef.current = onSelection;
-  const onBtwReplyRef = useRef(onBtwReply);
-  onBtwReplyRef.current = onBtwReply;
-  const onBtwDismissRef = useRef(onBtwDismiss);
-  onBtwDismissRef.current = onBtwDismiss;
-  const documentIdRef = useRef(documentId);
-  documentIdRef.current = documentId;
-  const btwsRef = useRef(btws);
-  btwsRef.current = btws;
+  // Stable refs so the empty-deps useMemo below sees latest props without
+  // invalidating mdComponents identity (which would re-render all markdown).
+  const onSelectionRef = useLatest(onSelection);
+  const onBtwReplyRef = useLatest(onBtwReply);
+  const onBtwDismissRef = useLatest(onBtwDismiss);
+  const onBtwSpinOffRef = useLatest(onBtwSpinOff);
+  const documentIdRef = useLatest(documentId);
+  const btwsRef = useLatest(btws);
 
   const paraCountRef = useRef(0);
 
@@ -103,6 +103,9 @@ export function ArticleView({
                 onReply={(id, text) => onBtwReplyRef.current(id, text)}
                 onDismiss={
                   onBtwDismissRef.current ? (id) => onBtwDismissRef.current!(id) : undefined
+                }
+                onSpinOff={
+                  onBtwSpinOffRef.current ? (id) => onBtwSpinOffRef.current!(id) : undefined
                 }
               />
             ))}

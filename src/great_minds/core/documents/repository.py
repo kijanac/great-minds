@@ -23,6 +23,7 @@ from great_minds.core.documents.schemas import (
 )
 from great_minds.core.ideas.schemas import SourceCard
 from great_minds.core.markdown import parse_frontmatter
+from great_minds.core.pagination import FacetCount
 from great_minds.core.paths import WIKI_PREFIX, raw_prefix, wiki_slug
 
 
@@ -78,10 +79,69 @@ class DocumentRepository:
     async def batch_upsert(
         self, brain_id: UUID, docs: list[DocumentCreate]
     ) -> list[UUID]:
-        """Upsert multiple documents. Returns list of document UUIDs."""
-        doc_ids = []
+        """Upsert documents in a single statement. Returns IDs in input order.
+
+        Tag sync still happens per-doc — a real bulk tag sync (delete-by-doc-id-set
+        + bulk insert junction rows) is a follow-up.
+        """
+        if not docs:
+            return []
+
+        rows = []
         for doc in docs:
-            doc_id = await self.upsert(brain_id, doc)
+            file_hash = hashlib.sha256(doc.content.encode()).hexdigest()
+            _, body = parse_frontmatter(doc.content)
+            body_hash = hashlib.sha256(body.encode()).hexdigest()
+            rows.append(
+                {
+                    "brain_id": brain_id,
+                    "file_path": doc.file_path,
+                    "file_hash": file_hash,
+                    "body_hash": body_hash,
+                    "title": doc.metadata.title,
+                    "author": doc.metadata.author,
+                    "url": doc.metadata.url,
+                    "origin": doc.metadata.origin,
+                    "published_date": doc.metadata.published_date,
+                    "genre": doc.metadata.genre,
+                    "compiled": doc.compiled,
+                    "doc_kind": doc.doc_kind,
+                    "source_type": doc.metadata.source_type,
+                    "precis": doc.metadata.precis,
+                    "extra_metadata": doc.metadata.extra_metadata,
+                }
+            )
+
+        stmt = insert(DocumentORM).values(rows)
+        stmt = stmt.on_conflict_do_update(
+            constraint="documents_brain_id_file_path_key",
+            set_={
+                "file_hash": stmt.excluded.file_hash,
+                "body_hash": stmt.excluded.body_hash,
+                "title": stmt.excluded.title,
+                "author": stmt.excluded.author,
+                "url": stmt.excluded.url,
+                "origin": stmt.excluded.origin,
+                "published_date": stmt.excluded.published_date,
+                "genre": stmt.excluded.genre,
+                "compiled": stmt.excluded.compiled,
+                "doc_kind": stmt.excluded.doc_kind,
+                "source_type": stmt.excluded.source_type,
+                "precis": stmt.excluded.precis,
+                "metadata": stmt.excluded["metadata"],
+                "updated_at": func.now(),
+            },
+        )
+        result = await self.session.execute(
+            stmt.returning(DocumentORM.id, DocumentORM.file_path)
+        )
+        # RETURNING order isn't guaranteed by Postgres, so map back via file_path.
+        id_by_path = {row.file_path: row.id for row in result}
+
+        doc_ids: list[UUID] = []
+        for doc in docs:
+            doc_id = id_by_path[doc.file_path]
+            await self._sync_tags(doc_id, doc.metadata.tags)
             doc_ids.append(doc_id)
         return doc_ids
 
@@ -373,8 +433,8 @@ class DocumentRepository:
 
     async def get_content_type_counts(
         self, brain_ids: list[UUID]
-    ) -> list[tuple[str, int]]:
-        """Return (content_type, count) for raw documents grouped by folder.
+    ) -> list[FacetCount]:
+        """Return content_type facet counts for raw documents.
 
         Extracts the content type from file_path: raw/{content_type}/...
         """
@@ -391,7 +451,7 @@ class DocumentRepository:
             .group_by(content_type_col)
             .order_by(func.count().desc())
         )
-        return [(row.content_type, row.cnt) for row in result]
+        return [FacetCount(value=row.content_type, count=row.cnt) for row in result]
 
     async def get_distinct_tags(self, brain_ids: list[UUID]) -> list[str]:
         result = await self.session.execute(

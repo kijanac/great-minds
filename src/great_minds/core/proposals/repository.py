@@ -55,6 +55,23 @@ class ProposalRepository:
         )
         return result.scalar_one_or_none()
 
+    async def find_pending_for_dest(
+        self, brain_id: UUID, dest_path: str
+    ) -> SourceProposal | None:
+        """Return the pending proposal targeting ``dest_path`` for this brain.
+
+        Backed by the partial unique index ``(brain_id, dest_path)`` for
+        ``status = 'PENDING'``, so at most one row matches.
+        """
+        result = await self.session.execute(
+            select(SourceProposal).where(
+                SourceProposal.brain_id == brain_id,
+                SourceProposal.dest_path == dest_path,
+                SourceProposal.status == ProposalStatus.PENDING,
+            )
+        )
+        return result.scalar_one_or_none()
+
     async def refresh(self, proposal: SourceProposal) -> None:
         await self.session.refresh(proposal)
 

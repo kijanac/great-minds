@@ -32,7 +32,7 @@ export function ArticleReader({
 }: ArticleReaderProps) {
   const navigate = useViewNavigate();
   const handleLinkClick = useLinkInterceptor();
-  const { btws, startBtw, replyBtw, dismissEmpty, cleanup } = useBtw(path);
+  const { btws, startBtw, replyBtw, spinOff, dismissEmpty, cleanup } = useBtw(path);
   const [popover, setPopover] = useState<SelectionInfo | null>(null);
   const [suggestionTarget, setSuggestionTarget] = useState<SelectionInfo | null>(
     null,
@@ -134,6 +134,7 @@ export function ArticleReader({
           onSelection={setPopover}
           onBtwReply={replyBtw}
           onBtwDismiss={dismissEmpty}
+          onBtwSpinOff={spinOff}
           documentId={path}
           archived={archived}
           supersededBy={supersededBy}

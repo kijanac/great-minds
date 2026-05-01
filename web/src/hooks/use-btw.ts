@@ -1,11 +1,13 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import { consumeStream, streamQuery } from "@/api/query";
-import type { BtwThread, SelectionInfo } from "@/lib/types";
-import { assistantMsg, userMsg } from "@/lib/types";
+import { appendExchange, createSession } from "@/api/sessions";
+import { useViewNavigate } from "@/hooks/use-view-navigate";
+import type { BtwThread, Exchange, SelectionInfo } from "@/lib/types";
 import { buildBtwHistory, buildBtwQuery, genId, isAbortError } from "@/lib/utils";
 
 export function useBtw(originPath?: string) {
+  const navigate = useViewNavigate();
   const [btws, setBtws] = useState<BtwThread[]>([]);
   const btwsRef = useRef(btws);
   btwsRef.current = btws;
@@ -28,7 +30,8 @@ export function useBtw(originPath?: string) {
       paragraph: info.paragraph,
       paragraphIndex: info.paragraphIndex,
       exchangeId: info.exchangeId,
-      messages: [],
+      exchanges: [],
+      pendingQuery: null,
       sources: [],
       streaming: false,
       streamText: "",
@@ -36,62 +39,110 @@ export function useBtw(originPath?: string) {
     setBtws((prev) => [...prev, btw]);
   }, []);
 
-  const replyBtw = useCallback((btwId: string, userText: string) => {
-    const target = btwsRef.current.find((b) => b.id === btwId);
-    const anchor = target?.anchor ?? "";
-    const paragraph = target?.paragraph ?? "";
-    const priorBtw = target?.messages ?? [];
-    const isFirst = priorBtw.length === 0;
+  const replyBtw = useCallback(
+    (btwId: string, userText: string) => {
+      const target = btwsRef.current.find((b) => b.id === btwId);
+      const anchor = target?.anchor ?? "";
+      const paragraph = target?.paragraph ?? "";
+      const priorExchanges = target?.exchanges ?? [];
+      const isFirst = priorExchanges.length === 0;
 
-    setBtws((prev) =>
-      prev.map((b) => {
-        if (b.id !== btwId) return b;
-        return {
-          ...b,
-          streaming: true,
-          streamText: "",
-          messages: [...b.messages, userMsg(userText)],
-        };
-      }),
-    );
+      setBtws((prev) =>
+        prev.map((b) =>
+          b.id !== btwId
+            ? b
+            : {
+                ...b,
+                streaming: true,
+                streamText: "",
+                pendingQuery: userText,
+                sources: [],
+              },
+        ),
+      );
 
-    // First turn: passage prefix on the question.
-    // Follow-ups: passage prefix re-attached to turn 1 of priorBtw history (in buildBtwHistory).
-    const question = isFirst ? buildBtwQuery(paragraph, anchor, userText) : userText;
-    const history = buildBtwHistory(priorBtw, paragraph, anchor);
+      // First turn: passage prefix on the question.
+      // Follow-ups: passage prefix re-attached to turn 1 of priorExchanges (in buildBtwHistory).
+      const question = isFirst ? buildBtwQuery(paragraph, anchor, userText) : userText;
+      const history = buildBtwHistory(priorExchanges, paragraph, anchor);
 
-    const controller = new AbortController();
-    cleanupRef.current.push(() => controller.abort());
+      const controller = new AbortController();
+      cleanupRef.current.push(() => controller.abort());
 
-    const updateBtw = (patch: Partial<BtwThread>) =>
-      setBtws((prev) => prev.map((b) => (b.id === btwId ? { ...b, ...patch } : b)));
+      const updateBtw = (patch: Partial<BtwThread>) =>
+        setBtws((prev) => prev.map((b) => (b.id === btwId ? { ...b, ...patch } : b)));
 
-    (async () => {
+      (async () => {
+        try {
+          const { answer, sources } = await consumeStream(
+            streamQuery(question, { originPath, history, mode: "btw", signal: controller.signal }),
+            {
+              onSources: (s) => updateBtw({ sources: s }),
+              onToken: (text) => updateBtw({ streamText: text }),
+            },
+          );
+
+          const newExchange: Exchange = {
+            id: genId("ex"),
+            query: userText,
+            thinking: sources.length > 0 ? [{ sources }] : [],
+            answer,
+            btws: [],
+          };
+          setBtws((prev) =>
+            prev.map((b) =>
+              b.id !== btwId
+                ? b
+                : {
+                    ...b,
+                    streaming: false,
+                    streamText: "",
+                    pendingQuery: null,
+                    sources: [],
+                    exchanges: [...b.exchanges, newExchange],
+                  },
+            ),
+          );
+        } catch (err) {
+          if (isAbortError(err)) return;
+        }
+      })();
+    },
+    [originPath],
+  );
+
+  const spinOff = useCallback(
+    async (btwId: string) => {
+      if (!originPath) return;
+      const target = btwsRef.current.find((b) => b.id === btwId);
+      if (!target || target.streaming || target.exchanges.length === 0) return;
+
+      const sid = genId("s");
+      const origin = {
+        doc_path: originPath,
+        anchor: target.anchor,
+        paragraph: target.paragraph,
+        paragraph_index: target.paragraphIndex,
+      };
+
       try {
-        const { answer, sources } = await consumeStream(
-          streamQuery(question, { originPath, history, mode: "btw", signal: controller.signal }),
-          {
-            onSources: (s) => updateBtw({ sources: s }),
-            onToken: (text) => updateBtw({ streamText: text }),
-          },
-        );
-
-        updateBtw({
-          streaming: false,
-          streamText: "",
-          sources,
-          messages: [...(target?.messages ?? []), userMsg(userText), assistantMsg(answer)],
-        });
-      } catch (err) {
-        if (isAbortError(err)) return;
+        await createSession(sid, target.exchanges[0], origin);
+        for (let i = 1; i < target.exchanges.length; i++) {
+          await appendExchange(sid, target.exchanges[i]);
+        }
+        setBtws((prev) => prev.filter((b) => b.id !== btwId));
+        navigate(`/sessions/${sid}`);
+      } catch (e) {
+        console.error("Failed to spin off BTW:", e);
       }
-    })();
-  }, []);
+    },
+    [originPath, navigate],
+  );
 
   const dismissEmpty = useCallback((btwId: string) => {
     setBtws((prev) => {
       const target = prev.find((b) => b.id === btwId);
-      if (target && target.messages.length === 0 && !target.streaming) {
+      if (target && target.exchanges.length === 0 && !target.streaming) {
         return prev.filter((b) => b.id !== btwId);
       }
       return prev;
@@ -104,5 +155,5 @@ export function useBtw(originPath?: string) {
     setBtws([]);
   }, []);
 
-  return { btws, startBtw, replyBtw, dismissEmpty, cleanup };
+  return { btws, startBtw, replyBtw, spinOff, dismissEmpty, cleanup };
 }

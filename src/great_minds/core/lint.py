@@ -156,12 +156,12 @@ async def _unmentioned_intended_links(
     )
 
     out: list[UnmentionedLink] = []
-    for source_id, target_id in edges:
-        source = topic_by_id.get(source_id)
-        target = topic_by_id.get(target_id)
+    for edge in edges:
+        source = topic_by_id.get(edge.source_topic_id)
+        target = topic_by_id.get(edge.target_topic_id)
         if source is None or target is None:
             continue
-        if target.slug in cited_by_source.get(source_id, set()):
+        if target.slug in cited_by_source.get(edge.source_topic_id, set()):
             continue
         out.append(
             UnmentionedLink(

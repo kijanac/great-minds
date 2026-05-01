@@ -6,13 +6,17 @@ from pathlib import Path
 from uuid import UUID
 
 from great_minds.core.brain import load_config
-from great_minds.core import ingester
 from great_minds.core.brains.schemas import Brain
 from great_minds.core.compile_intents.repository import CompileIntentRepository
+from great_minds.core.documents.service import DocumentService
+from great_minds.core.ingest_service import render_session_exchange_source
+from great_minds.core.ingester import build_document, slugify
 from great_minds.core.pagination import Page, PageInfo, PageParams
+from great_minds.core.paths import raw_path, session_exchange_path
 from great_minds.core.proposals.models import ProposalStatus, SourceProposal
 from great_minds.core.proposals.repository import ProposalRepository
 from great_minds.core.proposals.schemas import Proposal
+from great_minds.core.sessions import ExchangeEvent, SessionOrigin
 from great_minds.core.settings import Settings
 from great_minds.core.storage import Storage
 from great_minds.core.telemetry import log_event
@@ -21,10 +25,22 @@ log = logging.getLogger(__name__)
 
 
 class ProposalService:
-    """Handles proposal CRUD and review workflows."""
+    """Handles proposal CRUD and review workflows.
 
-    def __init__(self, repo: ProposalRepository, settings: Settings) -> None:
+    Proposal storage holds the *fully rendered* source content
+    (frontmatter + body) staged at create time. Approval becomes a
+    direct write to ``dest_path`` plus a documents-table upsert and a
+    compile intent — no second pass through the ingester at approve time.
+    """
+
+    def __init__(
+        self,
+        repo: ProposalRepository,
+        doc_service: DocumentService,
+        settings: Settings,
+    ) -> None:
         self.repo = repo
+        self.doc_service = doc_service
         self.data_dir = settings.data_dir
 
     async def _commit(self) -> None:
@@ -34,10 +50,77 @@ class ProposalService:
         self,
         brain_id: UUID,
         user_id: UUID,
+        storage: Storage,
         content: str,
         content_type: str,
         title: str | None,
         author: str | None,
+    ) -> SourceProposal:
+        """Create a typed-in proposal — body becomes a raw/{content_type}/<slug>.md."""
+        slug_source = title or content_type
+        filename = f"{slugify(slug_source)}.md"
+        dest = raw_path(content_type, filename)
+
+        config = await load_config(storage)
+        kwargs: dict[str, str] = {}
+        if title:
+            kwargs["title"] = title
+        if author:
+            kwargs["author"] = author
+        rendered = build_document(config, content, content_type, **kwargs)
+
+        return await self._stage_and_persist(
+            brain_id=brain_id,
+            user_id=user_id,
+            content_type=content_type,
+            title=title,
+            author=author,
+            dest_path=dest,
+            rendered=rendered,
+        )
+
+    async def create_session_promotion(
+        self,
+        brain_id: UUID,
+        user_id: UUID,
+        storage: Storage,
+        *,
+        session_id: str,
+        exchange: ExchangeEvent,
+        title: str,
+        session_origin: SessionOrigin | None = None,
+    ) -> SourceProposal:
+        """Create a proposal whose source comes from a session exchange."""
+        config = await load_config(storage)
+        rendered = render_session_exchange_source(
+            config,
+            session_id=session_id,
+            exchange=exchange,
+            title=title,
+            session_origin=session_origin,
+        )
+        dest = session_exchange_path(exchange.exId)
+
+        return await self._stage_and_persist(
+            brain_id=brain_id,
+            user_id=user_id,
+            content_type="sessions",
+            title=title,
+            author=None,
+            dest_path=dest,
+            rendered=rendered,
+        )
+
+    async def _stage_and_persist(
+        self,
+        *,
+        brain_id: UUID,
+        user_id: UUID,
+        content_type: str,
+        title: str | None,
+        author: str | None,
+        dest_path: str,
+        rendered: str,
     ) -> SourceProposal:
         proposal = await self.repo.create(
             brain_id=brain_id,
@@ -46,6 +129,7 @@ class ProposalService:
             title=title,
             author=author,
             storage_path="",
+            dest_path=dest_path,
         )
 
         storage_path = f"{self.data_dir}/proposals/{proposal.id}.md"
@@ -53,7 +137,7 @@ class ProposalService:
 
         path = Path(storage_path)
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(content, encoding="utf-8")
+        path.write_text(rendered, encoding="utf-8")
 
         await self._commit()
         await self.repo.refresh(proposal)
@@ -97,6 +181,11 @@ class ProposalService:
     async def get(self, proposal_id: UUID, brain_id: UUID) -> SourceProposal | None:
         return await self.repo.get(proposal_id, brain_id)
 
+    async def find_pending_for_dest(
+        self, brain_id: UUID, dest_path: str
+    ) -> SourceProposal | None:
+        return await self.repo.find_pending_for_dest(brain_id, dest_path)
+
     async def review(
         self,
         proposal: SourceProposal,
@@ -125,17 +214,11 @@ class ProposalService:
         brain: Brain,
         storage: Storage,
     ) -> None:
-        """Ingest approved content and write a compile intent (reconciler dispatches)."""
-        content = Path(proposal.storage_path).read_text(encoding="utf-8")
-        config = await load_config(storage)
-
-        kwargs: dict[str, str] = {}
-        if proposal.title:
-            kwargs["title"] = proposal.title
-        if proposal.author:
-            kwargs["author"] = proposal.author
-        await ingester.ingest_document(
-            storage, config, content, proposal.content_type, **kwargs
+        """Write staged content to dest_path, index, and dispatch a compile."""
+        rendered = Path(proposal.storage_path).read_text(encoding="utf-8")
+        await storage.write(proposal.dest_path, rendered)
+        await self.doc_service.index_raw_doc(
+            brain.id, proposal.dest_path, rendered
         )
 
         intent_repo = CompileIntentRepository(self.repo.session)
@@ -149,7 +232,7 @@ class ProposalService:
             )
 
     def _reject(self, proposal: SourceProposal) -> None:
-        """Clean up stored content for a rejected proposal."""
+        """Clean up staged content for a rejected proposal."""
         path = Path(proposal.storage_path)
         if path.exists():
             path.unlink()

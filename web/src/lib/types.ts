@@ -1,34 +1,10 @@
-import type {
-  BtwMessage,
-  SourceRef,
-  ThinkingBlock,
-} from "@/api/schemas";
+import type { SourceRef, ThinkingBlock } from "@/api/schemas";
 
-export type { BtwMessage, SourceRef, ThinkingBlock };
+export type { SourceRef, ThinkingBlock };
 
 export interface HistoryMessage {
   role: "user" | "assistant";
   content: string;
-}
-
-export function userMsg(text: string): BtwMessage {
-  return { role: "user", text };
-}
-
-export function assistantMsg(text: string): BtwMessage {
-  return { role: "assistant", text };
-}
-
-export interface BtwThread {
-  id: string;
-  anchor: string;
-  paragraph: string;
-  paragraphIndex: number;
-  exchangeId: string;
-  messages: BtwMessage[];
-  sources: SourceRef[];
-  streaming: boolean;
-  streamText: string;
 }
 
 export interface Exchange {
@@ -37,6 +13,20 @@ export interface Exchange {
   thinking: ThinkingBlock[];
   answer: string;
   btws: BtwThread[];
+}
+
+export interface BtwThread {
+  id: string;
+  anchor: string;
+  paragraph: string;
+  paragraphIndex: number;
+  exchangeId: string;
+  exchanges: Exchange[];
+  // In-flight state — set during streaming, cleared when the new exchange lands:
+  pendingQuery: string | null;
+  streaming: boolean;
+  streamText: string;
+  sources: SourceRef[];
 }
 
 export interface SelectionInfo {

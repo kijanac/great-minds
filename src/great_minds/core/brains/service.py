@@ -44,8 +44,15 @@ class BrainService:
 
     async def list_brains(
         self, user_id: UUID, *, limit: int = 50, offset: int = 0
-    ) -> list[tuple[Brain, MemberRole]]:
+    ) -> list[BrainWithRole]:
         return await self.repo.list_user_brains(user_id, limit=limit, offset=offset)
+
+    async def ensure_default_for_user(self, user_id: UUID, email: str) -> None:
+        """Create a default brain for a user who has none. Idempotent."""
+        existing = await self.repo.list_user_brains(user_id, limit=1, offset=0)
+        if existing:
+            return
+        await self.create_brain(f"{email}'s brain", user_id)
 
     async def list_brains_page(
         self, user_id: UUID, *, pagination: PageParams
@@ -55,10 +62,7 @@ class BrainService:
         )
         total = await self.repo.count_user_brains(user_id)
         return Page(
-            items=[
-                BrainWithRole(brain=brain, role=role)
-                for brain, role in rows
-            ],
+            items=rows,
             pagination=PageInfo(
                 limit=pagination.limit,
                 offset=pagination.offset,
@@ -74,8 +78,8 @@ class BrainService:
         thematic_hint: str | None = None,
         kinds: list[str] | None = None,
         commit: bool = True,
-    ) -> tuple[Brain, MemberRole]:
-        brain, role = await self.repo.create_brain(name, owner_id)
+    ) -> Brain:
+        brain = await self.repo.create_brain(name, owner_id)
         await self._init_brain_storage(brain)
         if thematic_hint is not None or kinds is not None:
             await apply_brain_config_overrides(
@@ -85,7 +89,7 @@ class BrainService:
             )
         if commit:
             await self._commit()
-        return brain, role
+        return brain
 
     async def update_config(
         self,
@@ -110,7 +114,7 @@ class BrainService:
 
     async def list_members(
         self, brain_id: UUID, *, limit: int = 50, offset: int = 0
-    ) -> list[tuple[BrainMembership, str]]:
+    ) -> list[MemberWithEmail]:
         return await self.repo.list_members(brain_id, limit=limit, offset=offset)
 
     async def list_members_page(
@@ -121,14 +125,7 @@ class BrainService:
         )
         total = await self.repo.get_member_count(brain_id)
         return Page(
-            items=[
-                MemberWithEmail(
-                    user_id=membership.user_id,
-                    role=membership.role,
-                    email=email,
-                )
-                for membership, email in rows
-            ],
+            items=rows,
             pagination=PageInfo(
                 limit=pagination.limit,
                 offset=pagination.offset,

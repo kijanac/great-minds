@@ -10,7 +10,7 @@ from great_minds.core.brains.models import (
     BrainMembership,
     MemberRole,
 )
-from great_minds.core.brains.schemas import Brain
+from great_minds.core.brains.schemas import Brain, BrainWithRole, MemberWithEmail
 from great_minds.core.users.models import User
 
 
@@ -25,7 +25,7 @@ class BrainRepository:
         row = result.scalar_one_or_none()
         return Brain.model_validate(row) if row else None
 
-    async def create_brain(self, name: str, owner_id: UUID) -> tuple[Brain, MemberRole]:
+    async def create_brain(self, name: str, owner_id: UUID) -> Brain:
         brain = BrainORM(
             name=name,
             owner_id=owner_id,
@@ -34,11 +34,11 @@ class BrainRepository:
         await self.session.flush()
         await self.upsert_membership(brain.id, owner_id, MemberRole.OWNER)
         await self.session.refresh(brain)
-        return Brain.model_validate(brain), MemberRole.OWNER
+        return Brain.model_validate(brain)
 
     async def list_user_brains(
         self, user_id: UUID, *, limit: int | None = 50, offset: int = 0
-    ) -> list[tuple[Brain, MemberRole]]:
+    ) -> list[BrainWithRole]:
         stmt = (
             select(BrainORM, BrainMembership.role)
             .join(BrainMembership, BrainMembership.brain_id == BrainORM.id)
@@ -49,7 +49,10 @@ class BrainRepository:
         if limit is not None:
             stmt = stmt.limit(limit)
         result = await self.session.execute(stmt)
-        return [(Brain.model_validate(brain), role) for brain, role in result.all()]
+        return [
+            BrainWithRole(brain=Brain.model_validate(brain), role=role)
+            for brain, role in result.all()
+        ]
 
     async def count_user_brains(self, user_id: UUID) -> int:
         return (
@@ -87,16 +90,23 @@ class BrainRepository:
 
     async def list_members(
         self, brain_id: UUID, *, limit: int = 50, offset: int = 0
-    ) -> list[tuple[BrainMembership, str]]:
+    ) -> list[MemberWithEmail]:
         result = await self.session.execute(
-            select(BrainMembership, User.email)
+            select(
+                BrainMembership.user_id,
+                BrainMembership.role,
+                User.email,
+            )
             .join(User, User.id == BrainMembership.user_id)
             .where(BrainMembership.brain_id == brain_id)
             .order_by(User.email)
             .offset(offset)
             .limit(limit)
         )
-        return result.all()
+        return [
+            MemberWithEmail(user_id=user_id, role=role, email=email)
+            for user_id, role, email in result.all()
+        ]
 
     async def upsert_membership(
         self, brain_id: UUID, user_id: UUID, role: MemberRole
