@@ -4,17 +4,17 @@ import json
 import logging
 from collections.abc import AsyncIterator
 from dataclasses import asdict
+from typing import Annotated
 from uuid import UUID
 
 import httpx
-from fastapi import APIRouter, Depends, Form, HTTPException, UploadFile
+from fastapi import APIRouter, Form, HTTPException, UploadFile
 from fastapi.responses import StreamingResponse
 
 from great_minds.app.api.dependencies import (
-    BrainMemberGuard,
     BrainStorageDep,
-    get_compile_intent_repository,
-    get_ingest_service,
+    CompileIntentRepositoryDep,
+    IngestServiceDep,
 )
 from great_minds.app.api.schemas.ingest import (
     IngestResult,
@@ -22,12 +22,12 @@ from great_minds.app.api.schemas.ingest import (
     URLSource,
     UserSuggestion,
 )
+from great_minds.core.compile_intents import CompileIntentRepository
 from great_minds.core.ingest_service import (
     BulkFileInput,
     BulkFileStatus,
     IngestService,
 )
-from great_minds.core.compile_intents import CompileIntentRepository
 from great_minds.core.sources import SourceMetadata
 from great_minds.core.storage import Storage
 from great_minds.core.telemetry import log_event
@@ -42,7 +42,7 @@ async def ingest(
     source: RawSource,
     brain_id: UUID,
     storage: BrainStorageDep,
-    ingest_service: IngestService = Depends(get_ingest_service),
+    ingest_service: IngestServiceDep,
 ) -> IngestResult:
     file_path, title = await ingest_service.ingest_text(
         brain_id,
@@ -59,8 +59,7 @@ async def ingest_user_suggestion(
     suggestion: UserSuggestion,
     brain_id: UUID,
     storage: BrainStorageDep,
-    _auth: BrainMemberGuard,
-    ingest_service: IngestService = Depends(get_ingest_service),
+    ingest_service: IngestServiceDep,
 ) -> IngestResult:
     try:
         file_path, title = await ingest_service.ingest_user_suggestion(
@@ -81,7 +80,7 @@ async def ingest_upload(
     file: UploadFile,
     brain_id: UUID,
     storage: BrainStorageDep,
-    ingest_service: IngestService = Depends(get_ingest_service),
+    ingest_service: IngestServiceDep,
     content_type: str = "texts",
     author: str | None = None,
     date: str | None = None,
@@ -126,7 +125,7 @@ async def ingest_url(
     source: URLSource,
     brain_id: UUID,
     storage: BrainStorageDep,
-    ingest_service: IngestService = Depends(get_ingest_service),
+    ingest_service: IngestServiceDep,
 ) -> IngestResult:
     try:
         file_path, title = await ingest_service.ingest_url(
@@ -145,10 +144,9 @@ async def ingest_bulk(
     brain_id: UUID,
     files: list[UploadFile],
     storage: BrainStorageDep,
-    _auth: BrainMemberGuard,
-    content_type: str = Form("texts"),
-    ingest_service: IngestService = Depends(get_ingest_service),
-    intent_repo: CompileIntentRepository = Depends(get_compile_intent_repository),
+    ingest_service: IngestServiceDep,
+    intent_repo: CompileIntentRepositoryDep,
+    content_type: Annotated[str, Form()] = "texts",
 ) -> StreamingResponse:
     """Bulk ingest N files. Streams NDJSON per-file events; on success writes
     a compile intent (reconciler dispatches to Absurd within ~5s).

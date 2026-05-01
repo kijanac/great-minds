@@ -1,16 +1,29 @@
 """Session routes."""
 
+from uuid import UUID
+
 from fastapi import APIRouter, HTTPException
 
 from great_minds.app.api.dependencies import (
+    BrainAccessDep,
     BrainStorageDep,
+    CompileIntentRepositoryDep,
     CurrentUser,
+    DocumentRepositoryDep,
+    IngestServiceDep,
+    LlmGuard,
     PageParamsQuery,
+    ProposalServiceDep,
 )
 from great_minds.app.api.schemas import sessions as schemas
 from great_minds.core import sessions
+from great_minds.core.brains.models import MemberRole
+from great_minds.core.ingest_service import generate_session_title
+from great_minds.core.llm import get_async_client
 from great_minds.core.pagination import Page
+from great_minds.core.paths import session_exchange_path
 from great_minds.core.sessions import BtwInput, ExchangeInput
+from great_minds.core.telemetry import log_event
 
 router = APIRouter(prefix="/sessions", tags=["sessions"])
 
@@ -69,7 +82,7 @@ async def append_btw_to_session(
             anchor=btw.anchor,
             paragraph=btw.paragraph,
             paragraphIndex=btw.paragraphIndex,
-            messages=btw.messages,
+            exchanges=btw.exchanges,
         ),
     )
     return schemas.SessionPathResponse(path=path)
@@ -100,3 +113,108 @@ async def read_session(
     except FileNotFoundError:
         raise HTTPException(status_code=404, detail="Session not found")
     return schemas.SessionResponse(id=session_id, events=events)
+
+
+@router.post(
+    "/{session_id}/exchanges/{exchange_id}/promote",
+    status_code=201,
+)
+async def promote_exchange(
+    session_id: str,
+    exchange_id: str,
+    storage: BrainStorageDep,
+    user: CurrentUser,
+    access: BrainAccessDep,
+    ingest_service: IngestServiceDep,
+    proposal_service: ProposalServiceDep,
+    intent_repo: CompileIntentRepositoryDep,
+    doc_repo: DocumentRepositoryDep,
+    _llm: LlmGuard,
+    brain_id: UUID,
+) -> schemas.PromoteExchangeResponse:
+    """Promote one session exchange into the brain's raw corpus.
+
+    Owners ingest directly. Non-owner members create a proposal that
+    flows through the existing approval UI. Idempotent on both paths:
+    re-promoting either short-circuits to the existing document or
+    pending proposal.
+    """
+    dest = session_exchange_path(exchange_id)
+    role = await access.get_member_role(brain_id, user.id)
+    is_owner = role == MemberRole.OWNER
+
+    if is_owner:
+        existing_doc = await doc_repo.get_by_path(brain_id, dest)
+        if existing_doc is not None:
+            return schemas.PromoteExchangeResponse(
+                mode="ingested",
+                path=dest,
+                title=existing_doc.metadata.title or exchange_id,
+                document_id=str(existing_doc.id),
+            )
+    else:
+        existing_proposal = await proposal_service.find_pending_for_dest(
+            brain_id, dest
+        )
+        if existing_proposal is not None:
+            return schemas.PromoteExchangeResponse(
+                mode="proposed",
+                path=dest,
+                title=existing_proposal.title or exchange_id,
+                proposal_id=str(existing_proposal.id),
+            )
+
+    events = await sessions.load_events(storage, session_id)
+    if not events:
+        raise HTTPException(404, "Session not found")
+    meta = sessions.find_meta(events)
+    exchange = sessions.find_exchange(events, exchange_id)
+    if exchange is None:
+        raise HTTPException(404, "Exchange not found in session")
+    if not exchange.answer.strip():
+        raise HTTPException(400, "Exchange has no answer yet")
+
+    title = await generate_session_title(
+        get_async_client(), exchange.query, exchange.answer
+    )
+    session_origin = meta.origin if meta else None
+
+    if is_owner:
+        _, document_id = await ingest_service.ingest_session_exchange(
+            brain_id,
+            storage,
+            session_id=session_id,
+            exchange=exchange,
+            title=title,
+            session_origin=session_origin,
+        )
+        intent = await intent_repo.upsert_pending(brain_id)
+        if intent is not None:
+            log_event(
+                "intent_created",
+                intent_id=str(intent.id),
+                brain_id=str(brain_id),
+                trigger="session_exchange_promoted",
+            )
+        return schemas.PromoteExchangeResponse(
+            mode="ingested",
+            path=dest,
+            title=title,
+            document_id=str(document_id),
+        )
+
+    proposal = await proposal_service.create_session_promotion(
+        brain_id,
+        user.id,
+        storage,
+        session_id=session_id,
+        exchange=exchange,
+        title=title,
+        session_origin=session_origin,
+    )
+    return schemas.PromoteExchangeResponse(
+        mode="proposed",
+        path=dest,
+        title=title,
+        proposal_id=str(proposal.id),
+    )

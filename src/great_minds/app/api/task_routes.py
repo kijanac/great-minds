@@ -2,16 +2,14 @@
 
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, HTTPException
 
 from great_minds.app.api.dependencies import (
-    BrainMemberGuard,
-    get_task_service,
     PageParamsQuery,
+    TaskServiceDep,
 )
 from great_minds.core.pagination import Page
 from great_minds.core.tasks.schemas import TaskDetail
-from great_minds.core.tasks.service import TaskService
 
 router = APIRouter(prefix="/tasks", tags=["tasks"])
 
@@ -20,8 +18,7 @@ router = APIRouter(prefix="/tasks", tags=["tasks"])
 async def list_tasks(
     brain_id: UUID,
     pagination: PageParamsQuery,
-    _auth: BrainMemberGuard,
-    task_service: TaskService = Depends(get_task_service),
+    task_service: TaskServiceDep,
 ) -> Page[TaskDetail]:
     result = await task_service.list_for_brain(brain_id, pagination=pagination)
     return result
@@ -31,8 +28,7 @@ async def list_tasks(
 async def get_task(
     task_id: UUID,
     brain_id: UUID,
-    _auth: BrainMemberGuard,
-    task_service: TaskService = Depends(get_task_service),
+    task_service: TaskServiceDep,
 ) -> TaskDetail:
     response = await task_service.get(task_id, brain_id)
     if response is None:

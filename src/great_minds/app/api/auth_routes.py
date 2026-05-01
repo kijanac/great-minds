@@ -3,11 +3,14 @@
 import logging
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, HTTPException, status
 
-from great_minds.app.api.dependencies import CurrentUser, get_auth_service
+from great_minds.app.api.dependencies import (
+    AuthServiceDep,
+    BrainServiceDep,
+    CurrentUser,
+)
 from great_minds.app.api.schemas import auth as schemas
-from great_minds.core.auth.service import AuthService
 
 log = logging.getLogger(__name__)
 
@@ -17,7 +20,7 @@ router = APIRouter(prefix="/auth", tags=["auth"])
 @router.post("/request-code", status_code=status.HTTP_204_NO_CONTENT)
 async def request_code(
     req: schemas.RequestCode,
-    auth_service: AuthService = Depends(get_auth_service),
+    auth_service: AuthServiceDep,
 ) -> None:
     await auth_service.request_code(req.email)
 
@@ -25,23 +28,25 @@ async def request_code(
 @router.post("/verify-code")
 async def verify_code(
     req: schemas.VerifyCode,
-    auth_service: AuthService = Depends(get_auth_service),
+    auth_service: AuthServiceDep,
+    brain_service: BrainServiceDep,
 ) -> schemas.TokenPair:
     try:
-        access_token, refresh_token = await auth_service.verify_code(
+        user_id, access_token, refresh_token = await auth_service.verify_code(
             req.email, req.code
         )
     except ValueError:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid or expired code"
         )
+    await brain_service.ensure_default_for_user(user_id, req.email)
     return schemas.TokenPair(access_token=access_token, refresh_token=refresh_token)
 
 
 @router.post("/refresh")
 async def refresh(
     req: schemas.RefreshRequest,
-    auth_service: AuthService = Depends(get_auth_service),
+    auth_service: AuthServiceDep,
 ) -> schemas.TokenPair:
     try:
         access_token, refresh_token = await auth_service.refresh_tokens(
@@ -62,7 +67,7 @@ async def refresh(
 async def create_api_key(
     req: schemas.ApiKeyCreate,
     user: CurrentUser,
-    auth_service: AuthService = Depends(get_auth_service),
+    auth_service: AuthServiceDep,
 ) -> schemas.ApiKeyCreated:
     api_key, raw_key = await auth_service.create_api_key(user.id, req.label)
     return schemas.ApiKeyCreated(
@@ -77,7 +82,7 @@ async def create_api_key(
 @router.get("/api-keys")
 async def list_api_keys(
     user: CurrentUser,
-    auth_service: AuthService = Depends(get_auth_service),
+    auth_service: AuthServiceDep,
 ) -> list[schemas.ApiKey]:
     rows = await auth_service.list_api_keys(user.id)
     return [schemas.ApiKey.model_validate(k) for k in rows]
@@ -87,7 +92,7 @@ async def list_api_keys(
 async def revoke_api_key(
     key_id: UUID,
     user: CurrentUser,
-    auth_service: AuthService = Depends(get_auth_service),
+    auth_service: AuthServiceDep,
 ) -> None:
     try:
         await auth_service.revoke_api_key(key_id, user.id)

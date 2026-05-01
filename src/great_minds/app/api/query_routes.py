@@ -3,20 +3,18 @@
 import json
 from uuid import UUID
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter
 from fastapi.responses import StreamingResponse
 
 from great_minds.app.api.dependencies import (
+    BrainServiceDep,
     BrainStorageDep,
     CurrentUser,
-    get_brain_service,
-    get_document_repository,
-    require_llm,
+    DocumentRepositoryDep,
+    LlmGuard,
 )
 from great_minds.app.api.schemas import query as schemas
 from great_minds.core import querier
-from great_minds.core.brains.service import BrainService
-from great_minds.core.documents.repository import DocumentRepository
 
 router = APIRouter(prefix="/query", tags=["query"])
 
@@ -27,9 +25,9 @@ async def query(
     brain_id: UUID,
     storage: BrainStorageDep,
     user: CurrentUser,
-    brain_service: BrainService = Depends(get_brain_service),
-    doc_repo: DocumentRepository = Depends(get_document_repository),
-    _llm: None = Depends(require_llm),
+    brain_service: BrainServiceDep,
+    doc_repo: DocumentRepositoryDep,
+    _llm: LlmGuard,
 ) -> schemas.QueryResponse:
     brain = await brain_service.get_brain(brain_id)
     source = querier.QuerySource(storage=storage, label=brain.name, brain_id=brain_id)
@@ -59,9 +57,9 @@ async def query_stream(
     brain_id: UUID,
     storage: BrainStorageDep,
     user: CurrentUser,
-    brain_service: BrainService = Depends(get_brain_service),
-    doc_repo: DocumentRepository = Depends(get_document_repository),
-    _llm: None = Depends(require_llm),
+    brain_service: BrainServiceDep,
+    doc_repo: DocumentRepositoryDep,
+    _llm: LlmGuard,
 ) -> StreamingResponse:
     brain = await brain_service.get_brain(brain_id)
     source = querier.QuerySource(storage=storage, label=brain.name, brain_id=brain_id)

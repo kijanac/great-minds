@@ -7,15 +7,14 @@ it to Absurd within ~5s. GET lets the frontend poll the intent's status
 
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, HTTPException, status
 
 from great_minds.app.api.dependencies import (
-    BrainMemberGuard,
-    get_compile_intent_repository,
-    require_llm,
+    CompileIntentRepositoryDep,
+    LlmGuard,
 )
 from great_minds.app.api.schemas.tasks import CompileRequest
-from great_minds.core.compile_intents import CompileIntent, CompileIntentRepository
+from great_minds.core.compile_intents import CompileIntent
 from great_minds.core.telemetry import log_event
 
 router = APIRouter(prefix="/compile", tags=["compile"])
@@ -25,9 +24,8 @@ router = APIRouter(prefix="/compile", tags=["compile"])
 async def request_compile(
     req: CompileRequest,
     brain_id: UUID,
-    _auth: BrainMemberGuard,
-    intent_repo: CompileIntentRepository = Depends(get_compile_intent_repository),
-    _llm: None = Depends(require_llm),
+    intent_repo: CompileIntentRepositoryDep,
+    _llm: LlmGuard,
 ) -> CompileIntent:
     del req  # reserved for future compile options
     record = await intent_repo.upsert_pending(brain_id)
@@ -54,8 +52,7 @@ async def request_compile(
 async def get_compile_intent(
     intent_id: UUID,
     brain_id: UUID,
-    _auth: BrainMemberGuard,
-    intent_repo: CompileIntentRepository = Depends(get_compile_intent_repository),
+    intent_repo: CompileIntentRepositoryDep,
 ) -> CompileIntent:
     record = await intent_repo.get(intent_id)
     if record is None or record.brain_id != brain_id:

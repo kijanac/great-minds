@@ -8,20 +8,18 @@ raw-doc reads continue to work off the filesystem.
 from pathlib import PurePosixPath
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, HTTPException
 
 from great_minds.app.api.dependencies import (
     BrainStorageDep,
-    get_document_repository,
-    get_document_service,
+    DocumentRepositoryDep,
+    DocumentServiceDep,
     PageParamsQuery,
 )
 from great_minds.app.api.schemas import wiki as schemas
 from great_minds.core import brain as brain_ops
 from great_minds.core.documents import (
     DocKind,
-    DocumentRepository,
-    DocumentService,
     SourceDocumentFacets,
     WikiArticleSummary,
 )
@@ -36,7 +34,7 @@ async def list_articles(
     brain_id: UUID,
     pagination: PageParamsQuery,
     _storage: BrainStorageDep,
-    doc_service: DocumentService = Depends(get_document_service),
+    doc_service: DocumentServiceDep,
 ) -> Page[WikiArticleSummary]:
     return await doc_service.list_wiki_articles(brain_id, pagination=pagination)
 
@@ -45,8 +43,8 @@ async def list_articles(
 async def recent_articles(
     brain_id: UUID,
     _storage: BrainStorageDep,
+    doc_service: DocumentServiceDep,
     limit: int = 10,
-    doc_service: DocumentService = Depends(get_document_service),
 ) -> list[schemas.RecentArticleItem]:
     docs = await doc_service.query_documents(
         [brain_id], doc_kind=DocKind.WIKI, limit=limit
@@ -59,10 +57,10 @@ async def list_raw_sources(
     brain_id: UUID,
     pagination: PageParamsQuery,
     _storage: BrainStorageDep,
+    doc_service: DocumentServiceDep,
     content_type: str | None = None,
     search: str | None = None,
     compiled: bool | None = None,
-    doc_service: DocumentService = Depends(get_document_service),
 ) -> FacetedPage[schemas.SourceDocumentSummary, SourceDocumentFacets]:
     result = await doc_service.list_raw_sources(
         brain_id,
@@ -95,7 +93,7 @@ async def read_document(
     brain_id: UUID,
     path: str,
     storage: BrainStorageDep,
-    doc_repo: DocumentRepository = Depends(get_document_repository),
+    doc_repo: DocumentRepositoryDep,
 ) -> schemas.DocResponse:
     try:
         path = _safe_document_read_path(path)
