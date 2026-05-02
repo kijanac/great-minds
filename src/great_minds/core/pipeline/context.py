@@ -15,7 +15,7 @@ from uuid import UUID
 from openai import AsyncOpenAI
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from great_minds.core.brain_config import BrainConfig, load_brain_config
+from great_minds.core.brains.config import BrainConfig, load_brain_config
 from great_minds.core.paths import cache_root, sidecar_root
 from great_minds.core.pipeline.cache import ContentHashCache
 from great_minds.core.settings import get_settings

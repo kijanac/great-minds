@@ -4,7 +4,7 @@ import hashlib
 from collections import defaultdict
 from uuid import UUID
 
-from sqlalchemy import Select, delete, distinct, func, select, update
+from sqlalchemy import Select, delete, distinct, func, or_, select, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -24,7 +24,7 @@ from great_minds.core.documents.schemas import (
 from great_minds.core.ideas.schemas import SourceCard
 from great_minds.core.markdown import parse_frontmatter
 from great_minds.core.pagination import FacetCount
-from great_minds.core.paths import WIKI_PREFIX, raw_prefix, wiki_slug
+from great_minds.core.paths import WIKI_PREFIX, raw_prefix, wiki_path
 
 
 class DocumentRepository:
@@ -265,15 +265,47 @@ class DocumentRepository:
                 .limit(limit)
             )
         ).all()
-        return [
-            WikiArticleSummary(
-                slug=wiki_slug(file_path),
-                title=title,
-                precis=precis,
-                updated_at=updated_at,
+        return [WikiArticleSummary.model_validate(r) for r in rows]
+
+    async def search_wiki_articles(
+        self,
+        brain_id: UUID,
+        *,
+        slug: str | None = None,
+        query: str | None = None,
+        limit: int = 20,
+    ) -> list[WikiArticleSummary]:
+        """Filter wiki articles by exact slug and/or substring on title/precis.
+
+        SQL-side filter — replaces the previous load-all-and-filter pattern in
+        the agent's ``query_wiki_articles`` tool. ``query`` matches title or
+        precis case-insensitively. ``slug`` is exact. Underscore-prefixed
+        slugs (index pages) are excluded.
+        """
+        stmt = select(
+            DocumentORM.file_path,
+            DocumentORM.title,
+            DocumentORM.precis,
+            DocumentORM.updated_at,
+        ).where(
+            DocumentORM.brain_id == brain_id,
+            DocumentORM.doc_kind == DocKind.WIKI,
+            DocumentORM.file_path.not_like(f"{WIKI_PREFIX}_%"),
+        )
+        if slug is not None:
+            stmt = stmt.where(DocumentORM.file_path == wiki_path(slug))
+        if query:
+            pattern = f"%{query.lower()}%"
+            stmt = stmt.where(
+                or_(
+                    func.lower(DocumentORM.title).like(pattern),
+                    func.lower(func.coalesce(DocumentORM.precis, "")).like(pattern),
+                )
             )
-            for file_path, title, precis, updated_at in rows
-        ]
+        stmt = stmt.order_by(func.lower(DocumentORM.title)).limit(limit)
+
+        rows = (await self.session.execute(stmt)).all()
+        return [WikiArticleSummary.model_validate(r) for r in rows]
 
     async def count_wiki_article_paths(self, brain_id: UUID) -> int:
         return (
@@ -307,10 +339,7 @@ class DocumentRepository:
                 .order_by(func.lower(DocumentORM.title))
             )
         ).all()
-        return [
-            WikiArticleSummary(slug=wiki_slug(file_path), title=title)
-            for file_path, title in rows
-        ]
+        return [WikiArticleSummary.model_validate(r) for r in rows]
 
     async def update_wiki_backlinks(
         self,

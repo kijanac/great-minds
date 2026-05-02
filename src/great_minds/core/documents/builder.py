@@ -1,15 +1,23 @@
-"""Generic ingestion: add frontmatter to documents and write to brain storage.
+"""Build markdown source documents and write them to brain storage.
 
-Reads config for the metadata field list per content type.
-Universal fields (title, author, origin, date, url, genre, tags) are always
-included. Config-driven fields are loaded from the metadata section.
-Leaves enriched fields empty -- compilation fills them.
+Pure builders (`build_document`, `build_frontmatter`, `extract_title`)
+take config + content + metadata and return the on-disk markdown form.
+The write helpers (`write_document`, `write_file`) compose the builders
+with storage I/O for callers that have raw bytes/text on hand. DB
+indexing happens elsewhere — these functions know nothing about
+brain_id or the documents table.
 
-This module reads from the EXTERNAL filesystem (source corpus) and writes
-TO brain storage. It is always called via a Brain instance:
+Universal frontmatter fields (title/author/origin/date/url, plus
+genre/tags and the structural compiled/source_type flags) are always
+emitted. Per-content_type fields come from the brain's config.yaml
+``metadata.<content_type>`` section via ``load_field_specs``.
 
-    brain.ingest_document(content, "texts", author="V.I. Lenin", date=1916)
-    brain.ingest_file(Path("corpus/lenin/ch1.md"), "texts", "raw/texts/lenin/")
+Callers:
+    - ``IngestService`` (core/ingest_service.py) — wraps these in
+      source-conversion + DB indexing for the API entry points.
+    - ``workers.bulk_ingest_task`` — bulk corpus ingest with concurrent
+      writes.
+    - ``scripts/bulk_ingest_corpus.py`` — local-dev one-shot.
 """
 
 import logging
@@ -26,17 +34,6 @@ from great_minds.core.storage import Storage
 
 log = logging.getLogger(__name__)
 
-
-def slugify(text: str, max_len: int = 80) -> str:
-    return re.sub(r"[^a-z0-9]+", "-", text.lower()).strip("-")[:max_len]
-
-
-def normalize_url(url: str) -> str:
-    if url.startswith("http://") or url.startswith("https://"):
-        return url
-    return f"https://{url}"
-
-
 _yaml = YAML()
 _yaml.default_flow_style = False
 
@@ -50,7 +47,6 @@ UNIVERSAL_ENRICHED = ["genre", "tags"]
 STRUCTURAL = ["compiled", "source_type"]
 UNIVERSAL_ALL = UNIVERSAL_PROVIDED + UNIVERSAL_ENRICHED + STRUCTURAL
 
-# Default empty values for universal fields
 _UNIVERSAL_DEFAULTS: dict[str, object] = {
     "title": "",
     "author": "",
@@ -119,14 +115,12 @@ def build_frontmatter(
     """
     fm: dict = {}
 
-    # Universal fields first
     for field in UNIVERSAL_ALL:
         if field in known:
             fm[field] = known[field]
         else:
             fm[field] = _UNIVERSAL_DEFAULTS[field]
 
-    # Config-driven fields
     for spec in field_specs:
         if spec.name in known:
             fm[spec.name] = known[spec.name]
@@ -198,7 +192,7 @@ def build_document(
     return frontmatter + inject_anchors(content)
 
 
-async def ingest_document(
+async def write_document(
     storage: Storage,
     config: dict,
     content: str,
@@ -230,7 +224,7 @@ async def ingest_document(
     return built
 
 
-async def ingest_file(
+async def write_file(
     storage: Storage,
     config: dict,
     filepath: Path,
@@ -238,19 +232,21 @@ async def ingest_file(
     dest_dir: str,
     **kwargs,
 ) -> str:
-    """Ingest a single file: read from filesystem, add frontmatter, write to brain storage.
+    """Read a file from the external filesystem and write it to brain storage.
 
     Args:
-        storage: Storage, config: dict instance providing config and storage.
-        filepath: Path on the external filesystem (the source file being ingested).
-        content_type: One of the types in config metadata.
-        dest_dir: Destination directory relative to brain root (e.g. "raw/texts/lenin/").
-        **kwargs: Passed through to ingest_document (author, date, origin, etc.).
+        storage: Brain storage backend.
+        config: Brain config (parsed config.yaml).
+        filepath: Path on the external filesystem (the source file).
+        content_type: One of the types in ``config['metadata']``.
+        dest_dir: Destination directory relative to brain root
+            (e.g. ``raw/texts/lenin/``).
+        **kwargs: Passed through to ``write_document`` (author, date, etc.).
 
     Returns:
         The dest path string (relative to brain root).
     """
     content = filepath.read_text(encoding="utf-8")
     dest = f"{dest_dir}/{filepath.name}"
-    await ingest_document(storage, config, content, content_type, dest=dest, **kwargs)
+    await write_document(storage, config, content, content_type, dest=dest, **kwargs)
     return dest

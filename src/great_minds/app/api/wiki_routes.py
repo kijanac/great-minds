@@ -17,7 +17,6 @@ from great_minds.app.api.dependencies import (
     PageParamsQuery,
 )
 from great_minds.app.api.schemas import wiki as schemas
-from great_minds.core import brain as brain_ops
 from great_minds.core.documents import (
     DocKind,
     SourceDocumentFacets,
@@ -25,6 +24,7 @@ from great_minds.core.documents import (
 )
 from great_minds.core.markdown import parse_frontmatter
 from great_minds.core.pagination import FacetedPage, Page
+from great_minds.core.paths import wiki_path
 
 router = APIRouter(tags=["wiki"])
 
@@ -82,7 +82,7 @@ async def read_article(
     slug: str,
     storage: BrainStorageDep,
 ) -> schemas.ArticleResponse:
-    content = await brain_ops.read_article(storage, slug)
+    content = await storage.read(wiki_path(slug), strict=False)
     if content is not None:
         return schemas.ArticleResponse(slug=slug, content=content)
     raise HTTPException(status_code=404, detail=f"Article not found: {slug}")

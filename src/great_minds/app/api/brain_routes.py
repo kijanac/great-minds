@@ -26,7 +26,7 @@ from great_minds.app.api.schemas.brains import (
     BrainOverview,
     Membership,
 )
-from great_minds.core.brain_config import draft_thematic_hint, load_brain_config
+from great_minds.core.brains.config import draft_thematic_hint, load_brain_config
 from great_minds.core.brains.models import MemberRole
 from great_minds.core.documents import DocKind
 from great_minds.core.llm import get_async_client

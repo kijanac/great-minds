@@ -24,7 +24,7 @@ import hashlib
 import logging
 from uuid import UUID
 
-from great_minds.core.brain import load_prompt
+from great_minds.core.brains.prompts import load_prompt
 from great_minds.core.llm.client import json_llm_call
 from great_minds.core.llm import REDUCE_MODEL
 from great_minds.core.pipeline.abstract.schemas import LocalTopic

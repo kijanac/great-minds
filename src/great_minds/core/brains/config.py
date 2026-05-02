@@ -1,8 +1,9 @@
-"""Per-brain compile-time config.
+"""Brain config: storage-backed config.yaml loading and override editing.
 
-One config.yaml per brain, at {storage.root}/config.yaml — the same
-file the ingest path reads for per-source-type metadata schemas. We
-just parse different sections for different purposes.
+One config.yaml per brain at {storage.root}/config.yaml. The same file
+backs the ingester's per-source-type metadata schemas and the compile
+pipeline's editorial settings (kinds, thematic_hint); this module
+parses both views.
 
 Shape:
 
@@ -32,10 +33,9 @@ from io import StringIO
 from openai import AsyncOpenAI
 from ruamel.yaml import YAML
 
-from great_minds.core.brain import load_default_config_text
 from great_minds.core.llm import QUERY_MODEL
 from great_minds.core.llm.client import api_call, extract_content
-from great_minds.core.paths import CONFIG_PATH
+from great_minds.core.paths import CONFIG_PATH, DEFAULT_CONFIG_PATH
 from great_minds.core.storage import Storage
 
 DEFAULT_KINDS: tuple[str, ...] = ("person", "event", "organization", "concept")
@@ -55,6 +55,20 @@ _DRAFT_HINT_SYSTEM = (
     "concrete, and actionable. Do not include preamble, headings, or "
     "quotation marks — return only the steer text."
 )
+
+
+async def load_config(storage: Storage) -> dict:
+    """Load brain config as a raw dict, returning empty if absent."""
+    content = await storage.read(CONFIG_PATH, strict=False)
+    if content is None:
+        return {}
+    raw = _yaml.load(content)
+    return dict(raw) if raw else {}
+
+
+def load_default_config_text() -> str:
+    """Read the package-bundled default config.yaml."""
+    return DEFAULT_CONFIG_PATH.read_text(encoding="utf-8")
 
 
 @dataclass(frozen=True)

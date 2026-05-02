@@ -8,6 +8,11 @@ Event types:
   MetaEvent      — session metadata (first line of every JSONL)
   ExchangeEvent  — a query/answer pair
   BtwEvent       — a "by the way" side-thread attached to an exchange
+
+Promotion helpers (``generate_session_title``,
+``render_session_exchange_source``) live here too: turning a session
+exchange into a wiki-source document is a session-derived concern, and
+both ``IngestService`` and ``ProposalService`` use them.
 """
 
 import json
@@ -17,8 +22,12 @@ from datetime import datetime, timezone
 from enum import StrEnum
 from typing import Literal
 
+from openai import AsyncOpenAI
 from pydantic import BaseModel, ValidationError
 
+from great_minds.core.documents.builder import build_document
+from great_minds.core.llm import QUERY_MODEL
+from great_minds.core.llm.client import api_call, extract_content
 from great_minds.core.pagination import Page, PageInfo, PageParams
 
 from .storage import Storage
@@ -412,5 +421,100 @@ async def list_sessions(
             limit=pagination.limit,
             offset=pagination.offset,
             total=total,
+        ),
+    )
+
+
+# ---------------------------------------------------------------------------
+# Promotion helpers — turn a session exchange into a wiki-source document
+# ---------------------------------------------------------------------------
+
+
+_SESSION_TITLE_SYSTEM = (
+    "You generate concise titles for distilled Q&A excerpts that have "
+    "been promoted to a knowledge base. Output a 3-7 word noun phrase "
+    "in Title Case, no question marks, no leading articles, no quotes. "
+    "Output ONLY the title text — no preamble, no explanation."
+)
+
+
+async def generate_session_title(
+    client: AsyncOpenAI, query: str, answer: str
+) -> str:
+    """One-shot title for a promoted session exchange."""
+    response = await api_call(
+        client,
+        model=QUERY_MODEL,
+        messages=[
+            {"role": "system", "content": _SESSION_TITLE_SYSTEM},
+            {"role": "user", "content": f"Q: {query}\n\nA: {answer}"},
+        ],
+        temperature=0.4,
+    )
+    title = (extract_content(response) or "").strip().strip('"').strip()
+    if not title:
+        raise ValueError("LLM returned empty title")
+    return title
+
+
+def session_exchange_build_args(
+    *,
+    session_id: str,
+    exchange: ExchangeEvent,
+    title: str,
+    session_origin: SessionOrigin | None,
+) -> dict:
+    """Args dict shared by ``build_document`` and ``IngestService._ingest_raw``.
+
+    Single source of truth for the shape of a promoted session exchange:
+    content, content_type, source_type, origin, title, and the
+    ``source_*`` provenance fields. ProposalService consumes it via
+    ``render_session_exchange_source`` (it needs the rendered string for
+    staging); IngestService consumes it directly via ``_ingest_raw``.
+    """
+    extras: dict[str, str] = {
+        "source_session_id": session_id,
+        "source_exchange_id": exchange.exId,
+        "source_query": exchange.query,
+    }
+    if session_origin is not None:
+        extras["source_doc_path"] = session_origin.doc_path
+        if session_origin.anchor:
+            extras["source_anchor"] = session_origin.anchor
+        if session_origin.paragraph_index is not None:
+            extras["source_paragraph_index"] = str(session_origin.paragraph_index)
+
+    return dict(
+        content=exchange.answer,
+        content_type="sessions",
+        source_type="user",
+        title=title,
+        origin="session-exchange",
+        **extras,
+    )
+
+
+def render_session_exchange_source(
+    config: dict,
+    *,
+    session_id: str,
+    exchange: ExchangeEvent,
+    title: str,
+    session_origin: SessionOrigin | None,
+) -> str:
+    """Build the full markdown (frontmatter + body) for a promoted exchange.
+
+    Used by ProposalService to stage the same bytes that would have been
+    ingested directly. IngestService does not call this — it goes
+    through ``session_exchange_build_args`` + ``_ingest_raw`` to avoid
+    rebuilding the string only to reparse it on write.
+    """
+    return build_document(
+        config,
+        **session_exchange_build_args(
+            session_id=session_id,
+            exchange=exchange,
+            title=title,
+            session_origin=session_origin,
         ),
     )

@@ -18,11 +18,10 @@ from great_minds.app.api.dependencies import (
 from great_minds.app.api.schemas import sessions as schemas
 from great_minds.core import sessions
 from great_minds.core.brains.models import MemberRole
-from great_minds.core.ingest_service import generate_session_title
 from great_minds.core.llm import get_async_client
 from great_minds.core.pagination import Page
 from great_minds.core.paths import session_exchange_path
-from great_minds.core.sessions import BtwInput, ExchangeInput
+from great_minds.core.sessions import BtwInput, ExchangeInput, generate_session_title
 from great_minds.core.telemetry import log_event
 
 router = APIRouter(prefix="/sessions", tags=["sessions"])

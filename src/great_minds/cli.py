@@ -20,10 +20,15 @@ import uvicorn
 from sqlalchemy import text
 
 from great_minds.app.api.server import create_app
-from great_minds.core import brain as brain_ops
-from great_minds.core import ingester, pipeline, querier
+from great_minds.core import pipeline, querier
+from great_minds.core.brains.config import load_config
+from great_minds.core.documents.builder import write_document, write_file
+from great_minds.core.brains.repository import BrainRepository
+from great_minds.core.brains.service import BrainService
 from great_minds.core.db import session_maker
 from great_minds.core.documents.repository import DocumentRepository
+from great_minds.core.documents.service import DocumentService
+from great_minds.core.users.repository import UserRepository
 from great_minds.core.llm import get_async_client
 from great_minds.core.paths import (
     BRAIN_SUBDIRS,
@@ -59,11 +64,14 @@ def _make_storage() -> LocalStorage:
 
 
 async def _run_compile(brain_id: uuid.UUID, data_dir: Path) -> dict:
-    storage = make_storage(brain_id)
     client = get_async_client()
     init_wide_event("compile", brain_id=str(brain_id))
     try:
         async with session_maker() as session:
+            brain = await BrainRepository(session).get_by_id(brain_id)
+            if brain is None:
+                raise ValueError(f"Brain {brain_id} not found")
+            storage = make_storage(brain)
             ctx = await pipeline.build_context(
                 brain_id=brain_id, storage=storage, session=session, client=client
             )
@@ -100,16 +108,16 @@ async def _run_query(args: argparse.Namespace) -> None:
         storage=storage, label="local", brain_id=uuid.UUID(int=0)
     )
     async with session_maker() as session:
-        doc_repo = DocumentRepository(session)
+        doc_service = DocumentService(DocumentRepository(session))
         if args.question:
             question = " ".join(args.question)
             print(f"\n> {question}\n")
             result = await querier.run_query(
-                source, question, doc_repo, model=args.model
+                source, question, doc_service, model=args.model
             )
             print(result.answer)
         else:
-            await querier.run_interactive(source, doc_repo, model=args.model)
+            await querier.run_interactive(source, doc_service, model=args.model)
 
 
 def cmd_query(args: argparse.Namespace) -> None:
@@ -119,7 +127,7 @@ def cmd_query(args: argparse.Namespace) -> None:
 
 async def _run_ingest(args: argparse.Namespace) -> None:
     storage = _make_storage()
-    config = await brain_ops.load_config(storage)
+    config = await load_config(storage)
     path = Path(args.path)
     dest = args.dest or raw_prefix(args.content_type)
 
@@ -138,7 +146,7 @@ async def _run_ingest(args: argparse.Namespace) -> None:
     log = logging.getLogger(__name__)
 
     if path.is_file():
-        result = await ingester.ingest_file(
+        result = await write_file(
             storage, config, path, args.content_type, dest, **kwargs
         )
         log.info("ingested %s → %s", path, result)
@@ -161,7 +169,7 @@ async def _run_ingest(args: argparse.Namespace) -> None:
                 continue
 
             content = filepath.read_text(encoding="utf-8")
-            await ingester.ingest_document(
+            await write_document(
                 storage, config, content, args.content_type, dest=file_dest, **kwargs
             )
             ingested += 1
@@ -224,38 +232,20 @@ async def _run_reset(brain_id: str, brain_root: Path) -> None:
     log.info("reset complete for brain %s", brain_id)
 
 
-async def _run_delete_brain(brain_id: str, brain_root: Path, sidecar: Path) -> None:
+async def _run_delete_brain(brain_id: str, sidecar: Path) -> None:
     log = logging.getLogger(__name__)
+    settings = get_settings()
+    bid = uuid.UUID(brain_id)
 
     async with session_maker() as session:
-        # idea_embeddings lacks an FK to brains so it doesn't cascade.
-        # Delete explicitly first, then drop the brain row — that
-        # cascades to memberships, documents (→ tags), proposals, tasks,
-        # search_index, topics (→ topic_membership, topic_links,
-        # topic_related, backlinks).
-        idea_result = await session.execute(
-            text("DELETE FROM idea_embeddings WHERE brain_id = :bid"),
-            {"bid": brain_id},
-        )
-        log.info("deleted %d rows from idea_embeddings", idea_result.rowcount)
-
-        brain_result = await session.execute(
-            text("DELETE FROM brains WHERE id = :bid"),
-            {"bid": brain_id},
-        )
-        if brain_result.rowcount == 0:
+        brain_repo = BrainRepository(session)
+        user_repo = UserRepository(session)
+        brain_service = BrainService(brain_repo, user_repo, settings)
+        deleted = await brain_service.delete_brain(bid)
+        if deleted is None:
             log.warning("no brain row found with id=%s", brain_id)
         else:
-            log.info(
-                "deleted brain row (FK cascades cleared memberships, "
-                "documents, tasks, proposals, search_index, topics, "
-                "backlinks, etc.)"
-            )
-        await session.commit()
-
-    if brain_root.exists():
-        shutil.rmtree(brain_root)
-        log.info("removed brain directory %s", brain_root)
+            log.info("brain row deleted and storage cleared for %s", brain_id)
 
     if sidecar.exists():
         shutil.rmtree(sidecar)
@@ -268,21 +258,19 @@ def cmd_delete_brain(args: argparse.Namespace) -> None:
     _sync_data_dir(args.data_dir)
     setup_logging(service="great-minds")
 
-    if get_settings().storage_backend != "local":
-        raise SystemExit(
-            "delete-brain is local-backend only; R2 brain deletion not yet implemented"
-        )
-
+    settings = get_settings()
     brain_id = args.brain_id
     data_dir = Path(args.data_dir)
-    brain_root = brain_dir(data_dir, brain_id)
     sidecar = sidecar_root(data_dir, brain_id)
 
     if not args.yes:
         print(f"This will PERMANENTLY DELETE brain {brain_id}:")
         print("  - Database: the brains row + all FK-cascaded content")
         print("              (documents, topics, backlinks, idea_embeddings, tasks, ...)")
-        print(f"  - Disk:     {brain_root}")
+        if settings.storage_backend == "r2":
+            print("  - R2:       all keys under brains/<id>/ in the owner's bucket")
+        else:
+            print(f"  - Disk:     {brain_dir(data_dir, brain_id)}")
         print(f"  - Sidecar:  {sidecar}")
         print("\nThe brain row itself is removed — not just its content.")
         print("Use `great-minds reset` if you only want to clear content.")
@@ -291,7 +279,7 @@ def cmd_delete_brain(args: argparse.Namespace) -> None:
             print("Aborted.")
             return
 
-    asyncio.run(_run_delete_brain(brain_id, brain_root, sidecar))
+    asyncio.run(_run_delete_brain(brain_id, sidecar))
 
 
 def cmd_reset(args: argparse.Namespace) -> None:

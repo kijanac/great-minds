@@ -60,6 +60,24 @@ class DocumentService:
     async def query_documents(self, brain_ids: list[UUID], **filters) -> list[Document]:
         return await self.repo.query_documents(brain_ids, **filters)
 
+    async def search_wiki_articles(
+        self,
+        brain_id: UUID,
+        *,
+        slug: str | None = None,
+        query: str | None = None,
+        limit: int = 20,
+    ) -> list[WikiArticleSummary]:
+        return await self.repo.search_wiki_articles(
+            brain_id, slug=slug, query=query, limit=limit
+        )
+
+    async def get_title_by_path(self, brain_id: UUID, file_path: str) -> str | None:
+        return await self.repo.get_title_by_path(brain_id, file_path)
+
+    async def count_by_kind(self, brain_id: UUID, kind: DocKind) -> int:
+        return await self.repo.count_by_kind(brain_id, kind)
+
     async def list_wiki_articles(
         self, brain_id: UUID, *, pagination: PageParams
     ) -> Page[WikiArticleSummary]:

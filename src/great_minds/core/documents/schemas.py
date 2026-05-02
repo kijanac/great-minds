@@ -4,15 +4,34 @@ import uuid
 from datetime import datetime
 from enum import StrEnum
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, computed_field
 
-from great_minds.core.ingester import UNIVERSAL_ALL
+from great_minds.core.documents.builder import UNIVERSAL_ALL
 from great_minds.core.pagination import FacetCount
+from great_minds.core.paths import wiki_slug
 
 
 class DocKind(StrEnum):
     RAW = "raw"
     WIKI = "wiki"
+
+
+class SourceMetadata(BaseModel):
+    """Caller-supplied metadata accompanying an ingest request.
+
+    Universal frontmatter fields the API and CLI hand to ``IngestService``
+    before a document is constructed. Distinct from ``DocumentMetadata``
+    (which is the parsed view of an already-indexed document's
+    frontmatter): this model is the request-side input.
+    """
+
+    content_type: str = "texts"
+    source_type: str = "document"
+    author: str | None = None
+    published_date: str | None = Field(default=None, serialization_alias="date")
+    origin: str | None = None
+    title: str | None = None
+    url: str | None = None
 
 
 _UNIVERSAL_KEYS = frozenset(UNIVERSAL_ALL) | {"url"}
@@ -100,15 +119,28 @@ class Document(BaseModel):
 class WikiArticleSummary(BaseModel):
     """Wiki article browse-row shape.
 
-    Slug is what URLs use; title is the headline. precis and updated_at
-    are optional — populated for the wiki browse page, left None for
-    surfaces (like lint orphans) that only need the slug+title pair.
+    ``file_path`` is the canonical identifier (matches the documents
+    table). ``slug`` is the URL component consumers use, derived from
+    file_path via the wiki path convention. ``precis`` and
+    ``updated_at`` are optional — populated for the browse page, left
+    None for surfaces (like lint orphans) that only need title.
+
+    ``from_attributes=True`` lets the repository pass SQLAlchemy ``Row``
+    objects straight to ``model_validate`` (rows have labeled-column
+    attribute access), avoiding manual unpacking.
     """
 
-    slug: str
+    model_config = ConfigDict(from_attributes=True)
+
+    file_path: str
     title: str
     precis: str | None = None
     updated_at: datetime | None = None
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def slug(self) -> str:
+        return wiki_slug(self.file_path)
 
 
 class Backlink(BaseModel):

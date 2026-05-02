@@ -1,36 +1,31 @@
 """Ingest routes."""
 
-import json
 import logging
-from collections.abc import AsyncIterator
-from dataclasses import asdict
-from typing import Annotated
 from uuid import UUID
 
 import httpx
-from fastapi import APIRouter, Form, HTTPException, UploadFile
-from fastapi.responses import StreamingResponse
+from fastapi import APIRouter, HTTPException, UploadFile
 
 from great_minds.app.api.dependencies import (
+    BrainServiceDep,
     BrainStorageDep,
-    CompileIntentRepositoryDep,
     IngestServiceDep,
+    SettingsDep,
+    TaskServiceDep,
 )
 from great_minds.app.api.schemas.ingest import (
+    BulkProcessRequest,
+    BulkProcessResponse,
+    BulkSignedUrl,
+    BulkSignRequest,
+    BulkSignResponse,
     IngestResult,
     RawSource,
     URLSource,
     UserSuggestion,
 )
-from great_minds.core.compile_intents import CompileIntentRepository
-from great_minds.core.ingest_service import (
-    BulkFileInput,
-    BulkFileStatus,
-    IngestService,
-)
-from great_minds.core.sources import SourceMetadata
-from great_minds.core.storage import Storage
-from great_minds.core.telemetry import log_event
+from great_minds.core.documents.schemas import SourceMetadata
+from great_minds.core.r2_admin import R2Admin
 
 log = logging.getLogger(__name__)
 
@@ -139,93 +134,68 @@ async def ingest_url(
     return IngestResult(file_path=file_path, title=title)
 
 
-@router.post("/bulk")
-async def ingest_bulk(
+# ---------------------------------------------------------------------------
+# Bulk direct-to-R2 upload flow
+#
+# Two-step handshake: client posts a manifest and gets back presigned PUT
+# URLs, uploads each file directly to ``staging/<brain>/<hash>`` on R2,
+# then posts the hashes to /process which spawns a worker. Server never
+# sees file bytes — sidesteps multipart caps, BaseHTTPMiddleware
+# disconnects, and per-request memory pressure entirely.
+# ---------------------------------------------------------------------------
+
+
+@router.post("/bulk/sign")
+async def ingest_bulk_sign(
+    req: BulkSignRequest,
     brain_id: UUID,
-    files: list[UploadFile],
-    storage: BrainStorageDep,
-    ingest_service: IngestServiceDep,
-    intent_repo: CompileIntentRepositoryDep,
-    content_type: Annotated[str, Form()] = "texts",
-) -> StreamingResponse:
-    """Bulk ingest N files. Streams NDJSON per-file events; on success writes
-    a compile intent (reconciler dispatches to Absurd within ~5s).
-    """
-    bulk_inputs = [
-        BulkFileInput(
-            filename=f.filename or f"upload-{i}.md",
-            raw_bytes=await f.read(),
-            mimetype=f.content_type or "",
+    brain_service: BrainServiceDep,
+    settings: SettingsDep,
+) -> BulkSignResponse:
+    if settings.storage_backend != "r2":
+        raise HTTPException(
+            status_code=400,
+            detail="bulk upload requires r2 storage backend",
         )
-        for i, f in enumerate(files)
-    ]
+    brain = await brain_service.get_brain(brain_id)
+    if not brain.r2_bucket_name:
+        raise HTTPException(
+            status_code=400,
+            detail="brain has no r2 bucket; cannot sign uploads",
+        )
+    if not req.files:
+        raise HTTPException(status_code=400, detail="manifest is empty")
 
-    return StreamingResponse(
-        _stream_bulk_events(
-            brain_id=brain_id,
-            bulk_inputs=bulk_inputs,
-            content_type=content_type,
-            storage=storage,
-            ingest_service=ingest_service,
-            intent_repo=intent_repo,
-        ),
-        media_type="application/x-ndjson",
-        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    admin = R2Admin(
+        account_id=settings.r2_account_id,
+        access_key_id=settings.r2_access_key_id,
+        secret_access_key=settings.r2_secret_access_key,
     )
+    signed: list[BulkSignedUrl] = []
+    for f in req.files:
+        key = f"staging/{brain_id}/{f.hash}"
+        url = admin.presign_put(
+            brain.r2_bucket_name,
+            key,
+            content_type=f.mimetype or "application/octet-stream",
+            content_length=f.size,
+        )
+        signed.append(BulkSignedUrl(hash=f.hash, url=url))
+    return BulkSignResponse(files=signed)
 
 
-async def _stream_bulk_events(
-    *,
+@router.post("/bulk/process")
+async def ingest_bulk_process(
+    req: BulkProcessRequest,
     brain_id: UUID,
-    bulk_inputs: list[BulkFileInput],
-    content_type: str,
-    storage: Storage,
-    ingest_service: IngestService,
-    intent_repo: CompileIntentRepository,
-) -> AsyncIterator[str]:
-    yield json.dumps({"event": "start", "total": len(bulk_inputs)}) + "\n"
-
-    ingested = 0
-    skipped = 0
-    failed = 0
-    async for event in ingest_service.ingest_bulk(
-        brain_id, storage, bulk_inputs, content_type
-    ):
-        if event.status == BulkFileStatus.DONE:
-            ingested += 1
-        elif event.status == BulkFileStatus.SKIPPED:
-            skipped += 1
-        else:
-            failed += 1
-        payload = {**asdict(event), "event": "file", "status": event.status.value}
-        yield json.dumps(payload) + "\n"
-
-    intent_id: str | None = None
-    if ingested > 0:
-        intent = await intent_repo.upsert_pending(brain_id)
-        if intent is None:
-            # Coalesced into an existing pending intent — return its id so
-            # the frontend can poll the same one.
-            intent = await intent_repo.get_pending_for_brain(brain_id)
-        await intent_repo.session.commit()
-        if intent is not None:
-            intent_id = str(intent.id)
-            log_event(
-                "intent_created",
-                intent_id=intent_id,
-                brain_id=str(brain_id),
-                trigger="bulk_ingest",
-            )
-
-    yield (
-        json.dumps(
-            {
-                "event": "done",
-                "ingested": ingested,
-                "skipped": skipped,
-                "failed": failed,
-                "compile_intent_id": intent_id,
-            }
-        )
-        + "\n"
+    task_service: TaskServiceDep,
+) -> BulkProcessResponse:
+    if not req.files:
+        raise HTTPException(status_code=400, detail="no files provided")
+    detail = await task_service.spawn_bulk_ingest_from_staging(
+        brain_id=brain_id,
+        files=[f.model_dump() for f in req.files],
+        content_type=req.content_type,
+        source_type=req.source_type,
     )
+    return BulkProcessResponse(task_id=str(detail.id))
