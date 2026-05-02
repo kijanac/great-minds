@@ -1,8 +1,7 @@
-"""Query request/response schemas."""
+"""Query request schemas."""
 
 from pydantic import BaseModel
 
-from great_minds.core.documents.schemas import DocKind
 from great_minds.core.querier import HistoryMessage, QueryMode
 
 
@@ -13,14 +12,3 @@ class QueryRequest(BaseModel):
     history: list[HistoryMessage] = []
     mode: QueryMode = QueryMode.QUERY
     extra_instructions: str | None = None
-
-
-class SourceConsultedItem(BaseModel):
-    kind: DocKind
-    path: str
-    title: str | None = None
-
-
-class QueryResponse(BaseModel):
-    answer: str
-    sources_consulted: list[SourceConsultedItem] = []

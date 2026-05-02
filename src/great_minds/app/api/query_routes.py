@@ -28,44 +28,20 @@ async def query(
     brain_service: BrainServiceDep,
     doc_service: DocumentServiceDep,
     _llm: LlmGuard,
-) -> schemas.QueryResponse:
-    brain = await brain_service.get_brain(brain_id)
-    source = querier.QuerySource(storage=storage, label=brain.name, brain_id=brain_id)
-    result = await querier.run_query(
-        source,
-        req.question,
-        doc_service,
-        user_id=user.id,
-        model=req.model,
-        origin_path=req.origin_path,
-        history=req.history,
-        mode=req.mode,
-        extra_instructions=req.extra_instructions,
-    )
-    return schemas.QueryResponse(
-        answer=result.answer,
-        sources_consulted=[
-            schemas.SourceConsultedItem(kind=s.kind, path=s.path, title=s.title)
-            for s in result.sources_consulted
-        ],
-    )
-
-
-@router.post("/stream")
-async def query_stream(
-    req: schemas.QueryRequest,
-    brain_id: UUID,
-    storage: BrainStorageDep,
-    user: CurrentUser,
-    brain_service: BrainServiceDep,
-    doc_service: DocumentServiceDep,
-    _llm: LlmGuard,
 ) -> StreamingResponse:
+    """Stream answer events as SSE.
+
+    Event shapes:
+      - ``source``: an article/raw doc/search the agent consulted
+      - ``token``:  a content delta from the model
+      - ``done``:   final marker with sources_consulted summary
+      - ``error``:  unrecoverable error before/during the stream
+    """
     brain = await brain_service.get_brain(brain_id)
     source = querier.QuerySource(storage=storage, label=brain.name, brain_id=brain_id)
 
     async def event_generator():
-        async for event in querier.run_stream_query(
+        async for event in querier.run_query(
             source,
             req.question,
             doc_service,

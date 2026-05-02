@@ -13,6 +13,7 @@ import asyncio
 import logging
 import os
 import shutil
+import sys
 import uuid
 from pathlib import Path
 
@@ -102,6 +103,33 @@ def cmd_compile(args: argparse.Namespace) -> None:
     print(f"  cost (USD):           ${float(e.get('cost_usd', 0.0)):.4f}")
 
 
+async def _stream_answer(
+    source: querier.QuerySource,
+    question: str,
+    doc_service: DocumentService,
+    model: str | None,
+) -> None:
+    """Consume run_query's SSE-shaped events and print to stdout.
+
+    Token deltas stream live; source events render as a single dim-mark
+    line above the answer text; errors go to stderr.
+    """
+    print(f"\n> {question}\n")
+    async for event in querier.run_query(source, question, doc_service, model=model):
+        kind = event["event"]
+        data = event["data"]
+        if kind == "token":
+            print(data["text"], end="", flush=True)
+        elif kind == "source":
+            label = data.get("path") or data.get("query") or ""
+            sys.stderr.write(f"\033[2m[· {data['type']}: {label}]\033[0m\n")
+        elif kind == "done":
+            print()
+        elif kind == "error":
+            print(f"\nerror: {data['message']}", file=sys.stderr)
+            return
+
+
 async def _run_query(args: argparse.Namespace) -> None:
     storage = _make_storage()
     source = querier.QuerySource(
@@ -110,14 +138,25 @@ async def _run_query(args: argparse.Namespace) -> None:
     async with session_maker() as session:
         doc_service = DocumentService(DocumentRepository(session))
         if args.question:
-            question = " ".join(args.question)
-            print(f"\n> {question}\n")
-            result = await querier.run_query(
-                source, question, doc_service, model=args.model
+            await _stream_answer(
+                source, " ".join(args.question), doc_service, args.model
             )
-            print(result.answer)
-        else:
-            await querier.run_interactive(source, doc_service, model=args.model)
+            return
+
+        # Interactive REPL — same streaming code path as the API.
+        print(
+            f"Knowledge Base — Query Interface (model: {args.model or 'default'})"
+        )
+        print("Type your question, or 'quit' to exit.\n")
+        while True:
+            try:
+                question = (await asyncio.to_thread(input, "> ")).strip()
+            except (EOFError, KeyboardInterrupt):
+                print()
+                return
+            if not question or question.lower() in ("quit", "exit", "q"):
+                return
+            await _stream_answer(source, question, doc_service, args.model)
 
 
 def cmd_query(args: argparse.Namespace) -> None:

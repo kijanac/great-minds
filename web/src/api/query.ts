@@ -66,7 +66,7 @@ export async function* streamQuery(
   question: string,
   options?: StreamQueryOptions,
 ): AsyncGenerator<StreamEvent> {
-  const res = await apiFetch(brainPath("/query/stream"), {
+  const res = await apiFetch(brainPath("/query"), {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
