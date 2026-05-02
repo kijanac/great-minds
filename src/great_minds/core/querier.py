@@ -5,7 +5,6 @@ Emits structured telemetry via wide events — every query logs which articles
 and sources were pulled into context, with timing.
 """
 
-import asyncio
 import enum
 import json
 import uuid
@@ -23,11 +22,11 @@ from .search import search as hybrid_search
 from .markdown import extract_wiki_link_targets
 from .documents.schemas import DocKind
 from .documents.service import DocumentService
-from .llm import FALLBACK_MODELS, QUERY_MODEL, get_async_client
+from .llm import QUERY_MODEL, get_async_client
+from .llm.client import api_stream, is_retryable, models_with_fallback
 from .llm_costs import record_wide_event_cost
 from .storage import Storage
 from .telemetry import (
-    accumulate_cost,
     correlation_id,
     emit_wide_event,
     enrich,
@@ -62,14 +61,6 @@ class SourceConsulted:
     kind: DocKind
     path: str
     title: str | None = None
-
-
-@dataclass
-class ChatResult:
-    """Answer text plus provenance metadata."""
-
-    answer: str
-    sources_consulted: list[SourceConsulted]
 
 
 async def _build_sources_consulted(
@@ -239,45 +230,16 @@ def build_tools(tags: list[str]) -> list[dict]:
     return _BASE_TOOLS + [_build_query_tool(tags), _QUERY_WIKI_ARTICLES_TOOL]
 
 
-PROVIDER_EXTRA_BODY = {
+# OpenRouter routing preferences for the agent's chat calls. Tells the
+# provider it's OK to route across upstreams and to prefer throughput.
+# Cost-include + stream usage flags are set by ``api_call`` /
+# ``api_stream`` themselves — this dict only carries the routing intent.
+_ROUTING_PREFERENCE = {
     "provider": {
         "allow_fallbacks": True,
         "sort": "throughput",
     },
-    # OpenRouter extension: include response.usage.cost (USD) for
-    # per-call spend tracking in the query wide event.
-    "usage": {"include": True},
 }
-
-
-# ---------------------------------------------------------------------------
-# Shared helpers
-# ---------------------------------------------------------------------------
-
-
-class _StreamStalled(Exception):
-    """Raised when no chunks arrive within the timeout window."""
-
-
-def _is_retryable(exc: Exception) -> bool:
-    if isinstance(exc, _StreamStalled):
-        return True
-    msg = str(exc)
-    return "429" in msg or "rate" in msg.lower()
-
-
-def _models_with_fallback(primary: str) -> list[str]:
-    return [primary] + [m for m in FALLBACK_MODELS if m != primary]
-
-
-def _accumulate_cost_from_response(response) -> None:
-    """Pull response.usage.cost (OpenRouter extension) into the wide event."""
-    usage = getattr(response, "usage", None)
-    if usage is None:
-        return
-    cost = getattr(usage, "cost", None)
-    if cost is not None:
-        accumulate_cost(float(cost))
 
 
 def _classify_tool_call(name: str, args: dict) -> tuple[SourceType, dict] | None:
@@ -528,142 +490,10 @@ async def build_system_prompt(
     return prompt
 
 
-async def chat(
-    brain: QuerySource,
-    client: AsyncOpenAI,
-    model: str,
-    messages: list[dict],
-    doc_service: DocumentService,
-    *,
-    tools: list[dict] | None = None,
-) -> ChatResult:
-    """Run a chat turn, handling tool calls in a loop until the model responds with text."""
-    active_tools = tools or _BASE_TOOLS
-    articles_read: list[str] = []
-    sources_read: list[str] = []
-    searches: list[str] = []
-    llm_rounds = 0
-    tool_calls_total = 0
-
-    while True:
-        llm_rounds += 1
-        response = await client.chat.completions.create(
-            model=model,
-            messages=messages,
-            tools=active_tools,
-            temperature=0.3,
-            extra_body=PROVIDER_EXTRA_BODY,
-        )
-        _accumulate_cost_from_response(response)
-
-        choice = response.choices[0]
-        message = choice.message
-
-        if not message.tool_calls:
-            messages.append({"role": "assistant", "content": message.content})
-            enrich(
-                model=model,
-                articles_read=articles_read,
-                sources_read=sources_read,
-                searches=searches,
-                llm_rounds=llm_rounds,
-                tool_calls=tool_calls_total,
-            )
-            return ChatResult(
-                answer=message.content,
-                sources_consulted=await _build_sources_consulted(
-                    brain, doc_service, articles_read, sources_read
-                ),
-            )
-
-        messages.append(
-            {
-                "role": "assistant",
-                "content": message.content,
-                "tool_calls": [
-                    {
-                        "id": tc.id,
-                        "type": "function",
-                        "function": {
-                            "name": tc.function.name,
-                            "arguments": tc.function.arguments,
-                        },
-                    }
-                    for tc in message.tool_calls
-                ],
-            }
-        )
-
-        for tc in message.tool_calls:
-            tool_calls_total += 1
-            name = tc.function.name
-            args = json.loads(tc.function.arguments)
-
-            classified = _classify_tool_call(name, args)
-            if classified:
-                source_type, meta = classified
-                if source_type is SourceType.SEARCH:
-                    searches.append(meta["query"])
-                elif source_type in (SourceType.ARTICLE, SourceType.RAW):
-                    (
-                        articles_read
-                        if source_type is SourceType.ARTICLE
-                        else sources_read
-                    ).append(meta["path"])
-
-            result = await _dispatch_tool(brain, name, args, doc_service)
-            messages.append(
-                {
-                    "role": "tool",
-                    "tool_call_id": tc.id,
-                    "content": result,
-                }
-            )
-
-
-async def chat_with_fallback(
-    brain: QuerySource,
-    client: AsyncOpenAI,
-    model: str,
-    messages: list[dict],
-    doc_service: DocumentService,
-    *,
-    tools: list[dict] | None = None,
-) -> ChatResult:
-    """Try the primary model, fall back to alternatives on rate limit."""
-    for m in _models_with_fallback(model):
-        try:
-            return await chat(brain, client, m, messages, doc_service, tools=tools)
-        except Exception as e:
-            if _is_retryable(e):
-                log_event("query.retryable_error", model=m, error=str(e))
-                continue
-            raise
-
-    raise RuntimeError("all models failed — try again in a minute")
-
-
 # ---------------------------------------------------------------------------
-# Async streaming chat (for SSE endpoint)
+# Streaming chat — single conversation path, consumed via SSE by the API and
+# directly by the CLI.
 # ---------------------------------------------------------------------------
-
-
-CHUNK_TIMEOUT = 30  # seconds to wait for the next streaming chunk
-
-
-async def _iter_with_timeout(async_iter, timeout: float):
-    """Wrap an async iterator with a per-item timeout.
-
-    Raises _StreamStalled if no item arrives within `timeout` seconds.
-    """
-    ait = aiter(async_iter)
-    while True:
-        try:
-            yield await asyncio.wait_for(anext(ait), timeout)
-        except StopAsyncIteration:
-            return
-        except asyncio.TimeoutError:
-            raise _StreamStalled(f"no chunks received for {timeout}s") from None
 
 
 async def stream_chat(
@@ -692,25 +522,20 @@ async def stream_chat(
 
     while True:
         llm_rounds += 1
-        stream = await client.chat.completions.create(
-            model=model,
-            messages=messages,
-            tools=active_tools,
-            temperature=0.3,
-            stream=True,
-            stream_options={"include_usage": True},
-            extra_body=PROVIDER_EXTRA_BODY,
-        )
-
         tool_calls_acc: dict[int, dict] = {}
         content_acc = ""
         finish_reason = None
 
-        async for chunk in _iter_with_timeout(stream, CHUNK_TIMEOUT):
-            # Final usage chunk (from stream_options.include_usage).
-            # Comes after all content chunks; choices is usually empty.
-            if getattr(chunk, "usage", None) is not None:
-                _accumulate_cost_from_response(chunk)
+        async for chunk in api_stream(
+            client,
+            model=model,
+            messages=messages,
+            tools=active_tools,
+            temperature=0.3,
+            extra_body=_ROUTING_PREFERENCE,
+        ):
+            # Cost is accumulated by ``api_stream`` from the final usage
+            # chunk; we only consume content/tool-call deltas here.
             if not chunk.choices:
                 continue
             choice = chunk.choices[0]
@@ -865,7 +690,7 @@ async def _load_tools(
     return build_tools(tags)
 
 
-async def run_stream_query(
+async def run_query(
     brain: QuerySource,
     question: str,
     doc_service: DocumentService,
@@ -898,7 +723,7 @@ async def run_stream_query(
     init_wide_event("query.stream", question=question, brain_id=str(brain.brain_id))
 
     try:
-        for m in _models_with_fallback(primary):
+        for m in models_with_fallback(primary):
             messages = list(base_messages)
             try:
                 async for event in stream_chat(
@@ -907,7 +732,7 @@ async def run_stream_query(
                     yield event
                 return
             except Exception as e:
-                if _is_retryable(e):
+                if is_retryable(e):
                     log_event("query.stream_retryable", model=m, error=str(e))
                     continue
                 yield {"event": "error", "data": {"message": str(e)}}
@@ -919,84 +744,6 @@ async def run_stream_query(
         }
     finally:
         await _finalize_wide_event(doc_service, user_id=user_id, brain_id=brain.brain_id)
-
-
-async def run_query(
-    brain: QuerySource,
-    question: str,
-    doc_service: DocumentService,
-    *,
-    user_id: UUID | None = None,
-    model: str | None = None,
-    origin_path: str | None = None,
-    history: list[HistoryMessage] | None = None,
-    mode: QueryMode = QueryMode.QUERY,
-    extra_instructions: str | None = None,
-) -> ChatResult:
-    """Answer a single question against the knowledge base."""
-    primary = model or QUERY_MODEL
-    client = get_async_client()
-    system_prompt = await build_system_prompt(
-        brain, doc_service, mode=mode, extra_instructions=extra_instructions
-    )
-    tools = await _load_tools(brain, doc_service)
-    messages: list[dict] = [{"role": "system", "content": system_prompt}]
-
-    query_id = f"q-{uuid.uuid4().hex[:8]}"
-    correlation_id.set(query_id)
-    init_wide_event("query", question=question, brain_id=str(brain.brain_id))
-
-    try:
-        if origin_path:
-            messages.extend(await _build_origin_messages(brain, origin_path))
-        if history:
-            messages.extend(m.model_dump() for m in history)
-        messages.append({"role": "user", "content": question})
-        return await chat_with_fallback(
-            brain, client, primary, messages, doc_service, tools=tools
-        )
-    finally:
-        await _finalize_wide_event(doc_service, user_id=user_id, brain_id=brain.brain_id)
-
-
-async def run_interactive(
-    brain: QuerySource,
-    doc_service: DocumentService,
-    *,
-    model: str | None = None,
-) -> None:
-    """Run an interactive REPL session against the knowledge base."""
-    model = model or QUERY_MODEL
-    client = get_async_client()
-    system_prompt = await build_system_prompt(brain, doc_service)
-    tools = await _load_tools(brain, doc_service)
-    messages: list[dict] = [{"role": "system", "content": system_prompt}]
-
-    print(f"Knowledge Base — Query Interface (model: {model})")
-    print("Type your question, or 'quit' to exit.\n")
-
-    while True:
-        try:
-            question = (await asyncio.to_thread(input, "> ")).strip()
-        except (EOFError, KeyboardInterrupt):
-            print()
-            break
-
-        if not question or question.lower() in ("quit", "exit", "q"):
-            break
-
-        query_id = f"q-{uuid.uuid4().hex[:8]}"
-        correlation_id.set(query_id)
-        init_wide_event("query", question=question)
-
-        messages.append({"role": "user", "content": question})
-        try:
-            result = await chat_with_fallback(
-                brain, client, model, messages, doc_service, tools=tools
-            )
-        finally:
-            await _finalize_wide_event(doc_service, user_id=None, brain_id=brain.brain_id)
-        print(f"\n{result.answer}\n")
 
 
 async def _finalize_wide_event(
