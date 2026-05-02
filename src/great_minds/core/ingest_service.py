@@ -1,10 +1,7 @@
 """Ingest service: content conversion, ingestion, and indexing."""
 
 import asyncio
-import hashlib
 import io
-from collections.abc import AsyncIterator
-from dataclasses import dataclass
 from datetime import datetime, timezone
 from enum import StrEnum
 from pathlib import PurePosixPath
@@ -12,24 +9,19 @@ from uuid import UUID
 
 import httpx
 from markitdown import MarkItDown, StreamInfo
-from openai import AsyncOpenAI
 
-from great_minds.core.brain import load_config
-from great_minds.core.documents.schemas import DocumentCreate
+from great_minds.core.brains.config import load_config
+from great_minds.core.documents.builder import write_document
+from great_minds.core.documents.schemas import SourceMetadata
 from great_minds.core.documents.service import DocumentService
-from great_minds.core.llm import QUERY_MODEL
-from great_minds.core.llm.client import api_call, extract_content
-from great_minds.core.markdown import parse_frontmatter
 from great_minds.core.paths import raw_path, session_exchange_path
-from great_minds.core.sessions import ExchangeEvent, SessionOrigin
-from great_minds.core.sources import SourceMetadata
-from great_minds.core.ingester import (
-    build_document,
-    ingest_document,
-    normalize_url,
-    slugify,
+from great_minds.core.sessions import (
+    ExchangeEvent,
+    SessionOrigin,
+    session_exchange_build_args,
 )
 from great_minds.core.storage import Storage
+from great_minds.core.text import normalize_url, slugify
 
 
 class UserSuggestionIntent(StrEnum):
@@ -39,100 +31,42 @@ class UserSuggestionIntent(StrEnum):
     RESTRUCTURE = "restructure"
 
 
-BULK_CONVERT_CONCURRENCY = 4
-BULK_BATCH_SIZE = 50
-
-
-class BulkFileStatus(StrEnum):
-    DONE = "done"
-    SKIPPED = "skipped"
-    ERROR = "error"
-
-
-@dataclass
-class BulkFileInput:
-    filename: str
-    raw_bytes: bytes
-    mimetype: str
-
-
-@dataclass
-class BulkFileEvent:
-    index: int
-    filename: str
-    status: BulkFileStatus
-    file_path: str | None = None
-    title: str | None = None
-    error: str | None = None
-
-
-_SESSION_TITLE_SYSTEM = (
-    "You generate concise titles for distilled Q&A excerpts that have "
-    "been promoted to a knowledge base. Output a 3-7 word noun phrase "
-    "in Title Case, no question marks, no leading articles, no quotes. "
-    "Output ONLY the title text — no preamble, no explanation."
-)
-
-
-async def generate_session_title(
-    client: AsyncOpenAI, query: str, answer: str
-) -> str:
-    """One-shot title for a promoted session exchange."""
-    response = await api_call(
-        client,
-        model=QUERY_MODEL,
-        messages=[
-            {"role": "system", "content": _SESSION_TITLE_SYSTEM},
-            {"role": "user", "content": f"Q: {query}\n\nA: {answer}"},
-        ],
-        temperature=0.4,
-    )
-    title = (extract_content(response) or "").strip().strip('"').strip()
-    if not title:
-        raise ValueError("LLM returned empty title")
-    return title
-
-
-def render_session_exchange_source(
-    config: dict,
-    *,
-    session_id: str,
-    exchange: ExchangeEvent,
-    title: str,
-    session_origin: SessionOrigin | None,
-) -> str:
-    """Build the full markdown (frontmatter + body) for a promoted exchange.
-
-    Pure — used by both the owner-direct ingest path and the member
-    proposal-create path so the proposal stages exactly what would
-    have been ingested.
-    """
-    extra: dict[str, str] = {
-        "source_session_id": session_id,
-        "source_exchange_id": exchange.exId,
-        "source_query": exchange.query,
-    }
-    if session_origin is not None:
-        extra["source_doc_path"] = session_origin.doc_path
-        if session_origin.anchor:
-            extra["source_anchor"] = session_origin.anchor
-        if session_origin.paragraph_index is not None:
-            extra["source_paragraph_index"] = str(session_origin.paragraph_index)
-
-    return build_document(
-        config,
-        exchange.answer,
-        "sessions",
-        title=title,
-        origin="session-exchange",
-        source_type="user",
-        **extra,
-    )
-
-
 class IngestService:
+    """Coordinator for the API-side ingest entry points.
+
+    Each public ``ingest_*`` method is an input adapter — it derives
+    ``content``, ``dest``, and frontmatter extras from its source
+    (text, upload, URL, suggestion, session exchange) and funnels them
+    into ``_ingest_raw``, which loads brain config, builds the markdown
+    via ``write_document``, and indexes the document row.
+    """
+
     def __init__(self, doc_service: DocumentService) -> None:
         self.doc_service = doc_service
+
+    async def _ingest_raw(
+        self,
+        brain_id: UUID,
+        storage: Storage,
+        *,
+        content: str,
+        content_type: str,
+        dest: str,
+        source_type: str,
+        **frontmatter: object,
+    ) -> UUID:
+        """Build markdown from raw content + metadata, write, and index."""
+        config = await load_config(storage)
+        rendered = await write_document(
+            storage,
+            config,
+            content,
+            content_type,
+            dest=dest,
+            source_type=source_type,
+            **frontmatter,
+        )
+        return await self.doc_service.index_raw_doc(brain_id, dest, rendered)
 
     async def ingest_text(
         self,
@@ -143,21 +77,15 @@ class IngestService:
         metadata: SourceMetadata,
     ) -> tuple[str, str]:
         """Ingest raw text content. Returns (file_path, title)."""
-        config = await load_config(storage)
-        result = await ingest_document(
+        await self._ingest_raw(
+            brain_id,
             storage,
-            config,
-            content,
-            metadata.content_type,
+            content=content,
+            content_type=metadata.content_type,
             dest=dest,
             source_type=metadata.source_type,
-            **metadata.model_dump(
-                by_alias=True,
-                exclude_none=True,
-                exclude={"content_type", "source_type"},
-            ),
+            **_metadata_extras(metadata),
         )
-        await self.doc_service.index_raw_doc(brain_id, dest, result)
         return dest, metadata.title or dest
 
     async def ingest_upload(
@@ -180,72 +108,16 @@ class IngestService:
             slug = slugify(filename.rsplit(".", 1)[0])
             dest = _safe_upload_dest(metadata.content_type, f"{slug}.md")
 
-        config = await load_config(storage)
-        result = await ingest_document(
+        await self._ingest_raw(
+            brain_id,
             storage,
-            config,
-            content,
-            metadata.content_type,
+            content=content,
+            content_type=metadata.content_type,
             dest=dest,
             source_type=metadata.source_type,
-            **metadata.model_dump(
-                by_alias=True,
-                exclude_none=True,
-                exclude={"content_type", "source_type"},
-            ),
+            **_metadata_extras(metadata),
         )
-        await self.doc_service.index_raw_doc(brain_id, dest, result)
         return dest, metadata.title or filename
-
-    async def ingest_bulk(
-        self,
-        brain_id: UUID,
-        storage: Storage,
-        files: list[BulkFileInput],
-        content_type: str,
-        *,
-        source_type: str = "document",
-    ) -> AsyncIterator[BulkFileEvent]:
-        """Ingest N uploaded files, yielding a per-file event as each completes.
-
-        - Converts with bounded concurrency (BULK_CONVERT_CONCURRENCY).
-        - Skips files whose final hash matches an existing row (idempotent re-ingest).
-        - Batches DB writes (BULK_BATCH_SIZE per commit).
-
-        Caller is responsible for compile-spawn after the iterator is exhausted.
-        """
-        config = await load_config(storage)
-        existing_hashes = await self.doc_service.get_raw_file_hashes(brain_id)
-        semaphore = asyncio.Semaphore(BULK_CONVERT_CONCURRENCY)
-
-        tasks = [
-            asyncio.create_task(
-                _process_bulk_file(
-                    index=i,
-                    item=item,
-                    storage=storage,
-                    config=config,
-                    content_type=content_type,
-                    source_type=source_type,
-                    existing_hashes=existing_hashes,
-                    semaphore=semaphore,
-                )
-            )
-            for i, item in enumerate(files)
-        ]
-        pending_docs: list[DocumentCreate] = []
-
-        for coro in asyncio.as_completed(tasks):
-            event, doc = await coro
-            if doc is not None:
-                pending_docs.append(doc)
-                if len(pending_docs) >= BULK_BATCH_SIZE:
-                    await self.doc_service.batch_index_raw_docs(brain_id, pending_docs)
-                    pending_docs.clear()
-            yield event
-
-        if pending_docs:
-            await self.doc_service.batch_index_raw_docs(brain_id, pending_docs)
 
     async def ingest_user_suggestion(
         self,
@@ -273,20 +145,18 @@ class IngestService:
         filename = f"{ts}-{anchor_slug}-{intent.value}.md"
         dest = _safe_upload_dest("user", filename)
 
-        config = await load_config(storage)
-        result = await ingest_document(
+        await self._ingest_raw(
+            brain_id,
             storage,
-            config,
-            body,
-            "user",
+            content=body,
+            content_type="user",
             dest=dest,
-            origin="user-suggestion",
             source_type="user",
+            origin="user-suggestion",
             intent=intent.value,
             anchored_to=anchored_to,
             anchored_section=anchored_section,
         )
-        await self.doc_service.index_raw_doc(brain_id, dest, result)
         return dest, filename
 
     async def ingest_session_exchange(
@@ -306,16 +176,17 @@ class IngestService:
         on re-promotion.
         """
         dest = session_exchange_path(exchange.exId)
-        config = await load_config(storage)
-        rendered = render_session_exchange_source(
-            config,
-            session_id=session_id,
-            exchange=exchange,
-            title=title,
-            session_origin=session_origin,
+        document_id = await self._ingest_raw(
+            brain_id,
+            storage,
+            dest=dest,
+            **session_exchange_build_args(
+                session_id=session_id,
+                exchange=exchange,
+                title=title,
+                session_origin=session_origin,
+            ),
         )
-        await storage.write(dest, rendered)
-        document_id = await self.doc_service.index_raw_doc(brain_id, dest, rendered)
         return dest, document_id
 
     async def ingest_url(
@@ -341,88 +212,32 @@ class IngestService:
 
         title = metadata.title or result.title or url
         dest = raw_path(metadata.content_type, f"{slugify(title)}.md")
-        frontmatter = metadata.model_dump(
-            by_alias=True,
-            exclude_none=True,
-            exclude={"content_type", "source_type", "title"},
-        )
 
-        config = await load_config(storage)
-        ingested = await ingest_document(
+        await self._ingest_raw(
+            brain_id,
             storage,
-            config,
-            result.text_content,
-            metadata.content_type,
+            content=result.text_content,
+            content_type=metadata.content_type,
             dest=dest,
-            title=title,
             source_type=metadata.source_type,
-            **frontmatter,
+            title=title,
+            **_metadata_extras(metadata, exclude_title=True),
         )
-        await self.doc_service.index_raw_doc(brain_id, dest, ingested)
         return dest, title
 
 
-async def _process_bulk_file(
-    *,
-    index: int,
-    item: BulkFileInput,
-    storage: Storage,
-    config: dict,
-    content_type: str,
-    source_type: str,
-    existing_hashes: dict[str, str],
-    semaphore: asyncio.Semaphore,
-) -> tuple[BulkFileEvent, DocumentCreate | None]:
-    """Convert one file, write it if new, return (event, doc_to_upsert).
+def _metadata_extras(
+    metadata: SourceMetadata, *, exclude_title: bool = False
+) -> dict:
+    """Project SourceMetadata into **extras kwargs for ``write_document``.
 
-    Returns doc=None when the file was skipped (hash match) or errored.
+    ``content_type`` and ``source_type`` are passed positionally; title
+    is excluded when the caller is passing it explicitly.
     """
-    async with semaphore:
-        try:
-            content = await _convert_to_markdown(
-                item.raw_bytes, item.filename, item.mimetype
-            )
-            slug = slugify(item.filename.rsplit(".", 1)[0])
-            dest = _safe_upload_dest(content_type, f"{slug}.md")
-            content_with_fm = build_document(
-                config, content, content_type, source_type=source_type
-            )
-        except Exception as exc:
-            return (
-                BulkFileEvent(
-                    index=index,
-                    filename=item.filename,
-                    status=BulkFileStatus.ERROR,
-                    error=str(exc),
-                ),
-                None,
-            )
-
-    file_hash = hashlib.sha256(content_with_fm.encode()).hexdigest()
-    if existing_hashes.get(dest) == file_hash:
-        return (
-            BulkFileEvent(
-                index=index,
-                filename=item.filename,
-                status=BulkFileStatus.SKIPPED,
-                file_path=dest,
-            ),
-            None,
-        )
-
-    await storage.write(dest, content_with_fm)
-    fm, _ = parse_frontmatter(content_with_fm)
-    doc = DocumentCreate.from_frontmatter(fm, dest, content_with_fm)
-    return (
-        BulkFileEvent(
-            index=index,
-            filename=item.filename,
-            status=BulkFileStatus.DONE,
-            file_path=dest,
-            title=fm.get("title") or item.filename,
-        ),
-        doc,
-    )
+    exclude: set[str] = {"content_type", "source_type"}
+    if exclude_title:
+        exclude.add("title")
+    return metadata.model_dump(by_alias=True, exclude_none=True, exclude=exclude)
 
 
 def _safe_upload_dest(content_type: str, dest_path: str) -> str:

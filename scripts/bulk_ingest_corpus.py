@@ -22,8 +22,8 @@ import hashlib
 from pathlib import Path
 from uuid import UUID
 
-from great_minds.core import ingester
-from great_minds.core.brain import load_config
+from great_minds.core.brains.config import load_config
+from great_minds.core.documents.builder import write_document
 from great_minds.core.markdown import parse_frontmatter
 from great_minds.core.db import session_maker
 from great_minds.core.documents.repository import DocumentRepository
@@ -39,7 +39,7 @@ async def main(
     author: str | None,
 ) -> None:
     storage = LocalStorage(data_dir / "brains" / str(brain_id))
-    config = load_config(storage)
+    config = await load_config(storage)
     source_files = sorted(source_dir.rglob("*.md"))
     total = len(source_files)
     if total == 0:
@@ -65,7 +65,7 @@ async def main(
             dest = f"{dest_rel}/{relative}"
 
             raw_content = fp.read_text(encoding="utf-8")
-            content_with_fm = ingester.ingest_document(
+            content_with_fm = await write_document(
                 storage, config, raw_content, "texts", dest=dest, **ingest_kwargs
             )
             file_hash = hashlib.sha256(content_with_fm.encode()).hexdigest()
@@ -74,7 +74,7 @@ async def main(
                 skipped += 1
                 continue
 
-            storage.write(dest, content_with_fm)
+            await storage.write(dest, content_with_fm)
             ingested += 1
 
             fm, _ = parse_frontmatter(content_with_fm)

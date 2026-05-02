@@ -10,7 +10,7 @@ from great_minds.app.api.dependencies import (
     BrainServiceDep,
     BrainStorageDep,
     CurrentUser,
-    DocumentRepositoryDep,
+    DocumentServiceDep,
     LlmGuard,
 )
 from great_minds.app.api.schemas import query as schemas
@@ -26,7 +26,7 @@ async def query(
     storage: BrainStorageDep,
     user: CurrentUser,
     brain_service: BrainServiceDep,
-    doc_repo: DocumentRepositoryDep,
+    doc_service: DocumentServiceDep,
     _llm: LlmGuard,
 ) -> schemas.QueryResponse:
     brain = await brain_service.get_brain(brain_id)
@@ -34,7 +34,7 @@ async def query(
     result = await querier.run_query(
         source,
         req.question,
-        doc_repo,
+        doc_service,
         user_id=user.id,
         model=req.model,
         origin_path=req.origin_path,
@@ -58,7 +58,7 @@ async def query_stream(
     storage: BrainStorageDep,
     user: CurrentUser,
     brain_service: BrainServiceDep,
-    doc_repo: DocumentRepositoryDep,
+    doc_service: DocumentServiceDep,
     _llm: LlmGuard,
 ) -> StreamingResponse:
     brain = await brain_service.get_brain(brain_id)
@@ -68,7 +68,7 @@ async def query_stream(
         async for event in querier.run_stream_query(
             source,
             req.question,
-            doc_repo,
+            doc_service,
             user_id=user.id,
             model=req.model,
             origin_path=req.origin_path,

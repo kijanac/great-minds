@@ -4,6 +4,7 @@ import { apiFetch, brainPath, readJson } from "./client";
 import { paginatedSchema } from "./schemas";
 
 const wikiArticleSummarySchema = z.object({
+  file_path: z.string(),
   slug: z.string(),
   title: z.string(),
   precis: z.string().nullable(),

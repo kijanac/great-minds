@@ -5,12 +5,13 @@ from datetime import UTC, datetime
 from pathlib import Path
 from uuid import UUID
 
-from great_minds.core.brain import load_config
+from great_minds.core.brains.config import load_config
 from great_minds.core.brains.schemas import Brain
 from great_minds.core.compile_intents.repository import CompileIntentRepository
 from great_minds.core.documents.service import DocumentService
-from great_minds.core.ingest_service import render_session_exchange_source
-from great_minds.core.ingester import build_document, slugify
+from great_minds.core.documents.builder import build_document
+from great_minds.core.sessions import render_session_exchange_source
+from great_minds.core.text import slugify
 from great_minds.core.pagination import Page, PageInfo, PageParams
 from great_minds.core.paths import raw_path, session_exchange_path
 from great_minds.core.proposals.models import ProposalStatus, SourceProposal

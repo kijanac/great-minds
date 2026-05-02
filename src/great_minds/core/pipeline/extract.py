@@ -8,7 +8,7 @@ compiles.
 
 Per-source-type metadata fields (tradition, interlocutors, outlet, etc.)
 are pulled from the brain's config.yaml metadata.<source_type> section
-via ingester.load_field_specs and formatted into the prompt's
+via documents.builder.load_field_specs and formatted into the prompt's
 {extra_fields} slot. Universal fields (genre, tags) are hardcoded.
 """
 
@@ -25,7 +25,7 @@ from uuid import UUID
 from pydantic import ValidationError
 from uuid6 import uuid7
 
-from great_minds.core.brain import load_prompt
+from great_minds.core.brains.prompts import load_prompt
 from great_minds.core.documents.repository import DocumentRepository
 from great_minds.core.documents.schemas import DocKind, Document
 from great_minds.core.llm.client import json_llm_call
@@ -44,7 +44,7 @@ from great_minds.core.ideas.schemas import (
     SourceCard,
 )
 from great_minds.core.ideas.service import IdeaService
-from great_minds.core.ingester import load_field_specs
+from great_minds.core.documents.builder import load_field_specs
 from great_minds.core.llm import EXTRACT_MODEL
 from great_minds.core.llm.providers import (
     EMBEDDING_DIMENSIONS,

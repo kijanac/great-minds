@@ -3,8 +3,10 @@
 import logging
 from uuid import UUID
 
-from great_minds.core.brain import load_default_config_text
-from great_minds.core.brain_config import apply_brain_config_overrides
+from great_minds.core.brains.config import (
+    apply_brain_config_overrides,
+    load_default_config_text,
+)
 from great_minds.core.brains.models import BrainMembership, MemberRole
 from great_minds.core.brains.repository import BrainRepository
 from great_minds.core.brains.schemas import (
@@ -14,26 +16,41 @@ from great_minds.core.brains.schemas import (
 )
 from great_minds.core.pagination import Page, PageInfo, PageParams
 from great_minds.core.paths import CONFIG_PATH
+from great_minds.core.r2_admin import R2Admin, derive_user_bucket_name
+from great_minds.core.settings import Settings
 from great_minds.core.storage import Storage
 from great_minds.core.storage_factory import make_storage
+from great_minds.core.users.repository import UserRepository
 
 log = logging.getLogger(__name__)
 
 
 class BrainService:
-    """Manages brain access control, lifecycle, and membership operations."""
+    """Manages brain access control, lifecycle, and membership operations.
 
-    def __init__(self, repository: BrainRepository) -> None:
+    Holds ``settings`` so storage construction (and per-owner R2 bucket
+    provisioning) can stay encapsulated inside lifecycle calls.
+    """
+
+    def __init__(
+        self,
+        repository: BrainRepository,
+        user_repo: UserRepository,
+        settings: Settings,
+    ) -> None:
         self.repo = repository
+        self.user_repo = user_repo
+        self.settings = settings
 
     async def _commit(self) -> None:
         await self.repo.session.commit()
 
     def get_storage(self, brain: Brain) -> Storage:
-        return self.get_storage_by_id(brain.id)
+        return make_storage(brain, self.settings)
 
-    def get_storage_by_id(self, brain_id: UUID) -> Storage:
-        return make_storage(brain_id)
+    async def get_storage_by_id(self, brain_id: UUID) -> Storage:
+        brain = await self.get_brain(brain_id)
+        return make_storage(brain, self.settings)
 
     async def get_brain(self, brain_id: UUID) -> Brain:
         """Fetch a brain by ID. Raises ValueError if not found."""
@@ -79,7 +96,10 @@ class BrainService:
         kinds: list[str] | None = None,
         commit: bool = True,
     ) -> Brain:
-        brain = await self.repo.create_brain(name, owner_id)
+        bucket_name = await self._ensure_owner_bucket(owner_id)
+        brain = await self.repo.create_brain(
+            name, owner_id, r2_bucket_name=bucket_name
+        )
         await self._init_brain_storage(brain)
         if thematic_hint is not None or kinds is not None:
             await apply_brain_config_overrides(
@@ -99,15 +119,64 @@ class BrainService:
         kinds: list[str] | None = None,
     ) -> None:
         await apply_brain_config_overrides(
-            self.get_storage_by_id(brain_id),
+            await self.get_storage_by_id(brain_id),
             thematic_hint=thematic_hint,
             kinds=kinds,
         )
+
+    async def delete_brain(self, brain_id: UUID) -> Brain | None:
+        """Drop a brain and its storage. Idempotent on missing brain.
+
+        Order: capture → DB delete → commit → storage clear. The DB
+        commit lands first so a storage-clear failure leaves orphaned
+        keys (re-runnable) instead of an orphaned brain row pointing at
+        cleared storage.
+        """
+        brain = await self.repo.get_by_id(brain_id)
+        if brain is None:
+            return None
+        await self.repo.delete_brain(brain_id)
+        await self._commit()
+        storage = self.get_storage(brain)
+        await storage.clear()
+        return brain
+
+    async def list_owned_by(self, user_id: UUID) -> list[Brain]:
+        return await self.repo.list_owned_by(user_id)
 
     async def _init_brain_storage(self, brain: Brain) -> None:
         storage = self.get_storage(brain)
         if not await storage.exists(CONFIG_PATH):
             await storage.write(CONFIG_PATH, load_default_config_text())
+
+    async def _ensure_owner_bucket(self, owner_id: UUID) -> str | None:
+        """For r2 backend: ensure owner has a bucket; return its name. Else None.
+
+        Lazy provisioning: the first brain creation for a user provisions
+        their R2 bucket. The bucket name is deterministic (derived from
+        user_id + ``r2_bucket_prefix``), so re-invocation after partial
+        failure converges instead of creating duplicates.
+        """
+        if self.settings.storage_backend != "r2":
+            return None
+        user = await self.user_repo.get_by_id(owner_id)
+        if user is None:
+            raise ValueError(f"User {owner_id} not found")
+        if user.r2_bucket_name:
+            return user.r2_bucket_name
+        bucket_name = derive_user_bucket_name(
+            self.settings.r2_bucket_prefix, owner_id
+        )
+        admin = R2Admin(
+            account_id=self.settings.r2_account_id,
+            access_key_id=self.settings.r2_access_key_id,
+            secret_access_key=self.settings.r2_secret_access_key,
+        )
+        await admin.ensure_bucket(
+            bucket_name, cors_origins=self.settings.cors_origins
+        )
+        await self.user_repo.set_r2_bucket_name(owner_id, bucket_name)
+        return bucket_name
 
     async def get_member_count(self, brain_id: UUID) -> int:
         return await self.repo.get_member_count(brain_id)

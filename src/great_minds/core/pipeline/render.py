@@ -29,7 +29,7 @@ from uuid import UUID
 
 from pydantic import BaseModel, ValidationError, field_validator
 
-from great_minds.core.brain import load_prompt
+from great_minds.core.brains.prompts import load_prompt
 from great_minds.core.llm.client import json_llm_call
 from great_minds.core.markdown import serialize_frontmatter
 from great_minds.core.paths import source_cards_path, wiki_path
