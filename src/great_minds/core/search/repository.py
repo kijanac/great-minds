@@ -6,7 +6,6 @@ tokenized BM25 query string, query embedding vector) and never sees
 a tsquery or cosine operator.
 """
 
-from __future__ import annotations
 
 import re
 from uuid import UUID

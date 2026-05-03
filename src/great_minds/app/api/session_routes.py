@@ -7,7 +7,6 @@ from fastapi import APIRouter, HTTPException
 from great_minds.app.api.dependencies import (
     VaultAccessDep,
     VaultStorageDep,
-    CompileIntentRepositoryDep,
     CurrentUser,
     DocumentRepositoryDep,
     IngestServiceDep,
@@ -22,7 +21,6 @@ from great_minds.core.llm import get_async_client
 from great_minds.core.pagination import Page
 from great_minds.core.paths import session_exchange_path
 from great_minds.core.sessions import BtwInput, ExchangeInput, generate_session_title
-from great_minds.core.telemetry import log_event
 
 router = APIRouter(prefix="/sessions", tags=["sessions"])
 
@@ -126,7 +124,6 @@ async def promote_exchange(
     access: VaultAccessDep,
     ingest_service: IngestServiceDep,
     proposal_service: ProposalServiceDep,
-    intent_repo: CompileIntentRepositoryDep,
     doc_repo: DocumentRepositoryDep,
     _llm: LlmGuard,
     vault_id: UUID,
@@ -187,14 +184,6 @@ async def promote_exchange(
             title=title,
             session_origin=session_origin,
         )
-        intent = await intent_repo.upsert_pending(vault_id)
-        if intent is not None:
-            log_event(
-                "intent_created",
-                intent_id=str(intent.id),
-                vault_id=str(vault_id),
-                trigger="session_exchange_promoted",
-            )
         return schemas.PromoteExchangeResponse(
             mode="ingested",
             path=dest,

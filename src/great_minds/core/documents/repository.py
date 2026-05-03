@@ -1,8 +1,9 @@
 """Document index repository: upsert and structured document queries."""
 
-import hashlib
 from collections import defaultdict
 from uuid import UUID
+
+from great_minds.core.hashing import body_hash, file_hash
 
 from sqlalchemy import Select, delete, distinct, func, or_, select, update
 from sqlalchemy.dialects.postgresql import insert
@@ -33,13 +34,13 @@ class DocumentRepository:
 
     async def upsert(self, vault_id: UUID, doc: DocumentCreate) -> UUID:
         """Upsert a document row and sync the tags junction table."""
-        file_hash = hashlib.sha256(doc.content.encode()).hexdigest()
+        file_hash_val = file_hash(doc.content)
         _, body = parse_frontmatter(doc.content)
-        body_hash = hashlib.sha256(body.encode()).hexdigest()
+        body_hash_val = body_hash(body)
 
         columns = {
-            "file_hash": file_hash,
-            "body_hash": body_hash,
+            "file_hash": file_hash_val,
+            "body_hash": body_hash_val,
             "title": doc.metadata.title,
             "author": doc.metadata.author,
             "url": doc.metadata.url,
@@ -49,6 +50,7 @@ class DocumentRepository:
             "compiled": doc.compiled,
             "doc_kind": doc.doc_kind,
             "source_type": doc.metadata.source_type,
+            "topic_id": doc.topic_id,
             "precis": doc.metadata.precis,
         }
 
@@ -89,15 +91,15 @@ class DocumentRepository:
 
         rows = []
         for doc in docs:
-            file_hash = hashlib.sha256(doc.content.encode()).hexdigest()
+            file_hash_val = file_hash(doc.content)
             _, body = parse_frontmatter(doc.content)
-            body_hash = hashlib.sha256(body.encode()).hexdigest()
+            body_hash_val = body_hash(body)
             rows.append(
                 {
                     "vault_id": vault_id,
                     "file_path": doc.file_path,
-                    "file_hash": file_hash,
-                    "body_hash": body_hash,
+                    "file_hash": file_hash_val,
+                    "body_hash": body_hash_val,
                     "title": doc.metadata.title,
                     "author": doc.metadata.author,
                     "url": doc.metadata.url,
@@ -107,6 +109,7 @@ class DocumentRepository:
                     "compiled": doc.compiled,
                     "doc_kind": doc.doc_kind,
                     "source_type": doc.metadata.source_type,
+                    "topic_id": doc.topic_id,
                     "precis": doc.metadata.precis,
                     "extra_metadata": doc.metadata.extra_metadata,
                 }
@@ -127,6 +130,7 @@ class DocumentRepository:
                 "compiled": stmt.excluded.compiled,
                 "doc_kind": stmt.excluded.doc_kind,
                 "source_type": stmt.excluded.source_type,
+                "topic_id": stmt.excluded.topic_id,
                 "precis": stmt.excluded.precis,
                 "metadata": stmt.excluded["metadata"],
                 "updated_at": func.now(),
@@ -341,6 +345,24 @@ class DocumentRepository:
         ).all()
         return [WikiArticleSummary.model_validate(r) for r in rows]
 
+    async def update_file_path_for_topic(
+        self, vault_id: UUID, topic_id: UUID, new_file_path: str
+    ) -> None:
+        """Repoint the wiki document for a topic at a new storage path.
+
+        Used by the archive flow when ``wiki/<slug>.md`` is moved to
+        ``archive/<topic_id>/<slug>.md`` — the documents row's file_path
+        must follow the file so backlinks and reads stay consistent.
+        """
+        await self.session.execute(
+            update(DocumentORM)
+            .where(
+                DocumentORM.vault_id == vault_id,
+                DocumentORM.topic_id == topic_id,
+            )
+            .values(file_path=new_file_path)
+        )
+
     async def update_wiki_backlinks(
         self,
         source_document_ids: list[UUID],
@@ -500,6 +522,7 @@ def _document_from_orm(orm: DocumentORM, *, tags: list[str] | None = None) -> Do
         body_hash=orm.body_hash,
         compiled=orm.compiled,
         doc_kind=orm.doc_kind,
+        topic_id=orm.topic_id,
         metadata=DocumentMetadata(
             title=orm.title,
             author=orm.author,

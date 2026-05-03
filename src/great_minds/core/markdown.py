@@ -17,7 +17,6 @@ in walk output but don't increment the paragraph counter and don't
 get ``^pN`` anchors.
 """
 
-from __future__ import annotations
 
 import re
 from dataclasses import dataclass

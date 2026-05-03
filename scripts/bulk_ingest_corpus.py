@@ -14,7 +14,6 @@ Example:
         --data-dir test_data --author "V.I. Lenin"
 """
 
-from __future__ import annotations
 
 import argparse
 import asyncio
@@ -28,6 +27,7 @@ from great_minds.core.markdown import parse_frontmatter
 from great_minds.core.db import session_maker
 from great_minds.core.documents.repository import DocumentRepository
 from great_minds.core.documents.schemas import DocumentCreate
+from great_minds.core.documents.service import DocumentService
 from great_minds.core.storage import LocalStorage
 
 
@@ -53,8 +53,8 @@ async def main(
         ingest_kwargs["author"] = author
 
     async with session_maker() as session:
-        doc_repo = DocumentRepository(session)
-        existing_hashes = await doc_repo.get_file_hashes(vault_id)
+        doc_service = DocumentService(DocumentRepository(session))
+        existing_hashes = await doc_service.get_raw_file_hashes(vault_id)
 
         batch: list[DocumentCreate] = []
         ingested = 0
@@ -83,16 +83,14 @@ async def main(
             )
 
             if len(batch) >= 50:
-                await doc_repo.batch_upsert(vault_id, batch)
-                await session.commit()
+                await doc_service.batch_index_raw_docs(vault_id, batch)
                 batch.clear()
 
             if (i + 1) % 25 == 0:
                 print(f"  {i + 1}/{total} (ingested={ingested}, skipped={skipped})")
 
         if batch:
-            await doc_repo.batch_upsert(vault_id, batch)
-            await session.commit()
+            await doc_service.batch_index_raw_docs(vault_id, batch)
 
     print(f"\nDone: ingested={ingested}, skipped={skipped}, total={total}")
 

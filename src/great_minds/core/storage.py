@@ -20,7 +20,6 @@ they're machine-local filesystem paths managed directly. See
 ``great_minds.core.paths`` for the split.
 """
 
-from __future__ import annotations
 
 import asyncio
 import fnmatch

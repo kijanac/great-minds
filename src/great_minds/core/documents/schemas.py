@@ -57,7 +57,8 @@ class DocumentCreate(BaseModel):
     """Input for creating/upserting a document.
 
     Universal frontmatter fields (title, author, origin, date, genre, tags)
-    are explicit. Config-driven fields live in extra_metadata.
+    are explicit. Config-driven fields live in extra_metadata. ``topic_id``
+    is set for wiki rows by render and NULL for raw rows.
     """
 
     model_config = ConfigDict(extra="ignore")
@@ -66,6 +67,7 @@ class DocumentCreate(BaseModel):
     content: str
     doc_kind: str = DocKind.RAW
     compiled: bool = False
+    topic_id: uuid.UUID | None = None
     metadata: DocumentMetadata = Field(default_factory=DocumentMetadata)
 
     @staticmethod
@@ -111,6 +113,7 @@ class Document(BaseModel):
     body_hash: str
     compiled: bool
     doc_kind: str
+    topic_id: uuid.UUID | None = None
     metadata: DocumentMetadata
     created_at: datetime | None = None
     updated_at: datetime | None = None

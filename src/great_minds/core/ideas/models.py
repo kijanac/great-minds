@@ -1,6 +1,5 @@
 """ORM for idea_embeddings (pgvector-backed)."""
 
-from __future__ import annotations
 
 import uuid
 from datetime import datetime

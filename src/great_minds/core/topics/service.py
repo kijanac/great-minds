@@ -5,7 +5,6 @@ use it too but typically operate on the repository directly for bulk
 operations.
 """
 
-from __future__ import annotations
 
 from uuid import UUID
 

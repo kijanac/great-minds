@@ -5,7 +5,6 @@ the other. The service is the single entry point so the two stores
 stay aligned.
 """
 
-from __future__ import annotations
 
 from pathlib import Path
 from uuid import UUID

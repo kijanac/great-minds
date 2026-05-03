@@ -5,7 +5,6 @@ Postgres. Canonical topics (the reduce output that does reach the DB)
 live in core/topics/schemas.py.
 """
 
-from __future__ import annotations
 
 from uuid import UUID
 

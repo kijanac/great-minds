@@ -16,7 +16,6 @@ from_hash was already set by validate's upsert; no additional update
 here.
 """
 
-from __future__ import annotations
 
 import logging
 from uuid import UUID

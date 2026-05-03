@@ -2,6 +2,7 @@
 
 from uuid import UUID
 
+from great_minds.core.compile_intents.repository import CompileIntentRepository
 from great_minds.core.markdown import parse_frontmatter
 from great_minds.core.documents.repository import DocumentRepository
 from great_minds.core.documents.schemas import (
@@ -17,6 +18,7 @@ from great_minds.core.pagination import (
     PageInfo,
     PageParams,
 )
+from great_minds.core.telemetry import log_event
 
 
 class DocumentService:
@@ -26,19 +28,41 @@ class DocumentService:
     async def _commit(self) -> None:
         await self.repo.session.commit()
 
+    async def _emit_compile_intent(self, vault_id: UUID) -> None:
+        """Mark the vault as having pending changes for the reconciler.
+
+        ``upsert_pending`` is idempotent — the partial unique index on
+        ``(vault_id) WHERE dispatched_at IS NULL`` coalesces concurrent
+        ingests into one pending intent, so emitting per-write is safe.
+        Logs ``intent_created`` only when a new row is inserted.
+        """
+        intent = await CompileIntentRepository(self.repo.session).upsert_pending(
+            vault_id
+        )
+        if intent is not None:
+            log_event(
+                "intent_created",
+                intent_id=str(intent.id),
+                vault_id=str(vault_id),
+                trigger="document_indexed",
+            )
+
     async def index_raw_doc(
         self,
         vault_id: UUID,
         file_path: str,
         content: str,
     ) -> UUID:
-        """Parse frontmatter and upsert a raw ingested document.
+        """Parse frontmatter, upsert a raw doc, and emit a compile intent.
 
-        Always doc_kind=RAW. Wiki articles are indexed by the render phase.
+        Always doc_kind=RAW. Wiki articles are written by the render
+        phase via ``DocumentRepository.upsert`` directly — they're
+        compile *outputs*, not inputs, so they don't trigger a recompile.
         """
         fm, _ = parse_frontmatter(content)
         doc = DocumentCreate.from_frontmatter(fm, file_path, content, DocKind.RAW)
         result = await self.repo.upsert(vault_id, doc)
+        await self._emit_compile_intent(vault_id)
         await self._commit()
         return result
 
@@ -52,8 +76,15 @@ class DocumentService:
     async def batch_index_raw_docs(
         self, vault_id: UUID, docs: list[DocumentCreate]
     ) -> list[UUID]:
-        """Upsert multiple raw documents in one commit."""
+        """Upsert raw docs in one batch and emit a compile intent.
+
+        Empty input is a no-op — no DB write, no intent. Lets callers
+        flush conditionally without an empty-batch guard.
+        """
+        if not docs:
+            return []
         ids = await self.repo.batch_upsert(vault_id, docs)
+        await self._emit_compile_intent(vault_id)
         await self._commit()
         return ids
 

@@ -6,7 +6,6 @@ read-only from the phase's perspective — phases produce Result objects
 that flow back through the orchestrator, not by mutating context.
 """
 
-from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
