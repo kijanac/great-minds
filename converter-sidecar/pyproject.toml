@@ -1,0 +1,23 @@
+[project]
+name = "converter-sidecar"
+version = "0.1.0"
+description = "Agentic content-to-markdown converter sidecar for Great Minds"
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi>=0.115",
+    "httpx>=0.28",
+    "markitdown[all]>=0.1.5",
+    "crawl4ai>=0.5",
+    "pydantic>=2.12",
+    "openai>=1.0",              # LLM calls (reuses main app's provider)
+    "pdfplumber>=0.11",         # pure-Python PDF (no onnxruntime dep)
+    "structlog>=24",
+    "uvicorn[standard]>=0.34",
+    "yt-dlp>=2025",
+]
+
+[tool.fastapi]
+entrypoint = "converter_sidecar.main:app"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "N", "UP"]
