@@ -21,7 +21,7 @@ interface DocHeaderProps {
 /**
  * Chrome block above the document body: title, subtitle, metadata
  * row, tag chips, origin link, and a collapsed "more metadata" panel
- * for per-brain custom fields that don't have a dedicated slot.
+ * for per-vault custom fields that don't have a dedicated slot.
  *
  * Works for both wiki and raw documents — missing fields (e.g. author
  * on a wiki doc, description on a raw doc) render nothing.

@@ -1,9 +1,12 @@
 """initial schema
 
-Full schema for the seven-phase pipeline: users, auth, brains,
+Full schema for the seven-phase pipeline: users, auth, vaults,
 memberships, proposals, tasks, compile_intents (outbox), search index,
 documents, idea_embeddings, topics + topic_membership + topic_links +
 topic_related, backlinks (keyed by document_id), and the absurd task queue.
+
+Includes per-user/per-vault ``r2_bucket_name`` and ``source_proposals``
+``dest_path`` + pending-dedup index.
 
 Revision ID: 0001
 Revises:
@@ -41,6 +44,7 @@ def upgrade() -> None:
             server_default=sa.text("now()"),
             nullable=False,
         ),
+        sa.Column("r2_bucket_name", sa.Text(), nullable=True),
         sa.PrimaryKeyConstraint("id"),
     )
     op.create_index("ix_users_email", "users", ["email"], unique=True)
@@ -100,9 +104,9 @@ def upgrade() -> None:
         "ix_refresh_tokens_token_hash", "refresh_tokens", ["token_hash"], unique=True
     )
 
-    # -- Brains & memberships ----------------------------------------------
+    # -- Vaults & memberships ----------------------------------------------
     op.create_table(
-        "brains",
+        "vaults",
         sa.Column("id", sa.UUID(), nullable=False),
         sa.Column("name", sa.String(length=255), nullable=False),
         sa.Column("owner_id", sa.UUID(), nullable=False),
@@ -112,14 +116,15 @@ def upgrade() -> None:
             server_default=sa.text("now()"),
             nullable=False,
         ),
+        sa.Column("r2_bucket_name", sa.Text(), nullable=True),
         sa.ForeignKeyConstraint(["owner_id"], ["users.id"], ondelete="CASCADE"),
         sa.PrimaryKeyConstraint("id"),
     )
 
     op.create_table(
-        "brain_memberships",
+        "vault_memberships",
         sa.Column("id", sa.UUID(), nullable=False),
-        sa.Column("brain_id", sa.UUID(), nullable=False),
+        sa.Column("vault_id", sa.UUID(), nullable=False),
         sa.Column("user_id", sa.UUID(), nullable=False),
         sa.Column(
             "role",
@@ -132,17 +137,17 @@ def upgrade() -> None:
             server_default=sa.text("now()"),
             nullable=False,
         ),
-        sa.ForeignKeyConstraint(["brain_id"], ["brains.id"], ondelete="CASCADE"),
+        sa.ForeignKeyConstraint(["vault_id"], ["vaults.id"], ondelete="CASCADE"),
         sa.ForeignKeyConstraint(["user_id"], ["users.id"], ondelete="CASCADE"),
         sa.PrimaryKeyConstraint("id"),
-        sa.UniqueConstraint("brain_id", "user_id"),
+        sa.UniqueConstraint("vault_id", "user_id"),
     )
 
     # -- Source proposals ---------------------------------------------------
     op.create_table(
         "source_proposals",
         sa.Column("id", sa.UUID(), nullable=False),
-        sa.Column("brain_id", sa.UUID(), nullable=False),
+        sa.Column("vault_id", sa.UUID(), nullable=False),
         sa.Column("user_id", sa.UUID(), nullable=False),
         sa.Column(
             "status",
@@ -153,6 +158,7 @@ def upgrade() -> None:
         sa.Column("title", sa.Text(), nullable=True),
         sa.Column("author", sa.Text(), nullable=True),
         sa.Column("storage_path", sa.Text(), nullable=False),
+        sa.Column("dest_path", sa.Text(), nullable=False, server_default=""),
         sa.Column("reviewed_by", sa.UUID(), nullable=True),
         sa.Column("reviewed_at", sa.DateTime(timezone=True), nullable=True),
         sa.Column(
@@ -161,20 +167,29 @@ def upgrade() -> None:
             server_default=sa.text("now()"),
             nullable=False,
         ),
-        sa.ForeignKeyConstraint(["brain_id"], ["brains.id"], ondelete="CASCADE"),
+        sa.ForeignKeyConstraint(["vault_id"], ["vaults.id"], ondelete="CASCADE"),
         sa.ForeignKeyConstraint(["reviewed_by"], ["users.id"], ondelete="SET NULL"),
         sa.ForeignKeyConstraint(["user_id"], ["users.id"], ondelete="CASCADE"),
         sa.PrimaryKeyConstraint("id"),
     )
     op.create_index(
-        "ix_source_proposals_brain_id", "source_proposals", ["brain_id"], unique=False
+        "ix_source_proposals_vault_id", "source_proposals", ["vault_id"], unique=False
+    )
+    # Partial unique index: re-promoting the same session exchange returns
+    # the existing pending proposal instead of inserting a duplicate.
+    op.create_index(
+        "ix_source_proposals_pending_dest",
+        "source_proposals",
+        ["vault_id", "dest_path"],
+        unique=True,
+        postgresql_where=sa.text("status = 'PENDING'"),
     )
 
     # -- Tasks -------------------------------------------------------------
     op.create_table(
         "tasks",
         sa.Column("id", sa.UUID(), nullable=False),
-        sa.Column("brain_id", sa.UUID(), nullable=False),
+        sa.Column("vault_id", sa.UUID(), nullable=False),
         sa.Column("type", sa.Text(), nullable=False),
         sa.Column("params", JSONB(), nullable=False),
         sa.Column(
@@ -183,15 +198,15 @@ def upgrade() -> None:
             server_default=sa.text("now()"),
             nullable=False,
         ),
-        sa.ForeignKeyConstraint(["brain_id"], ["brains.id"], ondelete="CASCADE"),
+        sa.ForeignKeyConstraint(["vault_id"], ["vaults.id"], ondelete="CASCADE"),
         sa.PrimaryKeyConstraint("id"),
     )
-    op.create_index("ix_tasks_brain_id", "tasks", ["brain_id"], unique=False)
+    op.create_index("ix_tasks_vault_id", "tasks", ["vault_id"], unique=False)
 
     # -- Compile intents (outbox: domain-change → eventual compile) --------
     # Lifecycle: pending → dispatched → satisfied. The partial unique index
-    # on (brain_id) WHERE dispatched_at IS NULL coalesces concurrent ingests
-    # to one pending intent per brain, enforced at the DB level.
+    # on (vault_id) WHERE dispatched_at IS NULL coalesces concurrent ingests
+    # to one pending intent per vault, enforced at the DB level.
     op.create_table(
         "compile_intents",
         sa.Column(
@@ -200,7 +215,7 @@ def upgrade() -> None:
             nullable=False,
             server_default=sa.text("gen_random_uuid()"),
         ),
-        sa.Column("brain_id", sa.UUID(), nullable=False),
+        sa.Column("vault_id", sa.UUID(), nullable=False),
         sa.Column(
             "created_at",
             sa.DateTime(timezone=True),
@@ -210,13 +225,13 @@ def upgrade() -> None:
         sa.Column("dispatched_at", sa.DateTime(timezone=True), nullable=True),
         sa.Column("dispatched_task_id", sa.UUID(), nullable=True),
         sa.Column("satisfied_at", sa.DateTime(timezone=True), nullable=True),
-        sa.ForeignKeyConstraint(["brain_id"], ["brains.id"], ondelete="CASCADE"),
+        sa.ForeignKeyConstraint(["vault_id"], ["vaults.id"], ondelete="CASCADE"),
         sa.PrimaryKeyConstraint("id"),
     )
     op.create_index(
         "ix_compile_intents_one_pending",
         "compile_intents",
-        ["brain_id"],
+        ["vault_id"],
         unique=True,
         postgresql_where=sa.text("dispatched_at IS NULL"),
     )
@@ -254,12 +269,12 @@ def upgrade() -> None:
             nullable=False,
         ),
         sa.Column("user_id", sa.UUID(), nullable=True),
-        sa.Column("brain_id", sa.UUID(), nullable=True),
+        sa.Column("vault_id", sa.UUID(), nullable=True),
         sa.Column("event_type", sa.Text(), nullable=False),
         sa.Column("cost_usd", sa.Numeric(precision=12, scale=6), nullable=False),
         sa.Column("correlation_id", sa.Text(), nullable=True),
         sa.ForeignKeyConstraint(["user_id"], ["users.id"], ondelete="SET NULL"),
-        sa.ForeignKeyConstraint(["brain_id"], ["brains.id"], ondelete="CASCADE"),
+        sa.ForeignKeyConstraint(["vault_id"], ["vaults.id"], ondelete="CASCADE"),
         sa.PrimaryKeyConstraint("id"),
     )
     op.create_index(
@@ -268,9 +283,9 @@ def upgrade() -> None:
         ["user_id", "created_at"],
     )
     op.create_index(
-        "ix_llm_cost_events_brain_created",
+        "ix_llm_cost_events_vault_created",
         "llm_cost_events",
-        ["brain_id", "created_at"],
+        ["vault_id", "created_at"],
     )
 
     # -- Search index (pgvector + tsvector) --------------------------------
@@ -278,7 +293,7 @@ def upgrade() -> None:
         text("""
         CREATE TABLE search_index (
             id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-            brain_id    UUID NOT NULL REFERENCES brains(id) ON DELETE CASCADE,
+            vault_id    UUID NOT NULL REFERENCES vaults(id) ON DELETE CASCADE,
             path        TEXT NOT NULL,
             chunk_index INTEGER NOT NULL DEFAULT 0,
             heading     TEXT NOT NULL DEFAULT '',
@@ -288,11 +303,11 @@ def upgrade() -> None:
             embedding   vector(1024),
             updated_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
 
-            UNIQUE (brain_id, path, chunk_index)
+            UNIQUE (vault_id, path, chunk_index)
         )
     """)
     )
-    op.execute(text("CREATE INDEX ix_search_index_brain_id ON search_index (brain_id)"))
+    op.execute(text("CREATE INDEX ix_search_index_vault_id ON search_index (vault_id)"))
     op.execute(text("CREATE INDEX ix_search_index_tsv ON search_index USING GIN (tsv)"))
     op.execute(
         text(
@@ -309,7 +324,7 @@ def upgrade() -> None:
             nullable=False,
             server_default=sa.text("gen_random_uuid()"),
         ),
-        sa.Column("brain_id", sa.UUID(), nullable=False),
+        sa.Column("vault_id", sa.UUID(), nullable=False),
         sa.Column("file_path", sa.Text(), nullable=False),
         sa.Column("file_hash", sa.Text(), nullable=False),
         sa.Column("body_hash", sa.Text(), nullable=False),
@@ -321,7 +336,7 @@ def upgrade() -> None:
         sa.Column("genre", sa.Text(), nullable=True),
         sa.Column("compiled", sa.Boolean(), nullable=False, server_default="false"),
         sa.Column("doc_kind", sa.Text(), nullable=False, server_default="raw"),
-        # source_type is the brain-config bucket (texts/news/ideas) for
+        # source_type is the vault-config bucket (texts/news/ideas) for
         # raw docs; NULL for rendered wiki articles since the axis
         # doesn't apply to generated outputs.
         sa.Column("source_type", sa.Text(), nullable=True),
@@ -339,11 +354,11 @@ def upgrade() -> None:
             server_default=sa.text("now()"),
             nullable=False,
         ),
-        sa.ForeignKeyConstraint(["brain_id"], ["brains.id"], ondelete="CASCADE"),
+        sa.ForeignKeyConstraint(["vault_id"], ["vaults.id"], ondelete="CASCADE"),
         sa.PrimaryKeyConstraint("id"),
-        sa.UniqueConstraint("brain_id", "file_path"),
+        sa.UniqueConstraint("vault_id", "file_path"),
     )
-    op.create_index("ix_documents_brain_id", "documents", ["brain_id"])
+    op.create_index("ix_documents_vault_id", "documents", ["vault_id"])
     op.create_index("ix_documents_published_date", "documents", ["published_date"])
     op.create_index("ix_documents_author", "documents", ["author"])
     op.create_index("ix_documents_compiled", "documents", ["compiled"])
@@ -368,7 +383,7 @@ def upgrade() -> None:
             """
             CREATE TABLE idea_embeddings (
                 idea_id       uuid PRIMARY KEY,
-                brain_id      uuid NOT NULL,
+                vault_id      uuid NOT NULL,
                 document_id   uuid NOT NULL,
                 kind          text NOT NULL,
                 label         text NOT NULL,
@@ -380,7 +395,7 @@ def upgrade() -> None:
         )
     )
     op.execute(
-        text("CREATE INDEX ix_idea_embeddings_brain_id ON idea_embeddings (brain_id)")
+        text("CREATE INDEX ix_idea_embeddings_vault_id ON idea_embeddings (vault_id)")
     )
     op.execute(
         text(
@@ -401,7 +416,7 @@ def upgrade() -> None:
             """
             CREATE TABLE topics (
                 topic_id            uuid PRIMARY KEY,
-                brain_id            uuid NOT NULL REFERENCES brains(id) ON DELETE CASCADE,
+                vault_id            uuid NOT NULL REFERENCES vaults(id) ON DELETE CASCADE,
                 slug                text NOT NULL,
                 title               text NOT NULL,
                 description         text NOT NULL,
@@ -412,12 +427,12 @@ def upgrade() -> None:
                 superseded_by       uuid NULL,
                 created_at          timestamptz NOT NULL DEFAULT now(),
                 updated_at          timestamptz NOT NULL DEFAULT now(),
-                UNIQUE (brain_id, slug)
+                UNIQUE (vault_id, slug)
             )
             """
         )
     )
-    op.execute(text("CREATE INDEX ix_topics_brain_id ON topics (brain_id)"))
+    op.execute(text("CREATE INDEX ix_topics_vault_id ON topics (vault_id)"))
     op.execute(
         text("CREATE INDEX ix_topics_article_status ON topics (article_status)")
     )

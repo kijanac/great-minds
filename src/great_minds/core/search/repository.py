@@ -25,7 +25,7 @@ class SearchIndexRepository:
     # -- Rebuild / upsert path -------------------------------------------
 
     async def list_hashes_by_prefix(
-        self, brain_id: UUID, path_prefix: str
+        self, vault_id: UUID, path_prefix: str
     ) -> dict[tuple[str, int], str]:
         """Return {(path, chunk_index): content_hash} for diff during rebuild."""
         rows = await self.session.execute(
@@ -34,35 +34,35 @@ class SearchIndexRepository:
                 SearchIndexEntry.chunk_index,
                 SearchIndexEntry.content_hash,
             ).where(
-                SearchIndexEntry.brain_id == brain_id,
+                SearchIndexEntry.vault_id == vault_id,
                 SearchIndexEntry.path.like(f"{path_prefix}%"),
             )
         )
         return {(r.path, r.chunk_index): r.content_hash for r in rows}
 
     async def delete_by_keys(
-        self, brain_id: UUID, keys: list[tuple[str, int]]
+        self, vault_id: UUID, keys: list[tuple[str, int]]
     ) -> None:
         """Bulk delete rows matching (path, chunk_index) pairs."""
         if not keys:
             return
         await self.session.execute(
             delete(SearchIndexEntry).where(
-                SearchIndexEntry.brain_id == brain_id,
+                SearchIndexEntry.vault_id == vault_id,
                 tuple_(SearchIndexEntry.path, SearchIndexEntry.chunk_index).in_(keys),
             )
         )
 
     async def upsert_chunk(
         self,
-        brain_id: UUID,
+        vault_id: UUID,
         chunk: Chunk,
         embedding: list[float] | None,
     ) -> None:
         """Insert or update a single chunk with its precomputed embedding."""
         existing = await self.session.execute(
             select(SearchIndexEntry).where(
-                SearchIndexEntry.brain_id == brain_id,
+                SearchIndexEntry.vault_id == vault_id,
                 SearchIndexEntry.path == chunk.path,
                 SearchIndexEntry.chunk_index == chunk.chunk_index,
             )
@@ -79,7 +79,7 @@ class SearchIndexRepository:
             return
         self.session.add(
             SearchIndexEntry(
-                brain_id=brain_id,
+                vault_id=vault_id,
                 path=chunk.path,
                 chunk_index=chunk.chunk_index,
                 heading=chunk.heading,
@@ -93,14 +93,14 @@ class SearchIndexRepository:
     # -- Diagnostics -----------------------------------------------------
 
     async def count_by_prefix(
-        self, brain_id: UUID, path_prefix: str
+        self, vault_id: UUID, path_prefix: str
     ) -> int:
         return (
             await self.session.scalar(
                 select(func.count())
                 .select_from(SearchIndexEntry)
                 .where(
-                    SearchIndexEntry.brain_id == brain_id,
+                    SearchIndexEntry.vault_id == vault_id,
                     SearchIndexEntry.path.like(f"{path_prefix}%"),
                 )
             )
@@ -109,7 +109,7 @@ class SearchIndexRepository:
     # -- Query path ------------------------------------------------------
 
     async def bm25_search(
-        self, brain_ids: list[UUID], query: str, limit: int
+        self, vault_ids: list[UUID], query: str, limit: int
     ) -> list[ChunkScore]:
         """Return top-N rows by ts_rank against a tokenized BM25 tsquery.
 
@@ -127,7 +127,7 @@ class SearchIndexRepository:
         rank_expr = func.ts_rank(SearchIndexEntry.tsv, tsquery)
         result = await self.session.execute(
             select(
-                SearchIndexEntry.brain_id,
+                SearchIndexEntry.vault_id,
                 SearchIndexEntry.path,
                 SearchIndexEntry.chunk_index,
                 SearchIndexEntry.heading,
@@ -135,7 +135,7 @@ class SearchIndexRepository:
                 rank_expr.label("score"),
             )
             .where(
-                SearchIndexEntry.brain_id.in_(brain_ids),
+                SearchIndexEntry.vault_id.in_(vault_ids),
                 SearchIndexEntry.tsv.bool_op("@@")(tsquery),
             )
             .order_by(rank_expr.desc())
@@ -143,7 +143,7 @@ class SearchIndexRepository:
         )
         return [
             ChunkScore(
-                brain_id=row.brain_id,
+                vault_id=row.vault_id,
                 path=row.path,
                 chunk_index=row.chunk_index,
                 heading=row.heading,
@@ -155,7 +155,7 @@ class SearchIndexRepository:
 
     async def vector_search(
         self,
-        brain_ids: list[UUID],
+        vault_ids: list[UUID],
         query_embedding: list[float],
         limit: int,
     ) -> list[ChunkScore]:
@@ -163,7 +163,7 @@ class SearchIndexRepository:
         dist_expr = SearchIndexEntry.embedding.cosine_distance(query_embedding)
         result = await self.session.execute(
             select(
-                SearchIndexEntry.brain_id,
+                SearchIndexEntry.vault_id,
                 SearchIndexEntry.path,
                 SearchIndexEntry.chunk_index,
                 SearchIndexEntry.heading,
@@ -171,7 +171,7 @@ class SearchIndexRepository:
                 (1 - dist_expr).label("score"),
             )
             .where(
-                SearchIndexEntry.brain_id.in_(brain_ids),
+                SearchIndexEntry.vault_id.in_(vault_ids),
                 SearchIndexEntry.embedding.isnot(None),
             )
             .order_by(dist_expr)
@@ -179,7 +179,7 @@ class SearchIndexRepository:
         )
         return [
             ChunkScore(
-                brain_id=row.brain_id,
+                vault_id=row.vault_id,
                 path=row.path,
                 chunk_index=row.chunk_index,
                 heading=row.heading,

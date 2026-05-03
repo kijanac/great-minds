@@ -7,7 +7,7 @@ extract_model) short-circuits the LLM + embedding work for incremental
 compiles.
 
 Per-source-type metadata fields (tradition, interlocutors, outlet, etc.)
-are pulled from the brain's config.yaml metadata.<source_type> section
+are pulled from the vault's config.yaml metadata.<source_type> section
 via documents.builder.load_field_specs and formatted into the prompt's
 {extra_fields} slot. Universal fields (genre, tags) are hardcoded.
 """
@@ -25,7 +25,7 @@ from uuid import UUID
 from pydantic import ValidationError
 from uuid6 import uuid7
 
-from great_minds.core.brains.prompts import load_prompt
+from great_minds.core.vaults.prompts import load_prompt
 from great_minds.core.documents.repository import DocumentRepository
 from great_minds.core.documents.schemas import DocKind, Document
 from great_minds.core.llm.client import json_llm_call
@@ -62,7 +62,7 @@ EMBEDDING_BATCH_SIZE = 50
 
 
 async def run(ctx: PipelineContext) -> None:
-    """Extract every raw document registered in the DB for this brain.
+    """Extract every raw document registered in the DB for this vault.
 
     The documents table is the authoritative registry — ingest writes
     the file and the DB row together, so iterating the registry catches
@@ -75,7 +75,7 @@ async def run(ctx: PipelineContext) -> None:
     prompt_hash = hashlib.sha256(prompt_template.encode()).hexdigest()
     kinds_key = "|".join(sorted(ctx.config.kinds))
 
-    docs = await _load_documents(ctx.session, ctx.brain_id)
+    docs = await _load_documents(ctx.session, ctx.vault_id)
 
     sem = asyncio.Semaphore(settings.compile_enrich_concurrency)
     tasks = [
@@ -116,7 +116,7 @@ async def run(ctx: PipelineContext) -> None:
             log_event(
                 "extract.doc_failed",
                 level=logging.WARNING,
-                brain_id=str(ctx.brain_id),
+                vault_id=str(ctx.vault_id),
                 path=outcome.raw_path,
                 error=outcome.error,
             )
@@ -138,7 +138,7 @@ async def run(ctx: PipelineContext) -> None:
             pending_per_doc[outcome.document_id] = len(source_card.ideas)
             embeddings_by_doc[outcome.document_id] = []
             for idea in source_card.ideas:
-                embedding_inputs.append((ctx.brain_id, outcome.document_id, idea))
+                embedding_inputs.append((ctx.vault_id, outcome.document_id, idea))
 
     # Write each fresh doc's cache entry as soon as all its ideas are
     # embedded. A mid-phase crash preserves LLM + embedding work for
@@ -179,7 +179,7 @@ async def run(ctx: PipelineContext) -> None:
 
     idea_repo = IdeaEmbeddingRepository(ctx.session)
     idea_service = IdeaService(
-        brain_id=ctx.brain_id,
+        vault_id=ctx.vault_id,
         embedding_repo=idea_repo,
         sidecar_root=ctx.sidecar_root,
     )
@@ -189,7 +189,7 @@ async def run(ctx: PipelineContext) -> None:
         cards, cached_embeddings + fresh_embeddings
     )
     await DocumentRepository(ctx.session).update_metadata_from_cards(
-        ctx.brain_id, cards
+        ctx.vault_id, cards
     )
     await ctx.session.commit()
 
@@ -202,7 +202,7 @@ async def run(ctx: PipelineContext) -> None:
     )
     log_event(
         "pipeline.extract_completed",
-        brain_id=str(ctx.brain_id),
+        vault_id=str(ctx.vault_id),
         docs_extracted=docs_extracted,
         cache_hits=cache_hits,
         cache_misses=cache_misses,
@@ -294,7 +294,7 @@ async def _extract_one(
         log_event(
             "extract.doc_failed",
             level=logging.WARNING,
-            brain_id=str(ctx.brain_id),
+            vault_id=str(ctx.vault_id),
             path=raw_path,
             error=outcome.error,
         )
@@ -333,7 +333,7 @@ def _build_extra_fields(config_raw: dict, source_type: str) -> str:
 
     Pulls from config.metadata.<source_type>, keeps fields with
     source=="enriched", writes lines matching the sibling genre/tags
-    entries' format. Returns empty string if the brain has no
+    entries' format. Returns empty string if the vault has no
     per-source-type enriched fields.
     """
     try:
@@ -439,14 +439,14 @@ async def _embed_in_batches(
             model=EMBEDDING_MODEL, input=texts
         )
         out: list[IdeaEmbedding] = []
-        for (brain_id, document_id, idea), item in zip(
+        for (vault_id, document_id, idea), item in zip(
             batch_inputs, response.data
         ):
             vec = _truncate_and_normalize(item.embedding, EMBEDDING_DIMENSIONS)
             out.append(
                 IdeaEmbedding(
                     idea_id=idea.idea_id,
-                    brain_id=brain_id,
+                    vault_id=vault_id,
                     document_id=document_id,
                     kind=idea.kind,
                     label=idea.label,
@@ -462,9 +462,9 @@ async def _embed_in_batches(
 # ---------------------------------------------------------------------------
 
 
-async def _load_documents(session, brain_id: UUID) -> list[Document]:
-    """Load all raw documents for a brain in deterministic path order."""
-    return await DocumentRepository(session).list_by_kind(brain_id, DocKind.RAW)
+async def _load_documents(session, vault_id: UUID) -> list[Document]:
+    """Load all raw documents for a vault in deterministic path order."""
+    return await DocumentRepository(session).list_by_kind(vault_id, DocKind.RAW)
 
 
 def _write_cache(

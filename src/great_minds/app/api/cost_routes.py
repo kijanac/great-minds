@@ -9,7 +9,7 @@ from uuid import UUID
 from fastapi import APIRouter, Query
 
 from great_minds.app.api.dependencies import (
-    BrainAccessDep,
+    VaultAccessDep,
     CurrentUser,
     LlmCostServiceDep,
 )
@@ -22,22 +22,22 @@ router = APIRouter(prefix="/costs", tags=["costs"])
 async def get_costs(
     user: CurrentUser,
     cost_service: LlmCostServiceDep,
-    access: BrainAccessDep,
+    access: VaultAccessDep,
     since: Annotated[datetime | None, Query()] = None,
     until: Annotated[datetime | None, Query()] = None,
-    brain_id: Annotated[UUID | None, Query()] = None,
+    vault_id: Annotated[UUID | None, Query()] = None,
 ) -> schemas.CostAggregateResponse:
     """LLM cost totals.
 
-    With ``brain_id``: aggregate every cost-bearing event for that brain
+    With ``vault_id``: aggregate every cost-bearing event for that vault
     (compiles + queries from any member). Caller must be a member.
-    Without ``brain_id``: aggregate the caller's own user-attributed
-    events across all brains.
+    Without ``vault_id``: aggregate the caller's own user-attributed
+    events across all vaults.
     """
-    if brain_id is not None:
-        await access.require_member(brain_id, user.id)
+    if vault_id is not None:
+        await access.require_member(vault_id, user.id)
         aggregate = await cost_service.aggregate(
-            brain_id=brain_id, since=since, until=until
+            vault_id=vault_id, since=since, until=until
         )
     else:
         aggregate = await cost_service.aggregate(
@@ -47,11 +47,11 @@ async def get_costs(
     return schemas.CostAggregateResponse(
         total_usd=aggregate.total_usd,
         event_count=aggregate.event_count,
-        by_brain=[
+        by_vault=[
             schemas.CostBreakdownItem(
                 key=b.key, total_usd=b.total_usd, event_count=b.event_count
             )
-            for b in aggregate.by_brain
+            for b in aggregate.by_vault
         ],
         by_event_type=[
             schemas.CostBreakdownItem(

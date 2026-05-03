@@ -1,7 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 
 import { loadSession, type SessionEvent } from "@/api/sessions";
-import { useActiveBrainId } from "@/hooks/use-brain";
+import { useActiveVaultId } from "@/hooks/use-vault";
 import type { BtwThread, Exchange } from "@/lib/types";
 
 function replayEvents(events: SessionEvent[]): Exchange[] {
@@ -61,13 +61,13 @@ function replayEvents(events: SessionEvent[]): Exchange[] {
 }
 
 export function useSavedSession(sessionId: string | null) {
-  const brainId = useActiveBrainId();
+  const vaultId = useActiveVaultId();
   return useQuery({
-    queryKey: ["brain", brainId, "session", sessionId],
+    queryKey: ["vault", vaultId, "session", sessionId],
     queryFn: async () => {
       const data = await loadSession(sessionId!);
       return replayEvents(data.events);
     },
-    enabled: !!sessionId && !!brainId,
+    enabled: !!sessionId && !!vaultId,
   });
 }

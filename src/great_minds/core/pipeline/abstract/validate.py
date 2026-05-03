@@ -32,7 +32,7 @@ from uuid import UUID
 
 from uuid6 import uuid7
 
-from great_minds.core.brains.prompts import load_prompt
+from great_minds.core.vaults.prompts import load_prompt
 from great_minds.core.llm.client import json_llm_call
 from great_minds.core.llm import REDUCE_MODEL
 from great_minds.core.markdown import parse_frontmatter, serialize_frontmatter
@@ -63,7 +63,7 @@ async def run(
     if not canonical_topics:
         log_event(
             "pipeline.validate_skipped",
-            brain_id=str(ctx.brain_id),
+            vault_id=str(ctx.vault_id),
             reason="no_canonicals",
         )
         return []
@@ -72,7 +72,7 @@ async def run(
     local_by_id = {t.local_topic_id: t for t in local_topics}
 
     repo = TopicRepository(ctx.session)
-    existing = await repo.list_all(ctx.brain_id)
+    existing = await repo.list_all(ctx.vault_id)
     active_existing = [
         t for t in existing if t.article_status != ArticleStatus.ARCHIVED
     ]
@@ -94,7 +94,7 @@ async def run(
     _assert_no_collision(renamed_canonicals)
 
     validated = await _assign_topic_ids(
-        brain_id=ctx.brain_id,
+        vault_id=ctx.vault_id,
         repo=repo,
         canonicals=renamed_canonicals,
         local_by_id=local_by_id,
@@ -108,7 +108,7 @@ async def run(
         validated=validated,
     )
 
-    await _upsert_topics(repo=repo, brain_id=ctx.brain_id, validated=validated)
+    await _upsert_topics(repo=repo, vault_id=ctx.vault_id, validated=validated)
     await ctx.session.commit()
 
     enrich(
@@ -121,7 +121,7 @@ async def run(
     )
     log_event(
         "pipeline.validate_completed",
-        brain_id=str(ctx.brain_id),
+        vault_id=str(ctx.vault_id),
         canonical_count=len(validated),
         collisions_resolved=len(cleanup.slug_renames),
         archived_count=len(archive_candidates),
@@ -199,7 +199,7 @@ async def _cleanup_llm_call(
         log_event(
             "pipeline.validate_cleanup_failed",
             level=logging.ERROR,
-            brain_id=str(ctx.brain_id),
+            vault_id=str(ctx.vault_id),
             error=repr(e)[:300],
             collisions=len(collisions),
             archive_candidates=len(archive_candidates),
@@ -322,14 +322,14 @@ def _assert_no_collision(canonical_topics: list[CanonicalTopic]) -> None:
 
 async def _assign_topic_ids(
     *,
-    brain_id: UUID,
+    vault_id: UUID,
     repo: TopicRepository,
     canonicals: list[CanonicalTopic],
     local_by_id: dict[UUID, LocalTopic],
 ) -> list[ValidatedCanonicalTopic]:
     out: list[ValidatedCanonicalTopic] = []
     for c in canonicals:
-        existing = await repo.get_by_slug(brain_id, c.slug)
+        existing = await repo.get_by_slug(vault_id, c.slug)
         if existing is not None:
             topic_id = existing.topic_id
             is_new = False
@@ -418,14 +418,14 @@ async def _move_wiki_to_archive(
 async def _upsert_topics(
     *,
     repo: TopicRepository,
-    brain_id: UUID,
+    vault_id: UUID,
     validated: list[ValidatedCanonicalTopic],
 ) -> None:
     for v in validated:
         compiled_from_hash = _topic_content_hash(v)
         await repo.upsert(
             topic_id=v.topic_id,
-            brain_id=brain_id,
+            vault_id=vault_id,
             slug=v.slug,
             title=v.title,
             description=v.description,

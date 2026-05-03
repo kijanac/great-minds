@@ -24,11 +24,11 @@ class CostBreakdown:
 
 @dataclass(frozen=True)
 class CostAggregate:
-    """Aggregation result with per-brain and per-event-type breakdowns."""
+    """Aggregation result with per-vault and per-event-type breakdowns."""
 
     total_usd: Decimal
     event_count: int
-    by_brain: list[CostBreakdown]
+    by_vault: list[CostBreakdown]
     by_event_type: list[CostBreakdown]
 
 
@@ -40,7 +40,7 @@ class LlmCostEventRepository:
         self,
         *,
         user_id: uuid.UUID | None,
-        brain_id: uuid.UUID | None,
+        vault_id: uuid.UUID | None,
         event_type: str,
         cost_usd: Decimal,
         correlation_id: str | None,
@@ -48,7 +48,7 @@ class LlmCostEventRepository:
         await self.session.execute(
             insert(LlmCostEventORM).values(
                 user_id=user_id,
-                brain_id=brain_id,
+                vault_id=vault_id,
                 event_type=event_type,
                 cost_usd=cost_usd,
                 correlation_id=correlation_id,
@@ -59,21 +59,21 @@ class LlmCostEventRepository:
         self,
         *,
         user_id: uuid.UUID | None = None,
-        brain_id: uuid.UUID | None = None,
+        vault_id: uuid.UUID | None = None,
         since: datetime | None = None,
         until: datetime | None = None,
     ) -> CostAggregate:
         """Sum cost across all events matching the filters.
 
-        ``user_id`` and ``brain_id`` filter by exact match. ``None``
+        ``user_id`` and ``vault_id`` filter by exact match. ``None``
         means "no filter on that field" — pass the current user at the
         route level if you want to scope to a single user.
         """
         conditions = []
         if user_id is not None:
             conditions.append(LlmCostEventORM.user_id == user_id)
-        if brain_id is not None:
-            conditions.append(LlmCostEventORM.brain_id == brain_id)
+        if vault_id is not None:
+            conditions.append(LlmCostEventORM.vault_id == vault_id)
         if since is not None:
             conditions.append(LlmCostEventORM.created_at >= since)
         if until is not None:
@@ -87,23 +87,23 @@ class LlmCostEventRepository:
         total_usd: Decimal = Decimal(total_row[0])
         event_count: int = int(total_row[1])
 
-        brain_stmt = (
+        vault_stmt = (
             select(
-                LlmCostEventORM.brain_id,
+                LlmCostEventORM.vault_id,
                 func.coalesce(func.sum(LlmCostEventORM.cost_usd), 0),
                 func.count(LlmCostEventORM.id),
             )
             .where(*conditions)
-            .group_by(LlmCostEventORM.brain_id)
+            .group_by(LlmCostEventORM.vault_id)
             .order_by(func.sum(LlmCostEventORM.cost_usd).desc())
         )
-        by_brain = [
+        by_vault = [
             CostBreakdown(
-                key=str(row[0]) if row[0] is not None else "(no-brain)",
+                key=str(row[0]) if row[0] is not None else "(no-vault)",
                 total_usd=Decimal(row[1]),
                 event_count=int(row[2]),
             )
-            for row in (await self.session.execute(brain_stmt)).all()
+            for row in (await self.session.execute(vault_stmt)).all()
         ]
 
         type_stmt = (
@@ -128,6 +128,6 @@ class LlmCostEventRepository:
         return CostAggregate(
             total_usd=total_usd,
             event_count=event_count,
-            by_brain=by_brain,
+            by_vault=by_vault,
             by_event_type=by_event_type,
         )

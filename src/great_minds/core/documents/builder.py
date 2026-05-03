@@ -1,15 +1,15 @@
-"""Build markdown source documents and write them to brain storage.
+"""Build markdown source documents and write them to vault storage.
 
 Pure builders (`build_document`, `build_frontmatter`, `extract_title`)
 take config + content + metadata and return the on-disk markdown form.
 The write helpers (`write_document`, `write_file`) compose the builders
 with storage I/O for callers that have raw bytes/text on hand. DB
 indexing happens elsewhere — these functions know nothing about
-brain_id or the documents table.
+vault_id or the documents table.
 
 Universal frontmatter fields (title/author/origin/date/url, plus
 genre/tags and the structural compiled/source_type flags) are always
-emitted. Per-content_type fields come from the brain's config.yaml
+emitted. Per-content_type fields come from the vault's config.yaml
 ``metadata.<content_type>`` section via ``load_field_specs``.
 
 Callers:
@@ -232,19 +232,19 @@ async def write_file(
     dest_dir: str,
     **kwargs,
 ) -> str:
-    """Read a file from the external filesystem and write it to brain storage.
+    """Read a file from the external filesystem and write it to vault storage.
 
     Args:
-        storage: Brain storage backend.
-        config: Brain config (parsed config.yaml).
+        storage: Vault storage backend.
+        config: Vault config (parsed config.yaml).
         filepath: Path on the external filesystem (the source file).
         content_type: One of the types in ``config['metadata']``.
-        dest_dir: Destination directory relative to brain root
+        dest_dir: Destination directory relative to vault root
             (e.g. ``raw/texts/lenin/``).
         **kwargs: Passed through to ``write_document`` (author, date, etc.).
 
     Returns:
-        The dest path string (relative to brain root).
+        The dest path string (relative to vault root).
     """
     content = filepath.read_text(encoding="utf-8")
     dest = f"{dest_dir}/{filepath.name}"

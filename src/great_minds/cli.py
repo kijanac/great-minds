@@ -22,18 +22,18 @@ from sqlalchemy import text
 
 from great_minds.app.api.server import create_app
 from great_minds.core import pipeline, querier
-from great_minds.core.brains.config import load_config
+from great_minds.core.vaults.config import load_config
 from great_minds.core.documents.builder import write_document, write_file
-from great_minds.core.brains.repository import BrainRepository
-from great_minds.core.brains.service import BrainService
+from great_minds.core.vaults.repository import VaultRepository
+from great_minds.core.vaults.service import VaultService
 from great_minds.core.db import session_maker
 from great_minds.core.documents.repository import DocumentRepository
 from great_minds.core.documents.service import DocumentService
 from great_minds.core.users.repository import UserRepository
 from great_minds.core.llm import get_async_client
 from great_minds.core.paths import (
-    BRAIN_SUBDIRS,
-    brain_dir,
+    VAULT_SUBDIRS,
+    vault_dir,
     raw_prefix,
     sidecar_root,
 )
@@ -64,17 +64,17 @@ def _make_storage() -> LocalStorage:
     return LocalStorage(Path.cwd())
 
 
-async def _run_compile(brain_id: uuid.UUID, data_dir: Path) -> dict:
+async def _run_compile(vault_id: uuid.UUID, data_dir: Path) -> dict:
     client = get_async_client()
-    init_wide_event("compile", brain_id=str(brain_id))
+    init_wide_event("compile", vault_id=str(vault_id))
     try:
         async with session_maker() as session:
-            brain = await BrainRepository(session).get_by_id(brain_id)
-            if brain is None:
-                raise ValueError(f"Brain {brain_id} not found")
-            storage = make_storage(brain)
+            vault = await VaultRepository(session).get_by_id(vault_id)
+            if vault is None:
+                raise ValueError(f"Vault {vault_id} not found")
+            storage = make_storage(vault)
             ctx = await pipeline.build_context(
-                brain_id=brain_id, storage=storage, session=session, client=client
+                vault_id=vault_id, storage=storage, session=session, client=client
             )
             await pipeline.run(ctx)
             return dict(wide_event.get() or {})
@@ -85,7 +85,7 @@ async def _run_compile(brain_id: uuid.UUID, data_dir: Path) -> dict:
 def cmd_compile(args: argparse.Namespace) -> None:
     _sync_data_dir(args.data_dir)
     setup_logging(service="great-minds")
-    e = asyncio.run(_run_compile(args.brain_id, Path(args.data_dir)))
+    e = asyncio.run(_run_compile(args.vault_id, Path(args.data_dir)))
     print("compile complete:")
     print(f"  raw chunks indexed:   {e.get('raw_chunks_indexed', 0)}")
     print(
@@ -133,7 +133,7 @@ async def _stream_answer(
 async def _run_query(args: argparse.Namespace) -> None:
     storage = _make_storage()
     source = querier.QuerySource(
-        storage=storage, label="local", brain_id=uuid.UUID(int=0)
+        storage=storage, label="local", vault_id=uuid.UUID(int=0)
     )
     async with session_maker() as session:
         doc_service = DocumentService(DocumentRepository(session))
@@ -238,7 +238,7 @@ def cmd_ingest(args: argparse.Namespace) -> None:
     asyncio.run(_run_ingest(args))
 
 
-async def _run_reset(brain_id: str, brain_root: Path) -> None:
+async def _run_reset(vault_id: str, vault_root: Path) -> None:
     log = logging.getLogger(__name__)
 
     async with session_maker() as session:
@@ -255,70 +255,70 @@ async def _run_reset(brain_id: str, brain_root: Path) -> None:
         ]
         for table in tables:
             result = await session.execute(
-                text(f"DELETE FROM {table} WHERE brain_id = :bid"),
-                {"bid": brain_id},
+                text(f"DELETE FROM {table} WHERE vault_id = :bid"),
+                {"bid": vault_id},
             )
             log.info("deleted %d rows from %s", result.rowcount, table)
         await session.commit()
 
-    for subdir in BRAIN_SUBDIRS:
-        target = brain_root / subdir
+    for subdir in VAULT_SUBDIRS:
+        target = vault_root / subdir
         if target.exists():
             shutil.rmtree(target)
             target.mkdir()
             log.info("cleared %s", target)
 
-    log.info("reset complete for brain %s", brain_id)
+    log.info("reset complete for vault %s", vault_id)
 
 
-async def _run_delete_brain(brain_id: str, sidecar: Path) -> None:
+async def _run_delete_vault(vault_id: str, sidecar: Path) -> None:
     log = logging.getLogger(__name__)
     settings = get_settings()
-    bid = uuid.UUID(brain_id)
+    bid = uuid.UUID(vault_id)
 
     async with session_maker() as session:
-        brain_repo = BrainRepository(session)
+        vault_repo = VaultRepository(session)
         user_repo = UserRepository(session)
-        brain_service = BrainService(brain_repo, user_repo, settings)
-        deleted = await brain_service.delete_brain(bid)
+        vault_service = VaultService(vault_repo, user_repo, settings)
+        deleted = await vault_service.delete_vault(bid)
         if deleted is None:
-            log.warning("no brain row found with id=%s", brain_id)
+            log.warning("no vault row found with id=%s", vault_id)
         else:
-            log.info("brain row deleted and storage cleared for %s", brain_id)
+            log.info("vault row deleted and storage cleared for %s", vault_id)
 
     if sidecar.exists():
         shutil.rmtree(sidecar)
         log.info("removed compile sidecar %s", sidecar)
 
-    log.info("brain %s fully deleted", brain_id)
+    log.info("vault %s fully deleted", vault_id)
 
 
-def cmd_delete_brain(args: argparse.Namespace) -> None:
+def cmd_delete_vault(args: argparse.Namespace) -> None:
     _sync_data_dir(args.data_dir)
     setup_logging(service="great-minds")
 
     settings = get_settings()
-    brain_id = args.brain_id
+    vault_id = args.vault_id
     data_dir = Path(args.data_dir)
-    sidecar = sidecar_root(data_dir, brain_id)
+    sidecar = sidecar_root(data_dir, vault_id)
 
     if not args.yes:
-        print(f"This will PERMANENTLY DELETE brain {brain_id}:")
-        print("  - Database: the brains row + all FK-cascaded content")
+        print(f"This will PERMANENTLY DELETE vault {vault_id}:")
+        print("  - Database: the vaults row + all FK-cascaded content")
         print("              (documents, topics, backlinks, idea_embeddings, tasks, ...)")
         if settings.storage_backend == "r2":
-            print("  - R2:       all keys under brains/<id>/ in the owner's bucket")
+            print("  - R2:       all keys under vaults/<id>/ in the owner's bucket")
         else:
-            print(f"  - Disk:     {brain_dir(data_dir, brain_id)}")
+            print(f"  - Disk:     {vault_dir(data_dir, vault_id)}")
         print(f"  - Sidecar:  {sidecar}")
-        print("\nThe brain row itself is removed — not just its content.")
+        print("\nThe vault row itself is removed — not just its content.")
         print("Use `great-minds reset` if you only want to clear content.")
         confirm = input("\nType 'yes' to continue: ")
         if confirm != "yes":
             print("Aborted.")
             return
 
-    asyncio.run(_run_delete_brain(brain_id, sidecar))
+    asyncio.run(_run_delete_vault(vault_id, sidecar))
 
 
 def cmd_reset(args: argparse.Namespace) -> None:
@@ -327,26 +327,26 @@ def cmd_reset(args: argparse.Namespace) -> None:
 
     if get_settings().storage_backend != "local":
         raise SystemExit(
-            "reset is local-backend only; R2 brain reset not yet implemented"
+            "reset is local-backend only; R2 vault reset not yet implemented"
         )
 
-    brain_id = args.brain_id
+    vault_id = args.vault_id
     data_dir = Path(args.data_dir)
-    brain_root = brain_dir(data_dir, brain_id)
+    vault_root = vault_dir(data_dir, vault_id)
 
     if not args.yes:
-        print(f"This will delete ALL content for brain {brain_id}:")
+        print(f"This will delete ALL content for vault {vault_id}:")
         print(
             "  - Database: documents, search_index, backlinks, tasks, source_proposals"
         )
-        subdir_display = ", ".join(str(brain_root / s) for s in BRAIN_SUBDIRS)
+        subdir_display = ", ".join(str(vault_root / s) for s in VAULT_SUBDIRS)
         print(f"  - Disk: {subdir_display}")
         confirm = input("\nType 'yes' to continue: ")
         if confirm != "yes":
             print("Aborted.")
             return
 
-    asyncio.run(_run_reset(brain_id, brain_root))
+    asyncio.run(_run_reset(vault_id, vault_root))
 
 
 def cmd_serve(args: argparse.Namespace) -> None:
@@ -375,7 +375,7 @@ def main() -> None:
         "compile", help="Compile raw texts into wiki articles"
     )
     p_compile.add_argument(
-        "brain_id", type=uuid.UUID, help="UUID of the brain to compile"
+        "vault_id", type=uuid.UUID, help="UUID of the vault to compile"
     )
     p_compile.add_argument(
         "--data-dir", default="/data", help="Data directory (default: /data)"
@@ -409,9 +409,9 @@ def main() -> None:
 
     # reset
     p_reset = subparsers.add_parser(
-        "reset", help="Wipe all content for a brain (keeps brain and user accounts)"
+        "reset", help="Wipe all content for a vault (keeps vault and user accounts)"
     )
-    p_reset.add_argument("brain_id", help="UUID of the brain to reset")
+    p_reset.add_argument("vault_id", help="UUID of the vault to reset")
     p_reset.add_argument(
         "--data-dir", default="/data", help="Data directory (default: /data)"
     )
@@ -420,20 +420,20 @@ def main() -> None:
     )
     p_reset.set_defaults(func=cmd_reset)
 
-    # delete-brain
+    # delete-vault
     p_delete = subparsers.add_parser(
-        "delete-brain",
-        help="Permanently delete a brain (row + content + sidecar). "
+        "delete-vault",
+        help="Permanently delete a vault (row + content + sidecar). "
         "For content-only clear, use `reset`.",
     )
-    p_delete.add_argument("brain_id", help="UUID of the brain to delete")
+    p_delete.add_argument("vault_id", help="UUID of the vault to delete")
     p_delete.add_argument(
         "--data-dir", default="/data", help="Data directory (default: /data)"
     )
     p_delete.add_argument(
         "-y", "--yes", action="store_true", help="Skip confirmation prompt"
     )
-    p_delete.set_defaults(func=cmd_delete_brain)
+    p_delete.set_defaults(func=cmd_delete_vault)
 
     # serve
     p_serve = subparsers.add_parser("serve", help="Start the API server")

@@ -2,7 +2,7 @@
 
 from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from great_minds.core.users.models import User
@@ -26,3 +26,17 @@ class UserRepository:
     async def get_by_id(self, user_id: UUID) -> User | None:
         result = await self.session.execute(select(User).where(User.id == user_id))
         return result.scalar_one_or_none()
+
+    async def set_r2_bucket_name(self, user_id: UUID, bucket_name: str) -> None:
+        user = await self.get_by_id(user_id)
+        if user is None:
+            raise ValueError(f"User {user_id} not found")
+        user.r2_bucket_name = bucket_name
+        await self.session.flush()
+
+    async def delete(self, user_id: UUID) -> None:
+        """Drop the user row. Cascades to api_keys, refresh_tokens, memberships.
+
+        Caller commits.
+        """
+        await self.session.execute(delete(User).where(User.id == user_id))

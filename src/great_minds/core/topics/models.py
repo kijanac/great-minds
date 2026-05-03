@@ -22,30 +22,27 @@ from great_minds.core.db import Base
 
 class TopicORM(Base):
     __tablename__ = "topics"
-    __table_args__ = (UniqueConstraint("brain_id", "slug"),)
+    __table_args__ = (UniqueConstraint("vault_id", "slug"),)
 
     topic_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True)
-    brain_id: Mapped[uuid.UUID] = mapped_column(
+    vault_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True),
-        ForeignKey("brains.id", ondelete="CASCADE"),
-        nullable=False,
+        ForeignKey("vaults.id", ondelete="CASCADE"),
         index=True,
     )
-    slug: Mapped[str] = mapped_column(Text, nullable=False)
-    title: Mapped[str] = mapped_column(Text, nullable=False)
-    description: Mapped[str] = mapped_column(Text, nullable=False)
-    article_status: Mapped[str] = mapped_column(
-        Text, nullable=False, server_default="no_article"
-    )
-    compiled_from_hash: Mapped[str | None] = mapped_column(Text, nullable=True)
-    rendered_from_hash: Mapped[str | None] = mapped_column(Text, nullable=True)
-    supersedes: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
-    superseded_by: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
+    slug: Mapped[str] = mapped_column(Text)
+    title: Mapped[str] = mapped_column(Text)
+    description: Mapped[str] = mapped_column(Text)
+    article_status: Mapped[str] = mapped_column(Text, server_default="no_article")
+    compiled_from_hash: Mapped[str | None] = mapped_column(Text)
+    rendered_from_hash: Mapped[str | None] = mapped_column(Text)
+    supersedes: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))
+    superseded_by: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))
     created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now(), nullable=False
+        DateTime(timezone=True), server_default=func.now()
     )
     updated_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now(), nullable=False
+        DateTime(timezone=True), server_default=func.now()
     )
 
 
@@ -88,5 +85,5 @@ class TopicRelatedORM(Base):
         ForeignKey("topics.topic_id", ondelete="CASCADE"),
         primary_key=True,
     )
-    shared_ideas: Mapped[int] = mapped_column(Integer, nullable=False)
-    jaccard: Mapped[float] = mapped_column(Double, nullable=False)
+    shared_ideas: Mapped[int] = mapped_column(Integer)
+    jaccard: Mapped[float] = mapped_column(Double)

@@ -16,5 +16,5 @@ class CostBreakdownItem(BaseModel):
 class CostAggregateResponse(BaseModel):
     total_usd: Decimal
     event_count: int
-    by_brain: list[CostBreakdownItem]
+    by_vault: list[CostBreakdownItem]
     by_event_type: list[CostBreakdownItem]

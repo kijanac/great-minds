@@ -17,7 +17,7 @@ class LlmCostEvent(BaseModel):
     id: uuid.UUID
     created_at: datetime
     user_id: uuid.UUID | None
-    brain_id: uuid.UUID | None
+    vault_id: uuid.UUID | None
     event_type: str
     cost_usd: Decimal
     correlation_id: str | None

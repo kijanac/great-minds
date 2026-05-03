@@ -5,8 +5,8 @@ from datetime import UTC, datetime
 from pathlib import Path
 from uuid import UUID
 
-from great_minds.core.brains.config import load_config
-from great_minds.core.brains.schemas import Brain
+from great_minds.core.vaults.config import load_config
+from great_minds.core.vaults.schemas import Vault
 from great_minds.core.compile_intents.repository import CompileIntentRepository
 from great_minds.core.documents.service import DocumentService
 from great_minds.core.documents.builder import build_document
@@ -49,7 +49,7 @@ class ProposalService:
 
     async def create(
         self,
-        brain_id: UUID,
+        vault_id: UUID,
         user_id: UUID,
         storage: Storage,
         content: str,
@@ -71,7 +71,7 @@ class ProposalService:
         rendered = build_document(config, content, content_type, **kwargs)
 
         return await self._stage_and_persist(
-            brain_id=brain_id,
+            vault_id=vault_id,
             user_id=user_id,
             content_type=content_type,
             title=title,
@@ -82,7 +82,7 @@ class ProposalService:
 
     async def create_session_promotion(
         self,
-        brain_id: UUID,
+        vault_id: UUID,
         user_id: UUID,
         storage: Storage,
         *,
@@ -103,7 +103,7 @@ class ProposalService:
         dest = session_exchange_path(exchange.exId)
 
         return await self._stage_and_persist(
-            brain_id=brain_id,
+            vault_id=vault_id,
             user_id=user_id,
             content_type="sessions",
             title=title,
@@ -115,7 +115,7 @@ class ProposalService:
     async def _stage_and_persist(
         self,
         *,
-        brain_id: UUID,
+        vault_id: UUID,
         user_id: UUID,
         content_type: str,
         title: str | None,
@@ -124,7 +124,7 @@ class ProposalService:
         rendered: str,
     ) -> SourceProposal:
         proposal = await self.repo.create(
-            brain_id=brain_id,
+            vault_id=vault_id,
             user_id=user_id,
             content_type=content_type,
             title=title,
@@ -144,32 +144,32 @@ class ProposalService:
         await self.repo.refresh(proposal)
         return proposal
 
-    async def list_for_brain(
+    async def list_for_vault(
         self,
-        brain_id: UUID,
+        vault_id: UUID,
         *,
         status: ProposalStatus | None = None,
         limit: int = 50,
         offset: int = 0,
     ) -> list[SourceProposal]:
-        return await self.repo.list_for_brain(
-            brain_id, status=status, limit=limit, offset=offset
+        return await self.repo.list_for_vault(
+            vault_id, status=status, limit=limit, offset=offset
         )
 
-    async def list_for_brain_page(
+    async def list_for_vault_page(
         self,
-        brain_id: UUID,
+        vault_id: UUID,
         *,
         pagination: PageParams,
         status: ProposalStatus | None = None,
     ) -> Page[Proposal]:
-        proposals = await self.repo.list_for_brain(
-            brain_id,
+        proposals = await self.repo.list_for_vault(
+            vault_id,
             status=status,
             limit=pagination.limit,
             offset=pagination.offset,
         )
-        total = await self.repo.count_for_brain(brain_id, status=status)
+        total = await self.repo.count_for_vault(vault_id, status=status)
         return Page(
             items=[Proposal.model_validate(proposal) for proposal in proposals],
             pagination=PageInfo(
@@ -179,20 +179,20 @@ class ProposalService:
             ),
         )
 
-    async def get(self, proposal_id: UUID, brain_id: UUID) -> SourceProposal | None:
-        return await self.repo.get(proposal_id, brain_id)
+    async def get(self, proposal_id: UUID, vault_id: UUID) -> SourceProposal | None:
+        return await self.repo.get(proposal_id, vault_id)
 
     async def find_pending_for_dest(
-        self, brain_id: UUID, dest_path: str
+        self, vault_id: UUID, dest_path: str
     ) -> SourceProposal | None:
-        return await self.repo.find_pending_for_dest(brain_id, dest_path)
+        return await self.repo.find_pending_for_dest(vault_id, dest_path)
 
     async def review(
         self,
         proposal: SourceProposal,
         reviewer_id: UUID,
         new_status: ProposalStatus,
-        brain: Brain,
+        vault: Vault,
         storage: Storage,
     ) -> SourceProposal:
         proposal.status = new_status
@@ -200,7 +200,7 @@ class ProposalService:
         proposal.reviewed_at = datetime.now(UTC)
 
         if new_status == ProposalStatus.APPROVED:
-            await self._approve(proposal, brain, storage)
+            await self._approve(proposal, vault, storage)
 
         if new_status == ProposalStatus.REJECTED:
             self._reject(proposal)
@@ -212,23 +212,23 @@ class ProposalService:
     async def _approve(
         self,
         proposal: SourceProposal,
-        brain: Brain,
+        vault: Vault,
         storage: Storage,
     ) -> None:
         """Write staged content to dest_path, index, and dispatch a compile."""
         rendered = Path(proposal.storage_path).read_text(encoding="utf-8")
         await storage.write(proposal.dest_path, rendered)
         await self.doc_service.index_raw_doc(
-            brain.id, proposal.dest_path, rendered
+            vault.id, proposal.dest_path, rendered
         )
 
         intent_repo = CompileIntentRepository(self.repo.session)
-        intent = await intent_repo.upsert_pending(brain.id)
+        intent = await intent_repo.upsert_pending(vault.id)
         if intent is not None:
             log_event(
                 "intent_created",
                 intent_id=str(intent.id),
-                brain_id=str(brain.id),
+                vault_id=str(vault.id),
                 trigger="proposal_approved",
             )
 

@@ -2,7 +2,7 @@
 
 Scope is deliberately downstream-only — visibility, not billing. The
 system does not enforce quotas, charge customers, or rate-limit on
-spend. The table exists so questions like "what has this brain cost
+spend. The table exists so questions like "what has this vault cost
 over the last month" can hit a real table instead of mining logs.
 
 Wide_event (in core.telemetry) accumulates per-LLM-call cost into a

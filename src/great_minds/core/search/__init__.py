@@ -7,7 +7,7 @@ Public surface:
 - ``Chunk`` / ``ChunkScore`` / ``SearchResult`` — pydantic schemas.
 - ``rebuild_raw_index`` / ``rebuild_wiki_index`` — orchestration entry points.
 - ``count_chunks_by_prefix`` — diagnostic count used by publish's compile log.
-- ``search`` — hybrid retrieval across brains.
+- ``search`` — hybrid retrieval across vaults.
 - ``_truncate_and_normalize`` — MRL + L2-normalize helper shared with extract.
 """
 

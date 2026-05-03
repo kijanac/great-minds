@@ -1,18 +1,18 @@
 import { useState, type ReactNode } from "react";
 import { Home, X } from "lucide-react";
 
-import type { BrainConfig, BrainDetail, Membership } from "@/api/brains";
+import type { VaultConfig, VaultDetail, Membership } from "@/api/vaults";
 import {
-  BrainConfigForm,
-  type BrainConfigFormSubmit,
-} from "@/components/brain-config-form";
+  VaultConfigForm,
+  type VaultConfigFormSubmit,
+} from "@/components/vault-config-form";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 
 interface ProjectSettingsProps {
-  project: BrainDetail | null;
+  project: VaultDetail | null;
   members: Membership[];
-  config: BrainConfig | null;
+  config: VaultConfig | null;
   isOwner: boolean;
   loading: boolean;
   proposalsSlot: ReactNode;
@@ -63,7 +63,7 @@ export function ProjectSettings({
     }
   }
 
-  async function handleSaveConfig(data: BrainConfigFormSubmit) {
+  async function handleSaveConfig(data: VaultConfigFormSubmit) {
     setSavingConfig(true);
     try {
       await onSaveConfig(data.thematic_hint);
@@ -167,7 +167,7 @@ export function ProjectSettings({
                   <h2 className="font-mono text-[length:var(--text-chrome)] tracking-[0.14em] text-gold-muted uppercase mb-4">
                     configuration
                   </h2>
-                  <BrainConfigForm
+                  <VaultConfigForm
                     mode="edit"
                     initialThematicHint={config.thematic_hint}
                     submitting={savingConfig}

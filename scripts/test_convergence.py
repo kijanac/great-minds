@@ -47,17 +47,17 @@ class _MockTopicRepo:
     def __init__(self, by_slug: dict[str, Topic]) -> None:
         self._by_slug = by_slug
 
-    async def get_by_slug(self, brain_id: UUID, slug: str) -> Topic | None:
+    async def get_by_slug(self, vault_id: UUID, slug: str) -> Topic | None:
         return self._by_slug.get(slug)
 
 
 async def test_slug_continuity() -> None:
     """Existing slug → reuses topic_id; new slug → fresh uuid7, is_new=True."""
-    brain_id = uuid7()
+    vault_id = uuid7()
     existing_topic_id = uuid7()
     existing = Topic(
         topic_id=existing_topic_id,
-        brain_id=brain_id,
+        vault_id=vault_id,
         slug="existing-slug",
         title="Existing",
         description="d",
@@ -83,7 +83,7 @@ async def test_slug_continuity() -> None:
     ]
 
     validated = await _assign_topic_ids(
-        brain_id=brain_id,
+        vault_id=vault_id,
         repo=repo,
         canonicals=canonicals,
         local_by_id={},
@@ -204,7 +204,7 @@ async def test_subsumed_ideas_resolved_deterministically() -> None:
     """Given same local topics, _assign_topic_ids produces identical
     subsumed_idea_ids (order-stable via sort-by-str).
     """
-    brain_id = uuid7()
+    vault_id = uuid7()
     repo = _MockTopicRepo({})
 
     lt1_id, lt2_id = uuid7(), uuid7()
@@ -237,10 +237,10 @@ async def test_subsumed_ideas_resolved_deterministically() -> None:
     )
 
     run_a = await _assign_topic_ids(
-        brain_id=brain_id, repo=repo, canonicals=[canonical], local_by_id=local_by_id
+        vault_id=vault_id, repo=repo, canonicals=[canonical], local_by_id=local_by_id
     )
     run_b = await _assign_topic_ids(
-        brain_id=brain_id, repo=repo, canonicals=[canonical], local_by_id=local_by_id
+        vault_id=vault_id, repo=repo, canonicals=[canonical], local_by_id=local_by_id
     )
     assert run_a[0].subsumed_idea_ids == run_b[0].subsumed_idea_ids
     assert set(run_a[0].subsumed_idea_ids) == {i1, i2, i3, i4}

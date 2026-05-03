@@ -22,7 +22,7 @@ class Topic(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     topic_id: UUID
-    brain_id: UUID
+    vault_id: UUID
     slug: str
     title: str
     description: str
@@ -56,7 +56,7 @@ class ReduceOutput(BaseModel):
 
 
 class TopicLink(BaseModel):
-    """A directed edge between two topics in a brain's link graph."""
+    """A directed edge between two topics in a vault's link graph."""
 
     source_topic_id: UUID
     target_topic_id: UUID

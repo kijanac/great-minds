@@ -9,11 +9,11 @@
 5. **Batch-agnosticism is a structural property (within a cache snapshot).** Given a cache C recording the LLM's outputs for corpus state S, any incremental compile drawing from a subset of C produces the same canonical topics as a full compile over C. Convergence across independent LLM passes is not claimed — nor achievable — because extract/map/reduce/render are stochastic. Identity stability across compiles comes from slug continuity for topics and from the cache returning recorded outputs for everything below the LLM surfaces. UUIDs themselves are opaque identifiers; they carry no semantic content.
 6. **Stochastic surfaces are bounded and named.** Exactly four LLM-call types: extract, map, reduce, render. Everything else is mechanical.
 7. **Raw markdown is immutable.** User feedback and lint findings re-enter the pipeline as new source documents.
-8. **Per-brain configuration shapes the pipeline.** The `kind` taxonomy and the thematic-schema hint to the reducer are declared at brain creation. Defaults exist; overrides are cheap.
+8. **Per-vault configuration shapes the pipeline.** The `kind` taxonomy and the thematic-schema hint to the reducer are declared at vault creation. Defaults exist; overrides are cheap.
 
-## Per-brain configuration
+## Per-vault configuration
 
-Declared at brain creation, stored alongside the brain:
+Declared at vault creation, stored alongside the vault:
 
 ```yaml
 kinds:
@@ -36,7 +36,7 @@ thematic_hint: |
 | table | authoritative | purpose |
 |---|---|---|
 | `documents` | Postgres | one row per on-disk file — both ingested raw (`doc_kind=raw`) and rendered wiki articles (`doc_kind=wiki`); title, doc_metadata, precis. Raw rows are written by ingest + updated by extract; wiki rows are written by render (precis = topic.description). Topics is the editorial plan; documents is the artifact metadata index. |
-| `source_cards` (`.compile/<brain>/source_cards.jsonl`) | JSONL on disk | per-document extraction output: ideas, anchors |
+| `source_cards` (`.compile/<vault>/source_cards.jsonl`) | JSONL on disk | per-document extraction output: ideas, anchors |
 | `idea_embeddings` | Postgres (pgvector) | one vector per idea; used for partition |
 | `topics` | Postgres | canonical theme registry: slug, title, description, lifecycle |
 | `topic_membership` | Postgres | derived: `(topic_id, idea_id)` edges |
@@ -52,7 +52,7 @@ The `concepts` table and its associated code (`distiller.py` clustering, `concep
 ```
 idea_id           uuid7 (minted at extract time; opaque)
 document_id       uuid
-kind              one of brain's configured kinds (fallback: other)
+kind              one of vault's configured kinds (fallback: other)
 label             short canonical name as it appears in this doc
 description       one-sentence description of what this is, as treated in this doc
 anchors           list of {anchor_id, claim, quote}
@@ -66,8 +66,8 @@ Idea rows are rewritten on every extract re-run for a document: delete-then-inse
 
 ```
 topic_id             uuid7 (minted fresh, stabilized via slug continuity)
-brain_id             uuid
-slug                 kebab-case, unique within brain
+vault_id             uuid
+slug                 kebab-case, unique within vault
 title                human-readable theme title
 description          2-3 sentences describing what this topic covers
 article_status       no_article | rendered | needs_revision | archived
@@ -105,7 +105,7 @@ Raw-doc chunking gives the agent RAG access to primary sources.
 ### Phase 1 — extract (LLM, one call per document)
 
 Per document (cache key: `sha256(doc_content)`):
-- Single LLM call reads raw doc + source_type + brain's kinds config
+- Single LLM call reads raw doc + source_type + vault's kinds config
 - Output: `title`, `doc_metadata` (genre, tags, tradition, interlocutors), `precis` (2-3 sentences), `ideas[]` (claims + anchors), `anchors[]` (verbatim quotes)
 - Write to `source_cards.jsonl`; write `documents` row with title + metadata + precis
 - Embed ideas (`qwen3-embedding-8b` on `label + description`), store in `idea_embeddings`
@@ -144,7 +144,7 @@ Union `subsumed_idea_ids` on merge. No cosine/embedding signal — exact matches
 **2d. Reduce (LLM, one call).** Cache key: `sha256(sorted local topic ids + their hashes)`.
 
 Prompt:
-- Brain's `thematic_hint` prepended
+- Vault's `thematic_hint` prepended
 - Reads all pre-merged local topics at once
 - Produces the **canonical topic registry** for this compile
 - Also produces `link_targets[]` per canonical topic
@@ -218,7 +218,7 @@ The split: `topic_links` is topic-level intent (from reduce); `backlinks` is art
 
 - Generate `wiki/index.md`: topic list with title + description
 - Generate `raw/index.md`: doc list with title + precis + doc_metadata
-- Append compile entry to `.compile/<brain>/log.md`: timestamp, topic counts, diff vs. prior compile
+- Append compile entry to `.compile/<vault>/log.md`: timestamp, topic counts, diff vs. prior compile
 
 ## Incremental compilation
 
@@ -274,7 +274,7 @@ Everything else mechanical. Estimated cost per 10K-doc compile: $17 budget confi
 | `concepts` table + `concept_repository.py` + clustering in `distiller.py` | retired |
 | 6 phases (extract → distill → render → crosslink → index → lint) | 7 phases (ingest → extract → abstract → derive → render → verify → publish); lint unchanged as on-demand |
 | `kind` at article level | gone (idea-level only) |
-| `kind` taxonomy hardcoded | per-brain config |
+| `kind` taxonomy hardcoded | per-vault config |
 | Fuzzy-match crosslinker | replaced by intentional authored links verified mechanically |
 | `[[wikilink]]` style (if any) | `[title](wiki/<slug>.md)` markdown style throughout |
 | Per-concept article | per-topic article; ideas are many-to-many |
@@ -292,4 +292,4 @@ Everything else mechanical. Estimated cost per 10K-doc compile: $17 budget confi
 5. **Token trimming of ideas for map** — does dropping anchors from map's prompt cost thematic judgment, or not.
 6. **Whether `link_targets` should be mechanically seeded** (top-K by shared ideas) before reduce, or left fully to the LLM.
 7. **Hierarchical reduce threshold** — at what local topic count aggressive pre-merge stops being sufficient.
-8. **Brain-level kind taxonomy defaults** — what's a good default set that covers most domains.
+8. **Vault-level kind taxonomy defaults** — what's a good default set that covers most domains.

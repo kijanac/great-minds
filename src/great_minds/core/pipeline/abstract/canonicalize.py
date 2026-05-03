@@ -24,7 +24,7 @@ import hashlib
 import logging
 from uuid import UUID
 
-from great_minds.core.brains.prompts import load_prompt
+from great_minds.core.vaults.prompts import load_prompt
 from great_minds.core.llm.client import json_llm_call
 from great_minds.core.llm import REDUCE_MODEL
 from great_minds.core.pipeline.abstract.schemas import LocalTopic
@@ -49,7 +49,7 @@ async def run(
     if not local_topics:
         log_event(
             "pipeline.canonicalize_skipped",
-            brain_id=str(ctx.brain_id),
+            vault_id=str(ctx.vault_id),
             reason="no_local_topics",
         )
         return []
@@ -81,7 +81,7 @@ async def run(
         )
         log_event(
             "pipeline.canonicalize_cached",
-            brain_id=str(ctx.brain_id),
+            vault_id=str(ctx.vault_id),
             canonical_count=len(canonical_topics),
             orphan_count=orphans,
         )
@@ -126,7 +126,7 @@ async def run(
     )
     log_event(
         "pipeline.canonicalize_completed",
-        brain_id=str(ctx.brain_id),
+        vault_id=str(ctx.vault_id),
         input_local_topics=len(local_topics),
         output_canonical_topics=len(canonical_topics),
         orphan_count=orphans,
@@ -167,7 +167,7 @@ def _render_prompt(
     hint_block = ""
     if thematic_hint.strip():
         hint_block = (
-            "The wiki's editorial lens for this brain:\n\n"
+            "The wiki's editorial lens for this vault:\n\n"
             f"{thematic_hint.strip()}\n\n"
         )
     return prompt_template.replace("{thematic_hint_block}", hint_block).replace(

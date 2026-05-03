@@ -46,7 +46,7 @@ class Idea(BaseModel):
 class DocMetadata(BaseModel):
     """Document-level metadata extracted alongside ideas.
 
-    Known fields (genre/tags/tradition/interlocutors) are typed; per-brain
+    Known fields (genre/tags/tradition/interlocutors) are typed; per-vault
     config may declare additional fields which land in the extra bag.
     """
 
@@ -74,7 +74,7 @@ class IdeaEmbedding(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     idea_id: UUID
-    brain_id: UUID
+    vault_id: UUID
     document_id: UUID
     kind: str
     label: str

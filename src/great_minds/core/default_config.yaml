@@ -1,4 +1,4 @@
-name: "Personal Brain"
+name: "Personal Vault"
 
 # Idea-level kind taxonomy. Constrains what the extract LLM can classify
 # ideas as; "other" is always accepted as fallback.

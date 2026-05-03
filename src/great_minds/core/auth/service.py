@@ -54,7 +54,7 @@ class AuthService:
     async def verify_code(self, email: str, code: str) -> tuple[UUID, str, str]:
         """Verify auth code, ensure user row exists, mint tokens.
 
-        Returns ``(user_id, access_token, refresh_token)``. Brain
+        Returns ``(user_id, access_token, refresh_token)``. Vault
         provisioning is the route's job, not auth's.
         """
         email = normalize_email(email)

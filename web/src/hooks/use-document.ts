@@ -1,13 +1,13 @@
 import { useQuery } from "@tanstack/react-query";
 
 import { readDocument } from "@/api/doc";
-import { useActiveBrainId } from "@/hooks/use-brain";
+import { useActiveVaultId } from "@/hooks/use-vault";
 
 export function useDocument(path: string | null) {
-  const brainId = useActiveBrainId();
+  const vaultId = useActiveVaultId();
   return useQuery({
-    queryKey: ["brain", brainId, "doc", path],
+    queryKey: ["vault", vaultId, "doc", path],
     queryFn: ({ signal }) => readDocument(path!, signal),
-    enabled: !!path && !!brainId,
+    enabled: !!path && !!vaultId,
   });
 }

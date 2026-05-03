@@ -8,7 +8,7 @@ import {
 } from "react";
 import type { ReactNode } from "react";
 import { decodeJwt } from "jose";
-import { clearTokens, ensureBrainId } from "@/api/client";
+import { clearTokens, ensureVaultId } from "@/api/client";
 import { queryClient } from "@/lib/query-client";
 
 function isTokenValid(token: string | null): boolean {
@@ -62,7 +62,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const userId = isAuthenticated ? getUserIdFromToken() : null;
 
   useEffect(() => {
-    if (isAuthenticated) ensureBrainId();
+    if (isAuthenticated) ensureVaultId();
   }, [isAuthenticated]);
 
   const login = useCallback(() => {

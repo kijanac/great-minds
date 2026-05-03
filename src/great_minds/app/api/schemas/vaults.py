@@ -3,41 +3,41 @@ from datetime import datetime
 
 from pydantic import BaseModel
 
-from great_minds.core.brains.models import MemberRole
+from great_minds.core.vaults.models import MemberRole
 
 
-class BrainOverview(BaseModel):
+class VaultOverview(BaseModel):
     id: uuid.UUID
     name: str
     role: MemberRole
 
 
-class Brain(BrainOverview):
+class Vault(VaultOverview):
     owner_id: uuid.UUID
     created_at: datetime
 
 
-class BrainDetail(Brain):
+class VaultDetail(Vault):
     member_count: int
     article_count: int
 
 
-class BrainCreate(BaseModel):
+class VaultCreate(BaseModel):
     name: str
     thematic_hint: str | None = None
     kinds: list[str] | None = None
 
 
-class BrainUpdate(BaseModel):
+class VaultUpdate(BaseModel):
     name: str | None = None
 
 
-class BrainConfigUpdate(BaseModel):
+class VaultConfigUpdate(BaseModel):
     thematic_hint: str | None = None
     kinds: list[str] | None = None
 
 
-class BrainConfig(BaseModel):
+class VaultConfig(BaseModel):
     thematic_hint: str
     kinds: list[str]
 

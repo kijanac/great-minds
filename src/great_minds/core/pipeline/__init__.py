@@ -53,7 +53,7 @@ async def run(ctx: PipelineContext) -> None:
     if not validated:
         log_event(
             "pipeline.compile_completed_early",
-            brain_id=str(ctx.brain_id),
+            vault_id=str(ctx.vault_id),
             reason="no_validated_topics",
         )
         return
@@ -63,4 +63,4 @@ async def run(ctx: PipelineContext) -> None:
     await verify.run(ctx)
     await publish.run(ctx)
 
-    log_event("pipeline.compile_completed", brain_id=str(ctx.brain_id))
+    log_event("pipeline.compile_completed", vault_id=str(ctx.vault_id))

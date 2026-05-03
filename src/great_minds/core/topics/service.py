@@ -17,14 +17,14 @@ class TopicService:
     def __init__(self, repository: TopicRepository) -> None:
         self.repo = repository
 
-    async def list_rendered(self, brain_id: UUID) -> list[Topic]:
-        return await self.repo.list_by_status(brain_id, ArticleStatus.RENDERED)
+    async def list_rendered(self, vault_id: UUID) -> list[Topic]:
+        return await self.repo.list_by_status(vault_id, ArticleStatus.RENDERED)
 
-    async def list_archived(self, brain_id: UUID) -> list[Topic]:
-        return await self.repo.list_by_status(brain_id, ArticleStatus.ARCHIVED)
+    async def list_archived(self, vault_id: UUID) -> list[Topic]:
+        return await self.repo.list_by_status(vault_id, ArticleStatus.ARCHIVED)
 
-    async def get_by_slug(self, brain_id: UUID, slug: str) -> Topic | None:
-        return await self.repo.get_by_slug(brain_id, slug)
+    async def get_by_slug(self, vault_id: UUID, slug: str) -> Topic | None:
+        return await self.repo.get_by_slug(vault_id, slug)
 
     async def get_by_id(self, topic_id: UUID) -> Topic | None:
         return await self.repo.get_by_id(topic_id)

@@ -23,12 +23,12 @@ class LlmCostService:
         self,
         *,
         user_id: uuid.UUID | None = None,
-        brain_id: uuid.UUID | None = None,
+        vault_id: uuid.UUID | None = None,
         since: datetime | None = None,
         until: datetime | None = None,
     ) -> CostAggregate:
         return await self.repo.aggregate(
-            user_id=user_id, brain_id=brain_id, since=since, until=until
+            user_id=user_id, vault_id=vault_id, since=since, until=until
         )
 
 
@@ -36,7 +36,7 @@ async def record_wide_event_cost(
     session: AsyncSession,
     *,
     user_id: uuid.UUID | None,
-    brain_id: uuid.UUID | None,
+    vault_id: uuid.UUID | None,
 ) -> None:
     """Persist the current wide_event's accumulated cost as one row.
 
@@ -57,7 +57,7 @@ async def record_wide_event_cost(
     repo = LlmCostEventRepository(session)
     await repo.record(
         user_id=user_id,
-        brain_id=brain_id,
+        vault_id=vault_id,
         event_type=ctx.get("event_type", "unknown"),
         cost_usd=Decimal(str(raw_cost)),
         correlation_id=ctx.get("correlation_id"),

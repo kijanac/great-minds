@@ -7,8 +7,8 @@ from fastapi import APIRouter
 from fastapi.responses import StreamingResponse
 
 from great_minds.app.api.dependencies import (
-    BrainServiceDep,
-    BrainStorageDep,
+    VaultServiceDep,
+    VaultStorageDep,
     CurrentUser,
     DocumentServiceDep,
     LlmGuard,
@@ -22,10 +22,10 @@ router = APIRouter(prefix="/query", tags=["query"])
 @router.post("")
 async def query(
     req: schemas.QueryRequest,
-    brain_id: UUID,
-    storage: BrainStorageDep,
+    vault_id: UUID,
+    storage: VaultStorageDep,
     user: CurrentUser,
-    brain_service: BrainServiceDep,
+    vault_service: VaultServiceDep,
     doc_service: DocumentServiceDep,
     _llm: LlmGuard,
 ) -> StreamingResponse:
@@ -37,8 +37,8 @@ async def query(
       - ``done``:   final marker with sources_consulted summary
       - ``error``:  unrecoverable error before/during the stream
     """
-    brain = await brain_service.get_brain(brain_id)
-    source = querier.QuerySource(storage=storage, label=brain.name, brain_id=brain_id)
+    vault = await vault_service.get_vault(vault_id)
+    source = querier.QuerySource(storage=storage, label=vault.name, vault_id=vault_id)
 
     async def event_generator():
         async for event in querier.run_query(

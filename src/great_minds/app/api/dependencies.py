@@ -10,7 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from great_minds.core.auth import AuthRepository, AuthService
 from great_minds.core.authz import Forbidden
-from great_minds.core.brains import BrainAccess, BrainRepository, BrainService
+from great_minds.core.vaults import VaultAccess, VaultRepository, VaultService
 from great_minds.core.compile_intents import CompileIntentRepository
 from great_minds.core.crypto import decode_access_token
 from great_minds.core.db import get_session
@@ -66,11 +66,11 @@ def get_user_repository(session: SessionDep) -> UserRepository:
 UserRepositoryDep = Annotated[UserRepository, Depends(get_user_repository)]
 
 
-def get_brain_repository(session: SessionDep) -> BrainRepository:
-    return BrainRepository(session)
+def get_vault_repository(session: SessionDep) -> VaultRepository:
+    return VaultRepository(session)
 
 
-BrainRepositoryDep = Annotated[BrainRepository, Depends(get_brain_repository)]
+VaultRepositoryDep = Annotated[VaultRepository, Depends(get_vault_repository)]
 
 
 def get_document_repository(session: SessionDep) -> DocumentRepository:
@@ -129,15 +129,23 @@ def get_ingest_service(doc_service: DocumentServiceDep) -> IngestService:
 IngestServiceDep = Annotated[IngestService, Depends(get_ingest_service)]
 
 
-def get_brain_service(repo: BrainRepositoryDep) -> BrainService:
-    return BrainService(repo)
+def get_vault_service(
+    repo: VaultRepositoryDep,
+    user_repo: UserRepositoryDep,
+    settings: SettingsDep,
+) -> VaultService:
+    return VaultService(repo, user_repo, settings)
 
 
-BrainServiceDep = Annotated[BrainService, Depends(get_brain_service)]
+VaultServiceDep = Annotated[VaultService, Depends(get_vault_service)]
 
 
-def get_user_service(user_repo: UserRepositoryDep) -> UserService:
-    return UserService(user_repo)
+def get_user_service(
+    user_repo: UserRepositoryDep,
+    vault_service: VaultServiceDep,
+    settings: SettingsDep,
+) -> UserService:
+    return UserService(user_repo, vault_service, settings)
 
 
 UserServiceDep = Annotated[UserService, Depends(get_user_service)]
@@ -241,57 +249,57 @@ CurrentUser = Annotated[User, Depends(get_current_user)]
 
 
 # ---------------------------------------------------------------------------
-# Brain-scoped dependencies (path-based)
+# Vault-scoped dependencies (path-based)
 # ---------------------------------------------------------------------------
 
 
-def get_brain_access(repo: BrainRepositoryDep) -> BrainAccess:
-    return BrainAccess(repo)
+def get_vault_access(repo: VaultRepositoryDep) -> VaultAccess:
+    return VaultAccess(repo)
 
 
-BrainAccessDep = Annotated[BrainAccess, Depends(get_brain_access)]
+VaultAccessDep = Annotated[VaultAccess, Depends(get_vault_access)]
 
 
-async def require_brain_member(
-    brain_id: UUID,
+async def require_vault_member(
+    vault_id: UUID,
     user: CurrentUser,
-    access: BrainAccessDep,
+    access: VaultAccessDep,
 ) -> None:
-    """Raises 403 if user is not a member of this brain."""
+    """Raises 403 if user is not a member of this vault."""
     try:
-        await access.require_member(brain_id, user.id)
+        await access.require_member(vault_id, user.id)
     except Forbidden:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="Only brain members can perform this action",
+            detail="Only vault members can perform this action",
         )
 
 
-async def require_brain_owner(
-    brain_id: UUID,
+async def require_vault_owner(
+    vault_id: UUID,
     user: CurrentUser,
-    access: BrainAccessDep,
+    access: VaultAccessDep,
 ) -> None:
-    """Raises 403 if user is not the brain owner."""
+    """Raises 403 if user is not the vault owner."""
     try:
-        await access.require_owner(brain_id, user.id)
+        await access.require_owner(vault_id, user.id)
     except Forbidden:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="Only brain owners can perform this action",
+            detail="Only vault owners can perform this action",
         )
 
 
-BrainMemberGuard = Annotated[None, Depends(require_brain_member)]
-BrainOwnerGuard = Annotated[None, Depends(require_brain_owner)]
+VaultMemberGuard = Annotated[None, Depends(require_vault_member)]
+VaultOwnerGuard = Annotated[None, Depends(require_vault_owner)]
 
 
-async def get_brain_storage(
-    brain_id: UUID,
-    brain_service: BrainServiceDep,
-    _auth: BrainMemberGuard,
+async def get_vault_storage(
+    vault_id: UUID,
+    vault_service: VaultServiceDep,
+    _auth: VaultMemberGuard,
 ) -> Storage:
-    return brain_service.get_storage_by_id(brain_id)
+    return await vault_service.get_storage_by_id(vault_id)
 
 
-BrainStorageDep = Annotated[Storage, Depends(get_brain_storage)]
+VaultStorageDep = Annotated[Storage, Depends(get_vault_storage)]

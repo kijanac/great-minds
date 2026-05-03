@@ -18,7 +18,7 @@ export interface ProposalCreateInput {
 }
 
 export async function listProposals(
-  brainId: string,
+  vaultId: string,
   params?: { status?: ProposalStatus; limit?: number; offset?: number },
 ): Promise<ProposalList> {
   const query = new URLSearchParams();
@@ -26,26 +26,26 @@ export async function listProposals(
   if (params?.limit !== undefined) query.set("limit", String(params.limit));
   if (params?.offset !== undefined) query.set("offset", String(params.offset));
   const qs = query.toString();
-  const path = `/brains/${brainId}/proposals${qs ? `?${qs}` : ""}`;
+  const path = `/vaults/${vaultId}/proposals${qs ? `?${qs}` : ""}`;
   const res = await apiFetch(path);
   if (!res.ok) throw new Error("Failed to list proposals");
   return readJson(res, proposalListSchema);
 }
 
 export async function getProposal(
-  brainId: string,
+  vaultId: string,
   proposalId: string,
 ): Promise<Proposal> {
-  const res = await apiFetch(`/brains/${brainId}/proposals/${proposalId}`);
+  const res = await apiFetch(`/vaults/${vaultId}/proposals/${proposalId}`);
   if (!res.ok) throw new Error("Failed to fetch proposal");
   return readJson(res, proposalSchema);
 }
 
 export async function createProposal(
-  brainId: string,
+  vaultId: string,
   input: ProposalCreateInput,
 ): Promise<Proposal> {
-  const res = await apiFetch(`/brains/${brainId}/proposals`, {
+  const res = await apiFetch(`/vaults/${vaultId}/proposals`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(input),
@@ -55,11 +55,11 @@ export async function createProposal(
 }
 
 export async function reviewProposal(
-  brainId: string,
+  vaultId: string,
   proposalId: string,
   status: "approved" | "rejected",
 ): Promise<Proposal> {
-  const res = await apiFetch(`/brains/${brainId}/proposals/${proposalId}`, {
+  const res = await apiFetch(`/vaults/${vaultId}/proposals/${proposalId}`, {
     method: "PATCH",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ status }),

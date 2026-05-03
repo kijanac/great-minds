@@ -16,6 +16,7 @@ from great_minds.core.pagination import Page, PageInfo, PageParams
 from great_minds.core.tasks.models import TaskRecord
 from great_minds.core.tasks.repository import TaskRepository
 from great_minds.core.tasks.schemas import TaskDetail, TaskStatus
+from great_minds.core.telemetry import log_event
 
 log = logging.getLogger(__name__)
 
@@ -68,11 +69,53 @@ class TaskService:
         self.repo = repo
         self.absurd = absurd
 
+    async def spawn_bulk_ingest_from_staging(
+        self,
+        *,
+        vault_id: UUID,
+        files: list[dict],
+        content_type: str,
+        source_type: str,
+    ) -> TaskDetail:
+        """Spawn a bulk-ingest task that pulls from R2 ``staging/<vault>/<hash>``.
+
+        No idempotency_key: each /process call yields a fresh task. The
+        worker is idempotent at the document level via content-addressable
+        dest paths + ``batch_upsert`` ON CONFLICT, so retries are safe.
+        """
+        params: dict = {
+            "vault_id": str(vault_id),
+            "files": files,
+            "content_type": content_type,
+            "source_type": source_type,
+        }
+        result = await self.absurd.spawn(
+            "bulk_ingest_from_staging",
+            params,
+            max_attempts=2,
+        )
+        record = await self.repo.create(
+            cast(UUID, result["task_id"]),
+            vault_id,
+            "bulk_ingest_from_staging",
+            params,
+        )
+        await self.repo.session.commit()
+        log_event(
+            "bulk_ingest_from_staging_spawned",
+            task_id=str(record.id),
+            vault_id=str(vault_id),
+            file_count=len(files),
+            content_type=content_type,
+            source_type=source_type,
+        )
+        return await fetch_task_response(self.absurd, record)
+
     async def spawn_compile_for_intent(
         self,
         *,
         intent_id: UUID,
-        brain_id: UUID,
+        vault_id: UUID,
         data_dir: str,
         label: str,
     ) -> TaskDetail:
@@ -82,7 +125,7 @@ class TaskService:
         for the same intent — Absurd returns the same task each time.
         """
         params: dict[str, str] = {
-            "brain_id": str(brain_id),
+            "vault_id": str(vault_id),
             "data_dir": data_dir,
             "label": label,
         }
@@ -99,20 +142,20 @@ class TaskService:
         # actually returning str, SQLAlchemy will surface the mismatch
         # at insert time.
         record = await self.repo.create(
-            cast(UUID, result["task_id"]), brain_id, "compile", params
+            cast(UUID, result["task_id"]), vault_id, "compile", params
         )
         await self.repo.session.commit()
         log.info(
-            "compile_spawned task_id=%s brain_id=%s intent_id=%s",
+            "compile_spawned task_id=%s vault_id=%s intent_id=%s",
             record.id,
-            brain_id,
+            vault_id,
             intent_id,
         )
         return await fetch_task_response(self.absurd, record)
 
-    async def find_active_compile(self, brain_id: UUID) -> TaskDetail | None:
-        """Most recent compile task for this brain still in pending/running/sleeping."""
-        records = await self.repo.list_for_brain_by_type(brain_id, "compile")
+    async def find_active_compile(self, vault_id: UUID) -> TaskDetail | None:
+        """Most recent compile task for this vault still in pending/running/sleeping."""
+        records = await self.repo.list_for_vault_by_type(vault_id, "compile")
         for record in records:
             snapshot = await self.absurd.fetch_task_result(str(record.id))
             if snapshot is None:
@@ -121,13 +164,13 @@ class TaskService:
                 return await fetch_task_response(self.absurd, record)
         return None
 
-    async def list_for_brain(
-        self, brain_id: UUID, *, pagination: PageParams
+    async def list_for_vault(
+        self, vault_id: UUID, *, pagination: PageParams
     ) -> Page[TaskDetail]:
-        records = await self.repo.list_for_brain(
-            brain_id, limit=pagination.limit, offset=pagination.offset
+        records = await self.repo.list_for_vault(
+            vault_id, limit=pagination.limit, offset=pagination.offset
         )
-        total = await self.repo.count_for_brain(brain_id)
+        total = await self.repo.count_for_vault(vault_id)
         return Page(
             items=[await fetch_task_response(self.absurd, r) for r in records],
             pagination=PageInfo(
@@ -137,8 +180,8 @@ class TaskService:
             ),
         )
 
-    async def get(self, task_id: UUID, brain_id: UUID) -> TaskDetail | None:
-        record = await self.repo.get(task_id, brain_id)
+    async def get(self, task_id: UUID, vault_id: UUID) -> TaskDetail | None:
+        record = await self.repo.get(task_id, vault_id)
         if record is None:
             return None
         return await fetch_task_response(self.absurd, record)

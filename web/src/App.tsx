@@ -6,7 +6,7 @@ import { AppShell } from "@/components/app-shell";
 import { CornerMenuContainer } from "@/containers/corner-menu-container";
 import { AuthProvider, useAuth } from "@/lib/auth";
 import { queryClient } from "@/lib/query-client";
-import BrainNewPage from "@/pages/brain-new";
+import VaultNewPage from "@/pages/vault-new";
 import HomePage from "@/pages/home";
 import LoginPage from "@/pages/login";
 import DocPage, { docLoader } from "@/pages/doc";
@@ -54,7 +54,7 @@ const router = createBrowserRouter([
         element: <RequireAuth />,
         children: [
           { path: "/", element: <HomePage /> },
-          { path: "/brains/new", element: <BrainNewPage /> },
+          { path: "/vaults/new", element: <VaultNewPage /> },
           {
             path: "/doc/*",
             element: <DocPage />,

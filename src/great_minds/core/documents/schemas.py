@@ -106,7 +106,7 @@ class Document(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: uuid.UUID
-    brain_id: uuid.UUID
+    vault_id: uuid.UUID
     file_path: str
     body_hash: str
     compiled: bool

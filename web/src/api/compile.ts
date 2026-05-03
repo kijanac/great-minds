@@ -1,12 +1,12 @@
 import { z } from "zod";
 
-import { apiFetch, brainPath, readJson } from "./client";
+import { apiFetch, vaultPath, readJson } from "./client";
 
 export type IntentStatus = "pending" | "dispatched" | "satisfied";
 
 export interface CompileIntent {
   id: string;
-  brain_id: string;
+  vault_id: string;
   created_at: string;
   dispatched_at: string | null;
   dispatched_task_id: string | null;
@@ -16,7 +16,7 @@ export interface CompileIntent {
 
 const compileIntentSchema: z.ZodType<CompileIntent> = z.object({
   id: z.string(),
-  brain_id: z.string(),
+  vault_id: z.string(),
   created_at: z.string(),
   dispatched_at: z.string().nullable(),
   dispatched_task_id: z.string().nullable(),
@@ -25,7 +25,7 @@ const compileIntentSchema: z.ZodType<CompileIntent> = z.object({
 });
 
 export async function compile(): Promise<CompileIntent> {
-  const res = await apiFetch(brainPath("/compile"), {
+  const res = await apiFetch(vaultPath("/compile"), {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({}),
@@ -38,7 +38,7 @@ export async function compile(): Promise<CompileIntent> {
 }
 
 export async function getCompileIntent(intentId: string): Promise<CompileIntent> {
-  const res = await apiFetch(brainPath(`/compile/${intentId}`));
+  const res = await apiFetch(vaultPath(`/compile/${intentId}`));
   if (!res.ok) {
     const detail = await res.text();
     throw new Error(detail);

@@ -1,12 +1,12 @@
 import { z } from "zod";
 
 import {
-  brainOverviewListSchema,
-  brainOverviewSchema,
-  type BrainOverview,
+  vaultOverviewListSchema,
+  vaultOverviewSchema,
+  type VaultOverview,
 } from "./schemas";
 
-export type { BrainOverview } from "./schemas";
+export type { VaultOverview } from "./schemas";
 
 const API_BASE = import.meta.env.VITE_API_BASE || "/api";
 
@@ -27,8 +27,8 @@ function getRefreshToken(): string | null {
   return localStorage.getItem("refresh_token");
 }
 
-export function getBrainId(): string | null {
-  return localStorage.getItem("brain_id");
+export function getVaultId(): string | null {
+  return localStorage.getItem("vault_id");
 }
 
 function storeTokens(accessToken: string, refreshToken: string) {
@@ -36,15 +36,15 @@ function storeTokens(accessToken: string, refreshToken: string) {
   localStorage.setItem("refresh_token", refreshToken);
 }
 
-export function storeBrainId(brainId: string) {
-  localStorage.setItem("brain_id", brainId);
+export function storeVaultId(vaultId: string) {
+  localStorage.setItem("vault_id", vaultId);
   window.dispatchEvent(new Event("auth:changed"));
 }
 
 export function clearTokens() {
   localStorage.removeItem("access_token");
   localStorage.removeItem("refresh_token");
-  localStorage.removeItem("brain_id");
+  localStorage.removeItem("vault_id");
   window.dispatchEvent(new Event("auth:changed"));
 }
 
@@ -78,19 +78,19 @@ function refreshAccessToken(): Promise<string | null> {
   return refreshInFlight;
 }
 
-async function resolveDefaultBrain(): Promise<string> {
-  const res = await apiFetch("/brains");
-  if (!res.ok) throw new Error("Failed to fetch brains");
+async function resolveDefaultVault(): Promise<string> {
+  const res = await apiFetch("/vaults");
+  if (!res.ok) throw new Error("Failed to fetch vaults");
 
-  const brains = await readJson(res, brainOverviewListSchema);
-  if (!brains.items.length) throw new Error("No brains found");
-  return brains.items[0].id;
+  const vaults = await readJson(res, vaultOverviewListSchema);
+  if (!vaults.items.length) throw new Error("No vaults found");
+  return vaults.items[0].id;
 }
 
-export function brainPath(path: string): string {
-  const brainId = getBrainId();
-  if (!brainId) throw new Error("No brain selected");
-  return `/brains/${brainId}${path}`;
+export function vaultPath(path: string): string {
+  const vaultId = getVaultId();
+  if (!vaultId) throw new Error("No vault selected");
+  return `/vaults/${vaultId}${path}`;
 }
 
 export async function apiFetch(path: string, init?: RequestInit): Promise<Response> {
@@ -115,11 +115,11 @@ export async function apiFetch(path: string, init?: RequestInit): Promise<Respon
   return res;
 }
 
-export async function ensureBrainId(): Promise<void> {
-  if (getBrainId()) return;
+export async function ensureVaultId(): Promise<void> {
+  if (getVaultId()) return;
   if (!getAccessToken()) return;
-  const brainId = await resolveDefaultBrain();
-  storeBrainId(brainId);
+  const vaultId = await resolveDefaultVault();
+  storeVaultId(vaultId);
 }
 
 export async function loginWithCode(email: string, code: string): Promise<void> {
@@ -134,34 +134,34 @@ export async function loginWithCode(email: string, code: string): Promise<void> 
   storeTokens(data.access_token, data.refresh_token);
 
   try {
-    const brainId = await resolveDefaultBrain();
-    storeBrainId(brainId);
+    const vaultId = await resolveDefaultVault();
+    storeVaultId(vaultId);
   } catch {
     throw new Error("Signed in, but failed to load your workspace. Please refresh.");
   }
 }
 
-export async function fetchBrains(): Promise<BrainOverview[]> {
-  const res = await apiFetch("/brains");
-  if (!res.ok) throw new Error("Failed to fetch brains");
-  const parsed = await readJson(res, brainOverviewListSchema);
+export async function fetchVaults(): Promise<VaultOverview[]> {
+  const res = await apiFetch("/vaults");
+  if (!res.ok) throw new Error("Failed to fetch vaults");
+  const parsed = await readJson(res, vaultOverviewListSchema);
   return parsed.items;
 }
 
-export interface CreateBrainInput {
+export interface CreateVaultInput {
   name: string;
   thematic_hint?: string;
   kinds?: string[];
 }
 
-export async function createBrain(input: CreateBrainInput): Promise<BrainOverview> {
-  const res = await apiFetch("/brains", {
+export async function createVault(input: CreateVaultInput): Promise<VaultOverview> {
+  const res = await apiFetch("/vaults", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(input),
   });
   if (!res.ok) throw new Error("Failed to create project");
-  return readJson(res, brainOverviewSchema);
+  return readJson(res, vaultOverviewSchema);
 }
 
 export async function requestCode(email: string): Promise<void> {

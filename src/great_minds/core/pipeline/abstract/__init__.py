@@ -45,7 +45,7 @@ async def run(ctx: PipelineContext) -> list[ValidatedCanonicalTopic]:
     if not chunks:
         log_event(
             "pipeline.abstract_skipped",
-            brain_id=str(ctx.brain_id),
+            vault_id=str(ctx.vault_id),
             reason="no_chunks",
         )
         return []
@@ -61,7 +61,7 @@ async def run(ctx: PipelineContext) -> list[ValidatedCanonicalTopic]:
     enrich(validated_topics=len(validated))
     log_event(
         "pipeline.abstract_completed",
-        brain_id=str(ctx.brain_id),
+        vault_id=str(ctx.vault_id),
         chunks=len(chunks),
         local_topics=len(local_topics),
         merged_topics=len(merged_topics),

@@ -15,13 +15,13 @@ class TaskRepository:
         self.session = session
 
     async def create(
-        self, task_id: UUID, brain_id: UUID, task_type: str, params: dict
+        self, task_id: UUID, vault_id: UUID, task_type: str, params: dict
     ) -> TaskRecord:
         await self.session.execute(
             insert(TaskRecord)
             .values(
                 id=task_id,
-                brain_id=brain_id,
+                vault_id=vault_id,
                 type=task_type,
                 params=params,
                 created_at=datetime.now(UTC),
@@ -33,42 +33,42 @@ class TaskRepository:
             raise RuntimeError(f"TaskRecord {task_id} missing after upsert")
         return record
 
-    async def list_for_brain(
-        self, brain_id: UUID, limit: int = 50, offset: int = 0
+    async def list_for_vault(
+        self, vault_id: UUID, limit: int = 50, offset: int = 0
     ) -> list[TaskRecord]:
         rows = await self.session.execute(
             select(TaskRecord)
-            .where(TaskRecord.brain_id == brain_id)
+            .where(TaskRecord.vault_id == vault_id)
             .order_by(TaskRecord.created_at.desc())
             .offset(offset)
             .limit(limit)
         )
         return list(rows.scalars().all())
 
-    async def count_for_brain(self, brain_id: UUID) -> int:
+    async def count_for_vault(self, vault_id: UUID) -> int:
         return (
             await self.session.scalar(
-                select(func.count()).where(TaskRecord.brain_id == brain_id)
+                select(func.count()).where(TaskRecord.vault_id == vault_id)
             )
         ) or 0
 
-    async def get(self, task_id: UUID, brain_id: UUID) -> TaskRecord | None:
+    async def get(self, task_id: UUID, vault_id: UUID) -> TaskRecord | None:
         row = await self.session.execute(
             select(TaskRecord).where(
                 TaskRecord.id == task_id,
-                TaskRecord.brain_id == brain_id,
+                TaskRecord.vault_id == vault_id,
             )
         )
         return row.scalar_one_or_none()
 
-    async def list_for_brain_by_type(
-        self, brain_id: UUID, task_type: str, limit: int = 10
+    async def list_for_vault_by_type(
+        self, vault_id: UUID, task_type: str, limit: int = 10
     ) -> list[TaskRecord]:
-        """Most-recent-first list of tasks of a given type for a brain."""
+        """Most-recent-first list of tasks of a given type for a vault."""
         rows = await self.session.execute(
             select(TaskRecord)
             .where(
-                TaskRecord.brain_id == brain_id,
+                TaskRecord.vault_id == vault_id,
                 TaskRecord.type == task_type,
             )
             .order_by(TaskRecord.created_at.desc())

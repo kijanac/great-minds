@@ -46,14 +46,14 @@ async def run(
     idea_index = index_ideas_by_id(source_cards)
 
     repo = IdeaEmbeddingRepository(ctx.session)
-    idea_embeddings = await repo.list_for_brain(ctx.brain_id)
+    idea_embeddings = await repo.list_for_vault(ctx.vault_id)
     embedding_vectors = {e.idea_id: e.embedding for e in idea_embeddings}
     id_order = sorted(embedding_vectors)  # deterministic order
 
     if not id_order:
         log_event(
             "pipeline.partition_skipped",
-            brain_id=str(ctx.brain_id),
+            vault_id=str(ctx.vault_id),
             reason="no_embeddings",
         )
         return []
@@ -68,7 +68,7 @@ async def run(
         )
         log_event(
             "pipeline.partition_cached",
-            brain_id=str(ctx.brain_id),
+            vault_id=str(ctx.vault_id),
             chunk_count=len(chunks),
         )
         return chunks
@@ -117,7 +117,7 @@ async def run(
     )
     log_event(
         "pipeline.partition_completed",
-        brain_id=str(ctx.brain_id),
+        vault_id=str(ctx.vault_id),
         k_initial=k,
         chunk_count=len(chunks),
         total_tokens=total_tokens,

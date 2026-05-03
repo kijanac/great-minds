@@ -1,4 +1,4 @@
-"""Source proposal routes — nested under /brains/{brain_id}/proposals."""
+"""Source proposal routes — nested under /vaults/{vault_id}/proposals."""
 
 import logging
 from typing import Annotated
@@ -7,9 +7,9 @@ from uuid import UUID
 from fastapi import APIRouter, HTTPException, Query, status
 
 from great_minds.app.api.dependencies import (
-    BrainOwnerGuard,
-    BrainServiceDep,
-    BrainStorageDep,
+    VaultOwnerGuard,
+    VaultServiceDep,
+    VaultStorageDep,
     CurrentUser,
     PageParamsQuery,
     ProposalServiceDep,
@@ -26,13 +26,13 @@ router = APIRouter(prefix="/proposals", tags=["proposals"])
 @router.post("", status_code=status.HTTP_201_CREATED)
 async def create_proposal(
     req: schemas.ProposalCreate,
-    brain_id: UUID,
+    vault_id: UUID,
     user: CurrentUser,
-    storage: BrainStorageDep,
+    storage: VaultStorageDep,
     proposal_service: ProposalServiceDep,
 ) -> schemas.Proposal:
     proposal = await proposal_service.create(
-        brain_id=brain_id,
+        vault_id=vault_id,
         user_id=user.id,
         storage=storage,
         content=req.content,
@@ -45,13 +45,13 @@ async def create_proposal(
 
 @router.get("")
 async def list_proposals(
-    brain_id: UUID,
+    vault_id: UUID,
     pagination: PageParamsQuery,
     proposal_service: ProposalServiceDep,
     status_filter: Annotated[ProposalStatus | None, Query(alias="status")] = None,
 ) -> Page[schemas.ProposalOverview]:
-    result = await proposal_service.list_for_brain_page(
-        brain_id, status=status_filter, pagination=pagination
+    result = await proposal_service.list_for_vault_page(
+        vault_id, status=status_filter, pagination=pagination
     )
     return Page(
         items=[schemas.ProposalOverview.model_validate(p) for p in result.items],
@@ -62,10 +62,10 @@ async def list_proposals(
 @router.get("/{proposal_id}")
 async def get_proposal(
     proposal_id: UUID,
-    brain_id: UUID,
+    vault_id: UUID,
     proposal_service: ProposalServiceDep,
 ) -> schemas.Proposal:
-    proposal = await proposal_service.get(proposal_id, brain_id)
+    proposal = await proposal_service.get(proposal_id, vault_id)
     if proposal is None:
         raise HTTPException(status_code=404, detail="Proposal not found")
     return schemas.Proposal.model_validate(proposal)
@@ -75,24 +75,24 @@ async def get_proposal(
 async def review_proposal(
     proposal_id: UUID,
     req: schemas.ProposalReview,
-    brain_id: UUID,
+    vault_id: UUID,
     user: CurrentUser,
-    _auth: BrainOwnerGuard,
-    brain_service: BrainServiceDep,
+    _auth: VaultOwnerGuard,
+    vault_service: VaultServiceDep,
     proposal_service: ProposalServiceDep,
 ) -> schemas.Proposal:
     if req.status == ProposalStatus.PENDING:
         raise HTTPException(status_code=400, detail="Cannot set status back to pending")
 
-    proposal = await proposal_service.get(proposal_id, brain_id)
+    proposal = await proposal_service.get(proposal_id, vault_id)
     if proposal is None:
         raise HTTPException(status_code=404, detail="Proposal not found")
     if proposal.status != ProposalStatus.PENDING:
         raise HTTPException(status_code=409, detail="Proposal already reviewed")
 
-    brain = await brain_service.get_brain(brain_id)
-    storage = brain_service.get_storage(brain)
+    vault = await vault_service.get_vault(vault_id)
+    storage = vault_service.get_storage(vault)
     proposal = await proposal_service.review(
-        proposal, user.id, req.status, brain, storage
+        proposal, user.id, req.status, vault, storage
     )
     return schemas.Proposal.model_validate(proposal)

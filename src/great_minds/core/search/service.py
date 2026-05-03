@@ -92,7 +92,7 @@ async def _embed_batch(client: AsyncOpenAI, texts: list[str]) -> list[list[float
 
 async def _rebuild_scope(
     session: AsyncSession,
-    brain_id: UUID,
+    vault_id: UUID,
     storage: Storage,
     *,
     glob_pattern: str,
@@ -120,13 +120,13 @@ async def _rebuild_scope(
             _, body = parse_frontmatter(content)
             all_chunks.extend(_chunk_paragraphs(path, body))
 
-    existing_hashes = await repo.list_hashes_by_prefix(brain_id, path_prefix)
+    existing_hashes = await repo.list_hashes_by_prefix(vault_id, path_prefix)
 
     if not all_chunks and not existing_hashes:
         log.info(
-            "no %s content to index for brain %s",
+            "no %s content to index for vault %s",
             path_prefix.rstrip("/"),
-            brain_id,
+            vault_id,
         )
         return 0
 
@@ -137,8 +137,8 @@ async def _rebuild_scope(
             changed_chunks.append(chunk)
 
     log.info(
-        "brain %s scope=%s: %d total chunks, %d changed, %d unchanged",
-        brain_id,
+        "vault %s scope=%s: %d total chunks, %d changed, %d unchanged",
+        vault_id,
         path_prefix.rstrip("/"),
         len(all_chunks),
         len(changed_chunks),
@@ -155,7 +155,7 @@ async def _rebuild_scope(
     current_keys = {(c.path, c.chunk_index) for c in all_chunks}
     stale_keys = list(set(existing_hashes.keys()) - current_keys)
     if stale_keys:
-        await repo.delete_by_keys(brain_id, stale_keys)
+        await repo.delete_by_keys(vault_id, stale_keys)
         log.info(
             "deleted %d stale index entries (scope=%s)",
             len(stale_keys),
@@ -163,13 +163,13 @@ async def _rebuild_scope(
         )
 
     for i, chunk in enumerate(changed_chunks):
-        await repo.upsert_chunk(brain_id, chunk, embeddings[i])
+        await repo.upsert_chunk(vault_id, chunk, embeddings[i])
 
     await session.commit()
     log.info(
-        "indexed %d chunks for brain %s scope=%s (%d embedded)",
+        "indexed %d chunks for vault %s scope=%s (%d embedded)",
         len(all_chunks),
-        brain_id,
+        vault_id,
         path_prefix.rstrip("/"),
         len(changed_chunks),
     )
@@ -178,14 +178,14 @@ async def _rebuild_scope(
 
 async def rebuild_raw_index(
     session: AsyncSession,
-    brain_id: UUID,
+    vault_id: UUID,
     storage: Storage,
     *,
     client: AsyncOpenAI | None = None,
 ) -> int:
     return await _rebuild_scope(
         session,
-        brain_id,
+        vault_id,
         storage,
         glob_pattern=RAW_GLOB,
         path_prefix=RAW_PREFIX,
@@ -195,14 +195,14 @@ async def rebuild_raw_index(
 
 async def rebuild_wiki_index(
     session: AsyncSession,
-    brain_id: UUID,
+    vault_id: UUID,
     storage: Storage,
     *,
     client: AsyncOpenAI | None = None,
 ) -> int:
     return await _rebuild_scope(
         session,
-        brain_id,
+        vault_id,
         storage,
         glob_pattern=WIKI_GLOB,
         path_prefix=WIKI_PREFIX,
@@ -211,23 +211,23 @@ async def rebuild_wiki_index(
 
 
 async def count_chunks_by_prefix(
-    session: AsyncSession, brain_id: UUID, path_prefix: str
+    session: AsyncSession, vault_id: UUID, path_prefix: str
 ) -> int:
     """Count indexed chunks whose path starts with ``path_prefix``."""
     return await SearchIndexRepository(session).count_by_prefix(
-        brain_id, path_prefix
+        vault_id, path_prefix
     )
 
 
 async def search(
     session: AsyncSession,
-    brain_ids: list[UUID],
+    vault_ids: list[UUID],
     query: str,
     *,
     limit: int = MAX_SEARCH_RESULTS,
 ) -> list[SearchResult]:
-    """Hybrid search across brains using BM25 + vector similarity + RRF."""
-    if not brain_ids or not query.strip():
+    """Hybrid search across vaults using BM25 + vector similarity + RRF."""
+    if not vault_ids or not query.strip():
         return []
 
     repo = SearchIndexRepository(session)
@@ -236,21 +236,21 @@ async def search(
     query_embeddings = await _embed_batch(client, [query])
     query_embedding = query_embeddings[0]
 
-    bm25_rows = await repo.bm25_search(brain_ids, query, limit * 2)
-    vector_rows = await repo.vector_search(brain_ids, query_embedding, limit * 2)
+    bm25_rows = await repo.bm25_search(vault_ids, query, limit * 2)
+    vector_rows = await repo.vector_search(vault_ids, query_embedding, limit * 2)
 
     scores: dict[tuple[UUID, str, int], float] = {}
     metadata: dict[tuple[UUID, str, int], tuple[str, str]] = {}
 
     for rank, row in enumerate(bm25_rows):
-        key = (row.brain_id, row.path, row.chunk_index)
+        key = (row.vault_id, row.path, row.chunk_index)
         if key not in scores:
             scores[key] = 0
             metadata[key] = (row.heading, row.body)
         scores[key] += 1.0 / (RRF_K + rank + 1)
 
     for rank, row in enumerate(vector_rows):
-        key = (row.brain_id, row.path, row.chunk_index)
+        key = (row.vault_id, row.path, row.chunk_index)
         if key not in scores:
             scores[key] = 0
             metadata[key] = (row.heading, row.body)
@@ -259,8 +259,8 @@ async def search(
     ranked = sorted(scores.items(), key=lambda x: x[1], reverse=True)[:limit]
 
     results: list[SearchResult] = []
-    for (brain_id, path, chunk_index), score in ranked:
-        heading, body = metadata[(brain_id, path, chunk_index)]
+    for (vault_id, path, chunk_index), score in ranked:
+        heading, body = metadata[(vault_id, path, chunk_index)]
         snippet = body[:500] if len(body) > 500 else body
         results.append(
             SearchResult(
@@ -268,7 +268,7 @@ async def search(
                 heading=heading,
                 snippet=snippet,
                 score=score,
-                brain_id=brain_id,
+                vault_id=vault_id,
             )
         )
     return results

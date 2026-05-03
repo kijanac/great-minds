@@ -23,17 +23,17 @@ router = APIRouter(prefix="/compile", tags=["compile"])
 @router.post("", status_code=status.HTTP_202_ACCEPTED)
 async def request_compile(
     req: CompileRequest,
-    brain_id: UUID,
+    vault_id: UUID,
     intent_repo: CompileIntentRepositoryDep,
     _llm: LlmGuard,
 ) -> CompileIntent:
     del req  # reserved for future compile options
-    record = await intent_repo.upsert_pending(brain_id)
+    record = await intent_repo.upsert_pending(vault_id)
     if record is None:
-        record = await intent_repo.get_pending_for_brain(brain_id)
+        record = await intent_repo.get_pending_for_vault(vault_id)
     if record is None:
         # Race: a reconciler dispatched between upsert and lookup. Caller
-        # should re-poll the brain's task list.
+        # should re-poll the vault's task list.
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail="Intent dispatched between request and lookup; refresh task list",
@@ -42,7 +42,7 @@ async def request_compile(
     log_event(
         "intent_created",
         intent_id=str(record.id),
-        brain_id=str(brain_id),
+        vault_id=str(vault_id),
         trigger="api",
     )
     return CompileIntent.model_validate(record)
@@ -51,11 +51,11 @@ async def request_compile(
 @router.get("/{intent_id}")
 async def get_compile_intent(
     intent_id: UUID,
-    brain_id: UUID,
+    vault_id: UUID,
     intent_repo: CompileIntentRepositoryDep,
 ) -> CompileIntent:
     record = await intent_repo.get(intent_id)
-    if record is None or record.brain_id != brain_id:
+    if record is None or record.vault_id != vault_id:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="Intent not found"
         )

@@ -5,8 +5,8 @@ from uuid import UUID
 from fastapi import APIRouter, HTTPException
 
 from great_minds.app.api.dependencies import (
-    BrainAccessDep,
-    BrainStorageDep,
+    VaultAccessDep,
+    VaultStorageDep,
     CompileIntentRepositoryDep,
     CurrentUser,
     DocumentRepositoryDep,
@@ -17,7 +17,7 @@ from great_minds.app.api.dependencies import (
 )
 from great_minds.app.api.schemas import sessions as schemas
 from great_minds.core import sessions
-from great_minds.core.brains.models import MemberRole
+from great_minds.core.vaults.models import MemberRole
 from great_minds.core.llm import get_async_client
 from great_minds.core.pagination import Page
 from great_minds.core.paths import session_exchange_path
@@ -30,7 +30,7 @@ router = APIRouter(prefix="/sessions", tags=["sessions"])
 @router.post("", status_code=201)
 async def create_session(
     req: schemas.CreateSessionRequest,
-    storage: BrainStorageDep,
+    storage: VaultStorageDep,
     user: CurrentUser,
 ) -> schemas.SessionPathResponse:
     path = await sessions.create_session(
@@ -52,7 +52,7 @@ async def create_session(
 async def append_to_session(
     session_id: str,
     exchange: schemas.ExchangeData,
-    storage: BrainStorageDep,
+    storage: VaultStorageDep,
 ) -> schemas.SessionPathResponse:
     path = await sessions.append_exchange(
         storage,
@@ -71,7 +71,7 @@ async def append_to_session(
 async def append_btw_to_session(
     session_id: str,
     btw: schemas.BtwData,
-    storage: BrainStorageDep,
+    storage: VaultStorageDep,
 ) -> schemas.SessionPathResponse:
     path = await sessions.append_btw(
         storage,
@@ -90,7 +90,7 @@ async def append_btw_to_session(
 @router.get("")
 async def list_all_sessions(
     pagination: PageParamsQuery,
-    storage: BrainStorageDep,
+    storage: VaultStorageDep,
     user: CurrentUser,
 ) -> Page[schemas.SessionListItem]:
     result = await sessions.list_sessions(
@@ -105,7 +105,7 @@ async def list_all_sessions(
 @router.get("/{session_id}")
 async def read_session(
     session_id: str,
-    storage: BrainStorageDep,
+    storage: VaultStorageDep,
 ) -> schemas.SessionResponse:
     try:
         events = await sessions.load_events(storage, session_id)
@@ -121,17 +121,17 @@ async def read_session(
 async def promote_exchange(
     session_id: str,
     exchange_id: str,
-    storage: BrainStorageDep,
+    storage: VaultStorageDep,
     user: CurrentUser,
-    access: BrainAccessDep,
+    access: VaultAccessDep,
     ingest_service: IngestServiceDep,
     proposal_service: ProposalServiceDep,
     intent_repo: CompileIntentRepositoryDep,
     doc_repo: DocumentRepositoryDep,
     _llm: LlmGuard,
-    brain_id: UUID,
+    vault_id: UUID,
 ) -> schemas.PromoteExchangeResponse:
-    """Promote one session exchange into the brain's raw corpus.
+    """Promote one session exchange into the vault's raw corpus.
 
     Owners ingest directly. Non-owner members create a proposal that
     flows through the existing approval UI. Idempotent on both paths:
@@ -139,11 +139,11 @@ async def promote_exchange(
     pending proposal.
     """
     dest = session_exchange_path(exchange_id)
-    role = await access.get_member_role(brain_id, user.id)
+    role = await access.get_member_role(vault_id, user.id)
     is_owner = role == MemberRole.OWNER
 
     if is_owner:
-        existing_doc = await doc_repo.get_by_path(brain_id, dest)
+        existing_doc = await doc_repo.get_by_path(vault_id, dest)
         if existing_doc is not None:
             return schemas.PromoteExchangeResponse(
                 mode="ingested",
@@ -153,7 +153,7 @@ async def promote_exchange(
             )
     else:
         existing_proposal = await proposal_service.find_pending_for_dest(
-            brain_id, dest
+            vault_id, dest
         )
         if existing_proposal is not None:
             return schemas.PromoteExchangeResponse(
@@ -180,19 +180,19 @@ async def promote_exchange(
 
     if is_owner:
         _, document_id = await ingest_service.ingest_session_exchange(
-            brain_id,
+            vault_id,
             storage,
             session_id=session_id,
             exchange=exchange,
             title=title,
             session_origin=session_origin,
         )
-        intent = await intent_repo.upsert_pending(brain_id)
+        intent = await intent_repo.upsert_pending(vault_id)
         if intent is not None:
             log_event(
                 "intent_created",
                 intent_id=str(intent.id),
-                brain_id=str(brain_id),
+                vault_id=str(vault_id),
                 trigger="session_exchange_promoted",
             )
         return schemas.PromoteExchangeResponse(
@@ -203,7 +203,7 @@ async def promote_exchange(
         )
 
     proposal = await proposal_service.create_session_promotion(
-        brain_id,
+        vault_id,
         user.id,
         storage,
         session_id=session_id,

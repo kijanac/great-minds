@@ -11,7 +11,7 @@ from uuid import UUID
 from fastapi import APIRouter, HTTPException
 
 from great_minds.app.api.dependencies import (
-    BrainStorageDep,
+    VaultStorageDep,
     DocumentRepositoryDep,
     DocumentServiceDep,
     PageParamsQuery,
@@ -31,39 +31,39 @@ router = APIRouter(tags=["wiki"])
 
 @router.get("/wiki")
 async def list_articles(
-    brain_id: UUID,
+    vault_id: UUID,
     pagination: PageParamsQuery,
-    _storage: BrainStorageDep,
+    _storage: VaultStorageDep,
     doc_service: DocumentServiceDep,
 ) -> Page[WikiArticleSummary]:
-    return await doc_service.list_wiki_articles(brain_id, pagination=pagination)
+    return await doc_service.list_wiki_articles(vault_id, pagination=pagination)
 
 
 @router.get("/wiki/recent")
 async def recent_articles(
-    brain_id: UUID,
-    _storage: BrainStorageDep,
+    vault_id: UUID,
+    _storage: VaultStorageDep,
     doc_service: DocumentServiceDep,
     limit: int = 10,
 ) -> list[schemas.RecentArticleItem]:
     docs = await doc_service.query_documents(
-        [brain_id], doc_kind=DocKind.WIKI, limit=limit
+        [vault_id], doc_kind=DocKind.WIKI, limit=limit
     )
     return [schemas.RecentArticleItem.model_validate(d) for d in docs]
 
 
 @router.get("/raw/sources")
 async def list_raw_sources(
-    brain_id: UUID,
+    vault_id: UUID,
     pagination: PageParamsQuery,
-    _storage: BrainStorageDep,
+    _storage: VaultStorageDep,
     doc_service: DocumentServiceDep,
     content_type: str | None = None,
     search: str | None = None,
     compiled: bool | None = None,
 ) -> FacetedPage[schemas.SourceDocumentSummary, SourceDocumentFacets]:
     result = await doc_service.list_raw_sources(
-        brain_id,
+        vault_id,
         content_type=content_type,
         search=search,
         compiled=compiled,
@@ -78,9 +78,9 @@ async def list_raw_sources(
 
 @router.get("/wiki/{slug}")
 async def read_article(
-    brain_id: UUID,
+    vault_id: UUID,
     slug: str,
-    storage: BrainStorageDep,
+    storage: VaultStorageDep,
 ) -> schemas.ArticleResponse:
     content = await storage.read(wiki_path(slug), strict=False)
     if content is not None:
@@ -90,9 +90,9 @@ async def read_article(
 
 @router.get("/doc/{path:path}")
 async def read_document(
-    brain_id: UUID,
+    vault_id: UUID,
     path: str,
-    storage: BrainStorageDep,
+    storage: VaultStorageDep,
     doc_repo: DocumentRepositoryDep,
 ) -> schemas.DocResponse:
     try:
@@ -105,7 +105,7 @@ async def read_document(
         raise HTTPException(status_code=404, detail=f"Document not found: {path}")
     _, body = parse_frontmatter(content)
 
-    document = await doc_repo.get_by_path(brain_id, path)
+    document = await doc_repo.get_by_path(vault_id, path)
     if document is None:
         # File exists on disk without a DB row — an ingest invariant
         # violation. Surface loudly; a reconciliation pass would repair.

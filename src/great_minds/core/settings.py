@@ -29,15 +29,17 @@ class Settings(BaseSettings):
     cors_origins: list[str] = ["http://localhost:5173"]
     suppress_auth: bool = False
 
-    # Storage backend for brain content (raw/, wiki/, config, prompts).
-    # "local" writes to data_dir/brains/<id>/. "r2" writes to a
-    # Cloudflare R2 bucket under brains/<id>/ prefix. Compile sidecar
-    # always stays local under data_dir/.compile/<id>/ regardless.
+    # Storage backend for vault content (raw/, wiki/, config, prompts).
+    # "local" writes to data_dir/vaults/<id>/. "r2" provisions one
+    # Cloudflare R2 bucket per user (lazily on first vault creation),
+    # keyed by ``r2_bucket_prefix-{user_uuid_hex}``; vault content lives
+    # under vaults/<id>/ within that bucket. Compile sidecar always
+    # stays local under data_dir/.compile/<id>/ regardless.
     storage_backend: Literal["local", "r2"] = "local"
     r2_account_id: str | None = None
     r2_access_key_id: str | None = None
     r2_secret_access_key: str | None = None
-    r2_bucket_name: str | None = None
+    r2_bucket_prefix: str = "gm"
 
     @model_validator(mode="after")
     def _require_r2_creds(self) -> "Settings":
@@ -48,7 +50,6 @@ class Settings(BaseSettings):
                     ("r2_account_id", self.r2_account_id),
                     ("r2_access_key_id", self.r2_access_key_id),
                     ("r2_secret_access_key", self.r2_secret_access_key),
-                    ("r2_bucket_name", self.r2_bucket_name),
                 )
                 if not value
             ]

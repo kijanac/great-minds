@@ -13,7 +13,7 @@ import os
 import sys
 
 BUCKET = "test-bucket"
-PREFIX = "brains/11111111-1111-1111-1111-111111111111"
+PREFIX = "vaults/11111111-1111-1111-1111-111111111111"
 FAKE_ACCOUNT = "fake"
 FAKE_ENDPOINT = f"https://{FAKE_ACCOUNT}.r2.cloudflarestorage.com"
 
@@ -107,7 +107,7 @@ async def _run_checks() -> None:
         Bucket=BUCKET, Key=f"{PREFIX}/log.md"
     )
     _check(
-        "keys land under the brain prefix",
+        "keys land under the vault prefix",
         raw["Body"].read().decode("utf-8") == "line1\nline2\n",
     )
 

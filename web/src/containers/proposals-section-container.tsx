@@ -11,21 +11,21 @@ import {
 export type ProposalFilter = ProposalStatus | "all";
 
 interface ProposalsSectionContainerProps {
-  brainId: string;
+  vaultId: string;
   isOwner: boolean;
 }
 
 export function ProposalsSectionContainer({
-  brainId,
+  vaultId,
   isOwner,
 }: ProposalsSectionContainerProps) {
   const [status, setStatus] = useState<ProposalFilter>("pending");
   const proposals = useProposals(
-    brainId,
+    vaultId,
     status === "all" ? undefined : status,
   );
-  const create = useCreateProposal(brainId);
-  const review = useReviewProposal(brainId);
+  const create = useCreateProposal(vaultId);
+  const review = useReviewProposal(vaultId);
 
   const items = proposals.data?.pages.flatMap((p) => p.items) ?? [];
 

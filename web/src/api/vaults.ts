@@ -1,36 +1,36 @@
 import { apiFetch, readJson } from "./client";
 import {
-  brainConfigSchema,
-  brainDetailSchema,
+  vaultConfigSchema,
+  vaultDetailSchema,
   draftHintResponseSchema,
   membershipListSchema,
   membershipSchema,
-  type BrainConfig,
-  type BrainDetail,
+  type VaultConfig,
+  type VaultDetail,
   type Membership,
 } from "./schemas";
 
-export type { BrainConfig, BrainDetail, Membership };
+export type { VaultConfig, VaultDetail, Membership };
 
-export async function getBrainDetail(brainId: string): Promise<BrainDetail> {
-  const res = await apiFetch(`/brains/${brainId}`);
+export async function getVaultDetail(vaultId: string): Promise<VaultDetail> {
+  const res = await apiFetch(`/vaults/${vaultId}`);
   if (!res.ok) throw new Error("Failed to fetch project details");
-  return readJson(res, brainDetailSchema);
+  return readJson(res, vaultDetailSchema);
 }
 
-export async function listMembers(brainId: string): Promise<Membership[]> {
-  const res = await apiFetch(`/brains/${brainId}/members`);
+export async function listMembers(vaultId: string): Promise<Membership[]> {
+  const res = await apiFetch(`/vaults/${vaultId}/members`);
   if (!res.ok) throw new Error("Failed to fetch members");
   const parsed = await readJson(res, membershipListSchema);
   return parsed.items;
 }
 
 export async function inviteMember(
-  brainId: string,
+  vaultId: string,
   email: string,
   role: string = "editor",
 ): Promise<Membership> {
-  const res = await apiFetch(`/brains/${brainId}/members`, {
+  const res = await apiFetch(`/vaults/${vaultId}/members`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ email, role }),
@@ -40,11 +40,11 @@ export async function inviteMember(
 }
 
 export async function updateMemberRole(
-  brainId: string,
+  vaultId: string,
   userId: string,
   role: string,
 ): Promise<Membership> {
-  const res = await apiFetch(`/brains/${brainId}/members/${userId}`, {
+  const res = await apiFetch(`/vaults/${vaultId}/members/${userId}`, {
     method: "PUT",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ role }),
@@ -53,34 +53,34 @@ export async function updateMemberRole(
   return readJson(res, membershipSchema);
 }
 
-export async function removeMember(brainId: string, userId: string): Promise<void> {
-  const res = await apiFetch(`/brains/${brainId}/members/${userId}`, {
+export async function removeMember(vaultId: string, userId: string): Promise<void> {
+  const res = await apiFetch(`/vaults/${vaultId}/members/${userId}`, {
     method: "DELETE",
   });
   if (!res.ok) throw new Error("Failed to remove member");
 }
 
-export async function getBrainConfig(brainId: string): Promise<BrainConfig> {
-  const res = await apiFetch(`/brains/${brainId}/config`);
+export async function getVaultConfig(vaultId: string): Promise<VaultConfig> {
+  const res = await apiFetch(`/vaults/${vaultId}/config`);
   if (!res.ok) throw new Error("Failed to fetch project config");
-  return readJson(res, brainConfigSchema);
+  return readJson(res, vaultConfigSchema);
 }
 
-export async function updateBrainConfig(
-  brainId: string,
-  patch: Partial<BrainConfig>,
-): Promise<BrainConfig> {
-  const res = await apiFetch(`/brains/${brainId}/config`, {
+export async function updateVaultConfig(
+  vaultId: string,
+  patch: Partial<VaultConfig>,
+): Promise<VaultConfig> {
+  const res = await apiFetch(`/vaults/${vaultId}/config`, {
     method: "PATCH",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(patch),
   });
   if (!res.ok) throw new Error("Failed to update project config");
-  return readJson(res, brainConfigSchema);
+  return readJson(res, vaultConfigSchema);
 }
 
 export async function draftThematicHint(description: string): Promise<string> {
-  const res = await apiFetch(`/brains/draft-hint`, {
+  const res = await apiFetch(`/vaults/draft-hint`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ description }),
