@@ -12,7 +12,7 @@ class ProposalOverview(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: uuid.UUID
-    brain_id: uuid.UUID
+    vault_id: uuid.UUID
     status: ProposalStatus
     title: str | None
     content_type: str

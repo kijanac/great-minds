@@ -1,20 +1,20 @@
 import { useState } from "react";
 
-import { draftThematicHint } from "@/api/brains";
+import { draftThematicHint } from "@/api/vaults";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 
-export interface BrainConfigFormSubmit {
+export interface VaultConfigFormSubmit {
   name?: string;
   thematic_hint: string;
 }
 
-interface BrainConfigFormProps {
+interface VaultConfigFormProps {
   mode: "create" | "edit";
   initialName?: string;
   initialThematicHint?: string;
   submitting?: boolean;
-  onSubmit: (data: BrainConfigFormSubmit) => Promise<void> | void;
+  onSubmit: (data: VaultConfigFormSubmit) => Promise<void> | void;
   onCancel?: () => void;
   submitLabel?: string;
 }
@@ -28,7 +28,7 @@ const SECTION_LABEL =
 const HELPER_TEXT =
   "font-mono text-[length:var(--text-chrome)] tracking-[0.06em] text-warm-ghost";
 
-export function BrainConfigForm({
+export function VaultConfigForm({
   mode,
   initialName = "",
   initialThematicHint = "",
@@ -36,7 +36,7 @@ export function BrainConfigForm({
   onSubmit,
   onCancel,
   submitLabel,
-}: BrainConfigFormProps) {
+}: VaultConfigFormProps) {
   const [name, setName] = useState(initialName);
   const [description, setDescription] = useState("");
   const [thematicHint, setThematicHint] = useState(initialThematicHint);
@@ -74,11 +74,11 @@ export function BrainConfigForm({
     <form onSubmit={handleSubmit} className="space-y-8">
       {isCreate && (
         <div>
-          <label htmlFor="brain-name" className={SECTION_LABEL}>
+          <label htmlFor="vault-name" className={SECTION_LABEL}>
             project name
           </label>
           <Input
-            id="brain-name"
+            id="vault-name"
             autoFocus
             disabled={submitting}
             placeholder="untitled"
@@ -90,14 +90,14 @@ export function BrainConfigForm({
       )}
 
       <div>
-        <label htmlFor="brain-description" className={SECTION_LABEL}>
+        <label htmlFor="vault-description" className={SECTION_LABEL}>
           describe what to focus on
           <span className="ml-2 text-warm-ghost normal-case tracking-normal">
             (optional, used to draft a focus statement)
           </span>
         </label>
         <textarea
-          id="brain-description"
+          id="vault-description"
           disabled={submitting || drafting}
           placeholder="e.g. a knowledge base on Marxist political economy, with emphasis on debates and events over biography"
           value={description}
@@ -125,14 +125,14 @@ export function BrainConfigForm({
       </div>
 
       <div>
-        <label htmlFor="brain-thematic-hint" className={SECTION_LABEL}>
+        <label htmlFor="vault-thematic-hint" className={SECTION_LABEL}>
           editorial focus
           <span className="ml-2 text-warm-ghost normal-case tracking-normal">
             (steers how topics are framed; leave blank to use defaults)
           </span>
         </label>
         <textarea
-          id="brain-thematic-hint"
+          id="vault-thematic-hint"
           disabled={submitting}
           placeholder="prefer event-centric and debate-centric framings over biographical summaries"
           value={thematicHint}

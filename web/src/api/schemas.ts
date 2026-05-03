@@ -11,7 +11,7 @@ export const thinkingBlockSchema = z.object({
   sources: z.array(sourceRefSchema),
 });
 
-export const brainOverviewSchema = z.object({
+export const vaultOverviewSchema = z.object({
   id: z.string(),
   name: z.string(),
   role: z.string(),
@@ -44,9 +44,9 @@ export function facetedPaginatedSchema<
   });
 }
 
-export const brainOverviewListSchema = paginatedSchema(brainOverviewSchema);
+export const vaultOverviewListSchema = paginatedSchema(vaultOverviewSchema);
 
-export const brainDetailSchema = brainOverviewSchema.extend({
+export const vaultDetailSchema = vaultOverviewSchema.extend({
   owner_id: z.string(),
   created_at: z.string(),
   member_count: z.number(),
@@ -61,7 +61,7 @@ export const membershipSchema = z.object({
 
 export const membershipListSchema = paginatedSchema(membershipSchema);
 
-export const brainConfigSchema = z.object({
+export const vaultConfigSchema = z.object({
   thematic_hint: z.string(),
   kinds: z.array(z.string()),
 });
@@ -89,7 +89,7 @@ export const proposalStatusSchema = z.enum([
 
 export const proposalOverviewSchema = z.object({
   id: z.string(),
-  brain_id: z.string(),
+  vault_id: z.string(),
   status: proposalStatusSchema,
   title: z.string().nullable(),
   content_type: z.string(),
@@ -107,14 +107,14 @@ export const proposalListSchema = paginatedSchema(proposalOverviewSchema);
 
 export type SourceRef = z.infer<typeof sourceRefSchema>;
 export type ThinkingBlock = z.infer<typeof thinkingBlockSchema>;
-export type BrainOverview = z.infer<typeof brainOverviewSchema>;
+export type VaultOverview = z.infer<typeof vaultOverviewSchema>;
 export type PageInfo = z.infer<typeof pageInfoSchema>;
 export type FacetCount = z.infer<typeof facetCountSchema>;
-export type BrainOverviewList = z.infer<typeof brainOverviewListSchema>;
-export type BrainDetail = z.infer<typeof brainDetailSchema>;
+export type VaultOverviewList = z.infer<typeof vaultOverviewListSchema>;
+export type VaultDetail = z.infer<typeof vaultDetailSchema>;
 export type Membership = z.infer<typeof membershipSchema>;
 export type MembershipList = z.infer<typeof membershipListSchema>;
-export type BrainConfig = z.infer<typeof brainConfigSchema>;
+export type VaultConfig = z.infer<typeof vaultConfigSchema>;
 export type ApiKey = z.infer<typeof apiKeySchema>;
 export type ApiKeyCreated = z.infer<typeof apiKeyCreatedSchema>;
 export type ProposalStatus = z.infer<typeof proposalStatusSchema>;

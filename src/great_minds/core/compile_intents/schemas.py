@@ -17,7 +17,7 @@ class CompileIntent(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: UUID
-    brain_id: UUID
+    vault_id: UUID
     created_at: datetime
     dispatched_at: datetime | None
     dispatched_task_id: UUID | None

@@ -32,7 +32,7 @@ class TopicRepository:
         self,
         *,
         topic_id: UUID,
-        brain_id: UUID,
+        vault_id: UUID,
         slug: str,
         title: str,
         description: str,
@@ -48,7 +48,7 @@ class TopicRepository:
             insert(TopicORM)
             .values(
                 topic_id=topic_id,
-                brain_id=brain_id,
+                vault_id=vault_id,
                 slug=slug,
                 title=title,
                 description=description,
@@ -66,11 +66,11 @@ class TopicRepository:
         )
         await self.session.execute(stmt)
 
-    async def get_by_slug(self, brain_id: UUID, slug: str) -> Topic | None:
+    async def get_by_slug(self, vault_id: UUID, slug: str) -> Topic | None:
         row = (
             await self.session.execute(
                 select(TopicORM).where(
-                    TopicORM.brain_id == brain_id, TopicORM.slug == slug
+                    TopicORM.vault_id == vault_id, TopicORM.slug == slug
                 )
             )
         ).scalar_one_or_none()
@@ -85,13 +85,13 @@ class TopicRepository:
         return Topic.model_validate(row) if row is not None else None
 
     async def list_by_status(
-        self, brain_id: UUID, status: ArticleStatus
+        self, vault_id: UUID, status: ArticleStatus
     ) -> list[Topic]:
         rows = (
             await self.session.execute(
                 select(TopicORM)
                 .where(
-                    TopicORM.brain_id == brain_id,
+                    TopicORM.vault_id == vault_id,
                     TopicORM.article_status == status.value,
                 )
                 .order_by(TopicORM.title)
@@ -99,40 +99,40 @@ class TopicRepository:
         ).scalars().all()
         return [Topic.model_validate(r) for r in rows]
 
-    async def list_all(self, brain_id: UUID) -> list[Topic]:
+    async def list_all(self, vault_id: UUID) -> list[Topic]:
         rows = (
             await self.session.execute(
                 select(TopicORM)
-                .where(TopicORM.brain_id == brain_id)
+                .where(TopicORM.vault_id == vault_id)
                 .order_by(TopicORM.title)
             )
         ).scalars().all()
         return [Topic.model_validate(r) for r in rows]
 
-    async def count_all(self, brain_id: UUID) -> int:
+    async def count_all(self, vault_id: UUID) -> int:
         return (
             await self.session.scalar(
                 select(func.count())
                 .select_from(TopicORM)
-                .where(TopicORM.brain_id == brain_id)
+                .where(TopicORM.vault_id == vault_id)
             )
         ) or 0
 
     async def count_by_status(
-        self, brain_id: UUID, status: ArticleStatus
+        self, vault_id: UUID, status: ArticleStatus
     ) -> int:
         return (
             await self.session.scalar(
                 select(func.count())
                 .select_from(TopicORM)
                 .where(
-                    TopicORM.brain_id == brain_id,
+                    TopicORM.vault_id == vault_id,
                     TopicORM.article_status == status.value,
                 )
             )
         ) or 0
 
-    async def list_dirty_topic_ids(self, brain_id: UUID) -> list[UUID]:
+    async def list_dirty_topic_ids(self, vault_id: UUID) -> list[UUID]:
         """Return topic_ids whose rendered output lags the compiled inputs.
 
         Non-archived topics where rendered_from_hash is NULL (never
@@ -142,7 +142,7 @@ class TopicRepository:
         result = await self.session.execute(
             select(TopicORM.topic_id)
             .where(
-                TopicORM.brain_id == brain_id,
+                TopicORM.vault_id == vault_id,
                 TopicORM.article_status != ArticleStatus.ARCHIVED.value,
                 TopicORM.compiled_from_hash.is_not(None),
                 or_(
@@ -153,14 +153,14 @@ class TopicRepository:
         )
         return [row.topic_id for row in result]
 
-    async def count_dirty(self, brain_id: UUID) -> int:
+    async def count_dirty(self, vault_id: UUID) -> int:
         """Non-archived topics whose rendered output lags the compiled inputs."""
         return (
             await self.session.scalar(
                 select(func.count())
                 .select_from(TopicORM)
                 .where(
-                    TopicORM.brain_id == brain_id,
+                    TopicORM.vault_id == vault_id,
                     TopicORM.article_status != ArticleStatus.ARCHIVED.value,
                     TopicORM.compiled_from_hash.is_not(None),
                     or_(
@@ -171,10 +171,10 @@ class TopicRepository:
             )
         ) or 0
 
-    async def list_links_for_brain(
-        self, brain_id: UUID, source_topic_ids: list[UUID] | None = None
+    async def list_links_for_vault(
+        self, vault_id: UUID, source_topic_ids: list[UUID] | None = None
     ) -> list[TopicLink]:
-        """Return directed link edges for a brain.
+        """Return directed link edges for a vault.
 
         Pass source_topic_ids to restrict to edges whose source is in
         the set (e.g., rendered topics only).
@@ -182,7 +182,7 @@ class TopicRepository:
         stmt = (
             select(TopicLinkORM.source_topic_id, TopicLinkORM.target_topic_id)
             .join(TopicORM, TopicORM.topic_id == TopicLinkORM.source_topic_id)
-            .where(TopicORM.brain_id == brain_id)
+            .where(TopicORM.vault_id == vault_id)
         )
         if source_topic_ids is not None:
             stmt = stmt.where(TopicLinkORM.source_topic_id.in_(source_topic_ids))
@@ -239,23 +239,23 @@ class TopicRepository:
 
     # -- Topic links (intent from reduce) ----------------------------------
 
-    async def replace_links_for_brain(
-        self, brain_id: UUID, edges: list[tuple[UUID, UUID]]
+    async def replace_links_for_vault(
+        self, vault_id: UUID, edges: list[tuple[UUID, UUID]]
     ) -> None:
-        """Replace every outgoing edge rooted at this brain's topics.
+        """Replace every outgoing edge rooted at this vault's topics.
 
         Implemented by deleting any edge whose source belongs to this
-        brain, then bulk-inserting the new set.
+        vault, then bulk-inserting the new set.
         """
-        brain_topic_ids = (
+        vault_topic_ids = (
             await self.session.execute(
-                select(TopicORM.topic_id).where(TopicORM.brain_id == brain_id)
+                select(TopicORM.topic_id).where(TopicORM.vault_id == vault_id)
             )
         ).scalars().all()
-        if brain_topic_ids:
+        if vault_topic_ids:
             await self.session.execute(
                 delete(TopicLinkORM).where(
-                    TopicLinkORM.source_topic_id.in_(list(brain_topic_ids))
+                    TopicLinkORM.source_topic_id.in_(list(vault_topic_ids))
                 )
             )
         if edges:

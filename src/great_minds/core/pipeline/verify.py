@@ -35,12 +35,12 @@ log = logging.getLogger(__name__)
 
 async def run(ctx: PipelineContext) -> None:
     rendered = await TopicRepository(ctx.session).list_by_status(
-        ctx.brain_id, ArticleStatus.RENDERED
+        ctx.vault_id, ArticleStatus.RENDERED
     )
     if not rendered:
         log_event(
             "pipeline.verify_skipped",
-            brain_id=str(ctx.brain_id),
+            vault_id=str(ctx.vault_id),
             reason="no_rendered_topics",
         )
         return
@@ -65,7 +65,7 @@ async def run(ctx: PipelineContext) -> None:
             log_event(
                 "verify.missing_rendered_file",
                 level=logging.WARNING,
-                brain_id=str(ctx.brain_id),
+                vault_id=str(ctx.vault_id),
                 topic_slug=topic.slug,
                 topic_id=str(topic.topic_id),
             )
@@ -77,7 +77,7 @@ async def run(ctx: PipelineContext) -> None:
             log_event(
                 "verify.missing_source_article_document",
                 level=logging.WARNING,
-                brain_id=str(ctx.brain_id),
+                vault_id=str(ctx.vault_id),
                 topic_slug=topic.slug,
                 article_path=article_path,
             )
@@ -96,7 +96,7 @@ async def run(ctx: PipelineContext) -> None:
                 log_event(
                     "verify.unresolved_citation",
                     level=logging.WARNING,
-                    brain_id=str(ctx.brain_id),
+                    vault_id=str(ctx.vault_id),
                     source_slug=topic.slug,
                     missing_slug=slug,
                 )
@@ -110,7 +110,7 @@ async def run(ctx: PipelineContext) -> None:
                 log_event(
                     "verify.missing_target_article_document",
                     level=logging.WARNING,
-                    brain_id=str(ctx.brain_id),
+                    vault_id=str(ctx.vault_id),
                     source_slug=topic.slug,
                     target_slug=target.slug,
                 )
@@ -127,7 +127,7 @@ async def run(ctx: PipelineContext) -> None:
 
     # Unmentioned intended links: topic_links edges whose target isn't
     # in cited_by_source[source]. Requires the topic_links rows from
-    # phase 3 derive, scoped to this brain.
+    # phase 3 derive, scoped to this vault.
     unmentioned_count = await _detect_unmentioned_links(
         ctx=ctx,
         topic_id_set=topic_id_set,
@@ -151,7 +151,7 @@ async def run(ctx: PipelineContext) -> None:
     )
     log_event(
         "pipeline.verify_completed",
-        brain_id=str(ctx.brain_id),
+        vault_id=str(ctx.vault_id),
         articles_walked=articles_walked,
         backlink_edges=len(backlinks),
         unresolved_citations=unresolved_count,
@@ -161,7 +161,7 @@ async def run(ctx: PipelineContext) -> None:
 
 
 async def _load_wiki_articles(ctx: PipelineContext) -> dict[str, Document]:
-    docs = await DocumentRepository(ctx.session).list_by_kind(ctx.brain_id, DocKind.WIKI)
+    docs = await DocumentRepository(ctx.session).list_by_kind(ctx.vault_id, DocKind.WIKI)
     return {doc.file_path: doc for doc in docs}
 
 
@@ -174,8 +174,8 @@ async def _detect_unmentioned_links(
 ) -> int:
     if not topic_id_set:
         return 0
-    edges = await TopicRepository(ctx.session).list_links_for_brain(
-        ctx.brain_id, source_topic_ids=list(topic_id_set)
+    edges = await TopicRepository(ctx.session).list_links_for_vault(
+        ctx.vault_id, source_topic_ids=list(topic_id_set)
     )
 
     unmentioned = 0
@@ -190,7 +190,7 @@ async def _detect_unmentioned_links(
         log_event(
             "verify.unmentioned_link",
             level=logging.INFO,
-            brain_id=str(ctx.brain_id),
+            vault_id=str(ctx.vault_id),
             source_slug=slug_by_topic_id[edge.source_topic_id],
             missing_target_slug=target_slug,
         )

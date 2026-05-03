@@ -1,17 +1,17 @@
-"""Brain service: access control, brain lifecycle, and membership operations."""
+"""Vault service: access control, vault lifecycle, and membership operations."""
 
 import logging
 from uuid import UUID
 
-from great_minds.core.brains.config import (
-    apply_brain_config_overrides,
+from great_minds.core.vaults.config import (
+    apply_vault_config_overrides,
     load_default_config_text,
 )
-from great_minds.core.brains.models import BrainMembership, MemberRole
-from great_minds.core.brains.repository import BrainRepository
-from great_minds.core.brains.schemas import (
-    Brain,
-    BrainWithRole,
+from great_minds.core.vaults.models import VaultMembership, MemberRole
+from great_minds.core.vaults.repository import VaultRepository
+from great_minds.core.vaults.schemas import (
+    Vault,
+    VaultWithRole,
     MemberWithEmail,
 )
 from great_minds.core.pagination import Page, PageInfo, PageParams
@@ -25,8 +25,8 @@ from great_minds.core.users.repository import UserRepository
 log = logging.getLogger(__name__)
 
 
-class BrainService:
-    """Manages brain access control, lifecycle, and membership operations.
+class VaultService:
+    """Manages vault access control, lifecycle, and membership operations.
 
     Holds ``settings`` so storage construction (and per-owner R2 bucket
     provisioning) can stay encapsulated inside lifecycle calls.
@@ -34,7 +34,7 @@ class BrainService:
 
     def __init__(
         self,
-        repository: BrainRepository,
+        repository: VaultRepository,
         user_repo: UserRepository,
         settings: Settings,
     ) -> None:
@@ -45,39 +45,39 @@ class BrainService:
     async def _commit(self) -> None:
         await self.repo.session.commit()
 
-    def get_storage(self, brain: Brain) -> Storage:
-        return make_storage(brain, self.settings)
+    def get_storage(self, vault: Vault) -> Storage:
+        return make_storage(vault, self.settings)
 
-    async def get_storage_by_id(self, brain_id: UUID) -> Storage:
-        brain = await self.get_brain(brain_id)
-        return make_storage(brain, self.settings)
+    async def get_storage_by_id(self, vault_id: UUID) -> Storage:
+        vault = await self.get_vault(vault_id)
+        return make_storage(vault, self.settings)
 
-    async def get_brain(self, brain_id: UUID) -> Brain:
-        """Fetch a brain by ID. Raises ValueError if not found."""
-        brain = await self.repo.get_by_id(brain_id)
-        if brain is None:
-            raise ValueError(f"Brain {brain_id} not found")
-        return brain
+    async def get_vault(self, vault_id: UUID) -> Vault:
+        """Fetch a vault by ID. Raises ValueError if not found."""
+        vault = await self.repo.get_by_id(vault_id)
+        if vault is None:
+            raise ValueError(f"Vault {vault_id} not found")
+        return vault
 
-    async def list_brains(
+    async def list_vaults(
         self, user_id: UUID, *, limit: int = 50, offset: int = 0
-    ) -> list[BrainWithRole]:
-        return await self.repo.list_user_brains(user_id, limit=limit, offset=offset)
+    ) -> list[VaultWithRole]:
+        return await self.repo.list_user_vaults(user_id, limit=limit, offset=offset)
 
     async def ensure_default_for_user(self, user_id: UUID, email: str) -> None:
-        """Create a default brain for a user who has none. Idempotent."""
-        existing = await self.repo.list_user_brains(user_id, limit=1, offset=0)
+        """Create a default vault for a user who has none. Idempotent."""
+        existing = await self.repo.list_user_vaults(user_id, limit=1, offset=0)
         if existing:
             return
-        await self.create_brain(f"{email}'s brain", user_id)
+        await self.create_vault(f"{email}'s vault", user_id)
 
-    async def list_brains_page(
+    async def list_vaults_page(
         self, user_id: UUID, *, pagination: PageParams
-    ) -> Page[BrainWithRole]:
-        rows = await self.repo.list_user_brains(
+    ) -> Page[VaultWithRole]:
+        rows = await self.repo.list_user_vaults(
             user_id, limit=pagination.limit, offset=pagination.offset
         )
-        total = await self.repo.count_user_brains(user_id)
+        total = await self.repo.count_user_vaults(user_id)
         return Page(
             items=rows,
             pagination=PageInfo(
@@ -87,7 +87,7 @@ class BrainService:
             ),
         )
 
-    async def create_brain(
+    async def create_vault(
         self,
         name: str,
         owner_id: UUID,
@@ -95,64 +95,64 @@ class BrainService:
         thematic_hint: str | None = None,
         kinds: list[str] | None = None,
         commit: bool = True,
-    ) -> Brain:
+    ) -> Vault:
         bucket_name = await self._ensure_owner_bucket(owner_id)
-        brain = await self.repo.create_brain(
+        vault = await self.repo.create_vault(
             name, owner_id, r2_bucket_name=bucket_name
         )
-        await self._init_brain_storage(brain)
+        await self._init_vault_storage(vault)
         if thematic_hint is not None or kinds is not None:
-            await apply_brain_config_overrides(
-                self.get_storage(brain),
+            await apply_vault_config_overrides(
+                self.get_storage(vault),
                 thematic_hint=thematic_hint,
                 kinds=kinds,
             )
         if commit:
             await self._commit()
-        return brain
+        return vault
 
     async def update_config(
         self,
-        brain_id: UUID,
+        vault_id: UUID,
         *,
         thematic_hint: str | None = None,
         kinds: list[str] | None = None,
     ) -> None:
-        await apply_brain_config_overrides(
-            await self.get_storage_by_id(brain_id),
+        await apply_vault_config_overrides(
+            await self.get_storage_by_id(vault_id),
             thematic_hint=thematic_hint,
             kinds=kinds,
         )
 
-    async def delete_brain(self, brain_id: UUID) -> Brain | None:
-        """Drop a brain and its storage. Idempotent on missing brain.
+    async def delete_vault(self, vault_id: UUID) -> Vault | None:
+        """Drop a vault and its storage. Idempotent on missing vault.
 
         Order: capture → DB delete → commit → storage clear. The DB
         commit lands first so a storage-clear failure leaves orphaned
-        keys (re-runnable) instead of an orphaned brain row pointing at
+        keys (re-runnable) instead of an orphaned vault row pointing at
         cleared storage.
         """
-        brain = await self.repo.get_by_id(brain_id)
-        if brain is None:
+        vault = await self.repo.get_by_id(vault_id)
+        if vault is None:
             return None
-        await self.repo.delete_brain(brain_id)
+        await self.repo.delete_vault(vault_id)
         await self._commit()
-        storage = self.get_storage(brain)
+        storage = self.get_storage(vault)
         await storage.clear()
-        return brain
+        return vault
 
-    async def list_owned_by(self, user_id: UUID) -> list[Brain]:
+    async def list_owned_by(self, user_id: UUID) -> list[Vault]:
         return await self.repo.list_owned_by(user_id)
 
-    async def _init_brain_storage(self, brain: Brain) -> None:
-        storage = self.get_storage(brain)
+    async def _init_vault_storage(self, vault: Vault) -> None:
+        storage = self.get_storage(vault)
         if not await storage.exists(CONFIG_PATH):
             await storage.write(CONFIG_PATH, load_default_config_text())
 
     async def _ensure_owner_bucket(self, owner_id: UUID) -> str | None:
         """For r2 backend: ensure owner has a bucket; return its name. Else None.
 
-        Lazy provisioning: the first brain creation for a user provisions
+        Lazy provisioning: the first vault creation for a user provisions
         their R2 bucket. The bucket name is deterministic (derived from
         user_id + ``r2_bucket_prefix``), so re-invocation after partial
         failure converges instead of creating duplicates.
@@ -178,21 +178,21 @@ class BrainService:
         await self.user_repo.set_r2_bucket_name(owner_id, bucket_name)
         return bucket_name
 
-    async def get_member_count(self, brain_id: UUID) -> int:
-        return await self.repo.get_member_count(brain_id)
+    async def get_member_count(self, vault_id: UUID) -> int:
+        return await self.repo.get_member_count(vault_id)
 
     async def list_members(
-        self, brain_id: UUID, *, limit: int = 50, offset: int = 0
+        self, vault_id: UUID, *, limit: int = 50, offset: int = 0
     ) -> list[MemberWithEmail]:
-        return await self.repo.list_members(brain_id, limit=limit, offset=offset)
+        return await self.repo.list_members(vault_id, limit=limit, offset=offset)
 
     async def list_members_page(
-        self, brain_id: UUID, *, pagination: PageParams
+        self, vault_id: UUID, *, pagination: PageParams
     ) -> Page[MemberWithEmail]:
         rows = await self.repo.list_members(
-            brain_id, limit=pagination.limit, offset=pagination.offset
+            vault_id, limit=pagination.limit, offset=pagination.offset
         )
-        total = await self.repo.get_member_count(brain_id)
+        total = await self.repo.get_member_count(vault_id)
         return Page(
             items=rows,
             pagination=PageInfo(
@@ -203,13 +203,13 @@ class BrainService:
         )
 
     async def upsert_membership(
-        self, brain_id: UUID, user_id: UUID, role: MemberRole
-    ) -> BrainMembership:
-        membership = await self.repo.upsert_membership(brain_id, user_id, role)
+        self, vault_id: UUID, user_id: UUID, role: MemberRole
+    ) -> VaultMembership:
+        membership = await self.repo.upsert_membership(vault_id, user_id, role)
         await self._commit()
         return membership
 
-    async def delete_membership(self, brain_id: UUID, user_id: UUID) -> bool:
-        deleted = await self.repo.delete_membership(brain_id, user_id)
+    async def delete_membership(self, vault_id: UUID, user_id: UUID) -> bool:
+        deleted = await self.repo.delete_membership(vault_id, user_id)
         await self._commit()
         return deleted

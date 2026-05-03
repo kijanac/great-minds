@@ -25,7 +25,7 @@ class IdeaEmbeddingRepository:
         values = [
             {
                 "idea_id": e.idea_id,
-                "brain_id": e.brain_id,
+                "vault_id": e.vault_id,
                 "document_id": e.document_id,
                 "kind": e.kind,
                 "label": e.label,
@@ -55,24 +55,24 @@ class IdeaEmbeddingRepository:
             )
         )
 
-    async def delete_for_brain(self, brain_id: UUID) -> None:
+    async def delete_for_vault(self, vault_id: UUID) -> None:
         await self.session.execute(
-            delete(IdeaEmbeddingORM).where(IdeaEmbeddingORM.brain_id == brain_id)
+            delete(IdeaEmbeddingORM).where(IdeaEmbeddingORM.vault_id == vault_id)
         )
 
-    async def list_for_brain(self, brain_id: UUID) -> list[IdeaEmbedding]:
+    async def list_for_vault(self, vault_id: UUID) -> list[IdeaEmbedding]:
         rows = (
             await self.session.execute(
-                select(IdeaEmbeddingORM).where(IdeaEmbeddingORM.brain_id == brain_id)
+                select(IdeaEmbeddingORM).where(IdeaEmbeddingORM.vault_id == vault_id)
             )
         ).scalars().all()
         return [IdeaEmbedding.model_validate(row) for row in rows]
 
-    async def get_ids_for_brain(self, brain_id: UUID) -> list[UUID]:
+    async def get_ids_for_vault(self, vault_id: UUID) -> list[UUID]:
         rows = (
             await self.session.execute(
                 select(IdeaEmbeddingORM.idea_id).where(
-                    IdeaEmbeddingORM.brain_id == brain_id
+                    IdeaEmbeddingORM.vault_id == vault_id
                 )
             )
         ).scalars().all()

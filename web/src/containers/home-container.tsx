@@ -9,7 +9,7 @@ import { IngestionContainer } from "@/containers/ingestion-container";
 import { ProjectSwitcher } from "@/containers/project-switcher";
 import { SearchBar } from "@/components/search-bar";
 import { SessionThread } from "@/containers/session-thread";
-import { useActiveBrain } from "@/hooks/use-brain";
+import { useActiveVault } from "@/hooks/use-vault";
 import { useExploreBadge } from "@/hooks/use-explore-badge";
 import { useSavedSession } from "@/hooks/use-saved-session";
 import { useSession } from "@/hooks/use-session";
@@ -24,22 +24,22 @@ interface HomeContainerProps {
 }
 
 export function HomeContainer({ sessionId, initialQuery, origin }: HomeContainerProps) {
-  const brains = useActiveBrain();
+  const vaults = useActiveVault();
   const saved = useSavedSession(sessionId ?? null);
 
-  if (brains.error) {
+  if (vaults.error) {
     return (
       <ErrorState
         message="Couldn't load your projects."
-        onRetry={() => brains.refetch()}
+        onRetry={() => vaults.refetch()}
       />
     );
   }
 
-  if (brains.isLoading) return <Spinner label="Loading…" />;
+  if (vaults.isLoading) return <Spinner label="Loading…" />;
 
-  if ((brains.data?.length ?? 0) === 0 && !sessionId) {
-    return <Navigate to="/brains/new" replace />;
+  if ((vaults.data?.length ?? 0) === 0 && !sessionId) {
+    return <Navigate to="/vaults/new" replace />;
   }
 
   if (sessionId) {
@@ -75,7 +75,7 @@ const EASE_OUT: [number, number, number, number] = [0.25, 1, 0.5, 1];
 
 function HomeContent({ sessionId, initialExchanges, initialQuery, origin }: HomeContentProps) {
   const navigate = useViewNavigate();
-  const { activeBrain } = useActiveBrain();
+  const { activeVault } = useActiveVault();
   const badge = useExploreBadge();
   const lint = badge.data;
   const badgeCount =
@@ -160,13 +160,13 @@ function HomeContent({ sessionId, initialExchanges, initialQuery, origin }: Home
               transition={fadeIn}
             >
               <div className="mb-6 flex items-center gap-1.5">
-                {activeBrain && (
+                {activeVault && (
                   <Button
                     variant="outline"
                     onClick={() => navigate("/explore")}
                     className="h-auto py-1.5 px-4 rounded-sm border-ink-border font-mono text-[length:var(--text-chrome)] tracking-[0.14em] text-warm-faint hover:text-warm hover:border-gold-dim gap-2.5"
                   >
-                    {activeBrain.name}
+                    {activeVault.name}
                     {badgeCount > 0 && (
                       <span className="inline-flex items-center justify-center min-w-[18px] h-[18px] px-1 rounded-full bg-gold/20 text-gold text-[10px] leading-none">
                         {badgeCount}

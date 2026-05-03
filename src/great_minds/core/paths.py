@@ -1,7 +1,7 @@
-"""Single source of truth for the brain's on-disk hierarchy.
+"""Single source of truth for the vault's on-disk hierarchy.
 
-Brain content lives under ``<data_dir>/brains/<brain_id>/`` (or, for
-R2 storage, under ``<bucket>/brains/<brain_id>/``)::
+Vault content lives under ``<data_dir>/vaults/<vault_id>/`` (or, for
+R2 storage, under ``<bucket>/vaults/<vault_id>/``)::
 
     config.yaml                     user config
     prompts/<name>.md               optional prompt overrides
@@ -12,7 +12,7 @@ R2 storage, under ``<bucket>/brains/<brain_id>/``)::
 
 Compile sidecar is always machine-local, regardless of storage backend
 — it's build-cache state (think ``node_modules/``), regeneratable from
-content-hash inputs. It lives under ``<data_dir>/.compile/<brain_id>/``::
+content-hash inputs. It lives under ``<data_dir>/.compile/<vault_id>/``::
 
     cache/<phase>/<key>.json        per-phase content-hash cache
     source_cards.jsonl              extract output stream
@@ -20,7 +20,7 @@ content-hash inputs. It lives under ``<data_dir>/.compile/<brain_id>/``::
 
 Package-bundled defaults (``default_config.yaml``, ``default_prompts/``)
 ship with the installed package under ``great_minds/core/`` and serve
-as fallbacks when a brain hasn't authored an override.
+as fallbacks when a vault hasn't authored an override.
 
 Three helper families:
 
@@ -38,15 +38,15 @@ from pathlib import Path
 from uuid import UUID
 
 # ---------------------------------------------------------------------------
-# Data-dir-relative: brain root
+# Data-dir-relative: vault root
 # ---------------------------------------------------------------------------
 
-BRAINS_DIR = "brains"
+VAULTS_DIR = "vaults"
 
 
-def brain_dir(data_dir: Path, brain_id: UUID | str) -> Path:
-    """Absolute path to a brain's root directory on disk."""
-    return Path(data_dir) / BRAINS_DIR / str(brain_id)
+def vault_dir(data_dir: Path, vault_id: UUID | str) -> Path:
+    """Absolute path to a vault's root directory on disk."""
+    return Path(data_dir) / VAULTS_DIR / str(vault_id)
 
 
 # ---------------------------------------------------------------------------
@@ -62,8 +62,8 @@ RAW_INDEX_PATH = "raw/_index.md"
 CONFIG_PATH = "config.yaml"
 PROMPTS_DIR = "prompts"
 
-# Top-level brain content subdirs that the reset command clears.
-BRAIN_SUBDIRS: tuple[str, ...] = ("raw", "wiki")
+# Top-level vault content subdirs that the reset command clears.
+VAULT_SUBDIRS: tuple[str, ...] = ("raw", "wiki")
 
 
 def wiki_path(slug: str) -> str:
@@ -100,9 +100,9 @@ def prompts_path(name: str) -> str:
 COMPILE_DIR = ".compile"
 
 
-def sidecar_root(data_dir: Path, brain_id: UUID | str) -> Path:
-    """Absolute path to a brain's compile sidecar on local disk."""
-    return Path(data_dir) / COMPILE_DIR / str(brain_id)
+def sidecar_root(data_dir: Path, vault_id: UUID | str) -> Path:
+    """Absolute path to a vault's compile sidecar on local disk."""
+    return Path(data_dir) / COMPILE_DIR / str(vault_id)
 
 
 def cache_root(sidecar: Path) -> Path:

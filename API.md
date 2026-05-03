@@ -100,14 +100,14 @@ Returns `204 No Content`.
 
 ---
 
-## Brains
+## Vaults
 
-A brain is an isolated knowledge base. All content (raw sources, wiki articles, sessions) lives inside a brain. Users access brains through memberships with roles: `owner`, `editor`, or `viewer`.
+A vault is an isolated knowledge base. All content (raw sources, wiki articles, sessions) lives inside a vault. Users access vaults through memberships with roles: `owner`, `editor`, or `viewer`.
 
-### List your brains
+### List your vaults
 
 ```
-GET /v1/brains
+GET /v1/vaults
 ```
 
 **Response:**
@@ -118,15 +118,15 @@ GET /v1/brains
 ]
 ```
 
-### Create a brain
+### Create a vault
 
 ```
-POST /v1/brains
+POST /v1/vaults
 ```
 
 | Field  | Type   | Required | Description |
 |--------|--------|----------|-------------|
-| `name` | string | yes      | Brain name  |
+| `name` | string | yes      | Vault name  |
 
 **Response (201):**
 
@@ -140,10 +140,10 @@ POST /v1/brains
 }
 ```
 
-### Get brain details
+### Get vault details
 
 ```
-GET /v1/brains/{brain_id}
+GET /v1/vaults/{vault_id}
 ```
 
 **Response:**
@@ -163,7 +163,7 @@ GET /v1/brains/{brain_id}
 ### List members
 
 ```
-GET /v1/brains/{brain_id}/members
+GET /v1/vaults/{vault_id}/members
 ```
 
 **Response:**
@@ -177,7 +177,7 @@ GET /v1/brains/{brain_id}/members
 ### Invite a member
 
 ```
-POST /v1/brains/{brain_id}/members
+POST /v1/vaults/{vault_id}/members
 ```
 
 Requires `owner` role. Sends an invitation email.
@@ -192,7 +192,7 @@ Requires `owner` role. Sends an invitation email.
 ### Update a member's role
 
 ```
-PUT /v1/brains/{brain_id}/members/{member_user_id}
+PUT /v1/vaults/{vault_id}/members/{member_user_id}
 ```
 
 Requires `owner` role.
@@ -204,7 +204,7 @@ Requires `owner` role.
 ### Remove a member
 
 ```
-DELETE /v1/brains/{brain_id}/members/{member_user_id}
+DELETE /v1/vaults/{vault_id}/members/{member_user_id}
 ```
 
 Requires `owner` role. Returns `204 No Content`.
@@ -213,14 +213,14 @@ Requires `owner` role. Returns `204 No Content`.
 
 ## Ingestion
 
-Add raw source material to a brain. The brain must be compiled afterward for the content to appear in the wiki and become queryable.
+Add raw source material to a vault. The vault must be compiled afterward for the content to appear in the wiki and become queryable.
 
-All ingest endpoints are scoped to a brain: `/v1/brains/{brain_id}/ingest`
+All ingest endpoints are scoped to a vault: `/v1/vaults/{vault_id}/ingest`
 
 ### Ingest text
 
 ```
-POST /v1/brains/{brain_id}/ingest
+POST /v1/vaults/{vault_id}/ingest
 ```
 
 | Field            | Type   | Required | Default    | Description                                |
@@ -246,7 +246,7 @@ POST /v1/brains/{brain_id}/ingest
 ### Ingest file upload
 
 ```
-POST /v1/brains/{brain_id}/ingest/upload
+POST /v1/vaults/{vault_id}/ingest/upload
 ```
 
 Multipart form upload. Accepts `.md`, `.txt`, and `.pdf` files.
@@ -268,7 +268,7 @@ All optional fields are query parameters, not part of the multipart body.
 ### Ingest from URL
 
 ```
-POST /v1/brains/{brain_id}/ingest/url
+POST /v1/vaults/{vault_id}/ingest/url
 ```
 
 Fetches and ingests content from a URL.
@@ -283,7 +283,7 @@ Fetches and ingests content from a URL.
 ### Ingest user suggestion
 
 ```
-POST /v1/brains/{brain_id}/ingest/user-suggestion
+POST /v1/vaults/{vault_id}/ingest/user-suggestion
 ```
 
 Persists a structured user suggestion as a source document under `raw/user/` with `source_type: "user"`. The suggestion enters the pipeline through the same rail as any other document and influences the next compile.
@@ -306,7 +306,7 @@ Compilation processes raw sources into wiki articles. It runs as a background ta
 ### Trigger compilation
 
 ```
-POST /v1/brains/{brain_id}/compile
+POST /v1/vaults/{vault_id}/compile
 ```
 
 Returns immediately with a task you can poll.
@@ -335,14 +335,14 @@ Requires `OPENROUTER_API_KEY` to be configured (returns `503` otherwise).
 
 ## Query
 
-Query a brain's knowledge base using natural language. The query engine uses an LLM agent that can read wiki articles, follow source citations, and search across documents to ground its answers.
+Query a vault's knowledge base using natural language. The query engine uses an LLM agent that can read wiki articles, follow source citations, and search across documents to ground its answers.
 
-All query endpoints are scoped to a brain: `/v1/brains/{brain_id}/query`
+All query endpoints are scoped to a vault: `/v1/vaults/{vault_id}/query`
 
 ### Query (non-streaming)
 
 ```
-POST /v1/brains/{brain_id}/query
+POST /v1/vaults/{vault_id}/query
 ```
 
 | Field                | Type   | Required | Default   | Description |
@@ -352,7 +352,7 @@ POST /v1/brains/{brain_id}/query
 | `origin_path`        | string | no       |           | Pre-load this document into context (e.g. `wiki/imperialism.md` or `raw/texts/lenin/imp/01.md`). Useful when the user is reading a specific document and asking about it. |
 | `session_context`    | string | no       |           | Markdown of prior conversation to provide follow-up context. The engine uses this to understand references like "what did he mean by that?" |
 | `mode`               | string | no       | `"query"` | `"query"` for full answers, `"btw"` for concise 2-3 paragraph responses |
-| `extra_instructions` | string | no       |           | Additional instructions appended to the system prompt. Use this to control output format, tone, focus area, or any other behavioral guidance without modifying the brain's stored prompts. |
+| `extra_instructions` | string | no       |           | Additional instructions appended to the system prompt. Use this to control output format, tone, focus area, or any other behavioral guidance without modifying the vault's stored prompts. |
 
 **Response:**
 
@@ -368,12 +368,12 @@ POST /v1/brains/{brain_id}/query
 
 The `answer` field contains markdown with internal links to wiki articles and raw sources.
 
-The `sources_consulted` field lists every document the engine read while producing the answer, deduplicated and in the order first consulted. `kind` is either `"wiki"` (a compiled wiki article) or `"raw"` (a primary source document). Use this to render a bibliography or fetch full source content via `GET /v1/brains/{brain_id}/doc/{path}`.
+The `sources_consulted` field lists every document the engine read while producing the answer, deduplicated and in the order first consulted. `kind` is either `"wiki"` (a compiled wiki article) or `"raw"` (a primary source document). Use this to render a bibliography or fetch full source content via `GET /v1/vaults/{vault_id}/doc/{path}`.
 
 ### Query (streaming)
 
 ```
-POST /v1/brains/{brain_id}/query/stream
+POST /v1/vaults/{vault_id}/query/stream
 ```
 
 Same request body as the non-streaming endpoint. Returns a `text/event-stream` SSE response.
@@ -411,7 +411,7 @@ data: {"sources_consulted": [{"kind": "wiki", "path": "wiki/imperialism.md"}, {"
 
 ### Using `extra_instructions`
 
-The `extra_instructions` field lets you shape the engine's behavior per-request without modifying the brain's stored prompts. This is the primary integration point for wrapper services.
+The `extra_instructions` field lets you shape the engine's behavior per-request without modifying the vault's stored prompts. This is the primary integration point for wrapper services.
 
 **Examples:**
 
@@ -445,7 +445,7 @@ Read wiki articles and browse raw sources. These are read-only endpoints for acc
 ### List wiki articles
 
 ```
-GET /v1/brains/{brain_id}/wiki
+GET /v1/vaults/{vault_id}/wiki
 ```
 
 **Response:** Array of article slugs.
@@ -457,7 +457,7 @@ GET /v1/brains/{brain_id}/wiki
 ### Get recent articles
 
 ```
-GET /v1/brains/{brain_id}/wiki/recent
+GET /v1/vaults/{vault_id}/wiki/recent
 ```
 
 | Param   | Type    | Required | Default | Description       |
@@ -480,7 +480,7 @@ GET /v1/brains/{brain_id}/wiki/recent
 ### Read a wiki article
 
 ```
-GET /v1/brains/{brain_id}/wiki/{slug}
+GET /v1/vaults/{vault_id}/wiki/{slug}
 ```
 
 **Response:**
@@ -499,7 +499,7 @@ If the slug's active article is missing but a retired concept with that slug exi
 ### Read an archived article by concept_id
 
 ```
-GET /v1/brains/{brain_id}/wiki/archive/{concept_id}
+GET /v1/vaults/{vault_id}/wiki/archive/{concept_id}
 ```
 
 Fetches an archived article directly by its concept_id. Returns the same shape as above with `archived: true`. Returns `404` if the concept is not archived or its archive file is missing.
@@ -507,14 +507,14 @@ Fetches an archived article directly by its concept_id. Returns the same shape a
 ### Read any document by path
 
 ```
-GET /v1/brains/{brain_id}/doc/{path}
+GET /v1/vaults/{vault_id}/doc/{path}
 ```
 
 Read any wiki article or raw source by its full path. The path must start with `wiki/` or `raw/` and end with `.md`.
 
 **Examples:**
-- `GET /v1/brains/{brain_id}/doc/wiki/imperialism.md`
-- `GET /v1/brains/{brain_id}/doc/raw/texts/lenin/imp/01.md`
+- `GET /v1/vaults/{vault_id}/doc/wiki/imperialism.md`
+- `GET /v1/vaults/{vault_id}/doc/raw/texts/lenin/imp/01.md`
 
 **Response:**
 
@@ -532,7 +532,7 @@ Wiki paths (`wiki/<slug>.md`) follow the same archive-fallback rule as `GET /wik
 ### List raw sources
 
 ```
-GET /v1/brains/{brain_id}/raw/sources
+GET /v1/vaults/{vault_id}/raw/sources
 ```
 
 | Param          | Type    | Required | Default | Description                  |
@@ -572,12 +572,12 @@ GET /v1/brains/{brain_id}/raw/sources
 
 ## Sessions
 
-Sessions persist research conversations (queries + answers + BTWs) as event logs within a brain.
+Sessions persist research conversations (queries + answers + BTWs) as event logs within a vault.
 
 ### Create a session
 
 ```
-POST /v1/brains/{brain_id}/sessions
+POST /v1/vaults/{vault_id}/sessions
 ```
 
 | Field        | Type   | Required | Description                      |
@@ -603,7 +603,7 @@ POST /v1/brains/{brain_id}/sessions
 ### Append an exchange
 
 ```
-PATCH /v1/brains/{brain_id}/sessions/{session_id}
+PATCH /v1/vaults/{vault_id}/sessions/{session_id}
 ```
 
 Body: an `exchange` object (same shape as above).
@@ -611,7 +611,7 @@ Body: an `exchange` object (same shape as above).
 ### Append a BTW
 
 ```
-PATCH /v1/brains/{brain_id}/sessions/{session_id}/btw
+PATCH /v1/vaults/{vault_id}/sessions/{session_id}/btw
 ```
 
 | Field            | Type    | Required | Description                    |
@@ -625,7 +625,7 @@ PATCH /v1/brains/{brain_id}/sessions/{session_id}/btw
 ### List sessions
 
 ```
-GET /v1/brains/{brain_id}/sessions
+GET /v1/vaults/{vault_id}/sessions
 ```
 
 **Response:**
@@ -645,7 +645,7 @@ GET /v1/brains/{brain_id}/sessions
 ### Read a session
 
 ```
-GET /v1/brains/{brain_id}/sessions/{session_id}
+GET /v1/vaults/{vault_id}/sessions/{session_id}
 ```
 
 Returns the full event log for the session.
@@ -654,12 +654,12 @@ Returns the full event log for the session.
 
 ## Proposals
 
-Source proposals let members suggest content for a brain. Owners review and approve/reject them. Approved proposals are automatically ingested and compiled.
+Source proposals let members suggest content for a vault. Owners review and approve/reject them. Approved proposals are automatically ingested and compiled.
 
 ### Create a proposal
 
 ```
-POST /v1/brains/{brain_id}/proposals
+POST /v1/vaults/{vault_id}/proposals
 ```
 
 | Field          | Type   | Required | Default   | Description        |
@@ -674,7 +674,7 @@ POST /v1/brains/{brain_id}/proposals
 ```json
 {
   "id": "uuid",
-  "brain_id": "uuid",
+  "vault_id": "uuid",
   "user_id": "uuid",
   "status": "pending",
   "title": "On Contradiction",
@@ -689,7 +689,7 @@ POST /v1/brains/{brain_id}/proposals
 ### List proposals
 
 ```
-GET /v1/brains/{brain_id}/proposals
+GET /v1/vaults/{vault_id}/proposals
 ```
 
 | Param    | Type   | Required | Description                                  |
@@ -699,13 +699,13 @@ GET /v1/brains/{brain_id}/proposals
 ### Get a proposal
 
 ```
-GET /v1/brains/{brain_id}/proposals/{proposal_id}
+GET /v1/vaults/{vault_id}/proposals/{proposal_id}
 ```
 
 ### Review a proposal
 
 ```
-PATCH /v1/brains/{brain_id}/proposals/{proposal_id}
+PATCH /v1/vaults/{vault_id}/proposals/{proposal_id}
 ```
 
 Requires `owner` role.
@@ -714,18 +714,18 @@ Requires `owner` role.
 |----------|--------|----------|---------------------------------|
 | `status` | string | yes      | `"approved"` or `"rejected"`   |
 
-Approved proposals are automatically ingested into the brain and trigger a compilation task.
+Approved proposals are automatically ingested into the vault and trigger a compilation task.
 
 ---
 
 ## Lint
 
-Returns a detection-only report over the current brain state. Computed on demand from the compile artifacts — no LLM calls, no mutation. The report surfaces four kinds of signal the caller can act on.
+Returns a detection-only report over the current vault state. Computed on demand from the compile artifacts — no LLM calls, no mutation. The report surfaces four kinds of signal the caller can act on.
 
 ### Get lint report
 
 ```
-GET /v1/brains/{brain_id}/lint
+GET /v1/vaults/{vault_id}/lint
 ```
 
 **Response:**
@@ -760,12 +760,12 @@ GET /v1/brains/{brain_id}/lint
 
 ## Tasks
 
-Background tasks (compilation, bulk ingest). Tasks are scoped to a brain.
+Background tasks (compilation, bulk ingest). Tasks are scoped to a vault.
 
 ### List tasks
 
 ```
-GET /v1/brains/{brain_id}/tasks
+GET /v1/vaults/{vault_id}/tasks
 ```
 
 **Response:**
@@ -789,7 +789,7 @@ Task statuses: `pending`, `running`, `completed`, `failed`, `cancelled`.
 ### Get a task
 
 ```
-GET /v1/brains/{brain_id}/tasks/{task_id}
+GET /v1/vaults/{vault_id}/tasks/{task_id}
 ```
 
 ---
@@ -815,14 +815,14 @@ No authentication required.
 ### Typical workflow for a wrapper service
 
 1. **Authenticate** with an API key (create one via the web UI or `POST /v1/auth/api-keys`)
-2. **List brains** to find the brain ID you want to query
+2. **List vaults** to find the vault ID you want to query
 3. **Query** with `extra_instructions` to shape output for your use case
 4. **Stream** responses for real-time UX, or use the non-streaming endpoint for batch processing
 
 ### Minimal query example (curl)
 
 ```bash
-curl -X POST https://your-instance.com/v1/brains/{brain_id}/query \
+curl -X POST https://your-instance.com/v1/vaults/{vault_id}/query \
   -H "Authorization: Bearer gm_your_api_key" \
   -H "Content-Type: application/json" \
   -d '{
@@ -838,7 +838,7 @@ import httpx
 
 with httpx.stream(
     "POST",
-    f"https://your-instance.com/v1/brains/{brain_id}/query/stream",
+    f"https://your-instance.com/v1/vaults/{vault_id}/query/stream",
     headers={"Authorization": f"Bearer {api_key}"},
     json={
         "question": "Summarize the theory of surplus value",
@@ -860,7 +860,7 @@ with httpx.stream(
 |------|---------|
 | 400  | Bad request (invalid path, malformed body) |
 | 401  | Missing or invalid credentials |
-| 403  | Not a member of the brain, or insufficient role |
+| 403  | Not a member of the vault, or insufficient role |
 | 404  | Resource not found |
 | 409  | Conflict (e.g. proposal already reviewed) |
 | 503  | LLM service not configured (`OPENROUTER_API_KEY` missing) |

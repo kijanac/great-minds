@@ -2,14 +2,14 @@ import { useCallback, useEffect, useState } from "react";
 
 import { listSessions, type SessionSummary } from "@/api/sessions";
 import { SessionList } from "@/components/session-list";
-import { useActiveBrainId } from "@/hooks/use-brain";
+import { useActiveVaultId } from "@/hooks/use-vault";
 import { useViewNavigate } from "@/hooks/use-view-navigate";
 
 const PAGE_SIZE = 50;
 
 export function SessionsContainer() {
   const navigate = useViewNavigate();
-  const brainId = useActiveBrainId();
+  const vaultId = useActiveVaultId();
   const [sessions, setSessions] = useState<SessionSummary[]>([]);
   const [total, setTotal] = useState(0);
   const [offset, setOffset] = useState(0);
@@ -18,7 +18,7 @@ export function SessionsContainer() {
 
   const load = useCallback(
     async (nextOffset: number, append: boolean) => {
-      if (!brainId) return;
+      if (!vaultId) return;
       setLoading(true);
       setError(null);
       try {
@@ -42,7 +42,7 @@ export function SessionsContainer() {
         setLoading(false);
       }
     },
-    [brainId],
+    [vaultId],
   );
 
   useEffect(() => {

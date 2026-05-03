@@ -7,8 +7,8 @@ import httpx
 from fastapi import APIRouter, HTTPException, UploadFile
 
 from great_minds.app.api.dependencies import (
-    BrainServiceDep,
-    BrainStorageDep,
+    VaultServiceDep,
+    VaultStorageDep,
     IngestServiceDep,
     SettingsDep,
     TaskServiceDep,
@@ -35,12 +35,12 @@ router = APIRouter(prefix="/ingest", tags=["ingest"])
 @router.post("", status_code=201)
 async def ingest(
     source: RawSource,
-    brain_id: UUID,
-    storage: BrainStorageDep,
+    vault_id: UUID,
+    storage: VaultStorageDep,
     ingest_service: IngestServiceDep,
 ) -> IngestResult:
     file_path, title = await ingest_service.ingest_text(
-        brain_id,
+        vault_id,
         storage,
         source.content,
         source.dest,
@@ -52,13 +52,13 @@ async def ingest(
 @router.post("/user-suggestion", status_code=201)
 async def ingest_user_suggestion(
     suggestion: UserSuggestion,
-    brain_id: UUID,
-    storage: BrainStorageDep,
+    vault_id: UUID,
+    storage: VaultStorageDep,
     ingest_service: IngestServiceDep,
 ) -> IngestResult:
     try:
         file_path, title = await ingest_service.ingest_user_suggestion(
-            brain_id,
+            vault_id,
             storage,
             body=suggestion.body,
             intent=suggestion.intent,
@@ -73,8 +73,8 @@ async def ingest_user_suggestion(
 @router.post("/upload", status_code=201)
 async def ingest_upload(
     file: UploadFile,
-    brain_id: UUID,
-    storage: BrainStorageDep,
+    vault_id: UUID,
+    storage: VaultStorageDep,
     ingest_service: IngestServiceDep,
     content_type: str = "texts",
     author: str | None = None,
@@ -98,7 +98,7 @@ async def ingest_upload(
     )
     try:
         file_path, title = await ingest_service.ingest_upload(
-            brain_id,
+            vault_id,
             storage,
             raw_bytes,
             filename,
@@ -118,13 +118,13 @@ async def ingest_upload(
 @router.post("/url", status_code=201)
 async def ingest_url(
     source: URLSource,
-    brain_id: UUID,
-    storage: BrainStorageDep,
+    vault_id: UUID,
+    storage: VaultStorageDep,
     ingest_service: IngestServiceDep,
 ) -> IngestResult:
     try:
         file_path, title = await ingest_service.ingest_url(
-            brain_id,
+            vault_id,
             storage,
             source.url,
             source.metadata,
@@ -138,7 +138,7 @@ async def ingest_url(
 # Bulk direct-to-R2 upload flow
 #
 # Two-step handshake: client posts a manifest and gets back presigned PUT
-# URLs, uploads each file directly to ``staging/<brain>/<hash>`` on R2,
+# URLs, uploads each file directly to ``staging/<vault>/<hash>`` on R2,
 # then posts the hashes to /process which spawns a worker. Server never
 # sees file bytes — sidesteps multipart caps, BaseHTTPMiddleware
 # disconnects, and per-request memory pressure entirely.
@@ -148,8 +148,8 @@ async def ingest_url(
 @router.post("/bulk/sign")
 async def ingest_bulk_sign(
     req: BulkSignRequest,
-    brain_id: UUID,
-    brain_service: BrainServiceDep,
+    vault_id: UUID,
+    vault_service: VaultServiceDep,
     settings: SettingsDep,
 ) -> BulkSignResponse:
     if settings.storage_backend != "r2":
@@ -157,11 +157,11 @@ async def ingest_bulk_sign(
             status_code=400,
             detail="bulk upload requires r2 storage backend",
         )
-    brain = await brain_service.get_brain(brain_id)
-    if not brain.r2_bucket_name:
+    vault = await vault_service.get_vault(vault_id)
+    if not vault.r2_bucket_name:
         raise HTTPException(
             status_code=400,
-            detail="brain has no r2 bucket; cannot sign uploads",
+            detail="vault has no r2 bucket; cannot sign uploads",
         )
     if not req.files:
         raise HTTPException(status_code=400, detail="manifest is empty")
@@ -173,9 +173,9 @@ async def ingest_bulk_sign(
     )
     signed: list[BulkSignedUrl] = []
     for f in req.files:
-        key = f"staging/{brain_id}/{f.hash}"
+        key = f"staging/{vault_id}/{f.hash}"
         url = admin.presign_put(
-            brain.r2_bucket_name,
+            vault.r2_bucket_name,
             key,
             content_type=f.mimetype or "application/octet-stream",
             content_length=f.size,
@@ -187,13 +187,13 @@ async def ingest_bulk_sign(
 @router.post("/bulk/process")
 async def ingest_bulk_process(
     req: BulkProcessRequest,
-    brain_id: UUID,
+    vault_id: UUID,
     task_service: TaskServiceDep,
 ) -> BulkProcessResponse:
     if not req.files:
         raise HTTPException(status_code=400, detail="no files provided")
     detail = await task_service.spawn_bulk_ingest_from_staging(
-        brain_id=brain_id,
+        vault_id=vault_id,
         files=[f.model_dump() for f in req.files],
         content_type=req.content_type,
         source_type=req.source_type,

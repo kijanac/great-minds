@@ -59,22 +59,22 @@ class LintReport:
 
 async def build_lint_report(
     session: AsyncSession,
-    brain_id: uuid.UUID,
+    vault_id: uuid.UUID,
     storage: Storage,
 ) -> LintReport:
     doc_repo = DocumentRepository(session)
     topic_repo = TopicRepository(session)
 
-    orphans = await doc_repo.list_orphan_wiki_documents(brain_id)
-    rendered = await topic_repo.list_by_status(brain_id, ArticleStatus.RENDERED)
+    orphans = await doc_repo.list_orphan_wiki_documents(vault_id)
+    rendered = await topic_repo.list_by_status(vault_id, ArticleStatus.RENDERED)
     if not rendered:
-        dirty = await topic_repo.list_dirty_topic_ids(brain_id)
+        dirty = await topic_repo.list_dirty_topic_ids(vault_id)
         return LintReport(orphans=orphans, dirty_topics=dirty)
 
     topic_by_id = {t.topic_id: t for t in rendered}
     slug_to_topic = {t.slug: t for t in rendered}
 
-    dirty = await topic_repo.list_dirty_topic_ids(brain_id)
+    dirty = await topic_repo.list_dirty_topic_ids(vault_id)
     unresolved, cited_by_source = await _walk_articles(
         storage=storage,
         rendered=rendered,
@@ -82,7 +82,7 @@ async def build_lint_report(
     )
     unmentioned = await _unmentioned_intended_links(
         topic_repo=topic_repo,
-        brain_id=brain_id,
+        vault_id=vault_id,
         topic_by_id=topic_by_id,
         cited_by_source=cited_by_source,
     )
@@ -139,7 +139,7 @@ async def _walk_articles(
 async def _unmentioned_intended_links(
     *,
     topic_repo: TopicRepository,
-    brain_id: uuid.UUID,
+    vault_id: uuid.UUID,
     topic_by_id: dict[uuid.UUID, Topic],
     cited_by_source: dict[uuid.UUID, set[str]],
 ) -> list[UnmentionedLink]:
@@ -151,8 +151,8 @@ async def _unmentioned_intended_links(
     """
     if not cited_by_source:
         return []
-    edges = await topic_repo.list_links_for_brain(
-        brain_id, source_topic_ids=list(cited_by_source.keys())
+    edges = await topic_repo.list_links_for_vault(
+        vault_id, source_topic_ids=list(cited_by_source.keys())
     )
 
     out: list[UnmentionedLink] = []

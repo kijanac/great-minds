@@ -1,21 +1,21 @@
 import { useNavigate } from "react-router";
 
 import {
-  BrainConfigForm,
-  type BrainConfigFormSubmit,
-} from "@/components/brain-config-form";
-import { useBrains, useCreateBrain } from "@/hooks/use-brain";
+  VaultConfigForm,
+  type VaultConfigFormSubmit,
+} from "@/components/vault-config-form";
+import { useVaults, useCreateVault } from "@/hooks/use-vault";
 
-export default function BrainNewPage() {
+export default function VaultNewPage() {
   const navigate = useNavigate();
-  const { data: brains } = useBrains();
-  const createBrain = useCreateBrain();
+  const { data: vaults } = useVaults();
+  const createVault = useCreateVault();
 
-  const isFirstRun = (brains?.length ?? 0) === 0;
+  const isFirstRun = (vaults?.length ?? 0) === 0;
 
-  async function handleSubmit(data: BrainConfigFormSubmit) {
+  async function handleSubmit(data: VaultConfigFormSubmit) {
     if (!data.name) return;
-    await createBrain.mutateAsync({
+    await createVault.mutateAsync({
       name: data.name,
       thematic_hint: data.thematic_hint || undefined,
     });
@@ -34,17 +34,17 @@ export default function BrainNewPage() {
             : "set up a new library of sources"}
         </p>
 
-        <BrainConfigForm
+        <VaultConfigForm
           mode="create"
-          submitting={createBrain.isPending}
+          submitting={createVault.isPending}
           onSubmit={handleSubmit}
           onCancel={isFirstRun ? undefined : () => navigate("/")}
           submitLabel="create project"
         />
 
-        {createBrain.error && (
+        {createVault.error && (
           <p className="mt-4 font-mono text-[length:var(--text-chrome)] text-red-400">
-            {createBrain.error.message}
+            {createVault.error.message}
           </p>
         )}
       </div>

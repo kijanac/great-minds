@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-import { apiFetch, brainPath, readJson } from "./client";
+import { apiFetch, vaultPath, readJson } from "./client";
 
 export interface IngestResult {
   file_path: string;
@@ -12,39 +12,52 @@ const ingestResultSchema: z.ZodType<IngestResult> = z.object({
   title: z.string(),
 });
 
-const bulkStartEventSchema = z.object({
-  event: z.literal("start"),
-  total: z.number(),
+const bulkSignedUrlSchema = z.object({
+  hash: z.string(),
+  url: z.string(),
 });
 
-const bulkFileEventSchema = z.object({
-  event: z.literal("file"),
-  index: z.number(),
-  filename: z.string(),
-  status: z.enum(["done", "skipped", "error"]),
-  file_path: z.string().nullable().optional(),
-  title: z.string().nullable().optional(),
-  error: z.string().nullable().optional(),
+const bulkSignResponseSchema = z.object({
+  files: z.array(bulkSignedUrlSchema),
 });
 
-const bulkDoneEventSchema = z.object({
-  event: z.literal("done"),
-  ingested: z.number(),
-  skipped: z.number(),
-  failed: z.number(),
-  compile_intent_id: z.string().nullable(),
+const bulkProcessResponseSchema = z.object({
+  task_id: z.string(),
 });
 
-const bulkEventSchema = z.discriminatedUnion("event", [
-  bulkStartEventSchema,
-  bulkFileEventSchema,
-  bulkDoneEventSchema,
+const taskStatusSchema = z.enum([
+  "pending",
+  "running",
+  "completed",
+  "failed",
+  "cancelled",
 ]);
 
-export type BulkStartEvent = z.infer<typeof bulkStartEventSchema>;
-export type BulkFileEvent = z.infer<typeof bulkFileEventSchema>;
-export type BulkDoneEvent = z.infer<typeof bulkDoneEventSchema>;
-export type BulkEvent = z.infer<typeof bulkEventSchema>;
+const taskDetailSchema = z.object({
+  id: z.string(),
+  type: z.string(),
+  status: taskStatusSchema,
+  created_at: z.string(),
+  error: z.string().nullable(),
+  params: z.record(z.string(), z.unknown()),
+});
+
+export type TaskStatus = z.infer<typeof taskStatusSchema>;
+export type TaskDetail = z.infer<typeof taskDetailSchema>;
+
+const PUT_CONCURRENCY = 4;
+const TASK_POLL_INTERVAL_MS = 1500;
+
+export type BulkPhase = "uploading" | "processing" | "done" | "error";
+
+export interface BulkUploadProgress {
+  phase: BulkPhase;
+  uploaded: number;
+  total: number;
+  task_id?: string;
+  error?: string;
+  failed_uploads?: { name: string; error: string }[];
+}
 
 export async function uploadFile(file: File, destPath?: string): Promise<IngestResult> {
   const formData = new FormData();
@@ -53,7 +66,7 @@ export async function uploadFile(file: File, destPath?: string): Promise<IngestR
     formData.append("dest_path", destPath);
   }
 
-  const res = await apiFetch(brainPath("/ingest/upload"), {
+  const res = await apiFetch(vaultPath("/ingest/upload"), {
     method: "POST",
     body: formData,
   });
@@ -66,54 +79,199 @@ export async function uploadFile(file: File, destPath?: string): Promise<IngestR
   return readJson(res, ingestResultSchema);
 }
 
+async function sha256Hex(bytes: ArrayBuffer): Promise<string> {
+  const digest = await crypto.subtle.digest("SHA-256", bytes);
+  return Array.from(new Uint8Array(digest))
+    .map((b) => b.toString(16).padStart(2, "0"))
+    .join("");
+}
+
+async function pMap<T, R>(
+  items: T[],
+  fn: (item: T, index: number) => Promise<R>,
+  concurrency: number,
+): Promise<R[]> {
+  const results: R[] = new Array(items.length);
+  let cursor = 0;
+  async function worker() {
+    while (true) {
+      const i = cursor++;
+      if (i >= items.length) return;
+      results[i] = await fn(items[i], i);
+    }
+  }
+  const workers = Array.from(
+    { length: Math.min(concurrency, items.length) },
+    worker,
+  );
+  await Promise.all(workers);
+  return results;
+}
+
+/**
+ * Bulk ingest via direct-to-R2 upload.
+ *
+ * Yields progress events: per-file "uploading" updates while PUTs are
+ * in flight, then a single "processing" event with the spawned task_id,
+ * then terminal "done" or "error". Caller drives the rest of the UI off
+ * the existing compile-intent stream once the task completes.
+ */
 export async function* ingestBulk(
   files: File[],
   contentType: string = "texts",
-): AsyncGenerator<BulkEvent> {
-  const formData = new FormData();
-  for (const file of files) {
-    formData.append("files", file);
-  }
-  formData.append("content_type", contentType);
+): AsyncGenerator<BulkUploadProgress> {
+  if (files.length === 0) return;
 
-  const res = await apiFetch(brainPath("/ingest/bulk"), {
+  const manifest = await Promise.all(
+    files.map(async (f) => ({
+      name: f.name,
+      size: f.size,
+      hash: await sha256Hex(await f.arrayBuffer()),
+      mimetype: f.type,
+    })),
+  );
+
+  // 1. sign
+  const signRes = await apiFetch(vaultPath("/ingest/bulk/sign"), {
     method: "POST",
-    body: formData,
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ files: manifest }),
   });
+  if (!signRes.ok) {
+    yield {
+      phase: "error",
+      uploaded: 0,
+      total: files.length,
+      error: await signRes.text(),
+    };
+    return;
+  }
+  const signed = (await readJson(signRes, bulkSignResponseSchema)).files;
+  const urlByHash = new Map(signed.map((s) => [s.hash, s.url]));
 
-  if (!res.ok || !res.body) {
-    const detail = res.ok ? "Empty response body" : await res.text();
-    throw new Error(detail);
+  // 2. PUT to R2 with bounded concurrency. Per-file failures are
+  //    collected; we still kick off /process for whatever uploaded.
+  let uploaded = 0;
+  const failedUploads: { name: string; error: string }[] = [];
+  yield { phase: "uploading", uploaded, total: files.length };
+
+  const uploadResults = await pMap(
+    files,
+    async (file, i) => {
+      const m = manifest[i];
+      const url = urlByHash.get(m.hash);
+      if (!url) {
+        failedUploads.push({ name: file.name, error: "no presigned URL" });
+        return null;
+      }
+      try {
+        const res = await fetch(url, {
+          method: "PUT",
+          body: file,
+          headers: { "Content-Type": file.type || "application/octet-stream" },
+        });
+        if (!res.ok) {
+          failedUploads.push({
+            name: file.name,
+            error: `PUT ${res.status}: ${await res.text()}`,
+          });
+          return null;
+        }
+        return m;
+      } catch (e) {
+        failedUploads.push({
+          name: file.name,
+          error: e instanceof Error ? e.message : "PUT failed",
+        });
+        return null;
+      } finally {
+        uploaded += 1;
+      }
+    },
+    PUT_CONCURRENCY,
+  );
+
+  yield { phase: "uploading", uploaded, total: files.length, failed_uploads: failedUploads };
+
+  const successfullyUploaded = uploadResults.filter(
+    (m): m is (typeof manifest)[number] => m !== null,
+  );
+  if (successfullyUploaded.length === 0) {
+    yield {
+      phase: "error",
+      uploaded,
+      total: files.length,
+      error: "all uploads failed",
+      failed_uploads: failedUploads,
+    };
+    return;
   }
 
-  for await (const line of readLines(res.body)) {
-    if (!line) continue;
-    yield bulkEventSchema.parse(JSON.parse(line));
+  // 3. process — spawns the bulk_ingest_from_staging worker task
+  const processRes = await apiFetch(vaultPath("/ingest/bulk/process"), {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      files: successfullyUploaded.map((m) => ({
+        hash: m.hash,
+        name: m.name,
+        mimetype: m.mimetype,
+      })),
+      content_type: contentType,
+      source_type: "document",
+    }),
+  });
+  if (!processRes.ok) {
+    yield {
+      phase: "error",
+      uploaded,
+      total: files.length,
+      error: await processRes.text(),
+      failed_uploads: failedUploads,
+    };
+    return;
+  }
+  const { task_id } = await readJson(processRes, bulkProcessResponseSchema);
+  yield {
+    phase: "processing",
+    uploaded,
+    total: files.length,
+    task_id,
+    failed_uploads: failedUploads,
+  };
+
+  // 4. poll task to terminal state
+  while (true) {
+    await new Promise((r) => setTimeout(r, TASK_POLL_INTERVAL_MS));
+    const status = await getTask(task_id);
+    if (status.status === "completed") {
+      yield {
+        phase: "done",
+        uploaded,
+        total: files.length,
+        task_id,
+        failed_uploads: failedUploads,
+      };
+      return;
+    }
+    if (status.status === "failed" || status.status === "cancelled") {
+      yield {
+        phase: "error",
+        uploaded,
+        total: files.length,
+        task_id,
+        error: status.error ?? `task ${status.status}`,
+        failed_uploads: failedUploads,
+      };
+      return;
+    }
   }
 }
 
-async function* readLines(
-  body: ReadableStream<Uint8Array>,
-): AsyncGenerator<string> {
-  const reader = body.getReader();
-  const decoder = new TextDecoder();
-  let buffer = "";
-  try {
-    while (true) {
-      const { value, done } = await reader.read();
-      if (done) break;
-      buffer += decoder.decode(value, { stream: true });
-      let idx = buffer.indexOf("\n");
-      while (idx !== -1) {
-        yield buffer.slice(0, idx);
-        buffer = buffer.slice(idx + 1);
-        idx = buffer.indexOf("\n");
-      }
-    }
-    if (buffer) yield buffer;
-  } finally {
-    reader.releaseLock();
-  }
+async function getTask(taskId: string): Promise<TaskDetail> {
+  const res = await apiFetch(vaultPath(`/tasks/${taskId}`));
+  if (!res.ok) throw new Error(await res.text());
+  return readJson(res, taskDetailSchema);
 }
 
 export type UserSuggestionIntent =
@@ -128,7 +286,7 @@ export async function postUserSuggestion(params: {
   anchoredTo: string;
   anchoredSection: string;
 }): Promise<IngestResult> {
-  const res = await apiFetch(brainPath("/ingest/user-suggestion"), {
+  const res = await apiFetch(vaultPath("/ingest/user-suggestion"), {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
@@ -148,7 +306,7 @@ export async function postUserSuggestion(params: {
 }
 
 export async function ingestUrl(url: string): Promise<IngestResult> {
-  const res = await apiFetch(brainPath("/ingest/url"), {
+  const res = await apiFetch(vaultPath("/ingest/url"), {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ url }),

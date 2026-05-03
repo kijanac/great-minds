@@ -15,8 +15,8 @@ from absurd_sdk import AbsurdHooks, AsyncAbsurd
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from great_minds.core import pipeline
-from great_minds.core.brains.config import load_config
-from great_minds.core.brains.repository import BrainRepository
+from great_minds.core.vaults.config import load_config
+from great_minds.core.vaults.repository import VaultRepository
 from great_minds.core.compile_intents.repository import CompileIntentRepository
 from great_minds.core.documents.builder import build_document, write_document
 from great_minds.core.documents.repository import DocumentRepository
@@ -56,36 +56,36 @@ async def compile_task(params: dict, ctx) -> None:
     returned through the task result.
     """
     correlation_id.set(f"task-{ctx.task_id}")
-    brain_id = UUID(params["brain_id"])
+    vault_id = UUID(params["vault_id"])
     session = _task_session.get()
-    brain = await BrainRepository(session).get_by_id(brain_id)
-    if brain is None:
-        raise ValueError(f"Brain {brain_id} not found")
-    storage = make_storage(brain)
+    vault = await VaultRepository(session).get_by_id(vault_id)
+    if vault is None:
+        raise ValueError(f"Vault {vault_id} not found")
+    storage = make_storage(vault)
     client = get_async_client()
 
-    init_wide_event("compile", brain_id=str(brain_id))
+    init_wide_event("compile", vault_id=str(vault_id))
     await ctx.heartbeat(600)
 
     pipeline_ctx = await pipeline.build_context(
-        brain_id=brain_id, storage=storage, session=session, client=client
+        vault_id=vault_id, storage=storage, session=session, client=client
     )
     await pipeline.run(pipeline_ctx)
 
-    await record_wide_event_cost(session, user_id=None, brain_id=brain_id)
+    await record_wide_event_cost(session, user_id=None, vault_id=vault_id)
     await session.commit()
     emit_wide_event()
 
 
 async def bulk_ingest_task(params: dict, ctx) -> None:
-    """Bulk ingest a directory of files into a brain."""
+    """Bulk ingest a directory of files into a vault."""
     correlation_id.set(f"task-{ctx.task_id}")
-    brain_id = UUID(params["brain_id"])
+    vault_id = UUID(params["vault_id"])
     session = _task_session.get()
-    brain = await BrainRepository(session).get_by_id(brain_id)
-    if brain is None:
-        raise ValueError(f"Brain {brain_id} not found")
-    storage = make_storage(brain)
+    vault = await VaultRepository(session).get_by_id(vault_id)
+    if vault is None:
+        raise ValueError(f"Vault {vault_id} not found")
+    storage = make_storage(vault)
     source_dir = Path(params["source_dir"])
     content_type = params.get("content_type", "texts")
     dest_dir = params.get("dest_dir", raw_prefix(content_type))
@@ -94,7 +94,7 @@ async def bulk_ingest_task(params: dict, ctx) -> None:
 
     doc_repo = DocumentRepository(session)
     intent_repo = CompileIntentRepository(session)
-    existing_hashes = await doc_repo.get_file_hashes(brain_id)
+    existing_hashes = await doc_repo.get_file_hashes(vault_id)
 
     source_files = sorted(source_dir.rglob("*.md"))
     total = len(source_files)
@@ -105,14 +105,14 @@ async def bulk_ingest_task(params: dict, ctx) -> None:
 
     init_wide_event(
         "bulk_ingested",
-        brain_id=str(brain_id),
+        vault_id=str(vault_id),
         source_dir=str(source_dir),
         content_type=content_type,
         total_files=total,
     )
 
     log.info(
-        "bulk_ingest brain=%s source=%s files=%d",
+        "bulk_ingest vault=%s source=%s files=%d",
         params.get("label"),
         source_dir,
         total,
@@ -143,10 +143,10 @@ async def bulk_ingest_task(params: dict, ctx) -> None:
             batch.append(DocumentCreate.from_frontmatter(fm, dest, content_with_fm))
 
             if len(batch) >= batch_size:
-                await doc_repo.batch_upsert(brain_id, batch)
+                await doc_repo.batch_upsert(vault_id, batch)
                 # Outbox: every commit that persists docs also persists the
                 # intent (idempotent — the partial unique index coalesces).
-                await intent_repo.upsert_pending(brain_id)
+                await intent_repo.upsert_pending(vault_id)
                 await session.commit()
                 batch.clear()
 
@@ -160,13 +160,13 @@ async def bulk_ingest_task(params: dict, ctx) -> None:
                 )
 
         if batch:
-            await doc_repo.batch_upsert(brain_id, batch)
-            await intent_repo.upsert_pending(brain_id)
+            await doc_repo.batch_upsert(vault_id, batch)
+            await intent_repo.upsert_pending(vault_id)
             await session.commit()
 
     enrich(ingested=ingested, skipped=skipped)
     log.info(
-        "bulk_ingest complete brain=%s ingested=%d skipped=%d total=%d",
+        "bulk_ingest complete vault=%s ingested=%d skipped=%d total=%d",
         params.get("label"),
         ingested,
         skipped,
@@ -187,7 +187,7 @@ _STAGING_BATCH_SIZE = 50
 async def _fetch_and_convert(
     entry: dict,
     *,
-    brain_id: UUID,
+    vault_id: UUID,
     bucket: str,
     admin: R2Admin,
     config: dict,
@@ -197,7 +197,7 @@ async def _fetch_and_convert(
 ) -> tuple[dict, str]:
     """Pull one staging blob, convert to markdown, prepend frontmatter."""
     async with sem:
-        staging_key = f"staging/{brain_id}/{entry['hash']}"
+        staging_key = f"staging/{vault_id}/{entry['hash']}"
         raw_bytes = await admin.fetch_bytes(bucket, staging_key)
         content = await _convert_to_markdown(
             raw_bytes, entry["name"], entry.get("mimetype", "")
@@ -212,7 +212,7 @@ async def _index_fetched_results(
     fetch_tasks: list[asyncio.Task[tuple[dict, str]]],
     *,
     ctx,
-    brain_id: UUID,
+    vault_id: UUID,
     content_type: str,
     storage,
     existing_hashes: dict[str, str],
@@ -240,7 +240,7 @@ async def _index_fetched_results(
             log_event(
                 "bulk_ingest_from_staging.fetch_failed",
                 level=logging.WARNING,
-                brain_id=str(brain_id),
+                vault_id=str(vault_id),
                 error_type=type(e).__name__,
                 error=str(e),
             )
@@ -249,7 +249,7 @@ async def _index_fetched_results(
 
         file_hash = hashlib.sha256(content_with_fm.encode()).hexdigest()
         dest = f"raw/{content_type}/{entry['hash'][:12]}.md"
-        keys_to_clean.append(f"staging/{brain_id}/{entry['hash']}")
+        keys_to_clean.append(f"staging/{vault_id}/{entry['hash']}")
 
         if existing_hashes.get(dest) == file_hash:
             skipped += 1
@@ -261,26 +261,26 @@ async def _index_fetched_results(
         ingested += 1
 
         if len(batch) >= _STAGING_BATCH_SIZE:
-            await doc_repo.batch_upsert(brain_id, batch)
-            await intent_repo.upsert_pending(brain_id)
+            await doc_repo.batch_upsert(vault_id, batch)
+            await intent_repo.upsert_pending(vault_id)
             await session.commit()
             batch.clear()
 
     if batch:
-        await doc_repo.batch_upsert(brain_id, batch)
-        await intent_repo.upsert_pending(brain_id)
+        await doc_repo.batch_upsert(vault_id, batch)
+        await intent_repo.upsert_pending(vault_id)
         await session.commit()
     elif ingested > 0:
         # Last batch already flushed at BATCH_SIZE; still ensure a
         # compile_intent exists for the run.
-        await intent_repo.upsert_pending(brain_id)
+        await intent_repo.upsert_pending(vault_id)
         await session.commit()
 
     return ingested, skipped, failed, keys_to_clean
 
 
 async def _cleanup_staging(
-    admin: R2Admin, bucket: str, keys: list[str], *, brain_id: UUID
+    admin: R2Admin, bucket: str, keys: list[str], *, vault_id: UUID
 ) -> None:
     """Best-effort delete of staging keys. Lifecycle rule (24h) is the
     safety net for any failures here."""
@@ -295,69 +295,69 @@ async def _cleanup_staging(
         log_event(
             "bulk_ingest_from_staging.cleanup_failures",
             level=logging.WARNING,
-            brain_id=str(brain_id),
+            vault_id=str(vault_id),
             failed=failures,
             total=len(keys),
         )
 
 
 async def bulk_ingest_from_staging_task(params: dict, ctx) -> None:
-    """Process files previously uploaded to ``staging/<brain_id>/<hash>``.
+    """Process files previously uploaded to ``staging/<vault_id>/<hash>``.
 
     ``params`` shape:
         {
-          "brain_id": str,
+          "vault_id": str,
           "files": [{"hash": str, "name": str, "mimetype": str}, ...],
-          "content_type": str,    # brain category, e.g. "texts"
+          "content_type": str,    # vault category, e.g. "texts"
           "source_type": str,     # frontmatter source_type, e.g. "document"
         }
 
     Idempotency comes from content-addressable dest paths
     (``raw/<content_type>/<hash[:12]>.md``) plus
-    ``DocumentRepository.batch_upsert``'s ``(brain_id, file_path)``
+    ``DocumentRepository.batch_upsert``'s ``(vault_id, file_path)``
     conflict target. Re-running the task on the same hashes is a no-op.
     """
     correlation_id.set(f"task-{ctx.task_id}")
-    brain_id = UUID(params["brain_id"])
+    vault_id = UUID(params["vault_id"])
     files = params["files"]
     content_type = params["content_type"]
     source_type = params["source_type"]
 
     session = _task_session.get()
-    brain = await BrainRepository(session).get_by_id(brain_id)
-    if brain is None:
-        raise ValueError(f"Brain {brain_id} not found")
+    vault = await VaultRepository(session).get_by_id(vault_id)
+    if vault is None:
+        raise ValueError(f"Vault {vault_id} not found")
 
     settings = get_settings()
     if settings.storage_backend != "r2":
         raise ValueError("bulk_ingest_from_staging requires r2 storage backend")
-    if not brain.r2_bucket_name:
-        raise ValueError(f"Brain {brain_id} has no r2_bucket_name")
+    if not vault.r2_bucket_name:
+        raise ValueError(f"Vault {vault_id} has no r2_bucket_name")
 
-    storage = make_storage(brain, settings)
+    storage = make_storage(vault, settings)
     config = await load_config(storage)
     admin = R2Admin(
         account_id=settings.r2_account_id,
         access_key_id=settings.r2_access_key_id,
         secret_access_key=settings.r2_secret_access_key,
     )
-    bucket = brain.r2_bucket_name
+    bucket = vault.r2_bucket_name
 
     init_wide_event(
-        "bulk_ingest_from_staging", brain_id=str(brain_id), total=len(files)
+        "bulk_ingest_from_staging", vault_id=str(vault_id), total=len(files)
     )
     await ctx.heartbeat(600)
 
     doc_repo = DocumentRepository(session)
     intent_repo = CompileIntentRepository(session)
-    existing_hashes = await doc_repo.get_file_hashes(brain_id)
+    existing_hashes = await doc_repo.get_file_hashes(vault_id)
 
     sem = asyncio.Semaphore(_STAGING_FETCH_CONCURRENCY)
     fetch_tasks = [
         asyncio.create_task(
             _fetch_and_convert(
                 entry,
-                brain_id=brain_id,
+                vault_id=vault_id,
                 bucket=bucket,
                 admin=admin,
                 config=config,
@@ -372,7 +372,7 @@ async def bulk_ingest_from_staging_task(params: dict, ctx) -> None:
     ingested, skipped, failed, keys_to_clean = await _index_fetched_results(
         fetch_tasks,
         ctx=ctx,
-        brain_id=brain_id,
+        vault_id=vault_id,
         content_type=content_type,
         storage=storage,
         existing_hashes=existing_hashes,
@@ -381,7 +381,7 @@ async def bulk_ingest_from_staging_task(params: dict, ctx) -> None:
         session=session,
     )
 
-    await _cleanup_staging(admin, bucket, keys_to_clean, brain_id=brain_id)
+    await _cleanup_staging(admin, bucket, keys_to_clean, vault_id=vault_id)
 
     enrich(ingested=ingested, skipped=skipped, failed=failed)
     emit_wide_event()

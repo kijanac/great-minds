@@ -6,7 +6,7 @@ from sqlalchemy import text
 
 import great_minds.core.users.models  # noqa: F401
 import great_minds.core.auth.models  # noqa: F401
-import great_minds.core.brains.models  # noqa: F401
+import great_minds.core.vaults.models  # noqa: F401
 import great_minds.core.proposals.models  # noqa: F401
 import great_minds.core.tasks  # noqa: F401
 from great_minds.core.db import session_maker

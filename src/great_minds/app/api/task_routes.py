@@ -16,21 +16,21 @@ router = APIRouter(prefix="/tasks", tags=["tasks"])
 
 @router.get("")
 async def list_tasks(
-    brain_id: UUID,
+    vault_id: UUID,
     pagination: PageParamsQuery,
     task_service: TaskServiceDep,
 ) -> Page[TaskDetail]:
-    result = await task_service.list_for_brain(brain_id, pagination=pagination)
+    result = await task_service.list_for_vault(vault_id, pagination=pagination)
     return result
 
 
 @router.get("/{task_id}")
 async def get_task(
     task_id: UUID,
-    brain_id: UUID,
+    vault_id: UUID,
     task_service: TaskServiceDep,
 ) -> TaskDetail:
-    response = await task_service.get(task_id, brain_id)
+    response = await task_service.get(task_id, vault_id)
     if response is None:
         raise HTTPException(status_code=404, detail="Task not found")
     return response

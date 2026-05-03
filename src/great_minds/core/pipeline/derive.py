@@ -37,7 +37,7 @@ async def run(
     if not validated:
         log_event(
             "pipeline.derive_skipped",
-            brain_id=str(ctx.brain_id),
+            vault_id=str(ctx.vault_id),
             reason="no_topics",
         )
         return
@@ -47,7 +47,7 @@ async def run(
     repo = TopicRepository(ctx.session)
 
     membership_rows = await _replace_membership(repo, validated)
-    link_edges = await _replace_links(repo, ctx.brain_id, validated)
+    link_edges = await _replace_links(repo, ctx.vault_id, validated)
     related_rows = await _replace_related(repo, validated, related_limit)
 
     await ctx.session.commit()
@@ -60,7 +60,7 @@ async def run(
     )
     log_event(
         "pipeline.derive_completed",
-        brain_id=str(ctx.brain_id),
+        vault_id=str(ctx.vault_id),
         topic_count=len(validated),
         membership_rows=membership_rows,
         link_edges=link_edges,
@@ -80,7 +80,7 @@ async def _replace_membership(
 
 async def _replace_links(
     repo: TopicRepository,
-    brain_id: UUID,
+    vault_id: UUID,
     validated: list[ValidatedCanonicalTopic],
 ) -> int:
     slug_to_id = {v.slug: v.topic_id for v in validated}
@@ -91,7 +91,7 @@ async def _replace_links(
             if target_id is None or target_id == v.topic_id:
                 continue
             edges.append((v.topic_id, target_id))
-    await repo.replace_links_for_brain(brain_id, edges)
+    await repo.replace_links_for_vault(vault_id, edges)
     return len(edges)
 
 

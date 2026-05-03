@@ -5,7 +5,7 @@ import uuid
 from datetime import datetime
 from typing import TYPE_CHECKING
 
-from sqlalchemy import DateTime, Enum, ForeignKey, String, UniqueConstraint, func
+from sqlalchemy import DateTime, Enum, ForeignKey, String, Text, UniqueConstraint, func
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -21,8 +21,8 @@ class MemberRole(enum.StrEnum):
     VIEWER = "viewer"
 
 
-class BrainORM(Base):
-    __tablename__ = "brains"
+class VaultORM(Base):
+    __tablename__ = "vaults"
 
     id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
@@ -34,22 +34,23 @@ class BrainORM(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )
+    r2_bucket_name: Mapped[str | None] = mapped_column(Text())
 
     owner: Mapped["User"] = relationship("User")
-    memberships: Mapped[list["BrainMembership"]] = relationship(
-        "BrainMembership", back_populates="brain", cascade="all, delete-orphan"
+    memberships: Mapped[list["VaultMembership"]] = relationship(
+        "VaultMembership", back_populates="vault", cascade="all, delete-orphan"
     )
 
 
-class BrainMembership(Base):
-    __tablename__ = "brain_memberships"
-    __table_args__ = (UniqueConstraint("brain_id", "user_id"),)
+class VaultMembership(Base):
+    __tablename__ = "vault_memberships"
+    __table_args__ = (UniqueConstraint("vault_id", "user_id"),)
 
     id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
     )
-    brain_id: Mapped[uuid.UUID] = mapped_column(
-        ForeignKey("brains.id", ondelete="CASCADE")
+    vault_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("vaults.id", ondelete="CASCADE")
     )
     user_id: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("users.id", ondelete="CASCADE")
@@ -59,5 +60,5 @@ class BrainMembership(Base):
         DateTime(timezone=True), server_default=func.now()
     )
 
-    brain: Mapped["BrainORM"] = relationship("BrainORM", back_populates="memberships")
+    vault: Mapped["VaultORM"] = relationship("VaultORM", back_populates="memberships")
     user: Mapped["User"] = relationship("User", back_populates="memberships")

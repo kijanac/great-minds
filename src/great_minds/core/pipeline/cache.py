@@ -2,7 +2,7 @@
 
 One JSON file per (phase, key) under ``<sidecar>/cache/<phase>/<key>.json``
 where sidecar is the machine-local compile sidecar
-(``<data_dir>/.compile/<brain_id>/``).
+(``<data_dir>/.compile/<vault_id>/``).
 Keys are content hashes (phase-specific): extract uses sha256 over
 (doc_content + prompt_hash + kinds_config + extract_model); map uses
 sha256 over sorted idea_ids in chunk; etc.

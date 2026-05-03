@@ -1,3 +1,5 @@
+from typing import Literal
+
 from pydantic import BaseModel, EmailStr
 
 from great_minds.core.auth.schemas import ApiKey
@@ -30,3 +32,9 @@ class TokenPair(BaseModel):
 
 class RefreshRequest(BaseModel):
     refresh_token: str
+
+
+class AccountDeleteRequest(BaseModel):
+    """Self-service delete confirmation. Body must contain ``confirm: "DELETE"``."""
+
+    confirm: Literal["DELETE"]

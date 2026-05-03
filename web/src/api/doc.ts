@@ -1,10 +1,10 @@
 import { z } from "zod";
 
-import { apiFetch, brainPath, readJson } from "./client";
+import { apiFetch, vaultPath, readJson } from "./client";
 
 const documentSchema = z.object({
   id: z.string(),
-  brain_id: z.string(),
+  vault_id: z.string(),
   file_path: z.string(),
   body_hash: z.string(),
   compiled: z.boolean(),
@@ -39,7 +39,7 @@ export async function readDocument(
   path: string,
   signal?: AbortSignal,
 ): Promise<DocumentResponse> {
-  const res = await apiFetch(brainPath(`/doc/${path}`), { signal });
+  const res = await apiFetch(vaultPath(`/doc/${path}`), { signal });
   if (!res.ok) throw new Error(`Document not found: ${path}`);
   return readJson(res, documentResponseSchema);
 }

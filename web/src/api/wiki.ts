@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-import { apiFetch, brainPath, readJson } from "./client";
+import { apiFetch, vaultPath, readJson } from "./client";
 import { paginatedSchema } from "./schemas";
 
 const wikiArticleSummarySchema = z.object({
@@ -24,7 +24,7 @@ export async function fetchWikiArticles(params?: {
   if (params?.limit !== undefined) query.set("limit", String(params.limit));
   if (params?.offset !== undefined) query.set("offset", String(params.offset));
   const qs = query.toString();
-  const path = brainPath(`/wiki${qs ? `?${qs}` : ""}`);
+  const path = vaultPath(`/wiki${qs ? `?${qs}` : ""}`);
   const res = await apiFetch(path);
   if (!res.ok) throw new Error("Failed to fetch wiki articles");
   return readJson(res, wikiArticleListSchema);

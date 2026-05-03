@@ -19,7 +19,7 @@ class ProposalReview(BaseModel):
 
 class ProposalOverview(BaseModel):
     id: uuid.UUID
-    brain_id: uuid.UUID
+    vault_id: uuid.UUID
     status: ProposalStatus
     title: str | None
     content_type: str

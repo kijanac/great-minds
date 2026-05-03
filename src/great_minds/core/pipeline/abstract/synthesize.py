@@ -4,7 +4,7 @@ One LLM call per chunk. Each chunk's ideas are rendered with doc-level
 provenance (grouped by doc to avoid repeating headers). The LLM
 proposes 10-30 local thematic topics with slug/title/description and
 subsumed_idea_ids. Output is cached per chunk under
-.compile/<brain_id>/cache/synthesize/<key>.json so incremental compiles
+.compile/<vault_id>/cache/synthesize/<key>.json so incremental compiles
 skip the LLM call for chunks whose idea set hasn't changed.
 
 Idea rendering uses short tags (`idea_1`, `idea_2`, ...) to keep UUIDs
@@ -26,7 +26,7 @@ from uuid import UUID
 from pydantic import ValidationError
 from uuid6 import uuid7
 
-from great_minds.core.brains.prompts import load_prompt
+from great_minds.core.vaults.prompts import load_prompt
 from great_minds.core.llm.client import json_llm_call
 from great_minds.core.ideas.schemas import Idea, SourceCard
 from great_minds.core.llm import MAP_MODEL
@@ -88,7 +88,7 @@ async def run(
             log_event(
                 "synthesize.chunk_failed",
                 level=logging.WARNING,
-                brain_id=str(ctx.brain_id),
+                vault_id=str(ctx.vault_id),
                 chunk_idx=outcome.chunk_idx,
                 error=outcome.error,
             )
@@ -109,7 +109,7 @@ async def run(
     )
     log_event(
         "pipeline.synthesize_completed",
-        brain_id=str(ctx.brain_id),
+        vault_id=str(ctx.vault_id),
         chunks_processed=chunks_processed,
         cache_hits=cache_hits,
         cache_misses=cache_misses,

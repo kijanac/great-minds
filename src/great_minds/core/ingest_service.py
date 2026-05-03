@@ -10,7 +10,7 @@ from uuid import UUID
 import httpx
 from markitdown import MarkItDown, StreamInfo
 
-from great_minds.core.brains.config import load_config
+from great_minds.core.vaults.config import load_config
 from great_minds.core.documents.builder import write_document
 from great_minds.core.documents.schemas import SourceMetadata
 from great_minds.core.documents.service import DocumentService
@@ -37,7 +37,7 @@ class IngestService:
     Each public ``ingest_*`` method is an input adapter — it derives
     ``content``, ``dest``, and frontmatter extras from its source
     (text, upload, URL, suggestion, session exchange) and funnels them
-    into ``_ingest_raw``, which loads brain config, builds the markdown
+    into ``_ingest_raw``, which loads vault config, builds the markdown
     via ``write_document``, and indexes the document row.
     """
 
@@ -46,7 +46,7 @@ class IngestService:
 
     async def _ingest_raw(
         self,
-        brain_id: UUID,
+        vault_id: UUID,
         storage: Storage,
         *,
         content: str,
@@ -66,11 +66,11 @@ class IngestService:
             source_type=source_type,
             **frontmatter,
         )
-        return await self.doc_service.index_raw_doc(brain_id, dest, rendered)
+        return await self.doc_service.index_raw_doc(vault_id, dest, rendered)
 
     async def ingest_text(
         self,
-        brain_id: UUID,
+        vault_id: UUID,
         storage: Storage,
         content: str,
         dest: str,
@@ -78,7 +78,7 @@ class IngestService:
     ) -> tuple[str, str]:
         """Ingest raw text content. Returns (file_path, title)."""
         await self._ingest_raw(
-            brain_id,
+            vault_id,
             storage,
             content=content,
             content_type=metadata.content_type,
@@ -90,7 +90,7 @@ class IngestService:
 
     async def ingest_upload(
         self,
-        brain_id: UUID,
+        vault_id: UUID,
         storage: Storage,
         raw_bytes: bytes,
         filename: str,
@@ -109,7 +109,7 @@ class IngestService:
             dest = _safe_upload_dest(metadata.content_type, f"{slug}.md")
 
         await self._ingest_raw(
-            brain_id,
+            vault_id,
             storage,
             content=content,
             content_type=metadata.content_type,
@@ -121,7 +121,7 @@ class IngestService:
 
     async def ingest_user_suggestion(
         self,
-        brain_id: UUID,
+        vault_id: UUID,
         storage: Storage,
         *,
         body: str,
@@ -146,7 +146,7 @@ class IngestService:
         dest = _safe_upload_dest("user", filename)
 
         await self._ingest_raw(
-            brain_id,
+            vault_id,
             storage,
             content=body,
             content_type="user",
@@ -161,7 +161,7 @@ class IngestService:
 
     async def ingest_session_exchange(
         self,
-        brain_id: UUID,
+        vault_id: UUID,
         storage: Storage,
         *,
         session_id: str,
@@ -177,7 +177,7 @@ class IngestService:
         """
         dest = session_exchange_path(exchange.exId)
         document_id = await self._ingest_raw(
-            brain_id,
+            vault_id,
             storage,
             dest=dest,
             **session_exchange_build_args(
@@ -191,7 +191,7 @@ class IngestService:
 
     async def ingest_url(
         self,
-        brain_id: UUID,
+        vault_id: UUID,
         storage: Storage,
         url: str,
         metadata: SourceMetadata,
@@ -214,7 +214,7 @@ class IngestService:
         dest = raw_path(metadata.content_type, f"{slugify(title)}.md")
 
         await self._ingest_raw(
-            brain_id,
+            vault_id,
             storage,
             content=result.text_content,
             content_type=metadata.content_type,

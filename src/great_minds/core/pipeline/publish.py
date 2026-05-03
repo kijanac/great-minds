@@ -1,7 +1,7 @@
 """Phase 6 — publish.
 
 Mechanical. Writes two index files to storage (wiki/_index.md and
-raw/_index.md) and appends a run summary to .compile/<brain_id>/log.md.
+raw/_index.md) and appends a run summary to .compile/<vault_id>/log.md.
 
 No LLM calls, no cache. Indexes rebuilt from current DB state each
 compile. The wiki index is consumed by the agent's retrieval flow as
@@ -50,7 +50,7 @@ class CompileLogCounts(BaseModel):
 
 async def run(ctx: PipelineContext) -> None:
     rendered_topics = await TopicRepository(ctx.session).list_by_status(
-        ctx.brain_id, ArticleStatus.RENDERED
+        ctx.vault_id, ArticleStatus.RENDERED
     )
     raw_docs = await _load_raw_documents(ctx)
 
@@ -66,7 +66,7 @@ async def run(ctx: PipelineContext) -> None:
     )
     log_event(
         "pipeline.publish_completed",
-        brain_id=str(ctx.brain_id),
+        vault_id=str(ctx.vault_id),
         wiki_index_topics=len(rendered_topics),
         raw_index_docs=len(raw_docs),
         **counts.model_dump(),
@@ -134,20 +134,20 @@ async def _gather_log_counts(ctx: PipelineContext) -> CompileLogCounts:
     topic_repo = TopicRepository(ctx.session)
     doc_repo = DocumentRepository(ctx.session)
     return CompileLogCounts(
-        topics_total=await topic_repo.count_all(ctx.brain_id),
+        topics_total=await topic_repo.count_all(ctx.vault_id),
         topics_rendered=await topic_repo.count_by_status(
-            ctx.brain_id, ArticleStatus.RENDERED
+            ctx.vault_id, ArticleStatus.RENDERED
         ),
         topics_archived=await topic_repo.count_by_status(
-            ctx.brain_id, ArticleStatus.ARCHIVED
+            ctx.vault_id, ArticleStatus.ARCHIVED
         ),
-        topics_dirty=await topic_repo.count_dirty(ctx.brain_id),
-        docs_raw=await doc_repo.count_by_kind(ctx.brain_id, DocKind.RAW),
+        topics_dirty=await topic_repo.count_dirty(ctx.vault_id),
+        docs_raw=await doc_repo.count_by_kind(ctx.vault_id, DocKind.RAW),
         chunks_raw=await count_chunks_by_prefix(
-            ctx.session, ctx.brain_id, RAW_PREFIX
+            ctx.session, ctx.vault_id, RAW_PREFIX
         ),
         chunks_wiki=await count_chunks_by_prefix(
-            ctx.session, ctx.brain_id, WIKI_PREFIX
+            ctx.session, ctx.vault_id, WIKI_PREFIX
         ),
     )
 
@@ -179,5 +179,5 @@ def _append_compile_log(ctx: PipelineContext, counts: CompileLogCounts) -> None:
 
 async def _load_raw_documents(ctx: PipelineContext) -> list[Document]:
     return await DocumentRepository(ctx.session).list_by_kind(
-        ctx.brain_id, DocKind.RAW
+        ctx.vault_id, DocKind.RAW
     )

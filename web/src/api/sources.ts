@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-import { apiFetch, brainPath, readJson } from "./client";
+import { apiFetch, vaultPath, readJson } from "./client";
 import {
   facetedPaginatedSchema,
   facetCountSchema,
@@ -53,7 +53,7 @@ export async function fetchSourceDocuments(params?: {
   if (params?.offset !== undefined) query.set("offset", String(params.offset));
 
   const qs = query.toString();
-  const path = brainPath(`/raw/sources${qs ? `?${qs}` : ""}`);
+  const path = vaultPath(`/raw/sources${qs ? `?${qs}` : ""}`);
   const res = await apiFetch(path);
   if (!res.ok) throw new Error("Failed to fetch raw sources");
   return readJson(res, sourceDocumentPageSchema);

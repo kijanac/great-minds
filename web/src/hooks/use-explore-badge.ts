@@ -1,13 +1,13 @@
 import { useQuery } from "@tanstack/react-query";
 
 import { fetchLintResults } from "@/api/explore";
-import { useActiveBrainId } from "@/hooks/use-brain";
+import { useActiveVaultId } from "@/hooks/use-vault";
 
 export function useExploreBadge() {
-  const brainId = useActiveBrainId();
+  const vaultId = useActiveVaultId();
   return useQuery({
-    queryKey: ["brain", brainId, "explore-count"],
+    queryKey: ["vault", vaultId, "explore-count"],
     queryFn: fetchLintResults,
-    enabled: !!brainId,
+    enabled: !!vaultId,
   });
 }

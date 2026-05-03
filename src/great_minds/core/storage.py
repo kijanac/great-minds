@@ -1,12 +1,12 @@
-"""Storage abstraction for brain data.
+"""Storage abstraction for vault data.
 
-All paths passed to Storage methods are relative to the brain root.
+All paths passed to Storage methods are relative to the vault root.
 Example: "wiki/imperialism.md", "raw/texts/lenin/works/1893/market/01.md"
 
 Two backends implement the Storage protocol:
 
 - LocalStorage: filesystem directory.
-- R2Storage: Cloudflare R2 bucket with a per-brain key prefix.
+- R2Storage: Cloudflare R2 bucket with a per-vault key prefix.
 
 The Protocol is async throughout because R2 calls block on network I/O;
 under async FastAPI handlers that would stall the event loop. LocalStorage
@@ -25,6 +25,7 @@ from __future__ import annotations
 import asyncio
 import fnmatch
 import logging
+import shutil
 import time
 from collections.abc import Callable
 from pathlib import Path
@@ -40,7 +41,7 @@ T = TypeVar("T")
 
 @runtime_checkable
 class Storage(Protocol):
-    """Structural interface for brain file storage."""
+    """Structural interface for vault file storage."""
 
     async def read(self, path: str, *, strict: bool = True) -> str | None: ...
     async def write(self, path: str, content: str) -> None: ...
@@ -49,6 +50,7 @@ class Storage(Protocol):
     async def append(self, path: str, content: str) -> None: ...
     async def mkdir(self, path: str) -> None: ...
     async def delete(self, path: str, *, missing_ok: bool = True) -> None: ...
+    async def clear(self) -> None: ...
 
 
 class LocalStorage:
@@ -96,11 +98,16 @@ class LocalStorage:
     async def delete(self, path: str, *, missing_ok: bool = True) -> None:
         self._resolve(path).unlink(missing_ok=missing_ok)
 
+    async def clear(self) -> None:
+        """Remove the storage root and all its contents. Subsequent writes recreate parents."""
+        if self.root.exists():
+            shutil.rmtree(self.root)
+
 
 class R2Storage:
     """Storage backed by a Cloudflare R2 bucket.
 
-    All keys are written under a per-brain prefix (e.g. ``brains/<id>/``).
+    All keys are written under a per-vault prefix (e.g. ``vaults/<id>/``).
     R2 has no concept of directories — ``mkdir`` is a no-op.
 
     Uses synchronous boto3 wrapped in ``asyncio.to_thread`` so that
@@ -256,7 +263,7 @@ class R2Storage:
         return sorted(matches)
 
     async def glob(self, pattern: str) -> list[str]:
-        """Match a glob pattern against keys under the brain prefix.
+        """Match a glob pattern against keys under the vault prefix.
 
         Supports patterns like ``raw/**/*.md`` (recursive) and
         ``wiki/*.md`` (single-level). The pattern's leading path segment
@@ -304,4 +311,34 @@ class R2Storage:
             op="delete",
             path=path,
             latency_ms=latency_ms,
+        )
+
+    def _clear_sync(self) -> int:
+        """List + batch-delete every key under the vault prefix. Returns count."""
+        paginator = self._client.get_paginator("list_objects_v2")
+        full_prefix = f"{self.prefix}/"
+        deleted = 0
+        for page in paginator.paginate(Bucket=self.bucket, Prefix=full_prefix):
+            keys = [{"Key": obj["Key"]} for obj in page.get("Contents", [])]
+            if not keys:
+                continue
+            # delete_objects accepts up to 1000 keys per request — list_objects_v2
+            # already paginates at that boundary, so each page is one delete call.
+            self._client.delete_objects(
+                Bucket=self.bucket, Delete={"Objects": keys, "Quiet": True}
+            )
+            deleted += len(keys)
+        return deleted
+
+    async def clear(self) -> None:
+        """Delete every key under this vault's prefix. Bucket stays intact."""
+        deleted, latency_ms = await self._timed(
+            "clear", self.prefix, self._clear_sync
+        )
+        log_event(
+            "storage.r2_op",
+            op="clear",
+            path=self.prefix,
+            latency_ms=latency_ms,
+            match_count=deleted,
         )

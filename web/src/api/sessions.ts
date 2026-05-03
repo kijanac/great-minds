@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-import { apiFetch, brainPath, readJson } from "./client";
+import { apiFetch, vaultPath, readJson } from "./client";
 import {
   paginatedSchema,
   thinkingBlockSchema,
@@ -106,7 +106,7 @@ export async function createSession(
   exchange: ExchangePayload,
   origin?: SessionOrigin,
 ): Promise<string> {
-  const res = await apiFetch(brainPath(`/sessions`), {
+  const res = await apiFetch(vaultPath(`/sessions`), {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ session_id: sessionId, exchange, origin }),
@@ -120,7 +120,7 @@ export async function appendExchange(
   sessionId: string,
   exchange: ExchangePayload,
 ): Promise<string> {
-  const res = await apiFetch(brainPath(`/sessions/${sessionId}`), {
+  const res = await apiFetch(vaultPath(`/sessions/${sessionId}`), {
     method: "PATCH",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(exchange),
@@ -131,7 +131,7 @@ export async function appendExchange(
 }
 
 export async function appendBtw(sessionId: string, btw: BtwPayload): Promise<string> {
-  const res = await apiFetch(brainPath(`/sessions/${sessionId}/btw`), {
+  const res = await apiFetch(vaultPath(`/sessions/${sessionId}/btw`), {
     method: "PATCH",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(btw),
@@ -150,7 +150,7 @@ export async function listSessions(params?: {
   if (params?.offset !== undefined) query.set("offset", String(params.offset));
 
   const qs = query.toString();
-  const res = await apiFetch(brainPath(`/sessions${qs ? `?${qs}` : ""}`));
+  const res = await apiFetch(vaultPath(`/sessions${qs ? `?${qs}` : ""}`));
   if (!res.ok) throw new Error(`Failed to list sessions: ${res.status}`);
   return readJson(res, sessionListSchema);
 }
@@ -158,7 +158,7 @@ export async function listSessions(params?: {
 export async function loadSession(
   sessionId: string,
 ): Promise<{ id: string; events: SessionEvent[] }> {
-  const res = await apiFetch(brainPath(`/sessions/${sessionId}`));
+  const res = await apiFetch(vaultPath(`/sessions/${sessionId}`));
   if (!res.ok) throw new Error(`Session not found: ${res.status}`);
   return readJson(res, sessionResponseSchema);
 }
@@ -178,7 +178,7 @@ export async function promoteExchange(
   exchangeId: string,
 ): Promise<PromoteResult> {
   const res = await apiFetch(
-    brainPath(`/sessions/${sessionId}/exchanges/${exchangeId}/promote`),
+    vaultPath(`/sessions/${sessionId}/exchanges/${exchangeId}/promote`),
     { method: "POST" },
   );
   if (!res.ok) {

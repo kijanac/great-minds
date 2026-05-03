@@ -31,7 +31,7 @@ class DocumentRepository:
     def __init__(self, session: AsyncSession) -> None:
         self.session = session
 
-    async def upsert(self, brain_id: UUID, doc: DocumentCreate) -> UUID:
+    async def upsert(self, vault_id: UUID, doc: DocumentCreate) -> UUID:
         """Upsert a document row and sync the tags junction table."""
         file_hash = hashlib.sha256(doc.content.encode()).hexdigest()
         _, body = parse_frontmatter(doc.content)
@@ -55,13 +55,13 @@ class DocumentRepository:
         stmt = (
             insert(DocumentORM)
             .values(
-                brain_id=brain_id,
+                vault_id=vault_id,
                 file_path=doc.file_path,
                 extra_metadata=doc.metadata.extra_metadata,
                 **columns,
             )
             .on_conflict_do_update(
-                constraint="documents_brain_id_file_path_key",
+                constraint="documents_vault_id_file_path_key",
                 set_={
                     **columns,
                     "metadata": doc.metadata.extra_metadata,
@@ -77,7 +77,7 @@ class DocumentRepository:
         return doc_id
 
     async def batch_upsert(
-        self, brain_id: UUID, docs: list[DocumentCreate]
+        self, vault_id: UUID, docs: list[DocumentCreate]
     ) -> list[UUID]:
         """Upsert documents in a single statement. Returns IDs in input order.
 
@@ -94,7 +94,7 @@ class DocumentRepository:
             body_hash = hashlib.sha256(body.encode()).hexdigest()
             rows.append(
                 {
-                    "brain_id": brain_id,
+                    "vault_id": vault_id,
                     "file_path": doc.file_path,
                     "file_hash": file_hash,
                     "body_hash": body_hash,
@@ -114,7 +114,7 @@ class DocumentRepository:
 
         stmt = insert(DocumentORM).values(rows)
         stmt = stmt.on_conflict_do_update(
-            constraint="documents_brain_id_file_path_key",
+            constraint="documents_vault_id_file_path_key",
             set_={
                 "file_hash": stmt.excluded.file_hash,
                 "body_hash": stmt.excluded.body_hash,
@@ -145,27 +145,27 @@ class DocumentRepository:
             doc_ids.append(doc_id)
         return doc_ids
 
-    async def get_file_hashes(self, brain_id: UUID) -> dict[str, str]:
-        """Return {file_path: file_hash} for all documents in a brain.
+    async def get_file_hashes(self, vault_id: UUID) -> dict[str, str]:
+        """Return {file_path: file_hash} for all documents in a vault.
 
         Used for skip detection during bulk ingest.
         """
         result = await self.session.execute(
             select(DocumentORM.file_path, DocumentORM.file_hash).where(
-                DocumentORM.brain_id == brain_id
+                DocumentORM.vault_id == vault_id
             )
         )
         return {row.file_path: row.file_hash for row in result}
 
     async def get_title_by_path(
-        self, brain_id: UUID, file_path: str
+        self, vault_id: UUID, file_path: str
     ) -> str | None:
         """Return just the LLM-generated title for a path, or None if the
         document isn't indexed or hasn't been extracted yet. Single
         indexed query — no tag JOIN, no full row hydration."""
         result = await self.session.execute(
             select(DocumentORM.title).where(
-                DocumentORM.brain_id == brain_id,
+                DocumentORM.vault_id == vault_id,
                 DocumentORM.file_path == file_path,
             )
         )
@@ -173,12 +173,12 @@ class DocumentRepository:
         return title or None
 
     async def get_by_path(
-        self, brain_id: UUID, file_path: str
+        self, vault_id: UUID, file_path: str
     ) -> Document | None:
-        """Return the single document at ``file_path`` for this brain, or None."""
+        """Return the single document at ``file_path`` for this vault, or None."""
         result = await self.session.execute(
             select(DocumentORM).where(
-                DocumentORM.brain_id == brain_id,
+                DocumentORM.vault_id == vault_id,
                 DocumentORM.file_path == file_path,
             )
         )
@@ -193,7 +193,7 @@ class DocumentRepository:
         return _document_from_orm(row, tags=tags)
 
     async def list_by_kind(
-        self, brain_id: UUID, kind: DocKind
+        self, vault_id: UUID, kind: DocKind
     ) -> list[Document]:
         """Return all documents of a given kind, ordered by file_path.
 
@@ -203,7 +203,7 @@ class DocumentRepository:
         rows = await self.session.execute(
             select(DocumentORM)
             .where(
-                DocumentORM.brain_id == brain_id,
+                DocumentORM.vault_id == vault_id,
                 DocumentORM.doc_kind == kind.value,
             )
             .order_by(DocumentORM.file_path)
@@ -211,7 +211,7 @@ class DocumentRepository:
         return [_document_from_orm(r) for r in rows.scalars().all()]
 
     async def update_metadata_from_cards(
-        self, brain_id: UUID, cards: list[SourceCard]
+        self, vault_id: UUID, cards: list[SourceCard]
     ) -> None:
         """Push LLM-produced title, precis, doc_metadata back to DB rows.
 
@@ -222,7 +222,7 @@ class DocumentRepository:
             await self.session.execute(
                 update(DocumentORM)
                 .where(
-                    DocumentORM.brain_id == brain_id,
+                    DocumentORM.vault_id == vault_id,
                     DocumentORM.id == card.document_id,
                 )
                 .values(
@@ -232,20 +232,20 @@ class DocumentRepository:
                 )
             )
 
-    async def count_by_kind(self, brain_id: UUID, kind: DocKind) -> int:
+    async def count_by_kind(self, vault_id: UUID, kind: DocKind) -> int:
         return (
             await self.session.scalar(
                 select(func.count())
                 .select_from(DocumentORM)
                 .where(
-                    DocumentORM.brain_id == brain_id,
+                    DocumentORM.vault_id == vault_id,
                     DocumentORM.doc_kind == kind.value,
                 )
             )
         ) or 0
 
     async def list_wiki_summaries(
-        self, brain_id: UUID, *, limit: int = 50, offset: int = 0
+        self, vault_id: UUID, *, limit: int = 50, offset: int = 0
     ) -> list[WikiArticleSummary]:
         rows = (
             await self.session.execute(
@@ -256,7 +256,7 @@ class DocumentRepository:
                     DocumentORM.updated_at,
                 )
                 .where(
-                    DocumentORM.brain_id == brain_id,
+                    DocumentORM.vault_id == vault_id,
                     DocumentORM.doc_kind == DocKind.WIKI,
                     DocumentORM.file_path.not_like(f"{WIKI_PREFIX}_%"),
                 )
@@ -269,7 +269,7 @@ class DocumentRepository:
 
     async def search_wiki_articles(
         self,
-        brain_id: UUID,
+        vault_id: UUID,
         *,
         slug: str | None = None,
         query: str | None = None,
@@ -288,7 +288,7 @@ class DocumentRepository:
             DocumentORM.precis,
             DocumentORM.updated_at,
         ).where(
-            DocumentORM.brain_id == brain_id,
+            DocumentORM.vault_id == vault_id,
             DocumentORM.doc_kind == DocKind.WIKI,
             DocumentORM.file_path.not_like(f"{WIKI_PREFIX}_%"),
         )
@@ -307,11 +307,11 @@ class DocumentRepository:
         rows = (await self.session.execute(stmt)).all()
         return [WikiArticleSummary.model_validate(r) for r in rows]
 
-    async def count_wiki_article_paths(self, brain_id: UUID) -> int:
+    async def count_wiki_article_paths(self, vault_id: UUID) -> int:
         return (
             await self.session.scalar(
                 select(func.count()).where(
-                    DocumentORM.brain_id == brain_id,
+                    DocumentORM.vault_id == vault_id,
                     DocumentORM.doc_kind == DocKind.WIKI,
                     DocumentORM.file_path.not_like(f"{WIKI_PREFIX}_%"),
                 )
@@ -319,7 +319,7 @@ class DocumentRepository:
         ) or 0
 
     async def list_orphan_wiki_documents(
-        self, brain_id: UUID
+        self, vault_id: UUID
     ) -> list[WikiArticleSummary]:
         """Return rendered wiki documents with zero incoming backlinks."""
         rows = (
@@ -330,7 +330,7 @@ class DocumentRepository:
                     BacklinkORM.target_document_id == DocumentORM.id,
                 )
                 .where(
-                    DocumentORM.brain_id == brain_id,
+                    DocumentORM.vault_id == vault_id,
                     DocumentORM.doc_kind == DocKind.WIKI.value,
                     DocumentORM.file_path.not_like(f"{WIKI_PREFIX}_%"),
                 )
@@ -373,7 +373,7 @@ class DocumentRepository:
 
     async def query_documents(
         self,
-        brain_ids: list[UUID],
+        vault_ids: list[UUID],
         *,
         tags: list[str] | None = None,
         author: str | None = None,
@@ -390,7 +390,7 @@ class DocumentRepository:
     ) -> list[Document]:
         """Structured query over the documents table with optional filters."""
         stmt = _document_query(
-            brain_ids,
+            vault_ids,
             tags=tags,
             author=author,
             genre=genre,
@@ -429,7 +429,7 @@ class DocumentRepository:
 
     async def count_documents(
         self,
-        brain_ids: list[UUID],
+        vault_ids: list[UUID],
         *,
         tags: list[str] | None = None,
         author: str | None = None,
@@ -444,7 +444,7 @@ class DocumentRepository:
     ) -> int:
         """Count documents using the same filters as ``query_documents``."""
         filtered = _document_query(
-            brain_ids,
+            vault_ids,
             tags=tags,
             author=author,
             genre=genre,
@@ -461,7 +461,7 @@ class DocumentRepository:
         ) or 0
 
     async def get_content_type_counts(
-        self, brain_ids: list[UUID]
+        self, vault_ids: list[UUID]
     ) -> list[FacetCount]:
         """Return content_type facet counts for raw documents.
 
@@ -474,7 +474,7 @@ class DocumentRepository:
         result = await self.session.execute(
             select(content_type_col, func.count().label("cnt"))
             .where(
-                DocumentORM.brain_id.in_(brain_ids),
+                DocumentORM.vault_id.in_(vault_ids),
                 DocumentORM.doc_kind == DocKind.RAW,
             )
             .group_by(content_type_col)
@@ -482,11 +482,11 @@ class DocumentRepository:
         )
         return [FacetCount(value=row.content_type, count=row.cnt) for row in result]
 
-    async def get_distinct_tags(self, brain_ids: list[UUID]) -> list[str]:
+    async def get_distinct_tags(self, vault_ids: list[UUID]) -> list[str]:
         result = await self.session.execute(
             select(distinct(DocumentTag.tag))
             .join(DocumentORM, DocumentORM.id == DocumentTag.document_id)
-            .where(DocumentORM.brain_id.in_(brain_ids))
+            .where(DocumentORM.vault_id.in_(vault_ids))
             .order_by(DocumentTag.tag)
         )
         return list(result.scalars().all())
@@ -495,7 +495,7 @@ class DocumentRepository:
 def _document_from_orm(orm: DocumentORM, *, tags: list[str] | None = None) -> Document:
     return Document(
         id=orm.id,
-        brain_id=orm.brain_id,
+        vault_id=orm.vault_id,
         file_path=orm.file_path,
         body_hash=orm.body_hash,
         compiled=orm.compiled,
@@ -518,7 +518,7 @@ def _document_from_orm(orm: DocumentORM, *, tags: list[str] | None = None) -> Do
 
 
 def _document_query(
-    brain_ids: list[UUID],
+    vault_ids: list[UUID],
     *,
     tags: list[str] | None = None,
     author: str | None = None,
@@ -531,7 +531,7 @@ def _document_query(
     date_gte: str | None = None,
     date_lte: str | None = None,
 ) -> Select[tuple[DocumentORM]]:
-    stmt = select(DocumentORM).where(DocumentORM.brain_id.in_(brain_ids))
+    stmt = select(DocumentORM).where(DocumentORM.vault_id.in_(vault_ids))
 
     if tags:
         tag_subq = (

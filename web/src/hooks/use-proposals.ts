@@ -12,34 +12,34 @@ import { useOffsetInfiniteQuery } from "@/hooks/use-offset-infinite-query";
 
 const PAGE_SIZE = 20;
 
-function queryKey(brainId: string, status?: ProposalStatus) {
-  return ["proposals", brainId, status ?? "all"] as const;
+function queryKey(vaultId: string, status?: ProposalStatus) {
+  return ["proposals", vaultId, status ?? "all"] as const;
 }
 
 export function useProposals(
-  brainId: string,
+  vaultId: string,
   status?: ProposalStatus,
   enabled: boolean = true,
 ) {
   return useOffsetInfiniteQuery({
-    queryKey: queryKey(brainId, status),
-    enabled: enabled && !!brainId,
+    queryKey: queryKey(vaultId, status),
+    enabled: enabled && !!vaultId,
     pageSize: PAGE_SIZE,
-    queryFn: (params) => listProposals(brainId, { status, ...params }),
+    queryFn: (params) => listProposals(vaultId, { status, ...params }),
   });
 }
 
-export function useCreateProposal(brainId: string) {
+export function useCreateProposal(vaultId: string) {
   const qc = useQueryClient();
   return useMutation<Proposal, Error, ProposalCreateInput>({
-    mutationFn: (input) => createProposal(brainId, input),
+    mutationFn: (input) => createProposal(vaultId, input),
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["proposals", brainId] });
+      qc.invalidateQueries({ queryKey: ["proposals", vaultId] });
     },
   });
 }
 
-export function useReviewProposal(brainId: string) {
+export function useReviewProposal(vaultId: string) {
   const qc = useQueryClient();
   return useMutation<
     Proposal,
@@ -47,9 +47,9 @@ export function useReviewProposal(brainId: string) {
     { proposalId: string; status: "approved" | "rejected" }
   >({
     mutationFn: ({ proposalId, status }) =>
-      reviewProposal(brainId, proposalId, status),
+      reviewProposal(vaultId, proposalId, status),
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["proposals", brainId] });
+      qc.invalidateQueries({ queryKey: ["proposals", vaultId] });
     },
   });
 }

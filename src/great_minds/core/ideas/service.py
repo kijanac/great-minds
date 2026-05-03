@@ -20,11 +20,11 @@ class IdeaService:
     def __init__(
         self,
         *,
-        brain_id: UUID,
+        vault_id: UUID,
         embedding_repo: IdeaEmbeddingRepository,
         sidecar_root: Path,
     ) -> None:
-        self.brain_id = brain_id
+        self.vault_id = vault_id
         self.embedding_repo = embedding_repo
         self.source_cards = SourceCardStore(source_cards_path(sidecar_root))
 
@@ -48,4 +48,4 @@ class IdeaService:
         return self.source_cards.load_all()
 
     async def list_embeddings(self) -> list[IdeaEmbedding]:
-        return await self.embedding_repo.list_for_brain(self.brain_id)
+        return await self.embedding_repo.list_for_vault(self.vault_id)

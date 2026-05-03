@@ -25,7 +25,7 @@ class Chunk(BaseModel):
 class ChunkScore(BaseModel):
     """One ranked row from either BM25 or vector search, pre-fusion."""
 
-    brain_id: UUID
+    vault_id: UUID
     path: str
     chunk_index: int
     heading: str
@@ -38,4 +38,4 @@ class SearchResult(BaseModel):
     heading: str
     snippet: str
     score: float
-    brain_id: UUID
+    vault_id: UUID

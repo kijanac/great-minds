@@ -1,4 +1,4 @@
-"""FastAPI server wrapping Brain operations.
+"""FastAPI server wrapping Vault operations.
 
 great-minds serve
 great-minds serve --port 8080
@@ -16,14 +16,15 @@ from sqlalchemy.ext.asyncio import async_sessionmaker
 from starlette.middleware.base import BaseHTTPMiddleware
 
 from great_minds.app.api.v1 import router as v1_router
-from great_minds.core.brains.repository import BrainRepository
-from great_minds.core.brains.service import BrainService
+from great_minds.core.vaults.repository import VaultRepository
+from great_minds.core.vaults.service import VaultService
 from great_minds.core.compile_intents.reconciler import reconcile_once
 from great_minds.core.compile_intents.repository import CompileIntentRepository
 from great_minds.core.db import engine, session_maker
 from great_minds.core.settings import Settings, get_settings
 from great_minds.core.tasks.repository import TaskRepository
 from great_minds.core.tasks.service import TaskService
+from great_minds.core.users.repository import UserRepository
 from great_minds.core.telemetry import (
     correlation_id,
     emit_wide_event,
@@ -124,9 +125,13 @@ async def _reconciler_loop(
             async with sm() as session:
                 intent_repo = CompileIntentRepository(session)
                 task_service = TaskService(TaskRepository(session), absurd)
-                brain_service = BrainService(BrainRepository(session))
+                vault_service = VaultService(
+                    VaultRepository(session),
+                    UserRepository(session),
+                    settings,
+                )
                 await reconcile_once(
-                    intent_repo, task_service, brain_service, settings
+                    intent_repo, task_service, vault_service, settings
                 )
                 await session.commit()
         except Exception as exc:

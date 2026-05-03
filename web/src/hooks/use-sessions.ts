@@ -1,13 +1,13 @@
 import { useQuery } from "@tanstack/react-query";
 
 import { listSessions } from "@/api/sessions";
-import { useActiveBrainId } from "@/hooks/use-brain";
+import { useActiveVaultId } from "@/hooks/use-vault";
 
 export function useSessions() {
-  const brainId = useActiveBrainId();
+  const vaultId = useActiveVaultId();
   return useQuery({
-    queryKey: ["brain", brainId, "sessions"],
+    queryKey: ["vault", vaultId, "sessions"],
     queryFn: () => listSessions(),
-    enabled: !!brainId,
+    enabled: !!vaultId,
   });
 }

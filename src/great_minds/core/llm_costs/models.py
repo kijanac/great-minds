@@ -22,20 +22,16 @@ class LlmCostEventORM(Base):
         server_default=func.gen_random_uuid(),
     )
     created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now(), nullable=False
+        DateTime(timezone=True), server_default=func.now()
     )
     user_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True),
         ForeignKey("users.id", ondelete="SET NULL"),
-        nullable=True,
     )
-    brain_id: Mapped[uuid.UUID | None] = mapped_column(
+    vault_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True),
-        ForeignKey("brains.id", ondelete="CASCADE"),
-        nullable=True,
+        ForeignKey("vaults.id", ondelete="CASCADE"),
     )
-    event_type: Mapped[str] = mapped_column(Text, nullable=False)
-    cost_usd: Mapped[Decimal] = mapped_column(
-        Numeric(precision=12, scale=6), nullable=False
-    )
-    correlation_id: Mapped[str | None] = mapped_column(Text, nullable=True)
+    event_type: Mapped[str] = mapped_column(Text)
+    cost_usd: Mapped[Decimal] = mapped_column(Numeric(precision=12, scale=6))
+    correlation_id: Mapped[str | None] = mapped_column(Text)

@@ -7,8 +7,9 @@ from fastapi import APIRouter, HTTPException, status
 
 from great_minds.app.api.dependencies import (
     AuthServiceDep,
-    BrainServiceDep,
+    VaultServiceDep,
     CurrentUser,
+    UserServiceDep,
 )
 from great_minds.app.api.schemas import auth as schemas
 
@@ -29,7 +30,7 @@ async def request_code(
 async def verify_code(
     req: schemas.VerifyCode,
     auth_service: AuthServiceDep,
-    brain_service: BrainServiceDep,
+    vault_service: VaultServiceDep,
 ) -> schemas.TokenPair:
     try:
         user_id, access_token, refresh_token = await auth_service.verify_code(
@@ -39,7 +40,7 @@ async def verify_code(
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid or expired code"
         )
-    await brain_service.ensure_default_for_user(user_id, req.email)
+    await vault_service.ensure_default_for_user(user_id, req.email)
     return schemas.TokenPair(access_token=access_token, refresh_token=refresh_token)
 
 
@@ -100,3 +101,21 @@ async def revoke_api_key(
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="API key not found"
         )
+
+
+@router.delete("/me", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_account(
+    req: schemas.AccountDeleteRequest,
+    user: CurrentUser,
+    user_service: UserServiceDep,
+) -> None:
+    """Self-service account deletion.
+
+    Drops every vault the user owns (and its R2 prefix), the user row
+    (cascading api_keys, refresh_tokens, vault memberships), and the
+    user's R2 bucket if any. Vaults where the user is only a member are
+    left in place; the membership cascades away with the user row.
+    Requires ``{"confirm": "DELETE"}`` in the body.
+    """
+    log.info("account_delete_requested user_id=%s", user.id)
+    await user_service.delete_self(user.id)

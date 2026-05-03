@@ -14,9 +14,9 @@ class TaskRecord(Base):
     __tablename__ = "tasks"
 
     id: Mapped[UUID] = mapped_column(PG_UUID, primary_key=True)
-    brain_id: Mapped[UUID] = mapped_column(
+    vault_id: Mapped[UUID] = mapped_column(
         PG_UUID,
-        ForeignKey("brains.id", ondelete="CASCADE"),
+        ForeignKey("vaults.id", ondelete="CASCADE"),
         index=True,
     )
     type: Mapped[str] = mapped_column(Text)

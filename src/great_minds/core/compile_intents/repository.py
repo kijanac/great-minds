@@ -2,7 +2,7 @@
 
 `upsert_pending` relies on the partial unique index
 `ix_compile_intents_one_pending` to coalesce concurrent inserts: when a
-pending intent already exists for the brain, ON CONFLICT DO NOTHING
+pending intent already exists for the vault, ON CONFLICT DO NOTHING
 returns no row and the caller treats that as "already queued."
 
 `list_pending_locked` uses `FOR UPDATE SKIP LOCKED` so multiple
@@ -23,7 +23,7 @@ class CompileIntentRepository:
     def __init__(self, session: AsyncSession) -> None:
         self.session = session
 
-    async def upsert_pending(self, brain_id: UUID) -> CompileIntentRecord | None:
+    async def upsert_pending(self, vault_id: UUID) -> CompileIntentRecord | None:
         """Insert a pending intent, or return None if one already exists.
 
         Coalescing is enforced by the partial unique index. Caller must
@@ -31,9 +31,9 @@ class CompileIntentRepository:
         """
         stmt = (
             insert(CompileIntentRecord)
-            .values(brain_id=brain_id)
+            .values(vault_id=vault_id)
             .on_conflict_do_nothing(
-                index_elements=["brain_id"],
+                index_elements=["vault_id"],
                 index_where=text("dispatched_at IS NULL"),
             )
             .returning(CompileIntentRecord)
@@ -41,12 +41,12 @@ class CompileIntentRepository:
         row = await self.session.execute(stmt)
         return row.scalar_one_or_none()
 
-    async def get_pending_for_brain(
-        self, brain_id: UUID
+    async def get_pending_for_vault(
+        self, vault_id: UUID
     ) -> CompileIntentRecord | None:
         row = await self.session.execute(
             select(CompileIntentRecord).where(
-                CompileIntentRecord.brain_id == brain_id,
+                CompileIntentRecord.vault_id == vault_id,
                 CompileIntentRecord.dispatched_at.is_(None),
             )
         )

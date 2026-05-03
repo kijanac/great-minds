@@ -1,6 +1,6 @@
 """Markdown I/O utilities.
 
-One source of truth for reading, writing, and chunking the brain's
+One source of truth for reading, writing, and chunking the vault's
 markdown files. Covers three related concerns:
 
 - Frontmatter parsing + serialization (YAML between ``---`` fences)

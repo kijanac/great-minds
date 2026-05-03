@@ -1,6 +1,6 @@
-"""Brain config: storage-backed config.yaml loading and override editing.
+"""Vault config: storage-backed config.yaml loading and override editing.
 
-One config.yaml per brain at {storage.root}/config.yaml. The same file
+One config.yaml per vault at {storage.root}/config.yaml. The same file
 backs the ingester's per-source-type metadata schemas and the compile
 pipeline's editorial settings (kinds, thematic_hint); this module
 parses both views.
@@ -58,7 +58,7 @@ _DRAFT_HINT_SYSTEM = (
 
 
 async def load_config(storage: Storage) -> dict:
-    """Load brain config as a raw dict, returning empty if absent."""
+    """Load vault config as a raw dict, returning empty if absent."""
     content = await storage.read(CONFIG_PATH, strict=False)
     if content is None:
         return {}
@@ -72,7 +72,7 @@ def load_default_config_text() -> str:
 
 
 @dataclass(frozen=True)
-class BrainConfig:
+class VaultConfig:
     """Parsed view of the compile-relevant sections of config.yaml.
 
     `raw` preserves the full dict so callers that need other sections
@@ -85,31 +85,31 @@ class BrainConfig:
     raw: dict = field(default_factory=dict)
 
 
-async def load_brain_config(storage: Storage) -> BrainConfig:
+async def load_vault_config(storage: Storage) -> VaultConfig:
     content = await storage.read(CONFIG_PATH, strict=False)
     if content is None:
-        return BrainConfig()
+        return VaultConfig()
     data = _yaml.load(content) or {}
     kinds_raw = data.get("kinds")
     kinds = tuple(kinds_raw) if kinds_raw else DEFAULT_KINDS
     thematic_hint = data.get("thematic_hint") or DEFAULT_THEMATIC_HINT
-    return BrainConfig(
+    return VaultConfig(
         kinds=kinds,
         thematic_hint=thematic_hint,
         raw=dict(data),
     )
 
 
-async def apply_brain_config_overrides(
+async def apply_vault_config_overrides(
     storage: Storage,
     *,
     thematic_hint: str | None = None,
     kinds: list[str] | None = None,
 ) -> None:
-    """Merge overrides into the brain's config.yaml.
+    """Merge overrides into the vault's config.yaml.
 
     Reads the existing file (or falls back to the package default if
-    the brain doesn't have one yet), applies the overrides, and writes
+    the vault doesn't have one yet), applies the overrides, and writes
     back. ``None`` for a field means "leave unchanged" — passing the
     empty string clears thematic_hint, passing ``[]`` clears kinds.
     """

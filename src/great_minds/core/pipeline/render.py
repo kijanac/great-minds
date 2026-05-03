@@ -29,7 +29,7 @@ from uuid import UUID
 
 from pydantic import BaseModel, ValidationError, field_validator
 
-from great_minds.core.brains.prompts import load_prompt
+from great_minds.core.vaults.prompts import load_prompt
 from great_minds.core.llm.client import json_llm_call
 from great_minds.core.markdown import serialize_frontmatter
 from great_minds.core.paths import source_cards_path, wiki_path
@@ -89,7 +89,7 @@ async def run(
     if not validated:
         log_event(
             "pipeline.render_skipped",
-            brain_id=str(ctx.brain_id),
+            vault_id=str(ctx.vault_id),
             reason="no_topics",
         )
         return
@@ -129,7 +129,7 @@ async def run(
         )
         log_event(
             "pipeline.render_completed",
-            brain_id=str(ctx.brain_id),
+            vault_id=str(ctx.vault_id),
             topics_rendered=cache_hits,
             cache_hits=cache_hits,
             cache_misses=0,
@@ -141,7 +141,7 @@ async def run(
     # Heavy context loaded only when at least one topic needs rendering.
     source_cards = SourceCardStore(source_cards_path(ctx.sidecar_root)).load_all()
     idea_by_id = index_ideas_by_id(source_cards)
-    docs = await _load_documents(ctx.session, ctx.brain_id)
+    docs = await _load_documents(ctx.session, ctx.vault_id)
     doc_by_id = {d.id: d for d in docs}
     topic_by_slug = {v.slug: v for v in validated}
 
@@ -181,7 +181,7 @@ async def run(
     wiki_chunks_indexed = 0
     if cache_misses:
         wiki_chunks_indexed = await rebuild_wiki_index(
-            ctx.session, ctx.brain_id, ctx.storage, client=ctx.client
+            ctx.session, ctx.vault_id, ctx.storage, client=ctx.client
         )
 
     topics_rendered = cache_hits + cache_misses
@@ -194,7 +194,7 @@ async def run(
     )
     log_event(
         "pipeline.render_completed",
-        brain_id=str(ctx.brain_id),
+        vault_id=str(ctx.vault_id),
         topics_rendered=topics_rendered,
         cache_hits=cache_hits,
         cache_misses=cache_misses,
@@ -268,7 +268,7 @@ async def _render_one(
         log_event(
             "render.topic_failed",
             level=logging.WARNING,
-            brain_id=str(ctx.brain_id),
+            vault_id=str(ctx.vault_id),
             topic_slug=topic.slug,
             error=outcome.error,
         )
@@ -282,7 +282,7 @@ async def _render_one(
         log_event(
             "render.body_invalid",
             level=logging.WARNING,
-            brain_id=str(ctx.brain_id),
+            vault_id=str(ctx.vault_id),
             topic_slug=topic.slug,
             error=outcome.error,
             response_preview=str(data)[:300],
@@ -305,7 +305,7 @@ async def _render_one(
     # on-disk artifacts (raw + wiki).
     doc_repo = DocumentRepository(ctx.session)
     await doc_repo.upsert(
-        ctx.brain_id,
+        ctx.vault_id,
         DocumentCreate(
             file_path=article_path,
             content=full_content,
@@ -518,7 +518,7 @@ def _cache_key(
 # ---------------------------------------------------------------------------
 
 
-async def _load_documents(session, brain_id: UUID) -> list[Document]:
+async def _load_documents(session, vault_id: UUID) -> list[Document]:
     """Load raw documents used by anchor footnotes.
 
     Render's footnotes cite source documents (raw), not wiki articles,
@@ -526,4 +526,4 @@ async def _load_documents(session, brain_id: UUID) -> list[Document]:
     table (render writes them via DocumentRepository.upsert) but would
     never be referenced by anchor.document_id.
     """
-    return await DocumentRepository(session).list_by_kind(brain_id, DocKind.RAW)
+    return await DocumentRepository(session).list_by_kind(vault_id, DocKind.RAW)

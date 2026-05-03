@@ -32,12 +32,6 @@ export function useIngestion() {
   const urlRef = useRef(url);
   urlRef.current = url;
 
-  const trackCompileIntent = useCallback((intentId: string) => {
-    setCompileIntentIds((ids) =>
-      ids.includes(intentId) ? ids : [...ids, intentId],
-    );
-  }, []);
-
   const dismissCompileIntent = useCallback((intentId: string) => {
     setCompileIntentIds((ids) => ids.filter((id) => id !== intentId));
   }, []);
@@ -63,27 +57,54 @@ export function useIngestion() {
 
     try {
       for await (const event of ingestBulk(files)) {
-        if (event.event === "done" && event.compile_intent_id) {
-          trackCompileIntent(event.compile_intent_id);
-          continue;
-        }
-        if (event.event !== "file") continue;
-        const id = queuedFileIds[event.index];
-        if (!id) continue;
-        setQueue((q) =>
-          q.map((i) =>
-            i.id === id
-              ? {
+        if (event.phase === "error") {
+          const failedNames = new Set(
+            (event.failed_uploads ?? []).map((f) => f.name),
+          );
+          const errMsgByName = new Map(
+            (event.failed_uploads ?? []).map((f) => [f.name, f.error]),
+          );
+          setQueue((q) =>
+            q.map((i) => {
+              if (!queuedFileIds.includes(i.id)) return i;
+              const file = batch.find(([id]) => id === i.id)?.[1];
+              const name = file?.name ?? "";
+              if (failedNames.has(name)) {
+                return {
                   ...i,
-                  status: event.status === "error" ? "error" : "done",
-                  error: event.status === "error" ? event.error ?? "Ingestion failed" : undefined,
-                  name: event.title ?? i.name,
-                }
-              : i,
-          ),
-        );
-        filesById.current.delete(id);
+                  status: "error",
+                  error: errMsgByName.get(name) ?? "Upload failed",
+                };
+              }
+              return { ...i, status: "error", error: event.error ?? "Ingest failed" };
+            }),
+          );
+          break;
+        }
+        if (event.phase === "done") {
+          const failedNames = new Set(
+            (event.failed_uploads ?? []).map((f) => f.name),
+          );
+          const errMsgByName = new Map(
+            (event.failed_uploads ?? []).map((f) => [f.name, f.error]),
+          );
+          setQueue((q) =>
+            q.map((i) => {
+              if (!queuedFileIds.includes(i.id)) return i;
+              const file = batch.find(([id]) => id === i.id)?.[1];
+              const name = file?.name ?? "";
+              return failedNames.has(name)
+                ? {
+                    ...i,
+                    status: "error",
+                    error: errMsgByName.get(name) ?? "Upload failed",
+                  }
+                : { ...i, status: "done" };
+            }),
+          );
+        }
       }
+      queuedFileIds.forEach((id) => filesById.current.delete(id));
     } catch (e) {
       const message = e instanceof Error ? e.message : "Bulk ingest failed";
       setQueue((q) =>
@@ -98,11 +119,10 @@ export function useIngestion() {
       batchInFlightRef.current = false;
     }
 
-    // If new files arrived while this batch was in flight, fire again.
     if (filesById.current.size > 0) {
       flushFileBatch();
     }
-  }, [trackCompileIntent]);
+  }, []);
 
   const processNextUrl = useCallback(async () => {
     const entry = firstQueuedUrl(urlsById.current);

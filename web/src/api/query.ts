@@ -2,7 +2,7 @@ import { z } from "zod";
 
 import type { HistoryMessage, SourceRef } from "@/lib/types";
 
-import { apiFetch, brainPath } from "./client";
+import { apiFetch, vaultPath } from "./client";
 
 interface StreamQueryOptions {
   model?: string;
@@ -66,7 +66,7 @@ export async function* streamQuery(
   question: string,
   options?: StreamQueryOptions,
 ): AsyncGenerator<StreamEvent> {
-  const res = await apiFetch(brainPath("/query"), {
+  const res = await apiFetch(vaultPath("/query"), {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({

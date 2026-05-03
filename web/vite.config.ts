@@ -12,8 +12,8 @@ export default defineConfig({
   },
   server: {
     proxy: {
-      // Match brain-scoped SSE endpoint: /api/brains/{id}/query/stream
-      "^/api/brains/[^/]+/query/stream": {
+      // Match vault-scoped SSE endpoint: /api/vaults/{id}/query/stream
+      "^/api/vaults/[^/]+/query/stream": {
         target: "http://localhost:8000",
         rewrite: (path) => path.replace(/^\/api/, "/v1"),
         configure: (proxy) => {

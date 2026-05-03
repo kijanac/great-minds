@@ -20,7 +20,7 @@ from fastapi import APIRouter
 from pydantic import BaseModel
 
 from great_minds.app.api.dependencies import (
-    BrainStorageDep,
+    VaultStorageDep,
     SessionDep,
 )
 from great_minds.core.lint import build_lint_report
@@ -55,11 +55,11 @@ class LintReportResponse(BaseModel):
 
 @router.get("")
 async def lint(
-    brain_id: UUID,
-    storage: BrainStorageDep,
+    vault_id: UUID,
+    storage: VaultStorageDep,
     session: SessionDep,
 ) -> LintReportResponse:
-    report = await build_lint_report(session, brain_id, storage)
+    report = await build_lint_report(session, vault_id, storage)
     return LintReportResponse(
         orphans=[
             OrphanResponse(slug=o.slug, title=o.title)
