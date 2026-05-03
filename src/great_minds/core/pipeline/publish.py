@@ -10,7 +10,6 @@ sources. The log is a human-readable timeline for understanding
 registry drift between compiles.
 """
 
-from __future__ import annotations
 
 import logging
 from datetime import datetime, timezone

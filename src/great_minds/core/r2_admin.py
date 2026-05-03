@@ -9,7 +9,6 @@ per-bucket service tokens by default, and surfacing customer-managed
 creds is a separate (deferred) concern.
 """
 
-from __future__ import annotations
 
 import asyncio
 import logging

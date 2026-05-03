@@ -15,7 +15,6 @@ Usage:
     uv run python scripts/test_convergence.py
 """
 
-from __future__ import annotations
 
 import asyncio
 from uuid import UUID

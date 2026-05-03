@@ -19,7 +19,6 @@ phase lint module don't map cleanly onto the topic layer and are
 reserved — the endpoint returns empty arrays for both.
 """
 
-from __future__ import annotations
 
 import uuid
 from dataclasses import dataclass, field

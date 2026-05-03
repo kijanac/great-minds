@@ -1,6 +1,5 @@
 """Pydantic schemas for LLM cost events."""
 
-from __future__ import annotations
 
 import uuid
 from datetime import datetime

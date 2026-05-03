@@ -1,6 +1,5 @@
 """Idea embeddings repository (Postgres, pgvector)."""
 
-from __future__ import annotations
 
 from uuid import UUID
 

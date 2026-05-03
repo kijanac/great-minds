@@ -1,6 +1,5 @@
 """Repository for llm_cost_events. Persistence + aggregation queries."""
 
-from __future__ import annotations
 
 import uuid
 from dataclasses import dataclass

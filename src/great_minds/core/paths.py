@@ -32,7 +32,6 @@ Three helper families:
   directly; never written.
 """
 
-from __future__ import annotations
 
 from pathlib import Path
 from uuid import UUID

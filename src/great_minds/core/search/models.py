@@ -6,7 +6,6 @@ where chunk_index aligns with markdown.paragraphs() so it matches the
 ^pN anchors extract persists on Anchor.chunk_index.
 """
 
-from __future__ import annotations
 
 from datetime import datetime
 from uuid import UUID

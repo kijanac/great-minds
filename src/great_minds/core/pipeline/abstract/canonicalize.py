@@ -18,12 +18,11 @@ canonical — are logged as a quality signal but don't fail the phase;
 a lossy registry still beats no registry, and the user can re-run.
 """
 
-from __future__ import annotations
 
-import hashlib
 import logging
 from uuid import UUID
 
+from great_minds.core.hashing import content_hash, prompt_hash
 from great_minds.core.vaults.prompts import load_prompt
 from great_minds.core.llm.client import json_llm_call
 from great_minds.core.llm import REDUCE_MODEL
@@ -55,7 +54,7 @@ async def run(
         return []
 
     prompt_template = await load_prompt(ctx.storage, "canonicalize")
-    prompt_hash = hashlib.sha256(prompt_template.encode()).hexdigest()
+    prompt_hash = prompt_hash(prompt_template)
 
     ordered = sorted(local_topics, key=lambda t: str(t.local_topic_id))
     tag_to_uuid, local_topic_block = _render_local_topics(ordered)
@@ -236,13 +235,12 @@ def _covered_local_ids(
 
 
 def _topic_content_hash(t: LocalTopic) -> str:
-    parts = [
+    return content_hash(
         t.slug,
         t.title,
         t.description,
         *sorted(str(i) for i in t.subsumed_idea_ids),
-    ]
-    return hashlib.sha256("\n".join(parts).encode()).hexdigest()[:16]
+    )
 
 
 def _cache_key(
@@ -251,13 +249,9 @@ def _cache_key(
     prompt_hash: str,
     thematic_hint: str,
 ) -> str:
-    h = hashlib.sha256()
-    for t in ordered:
-        h.update(str(t.local_topic_id).encode())
-        h.update(b":")
-        h.update(_topic_content_hash(t).encode())
-        h.update(b";")
-    h.update(f"prompt={prompt_hash}".encode())
-    hint_hash = hashlib.sha256(thematic_hint.encode()).hexdigest()[:16]
-    h.update(f"::hint={hint_hash}::model={REDUCE_MODEL}".encode())
-    return h.hexdigest()
+    return content_hash(
+        *(str(t.local_topic_id) + ":" + _topic_content_hash(t) for t in ordered),
+        f"prompt={prompt_hash}",
+        f"hint={content_hash(thematic_hint)}",
+        f"model={REDUCE_MODEL}",
+    )

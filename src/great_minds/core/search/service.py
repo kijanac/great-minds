@@ -6,13 +6,13 @@ specific table: chunking, embedding batching + MRL truncation, and
 Reciprocal Rank Fusion of BM25 and vector results.
 """
 
-from __future__ import annotations
 
 import asyncio
-import hashlib
 import logging
 import math
 from uuid import UUID
+
+from great_minds.core.hashing import content_hash
 
 from openai import AsyncOpenAI
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -44,7 +44,7 @@ def _chunk_paragraphs(path: str, content: str) -> list[Chunk]:
     chunks: list[Chunk] = []
     for p in paragraphs(content):
         full_text = f"{p.heading}\n\n{p.body}" if p.heading else p.body
-        h = hashlib.sha256(full_text.encode()).hexdigest()
+        h = content_hash("chunk", full_text)
         chunks.append(
             Chunk(
                 path=path,

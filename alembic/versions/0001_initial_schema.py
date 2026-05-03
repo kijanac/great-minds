@@ -496,6 +496,26 @@ def upgrade() -> None:
         )
     )
 
+    # -- Topic FK on documents (one wiki document per topic) ---------------
+    # FK is added after topics exists. NULL for raw rows, set for wiki rows
+    # by render. Partial unique index enforces 1 wiki document per topic.
+    op.add_column(
+        "documents",
+        sa.Column(
+            "topic_id",
+            sa.UUID(),
+            sa.ForeignKey("topics.topic_id", ondelete="CASCADE"),
+            nullable=True,
+        ),
+    )
+    op.create_index(
+        "ix_documents_topic_id_wiki",
+        "documents",
+        ["topic_id"],
+        unique=True,
+        postgresql_where=sa.text("doc_kind = 'wiki'"),
+    )
+
     # -- Backlinks (article-level reality from verify) ---------------------
     # Built by phase 5 verify from actual [title](wiki/<slug>.md) citations
     # in rendered prose. Separate from topic_links (topic-level intent).

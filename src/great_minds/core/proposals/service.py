@@ -7,7 +7,6 @@ from uuid import UUID
 
 from great_minds.core.vaults.config import load_config
 from great_minds.core.vaults.schemas import Vault
-from great_minds.core.compile_intents.repository import CompileIntentRepository
 from great_minds.core.documents.service import DocumentService
 from great_minds.core.documents.builder import build_document
 from great_minds.core.sessions import render_session_exchange_source
@@ -20,7 +19,6 @@ from great_minds.core.proposals.schemas import Proposal
 from great_minds.core.sessions import ExchangeEvent, SessionOrigin
 from great_minds.core.settings import Settings
 from great_minds.core.storage import Storage
-from great_minds.core.telemetry import log_event
 
 log = logging.getLogger(__name__)
 
@@ -215,22 +213,16 @@ class ProposalService:
         vault: Vault,
         storage: Storage,
     ) -> None:
-        """Write staged content to dest_path, index, and dispatch a compile."""
+        """Write staged content to dest_path and index it.
+
+        ``DocumentService.index_raw_doc`` emits the compile intent so
+        the reconciler dispatches a recompile.
+        """
         rendered = Path(proposal.storage_path).read_text(encoding="utf-8")
         await storage.write(proposal.dest_path, rendered)
         await self.doc_service.index_raw_doc(
             vault.id, proposal.dest_path, rendered
         )
-
-        intent_repo = CompileIntentRepository(self.repo.session)
-        intent = await intent_repo.upsert_pending(vault.id)
-        if intent is not None:
-            log_event(
-                "intent_created",
-                intent_id=str(intent.id),
-                vault_id=str(vault.id),
-                trigger="proposal_approved",
-            )
 
     def _reject(self, proposal: SourceProposal) -> None:
         """Clean up staged content for a rejected proposal."""

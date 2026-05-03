@@ -5,7 +5,6 @@ Storage/session from serialized params — they don't use the DI chain.
 """
 
 import asyncio
-import hashlib
 import logging
 from contextvars import ContextVar
 from pathlib import Path
@@ -14,13 +13,15 @@ from uuid import UUID
 from absurd_sdk import AbsurdHooks, AsyncAbsurd
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from great_minds.core.hashing import file_hash
+
 from great_minds.core import pipeline
 from great_minds.core.vaults.config import load_config
 from great_minds.core.vaults.repository import VaultRepository
-from great_minds.core.compile_intents.repository import CompileIntentRepository
 from great_minds.core.documents.builder import build_document, write_document
 from great_minds.core.documents.repository import DocumentRepository
 from great_minds.core.documents.schemas import DocumentCreate
+from great_minds.core.documents.service import DocumentService
 from great_minds.core.ingest_service import _convert_to_markdown
 from great_minds.core.llm import get_async_client
 from great_minds.core.llm_costs import record_wide_event_cost
@@ -92,9 +93,8 @@ async def bulk_ingest_task(params: dict, ctx) -> None:
     ingest_kwargs = params.get("ingest_kwargs", {})
     config = await load_config(storage)
 
-    doc_repo = DocumentRepository(session)
-    intent_repo = CompileIntentRepository(session)
-    existing_hashes = await doc_repo.get_file_hashes(vault_id)
+    doc_service = DocumentService(DocumentRepository(session))
+    existing_hashes = await doc_service.get_raw_file_hashes(vault_id)
 
     source_files = sorted(source_dir.rglob("*.md"))
     total = len(source_files)
@@ -130,9 +130,9 @@ async def bulk_ingest_task(params: dict, ctx) -> None:
             content_with_fm = await write_document(
                 storage, config, raw_content, content_type, dest=dest, **ingest_kwargs
             )
-            file_hash = hashlib.sha256(content_with_fm.encode()).hexdigest()
+            file_hash_val = file_hash(content_with_fm)
 
-            if existing_hashes.get(dest) == file_hash:
+            if existing_hashes.get(dest) == file_hash_val:
                 skipped += 1
                 continue
 
@@ -143,11 +143,9 @@ async def bulk_ingest_task(params: dict, ctx) -> None:
             batch.append(DocumentCreate.from_frontmatter(fm, dest, content_with_fm))
 
             if len(batch) >= batch_size:
-                await doc_repo.batch_upsert(vault_id, batch)
-                # Outbox: every commit that persists docs also persists the
-                # intent (idempotent — the partial unique index coalesces).
-                await intent_repo.upsert_pending(vault_id)
-                await session.commit()
+                # batch_index_raw_docs upserts, emits a compile intent,
+                # and commits — outbox semantics live in DocumentService.
+                await doc_service.batch_index_raw_docs(vault_id, batch)
                 batch.clear()
 
             if ingested % 100 == 0:
@@ -160,9 +158,7 @@ async def bulk_ingest_task(params: dict, ctx) -> None:
                 )
 
         if batch:
-            await doc_repo.batch_upsert(vault_id, batch)
-            await intent_repo.upsert_pending(vault_id)
-            await session.commit()
+            await doc_service.batch_index_raw_docs(vault_id, batch)
 
     enrich(ingested=ingested, skipped=skipped)
     log.info(
@@ -216,14 +212,13 @@ async def _index_fetched_results(
     content_type: str,
     storage,
     existing_hashes: dict[str, str],
-    doc_repo: DocumentRepository,
-    intent_repo: CompileIntentRepository,
-    session: AsyncSession,
+    doc_service: DocumentService,
 ) -> tuple[int, int, int, list[str]]:
     """Drain fetches as they complete, write+upsert in batches.
 
     Returns (ingested, skipped, failed, keys_to_clean). Each batch flush
-    upserts docs and an idempotent compile_intent, then commits.
+    goes through ``DocumentService.batch_index_raw_docs``, which upserts,
+    emits a compile intent, and commits in one transaction.
     """
     ingested = 0
     skipped = 0
@@ -247,11 +242,11 @@ async def _index_fetched_results(
             failed += 1
             continue
 
-        file_hash = hashlib.sha256(content_with_fm.encode()).hexdigest()
+        file_hash_val = file_hash(content_with_fm)
         dest = f"raw/{content_type}/{entry['hash'][:12]}.md"
         keys_to_clean.append(f"staging/{vault_id}/{entry['hash']}")
 
-        if existing_hashes.get(dest) == file_hash:
+        if existing_hashes.get(dest) == file_hash_val:
             skipped += 1
             continue
 
@@ -261,20 +256,11 @@ async def _index_fetched_results(
         ingested += 1
 
         if len(batch) >= _STAGING_BATCH_SIZE:
-            await doc_repo.batch_upsert(vault_id, batch)
-            await intent_repo.upsert_pending(vault_id)
-            await session.commit()
+            await doc_service.batch_index_raw_docs(vault_id, batch)
             batch.clear()
 
     if batch:
-        await doc_repo.batch_upsert(vault_id, batch)
-        await intent_repo.upsert_pending(vault_id)
-        await session.commit()
-    elif ingested > 0:
-        # Last batch already flushed at BATCH_SIZE; still ensure a
-        # compile_intent exists for the run.
-        await intent_repo.upsert_pending(vault_id)
-        await session.commit()
+        await doc_service.batch_index_raw_docs(vault_id, batch)
 
     return ingested, skipped, failed, keys_to_clean
 
@@ -348,9 +334,8 @@ async def bulk_ingest_from_staging_task(params: dict, ctx) -> None:
     )
     await ctx.heartbeat(600)
 
-    doc_repo = DocumentRepository(session)
-    intent_repo = CompileIntentRepository(session)
-    existing_hashes = await doc_repo.get_file_hashes(vault_id)
+    doc_service = DocumentService(DocumentRepository(session))
+    existing_hashes = await doc_service.get_raw_file_hashes(vault_id)
 
     sem = asyncio.Semaphore(_STAGING_FETCH_CONCURRENCY)
     fetch_tasks = [
@@ -376,9 +361,7 @@ async def bulk_ingest_from_staging_task(params: dict, ctx) -> None:
         content_type=content_type,
         storage=storage,
         existing_hashes=existing_hashes,
-        doc_repo=doc_repo,
-        intent_repo=intent_repo,
-        session=session,
+        doc_service=doc_service,
     )
 
     await _cleanup_staging(admin, bucket, keys_to_clean, vault_id=vault_id)

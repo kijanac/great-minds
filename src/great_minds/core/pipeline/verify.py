@@ -17,7 +17,6 @@ file walk; we log here so compile-time quality is visible without
 needing to hit the endpoint.
 """
 
-from __future__ import annotations
 
 import logging
 from uuid import UUID
@@ -47,16 +46,19 @@ async def run(ctx: PipelineContext) -> None:
 
     slug_to_topic = {t.slug: t for t in rendered}
     topic_id_set = {t.topic_id for t in rendered}
-    article_by_path = await _load_wiki_articles(ctx)
+    article_by_topic = await _load_wiki_articles(ctx)
 
     backlinks: list[Backlink] = []
     source_document_ids: list[UUID] = []
     # source_topic_id -> set of cited slugs found in its prose (for unmentioned check)
     cited_by_source: dict[UUID, set[str]] = {}
     unresolved_count = 0
-    missing_document_count = 0
     articles_walked = 0
 
+    # FK + partial unique index guarantee a wiki document for every
+    # rendered topic (render commits both writes in one transaction),
+    # so dict access by topic_id is total — KeyError would surface real
+    # schema corruption rather than expected absence.
     for topic in rendered:
         article_path = wiki_path(topic.slug)
         content = await ctx.storage.read(article_path, strict=False)
@@ -71,18 +73,7 @@ async def run(ctx: PipelineContext) -> None:
             )
             continue
 
-        source_article = article_by_path.get(article_path)
-        if source_article is None:
-            missing_document_count += 1
-            log_event(
-                "verify.missing_source_article_document",
-                level=logging.WARNING,
-                vault_id=str(ctx.vault_id),
-                topic_slug=topic.slug,
-                article_path=article_path,
-            )
-            continue
-
+        source_article = article_by_topic[topic.topic_id]
         source_document_ids.append(source_article.id)
         articles_walked += 1
         link_paths = extract_wiki_link_targets(content)
@@ -104,17 +95,7 @@ async def run(ctx: PipelineContext) -> None:
             if target.topic_id == topic.topic_id:
                 # Self-reference — skip (not a semantic backlink)
                 continue
-            target_article = article_by_path.get(wiki_path(target.slug))
-            if target_article is None:
-                missing_document_count += 1
-                log_event(
-                    "verify.missing_target_article_document",
-                    level=logging.WARNING,
-                    vault_id=str(ctx.vault_id),
-                    source_slug=topic.slug,
-                    target_slug=target.slug,
-                )
-                continue
+            target_article = article_by_topic[target.topic_id]
             cited_slugs.add(slug)
             backlinks.append(
                 Backlink(
@@ -147,7 +128,6 @@ async def run(ctx: PipelineContext) -> None:
         verify_backlink_edges=len(backlinks),
         verify_unresolved_citations=unresolved_count,
         verify_unmentioned_links=unmentioned_count,
-        verify_missing_article_documents=missing_document_count,
     )
     log_event(
         "pipeline.verify_completed",
@@ -156,13 +136,18 @@ async def run(ctx: PipelineContext) -> None:
         backlink_edges=len(backlinks),
         unresolved_citations=unresolved_count,
         unmentioned_links=unmentioned_count,
-        missing_article_documents=missing_document_count,
     )
 
 
-async def _load_wiki_articles(ctx: PipelineContext) -> dict[str, Document]:
+async def _load_wiki_articles(ctx: PipelineContext) -> dict[UUID, Document]:
+    """Map topic_id → wiki Document for the rendered set.
+
+    Wiki documents always carry a topic_id (FK enforced via the partial
+    unique index). Rows missing it would be schema corruption — skip
+    rather than crash so verify can still run on the well-formed set.
+    """
     docs = await DocumentRepository(ctx.session).list_by_kind(ctx.vault_id, DocKind.WIKI)
-    return {doc.file_path: doc for doc in docs}
+    return {doc.topic_id: doc for doc in docs if doc.topic_id is not None}
 
 
 async def _detect_unmentioned_links(

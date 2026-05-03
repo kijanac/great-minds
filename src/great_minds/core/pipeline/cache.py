@@ -18,7 +18,6 @@ authoritative recording of the LLM's output for that input. On miss,
 the caller must actually draw fresh from the LLM and record.
 """
 
-from __future__ import annotations
 
 import json
 from dataclasses import dataclass

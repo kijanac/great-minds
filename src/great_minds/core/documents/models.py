@@ -1,6 +1,5 @@
 """ORM models for the documents index."""
 
-from __future__ import annotations
 
 import uuid
 from datetime import datetime
@@ -50,6 +49,13 @@ class DocumentORM(Base):
     # (texts/news/ideas). It has no meaning for rendered wiki articles,
     # so those rows set source_type = NULL.
     source_type: Mapped[str | None] = mapped_column(Text)
+    # Set for doc_kind='wiki' (FK to the topic this article renders);
+    # NULL for raw rows. Partial unique index in the migration enforces
+    # one wiki document per topic.
+    topic_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("topics.topic_id", ondelete="CASCADE"),
+    )
     precis: Mapped[str | None] = mapped_column(Text)
     extra_metadata: Mapped[dict] = mapped_column(
         "metadata", JSONB, server_default="{}"

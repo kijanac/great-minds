@@ -5,7 +5,6 @@ route-level services (wiki endpoints). Keeps queries narrow; business
 logic around slug continuity / archive lives in topics.service.
 """
 
-from __future__ import annotations
 
 from uuid import UUID
 

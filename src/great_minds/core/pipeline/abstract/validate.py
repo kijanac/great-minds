@@ -23,16 +23,16 @@ Mechanical + one unified LLM cleanup call:
 Output is list[ValidatedCanonicalTopic] — what phase 3 derive consumes.
 """
 
-from __future__ import annotations
 
-import hashlib
 import logging
 from dataclasses import dataclass
 from uuid import UUID
 
 from uuid6 import uuid7
 
+from great_minds.core.hashing import content_hash
 from great_minds.core.vaults.prompts import load_prompt
+from great_minds.core.documents.repository import DocumentRepository
 from great_minds.core.llm.client import json_llm_call
 from great_minds.core.llm import REDUCE_MODEL
 from great_minds.core.markdown import parse_frontmatter, serialize_frontmatter
@@ -382,7 +382,7 @@ async def _archive_candidates(
         )
         await repo.set_archived(candidate.topic_id, superseded_by=successor_topic_id)
         await _move_wiki_to_archive(
-            storage=ctx.storage,
+            ctx=ctx,
             topic=candidate,
             successor_topic_id=successor_topic_id,
         )
@@ -390,12 +390,12 @@ async def _archive_candidates(
 
 async def _move_wiki_to_archive(
     *,
-    storage,
+    ctx: PipelineContext,
     topic: Topic,
     successor_topic_id: UUID | None,
 ) -> None:
     article_path = wiki_path(topic.slug)
-    content = await storage.read(article_path, strict=False)
+    content = await ctx.storage.read(article_path, strict=False)
     if content is None:
         # Topic had no rendered article yet (e.g., archived before render ran).
         # Nothing on disk to move.
@@ -406,8 +406,13 @@ async def _move_wiki_to_archive(
         fm["superseded_by"] = str(successor_topic_id)
     updated = serialize_frontmatter(fm, body)
     archive_path = f"archive/{topic.topic_id}/{topic.slug}.md"
-    await storage.write(archive_path, updated)
-    await storage.delete(article_path)
+    await ctx.storage.write(archive_path, updated)
+    await ctx.storage.delete(article_path)
+    # Repoint the documents row at the archive location so backlinks
+    # and /doc reads resolve to the artifact's actual home.
+    await DocumentRepository(ctx.session).update_file_path_for_topic(
+        ctx.vault_id, topic.topic_id, archive_path
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -435,9 +440,8 @@ async def _upsert_topics(
 
 def _topic_content_hash(v: ValidatedCanonicalTopic) -> str:
     """Content hash per architecture: topic_membership + title + description."""
-    parts = [
+    return content_hash(
         v.title,
         v.description,
         *sorted(str(i) for i in v.subsumed_idea_ids),
-    ]
-    return hashlib.sha256("\n".join(parts).encode()).hexdigest()[:16]
+    )

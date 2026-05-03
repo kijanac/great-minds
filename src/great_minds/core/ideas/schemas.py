@@ -1,6 +1,5 @@
 """Pydantic schemas for ideas, anchors, and source cards."""
 
-from __future__ import annotations
 
 from uuid import UUID
 

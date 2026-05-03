@@ -25,7 +25,6 @@ Shape:
         ...
 """
 
-from __future__ import annotations
 
 from dataclasses import dataclass, field
 from io import StringIO

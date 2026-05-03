@@ -16,7 +16,6 @@ Fully deterministic. Not cached: O(N²) Jaccard is cheap at the scale
 where N is "local topics across all chunks" (~600 at 10K-doc scale).
 """
 
-from __future__ import annotations
 
 from collections import defaultdict
 from uuid import UUID

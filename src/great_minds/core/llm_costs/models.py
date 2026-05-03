@@ -1,6 +1,5 @@
 """ORM for llm_cost_events."""
 
-from __future__ import annotations
 
 import uuid
 from datetime import datetime

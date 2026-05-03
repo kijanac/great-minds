@@ -18,10 +18,8 @@ key. No LLM fallback — a render flake surfaces via missing article,
 not degraded content.
 """
 
-from __future__ import annotations
 
 import asyncio
-import hashlib
 import logging
 import re
 from dataclasses import dataclass
@@ -29,6 +27,7 @@ from uuid import UUID
 
 from pydantic import BaseModel, ValidationError, field_validator
 
+from great_minds.core.hashing import content_hash, prompt_hash
 from great_minds.core.vaults.prompts import load_prompt
 from great_minds.core.llm.client import json_llm_call
 from great_minds.core.markdown import serialize_frontmatter
@@ -95,7 +94,7 @@ async def run(
         return
 
     prompt_template = await load_prompt(ctx.storage, "render")
-    prompt_hash = hashlib.sha256(prompt_template.encode()).hexdigest()
+    prompt_hash = prompt_hash(prompt_template)
 
     # Pre-pass: one storage list + N in-memory cache checks decides which
     # topics actually need rendering. On a full-cache-hit replay this
@@ -302,7 +301,8 @@ async def _render_one(
     # Index the rendered article in the documents table so /wiki/recent,
     # /raw/sources, and search.rebuild_wiki_index all have consistent
     # metadata. topics is the editorial plan; documents holds the
-    # on-disk artifacts (raw + wiki).
+    # on-disk artifacts (raw + wiki). topic_id is the FK that ties the
+    # two together — verify, lint, and archive all join on it.
     doc_repo = DocumentRepository(ctx.session)
     await doc_repo.upsert(
         ctx.vault_id,
@@ -311,16 +311,11 @@ async def _render_one(
             content=full_content,
             doc_kind=DocKind.WIKI,
             compiled=True,
+            topic_id=topic.topic_id,
             metadata=DocumentMetadata(
                 title=topic.title,
-                author=None,
-                published_date=None,
-                url=None,
-                origin=None,
-                genre=None,
                 precis=topic.description,
                 tags=tags,
-                extra_metadata={"topic_id": str(topic.topic_id)},
             ),
         ),
     )
@@ -493,8 +488,11 @@ def _format_source_link(na: _NumberedAnchor) -> str:
 
 
 def _topic_content_hash(v: ValidatedCanonicalTopic) -> str:
-    parts = [v.title, v.description, *sorted(str(i) for i in v.subsumed_idea_ids)]
-    return hashlib.sha256("\n".join(parts).encode()).hexdigest()[:16]
+    return content_hash(
+        v.title,
+        v.description,
+        *sorted(str(i) for i in v.subsumed_idea_ids),
+    )
 
 
 def _cache_key(
@@ -504,13 +502,13 @@ def _cache_key(
     link_targets: list[str],
     prompt_hash: str,
 ) -> str:
-    h = hashlib.sha256()
-    h.update(str(topic_id).encode())
-    h.update(f"::{compiled_from_hash}".encode())
-    for t in sorted(link_targets):
-        h.update(f"::{t}".encode())
-    h.update(f"::prompt={prompt_hash}::model={RENDER_MODEL}".encode())
-    return h.hexdigest()
+    return content_hash(
+        str(topic_id),
+        compiled_from_hash,
+        *sorted(link_targets),
+        f"prompt={prompt_hash}",
+        f"model={RENDER_MODEL}",
+    )
 
 
 # ---------------------------------------------------------------------------

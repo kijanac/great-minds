@@ -11,9 +11,7 @@ per-idea line + doc header + precis. Approximation uses chars/4 for
 speed — exact tokenization isn't needed for cluster-count rounding.
 """
 
-from __future__ import annotations
 
-import hashlib
 import logging
 import math
 from uuid import UUID
@@ -21,6 +19,7 @@ from uuid import UUID
 import numpy as np
 from sklearn.cluster import KMeans
 
+from great_minds.core.hashing import content_hash
 from great_minds.core.ideas.repository import IdeaEmbeddingRepository
 from great_minds.core.ideas.schemas import Idea, SourceCard
 from great_minds.core.ideas.source_cards import index_ideas_by_id
@@ -300,9 +299,7 @@ def _cosine_distance(a: np.ndarray, b: np.ndarray) -> float:
 
 
 def _cache_key(id_order: list[UUID], target_tokens: int) -> str:
-    h = hashlib.sha256()
-    for iid in id_order:
-        h.update(str(iid).encode())
-        h.update(b":")
-    h.update(f"target={target_tokens}".encode())
-    return h.hexdigest()
+    return content_hash(
+        *sorted(str(iid) for iid in id_order),
+        f"target={target_tokens}",
+    )

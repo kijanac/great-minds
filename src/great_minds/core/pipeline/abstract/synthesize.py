@@ -12,10 +12,8 @@ out of the LLM's face; we map tags back to real idea_ids on parse.
 Unknown tags in the LLM output are silently dropped as hallucinations.
 """
 
-from __future__ import annotations
 
 import asyncio
-import hashlib
 import json
 import logging
 import re
@@ -26,6 +24,7 @@ from uuid import UUID
 from pydantic import ValidationError
 from uuid6 import uuid7
 
+from great_minds.core.hashing import content_hash, prompt_hash
 from great_minds.core.vaults.prompts import load_prompt
 from great_minds.core.llm.client import json_llm_call
 from great_minds.core.ideas.schemas import Idea, SourceCard
@@ -56,7 +55,7 @@ async def run(
 
     settings = get_settings()
     prompt_template = await load_prompt(ctx.storage, "synthesize")
-    prompt_hash = hashlib.sha256(prompt_template.encode()).hexdigest()
+    prompt_hash = prompt_hash(prompt_template)
     idea_index: dict[UUID, tuple[Idea, SourceCard]] = {}
     for card in source_cards:
         for idea in card.ideas:
@@ -207,12 +206,11 @@ async def _synthesize_one(
 
 
 def _cache_key(*, idea_ids: list[UUID], prompt_hash: str, model: str) -> str:
-    h = hashlib.sha256()
-    for iid in sorted(idea_ids):
-        h.update(str(iid).encode())
-        h.update(b":")
-    h.update(f"prompt={prompt_hash}::model={model}".encode())
-    return h.hexdigest()
+    return content_hash(
+        *sorted(str(iid) for iid in idea_ids),
+        f"prompt={prompt_hash}",
+        f"model={model}",
+    )
 
 
 def _render_idea_block(

@@ -12,10 +12,8 @@ via documents.builder.load_field_specs and formatted into the prompt's
 {extra_fields} slot. Universal fields (genre, tags) are hardcoded.
 """
 
-from __future__ import annotations
 
 import asyncio
-import hashlib
 import json
 import logging
 from collections.abc import AsyncIterator
@@ -29,6 +27,7 @@ from great_minds.core.vaults.prompts import load_prompt
 from great_minds.core.documents.repository import DocumentRepository
 from great_minds.core.documents.schemas import DocKind, Document
 from great_minds.core.llm.client import json_llm_call
+from great_minds.core.hashing import content_hash, prompt_hash
 from great_minds.core.markdown import (
     normalized_bodies,
     paragraph_for_quote,
@@ -72,7 +71,7 @@ async def run(ctx: PipelineContext) -> None:
     """
     settings = get_settings()
     prompt_template = await load_prompt(ctx.storage, "extract")
-    prompt_hash = hashlib.sha256(prompt_template.encode()).hexdigest()
+    prompt_hash = prompt_hash(prompt_template)
     kinds_key = "|".join(sorted(ctx.config.kinds))
 
     docs = await _load_documents(ctx.session, ctx.vault_id)
@@ -304,11 +303,13 @@ async def _extract_one(
 def _cache_key(
     *, body_hash: str, prompt_hash: str, kinds_key: str, source_type: str
 ) -> str:
-    key_input = (
-        f"{body_hash}::prompt={prompt_hash}::kinds={kinds_key}"
-        f"::source_type={source_type}::model={EXTRACT_MODEL}"
+    return content_hash(
+        body_hash,
+        f"prompt={prompt_hash}",
+        f"kinds={kinds_key}",
+        f"source_type={source_type}",
+        f"model={EXTRACT_MODEL}",
     )
-    return hashlib.sha256(key_input.encode()).hexdigest()
 
 
 def _render_prompt(
