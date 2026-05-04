@@ -18,6 +18,7 @@ here.
 
 
 import logging
+from collections import defaultdict
 from uuid import UUID
 
 from great_minds.core.pipeline.abstract.schemas import ValidatedCanonicalTopic
@@ -99,24 +100,26 @@ async def _replace_related(
     validated: list[ValidatedCanonicalTopic],
     limit: int,
 ) -> int:
-    sets = {v.topic_id: set(v.subsumed_idea_ids) for v in validated}
+    """Compute topic_related via a single SQL self-join on topic_membership.
+
+    Replaces the previous O(N²) Python Jaccard with a DB-side
+    pairwise computation. topic_membership was already populated by
+    _replace_membership above, so the join sees fresh data.
+    """
+    topic_ids = [v.topic_id for v in validated]
+    pairs = await repo.compute_pairwise_jaccard(topic_ids)
+
+    # Fan out each (topic_a, topic_b) pair into both directions.
+    by_topic: dict[UUID, list[tuple[UUID, int, float]]] = {
+        v.topic_id: [] for v in validated
+    }
+    for topic_a, topic_b, shared, jaccard in pairs:
+        by_topic[topic_a].append((topic_b, shared, jaccard))
+        by_topic[topic_b].append((topic_a, shared, jaccard))
+
     total = 0
     for v in validated:
-        a = sets[v.topic_id]
-        if not a:
-            await repo.replace_related(v.topic_id, [])
-            continue
-        candidates: list[tuple[UUID, int, float]] = []
-        for other in validated:
-            if other.topic_id == v.topic_id:
-                continue
-            b = sets[other.topic_id]
-            shared = len(a & b)
-            if shared == 0:
-                continue
-            union = len(a | b) or 1
-            jaccard = shared / union
-            candidates.append((other.topic_id, shared, jaccard))
+        candidates = by_topic[v.topic_id]
         # Deterministic: primary by jaccard desc, tie-break by topic_id.
         candidates.sort(key=lambda x: (-x[2], str(x[0])))
         top = candidates[:limit]

@@ -3,13 +3,15 @@
 from datetime import UTC, datetime, timedelta
 from uuid import UUID
 
-from sqlalchemy import select, update
+from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from great_minds.core.auth.models import ApiKey, AuthCode, RefreshToken
+from great_minds.core.auth.models import ApiKeyORM, AuthCode, RefreshToken
+from great_minds.core.auth.schemas import ApiKey as ApiKeySchema
 from great_minds.core.crypto import hash_api_key, hash_code, hash_refresh_token
 from great_minds.core.settings import Settings
-from great_minds.core.users.models import User
+from great_minds.core.users.schemas import User as UserSchema
+from great_minds.core.users.models import UserORM
 
 
 class AuthRepository:
@@ -24,24 +26,24 @@ class AuthRepository:
             .where(AuthCode.email == email, AuthCode.used == False)
             .values(used=True)
         )
+        db_now = await self.session.scalar(func.now())
         auth_code = AuthCode(
             email=email,
             code_hash=hash_code(code),
-            expires_at=datetime.now(UTC)
+            expires_at=db_now
             + timedelta(minutes=settings.auth_code_expiry_minutes),
         )
         self.session.add(auth_code)
         return auth_code
 
     async def verify_auth_code(self, email: str, code: str) -> bool:
-        now = datetime.now(UTC)
         code_h = hash_code(code)
         result = await self.session.execute(
             select(AuthCode).where(
                 AuthCode.email == email,
                 AuthCode.code_hash == code_h,
                 AuthCode.used == False,
-                AuthCode.expires_at > now,
+                AuthCode.expires_at > func.now(),
             )
         )
         auth_code = result.scalar_one_or_none()
@@ -53,42 +55,43 @@ class AuthRepository:
     async def store_refresh_token(
         self, user_id: UUID, raw_token: str, settings: Settings
     ) -> RefreshToken:
+        db_now = await self.session.scalar(func.now())
         rt = RefreshToken(
             user_id=user_id,
             token_hash=hash_refresh_token(raw_token),
-            expires_at=datetime.now(UTC)
+            expires_at=db_now
             + timedelta(days=settings.jwt_refresh_expiry_days),
         )
         self.session.add(rt)
         return rt
 
     async def validate_refresh_token(self, raw_token: str) -> RefreshToken | None:
-        now = datetime.now(UTC)
         token_h = hash_refresh_token(raw_token)
         result = await self.session.execute(
             select(RefreshToken).where(
                 RefreshToken.token_hash == token_h,
                 RefreshToken.revoked == False,
-                RefreshToken.expires_at > now,
+                RefreshToken.expires_at > func.now(),
             )
         )
         return result.scalar_one_or_none()
 
-    async def resolve_api_key(self, raw_key: str) -> User | None:
-        """O(1) lookup by SHA-256 hash."""
+    async def resolve_api_key(self, raw_key: str) -> UserSchema | None:
+        """O(1) lookup by SHA-256 hash. Returns domain Pydantic User."""
         key_h = hash_api_key(raw_key)
         result = await self.session.execute(
-            select(User)
-            .join(ApiKey, ApiKey.user_id == User.id)
+            select(UserORM)
+            .join(ApiKeyORM, ApiKeyORM.user_id == UserORM.id)
             .where(
-                ApiKey.key_hash == key_h,
-                ApiKey.revoked == False,
+                ApiKeyORM.key_hash == key_h,
+                ApiKeyORM.revoked == False,
             )
         )
-        return result.scalar_one_or_none()
+        orm_user = result.scalar_one_or_none()
+        return UserSchema.model_validate(orm_user) if orm_user else None
 
-    async def store_api_key(self, user_id: UUID, raw_key: str, label: str) -> ApiKey:
-        api_key = ApiKey(
+    async def store_api_key(self, user_id: UUID, raw_key: str, label: str) -> ApiKeySchema:
+        api_key = ApiKeyORM(
             user_id=user_id,
             key_hash=hash_api_key(raw_key),
             label=label,
@@ -96,21 +99,21 @@ class AuthRepository:
         self.session.add(api_key)
         await self.session.flush()
         await self.session.refresh(api_key)
-        return api_key
+        return ApiKeySchema.model_validate(api_key)
 
     async def revoke_api_key(self, key_id: UUID, user_id: UUID) -> bool:
-        api_key = await self.session.get(ApiKey, key_id)
+        api_key = await self.session.get(ApiKeyORM, key_id)
         if api_key is None or api_key.user_id != user_id:
             return False
         api_key.revoked = True
         return True
 
-    async def list_api_keys(self, user_id: UUID) -> list[ApiKey]:
+    async def list_api_keys(self, user_id: UUID) -> list[ApiKeySchema]:
         """All API keys for a user, newest first. Includes revoked rows
         so the UI can show full history."""
         result = await self.session.execute(
-            select(ApiKey)
-            .where(ApiKey.user_id == user_id)
-            .order_by(ApiKey.created_at.desc())
+            select(ApiKeyORM)
+            .where(ApiKeyORM.user_id == user_id)
+            .order_by(ApiKeyORM.created_at.desc())
         )
-        return list(result.scalars().all())
+        return [ApiKeySchema.model_validate(r) for r in result.scalars().all()]

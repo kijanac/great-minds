@@ -152,13 +152,14 @@ async def _rebuild_scope(
         for i, emb in enumerate(batch_embeddings):
             embeddings[batch_start + i] = emb
 
-    current_keys = {(c.path, c.chunk_index) for c in all_chunks}
-    stale_keys = list(set(existing_hashes.keys()) - current_keys)
-    if stale_keys:
-        await repo.delete_by_keys(vault_id, stale_keys)
+    current_keys = [(c.path, c.chunk_index) for c in all_chunks]
+    stale_count = await repo.delete_stale_in_scope(
+        vault_id, path_prefix, current_keys
+    )
+    if stale_count:
         log.info(
             "deleted %d stale index entries (scope=%s)",
-            len(stale_keys),
+            stale_count,
             path_prefix.rstrip("/"),
         )
 

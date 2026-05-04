@@ -10,11 +10,11 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from great_minds.core.db import Base
 
 if TYPE_CHECKING:
-    from great_minds.core.auth.models import ApiKey, RefreshToken
+    from great_minds.core.auth.models import ApiKeyORM, RefreshToken
     from great_minds.core.vaults.models import VaultMembership
 
 
-class User(Base):
+class UserORM(Base):
     __tablename__ = "users"
 
     id: Mapped[uuid.UUID] = mapped_column(
@@ -26,8 +26,8 @@ class User(Base):
     )
     r2_bucket_name: Mapped[str | None] = mapped_column(Text())
 
-    api_keys: Mapped[list["ApiKey"]] = relationship(
-        "ApiKey", back_populates="user", cascade="all, delete-orphan"
+    api_keys: Mapped[list["ApiKeyORM"]] = relationship(
+        "ApiKeyORM", back_populates="user", cascade="all, delete-orphan"
     )
     refresh_tokens: Mapped[list["RefreshToken"]] = relationship(
         "RefreshToken", back_populates="user", cascade="all, delete-orphan"

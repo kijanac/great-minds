@@ -18,16 +18,19 @@ from great_minds.app.api.dependencies import (
 )
 from great_minds.app.api.schemas import vaults as schemas
 from great_minds.app.api.schemas.vaults import (
-    Vault,
     VaultConfig,
-    VaultConfigUpdate,
-    VaultCreate,
     VaultDetail,
-    VaultOverview,
-    Membership,
+    VaultPage,
 )
 from great_minds.core.vaults.config import draft_thematic_hint, load_vault_config
 from great_minds.core.vaults.models import MemberRole
+from great_minds.core.vaults.schemas import (
+    MemberWithEmail,
+    MembershipInternal,
+    Vault,
+    VaultConfigUpdate,
+    VaultCreate,
+)
 from great_minds.core.documents import DocKind
 from great_minds.core.llm import get_async_client
 from great_minds.core.pagination import Page
@@ -42,13 +45,11 @@ async def list_vaults(
     pagination: PageParamsQuery,
     user: CurrentUser,
     vault_service: VaultServiceDep,
-) -> Page[VaultOverview]:
+) -> VaultPage:
     result = await vault_service.list_vaults_page(user.id, pagination=pagination)
-    return Page(
-        items=[
-            VaultOverview(id=item.vault.id, name=item.vault.name, role=item.role)
-            for item in result.items
-        ],
+    return VaultPage(
+        items=[vault for vault, _role in result.items],
+        roles={str(vault.id): role for vault, role in result.items},
         pagination=result.pagination,
     )
 
@@ -65,13 +66,7 @@ async def create_vault(
         thematic_hint=req.thematic_hint,
         kinds=req.kinds,
     )
-    return Vault(
-        id=vault.id,
-        name=vault.name,
-        role=MemberRole.OWNER,
-        owner_id=vault.owner_id,
-        created_at=vault.created_at,
-    )
+    return vault
 
 
 @router.post("/draft-hint")
@@ -107,11 +102,8 @@ async def get_vault(
     article_count = await doc_repo.count_by_kind(vault.id, DocKind.WIKI)
 
     return VaultDetail(
-        id=vault.id,
-        name=vault.name,
+        **vault.model_dump(),
         role=role,
-        owner_id=vault.owner_id,
-        created_at=vault.created_at,
         member_count=member_count,
         article_count=article_count,
     )
@@ -162,7 +154,7 @@ async def list_members(
     pagination: PageParamsQuery,
     _auth: VaultOwnerGuard,
     vault_service: VaultServiceDep,
-) -> Page[Membership]:
+) -> Page[MemberWithEmail]:
     try:
         await vault_service.get_vault(vault_id)
     except ValueError:
@@ -170,10 +162,7 @@ async def list_members(
 
     result = await vault_service.list_members_page(vault_id, pagination=pagination)
     return Page(
-        items=[
-            Membership(user_id=item.user_id, email=item.email, role=item.role)
-            for item in result.items
-        ],
+        items=list(result.items),
         pagination=result.pagination,
     )
 
@@ -187,11 +176,15 @@ async def invite_member(
     vault_service: VaultServiceDep,
     user_service: UserServiceDep,
     mailer: MailerDep,
-) -> Membership:
+) -> MemberWithEmail:
     vault = await vault_service.get_vault(vault_id)
 
-    target_user, _created = await user_service.get_or_create(req.email)
-    await vault_service.upsert_membership(vault_id, target_user.id, req.role)
+    target_user = await user_service.ensure_user(req.email)
+    await vault_service.add_member(
+        MembershipInternal(
+            vault_id=vault_id, user_id=target_user.id, role=req.role
+        )
+    )
 
     await mailer.send(
         to=req.email,
@@ -203,9 +196,7 @@ async def invite_member(
         ),
     )
 
-    return Membership(
-        user_id=target_user.id, email=target_user.email, role=req.role
-    )
+    return MemberWithEmail(user_id=target_user.id, email=target_user.email, role=req.role)
 
 
 @router.put("/{vault_id}/members/{member_user_id}")
@@ -216,16 +207,23 @@ async def set_member(
     _auth: VaultOwnerGuard,
     vault_service: VaultServiceDep,
     user_service: UserServiceDep,
-) -> Membership:
+) -> MemberWithEmail:
     target_user = await user_service.get_by_id(member_user_id)
     if target_user is None:
         raise HTTPException(status_code=404, detail="User not found")
 
-    await vault_service.upsert_membership(vault_id, member_user_id, req.role)
+    try:
+        await vault_service.set_member_role(
+            MembershipInternal(
+                vault_id=vault_id, user_id=member_user_id, role=req.role
+            )
+        )
+    except ValueError:
+        raise HTTPException(
+            status_code=404, detail="User is not a member of this vault"
+        )
 
-    return Membership(
-        user_id=target_user.id, email=target_user.email, role=req.role
-    )
+    return MemberWithEmail(user_id=target_user.id, email=target_user.email, role=req.role)
 
 
 @router.delete(

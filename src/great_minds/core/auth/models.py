@@ -10,7 +10,7 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from great_minds.core.db import Base
 
 if TYPE_CHECKING:
-    from great_minds.core.users.models import User
+    from great_minds.core.users.models import UserORM
 
 
 class AuthCode(Base):
@@ -28,7 +28,7 @@ class AuthCode(Base):
     )
 
 
-class ApiKey(Base):
+class ApiKeyORM(Base):
     __tablename__ = "api_keys"
 
     id: Mapped[uuid.UUID] = mapped_column(
@@ -44,7 +44,7 @@ class ApiKey(Base):
         DateTime(timezone=True), server_default=func.now()
     )
 
-    user: Mapped["User"] = relationship("User", back_populates="api_keys")
+    user: Mapped["UserORM"] = relationship("UserORM", back_populates="api_keys")
 
 
 class RefreshToken(Base):
@@ -63,4 +63,4 @@ class RefreshToken(Base):
         DateTime(timezone=True), server_default=func.now()
     )
 
-    user: Mapped["User"] = relationship("User", back_populates="refresh_tokens")
+    user: Mapped["UserORM"] = relationship("UserORM", back_populates="refresh_tokens")

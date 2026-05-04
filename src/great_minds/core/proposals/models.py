@@ -12,7 +12,7 @@ from great_minds.core.db import Base
 
 if TYPE_CHECKING:
     from great_minds.core.vaults.models import VaultORM
-    from great_minds.core.users.models import User
+    from great_minds.core.users.models import UserORM
 
 
 class ProposalStatus(enum.StrEnum):
@@ -21,7 +21,7 @@ class ProposalStatus(enum.StrEnum):
     REJECTED = "rejected"
 
 
-class SourceProposal(Base):
+class ProposalORM(Base):
     __tablename__ = "source_proposals"
 
     id: Mapped[uuid.UUID] = mapped_column(
@@ -39,16 +39,11 @@ class SourceProposal(Base):
     content_type: Mapped[str] = mapped_column(String(50))
     title: Mapped[str | None] = mapped_column(Text)
     author: Mapped[str | None] = mapped_column(Text)
-    storage_path: Mapped[str] = mapped_column(Text)
     dest_path: Mapped[str] = mapped_column(Text, server_default="")
-    reviewed_by: Mapped[uuid.UUID | None] = mapped_column(
-        ForeignKey("users.id", ondelete="SET NULL")
-    )
-    reviewed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )
 
     vault: Mapped["VaultORM"] = relationship("VaultORM")
-    user: Mapped["User"] = relationship("User", foreign_keys=[user_id])
-    reviewer: Mapped["User | None"] = relationship("User", foreign_keys=[reviewed_by])
+    user: Mapped["UserORM"] = relationship("UserORM", foreign_keys=[user_id])
+

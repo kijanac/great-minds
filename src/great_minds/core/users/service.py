@@ -7,7 +7,7 @@ from uuid import UUID
 
 from great_minds.core.mail import normalize_email
 from great_minds.core.r2_admin import R2Admin
-from great_minds.core.users.models import User
+from great_minds.core.users.schemas import User
 from great_minds.core.users.repository import UserRepository
 
 if TYPE_CHECKING:
@@ -32,8 +32,8 @@ class UserService:
         self.vault_service = vault_service
         self.settings = settings
 
-    async def get_or_create(self, email: str) -> tuple[User, bool]:
-        return await self.repo.get_or_create(normalize_email(email))
+    async def ensure_user(self, email: str) -> User:
+        return await self.repo.ensure_user(normalize_email(email))
 
     async def get_by_id(self, user_id: UUID) -> User | None:
         return await self.repo.get_by_id(user_id)

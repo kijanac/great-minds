@@ -11,7 +11,7 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from great_minds.core.db import Base
 
 if TYPE_CHECKING:
-    from great_minds.core.users.models import User
+    from great_minds.core.users.models import UserORM
 
 
 class MemberRole(enum.StrEnum):
@@ -35,7 +35,7 @@ class VaultORM(Base):
     )
     r2_bucket_name: Mapped[str | None] = mapped_column(Text())
 
-    owner: Mapped["User"] = relationship("User")
+    owner: Mapped["UserORM"] = relationship("UserORM")
     memberships: Mapped[list["VaultMembership"]] = relationship(
         "VaultMembership", back_populates="vault", cascade="all, delete-orphan"
     )
@@ -60,4 +60,4 @@ class VaultMembership(Base):
     )
 
     vault: Mapped["VaultORM"] = relationship("VaultORM", back_populates="memberships")
-    user: Mapped["User"] = relationship("User", back_populates="memberships")
+    user: Mapped["UserORM"] = relationship("UserORM", back_populates="memberships")

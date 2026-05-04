@@ -10,7 +10,7 @@ from sqlalchemy.orm import Mapped, mapped_column
 from great_minds.core.db import Base
 
 
-class TaskRecord(Base):
+class TaskRecordORM(Base):
     __tablename__ = "tasks"
 
     id: Mapped[UUID] = mapped_column(PG_UUID, primary_key=True)

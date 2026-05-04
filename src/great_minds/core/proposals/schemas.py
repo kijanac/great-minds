@@ -22,5 +22,22 @@ class ProposalOverview(BaseModel):
 class Proposal(ProposalOverview):
     user_id: uuid.UUID
     author: str | None
-    reviewed_by: uuid.UUID | None
-    reviewed_at: datetime | None
+    dest_path: str
+
+
+class ProposalCreate(BaseModel):
+    """Input for ProposalService.create().
+
+    Routes resolve vault_id/user_id from path/auth, pre-render the
+    markdown, compute dest_path, and pass the bundled result here.
+    """
+
+    content_type: str
+    title: str
+    author: str | None
+    dest_path: str
+    rendered: str
+
+
+class ProposalUpdate(BaseModel):
+    status: ProposalStatus

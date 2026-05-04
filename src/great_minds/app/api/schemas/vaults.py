@@ -1,43 +1,29 @@
-import uuid
-from datetime import datetime
+"""Vault API schemas — endpoint-specific shapes that compose from core."""
 
 from pydantic import BaseModel
 
+from great_minds.core.pagination import Page, PageInfo
 from great_minds.core.vaults.models import MemberRole
-
-
-class VaultOverview(BaseModel):
-    id: uuid.UUID
-    name: str
-    role: MemberRole
-
-
-class Vault(VaultOverview):
-    owner_id: uuid.UUID
-    created_at: datetime
+from great_minds.core.vaults.schemas import Vault
 
 
 class VaultDetail(Vault):
+    """Single-vault view with role + aggregated counts (cross-domain join)."""
+
+    role: MemberRole
     member_count: int
     article_count: int
 
 
-class VaultCreate(BaseModel):
-    name: str
-    thematic_hint: str | None = None
-    kinds: list[str] | None = None
+class VaultPage(Page[Vault]):
+    """Paginated vault list with per-vault roles for the requesting user."""
 
-
-class VaultUpdate(BaseModel):
-    name: str | None = None
-
-
-class VaultConfigUpdate(BaseModel):
-    thematic_hint: str | None = None
-    kinds: list[str] | None = None
+    roles: dict[str, str]
 
 
 class VaultConfig(BaseModel):
+    """Read shape for the vault config.yaml (storage, not DB)."""
+
     thematic_hint: str
     kinds: list[str]
 
@@ -48,12 +34,6 @@ class DraftHintRequest(BaseModel):
 
 class DraftHintResponse(BaseModel):
     thematic_hint: str
-
-
-class Membership(BaseModel):
-    user_id: uuid.UUID
-    email: str
-    role: MemberRole
 
 
 class MembershipInvite(BaseModel):
