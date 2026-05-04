@@ -52,6 +52,32 @@ class SearchIndexRepository:
             )
         )
 
+    async def delete_stale_in_scope(
+        self,
+        vault_id: UUID,
+        path_prefix: str,
+        current_keys: list[tuple[str, int]],
+    ) -> int:
+        """Delete rows under ``path_prefix`` whose (path, chunk_index)
+        is NOT in ``current_keys``.
+
+        Returns the number of rows deleted.
+        """
+        where_clauses = [
+            SearchIndexEntry.vault_id == vault_id,
+            SearchIndexEntry.path.like(f"{path_prefix}%"),
+        ]
+        if current_keys:
+            where_clauses.append(
+                ~tuple_(
+                    SearchIndexEntry.path, SearchIndexEntry.chunk_index
+                ).in_(current_keys)
+            )
+        result = await self.session.execute(
+            delete(SearchIndexEntry).where(*where_clauses)
+        )
+        return result.rowcount
+
     async def upsert_chunk(
         self,
         vault_id: UUID,

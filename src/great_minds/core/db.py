@@ -1,25 +1,12 @@
-from collections.abc import AsyncGenerator
+"""ORM base class shared across all model modules.
 
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+Engine and session lifecycle is owned by entry points —
+the FastAPI lifespan (server) or the CLI main() — not by this module.
+See server.py lifespan and cli.py for per-process initialization.
+"""
+
 from sqlalchemy.orm import DeclarativeBase
-
-from great_minds.core.settings import get_settings
-
-settings = get_settings()
 
 
 class Base(DeclarativeBase):
     pass
-
-
-engine = create_async_engine(
-    settings.database_url,
-    pool_pre_ping=True,
-)
-
-session_maker = async_sessionmaker(engine, expire_on_commit=False)
-
-
-async def get_session() -> AsyncGenerator[AsyncSession]:
-    async with session_maker() as session:
-        yield session

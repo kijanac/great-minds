@@ -13,7 +13,6 @@ from great_minds.core.authz import Forbidden
 from great_minds.core.vaults import VaultAccess, VaultRepository, VaultService
 from great_minds.core.compile_intents import CompileIntentRepository
 from great_minds.core.crypto import decode_access_token
-from great_minds.core.db import get_session
 from great_minds.core.documents import DocumentRepository, DocumentService
 from great_minds.core.ingest_service import IngestService
 from great_minds.core.llm_costs import LlmCostEventRepository, LlmCostService
@@ -21,9 +20,22 @@ from great_minds.core.mail import Mailer
 from great_minds.core.pagination import PageParams
 from great_minds.core.proposals import ProposalRepository, ProposalService
 from great_minds.core.settings import Settings, get_settings
-from great_minds.core.storage import Storage
+from great_minds.core.paths import PROPOSALS_DIR
+from great_minds.core.storage import LocalStorage, Storage
 from great_minds.core.tasks import TaskRepository, TaskService
 from great_minds.core.users import User, UserRepository, UserService
+
+
+async def get_session(request: Request) -> AsyncSession:
+    """FastAPI dependency: yields a per-request DB session.
+
+    The session maker is injected by the lifespan (server.py) into
+    ``request.state`` — a shallow copy of the lifespan's yielded dict
+    per the Starlette ASGI lifespan spec.
+    """
+    sm = request.state["session_maker"]
+    async with sm() as session:
+        yield session
 
 bearer_scheme = HTTPBearer()
 
@@ -170,12 +182,19 @@ def get_auth_service(
 AuthServiceDep = Annotated[AuthService, Depends(get_auth_service)]
 
 
+def get_proposals_storage(settings: SettingsDep) -> LocalStorage:
+    return LocalStorage(f"{settings.data_dir}/{PROPOSALS_DIR}")
+
+
+ProposalsStorageDep = Annotated[LocalStorage, Depends(get_proposals_storage)]
+
+
 def get_proposal_service(
     repo: ProposalRepositoryDep,
     doc_service: DocumentServiceDep,
-    settings: SettingsDep,
+    proposals_storage: ProposalsStorageDep,
 ) -> ProposalService:
-    return ProposalService(repo, doc_service, settings)
+    return ProposalService(repo, doc_service, proposals_storage)
 
 
 ProposalServiceDep = Annotated[ProposalService, Depends(get_proposal_service)]

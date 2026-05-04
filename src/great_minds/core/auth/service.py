@@ -4,8 +4,8 @@ import logging
 import secrets
 from uuid import UUID
 
-from great_minds.core.auth.models import ApiKey
 from great_minds.core.auth.repository import AuthRepository
+from great_minds.core.auth.schemas import ApiKey
 from great_minds.core.crypto import (
     create_access_token,
     create_refresh_token_value,
@@ -67,7 +67,7 @@ class AuthService:
             if not valid:
                 raise ValueError("Invalid or expired code")
 
-        user, _ = await self.user_service.get_or_create(email)
+        user = await self.user_service.ensure_user(email)
 
         access_token = create_access_token(user.id, self.settings)
         raw_refresh = create_refresh_token_value()
@@ -90,7 +90,7 @@ class AuthService:
         await self._commit()
         return access_token, new_refresh
 
-    async def create_api_key(self, user_id: UUID, label: str) -> tuple[ApiKey, str]:
+    async def create_api_key(self, user_id: UUID, label: str) -> tuple[ApiKey, str]:  # ApiKey = domain Pydantic
         """Create an API key, return (api_key_model, raw_key)."""
         raw_key = f"gm_{secrets.token_urlsafe(32)}"
         api_key = await self.auth_repo.store_api_key(user_id, raw_key, label)

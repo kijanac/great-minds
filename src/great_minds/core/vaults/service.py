@@ -7,12 +7,12 @@ from great_minds.core.vaults.config import (
     apply_vault_config_overrides,
     load_default_config_text,
 )
-from great_minds.core.vaults.models import VaultMembership, MemberRole
+from great_minds.core.vaults.models import MemberRole
 from great_minds.core.vaults.repository import VaultRepository
 from great_minds.core.vaults.schemas import (
-    Vault,
-    VaultWithRole,
     MemberWithEmail,
+    MembershipInternal,
+    Vault,
 )
 from great_minds.core.pagination import Page, PageInfo, PageParams
 from great_minds.core.paths import CONFIG_PATH
@@ -59,22 +59,17 @@ class VaultService:
             raise ValueError(f"Vault {vault_id} not found")
         return vault
 
-    async def list_vaults(
-        self, user_id: UUID, *, limit: int = 50, offset: int = 0
-    ) -> list[VaultWithRole]:
-        return await self.repo.list_user_vaults(user_id, limit=limit, offset=offset)
-
     async def ensure_default_for_user(self, user_id: UUID, email: str) -> None:
         """Create a default vault for a user who has none. Idempotent."""
-        existing = await self.repo.list_user_vaults(user_id, limit=1, offset=0)
+        existing = await self.repo.count_user_vaults(user_id)
         if existing:
             return
         await self.create_vault(f"{email}'s vault", user_id)
 
     async def list_vaults_page(
         self, user_id: UUID, *, pagination: PageParams
-    ) -> Page[VaultWithRole]:
-        rows = await self.repo.list_user_vaults(
+    ) -> Page[tuple[Vault, MemberRole]]:
+        rows = await self.repo.list_user_vaults_with_roles(
             user_id, limit=pagination.limit, offset=pagination.offset
         )
         total = await self.repo.count_user_vaults(user_id)
@@ -202,12 +197,22 @@ class VaultService:
             ),
         )
 
-    async def upsert_membership(
-        self, vault_id: UUID, user_id: UUID, role: MemberRole
-    ) -> VaultMembership:
-        membership = await self.repo.upsert_membership(vault_id, user_id, role)
+    async def add_member(self, change: MembershipInternal) -> None:
+        """Add a member. Idempotent — no-op if already a member.
+
+        Does NOT change the role of an existing member. Use
+        ``set_member_role`` for role changes.
+        """
+        await self.repo.add_member(change.vault_id, change.user_id, change.role)
         await self._commit()
-        return membership
+
+    async def set_member_role(self, change: MembershipInternal) -> None:
+        """Change an existing member's role.
+
+        Raises ValueError if the user is not a member of the vault.
+        """
+        await self.repo.set_member_role(change.vault_id, change.user_id, change.role)
+        await self._commit()
 
     async def delete_membership(self, vault_id: UUID, user_id: UUID) -> bool:
         deleted = await self.repo.delete_membership(vault_id, user_id)

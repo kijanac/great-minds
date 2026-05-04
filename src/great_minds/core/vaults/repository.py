@@ -2,7 +2,8 @@
 
 from uuid import UUID
 
-from sqlalchemy import delete, func, select, text
+from sqlalchemy import delete, func, select, text, update
+from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from great_minds.core.vaults.models import (
@@ -10,8 +11,8 @@ from great_minds.core.vaults.models import (
     VaultMembership,
     MemberRole,
 )
-from great_minds.core.vaults.schemas import Vault, VaultWithRole, MemberWithEmail
-from great_minds.core.users.models import User
+from great_minds.core.vaults.schemas import Vault, MemberWithEmail
+from great_minds.core.users.models import UserORM
 
 
 class VaultRepository:
@@ -39,7 +40,7 @@ class VaultRepository:
         )
         self.session.add(vault)
         await self.session.flush()
-        await self.upsert_membership(vault.id, owner_id, MemberRole.OWNER)
+        await self.add_member(vault.id, owner_id, MemberRole.OWNER)
         await self.session.refresh(vault)
         return Vault.model_validate(vault)
 
@@ -69,7 +70,23 @@ class VaultRepository:
 
     async def list_user_vaults(
         self, user_id: UUID, *, limit: int | None = 50, offset: int = 0
-    ) -> list[VaultWithRole]:
+    ) -> list[Vault]:
+        """Vaults the user is a member of, sorted newest first."""
+        stmt = (
+            select(VaultORM)
+            .join(VaultMembership, VaultMembership.vault_id == VaultORM.id)
+            .where(VaultMembership.user_id == user_id)
+            .order_by(VaultORM.created_at.desc())
+            .offset(offset)
+        )
+        if limit is not None:
+            stmt = stmt.limit(limit)
+        result = await self.session.execute(stmt)
+        return [Vault.model_validate(row) for row in result.scalars().all()]
+
+    async def list_user_vaults_with_roles(
+        self, user_id: UUID, *, limit: int | None = 50, offset: int = 0
+    ) -> list[tuple[Vault, MemberRole]]:
         stmt = (
             select(VaultORM, VaultMembership.role)
             .join(VaultMembership, VaultMembership.vault_id == VaultORM.id)
@@ -81,7 +98,7 @@ class VaultRepository:
             stmt = stmt.limit(limit)
         result = await self.session.execute(stmt)
         return [
-            VaultWithRole(vault=Vault.model_validate(vault), role=role)
+            (Vault.model_validate(vault), role)
             for vault, role in result.all()
         ]
 
@@ -126,11 +143,11 @@ class VaultRepository:
             select(
                 VaultMembership.user_id,
                 VaultMembership.role,
-                User.email,
+                UserORM.email,
             )
-            .join(User, User.id == VaultMembership.user_id)
+            .join(UserORM, UserORM.id == VaultMembership.user_id)
             .where(VaultMembership.vault_id == vault_id)
-            .order_by(User.email)
+            .order_by(UserORM.email)
             .offset(offset)
             .limit(limit)
         )
@@ -139,22 +156,49 @@ class VaultRepository:
             for user_id, role, email in result.all()
         ]
 
-    async def upsert_membership(
+    async def add_member(
+        self, vault_id: UUID, user_id: UUID, role: MemberRole
+    ) -> VaultMembership | None:
+        """Add a member to a vault. Returns None if already a member.
+
+        Idempotent via ON CONFLICT DO NOTHING — re-adding silently
+        does nothing and does not change the existing role. Use
+        ``set_member_role`` for explicit role changes.
+        """
+        stmt = (
+            insert(VaultMembership)
+            .values(vault_id=vault_id, user_id=user_id, role=role)
+            .on_conflict_do_nothing(
+                index_elements=["vault_id", "user_id"]
+            )
+            .returning(VaultMembership)
+        )
+        result = await self.session.execute(stmt)
+        return result.scalar_one_or_none()
+
+    async def set_member_role(
         self, vault_id: UUID, user_id: UUID, role: MemberRole
     ) -> VaultMembership:
-        result = await self.session.execute(
-            select(VaultMembership).where(
+        """Change an existing member's role.
+
+        Raises ValueError if the user is not a member of the vault.
+        """
+        stmt = (
+            update(VaultMembership)
+            .where(
                 VaultMembership.vault_id == vault_id,
                 VaultMembership.user_id == user_id,
             )
+            .values(role=role)
+            .returning(VaultMembership)
         )
-        membership = result.scalar_one_or_none()
-        if membership is None:
-            membership = VaultMembership(vault_id=vault_id, user_id=user_id, role=role)
-            self.session.add(membership)
-        else:
-            membership.role = role
-        return membership
+        result = await self.session.execute(stmt)
+        row = result.scalar_one_or_none()
+        if row is None:
+            raise ValueError(
+                f"User {user_id} is not a member of vault {vault_id}"
+            )
+        return row
 
     async def delete_membership(self, vault_id: UUID, user_id: UUID) -> bool:
         result = await self.session.execute(

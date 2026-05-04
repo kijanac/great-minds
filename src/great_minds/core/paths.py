@@ -117,6 +117,18 @@ def compile_log_path(sidecar: Path) -> Path:
 
 
 # ---------------------------------------------------------------------------
+# Proposal staging (filesystem-absolute, machine-local)
+# ---------------------------------------------------------------------------
+
+PROPOSALS_DIR = "proposals"
+
+
+def proposal_staging_path(proposal_id: UUID | str) -> str:
+    """Storage-relative path for a staged proposal file."""
+    return f"{proposal_id}.md"
+
+
+# ---------------------------------------------------------------------------
 # Package-bundled defaults (read-only, shipped with the installed package)
 # ---------------------------------------------------------------------------
 

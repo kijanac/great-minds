@@ -157,10 +157,7 @@ def upgrade() -> None:
         sa.Column("content_type", sa.String(length=50), nullable=False),
         sa.Column("title", sa.Text(), nullable=True),
         sa.Column("author", sa.Text(), nullable=True),
-        sa.Column("storage_path", sa.Text(), nullable=False),
         sa.Column("dest_path", sa.Text(), nullable=False, server_default=""),
-        sa.Column("reviewed_by", sa.UUID(), nullable=True),
-        sa.Column("reviewed_at", sa.DateTime(timezone=True), nullable=True),
         sa.Column(
             "created_at",
             sa.DateTime(timezone=True),
@@ -168,7 +165,6 @@ def upgrade() -> None:
             nullable=False,
         ),
         sa.ForeignKeyConstraint(["vault_id"], ["vaults.id"], ondelete="CASCADE"),
-        sa.ForeignKeyConstraint(["reviewed_by"], ["users.id"], ondelete="SET NULL"),
         sa.ForeignKeyConstraint(["user_id"], ["users.id"], ondelete="CASCADE"),
         sa.PrimaryKeyConstraint("id"),
     )

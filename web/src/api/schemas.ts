@@ -11,10 +11,12 @@ export const thinkingBlockSchema = z.object({
   sources: z.array(sourceRefSchema),
 });
 
-export const vaultOverviewSchema = z.object({
+export const vaultSchema = z.object({
   id: z.string(),
   name: z.string(),
-  role: z.string(),
+  owner_id: z.string(),
+  created_at: z.string(),
+  r2_bucket_name: z.string().nullable().optional(),
 });
 
 export const pageInfoSchema = z.object({
@@ -44,11 +46,12 @@ export function facetedPaginatedSchema<
   });
 }
 
-export const vaultOverviewListSchema = paginatedSchema(vaultOverviewSchema);
+export const vaultPageSchema = paginatedSchema(vaultSchema).extend({
+  roles: z.record(z.string()),
+});
 
-export const vaultDetailSchema = vaultOverviewSchema.extend({
-  owner_id: z.string(),
-  created_at: z.string(),
+export const vaultDetailSchema = vaultSchema.extend({
+  role: z.string(),
   member_count: z.number(),
   article_count: z.number(),
 });
@@ -99,18 +102,19 @@ export const proposalOverviewSchema = z.object({
 export const proposalSchema = proposalOverviewSchema.extend({
   user_id: z.string(),
   author: z.string().nullable(),
-  reviewed_by: z.string().nullable(),
-  reviewed_at: z.string().nullable(),
+
 });
 
 export const proposalListSchema = paginatedSchema(proposalOverviewSchema);
 
 export type SourceRef = z.infer<typeof sourceRefSchema>;
 export type ThinkingBlock = z.infer<typeof thinkingBlockSchema>;
-export type VaultOverview = z.infer<typeof vaultOverviewSchema>;
+export type Vault = z.infer<typeof vaultSchema>;
+export type VaultPage = z.infer<typeof vaultPageSchema>;
+export type VaultOverview = Vault;
+export type VaultOverviewList = VaultPage;
 export type PageInfo = z.infer<typeof pageInfoSchema>;
 export type FacetCount = z.infer<typeof facetCountSchema>;
-export type VaultOverviewList = z.infer<typeof vaultOverviewListSchema>;
 export type VaultDetail = z.infer<typeof vaultDetailSchema>;
 export type Membership = z.infer<typeof membershipSchema>;
 export type MembershipList = z.infer<typeof membershipListSchema>;

@@ -1,8 +1,8 @@
 import { z } from "zod";
 
 import {
-  vaultOverviewListSchema,
-  vaultOverviewSchema,
+  vaultPageSchema as vaultOverviewListSchema,
+  vaultSchema as vaultOverviewSchema,
   type VaultOverview,
 } from "./schemas";
 

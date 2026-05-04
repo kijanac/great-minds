@@ -17,12 +17,24 @@ class Vault(BaseModel):
     r2_bucket_name: str | None = None
 
 
-class VaultWithRole(BaseModel):
-    vault: Vault
-    role: MemberRole
-
-
 class MemberWithEmail(BaseModel):
     user_id: uuid.UUID
     role: MemberRole
     email: str
+
+
+class VaultCreate(BaseModel):
+    name: str
+    thematic_hint: str | None = None
+    kinds: list[str] | None = None
+
+
+class VaultConfigUpdate(BaseModel):
+    thematic_hint: str | None = None
+    kinds: list[str] | None = None
+
+
+class MembershipInternal(BaseModel):
+    vault_id: uuid.UUID
+    user_id: uuid.UUID
+    role: MemberRole

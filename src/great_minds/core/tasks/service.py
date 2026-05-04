@@ -13,9 +13,8 @@ from uuid import UUID
 from absurd_sdk import AsyncAbsurd, RetryStrategy
 
 from great_minds.core.pagination import Page, PageInfo, PageParams
-from great_minds.core.tasks.models import TaskRecord
 from great_minds.core.tasks.repository import TaskRepository
-from great_minds.core.tasks.schemas import TaskDetail, TaskStatus
+from great_minds.core.tasks.schemas import Task, TaskDetail, TaskStatus
 from great_minds.core.telemetry import log_event
 
 log = logging.getLogger(__name__)
@@ -31,14 +30,14 @@ ActiveAbsurdState = Literal["pending", "running", "sleeping"]
 _ACTIVE: tuple[str, ...] = get_args(ActiveAbsurdState)
 
 
-async def fetch_task_response(absurd: AsyncAbsurd, record: TaskRecord) -> TaskDetail:
+async def fetch_task_response(absurd: AsyncAbsurd, task: Task) -> TaskDetail:
     """Build a TaskDetail by fetching current status from absurd.
 
     Detailed task results (compile telemetry, bulk-ingest counts) live
     in structured logs via `emit_wide_event` — they are not surfaced
     here. This response carries lifecycle state only.
     """
-    snapshot = await absurd.fetch_task_result(str(record.id))
+    snapshot = await absurd.fetch_task_result(str(task.id))
 
     status = TaskStatus.PENDING
     error = None
@@ -55,12 +54,12 @@ async def fetch_task_response(absurd: AsyncAbsurd, record: TaskRecord) -> TaskDe
             status = TaskStatus.RUNNING
 
     return TaskDetail(
-        id=record.id,
-        type=record.type,
+        id=task.id,
+        type=task.type,
         status=status,
-        created_at=record.created_at,
+        created_at=task.created_at,
         error=error,
-        params=record.params,
+        params=task.params,
     )
 
 

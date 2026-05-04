@@ -12,7 +12,7 @@ from contextlib import asynccontextmanager
 from absurd_sdk import AsyncAbsurd
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
-from sqlalchemy.ext.asyncio import async_sessionmaker
+from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from starlette.middleware.base import BaseHTTPMiddleware
 
 from great_minds.app.api.v1 import router as v1_router
@@ -20,7 +20,6 @@ from great_minds.core.vaults.repository import VaultRepository
 from great_minds.core.vaults.service import VaultService
 from great_minds.core.compile_intents.reconciler import reconcile_once
 from great_minds.core.compile_intents.repository import CompileIntentRepository
-from great_minds.core.db import engine, session_maker
 from great_minds.core.settings import Settings, get_settings
 from great_minds.core.tasks.repository import TaskRepository
 from great_minds.core.tasks.service import TaskService
@@ -80,7 +79,10 @@ class TelemetryMiddleware(BaseHTTPMiddleware):
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     settings = get_settings()
-    absurd = create_absurd(settings.database_url, session_maker)
+    engine = create_async_engine(settings.database_url, pool_pre_ping=True)
+    sm = async_sessionmaker(engine, expire_on_commit=False)
+
+    absurd = create_absurd(settings.database_url, sm)
     app.state.absurd = absurd
     worker = asyncio.create_task(
         absurd.start_worker(concurrency=2, poll_interval=0.5),
@@ -91,10 +93,10 @@ async def lifespan(app: FastAPI):
     # to a separate worker process or convert to a self-respawning
     # Absurd task. `reconcile_once` is the reusable unit.
     reconciler = asyncio.create_task(
-        _reconciler_loop(session_maker, absurd, settings)
+        _reconciler_loop(sm, absurd, settings)
     )
 
-    yield
+    yield {"session_maker": sm}
 
     reconciler.cancel()
     try:

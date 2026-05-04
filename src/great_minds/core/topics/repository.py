@@ -8,7 +8,7 @@ logic around slug continuity / archive lives in topics.service.
 
 from uuid import UUID
 
-from sqlalchemy import delete, func, or_, select
+from sqlalchemy import Float, cast as sa_cast, delete, func, or_, select
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -311,3 +311,78 @@ class TopicRepository:
             )
         ).scalars().all()
         return [RelatedTopic.model_validate(r) for r in rows]
+
+    # -- Jaccard computation (SQL-side, replaces O(N²) Python) -----------
+
+    async def compute_pairwise_jaccard(
+        self, topic_ids: list[UUID]
+    ) -> list[tuple[UUID, UUID, int, float]]:
+        """Compute Jaccard similarity for all topic pairs via SQL self-join.
+
+        Returns (topic_a, topic_b, shared_idea_count, jaccard_score)
+        for all pairs where topic_a < topic_b and shared > 0.
+        Uses the topic_membership table (populated by _replace_membership
+        before _replace_related runs).
+        """
+        if len(topic_ids) < 2:
+            return []
+
+        tm = TopicMembershipORM.__table__
+        a = tm.alias("a")
+        b = tm.alias("b")
+
+        pair = (
+            select(
+                a.c.topic_id.label("topic_a"),
+                b.c.topic_id.label("topic_b"),
+                func.count().label("shared"),
+            )
+            .select_from(a.join(b, a.c.idea_id == b.c.idea_id))
+            .where(
+                a.c.topic_id < b.c.topic_id,
+                a.c.topic_id.in_(topic_ids),
+                b.c.topic_id.in_(topic_ids),
+            )
+            .group_by(a.c.topic_id, b.c.topic_id)
+            .cte("pair")
+        )
+
+        sizes = (
+            select(
+                tm.c.topic_id,
+                func.count().label("cnt"),
+            )
+            .where(tm.c.topic_id.in_(topic_ids))
+            .group_by(tm.c.topic_id)
+            .cte("sizes")
+        )
+
+        sa = sizes.alias("sa")
+        sb = sizes.alias("sb")
+
+        sized = (
+            select(
+                pair.c.topic_a,
+                pair.c.topic_b,
+                pair.c.shared,
+                (
+                    sa_cast(pair.c.shared, Float)
+                    / func.nullif(
+                        sa.c.cnt + sb.c.cnt - pair.c.shared,
+                        0,
+                    )
+                ).label("jaccard"),
+            )
+            .select_from(
+                pair.join(sa, pair.c.topic_a == sa.c.topic_id).join(
+                    sb, pair.c.topic_b == sb.c.topic_id
+                )
+            )
+            .where(pair.c.shared > 0)
+        )
+
+        result = await self.session.execute(sized)
+        return [
+            (row.topic_a, row.topic_b, row.shared, float(row.jaccard))
+            for row in result
+        ]
