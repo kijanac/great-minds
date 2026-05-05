@@ -2,11 +2,7 @@ import { ChevronDown, ChevronRight, ExternalLink } from "lucide-react";
 import { useState } from "react";
 
 import { Button } from "@/components/ui/button";
-import {
-  Collapsible,
-  CollapsibleContent,
-  CollapsibleTrigger,
-} from "@/components/ui/collapsible";
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import type { Document } from "@/api/doc";
 import { CHIP_BASE, CHIP_INACTIVE } from "@/lib/chip";
 import { cn } from "@/lib/utils";

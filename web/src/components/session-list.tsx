@@ -76,9 +76,7 @@ export function SessionList({
 
       <div className="flex-1 min-h-0 overflow-y-auto">
         <div className="max-w-[740px] mx-auto px-4 md:px-10 pt-8 pb-20">
-          {error && (
-            <ErrorState message="Couldn't load your sessions." onRetry={onRetry} />
-          )}
+          {error && <ErrorState message="Couldn't load your sessions." onRetry={onRetry} />}
 
           {!error && loading && (
             <p className="text-[length:var(--text-body)] text-warm-faint animate-[pulse-fade_1.6s_ease-in-out_infinite]">

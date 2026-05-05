@@ -26,9 +26,7 @@ export function SessionsContainer() {
           limit: PAGE_SIZE,
           offset: nextOffset,
         });
-        setSessions((prev) =>
-          append ? [...prev, ...result.items] : result.items,
-        );
+        setSessions((prev) => (append ? [...prev, ...result.items] : result.items));
         setTotal(result.pagination.total);
         setOffset(result.pagination.offset);
       } catch (err) {

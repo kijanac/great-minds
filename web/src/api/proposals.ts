@@ -32,10 +32,7 @@ export async function listProposals(
   return readJson(res, proposalListSchema);
 }
 
-export async function getProposal(
-  vaultId: string,
-  proposalId: string,
-): Promise<Proposal> {
+export async function getProposal(vaultId: string, proposalId: string): Promise<Proposal> {
   const res = await apiFetch(`/vaults/${vaultId}/proposals/${proposalId}`);
   if (!res.ok) throw new Error("Failed to fetch proposal");
   return readJson(res, proposalSchema);

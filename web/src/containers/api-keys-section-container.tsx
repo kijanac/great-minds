@@ -1,11 +1,7 @@
 import { useCallback } from "react";
 
 import { ApiKeysSection } from "@/components/api-keys-section";
-import {
-  useApiKeys,
-  useCreateApiKey,
-  useRevokeApiKey,
-} from "@/hooks/use-api-keys";
+import { useApiKeys, useCreateApiKey, useRevokeApiKey } from "@/hooks/use-api-keys";
 
 export function ApiKeysSectionContainer() {
   const apiKeys = useApiKeys();

@@ -1,6 +1,6 @@
 """FastAPI dependencies: auth and service factories."""
 
-from typing import Annotated
+from typing import Annotated, AsyncGenerator
 from uuid import UUID
 
 from absurd_sdk import AsyncAbsurd
@@ -26,7 +26,7 @@ from great_minds.core.tasks import TaskRepository, TaskService
 from great_minds.core.users import User, UserRepository, UserService
 
 
-async def get_session(request: Request) -> AsyncSession:
+async def get_session(request: Request) -> AsyncGenerator[AsyncSession, None]:
     """FastAPI dependency: yields a per-request DB session.
 
     The session maker is injected by the lifespan (server.py) into

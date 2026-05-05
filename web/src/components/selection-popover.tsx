@@ -8,12 +8,7 @@ interface SelectionPopoverProps {
   onSuggest?: () => void;
 }
 
-export function SelectionPopover({
-  info,
-  onFollowUp,
-  onBtw,
-  onSuggest,
-}: SelectionPopoverProps) {
+export function SelectionPopover({ info, onFollowUp, onBtw, onSuggest }: SelectionPopoverProps) {
   return (
     <div
       data-popover

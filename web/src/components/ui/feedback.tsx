@@ -23,10 +23,7 @@ interface ErrorStateProps {
   onRetry?: () => void;
 }
 
-export function ErrorState({
-  message = "Something went wrong.",
-  onRetry,
-}: ErrorStateProps) {
+export function ErrorState({ message = "Something went wrong.", onRetry }: ErrorStateProps) {
   return (
     <div className="flex h-full w-full flex-col items-center justify-center gap-3 py-10 px-4">
       <p className="font-mono text-[length:var(--text-chrome)] tracking-[0.1em] text-warm-faint text-center">

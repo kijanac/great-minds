@@ -31,9 +31,7 @@ export function PromoteButton({ sessionId, exchangeId }: PromoteButtonProps) {
   if (state.kind === "done") {
     const { result } = state;
     const label =
-      result.mode === "ingested"
-        ? `saved as "${result.title}"`
-        : `submitted for review`;
+      result.mode === "ingested" ? `saved as "${result.title}"` : `submitted for review`;
     return (
       <span className="font-mono text-[length:var(--text-chrome)] tracking-[0.06em] text-warm-faint">
         {label}

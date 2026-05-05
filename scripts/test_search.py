@@ -20,12 +20,15 @@ from great_minds.core.vaults.models import VaultORM
 from great_minds.core.search import (
     search,
     SearchIndexEntry,
-    _truncate_and_normalize,
+)
+from great_minds.core.llm import (
     EMBEDDING_DIMENSIONS,
     EMBEDDING_MODEL,
+    get_async_client,
+    truncate_and_normalize,
 )
-from great_minds.core.db import session_maker
-from great_minds.core.llm import get_async_client
+from great_minds.core.settings import get_settings
+from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 
 DEMO_QUERIES = [
@@ -89,7 +92,7 @@ async def test_query(session, vault_ids, query):
 
     client = get_async_client()
     response = await client.embeddings.create(model=EMBEDDING_MODEL, input=[query])
-    query_embedding = _truncate_and_normalize(
+    query_embedding = truncate_and_normalize(
         response.data[0].embedding, EMBEDDING_DIMENSIONS
     )
 
@@ -121,7 +124,11 @@ async def test_query(session, vault_ids, query):
 async def main():
     queries = [" ".join(sys.argv[1:])] if len(sys.argv) > 1 else DEMO_QUERIES
 
-    async with session_maker() as session:
+    settings = get_settings()
+    engine = create_async_engine(settings.database_url)
+    sm = async_sessionmaker(engine, expire_on_commit=False)
+
+    async with sm() as session:
         rows = await session.execute(select(VaultORM))
         vaults = rows.scalars().all()
         vault_ids = [b.id for b in vaults]

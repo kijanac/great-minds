@@ -30,10 +30,7 @@ interface ProposalsSectionProps {
     title?: string;
     author?: string;
   }) => Promise<void>;
-  onReview: (
-    proposalId: string,
-    status: "approved" | "rejected",
-  ) => Promise<void>;
+  onReview: (proposalId: string, status: "approved" | "rejected") => Promise<void>;
   onLoadMore: () => void;
 }
 
@@ -86,10 +83,7 @@ export function ProposalsSection({
           <button
             key={f.value}
             onClick={() => onStatusFilter(f.value)}
-            className={cn(
-              CHIP_BASE,
-              activeStatus === f.value ? CHIP_ACTIVE : CHIP_INACTIVE,
-            )}
+            className={cn(CHIP_BASE, activeStatus === f.value ? CHIP_ACTIVE : CHIP_INACTIVE)}
           >
             {f.label}
           </button>

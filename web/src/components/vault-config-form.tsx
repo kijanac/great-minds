@@ -25,8 +25,7 @@ const TEXTAREA_CLASS =
 const SECTION_LABEL =
   "font-mono text-[length:var(--text-chrome)] tracking-[0.14em] text-gold-muted uppercase mb-2 block";
 
-const HELPER_TEXT =
-  "font-mono text-[length:var(--text-chrome)] tracking-[0.06em] text-warm-ghost";
+const HELPER_TEXT = "font-mono text-[length:var(--text-chrome)] tracking-[0.06em] text-warm-ghost";
 
 export function VaultConfigForm({
   mode,

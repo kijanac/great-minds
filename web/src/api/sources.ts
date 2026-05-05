@@ -1,11 +1,7 @@
 import { z } from "zod";
 
 import { apiFetch, vaultPath, readJson } from "./client";
-import {
-  facetedPaginatedSchema,
-  facetCountSchema,
-  type FacetCount,
-} from "./schemas";
+import { facetedPaginatedSchema, facetCountSchema, type FacetCount } from "./schemas";
 
 const sourceDocumentSummarySchema = z.object({
   file_path: z.string(),

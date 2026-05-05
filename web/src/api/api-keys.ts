@@ -1,12 +1,7 @@
 import { z } from "zod";
 
 import { apiFetch, readJson } from "./client";
-import {
-  apiKeyCreatedSchema,
-  apiKeySchema,
-  type ApiKey,
-  type ApiKeyCreated,
-} from "./schemas";
+import { apiKeyCreatedSchema, apiKeySchema, type ApiKey, type ApiKeyCreated } from "./schemas";
 
 export type { ApiKey, ApiKeyCreated };
 

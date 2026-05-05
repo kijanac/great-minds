@@ -35,10 +35,7 @@ const documentResponseSchema = z.object({
 export type Document = z.infer<typeof documentSchema>;
 export type DocumentResponse = z.infer<typeof documentResponseSchema>;
 
-export async function readDocument(
-  path: string,
-  signal?: AbortSignal,
-): Promise<DocumentResponse> {
+export async function readDocument(path: string, signal?: AbortSignal): Promise<DocumentResponse> {
   const res = await apiFetch(vaultPath(`/doc/${path}`), { signal });
   if (!res.ok) throw new Error(`Document not found: ${path}`);
   return readJson(res, documentResponseSchema);

@@ -23,8 +23,7 @@ export function useOffsetInfiniteQuery<T>({
   return useInfiniteQuery<OffsetPage<T>>({
     queryKey,
     enabled,
-    queryFn: ({ pageParam }) =>
-      queryFn({ limit: pageSize, offset: pageParam as number }),
+    queryFn: ({ pageParam }) => queryFn({ limit: pageSize, offset: pageParam as number }),
     initialPageParam: 0,
     getNextPageParam: (lastPage) => {
       const next = lastPage.pagination.offset + lastPage.items.length;

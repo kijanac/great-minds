@@ -37,10 +37,10 @@ export const facetCountSchema = z.object({
   count: z.number(),
 });
 
-export function facetedPaginatedSchema<
-  T extends z.ZodTypeAny,
-  F extends z.ZodTypeAny,
->(itemSchema: T, facetsSchema: F) {
+export function facetedPaginatedSchema<T extends z.ZodTypeAny, F extends z.ZodTypeAny>(
+  itemSchema: T,
+  facetsSchema: F,
+) {
   return paginatedSchema(itemSchema).extend({
     facets: facetsSchema,
   });
@@ -84,11 +84,7 @@ export const apiKeyCreatedSchema = apiKeySchema.extend({
   raw_key: z.string(),
 });
 
-export const proposalStatusSchema = z.enum([
-  "pending",
-  "approved",
-  "rejected",
-]);
+export const proposalStatusSchema = z.enum(["pending", "approved", "rejected"]);
 
 export const proposalOverviewSchema = z.object({
   id: z.string(),
@@ -102,7 +98,6 @@ export const proposalOverviewSchema = z.object({
 export const proposalSchema = proposalOverviewSchema.extend({
   user_id: z.string(),
   author: z.string().nullable(),
-
 });
 
 export const proposalListSchema = paginatedSchema(proposalOverviewSchema);

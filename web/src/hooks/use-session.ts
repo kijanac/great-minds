@@ -112,9 +112,7 @@ export function useSession(options?: UseSessionOptions) {
       if (!sessionIdRef.current) {
         const sid = genId("s");
         sessionIdRef.current = sid;
-        const origin = originPathRef.current
-          ? { doc_path: originPathRef.current }
-          : undefined;
+        const origin = originPathRef.current ? { doc_path: originPathRef.current } : undefined;
         createSession(sid, payload, origin)
           .then(() => {
             setSessionId(sid);

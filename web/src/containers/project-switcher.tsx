@@ -4,11 +4,7 @@ import { useNavigate } from "react-router";
 
 import { Button } from "@/components/ui/button";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
-import {
-  useActiveVaultId,
-  useVaults,
-  useSwitchVault,
-} from "@/hooks/use-vault";
+import { useActiveVaultId, useVaults, useSwitchVault } from "@/hooks/use-vault";
 
 const ITEM_CLASS =
   "font-mono text-[length:var(--text-chrome)] tracking-[0.1em] text-warm-faint hover:text-warm hover:bg-ink-raised rounded-sm gap-2 flex-1 justify-start";
@@ -108,12 +104,7 @@ export function ProjectSwitcher() {
           );
         })}
         <div className="my-1 border-t border-ink-border" />
-        <Button
-          variant="ghost"
-          size="sm"
-          onClick={handleCreate}
-          className={`${ITEM_CLASS} w-full`}
-        >
+        <Button variant="ghost" size="sm" onClick={handleCreate} className={`${ITEM_CLASS} w-full`}>
           <Plus className="size-3.5" />
           new project
         </Button>

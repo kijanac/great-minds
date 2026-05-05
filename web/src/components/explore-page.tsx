@@ -1,12 +1,7 @@
 import { Home } from "lucide-react";
 import type { ReactNode } from "react";
 
-import type {
-  Orphan,
-  RecentArticle,
-  UnmentionedLink,
-  UnresolvedCitation,
-} from "@/api/explore";
+import type { Orphan, RecentArticle, UnmentionedLink, UnresolvedCitation } from "@/api/explore";
 import type { ContentTypeFacet } from "@/api/sources";
 import { Button } from "@/components/ui/button";
 import { CHIP_BASE, CHIP_INACTIVE } from "@/lib/chip";
@@ -52,12 +47,7 @@ export function ExplorePage({
   const hasArticles = recentArticles.length > 0;
   const hasSourceTypes = contentTypes.length > 0;
   const hasContent =
-    hasOrphans ||
-    hasDirty ||
-    hasUnresolved ||
-    hasUnmentioned ||
-    hasArticles ||
-    hasSourceTypes;
+    hasOrphans || hasDirty || hasUnresolved || hasUnmentioned || hasArticles || hasSourceTypes;
 
   return (
     <div className="h-screen flex flex-col overflow-hidden">
@@ -96,12 +86,8 @@ export function ExplorePage({
                 <div className="flex flex-wrap items-center gap-2">
                   {hasSourceTypes && (
                     <>
-                      <button
-                        onClick={() => onExploreSources()}
-                        className={CHIP_CLASS}
-                      >
-                        all sources ·{" "}
-                        {contentTypes.reduce((s, ct) => s + ct.count, 0)}
+                      <button onClick={() => onExploreSources()} className={CHIP_CLASS}>
+                        all sources · {contentTypes.reduce((s, ct) => s + ct.count, 0)}
                       </button>
                       {contentTypes.map((ct) => (
                         <button
@@ -115,10 +101,7 @@ export function ExplorePage({
                     </>
                   )}
                   {hasArticles && (
-                    <button
-                      onClick={onExploreWiki}
-                      className={CHIP_CLASS}
-                    >
+                    <button onClick={onExploreWiki} className={CHIP_CLASS}>
                       explore wiki
                     </button>
                   )}
@@ -131,9 +114,8 @@ export function ExplorePage({
                     needs recompile
                   </h2>
                   <p className="font-serif text-[length:var(--text-body)] text-warm-dim">
-                    {dirtyCount} article{dirtyCount === 1 ? "" : "s"} drifted from
-                    the current topic registry and will be refreshed on the next
-                    compile.
+                    {dirtyCount} article{dirtyCount === 1 ? "" : "s"} drifted from the current topic
+                    registry and will be refreshed on the next compile.
                   </p>
                 </section>
               )}

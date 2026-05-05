@@ -1,11 +1,7 @@
 import { z } from "zod";
 
 import { apiFetch, vaultPath, readJson } from "./client";
-import {
-  paginatedSchema,
-  thinkingBlockSchema,
-  type ThinkingBlock,
-} from "./schemas";
+import { paginatedSchema, thinkingBlockSchema, type ThinkingBlock } from "./schemas";
 
 const btwExchangeSchema = z.object({
   query: z.string(),
@@ -153,9 +149,7 @@ const sessionResponseSchema = z.object({
 
 export type SessionResponse = z.infer<typeof sessionResponseSchema>;
 
-export async function loadSession(
-  sessionId: string,
-): Promise<SessionResponse> {
+export async function loadSession(sessionId: string): Promise<SessionResponse> {
   const res = await apiFetch(vaultPath(`/sessions/${sessionId}`));
   if (!res.ok) throw new Error(`Session not found: ${res.status}`);
   return readJson(res, sessionResponseSchema);
@@ -175,10 +169,9 @@ export async function promoteExchange(
   sessionId: string,
   exchangeId: string,
 ): Promise<PromoteResult> {
-  const res = await apiFetch(
-    vaultPath(`/sessions/${sessionId}/exchanges/${exchangeId}/promote`),
-    { method: "POST" },
-  );
+  const res = await apiFetch(vaultPath(`/sessions/${sessionId}/exchanges/${exchangeId}/promote`), {
+    method: "POST",
+  });
   if (!res.ok) {
     if (res.status === 400) throw new Error("Exchange has no answer yet");
     if (res.status === 404) throw new Error("Exchange not found");

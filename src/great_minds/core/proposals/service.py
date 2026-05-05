@@ -67,7 +67,10 @@ class ProposalService:
         )
 
         await self._commit()
-        return await self.repo.get(proposal.id)
+        result = await self.repo.get(proposal.id)
+        if result is None:
+            raise RuntimeError(f"created proposal {proposal.id} not found")
+        return result
 
     async def list_for_vault(
         self,
@@ -124,7 +127,10 @@ class ProposalService:
 
         await self.repo.set_status(proposal.id, new_status)
         await self._commit()
-        return await self.repo.get(proposal.id)
+        result = await self.repo.get(proposal.id)
+        if result is None:
+            raise RuntimeError(f"reviewed proposal {proposal.id} not found")
+        return result
 
     async def _approve(
         self,

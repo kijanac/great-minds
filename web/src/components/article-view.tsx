@@ -122,7 +122,11 @@ export function ArticleView({
           {children}
         </ol>
       ),
-      li: ({ children, id }) => <li id={id} className="mb-1">{children}</li>,
+      li: ({ children, id }) => (
+        <li id={id} className="mb-1">
+          {children}
+        </li>
+      ),
       blockquote: ({ children }) => (
         <blockquote className="border-l-2 border-gold-dim pl-4 text-warm-faint italic my-4">
           {children}
@@ -142,10 +146,7 @@ export function ArticleView({
 
   // Strip `^pN` block-ref markers from visible prose — they're metadata
   // for deep-link fragments, not content.
-  const displayBody = useMemo(
-    () => body.replace(BLOCK_REF_RE, ""),
-    [body],
-  );
+  const displayBody = useMemo(() => body.replace(BLOCK_REF_RE, ""), [body]);
 
   return (
     <article className="max-w-[740px] mx-auto px-4 md:px-10 pt-6 md:pt-10 pb-20 select-text">

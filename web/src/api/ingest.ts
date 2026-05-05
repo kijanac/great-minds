@@ -25,13 +25,7 @@ const bulkProcessResponseSchema = z.object({
   task_id: z.string(),
 });
 
-const taskStatusSchema = z.enum([
-  "pending",
-  "running",
-  "completed",
-  "failed",
-  "cancelled",
-]);
+const taskStatusSchema = z.enum(["pending", "running", "completed", "failed", "cancelled"]);
 
 const taskDetailSchema = z.object({
   id: z.string(),
@@ -100,10 +94,7 @@ async function pMap<T, R>(
       results[i] = await fn(items[i], i);
     }
   }
-  const workers = Array.from(
-    { length: Math.min(concurrency, items.length) },
-    worker,
-  );
+  const workers = Array.from({ length: Math.min(concurrency, items.length) }, worker);
   await Promise.all(workers);
   return results;
 }
@@ -274,11 +265,7 @@ async function getTask(taskId: string): Promise<TaskDetail> {
   return readJson(res, taskDetailSchema);
 }
 
-export type UserSuggestionIntent =
-  | "disagree"
-  | "correct"
-  | "add_context"
-  | "restructure";
+export type UserSuggestionIntent = "disagree" | "correct" | "add_context" | "restructure";
 
 export async function postUserSuggestion(params: {
   body: string;

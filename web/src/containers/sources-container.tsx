@@ -35,12 +35,7 @@ export function SourcesContainer() {
   }, []);
 
   const load = useCallback(
-    async (params: {
-      content_type?: string;
-      search?: string;
-      offset: number;
-      append: boolean;
-    }) => {
+    async (params: { content_type?: string; search?: string; offset: number; append: boolean }) => {
       setLoading(true);
       try {
         const data = await fetchSourceDocuments({
@@ -49,15 +44,11 @@ export function SourcesContainer() {
           limit: PAGE_SIZE,
           offset: params.offset,
         });
-        setItems((prev) =>
-          params.append ? [...prev, ...data.items] : data.items,
-        );
+        setItems((prev) => (params.append ? [...prev, ...data.items] : data.items));
         if (!params.append) {
           setContentTypes(data.facets.content_types ?? []);
         }
-        setHasMore(
-          data.pagination.offset + data.items.length < data.pagination.total,
-        );
+        setHasMore(data.pagination.offset + data.items.length < data.pagination.total);
       } catch {
         if (!params.append) {
           setItems([]);

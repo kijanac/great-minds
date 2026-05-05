@@ -21,6 +21,7 @@ from great_minds.core.llm import get_async_client
 from great_minds.core.paths import session_exchange_path
 from great_minds.core.vaults.config import load_config
 from great_minds.core.pagination import Page
+from great_minds.core.proposals.schemas import ProposalCreate
 from great_minds.core.sessions import BtwInput, ExchangeInput, generate_session_title
 
 router = APIRouter(prefix="/sessions", tags=["sessions"])
@@ -200,11 +201,13 @@ async def promote_exchange(
     proposal = await proposal_service.create(
         vault_id=vault_id,
         user_id=user.id,
-        content_type="sessions",
-        title=title,
-        author=None,
-        dest_path=dest,
-        rendered=rendered,
+        data=ProposalCreate(
+            content_type="sessions",
+            title=title,
+            author=None,
+            dest_path=dest,
+            rendered=rendered,
+        ),
     )
     return schemas.PromoteExchangeResponse(
         mode="proposed",

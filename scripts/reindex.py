@@ -14,13 +14,17 @@ import great_minds.core.vaults.models  # noqa: F401
 import great_minds.core.proposals.models  # noqa: F401
 import great_minds.core.tasks  # noqa: F401
 from great_minds.core.vaults.models import VaultORM
-from great_minds.core.search import rebuild_raw_index, rebuild_wiki_index
-from great_minds.core.db import session_maker
+from great_minds.core.indexing import rebuild_raw_index, rebuild_wiki_index
+from great_minds.core.settings import get_settings
+from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from great_minds.core.storage import LocalStorage
 
 
 async def main() -> None:
-    async with session_maker() as session:
+    settings = get_settings()
+    engine = create_async_engine(settings.database_url)
+    sm = async_sessionmaker(engine, expire_on_commit=False)
+    async with sm() as session:
         rows = await session.execute(select(VaultORM))
         vaults = rows.scalars().all()
 
@@ -35,11 +39,11 @@ async def main() -> None:
             print(f"  {vault.name} ({vault.id})")
             storage = LocalStorage(f"vaults/{vault.id}")
 
-            raw_count = len(storage.glob("raw/**/*.md"))
+            raw_count = len(await storage.glob("raw/**/*.md"))
             wiki_count = len(
                 [
                     f
-                    for f in storage.glob("wiki/*.md")
+                    for f in await storage.glob("wiki/*.md")
                     if not f.rsplit("/", 1)[-1].startswith("_")
                 ]
             )

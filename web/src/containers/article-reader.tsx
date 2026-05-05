@@ -34,9 +34,7 @@ export function ArticleReader({
   const handleLinkClick = useLinkInterceptor();
   const { btws, startBtw, replyBtw, spinOff, dismissEmpty, cleanup } = useBtw(path);
   const [popover, setPopover] = useState<SelectionInfo | null>(null);
-  const [suggestionTarget, setSuggestionTarget] = useState<SelectionInfo | null>(
-    null,
-  );
+  const [suggestionTarget, setSuggestionTarget] = useState<SelectionInfo | null>(null);
   const [suggestionSubmitted, setSuggestionSubmitted] = useState(false);
   const [hintDismissed, setHintDismissed] = useState(
     () => localStorage.getItem("onboarding-hint-seen") === "true",

@@ -16,11 +16,7 @@ function queryKey(vaultId: string, status?: ProposalStatus) {
   return ["proposals", vaultId, status ?? "all"] as const;
 }
 
-export function useProposals(
-  vaultId: string,
-  status?: ProposalStatus,
-  enabled: boolean = true,
-) {
+export function useProposals(vaultId: string, status?: ProposalStatus, enabled: boolean = true) {
   return useOffsetInfiniteQuery({
     queryKey: queryKey(vaultId, status),
     enabled: enabled && !!vaultId,
@@ -41,13 +37,8 @@ export function useCreateProposal(vaultId: string) {
 
 export function useReviewProposal(vaultId: string) {
   const qc = useQueryClient();
-  return useMutation<
-    Proposal,
-    Error,
-    { proposalId: string; status: "approved" | "rejected" }
-  >({
-    mutationFn: ({ proposalId, status }) =>
-      reviewProposal(vaultId, proposalId, status),
+  return useMutation<Proposal, Error, { proposalId: string; status: "approved" | "rejected" }>({
+    mutationFn: ({ proposalId, status }) => reviewProposal(vaultId, proposalId, status),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["proposals", vaultId] });
     },

@@ -1,9 +1,6 @@
 import { useNavigate } from "react-router";
 
-import {
-  VaultConfigForm,
-  type VaultConfigFormSubmit,
-} from "@/components/vault-config-form";
+import { VaultConfigForm, type VaultConfigFormSubmit } from "@/components/vault-config-form";
 import { useVaults, useCreateVault } from "@/hooks/use-vault";
 
 export default function VaultNewPage() {

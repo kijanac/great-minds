@@ -4,8 +4,7 @@ import { useWikiArticles } from "@/hooks/use-wiki-articles";
 
 export function WikiContainer() {
   const navigate = useViewNavigate();
-  const { data, isLoading, isFetchingNextPage, hasNextPage, fetchNextPage } =
-    useWikiArticles();
+  const { data, isLoading, isFetchingNextPage, hasNextPage, fetchNextPage } = useWikiArticles();
 
   const items = data?.pages.flatMap((p) => p.items) ?? [];
   const total = data?.pages[0]?.pagination.total ?? 0;

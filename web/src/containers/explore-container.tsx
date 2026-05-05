@@ -24,11 +24,7 @@ export function ExploreContainer() {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    Promise.all([
-      fetchLintResults(),
-      fetchRecentArticles(),
-      fetchSourceDocuments({ limit: 0 }),
-    ])
+    Promise.all([fetchLintResults(), fetchRecentArticles(), fetchSourceDocuments({ limit: 0 })])
       .then(([lint, articles, sources]) => {
         setOrphans(lint.orphans);
         setDirtyCount(lint.dirty_topics.length);
@@ -61,9 +57,7 @@ export function ExploreContainer() {
       onArticleClick={(path) => navigate(`/doc/${path}`)}
       onOrphanClick={(slug) => navigate(`/doc/wiki/${slug}.md`)}
       onExploreWiki={() => navigate("/wiki")}
-      onExploreSources={(type) =>
-        navigate(type ? `/sources?type=${type}` : "/sources")
-      }
+      onExploreSources={(type) => navigate(type ? `/sources?type=${type}` : "/sources")}
       ingestionZone={<IngestionContainer />}
     />
   );

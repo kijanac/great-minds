@@ -50,9 +50,7 @@ export function SessionThread({ session, onFollowUp }: SessionThreadProps) {
       );
     } catch {
       setPanel((prev) =>
-        prev?.path === path
-          ? { path, title: null, kind: null, body: null, loading: false }
-          : prev,
+        prev?.path === path ? { path, title: null, kind: null, body: null, loading: false } : prev,
       );
     }
   }, []);
@@ -109,10 +107,7 @@ export function SessionThread({ session, onFollowUp }: SessionThreadProps) {
                   {`"${ex.query}"`}
                 </span>
                 {session.sessionId && ex.answer && (
-                  <PromoteButton
-                    sessionId={session.sessionId}
-                    exchangeId={ex.id}
-                  />
+                  <PromoteButton sessionId={session.sessionId} exchangeId={ex.id} />
                 )}
               </div>
 

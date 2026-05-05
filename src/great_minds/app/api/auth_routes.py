@@ -12,7 +12,7 @@ from great_minds.app.api.dependencies import (
     UserServiceDep,
 )
 from great_minds.app.api.schemas import auth as schemas
-from great_minds.core.auth.schemas import TokenPair
+from great_minds.core.auth.schemas import ApiKey, ApiKeyWithSecret, TokenPair
 
 log = logging.getLogger(__name__)
 
@@ -65,7 +65,7 @@ async def create_api_key(
     req: schemas.ApiKeyCreate,
     user: CurrentUser,
     auth_service: AuthServiceDep,
-) -> schemas.ApiKeyWithSecret:
+) -> ApiKeyWithSecret:
     return await auth_service.create_api_key(user.id, req.label)
 
 
@@ -73,9 +73,9 @@ async def create_api_key(
 async def list_api_keys(
     user: CurrentUser,
     auth_service: AuthServiceDep,
-) -> list[schemas.ApiKey]:
+) -> list[ApiKey]:
     rows = await auth_service.list_api_keys(user.id)
-    return [schemas.ApiKey.model_validate(k) for k in rows]
+    return [ApiKey.model_validate(k) for k in rows]
 
 
 @router.delete("/api-keys/{key_id}", status_code=status.HTTP_204_NO_CONTENT)

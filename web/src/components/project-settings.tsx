@@ -2,10 +2,7 @@ import { useState, type ReactNode } from "react";
 import { Home, X } from "lucide-react";
 
 import type { VaultConfig, VaultDetail, Membership } from "@/api/vaults";
-import {
-  VaultConfigForm,
-  type VaultConfigFormSubmit,
-} from "@/components/vault-config-form";
+import { VaultConfigForm, type VaultConfigFormSubmit } from "@/components/vault-config-form";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 
@@ -102,7 +99,8 @@ export function ProjectSettings({
                 {project.name}
               </h1>
               <p className="font-mono text-[length:var(--text-chrome)] tracking-[0.06em] text-warm-ghost mb-8">
-                {project.article_count} articles · {project.member_count} member{project.member_count !== 1 && "s"}
+                {project.article_count} articles · {project.member_count} member
+                {project.member_count !== 1 && "s"}
               </p>
 
               <h2 className="font-mono text-[length:var(--text-chrome)] tracking-[0.14em] text-gold-muted uppercase mb-4">

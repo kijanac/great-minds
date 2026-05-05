@@ -28,12 +28,7 @@ export function HomeContainer({ sessionId, initialQuery, origin }: HomeContainer
   const saved = useSavedSession(sessionId ?? null);
 
   if (vaults.error) {
-    return (
-      <ErrorState
-        message="Couldn't load your projects."
-        onRetry={() => vaults.refetch()}
-      />
-    );
+    return <ErrorState message="Couldn't load your projects." onRetry={() => vaults.refetch()} />;
   }
 
   if (vaults.isLoading) return <Spinner label="Loading…" />;
@@ -44,12 +39,7 @@ export function HomeContainer({ sessionId, initialQuery, origin }: HomeContainer
 
   if (sessionId) {
     if (saved.error) {
-      return (
-        <ErrorState
-          message="Couldn't load this session."
-          onRetry={() => saved.refetch()}
-        />
-      );
+      return <ErrorState message="Couldn't load this session." onRetry={() => saved.refetch()} />;
     }
     if (saved.isLoading) return <Spinner label="Loading session…" />;
   }

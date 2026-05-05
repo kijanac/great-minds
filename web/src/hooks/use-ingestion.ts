@@ -50,20 +50,14 @@ export function useIngestion() {
     const files = batch.map(([, file]) => file);
 
     setQueue((q) =>
-      q.map((i) =>
-        queuedFileIds.includes(i.id) ? { ...i, status: "processing" as const } : i,
-      ),
+      q.map((i) => (queuedFileIds.includes(i.id) ? { ...i, status: "processing" as const } : i)),
     );
 
     try {
       for await (const event of ingestBulk(files)) {
         if (event.phase === "error") {
-          const failedNames = new Set(
-            (event.failed_uploads ?? []).map((f) => f.name),
-          );
-          const errMsgByName = new Map(
-            (event.failed_uploads ?? []).map((f) => [f.name, f.error]),
-          );
+          const failedNames = new Set((event.failed_uploads ?? []).map((f) => f.name));
+          const errMsgByName = new Map((event.failed_uploads ?? []).map((f) => [f.name, f.error]));
           setQueue((q) =>
             q.map((i) => {
               if (!queuedFileIds.includes(i.id)) return i;
@@ -82,12 +76,8 @@ export function useIngestion() {
           break;
         }
         if (event.phase === "done") {
-          const failedNames = new Set(
-            (event.failed_uploads ?? []).map((f) => f.name),
-          );
-          const errMsgByName = new Map(
-            (event.failed_uploads ?? []).map((f) => [f.name, f.error]),
-          );
+          const failedNames = new Set((event.failed_uploads ?? []).map((f) => f.name));
+          const errMsgByName = new Map((event.failed_uploads ?? []).map((f) => [f.name, f.error]));
           setQueue((q) =>
             q.map((i) => {
               if (!queuedFileIds.includes(i.id)) return i;
@@ -129,23 +119,17 @@ export function useIngestion() {
     if (!entry) return;
     const { id, urlValue } = entry;
 
-    setQueue((q) =>
-      q.map((i) => (i.id === id ? { ...i, status: "processing" as const } : i)),
-    );
+    setQueue((q) => q.map((i) => (i.id === id ? { ...i, status: "processing" as const } : i)));
 
     try {
       const result = await ingestUrl(urlValue);
       setQueue((q) =>
-        q.map((i) =>
-          i.id === id ? { ...i, status: "done" as const, name: result.title } : i,
-        ),
+        q.map((i) => (i.id === id ? { ...i, status: "done" as const, name: result.title } : i)),
       );
     } catch (e) {
       const message = e instanceof Error ? e.message : "URL ingest failed";
       setQueue((q) =>
-        q.map((i) =>
-          i.id === id ? { ...i, status: "error" as const, error: message } : i,
-        ),
+        q.map((i) => (i.id === id ? { ...i, status: "error" as const, error: message } : i)),
       );
     } finally {
       urlsById.current.delete(id);
@@ -216,9 +200,7 @@ export function useIngestion() {
   };
 }
 
-function firstQueuedUrl(
-  urlsById: Map<string, string>,
-): { id: string; urlValue: string } | null {
+function firstQueuedUrl(urlsById: Map<string, string>): { id: string; urlValue: string } | null {
   for (const [id, urlValue] of urlsById) {
     return { id, urlValue };
   }

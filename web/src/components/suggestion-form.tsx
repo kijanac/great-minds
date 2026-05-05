@@ -52,7 +52,6 @@ const INTENT_OPTIONS: {
   },
 ];
 
-
 export function SuggestionForm({
   open,
   onOpenChange,
@@ -91,17 +90,14 @@ export function SuggestionForm({
 
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
-      <SheetContent
-        side="bottom"
-        className="max-h-[85vh] border-t border-ink-subtle"
-      >
+      <SheetContent side="bottom" className="max-h-[85vh] border-t border-ink-subtle">
         <SheetHeader className="px-6 pt-6 pb-2">
           <SheetTitle className="font-mono text-[length:var(--text-chrome)] tracking-[0.14em] text-gold-muted uppercase">
             suggest · {anchoredTo}
           </SheetTitle>
           <SheetDescription className="font-mono text-[length:var(--text-chrome)] tracking-[0.04em] text-warm-ghost">
-            Your suggestion enters the pipeline as a source document and
-            influences the next compile.
+            Your suggestion enters the pipeline as a source document and influences the next
+            compile.
           </SheetDescription>
         </SheetHeader>
 
@@ -123,10 +119,7 @@ export function SuggestionForm({
                     key={opt.value}
                     type="button"
                     onClick={() => setIntent(opt.value)}
-                    className={cn(
-                      CHIP_BASE,
-                      intent === opt.value ? CHIP_ACTIVE : CHIP_INACTIVE,
-                    )}
+                    className={cn(CHIP_BASE, intent === opt.value ? CHIP_ACTIVE : CHIP_INACTIVE)}
                     title={opt.hint}
                   >
                     {opt.label}

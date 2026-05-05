@@ -38,6 +38,15 @@ build-backend = "hatchling.build"
 [tool.ruff.lint]
 ignore = ["E712"]
 
+[tool.ty]
+[tool.ty.rules]
+# SQLAlchemy async stubs false positives.
+# FromClause.update() and Result.rowcount exist at runtime but
+# not in SQLAlchemy type stubs.
+invalid-argument-type = "ignore"
+unknown-argument = "ignore"
+unresolved-attribute = "ignore"
+
 [dependency-groups]
 dev = [
     "moto[s3]>=5.1.22",

@@ -440,17 +440,29 @@
 }
 
 @keyframes vt-rise {
-  from { opacity: 0; transform: translateY(8px); }
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
 }
 
 @keyframes vt-settle {
-  from { opacity: 0; transform: translateY(-8px); }
+  from {
+    opacity: 0;
+    transform: translateY(-8px);
+  }
 }
 
 @keyframes vt-exit-left {
-  to { opacity: 0; transform: translateX(-16px); }
+  to {
+    opacity: 0;
+    transform: translateX(-16px);
+  }
 }
 
 @keyframes vt-enter-right {
-  from { opacity: 0; transform: translateX(16px); }
+  from {
+    opacity: 0;
+    transform: translateX(16px);
+  }
 }

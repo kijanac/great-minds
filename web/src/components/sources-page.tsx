@@ -76,15 +76,8 @@ export function SourcesPage({
               {contentTypes.map((ct) => (
                 <button
                   key={ct.value}
-                  onClick={() =>
-                    onTypeFilter(
-                      activeType === ct.value ? null : ct.value,
-                    )
-                  }
-                  className={cn(
-                    CHIP_BASE,
-                    activeType === ct.value ? CHIP_ACTIVE : CHIP_INACTIVE,
-                  )}
+                  onClick={() => onTypeFilter(activeType === ct.value ? null : ct.value)}
+                  className={cn(CHIP_BASE, activeType === ct.value ? CHIP_ACTIVE : CHIP_INACTIVE)}
                 >
                   {ct.value} · {ct.count}
                 </button>
@@ -126,9 +119,7 @@ export function SourcesPage({
                     </span>
                     {(item.metadata.author || item.metadata.origin) && (
                       <span className="font-mono text-[length:var(--text-chrome)] tracking-[0.04em] text-warm-ghost truncate w-full text-left">
-                        {[item.metadata.author, item.metadata.origin]
-                          .filter(Boolean)
-                          .join(" · ")}
+                        {[item.metadata.author, item.metadata.origin].filter(Boolean).join(" · ")}
                       </span>
                     )}
                   </div>

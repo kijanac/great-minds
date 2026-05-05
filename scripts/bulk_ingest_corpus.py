@@ -23,7 +23,8 @@ from uuid import UUID
 from great_minds.core.vaults.config import load_config
 from great_minds.core.documents.builder import write_document
 from great_minds.core.markdown import parse_frontmatter
-from great_minds.core.db import session_maker
+from great_minds.core.settings import get_settings
+from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from great_minds.core.documents.repository import DocumentRepository
 from great_minds.core.documents.schemas import DocumentCreate
 from great_minds.core.documents.service import DocumentService
@@ -51,7 +52,10 @@ async def main(
     if author:
         ingest_kwargs["author"] = author
 
-    async with session_maker() as session:
+    settings = get_settings()
+    engine = create_async_engine(settings.database_url)
+    sm = async_sessionmaker(engine, expire_on_commit=False)
+    async with sm() as session:
         doc_service = DocumentService(DocumentRepository(session))
         existing_hashes = await doc_service.get_raw_file_hashes(vault_id)
 

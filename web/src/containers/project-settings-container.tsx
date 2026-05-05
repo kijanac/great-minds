@@ -89,11 +89,7 @@ export function ProjectSettingsContainer() {
       config={config}
       isOwner={isOwner}
       loading={loading}
-      proposalsSlot={
-        id ? (
-          <ProposalsSectionContainer vaultId={id} isOwner={isOwner} />
-        ) : null
-      }
+      proposalsSlot={id ? <ProposalsSectionContainer vaultId={id} isOwner={isOwner} /> : null}
       apiKeysSlot={<ApiKeysSectionContainer />}
       onHome={() => navigate("/")}
       onInvite={handleInvite}
