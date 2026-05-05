@@ -48,8 +48,8 @@ async def list_vaults(
 ) -> VaultPage:
     result = await vault_service.list_vaults_page(user.id, pagination=pagination)
     return VaultPage(
-        items=[vault for vault, _role in result.items],
-        roles={str(vault.id): role for vault, role in result.items},
+        items=[vr for vr in result.items],
+        roles={str(vr.id): vr.role for vr in result.items},
         pagination=result.pagination,
     )
 

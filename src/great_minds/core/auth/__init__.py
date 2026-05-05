@@ -6,14 +6,16 @@ from great_minds.core.auth.models import (
     RefreshToken,
 )
 from great_minds.core.auth.repository import AuthRepository
-from great_minds.core.auth.schemas import ApiKey
+from great_minds.core.auth.schemas import ApiKey, ApiKeyWithSecret, TokenPair
 from great_minds.core.auth.service import AuthService
 
 __all__ = [
     "ApiKey",
     "ApiKeyORM",
+    "ApiKeyWithSecret",
     "AuthCode",
     "AuthRepository",
     "AuthService",
     "RefreshToken",
+    "TokenPair",
 ]

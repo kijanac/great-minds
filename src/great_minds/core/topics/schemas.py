@@ -69,3 +69,15 @@ class RelatedTopic(BaseModel):
     related_topic_id: UUID
     shared_ideas: int
     jaccard: float
+
+
+class JaccardPair(BaseModel):
+    """Raw pairwise Jaccard result from SQL self-join — (topic_a, topic_b,
+    shared_idea_count, jaccard_score) for pairs with shared > 0."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    topic_a: UUID
+    topic_b: UUID
+    shared: int
+    jaccard: float

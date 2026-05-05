@@ -23,6 +23,7 @@ class Proposal(ProposalOverview):
     user_id: uuid.UUID
     author: str | None
     dest_path: str
+    document_id: uuid.UUID | None = None
 
 
 class ProposalCreate(BaseModel):

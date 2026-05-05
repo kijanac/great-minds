@@ -11,7 +11,7 @@ from great_minds.core.vaults.models import (
     VaultMembership,
     MemberRole,
 )
-from great_minds.core.vaults.schemas import Vault, MemberWithEmail
+from great_minds.core.vaults.schemas import Vault, VaultWithRole, MemberWithEmail
 from great_minds.core.users.models import UserORM
 
 
@@ -70,23 +70,8 @@ class VaultRepository:
 
     async def list_user_vaults(
         self, user_id: UUID, *, limit: int | None = 50, offset: int = 0
-    ) -> list[Vault]:
-        """Vaults the user is a member of, sorted newest first."""
-        stmt = (
-            select(VaultORM)
-            .join(VaultMembership, VaultMembership.vault_id == VaultORM.id)
-            .where(VaultMembership.user_id == user_id)
-            .order_by(VaultORM.created_at.desc())
-            .offset(offset)
-        )
-        if limit is not None:
-            stmt = stmt.limit(limit)
-        result = await self.session.execute(stmt)
-        return [Vault.model_validate(row) for row in result.scalars().all()]
-
-    async def list_user_vaults_with_roles(
-        self, user_id: UUID, *, limit: int | None = 50, offset: int = 0
-    ) -> list[tuple[Vault, MemberRole]]:
+    ) -> list[VaultWithRole]:
+        """Vaults the user is a member of with their role, sorted newest first."""
         stmt = (
             select(VaultORM, VaultMembership.role)
             .join(VaultMembership, VaultMembership.vault_id == VaultORM.id)
@@ -98,7 +83,7 @@ class VaultRepository:
             stmt = stmt.limit(limit)
         result = await self.session.execute(stmt)
         return [
-            (Vault.model_validate(vault), role)
+            VaultWithRole(role=role, **Vault.model_validate(vault).model_dump())
             for vault, role in result.all()
         ]
 
@@ -158,11 +143,11 @@ class VaultRepository:
 
     async def add_member(
         self, vault_id: UUID, user_id: UUID, role: MemberRole
-    ) -> VaultMembership | None:
-        """Add a member to a vault. Returns None if already a member.
+    ) -> None:
+        """Add a member to a vault. Idempotent — no-op if already a member.
 
-        Idempotent via ON CONFLICT DO NOTHING — re-adding silently
-        does nothing and does not change the existing role. Use
+        Uses ON CONFLICT DO NOTHING so re-adding silently does
+        nothing and does not change the existing role. Use
         ``set_member_role`` for explicit role changes.
         """
         stmt = (
@@ -171,14 +156,12 @@ class VaultRepository:
             .on_conflict_do_nothing(
                 index_elements=["vault_id", "user_id"]
             )
-            .returning(VaultMembership)
         )
-        result = await self.session.execute(stmt)
-        return result.scalar_one_or_none()
+        await self.session.execute(stmt)
 
     async def set_member_role(
         self, vault_id: UUID, user_id: UUID, role: MemberRole
-    ) -> VaultMembership:
+    ) -> None:
         """Change an existing member's role.
 
         Raises ValueError if the user is not a member of the vault.
@@ -190,15 +173,13 @@ class VaultRepository:
                 VaultMembership.user_id == user_id,
             )
             .values(role=role)
-            .returning(VaultMembership)
+            .returning(VaultMembership.id)
         )
         result = await self.session.execute(stmt)
-        row = result.scalar_one_or_none()
-        if row is None:
+        if result.scalar_one_or_none() is None:
             raise ValueError(
                 f"User {user_id} is not a member of vault {vault_id}"
             )
-        return row
 
     async def delete_membership(self, vault_id: UUID, user_id: UUID) -> bool:
         result = await self.session.execute(

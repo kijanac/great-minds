@@ -38,3 +38,11 @@ class SearchResult(BaseModel):
     snippet: str
     score: float
     vault_id: UUID
+
+
+class ChunkHash(BaseModel):
+    """(path, chunk_index, content_hash) row — used for rebuild diff."""
+
+    path: str
+    chunk_index: int
+    content_hash: str

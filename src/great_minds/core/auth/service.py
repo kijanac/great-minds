@@ -5,7 +5,7 @@ import secrets
 from uuid import UUID
 
 from great_minds.core.auth.repository import AuthRepository
-from great_minds.core.auth.schemas import ApiKey
+from great_minds.core.auth.schemas import ApiKey, ApiKeyWithSecret, TokenPair
 from great_minds.core.crypto import (
     create_access_token,
     create_refresh_token_value,
@@ -51,11 +51,11 @@ class AuthService:
             body=f"Your Great Minds sign-in code is: {code}\n\nExpires in {self.settings.auth_code_expiry_minutes} minutes.",
         )
 
-    async def verify_code(self, email: str, code: str) -> tuple[UUID, str, str]:
+    async def verify_code(self, email: str, code: str) -> TokenPair:
         """Verify auth code, ensure user row exists, mint tokens.
 
-        Returns ``(user_id, access_token, refresh_token)``. Vault
-        provisioning is the route's job, not auth's.
+        Returns a ``TokenPair``. The access token carries the user ID
+        in its ``sub`` claim for downstream use.
         """
         email = normalize_email(email)
         if self.settings.suppress_auth:
@@ -70,32 +70,32 @@ class AuthService:
         user = await self.user_service.ensure_user(email)
 
         access_token = create_access_token(user.id, self.settings)
-        raw_refresh = create_refresh_token_value()
-        await self.auth_repo.store_refresh_token(user.id, raw_refresh, self.settings)
+        refresh_token = create_refresh_token_value()
+        await self.auth_repo.store_refresh_token(user.id, refresh_token, self.settings)
 
         await self._commit()
-        return user.id, access_token, raw_refresh
+        return TokenPair(access_token=access_token, refresh_token=refresh_token)
 
-    async def refresh_tokens(self, raw_refresh: str) -> tuple[str, str]:
-        """Validate refresh token, rotate it, return new (access_token, refresh_token)."""
-        rt = await self.auth_repo.validate_refresh_token(raw_refresh)
+    async def refresh_tokens(self, refresh_token: str) -> TokenPair:
+        """Validate refresh token, rotate it, return a new TokenPair."""
+        rt = await self.auth_repo.validate_refresh_token(refresh_token)
         if rt is None:
             raise ValueError("Invalid or expired refresh token")
 
         rt.revoked = True
         access_token = create_access_token(rt.user_id, self.settings)
-        new_refresh = create_refresh_token_value()
-        await self.auth_repo.store_refresh_token(rt.user_id, new_refresh, self.settings)
+        refresh_token = create_refresh_token_value()
+        await self.auth_repo.store_refresh_token(rt.user_id, refresh_token, self.settings)
 
         await self._commit()
-        return access_token, new_refresh
+        return TokenPair(access_token=access_token, refresh_token=refresh_token)
 
-    async def create_api_key(self, user_id: UUID, label: str) -> tuple[ApiKey, str]:  # ApiKey = domain Pydantic
-        """Create an API key, return (api_key_model, raw_key)."""
+    async def create_api_key(self, user_id: UUID, label: str) -> ApiKeyWithSecret:
+        """Create an API key, return metadata + the one-time raw secret."""
         raw_key = f"gm_{secrets.token_urlsafe(32)}"
         api_key = await self.auth_repo.store_api_key(user_id, raw_key, label)
         await self._commit()
-        return api_key, raw_key
+        return ApiKeyWithSecret(raw_key=raw_key, **api_key.model_dump())
 
     async def revoke_api_key(self, key_id: UUID, user_id: UUID) -> None:
         """Revoke an API key. Raises ValueError if not found or not owned."""

@@ -20,6 +20,7 @@ from great_minds.core.documents.schemas import (
     Document,
     DocumentCreate,
     DocumentMetadata,
+    FileHash,
     WikiArticleSummary,
 )
 from great_minds.core.ideas.schemas import SourceCard
@@ -149,8 +150,8 @@ class DocumentRepository:
             doc_ids.append(doc_id)
         return doc_ids
 
-    async def get_file_hashes(self, vault_id: UUID) -> dict[str, str]:
-        """Return {file_path: file_hash} for all documents in a vault.
+    async def get_file_hashes(self, vault_id: UUID) -> list[FileHash]:
+        """Return (file_path, file_hash) rows for all documents in a vault.
 
         Used for skip detection during bulk ingest.
         """
@@ -159,7 +160,7 @@ class DocumentRepository:
                 DocumentORM.vault_id == vault_id
             )
         )
-        return {row.file_path: row.file_hash for row in result}
+        return [FileHash.model_validate(r) for r in result]
 
     async def get_title_by_path(
         self, vault_id: UUID, file_path: str

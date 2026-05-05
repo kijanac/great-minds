@@ -14,7 +14,7 @@ from sqlalchemy import delete, func, select, tuple_
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from great_minds.core.search.models import SearchIndexEntry
-from great_minds.core.search.schemas import Chunk, ChunkScore
+from great_minds.core.search.schemas import Chunk, ChunkHash, ChunkScore
 
 
 class SearchIndexRepository:
@@ -25,8 +25,8 @@ class SearchIndexRepository:
 
     async def list_hashes_by_prefix(
         self, vault_id: UUID, path_prefix: str
-    ) -> dict[tuple[str, int], str]:
-        """Return {(path, chunk_index): content_hash} for diff during rebuild."""
+    ) -> list[ChunkHash]:
+        """Return (path, chunk_index, content_hash) rows for diff during rebuild."""
         rows = await self.session.execute(
             select(
                 SearchIndexEntry.path,
@@ -37,7 +37,7 @@ class SearchIndexRepository:
                 SearchIndexEntry.path.like(f"{path_prefix}%"),
             )
         )
-        return {(r.path, r.chunk_index): r.content_hash for r in rows}
+        return [ChunkHash.model_validate(r) for r in rows]
 
     async def delete_by_keys(
         self, vault_id: UUID, keys: list[tuple[str, int]]

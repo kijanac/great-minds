@@ -53,20 +53,20 @@ class AuthRepository:
         return True
 
     async def store_refresh_token(
-        self, user_id: UUID, raw_token: str, settings: Settings
+        self, user_id: UUID, refresh_token: str, settings: Settings
     ) -> RefreshToken:
         db_now = await self.session.scalar(func.now())
         rt = RefreshToken(
             user_id=user_id,
-            token_hash=hash_refresh_token(raw_token),
+            token_hash=hash_refresh_token(refresh_token),
             expires_at=db_now
             + timedelta(days=settings.jwt_refresh_expiry_days),
         )
         self.session.add(rt)
         return rt
 
-    async def validate_refresh_token(self, raw_token: str) -> RefreshToken | None:
-        token_h = hash_refresh_token(raw_token)
+    async def validate_refresh_token(self, refresh_token: str) -> RefreshToken | None:
+        token_h = hash_refresh_token(refresh_token)
         result = await self.session.execute(
             select(RefreshToken).where(
                 RefreshToken.token_hash == token_h,
