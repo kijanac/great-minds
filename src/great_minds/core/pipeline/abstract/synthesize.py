@@ -12,7 +12,6 @@ out of the LLM's face; we map tags back to real idea_ids on parse.
 Unknown tags in the LLM output are silently dropped as hallucinations.
 """
 
-
 import asyncio
 import json
 import logging
@@ -55,7 +54,7 @@ async def run(
 
     settings = get_settings()
     prompt_template = await load_prompt(ctx.storage, "synthesize")
-    prompt_hash = prompt_hash(prompt_template)
+    ph = prompt_hash(prompt_template)
     idea_index: dict[UUID, tuple[Idea, SourceCard]] = {}
     for card in source_cards:
         for idea in card.ideas:
@@ -70,7 +69,7 @@ async def run(
             chunk=chunk,
             idea_index=idea_index,
             prompt_template=prompt_template,
-            prompt_hash=prompt_hash,
+            prompt_hash=ph,
         )
         for idx, chunk in enumerate(chunks)
     ]
@@ -151,9 +150,7 @@ async def _synthesize_one(
         outcome.error = "no_ideas_indexed"
         return outcome
 
-    cache_key = _cache_key(
-        idea_ids=present, prompt_hash=prompt_hash, model=MAP_MODEL
-    )
+    cache_key = _cache_key(idea_ids=present, prompt_hash=prompt_hash, model=MAP_MODEL)
 
     cached = ctx.cache.get(PHASE, cache_key)
     if cached is not None:
@@ -243,9 +240,7 @@ def _render_idea_block(
         if meta.tradition:
             context_bits.append(f"Tradition: {meta.tradition}")
         if meta.interlocutors:
-            context_bits.append(
-                f"Interlocutors: {', '.join(meta.interlocutors)}"
-            )
+            context_bits.append(f"Interlocutors: {', '.join(meta.interlocutors)}")
         if meta.tags:
             context_bits.append(f"Tags: {', '.join(meta.tags)}")
         if context_bits:
@@ -255,9 +250,7 @@ def _render_idea_block(
             counter += 1
             tag = f"idea_{counter}"
             tag_to_uuid[tag] = idea.idea_id
-            lines.append(
-                f"- {tag} [{idea.kind}] {idea.label}: {idea.description}"
-            )
+            lines.append(f"- {tag} [{idea.kind}] {idea.label}: {idea.description}")
         lines.append("")
 
     return "\n".join(lines), tag_to_uuid

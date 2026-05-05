@@ -1,6 +1,5 @@
 """ORM models for the topic registry and its derived tables."""
 
-
 import uuid
 from datetime import datetime
 

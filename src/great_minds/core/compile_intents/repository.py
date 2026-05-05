@@ -41,9 +41,7 @@ class CompileIntentRepository:
         row = await self.session.execute(stmt)
         return row.scalar_one_or_none()
 
-    async def get_pending_for_vault(
-        self, vault_id: UUID
-    ) -> CompileIntentRecord | None:
+    async def get_pending_for_vault(self, vault_id: UUID) -> CompileIntentRecord | None:
         row = await self.session.execute(
             select(CompileIntentRecord).where(
                 CompileIntentRecord.vault_id == vault_id,
@@ -52,9 +50,7 @@ class CompileIntentRepository:
         )
         return row.scalar_one_or_none()
 
-    async def list_pending_locked(
-        self, limit: int = 100
-    ) -> list[CompileIntentRecord]:
+    async def list_pending_locked(self, limit: int = 100) -> list[CompileIntentRecord]:
         """Pending intents, oldest first, locked with SKIP LOCKED."""
         rows = await self.session.execute(
             select(CompileIntentRecord)

@@ -15,7 +15,11 @@ from great_minds.core.pagination import Page, PageInfo, PageParams
 from great_minds.core.paths import proposal_staging_path
 from great_minds.core.proposals.models import ProposalORM, ProposalStatus
 from great_minds.core.proposals.repository import ProposalRepository
-from great_minds.core.proposals.schemas import Proposal, ProposalCreate, ProposalOverview
+from great_minds.core.proposals.schemas import (
+    Proposal,
+    ProposalCreate,
+    ProposalOverview,
+)
 from great_minds.core.storage import Storage
 
 log = logging.getLogger(__name__)
@@ -143,6 +147,4 @@ class ProposalService:
 
     async def _reject(self, proposal: Proposal) -> None:
         """Clean up staged content for a rejected proposal."""
-        await self.proposals_storage.delete(
-            proposal_staging_path(proposal.id)
-        )
+        await self.proposals_storage.delete(proposal_staging_path(proposal.id))

@@ -7,6 +7,7 @@ from pydantic import BaseModel, ConfigDict
 
 from great_minds.core.vaults.models import MemberRole
 
+
 class Vault(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 

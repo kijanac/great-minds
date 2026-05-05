@@ -1,6 +1,5 @@
 """Repository for llm_cost_events. Persistence + aggregation queries."""
 
-
 import uuid
 from dataclasses import dataclass
 from datetime import datetime

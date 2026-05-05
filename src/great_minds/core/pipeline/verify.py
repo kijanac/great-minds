@@ -17,7 +17,6 @@ file walk; we log here so compile-time quality is visible without
 needing to hit the endpoint.
 """
 
-
 import logging
 from uuid import UUID
 
@@ -146,7 +145,9 @@ async def _load_wiki_articles(ctx: PipelineContext) -> dict[UUID, Document]:
     unique index). Rows missing it would be schema corruption — skip
     rather than crash so verify can still run on the well-formed set.
     """
-    docs = await DocumentRepository(ctx.session).list_by_kind(ctx.vault_id, DocKind.WIKI)
+    docs = await DocumentRepository(ctx.session).list_by_kind(
+        ctx.vault_id, DocKind.WIKI
+    )
     return {doc.topic_id: doc for doc in docs if doc.topic_id is not None}
 
 

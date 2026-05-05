@@ -141,9 +141,7 @@ class VaultRepository:
             for user_id, role, email in result.all()
         ]
 
-    async def add_member(
-        self, vault_id: UUID, user_id: UUID, role: MemberRole
-    ) -> None:
+    async def add_member(self, vault_id: UUID, user_id: UUID, role: MemberRole) -> None:
         """Add a member to a vault. Idempotent — no-op if already a member.
 
         Uses ON CONFLICT DO NOTHING so re-adding silently does
@@ -153,9 +151,7 @@ class VaultRepository:
         stmt = (
             insert(VaultMembership)
             .values(vault_id=vault_id, user_id=user_id, role=role)
-            .on_conflict_do_nothing(
-                index_elements=["vault_id", "user_id"]
-            )
+            .on_conflict_do_nothing(index_elements=["vault_id", "user_id"])
         )
         await self.session.execute(stmt)
 
@@ -177,9 +173,7 @@ class VaultRepository:
         )
         result = await self.session.execute(stmt)
         if result.scalar_one_or_none() is None:
-            raise ValueError(
-                f"User {user_id} is not a member of vault {vault_id}"
-            )
+            raise ValueError(f"User {user_id} is not a member of vault {vault_id}")
 
     async def set_bucket_name(self, vault_id: UUID, bucket_name: str) -> Vault:
         """Set the r2_bucket_name on a vault and return the updated Vault."""

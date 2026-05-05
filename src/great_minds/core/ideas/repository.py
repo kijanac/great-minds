@@ -1,6 +1,5 @@
 """Idea embeddings repository (Postgres, pgvector)."""
 
-
 from uuid import UUID
 
 from sqlalchemy import delete, select
@@ -49,9 +48,7 @@ class IdeaEmbeddingRepository:
 
     async def delete_for_document(self, document_id: UUID) -> None:
         await self.session.execute(
-            delete(IdeaEmbeddingORM).where(
-                IdeaEmbeddingORM.document_id == document_id
-            )
+            delete(IdeaEmbeddingORM).where(IdeaEmbeddingORM.document_id == document_id)
         )
 
     async def delete_for_vault(self, vault_id: UUID) -> None:
@@ -61,18 +58,28 @@ class IdeaEmbeddingRepository:
 
     async def list_for_vault(self, vault_id: UUID) -> list[IdeaEmbedding]:
         rows = (
-            await self.session.execute(
-                select(IdeaEmbeddingORM).where(IdeaEmbeddingORM.vault_id == vault_id)
+            (
+                await self.session.execute(
+                    select(IdeaEmbeddingORM).where(
+                        IdeaEmbeddingORM.vault_id == vault_id
+                    )
+                )
             )
-        ).scalars().all()
+            .scalars()
+            .all()
+        )
         return [IdeaEmbedding.model_validate(row) for row in rows]
 
     async def get_ids_for_vault(self, vault_id: UUID) -> list[UUID]:
         rows = (
-            await self.session.execute(
-                select(IdeaEmbeddingORM.idea_id).where(
-                    IdeaEmbeddingORM.vault_id == vault_id
+            (
+                await self.session.execute(
+                    select(IdeaEmbeddingORM.idea_id).where(
+                        IdeaEmbeddingORM.vault_id == vault_id
+                    )
                 )
             )
-        ).scalars().all()
+            .scalars()
+            .all()
+        )
         return list(rows)

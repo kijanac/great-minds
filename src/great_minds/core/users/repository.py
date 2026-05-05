@@ -37,14 +37,14 @@ class UserRepository:
         return UserSchema.model_validate(existing.scalar_one())
 
     async def get_by_id(self, user_id: UUID) -> UserSchema | None:
-        result = await self.session.execute(select(UserORM).where(UserORM.id == user_id))
+        result = await self.session.execute(
+            select(UserORM).where(UserORM.id == user_id)
+        )
         row = result.scalar_one_or_none()
         return UserSchema.model_validate(row) if row else None
 
     async def set_r2_bucket_name(self, user_id: UUID, bucket_name: str) -> None:
-        user = await self.session.execute(
-            select(UserORM).where(UserORM.id == user_id)
-        )
+        user = await self.session.execute(select(UserORM).where(UserORM.id == user_id))
         orm_user = user.scalar_one_or_none()
         if orm_user is None:
             raise ValueError(f"User {user_id} not found")

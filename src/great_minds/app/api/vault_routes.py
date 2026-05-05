@@ -23,7 +23,6 @@ from great_minds.app.api.schemas.vaults import (
     VaultPage,
 )
 from great_minds.core.vaults.config import draft_thematic_hint, load_vault_config
-from great_minds.core.vaults.models import MemberRole
 from great_minds.core.vaults.schemas import (
     MemberWithEmail,
     MembershipInternal,
@@ -181,9 +180,7 @@ async def invite_member(
 
     target_user = await user_service.ensure_user(req.email)
     await vault_service.add_member(
-        MembershipInternal(
-            vault_id=vault_id, user_id=target_user.id, role=req.role
-        )
+        MembershipInternal(vault_id=vault_id, user_id=target_user.id, role=req.role)
     )
 
     await mailer.send(
@@ -196,7 +193,9 @@ async def invite_member(
         ),
     )
 
-    return MemberWithEmail(user_id=target_user.id, email=target_user.email, role=req.role)
+    return MemberWithEmail(
+        user_id=target_user.id, email=target_user.email, role=req.role
+    )
 
 
 @router.put("/{vault_id}/members/{member_user_id}")
@@ -214,16 +213,16 @@ async def set_member(
 
     try:
         await vault_service.set_member_role(
-            MembershipInternal(
-                vault_id=vault_id, user_id=member_user_id, role=req.role
-            )
+            MembershipInternal(vault_id=vault_id, user_id=member_user_id, role=req.role)
         )
     except ValueError:
         raise HTTPException(
             status_code=404, detail="User is not a member of this vault"
         )
 
-    return MemberWithEmail(user_id=target_user.id, email=target_user.email, role=req.role)
+    return MemberWithEmail(
+        user_id=target_user.id, email=target_user.email, role=req.role
+    )
 
 
 @router.delete(

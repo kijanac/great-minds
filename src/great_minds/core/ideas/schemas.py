@@ -1,6 +1,5 @@
 """Pydantic schemas for ideas, anchors, and source cards."""
 
-
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict

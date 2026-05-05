@@ -16,7 +16,6 @@ Fully deterministic. Not cached: O(N²) Jaccard is cheap at the scale
 where N is "local topics across all chunks" (~600 at 10K-doc scale).
 """
 
-
 from collections import defaultdict
 from uuid import UUID
 
@@ -34,9 +33,7 @@ def run(
 
     # Sort for deterministic representative selection — the first member
     # of a union group (by this key) donates slug/title/description/id.
-    ordered = sorted(
-        local_topics, key=lambda t: (t.chunk_idx, str(t.local_topic_id))
-    )
+    ordered = sorted(local_topics, key=lambda t: (t.chunk_idx, str(t.local_topic_id)))
     n = len(ordered)
 
     parent = list(range(n))

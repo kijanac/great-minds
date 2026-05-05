@@ -16,9 +16,7 @@ from_hash was already set by validate's upsert; no additional update
 here.
 """
 
-
 import logging
-from collections import defaultdict
 from uuid import UUID
 
 from great_minds.core.pipeline.abstract.schemas import ValidatedCanonicalTopic

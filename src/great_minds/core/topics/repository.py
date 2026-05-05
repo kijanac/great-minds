@@ -5,7 +5,6 @@ route-level services (wiki endpoints). Keeps queries narrow; business
 logic around slug continuity / archive lives in topics.service.
 """
 
-
 from uuid import UUID
 
 from sqlalchemy import Float, cast as sa_cast, delete, func, or_, select
@@ -18,7 +17,13 @@ from great_minds.core.topics.models import (
     TopicORM,
     TopicRelatedORM,
 )
-from great_minds.core.topics.schemas import ArticleStatus, JaccardPair, RelatedTopic, Topic, TopicLink
+from great_minds.core.topics.schemas import (
+    ArticleStatus,
+    JaccardPair,
+    RelatedTopic,
+    Topic,
+    TopicLink,
+)
 
 
 class TopicRepository:
@@ -87,25 +92,33 @@ class TopicRepository:
         self, vault_id: UUID, status: ArticleStatus
     ) -> list[Topic]:
         rows = (
-            await self.session.execute(
-                select(TopicORM)
-                .where(
-                    TopicORM.vault_id == vault_id,
-                    TopicORM.article_status == status.value,
+            (
+                await self.session.execute(
+                    select(TopicORM)
+                    .where(
+                        TopicORM.vault_id == vault_id,
+                        TopicORM.article_status == status.value,
+                    )
+                    .order_by(TopicORM.title)
                 )
-                .order_by(TopicORM.title)
             )
-        ).scalars().all()
+            .scalars()
+            .all()
+        )
         return [Topic.model_validate(r) for r in rows]
 
     async def list_all(self, vault_id: UUID) -> list[Topic]:
         rows = (
-            await self.session.execute(
-                select(TopicORM)
-                .where(TopicORM.vault_id == vault_id)
-                .order_by(TopicORM.title)
+            (
+                await self.session.execute(
+                    select(TopicORM)
+                    .where(TopicORM.vault_id == vault_id)
+                    .order_by(TopicORM.title)
+                )
             )
-        ).scalars().all()
+            .scalars()
+            .all()
+        )
         return [Topic.model_validate(r) for r in rows]
 
     async def count_all(self, vault_id: UUID) -> int:
@@ -117,9 +130,7 @@ class TopicRepository:
             )
         ) or 0
 
-    async def count_by_status(
-        self, vault_id: UUID, status: ArticleStatus
-    ) -> int:
+    async def count_by_status(self, vault_id: UUID, status: ArticleStatus) -> int:
         return (
             await self.session.scalar(
                 select(func.count())
@@ -139,8 +150,7 @@ class TopicRepository:
         since last render).
         """
         result = await self.session.execute(
-            select(TopicORM.topic_id)
-            .where(
+            select(TopicORM.topic_id).where(
                 TopicORM.vault_id == vault_id,
                 TopicORM.article_status != ArticleStatus.ARCHIVED.value,
                 TopicORM.compiled_from_hash.is_not(None),
@@ -187,8 +197,7 @@ class TopicRepository:
             stmt = stmt.where(TopicLinkORM.source_topic_id.in_(source_topic_ids))
         rows = (await self.session.execute(stmt)).all()
         return [
-            TopicLink(source_topic_id=src, target_topic_id=tgt)
-            for src, tgt in rows
+            TopicLink(source_topic_id=src, target_topic_id=tgt) for src, tgt in rows
         ]
 
     async def set_archived(
@@ -228,12 +237,16 @@ class TopicRepository:
 
     async def get_membership(self, topic_id: UUID) -> list[UUID]:
         rows = (
-            await self.session.execute(
-                select(TopicMembershipORM.idea_id).where(
-                    TopicMembershipORM.topic_id == topic_id
+            (
+                await self.session.execute(
+                    select(TopicMembershipORM.idea_id).where(
+                        TopicMembershipORM.topic_id == topic_id
+                    )
                 )
             )
-        ).scalars().all()
+            .scalars()
+            .all()
+        )
         return list(rows)
 
     # -- Topic links (intent from reduce) ----------------------------------
@@ -247,10 +260,14 @@ class TopicRepository:
         vault, then bulk-inserting the new set.
         """
         vault_topic_ids = (
-            await self.session.execute(
-                select(TopicORM.topic_id).where(TopicORM.vault_id == vault_id)
+            (
+                await self.session.execute(
+                    select(TopicORM.topic_id).where(TopicORM.vault_id == vault_id)
+                )
             )
-        ).scalars().all()
+            .scalars()
+            .all()
+        )
         if vault_topic_ids:
             await self.session.execute(
                 delete(TopicLinkORM).where(
@@ -266,12 +283,16 @@ class TopicRepository:
 
     async def get_links_from(self, topic_id: UUID) -> list[UUID]:
         rows = (
-            await self.session.execute(
-                select(TopicLinkORM.target_topic_id).where(
-                    TopicLinkORM.source_topic_id == topic_id
+            (
+                await self.session.execute(
+                    select(TopicLinkORM.target_topic_id).where(
+                        TopicLinkORM.source_topic_id == topic_id
+                    )
                 )
             )
-        ).scalars().all()
+            .scalars()
+            .all()
+        )
         return list(rows)
 
     # -- Related (sidebar UI) ----------------------------------------------
@@ -299,17 +320,19 @@ class TopicRepository:
                 )
             )
 
-    async def get_related(
-        self, topic_id: UUID, limit: int = 20
-    ) -> list[RelatedTopic]:
+    async def get_related(self, topic_id: UUID, limit: int = 20) -> list[RelatedTopic]:
         rows = (
-            await self.session.execute(
-                select(TopicRelatedORM)
-                .where(TopicRelatedORM.topic_id == topic_id)
-                .order_by(TopicRelatedORM.jaccard.desc())
-                .limit(limit)
+            (
+                await self.session.execute(
+                    select(TopicRelatedORM)
+                    .where(TopicRelatedORM.topic_id == topic_id)
+                    .order_by(TopicRelatedORM.jaccard.desc())
+                    .limit(limit)
+                )
             )
-        ).scalars().all()
+            .scalars()
+            .all()
+        )
         return [RelatedTopic.model_validate(r) for r in rows]
 
     # -- Jaccard computation (SQL-side, replaces O(N²) Python) -----------

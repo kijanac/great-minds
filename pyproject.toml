@@ -25,6 +25,7 @@ dependencies = [
     "uvicorn>=0.44.0",
     "rich>=14.3.3",
     "typer>=0.24.1",
+    "numpy>=2.4.4",
 ]
 
 [project.scripts]

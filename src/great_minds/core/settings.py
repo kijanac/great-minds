@@ -54,9 +54,7 @@ class Settings(BaseSettings):
                 if not value
             ]
             if missing:
-                raise ValueError(
-                    f"storage_backend='r2' requires: {', '.join(missing)}"
-                )
+                raise ValueError(f"storage_backend='r2' requires: {', '.join(missing)}")
         return self
 
     compile_enrich_concurrency: int = 20

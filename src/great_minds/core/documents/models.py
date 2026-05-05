@@ -1,6 +1,5 @@
 """ORM models for the documents index."""
 
-
 import uuid
 from datetime import datetime
 
@@ -57,9 +56,7 @@ class DocumentORM(Base):
         ForeignKey("topics.topic_id", ondelete="CASCADE"),
     )
     precis: Mapped[str | None] = mapped_column(Text)
-    extra_metadata: Mapped[dict] = mapped_column(
-        "metadata", JSONB, server_default="{}"
-    )
+    extra_metadata: Mapped[dict] = mapped_column("metadata", JSONB, server_default="{}")
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )

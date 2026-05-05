@@ -6,7 +6,6 @@ existing file, merges new cards in by document_id, and rewrites. At
 streaming upserts.
 """
 
-
 from pathlib import Path
 from uuid import UUID
 

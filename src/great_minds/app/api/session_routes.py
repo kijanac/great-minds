@@ -150,9 +150,7 @@ async def promote_exchange(
                 document_id=str(existing_doc.id),
             )
     else:
-        existing_proposal = await proposal_service.find_pending_for_dest(
-            vault_id, dest
-        )
+        existing_proposal = await proposal_service.find_pending_for_dest(vault_id, dest)
         if existing_proposal is not None:
             return schemas.PromoteExchangeResponse(
                 mode="proposed",

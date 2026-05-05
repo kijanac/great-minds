@@ -92,7 +92,9 @@ async def ingest_upload(
 ) -> IngestResult:
     raw_bytes = await file.read()
     if not file.filename:
-        raise HTTPException(status_code=400, detail="Uploaded file must have a filename")
+        raise HTTPException(
+            status_code=400, detail="Uploaded file must have a filename"
+        )
     filename = file.filename
     metadata = SourceMetadata(
         content_type=content_type,

@@ -14,7 +14,6 @@ Example:
         --data-dir test_data --author "V.I. Lenin"
 """
 
-
 import argparse
 import asyncio
 import hashlib
@@ -78,9 +77,7 @@ async def main(
             ingested += 1
 
             fm, _ = parse_frontmatter(content_with_fm)
-            batch.append(
-                DocumentCreate.from_frontmatter(fm, dest, content_with_fm)
-            )
+            batch.append(DocumentCreate.from_frontmatter(fm, dest, content_with_fm))
 
             if len(batch) >= 50:
                 await doc_service.batch_index_raw_docs(vault_id, batch)
@@ -96,10 +93,15 @@ async def main(
 
 
 def parse_args() -> argparse.Namespace:
-    p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    p = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
     p.add_argument("vault_id", type=UUID)
     p.add_argument("source_dir", type=Path)
-    p.add_argument("dest_rel", help="Destination path relative to vault root, e.g. raw/texts/lenin/1897")
+    p.add_argument(
+        "dest_rel",
+        help="Destination path relative to vault root, e.g. raw/texts/lenin/1897",
+    )
     p.add_argument("--data-dir", type=Path, default=Path("/data"))
     p.add_argument("--author", default=None)
     return p.parse_args()

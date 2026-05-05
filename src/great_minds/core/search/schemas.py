@@ -7,7 +7,6 @@
 - ``SearchResult``: public, fused-and-ranked result returned to callers.
 """
 
-
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict

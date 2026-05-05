@@ -162,9 +162,7 @@ class DocumentRepository:
         )
         return [FileHash.model_validate(r) for r in result]
 
-    async def get_title_by_path(
-        self, vault_id: UUID, file_path: str
-    ) -> str | None:
+    async def get_title_by_path(self, vault_id: UUID, file_path: str) -> str | None:
         """Return just the LLM-generated title for a path, or None if the
         document isn't indexed or hasn't been extracted yet. Single
         indexed query — no tag JOIN, no full row hydration."""
@@ -177,9 +175,7 @@ class DocumentRepository:
         title = result.scalar_one_or_none()
         return title or None
 
-    async def get_by_path(
-        self, vault_id: UUID, file_path: str
-    ) -> Document | None:
+    async def get_by_path(self, vault_id: UUID, file_path: str) -> Document | None:
         """Return the single document at ``file_path`` for this vault, or None."""
         result = await self.session.execute(
             select(DocumentORM).where(
@@ -197,9 +193,7 @@ class DocumentRepository:
         tags = list(tag_rows.scalars().all())
         return _document_from_orm(row, tags=tags)
 
-    async def list_by_kind(
-        self, vault_id: UUID, kind: DocKind
-    ) -> list[Document]:
+    async def list_by_kind(self, vault_id: UUID, kind: DocKind) -> list[Document]:
         """Return all documents of a given kind, ordered by file_path.
 
         Used by extract (iterate raw docs) and render (resolve footnote
@@ -445,10 +439,7 @@ class DocumentRepository:
         for doc_id, tag in tag_result:
             tags_by_doc[doc_id].append(tag)
 
-        return [
-            _document_from_orm(orm, tags=tags_by_doc[orm.id])
-            for orm in docs
-        ]
+        return [_document_from_orm(orm, tags=tags_by_doc[orm.id]) for orm in docs]
 
     async def count_documents(
         self,
@@ -483,9 +474,7 @@ class DocumentRepository:
             await self.session.scalar(select(func.count()).select_from(filtered))
         ) or 0
 
-    async def get_content_type_counts(
-        self, vault_ids: list[UUID]
-    ) -> list[FacetCount]:
+    async def get_content_type_counts(self, vault_ids: list[UUID]) -> list[FacetCount]:
         """Return content_type facet counts for raw documents.
 
         Extracts the content type from file_path: raw/{content_type}/...

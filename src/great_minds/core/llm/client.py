@@ -21,7 +21,6 @@ Three call layers:
   the log.
 """
 
-
 import asyncio
 import json
 import logging
@@ -264,18 +263,14 @@ async def json_llm_call(
     kwargs.setdefault("response_format", {"type": "json_object"})
     total_attempts = max_parse_retries + 1
     for attempt in range(1, total_attempts + 1):
-        response = await api_call(
-            client, model=model, messages=messages, **kwargs
-        )
+        response = await api_call(client, model=model, messages=messages, **kwargs)
         raw = extract_content(response) or ""
         try:
             return json.loads(_strip_json_fencing(raw))
         except json.JSONDecodeError as e:
             is_final = attempt == total_attempts
             log_event(
-                "json_llm_parse_exhausted"
-                if is_final
-                else "json_llm_parse_retry",
+                "json_llm_parse_exhausted" if is_final else "json_llm_parse_retry",
                 level=logging.ERROR if is_final else logging.WARNING,
                 model=model,
                 attempt=attempt,

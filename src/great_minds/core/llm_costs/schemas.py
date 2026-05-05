@@ -1,6 +1,5 @@
 """Pydantic schemas for LLM cost events."""
 
-
 import uuid
 from datetime import datetime
 from decimal import Decimal

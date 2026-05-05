@@ -92,9 +92,7 @@ async def lifespan(app: FastAPI):
     # lifespan. To extract for multi-instance deployment, lift the loop
     # to a separate worker process or convert to a self-respawning
     # Absurd task. `reconcile_once` is the reusable unit.
-    reconciler = asyncio.create_task(
-        _reconciler_loop(sm, absurd, settings)
-    )
+    reconciler = asyncio.create_task(_reconciler_loop(sm, absurd, settings))
 
     yield {"session_maker": sm}
 
@@ -132,9 +130,7 @@ async def _reconciler_loop(
                     UserRepository(session),
                     settings,
                 )
-                await reconcile_once(
-                    intent_repo, task_service, vault_service, settings
-                )
+                await reconcile_once(intent_repo, task_service, vault_service, settings)
                 await session.commit()
         except Exception as exc:
             log_event(

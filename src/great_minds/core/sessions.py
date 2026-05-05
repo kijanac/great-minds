@@ -229,9 +229,7 @@ def _render_md(events: list[SessionEvent]) -> str:
     return "".join(parts).rstrip() + "\n"
 
 
-async def _append_event(
-    storage: Storage, session_id: str, event: SessionEvent
-) -> None:
+async def _append_event(storage: Storage, session_id: str, event: SessionEvent) -> None:
     path = f"sessions/{session_id}.jsonl"
     await storage.append(path, json.dumps(event.model_dump()) + "\n")
 
@@ -317,9 +315,7 @@ async def append_btw(
     return f"sessions/{session_id}.jsonl"
 
 
-async def load_events(
-    storage: Storage, session_id: str
-) -> list[SessionEvent]:
+async def load_events(storage: Storage, session_id: str) -> list[SessionEvent]:
     """Load all events from a session's JSONL file.
 
     Truncates at the first malformed line (partial write recovery).
@@ -350,9 +346,7 @@ def find_meta(events: list[SessionEvent]) -> MetaEvent | None:
     return None
 
 
-def find_exchange(
-    events: list[SessionEvent], exchange_id: str
-) -> ExchangeEvent | None:
+def find_exchange(events: list[SessionEvent], exchange_id: str) -> ExchangeEvent | None:
     """Return the ExchangeEvent with this exId, or None if missing."""
     for event in events:
         if isinstance(event, ExchangeEvent) and event.exId == exchange_id:
@@ -438,9 +432,7 @@ _SESSION_TITLE_SYSTEM = (
 )
 
 
-async def generate_session_title(
-    client: AsyncOpenAI, query: str, answer: str
-) -> str:
+async def generate_session_title(client: AsyncOpenAI, query: str, answer: str) -> str:
     """One-shot title for a promoted session exchange."""
     response = await api_call(
         client,

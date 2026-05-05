@@ -6,7 +6,6 @@ tokenized BM25 query string, query embedding vector) and never sees
 a tsquery or cosine operator.
 """
 
-
 import re
 from uuid import UUID
 
@@ -39,9 +38,7 @@ class SearchIndexRepository:
         )
         return [ChunkHash.model_validate(r) for r in rows]
 
-    async def delete_by_keys(
-        self, vault_id: UUID, keys: list[tuple[str, int]]
-    ) -> None:
+    async def delete_by_keys(self, vault_id: UUID, keys: list[tuple[str, int]]) -> None:
         """Bulk delete rows matching (path, chunk_index) pairs."""
         if not keys:
             return
@@ -69,9 +66,9 @@ class SearchIndexRepository:
         ]
         if current_keys:
             where_clauses.append(
-                ~tuple_(
-                    SearchIndexEntry.path, SearchIndexEntry.chunk_index
-                ).in_(current_keys)
+                ~tuple_(SearchIndexEntry.path, SearchIndexEntry.chunk_index).in_(
+                    current_keys
+                )
             )
         result = await self.session.execute(
             delete(SearchIndexEntry).where(*where_clauses)
@@ -117,9 +114,7 @@ class SearchIndexRepository:
 
     # -- Diagnostics -----------------------------------------------------
 
-    async def count_by_prefix(
-        self, vault_id: UUID, path_prefix: str
-    ) -> int:
+    async def count_by_prefix(self, vault_id: UUID, path_prefix: str) -> int:
         return (
             await self.session.scalar(
                 select(func.count())

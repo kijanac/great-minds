@@ -1,6 +1,6 @@
 """Auth repository: database operations for codes, tokens, and API keys."""
 
-from datetime import UTC, datetime, timedelta
+from datetime import timedelta
 from uuid import UUID
 
 from sqlalchemy import func, select, update
@@ -30,8 +30,7 @@ class AuthRepository:
         auth_code = AuthCode(
             email=email,
             code_hash=hash_code(code),
-            expires_at=db_now
-            + timedelta(minutes=settings.auth_code_expiry_minutes),
+            expires_at=db_now + timedelta(minutes=settings.auth_code_expiry_minutes),
         )
         self.session.add(auth_code)
         return auth_code
@@ -59,8 +58,7 @@ class AuthRepository:
         rt = RefreshToken(
             user_id=user_id,
             token_hash=hash_refresh_token(refresh_token),
-            expires_at=db_now
-            + timedelta(days=settings.jwt_refresh_expiry_days),
+            expires_at=db_now + timedelta(days=settings.jwt_refresh_expiry_days),
         )
         self.session.add(rt)
         return rt
@@ -90,7 +88,9 @@ class AuthRepository:
         orm_user = result.scalar_one_or_none()
         return UserSchema.model_validate(orm_user) if orm_user else None
 
-    async def store_api_key(self, user_id: UUID, raw_key: str, label: str) -> ApiKeySchema:
+    async def store_api_key(
+        self, user_id: UUID, raw_key: str, label: str
+    ) -> ApiKeySchema:
         api_key = ApiKeyORM(
             user_id=user_id,
             key_hash=hash_api_key(raw_key),

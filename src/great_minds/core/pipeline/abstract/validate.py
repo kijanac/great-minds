@@ -23,7 +23,6 @@ Mechanical + one unified LLM cleanup call:
 Output is list[ValidatedCanonicalTopic] — what phase 3 derive consumes.
 """
 
-
 import logging
 from dataclasses import dataclass
 from uuid import UUID
@@ -227,9 +226,7 @@ async def _cleanup_llm_call(
             continue
         successor_idx: int | None = None
         if successor_tag:
-            successor_idx = _tag_to_index(
-                successor_tag, "c_", len(canonical_topics)
-            )
+            successor_idx = _tag_to_index(successor_tag, "c_", len(canonical_topics))
         supersessions[topic_id] = successor_idx
 
     return _CleanupOutput(slug_renames=slug_renames, supersessions=supersessions)
@@ -239,7 +236,7 @@ def _tag_to_index(tag: str, prefix: str, upper_bound: int) -> int | None:
     if not tag.startswith(prefix):
         return None
     try:
-        n = int(tag[len(prefix):])
+        n = int(tag[len(prefix) :])
     except ValueError:
         return None
     idx = n - 1
@@ -273,7 +270,10 @@ def _render_collision_block(collisions: dict[str, list[int]]) -> str:
 def _render_supersession_block(archive_candidates: list[Topic]) -> str:
     if not archive_candidates:
         return ""
-    lines = ["## Archived candidates (previous-compile topics with no matching slug)", ""]
+    lines = [
+        "## Archived candidates (previous-compile topics with no matching slug)",
+        "",
+    ]
     for i, t in enumerate(archive_candidates, start=1):
         lines.append(f"## a_{i}")
         lines.append(f"slug: {t.slug}")
@@ -340,7 +340,7 @@ async def _assign_topic_ids(
         for s in c.merged_local_topic_ids:
             try:
                 merged_uuids.append(UUID(s))
-            except (ValueError, TypeError):
+            except ValueError, TypeError:
                 continue
         subsumed: set[UUID] = set()
         for lt_id in merged_uuids:

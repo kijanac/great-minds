@@ -85,7 +85,9 @@ class AuthService:
         rt.revoked = True
         access_token = create_access_token(rt.user_id, self.settings)
         refresh_token = create_refresh_token_value()
-        await self.auth_repo.store_refresh_token(rt.user_id, refresh_token, self.settings)
+        await self.auth_repo.store_refresh_token(
+            rt.user_id, refresh_token, self.settings
+        )
 
         await self._commit()
         return TokenPair(access_token=access_token, refresh_token=refresh_token)

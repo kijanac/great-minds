@@ -682,9 +682,7 @@ async def _build_origin_messages(
 # ---------------------------------------------------------------------------
 
 
-async def _load_tools(
-    vault: QuerySource, doc_service: DocumentService
-) -> list[dict]:
+async def _load_tools(vault: QuerySource, doc_service: DocumentService) -> list[dict]:
     """Load tag vocabulary from DB and build the full tool list."""
     tags = await doc_service.get_distinct_tags([vault.vault_id])
     return build_tools(tags)
@@ -743,7 +741,9 @@ async def run_query(
             "data": {"message": "all models failed — try again in a minute"},
         }
     finally:
-        await _finalize_wide_event(doc_service, user_id=user_id, vault_id=vault.vault_id)
+        await _finalize_wide_event(
+            doc_service, user_id=user_id, vault_id=vault.vault_id
+        )
 
 
 async def _finalize_wide_event(

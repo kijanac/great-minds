@@ -18,7 +18,6 @@ key. No LLM fallback — a render flake surfaces via missing article,
 not degraded content.
 """
 
-
 import asyncio
 import logging
 import re
@@ -44,7 +43,7 @@ from great_minds.core.ideas.source_cards import SourceCardStore, index_ideas_by_
 from great_minds.core.llm import RENDER_MODEL
 from great_minds.core.pipeline.abstract.schemas import ValidatedCanonicalTopic
 from great_minds.core.pipeline.context import PipelineContext
-from great_minds.core.search import rebuild_wiki_index
+from great_minds.core.indexing import rebuild_wiki_index
 from great_minds.core.settings import get_settings
 from great_minds.core.telemetry import enrich, log_event
 from great_minds.core.topics.repository import TopicRepository
@@ -94,7 +93,7 @@ async def run(
         return
 
     prompt_template = await load_prompt(ctx.storage, "render")
-    prompt_hash = prompt_hash(prompt_template)
+    ph = prompt_hash(prompt_template)
 
     # Pre-pass: one storage list + N in-memory cache checks decides which
     # topics actually need rendering. On a full-cache-hit replay this
@@ -108,12 +107,9 @@ async def run(
             topic_id=topic.topic_id,
             compiled_from_hash=_topic_content_hash(topic),
             link_targets=topic.link_targets,
-            prompt_hash=prompt_hash,
+            prompt_hash=ph,
         )
-        if (
-            ctx.cache.has(PHASE, cache_key)
-            and wiki_path(topic.slug) in existing_wiki
-        ):
+        if ctx.cache.has(PHASE, cache_key) and wiki_path(topic.slug) in existing_wiki:
             cache_hits += 1
             continue
         to_render.append(topic)
@@ -156,7 +152,7 @@ async def run(
             doc_by_id=doc_by_id,
             topic_by_slug=topic_by_slug,
             prompt_template=prompt_template,
-            prompt_hash=prompt_hash,
+            prompt_hash=ph,
         )
         for v in to_render
     ]
@@ -244,9 +240,7 @@ async def _render_one(
         idea_by_id=idea_by_id,
         doc_by_id=doc_by_id,
     )
-    link_targets_block = _render_link_targets_block(
-        topic.link_targets, topic_by_slug
-    )
+    link_targets_block = _render_link_targets_block(topic.link_targets, topic_by_slug)
     prompt = (
         prompt_template.replace("{title}", topic.title)
         .replace("{description}", topic.description)
@@ -354,9 +348,7 @@ def _build_numbered_anchors(
         for anchor in idea.anchors:
             counter += 1
             out.append(
-                _NumberedAnchor(
-                    number=counter, anchor=anchor, idea=idea, doc=doc
-                )
+                _NumberedAnchor(number=counter, anchor=anchor, idea=idea, doc=doc)
             )
     return out
 
@@ -389,9 +381,7 @@ def _render_idea_block(
             lines.append(f"Source: (unresolved document {idea.document_id})")
 
         for na in anchors_by_idea.get(idea_id, []):
-            lines.append(
-                f"[^{na.number}] claim: {na.anchor.claim}"
-            )
+            lines.append(f"[^{na.number}] claim: {na.anchor.claim}")
             lines.append(f'     quote: "{na.anchor.quote.strip()}"')
         lines.append("")
 

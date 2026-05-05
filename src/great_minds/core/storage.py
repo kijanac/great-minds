@@ -20,7 +20,6 @@ they're machine-local filesystem paths managed directly. See
 ``great_minds.core.paths`` for the split.
 """
 
-
 import asyncio
 import fnmatch
 import logging
@@ -331,9 +330,7 @@ class R2Storage:
 
     async def clear(self) -> None:
         """Delete every key under this vault's prefix. Bucket stays intact."""
-        deleted, latency_ms = await self._timed(
-            "clear", self.prefix, self._clear_sync
-        )
+        deleted, latency_ms = await self._timed("clear", self.prefix, self._clear_sync)
         log_event(
             "storage.r2_op",
             op="clear",

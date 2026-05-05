@@ -2,7 +2,7 @@
 
 from pydantic import BaseModel
 
-from great_minds.core.pagination import Page, PageInfo
+from great_minds.core.pagination import Page
 from great_minds.core.vaults.models import MemberRole
 from great_minds.core.vaults.schemas import Vault
 

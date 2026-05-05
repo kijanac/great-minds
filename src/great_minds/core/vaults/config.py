@@ -25,7 +25,6 @@ Shape:
         ...
 """
 
-
 from dataclasses import dataclass, field
 from io import StringIO
 

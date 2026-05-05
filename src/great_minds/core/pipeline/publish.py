@@ -10,7 +10,6 @@ sources. The log is a human-readable timeline for understanding
 registry drift between compiles.
 """
 
-
 import logging
 from datetime import datetime, timezone
 
@@ -27,7 +26,7 @@ from great_minds.core.paths import (
     wiki_path,
 )
 from great_minds.core.pipeline.context import PipelineContext
-from great_minds.core.search import count_chunks_by_prefix
+from great_minds.core.indexing import count_chunks_by_prefix
 from great_minds.core.telemetry import enrich, log_event
 from great_minds.core.topics.repository import TopicRepository
 from great_minds.core.topics.schemas import ArticleStatus, Topic
@@ -117,9 +116,7 @@ async def _write_raw_index(ctx: PipelineContext, docs: list[Document]) -> None:
         meta_suffix = f" — {', '.join(meta_bits)}" if meta_bits else ""
         precis = (metadata.precis or "").strip().replace("\n", " ")
         precis_suffix = f"  \n  {precis}" if precis else ""
-        lines.append(
-            f"- [{metadata.title}]({d.file_path}){meta_suffix}{precis_suffix}"
-        )
+        lines.append(f"- [{metadata.title}]({d.file_path}){meta_suffix}{precis_suffix}")
     lines.append("")
     await ctx.storage.write(RAW_INDEX_PATH, "\n".join(lines))
 
@@ -142,9 +139,7 @@ async def _gather_log_counts(ctx: PipelineContext) -> CompileLogCounts:
         ),
         topics_dirty=await topic_repo.count_dirty(ctx.vault_id),
         docs_raw=await doc_repo.count_by_kind(ctx.vault_id, DocKind.RAW),
-        chunks_raw=await count_chunks_by_prefix(
-            ctx.session, ctx.vault_id, RAW_PREFIX
-        ),
+        chunks_raw=await count_chunks_by_prefix(ctx.session, ctx.vault_id, RAW_PREFIX),
         chunks_wiki=await count_chunks_by_prefix(
             ctx.session, ctx.vault_id, WIKI_PREFIX
         ),
@@ -177,6 +172,4 @@ def _append_compile_log(ctx: PipelineContext, counts: CompileLogCounts) -> None:
 
 
 async def _load_raw_documents(ctx: PipelineContext) -> list[Document]:
-    return await DocumentRepository(ctx.session).list_by_kind(
-        ctx.vault_id, DocKind.RAW
-    )
+    return await DocumentRepository(ctx.session).list_by_kind(ctx.vault_id, DocKind.RAW)

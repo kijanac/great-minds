@@ -1,6 +1,5 @@
 """Cost aggregation API schemas."""
 
-
 from decimal import Decimal
 
 from pydantic import BaseModel

@@ -21,7 +21,6 @@ Callers that want a summary (CLI, task worker) read wide_event
 directly — no typed Result flows through.
 """
 
-
 from great_minds.core.pipeline import (
     abstract,
     derive,

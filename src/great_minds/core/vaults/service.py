@@ -7,7 +7,6 @@ from great_minds.core.vaults.config import (
     apply_vault_config_overrides,
     load_default_config_text,
 )
-from great_minds.core.vaults.models import MemberRole
 from great_minds.core.vaults.repository import VaultRepository
 from great_minds.core.vaults.schemas import (
     MemberWithEmail,
@@ -102,9 +101,7 @@ class VaultService:
         commit: bool = True,
     ) -> Vault:
         bucket_name = await self._ensure_owner_bucket(owner_id)
-        vault = await self.repo.create_vault(
-            name, owner_id, r2_bucket_name=bucket_name
-        )
+        vault = await self.repo.create_vault(name, owner_id, r2_bucket_name=bucket_name)
         await self._init_vault_storage(vault)
         if thematic_hint is not None or kinds is not None:
             await apply_vault_config_overrides(
@@ -169,17 +166,13 @@ class VaultService:
             raise ValueError(f"User {owner_id} not found")
         if user.r2_bucket_name:
             return user.r2_bucket_name
-        bucket_name = derive_user_bucket_name(
-            self.settings.r2_bucket_prefix, owner_id
-        )
+        bucket_name = derive_user_bucket_name(self.settings.r2_bucket_prefix, owner_id)
         admin = R2Admin(
             account_id=self.settings.r2_account_id,
             access_key_id=self.settings.r2_access_key_id,
             secret_access_key=self.settings.r2_secret_access_key,
         )
-        await admin.ensure_bucket(
-            bucket_name, cors_origins=self.settings.cors_origins
-        )
+        await admin.ensure_bucket(bucket_name, cors_origins=self.settings.cors_origins)
         await self.user_repo.set_r2_bucket_name(owner_id, bucket_name)
         return bucket_name
 

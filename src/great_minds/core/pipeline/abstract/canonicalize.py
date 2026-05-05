@@ -18,7 +18,6 @@ canonical — are logged as a quality signal but don't fail the phase;
 a lossy registry still beats no registry, and the user can re-run.
 """
 
-
 import logging
 from uuid import UUID
 
@@ -54,14 +53,14 @@ async def run(
         return []
 
     prompt_template = await load_prompt(ctx.storage, "canonicalize")
-    prompt_hash = prompt_hash(prompt_template)
+    ph = prompt_hash(prompt_template)
 
     ordered = sorted(local_topics, key=lambda t: str(t.local_topic_id))
     tag_to_uuid, local_topic_block = _render_local_topics(ordered)
 
     cache_key = _cache_key(
         ordered=ordered,
-        prompt_hash=prompt_hash,
+        prompt_hash=ph,
         thematic_hint=ctx.config.thematic_hint,
     )
 
@@ -109,11 +108,7 @@ async def run(
     ctx.cache.put(
         PHASE,
         cache_key,
-        {
-            "canonical_topics": [
-                c.model_dump(mode="json") for c in canonical_topics
-            ]
-        },
+        {"canonical_topics": [c.model_dump(mode="json") for c in canonical_topics]},
     )
 
     enrich(
@@ -166,8 +161,7 @@ def _render_prompt(
     hint_block = ""
     if thematic_hint.strip():
         hint_block = (
-            "The wiki's editorial lens for this vault:\n\n"
-            f"{thematic_hint.strip()}\n\n"
+            f"The wiki's editorial lens for this vault:\n\n{thematic_hint.strip()}\n\n"
         )
     return prompt_template.replace("{thematic_hint_block}", hint_block).replace(
         "{local_topic_block}", local_topic_block
@@ -224,7 +218,7 @@ def _covered_local_ids(
         for s in c.merged_local_topic_ids:
             try:
                 covered.add(UUID(s))
-            except (ValueError, TypeError):
+            except ValueError, TypeError:
                 continue
     return covered & all_uuids
 

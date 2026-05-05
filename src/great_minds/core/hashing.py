@@ -12,7 +12,6 @@ content hashing — route through this module instead.  Auth security
 hashing lives in ``great_minds.core.crypto`` and is a separate concern.
 """
 
-
 import hashlib
 import struct
 

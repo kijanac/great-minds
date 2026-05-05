@@ -240,9 +240,7 @@ class IngestService:
         )
 
 
-def _metadata_extras(
-    metadata: SourceMetadata, *, exclude_title: bool = False
-) -> dict:
+def _metadata_extras(metadata: SourceMetadata, *, exclude_title: bool = False) -> dict:
     """Project SourceMetadata into **extras kwargs for ``write_document``.
 
     ``content_type`` and ``source_type`` are passed positionally; title

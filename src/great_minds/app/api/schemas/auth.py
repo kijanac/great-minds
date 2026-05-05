@@ -2,8 +2,6 @@ from typing import Literal
 
 from pydantic import BaseModel, EmailStr
 
-from great_minds.core.auth.schemas import ApiKey, ApiKeyWithSecret
-
 
 class ApiKeyCreate(BaseModel):
     label: str

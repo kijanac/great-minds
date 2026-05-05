@@ -1,6 +1,5 @@
 """ORM for llm_cost_events."""
 
-
 import uuid
 from datetime import datetime
 from decimal import Decimal

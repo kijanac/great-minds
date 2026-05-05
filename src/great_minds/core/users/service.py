@@ -1,6 +1,5 @@
 """User service: provisioning and lifecycle."""
 
-
 import logging
 from typing import TYPE_CHECKING
 from uuid import UUID

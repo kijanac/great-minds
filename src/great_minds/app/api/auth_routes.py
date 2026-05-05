@@ -34,9 +34,7 @@ async def verify_code(
     vault_service: VaultServiceDep,
 ) -> TokenPair:
     try:
-        token_pair = await auth_service.verify_code(
-            req.email, req.code
-        )
+        token_pair = await auth_service.verify_code(req.email, req.code)
     except ValueError:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid or expired code"
@@ -51,9 +49,7 @@ async def refresh(
     auth_service: AuthServiceDep,
 ) -> TokenPair:
     try:
-        return await auth_service.refresh_tokens(
-            req.refresh_token
-        )
+        return await auth_service.refresh_tokens(req.refresh_token)
     except ValueError:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,

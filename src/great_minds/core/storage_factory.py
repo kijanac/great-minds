@@ -6,7 +6,6 @@ For the R2 backend the bucket is per-user (provisioned by
 callers must pass a ``Vault`` — the vault carries its bucket name.
 """
 
-
 from pathlib import Path
 
 from great_minds.core.vaults.schemas import Vault

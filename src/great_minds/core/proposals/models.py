@@ -1,4 +1,3 @@
-
 import enum
 import uuid
 from datetime import datetime
@@ -49,4 +48,3 @@ class ProposalORM(Base):
 
     vault: Mapped["VaultORM"] = relationship("VaultORM")
     user: Mapped["UserORM"] = relationship("UserORM", foreign_keys=[user_id])
-

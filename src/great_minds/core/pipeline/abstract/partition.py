@@ -11,7 +11,6 @@ per-idea line + doc header + precis. Approximation uses chars/4 for
 speed — exact tokenization isn't needed for cluster-count rounding.
 """
 
-
 import logging
 import math
 from uuid import UUID
@@ -34,9 +33,7 @@ KMEANS_SEED = 42
 KMEANS_N_INIT = 10
 
 
-async def run(
-    ctx: PipelineContext, source_cards: list[SourceCard]
-) -> list[list[UUID]]:
+async def run(ctx: PipelineContext, source_cards: list[SourceCard]) -> list[list[UUID]]:
     settings = get_settings()
     target = settings.compile_partition_target_tokens
     max_tokens = int(target * settings.compile_partition_max_factor)
@@ -173,9 +170,7 @@ def _seeded_kmeans(
     return {iid: int(lab) for iid, lab in zip(id_order, labels)}
 
 
-def _group_by_label(
-    id_order: list[UUID], labels: dict[UUID, int]
-) -> list[list[UUID]]:
+def _group_by_label(id_order: list[UUID], labels: dict[UUID, int]) -> list[list[UUID]]:
     grouped: dict[int, list[UUID]] = {}
     for iid in id_order:
         grouped.setdefault(labels[iid], []).append(iid)
@@ -200,7 +195,9 @@ def _rebalance(
         for chunk in chunks
         for split in _split_recursively(chunk, tokens_per_idea, embeddings, max_tokens)
     ]
-    chunks = _merge_undersize(chunks, tokens_per_idea, embeddings, min_tokens, max_tokens)
+    chunks = _merge_undersize(
+        chunks, tokens_per_idea, embeddings, min_tokens, max_tokens
+    )
     return chunks
 
 

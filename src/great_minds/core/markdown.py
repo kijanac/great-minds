@@ -17,7 +17,6 @@ in walk output but don't increment the paragraph counter and don't
 get ``^pN`` anchors.
 """
 
-
 import re
 from dataclasses import dataclass
 from io import StringIO
@@ -168,9 +167,7 @@ def normalized_bodies(paras: list[Paragraph]) -> list[tuple[int, str]]:
     return [(p.index, _normalize(p.body)) for p in paras]
 
 
-def paragraph_for_quote(
-    quote: str, bodies: list[tuple[int, str]]
-) -> int | None:
+def paragraph_for_quote(quote: str, bodies: list[tuple[int, str]]) -> int | None:
     """Return the paragraph index whose body contains ``quote``.
 
     Whitespace-normalized substring match against pre-normalized bodies

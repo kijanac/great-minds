@@ -12,7 +12,6 @@ via documents.builder.load_field_specs and formatted into the prompt's
 {extra_fields} slot. Universal fields (genre, tags) are hardcoded.
 """
 
-
 import asyncio
 import json
 import logging
@@ -50,7 +49,7 @@ from great_minds.core.llm.providers import (
     EMBEDDING_MODEL,
 )
 from great_minds.core.pipeline.context import PipelineContext
-from great_minds.core.search import _truncate_and_normalize
+from great_minds.core.llm import truncate_and_normalize
 from great_minds.core.settings import get_settings
 from great_minds.core.telemetry import enrich, log_event
 
@@ -71,7 +70,7 @@ async def run(ctx: PipelineContext) -> None:
     """
     settings = get_settings()
     prompt_template = await load_prompt(ctx.storage, "extract")
-    prompt_hash = prompt_hash(prompt_template)
+    ph = prompt_hash(prompt_template)
     kinds_key = "|".join(sorted(ctx.config.kinds))
 
     docs = await _load_documents(ctx.session, ctx.vault_id)
@@ -86,7 +85,7 @@ async def run(ctx: PipelineContext) -> None:
             source_type=doc.metadata.source_type,
             body_hash=doc.body_hash,
             prompt_template=prompt_template,
-            prompt_hash=prompt_hash,
+            prompt_hash=ph,
             kinds_key=kinds_key,
         )
         for doc in docs
@@ -184,9 +183,7 @@ async def run(ctx: PipelineContext) -> None:
     )
     for doc_id in fresh_source_cards:
         await idea_repo.delete_for_document(doc_id)
-    await idea_service.record_extractions(
-        cards, cached_embeddings + fresh_embeddings
-    )
+    await idea_service.record_extractions(cards, cached_embeddings + fresh_embeddings)
     await DocumentRepository(ctx.session).update_metadata_from_cards(
         ctx.vault_id, cards
     )
@@ -433,17 +430,12 @@ async def _embed_in_batches(
     for start in range(0, len(inputs), EMBEDDING_BATCH_SIZE):
         batch_inputs = inputs[start : start + EMBEDDING_BATCH_SIZE]
         texts = [
-            f"{idea.label}. {idea.description}".strip()
-            for _, _, idea in batch_inputs
+            f"{idea.label}. {idea.description}".strip() for _, _, idea in batch_inputs
         ]
-        response = await client.embeddings.create(
-            model=EMBEDDING_MODEL, input=texts
-        )
+        response = await client.embeddings.create(model=EMBEDDING_MODEL, input=texts)
         out: list[IdeaEmbedding] = []
-        for (vault_id, document_id, idea), item in zip(
-            batch_inputs, response.data
-        ):
-            vec = _truncate_and_normalize(item.embedding, EMBEDDING_DIMENSIONS)
+        for (vault_id, document_id, idea), item in zip(batch_inputs, response.data):
+            vec = truncate_and_normalize(item.embedding, EMBEDDING_DIMENSIONS)
             out.append(
                 IdeaEmbedding(
                     idea_id=idea.idea_id,

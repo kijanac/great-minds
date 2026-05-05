@@ -5,7 +5,6 @@ use it too but typically operate on the repository directly for bulk
 operations.
 """
 
-
 from uuid import UUID
 
 from great_minds.core.topics.repository import TopicRepository

@@ -61,10 +61,7 @@ async def lint(
 ) -> LintReportResponse:
     report = await build_lint_report(session, vault_id, storage)
     return LintReportResponse(
-        orphans=[
-            OrphanResponse(slug=o.slug, title=o.title)
-            for o in report.orphans
-        ],
+        orphans=[OrphanResponse(slug=o.slug, title=o.title) for o in report.orphans],
         dirty_topics=report.dirty_topics,
         unresolved_citations=[
             UnresolvedCitationResponse(

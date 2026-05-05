@@ -9,9 +9,8 @@ Wiki re-chunking lives in phase 4 (render), which calls rebuild_wiki_index
 after writing articles.
 """
 
-
 from great_minds.core.pipeline.context import PipelineContext
-from great_minds.core.search import rebuild_raw_index
+from great_minds.core.indexing import rebuild_raw_index
 from great_minds.core.telemetry import enrich, log_event
 
 

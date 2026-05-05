@@ -248,9 +248,7 @@ def upgrade() -> None:
         "ix_compile_intents_dispatched_unsatisfied",
         "compile_intents",
         ["dispatched_at"],
-        postgresql_where=sa.text(
-            "dispatched_at IS NOT NULL AND satisfied_at IS NULL"
-        ),
+        postgresql_where=sa.text("dispatched_at IS NOT NULL AND satisfied_at IS NULL"),
     )
 
     # -- LLM cost events (one row per cost-bearing wide_event) ------------
@@ -447,9 +445,7 @@ def upgrade() -> None:
         )
     )
     op.execute(text("CREATE INDEX ix_topics_vault_id ON topics (vault_id)"))
-    op.execute(
-        text("CREATE INDEX ix_topics_article_status ON topics (article_status)")
-    )
+    op.execute(text("CREATE INDEX ix_topics_article_status ON topics (article_status)"))
 
     # -- Topic membership (topic <-> idea edges, derived) ------------------
     op.execute(
@@ -464,10 +460,7 @@ def upgrade() -> None:
         )
     )
     op.execute(
-        text(
-            "CREATE INDEX ix_topic_membership_idea_id "
-            "ON topic_membership (idea_id)"
-        )
+        text("CREATE INDEX ix_topic_membership_idea_id ON topic_membership (idea_id)")
     )
 
     # -- Topic links (intentional citations from reduce's link_targets) ---
@@ -483,10 +476,7 @@ def upgrade() -> None:
         )
     )
     op.execute(
-        text(
-            "CREATE INDEX ix_topic_links_target "
-            "ON topic_links (target_topic_id)"
-        )
+        text("CREATE INDEX ix_topic_links_target ON topic_links (target_topic_id)")
     )
 
     # -- Topic related (shared-idea Jaccard, for sidebar UI) ---------------

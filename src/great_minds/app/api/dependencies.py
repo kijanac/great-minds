@@ -37,6 +37,7 @@ async def get_session(request: Request) -> AsyncSession:
     async with sm() as session:
         yield session
 
+
 bearer_scheme = HTTPBearer()
 
 

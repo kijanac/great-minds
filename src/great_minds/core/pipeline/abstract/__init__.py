@@ -14,7 +14,6 @@ each sub-step's output into the next. Returning composed results
 rather than mutating a bag keeps each sub-phase's contract explicit.
 """
 
-
 from great_minds.core.ideas.source_cards import SourceCardStore
 from great_minds.core.paths import source_cards_path
 from great_minds.core.pipeline.abstract import (

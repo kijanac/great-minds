@@ -15,7 +15,6 @@ Usage:
     uv run python scripts/test_convergence.py
 """
 
-
 import asyncio
 from uuid import UUID
 
@@ -126,17 +125,13 @@ def test_content_hash_determinism() -> None:
     )
 
     # Different idea set → different hash
-    assert _topic_content_hash(make()) != _topic_content_hash(
-        make(subsumed=[i1, i2])
-    )
+    assert _topic_content_hash(make()) != _topic_content_hash(make(subsumed=[i1, i2]))
 
     # Different title → different hash
     assert _topic_content_hash(make()) != _topic_content_hash(make(title="OTHER"))
 
     # Different description → different hash
-    assert _topic_content_hash(make()) != _topic_content_hash(
-        make(description="OTHER")
-    )
+    assert _topic_content_hash(make()) != _topic_content_hash(make(description="OTHER"))
     print("✓ content_hash_determinism")
 
 

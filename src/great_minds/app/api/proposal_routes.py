@@ -9,7 +9,7 @@ import logging
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, HTTPException, Query, status
+from fastapi import APIRouter, HTTPException, Query
 
 from great_minds.app.api.dependencies import (
     VaultOwnerGuard,
@@ -19,7 +19,11 @@ from great_minds.app.api.dependencies import (
 )
 from great_minds.core.pagination import Page
 from great_minds.core.proposals import ProposalStatus
-from great_minds.core.proposals.schemas import Proposal, ProposalOverview, ProposalUpdate
+from great_minds.core.proposals.schemas import (
+    Proposal,
+    ProposalOverview,
+    ProposalUpdate,
+)
 
 log = logging.getLogger(__name__)
 
