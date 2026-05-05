@@ -171,6 +171,11 @@ def create_app() -> FastAPI:
     def health() -> dict[str, str]:
         return {"status": "ok"}
 
+    @app.head("/")
+    @app.get("/")
+    def root() -> dict[str, str]:
+        return {"status": "ok"}
+
     app.include_router(v1_router)
 
     return app
