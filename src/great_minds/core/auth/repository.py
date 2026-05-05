@@ -21,19 +21,24 @@ class AuthRepository:
     async def store_auth_code(
         self, email: str, code: str, settings: Settings
     ) -> AuthCode:
+        import logging
+        log = logging.getLogger(__name__)
         await self.session.execute(
             update(AuthCode)
             .where(AuthCode.email == email, AuthCode.used == False)
             .values(used=True)
         )
         db_now = await self.session.scalar(func.now())
+        code_hash = hash_code(code)
         auth_code = AuthCode(
             email=email,
-            code_hash=hash_code(code),
+            code_hash=code_hash,
             expires_at=db_now
             + timedelta(minutes=settings.auth_code_expiry_minutes),
         )
         self.session.add(auth_code)
+        await self.session.flush()
+        log.info("store_auth_code email=%s code_hash=%s expires=%s", email, code_hash, auth_code.expires_at)
         return auth_code
 
     async def verify_auth_code(self, email: str, code: str) -> bool:
