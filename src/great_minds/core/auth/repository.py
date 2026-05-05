@@ -38,16 +38,30 @@ class AuthRepository:
 
     async def verify_auth_code(self, email: str, code: str) -> bool:
         code_h = hash_code(code)
+        db_now = await self.session.scalar(func.now())
+        import logging
+        log = logging.getLogger(__name__)
+        log.info("verify_auth_code email=%s code_hash=%s db_now=%s", email, code_h, db_now)
         result = await self.session.execute(
             select(AuthCode).where(
                 AuthCode.email == email,
                 AuthCode.code_hash == code_h,
                 AuthCode.used == False,
-                AuthCode.expires_at > func.now(),
+                AuthCode.expires_at > db_now,
             )
         )
         auth_code = result.scalar_one_or_none()
         if auth_code is None:
+            any_for_email = await self.session.execute(
+                select(AuthCode).where(AuthCode.email == email)
+            )
+            all_rows = any_for_email.scalars().all()
+            for row in all_rows:
+                log.info(
+                    "existing code: hash=%s used=%s expires=%s db_now=%s expired=%s",
+                    row.code_hash, row.used, row.expires_at, db_now,
+                    row.expires_at <= db_now if row.expires_at else "N/A",
+                )
             return False
         auth_code.used = True
         return True
