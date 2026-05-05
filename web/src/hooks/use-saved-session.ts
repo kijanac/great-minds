@@ -1,6 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 
-import { loadSession, type SessionEvent, type SessionResponse } from "@/api/sessions";
+import { loadSession, type SessionEvent } from "@/api/sessions";
 import { useActiveVaultId } from "@/hooks/use-vault";
 import type { BtwThread, Exchange } from "@/lib/types";
 

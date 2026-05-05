@@ -9,8 +9,8 @@ import {
 
 const btwExchangeSchema = z.object({
   query: z.string(),
-  thinking: z.array(thinkingBlockSchema).default([]),
-  answer: z.string().default(""),
+  thinking: z.array(thinkingBlockSchema),
+  answer: z.string(),
 });
 
 export type BtwExchange = z.infer<typeof btwExchangeSchema>;
