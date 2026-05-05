@@ -15,8 +15,10 @@ import time
 from uuid import UUID
 
 import boto3
+from botocore.config import Config as BotoConfig
 from botocore.exceptions import ClientError
 
+from great_minds.core.settings import get_settings
 from great_minds.core.telemetry import log_event
 
 log = logging.getLogger(__name__)
@@ -55,6 +57,9 @@ class R2Admin:
             aws_access_key_id=access_key_id,
             aws_secret_access_key=secret_access_key,
             region_name="auto",
+            config=BotoConfig(
+                max_pool_connections=get_settings().compile_enrich_concurrency
+            ),
         )
 
     def _head_sync(self, bucket: str) -> bool:

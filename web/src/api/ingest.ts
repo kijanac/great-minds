@@ -113,13 +113,17 @@ export async function* ingestBulk(
 ): AsyncGenerator<BulkUploadProgress> {
   if (files.length === 0) return;
 
-  const manifest = await Promise.all(
-    files.map(async (f) => ({
+  // Build manifest with bounded concurrency so we don't exhaust browser
+  // file handles or memory when reading thousands of files at once.
+  const manifest = await pMap(
+    files,
+    async (f) => ({
       name: f.name,
       size: f.size,
       hash: await sha256Hex(await f.arrayBuffer()),
       mimetype: f.type,
-    })),
+    }),
+    PUT_CONCURRENCY,
   );
 
   // 1. sign

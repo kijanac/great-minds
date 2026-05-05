@@ -30,7 +30,10 @@ from pathlib import Path
 from typing import Protocol, TypeVar, runtime_checkable
 
 import boto3
+from botocore.config import Config as BotoConfig
 from botocore.exceptions import ClientError
+
+from great_minds.core.settings import get_settings
 
 from great_minds.core.telemetry import log_event
 
@@ -132,6 +135,9 @@ class R2Storage:
             aws_access_key_id=access_key_id,
             aws_secret_access_key=secret_access_key,
             region_name="auto",
+            config=BotoConfig(
+                max_pool_connections=get_settings().compile_enrich_concurrency
+            ),
         )
 
     def _key(self, path: str) -> str:
