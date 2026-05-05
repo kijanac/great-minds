@@ -386,6 +386,10 @@ async def bulk_ingest_from_staging_task(params: dict, ctx) -> None:
     existing_hashes = await doc_service.get_raw_file_hashes(vault_id)
     task_repo = TaskRepository(session)
     task_id = UUID(str(ctx.task_id))
+    # Write initial progress so the frontend shows "0 / N" immediately.
+    # This commit is standalone — it won't include any partial doc work.
+    await task_repo.update_progress(task_id, done=0, total=len(files), failed=0)
+    await session.commit()
 
     sem = asyncio.Semaphore(_STAGING_FETCH_CONCURRENCY)
     fetch_tasks = [

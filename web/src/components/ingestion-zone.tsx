@@ -156,7 +156,7 @@ export function IngestionZone({
       )}
 
       {/* Compile intents — one row per in-flight or recently-finished compile */}
-      {taskProgress && taskProgress.total > 0 && (
+      {taskProgress && (
         <div className="mt-3 font-mono text-[length:var(--text-chrome)] tracking-[0.1em] text-warm-ghost">
           <div className="flex items-center gap-2 mb-1">
             <span>
