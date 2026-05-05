@@ -10,6 +10,7 @@ import re
 from uuid import UUID
 
 from sqlalchemy import delete, func, select, tuple_
+from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from great_minds.core.search.models import SearchIndexEntry
@@ -111,6 +112,50 @@ class SearchIndexRepository:
                 embedding=embedding,
             )
         )
+
+    async def batch_upsert(
+        self,
+        vault_id: UUID,
+        chunks_and_embeddings: list[tuple[Chunk, list[float] | None]],
+    ) -> None:
+        """Upsert a batch of chunks with their embeddings in one INSERT.
+
+        Avoids per-row SELECT + round-trip; uses ON CONFLICT to handle
+        existing (vault_id, path, chunk_index) rows."""
+        if not chunks_and_embeddings:
+            return
+        rows = []
+        for chunk, emb in chunks_and_embeddings:
+            rows.append(
+                {
+                    "vault_id": vault_id,
+                    "path": chunk.path,
+                    "chunk_index": chunk.chunk_index,
+                    "heading": chunk.heading,
+                    "body": chunk.body,
+                    "content_hash": chunk.content_hash,
+                    "tsv": func.to_tsvector("english", chunk.body),
+                    "embedding": emb,
+                    "updated_at": func.now(),
+                }
+            )
+        stmt = insert(SearchIndexEntry).values(rows)
+        stmt = stmt.on_conflict_do_update(
+            index_elements=[
+                SearchIndexEntry.vault_id,
+                SearchIndexEntry.path,
+                SearchIndexEntry.chunk_index,
+            ],
+            set_={
+                "heading": stmt.excluded.heading,
+                "body": stmt.excluded.body,
+                "content_hash": stmt.excluded.content_hash,
+                "tsv": stmt.excluded.tsv,
+                "embedding": stmt.excluded.embedding,
+                "updated_at": stmt.excluded.updated_at,
+            },
+        )
+        await self.session.execute(stmt)
 
     # -- Diagnostics -----------------------------------------------------
 

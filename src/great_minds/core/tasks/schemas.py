@@ -26,3 +26,7 @@ class Task(BaseModel):
 class TaskDetail(Task):
     status: TaskStatus
     error: str | None
+    progress_total: int = 0
+    progress_done: int = 0
+    progress_failed: int = 0
+    progress_failed_names: list[str] = []

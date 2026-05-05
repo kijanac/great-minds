@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
-import { ingestBulk, ingestUrl } from "@/api/ingest";
+import { ingestBulk, ingestUrl, getTask } from "@/api/ingest";
 import type { DroppedFile } from "@/lib/types";
 
 export type ItemStatus = "queued" | "processing" | "done" | "error";
@@ -19,6 +19,13 @@ export interface QueueSummary {
   processing: boolean;
 }
 
+export interface TaskProgress {
+  total: number;
+  done: number;
+  failed: number;
+  failedNames: string[];
+}
+
 let nextId = 0;
 
 function makeId(): string {
@@ -29,6 +36,8 @@ export function useIngestion() {
   const [queue, setQueue] = useState<QueueItem[]>([]);
   const [compileIntentIds, setCompileIntentIds] = useState<string[]>([]);
   const [url, setUrl] = useState("");
+  const [taskProgress, setTaskProgress] = useState<TaskProgress | null>(null);
+  const [activeTaskId, setActiveTaskId] = useState<string | null>(null);
   const urlRef = useRef(url);
   urlRef.current = url;
 
@@ -55,6 +64,10 @@ export function useIngestion() {
 
     try {
       for await (const event of ingestBulk(files)) {
+        if (event.phase === "processing" && "task_id" in event) {
+          setActiveTaskId(event.task_id);
+          continue;
+        }
         if (event.phase === "error") {
           const failedNames = new Set((event.failed_uploads ?? []).map((f) => f.name));
           const errMsgByName = new Map((event.failed_uploads ?? []).map((f) => [f.name, f.error]));
@@ -73,6 +86,8 @@ export function useIngestion() {
               return { ...i, status: "error", error: event.error ?? "Ingest failed" };
             }),
           );
+          setActiveTaskId(null);
+          setTaskProgress(null);
           break;
         }
         if (event.phase === "done") {
@@ -92,6 +107,8 @@ export function useIngestion() {
                 : { ...i, status: "done" };
             }),
           );
+          setActiveTaskId(null);
+          setTaskProgress(null);
         }
       }
       queuedFileIds.forEach((id) => filesById.current.delete(id));
@@ -149,6 +166,38 @@ export function useIngestion() {
     return () => clearTimeout(t);
   }, [queue]);
 
+  // Poll bulk ingest task progress
+  useEffect(() => {
+    if (!activeTaskId) return;
+    let alive = true;
+    const poll = async () => {
+      while (alive) {
+        try {
+          const task = await getTask(activeTaskId);
+          setTaskProgress({
+            total: task.progress_total,
+            done: task.progress_done,
+            failed: task.progress_failed,
+            failedNames: task.progress_failed_names,
+          });
+          if (
+            task.status === "completed" ||
+            task.status === "failed" ||
+            task.status === "cancelled"
+          )
+            break;
+        } catch {
+          // retry next interval
+        }
+        await new Promise((r) => setTimeout(r, 2000));
+      }
+    };
+    poll();
+    return () => {
+      alive = false;
+    };
+  }, [activeTaskId]);
+
   const summary: QueueSummary = {
     total: queue.length,
     done: queue.filter((i) => i.status === "done").length,
@@ -190,6 +239,7 @@ export function useIngestion() {
   return {
     queue,
     summary,
+    taskProgress,
     url,
     setUrl,
     handleFileDrop,

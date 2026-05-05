@@ -30,6 +30,7 @@ from great_minds.core.paths import raw_prefix
 from great_minds.core.r2_admin import R2Admin
 from great_minds.core.settings import get_settings
 from great_minds.core.storage_factory import make_storage
+from great_minds.core.tasks.repository import TaskRepository
 from great_minds.core.telemetry import (
     correlation_id,
     emit_wide_event,
@@ -220,6 +221,8 @@ async def _index_fetched_results(
     storage,
     existing_hashes: dict[str, str],
     doc_service: DocumentService,
+    task_repo: TaskRepository,
+    task_id: UUID,
 ) -> tuple[int, int, int, list[str]]:
     """Drain fetches as they complete, write+upsert in batches.
 
@@ -232,6 +235,8 @@ async def _index_fetched_results(
     failed = 0
     batch: list[DocumentCreate] = []
     keys_to_clean: list[str] = []
+    seen_dest: set[str] = set()  # dedupe within this run for batch_upsert
+    failed_names: list[str] = []
 
     pending = len(fetch_tasks)
     for i, coro in enumerate(asyncio.as_completed(fetch_tasks)):
@@ -255,20 +260,22 @@ async def _index_fetched_results(
                 vault_id=str(vault_id),
                 error_type=type(e).__name__,
                 error=str(e),
-                file_name=entry.get("name", "?") if "entry" in dir() else "?",
+                file_name=entry.get("name", "?"),
             )
             failed += 1
+            failed_names.append(entry.get("name", "?"))
             continue
 
         file_hash_val = file_hash(content_with_fm)
         dest = f"raw/{content_type}/{entry['hash'][:12]}.md"
         keys_to_clean.append(f"staging/{vault_id}/{entry['hash']}")
 
-        if existing_hashes.get(dest) == file_hash_val:
+        if existing_hashes.get(dest) == file_hash_val or dest in seen_dest:
             skipped += 1
             continue
 
         await storage.write(dest, content_with_fm)
+        seen_dest.add(dest)
         fm, _ = parse_frontmatter(content_with_fm)
         batch.append(DocumentCreate.from_frontmatter(fm, dest, content_with_fm))
         ingested += 1
@@ -280,6 +287,13 @@ async def _index_fetched_results(
             await doc_service.batch_index_raw_docs(vault_id, batch)
             log.debug("batch_upsert done")
             batch.clear()
+            await task_repo.update_progress(
+                task_id,
+                done=ingested + skipped,
+                total=pending,
+                failed=failed,
+                failed_names=failed_names[-20:] if failed_names else None,
+            )
 
     if batch:
         log.debug(
@@ -287,6 +301,14 @@ async def _index_fetched_results(
         )
         await doc_service.batch_index_raw_docs(vault_id, batch)
         log.debug("batch_upsert final done")
+
+    await task_repo.update_progress(
+        task_id,
+        done=ingested + skipped,
+        total=pending,
+        failed=failed,
+        failed_names=failed_names[-20:] if failed_names else None,
+    )
 
     return ingested, skipped, failed, keys_to_clean
 
@@ -362,6 +384,8 @@ async def bulk_ingest_from_staging_task(params: dict, ctx) -> None:
 
     doc_service = DocumentService(DocumentRepository(session))
     existing_hashes = await doc_service.get_raw_file_hashes(vault_id)
+    task_repo = TaskRepository(session)
+    task_id = UUID(str(ctx.task_id))
 
     sem = asyncio.Semaphore(_STAGING_FETCH_CONCURRENCY)
     fetch_tasks = [
@@ -406,6 +430,8 @@ async def bulk_ingest_from_staging_task(params: dict, ctx) -> None:
             storage=storage,
             existing_hashes=existing_hashes,
             doc_service=doc_service,
+            task_repo=task_repo,
+            task_id=task_id,
         )
     finally:
         alive = False

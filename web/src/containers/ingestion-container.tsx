@@ -5,6 +5,7 @@ export function IngestionContainer() {
   const {
     queue,
     summary,
+    taskProgress,
     url,
     setUrl,
     handleFileDrop,
@@ -18,6 +19,7 @@ export function IngestionContainer() {
     <IngestionZone
       queue={queue}
       summary={summary}
+      taskProgress={taskProgress}
       url={url}
       onUrlChange={setUrl}
       onUrlSubmit={handleUrlSubmit}

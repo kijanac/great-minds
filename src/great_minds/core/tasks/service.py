@@ -60,6 +60,10 @@ async def fetch_task_response(absurd: AsyncAbsurd, task: Task) -> TaskDetail:
         created_at=task.created_at,
         error=error,
         params=task.params,
+        progress_total=getattr(task, "progress_total", 0),
+        progress_done=getattr(task, "progress_done", 0),
+        progress_failed=getattr(task, "progress_failed", 0),
+        progress_failed_names=getattr(task, "progress_failed_names", []),
     )
 
 

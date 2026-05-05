@@ -34,6 +34,10 @@ const taskDetailSchema = z.object({
   created_at: z.string(),
   error: z.string().nullable(),
   params: z.record(z.string(), z.unknown()),
+  progress_total: z.number().default(0),
+  progress_done: z.number().default(0),
+  progress_failed: z.number().default(0),
+  progress_failed_names: z.array(z.string()).default([]),
 });
 
 export type TaskStatus = z.infer<typeof taskStatusSchema>;
@@ -126,17 +130,35 @@ export async function* ingestBulk(
     PUT_CONCURRENCY,
   );
 
-  // 1. sign
+  // Deduplicate by content hash before uploading — identical files
+  // (e.g. scrape failures) would produce the same dest path and cause
+  // Postgres ON CONFLICT errors in the worker.
+  const originalCount = files.length;
+  const seen = new Set<string>();
+  const uniqueManifest = manifest.filter((m) => {
+    if (seen.has(m.hash)) return false;
+    seen.add(m.hash);
+    return true;
+  });
+  const skippedDuplicate = originalCount - uniqueManifest.length;
+  yield {
+    phase: "uploading",
+    uploaded: 0,
+    total: originalCount,
+    ...(skippedDuplicate > 0 ? { skipped_duplicate: skippedDuplicate } : {}),
+  };
+
+  // 1. sign (unique hashes only)
   const signRes = await apiFetch(vaultPath("/ingest/bulk/sign"), {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ files: manifest }),
+    body: JSON.stringify({ files: uniqueManifest }),
   });
   if (!signRes.ok) {
     yield {
       phase: "error",
       uploaded: 0,
-      total: files.length,
+      total: originalCount,
       error: await signRes.text(),
     };
     return;
@@ -144,19 +166,30 @@ export async function* ingestBulk(
   const signed = (await readJson(signRes, bulkSignResponseSchema)).files;
   const urlByHash = new Map(signed.map((s) => [s.hash, s.url]));
 
-  // 2. PUT to R2 with bounded concurrency. Per-file failures are
-  //    collected; we still kick off /process for whatever uploaded.
+  // 2. PUT to R2 (unique files only, one per hash).
+  //    Build a hash→File map from the original file list for upload.
+  const fileByHash = new Map<string, File>();
+  for (let i = 0; i < manifest.length; i++) {
+    if (!fileByHash.has(manifest[i].hash)) {
+      fileByHash.set(manifest[i].hash, files[i]);
+    }
+  }
+
   let uploaded = 0;
   const failedUploads: { name: string; error: string }[] = [];
-  yield { phase: "uploading", uploaded, total: files.length };
+  yield { phase: "uploading", uploaded, total: originalCount };
 
   const uploadResults = await pMap(
-    files,
-    async (file, i) => {
-      const m = manifest[i];
+    uniqueManifest,
+    async (m) => {
       const url = urlByHash.get(m.hash);
       if (!url) {
-        failedUploads.push({ name: file.name, error: "no presigned URL" });
+        failedUploads.push({ name: m.name, error: "no presigned URL" });
+        return null;
+      }
+      const file = fileByHash.get(m.hash);
+      if (!file) {
+        failedUploads.push({ name: m.name, error: "file not found" });
         return null;
       }
       try {
@@ -167,7 +200,7 @@ export async function* ingestBulk(
         });
         if (!res.ok) {
           failedUploads.push({
-            name: file.name,
+            name: m.name,
             error: `PUT ${res.status}: ${await res.text()}`,
           });
           return null;
@@ -175,7 +208,7 @@ export async function* ingestBulk(
         return m;
       } catch (e) {
         failedUploads.push({
-          name: file.name,
+          name: m.name,
           error: e instanceof Error ? e.message : "PUT failed",
         });
         return null;
@@ -186,16 +219,16 @@ export async function* ingestBulk(
     PUT_CONCURRENCY,
   );
 
-  yield { phase: "uploading", uploaded, total: files.length, failed_uploads: failedUploads };
+  yield { phase: "uploading", uploaded, total: originalCount, failed_uploads: failedUploads };
 
   const successfullyUploaded = uploadResults.filter(
-    (m): m is (typeof manifest)[number] => m !== null,
+    (m): m is (typeof uniqueManifest)[number] => m !== null,
   );
   if (successfullyUploaded.length === 0) {
     yield {
       phase: "error",
       uploaded,
-      total: files.length,
+      total: originalCount,
       error: "all uploads failed",
       failed_uploads: failedUploads,
     };
@@ -220,7 +253,7 @@ export async function* ingestBulk(
     yield {
       phase: "error",
       uploaded,
-      total: files.length,
+      total: originalCount,
       error: await processRes.text(),
       failed_uploads: failedUploads,
     };
@@ -230,7 +263,7 @@ export async function* ingestBulk(
   yield {
     phase: "processing",
     uploaded,
-    total: files.length,
+    total: originalCount,
     task_id,
     failed_uploads: failedUploads,
   };
@@ -243,7 +276,7 @@ export async function* ingestBulk(
       yield {
         phase: "done",
         uploaded,
-        total: files.length,
+        total: originalCount,
         task_id,
         failed_uploads: failedUploads,
       };
@@ -253,7 +286,7 @@ export async function* ingestBulk(
       yield {
         phase: "error",
         uploaded,
-        total: files.length,
+        total: originalCount,
         task_id,
         error: status.error ?? `task ${status.status}`,
         failed_uploads: failedUploads,
@@ -263,7 +296,7 @@ export async function* ingestBulk(
   }
 }
 
-async function getTask(taskId: string): Promise<TaskDetail> {
+export async function getTask(taskId: string): Promise<TaskDetail> {
   const res = await apiFetch(vaultPath(`/tasks/${taskId}`));
   if (!res.ok) throw new Error(await res.text());
   return readJson(res, taskDetailSchema);

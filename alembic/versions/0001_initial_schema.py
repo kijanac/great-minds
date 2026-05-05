@@ -201,6 +201,30 @@ def upgrade() -> None:
             server_default=sa.text("now()"),
             nullable=False,
         ),
+        sa.Column(
+            "progress_total",
+            sa.Integer(),
+            nullable=False,
+            server_default="0",
+        ),
+        sa.Column(
+            "progress_done",
+            sa.Integer(),
+            nullable=False,
+            server_default="0",
+        ),
+        sa.Column(
+            "progress_failed",
+            sa.Integer(),
+            nullable=False,
+            server_default="0",
+        ),
+        sa.Column(
+            "progress_failed_names",
+            JSONB(),
+            nullable=False,
+            server_default="[]",
+        ),
         sa.ForeignKeyConstraint(["vault_id"], ["vaults.id"], ondelete="CASCADE"),
         sa.PrimaryKeyConstraint("id"),
     )

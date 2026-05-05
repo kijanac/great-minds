@@ -3,7 +3,7 @@ import { useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { useCompileIntent } from "@/hooks/use-compile-intent";
-import type { QueueItem, QueueSummary } from "@/hooks/use-ingestion";
+import type { QueueItem, QueueSummary, TaskProgress } from "@/hooks/use-ingestion";
 import type { DroppedFile } from "@/lib/types";
 
 const MAX_VISIBLE_ITEMS = 3;
@@ -12,6 +12,7 @@ const COMPILE_DISMISS_DELAY_MS = 3000;
 interface IngestionZoneProps {
   queue: QueueItem[];
   summary: QueueSummary;
+  taskProgress: TaskProgress | null;
   url: string;
   onUrlChange: (url: string) => void;
   onUrlSubmit: () => void;
@@ -65,6 +66,7 @@ async function filesFromDrop(dataTransfer: DataTransfer): Promise<DroppedFile[]>
 export function IngestionZone({
   queue,
   summary,
+  taskProgress,
   url,
   onUrlChange,
   onUrlSubmit,
@@ -148,6 +150,37 @@ export function IngestionZone({
               {summary.failed > 0 && (
                 <span className="text-warm-faint"> · {summary.failed} failed</span>
               )}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Compile intents — one row per in-flight or recently-finished compile */}
+      {taskProgress && taskProgress.total > 0 && (
+        <div className="mt-3 font-mono text-[length:var(--text-chrome)] tracking-[0.1em] text-warm-ghost">
+          <div className="flex items-center gap-2 mb-1">
+            <span>
+              {taskProgress.done} / {taskProgress.total}
+            </span>
+            {taskProgress.failed > 0 && (
+              <span className="text-warm-faint">· {taskProgress.failed} failed</span>
+            )}
+          </div>
+          <div className="w-full h-1 rounded-full bg-ink-border overflow-hidden">
+            <div
+              className="h-full rounded-full bg-gold transition-all duration-500 ease-out"
+              style={{
+                width: `${taskProgress.total > 0 ? (taskProgress.done / taskProgress.total) * 100 : 0}%`,
+              }}
+            />
+          </div>
+          {taskProgress.failedNames.length > 0 && (
+            <div className="mt-2 text-[length:var(--text-small)] text-warm-faint max-h-16 overflow-y-auto">
+              {taskProgress.failedNames.map((n, i) => (
+                <div key={i} className="truncate">
+                  ✗ {n}
+                </div>
+              ))}
             </div>
           )}
         </div>

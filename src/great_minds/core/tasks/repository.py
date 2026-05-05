@@ -75,3 +75,22 @@ class TaskRepository:
             .limit(limit)
         )
         return [Task.model_validate(r) for r in rows.scalars().all()]
+
+    async def update_progress(
+        self,
+        task_id: UUID,
+        *,
+        done: int,
+        total: int,
+        failed: int,
+        failed_names: list[str] | None = None,
+    ) -> None:
+        record = await self.session.get(TaskRecordORM, task_id)
+        if record is None:
+            return
+        record.progress_done = done
+        record.progress_total = total
+        record.progress_failed = failed
+        if failed_names is not None:
+            record.progress_failed_names = failed_names
+        await self.session.flush()

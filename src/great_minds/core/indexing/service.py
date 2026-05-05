@@ -67,11 +67,10 @@ async def _embed_and_write(
     batch: list[Chunk],
     sem: asyncio.Semaphore,
 ) -> int:
-    """Embed one batch of chunks and write results to DB."""
+    """Embed one batch of chunks and write results to DB in a single upsert."""
     async with sem:
         embeddings = await embed_batch(client, [c.body for c in batch])
-        for chunk, emb in zip(batch, embeddings):
-            await repo.upsert_chunk(vault_id, chunk, emb)
+        await repo.batch_upsert(vault_id, list(zip(batch, embeddings)))
         return len(batch)
 
 
