@@ -86,11 +86,6 @@ const sessionSummarySchema = z.object({
   origin: sessionOriginSchema.nullish(),
 });
 
-const sessionResponseSchema = z.object({
-  id: z.string(),
-  events: z.array(sessionEventSchema),
-});
-
 const sessionListSchema = paginatedSchema(sessionSummarySchema);
 
 export type SessionEvent = z.infer<typeof sessionEventSchema>;
@@ -151,9 +146,16 @@ export async function listSessions(params?: {
   return readJson(res, sessionListSchema);
 }
 
+const sessionResponseSchema = z.object({
+  id: z.string(),
+  events: z.array(sessionEventSchema),
+});
+
+export type SessionResponse = z.infer<typeof sessionResponseSchema>;
+
 export async function loadSession(
   sessionId: string,
-): Promise<{ id: string; events: SessionEvent[] }> {
+): Promise<SessionResponse> {
   const res = await apiFetch(vaultPath(`/sessions/${sessionId}`));
   if (!res.ok) throw new Error(`Session not found: ${res.status}`);
   return readJson(res, sessionResponseSchema);
