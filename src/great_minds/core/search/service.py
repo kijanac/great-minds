@@ -120,7 +120,8 @@ async def _rebuild_scope(
             _, body = parse_frontmatter(content)
             all_chunks.extend(_chunk_paragraphs(path, body))
 
-    existing_hashes = await repo.list_hashes_by_prefix(vault_id, path_prefix)
+    hash_entries = await repo.list_hashes_by_prefix(vault_id, path_prefix)
+    existing_hashes = {(e.path, e.chunk_index): e.content_hash for e in hash_entries}
 
     if not all_chunks and not existing_hashes:
         log.info(

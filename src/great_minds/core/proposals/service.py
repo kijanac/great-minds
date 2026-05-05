@@ -8,10 +8,12 @@ to ``create()`` so the service stays agnostic to content source.
 import logging
 from uuid import UUID
 
+from sqlalchemy import update
+
 from great_minds.core.documents.service import DocumentService
 from great_minds.core.pagination import Page, PageInfo, PageParams
 from great_minds.core.paths import proposal_staging_path
-from great_minds.core.proposals.models import ProposalStatus
+from great_minds.core.proposals.models import ProposalORM, ProposalStatus
 from great_minds.core.proposals.repository import ProposalRepository
 from great_minds.core.proposals.schemas import Proposal, ProposalCreate, ProposalOverview
 from great_minds.core.storage import Storage
@@ -125,12 +127,18 @@ class ProposalService:
         proposal: Proposal,
         storage: Storage,
     ) -> None:
-        """Write staged content to dest_path and index it."""
+        """Write staged content to dest_path, index it, and link the
+        resulting document_id back to the proposal."""
         path = proposal_staging_path(proposal.id)
         rendered = await self.proposals_storage.read(path)
         await storage.write(proposal.dest_path, rendered)
-        await self.doc_service.index_raw_doc(
+        document_id = await self.doc_service.index_raw_doc(
             proposal.vault_id, proposal.dest_path, rendered
+        )
+        await self.repo.session.execute(
+            update(ProposalORM)
+            .where(ProposalORM.id == proposal.id)
+            .values(document_id=document_id)
         )
 
     async def _reject(self, proposal: Proposal) -> None:

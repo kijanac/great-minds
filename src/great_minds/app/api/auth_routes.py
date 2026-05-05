@@ -12,6 +12,7 @@ from great_minds.app.api.dependencies import (
     UserServiceDep,
 )
 from great_minds.app.api.schemas import auth as schemas
+from great_minds.core.auth.schemas import TokenPair
 
 log = logging.getLogger(__name__)
 
@@ -31,26 +32,26 @@ async def verify_code(
     req: schemas.VerifyCode,
     auth_service: AuthServiceDep,
     vault_service: VaultServiceDep,
-) -> schemas.TokenPair:
+) -> TokenPair:
     try:
-        user_id, access_token, refresh_token = await auth_service.verify_code(
+        token_pair = await auth_service.verify_code(
             req.email, req.code
         )
     except ValueError:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid or expired code"
         )
-    await vault_service.ensure_default_for_user(user_id, req.email)
-    return schemas.TokenPair(access_token=access_token, refresh_token=refresh_token)
+    await vault_service.ensure_default_for_user(token_pair.access_token, req.email)
+    return token_pair
 
 
 @router.post("/refresh")
 async def refresh(
     req: schemas.RefreshRequest,
     auth_service: AuthServiceDep,
-) -> schemas.TokenPair:
+) -> TokenPair:
     try:
-        access_token, refresh_token = await auth_service.refresh_tokens(
+        return await auth_service.refresh_tokens(
             req.refresh_token
         )
     except ValueError:
@@ -58,7 +59,6 @@ async def refresh(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid or expired refresh token",
         )
-    return schemas.TokenPair(access_token=access_token, refresh_token=refresh_token)
 
 
 @router.post(
@@ -69,15 +69,8 @@ async def create_api_key(
     req: schemas.ApiKeyCreate,
     user: CurrentUser,
     auth_service: AuthServiceDep,
-) -> schemas.ApiKeyCreated:
-    api_key, raw_key = await auth_service.create_api_key(user.id, req.label)
-    return schemas.ApiKeyCreated(
-        id=api_key.id,
-        label=api_key.label,
-        revoked=api_key.revoked,
-        created_at=api_key.created_at,
-        raw_key=raw_key,
-    )
+) -> schemas.ApiKeyWithSecret:
+    return await auth_service.create_api_key(user.id, req.label)
 
 
 @router.get("/api-keys")

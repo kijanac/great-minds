@@ -122,11 +122,9 @@ class Document(BaseModel):
 class WikiArticleSummary(BaseModel):
     """Wiki article browse-row shape.
 
-    ``file_path`` is the canonical identifier (matches the documents
-    table). ``slug`` is the URL component consumers use, derived from
-    file_path via the wiki path convention. ``precis`` and
-    ``updated_at`` are optional — populated for the browse page, left
-    None for surfaces (like lint orphans) that only need title.
+    ``file_path`` is the canonical document identity (matches the
+    documents table). ``slug`` is derived from file_path via the wiki
+    path convention.
 
     ``from_attributes=True`` lets the repository pass SQLAlchemy ``Row``
     objects straight to ``model_validate`` (rows have labeled-column
@@ -149,6 +147,20 @@ class WikiArticleSummary(BaseModel):
 class Backlink(BaseModel):
     source_document_id: uuid.UUID
     target_document_id: uuid.UUID
+
+
+class FileHash(BaseModel):
+    """(file_path, file_hash) row — used for bulk ingest skip detection."""
+
+    file_path: str
+    file_hash: str
+
+
+class IngestedDocument(BaseModel):
+    """Result of a successful ingest operation."""
+
+    file_path: str
+    title: str
 
 
 class SourceDocumentFacets(BaseModel):

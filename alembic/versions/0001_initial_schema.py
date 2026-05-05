@@ -6,7 +6,7 @@ documents, idea_embeddings, topics + topic_membership + topic_links +
 topic_related, backlinks (keyed by document_id), and the absurd task queue.
 
 Includes per-user/per-vault ``r2_bucket_name`` and ``source_proposals``
-``dest_path`` + pending-dedup index.
+``dest_path`` + pending-dedup index + ``document_id`` FK (populated on approval).
 
 Revision ID: 0001
 Revises:
@@ -158,6 +158,7 @@ def upgrade() -> None:
         sa.Column("title", sa.Text(), nullable=True),
         sa.Column("author", sa.Text(), nullable=True),
         sa.Column("dest_path", sa.Text(), nullable=False, server_default=""),
+        sa.Column("document_id", sa.UUID(), nullable=True),
         sa.Column(
             "created_at",
             sa.DateTime(timezone=True),
@@ -170,6 +171,20 @@ def upgrade() -> None:
     )
     op.create_index(
         "ix_source_proposals_vault_id", "source_proposals", ["vault_id"], unique=False
+    )
+    op.create_index(
+        "ix_source_proposals_document_id",
+        "source_proposals",
+        ["document_id"],
+        unique=False,
+    )
+    op.create_foreign_key(
+        "fk_source_proposals_document_id",
+        "source_proposals",
+        "documents",
+        ["document_id"],
+        ["id"],
+        ondelete="SET NULL",
     )
     # Partial unique index: re-promoting the same session exchange returns
     # the existing pending proposal instead of inserting a duplicate.

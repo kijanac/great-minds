@@ -40,6 +40,9 @@ class ProposalORM(Base):
     title: Mapped[str | None] = mapped_column(Text)
     author: Mapped[str | None] = mapped_column(Text)
     dest_path: Mapped[str] = mapped_column(Text, server_default="")
+    document_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("documents.id", ondelete="SET NULL"), index=True, nullable=True
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )

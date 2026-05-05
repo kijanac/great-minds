@@ -18,7 +18,7 @@ from great_minds.core.topics.models import (
     TopicORM,
     TopicRelatedORM,
 )
-from great_minds.core.topics.schemas import ArticleStatus, RelatedTopic, Topic, TopicLink
+from great_minds.core.topics.schemas import ArticleStatus, JaccardPair, RelatedTopic, Topic, TopicLink
 
 
 class TopicRepository:
@@ -316,13 +316,12 @@ class TopicRepository:
 
     async def compute_pairwise_jaccard(
         self, topic_ids: list[UUID]
-    ) -> list[tuple[UUID, UUID, int, float]]:
+    ) -> list[JaccardPair]:
         """Compute Jaccard similarity for all topic pairs via SQL self-join.
 
-        Returns (topic_a, topic_b, shared_idea_count, jaccard_score)
-        for all pairs where topic_a < topic_b and shared > 0.
-        Uses the topic_membership table (populated by _replace_membership
-        before _replace_related runs).
+        Returns JaccardPair rows for all pairs where topic_a < topic_b
+        and shared > 0. Uses topic_membership (populated by
+        _replace_membership before _replace_related runs).
         """
         if len(topic_ids) < 2:
             return []
@@ -382,7 +381,4 @@ class TopicRepository:
         )
 
         result = await self.session.execute(sized)
-        return [
-            (row.topic_a, row.topic_b, row.shared, float(row.jaccard))
-            for row in result
-        ]
+        return [JaccardPair.model_validate(row) for row in result]

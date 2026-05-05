@@ -177,7 +177,7 @@ async def promote_exchange(
     session_origin = meta.origin if meta else None
 
     if is_owner:
-        _, document_id = await ingest_service.ingest_session_exchange(
+        result = await ingest_service.ingest_session_exchange(
             vault_id,
             storage,
             session_id=session_id,
@@ -187,9 +187,8 @@ async def promote_exchange(
         )
         return schemas.PromoteExchangeResponse(
             mode="ingested",
-            path=dest,
-            title=title,
-            document_id=str(document_id),
+            path=result.file_path,
+            title=result.title,
         )
 
     config = await load_config(storage)

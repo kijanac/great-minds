@@ -69,9 +69,11 @@ class DocumentService:
     async def get_raw_file_hashes(self, vault_id: UUID) -> dict[str, str]:
         """Return {file_path: file_hash} for every document in this vault.
 
-        Used by bulk ingest to skip unchanged files.
+        Used by bulk ingest to skip unchanged files. Builds the lookup
+        dict from domain schemas returned by the repository.
         """
-        return await self.repo.get_file_hashes(vault_id)
+        entries = await self.repo.get_file_hashes(vault_id)
+        return {e.file_path: e.file_hash for e in entries}
 
     async def batch_index_raw_docs(
         self, vault_id: UUID, docs: list[DocumentCreate]

@@ -13,8 +13,10 @@ from great_minds.core.vaults.schemas import (
     MemberWithEmail,
     MembershipInternal,
     Vault,
+    VaultWithRole,
 )
 from great_minds.core.pagination import Page, PageInfo, PageParams
+from great_minds.core.crypto import decode_access_token
 from great_minds.core.paths import CONFIG_PATH
 from great_minds.core.r2_admin import R2Admin, derive_user_bucket_name
 from great_minds.core.settings import Settings
@@ -59,8 +61,13 @@ class VaultService:
             raise ValueError(f"Vault {vault_id} not found")
         return vault
 
-    async def ensure_default_for_user(self, user_id: UUID, email: str) -> None:
-        """Create a default vault for a user who has none. Idempotent."""
+    async def ensure_default_for_user(self, access_token: str, email: str) -> None:
+        """Create a default vault for a user who has none. Idempotent.
+
+        Decodes the ``sub`` claim from the access token to identify the
+        user, so callers don't need to extract the user ID separately.
+        """
+        user_id = decode_access_token(access_token, self.settings)
         existing = await self.repo.count_user_vaults(user_id)
         if existing:
             return
@@ -68,8 +75,8 @@ class VaultService:
 
     async def list_vaults_page(
         self, user_id: UUID, *, pagination: PageParams
-    ) -> Page[tuple[Vault, MemberRole]]:
-        rows = await self.repo.list_user_vaults_with_roles(
+    ) -> Page[VaultWithRole]:
+        rows = await self.repo.list_user_vaults(
             user_id, limit=pagination.limit, offset=pagination.offset
         )
         total = await self.repo.count_user_vaults(user_id)

@@ -9,6 +9,7 @@ from great_minds.core.vaults.schemas import (
     Vault,
     VaultConfigUpdate,
     VaultCreate,
+    VaultWithRole,
 )
 from great_minds.core.vaults.service import VaultService
 
@@ -24,4 +25,5 @@ __all__ = [
     "VaultORM",
     "VaultRepository",
     "VaultService",
+    "VaultWithRole",
 ]

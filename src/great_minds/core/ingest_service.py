@@ -12,7 +12,7 @@ from markitdown import MarkItDown, StreamInfo
 
 from great_minds.core.vaults.config import load_config
 from great_minds.core.documents.builder import write_document
-from great_minds.core.documents.schemas import SourceMetadata
+from great_minds.core.documents.schemas import IngestedDocument, SourceMetadata
 from great_minds.core.documents.service import DocumentService
 from great_minds.core.paths import raw_path, session_exchange_path
 from great_minds.core.sessions import (
@@ -75,8 +75,8 @@ class IngestService:
         content: str,
         dest: str,
         metadata: SourceMetadata,
-    ) -> tuple[str, str]:
-        """Ingest raw text content. Returns (file_path, title)."""
+    ) -> IngestedDocument:
+        """Ingest raw text content."""
         await self._ingest_raw(
             vault_id,
             storage,
@@ -86,7 +86,10 @@ class IngestService:
             source_type=metadata.source_type,
             **_metadata_extras(metadata),
         )
-        return dest, metadata.title or dest
+        return IngestedDocument(
+            file_path=dest,
+            title=metadata.title or dest,
+        )
 
     async def ingest_upload(
         self,
@@ -98,8 +101,8 @@ class IngestService:
         *,
         mimetype: str = "",
         dest_path: str | None = None,
-    ) -> tuple[str, str]:
-        """Ingest an uploaded file. Returns (file_path, title)."""
+    ) -> IngestedDocument:
+        """Ingest an uploaded file."""
         content = await _convert_to_markdown(raw_bytes, filename, mimetype)
 
         if dest_path:
@@ -117,7 +120,10 @@ class IngestService:
             source_type=metadata.source_type,
             **_metadata_extras(metadata),
         )
-        return dest, metadata.title or filename
+        return IngestedDocument(
+            file_path=dest,
+            title=metadata.title or filename,
+        )
 
     async def ingest_user_suggestion(
         self,
@@ -128,7 +134,7 @@ class IngestService:
         intent: UserSuggestionIntent,
         anchored_to: str = "",
         anchored_section: str = "",
-    ) -> tuple[str, str]:
+    ) -> IngestedDocument:
         """Persist a user suggestion as a source document.
 
         Writes to raw/user/<ts>-<slug>.md with source_type=user. body is
@@ -157,7 +163,10 @@ class IngestService:
             anchored_to=anchored_to,
             anchored_section=anchored_section,
         )
-        return dest, filename
+        return IngestedDocument(
+            file_path=dest,
+            title=filename,
+        )
 
     async def ingest_session_exchange(
         self,
@@ -168,15 +177,14 @@ class IngestService:
         exchange: ExchangeEvent,
         title: str,
         session_origin: SessionOrigin | None = None,
-    ) -> tuple[str, UUID]:
+    ) -> IngestedDocument:
         """Persist a promoted session exchange as a raw/sessions/ source.
 
-        Returns (dest_path, document_id). The path is content-addressable
-        on ``exchange.exId`` so the documents-table upsert is idempotent
-        on re-promotion.
+        The path is content-addressable on ``exchange.exId`` so the
+        documents-table upsert is idempotent on re-promotion.
         """
         dest = session_exchange_path(exchange.exId)
-        document_id = await self._ingest_raw(
+        await self._ingest_raw(
             vault_id,
             storage,
             dest=dest,
@@ -187,7 +195,10 @@ class IngestService:
                 session_origin=session_origin,
             ),
         )
-        return dest, document_id
+        return IngestedDocument(
+            file_path=dest,
+            title=title,
+        )
 
     async def ingest_url(
         self,
@@ -195,8 +206,8 @@ class IngestService:
         storage: Storage,
         url: str,
         metadata: SourceMetadata,
-    ) -> tuple[str, str]:
-        """Fetch a URL, convert to markdown, and ingest. Returns (file_path, title)."""
+    ) -> IngestedDocument:
+        """Fetch a URL, convert to markdown, and ingest."""
         url = normalize_url(url)
         response = await _fetch_url(url)
 
@@ -223,7 +234,10 @@ class IngestService:
             title=title,
             **_metadata_extras(metadata, exclude_title=True),
         )
-        return dest, title
+        return IngestedDocument(
+            file_path=dest,
+            title=title,
+        )
 
 
 def _metadata_extras(

@@ -34,6 +34,16 @@ class VaultConfigUpdate(BaseModel):
     kinds: list[str] | None = None
 
 
+class VaultWithRole(Vault):
+    """Vault with the requesting user's membership role.
+
+    Returned by list views where the vault membership join is already
+    scoped to a single user, so the role is known without a separate query.
+    """
+
+    role: MemberRole
+
+
 class MembershipInternal(BaseModel):
     vault_id: uuid.UUID
     user_id: uuid.UUID

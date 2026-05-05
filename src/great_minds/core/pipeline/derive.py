@@ -109,13 +109,13 @@ async def _replace_related(
     topic_ids = [v.topic_id for v in validated]
     pairs = await repo.compute_pairwise_jaccard(topic_ids)
 
-    # Fan out each (topic_a, topic_b) pair into both directions.
+    # Fan out each pair into both directions.
     by_topic: dict[UUID, list[tuple[UUID, int, float]]] = {
         v.topic_id: [] for v in validated
     }
-    for topic_a, topic_b, shared, jaccard in pairs:
-        by_topic[topic_a].append((topic_b, shared, jaccard))
-        by_topic[topic_b].append((topic_a, shared, jaccard))
+    for p in pairs:
+        by_topic[p.topic_a].append((p.topic_b, p.shared, p.jaccard))
+        by_topic[p.topic_b].append((p.topic_a, p.shared, p.jaccard))
 
     total = 0
     for v in validated:
