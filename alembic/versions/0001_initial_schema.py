@@ -178,14 +178,6 @@ def upgrade() -> None:
         ["document_id"],
         unique=False,
     )
-    op.create_foreign_key(
-        "fk_source_proposals_document_id",
-        "source_proposals",
-        "documents",
-        ["document_id"],
-        ["id"],
-        ondelete="SET NULL",
-    )
     # Partial unique index: re-promoting the same session exchange returns
     # the existing pending proposal instead of inserting a duplicate.
     op.create_index(
@@ -387,6 +379,17 @@ def upgrade() -> None:
         sa.PrimaryKeyConstraint("document_id", "tag"),
     )
     op.create_index("ix_document_tags_tag", "document_tags", ["tag"])
+
+    # FK from source_proposals — deferred because documents table doesn't
+    # exist yet at the point source_proposals is created above.
+    op.create_foreign_key(
+        "fk_source_proposals_document_id",
+        "source_proposals",
+        "documents",
+        ["document_id"],
+        ["id"],
+        ondelete="SET NULL",
+    )
 
     # -- Idea embeddings (per-Idea vectors, pgvector-backed) ---------------
     op.execute(
