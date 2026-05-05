@@ -192,15 +192,22 @@ async def _fetch_and_convert(
     sem: asyncio.Semaphore,
 ) -> tuple[dict, str]:
     """Pull one staging blob, convert to markdown, prepend frontmatter."""
+    name = entry["name"]
+    log.debug(
+        "fetch_convert start name=%s sem_waiters=%d",
+        name,
+        sem._waiters if hasattr(sem, "_waiters") else -1,
+    )
+    t0 = asyncio.get_event_loop().time()
     async with sem:
         staging_key = f"staging/{vault_id}/{entry['hash']}"
         raw_bytes = await admin.fetch_bytes(bucket, staging_key)
-        content = await _convert_to_markdown(
-            raw_bytes, entry["name"], entry.get("mimetype", "")
-        )
+        content = await _convert_to_markdown(raw_bytes, name, entry.get("mimetype", ""))
         content_with_fm = build_document(
             config, content, content_type, source_type=source_type
         )
+        elapsed = asyncio.get_event_loop().time() - t0
+        log.debug("fetch_convert done name=%s elapsed=%.2fs", name, elapsed)
         return entry, content_with_fm
 
 
@@ -226,9 +233,19 @@ async def _index_fetched_results(
     batch: list[DocumentCreate] = []
     keys_to_clean: list[str] = []
 
+    pending = len(fetch_tasks)
     for i, coro in enumerate(asyncio.as_completed(fetch_tasks)):
         if i % 10 == 0:
             await ctx.heartbeat(600)
+        if i > 0 and i % 100 == 0:
+            remaining = pending - i
+            log.info(
+                "bulk_ingest drain: %d/%d completed %d failed %d pending",
+                i,
+                pending,
+                failed,
+                remaining,
+            )
         try:
             entry, content_with_fm = await coro
         except Exception as e:
@@ -238,6 +255,7 @@ async def _index_fetched_results(
                 vault_id=str(vault_id),
                 error_type=type(e).__name__,
                 error=str(e),
+                file_name=entry.get("name", "?") if "entry" in dir() else "?",
             )
             failed += 1
             continue
@@ -256,11 +274,19 @@ async def _index_fetched_results(
         ingested += 1
 
         if len(batch) >= _STAGING_BATCH_SIZE:
+            log.debug(
+                "batch_upsert start batch_size=%d ingest_count=%d", len(batch), ingested
+            )
             await doc_service.batch_index_raw_docs(vault_id, batch)
+            log.debug("batch_upsert done")
             batch.clear()
 
     if batch:
+        log.debug(
+            "batch_upsert final batch_size=%d ingest_count=%d", len(batch), ingested
+        )
         await doc_service.batch_index_raw_docs(vault_id, batch)
+        log.debug("batch_upsert final done")
 
     return ingested, skipped, failed, keys_to_clean
 
@@ -354,15 +380,40 @@ async def bulk_ingest_from_staging_task(params: dict, ctx) -> None:
         for entry in files
     ]
 
-    ingested, skipped, failed, keys_to_clean = await _index_fetched_results(
-        fetch_tasks,
-        ctx=ctx,
-        vault_id=vault_id,
-        content_type=content_type,
-        storage=storage,
-        existing_hashes=existing_hashes,
-        doc_service=doc_service,
-    )
+    # Liveness timer — fires even if asyncio.as_completed() stalls
+    alive = True
+
+    async def liveness_log():
+        while alive:
+            done = sum(1 for t in fetch_tasks if t.done())
+            pending = len(fetch_tasks) - done
+            log.info(
+                "bulk_ingest liveness: %d/%d done %d pending %d failed so far",
+                done,
+                len(fetch_tasks),
+                pending,
+                0,
+            )
+            await asyncio.sleep(10)
+
+    liveness_task = asyncio.create_task(liveness_log())
+    try:
+        ingested, skipped, failed, keys_to_clean = await _index_fetched_results(
+            fetch_tasks,
+            ctx=ctx,
+            vault_id=vault_id,
+            content_type=content_type,
+            storage=storage,
+            existing_hashes=existing_hashes,
+            doc_service=doc_service,
+        )
+    finally:
+        alive = False
+        liveness_task.cancel()
+        try:
+            await liveness_task
+        except asyncio.CancelledError:
+            pass
 
     await _cleanup_staging(admin, bucket, keys_to_clean, vault_id=vault_id)
 
