@@ -44,17 +44,7 @@ class AuthService:
             return
         code = generate_auth_code()
         await self.auth_repo.store_auth_code(email, code, self.settings)
-        await self._commit()
-        # Verify the code was actually persisted
-        from sqlalchemy import select
-        from great_minds.core.auth.models import AuthCode
-        check = await self.auth_repo.session.execute(
-            select(AuthCode).where(AuthCode.email == email, AuthCode.used == False)
-        )
-        rows = check.scalars().all()
-        log.info("post-commit check: found %d unused codes for %s", len(rows), email)
-        for r in rows:
-            log.info("  code hash=%s expires=%s", r.code_hash, r.expires_at)
+        # store_auth_code commits internally
         await self.mailer.send(
             to=email,
             subject="Your sign-in code",
