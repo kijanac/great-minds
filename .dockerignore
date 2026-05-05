@@ -14,3 +14,19 @@ sessions/
 dogfood-output/
 scripts/
 ingest/
+
+# Never needed in the image
+tests/
+test/
+**/test_*.py
+**/*_test.py
+conftest.py
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+*.md
+*.c
+*.cpp
+*.hpp
+*.pxd
+*.pyx

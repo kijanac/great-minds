@@ -319,7 +319,10 @@
 /* Footnotes (remark-gfm) */
 @layer base {
   [data-footnote-ref] {
-    @apply text-gold text-[11px] no-underline ml-px;
+    @apply text-gold text-[11px] no-underline;
+  }
+  [data-footnote-ref] + [data-footnote-ref]::before {
+    content: ",";
   }
   [data-footnotes] {
     @apply border-t border-ink-border mt-8 pt-4;
