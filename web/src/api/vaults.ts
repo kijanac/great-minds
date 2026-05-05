@@ -60,6 +60,11 @@ export async function removeMember(vaultId: string, userId: string): Promise<voi
   if (!res.ok) throw new Error("Failed to remove member");
 }
 
+export async function deleteVault(vaultId: string): Promise<void> {
+  const res = await apiFetch(`/vaults/${vaultId}`, { method: "DELETE" });
+  if (!res.ok) throw new Error("Failed to delete vault");
+}
+
 export async function getVaultConfig(vaultId: string): Promise<VaultConfig> {
   const res = await apiFetch(`/vaults/${vaultId}/config`);
   if (!res.ok) throw new Error("Failed to fetch project config");

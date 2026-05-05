@@ -19,6 +19,7 @@ interface ProjectSettingsProps {
   onChangeRole: (userId: string, role: string) => Promise<void>;
   onRemoveMember: (userId: string) => Promise<void>;
   onSaveConfig: (thematic_hint: string) => Promise<void>;
+  onDeleteVault: () => Promise<void>;
 }
 
 const ROLES = ["owner", "editor", "viewer"] as const;
@@ -42,6 +43,7 @@ export function ProjectSettings({
   onChangeRole,
   onRemoveMember,
   onSaveConfig,
+  onDeleteVault,
 }: ProjectSettingsProps) {
   const [email, setEmail] = useState("");
   const [inviting, setInviting] = useState(false);
@@ -177,10 +179,74 @@ export function ProjectSettings({
 
               {proposalsSlot}
               {apiKeysSlot}
+
+              {isOwner && (
+                <div className="mt-16 pt-8 border-t border-ink-border">
+                  <h2 className="font-mono text-[length:var(--text-chrome)] tracking-[0.14em] text-red-400/70 uppercase mb-4">
+                    danger zone
+                  </h2>
+                  <p className="text-[length:var(--text-small)] text-warm-ghost mb-4 leading-relaxed">
+                    Permanently delete this vault, all its documents, wiki articles, and R2 storage.
+                    This cannot be undone.
+                  </p>
+                  <DeleteVaultButton onDelete={onDeleteVault} />
+                </div>
+              )}
             </>
           )}
         </div>
       </div>
+    </div>
+  );
+}
+
+function DeleteVaultButton({ onDelete }: { onDelete: () => Promise<void> }) {
+  const [confirming, setConfirming] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+
+  if (!confirming) {
+    return (
+      <Button
+        variant="ghost"
+        onClick={() => setConfirming(true)}
+        className="h-auto px-3 py-1.5 font-mono text-[length:var(--text-chrome)] tracking-[0.06em] text-red-400/70 hover:text-red-400 hover:bg-red-400/5 rounded-sm"
+      >
+        delete vault
+      </Button>
+    );
+  }
+
+  return (
+    <div className="flex items-center gap-3">
+      <span className="font-mono text-[length:var(--text-small)] text-red-400/80">
+        type &ldquo;delete&rdquo; to confirm:
+      </span>
+      <Input
+        autoFocus
+        disabled={deleting}
+        onKeyDown={async (e) => {
+          if (e.key === "Enter" && e.currentTarget.value === "delete") {
+            setDeleting(true);
+            try {
+              await onDelete();
+            } finally {
+              setDeleting(false);
+              setConfirming(false);
+            }
+          }
+          if (e.key === "Escape") setConfirming(false);
+        }}
+        className="h-8 w-32 bg-transparent dark:bg-transparent border-red-400/30 rounded-sm font-mono text-[length:var(--text-small)] text-red-400 px-3 caret-red-400 placeholder:text-red-400/30 focus-visible:ring-0 focus-visible:border-red-400/60"
+        placeholder="delete"
+      />
+      <Button
+        variant="ghost"
+        size="xs"
+        onClick={() => setConfirming(false)}
+        className="font-mono text-[length:var(--text-chrome)] text-warm-ghost hover:text-warm hover:bg-transparent"
+      >
+        cancel
+      </Button>
     </div>
   );
 }

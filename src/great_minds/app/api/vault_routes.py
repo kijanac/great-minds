@@ -237,3 +237,15 @@ async def remove_member(
     deleted = await vault_service.delete_membership(vault_id, member_user_id)
     if not deleted:
         raise HTTPException(status_code=404, detail="Membership not found")
+
+
+@router.delete("/{vault_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_vault(
+    vault_id: UUID,
+    _auth: VaultOwnerGuard,
+    vault_service: VaultServiceDep,
+) -> None:
+    """Permanently delete a vault — DB rows + all R2 storage."""
+    deleted = await vault_service.delete_vault(vault_id)
+    if deleted is None:
+        raise HTTPException(status_code=404, detail="Vault not found")

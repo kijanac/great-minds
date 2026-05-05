@@ -5,6 +5,7 @@ import {
   type VaultConfig,
   type VaultDetail,
   type Membership,
+  deleteVault,
   getVaultConfig,
   getVaultDetail,
   inviteMember,
@@ -82,6 +83,12 @@ export function ProjectSettingsContainer() {
     [id],
   );
 
+  const handleDeleteVault = useCallback(async () => {
+    if (!id) return;
+    await deleteVault(id);
+    navigate("/", { replace: true });
+  }, [id, navigate]);
+
   return (
     <ProjectSettings
       project={project}
@@ -96,6 +103,7 @@ export function ProjectSettingsContainer() {
       onChangeRole={handleChangeRole}
       onRemoveMember={handleRemoveMember}
       onSaveConfig={handleSaveConfig}
+      onDeleteVault={handleDeleteVault}
     />
   );
 }
