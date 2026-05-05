@@ -41,7 +41,6 @@ async def verify_code(
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid or expired code"
         )
-    await vault_service.ensure_default_for_user(token_pair.access_token, req.email)
     return token_pair
 
 
