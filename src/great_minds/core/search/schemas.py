@@ -10,7 +10,7 @@
 
 from uuid import UUID
 
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 
 
 class Chunk(BaseModel):
@@ -43,6 +43,7 @@ class SearchResult(BaseModel):
 class ChunkHash(BaseModel):
     """(path, chunk_index, content_hash) row — used for rebuild diff."""
 
+    model_config = ConfigDict(from_attributes=True)
     path: str
     chunk_index: int
     content_hash: str

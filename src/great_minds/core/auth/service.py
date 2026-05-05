@@ -58,7 +58,6 @@ class AuthService:
         in its ``sub`` claim for downstream use.
         """
         email = normalize_email(email)
-        log.info("verify_code step1: normalized email=%s", email)
         if self.settings.suppress_auth:
             log.warning(
                 "SUPPRESS_AUTH is active — bypassing code verification for %s", email
@@ -68,19 +67,13 @@ class AuthService:
             if not valid:
                 raise ValueError("Invalid or expired code")
 
-        log.info("verify_code step2: ensuring user")
         user = await self.user_service.ensure_user(email)
-        log.info("verify_code step3: user ensured, id=%s", user.id)
 
         access_token = create_access_token(user.id, self.settings)
-        log.info("verify_code step4: access token created")
         refresh_token = create_refresh_token_value()
-        log.info("verify_code step5: refresh token created")
         await self.auth_repo.store_refresh_token(user.id, refresh_token, self.settings)
-        log.info("verify_code step6: refresh token stored")
 
         await self._commit()
-        log.info("verify_code step7: committed, returning TokenPair")
         return TokenPair(access_token=access_token, refresh_token=refresh_token)
 
     async def refresh_tokens(self, refresh_token: str) -> TokenPair:
