@@ -85,7 +85,7 @@ async function pMap<T, R>(
   fn: (item: T, index: number) => Promise<R>,
   concurrency: number,
 ): Promise<R[]> {
-  const results: R[] = new Array(items.length);
+  const results: R[] = Array.from({ length: items.length });
   let cursor = 0;
   async function worker() {
     while (true) {
