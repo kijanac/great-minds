@@ -181,6 +181,17 @@ class VaultRepository:
                 f"User {user_id} is not a member of vault {vault_id}"
             )
 
+    async def set_bucket_name(self, vault_id: UUID, bucket_name: str) -> Vault:
+        """Set the r2_bucket_name on a vault and return the updated Vault."""
+        stmt = (
+            update(VaultORM)
+            .where(VaultORM.id == vault_id)
+            .values(r2_bucket_name=bucket_name)
+            .returning(VaultORM)
+        )
+        result = await self.session.execute(stmt)
+        return Vault.model_validate(result.scalar_one())
+
     async def delete_membership(self, vault_id: UUID, user_id: UUID) -> bool:
         result = await self.session.execute(
             select(VaultMembership).where(

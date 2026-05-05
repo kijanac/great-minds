@@ -52,6 +52,9 @@ class VaultService:
 
     async def get_storage_by_id(self, vault_id: UUID) -> Storage:
         vault = await self.get_vault(vault_id)
+        if self.settings.storage_backend == "r2" and not vault.r2_bucket_name:
+            bucket_name = await self._ensure_owner_bucket(vault.owner_id)
+            vault = await self.repo.set_bucket_name(vault_id, bucket_name)
         return make_storage(vault, self.settings)
 
     async def get_vault(self, vault_id: UUID) -> Vault:
