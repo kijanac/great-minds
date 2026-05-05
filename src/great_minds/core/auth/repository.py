@@ -38,6 +38,7 @@ class AuthRepository:
         )
         self.session.add(auth_code)
         await self.session.flush()
+        await self.session.commit()
         log.info("store_auth_code email=%s code_hash=%s expires=%s", email, code_hash, auth_code.expires_at)
         return auth_code
 
