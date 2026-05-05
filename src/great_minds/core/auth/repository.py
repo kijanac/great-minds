@@ -21,53 +21,33 @@ class AuthRepository:
     async def store_auth_code(
         self, email: str, code: str, settings: Settings
     ) -> AuthCode:
-        import logging
-        log = logging.getLogger(__name__)
         await self.session.execute(
             update(AuthCode)
             .where(AuthCode.email == email, AuthCode.used == False)
             .values(used=True)
         )
         db_now = await self.session.scalar(func.now())
-        code_hash = hash_code(code)
         auth_code = AuthCode(
             email=email,
-            code_hash=code_hash,
+            code_hash=hash_code(code),
             expires_at=db_now
             + timedelta(minutes=settings.auth_code_expiry_minutes),
         )
         self.session.add(auth_code)
-        await self.session.flush()
-        await self.session.commit()
-        log.info("store_auth_code email=%s code_hash=%s expires=%s", email, code_hash, auth_code.expires_at)
         return auth_code
 
     async def verify_auth_code(self, email: str, code: str) -> bool:
         code_h = hash_code(code)
-        db_now = await self.session.scalar(func.now())
-        import logging
-        log = logging.getLogger(__name__)
-        log.info("verify_auth_code email=%s code_hash=%s db_now=%s", email, code_h, db_now)
         result = await self.session.execute(
             select(AuthCode).where(
                 AuthCode.email == email,
                 AuthCode.code_hash == code_h,
                 AuthCode.used == False,
-                AuthCode.expires_at > db_now,
+                AuthCode.expires_at > func.now(),
             )
         )
         auth_code = result.scalar_one_or_none()
         if auth_code is None:
-            any_for_email = await self.session.execute(
-                select(AuthCode).where(AuthCode.email == email)
-            )
-            all_rows = any_for_email.scalars().all()
-            for row in all_rows:
-                log.info(
-                    "existing code: hash=%s used=%s expires=%s db_now=%s expired=%s",
-                    row.code_hash, row.used, row.expires_at, db_now,
-                    row.expires_at <= db_now if row.expires_at else "N/A",
-                )
             return False
         auth_code.used = True
         return True
