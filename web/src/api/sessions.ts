@@ -7,11 +7,13 @@ import {
   type ThinkingBlock,
 } from "./schemas";
 
-export interface BtwExchange {
-  query: string;
-  thinking: ThinkingBlock[];
-  answer: string;
-}
+const btwExchangeSchema = z.object({
+  query: z.string(),
+  thinking: z.array(thinkingBlockSchema).default([]),
+  answer: z.string().default(""),
+});
+
+export type BtwExchange = z.infer<typeof btwExchangeSchema>;
 
 export interface ExchangePayload {
   id: string;
@@ -57,12 +59,6 @@ const sessionExchangeEventSchema = z.object({
   thinking: z.array(thinkingBlockSchema),
   answer: z.string(),
   ts: z.string(),
-});
-
-const btwExchangeSchema = z.object({
-  query: z.string(),
-  thinking: z.array(thinkingBlockSchema).default([]),
-  answer: z.string().default(""),
 });
 
 const sessionBtwEventSchema = z.object({
