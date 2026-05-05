@@ -64,7 +64,7 @@ export function useIngestion() {
 
     try {
       for await (const event of ingestBulk(files)) {
-        if (event.phase === "processing" && "task_id" in event) {
+        if (event.phase === "processing" && "task_id" in event && event.task_id) {
           setActiveTaskId(event.task_id);
           continue;
         }

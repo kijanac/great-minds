@@ -34,10 +34,10 @@ const taskDetailSchema = z.object({
   created_at: z.string(),
   error: z.string().nullable(),
   params: z.record(z.string(), z.unknown()),
-  progress_total: z.number().default(0),
-  progress_done: z.number().default(0),
-  progress_failed: z.number().default(0),
-  progress_failed_names: z.array(z.string()).default([]),
+  progress_total: z.number().catch(0),
+  progress_done: z.number().catch(0),
+  progress_failed: z.number().catch(0),
+  progress_failed_names: z.array(z.string()).catch([]),
 });
 
 export type TaskStatus = z.infer<typeof taskStatusSchema>;
