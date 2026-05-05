@@ -22,6 +22,7 @@ from great_minds.core.markdown import paragraphs, parse_frontmatter
 from great_minds.core.paths import RAW_GLOB, RAW_PREFIX, WIKI_GLOB, WIKI_PREFIX
 from great_minds.core.search.repository import SearchIndexRepository
 from great_minds.core.search.schemas import Chunk, SearchResult
+from great_minds.core.settings import get_settings
 from great_minds.core.storage import Storage
 
 log = logging.getLogger(__name__)
@@ -105,25 +106,82 @@ async def _rebuild_scope(
     ``wiki/``) would delete rows of another scope (``raw/``) as
     stale. All existing-row queries and stale-deletions constrain to
     ``path LIKE path_prefix%``.
+
+    Files are streamed one at a time — chunks are batched and sent to
+    the embedding API as soon as a full batch accumulates, avoiding
+    loading all file contents into memory simultaneously.
     """
     if client is None:
         client = get_async_client()
     repo = SearchIndexRepository(session)
+    settings = get_settings()
 
-    all_chunks: list[Chunk] = []
-    for path in await storage.glob(glob_pattern):
+    # 1. Fetch existing hashes for change detection.
+    hash_entries = await repo.list_hashes_by_prefix(vault_id, path_prefix)
+    existing_hashes = {(e.path, e.chunk_index): e.content_hash for e in hash_entries}
+
+    # 2. Stream files, batch changed chunks for embedding.
+    total_chunks = 0
+    changed_count = 0
+    current_keys: list[tuple[str, int]] = []
+    embed_sem = asyncio.Semaphore(
+        max(1, settings.compile_enrich_concurrency // 4)
+    )
+
+    async def _embed_and_write(batch: list[Chunk]) -> int:
+        """Embed one batch and write results to DB. Returns batch size."""
+        async with embed_sem:
+            bodies = [c.body for c in batch]
+            try:
+                embeddings = await _embed_batch(client, bodies)
+            except Exception:
+                log.error("embed batch failed for %d chunks", len(batch))
+                raise
+            for chunk, emb in zip(batch, embeddings):
+                await repo.upsert_chunk(vault_id, chunk, emb)
+            return len(batch)
+
+    batch_buffer: list[Chunk] = []
+    pending_tasks: list[asyncio.Task[int]] = []
+    paths = await storage.glob(glob_pattern)
+
+    for path in paths:
         filename = path.rsplit("/", 1)[-1]
         if filename.startswith("_"):
             continue
         content = await storage.read(path)
-        if content:
-            _, body = parse_frontmatter(content)
-            all_chunks.extend(_chunk_paragraphs(path, body))
+        if not content:
+            continue
+        _, body = parse_frontmatter(content)
+        for chunk in _chunk_paragraphs(path, body):
+            total_chunks += 1
+            key = (chunk.path, chunk.chunk_index)
+            current_keys.append(key)
+            if existing_hashes.get(key) != chunk.content_hash:
+                changed_count += 1
+                batch_buffer.append(chunk)
+                if len(batch_buffer) >= EMBEDDING_BATCH_SIZE:
+                    batch = batch_buffer[:]
+                    batch_buffer.clear()
+                    pending_tasks.append(
+                        asyncio.create_task(_embed_and_write(batch))
+                    )
 
-    hash_entries = await repo.list_hashes_by_prefix(vault_id, path_prefix)
-    existing_hashes = {(e.path, e.chunk_index): e.content_hash for e in hash_entries}
+    # Flush final partial batch.
+    if batch_buffer:
+        pending_tasks.append(
+            asyncio.create_task(_embed_and_write(batch_buffer))
+        )
 
-    if not all_chunks and not existing_hashes:
+    # Wait for all in-flight embedding batches.
+    if pending_tasks:
+        embedded_total = sum(
+            await asyncio.gather(*pending_tasks, return_exceptions=False)
+        )
+    else:
+        embedded_total = 0
+
+    if not total_chunks and not existing_hashes:
         log.info(
             "no %s content to index for vault %s",
             path_prefix.rstrip("/"),
@@ -131,29 +189,7 @@ async def _rebuild_scope(
         )
         return 0
 
-    changed_chunks: list[Chunk] = []
-    for chunk in all_chunks:
-        key = (chunk.path, chunk.chunk_index)
-        if existing_hashes.get(key) != chunk.content_hash:
-            changed_chunks.append(chunk)
-
-    log.info(
-        "vault %s scope=%s: %d total chunks, %d changed, %d unchanged",
-        vault_id,
-        path_prefix.rstrip("/"),
-        len(all_chunks),
-        len(changed_chunks),
-        len(all_chunks) - len(changed_chunks),
-    )
-
-    embeddings: dict[int, list[float]] = {}
-    for batch_start in range(0, len(changed_chunks), EMBEDDING_BATCH_SIZE):
-        batch = changed_chunks[batch_start : batch_start + EMBEDDING_BATCH_SIZE]
-        batch_embeddings = await _embed_batch(client, [c.body for c in batch])
-        for i, emb in enumerate(batch_embeddings):
-            embeddings[batch_start + i] = emb
-
-    current_keys = [(c.path, c.chunk_index) for c in all_chunks]
+    # 3. Delete stale entries (paths no longer present).
     stale_count = await repo.delete_stale_in_scope(
         vault_id, path_prefix, current_keys
     )
@@ -164,18 +200,17 @@ async def _rebuild_scope(
             path_prefix.rstrip("/"),
         )
 
-    for i, chunk in enumerate(changed_chunks):
-        await repo.upsert_chunk(vault_id, chunk, embeddings[i])
-
     await session.commit()
     log.info(
-        "indexed %d chunks for vault %s scope=%s (%d embedded)",
-        len(all_chunks),
+        "vault %s scope=%s: %d total chunks, %d changed (%d embedded), %d unchanged",
         vault_id,
         path_prefix.rstrip("/"),
-        len(changed_chunks),
+        total_chunks,
+        changed_count,
+        embedded_total,
+        total_chunks - changed_count,
     )
-    return len(all_chunks)
+    return total_chunks
 
 
 async def rebuild_raw_index(
