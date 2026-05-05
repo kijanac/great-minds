@@ -34,14 +34,14 @@ const taskDetailSchema = z.object({
   created_at: z.string(),
   error: z.string().nullable(),
   params: z.record(z.string(), z.unknown()),
-  progress_total: z.number().default(0),
-  progress_done: z.number().default(0),
-  progress_failed: z.number().default(0),
-  progress_failed_names: z.array(z.string()).default([]),
+  progress_total: z.number(),
+  progress_done: z.number(),
+  progress_failed: z.number(),
+  progress_failed_names: z.array(z.string()),
 });
 
 export type TaskStatus = z.infer<typeof taskStatusSchema>;
-export type TaskDetail = z.output<typeof taskDetailSchema>;
+export type TaskDetail = z.infer<typeof taskDetailSchema>;
 
 const PUT_CONCURRENCY = 4;
 const TASK_POLL_INTERVAL_MS = 1500;
