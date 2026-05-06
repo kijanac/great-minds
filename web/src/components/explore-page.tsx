@@ -227,7 +227,7 @@ export function ExplorePage({
             </>
           )}
 
-          <div className="mt-4">{ingestionZone}</div>
+          {ingestionZone && <div className="mt-4">{ingestionZone}</div>}
         </div>
       </div>
     </div>

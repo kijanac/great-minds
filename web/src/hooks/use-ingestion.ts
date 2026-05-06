@@ -38,6 +38,7 @@ export function useIngestion() {
   const [url, setUrl] = useState("");
   const [taskProgress, setTaskProgress] = useState<TaskProgress | null>(null);
   const [activeTaskId, setActiveTaskId] = useState<string | null>(null);
+  const activeFileCount = useRef(0);
   const urlRef = useRef(url);
   urlRef.current = url;
 
@@ -55,6 +56,7 @@ export function useIngestion() {
     if (batch.length === 0) return;
 
     batchInFlightRef.current = true;
+    activeFileCount.current = batch.length;
     const queuedFileIds = batch.map(([id]) => id);
     const files = batch.map(([, file]) => file);
 
@@ -240,6 +242,8 @@ export function useIngestion() {
     queue,
     summary,
     taskProgress,
+    activeTaskId,
+    activeFileCount: activeFileCount.current,
     url,
     setUrl,
     handleFileDrop,

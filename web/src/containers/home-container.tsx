@@ -5,7 +5,8 @@ import { Navigate } from "react-router";
 
 import { Button } from "@/components/ui/button";
 import { ErrorState, Spinner } from "@/components/ui/feedback";
-import { IngestionContainer } from "@/containers/ingestion-container";
+import { IngestionFlow } from "@/components/ingestion-flow";
+import { useActivePipeline } from "@/hooks/use-active-pipeline";
 import { ProjectSwitcher } from "@/containers/project-switcher";
 import { SearchBar } from "@/components/search-bar";
 import { SessionThread } from "@/containers/session-thread";
@@ -66,6 +67,7 @@ const EASE_OUT: [number, number, number, number] = [0.25, 1, 0.5, 1];
 function HomeContent({ sessionId, initialExchanges, initialQuery, origin }: HomeContentProps) {
   const navigate = useViewNavigate();
   const { activeVault } = useActiveVault();
+  const hasActivePipeline = useActivePipeline();
   const badge = useExploreBadge();
   const lint = badge.data;
   const badgeCount =
@@ -183,7 +185,7 @@ function HomeContent({ sessionId, initialExchanges, initialQuery, origin }: Home
                 </div>
               </motion.div>
 
-              <IngestionContainer />
+              <IngestionFlow hasActivePipeline={hasActivePipeline} />
             </motion.div>
           )}
         </AnimatePresence>

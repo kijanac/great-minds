@@ -10,7 +10,6 @@ import {
 } from "@/api/explore";
 import { type ContentTypeFacet, fetchSourceDocuments } from "@/api/sources";
 import { ExplorePage } from "@/components/explore-page";
-import { IngestionContainer } from "@/containers/ingestion-container";
 import { useViewNavigate } from "@/hooks/use-view-navigate";
 
 export function ExploreContainer() {
@@ -58,7 +57,7 @@ export function ExploreContainer() {
       onOrphanClick={(slug) => navigate(`/doc/wiki/${slug}.md`)}
       onExploreWiki={() => navigate("/wiki")}
       onExploreSources={(type) => navigate(type ? `/sources?type=${type}` : "/sources")}
-      ingestionZone={<IngestionContainer />}
+      ingestionZone={null}
     />
   );
 }

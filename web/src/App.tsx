@@ -16,6 +16,7 @@ import SessionPage from "@/pages/session";
 import SessionsPage from "@/pages/sessions";
 import SourcesPage from "@/pages/sources";
 import WikiPage from "@/pages/wiki";
+import PipelinePage from "@/pages/pipeline";
 
 function RootLayout() {
   return (
@@ -63,6 +64,7 @@ const router = createBrowserRouter([
           { path: "/explore", element: <ExplorePage /> },
           { path: "/sources", element: <SourcesPage /> },
           { path: "/wiki", element: <WikiPage /> },
+          { path: "/pipeline", element: <PipelinePage /> },
           { path: "/project/:id/settings", element: <ProjectSettingsPage /> },
           { path: "/sessions", element: <SessionsPage /> },
           { path: "/sessions/:id", element: <SessionPage /> },
