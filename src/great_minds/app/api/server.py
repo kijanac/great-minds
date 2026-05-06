@@ -8,6 +8,7 @@ import asyncio
 import logging
 import uuid
 from contextlib import asynccontextmanager
+from datetime import datetime, timezone, timedelta
 
 from absurd_sdk import AsyncAbsurd
 from fastapi import FastAPI, Request
@@ -80,7 +81,11 @@ class TelemetryMiddleware(BaseHTTPMiddleware):
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     settings = get_settings()
-    engine = create_async_engine(settings.database_url, pool_pre_ping=True)
+    engine = create_async_engine(
+        settings.database_url,
+        pool_pre_ping=True,
+        pool_recycle=60,  # recycle before Render kills idle connections
+    )
     sm = async_sessionmaker(engine, expire_on_commit=False)
 
     absurd = create_absurd(settings.database_url, sm)
@@ -139,6 +144,7 @@ async def _reconciler_loop(
                     pipeline_run_repo,
                     settings,
                 )
+                await _recover_zombie_pipeline_runs(pipeline_run_repo, task_service)
                 await session.commit()
         except Exception as exc:
             log_event(
@@ -148,6 +154,43 @@ async def _reconciler_loop(
                 level=logging.WARNING,
             )
         await asyncio.sleep(RECONCILER_INTERVAL_SECONDS)
+
+
+async def _recover_zombie_pipeline_runs(
+    pipeline_run_repo: PipelineRunRepository,
+    task_service: TaskService,
+) -> None:
+    """Detect pipeline runs whose Absurd task died (e.g. backend restart)
+    and mark them as failed so the frontend doesn't hang forever."""
+    zombie_threshold = datetime.now(timezone.utc) - timedelta(seconds=120)
+    zombies = await pipeline_run_repo.list_stale_active(zombie_threshold)
+    for run in zombies:
+        task_id = run.bulk_task_id or run.compile_task_id
+        if task_id is None:
+            await pipeline_run_repo.fail(
+                run.id, "Pipeline lost — server may have restarted."
+            )
+            log_event(
+                "zombie_pipeline_failed",
+                pipeline_run_id=str(run.id),
+                vault_id=str(run.vault_id),
+                reason="no_task_id",
+            )
+            continue
+
+        snapshot = await task_service.absurd.fetch_task_result(str(task_id))
+        if snapshot is None or snapshot.state in ("completed", "failed", "cancelled"):
+            await pipeline_run_repo.fail(
+                run.id,
+                "Pipeline interrupted — server may have restarted during processing.",
+            )
+            log_event(
+                "zombie_pipeline_failed",
+                pipeline_run_id=str(run.id),
+                vault_id=str(run.vault_id),
+                task_id=str(task_id),
+                task_state=snapshot.state if snapshot else "missing",
+            )
 
 
 def create_app() -> FastAPI:

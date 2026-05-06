@@ -1,6 +1,7 @@
 """PipelineRun repository."""
 
 import json
+from datetime import datetime
 from uuid import UUID
 
 from sqlalchemy import case, func, select, update
@@ -56,6 +57,18 @@ class PipelineRunRepository:
         )
         record = row.scalar_one_or_none()
         return PipelineRun.model_validate(record) if record else None
+
+    async def list_stale_active(self, older_than: datetime) -> list[PipelineRun]:
+        """Return active pipeline runs that haven't been updated since `older_than`."""
+        row = await self.session.execute(
+            select(PipelineRunRecord)
+            .where(
+                PipelineRunRecord.status.in_(_ACTIVE),
+                PipelineRunRecord.updated_at < older_than,
+            )
+            .execution_options(populate_existing=True)
+        )
+        return [PipelineRun.model_validate(r) for r in row.scalars().all()]
 
     async def attach_bulk_task(self, pipeline_run_id: UUID, task_id: UUID) -> None:
         await self.session.execute(
