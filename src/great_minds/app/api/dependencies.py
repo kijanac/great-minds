@@ -18,6 +18,7 @@ from great_minds.core.ingest_service import IngestService
 from great_minds.core.llm_costs import LlmCostEventRepository, LlmCostService
 from great_minds.core.mail import Mailer
 from great_minds.core.pagination import PageParams
+from great_minds.core.pipeline_runs import PipelineRunRepository, PipelineRunService
 from great_minds.core.proposals import ProposalRepository, ProposalService
 from great_minds.core.settings import Settings, get_settings
 from great_minds.core.paths import PROPOSALS_DIR
@@ -105,6 +106,15 @@ def get_task_repository(session: SessionDep) -> TaskRepository:
 
 
 TaskRepositoryDep = Annotated[TaskRepository, Depends(get_task_repository)]
+
+
+def get_pipeline_run_repository(session: SessionDep) -> PipelineRunRepository:
+    return PipelineRunRepository(session)
+
+
+PipelineRunRepositoryDep = Annotated[
+    PipelineRunRepository, Depends(get_pipeline_run_repository)
+]
 
 
 def get_compile_intent_repository(session: SessionDep) -> CompileIntentRepository:
@@ -216,6 +226,13 @@ def get_task_service(
 
 
 TaskServiceDep = Annotated[TaskService, Depends(get_task_service)]
+
+
+def get_pipeline_run_service(repo: PipelineRunRepositoryDep) -> PipelineRunService:
+    return PipelineRunService(repo)
+
+
+PipelineRunServiceDep = Annotated[PipelineRunService, Depends(get_pipeline_run_service)]
 
 
 def require_llm(settings: SettingsDep) -> None:

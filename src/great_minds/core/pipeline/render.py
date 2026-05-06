@@ -41,7 +41,6 @@ from great_minds.core.documents.schemas import (
 from great_minds.core.ideas.schemas import Anchor, Idea, SourceCard
 from great_minds.core.ideas.source_cards import SourceCardStore, index_ideas_by_id
 from great_minds.core.llm import RENDER_MODEL
-from great_minds.core.pipeline import notify as pipeline_notify
 from great_minds.core.pipeline.abstract.schemas import ValidatedCanonicalTopic
 from great_minds.core.pipeline.context import PipelineContext
 from great_minds.core.indexing import rebuild_wiki_index
@@ -117,8 +116,8 @@ async def run(
 
     total_to_render = len(to_render)
     if total_to_render > 0:
-        await pipeline_notify.notify(
-            task_id=ctx.task_id,
+        await ctx.progress.emit(
+            pipeline_run_id=ctx.pipeline_run_id,
             phase="render",
             status="progress",
             done=0,
@@ -167,14 +166,24 @@ async def run(
         )
         for v in to_render
     ]
-    outcomes = await asyncio.gather(*tasks)
+    outcomes: list[_RenderOutcome] = []
+    topics_done = 0
+    for task in asyncio.as_completed(tasks):
+        outcome = await task
+        outcomes.append(outcome)
+        topics_done += 1
+        await ctx.progress.emit(
+            pipeline_run_id=ctx.pipeline_run_id,
+            phase="render",
+            status="progress",
+            done=topics_done,
+            total=total_to_render,
+        )
 
     repo = TopicRepository(ctx.session)
     cache_misses = 0
     topics_failed = 0
-    topics_done = 0
     for outcome in outcomes:
-        topics_done += 1
         if outcome.error is not None:
             topics_failed += 1
             continue
@@ -185,15 +194,6 @@ async def run(
         )
 
     await ctx.session.commit()
-
-    if total_to_render > 0:
-        await pipeline_notify.notify(
-            task_id=ctx.task_id,
-            phase="render",
-            status="progress",
-            done=topics_done,
-            total=total_to_render,
-        )
 
     wiki_chunks_indexed = 0
     if cache_misses:

@@ -1,8 +1,8 @@
 """Compile routes.
 
-POST writes a CompileIntent and returns 202; the reconciler dispatches
-it to Absurd within ~5s. GET lets the frontend poll the intent's status
-(pending → dispatched → satisfied).
+POST writes a CompileIntent attached to a PipelineRun and returns 202;
+the reconciler dispatches it to Absurd within ~5s. GET lets clients
+inspect the intent's status (pending → dispatched → satisfied).
 """
 
 from uuid import UUID
@@ -12,9 +12,11 @@ from fastapi import APIRouter, HTTPException, status
 from great_minds.app.api.dependencies import (
     CompileIntentRepositoryDep,
     LlmGuard,
+    PipelineRunServiceDep,
 )
 from great_minds.app.api.schemas.tasks import CompileRequest
 from great_minds.core.compile_intents import CompileIntent
+from great_minds.core.pipeline_runs import PipelineTrigger
 from great_minds.core.telemetry import log_event
 
 router = APIRouter(prefix="/compile", tags=["compile"])
@@ -25,6 +27,7 @@ async def request_compile(
     req: CompileRequest,
     vault_id: UUID,
     intent_repo: CompileIntentRepositoryDep,
+    pipeline_service: PipelineRunServiceDep,
     _llm: LlmGuard,
 ) -> CompileIntent:
     del req  # reserved for future compile options
@@ -33,11 +36,18 @@ async def request_compile(
         record = await intent_repo.get_pending_for_vault(vault_id)
     if record is None:
         # Race: a reconciler dispatched between upsert and lookup. Caller
-        # should re-poll the vault's task list.
+        # should refresh the current pipeline.
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail="Intent dispatched between request and lookup; refresh task list",
         )
+    if record.pipeline_run_id is None:
+        run = await pipeline_service.create(
+            vault_id=vault_id, trigger=PipelineTrigger.MANUAL
+        )
+        await intent_repo.attach_pipeline_run(record.id, run.id)
+        record.pipeline_run_id = run.id
+        await pipeline_service.repo.attach_compile_intent(run.id, record.id)
     await intent_repo.session.commit()
     log_event(
         "intent_created",

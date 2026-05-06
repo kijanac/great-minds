@@ -21,6 +21,7 @@ from great_minds.core.vaults.service import VaultService
 from great_minds.core.compile_intents.reconciler import reconcile_once
 from great_minds.core.compile_intents.repository import CompileIntentRepository
 from great_minds.core.settings import Settings, get_settings
+from great_minds.core.pipeline_runs.repository import PipelineRunRepository
 from great_minds.core.tasks.repository import TaskRepository
 from great_minds.core.tasks.service import TaskService
 from great_minds.core.users.repository import UserRepository
@@ -130,7 +131,14 @@ async def _reconciler_loop(
                     UserRepository(session),
                     settings,
                 )
-                await reconcile_once(intent_repo, task_service, vault_service, settings)
+                pipeline_run_repo = PipelineRunRepository(session)
+                await reconcile_once(
+                    intent_repo,
+                    task_service,
+                    vault_service,
+                    pipeline_run_repo,
+                    settings,
+                )
                 await session.commit()
         except Exception as exc:
             log_event(

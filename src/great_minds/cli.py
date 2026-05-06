@@ -36,6 +36,11 @@ from great_minds.core.paths import VAULT_SUBDIRS, raw_prefix, sidecar_root, vaul
 from great_minds.core.settings import get_settings
 from great_minds.core.storage import LocalStorage
 from great_minds.core.storage_factory import make_storage
+from great_minds.core.pipeline_runs import (
+    PipelineProgressRunner,
+    PipelineRunRepository,
+    PipelineTrigger,
+)
 from great_minds.core.telemetry import (
     emit_wide_event,
     init_wide_event,
@@ -87,9 +92,14 @@ async def _run_compile(vault_id: uuid.UUID, data_dir: Path) -> dict:
             vault = await VaultRepository(session).get_by_id(vault_id)
             if vault is None:
                 raise ValueError(f"Vault {vault_id} not found")
+            run = await PipelineRunRepository(session).create(
+                vault_id=vault_id, trigger=PipelineTrigger.MANUAL.value
+            )
+            await session.commit()
             ctx = await pipeline.build_context(
                 vault_id=vault_id,
-                task_id=uuid.uuid4(),
+                pipeline_run_id=run.id,
+                progress=PipelineProgressRunner(_cli_sm.get()),
                 storage=make_storage(vault),
                 session=session,
                 client=client,

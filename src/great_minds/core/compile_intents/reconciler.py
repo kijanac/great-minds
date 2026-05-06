@@ -20,6 +20,8 @@ from typing import Literal, get_args
 from great_minds.core.vaults.service import VaultService
 from great_minds.core.compile_intents.repository import CompileIntentRepository
 from great_minds.core.settings import Settings
+from great_minds.core.pipeline_runs.repository import PipelineRunRepository
+from great_minds.core.pipeline_runs.schemas import PipelineTrigger
 from great_minds.core.tasks.service import TaskService
 from great_minds.core.telemetry import log_event
 
@@ -31,12 +33,13 @@ async def reconcile_once(
     intent_repo: CompileIntentRepository,
     task_service: TaskService,
     vault_service: VaultService,
+    pipeline_run_repo: PipelineRunRepository,
     settings: Settings,
 ) -> None:
     """One reconciliation pass. Caller commits the session."""
     satisfied = await _mark_satisfied_terminal(intent_repo, task_service)
     dispatched = await _dispatch_pending(
-        intent_repo, task_service, vault_service, settings
+        intent_repo, task_service, vault_service, pipeline_run_repo, settings
     )
     log_event(
         "intent_reconciler_tick_completed",
@@ -75,6 +78,7 @@ async def _dispatch_pending(
     intent_repo: CompileIntentRepository,
     task_service: TaskService,
     vault_service: VaultService,
+    pipeline_run_repo: PipelineRunRepository,
     settings: Settings,
 ) -> int:
     pending = await intent_repo.list_pending_locked()
@@ -83,13 +87,23 @@ async def _dispatch_pending(
         if await task_service.find_active_compile(intent.vault_id) is not None:
             continue
         vault = await vault_service.get_vault(intent.vault_id)
+        pipeline_run_id = intent.pipeline_run_id
+        if pipeline_run_id is None:
+            run = await pipeline_run_repo.create(
+                vault_id=intent.vault_id, trigger=PipelineTrigger.MANUAL.value
+            )
+            pipeline_run_id = run.id
+            await intent_repo.attach_pipeline_run(intent.id, pipeline_run_id)
+            await pipeline_run_repo.attach_compile_intent(pipeline_run_id, intent.id)
         task = await task_service.spawn_compile_for_intent(
             intent_id=intent.id,
             vault_id=intent.vault_id,
             data_dir=settings.data_dir,
             label=vault.name,
+            pipeline_run_id=pipeline_run_id,
         )
         await intent_repo.mark_dispatched(intent.id, task.id)
+        await pipeline_run_repo.attach_compile_task(pipeline_run_id, task.id)
         dispatched += 1
         log_event(
             "intent_dispatched",

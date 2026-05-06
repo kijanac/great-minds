@@ -18,6 +18,7 @@ class CompileIntent(BaseModel):
 
     id: UUID
     vault_id: UUID
+    pipeline_run_id: UUID | None
     created_at: datetime
     dispatched_at: datetime | None
     dispatched_task_id: UUID | None

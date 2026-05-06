@@ -30,6 +30,7 @@ from great_minds.core.paths import raw_prefix
 from great_minds.core.r2_admin import R2Admin
 from great_minds.core.settings import get_settings
 from great_minds.core.storage_factory import make_storage
+from great_minds.core.pipeline_runs import PipelineProgressRunner
 from great_minds.core.tasks.repository import TaskRepository
 from great_minds.core.telemetry import (
     correlation_id,
@@ -41,6 +42,7 @@ from great_minds.core.telemetry import (
 )
 
 _task_session: ContextVar[AsyncSession] = ContextVar("task_session")
+_task_session_maker: ContextVar[async_sessionmaker] = ContextVar("task_session_maker")
 
 log = logging.getLogger(__name__)
 
@@ -59,7 +61,9 @@ async def compile_task(params: dict, ctx) -> None:
     """
     correlation_id.set(f"task-{ctx.task_id}")
     vault_id = UUID(params["vault_id"])
+    pipeline_run_id = UUID(params["pipeline_run_id"])
     session = _task_session.get()
+    progress = PipelineProgressRunner(_task_session_maker.get())
     vault = await VaultRepository(session).get_by_id(vault_id)
     if vault is None:
         raise ValueError(f"Vault {vault_id} not found")
@@ -69,18 +73,24 @@ async def compile_task(params: dict, ctx) -> None:
     init_wide_event("compile", vault_id=str(vault_id))
     await ctx.heartbeat(600)
 
-    pipeline_ctx = await pipeline.build_context(
-        vault_id=vault_id,
-        task_id=UUID(str(ctx.task_id)),
-        storage=storage,
-        session=session,
-        client=client,
-    )
-    await pipeline.run(pipeline_ctx)
+    try:
+        pipeline_ctx = await pipeline.build_context(
+            vault_id=vault_id,
+            pipeline_run_id=pipeline_run_id,
+            progress=progress,
+            storage=storage,
+            session=session,
+            client=client,
+        )
+        await pipeline.run(pipeline_ctx)
 
-    await record_wide_event_cost(session, user_id=None, vault_id=vault_id)
-    await session.commit()
-    emit_wide_event()
+        await record_wide_event_cost(session, user_id=None, vault_id=vault_id)
+        await session.commit()
+    except Exception as exc:
+        await progress.fail(pipeline_run_id, str(exc))
+        raise
+    finally:
+        emit_wide_event()
 
 
 async def bulk_ingest_task(params: dict, ctx) -> None:
@@ -227,6 +237,8 @@ async def _index_fetched_results(
     doc_service: DocumentService,
     task_repo: TaskRepository,
     task_id: UUID,
+    progress: PipelineProgressRunner,
+    pipeline_run_id: UUID,
 ) -> tuple[int, int, int, list[str]]:
     """Drain fetches as they complete, write+upsert in batches.
 
@@ -291,12 +303,22 @@ async def _index_fetched_results(
             await doc_service.batch_index_raw_docs(vault_id, batch)
             log.debug("batch_upsert done")
             batch.clear()
+            done = ingested + skipped
             await task_repo.update_progress(
                 task_id,
-                done=ingested + skipped,
+                done=done,
                 total=pending,
                 failed=failed,
                 failed_names=failed_names[-20:] if failed_names else None,
+            )
+            await progress.emit(
+                pipeline_run_id=pipeline_run_id,
+                phase="bulk_ingest",
+                status="progress",
+                done=done,
+                total=pending,
+                failed=failed,
+                message="processing uploaded sources",
             )
 
     if batch:
@@ -306,12 +328,22 @@ async def _index_fetched_results(
         await doc_service.batch_index_raw_docs(vault_id, batch)
         log.debug("batch_upsert final done")
 
+    done = ingested + skipped
     await task_repo.update_progress(
         task_id,
-        done=ingested + skipped,
+        done=done,
         total=pending,
         failed=failed,
         failed_names=failed_names[-20:] if failed_names else None,
+    )
+    await progress.emit(
+        pipeline_run_id=pipeline_run_id,
+        phase="bulk_ingest",
+        status="progress",
+        done=done,
+        total=pending,
+        failed=failed,
+        message="processing uploaded sources",
     )
 
     return ingested, skipped, failed, keys_to_clean
@@ -360,99 +392,150 @@ async def bulk_ingest_from_staging_task(params: dict, ctx) -> None:
     files = params["files"]
     content_type = params["content_type"]
     source_type = params["source_type"]
+    pipeline_run_id = UUID(params["pipeline_run_id"])
+    progress = PipelineProgressRunner(_task_session_maker.get())
 
-    session = _task_session.get()
-    vault = await VaultRepository(session).get_by_id(vault_id)
-    if vault is None:
-        raise ValueError(f"Vault {vault_id} not found")
-
-    settings = get_settings()
-    if settings.storage_backend != "r2":
-        raise ValueError("bulk_ingest_from_staging requires r2 storage backend")
-    if not vault.r2_bucket_name:
-        raise ValueError(f"Vault {vault_id} has no r2_bucket_name")
-
-    storage = make_storage(vault, settings)
-    config = await load_config(storage)
-    admin = R2Admin(
-        account_id=settings.r2_account_id,
-        access_key_id=settings.r2_access_key_id,
-        secret_access_key=settings.r2_secret_access_key,
-    )
-    bucket = vault.r2_bucket_name
-
-    init_wide_event(
-        "bulk_ingest_from_staging", vault_id=str(vault_id), total=len(files)
-    )
-    await ctx.heartbeat(600)
-
-    doc_service = DocumentService(DocumentRepository(session))
-    existing_hashes = await doc_service.get_raw_file_hashes(vault_id)
-    task_repo = TaskRepository(session)
-    task_id = UUID(str(ctx.task_id))
-    # Write initial progress so the frontend shows "0 / N" immediately.
-    # This commit is standalone — it won't include any partial doc work.
-    await task_repo.update_progress(task_id, done=0, total=len(files), failed=0)
-    await session.commit()
-
-    sem = asyncio.Semaphore(_STAGING_FETCH_CONCURRENCY)
-    fetch_tasks = [
-        asyncio.create_task(
-            _fetch_and_convert(
-                entry,
-                vault_id=vault_id,
-                bucket=bucket,
-                admin=admin,
-                config=config,
-                content_type=content_type,
-                source_type=source_type,
-                sem=sem,
-            )
-        )
-        for entry in files
-    ]
-
-    # Liveness timer — fires even if asyncio.as_completed() stalls
-    alive = True
-
-    async def liveness_log():
-        while alive:
-            done = sum(1 for t in fetch_tasks if t.done())
-            pending = len(fetch_tasks) - done
-            log.info(
-                "bulk_ingest liveness: %d/%d done %d pending %d failed so far",
-                done,
-                len(fetch_tasks),
-                pending,
-                0,
-            )
-            await asyncio.sleep(10)
-
-    liveness_task = asyncio.create_task(liveness_log())
     try:
-        ingested, skipped, failed, keys_to_clean = await _index_fetched_results(
-            fetch_tasks,
-            ctx=ctx,
-            vault_id=vault_id,
-            content_type=content_type,
-            storage=storage,
-            existing_hashes=existing_hashes,
-            doc_service=doc_service,
-            task_repo=task_repo,
-            task_id=task_id,
+        session = _task_session.get()
+        vault = await VaultRepository(session).get_by_id(vault_id)
+        if vault is None:
+            raise ValueError(f"Vault {vault_id} not found")
+
+        settings = get_settings()
+        if settings.storage_backend != "r2":
+            raise ValueError("bulk_ingest_from_staging requires r2 storage backend")
+        if not vault.r2_bucket_name:
+            raise ValueError(f"Vault {vault_id} has no r2_bucket_name")
+
+        storage = make_storage(vault, settings)
+        config = await load_config(storage)
+        admin = R2Admin(
+            account_id=settings.r2_account_id,
+            access_key_id=settings.r2_access_key_id,
+            secret_access_key=settings.r2_secret_access_key,
         )
-    finally:
-        alive = False
-        liveness_task.cancel()
+        bucket = vault.r2_bucket_name
+
+        init_wide_event(
+            "bulk_ingest_from_staging", vault_id=str(vault_id), total=len(files)
+        )
+        await ctx.heartbeat(600)
+
+        doc_service = DocumentService(
+            DocumentRepository(session), pipeline_run_id=pipeline_run_id
+        )
+        existing_hashes = await doc_service.get_raw_file_hashes(vault_id)
+        task_repo = TaskRepository(session)
+        task_id = UUID(str(ctx.task_id))
+        # Write initial progress so the frontend shows "0 / N" immediately.
+        # This commit is standalone — it won't include any partial doc work.
+        await task_repo.update_progress(task_id, done=0, total=len(files), failed=0)
+        await session.commit()
+        await progress.emit(
+            pipeline_run_id=pipeline_run_id,
+            phase="bulk_ingest",
+            status="started",
+            done=0,
+            total=len(files),
+            message="processing uploaded sources",
+        )
+
+        sem = asyncio.Semaphore(_STAGING_FETCH_CONCURRENCY)
+        fetch_tasks = [
+            asyncio.create_task(
+                _fetch_and_convert(
+                    entry,
+                    vault_id=vault_id,
+                    bucket=bucket,
+                    admin=admin,
+                    config=config,
+                    content_type=content_type,
+                    source_type=source_type,
+                    sem=sem,
+                )
+            )
+            for entry in files
+        ]
+
+        # Liveness timer — fires even if asyncio.as_completed() stalls
+        alive = True
+
+        async def liveness_log():
+            while alive:
+                done = sum(1 for t in fetch_tasks if t.done())
+                pending = len(fetch_tasks) - done
+                log.info(
+                    "bulk_ingest liveness: %d/%d done %d pending %d failed so far",
+                    done,
+                    len(fetch_tasks),
+                    pending,
+                    0,
+                )
+                await asyncio.sleep(10)
+
+        liveness_task = asyncio.create_task(liveness_log())
         try:
-            await liveness_task
-        except asyncio.CancelledError:
-            pass
+            ingested, skipped, failed, keys_to_clean = await _index_fetched_results(
+                fetch_tasks,
+                ctx=ctx,
+                vault_id=vault_id,
+                content_type=content_type,
+                storage=storage,
+                existing_hashes=existing_hashes,
+                doc_service=doc_service,
+                task_repo=task_repo,
+                task_id=task_id,
+                progress=progress,
+                pipeline_run_id=pipeline_run_id,
+            )
+        finally:
+            alive = False
+            liveness_task.cancel()
+            try:
+                await liveness_task
+            except asyncio.CancelledError:
+                pass
 
-    await _cleanup_staging(admin, bucket, keys_to_clean, vault_id=vault_id)
+        await _cleanup_staging(admin, bucket, keys_to_clean, vault_id=vault_id)
 
-    enrich(ingested=ingested, skipped=skipped, failed=failed)
-    emit_wide_event()
+        await progress.emit(
+            pipeline_run_id=pipeline_run_id,
+            phase="bulk_ingest",
+            status="completed",
+            done=ingested + skipped,
+            total=len(files),
+            failed=failed,
+            message="sources prepared for compile",
+        )
+        if ingested == 0:
+            if failed > 0:
+                await progress.emit(
+                    pipeline_run_id=pipeline_run_id,
+                    phase="bulk_ingest",
+                    status="failed",
+                    failed=failed,
+                    error=f"{failed} source(s) failed before compile",
+                )
+            else:
+                await progress.emit(
+                    pipeline_run_id=pipeline_run_id,
+                    phase="publish",
+                    status="completed",
+                    done=1,
+                    total=1,
+                    message="sources already up to date",
+                )
+
+        enrich(ingested=ingested, skipped=skipped, failed=failed)
+        emit_wide_event()
+    except Exception as exc:
+        await progress.emit(
+            pipeline_run_id=pipeline_run_id,
+            phase="bulk_ingest",
+            status="failed",
+            error=str(exc),
+        )
+        raise
 
 
 # ---------------------------------------------------------------------------
@@ -466,11 +549,13 @@ def create_absurd(database_url: str, session_maker: async_sessionmaker) -> Async
 
     async def wrap_with_session(ctx, execute):
         async with session_maker() as session:
-            token = _task_session.set(session)
+            session_token = _task_session.set(session)
+            sm_token = _task_session_maker.set(session_maker)
             try:
                 return await execute()
             finally:
-                _task_session.reset(token)
+                _task_session_maker.reset(sm_token)
+                _task_session.reset(session_token)
 
     hooks = AbsurdHooks(wrap_task_execution=wrap_with_session)
     app = AsyncAbsurd(url, queue_name="default", hooks=hooks)

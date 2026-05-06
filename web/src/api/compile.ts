@@ -7,6 +7,7 @@ export type IntentStatus = "pending" | "dispatched" | "satisfied";
 export interface CompileIntent {
   id: string;
   vault_id: string;
+  pipeline_run_id: string | null;
   created_at: string;
   dispatched_at: string | null;
   dispatched_task_id: string | null;
@@ -17,6 +18,7 @@ export interface CompileIntent {
 const compileIntentSchema: z.ZodType<CompileIntent> = z.object({
   id: z.string(),
   vault_id: z.string(),
+  pipeline_run_id: z.string().nullable(),
   created_at: z.string(),
   dispatched_at: z.string().nullable(),
   dispatched_task_id: z.string().nullable(),

@@ -72,14 +72,14 @@ export function WikiPage({
                   key={item.slug}
                   variant="ghost"
                   onClick={() => onArticleClick(item.slug)}
-                  className="w-full h-auto py-3 px-3 rounded-sm justify-between hover:bg-ink-raised group items-start"
+                  className="w-full h-auto py-3 px-3 rounded-sm justify-between hover:bg-ink-raised group items-start whitespace-normal"
                 >
                   <div className="flex flex-col items-start gap-1 min-w-0 flex-1">
                     <span className="font-serif text-[length:var(--text-body)] text-warm-dim group-hover:text-warm transition-colors truncate w-full text-left">
                       {item.title || item.slug}
                     </span>
                     {item.precis && (
-                      <span className="font-serif text-[length:var(--text-small)] text-warm-ghost text-left line-clamp-2">
+                      <span className="font-serif text-[length:var(--text-small)] text-warm-ghost text-left line-clamp-2 w-full break-words">
                         {item.precis}
                       </span>
                     )}

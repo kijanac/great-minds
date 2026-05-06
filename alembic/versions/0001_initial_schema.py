@@ -188,6 +188,57 @@ def upgrade() -> None:
         postgresql_where=sa.text("status = 'PENDING'"),
     )
 
+    # -- Pipeline runs -----------------------------------------------------
+    op.create_table(
+        "pipeline_runs",
+        sa.Column(
+            "id",
+            sa.UUID(),
+            nullable=False,
+            server_default=sa.text("gen_random_uuid()"),
+        ),
+        sa.Column("vault_id", sa.UUID(), nullable=False),
+        sa.Column("trigger", sa.Text(), nullable=False),
+        sa.Column("status", sa.Text(), nullable=False, server_default="pending"),
+        sa.Column("current_phase", sa.Text(), nullable=False, server_default=""),
+        sa.Column("phase_status", sa.Text(), nullable=False, server_default=""),
+        sa.Column("progress_done", sa.Integer(), nullable=False, server_default="0"),
+        sa.Column("progress_total", sa.Integer(), nullable=False, server_default="0"),
+        sa.Column("progress_failed", sa.Integer(), nullable=False, server_default="0"),
+        sa.Column("progress_message", sa.Text(), nullable=False, server_default=""),
+        sa.Column("error", sa.Text(), nullable=True),
+        sa.Column("bulk_task_id", sa.UUID(), nullable=True),
+        sa.Column("compile_intent_id", sa.UUID(), nullable=True),
+        sa.Column("compile_task_id", sa.UUID(), nullable=True),
+        sa.Column(
+            "created_at",
+            sa.DateTime(timezone=True),
+            server_default=sa.text("now()"),
+            nullable=False,
+        ),
+        sa.Column(
+            "updated_at",
+            sa.DateTime(timezone=True),
+            server_default=sa.text("now()"),
+            nullable=False,
+        ),
+        sa.Column("completed_at", sa.DateTime(timezone=True), nullable=True),
+        sa.ForeignKeyConstraint(["vault_id"], ["vaults.id"], ondelete="CASCADE"),
+        sa.PrimaryKeyConstraint("id"),
+    )
+    op.create_index(
+        "ix_pipeline_runs_vault_id",
+        "pipeline_runs",
+        ["vault_id"],
+        unique=False,
+    )
+    op.create_index(
+        "ix_pipeline_runs_vault_created",
+        "pipeline_runs",
+        ["vault_id", "created_at"],
+        unique=False,
+    )
+
     # -- Tasks -------------------------------------------------------------
     op.create_table(
         "tasks",
@@ -195,6 +246,7 @@ def upgrade() -> None:
         sa.Column("vault_id", sa.UUID(), nullable=False),
         sa.Column("type", sa.Text(), nullable=False),
         sa.Column("params", JSONB(), nullable=False),
+        sa.Column("pipeline_run_id", sa.UUID(), nullable=True),
         sa.Column(
             "created_at",
             sa.DateTime(timezone=True),
@@ -225,10 +277,16 @@ def upgrade() -> None:
             nullable=False,
             server_default="[]",
         ),
+        sa.ForeignKeyConstraint(
+            ["pipeline_run_id"], ["pipeline_runs.id"], ondelete="SET NULL"
+        ),
         sa.ForeignKeyConstraint(["vault_id"], ["vaults.id"], ondelete="CASCADE"),
         sa.PrimaryKeyConstraint("id"),
     )
     op.create_index("ix_tasks_vault_id", "tasks", ["vault_id"], unique=False)
+    op.create_index(
+        "ix_tasks_pipeline_run_id", "tasks", ["pipeline_run_id"], unique=False
+    )
 
     # -- Compile intents (outbox: domain-change → eventual compile) --------
     # Lifecycle: pending → dispatched → satisfied. The partial unique index
@@ -243,6 +301,7 @@ def upgrade() -> None:
             server_default=sa.text("gen_random_uuid()"),
         ),
         sa.Column("vault_id", sa.UUID(), nullable=False),
+        sa.Column("pipeline_run_id", sa.UUID(), nullable=True),
         sa.Column(
             "created_at",
             sa.DateTime(timezone=True),
@@ -252,6 +311,9 @@ def upgrade() -> None:
         sa.Column("dispatched_at", sa.DateTime(timezone=True), nullable=True),
         sa.Column("dispatched_task_id", sa.UUID(), nullable=True),
         sa.Column("satisfied_at", sa.DateTime(timezone=True), nullable=True),
+        sa.ForeignKeyConstraint(
+            ["pipeline_run_id"], ["pipeline_runs.id"], ondelete="SET NULL"
+        ),
         sa.ForeignKeyConstraint(["vault_id"], ["vaults.id"], ondelete="CASCADE"),
         sa.PrimaryKeyConstraint("id"),
     )
@@ -261,6 +323,12 @@ def upgrade() -> None:
         ["vault_id"],
         unique=True,
         postgresql_where=sa.text("dispatched_at IS NULL"),
+    )
+    op.create_index(
+        "ix_compile_intents_pipeline_run_id",
+        "compile_intents",
+        ["pipeline_run_id"],
+        unique=False,
     )
     op.create_index(
         "ix_compile_intents_pending",

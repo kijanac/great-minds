@@ -21,12 +21,13 @@ class Task(BaseModel):
     type: str
     created_at: datetime
     params: dict
+    pipeline_run_id: UUID | None = None
+    progress_total: int = 0
+    progress_done: int = 0
+    progress_failed: int = 0
+    progress_failed_names: list[str] = []
 
 
 class TaskDetail(Task):
     status: TaskStatus
     error: str | None
-    progress_total: int = 0
-    progress_done: int = 0
-    progress_failed: int = 0
-    progress_failed_names: list[str] = []

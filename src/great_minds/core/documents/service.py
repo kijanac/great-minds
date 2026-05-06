@@ -18,12 +18,16 @@ from great_minds.core.pagination import (
     PageInfo,
     PageParams,
 )
+from great_minds.core.pipeline_runs import PipelineRunRepository
 from great_minds.core.telemetry import log_event
 
 
 class DocumentService:
-    def __init__(self, repository: DocumentRepository) -> None:
+    def __init__(
+        self, repository: DocumentRepository, pipeline_run_id: UUID | None = None
+    ) -> None:
         self.repo = repository
+        self.pipeline_run_id = pipeline_run_id
 
     async def _commit(self) -> None:
         await self.repo.session.commit()
@@ -36,10 +40,20 @@ class DocumentService:
         ingests into one pending intent, so emitting per-write is safe.
         Logs ``intent_created`` only when a new row is inserted.
         """
-        intent = await CompileIntentRepository(self.repo.session).upsert_pending(
-            vault_id
+        intent_repo = CompileIntentRepository(self.repo.session)
+        intent = await intent_repo.upsert_pending(
+            vault_id, pipeline_run_id=self.pipeline_run_id
         )
-        if intent is not None:
+        created = intent is not None
+        if intent is None and self.pipeline_run_id is not None:
+            intent = await intent_repo.get_pending_for_vault(vault_id)
+            if intent is not None and intent.pipeline_run_id is None:
+                await intent_repo.attach_pipeline_run(intent.id, self.pipeline_run_id)
+        if intent is not None and self.pipeline_run_id is not None:
+            await PipelineRunRepository(self.repo.session).attach_compile_intent(
+                self.pipeline_run_id, intent.id
+            )
+        if created and intent is not None:
             log_event(
                 "intent_created",
                 intent_id=str(intent.id),

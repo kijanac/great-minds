@@ -1,9 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { ingestBulk } from "@/api/ingest";
+import { useActiveVaultId } from "@/hooks/use-vault";
 import { useViewNavigate } from "@/hooks/use-view-navigate";
 import type { DroppedFile } from "@/lib/types";
 
@@ -91,6 +93,8 @@ export function IngestionFlow({ hasActivePipeline }: { hasActivePipeline: boolea
   const pendingUrlRef = useRef<string>("");
   const zoneRef = useRef<HTMLDivElement>(null);
   const navigate = useViewNavigate();
+  const queryClient = useQueryClient();
+  const vaultId = useActiveVaultId();
   const prefersReducedMotion = useReducedMotion();
   const shouldAnimate = !prefersReducedMotion;
 
@@ -199,13 +203,17 @@ export function IngestionFlow({ hasActivePipeline }: { hasActivePipeline: boolea
     input.click();
   }, []);
 
+  const invalidateActivePipeline = useCallback(() => {
+    if (!vaultId) return;
+    queryClient.invalidateQueries({ queryKey: ["vault", vaultId, "active-pipeline"] });
+  }, [queryClient, vaultId]);
+
   const handleUrlSubmit = useCallback(() => {
     const trimmed = url.trim();
     if (!trimmed) return;
-    pendingUrlRef.current = trimmed;
-    pendingFilesRef.current = [];
-    setUrl("");
-  }, [url]);
+    setConfirming(true);
+    navigate(`/pipeline?url=${encodeURIComponent(trimmed)}`);
+  }, [navigate, url]);
 
   const handleConfirm = useCallback(async () => {
     const files = pendingFilesRef.current;
@@ -216,10 +224,10 @@ export function IngestionFlow({ hasActivePipeline }: { hasActivePipeline: boolea
     setConfirming(true);
 
     if (files.length > 0) {
-      let taskId: string | null = null;
+      let pipelineRunId: string | null = null;
       for await (const event of ingestBulk(files.map((f) => f.file))) {
-        if (event.phase === "processing" && event.task_id) {
-          taskId = event.task_id;
+        if (event.phase === "processing" && event.pipeline_run_id) {
+          pipelineRunId = event.pipeline_run_id;
           break;
         }
         if (event.phase === "error") {
@@ -228,15 +236,16 @@ export function IngestionFlow({ hasActivePipeline }: { hasActivePipeline: boolea
         }
       }
 
-      if (taskId) {
-        navigate(`/pipeline?task_id=${taskId}&file_count=${files.length}`);
+      if (pipelineRunId) {
+        invalidateActivePipeline();
+        navigate(`/pipeline?pipeline_run_id=${pipelineRunId}`);
       } else {
         setConfirming(false);
       }
     } else if (urlValue) {
       navigate(`/pipeline?url=${encodeURIComponent(urlValue)}`);
     }
-  }, [navigate]);
+  }, [invalidateActivePipeline, navigate]);
 
   // Transition config
   const morphTransition = shouldAnimate

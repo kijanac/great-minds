@@ -18,12 +18,14 @@ from great_minds.core.paths import cache_root, sidecar_root
 from great_minds.core.pipeline.cache import ContentHashCache
 from great_minds.core.settings import get_settings
 from great_minds.core.storage import Storage
+from great_minds.core.pipeline_runs import PipelineProgressRunner
 
 
 @dataclass
 class PipelineContext:
     vault_id: UUID
-    task_id: UUID  # Task ID for progress notifications (Absurd or synthetic for CLI)
+    pipeline_run_id: UUID
+    progress: PipelineProgressRunner
     storage: Storage
     sidecar_root: Path  # Machine-local path for compile-sidecar I/O
     session: AsyncSession
@@ -35,7 +37,8 @@ class PipelineContext:
 async def build_context(
     *,
     vault_id: UUID,
-    task_id: UUID,
+    pipeline_run_id: UUID,
+    progress: PipelineProgressRunner,
     storage: Storage,
     session: AsyncSession,
     client: AsyncOpenAI,
@@ -50,7 +53,8 @@ async def build_context(
     sidecar = sidecar_root(Path(get_settings().data_dir), vault_id)
     return PipelineContext(
         vault_id=vault_id,
-        task_id=task_id,
+        pipeline_run_id=pipeline_run_id,
+        progress=progress,
         storage=storage,
         sidecar_root=sidecar,
         session=session,

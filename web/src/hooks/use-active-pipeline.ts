@@ -1,29 +1,21 @@
 import { useQuery } from "@tanstack/react-query";
 
-import { listTasks } from "@/api/ingest";
+import { getCurrentPipeline } from "@/api/pipelines";
 import { useActiveVaultId } from "@/hooks/use-vault";
 
 const ACTIVE_STATUSES = new Set(["pending", "running"]);
 
-/**
- * Checks whether there's an active compile or bulk ingest pipeline
- * for the current vault. Polls the tasks endpoint every 10 seconds.
- */
+/** Checks whether there's an active pipeline run for the current vault. */
 export function useActivePipeline(): boolean {
   const vaultId = useActiveVaultId();
 
   const { data } = useQuery({
     queryKey: ["vault", vaultId, "active-pipeline"],
     queryFn: async () => {
-      const tasks = await listTasks(10);
-      return tasks.some(
-        (t) =>
-          ACTIVE_STATUSES.has(t.status) &&
-          (t.type === "compile" || t.type === "bulk_ingest_from_staging"),
-      );
+      const run = await getCurrentPipeline();
+      return run !== null && ACTIVE_STATUSES.has(run.status);
     },
     enabled: !!vaultId,
-    refetchInterval: 10_000,
     staleTime: 5_000,
   });
 

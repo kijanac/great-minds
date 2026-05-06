@@ -23,7 +23,9 @@ class CompileIntentRepository:
     def __init__(self, session: AsyncSession) -> None:
         self.session = session
 
-    async def upsert_pending(self, vault_id: UUID) -> CompileIntentRecord | None:
+    async def upsert_pending(
+        self, vault_id: UUID, pipeline_run_id: UUID | None = None
+    ) -> CompileIntentRecord | None:
         """Insert a pending intent, or return None if one already exists.
 
         Coalescing is enforced by the partial unique index. Caller must
@@ -31,7 +33,7 @@ class CompileIntentRepository:
         """
         stmt = (
             insert(CompileIntentRecord)
-            .values(vault_id=vault_id)
+            .values(vault_id=vault_id, pipeline_run_id=pipeline_run_id)
             .on_conflict_do_nothing(
                 index_elements=["vault_id"],
                 index_where=text("dispatched_at IS NULL"),
@@ -74,6 +76,13 @@ class CompileIntentRepository:
             .limit(limit)
         )
         return list(rows.scalars().all())
+
+    async def attach_pipeline_run(self, intent_id: UUID, pipeline_run_id: UUID) -> None:
+        await self.session.execute(
+            update(CompileIntentRecord)
+            .where(CompileIntentRecord.id == intent_id)
+            .values(pipeline_run_id=pipeline_run_id)
+        )
 
     async def mark_dispatched(self, intent_id: UUID, task_id: UUID) -> None:
         await self.session.execute(

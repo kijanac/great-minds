@@ -59,7 +59,7 @@ export function PipelinePage({
       {/* Pipeline stages */}
       <div className="flex-1 min-h-0 overflow-y-auto">
         <div className="max-w-[640px] mx-auto px-4 md:px-10 pt-10 pb-20">
-          {noTaskFound && stages.length === 0 && !overallError && (
+          {noTaskFound && !overallError && (
             <div className="text-center pt-8">
               <p className="font-serif text-[length:var(--text-body)] text-warm-dim mb-2">
                 No active pipeline
@@ -110,18 +110,19 @@ export function PipelinePage({
             </div>
           )}
 
-          {stages.map((stage, i) => (
-            <PipelineStageRow
-              key={stage.stage}
-              stage={stage}
-              index={i}
-              ref={stage.active ? activeRef : undefined}
-              shouldAnimate={shouldAnimate}
-            />
-          ))}
+          {!noTaskFound &&
+            stages.map((stage, i) => (
+              <PipelineStageRow
+                key={stage.stage}
+                stage={stage}
+                index={i}
+                ref={stage.active ? activeRef : undefined}
+                shouldAnimate={shouldAnimate}
+              />
+            ))}
 
           {/* Completion summary */}
-          {overallDone && (
+          {!noTaskFound && overallDone && !overallError && (
             <motion.div
               className="mt-10 p-6 rounded-sm border border-gold-dim bg-ink-raised"
               initial={shouldAnimate ? { opacity: 0, y: 8 } : {}}

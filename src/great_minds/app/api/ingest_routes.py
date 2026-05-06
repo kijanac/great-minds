@@ -12,6 +12,7 @@ from great_minds.app.api.dependencies import (
     IngestServiceDep,
     SettingsDep,
     TaskServiceDep,
+    PipelineRunServiceDep,
 )
 from great_minds.app.api.schemas.ingest import (
     BulkProcessRequest,
@@ -25,6 +26,7 @@ from great_minds.app.api.schemas.ingest import (
     UserSuggestion,
 )
 from great_minds.core.documents.schemas import SourceMetadata
+from great_minds.core.pipeline_runs import PipelineTrigger
 from great_minds.core.r2_admin import R2Admin
 
 log = logging.getLogger(__name__)
@@ -203,13 +205,20 @@ async def ingest_bulk_process(
     req: BulkProcessRequest,
     vault_id: UUID,
     task_service: TaskServiceDep,
+    pipeline_service: PipelineRunServiceDep,
 ) -> BulkProcessResponse:
     if not req.files:
         raise HTTPException(status_code=400, detail="no files provided")
+    run = await pipeline_service.create(
+        vault_id=vault_id, trigger=PipelineTrigger.BULK_UPLOAD
+    )
     detail = await task_service.spawn_bulk_ingest_from_staging(
         vault_id=vault_id,
         files=[f.model_dump() for f in req.files],
         content_type=req.content_type,
         source_type=req.source_type,
+        pipeline_run_id=run.id,
     )
-    return BulkProcessResponse(task_id=str(detail.id))
+    await pipeline_service.repo.attach_bulk_task(run.id, detail.id)
+    await pipeline_service.repo.session.commit()
+    return BulkProcessResponse(task_id=str(detail.id), pipeline_run_id=str(run.id))

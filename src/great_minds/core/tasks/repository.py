@@ -15,7 +15,12 @@ class TaskRepository:
         self.session = session
 
     async def create(
-        self, task_id: UUID, vault_id: UUID, task_type: str, params: dict
+        self,
+        task_id: UUID,
+        vault_id: UUID,
+        task_type: str,
+        params: dict,
+        pipeline_run_id: UUID | None = None,
     ) -> Task:
         await self.session.execute(
             insert(TaskRecordORM)
@@ -24,6 +29,7 @@ class TaskRepository:
                 vault_id=vault_id,
                 type=task_type,
                 params=params,
+                pipeline_run_id=pipeline_run_id,
             )
             .on_conflict_do_nothing(index_elements=["id"])
         )

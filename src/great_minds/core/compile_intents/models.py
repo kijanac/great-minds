@@ -20,6 +20,11 @@ class CompileIntentRecord(Base):
         PG_UUID,
         ForeignKey("vaults.id", ondelete="CASCADE"),
     )
+    pipeline_run_id: Mapped[UUID | None] = mapped_column(
+        PG_UUID,
+        ForeignKey("pipeline_runs.id", ondelete="SET NULL"),
+        index=True,
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         server_default=text("now()"),

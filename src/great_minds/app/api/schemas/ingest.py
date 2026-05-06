@@ -71,3 +71,4 @@ class BulkProcessRequest(BaseModel):
 
 class BulkProcessResponse(BaseModel):
     task_id: str
+    pipeline_run_id: str

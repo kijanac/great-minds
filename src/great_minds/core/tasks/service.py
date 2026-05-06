@@ -60,10 +60,11 @@ async def fetch_task_response(absurd: AsyncAbsurd, task: Task) -> TaskDetail:
         created_at=task.created_at,
         error=error,
         params=task.params,
-        progress_total=getattr(task, "progress_total", 0),
-        progress_done=getattr(task, "progress_done", 0),
-        progress_failed=getattr(task, "progress_failed", 0),
-        progress_failed_names=getattr(task, "progress_failed_names", []),
+        pipeline_run_id=task.pipeline_run_id,
+        progress_total=task.progress_total,
+        progress_done=task.progress_done,
+        progress_failed=task.progress_failed,
+        progress_failed_names=task.progress_failed_names,
     )
 
 
@@ -79,6 +80,7 @@ class TaskService:
         files: list[dict],
         content_type: str,
         source_type: str,
+        pipeline_run_id: UUID | None = None,
     ) -> TaskDetail:
         """Spawn a bulk-ingest task that pulls from R2 ``staging/<vault>/<hash>``.
 
@@ -91,6 +93,7 @@ class TaskService:
             "files": files,
             "content_type": content_type,
             "source_type": source_type,
+            **({"pipeline_run_id": str(pipeline_run_id)} if pipeline_run_id else {}),
         }
         result = await self.absurd.spawn(
             "bulk_ingest_from_staging",
@@ -102,6 +105,7 @@ class TaskService:
             vault_id,
             "bulk_ingest_from_staging",
             params,
+            pipeline_run_id=pipeline_run_id,
         )
         await self.repo.session.commit()
         log_event(
@@ -121,6 +125,7 @@ class TaskService:
         vault_id: UUID,
         data_dir: str,
         label: str,
+        pipeline_run_id: UUID | None = None,
     ) -> TaskDetail:
         """Spawn a compile task for a CompileIntent.
 
@@ -131,6 +136,7 @@ class TaskService:
             "vault_id": str(vault_id),
             "data_dir": data_dir,
             "label": label,
+            **({"pipeline_run_id": str(pipeline_run_id)} if pipeline_run_id else {}),
         }
         result = await self.absurd.spawn(
             "compile",
@@ -145,7 +151,11 @@ class TaskService:
         # actually returning str, SQLAlchemy will surface the mismatch
         # at insert time.
         record = await self.repo.create(
-            cast(UUID, result["task_id"]), vault_id, "compile", params
+            cast(UUID, result["task_id"]),
+            vault_id,
+            "compile",
+            params,
+            pipeline_run_id=pipeline_run_id,
         )
         await self.repo.session.commit()
         log.info(

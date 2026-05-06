@@ -23,6 +23,7 @@ const bulkSignResponseSchema = z.object({
 
 const bulkProcessResponseSchema = z.object({
   task_id: z.string(),
+  pipeline_run_id: z.string(),
 });
 
 const taskStatusSchema = z.enum(["pending", "running", "completed", "failed", "cancelled"]);
@@ -34,6 +35,7 @@ const taskDetailSchema = z.object({
   created_at: z.string(),
   error: z.string().nullable(),
   params: z.record(z.string(), z.unknown()),
+  pipeline_run_id: z.string().nullable(),
   progress_total: z.number(),
   progress_done: z.number(),
   progress_failed: z.number(),
@@ -44,7 +46,6 @@ export type TaskStatus = z.infer<typeof taskStatusSchema>;
 export type TaskDetail = z.infer<typeof taskDetailSchema>;
 
 const PUT_CONCURRENCY = 4;
-const TASK_POLL_INTERVAL_MS = 1500;
 
 export type BulkPhase = "uploading" | "processing" | "done" | "error";
 
@@ -53,6 +54,7 @@ export interface BulkUploadProgress {
   uploaded: number;
   total: number;
   task_id?: string;
+  pipeline_run_id?: string;
   error?: string;
   failed_uploads?: { name: string; error: string }[];
 }
@@ -107,9 +109,9 @@ async function pMap<T, R>(
  * Bulk ingest via direct-to-R2 upload.
  *
  * Yields progress events: per-file "uploading" updates while PUTs are
- * in flight, then a single "processing" event with the spawned task_id,
- * then terminal "done" or "error". Caller drives the rest of the UI off
- * the existing compile-intent stream once the task completes.
+ * in flight, then a single "processing" event with the spawned task_id and
+ * durable pipeline_run_id. Caller drives backend progress from the pipeline
+ * SSE stream instead of polling tasks.
  */
 export async function* ingestBulk(
   files: File[],
@@ -259,41 +261,17 @@ export async function* ingestBulk(
     };
     return;
   }
-  const { task_id } = await readJson(processRes, bulkProcessResponseSchema);
+  const { task_id, pipeline_run_id } = await readJson(processRes, bulkProcessResponseSchema);
   yield {
     phase: "processing",
     uploaded,
     total: originalCount,
     task_id,
+    pipeline_run_id,
     failed_uploads: failedUploads,
   };
 
-  // 4. poll task to terminal state
-  while (true) {
-    await new Promise((r) => setTimeout(r, TASK_POLL_INTERVAL_MS));
-    const status = await getTask(task_id);
-    if (status.status === "completed") {
-      yield {
-        phase: "done",
-        uploaded,
-        total: originalCount,
-        task_id,
-        failed_uploads: failedUploads,
-      };
-      return;
-    }
-    if (status.status === "failed" || status.status === "cancelled") {
-      yield {
-        phase: "error",
-        uploaded,
-        total: originalCount,
-        task_id,
-        error: status.error ?? `task ${status.status}`,
-        failed_uploads: failedUploads,
-      };
-      return;
-    }
-  }
+  return;
 }
 
 export async function getTask(taskId: string): Promise<TaskDetail> {

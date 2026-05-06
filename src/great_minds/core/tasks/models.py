@@ -21,6 +21,11 @@ class TaskRecordORM(Base):
     )
     type: Mapped[str] = mapped_column(Text)
     params: Mapped[dict] = mapped_column(JSONB, default=dict)
+    pipeline_run_id: Mapped[UUID | None] = mapped_column(
+        PG_UUID,
+        ForeignKey("pipeline_runs.id", ondelete="SET NULL"),
+        index=True,
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         server_default=text("now()"),

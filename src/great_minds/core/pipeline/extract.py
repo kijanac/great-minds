@@ -48,7 +48,6 @@ from great_minds.core.llm.providers import (
     EMBEDDING_DIMENSIONS,
     EMBEDDING_MODEL,
 )
-from great_minds.core.pipeline import notify as pipeline_notify
 from great_minds.core.pipeline.context import PipelineContext
 from great_minds.core.llm import truncate_and_normalize
 from great_minds.core.settings import get_settings
@@ -77,8 +76,8 @@ async def run(ctx: PipelineContext) -> None:
     docs = await _load_documents(ctx.session, ctx.vault_id)
     total_docs = len(docs)
     if total_docs > 0:
-        await pipeline_notify.notify(
-            task_id=ctx.task_id,
+        await ctx.progress.emit(
+            pipeline_run_id=ctx.pipeline_run_id,
             phase="extract",
             status="progress",
             done=0,
@@ -101,7 +100,20 @@ async def run(ctx: PipelineContext) -> None:
         for doc in docs
     ]
 
-    outcomes = await asyncio.gather(*tasks, return_exceptions=False)
+    outcomes: list[_ExtractOutcome] = []
+    docs_completed = 0
+    for task in asyncio.as_completed(tasks):
+        outcome = await task
+        outcomes.append(outcome)
+        docs_completed += 1
+        if total_docs > 0:
+            await ctx.progress.emit(
+                pipeline_run_id=ctx.pipeline_run_id,
+                phase="extract",
+                status="progress",
+                done=docs_completed,
+                total=total_docs,
+            )
 
     # Per-doc trackers for the embedding loop. Populated only inside
     # the success branch below where source_card is narrowed to non-None.
@@ -118,9 +130,7 @@ async def run(ctx: PipelineContext) -> None:
     docs_failed = 0
     ideas_emitted = 0
 
-    docs_completed = 0
     for outcome in outcomes:
-        docs_completed += 1
         if outcome.error is not None:
             docs_failed += 1
             log_event(
@@ -149,16 +159,6 @@ async def run(ctx: PipelineContext) -> None:
             embeddings_by_doc[outcome.document_id] = []
             for idea in source_card.ideas:
                 embedding_inputs.append((ctx.vault_id, outcome.document_id, idea))
-
-    # Emit progress
-    if total_docs > 0:
-        await pipeline_notify.notify(
-            task_id=ctx.task_id,
-            phase="extract",
-            status="progress",
-            done=docs_completed,
-            total=total_docs,
-        )
 
     # Write each fresh doc's cache entry as soon as all its ideas are
     # embedded. A mid-phase crash preserves LLM + embedding work for
