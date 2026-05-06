@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { AnimatePresence, motion, useReducedMotion } from "motion/react";
+import { motion, useReducedMotion } from "motion/react";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -42,7 +42,10 @@ async function collectAll(entries: FileSystemEntry[], prefix: string): Promise<D
     if (entry.isFile) {
       const fileEntry = entry as FileSystemFileEntry;
       const file = await new Promise<File>((resolve, reject) => fileEntry.file(resolve, reject));
-      results.push({ file, path: prefix ? `${prefix}/${entry.name}` : entry.name });
+      results.push({
+        file,
+        path: prefix ? `${prefix}/${entry.name}` : entry.name,
+      });
     } else if (entry.isDirectory) {
       const dirEntry = entry as FileSystemDirectoryEntry;
       const reader = dirEntry.createReader();
@@ -98,19 +101,15 @@ export function IngestionFlow({ hasActivePipeline }: { hasActivePipeline: boolea
   const prefersReducedMotion = useReducedMotion();
   const shouldAnimate = !prefersReducedMotion;
 
-  // Click-outside: collapse back to circle when clicking outside the zone
+  // ---- Side-effect: close on click-outside / Escape ----
+
   useEffect(() => {
     if (!expanded) return;
     const handler = (e: MouseEvent) => {
       if (zoneRef.current && !zoneRef.current.contains(e.target as Node)) {
-        setExpanded(false);
-        pendingFilesRef.current = [];
-        pendingUrlRef.current = "";
-        setUrl("");
-        setSummary(null);
+        close();
       }
     };
-    // Delay to avoid the click that expanded it from immediately closing
     const t = setTimeout(() => document.addEventListener("mousedown", handler), 0);
     return () => {
       clearTimeout(t);
@@ -118,41 +117,29 @@ export function IngestionFlow({ hasActivePipeline }: { hasActivePipeline: boolea
     };
   }, [expanded]);
 
-  // Escape to collapse
   useEffect(() => {
     if (!expanded) return;
     const handler = (e: KeyboardEvent) => {
-      if (e.key === "Escape") {
-        setExpanded(false);
-        pendingFilesRef.current = [];
-        pendingUrlRef.current = "";
-        setUrl("");
-        setSummary(null);
-      }
+      if (e.key === "Escape") close();
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
   }, [expanded]);
 
-  // Document-level drag detection — expand when files are dragged anywhere
+  // ---- Side-effect: document-level drag triggers expansion ----
+
   useEffect(() => {
     let _dragCounter = 0;
-
     const onDragEnter = (e: DragEvent) => {
       e.preventDefault();
       _dragCounter++;
       if (!expanded) setExpanded(true);
     };
-
     const onDragLeave = (e: DragEvent) => {
       e.preventDefault();
       _dragCounter--;
     };
-
-    const onDragOver = (e: DragEvent) => {
-      e.preventDefault();
-    };
-
+    const onDragOver = (e: DragEvent) => e.preventDefault();
     const onDrop = (e: DragEvent) => {
       e.preventDefault();
       _dragCounter = 0;
@@ -170,6 +157,23 @@ export function IngestionFlow({ hasActivePipeline }: { hasActivePipeline: boolea
       document.removeEventListener("drop", onDrop);
     };
   }, [expanded]);
+
+  // ---- Actions ----
+
+  const close = useCallback(() => {
+    setExpanded(false);
+    pendingFilesRef.current = [];
+    pendingUrlRef.current = "";
+    setUrl("");
+    setSummary(null);
+  }, []);
+
+  const invalidateActivePipeline = useCallback(() => {
+    if (!vaultId) return;
+    queryClient.invalidateQueries({
+      queryKey: ["vault", vaultId, "active-pipeline"],
+    });
+  }, [queryClient, vaultId]);
 
   const handleDrop = useCallback(async (e: React.DragEvent) => {
     e.preventDefault();
@@ -203,11 +207,6 @@ export function IngestionFlow({ hasActivePipeline }: { hasActivePipeline: boolea
     input.click();
   }, []);
 
-  const invalidateActivePipeline = useCallback(() => {
-    if (!vaultId) return;
-    queryClient.invalidateQueries({ queryKey: ["vault", vaultId, "active-pipeline"] });
-  }, [queryClient, vaultId]);
-
   const handleUrlSubmit = useCallback(() => {
     const trimmed = url.trim();
     if (!trimmed) return;
@@ -217,71 +216,67 @@ export function IngestionFlow({ hasActivePipeline }: { hasActivePipeline: boolea
 
   const handleConfirm = useCallback(async () => {
     const files = pendingFilesRef.current;
-    const urlValue = pendingUrlRef.current;
-
-    if (files.length === 0 && !urlValue) return;
+    if (files.length === 0) return;
 
     setConfirming(true);
 
-    if (files.length > 0) {
-      let pipelineRunId: string | null = null;
-      for await (const event of ingestBulk(files.map((f) => f.file))) {
-        if (event.phase === "processing" && event.pipeline_run_id) {
-          pipelineRunId = event.pipeline_run_id;
-          break;
-        }
-        if (event.phase === "error") {
-          setConfirming(false);
-          return;
-        }
+    let pipelineRunId: string | null = null;
+    for await (const event of ingestBulk(files.map((f) => f.file))) {
+      if (event.phase === "processing" && event.pipeline_run_id) {
+        pipelineRunId = event.pipeline_run_id;
+        break;
       }
-
-      if (pipelineRunId) {
-        invalidateActivePipeline();
-        navigate(`/pipeline?pipeline_run_id=${pipelineRunId}`);
-      } else {
+      if (event.phase === "error") {
         setConfirming(false);
+        return;
       }
-    } else if (urlValue) {
-      navigate(`/pipeline?url=${encodeURIComponent(urlValue)}`);
+    }
+
+    if (pipelineRunId) {
+      invalidateActivePipeline();
+      navigate(`/pipeline?pipeline_run_id=${pipelineRunId}`);
+    } else {
+      setConfirming(false);
     }
   }, [invalidateActivePipeline, navigate]);
 
-  // Transition config
-  const morphTransition = shouldAnimate
-    ? { type: "spring" as const, stiffness: 250, damping: 25, mass: 0.8 }
-    : { duration: 0 };
+  const handleCircleClick = useCallback(() => {
+    if (hasActivePipeline) {
+      navigate("/pipeline");
+    } else {
+      setExpanded(true);
+    }
+  }, [hasActivePipeline, navigate]);
 
-  // --- RENDER ---
+  // ---- Derived state ----
 
   const isCircle = !expanded && !confirming;
+  const showContent = expanded || confirming;
+
+  // ---- Transition ----
+
+  const shellSpring = shouldAnimate
+    ? { type: "spring" as const, stiffness: 300, damping: 28, mass: 0.6 }
+    : { duration: 0 };
+
+  // ---- Shell classes ----
+
+  const shellClass = isCircle
+    ? "w-12 h-12 rounded-full border border-dashed border-ink-border bg-transparent cursor-pointer"
+    : "w-full max-w-[800px] rounded-sm border border-solid border-gold-dim bg-ink-raised overflow-hidden";
+
+  // ---- Render ----
 
   return (
     <div className="flex justify-center" ref={zoneRef}>
       <motion.div
         layout
         layoutId={LAYOUT_ID}
-        transition={morphTransition}
-        onClick={
-          isCircle
-            ? () => {
-                if (hasActivePipeline) {
-                  navigate("/pipeline");
-                } else {
-                  setExpanded(true);
-                }
-              }
-            : undefined
-        }
-        className={
-          isCircle
-            ? "w-12 h-12 rounded-full border border-dashed border-ink-border flex items-center justify-center hover:border-gold-dim cursor-pointer bg-transparent relative"
-            : confirming
-              ? "w-full max-w-[800px] rounded-sm border border-solid border-gold-dim bg-ink-raised px-6 py-5"
-              : "w-full max-w-[800px] rounded-sm border border-solid border-gold-dim bg-ink-raised overflow-hidden"
-        }
+        transition={shellSpring}
+        onClick={isCircle ? handleCircleClick : undefined}
+        className={`relative ${shellClass}`}
         onDragEnter={
-          !isCircle
+          showContent
             ? (e: React.DragEvent) => {
                 e.preventDefault();
                 dragCounter.current++;
@@ -289,9 +284,9 @@ export function IngestionFlow({ hasActivePipeline }: { hasActivePipeline: boolea
               }
             : undefined
         }
-        onDragOver={!isCircle ? (e: React.DragEvent) => e.preventDefault() : undefined}
+        onDragOver={showContent ? (e: React.DragEvent) => e.preventDefault() : undefined}
         onDragLeave={
-          !isCircle
+          showContent
             ? (e: React.DragEvent) => {
                 e.preventDefault();
                 dragCounter.current--;
@@ -302,54 +297,48 @@ export function IngestionFlow({ hasActivePipeline }: { hasActivePipeline: boolea
               }
             : undefined
         }
-        onDrop={!isCircle ? handleDrop : undefined}
+        onDrop={showContent ? handleDrop : undefined}
       >
-        <AnimatePresence mode="wait">
-          {/* Circle content */}
-          {isCircle && (
-            <motion.div
-              key="circle-inner"
-              initial={shouldAnimate ? { opacity: 0 } : {}}
-              animate={{ opacity: 1 }}
-              exit={shouldAnimate ? { opacity: 0 } : {}}
-              transition={{ duration: 0.12 }}
-              className="flex items-center justify-center"
-            >
-              <span className="font-mono text-[length:var(--text-body)] text-warm-ghost leading-none select-none">
-                +
-              </span>
-              {hasActivePipeline && (
-                <span className="absolute -top-1 -right-1 w-3 h-3 rounded-full bg-gold animate-[pulse-fade_1.6s_ease-in-out_infinite]" />
-              )}
-            </motion.div>
+        {/* ── Anchor: "+" — always present, fades as shell expands ── */}
+        <motion.span
+          animate={{ opacity: isCircle ? 1 : 0 }}
+          transition={shouldAnimate ? { duration: 0.1, ease: [0.25, 1, 0.5, 1] } : { duration: 0 }}
+          className="absolute inset-0 flex items-center justify-center pointer-events-none select-none"
+        >
+          <span className="font-mono text-[length:var(--text-body)] text-warm-ghost leading-none">
+            +
+          </span>
+          {hasActivePipeline && (
+            <span className="absolute -top-1 -right-1 w-3 h-3 rounded-full bg-gold animate-[pulse-fade_1.6s_ease-in-out_infinite]" />
           )}
+        </motion.span>
 
-          {/* Confirming content */}
+        {/* ── Content: revealed after shell opens ── */}
+        <motion.div
+          animate={{ opacity: showContent ? 1 : 0 }}
+          transition={
+            shouldAnimate
+              ? { duration: 0.15, ease: [0.25, 1, 0.5, 1], delay: showContent ? 0.12 : 0 }
+              : { duration: 0 }
+          }
+          className={showContent ? "" : "pointer-events-none"}
+        >
+          {/* Confirming pulse */}
           {confirming && (
-            <motion.div
-              key="confirming"
-              initial={shouldAnimate ? { opacity: 0 } : {}}
-              animate={{ opacity: 1 }}
-              transition={{ duration: 0.15 }}
-              className="flex items-center gap-3"
-            >
+            <div className="flex items-center gap-3 px-6 py-5">
               <span className="text-gold animate-[pulse-fade_1.6s_ease-in-out_infinite] shrink-0 text-lg">
                 ◉
               </span>
               <span className="font-mono text-[length:var(--text-chrome)] tracking-[0.1em] text-warm-faint">
                 uploading to vault…
               </span>
-            </motion.div>
+            </div>
           )}
 
-          {/* Expanded content */}
+          {/* Expanded zone */}
           {expanded && !confirming && (
-            <motion.div
-              key="expanded-inner"
-              initial={shouldAnimate ? { opacity: 0 } : {}}
-              animate={{ opacity: 1 }}
-              transition={{ duration: 0.15, delay: 0.08 }}
-            >
+            <>
+              {/* Input row */}
               <div className="px-6 pt-6 pb-5">
                 <div className="flex items-center gap-3">
                   <Input
@@ -384,6 +373,7 @@ export function IngestionFlow({ hasActivePipeline }: { hasActivePipeline: boolea
                 </div>
               </div>
 
+              {/* File summary */}
               {summary && (
                 <div className="px-6 pb-4 border-t border-ink-subtle pt-4">
                   <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5 font-mono text-[length:var(--text-chrome)] tracking-[0.06em] text-warm-ghost">
@@ -400,8 +390,8 @@ export function IngestionFlow({ hasActivePipeline }: { hasActivePipeline: boolea
 
                   {summary.duplicates > 0 && (
                     <p className="mt-2 font-mono text-[length:var(--text-chrome)] tracking-[0.06em] text-warm-faint">
-                      {summary.duplicates} duplicate{summary.duplicates !== 1 ? "s" : ""} detected —
-                      duplicates will be skipped
+                      {summary.duplicates} duplicate
+                      {summary.duplicates !== 1 ? "s" : ""} detected — duplicates will be skipped
                     </p>
                   )}
 
@@ -413,6 +403,7 @@ export function IngestionFlow({ hasActivePipeline }: { hasActivePipeline: boolea
                 </div>
               )}
 
+              {/* Confirm action */}
               {summary && summary.count > 0 && (
                 <div className="px-6 pb-5 flex items-center justify-end gap-3 border-t border-ink-subtle pt-4">
                   <Button
@@ -423,13 +414,14 @@ export function IngestionFlow({ hasActivePipeline }: { hasActivePipeline: boolea
                                text-gold hover:text-gold-hover hover:bg-transparent
                                rounded-sm h-auto px-3 py-0.5"
                   >
-                    ingest {summary.count} file{summary.count !== 1 ? "s" : ""}
+                    ingest {summary.count} file
+                    {summary.count !== 1 ? "s" : ""}
                   </Button>
                 </div>
               )}
-            </motion.div>
+            </>
           )}
-        </AnimatePresence>
+        </motion.div>
       </motion.div>
     </div>
   );
