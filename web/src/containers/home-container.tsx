@@ -185,7 +185,10 @@ function HomeContent({ sessionId, initialExchanges, initialQuery, origin }: Home
                 </div>
               </motion.div>
 
-              <IngestionFlow hasActivePipeline={hasActivePipeline} />
+              {/* Stable-height container so expansion doesn't shift the query bar */}
+              <div className="w-full max-w-[800px] min-h-[360px] flex flex-col items-center justify-start pt-10">
+                <IngestionFlow hasActivePipeline={hasActivePipeline} />
+              </div>
             </motion.div>
           )}
         </AnimatePresence>

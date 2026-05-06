@@ -302,6 +302,16 @@ export async function getTask(taskId: string): Promise<TaskDetail> {
   return readJson(res, taskDetailSchema);
 }
 
+export async function listTasks(limit: number = 10): Promise<TaskDetail[]> {
+  const res = await apiFetch(vaultPath(`/tasks?limit=${limit}&offset=0`));
+  if (!res.ok) throw new Error(await res.text());
+  const pageSchema = z.object({
+    items: z.array(taskDetailSchema),
+  });
+  const page = await readJson(res, pageSchema);
+  return page.items;
+}
+
 export type UserSuggestionIntent = "disagree" | "correct" | "add_context" | "restructure";
 
 export async function postUserSuggestion(params: {

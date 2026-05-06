@@ -208,8 +208,8 @@ function PipelineStageRow({ stage, index, shouldAnimate, ref }: PipelineStageRow
         )}
       </div>
 
-      {/* Count (active stages) */}
-      {isActive && stage.total > 0 && (
+      {/* Count (only for stages with real progress) */}
+      {isActive && stage.total > 1 && (
         <div className="shrink-0 font-mono text-[length:var(--text-chrome)] tracking-[0.1em] text-warm-ghost">
           {stage.done}
           {stage.total > 1 && <> / {stage.total}</>}

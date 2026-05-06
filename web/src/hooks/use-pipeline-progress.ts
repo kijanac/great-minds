@@ -25,7 +25,7 @@ export interface StageProgress {
 }
 
 const STAGES: { stage: PipelineStage; label: string; activeLabel: string }[] = [
-  { stage: "uploading", label: "Uploading", activeLabel: "Uploading N files…" },
+  { stage: "uploading", label: "Uploading", activeLabel: "Uploading files…" },
   { stage: "indexing", label: "Indexing", activeLabel: "Indexing documents for search…" },
   { stage: "reading", label: "Reading", activeLabel: "Reading documents…" },
   { stage: "synthesizing", label: "Synthesizing", activeLabel: "Synthesizing topics…" },
@@ -41,7 +41,6 @@ const COMPILE_POLL_MS = 2000;
 /**
  * Approximate weight of each compile phase relative to total work.
  * Used to estimate which phase the compile is in from overall progress.
- * Upload is tracked separately via the bulk ingest task.
  */
 const PHASE_WEIGHTS: number[] = [5, 40, 15, 5, 30, 3, 2]; // index, read, synth, connect, write, check, pub
 
@@ -56,14 +55,24 @@ function estimateCompileStage(progressDone: number, progressTotal: number): numb
   return PHASE_WEIGHTS.length - 1;
 }
 
+const COMPILE_STAGES: PipelineStage[] = [
+  "indexing",
+  "reading",
+  "synthesizing",
+  "connecting",
+  "writing",
+  "checking",
+  "publishing",
+];
+
 export function usePipelineProgress() {
   const [stages, setStages] = useState<StageProgress[]>([]);
   const [overallDone, setOverallDone] = useState(false);
   const [overallError, setOverallError] = useState<string | null>(null);
   const [activeTaskId, setActiveTaskId] = useState<string | null>(null);
-  const [activeCompileIntentId, setActiveCompileIntentId] = useState<string | null>(null);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const compilePollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const compileTriggeredRef = useRef(false);
 
   const clearPolls = useCallback(() => {
     if (pollRef.current) {
@@ -74,6 +83,7 @@ export function usePipelineProgress() {
       clearInterval(compilePollRef.current);
       compilePollRef.current = null;
     }
+    compileTriggeredRef.current = false;
   }, []);
 
   const buildStages = useCallback(
@@ -94,7 +104,7 @@ export function usePipelineProgress() {
           label: s.label,
           detail: isActive ? (detail ?? s.activeLabel) : "",
           done: isActive ? stageDone : isComplete ? 1 : 0,
-          total: isActive ? stageTotal : isComplete ? 1 : 1,
+          total: isActive && stageTotal > 0 ? stageTotal : isComplete ? 1 : 1,
           active: isActive,
           complete: isComplete,
           errored: s.stage === erroredStage,
@@ -112,32 +122,41 @@ export function usePipelineProgress() {
       setOverallDone(false);
       setOverallError(null);
 
-      // Upload stage active
       setStages(buildStages("uploading", 0, fileCount, null, `Uploading ${fileCount} files…`));
 
       pollRef.current = setInterval(async () => {
         try {
           const task: TaskDetail = await getTask(taskId);
+          const total = task.progress_total > 0 ? task.progress_total : fileCount;
+          const done = task.progress_done;
+
           setStages(
-            buildStages(
-              "uploading",
-              task.progress_done,
-              Math.max(task.progress_total, fileCount),
-              null,
-              `Uploading ${task.progress_done} of ${Math.max(task.progress_total, fileCount)} files…`,
-            ),
+            buildStages("uploading", done, total, null, `Uploading ${done} of ${total} files…`),
           );
 
           if (task.status === "completed") {
-            // Upload done — mark uploading complete and trigger compile
-            setStages(buildStages("indexing", 0, 1, null, "Indexing documents for search…"));
+            // Guard against double-trigger from React re-renders
+            if (compileTriggeredRef.current) return;
+            compileTriggeredRef.current = true;
+
+            // Bulk task done — show compile-prep stage while the intent dispatches
+            setStages(buildStages("indexing", 0, 1, null, "Preparing to compile…"));
             clearInterval(pollRef.current!);
             pollRef.current = null;
 
-            // Trigger compile
-            const intent: CompileIntent = await compile();
-            setActiveCompileIntentId(intent.id);
-            watchCompile(intent.id);
+            try {
+              const intent: CompileIntent = await compile();
+              watchCompile(intent.id);
+            } catch (e) {
+              setOverallError(e instanceof Error ? e.message : "Failed to start compile");
+              setStages((prev) =>
+                prev.map((s) =>
+                  s.stage === "indexing"
+                    ? { ...s, errored: true, detail: "Failed to start compile" }
+                    : s,
+                ),
+              );
+            }
           } else if (task.status === "failed" || task.status === "cancelled") {
             const err = task.error ?? `Task ${task.status}`;
             setOverallError(err);
@@ -158,14 +177,14 @@ export function usePipelineProgress() {
     [clearPolls, buildStages],
   );
 
-  /** Watch a compile task's progress. */
+  /** Watch a compile intent → task → progress. */
   const watchCompile = useCallback(
     (intentId: string) => {
       compilePollRef.current = setInterval(async () => {
         try {
           const intent: CompileIntent = await getCompileIntent(intentId);
+
           if (intent.status === "satisfied") {
-            // All done
             setStages((prev) => prev.map((s) => ({ ...s, active: false, complete: true })));
             setOverallDone(true);
             clearInterval(compilePollRef.current!);
@@ -173,22 +192,33 @@ export function usePipelineProgress() {
             return;
           }
 
+          if (intent.status === "pending") {
+            // Still waiting for the reconciler to dispatch — keep showing "Preparing"
+            setStages(buildStages("indexing", 0, 1, null, "Preparing to compile…"));
+            return;
+          }
+
           if (intent.status === "dispatched" && intent.dispatched_task_id) {
-            // Poll the underlying task for progress
             const task: TaskDetail = await getTask(intent.dispatched_task_id);
+
+            if (task.status === "failed" || task.status === "cancelled") {
+              const err = task.error ?? `Compile ${task.status}`;
+              setOverallError(err);
+              setStages((prev) => {
+                const activeIdx = prev.findIndex((s) => s.active);
+                if (activeIdx === -1) return prev;
+                return prev.map((s, i) =>
+                  i === activeIdx ? { ...s, errored: true, detail: err } : s,
+                );
+              });
+              clearInterval(compilePollRef.current!);
+              compilePollRef.current = null;
+              return;
+            }
+
             if (task.progress_total > 0) {
               const stageIdx = estimateCompileStage(task.progress_done, task.progress_total);
-              // Stages after "uploading" (compile phases 0-6)
-              const compileStages: PipelineStage[] = [
-                "indexing",
-                "reading",
-                "synthesizing",
-                "connecting",
-                "writing",
-                "checking",
-                "publishing",
-              ];
-              const currentStage = compileStages[Math.min(stageIdx, compileStages.length - 1)];
+              const currentStage = COMPILE_STAGES[Math.min(stageIdx, COMPILE_STAGES.length - 1)];
               const stageDef = STAGES.find((s) => s.stage === currentStage)!;
               setStages(
                 buildStages(
@@ -199,6 +229,9 @@ export function usePipelineProgress() {
                   stageDef.activeLabel,
                 ),
               );
+            } else {
+              // Task dispatched but no progress yet — keep showing indexing
+              setStages(buildStages("indexing", 0, 1, null, "Starting compile…"));
             }
           }
         } catch {
@@ -209,7 +242,6 @@ export function usePipelineProgress() {
     [buildStages],
   );
 
-  // Cleanup on unmount
   useEffect(() => {
     return () => clearPolls();
   }, [clearPolls]);
@@ -220,7 +252,6 @@ export function usePipelineProgress() {
     setOverallDone(false);
     setOverallError(null);
     setActiveTaskId(null);
-    setActiveCompileIntentId(null);
   }, [clearPolls]);
 
   return {
@@ -228,7 +259,6 @@ export function usePipelineProgress() {
     overallDone,
     overallError,
     activeTaskId,
-    activeCompileIntentId,
     watchBulkTask,
     reset,
   };
