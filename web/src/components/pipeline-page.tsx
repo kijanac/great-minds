@@ -95,9 +95,11 @@ export function PipelinePage({ stages, overallDone, overallError }: PipelinePage
           {overallDone && (
             <motion.div
               className="mt-10 p-6 rounded-sm border border-gold-dim bg-ink-raised"
-              initial={shouldAnimate ? { opacity: 0, y: 8 } : false}
+              initial={shouldAnimate ? { opacity: 0, y: 8 } : {}}
               animate={{ opacity: 1, y: 0 }}
-              transition={{ duration: 0.3, ease: EASE_OUT, delay: 0.2 }}
+              transition={
+                shouldAnimate ? { duration: 0.3, ease: EASE_OUT, delay: 0.2 } : { duration: 0 }
+              }
             >
               <p className="font-serif text-[length:var(--text-body)] text-warm-dim mb-1">
                 Compile complete
@@ -151,13 +153,17 @@ function PipelineStageRow({ stage, index, shouldAnimate, ref }: PipelineStageRow
     <motion.div
       ref={ref}
       className="flex items-start gap-4 py-4 border-b border-ink-subtle last:border-b-0"
-      initial={shouldAnimate ? { opacity: 0, x: -8 } : false}
+      initial={shouldAnimate ? { opacity: 0, x: -8 } : {}}
       animate={{ opacity: 1, x: 0 }}
-      transition={{
-        duration: 0.25,
-        ease: EASE_OUT,
-        delay: isComplete ? 0 : Math.min(index * 0.05, 0.3),
-      }}
+      transition={
+        shouldAnimate
+          ? {
+              duration: 0.25,
+              ease: EASE_OUT,
+              delay: isComplete ? 0 : Math.min(index * 0.05, 0.3),
+            }
+          : { duration: 0 }
+      }
     >
       {/* Status icon */}
       <div className="shrink-0 w-5 h-5 flex items-center justify-center mt-0.5">

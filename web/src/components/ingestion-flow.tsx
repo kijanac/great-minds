@@ -119,9 +119,9 @@ export function IngestionFlow({ hasActivePipeline }: { hasActivePipeline: boolea
           layoutId={LAYOUT_ID}
           className="w-full max-w-[640px] rounded-sm border border-solid border-gold-dim
                      bg-ink-raised px-5 py-4"
-          initial={shouldAnimate ? { opacity: 0, scale: 0.95 } : false}
+          initial={shouldAnimate ? { opacity: 0, scale: 0.95 } : {}}
           animate={{ opacity: 1, scale: 1 }}
-          transition={{ duration: 0.25, ease: EASE_OUT }}
+          transition={shouldAnimate ? { duration: 0.25, ease: EASE_OUT } : { duration: 0 }}
         >
           <div className="flex items-center gap-3">
             <span className="text-gold animate-[pulse-fade_1.6s_ease-in-out_infinite] shrink-0 text-lg">
@@ -142,12 +142,10 @@ export function IngestionFlow({ hasActivePipeline }: { hasActivePipeline: boolea
         {!expanded ? (
           <motion.div
             key="circle"
-            initial={shouldAnimate ? { opacity: 0, scale: 0.8 } : false}
+            initial={shouldAnimate ? { opacity: 0, scale: 0.8 } : {}}
             animate={{ opacity: 1, scale: 1 }}
-            exit={
-              shouldAnimate ? { opacity: 0, scale: 0.8, transition: { duration: 0.15 } } : false
-            }
-            transition={{ duration: 0.2, ease: EASE_OUT }}
+            exit={shouldAnimate ? { opacity: 0, scale: 0.8, transition: { duration: 0.15 } } : {}}
+            transition={shouldAnimate ? { duration: 0.2, ease: EASE_OUT } : { duration: 0 }}
           >
             <IngestionCircle
               hasActivePipeline={hasActivePipeline}
@@ -158,12 +156,10 @@ export function IngestionFlow({ hasActivePipeline }: { hasActivePipeline: boolea
         ) : (
           <motion.div
             key="expanded"
-            initial={shouldAnimate ? { opacity: 0, scale: 0.95 } : false}
+            initial={shouldAnimate ? { opacity: 0, scale: 0.95 } : {}}
             animate={{ opacity: 1, scale: 1 }}
-            exit={
-              shouldAnimate ? { opacity: 0, scale: 0.95, transition: { duration: 0.15 } } : false
-            }
-            transition={{ duration: 0.25, ease: EASE_OUT }}
+            exit={shouldAnimate ? { opacity: 0, scale: 0.95, transition: { duration: 0.15 } } : {}}
+            transition={shouldAnimate ? { duration: 0.25, ease: EASE_OUT } : { duration: 0 }}
           >
             <IngestionExpanded
               onFileDrop={handleFileDrop}
