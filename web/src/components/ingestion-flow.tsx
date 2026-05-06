@@ -4,6 +4,7 @@ import { motion, useReducedMotion } from "motion/react";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { ScrollArea } from "@/components/ui/scroll-area";
 import { ingestBulk } from "@/api/ingest";
 import { useActiveVaultId } from "@/hooks/use-vault";
 import { useViewNavigate } from "@/hooks/use-view-navigate";
@@ -11,11 +12,44 @@ import type { DroppedFile } from "@/lib/types";
 
 const LAYOUT_ID = "ingestion-zone";
 
+/** Extensions MarkItDown can convert. Unrecognised types get a warning
+ *  but aren't blocked — the backend may handle types we don't list. */
+const RECOGNISED_EXTS = new Set([
+  ".md",
+  ".markdown",
+  ".txt",
+  ".text",
+  ".pdf",
+  ".docx",
+  ".doc",
+  ".pptx",
+  ".ppt",
+  ".xlsx",
+  ".xls",
+  ".csv",
+  ".json",
+  ".xml",
+  ".html",
+  ".htm",
+  ".epub",
+  ".rtf",
+  ".odt",
+]);
+
+/** Number of files above which we show a "large batch" note. */
+const LARGE_BATCH_THRESHOLD = 200;
+
+interface FailedUpload {
+  name: string;
+  error: string;
+}
+
 type FileSummary = {
   count: number;
   byType: Map<string, number>;
   duplicates: number;
   totalSize: number;
+  unrecognisedExts: Set<string>;
 };
 
 function formatSize(bytes: number): string {
@@ -66,6 +100,7 @@ async function collectAll(entries: FileSystemEntry[], prefix: string): Promise<D
 function computeSummary(files: DroppedFile[]): FileSummary {
   const byType = new Map<string, number>();
   const seen = new Set<string>();
+  const unrecognisedExts = new Set<string>();
   let duplicates = 0;
   let totalSize = 0;
 
@@ -73,6 +108,10 @@ function computeSummary(files: DroppedFile[]): FileSummary {
     totalSize += file.size;
     const ext = file.name.includes(".") ? `.${file.name.split(".").pop()?.toLowerCase()}` : "other";
     byType.set(ext, (byType.get(ext) ?? 0) + 1);
+
+    if (ext !== "other" && !RECOGNISED_EXTS.has(ext)) {
+      unrecognisedExts.add(ext);
+    }
 
     const key = `${file.name}:${file.size}`;
     if (seen.has(key)) {
@@ -82,7 +121,7 @@ function computeSummary(files: DroppedFile[]): FileSummary {
     }
   }
 
-  return { count: files.length, byType, duplicates, totalSize };
+  return { count: files.length, byType, duplicates, totalSize, unrecognisedExts };
 }
 
 export function IngestionFlow({ hasActivePipeline }: { hasActivePipeline: boolean }) {
@@ -91,6 +130,8 @@ export function IngestionFlow({ hasActivePipeline }: { hasActivePipeline: boolea
   const [isDragOver, setDragOver] = useState(false);
   const [url, setUrl] = useState("");
   const [summary, setSummary] = useState<FileSummary | null>(null);
+  const [ingestError, setIngestError] = useState<string | null>(null);
+  const [failedUploads, setFailedUploads] = useState<FailedUpload[]>([]);
   const dragCounter = useRef(0);
   const pendingFilesRef = useRef<DroppedFile[]>([]);
   const pendingUrlRef = useRef<string>("");
@@ -166,6 +207,8 @@ export function IngestionFlow({ hasActivePipeline }: { hasActivePipeline: boolea
     pendingUrlRef.current = "";
     setUrl("");
     setSummary(null);
+    setIngestError(null);
+    setFailedUploads([]);
   }, []);
 
   const invalidateActivePipeline = useCallback(() => {
@@ -175,10 +218,17 @@ export function IngestionFlow({ hasActivePipeline }: { hasActivePipeline: boolea
     });
   }, [queryClient, vaultId]);
 
+  const clearError = useCallback(() => {
+    setIngestError(null);
+    setFailedUploads([]);
+  }, []);
+
   const handleDrop = useCallback(async (e: React.DragEvent) => {
     e.preventDefault();
     dragCounter.current = 0;
     setDragOver(false);
+    setIngestError(null);
+    setFailedUploads([]);
     const files = await filesFromDrop(e.dataTransfer);
     if (files.length > 0) {
       pendingFilesRef.current = files;
@@ -201,6 +251,8 @@ export function IngestionFlow({ hasActivePipeline }: { hasActivePipeline: boolea
         }));
         pendingFilesRef.current = dropped;
         pendingUrlRef.current = "";
+        setIngestError(null);
+        setFailedUploads([]);
         setSummary(computeSummary(dropped));
       }
     };
@@ -214,31 +266,79 @@ export function IngestionFlow({ hasActivePipeline }: { hasActivePipeline: boolea
     navigate(`/pipeline?url=${encodeURIComponent(trimmed)}`);
   }, [navigate, url]);
 
-  const handleConfirm = useCallback(async () => {
-    const files = pendingFilesRef.current;
-    if (files.length === 0) return;
+  const handleConfirm = useCallback(
+    async (retryOnly?: DroppedFile[]) => {
+      const allFiles = pendingFilesRef.current;
+      const files = retryOnly ?? allFiles;
+      if (files.length === 0) return;
 
-    setConfirming(true);
+      setIngestError(null);
+      setFailedUploads([]);
+      setConfirming(true);
 
-    let pipelineRunId: string | null = null;
-    for await (const event of ingestBulk(files.map((f) => f.file))) {
-      if (event.phase === "processing" && event.pipeline_run_id) {
-        pipelineRunId = event.pipeline_run_id;
-        break;
+      let pipelineRunId: string | null = null;
+      let lastFailedUploads: FailedUpload[] = [];
+      for await (const event of ingestBulk(files.map((f) => f.file))) {
+        if (event.phase === "uploading" && event.failed_uploads) {
+          lastFailedUploads = event.failed_uploads;
+          setFailedUploads(lastFailedUploads);
+        }
+        if (event.phase === "processing") {
+          if (event.pipeline_run_id) pipelineRunId = event.pipeline_run_id;
+          // Capture partial failures on the success path — some files
+          // may have uploaded but others failed. Show the error UI even
+          // though a pipeline was created for the survivors.
+          if (event.failed_uploads && event.failed_uploads.length > 0) {
+            lastFailedUploads = event.failed_uploads;
+            setFailedUploads(lastFailedUploads);
+          }
+          break;
+        }
+        if (event.phase === "error") {
+          setConfirming(false);
+          setIngestError(event.error ?? "Ingest failed");
+          if (event.failed_uploads) setFailedUploads(event.failed_uploads);
+          return;
+        }
       }
-      if (event.phase === "error") {
+
+      if (pipelineRunId) {
+        if (lastFailedUploads.length > 0) {
+          // Partial success: some files made it, others didn't.
+          // Show the failures instead of navigating away silently.
+          // Keep pendingFilesRef so retry can find the failed subset.
+          setConfirming(false);
+          const failedNames = new Set(lastFailedUploads.map((f) => f.name));
+          const succeeded = allFiles.length - failedNames.size;
+          setIngestError(
+            succeeded > 0
+              ? `${succeeded} file${succeeded !== 1 ? "s" : ""} ingested, ${failedNames.size} failed. The pipeline will process successful uploads.`
+              : `All ${failedNames.size} upload${failedNames.size !== 1 ? "s" : ""} failed.`,
+          );
+          invalidateActivePipeline();
+        } else {
+          pendingFilesRef.current = [];
+          invalidateActivePipeline();
+          navigate(`/pipeline?pipeline_run_id=${pipelineRunId}`);
+        }
+      } else {
         setConfirming(false);
-        return;
+        setIngestError("No pipeline was created — the server may be unavailable.");
       }
-    }
+    },
+    [invalidateActivePipeline, navigate],
+  );
 
-    if (pipelineRunId) {
-      invalidateActivePipeline();
-      navigate(`/pipeline?pipeline_run_id=${pipelineRunId}`);
-    } else {
-      setConfirming(false);
+  const handleRetry = useCallback(() => {
+    // Retry only the files that failed, looked up by name.
+    const failedNames = new Set(failedUploads.map((f) => f.name));
+    const retryFiles = pendingFilesRef.current.filter((f) => failedNames.has(f.file.name));
+    if (retryFiles.length > 0) {
+      // Build a fresh DroppedFile[] from the pending ref so the batch
+      // size is accurate for partial-success messaging.
+      handleConfirm(retryFiles);
     }
-  }, [invalidateActivePipeline, navigate]);
+  }, [failedUploads, handleConfirm]);
 
   const handleCircleClick = useCallback(() => {
     if (hasActivePipeline) {
@@ -252,6 +352,8 @@ export function IngestionFlow({ hasActivePipeline }: { hasActivePipeline: boolea
 
   const isCircle = !expanded && !confirming;
   const showContent = expanded || confirming;
+  const hasUnrecognised = summary && summary.unrecognisedExts.size > 0;
+  const isLargeBatch = summary && summary.count > LARGE_BATCH_THRESHOLD;
 
   // ---- Transition ----
 
@@ -323,9 +425,75 @@ export function IngestionFlow({ hasActivePipeline }: { hasActivePipeline: boolea
           }
           className={showContent ? "" : "pointer-events-none"}
         >
+          {/* Error state */}
+          {expanded && ingestError && (
+            <div className="px-10 pt-8 pb-4">
+              {/* File summary — keep visible for context */}
+              {summary && (
+                <div className="mb-4 flex flex-wrap items-center gap-x-4 gap-y-1 font-mono text-[length:var(--text-chrome)] tracking-[0.06em] text-warm-ghost">
+                  <span>
+                    {summary.count} file{summary.count !== 1 ? "s" : ""}
+                  </span>
+                  <span>{formatSize(summary.totalSize)}</span>
+                </div>
+              )}
+
+              <div className="flex items-start gap-3">
+                <span className="text-warm-faint shrink-0 mt-0.5">✗</span>
+                <div className="flex-1 min-w-0">
+                  <p className="font-serif text-[length:var(--text-small)] text-warm-dim mb-1">
+                    {ingestError}
+                  </p>
+                  {failedUploads.length > 0 && (
+                    <div className="mt-2">
+                      <p className="font-mono text-[length:var(--text-chrome)] tracking-[0.06em] text-warm-ghost mb-1.5">
+                        {failedUploads.length} file{failedUploads.length !== 1 ? "s" : ""} failed
+                      </p>
+                      <ScrollArea className="max-h-32 rounded-sm border border-ink-border">
+                        <div className="p-3 space-y-1">
+                          {failedUploads.map((f, i) => (
+                            <div
+                              key={i}
+                              className="font-mono text-[length:var(--text-chrome)] text-warm-faint truncate"
+                            >
+                              <span className="text-warm-ghost">{f.name}</span>{" "}
+                              <span className="opacity-60">{f.error}</span>
+                            </div>
+                          ))}
+                        </div>
+                      </ScrollArea>
+                    </div>
+                  )}
+                </div>
+              </div>
+              <div className="flex items-center gap-3 mt-4 pb-3">
+                <Button
+                  variant="ghost"
+                  size="xs"
+                  onClick={handleRetry}
+                  className="font-mono text-[length:var(--text-chrome)] tracking-[0.1em]
+                             text-gold hover:text-gold-hover hover:bg-transparent
+                             rounded-sm h-auto px-3 py-0.5"
+                >
+                  retry failed
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="xs"
+                  onClick={clearError}
+                  className="font-mono text-[length:var(--text-chrome)] tracking-[0.1em]
+                             text-warm-ghost hover:text-warm-faint hover:bg-transparent
+                             rounded-sm h-auto px-3 py-0.5"
+                >
+                  dismiss
+                </Button>
+              </div>
+            </div>
+          )}
+
           {/* Confirming pulse */}
           {confirming && (
-            <div className="flex items-center gap-3 px-6 py-5">
+            <div className="flex items-center justify-center gap-3 px-10 py-12">
               <span className="text-gold animate-[pulse-fade_1.6s_ease-in-out_infinite] shrink-0 text-lg">
                 ◉
               </span>
@@ -336,47 +504,12 @@ export function IngestionFlow({ hasActivePipeline }: { hasActivePipeline: boolea
           )}
 
           {/* Expanded zone */}
-          {expanded && !confirming && (
+          {expanded && !confirming && !ingestError && (
             <>
-              {/* Input row */}
-              <div className="px-6 pt-6 pb-5">
-                <div className="flex items-center gap-3">
-                  <Input
-                    className="flex-1 border-none bg-transparent dark:bg-transparent
-                               font-mono text-[length:var(--text-chrome)] tracking-[0.1em]
-                               text-warm-faint placeholder:text-warm-ghost
-                               caret-gold focus-visible:ring-0 h-auto py-0 px-0"
-                    placeholder={
-                      isDragOver
-                        ? "drop to add to knowledge base"
-                        : "drop files, paste a link, or browse"
-                    }
-                    value={url}
-                    onChange={(e) => setUrl(e.target.value)}
-                    onKeyDown={(e) => e.key === "Enter" && handleUrlSubmit()}
-                  />
-                  {url.trim() && (
-                    <span className="font-mono text-[length:var(--text-chrome)] text-warm-ghost select-none">
-                      ↵
-                    </span>
-                  )}
-                  <Button
-                    variant="ghost"
-                    size="xs"
-                    onClick={handleBrowse}
-                    className="font-mono text-[length:var(--text-chrome)] tracking-[0.1em]
-                               text-gold-dim hover:text-gold hover:bg-transparent
-                               rounded-sm h-auto px-2 py-0 shrink-0"
-                  >
-                    browse
-                  </Button>
-                </div>
-              </div>
-
-              {/* File summary */}
-              {summary && (
-                <div className="px-6 pb-4 border-t border-ink-subtle pt-4">
-                  <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5 font-mono text-[length:var(--text-chrome)] tracking-[0.06em] text-warm-ghost">
+              {summary && summary.count > 0 ? (
+                /* ── With files selected ── */
+                <div className="px-10 py-8">
+                  <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5 font-mono text-[length:var(--text-chrome)] tracking-[0.06em] text-warm-ghost mb-4">
                     <span>
                       {summary.count} file{summary.count !== 1 ? "s" : ""}
                     </span>
@@ -388,35 +521,102 @@ export function IngestionFlow({ hasActivePipeline }: { hasActivePipeline: boolea
                     ))}
                   </div>
 
+                  {hasUnrecognised && (
+                    <p className="mb-1.5 font-mono text-[length:var(--text-chrome)] tracking-[0.06em] text-warm-faint">
+                      Unrecognised format{summary.unrecognisedExts.size > 1 ? "s" : ""}:{" "}
+                      {Array.from(summary.unrecognisedExts).join(", ")}. These may fail during
+                      processing.
+                    </p>
+                  )}
+
                   {summary.duplicates > 0 && (
-                    <p className="mt-2 font-mono text-[length:var(--text-chrome)] tracking-[0.06em] text-warm-faint">
+                    <p className="mb-1.5 font-mono text-[length:var(--text-chrome)] tracking-[0.06em] text-warm-faint">
                       {summary.duplicates} duplicate
                       {summary.duplicates !== 1 ? "s" : ""} detected — duplicates will be skipped
                     </p>
                   )}
 
                   {summary.totalSize > 100 * 1024 * 1024 && (
-                    <p className="mt-1.5 font-mono text-[length:var(--text-chrome)] tracking-[0.06em] text-warm-faint">
+                    <p className="mb-1.5 font-mono text-[length:var(--text-chrome)] tracking-[0.06em] text-warm-faint">
                       Large upload — may take a few minutes
                     </p>
                   )}
-                </div>
-              )}
 
-              {/* Confirm action */}
-              {summary && summary.count > 0 && (
-                <div className="px-6 pb-5 flex items-center justify-end gap-3 border-t border-ink-subtle pt-4">
-                  <Button
-                    variant="ghost"
-                    size="xs"
-                    onClick={handleConfirm}
+                  <div className="mt-6 pt-5 border-t border-ink-subtle">
+                    {isLargeBatch && (
+                      <p className="mb-4 font-mono text-[length:var(--text-chrome)] tracking-[0.06em] text-warm-faint text-center">
+                        {summary.count} files — a large batch. Ingest may take a while. The pipeline
+                        runs in the background if you navigate away.
+                      </p>
+                    )}
+                    <div className="flex items-center justify-center gap-2">
+                      <Button
+                        variant="ghost"
+                        size="xs"
+                        onClick={() => handleConfirm()}
+                        className="font-mono text-[length:var(--text-chrome)] tracking-[0.1em]
+                                   text-gold hover:text-gold-hover hover:bg-transparent
+                                   rounded-sm h-auto px-3 py-0.5"
+                      >
+                        ingest {summary.count} file
+                        {summary.count !== 1 ? "s" : ""}
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="xs"
+                        onClick={handleBrowse}
+                        className="font-mono text-[length:var(--text-chrome)] tracking-[0.1em]
+                                   text-warm-ghost hover:text-warm-faint hover:bg-transparent
+                                   rounded-sm h-auto px-3 py-0.5"
+                      >
+                        add more
+                      </Button>
+                    </div>
+                  </div>
+                </div>
+              ) : (
+                /* ── Empty: generous drop target ── */
+                <div className="px-10 py-14 flex flex-col items-center gap-6">
+                  <div className="text-center">
+                    <p className="font-serif text-[length:var(--text-body)] text-warm-dim mb-1">
+                      {isDragOver ? "drop to add to knowledge base" : "drop files or folders here"}
+                    </p>
+                    <p className="font-mono text-[length:var(--text-chrome)] tracking-[0.06em] text-warm-ghost">
+                      or use the field below
+                    </p>
+                  </div>
+
+                  <div className="w-full max-w-[420px] flex items-center gap-2">
+                    <Input
+                      className="flex-1 border-ink-border bg-transparent dark:bg-transparent
+                                 font-mono text-[length:var(--text-chrome)] tracking-[0.08em]
+                                 text-warm-faint placeholder:text-warm-ghost
+                                 caret-gold focus-visible:ring-0 focus-visible:border-gold-dim
+                                 h-8 py-0 px-3 rounded-sm"
+                      placeholder="paste a link and press Enter"
+                      value={url}
+                      onChange={(e) => setUrl(e.target.value)}
+                      onKeyDown={(e) => e.key === "Enter" && handleUrlSubmit()}
+                    />
+                    {url.trim() && (
+                      <span
+                        className="font-mono text-[length:var(--text-chrome)] text-warm-ghost select-none shrink-0"
+                        title="Press Enter to ingest this URL"
+                      >
+                        ↵
+                      </span>
+                    )}
+                  </div>
+
+                  <button
+                    onClick={handleBrowse}
+                    title="Browse for a folder"
                     className="font-mono text-[length:var(--text-chrome)] tracking-[0.1em]
-                               text-gold hover:text-gold-hover hover:bg-transparent
-                               rounded-sm h-auto px-3 py-0.5"
+                               text-gold-dim hover:text-gold transition-colors
+                               bg-transparent border-0 cursor-pointer"
                   >
-                    ingest {summary.count} file
-                    {summary.count !== 1 ? "s" : ""}
-                  </Button>
+                    or browse for a folder
+                  </button>
                 </div>
               )}
             </>
