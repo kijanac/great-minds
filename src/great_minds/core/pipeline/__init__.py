@@ -26,6 +26,7 @@ from great_minds.core.pipeline import (
     derive,
     extract,
     ingest,
+    notify as pipeline_notify,
     publish,
     render,
     verify,
@@ -43,22 +44,75 @@ async def run(ctx: PipelineContext) -> None:
     automatically skipped. Side effects (storage writes, DB rows) are
     the business outputs; per-phase counts accumulate in the wide
     event via enrich().
-    """
-    await ingest.run(ctx)
-    await extract.run(ctx)
 
+    Progress is pushed to the frontend via Postgres NOTIFY (when
+    ctx.task_id is set), giving real-time per-phase visibility with
+    zero polling.
+    """
+    tid = ctx.task_id
+
+    # Phase 0 — ingest (mechanical, fast)
+    await pipeline_notify.notify(task_id=tid, phase="ingest", status="started", total=1)
+    await ingest.run(ctx)
+    await pipeline_notify.notify(
+        task_id=tid, phase="ingest", status="completed", done=1, total=1
+    )
+
+    # Phase 1 — extract (LLM-heavy, slow)
+    await pipeline_notify.notify(task_id=tid, phase="extract", status="started")
+    await extract.run(ctx)
+    await pipeline_notify.notify(task_id=tid, phase="extract", status="completed")
+
+    # Phase 2 — abstract
+    await pipeline_notify.notify(
+        task_id=tid, phase="abstract", status="started", total=1
+    )
     validated = await abstract.run(ctx)
     if not validated:
+        await pipeline_notify.notify(
+            task_id=tid,
+            phase="abstract",
+            status="completed",
+            done=1,
+            total=1,
+            early_exit=True,
+        )
         log_event(
             "pipeline.compile_completed_early",
             vault_id=str(ctx.vault_id),
             reason="no_validated_topics",
         )
         return
+    await pipeline_notify.notify(
+        task_id=tid, phase="abstract", status="completed", done=1, total=1
+    )
 
+    # Phase 3 — derive (mechanical, fast)
+    await pipeline_notify.notify(task_id=tid, phase="derive", status="started", total=1)
     await derive.run(ctx, validated)
+    await pipeline_notify.notify(
+        task_id=tid, phase="derive", status="completed", done=1, total=1
+    )
+
+    # Phase 4 — render (LLM-heavy, slow)
+    await pipeline_notify.notify(task_id=tid, phase="render", status="started")
     await render.run(ctx, validated)
+    await pipeline_notify.notify(task_id=tid, phase="render", status="completed")
+
+    # Phase 5 — verify (mechanical, fast)
+    await pipeline_notify.notify(task_id=tid, phase="verify", status="started", total=1)
     await verify.run(ctx)
+    await pipeline_notify.notify(
+        task_id=tid, phase="verify", status="completed", done=1, total=1
+    )
+
+    # Phase 6 — publish (mechanical, fast)
+    await pipeline_notify.notify(
+        task_id=tid, phase="publish", status="started", total=1
+    )
     await publish.run(ctx)
+    await pipeline_notify.notify(
+        task_id=tid, phase="publish", status="completed", done=1, total=1
+    )
 
     log_event("pipeline.compile_completed", vault_id=str(ctx.vault_id))

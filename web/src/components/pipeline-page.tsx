@@ -3,18 +3,26 @@ import { motion, useReducedMotion } from "motion/react";
 import { ArrowLeft } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
-import type { StageProgress } from "@/hooks/use-pipeline-progress";
+import type { StageProgress } from "@/hooks/use-pipeline-sse";
 import { useViewNavigate } from "@/hooks/use-view-navigate";
 
 interface PipelinePageProps {
   stages: StageProgress[];
   overallDone: boolean;
   overallError: string | null;
+  noTaskFound?: boolean;
+  connected?: boolean;
 }
 
 const EASE_OUT: [number, number, number, number] = [0.25, 1, 0.5, 1];
 
-export function PipelinePage({ stages, overallDone, overallError }: PipelinePageProps) {
+export function PipelinePage({
+  stages,
+  overallDone,
+  overallError,
+  noTaskFound,
+  connected: _connected,
+}: PipelinePageProps) {
   const navigate = useViewNavigate();
   const prefersReducedMotion = useReducedMotion();
   const shouldAnimate = !prefersReducedMotion;
@@ -51,7 +59,28 @@ export function PipelinePage({ stages, overallDone, overallError }: PipelinePage
       {/* Pipeline stages */}
       <div className="flex-1 min-h-0 overflow-y-auto">
         <div className="max-w-[640px] mx-auto px-4 md:px-10 pt-10 pb-20">
-          {stages.length === 0 && !overallError && (
+          {noTaskFound && stages.length === 0 && !overallError && (
+            <div className="text-center pt-8">
+              <p className="font-serif text-[length:var(--text-body)] text-warm-dim mb-2">
+                No active pipeline
+              </p>
+              <p className="font-mono text-[length:var(--text-chrome)] tracking-[0.06em] text-warm-ghost mb-5">
+                drop sources from the home page to start a new ingest
+              </p>
+              <Button
+                variant="ghost"
+                size="xs"
+                onClick={() => navigate("/")}
+                className="font-mono text-[length:var(--text-chrome)] tracking-[0.1em]
+                           text-gold-dim hover:text-gold hover:bg-transparent
+                           rounded-sm h-auto px-3 py-1"
+              >
+                back to home
+              </Button>
+            </div>
+          )}
+
+          {!noTaskFound && stages.length === 0 && !overallError && (
             <p className="text-[length:var(--text-body)] text-warm-faint animate-[pulse-fade_1.6s_ease-in-out_infinite] font-mono">
               preparing…
             </p>

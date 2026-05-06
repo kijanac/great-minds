@@ -43,9 +43,9 @@ format-web:
 types:
     uv run ty check
 
-# Type-check frontend with tsgo
+# Type-check frontend with tsgo (project build mode)
 types-web:
-    pnpm --prefix web exec tsgo --noEmit
+    pnpm --prefix web exec tsgo -b
 
 # Run tests
 test *args='':

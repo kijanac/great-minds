@@ -89,6 +89,7 @@ async def _run_compile(vault_id: uuid.UUID, data_dir: Path) -> dict:
                 raise ValueError(f"Vault {vault_id} not found")
             ctx = await pipeline.build_context(
                 vault_id=vault_id,
+                task_id=uuid.uuid4(),
                 storage=make_storage(vault),
                 session=session,
                 client=client,

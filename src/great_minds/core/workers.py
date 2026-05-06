@@ -70,7 +70,11 @@ async def compile_task(params: dict, ctx) -> None:
     await ctx.heartbeat(600)
 
     pipeline_ctx = await pipeline.build_context(
-        vault_id=vault_id, storage=storage, session=session, client=client
+        vault_id=vault_id,
+        task_id=UUID(str(ctx.task_id)),
+        storage=storage,
+        session=session,
+        client=client,
     )
     await pipeline.run(pipeline_ctx)
 
