@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { motion, useReducedMotion } from "motion/react";
 import { ArrowLeft } from "lucide-react";
 
@@ -16,6 +16,25 @@ interface PipelinePageProps {
 
 const EASE_OUT: [number, number, number, number] = [0.25, 1, 0.5, 1];
 
+/** Number of completed stages above which we collapse them into a summary row. */
+const COMPLETED_COLLAPSE_THRESHOLD = 3;
+
+/** Stages that have meaningful per-item progress (show throughput). */
+const STAGES_WITH_THROUGHPUT = new Set(["uploading", "reading", "writing"]);
+
+function formatETA(seconds: number): string {
+  if (seconds <= 0) return "";
+  if (seconds < 60) return `~${Math.round(seconds)}s remaining`;
+  const m = Math.floor(seconds / 60);
+  return `~${m}m remaining`;
+}
+
+function formatRate(perSecond: number): string {
+  if (perSecond <= 0) return "";
+  if (perSecond >= 1) return `~${Math.round(perSecond)}/sec`;
+  return "";
+}
+
 export function PipelinePage({
   stages,
   overallDone,
@@ -28,15 +47,43 @@ export function PipelinePage({
   const shouldAnimate = !prefersReducedMotion;
   const activeRef = useRef<HTMLDivElement>(null);
 
-  // Auto-scroll active stage into view
+  const activeStageKey = useMemo(() => {
+    const active = stages.find((s) => s.active);
+    return active?.stage ?? null;
+  }, [stages]);
+
+  // Auto-scroll active stage into view (only when the active stage identity changes)
   useEffect(() => {
     if (activeRef.current) {
       activeRef.current.scrollIntoView({ behavior: "smooth", block: "center" });
     }
-  }, [stages]);
+  }, [activeStageKey]);
 
-  const completedCount = stages.filter((s) => s.complete).length;
   const firstErrored = stages.find((s) => s.errored);
+
+  // ---- Stage grouping for progressive disclosure ----
+  const activeIndex = stages.findIndex((s) => s.active);
+  const completedStages = stages.filter((s) => s.complete);
+  const hasManyCompleted = completedStages.length >= COMPLETED_COLLAPSE_THRESHOLD && !overallDone;
+  const visibleStages = useMemo(() => {
+    if (!hasManyCompleted || overallDone || activeIndex === -1) return stages;
+    // Show only: active stage + up to 2 pending after it.
+    // Completed stages are represented by the summary row above.
+    const afterActive = stages.slice(activeIndex + 1, activeIndex + 3);
+    const result: StageProgress[] = [stages[activeIndex], ...afterActive];
+    return result;
+  }, [stages, hasManyCompleted, overallDone, activeIndex]);
+
+  // ---- Completion flourish ----
+  const [showCompletion, setShowCompletion] = useState(false);
+  useEffect(() => {
+    if (overallDone && !overallError) {
+      const t = setTimeout(() => setShowCompletion(true), 300);
+      return () => clearTimeout(t);
+    } else {
+      setShowCompletion(false);
+    }
+  }, [overallDone, overallError]);
 
   return (
     <div className="h-screen flex flex-col overflow-hidden">
@@ -51,8 +98,12 @@ export function PipelinePage({
         >
           <ArrowLeft size={14} />
         </Button>
-        <span className="font-mono text-[length:var(--text-chrome)] tracking-[0.14em] text-gold-muted uppercase">
-          compile
+        <span
+          className={`font-mono text-[length:var(--text-chrome)] tracking-[0.14em] uppercase transition-colors duration-700 ${
+            overallDone ? "text-gold" : "text-gold-muted"
+          }`}
+        >
+          {overallDone ? "complete" : "compile"}
         </span>
       </div>
 
@@ -110,16 +161,33 @@ export function PipelinePage({
             </div>
           )}
 
-          {!noTaskFound &&
-            stages.map((stage, i) => (
-              <PipelineStageRow
-                key={stage.stage}
-                stage={stage}
-                index={i}
-                ref={stage.active ? activeRef : undefined}
-                shouldAnimate={shouldAnimate}
-              />
-            ))}
+          {!noTaskFound && stages.length > 0 && (
+            <>
+              {/* Completed stages summary (collapsed) */}
+              {hasManyCompleted && !overallDone && (
+                <div className="mb-3 font-mono text-[length:var(--text-chrome)] tracking-[0.06em] text-gold-dim flex items-center gap-2">
+                  <span className="text-gold-dim text-sm">✓</span>
+                  <span>
+                    {completedStages.length} stage{completedStages.length !== 1 ? "s" : ""} complete
+                  </span>
+                </div>
+              )}
+
+              {visibleStages.map((stage) => {
+                const origIndex = stages.indexOf(stage);
+                return (
+                  <PipelineStageRow
+                    key={stage.stage}
+                    stage={stage}
+                    index={origIndex}
+                    ref={stage.active ? activeRef : undefined}
+                    shouldAnimate={shouldAnimate}
+                    showCompletionFlourish={showCompletion && stage.complete}
+                  />
+                );
+              })}
+            </>
+          )}
 
           {/* Completion summary */}
           {!noTaskFound && overallDone && !overallError && (
@@ -135,7 +203,7 @@ export function PipelinePage({
                 Compile complete
               </p>
               <p className="font-mono text-[length:var(--text-chrome)] tracking-[0.06em] text-warm-ghost mb-5">
-                {completedCount} of {stages.length} stages finished
+                {stages.filter((s) => s.complete).length} of {stages.length} stages finished
               </p>
               <div className="flex items-center gap-4">
                 <Button
@@ -171,13 +239,78 @@ interface PipelineStageRowProps {
   stage: StageProgress;
   index: number;
   shouldAnimate: boolean;
+  showCompletionFlourish?: boolean;
   ref?: React.Ref<HTMLDivElement>;
 }
 
-function PipelineStageRow({ stage, index, shouldAnimate, ref }: PipelineStageRowProps) {
+function PipelineStageRow({
+  stage,
+  index,
+  shouldAnimate,
+  showCompletionFlourish,
+  ref,
+}: PipelineStageRowProps) {
   const isActive = stage.active;
   const isComplete = stage.complete;
   const isErrored = stage.errored;
+
+  // ---- Throughput tracking (synchronous, driven by a 1s tick) ----
+  const [tick, setTick] = useState(0);
+  const startTimeRef = useRef(Date.now());
+  const startDoneRef = useRef(0);
+
+  // Reset baseline when this stage becomes active
+  useEffect(() => {
+    if (isActive) {
+      startTimeRef.current = Date.now();
+      startDoneRef.current = stage.done;
+      setTick(0);
+    }
+  }, [isActive, stage.done]);
+
+  const tickInterval = useCallback(() => {
+    if (!isActive) return null;
+    return setInterval(() => setTick((t) => t + 1), 1000);
+  }, [isActive]);
+
+  useEffect(() => {
+    const id = tickInterval();
+    return () => {
+      if (id !== null) clearInterval(id);
+    };
+  }, [tickInterval]);
+
+  const throughput = useMemo(() => {
+    if (!isActive || !STAGES_WITH_THROUGHPUT.has(stage.stage) || stage.total <= 1) return null;
+    const done = stage.done - startDoneRef.current;
+    if (done <= 1) return null;
+    const elapsed = (Date.now() - startTimeRef.current) / 1000;
+    if (elapsed <= 1) return null;
+    const rate = done / elapsed;
+    const remaining = stage.total - stage.done;
+    const eta = rate > 0 ? remaining / rate : 0;
+    return { rate, eta };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isActive, stage.stage, stage.done, stage.total, tick]);
+
+  // ---- Build detail line ----
+  const detailLine = useMemo(() => {
+    if (!isActive || !stage.detail) return stage.detail;
+
+    if (throughput) {
+      const parts = [stage.detail];
+      if (throughput.rate > 0) {
+        const rateStr = formatRate(throughput.rate);
+        if (rateStr) parts.push(rateStr);
+      }
+      if (throughput.eta > 0) {
+        parts.push(formatETA(throughput.eta));
+      }
+      return parts.join(" · ");
+    }
+
+    return stage.detail;
+  }, [isActive, stage.detail, throughput]);
 
   return (
     <motion.div
@@ -196,7 +329,19 @@ function PipelineStageRow({ stage, index, shouldAnimate, ref }: PipelineStageRow
       }
     >
       {/* Status icon */}
-      <div className="shrink-0 w-5 h-5 flex items-center justify-center mt-0.5">
+      <motion.div
+        className="shrink-0 w-5 h-5 flex items-center justify-center mt-0.5"
+        animate={showCompletionFlourish && shouldAnimate ? { scale: [1, 1.4, 1] } : {}}
+        transition={
+          showCompletionFlourish && shouldAnimate
+            ? {
+                duration: 0.4,
+                ease: EASE_OUT,
+                delay: index * 0.08,
+              }
+            : { duration: 0 }
+        }
+      >
         {isErrored ? (
           <span className="text-warm-faint text-sm">✗</span>
         ) : isComplete ? (
@@ -208,7 +353,7 @@ function PipelineStageRow({ stage, index, shouldAnimate, ref }: PipelineStageRow
         ) : (
           <span className="text-warm-ghost text-sm">○</span>
         )}
-      </div>
+      </motion.div>
 
       {/* Content */}
       <div className="flex-1 min-w-0">
@@ -219,9 +364,9 @@ function PipelineStageRow({ stage, index, shouldAnimate, ref }: PipelineStageRow
           {stage.label}
         </div>
 
-        {isActive && stage.detail && (
+        {isActive && detailLine && (
           <div className="mt-1.5 font-serif text-[length:var(--text-small)] text-warm-faint">
-            {stage.detail}
+            {detailLine}
           </div>
         )}
 
