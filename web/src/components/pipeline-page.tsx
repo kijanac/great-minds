@@ -16,9 +16,6 @@ interface PipelinePageProps {
 
 const EASE_OUT: [number, number, number, number] = [0.25, 1, 0.5, 1];
 
-/** Number of completed stages above which we collapse them into a summary row. */
-const COMPLETED_COLLAPSE_THRESHOLD = 3;
-
 /** Stages that have meaningful per-item progress (show throughput). */
 const STAGES_WITH_THROUGHPUT = new Set(["uploading", "reading", "writing"]);
 
@@ -60,19 +57,6 @@ export function PipelinePage({
   }, [activeStageKey]);
 
   const firstErrored = stages.find((s) => s.errored);
-
-  // ---- Stage grouping for progressive disclosure ----
-  const activeIndex = stages.findIndex((s) => s.active);
-  const completedStages = stages.filter((s) => s.complete);
-  const hasManyCompleted = completedStages.length >= COMPLETED_COLLAPSE_THRESHOLD && !overallDone;
-  const visibleStages = useMemo(() => {
-    if (!hasManyCompleted || overallDone || activeIndex === -1) return stages;
-    // Show only: active stage + up to 2 pending after it.
-    // Completed stages are represented by the summary row above.
-    const afterActive = stages.slice(activeIndex + 1, activeIndex + 3);
-    const result: StageProgress[] = [stages[activeIndex], ...afterActive];
-    return result;
-  }, [stages, hasManyCompleted, overallDone, activeIndex]);
 
   // ---- Completion flourish ----
   const [showCompletion, setShowCompletion] = useState(false);
@@ -163,17 +147,7 @@ export function PipelinePage({
 
           {!noTaskFound && stages.length > 0 && (
             <>
-              {/* Completed stages summary (collapsed) */}
-              {hasManyCompleted && !overallDone && (
-                <div className="mb-3 font-mono text-[length:var(--text-chrome)] tracking-[0.06em] text-gold-dim flex items-center gap-2">
-                  <span className="text-gold-dim text-sm">✓</span>
-                  <span>
-                    {completedStages.length} stage{completedStages.length !== 1 ? "s" : ""} complete
-                  </span>
-                </div>
-              )}
-
-              {visibleStages.map((stage) => {
+              {stages.map((stage) => {
                 const origIndex = stages.indexOf(stage);
                 return (
                   <PipelineStageRow
