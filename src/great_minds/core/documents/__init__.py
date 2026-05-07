@@ -9,7 +9,7 @@ from great_minds.core.documents.schemas import (
     DocumentCreate,
     DocumentMetadata,
     SourceDocumentFacets,
-    WikiArticleSummary,
+    WikiArticleOverview,
 )
 from great_minds.core.documents.service import DocumentService
 
@@ -25,5 +25,5 @@ __all__ = [
     "DocumentService",
     "DocumentTag",
     "SourceDocumentFacets",
-    "WikiArticleSummary",
+    "WikiArticleOverview",
 ]

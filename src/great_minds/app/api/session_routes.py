@@ -6,23 +6,23 @@ from fastapi import APIRouter, HTTPException
 
 from great_minds.app.api.dependencies import (
     VaultAccessDep,
-    VaultStorageDep,
     CurrentUser,
     DocumentServiceDep,
     IngestServiceDep,
     LlmGuard,
     PageParamsQuery,
     ProposalServiceDep,
+    SessionServiceDep,
 )
 from great_minds.app.api.schemas import sessions as schemas
-from great_minds.core import sessions
+from great_minds.core.sessions.schemas import BtwInput, ExchangeInput, SessionOverview
+from great_minds.core.sessions.service import SessionService
 from great_minds.core.vaults.models import MemberRole
 from great_minds.core.llm import get_async_client
 from great_minds.core.paths import session_exchange_path
 from great_minds.core.vaults.config import load_config
 from great_minds.core.pagination import Page
 from great_minds.core.proposals.schemas import ProposalCreate
-from great_minds.core.sessions import BtwInput, ExchangeInput, generate_session_title
 
 router = APIRouter(prefix="/sessions", tags=["sessions"])
 
@@ -30,11 +30,10 @@ router = APIRouter(prefix="/sessions", tags=["sessions"])
 @router.post("", status_code=201)
 async def create_session(
     req: schemas.CreateSessionRequest,
-    storage: VaultStorageDep,
+    session_service: SessionServiceDep,
     user: CurrentUser,
 ) -> schemas.SessionPathResponse:
-    path = await sessions.create_session(
-        storage,
+    path = await session_service.create_session(
         req.session_id,
         ExchangeInput(
             id=req.exchange.id,
@@ -52,10 +51,9 @@ async def create_session(
 async def append_to_session(
     session_id: str,
     exchange: schemas.ExchangeData,
-    storage: VaultStorageDep,
+    session_service: SessionServiceDep,
 ) -> schemas.SessionPathResponse:
-    path = await sessions.append_exchange(
-        storage,
+    path = await session_service.append_exchange(
         session_id,
         ExchangeInput(
             id=exchange.id,
@@ -71,10 +69,9 @@ async def append_to_session(
 async def append_btw_to_session(
     session_id: str,
     btw: schemas.BtwData,
-    storage: VaultStorageDep,
+    session_service: SessionServiceDep,
 ) -> schemas.SessionPathResponse:
-    path = await sessions.append_btw(
-        storage,
+    path = await session_service.append_btw(
         session_id,
         BtwInput(
             exchangeId=btw.exchangeId,
@@ -90,25 +87,21 @@ async def append_btw_to_session(
 @router.get("")
 async def list_all_sessions(
     pagination: PageParamsQuery,
-    storage: VaultStorageDep,
+    session_service: SessionServiceDep,
     user: CurrentUser,
-) -> Page[schemas.SessionListItem]:
-    result = await sessions.list_sessions(
-        storage, user_id=str(user.id), pagination=pagination
-    )
-    return Page(
-        items=[schemas.SessionListItem.model_validate(s) for s in result.items],
-        pagination=result.pagination,
+) -> Page[SessionOverview]:
+    return await session_service.list_sessions(
+        user_id=str(user.id), pagination=pagination
     )
 
 
 @router.get("/{session_id}")
 async def read_session(
     session_id: str,
-    storage: VaultStorageDep,
+    session_service: SessionServiceDep,
 ) -> schemas.SessionResponse:
     try:
-        events = await sessions.load_events(storage, session_id)
+        events = await session_service.load_events(session_id)
     except FileNotFoundError:
         raise HTTPException(status_code=404, detail="Session not found")
     return schemas.SessionResponse(id=session_id, events=events)
@@ -121,7 +114,7 @@ async def read_session(
 async def promote_exchange(
     session_id: str,
     exchange_id: str,
-    storage: VaultStorageDep,
+    session_service: SessionServiceDep,
     user: CurrentUser,
     access: VaultAccessDep,
     ingest_service: IngestServiceDep,
@@ -160,17 +153,17 @@ async def promote_exchange(
                 proposal_id=str(existing_proposal.id),
             )
 
-    events = await sessions.load_events(storage, session_id)
+    events = await session_service.load_events(session_id)
     if not events:
         raise HTTPException(404, "Session not found")
-    meta = sessions.find_meta(events)
-    exchange = sessions.find_exchange(events, exchange_id)
+    meta = session_service.find_meta(events)
+    exchange = session_service.find_exchange(events, exchange_id)
     if exchange is None:
         raise HTTPException(404, "Exchange not found in session")
     if not exchange.answer.strip():
         raise HTTPException(400, "Exchange has no answer yet")
 
-    title = await generate_session_title(
+    title = await SessionService.generate_session_title(
         get_async_client(), exchange.query, exchange.answer
     )
     session_origin = meta.origin if meta else None
@@ -178,7 +171,7 @@ async def promote_exchange(
     if is_owner:
         result = await ingest_service.ingest_session_exchange(
             vault_id,
-            storage,
+            session_service.storage,
             session_id=session_id,
             exchange=exchange,
             title=title,
@@ -190,8 +183,8 @@ async def promote_exchange(
             title=result.title,
         )
 
-    config = await load_config(storage)
-    rendered = sessions.render_session_exchange_source(
+    config = await load_config(session_service.storage)
+    rendered = SessionService.render_session_exchange_source(
         config,
         session_id=session_id,
         exchange=exchange,

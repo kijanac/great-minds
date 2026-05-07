@@ -2,9 +2,9 @@
 
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel
 
-from great_minds.core.sessions import (
+from great_minds.core.sessions.schemas import (
     BtwExchange,
     SessionEvent,
     SessionOrigin,
@@ -41,16 +41,6 @@ class SessionPathResponse(BaseModel):
 class SessionResponse(BaseModel):
     id: str
     events: list[SessionEvent]
-
-
-class SessionListItem(BaseModel):
-    model_config = ConfigDict(from_attributes=True)
-
-    id: str
-    query: str
-    created: str
-    updated: str
-    origin: SessionOrigin | None = None
 
 
 class PromoteExchangeResponse(BaseModel):

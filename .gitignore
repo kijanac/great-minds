@@ -10,7 +10,7 @@ __pycache__/
 *.jsonl
 node_modules/
 dogfood-output/
-sessions/
+/sessions/
 .env
 .DS_Store
 .claude/

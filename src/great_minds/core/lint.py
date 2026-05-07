@@ -24,7 +24,7 @@ from dataclasses import dataclass, field
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from great_minds.core.documents import DocumentRepository, WikiArticleSummary
+from great_minds.core.documents import DocumentRepository, WikiArticleOverview
 from great_minds.core.markdown import extract_wiki_link_targets
 from great_minds.core.paths import wiki_path, wiki_slug
 from great_minds.core.storage import Storage
@@ -49,7 +49,7 @@ class UnmentionedLink:
 
 @dataclass
 class LintReport:
-    orphans: list[WikiArticleSummary] = field(default_factory=list)
+    orphans: list[WikiArticleOverview] = field(default_factory=list)
     dirty_topics: list[uuid.UUID] = field(default_factory=list)
     unresolved_citations: list[UnresolvedCitation] = field(default_factory=list)
     unmentioned_links: list[UnmentionedLink] = field(default_factory=list)

@@ -14,15 +14,6 @@ class ArticleResponse(BaseModel):
     superseded_by: str | None = None
 
 
-class RecentArticleItem(BaseModel):
-    model_config = ConfigDict(from_attributes=True)
-
-    file_path: str
-    doc_kind: str
-    metadata: DocumentMetadata
-    updated_at: datetime | None
-
-
 class SourceDocumentSummary(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 

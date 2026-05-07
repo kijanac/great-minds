@@ -21,7 +21,7 @@ from great_minds.core.documents.schemas import (
     DocumentCreate,
     DocumentMetadata,
     FileHash,
-    WikiArticleSummary,
+    WikiArticleOverview,
 )
 from great_minds.core.ideas.schemas import SourceCard
 from great_minds.core.markdown import parse_frontmatter
@@ -243,9 +243,14 @@ class DocumentRepository:
             )
         ) or 0
 
-    async def list_wiki_summaries(
-        self, vault_id: UUID, *, limit: int = 50, offset: int = 0
-    ) -> list[WikiArticleSummary]:
+    async def list_wiki_overviews(
+        self,
+        vault_id: UUID,
+        *,
+        limit: int = 50,
+        offset: int = 0,
+        recent: bool = False,
+    ) -> list[WikiArticleOverview]:
         rows = (
             await self.session.execute(
                 select(
@@ -259,12 +264,16 @@ class DocumentRepository:
                     DocumentORM.doc_kind == DocKind.WIKI,
                     DocumentORM.file_path.not_like(f"{WIKI_PREFIX}_%"),
                 )
-                .order_by(func.lower(DocumentORM.title))
+                .order_by(
+                    DocumentORM.updated_at.desc()
+                    if recent
+                    else func.lower(DocumentORM.title)
+                )
                 .offset(offset)
                 .limit(limit)
             )
         ).all()
-        return [WikiArticleSummary.model_validate(r) for r in rows]
+        return [WikiArticleOverview.model_validate(r) for r in rows]
 
     async def search_wiki_articles(
         self,
@@ -273,7 +282,7 @@ class DocumentRepository:
         slug: str | None = None,
         query: str | None = None,
         limit: int = 20,
-    ) -> list[WikiArticleSummary]:
+    ) -> list[WikiArticleOverview]:
         """Filter wiki articles by exact slug and/or substring on title/precis.
 
         SQL-side filter — replaces the previous load-all-and-filter pattern in
@@ -304,7 +313,7 @@ class DocumentRepository:
         stmt = stmt.order_by(func.lower(DocumentORM.title)).limit(limit)
 
         rows = (await self.session.execute(stmt)).all()
-        return [WikiArticleSummary.model_validate(r) for r in rows]
+        return [WikiArticleOverview.model_validate(r) for r in rows]
 
     async def count_wiki_article_paths(self, vault_id: UUID) -> int:
         return (
@@ -319,7 +328,7 @@ class DocumentRepository:
 
     async def list_orphan_wiki_documents(
         self, vault_id: UUID
-    ) -> list[WikiArticleSummary]:
+    ) -> list[WikiArticleOverview]:
         """Return rendered wiki documents with zero incoming backlinks."""
         rows = (
             await self.session.execute(
@@ -338,7 +347,7 @@ class DocumentRepository:
                 .order_by(func.lower(DocumentORM.title))
             )
         ).all()
-        return [WikiArticleSummary.model_validate(r) for r in rows]
+        return [WikiArticleOverview.model_validate(r) for r in rows]
 
     async def update_file_path_for_topic(
         self, vault_id: UUID, topic_id: UUID, new_file_path: str

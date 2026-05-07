@@ -51,7 +51,7 @@ class ProposalService:
         For normal (typed-in) proposals the caller uses
         ``build_document`` from ``core.documents.builder``.
         For session promotions the caller uses
-        ``render_session_exchange_source`` from ``core.sessions``.
+        ``render_session_exchange_source`` from ``core.sessions.service``.
         """
         proposal = await self.repo.create(
             vault_id=vault_id,

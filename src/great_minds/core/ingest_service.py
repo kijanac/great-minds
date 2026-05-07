@@ -19,11 +19,8 @@ from great_minds.core.documents.schemas import IngestedDocument, SourceMetadata
 from great_minds.core.ingest_schemas import StagedFileInput, StagedFileSignedUpload
 from great_minds.core.documents.service import DocumentService
 from great_minds.core.paths import raw_path, session_exchange_path
-from great_minds.core.sessions import (
-    ExchangeEvent,
-    SessionOrigin,
-    session_exchange_build_args,
-)
+from great_minds.core.sessions.schemas import ExchangeEvent, SessionOrigin
+from great_minds.core.sessions.service import SessionService
 from great_minds.core.storage import Storage
 from great_minds.core.text import normalize_url, slugify
 
@@ -238,7 +235,7 @@ class IngestService:
             vault_id,
             storage,
             dest=dest,
-            **session_exchange_build_args(
+            **SessionService.session_exchange_build_args(
                 session_id=session_id,
                 exchange=exchange,
                 title=title,

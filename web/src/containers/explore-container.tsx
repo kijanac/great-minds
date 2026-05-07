@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 
 import {
   type Orphan,
-  type RecentArticle,
+  type WikiArticleOverview,
   type UnmentionedLink,
   type UnresolvedCitation,
   fetchLintResults,
@@ -18,7 +18,7 @@ export function ExploreContainer() {
   const [dirtyCount, setDirtyCount] = useState(0);
   const [unresolvedCitations, setUnresolvedCitations] = useState<UnresolvedCitation[]>([]);
   const [unmentionedLinks, setUnmentionedLinks] = useState<UnmentionedLink[]>([]);
-  const [recentArticles, setRecentArticles] = useState<RecentArticle[]>([]);
+  const [recentArticles, setRecentArticles] = useState<WikiArticleOverview[]>([]);
   const [contentTypes, setContentTypes] = useState<ContentTypeFacet[]>([]);
   const [loading, setLoading] = useState(true);
 

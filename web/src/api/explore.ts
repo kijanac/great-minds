@@ -1,6 +1,7 @@
 import { z } from "zod";
 
 import { apiFetch, vaultPath, readJson } from "./client";
+import { paginatedSchema } from "./schemas";
 
 const orphanSchema = z.object({
   slug: z.string(),
@@ -38,28 +39,19 @@ export async function fetchLintResults(): Promise<LintResponse> {
   return readJson(res, lintResponseSchema);
 }
 
-const recentArticleSchema = z.object({
+const wikiArticleOverviewSchema = z.object({
   file_path: z.string(),
-  doc_kind: z.string(),
-  metadata: z.object({
-    title: z.string(),
-    author: z.string().nullable(),
-    published_date: z.string().nullable(),
-    url: z.string().nullable(),
-    origin: z.string().nullable(),
-    genre: z.string().nullable(),
-    precis: z.string().nullable(),
-    source_type: z.string().nullable(),
-    tags: z.array(z.string()),
-    extra_metadata: z.record(z.string(), z.unknown()),
-  }),
+  slug: z.string(),
+  title: z.string(),
+  precis: z.string().nullable(),
   updated_at: z.string().nullable(),
 });
+const recentArticlesSchema = paginatedSchema(wikiArticleOverviewSchema);
 
-export type RecentArticle = z.infer<typeof recentArticleSchema>;
+export type WikiArticleOverview = z.infer<typeof wikiArticleOverviewSchema>;
 
-export async function fetchRecentArticles(limit: number = 10): Promise<RecentArticle[]> {
+export async function fetchRecentArticles(limit: number = 10): Promise<WikiArticleOverview[]> {
   const res = await apiFetch(vaultPath(`/wiki/recent?limit=${limit}`));
   if (!res.ok) throw new Error("Failed to fetch recent articles");
-  return readJson(res, z.array(recentArticleSchema));
+  return (await readJson(res, recentArticlesSchema)).items;
 }

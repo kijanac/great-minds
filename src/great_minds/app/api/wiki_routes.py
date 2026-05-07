@@ -16,11 +16,7 @@ from great_minds.app.api.dependencies import (
     PageParamsQuery,
 )
 from great_minds.app.api.schemas import wiki as schemas
-from great_minds.core.documents import (
-    DocKind,
-    SourceDocumentFacets,
-    WikiArticleSummary,
-)
+from great_minds.core.documents import SourceDocumentFacets, WikiArticleOverview
 from great_minds.core.markdown import parse_frontmatter
 from great_minds.core.pagination import FacetedPage, Page
 from great_minds.core.paths import wiki_path
@@ -34,21 +30,18 @@ async def list_articles(
     pagination: PageParamsQuery,
     _storage: VaultStorageDep,
     doc_service: DocumentServiceDep,
-) -> Page[WikiArticleSummary]:
+) -> Page[WikiArticleOverview]:
     return await doc_service.list_wiki_articles(vault_id, pagination=pagination)
 
 
 @router.get("/wiki/recent")
 async def recent_articles(
     vault_id: UUID,
+    pagination: PageParamsQuery,
     _storage: VaultStorageDep,
     doc_service: DocumentServiceDep,
-    limit: int = 10,
-) -> list[schemas.RecentArticleItem]:
-    docs = await doc_service.query_documents(
-        [vault_id], doc_kind=DocKind.WIKI, limit=limit
-    )
-    return [schemas.RecentArticleItem.model_validate(d) for d in docs]
+) -> Page[WikiArticleOverview]:
+    return await doc_service.list_recent_wiki_articles(vault_id, pagination=pagination)
 
 
 @router.get("/raw/sources")

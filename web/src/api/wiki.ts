@@ -3,7 +3,7 @@ import { z } from "zod";
 import { apiFetch, vaultPath, readJson } from "./client";
 import { paginatedSchema } from "./schemas";
 
-const wikiArticleSummarySchema = z.object({
+const wikiArticleOverviewSchema = z.object({
   file_path: z.string(),
   slug: z.string(),
   title: z.string(),
@@ -11,9 +11,9 @@ const wikiArticleSummarySchema = z.object({
   updated_at: z.string().nullable(),
 });
 
-const wikiArticleListSchema = paginatedSchema(wikiArticleSummarySchema);
+const wikiArticleListSchema = paginatedSchema(wikiArticleOverviewSchema);
 
-export type WikiArticleSummary = z.infer<typeof wikiArticleSummarySchema>;
+export type WikiArticleOverview = z.infer<typeof wikiArticleOverviewSchema>;
 export type WikiArticleList = z.infer<typeof wikiArticleListSchema>;
 
 export async function fetchWikiArticles(params?: {

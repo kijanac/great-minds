@@ -119,8 +119,8 @@ class Document(BaseModel):
     updated_at: datetime | None = None
 
 
-class WikiArticleSummary(BaseModel):
-    """Wiki article browse-row shape.
+class WikiArticleOverview(BaseModel):
+    """Wiki article overview shape.
 
     ``file_path`` is the canonical document identity (matches the
     documents table). ``slug`` is derived from file_path via the wiki

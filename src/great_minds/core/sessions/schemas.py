@@ -1,0 +1,105 @@
+"""Session domain schemas and persisted event models."""
+
+from enum import StrEnum
+from typing import Literal
+
+from pydantic import BaseModel
+
+
+class ThinkingSource(BaseModel):
+    label: str
+    type: Literal["article", "raw", "search"]
+    thinking: str | None = None
+
+
+class ThinkingBlock(BaseModel):
+    sources: list[ThinkingSource] = []
+
+
+class BtwExchange(BaseModel):
+    """One Q/A round inside a BTW thread.
+
+    Mirrors ExchangeEvent but without exId/ts — those live on the parent
+    BtwEvent, since a BTW is a sequence of turns sharing one anchor and
+    one position in the parent session.
+    """
+
+    query: str
+    thinking: list[ThinkingBlock] = []
+    answer: str = ""
+
+
+class SessionOrigin(BaseModel):
+    """Where this session was anchored when it was created.
+
+    For sessions started by opening a doc, only ``doc_path`` is set.
+    For sessions spun off from a document BTW, the passage triple
+    (anchor + paragraph + paragraph_index) is also recorded so the
+    UI can scroll back to the source highlight.
+    """
+
+    doc_path: str
+    anchor: str | None = None
+    paragraph: str | None = None
+    paragraph_index: int | None = None
+
+
+class EventType(StrEnum):
+    META = "meta"
+    EXCHANGE = "exchange"
+    BTW = "btw"
+
+
+class MetaEvent(BaseModel):
+    type: EventType = EventType.META
+    id: str
+    query: str
+    ts: str
+    user_id: str
+    origin: SessionOrigin | None = None
+
+
+class ExchangeEvent(BaseModel):
+    type: EventType = EventType.EXCHANGE
+    exId: str
+    query: str
+    thinking: list[ThinkingBlock] = []
+    answer: str = ""
+    ts: str
+
+
+class BtwEvent(BaseModel):
+    type: EventType = EventType.BTW
+    exId: str
+    anchor: str
+    paragraph: str
+    pi: int = -1
+    exchanges: list[BtwExchange]
+    ts: str
+
+
+type SessionEvent = MetaEvent | ExchangeEvent | BtwEvent
+
+
+class ExchangeInput(BaseModel):
+    id: str
+    query: str
+    thinking: list[ThinkingBlock] = []
+    answer: str = ""
+
+
+class BtwInput(BaseModel):
+    exchangeId: str = ""
+    anchor: str
+    paragraph: str
+    paragraphIndex: int = -1
+    exchanges: list[BtwExchange]
+
+
+class SessionOverview(BaseModel):
+    id: str
+    query: str
+    created: str
+    updated: str
+    user_id: str
+    origin: SessionOrigin | None = None

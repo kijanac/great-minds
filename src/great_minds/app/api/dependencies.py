@@ -26,6 +26,8 @@ from great_minds.core.pipeline_runs import PipelineRunRepository, PipelineRunSer
 from great_minds.core.proposals import ProposalRepository, ProposalService
 from great_minds.core.settings import Settings, get_settings
 from great_minds.core.paths import PROPOSALS_DIR
+from great_minds.core.sessions.repository import SessionRepository
+from great_minds.core.sessions.service import SessionService
 from great_minds.core.storage import LocalStorage, Storage
 from great_minds.core.tasks import TaskRepository, TaskService
 from great_minds.core.users import User, UserRepository, UserService
@@ -373,3 +375,17 @@ async def get_vault_storage(
 
 
 VaultStorageDep = Annotated[Storage, Depends(get_vault_storage)]
+
+
+def get_session_repository(storage: VaultStorageDep) -> SessionRepository:
+    return SessionRepository(storage)
+
+
+SessionRepositoryDep = Annotated[SessionRepository, Depends(get_session_repository)]
+
+
+def get_session_service(repo: SessionRepositoryDep) -> SessionService:
+    return SessionService(repo)
+
+
+SessionServiceDep = Annotated[SessionService, Depends(get_session_service)]

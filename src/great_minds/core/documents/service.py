@@ -10,7 +10,7 @@ from great_minds.core.documents.schemas import (
     Document,
     DocumentCreate,
     SourceDocumentFacets,
-    WikiArticleSummary,
+    WikiArticleOverview,
 )
 from great_minds.core.pagination import (
     FacetedPage,
@@ -114,7 +114,7 @@ class DocumentService:
         slug: str | None = None,
         query: str | None = None,
         limit: int = 20,
-    ) -> list[WikiArticleSummary]:
+    ) -> list[WikiArticleOverview]:
         return await self.repo.search_wiki_articles(
             vault_id, slug=slug, query=query, limit=limit
         )
@@ -130,9 +130,28 @@ class DocumentService:
 
     async def list_wiki_articles(
         self, vault_id: UUID, *, pagination: PageParams
-    ) -> Page[WikiArticleSummary]:
-        items = await self.repo.list_wiki_summaries(
+    ) -> Page[WikiArticleOverview]:
+        items = await self.repo.list_wiki_overviews(
             vault_id, limit=pagination.limit, offset=pagination.offset
+        )
+        total = await self.repo.count_wiki_article_paths(vault_id)
+        return Page(
+            items=items,
+            pagination=PageInfo(
+                limit=pagination.limit,
+                offset=pagination.offset,
+                total=total,
+            ),
+        )
+
+    async def list_recent_wiki_articles(
+        self, vault_id: UUID, *, pagination: PageParams
+    ) -> Page[WikiArticleOverview]:
+        items = await self.repo.list_wiki_overviews(
+            vault_id,
+            limit=pagination.limit,
+            offset=pagination.offset,
+            recent=True,
         )
         total = await self.repo.count_wiki_article_paths(vault_id)
         return Page(

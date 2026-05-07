@@ -1,7 +1,12 @@
 import { Home } from "lucide-react";
 import type { ReactNode } from "react";
 
-import type { Orphan, RecentArticle, UnmentionedLink, UnresolvedCitation } from "@/api/explore";
+import type {
+  Orphan,
+  WikiArticleOverview,
+  UnmentionedLink,
+  UnresolvedCitation,
+} from "@/api/explore";
 import type { ContentTypeFacet } from "@/api/sources";
 import { Button } from "@/components/ui/button";
 import { CHIP_BASE, CHIP_INACTIVE } from "@/lib/chip";
@@ -12,7 +17,7 @@ interface ExplorePageProps {
   dirtyCount: number;
   unresolvedCitations: UnresolvedCitation[];
   unmentionedLinks: UnmentionedLink[];
-  recentArticles: RecentArticle[];
+  recentArticles: WikiArticleOverview[];
   contentTypes: ContentTypeFacet[];
   loading: boolean;
   onHome: () => void;
@@ -214,7 +219,7 @@ export function ExplorePage({
                         className="w-full h-auto py-2.5 px-3 rounded-sm justify-between hover:bg-ink-raised group"
                       >
                         <span className="font-serif text-[length:var(--text-body)] text-warm-dim group-hover:text-warm transition-colors truncate text-left">
-                          {a.metadata.title}
+                          {a.title}
                         </span>
                         <span className="font-mono text-[length:var(--text-chrome)] text-warm-ghost shrink-0 ml-4">
                           {formatShortDate(a.updated_at)}

@@ -1,11 +1,11 @@
 import { Home } from "lucide-react";
 
-import type { WikiArticleSummary } from "@/api/wiki";
+import type { WikiArticleOverview } from "@/api/wiki";
 import { Button } from "@/components/ui/button";
 import { formatShortDate } from "@/lib/utils";
 
 interface WikiPageProps {
-  items: WikiArticleSummary[];
+  items: WikiArticleOverview[];
   total: number;
   loading: boolean;
   hasMore: boolean;
