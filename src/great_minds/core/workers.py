@@ -15,9 +15,9 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from great_minds.core.hashing import file_hash
 
-from great_minds.core import pipeline as _pipeline
 from great_minds.core.pipeline import (
     abstract,
+    build_context,
     derive,
     extract,
     ingest,
@@ -89,7 +89,7 @@ async def compile_task(params: dict, ctx) -> None:
     await ctx.heartbeat(600)
 
     try:
-        pipeline_ctx = await _pipeline.build_context(
+        pipeline_ctx = await build_context(
             vault_id=vault_id,
             pipeline_run_id=pipeline_run_id,
             progress=progress,

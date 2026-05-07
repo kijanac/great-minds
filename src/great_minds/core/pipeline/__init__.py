@@ -17,8 +17,9 @@ Stages (named per target_architecture.md):
 
 Per-phase caching + DB persistence happens inside each phase. Phases
 are side-effectful and emit counts into the wide event via enrich().
-Callers that want a summary (CLI, task worker) read wide_event
-directly — no typed Result flows through.
+
+run() is the CLI entry point. The Absurd worker path (workers.py)
+calls individual phases via ctx.step() for crash-resilient execution.
 """
 
 from great_minds.core.pipeline import (
