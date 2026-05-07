@@ -85,7 +85,15 @@ async def compile_task(params: dict, ctx) -> None:
     client = get_async_client()
 
     init_wide_event("compile", vault_id=str(vault_id))
-    await ctx.heartbeat(600)
+
+    # Background heartbeat — extends the Absurd task lease every 5 min
+    # so long-running phases (ingest 3000 docs, extract) don't time out.
+    async def _heartbeat_loop():
+        while True:
+            await asyncio.sleep(300)
+            await ctx.heartbeat(600)
+
+    hb_task = asyncio.create_task(_heartbeat_loop())
 
     try:
         pipeline_ctx = await build_context(
@@ -118,8 +126,6 @@ async def compile_task(params: dict, ctx) -> None:
         await ctx.step("phase-ingest", _run_ingest)
 
         # Phase 1 — per-doc LLM extraction (ideas, anchors, metadata)
-        await ctx.heartbeat(600)
-
         async def _run_extract():
             await progress.emit(
                 pipeline_run_id=pipeline_run_id,
@@ -138,8 +144,6 @@ async def compile_task(params: dict, ctx) -> None:
         await ctx.step("phase-extract", _run_extract)
 
         # Phase 2 — topic clustering, synthesis, canonicalization
-        await ctx.heartbeat(600)
-
         async def _run_abstract():
             await progress.emit(
                 pipeline_run_id=pipeline_run_id,
@@ -197,8 +201,6 @@ async def compile_task(params: dict, ctx) -> None:
         await ctx.step("phase-derive", _run_derive)
 
         # Phase 4 — per-topic LLM article generation
-        await ctx.heartbeat(600)
-
         async def _run_render():
             await progress.emit(
                 pipeline_run_id=pipeline_run_id,
@@ -263,6 +265,11 @@ async def compile_task(params: dict, ctx) -> None:
         await progress.fail(pipeline_run_id, str(exc))
         raise
     finally:
+        hb_task.cancel()
+        try:
+            await hb_task
+        except asyncio.CancelledError:
+            pass
         emit_wide_event()
 
 
