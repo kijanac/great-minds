@@ -4,12 +4,16 @@ import json
 from datetime import datetime
 from uuid import UUID
 
-from sqlalchemy import case, func, select, update
+from sqlalchemy import func, select, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from great_minds.core.pipeline_runs.models import PipelineRunRecord
-from great_minds.core.pipeline_runs.schemas import PipelineRun, PipelineRunStatus
+from great_minds.core.pipeline_runs.schemas import (
+    PipelineRun,
+    PipelineRunCreate,
+    PipelineRunStatus,
+)
 
 CHANNEL = "pipeline_progress"
 
@@ -20,17 +24,19 @@ class PipelineRunRepository:
     def __init__(self, session: AsyncSession) -> None:
         self.session = session
 
-    async def create(self, *, vault_id: UUID, trigger: str) -> PipelineRun:
+    async def create(self, data: PipelineRunCreate) -> PipelineRun:
         row = await self.session.execute(
             insert(PipelineRunRecord)
-            .values(
-                vault_id=vault_id,
-                trigger=trigger,
-                status=PipelineRunStatus.PENDING.value,
-            )
+            .values(**data.model_dump())
+            .on_conflict_do_nothing(index_elements=["id"])
             .returning(PipelineRunRecord)
         )
-        record = row.scalar_one()
+        record = row.scalar_one_or_none()
+        if record is None:
+            existing = await self.session.get(PipelineRunRecord, data.id)
+            if existing is None:
+                raise RuntimeError(f"PipelineRunRecord {data.id} missing after upsert")
+            record = existing
         return PipelineRun.model_validate(record)
 
     async def get(self, pipeline_run_id: UUID, vault_id: UUID) -> PipelineRun | None:
@@ -45,18 +51,36 @@ class PipelineRunRepository:
         record = row.scalar_one_or_none()
         return PipelineRun.model_validate(record) if record else None
 
-    async def get_current_for_vault(self, vault_id: UUID) -> PipelineRun | None:
-        """Return newest active pipeline, falling back to newest pipeline."""
-        active_rank = case((PipelineRunRecord.status.in_(_ACTIVE), 0), else_=1)
-        row = await self.session.execute(
-            select(PipelineRunRecord)
-            .where(PipelineRunRecord.vault_id == vault_id)
-            .order_by(active_rank, PipelineRunRecord.created_at.desc())
-            .limit(1)
-            .execution_options(populate_existing=True)
+    async def list_for_vault(
+        self,
+        vault_id: UUID,
+        *,
+        status: str | None = None,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> list[PipelineRun]:
+        stmt = select(PipelineRunRecord).where(PipelineRunRecord.vault_id == vault_id)
+        if status == "active":
+            stmt = stmt.where(PipelineRunRecord.status.in_(_ACTIVE))
+        elif status is not None:
+            stmt = stmt.where(PipelineRunRecord.status == status)
+        stmt = (
+            stmt.order_by(PipelineRunRecord.created_at.desc())
+            .offset(offset)
+            .limit(limit)
         )
-        record = row.scalar_one_or_none()
-        return PipelineRun.model_validate(record) if record else None
+        row = await self.session.execute(stmt.execution_options(populate_existing=True))
+        return [PipelineRun.model_validate(r) for r in row.scalars().all()]
+
+    async def count_for_vault(
+        self, vault_id: UUID, *, status: str | None = None
+    ) -> int:
+        stmt = select(func.count()).where(PipelineRunRecord.vault_id == vault_id)
+        if status == "active":
+            stmt = stmt.where(PipelineRunRecord.status.in_(_ACTIVE))
+        elif status is not None:
+            stmt = stmt.where(PipelineRunRecord.status == status)
+        return (await self.session.scalar(stmt)) or 0
 
     async def list_stale_active(self, older_than: datetime) -> list[PipelineRun]:
         """Return active pipeline runs that haven't been updated since `older_than`."""
@@ -70,11 +94,11 @@ class PipelineRunRepository:
         )
         return [PipelineRun.model_validate(r) for r in row.scalars().all()]
 
-    async def attach_bulk_task(self, pipeline_run_id: UUID, task_id: UUID) -> None:
+    async def attach_ingest_task(self, pipeline_run_id: UUID, task_id: UUID) -> None:
         await self.session.execute(
             update(PipelineRunRecord)
             .where(PipelineRunRecord.id == pipeline_run_id)
-            .values(bulk_task_id=task_id, updated_at=func.now())
+            .values(ingest_task_id=task_id, updated_at=func.now())
         )
 
     async def attach_compile_intent(

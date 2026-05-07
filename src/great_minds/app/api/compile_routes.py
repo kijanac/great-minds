@@ -1,8 +1,8 @@
 """Compile routes.
 
-POST writes a CompileIntent attached to a PipelineRun and returns 202;
-the reconciler dispatches it to Absurd within ~5s. GET lets clients
-inspect the intent's status (pending → dispatched → satisfied).
+POST writes an internal CompileIntent attached to a job and returns
+that user-visible job. The reconciler dispatches the intent to Absurd
+within ~5s. CompileIntent remains an internal outbox detail.
 """
 
 from uuid import UUID
@@ -14,9 +14,9 @@ from great_minds.app.api.dependencies import (
     LlmGuard,
     PipelineRunServiceDep,
 )
+from great_minds.app.api.schemas.jobs import JobResponse
 from great_minds.app.api.schemas.tasks import CompileRequest
-from great_minds.core.compile_intents import CompileIntent
-from great_minds.core.pipeline_runs import PipelineTrigger
+from great_minds.core.pipeline_runs import PipelineRunCreate, PipelineTrigger
 from great_minds.core.telemetry import log_event
 
 router = APIRouter(prefix="/compile", tags=["compile"])
@@ -29,21 +29,24 @@ async def request_compile(
     intent_repo: CompileIntentRepositoryDep,
     pipeline_service: PipelineRunServiceDep,
     _llm: LlmGuard,
-) -> CompileIntent:
-    del req  # reserved for future compile options
-    record = await intent_repo.upsert_pending(vault_id)
+) -> JobResponse:
+    record = await intent_repo.upsert_pending(vault_id, pipeline_run_id=req.job_id)
     if record is None:
         record = await intent_repo.get_pending_for_vault(vault_id)
     if record is None:
         # Race: a reconciler dispatched between upsert and lookup. Caller
-        # should refresh the current pipeline.
+        # should refresh the active jobs list.
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail="Intent dispatched between request and lookup; refresh task list",
         )
     if record.pipeline_run_id is None:
         run = await pipeline_service.create(
-            vault_id=vault_id, trigger=PipelineTrigger.MANUAL
+            PipelineRunCreate(
+                id=req.job_id,
+                vault_id=vault_id,
+                trigger=PipelineTrigger.MANUAL,
+            )
         )
         await intent_repo.attach_pipeline_run(record.id, run.id)
         record.pipeline_run_id = run.id
@@ -55,18 +58,15 @@ async def request_compile(
         vault_id=str(vault_id),
         trigger="api",
     )
-    return CompileIntent.model_validate(record)
-
-
-@router.get("/{intent_id}")
-async def get_compile_intent(
-    intent_id: UUID,
-    vault_id: UUID,
-    intent_repo: CompileIntentRepositoryDep,
-) -> CompileIntent:
-    record = await intent_repo.get(intent_id)
-    if record is None or record.vault_id != vault_id:
+    if record.pipeline_run_id is None:
         raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND, detail="Intent not found"
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Compile intent missing pipeline run after creation",
         )
-    return CompileIntent.model_validate(record)
+    run = await pipeline_service.get(record.pipeline_run_id, vault_id)
+    if run is None:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Compile pipeline run not found after creation",
+        )
+    return JobResponse.model_validate(run)

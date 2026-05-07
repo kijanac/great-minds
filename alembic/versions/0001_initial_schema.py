@@ -191,12 +191,7 @@ def upgrade() -> None:
     # -- Pipeline runs -----------------------------------------------------
     op.create_table(
         "pipeline_runs",
-        sa.Column(
-            "id",
-            sa.UUID(),
-            nullable=False,
-            server_default=sa.text("gen_random_uuid()"),
-        ),
+        sa.Column("id", sa.UUID(), nullable=False),
         sa.Column("vault_id", sa.UUID(), nullable=False),
         sa.Column("trigger", sa.Text(), nullable=False),
         sa.Column("status", sa.Text(), nullable=False, server_default="pending"),
@@ -207,7 +202,7 @@ def upgrade() -> None:
         sa.Column("progress_failed", sa.Integer(), nullable=False, server_default="0"),
         sa.Column("progress_message", sa.Text(), nullable=False, server_default=""),
         sa.Column("error", sa.Text(), nullable=True),
-        sa.Column("bulk_task_id", sa.UUID(), nullable=True),
+        sa.Column("ingest_task_id", sa.UUID(), nullable=True),
         sa.Column("compile_intent_id", sa.UUID(), nullable=True),
         sa.Column("compile_task_id", sa.UUID(), nullable=True),
         sa.Column(
@@ -252,30 +247,6 @@ def upgrade() -> None:
             sa.DateTime(timezone=True),
             server_default=sa.text("now()"),
             nullable=False,
-        ),
-        sa.Column(
-            "progress_total",
-            sa.Integer(),
-            nullable=False,
-            server_default="0",
-        ),
-        sa.Column(
-            "progress_done",
-            sa.Integer(),
-            nullable=False,
-            server_default="0",
-        ),
-        sa.Column(
-            "progress_failed",
-            sa.Integer(),
-            nullable=False,
-            server_default="0",
-        ),
-        sa.Column(
-            "progress_failed_names",
-            JSONB(),
-            nullable=False,
-            server_default="[]",
         ),
         sa.ForeignKeyConstraint(
             ["pipeline_run_id"], ["pipeline_runs.id"], ondelete="SET NULL"

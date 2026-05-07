@@ -165,7 +165,7 @@ async def _recover_zombie_pipeline_runs(
     zombie_threshold = datetime.now(timezone.utc) - timedelta(seconds=120)
     zombies = await pipeline_run_repo.list_stale_active(zombie_threshold)
     for run in zombies:
-        task_id = run.bulk_task_id or run.compile_task_id
+        task_id = run.ingest_task_id or run.compile_task_id
         if task_id is None:
             await pipeline_run_repo.fail(
                 run.id, "Pipeline lost — server may have restarted."

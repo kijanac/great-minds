@@ -7,7 +7,7 @@ crash between spawn and `mark_dispatched` is safe to retry.
 """
 
 import logging
-from typing import Literal, cast, get_args
+from typing import Any, Literal, cast, get_args
 from uuid import UUID
 
 from absurd_sdk import AsyncAbsurd, RetryStrategy
@@ -33,7 +33,7 @@ _ACTIVE: tuple[str, ...] = get_args(ActiveAbsurdState)
 async def fetch_task_response(absurd: AsyncAbsurd, task: Task) -> TaskDetail:
     """Build a TaskDetail by fetching current status from absurd.
 
-    Detailed task results (compile telemetry, bulk-ingest counts) live
+    Detailed task results (compile telemetry, staged-file ingest counts) live
     in structured logs via `emit_wide_event` — they are not surfaced
     here. This response carries lifecycle state only.
     """
@@ -61,10 +61,6 @@ async def fetch_task_response(absurd: AsyncAbsurd, task: Task) -> TaskDetail:
         error=error,
         params=task.params,
         pipeline_run_id=task.pipeline_run_id,
-        progress_total=task.progress_total,
-        progress_done=task.progress_done,
-        progress_failed=task.progress_failed,
-        progress_failed_names=task.progress_failed_names,
     )
 
 
@@ -73,7 +69,7 @@ class TaskService:
         self.repo = repo
         self.absurd = absurd
 
-    async def spawn_bulk_ingest_from_staging(
+    async def spawn_staged_file_ingest(
         self,
         *,
         vault_id: UUID,
@@ -82,11 +78,12 @@ class TaskService:
         source_type: str,
         pipeline_run_id: UUID | None = None,
     ) -> TaskDetail:
-        """Spawn a bulk-ingest task that pulls from R2 ``staging/<vault>/<hash>``.
+        """Spawn a staged-file ingest task that pulls from R2 ``staging/<vault>/<hash>``.
 
-        No idempotency_key: each /process call yields a fresh task. The
-        worker is idempotent at the document level via content-addressable
-        dest paths + ``batch_upsert`` ON CONFLICT, so retries are safe.
+        Uses the pipeline run id as the Absurd idempotency key, so retrying
+        the same /process call returns/reuses the same task. The worker is
+        also idempotent at the document level via content-addressable dest
+        paths + ``batch_upsert`` ON CONFLICT, so task retries are safe.
         """
         params: dict = {
             "vault_id": str(vault_id),
@@ -95,21 +92,24 @@ class TaskService:
             "source_type": source_type,
             **({"pipeline_run_id": str(pipeline_run_id)} if pipeline_run_id else {}),
         }
+        spawn_kwargs: dict[str, Any] = {"max_attempts": 2}
+        if pipeline_run_id is not None:
+            spawn_kwargs["idempotency_key"] = str(pipeline_run_id)
         result = await self.absurd.spawn(
-            "bulk_ingest_from_staging",
+            "staged_file_ingest",
             params,
-            max_attempts=2,
+            **spawn_kwargs,
         )
         record = await self.repo.create(
             cast(UUID, result["task_id"]),
             vault_id,
-            "bulk_ingest_from_staging",
+            "staged_file_ingest",
             params,
             pipeline_run_id=pipeline_run_id,
         )
         await self.repo.session.commit()
         log_event(
-            "bulk_ingest_from_staging_spawned",
+            "staged_file_ingest_spawned",
             task_id=str(record.id),
             vault_id=str(vault_id),
             file_count=len(files),

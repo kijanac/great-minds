@@ -3,14 +3,14 @@ import { motion, useReducedMotion } from "motion/react";
 import { ArrowLeft } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
-import type { StageProgress } from "@/hooks/use-pipeline-sse";
+import type { StageProgress } from "@/hooks/use-job-sse";
 import { useViewNavigate } from "@/hooks/use-view-navigate";
 
 interface PipelinePageProps {
   stages: StageProgress[];
   overallDone: boolean;
   overallError: string | null;
-  noTaskFound?: boolean;
+  noJobFound?: boolean;
   connected?: boolean;
 }
 
@@ -36,7 +36,7 @@ export function PipelinePage({
   stages,
   overallDone,
   overallError,
-  noTaskFound,
+  noJobFound,
   connected: _connected,
 }: PipelinePageProps) {
   const navigate = useViewNavigate();
@@ -94,10 +94,10 @@ export function PipelinePage({
       {/* Pipeline stages */}
       <div className="flex-1 min-h-0 overflow-y-auto">
         <div className="max-w-[640px] mx-auto px-4 md:px-10 pt-10 pb-20">
-          {noTaskFound && !overallError && (
+          {noJobFound && !overallError && (
             <div className="text-center pt-8">
               <p className="font-serif text-[length:var(--text-body)] text-warm-dim mb-2">
-                No active pipeline
+                No active job
               </p>
               <p className="font-mono text-[length:var(--text-chrome)] tracking-[0.06em] text-warm-ghost mb-5">
                 drop sources from the home page to start a new ingest
@@ -115,7 +115,7 @@ export function PipelinePage({
             </div>
           )}
 
-          {!noTaskFound && stages.length === 0 && !overallError && (
+          {!noJobFound && stages.length === 0 && !overallError && (
             <p className="text-[length:var(--text-body)] text-warm-faint animate-[pulse-fade_1.6s_ease-in-out_infinite] font-mono">
               preparing…
             </p>
@@ -145,7 +145,7 @@ export function PipelinePage({
             </div>
           )}
 
-          {!noTaskFound && stages.length > 0 && (
+          {!noJobFound && stages.length > 0 && (
             <>
               {stages.map((stage) => {
                 const origIndex = stages.indexOf(stage);
@@ -164,7 +164,7 @@ export function PipelinePage({
           )}
 
           {/* Completion summary */}
-          {!noTaskFound && overallDone && !overallError && (
+          {!noJobFound && overallDone && !overallError && (
             <motion.div
               className="mt-10 p-6 rounded-sm border border-gold-dim bg-ink-raised"
               initial={shouldAnimate ? { opacity: 0, y: 8 } : {}}

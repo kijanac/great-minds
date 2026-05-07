@@ -12,49 +12,29 @@ const ingestResultSchema: z.ZodType<IngestResult> = z.object({
   title: z.string(),
 });
 
-const bulkSignedUrlSchema = z.object({
+const stagedFileSignedUrlSchema = z.object({
   hash: z.string(),
   url: z.string(),
 });
 
-const bulkSignResponseSchema = z.object({
-  files: z.array(bulkSignedUrlSchema),
+const stagedFileSignResponseSchema = z.object({
+  files: z.array(stagedFileSignedUrlSchema),
 });
 
-const bulkProcessResponseSchema = z.object({
-  task_id: z.string(),
-  pipeline_run_id: z.string(),
-});
-
-const taskStatusSchema = z.enum(["pending", "running", "completed", "failed", "cancelled"]);
-
-const taskDetailSchema = z.object({
+const stagedFileProcessResponseSchema = z.object({
   id: z.string(),
-  type: z.string(),
-  status: taskStatusSchema,
-  created_at: z.string(),
-  error: z.string().nullable(),
-  params: z.record(z.string(), z.unknown()),
-  pipeline_run_id: z.string().nullable(),
-  progress_total: z.number(),
-  progress_done: z.number(),
-  progress_failed: z.number(),
-  progress_failed_names: z.array(z.string()),
+  stream_url: z.string(),
 });
-
-export type TaskStatus = z.infer<typeof taskStatusSchema>;
-export type TaskDetail = z.infer<typeof taskDetailSchema>;
 
 const PUT_CONCURRENCY = 4;
 
-export type BulkPhase = "uploading" | "processing" | "done" | "error";
+export type StagedFilePhase = "uploading" | "processing" | "done" | "error";
 
-export interface BulkUploadProgress {
-  phase: BulkPhase;
+export interface StagedFileUploadProgress {
+  phase: StagedFilePhase;
   uploaded: number;
   total: number;
-  task_id?: string;
-  pipeline_run_id?: string;
+  id?: string;
   error?: string;
   failed_uploads?: { name: string; error: string }[];
 }
@@ -106,17 +86,17 @@ async function pMap<T, R>(
 }
 
 /**
- * Bulk ingest via direct-to-R2 upload.
+ * Ingest one or more files via direct-to-R2 staged upload.
  *
  * Yields progress events: per-file "uploading" updates while PUTs are
- * in flight, then a single "processing" event with the spawned task_id and
- * durable pipeline_run_id. Caller drives backend progress from the pipeline
- * SSE stream instead of polling tasks.
+ * in flight, then a single "processing" event with the durable job_id.
+ * Caller drives backend progress from the job SSE stream.
  */
-export async function* ingestBulk(
+export async function* ingestStagedFiles(
   files: File[],
   contentType: string = "texts",
-): AsyncGenerator<BulkUploadProgress> {
+  jobId: string = crypto.randomUUID(),
+): AsyncGenerator<StagedFileUploadProgress> {
   if (files.length === 0) return;
 
   // Build manifest with bounded concurrency so we don't exhaust browser
@@ -151,7 +131,7 @@ export async function* ingestBulk(
   };
 
   // 1. sign (unique hashes only)
-  const signRes = await apiFetch(vaultPath("/ingest/bulk/sign"), {
+  const signRes = await apiFetch(vaultPath("/ingest/staged-files/sign"), {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ files: uniqueManifest }),
@@ -165,7 +145,7 @@ export async function* ingestBulk(
     };
     return;
   }
-  const signed = (await readJson(signRes, bulkSignResponseSchema)).files;
+  const signed = (await readJson(signRes, stagedFileSignResponseSchema)).files;
   const urlByHash = new Map(signed.map((s) => [s.hash, s.url]));
 
   // 2. PUT to R2 (unique files only, one per hash).
@@ -237,11 +217,14 @@ export async function* ingestBulk(
     return;
   }
 
-  // 3. process — spawns the bulk_ingest_from_staging worker task
-  const processRes = await apiFetch(vaultPath("/ingest/bulk/process"), {
+  // 3. process — spawns/reuses the staged-file ingest worker task.
+  // The client-generated job ID is the public job ID, SSE channel,
+  // and Absurd idempotency key on the backend.
+  const processRes = await apiFetch(vaultPath("/ingest/staged-files/process"), {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
+      job_id: jobId,
       files: successfullyUploaded.map((m) => ({
         hash: m.hash,
         name: m.name,
@@ -261,33 +244,16 @@ export async function* ingestBulk(
     };
     return;
   }
-  const { task_id, pipeline_run_id } = await readJson(processRes, bulkProcessResponseSchema);
+  const { id } = await readJson(processRes, stagedFileProcessResponseSchema);
   yield {
     phase: "processing",
     uploaded,
     total: originalCount,
-    task_id,
-    pipeline_run_id,
+    id,
     failed_uploads: failedUploads,
   };
 
   return;
-}
-
-export async function getTask(taskId: string): Promise<TaskDetail> {
-  const res = await apiFetch(vaultPath(`/tasks/${taskId}`));
-  if (!res.ok) throw new Error(await res.text());
-  return readJson(res, taskDetailSchema);
-}
-
-export async function listTasks(limit: number = 10): Promise<TaskDetail[]> {
-  const res = await apiFetch(vaultPath(`/tasks?limit=${limit}&offset=0`));
-  if (!res.ok) throw new Error(await res.text());
-  const pageSchema = z.object({
-    items: z.array(taskDetailSchema),
-  });
-  const page = await readJson(res, pageSchema);
-  return page.items;
 }
 
 export type UserSuggestionIntent = "disagree" | "correct" | "add_context" | "restructure";

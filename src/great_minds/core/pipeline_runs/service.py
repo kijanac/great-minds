@@ -4,22 +4,43 @@ from uuid import UUID
 
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
+from great_minds.core.pagination import Page, PageInfo, PageParams
 from great_minds.core.pipeline_runs.repository import PipelineRunRepository
-from great_minds.core.pipeline_runs.schemas import PipelineRun, PipelineTrigger
+from great_minds.core.pipeline_runs.schemas import PipelineRun, PipelineRunCreate
 
 
 class PipelineRunService:
     def __init__(self, repo: PipelineRunRepository) -> None:
         self.repo = repo
 
-    async def create(self, *, vault_id: UUID, trigger: PipelineTrigger) -> PipelineRun:
-        return await self.repo.create(vault_id=vault_id, trigger=trigger.value)
+    async def create(self, data: PipelineRunCreate) -> PipelineRun:
+        return await self.repo.create(data)
 
     async def get(self, pipeline_run_id: UUID, vault_id: UUID) -> PipelineRun | None:
         return await self.repo.get(pipeline_run_id, vault_id)
 
-    async def get_current_for_vault(self, vault_id: UUID) -> PipelineRun | None:
-        return await self.repo.get_current_for_vault(vault_id)
+    async def list_for_vault(
+        self,
+        vault_id: UUID,
+        *,
+        status: str | None = None,
+        pagination: PageParams,
+    ) -> Page[PipelineRun]:
+        items = await self.repo.list_for_vault(
+            vault_id,
+            status=status,
+            limit=pagination.limit,
+            offset=pagination.offset,
+        )
+        total = await self.repo.count_for_vault(vault_id, status=status)
+        return Page(
+            items=items,
+            pagination=PageInfo(
+                limit=pagination.limit,
+                offset=pagination.offset,
+                total=total,
+            ),
+        )
 
 
 class PipelineProgressService:

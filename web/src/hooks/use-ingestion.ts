@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
-import { ingestBulk, ingestUrl } from "@/api/ingest";
+import { ingestStagedFiles, ingestUrl } from "@/api/ingest";
 import type { DroppedFile } from "@/lib/types";
 
 export type ItemStatus = "queued" | "processing" | "done" | "error";
@@ -19,13 +19,6 @@ export interface QueueSummary {
   processing: boolean;
 }
 
-export interface TaskProgress {
-  total: number;
-  done: number;
-  failed: number;
-  failedNames: string[];
-}
-
 let nextId = 0;
 
 function makeId(): string {
@@ -34,16 +27,10 @@ function makeId(): string {
 
 export function useIngestion() {
   const [queue, setQueue] = useState<QueueItem[]>([]);
-  const [compileIntentIds, setCompileIntentIds] = useState<string[]>([]);
   const [url, setUrl] = useState("");
-  const [taskProgress] = useState<TaskProgress | null>(null);
   const activeFileCount = useRef(0);
   const urlRef = useRef(url);
   urlRef.current = url;
-
-  const dismissCompileIntent = useCallback((intentId: string) => {
-    setCompileIntentIds((ids) => ids.filter((id) => id !== intentId));
-  }, []);
 
   const batchInFlightRef = useRef(false);
   const filesById = useRef<Map<string, File>>(new Map());
@@ -64,7 +51,7 @@ export function useIngestion() {
     );
 
     try {
-      for await (const event of ingestBulk(files)) {
+      for await (const event of ingestStagedFiles(files)) {
         if (event.phase === "processing") {
           setQueue((q) =>
             q.map((i) => (queuedFileIds.includes(i.id) ? { ...i, status: "done" as const } : i)),
@@ -112,7 +99,7 @@ export function useIngestion() {
       }
       queuedFileIds.forEach((id) => filesById.current.delete(id));
     } catch (e) {
-      const message = e instanceof Error ? e.message : "Bulk ingest failed";
+      const message = e instanceof Error ? e.message : "File ingest failed";
       setQueue((q) =>
         q.map((i) =>
           queuedFileIds.includes(i.id) && i.status === "processing"
@@ -206,15 +193,12 @@ export function useIngestion() {
   return {
     queue,
     summary,
-    taskProgress,
     activeFileCount: activeFileCount.current,
     url,
     setUrl,
     handleFileDrop,
     handleUrlSubmit,
     dismissItem,
-    compileIntentIds,
-    dismissCompileIntent,
   };
 }
 

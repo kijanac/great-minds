@@ -150,7 +150,7 @@ class Backlink(BaseModel):
 
 
 class FileHash(BaseModel):
-    """(file_path, file_hash) row — used for bulk ingest skip detection."""
+    """(file_path, file_hash) row — used for staged file ingest skip detection."""
 
     model_config = ConfigDict(from_attributes=True)
     file_path: str

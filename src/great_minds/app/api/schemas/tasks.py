@@ -1,12 +1,11 @@
 """Task API schemas — request models only."""
 
+from uuid import UUID
+
 from pydantic import BaseModel
 
 
 class CompileRequest(BaseModel):
-    """Empty for now — compile has no per-run parameters.
+    """Client-created job for a manual compile."""
 
-    Kept as a distinct schema so future compile-level options (e.g.
-    force re-render, scoped to a subset of topics) have a place to
-    land without API shape changes.
-    """
+    job_id: UUID

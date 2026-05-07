@@ -15,7 +15,7 @@ export type PipelineStage =
   | "publishing";
 
 type BackendPhase =
-  | "bulk_ingest"
+  | "source_ingest"
   | "ingest"
   | "extract"
   | "abstract"
@@ -36,10 +36,10 @@ export interface StageProgress {
 }
 
 interface BackendPipelineEvent {
-  pipeline_run_id: string;
+  id: string;
   phase: string;
   status: "started" | "progress" | "completed" | "failed";
-  run_status?: "pending" | "running" | "completed" | "failed" | "cancelled";
+  job_status?: "pending" | "running" | "completed" | "failed" | "cancelled";
   done: number;
   total: number;
   error?: string;
@@ -58,7 +58,7 @@ interface SseMessage {
 }
 
 const PHASE_TO_STAGE: Record<BackendPhase, PipelineStage> = {
-  bulk_ingest: "uploading",
+  source_ingest: "uploading",
   ingest: "indexing",
   extract: "reading",
   abstract: "synthesizing",
@@ -163,11 +163,11 @@ function applyEvent(prev: StageProgress[], event: PipelineEvent): StageProgress[
 }
 
 /**
- * Subscribes to the SSE progress stream for a pipeline run.
+ * Subscribes to the SSE progress stream for a job.
  * Uses fetch streaming rather than EventSource so auth works through the
  * same Authorization-header path as every other API request.
  */
-export function usePipelineSSE(pipelineRunId: string | null) {
+export function useJobSSE(jobId: string | null) {
   const vaultId = useActiveVaultId();
   const queryClient = useQueryClient();
   const [stages, setStages] = useState<StageProgress[]>(emptyStages);
@@ -186,11 +186,11 @@ export function usePipelineSSE(pipelineRunId: string | null) {
 
   const invalidateActivePipeline = useCallback(() => {
     if (!vaultId) return;
-    queryClient.invalidateQueries({ queryKey: ["vault", vaultId, "active-pipeline"] });
+    queryClient.invalidateQueries({ queryKey: ["vault", vaultId, "active-job"] });
   }, [queryClient, vaultId]);
 
   useEffect(() => {
-    if (!pipelineRunId || !vaultId) return;
+    if (!jobId || !vaultId) return;
 
     disconnect();
     setOverallDone(false);
@@ -223,8 +223,8 @@ export function usePipelineSSE(pipelineRunId: string | null) {
 
         if (
           data.status === "failed" ||
-          data.run_status === "failed" ||
-          data.run_status === "cancelled"
+          data.job_status === "failed" ||
+          data.job_status === "cancelled"
         ) {
           setOverallError(data.error ?? "Pipeline failed");
           setStages((prev) => applyEvent(prev, data));
@@ -250,7 +250,7 @@ export function usePipelineSSE(pipelineRunId: string | null) {
           return;
         }
 
-        if (data.run_status === "completed") {
+        if (data.job_status === "completed") {
           setOverallDone(true);
           invalidateActivePipeline();
         }
@@ -263,7 +263,7 @@ export function usePipelineSSE(pipelineRunId: string | null) {
 
     const run = async () => {
       try {
-        const res = await apiFetch(vaultPath(`/pipelines/${pipelineRunId}/stream`), {
+        const res = await apiFetch(vaultPath(`/jobs/${jobId}/stream`), {
           headers: { Accept: "text/event-stream" },
           signal: controller.signal,
         });
@@ -311,7 +311,7 @@ export function usePipelineSSE(pipelineRunId: string | null) {
       cancelled = true;
       controller.abort();
     };
-  }, [pipelineRunId, vaultId, disconnect, invalidateActivePipeline]);
+  }, [jobId, vaultId, disconnect, invalidateActivePipeline]);
 
   return {
     stages,

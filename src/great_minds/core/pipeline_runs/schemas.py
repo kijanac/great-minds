@@ -16,14 +16,14 @@ class PipelineRunStatus(StrEnum):
 
 
 class PipelineTrigger(StrEnum):
-    BULK_UPLOAD = "bulk_upload"
+    STAGED_FILES = "staged_files"
     URL = "url"
     MANUAL = "manual"
 
 
 class PipelinePhase(StrEnum):
     UPLOAD = "upload"
-    BULK_INGEST = "bulk_ingest"
+    SOURCE_INGEST = "source_ingest"
     INGEST = "ingest"
     EXTRACT = "extract"
     ABSTRACT = "abstract"
@@ -56,7 +56,7 @@ class PipelineRun(BaseModel):
     progress_message: str = ""
     error: str | None = None
 
-    bulk_task_id: UUID | None = None
+    ingest_task_id: UUID | None = None
     compile_intent_id: UUID | None = None
     compile_task_id: UUID | None = None
 
@@ -66,4 +66,7 @@ class PipelineRun(BaseModel):
 
 
 class PipelineRunCreate(BaseModel):
+    id: UUID
+    vault_id: UUID
     trigger: PipelineTrigger
+    status: PipelineRunStatus = PipelineRunStatus.PENDING

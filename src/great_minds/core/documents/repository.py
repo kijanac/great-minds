@@ -153,7 +153,7 @@ class DocumentRepository:
     async def get_file_hashes(self, vault_id: UUID) -> list[FileHash]:
         """Return (file_path, file_hash) rows for all documents in a vault.
 
-        Used for skip detection during bulk ingest.
+        Used for skip detection during staged file ingest.
         """
         result = await self.session.execute(
             select(DocumentORM.file_path, DocumentORM.file_hash).where(

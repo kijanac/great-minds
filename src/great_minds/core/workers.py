@@ -7,7 +7,6 @@ Storage/session from serialized params — they don't use the DI chain.
 import asyncio
 import logging
 from contextvars import ContextVar
-from pathlib import Path
 from uuid import UUID
 
 from absurd_sdk import AbsurdHooks, AsyncAbsurd
@@ -28,7 +27,7 @@ from great_minds.core.pipeline import (
 from great_minds.core.pipeline.abstract.schemas import ValidatedCanonicalTopic
 from great_minds.core.vaults.config import load_config
 from great_minds.core.vaults.repository import VaultRepository
-from great_minds.core.documents.builder import build_document, write_document
+from great_minds.core.documents.builder import build_document
 from great_minds.core.documents.repository import DocumentRepository
 from great_minds.core.documents.schemas import DocumentCreate
 from great_minds.core.documents.service import DocumentService
@@ -36,19 +35,16 @@ from great_minds.core.ingest_service import _convert_to_markdown
 from great_minds.core.llm import get_async_client
 from great_minds.core.llm_costs import record_wide_event_cost
 from great_minds.core.markdown import parse_frontmatter
-from great_minds.core.paths import raw_prefix
 from great_minds.core.r2_admin import R2Admin
 from great_minds.core.settings import get_settings
 from great_minds.core.storage_factory import make_storage
 from great_minds.core.pipeline_runs import PipelineProgressRunner
-from great_minds.core.tasks.repository import TaskRepository
 from great_minds.core.telemetry import (
     correlation_id,
     emit_wide_event,
     enrich,
     init_wide_event,
     log_event,
-    timed_op,
 )
 
 _task_session: ContextVar[AsyncSession] = ContextVar("task_session")
@@ -86,12 +82,13 @@ async def compile_task(params: dict, ctx) -> None:
 
     init_wide_event("compile", vault_id=str(vault_id))
 
-    # Background heartbeat — extends the Absurd task lease every 5 min
-    # so long-running phases (ingest 3000 docs, extract) don't time out.
+    # Background heartbeat — extends the Absurd task lease every
+    # half the claim_timeout (60s of 120s), so long-running phases
+    # (ingest on 3000 docs, extract) don't trigger $ClaimTimeout.
     async def _heartbeat_loop():
         while True:
-            await asyncio.sleep(300)
-            await ctx.heartbeat(600)
+            await asyncio.sleep(60)
+            await ctx.heartbeat(120)
 
     hb_task = asyncio.create_task(_heartbeat_loop())
 
@@ -273,99 +270,6 @@ async def compile_task(params: dict, ctx) -> None:
         emit_wide_event()
 
 
-async def bulk_ingest_task(params: dict, ctx) -> None:
-    """Bulk ingest a directory of files into a vault."""
-    correlation_id.set(f"task-{ctx.task_id}")
-    vault_id = UUID(params["vault_id"])
-    session = _task_session.get()
-    vault = await VaultRepository(session).get_by_id(vault_id)
-    if vault is None:
-        raise ValueError(f"Vault {vault_id} not found")
-    storage = make_storage(vault)
-    source_dir = Path(params["source_dir"])
-    content_type = params.get("content_type", "texts")
-    dest_dir = params.get("dest_dir", raw_prefix(content_type))
-    ingest_kwargs = params.get("ingest_kwargs", {})
-    config = await load_config(storage)
-
-    doc_service = DocumentService(DocumentRepository(session))
-    existing_hashes = await doc_service.get_raw_file_hashes(vault_id)
-
-    source_files = sorted(source_dir.rglob("*.md"))
-    total = len(source_files)
-    ingested = 0
-    skipped = 0
-    batch: list[DocumentCreate] = []
-    batch_size = 50
-
-    init_wide_event(
-        "bulk_ingested",
-        vault_id=str(vault_id),
-        source_dir=str(source_dir),
-        content_type=content_type,
-        total_files=total,
-    )
-
-    log.info(
-        "bulk_ingest vault=%s source=%s files=%d",
-        params.get("label"),
-        source_dir,
-        total,
-    )
-
-    async with timed_op("ingest"):
-        for i, filepath in enumerate(source_files):
-            if i % 100 == 0:
-                await ctx.heartbeat(600)
-
-            relative = filepath.relative_to(source_dir)
-            dest = f"{dest_dir}/{relative}"
-
-            raw_content = filepath.read_text(encoding="utf-8")
-            content_with_fm = await write_document(
-                storage, config, raw_content, content_type, dest=dest, **ingest_kwargs
-            )
-            file_hash_val = file_hash(content_with_fm)
-
-            if existing_hashes.get(dest) == file_hash_val:
-                skipped += 1
-                continue
-
-            await storage.write(dest, content_with_fm)
-            ingested += 1
-
-            fm, _ = parse_frontmatter(content_with_fm)
-            batch.append(DocumentCreate.from_frontmatter(fm, dest, content_with_fm))
-
-            if len(batch) >= batch_size:
-                # batch_index_raw_docs upserts, emits a compile intent,
-                # and commits — outbox semantics live in DocumentService.
-                await doc_service.batch_index_raw_docs(vault_id, batch)
-                batch.clear()
-
-            if ingested % 100 == 0:
-                log.info(
-                    "bulk_ingest progress=%d/%d ingested=%d skipped=%d",
-                    i + 1,
-                    total,
-                    ingested,
-                    skipped,
-                )
-
-        if batch:
-            await doc_service.batch_index_raw_docs(vault_id, batch)
-
-    enrich(ingested=ingested, skipped=skipped)
-    log.info(
-        "bulk_ingest complete vault=%s ingested=%d skipped=%d total=%d",
-        params.get("label"),
-        ingested,
-        skipped,
-        total,
-    )
-    emit_wide_event()
-
-
 # ---------------------------------------------------------------------------
 # Lifecycle
 # ---------------------------------------------------------------------------
@@ -415,8 +319,6 @@ async def _index_fetched_results(
     storage,
     existing_hashes: dict[str, str],
     doc_service: DocumentService,
-    task_repo: TaskRepository,
-    task_id: UUID,
     progress: PipelineProgressRunner,
     pipeline_run_id: UUID,
 ) -> tuple[int, int, int, list[str]]:
@@ -441,7 +343,7 @@ async def _index_fetched_results(
         if i > 0 and i % 100 == 0:
             remaining = pending - i
             log.info(
-                "bulk_ingest drain: %d/%d completed %d failed %d pending",
+                "staged_file_ingest drain: %d/%d completed %d failed %d pending",
                 i,
                 pending,
                 failed,
@@ -451,7 +353,7 @@ async def _index_fetched_results(
             entry, content_with_fm = await coro
         except Exception as e:
             log_event(
-                "bulk_ingest_from_staging.fetch_failed",
+                "staged_file_ingest.fetch_failed",
                 level=logging.WARNING,
                 vault_id=str(vault_id),
                 error_type=type(e).__name__,
@@ -484,16 +386,9 @@ async def _index_fetched_results(
             log.debug("batch_upsert done")
             batch.clear()
             done = ingested + skipped
-            await task_repo.update_progress(
-                task_id,
-                done=done,
-                total=pending,
-                failed=failed,
-                failed_names=failed_names[-20:] if failed_names else None,
-            )
             await progress.emit(
                 pipeline_run_id=pipeline_run_id,
-                phase="bulk_ingest",
+                phase="source_ingest",
                 status="progress",
                 done=done,
                 total=pending,
@@ -509,16 +404,9 @@ async def _index_fetched_results(
         log.debug("batch_upsert final done")
 
     done = ingested + skipped
-    await task_repo.update_progress(
-        task_id,
-        done=done,
-        total=pending,
-        failed=failed,
-        failed_names=failed_names[-20:] if failed_names else None,
-    )
     await progress.emit(
         pipeline_run_id=pipeline_run_id,
-        phase="bulk_ingest",
+        phase="source_ingest",
         status="progress",
         done=done,
         total=pending,
@@ -543,7 +431,7 @@ async def _cleanup_staging(
     failures = sum(1 for r in results if isinstance(r, Exception))
     if failures:
         log_event(
-            "bulk_ingest_from_staging.cleanup_failures",
+            "staged_file_ingest.cleanup_failures",
             level=logging.WARNING,
             vault_id=str(vault_id),
             failed=failures,
@@ -551,7 +439,7 @@ async def _cleanup_staging(
         )
 
 
-async def bulk_ingest_from_staging_task(params: dict, ctx) -> None:
+async def staged_file_ingest_task(params: dict, ctx) -> None:
     """Process files previously uploaded to ``staging/<vault_id>/<hash>``.
 
     ``params`` shape:
@@ -583,7 +471,7 @@ async def bulk_ingest_from_staging_task(params: dict, ctx) -> None:
 
         settings = get_settings()
         if settings.storage_backend != "r2":
-            raise ValueError("bulk_ingest_from_staging requires r2 storage backend")
+            raise ValueError("staged_file_ingest requires r2 storage backend")
         if not vault.r2_bucket_name:
             raise ValueError(f"Vault {vault_id} has no r2_bucket_name")
 
@@ -596,24 +484,16 @@ async def bulk_ingest_from_staging_task(params: dict, ctx) -> None:
         )
         bucket = vault.r2_bucket_name
 
-        init_wide_event(
-            "bulk_ingest_from_staging", vault_id=str(vault_id), total=len(files)
-        )
+        init_wide_event("staged_file_ingest", vault_id=str(vault_id), total=len(files))
         await ctx.heartbeat(600)
 
         doc_service = DocumentService(
             DocumentRepository(session), pipeline_run_id=pipeline_run_id
         )
         existing_hashes = await doc_service.get_raw_file_hashes(vault_id)
-        task_repo = TaskRepository(session)
-        task_id = UUID(str(ctx.task_id))
-        # Write initial progress so the frontend shows "0 / N" immediately.
-        # This commit is standalone — it won't include any partial doc work.
-        await task_repo.update_progress(task_id, done=0, total=len(files), failed=0)
-        await session.commit()
         await progress.emit(
             pipeline_run_id=pipeline_run_id,
-            phase="bulk_ingest",
+            phase="source_ingest",
             status="started",
             done=0,
             total=len(files),
@@ -645,7 +525,7 @@ async def bulk_ingest_from_staging_task(params: dict, ctx) -> None:
                 done = sum(1 for t in fetch_tasks if t.done())
                 pending = len(fetch_tasks) - done
                 log.info(
-                    "bulk_ingest liveness: %d/%d done %d pending %d failed so far",
+                    "staged_file_ingest liveness: %d/%d done %d pending %d failed so far",
                     done,
                     len(fetch_tasks),
                     pending,
@@ -663,8 +543,6 @@ async def bulk_ingest_from_staging_task(params: dict, ctx) -> None:
                 storage=storage,
                 existing_hashes=existing_hashes,
                 doc_service=doc_service,
-                task_repo=task_repo,
-                task_id=task_id,
                 progress=progress,
                 pipeline_run_id=pipeline_run_id,
             )
@@ -680,7 +558,7 @@ async def bulk_ingest_from_staging_task(params: dict, ctx) -> None:
 
         await progress.emit(
             pipeline_run_id=pipeline_run_id,
-            phase="bulk_ingest",
+            phase="source_ingest",
             status="completed",
             done=ingested + skipped,
             total=len(files),
@@ -691,7 +569,7 @@ async def bulk_ingest_from_staging_task(params: dict, ctx) -> None:
             if failed > 0:
                 await progress.emit(
                     pipeline_run_id=pipeline_run_id,
-                    phase="bulk_ingest",
+                    phase="source_ingest",
                     status="failed",
                     failed=failed,
                     error=f"{failed} source(s) failed before compile",
@@ -711,7 +589,7 @@ async def bulk_ingest_from_staging_task(params: dict, ctx) -> None:
     except Exception as exc:
         await progress.emit(
             pipeline_run_id=pipeline_run_id,
-            phase="bulk_ingest",
+            phase="source_ingest",
             status="failed",
             error=str(exc),
         )
@@ -740,8 +618,7 @@ def create_absurd(database_url: str, session_maker: async_sessionmaker) -> Async
     hooks = AbsurdHooks(wrap_task_execution=wrap_with_session)
     app = AsyncAbsurd(url, queue_name="default", hooks=hooks)
     app.register_task("compile", default_max_attempts=3)(compile_task)
-    app.register_task("bulk_ingest", default_max_attempts=2)(bulk_ingest_task)
-    app.register_task("bulk_ingest_from_staging", default_max_attempts=2)(
-        bulk_ingest_from_staging_task
+    app.register_task("staged_file_ingest", default_max_attempts=2)(
+        staged_file_ingest_task
     )
     return app

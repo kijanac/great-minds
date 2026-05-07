@@ -30,7 +30,3 @@ class TaskRecordORM(Base):
         DateTime(timezone=True),
         server_default=text("now()"),
     )
-    progress_total: Mapped[int] = mapped_column(default=0)
-    progress_done: Mapped[int] = mapped_column(default=0)
-    progress_failed: Mapped[int] = mapped_column(default=0)
-    progress_failed_names: Mapped[list] = mapped_column(JSONB, default=list)

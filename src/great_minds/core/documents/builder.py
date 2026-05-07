@@ -15,8 +15,7 @@ emitted. Per-content_type fields come from the vault's config.yaml
 Callers:
     - ``IngestService`` (core/ingest_service.py) — wraps these in
       source-conversion + DB indexing for the API entry points.
-    - ``workers.bulk_ingest_task`` — bulk corpus ingest with concurrent
-      writes.
+    - ``workers.staged_file_ingest_task`` — staged R2 file ingest.
     - ``scripts/bulk_ingest_corpus.py`` — local-dev one-shot.
 """
 

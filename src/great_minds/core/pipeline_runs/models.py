@@ -13,9 +13,7 @@ from great_minds.core.db import Base
 class PipelineRunRecord(Base):
     __tablename__ = "pipeline_runs"
 
-    id: Mapped[UUID] = mapped_column(
-        PG_UUID, primary_key=True, server_default=text("gen_random_uuid()")
-    )
+    id: Mapped[UUID] = mapped_column(PG_UUID, primary_key=True)
     vault_id: Mapped[UUID] = mapped_column(
         PG_UUID,
         ForeignKey("vaults.id", ondelete="CASCADE"),
@@ -33,7 +31,7 @@ class PipelineRunRecord(Base):
     progress_message: Mapped[str] = mapped_column(Text, default="")
     error: Mapped[str | None] = mapped_column(Text)
 
-    bulk_task_id: Mapped[UUID | None] = mapped_column(PG_UUID)
+    ingest_task_id: Mapped[UUID | None] = mapped_column(PG_UUID)
     compile_intent_id: Mapped[UUID | None] = mapped_column(PG_UUID)
     compile_task_id: Mapped[UUID | None] = mapped_column(PG_UUID)
 

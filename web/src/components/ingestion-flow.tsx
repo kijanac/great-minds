@@ -5,7 +5,7 @@ import { motion, useReducedMotion } from "motion/react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { ingestBulk } from "@/api/ingest";
+import { ingestStagedFiles } from "@/api/ingest";
 import { useActiveVaultId } from "@/hooks/use-vault";
 import { useViewNavigate } from "@/hooks/use-view-navigate";
 import type { DroppedFile } from "@/lib/types";
@@ -135,6 +135,7 @@ export function IngestionFlow({ hasActivePipeline }: { hasActivePipeline: boolea
   const dragCounter = useRef(0);
   const pendingFilesRef = useRef<DroppedFile[]>([]);
   const pendingUrlRef = useRef<string>("");
+  const pendingJobIdRef = useRef<string | null>(null);
   const zoneRef = useRef<HTMLDivElement>(null);
   const navigate = useViewNavigate();
   const queryClient = useQueryClient();
@@ -205,6 +206,7 @@ export function IngestionFlow({ hasActivePipeline }: { hasActivePipeline: boolea
     setExpanded(false);
     pendingFilesRef.current = [];
     pendingUrlRef.current = "";
+    pendingJobIdRef.current = null;
     setUrl("");
     setSummary(null);
     setIngestError(null);
@@ -214,7 +216,7 @@ export function IngestionFlow({ hasActivePipeline }: { hasActivePipeline: boolea
   const invalidateActivePipeline = useCallback(() => {
     if (!vaultId) return;
     queryClient.invalidateQueries({
-      queryKey: ["vault", vaultId, "active-pipeline"],
+      queryKey: ["vault", vaultId, "active-job"],
     });
   }, [queryClient, vaultId]);
 
@@ -233,6 +235,7 @@ export function IngestionFlow({ hasActivePipeline }: { hasActivePipeline: boolea
     if (files.length > 0) {
       pendingFilesRef.current = files;
       pendingUrlRef.current = "";
+      pendingJobIdRef.current = crypto.randomUUID();
       setSummary(computeSummary(files));
     }
   }, []);
@@ -251,6 +254,7 @@ export function IngestionFlow({ hasActivePipeline }: { hasActivePipeline: boolea
         }));
         pendingFilesRef.current = dropped;
         pendingUrlRef.current = "";
+        pendingJobIdRef.current = crypto.randomUUID();
         setIngestError(null);
         setFailedUploads([]);
         setSummary(computeSummary(dropped));
@@ -276,15 +280,21 @@ export function IngestionFlow({ hasActivePipeline }: { hasActivePipeline: boolea
       setFailedUploads([]);
       setConfirming(true);
 
-      let pipelineRunId: string | null = null;
+      const stableJobId = pendingJobIdRef.current ?? crypto.randomUUID();
+      pendingJobIdRef.current = stableJobId;
+      let createdJobId: string | null = null;
       let lastFailedUploads: FailedUpload[] = [];
-      for await (const event of ingestBulk(files.map((f) => f.file))) {
+      for await (const event of ingestStagedFiles(
+        files.map((f) => f.file),
+        "texts",
+        stableJobId,
+      )) {
         if (event.phase === "uploading" && event.failed_uploads) {
           lastFailedUploads = event.failed_uploads;
           setFailedUploads(lastFailedUploads);
         }
         if (event.phase === "processing") {
-          if (event.pipeline_run_id) pipelineRunId = event.pipeline_run_id;
+          if (event.id) createdJobId = event.id;
           // Capture partial failures on the success path — some files
           // may have uploaded but others failed. Show the error UI even
           // though a pipeline was created for the survivors.
@@ -302,11 +312,14 @@ export function IngestionFlow({ hasActivePipeline }: { hasActivePipeline: boolea
         }
       }
 
-      if (pipelineRunId) {
+      if (createdJobId) {
         if (lastFailedUploads.length > 0) {
           // Partial success: some files made it, others didn't.
           // Show the failures instead of navigating away silently.
-          // Keep pendingFilesRef so retry can find the failed subset.
+          // Keep pendingFilesRef so retry can find the failed subset. A
+          // backend pipeline already exists for the successful files, so a
+          // later retry of only failed files must be a new job.
+          pendingJobIdRef.current = crypto.randomUUID();
           setConfirming(false);
           const failedNames = new Set(lastFailedUploads.map((f) => f.name));
           const succeeded = allFiles.length - failedNames.size;
@@ -318,12 +331,13 @@ export function IngestionFlow({ hasActivePipeline }: { hasActivePipeline: boolea
           invalidateActivePipeline();
         } else {
           pendingFilesRef.current = [];
+          pendingJobIdRef.current = null;
           invalidateActivePipeline();
-          navigate(`/pipeline?pipeline_run_id=${pipelineRunId}`);
+          navigate(`/pipeline?job_id=${createdJobId}`);
         }
       } else {
         setConfirming(false);
-        setIngestError("No pipeline was created — the server may be unavailable.");
+        setIngestError("No job was created — the server may be unavailable.");
       }
     },
     [invalidateActivePipeline, navigate],

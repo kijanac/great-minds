@@ -10,10 +10,9 @@ from great_minds.app.api.dependencies import require_vault_member
 from great_minds.app.api.ingest_routes import router as ingest_router
 from great_minds.app.api.lint_routes import router as lint_router
 from great_minds.app.api.proposal_routes import router as proposal_router
-from great_minds.app.api.pipeline_routes import router as pipeline_router
+from great_minds.app.api.job_routes import router as job_router
 from great_minds.app.api.query_routes import router as query_router
 from great_minds.app.api.session_routes import router as session_router
-from great_minds.app.api.task_routes import router as task_router
 from great_minds.app.api.wiki_routes import router as wiki_router
 
 router = APIRouter(prefix="/v1")
@@ -33,10 +32,9 @@ vault_scoped = APIRouter(
 vault_scoped.include_router(compile_router)
 vault_scoped.include_router(ingest_router)
 vault_scoped.include_router(lint_router)
-vault_scoped.include_router(pipeline_router)
+vault_scoped.include_router(job_router)
 vault_scoped.include_router(query_router)
 vault_scoped.include_router(session_router)
-vault_scoped.include_router(task_router)
 vault_scoped.include_router(wiki_router)
 vault_scoped.include_router(proposal_router)
 router.include_router(vault_scoped)
