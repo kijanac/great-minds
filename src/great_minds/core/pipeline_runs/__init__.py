@@ -5,6 +5,8 @@ from great_minds.core.pipeline_runs.repository import PipelineRunRepository
 from great_minds.core.pipeline_runs.schemas import (
     PipelinePhase,
     PipelinePhaseStatus,
+    PipelineTaskType,
+    PipelineProgress,
     PipelineRun,
     PipelineRunCreate,
     PipelineRunStatus,
@@ -20,9 +22,11 @@ from great_minds.core.pipeline_runs.service import (
 __all__ = [
     "PipelinePhase",
     "PipelinePhaseStatus",
+    "PipelineProgress",
     "PipelineProgressRunner",
     "PipelineProgressService",
     "PipelineRun",
+    "PipelineTaskType",
     "PipelineRunCreate",
     "PipelineRunRecord",
     "PipelineRunRepository",

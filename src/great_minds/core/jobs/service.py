@@ -7,6 +7,7 @@ import httpx
 from great_minds.core.documents.schemas import SourceMetadata
 from great_minds.core.ingest_service import IngestService
 from great_minds.core.pipeline_runs import (
+    PipelineProgress,
     PipelineRun,
     PipelineRunCreate,
     PipelineRunService,
@@ -56,8 +57,7 @@ class JobService:
             PipelineRunUpdate(
                 phase="source_ingest",
                 status="started",
-                done=0,
-                total=1,
+                progress=PipelineProgress(done=0, total=1),
                 message="fetching source URL",
             ),
         )
@@ -89,8 +89,7 @@ class JobService:
             PipelineRunUpdate(
                 phase="source_ingest",
                 status="completed",
-                done=1,
-                total=1,
+                progress=PipelineProgress(done=1, total=1),
                 message="source prepared for compile",
             ),
         )

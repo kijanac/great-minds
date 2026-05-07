@@ -38,13 +38,15 @@ export interface StageProgress {
 interface BackendPipelineEvent {
   id: string;
   phase: string;
-  status: "started" | "progress" | "completed" | "failed";
+  phase_status: "started" | "progress" | "completed" | "failed";
   job_status?: "pending" | "running" | "completed" | "failed" | "cancelled";
-  done: number;
-  total: number;
+  progress?: {
+    done: number;
+    total: number;
+    failed_items?: number;
+  };
   error?: string;
   message?: string;
-  early_exit?: boolean;
 }
 
 interface PipelineEvent extends BackendPipelineEvent {
@@ -130,11 +132,14 @@ function applyEvent(prev: StageProgress[], event: PipelineEvent): StageProgress[
       return { ...s, active: false, complete: true, errored: false };
     }
     if (i === phaseIdx) {
-      const total = event.total > 0 ? event.total : s.total;
-      const done = event.status === "completed" && event.total <= 0 ? total : event.done;
+      const progress = event.progress;
+      const total = progress && progress.total > 0 ? progress.total : s.total;
+      const done =
+        event.phase_status === "completed" && !progress ? total : (progress?.done ?? s.done);
       const isComplete =
-        event.status === "completed" || (event.status === "progress" && done >= total && total > 0);
-      const isFailed = event.status === "failed";
+        event.phase_status === "completed" ||
+        (event.phase_status === "progress" && done >= total && total > 0);
+      const isFailed = event.phase_status === "failed";
       return {
         ...s,
         active: !isComplete && !isFailed,
@@ -222,7 +227,7 @@ export function useJobSSE(jobId: string | null) {
         if (!data) return;
 
         if (
-          data.status === "failed" ||
+          data.phase_status === "failed" ||
           data.job_status === "failed" ||
           data.job_status === "cancelled"
         ) {
@@ -232,19 +237,11 @@ export function useJobSSE(jobId: string | null) {
           return;
         }
 
-        if (data.backendPhase === "publish" && data.status === "completed") {
+        if (data.backendPhase === "publish" && data.phase_status === "completed") {
           setStages((prev) => {
             const withLast = applyEvent(prev, data);
             return withLast.map((s) => ({ ...s, active: false, complete: true }));
           });
-          setOverallDone(true);
-          invalidateActivePipeline();
-          return;
-        }
-
-        if (data.status === "completed" && data.backendPhase === "abstract" && data.early_exit) {
-          // No topics to compile — mark everything complete
-          setStages((prev) => prev.map((s) => ({ ...s, active: false, complete: true })));
           setOverallDone(true);
           invalidateActivePipeline();
           return;

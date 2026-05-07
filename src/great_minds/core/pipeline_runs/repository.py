@@ -11,7 +11,10 @@ from great_minds.core.pipeline_runs.models import PipelineRunRecord
 from great_minds.core.pipeline_runs.schemas import (
     PipelineRun,
     PipelineRunCreate,
+    PipelinePhase,
+    PipelinePhaseStatus,
     PipelineRunStatus,
+    PipelineTaskType,
     PipelineRunUpdate,
 )
 
@@ -98,7 +101,12 @@ class PipelineRunRepository:
         await self.session.execute(
             update(PipelineRunRecord)
             .where(PipelineRunRecord.id == pipeline_run_id)
-            .values(ingest_task_id=task_id, updated_at=func.now())
+            .values(
+                ingest_task_id=task_id,
+                active_task_id=task_id,
+                active_task_type=PipelineTaskType.STAGED_FILE_INGEST,
+                updated_at=func.now(),
+            )
         )
 
     async def attach_compile_intent(
@@ -114,7 +122,12 @@ class PipelineRunRepository:
         await self.session.execute(
             update(PipelineRunRecord)
             .where(PipelineRunRecord.id == pipeline_run_id)
-            .values(compile_task_id=task_id, updated_at=func.now())
+            .values(
+                compile_task_id=task_id,
+                active_task_id=task_id,
+                active_task_type=PipelineTaskType.COMPILE,
+                updated_at=func.now(),
+            )
         )
 
     async def fail(self, pipeline_run_id: UUID, error: str) -> UUID | None:
@@ -137,26 +150,36 @@ class PipelineRunRepository:
         pipeline_run_id: UUID,
         data: PipelineRunUpdate,
     ) -> UUID | None:
-        values: dict[str, object] = {
-            "status": PipelineRunStatus.RUNNING.value,
+        values = {
             "current_phase": data.phase,
             "phase_status": data.status,
             "progress_message": data.message,
             "updated_at": func.now(),
         }
-        if data.done is not None:
-            values["progress_done"] = data.done
-        if data.total is not None:
-            values["progress_total"] = data.total
-        if data.failed is not None:
-            values["progress_failed"] = data.failed
-        if data.error is not None or data.status == "failed":
-            values["error"] = data.error or "Pipeline failed"
-            values["status"] = PipelineRunStatus.FAILED.value
-            values["completed_at"] = func.now()
-        elif data.phase == "publish" and data.status == "completed":
-            values["status"] = PipelineRunStatus.COMPLETED.value
-            values["completed_at"] = func.now()
+        if data.progress is not None:
+            values.update(
+                progress_done=data.progress.done,
+                progress_total=data.progress.total,
+                progress_failed=data.progress.failed_items,
+            )
+        if data.error is not None:
+            values["error"] = data.error
+
+        if data.status is PipelinePhaseStatus.FAILED:
+            values.update(
+                status=PipelineRunStatus.FAILED,
+                completed_at=func.now(),
+            )
+        elif (
+            data.phase is PipelinePhase.PUBLISH
+            and data.status is PipelinePhaseStatus.COMPLETED
+        ):
+            values.update(
+                status=PipelineRunStatus.COMPLETED,
+                completed_at=func.now(),
+            )
+        else:
+            values["status"] = PipelineRunStatus.RUNNING
 
         row = await self.session.execute(
             update(PipelineRunRecord)

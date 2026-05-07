@@ -8,6 +8,7 @@ from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
 from great_minds.core.db import Base
+from great_minds.core.pipeline_runs.schemas import PipelineTaskType
 
 
 class PipelineRunRecord(Base):
@@ -34,6 +35,8 @@ class PipelineRunRecord(Base):
     ingest_task_id: Mapped[UUID | None] = mapped_column(PG_UUID)
     compile_intent_id: Mapped[UUID | None] = mapped_column(PG_UUID)
     compile_task_id: Mapped[UUID | None] = mapped_column(PG_UUID)
+    active_task_id: Mapped[UUID | None] = mapped_column(PG_UUID)
+    active_task_type: Mapped[PipelineTaskType | None] = mapped_column(Text)
 
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),

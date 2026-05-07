@@ -33,11 +33,22 @@ class PipelinePhase(StrEnum):
     PUBLISH = "publish"
 
 
+class PipelineTaskType(StrEnum):
+    STAGED_FILE_INGEST = "staged_file_ingest"
+    COMPILE = "compile"
+
+
 class PipelinePhaseStatus(StrEnum):
-    PENDING = "pending"
-    RUNNING = "running"
+    STARTED = "started"
+    PROGRESS = "progress"
     COMPLETED = "completed"
     FAILED = "failed"
+
+
+class PipelineProgress(BaseModel):
+    done: int
+    total: int
+    failed_items: int = 0
 
 
 class PipelineRun(BaseModel):
@@ -59,6 +70,8 @@ class PipelineRun(BaseModel):
     ingest_task_id: UUID | None = None
     compile_intent_id: UUID | None = None
     compile_task_id: UUID | None = None
+    active_task_id: UUID | None = None
+    active_task_type: PipelineTaskType | None = None
 
     created_at: datetime
     updated_at: datetime
@@ -73,10 +86,8 @@ class PipelineRunCreate(BaseModel):
 
 
 class PipelineRunUpdate(BaseModel):
-    phase: str
-    status: str
-    done: int | None = None
-    total: int | None = None
-    failed: int | None = None
+    phase: PipelinePhase
+    status: PipelinePhaseStatus
+    progress: PipelineProgress | None = None
     message: str = ""
     error: str | None = None

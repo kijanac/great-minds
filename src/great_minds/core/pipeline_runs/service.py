@@ -8,6 +8,7 @@ from great_minds.core.ingest_schemas import StagedFileInput
 from great_minds.core.pagination import Page, PageInfo, PageParams
 from great_minds.core.pipeline_runs.repository import PipelineRunRepository
 from great_minds.core.pipeline_runs.schemas import (
+    PipelineProgress,
     PipelineRun,
     PipelineRunCreate,
     PipelineRunUpdate,
@@ -121,14 +122,19 @@ class PipelineProgressService:
         message: str = "",
         error: str | None = None,
     ) -> UUID | None:
+        progress = None
+        if done is not None or total is not None or failed is not None:
+            progress = PipelineProgress(
+                done=done or 0,
+                total=total or 0,
+                failed_items=failed or 0,
+            )
         return await self.repo.update_progress(
             pipeline_run_id,
             PipelineRunUpdate(
                 phase=phase,
                 status=status,
-                done=done,
-                total=total,
-                failed=failed,
+                progress=progress,
                 message=message,
                 error=error,
             ),

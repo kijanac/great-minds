@@ -165,10 +165,7 @@ async def _recover_zombie_pipeline_runs(
     zombie_threshold = datetime.now(timezone.utc) - timedelta(seconds=120)
     zombies = await pipeline_run_repo.list_stale_active(zombie_threshold)
     for run in zombies:
-        # A pipeline run can progress from an ingest task to a compile task.
-        # Prefer the newest/most-specific task: a completed ingest task is
-        # expected once compile has started and must not fail the whole run.
-        task_id = run.compile_task_id or run.ingest_task_id
+        task_id = run.active_task_id
         if task_id is None:
             await pipeline_run_repo.fail(
                 run.id, "Pipeline lost — server may have restarted."
@@ -177,7 +174,7 @@ async def _recover_zombie_pipeline_runs(
                 "zombie_pipeline_failed",
                 pipeline_run_id=str(run.id),
                 vault_id=str(run.vault_id),
-                reason="no_task_id",
+                reason="no_active_task_id",
             )
             continue
 
@@ -192,6 +189,7 @@ async def _recover_zombie_pipeline_runs(
                 pipeline_run_id=str(run.id),
                 vault_id=str(run.vault_id),
                 task_id=str(task_id),
+                task_type=run.active_task_type,
                 task_state=snapshot.state if snapshot else "missing",
             )
 
