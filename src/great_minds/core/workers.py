@@ -76,7 +76,6 @@ async def compile_task(params: dict, ctx) -> None:
     correlation_id.set(f"task-{ctx.task_id}")
     vault_id = UUID(params["vault_id"])
     pipeline_run_id = UUID(params["pipeline_run_id"])
-    run_id = pipeline_run_id  # alias for progress emit calls
     session = _task_session.get()
     progress = PipelineProgressRunner(_task_session_maker.get())
     vault = await VaultRepository(session).get_by_id(vault_id)
@@ -101,7 +100,7 @@ async def compile_task(params: dict, ctx) -> None:
         # Phase 0 — mechanical chunking + embedding of raw docs
         async def _run_ingest():
             await progress.emit(
-                pipeline_run_id=run_id,
+                pipeline_run_id=pipeline_run_id,
                 phase="ingest",
                 status="started",
                 done=0,
@@ -109,7 +108,7 @@ async def compile_task(params: dict, ctx) -> None:
             )
             await ingest.run(pipeline_ctx)
             await progress.emit(
-                pipeline_run_id=run_id,
+                pipeline_run_id=pipeline_run_id,
                 phase="ingest",
                 status="completed",
                 done=1,
@@ -123,7 +122,7 @@ async def compile_task(params: dict, ctx) -> None:
 
         async def _run_extract():
             await progress.emit(
-                pipeline_run_id=run_id,
+                pipeline_run_id=pipeline_run_id,
                 phase="extract",
                 status="started",
                 done=0,
@@ -131,7 +130,7 @@ async def compile_task(params: dict, ctx) -> None:
             )
             await extract.run(pipeline_ctx)
             await progress.emit(
-                pipeline_run_id=run_id,
+                pipeline_run_id=pipeline_run_id,
                 phase="extract",
                 status="completed",
             )
@@ -143,7 +142,7 @@ async def compile_task(params: dict, ctx) -> None:
 
         async def _run_abstract():
             await progress.emit(
-                pipeline_run_id=run_id,
+                pipeline_run_id=pipeline_run_id,
                 phase="abstract",
                 status="started",
                 done=0,
@@ -152,7 +151,7 @@ async def compile_task(params: dict, ctx) -> None:
             result = await abstract.run(pipeline_ctx)
             if not result:
                 await progress.emit(
-                    pipeline_run_id=run_id,
+                    pipeline_run_id=pipeline_run_id,
                     phase="abstract",
                     status="completed",
                     done=1,
@@ -161,7 +160,7 @@ async def compile_task(params: dict, ctx) -> None:
                 )
             else:
                 await progress.emit(
-                    pipeline_run_id=run_id,
+                    pipeline_run_id=pipeline_run_id,
                     phase="abstract",
                     status="completed",
                     done=1,
@@ -180,7 +179,7 @@ async def compile_task(params: dict, ctx) -> None:
         # Phase 3 — mechanical: topic_membership, topic_links, topic_related
         async def _run_derive():
             await progress.emit(
-                pipeline_run_id=run_id,
+                pipeline_run_id=pipeline_run_id,
                 phase="derive",
                 status="started",
                 done=0,
@@ -188,7 +187,7 @@ async def compile_task(params: dict, ctx) -> None:
             )
             await derive.run(pipeline_ctx, validated)
             await progress.emit(
-                pipeline_run_id=run_id,
+                pipeline_run_id=pipeline_run_id,
                 phase="derive",
                 status="completed",
                 done=1,
@@ -202,7 +201,7 @@ async def compile_task(params: dict, ctx) -> None:
 
         async def _run_render():
             await progress.emit(
-                pipeline_run_id=run_id,
+                pipeline_run_id=pipeline_run_id,
                 phase="render",
                 status="started",
                 done=0,
@@ -210,7 +209,7 @@ async def compile_task(params: dict, ctx) -> None:
             )
             await render.run(pipeline_ctx, validated)
             await progress.emit(
-                pipeline_run_id=run_id,
+                pipeline_run_id=pipeline_run_id,
                 phase="render",
                 status="completed",
             )
@@ -220,7 +219,7 @@ async def compile_task(params: dict, ctx) -> None:
         # Phase 5 — mechanical: backlinks, citation verification
         async def _run_verify():
             await progress.emit(
-                pipeline_run_id=run_id,
+                pipeline_run_id=pipeline_run_id,
                 phase="verify",
                 status="started",
                 done=0,
@@ -228,7 +227,7 @@ async def compile_task(params: dict, ctx) -> None:
             )
             await verify.run(pipeline_ctx)
             await progress.emit(
-                pipeline_run_id=run_id,
+                pipeline_run_id=pipeline_run_id,
                 phase="verify",
                 status="completed",
                 done=1,
@@ -240,7 +239,7 @@ async def compile_task(params: dict, ctx) -> None:
         # Phase 6 — mechanical: index files + compile log
         async def _run_publish():
             await progress.emit(
-                pipeline_run_id=run_id,
+                pipeline_run_id=pipeline_run_id,
                 phase="publish",
                 status="started",
                 done=0,
@@ -248,7 +247,7 @@ async def compile_task(params: dict, ctx) -> None:
             )
             await publish.run(pipeline_ctx)
             await progress.emit(
-                pipeline_run_id=run_id,
+                pipeline_run_id=pipeline_run_id,
                 phase="publish",
                 status="completed",
                 done=1,
