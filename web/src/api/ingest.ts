@@ -228,6 +228,7 @@ export async function* ingestStagedFiles(
       files: successfullyUploaded.map((m) => ({
         hash: m.hash,
         name: m.name,
+        size: m.size,
         mimetype: m.mimetype,
       })),
       content_type: contentType,
