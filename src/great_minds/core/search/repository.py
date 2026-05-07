@@ -7,6 +7,7 @@ a tsquery or cosine operator.
 """
 
 import re
+from collections import defaultdict
 from uuid import UUID
 
 from sqlalchemy import delete, func, select, tuple_
@@ -56,25 +57,48 @@ class SearchIndexRepository:
         path_prefix: str,
         current_keys: list[tuple[str, int]],
     ) -> int:
-        """Delete rows under ``path_prefix`` whose (path, chunk_index)
-        is NOT in ``current_keys``.
+        """Delete rows under ``path_prefix`` absent from ``current_keys``.
 
-        Returns the number of rows deleted.
+        Avoid a huge composite ``NOT IN ((path, chunk), ...)`` expression:
+        PostgreSQL can hit ``StatementTooComplexError`` for large vaults.
+        Instead, delete missing paths once, then prune stale chunk indexes
+        per remaining path.
         """
-        where_clauses = [
+        scope_filter = (
             SearchIndexEntry.vault_id == vault_id,
             SearchIndexEntry.path.like(f"{path_prefix}%"),
-        ]
-        if current_keys:
-            where_clauses.append(
-                ~tuple_(SearchIndexEntry.path, SearchIndexEntry.chunk_index).in_(
-                    current_keys
+        )
+        if not current_keys:
+            result = await self.session.execute(
+                delete(SearchIndexEntry).where(*scope_filter)
+            )
+            return result.rowcount or 0
+
+        chunks_by_path: dict[str, list[int]] = defaultdict(list)
+        for path, chunk_index in current_keys:
+            chunks_by_path[path].append(chunk_index)
+
+        deleted = 0
+        current_paths = list(chunks_by_path)
+        result = await self.session.execute(
+            delete(SearchIndexEntry).where(
+                *scope_filter,
+                SearchIndexEntry.path.not_in(current_paths),
+            )
+        )
+        deleted += result.rowcount or 0
+
+        for path, chunk_indexes in chunks_by_path.items():
+            result = await self.session.execute(
+                delete(SearchIndexEntry).where(
+                    SearchIndexEntry.vault_id == vault_id,
+                    SearchIndexEntry.path == path,
+                    SearchIndexEntry.chunk_index.not_in(chunk_indexes),
                 )
             )
-        result = await self.session.execute(
-            delete(SearchIndexEntry).where(*where_clauses)
-        )
-        return result.rowcount
+            deleted += result.rowcount or 0
+
+        return deleted
 
     async def upsert_chunk(
         self,
