@@ -155,7 +155,6 @@ async def ingest_url(
 # ---------------------------------------------------------------------------
 
 
-@router.post("/bulk/sign", include_in_schema=False)
 @router.post("/staged-files/sign")
 async def ingest_staged_files_sign(
     req: StagedFileSignRequest,
@@ -169,7 +168,6 @@ async def ingest_staged_files_sign(
     return StagedFileSignResponse(files=signed)
 
 
-@router.post("/bulk/process", include_in_schema=False)
 @router.post("/staged-files/process")
 async def ingest_staged_files_process(
     req: StagedFileProcessRequest,
