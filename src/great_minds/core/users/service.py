@@ -1,5 +1,6 @@
 """User service: provisioning and lifecycle."""
 
+import asyncio
 import logging
 from typing import TYPE_CHECKING
 from uuid import UUID
@@ -63,4 +64,4 @@ class UserService:
                 access_key_id=self.settings.r2_access_key_id,
                 secret_access_key=self.settings.r2_secret_access_key,
             )
-            await admin.delete_bucket(bucket_name)
+            await asyncio.to_thread(admin.delete_bucket, bucket_name)

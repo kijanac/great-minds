@@ -357,7 +357,7 @@ async def _fetch_and_convert(
     t0 = asyncio.get_event_loop().time()
     async with sem:
         staging_key = f"staging/{vault_id}/{entry['hash']}"
-        raw_bytes = await admin.fetch_bytes(bucket, staging_key)
+        raw_bytes = await asyncio.to_thread(admin.fetch_bytes, bucket, staging_key)
         content = await _convert_to_markdown(raw_bytes, name, entry.get("mimetype", ""))
         content_with_fm = build_document(
             config, content, content_type, source_type=source_type
@@ -483,7 +483,7 @@ async def _cleanup_staging(
     if not keys:
         return
     results = await asyncio.gather(
-        *(admin.delete_object(bucket, k) for k in keys),
+        *(asyncio.to_thread(admin.delete_object, bucket, k) for k in keys),
         return_exceptions=True,
     )
     failures = sum(1 for r in results if isinstance(r, Exception))

@@ -9,7 +9,7 @@ per-bucket service tokens by default, and surfacing customer-managed
 creds is a separate (deferred) concern.
 """
 
-import asyncio
+from dataclasses import dataclass
 import logging
 import time
 from uuid import UUID
@@ -27,7 +27,33 @@ log = logging.getLogger(__name__)
 # start and end with a letter or digit. ``{prefix}-{uuid_hex}`` fits
 # comfortably (e.g. ``gm-`` + 32 hex = 35 chars).
 _MAX_BUCKET_NAME_LEN = 63
-_BUCKET_ALREADY_OWNED = ("BucketAlreadyOwnedByYou", "BucketAlreadyExists")
+_BUCKET_MISSING = frozenset({"404", "NoSuchBucket", "NotFound"})
+_OBJECT_MISSING = frozenset({"404", "NoSuchKey", "NotFound"})
+_BUCKET_ALREADY_OWNED = frozenset({"BucketAlreadyOwnedByYou"})
+
+
+@dataclass(frozen=True)
+class _R2ClientError:
+    """Parsed shape of boto3's loose ClientError response."""
+
+    code: str
+    status_code: int | None
+    message: str
+
+    @classmethod
+    def parse(cls, error: ClientError) -> "_R2ClientError":
+        payload = error.response
+        error_info = payload.get("Error", {})
+        metadata = payload.get("ResponseMetadata", {})
+        status = metadata.get("HTTPStatusCode")
+        return cls(
+            code=str(error_info.get("Code", "")),
+            status_code=status if isinstance(status, int) else None,
+            message=str(error_info.get("Message", "")),
+        )
+
+    def has_code(self, codes: frozenset[str]) -> bool:
+        return self.code in codes
 
 
 def derive_user_bucket_name(prefix: str, user_id: UUID) -> str:
@@ -62,25 +88,24 @@ class R2Admin:
             ),
         )
 
-    def _head_sync(self, bucket: str) -> bool:
+    def _bucket_exists(self, bucket: str) -> bool:
         try:
             self._client.head_bucket(Bucket=bucket)
         except ClientError as e:
-            code = e.response["Error"]["Code"]
-            if code in ("404", "NoSuchBucket", "NotFound"):
+            if _R2ClientError.parse(e).has_code(_BUCKET_MISSING):
                 return False
             raise
         return True
 
-    def _create_sync(self, bucket: str) -> None:
+    def _create_bucket(self, bucket: str) -> None:
         try:
             self._client.create_bucket(Bucket=bucket)
         except ClientError as e:
-            if e.response["Error"]["Code"] in _BUCKET_ALREADY_OWNED:
+            if _R2ClientError.parse(e).has_code(_BUCKET_ALREADY_OWNED):
                 return
             raise
 
-    async def ensure_bucket(
+    def ensure_bucket(
         self,
         bucket: str,
         *,
@@ -95,12 +120,11 @@ class R2Admin:
         """
         t0 = time.perf_counter()
         try:
-            exists = await asyncio.to_thread(self._head_sync, bucket)
+            exists = self._bucket_exists(bucket)
             if not exists:
-                await asyncio.to_thread(self._create_sync, bucket)
+                self._create_bucket(bucket)
             if cors_origins:
-                await asyncio.to_thread(
-                    self._client.put_bucket_cors,
+                self._client.put_bucket_cors(
                     Bucket=bucket,
                     CORSConfiguration={
                         "CORSRules": [
@@ -117,8 +141,7 @@ class R2Admin:
                         ]
                     },
                 )
-            await asyncio.to_thread(
-                self._client.put_bucket_lifecycle_configuration,
+            self._client.put_bucket_lifecycle_configuration(
                 Bucket=bucket,
                 LifecycleConfiguration={
                     "Rules": [
@@ -172,42 +195,39 @@ class R2Admin:
             ExpiresIn=expires_in,
         )
 
-    def _fetch_bytes_sync(self, bucket: str, key: str) -> bytes:
+    def fetch_bytes(self, bucket: str, key: str) -> bytes:
         resp = self._client.get_object(Bucket=bucket, Key=key)
-        return resp["Body"].read()
+        body = resp["Body"]
+        try:
+            return body.read()
+        finally:
+            body.close()
 
-    async def fetch_bytes(self, bucket: str, key: str) -> bytes:
-        return await asyncio.to_thread(self._fetch_bytes_sync, bucket, key)
-
-    def _delete_object_sync(self, bucket: str, key: str) -> None:
+    def delete_object(self, bucket: str, key: str) -> None:
         try:
             self._client.delete_object(Bucket=bucket, Key=key)
         except ClientError as e:
-            if e.response["Error"]["Code"] in ("NoSuchKey", "404"):
+            if _R2ClientError.parse(e).has_code(_OBJECT_MISSING):
                 return
             raise
 
-    async def delete_object(self, bucket: str, key: str) -> None:
-        await asyncio.to_thread(self._delete_object_sync, bucket, key)
-
-    def _delete_sync(self, bucket: str) -> bool:
+    def _delete_bucket(self, bucket: str) -> bool:
         try:
             self._client.delete_bucket(Bucket=bucket)
         except ClientError as e:
-            code = e.response["Error"]["Code"]
-            if code in ("404", "NoSuchBucket", "NotFound"):
+            if _R2ClientError.parse(e).has_code(_BUCKET_MISSING):
                 return False
             raise
         return True
 
-    async def delete_bucket(self, bucket: str) -> None:
+    def delete_bucket(self, bucket: str) -> None:
         """Delete ``bucket``. Caller must empty it first (R2/S3 requirement).
 
         Idempotent on absence — missing-bucket is treated as success.
         """
         t0 = time.perf_counter()
         try:
-            existed = await asyncio.to_thread(self._delete_sync, bucket)
+            existed = self._delete_bucket(bucket)
             log_event(
                 "r2_admin.delete_bucket",
                 bucket=bucket,

@@ -1,5 +1,6 @@
 """Vault service: access control, vault lifecycle, and membership operations."""
 
+import asyncio
 import logging
 from uuid import UUID
 
@@ -172,7 +173,11 @@ class VaultService:
             access_key_id=self.settings.r2_access_key_id,
             secret_access_key=self.settings.r2_secret_access_key,
         )
-        await admin.ensure_bucket(bucket_name, cors_origins=self.settings.cors_origins)
+        await asyncio.to_thread(
+            admin.ensure_bucket,
+            bucket_name,
+            cors_origins=self.settings.cors_origins,
+        )
         await self.user_repo.set_r2_bucket_name(owner_id, bucket_name)
         return bucket_name
 

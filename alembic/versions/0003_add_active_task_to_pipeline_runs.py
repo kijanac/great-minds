@@ -4,7 +4,7 @@ from alembic import op
 import sqlalchemy as sa
 
 revision = "0003_add_active_task_to_pipeline_runs"
-down_revision = "0002_drop_task_progress_columns"
+down_revision = "0002"
 branch_labels = None
 depends_on = None
 
