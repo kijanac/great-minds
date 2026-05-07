@@ -25,16 +25,30 @@ projects:
                 value: /data
               - key: CORS_ORIGINS
                 value: '["https://great-minds-web.onrender.com","https://greatmind.dev","https://www.greatmind.dev"]'
-              - key: MAILERSEND_API_KEY
+              - key: OPENROUTER_API_KEY
                 sync: false
-              - key: MAILERSEND_FROM_EMAIL
+              - key: STORAGE_BACKEND
+                value: r2
+              - key: R2_ACCOUNT_ID
                 sync: false
+              - key: R2_ACCESS_KEY_ID
+                sync: false
+              - key: R2_SECRET_ACCESS_KEY
+                sync: false
+              - key: R2_BUCKET_PREFIX
+                value: gm-prod
+              - key: RESEND_API_KEY
+                sync: false
+              - key: RESEND_FROM_EMAIL
+                sync: false
+              - key: LOG_JSON
+                value: "true"
 
           # ── Frontend (Static) ─────────────────────────────────────
           - name: great-minds-web
             type: web
             runtime: static
-            buildCommand: cd web && pnpm install && pnpm run build
+            buildCommand: cd web && pnpm install --frozen-lockfile && pnpm run build
             staticPublishPath: web/dist
             headers:
               - path: /*
@@ -52,5 +66,5 @@ projects:
           - name: great-minds-db
             plan: basic-256mb
             region: virginia
-            postgresMajorVersion: 16
+            postgresMajorVersion: 18
             ipAllowList: []
