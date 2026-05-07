@@ -48,14 +48,8 @@ class PipelineProgressService:
         self.repo = repo
 
     async def fail(self, pipeline_run_id: UUID, error: str) -> UUID | None:
-        vault_id = await self.repo.fail(pipeline_run_id, error)
-        if vault_id is None:
-            return None
-        await self.repo.notify_changed(
-            pipeline_run_id=pipeline_run_id,
-            vault_id=vault_id,
-        )
-        return vault_id
+        # The pipeline_runs trigger emits the LISTEN/NOTIFY wakeup on commit.
+        return await self.repo.fail(pipeline_run_id, error)
 
     async def emit(
         self,
@@ -69,7 +63,7 @@ class PipelineProgressService:
         message: str = "",
         error: str | None = None,
     ) -> UUID | None:
-        vault_id = await self.repo.update_progress(
+        return await self.repo.update_progress(
             pipeline_run_id,
             phase=phase,
             status=status,
@@ -79,13 +73,6 @@ class PipelineProgressService:
             message=message,
             error=error,
         )
-        if vault_id is None:
-            return None
-        await self.repo.notify_changed(
-            pipeline_run_id=pipeline_run_id,
-            vault_id=vault_id,
-        )
-        return vault_id
 
 
 class PipelineProgressRunner:

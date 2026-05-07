@@ -234,6 +234,54 @@ def upgrade() -> None:
         unique=False,
     )
 
+    # Pipeline progress notifications. The DB row is the durable source of
+    # truth; LISTEN/NOTIFY is only a small "go re-read this run" wakeup for
+    # SSE handlers. Keep payloads tiny and let listeners fetch current state.
+    op.execute(
+        """
+        CREATE OR REPLACE FUNCTION notify_pipeline_run_changed()
+        RETURNS trigger AS $$
+        BEGIN
+            PERFORM pg_notify(
+                'pipeline_progress',
+                json_build_object(
+                    'pipeline_run_id', NEW.id,
+                    'vault_id', NEW.vault_id
+                )::text
+            );
+            RETURN NEW;
+        END;
+        $$ LANGUAGE plpgsql;
+        """
+    )
+    op.execute(
+        """
+        CREATE TRIGGER pipeline_runs_notify_insert
+        AFTER INSERT ON pipeline_runs
+        FOR EACH ROW
+        EXECUTE FUNCTION notify_pipeline_run_changed();
+        """
+    )
+    op.execute(
+        """
+        CREATE TRIGGER pipeline_runs_notify_update
+        AFTER UPDATE ON pipeline_runs
+        FOR EACH ROW
+        WHEN (
+            OLD.status IS DISTINCT FROM NEW.status
+            OR OLD.current_phase IS DISTINCT FROM NEW.current_phase
+            OR OLD.phase_status IS DISTINCT FROM NEW.phase_status
+            OR OLD.progress_done IS DISTINCT FROM NEW.progress_done
+            OR OLD.progress_total IS DISTINCT FROM NEW.progress_total
+            OR OLD.progress_failed IS DISTINCT FROM NEW.progress_failed
+            OR OLD.progress_message IS DISTINCT FROM NEW.progress_message
+            OR OLD.error IS DISTINCT FROM NEW.error
+            OR OLD.completed_at IS DISTINCT FROM NEW.completed_at
+        )
+        EXECUTE FUNCTION notify_pipeline_run_changed();
+        """
+    )
+
     # -- Tasks -------------------------------------------------------------
     op.create_table(
         "tasks",

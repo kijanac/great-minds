@@ -65,10 +65,6 @@ async def start_url_pipeline(
             status="failed",
             error=message,
         )
-        await pipeline_service.repo.notify_changed(
-            pipeline_run_id=run.id,
-            vault_id=vault_id,
-        )
         await pipeline_service.repo.session.commit()
         if isinstance(exc, httpx.HTTPError):
             raise HTTPException(status_code=400, detail=message) from exc
@@ -80,10 +76,6 @@ async def start_url_pipeline(
         done=1,
         total=1,
         message="source prepared for compile",
-    )
-    await pipeline_service.repo.notify_changed(
-        pipeline_run_id=run.id,
-        vault_id=vault_id,
     )
     await pipeline_service.repo.session.commit()
     refreshed = await pipeline_service.get(run.id, vault_id)

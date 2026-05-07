@@ -1,6 +1,5 @@
 """PipelineRun repository."""
 
-import json
 from datetime import datetime
 from uuid import UUID
 
@@ -172,10 +171,3 @@ class PipelineRunRepository:
             .returning(PipelineRunRecord.vault_id)
         )
         return row.scalar_one_or_none()
-
-    async def notify_changed(self, *, pipeline_run_id: UUID, vault_id: UUID) -> None:
-        payload = {
-            "pipeline_run_id": str(pipeline_run_id),
-            "vault_id": str(vault_id),
-        }
-        await self.session.execute(select(func.pg_notify(CHANNEL, json.dumps(payload))))
