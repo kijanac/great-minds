@@ -15,7 +15,17 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from great_minds.core.hashing import file_hash
 
-from great_minds.core import pipeline
+from great_minds.core import pipeline as _pipeline
+from great_minds.core.pipeline import (
+    abstract,
+    derive,
+    extract,
+    ingest,
+    publish,
+    render,
+    verify,
+)
+from great_minds.core.pipeline.abstract.schemas import ValidatedCanonicalTopic
 from great_minds.core.vaults.config import load_config
 from great_minds.core.vaults.repository import VaultRepository
 from great_minds.core.documents.builder import build_document, write_document
@@ -53,7 +63,11 @@ log = logging.getLogger(__name__)
 
 
 async def compile_task(params: dict, ctx) -> None:
-    """Run the seven-phase compile pipeline with heartbeat for long runs.
+    """Run the seven-phase compile pipeline as durable Absurd steps.
+
+    Each phase is a `ctx.step()` — on worker crash, Absurd replays from
+    the last completed checkpoint. Side effects (storage writes, DB
+    upserts) are idempotent via content-addressing and ON CONFLICT.
 
     Telemetry (per-phase counters, cost, duration) is emitted via
     `emit_wide_event` for the structured-log pipeline; nothing is
@@ -62,6 +76,7 @@ async def compile_task(params: dict, ctx) -> None:
     correlation_id.set(f"task-{ctx.task_id}")
     vault_id = UUID(params["vault_id"])
     pipeline_run_id = UUID(params["pipeline_run_id"])
+    run_id = pipeline_run_id  # alias for progress emit calls
     session = _task_session.get()
     progress = PipelineProgressRunner(_task_session_maker.get())
     vault = await VaultRepository(session).get_by_id(vault_id)
@@ -74,7 +89,7 @@ async def compile_task(params: dict, ctx) -> None:
     await ctx.heartbeat(600)
 
     try:
-        pipeline_ctx = await pipeline.build_context(
+        pipeline_ctx = await _pipeline.build_context(
             vault_id=vault_id,
             pipeline_run_id=pipeline_run_id,
             progress=progress,
@@ -82,8 +97,167 @@ async def compile_task(params: dict, ctx) -> None:
             session=session,
             client=client,
         )
-        await pipeline.run(pipeline_ctx)
 
+        # Phase 0 — mechanical chunking + embedding of raw docs
+        async def _run_ingest():
+            await progress.emit(
+                pipeline_run_id=run_id,
+                phase="ingest",
+                status="started",
+                done=0,
+                total=1,
+            )
+            await ingest.run(pipeline_ctx)
+            await progress.emit(
+                pipeline_run_id=run_id,
+                phase="ingest",
+                status="completed",
+                done=1,
+                total=1,
+            )
+
+        await ctx.step("phase-ingest", _run_ingest)
+
+        # Phase 1 — per-doc LLM extraction (ideas, anchors, metadata)
+        await ctx.heartbeat(600)
+
+        async def _run_extract():
+            await progress.emit(
+                pipeline_run_id=run_id,
+                phase="extract",
+                status="started",
+                done=0,
+                total=0,
+            )
+            await extract.run(pipeline_ctx)
+            await progress.emit(
+                pipeline_run_id=run_id,
+                phase="extract",
+                status="completed",
+            )
+
+        await ctx.step("phase-extract", _run_extract)
+
+        # Phase 2 — topic clustering, synthesis, canonicalization
+        await ctx.heartbeat(600)
+
+        async def _run_abstract():
+            await progress.emit(
+                pipeline_run_id=run_id,
+                phase="abstract",
+                status="started",
+                done=0,
+                total=1,
+            )
+            result = await abstract.run(pipeline_ctx)
+            if not result:
+                await progress.emit(
+                    pipeline_run_id=run_id,
+                    phase="abstract",
+                    status="completed",
+                    done=1,
+                    total=1,
+                    message="no validated topics",
+                )
+            else:
+                await progress.emit(
+                    pipeline_run_id=run_id,
+                    phase="abstract",
+                    status="completed",
+                    done=1,
+                    total=1,
+                )
+            return [v.model_dump(mode="json") for v in result]
+
+        validated_raw = await ctx.step("phase-abstract", _run_abstract)
+        if not validated_raw:
+            # No topics — pipeline completed early
+            await record_wide_event_cost(session, user_id=None, vault_id=vault_id)
+            await session.commit()
+            return
+        validated = [ValidatedCanonicalTopic.model_validate(v) for v in validated_raw]
+
+        # Phase 3 — mechanical: topic_membership, topic_links, topic_related
+        async def _run_derive():
+            await progress.emit(
+                pipeline_run_id=run_id,
+                phase="derive",
+                status="started",
+                done=0,
+                total=1,
+            )
+            await derive.run(pipeline_ctx, validated)
+            await progress.emit(
+                pipeline_run_id=run_id,
+                phase="derive",
+                status="completed",
+                done=1,
+                total=1,
+            )
+
+        await ctx.step("phase-derive", _run_derive)
+
+        # Phase 4 — per-topic LLM article generation
+        await ctx.heartbeat(600)
+
+        async def _run_render():
+            await progress.emit(
+                pipeline_run_id=run_id,
+                phase="render",
+                status="started",
+                done=0,
+                total=0,
+            )
+            await render.run(pipeline_ctx, validated)
+            await progress.emit(
+                pipeline_run_id=run_id,
+                phase="render",
+                status="completed",
+            )
+
+        await ctx.step("phase-render", _run_render)
+
+        # Phase 5 — mechanical: backlinks, citation verification
+        async def _run_verify():
+            await progress.emit(
+                pipeline_run_id=run_id,
+                phase="verify",
+                status="started",
+                done=0,
+                total=1,
+            )
+            await verify.run(pipeline_ctx)
+            await progress.emit(
+                pipeline_run_id=run_id,
+                phase="verify",
+                status="completed",
+                done=1,
+                total=1,
+            )
+
+        await ctx.step("phase-verify", _run_verify)
+
+        # Phase 6 — mechanical: index files + compile log
+        async def _run_publish():
+            await progress.emit(
+                pipeline_run_id=run_id,
+                phase="publish",
+                status="started",
+                done=0,
+                total=1,
+            )
+            await publish.run(pipeline_ctx)
+            await progress.emit(
+                pipeline_run_id=run_id,
+                phase="publish",
+                status="completed",
+                done=1,
+                total=1,
+            )
+
+        await ctx.step("phase-publish", _run_publish)
+
+        log_event("pipeline.compile_completed", vault_id=str(pipeline_ctx.vault_id))
         await record_wide_event_cost(session, user_id=None, vault_id=vault_id)
         await session.commit()
     except Exception as exc:
