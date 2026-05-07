@@ -6,6 +6,8 @@ Storage/session from serialized params — they don't use the DI chain.
 
 import asyncio
 import logging
+
+import asyncpg
 from contextvars import ContextVar
 from uuid import UUID
 
@@ -53,6 +55,43 @@ _task_session_maker: ContextVar[async_sessionmaker] = ContextVar("task_session_m
 log = logging.getLogger(__name__)
 
 
+async def _acquire_vault_compile_lock(
+    *, vault_id: UUID, database_url: str
+) -> asyncpg.Connection:
+    """Hold a PostgreSQL session advisory lock for one vault compile.
+
+    This is a hard correctness guard around vault-level compile outputs.
+    The compile task may commit its normal SQLAlchemy session between
+    phases, so the lock lives on a separate asyncpg connection for the
+    duration of the task.
+    """
+    dsn = database_url.replace("+asyncpg", "")
+    conn = await asyncpg.connect(dsn)
+    try:
+        await conn.execute(
+            "SELECT pg_advisory_lock(hashtextextended($1, 0))",
+            str(vault_id),
+        )
+    except Exception:
+        await conn.close()
+        raise
+    return conn
+
+
+async def _release_vault_compile_lock(
+    conn: asyncpg.Connection | None, *, vault_id: UUID
+) -> None:
+    if conn is None:
+        return
+    try:
+        await conn.execute(
+            "SELECT pg_advisory_unlock(hashtextextended($1, 0))",
+            str(vault_id),
+        )
+    finally:
+        await conn.close()
+
+
 # ---------------------------------------------------------------------------
 # Task functions
 # ---------------------------------------------------------------------------
@@ -74,6 +113,8 @@ async def compile_task(params: dict, ctx) -> None:
     pipeline_run_id = UUID(params["pipeline_run_id"])
     session = _task_session.get()
     progress = PipelineProgressRunner(_task_session_maker.get())
+    settings = get_settings()
+    compile_lock_conn: asyncpg.Connection | None = None
     vault = await VaultRepository(session).get_by_id(vault_id)
     if vault is None:
         raise ValueError(f"Vault {vault_id} not found")
@@ -93,6 +134,21 @@ async def compile_task(params: dict, ctx) -> None:
     hb_task = asyncio.create_task(_heartbeat_loop())
 
     try:
+        log_event(
+            "compile_lock_waiting",
+            vault_id=str(vault_id),
+            pipeline_run_id=str(pipeline_run_id),
+        )
+        compile_lock_conn = await _acquire_vault_compile_lock(
+            vault_id=vault_id,
+            database_url=settings.database_url,
+        )
+        log_event(
+            "compile_lock_acquired",
+            vault_id=str(vault_id),
+            pipeline_run_id=str(pipeline_run_id),
+        )
+
         pipeline_ctx = await build_context(
             vault_id=vault_id,
             pipeline_run_id=pipeline_run_id,
@@ -262,6 +318,7 @@ async def compile_task(params: dict, ctx) -> None:
         await progress.fail(pipeline_run_id, str(exc))
         raise
     finally:
+        await _release_vault_compile_lock(compile_lock_conn, vault_id=vault_id)
         hb_task.cancel()
         try:
             await hb_task
@@ -325,8 +382,9 @@ async def _index_fetched_results(
     """Drain fetches as they complete, write+upsert in batches.
 
     Returns (ingested, skipped, failed, keys_to_clean). Each batch flush
-    goes through ``DocumentService.batch_index_raw_docs``, which upserts,
-    emits a compile intent, and commits in one transaction.
+    goes through ``DocumentService.batch_index_raw_docs``, which upserts
+    and commits without emitting compile intents; the caller emits one
+    intent after the full staged upload is indexed.
     """
     ingested = 0
     skipped = 0
@@ -555,6 +613,10 @@ async def staged_file_ingest_task(params: dict, ctx) -> None:
                 pass
 
         await _cleanup_staging(admin, bucket, keys_to_clean, vault_id=vault_id)
+
+        if ingested > 0:
+            await doc_service.emit_compile_intent(vault_id)
+            await session.commit()
 
         await progress.emit(
             pipeline_run_id=pipeline_run_id,

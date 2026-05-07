@@ -32,7 +32,7 @@ class DocumentService:
     async def _commit(self) -> None:
         await self.repo.session.commit()
 
-    async def _emit_compile_intent(self, vault_id: UUID) -> None:
+    async def emit_compile_intent(self, vault_id: UUID) -> None:
         """Mark the vault as having pending changes for the reconciler.
 
         ``upsert_pending`` is idempotent — the partial unique index on
@@ -76,7 +76,7 @@ class DocumentService:
         fm, _ = parse_frontmatter(content)
         doc = DocumentCreate.from_frontmatter(fm, file_path, content, DocKind.RAW)
         result = await self.repo.upsert(vault_id, doc)
-        await self._emit_compile_intent(vault_id)
+        await self.emit_compile_intent(vault_id)
         await self._commit()
         return result
 
@@ -92,15 +92,15 @@ class DocumentService:
     async def batch_index_raw_docs(
         self, vault_id: UUID, docs: list[DocumentCreate]
     ) -> list[UUID]:
-        """Upsert raw docs in one batch and emit a compile intent.
+        """Upsert raw docs in one batch without requesting a compile.
 
-        Empty input is a no-op — no DB write, no intent. Lets callers
-        flush conditionally without an empty-batch guard.
+        Empty input is a no-op. Bulk source-ingest callers should emit one
+        compile intent after the full ingest unit is durably indexed, not
+        once per persistence batch.
         """
         if not docs:
             return []
         ids = await self.repo.batch_upsert(vault_id, docs)
-        await self._emit_compile_intent(vault_id)
         await self._commit()
         return ids
 
