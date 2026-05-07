@@ -4,14 +4,22 @@ from uuid import UUID
 
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
+from great_minds.core.ingest_schemas import StagedFileInput
 from great_minds.core.pagination import Page, PageInfo, PageParams
 from great_minds.core.pipeline_runs.repository import PipelineRunRepository
-from great_minds.core.pipeline_runs.schemas import PipelineRun, PipelineRunCreate
+from great_minds.core.pipeline_runs.schemas import (
+    PipelineRun,
+    PipelineRunCreate,
+    PipelineRunUpdate,
+    PipelineTrigger,
+)
+from great_minds.core.tasks import TaskService
 
 
 class PipelineRunService:
-    def __init__(self, repo: PipelineRunRepository) -> None:
+    def __init__(self, repo: PipelineRunRepository, task_service: TaskService) -> None:
         self.repo = repo
+        self.task_service = task_service
 
     async def create(self, data: PipelineRunCreate) -> PipelineRun:
         return await self.repo.create(data)
@@ -42,6 +50,56 @@ class PipelineRunService:
             ),
         )
 
+    async def attach_ingest_task(self, pipeline_run_id: UUID, task_id: UUID) -> None:
+        await self.repo.attach_ingest_task(pipeline_run_id, task_id)
+
+    async def attach_compile_intent(
+        self, pipeline_run_id: UUID, intent_id: UUID
+    ) -> None:
+        await self.repo.attach_compile_intent(pipeline_run_id, intent_id)
+
+    async def update_progress(
+        self,
+        pipeline_run_id: UUID,
+        data: PipelineRunUpdate,
+    ) -> UUID | None:
+        return await self.repo.update_progress(pipeline_run_id, data)
+
+    async def start_staged_file_ingest(
+        self,
+        *,
+        vault_id: UUID,
+        job_id: UUID,
+        files: list[StagedFileInput],
+        content_type: str,
+        source_type: str,
+    ) -> PipelineRun:
+        if not files:
+            raise ValueError("no files provided")
+        run = await self.create(
+            PipelineRunCreate(
+                id=job_id,
+                vault_id=vault_id,
+                trigger=PipelineTrigger.STAGED_FILES,
+            )
+        )
+        detail = await self.task_service.spawn_staged_file_ingest(
+            vault_id=vault_id,
+            files=[f.model_dump() for f in files],
+            content_type=content_type,
+            source_type=source_type,
+            pipeline_run_id=run.id,
+        )
+        await self.attach_ingest_task(run.id, detail.id)
+        await self.commit()
+        refreshed = await self.get(run.id, vault_id)
+        if refreshed is None:
+            raise RuntimeError(f"Pipeline run not found after creation: {run.id}")
+        return refreshed
+
+    async def commit(self) -> None:
+        await self.repo.session.commit()
+
 
 class PipelineProgressService:
     def __init__(self, repo: PipelineRunRepository) -> None:
@@ -65,13 +123,15 @@ class PipelineProgressService:
     ) -> UUID | None:
         return await self.repo.update_progress(
             pipeline_run_id,
-            phase=phase,
-            status=status,
-            done=done,
-            total=total,
-            failed=failed,
-            message=message,
-            error=error,
+            PipelineRunUpdate(
+                phase=phase,
+                status=status,
+                done=done,
+                total=total,
+                failed=failed,
+                message=message,
+                error=error,
+            ),
         )
 
 

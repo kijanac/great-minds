@@ -11,7 +11,7 @@ from great_minds.app.api.dependencies import (
     VaultOwnerGuard,
     VaultServiceDep,
     CurrentUser,
-    DocumentRepositoryDep,
+    DocumentServiceDep,
     MailerDep,
     PageParamsQuery,
     UserServiceDep,
@@ -86,7 +86,7 @@ async def get_vault(
     user: CurrentUser,
     vault_service: VaultServiceDep,
     vault_access: VaultAccessDep,
-    doc_repo: DocumentRepositoryDep,
+    doc_service: DocumentServiceDep,
 ) -> VaultDetail:
     try:
         vault = await vault_service.get_vault(vault_id)
@@ -98,7 +98,7 @@ async def get_vault(
         raise HTTPException(status_code=403, detail="Not a member of this vault")
 
     member_count = await vault_service.get_member_count(vault.id)
-    article_count = await doc_repo.count_by_kind(vault.id, DocKind.WIKI)
+    article_count = await doc_service.count_by_kind(vault.id, DocKind.WIKI)
 
     return VaultDetail(
         **vault.model_dump(),

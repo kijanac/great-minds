@@ -119,6 +119,9 @@ class DocumentService:
             vault_id, slug=slug, query=query, limit=limit
         )
 
+    async def get_by_path(self, vault_id: UUID, file_path: str) -> Document | None:
+        return await self.repo.get_by_path(vault_id, file_path)
+
     async def get_title_by_path(self, vault_id: UUID, file_path: str) -> str | None:
         return await self.repo.get_title_by_path(vault_id, file_path)
 

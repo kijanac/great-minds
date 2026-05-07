@@ -8,7 +8,7 @@ from great_minds.app.api.dependencies import (
     VaultAccessDep,
     VaultStorageDep,
     CurrentUser,
-    DocumentRepositoryDep,
+    DocumentServiceDep,
     IngestServiceDep,
     LlmGuard,
     PageParamsQuery,
@@ -126,7 +126,7 @@ async def promote_exchange(
     access: VaultAccessDep,
     ingest_service: IngestServiceDep,
     proposal_service: ProposalServiceDep,
-    doc_repo: DocumentRepositoryDep,
+    doc_service: DocumentServiceDep,
     _llm: LlmGuard,
     vault_id: UUID,
 ) -> schemas.PromoteExchangeResponse:
@@ -142,7 +142,7 @@ async def promote_exchange(
     is_owner = role == MemberRole.OWNER
 
     if is_owner:
-        existing_doc = await doc_repo.get_by_path(vault_id, dest)
+        existing_doc = await doc_service.get_by_path(vault_id, dest)
         if existing_doc is not None:
             return schemas.PromoteExchangeResponse(
                 mode="ingested",

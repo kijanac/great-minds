@@ -8,6 +8,7 @@ from great_minds.core.pipeline_runs.schemas import (
     PipelineRun,
     PipelineRunCreate,
     PipelineRunStatus,
+    PipelineRunUpdate,
     PipelineTrigger,
 )
 from great_minds.core.pipeline_runs.service import (
@@ -27,5 +28,6 @@ __all__ = [
     "PipelineRunRepository",
     "PipelineRunService",
     "PipelineRunStatus",
+    "PipelineRunUpdate",
     "PipelineTrigger",
 ]

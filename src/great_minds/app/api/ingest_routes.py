@@ -4,19 +4,15 @@ import logging
 from uuid import UUID
 
 import httpx
-from fastapi import APIRouter, HTTPException, UploadFile
+from fastapi import APIRouter, HTTPException, UploadFile, status
 
 from great_minds.app.api.dependencies import (
-    VaultServiceDep,
     VaultStorageDep,
     IngestServiceDep,
-    SettingsDep,
-    TaskServiceDep,
     PipelineRunServiceDep,
 )
 from great_minds.app.api.schemas.ingest import (
     StagedFileProcessRequest,
-    StagedFileSignedUrl,
     StagedFileSignRequest,
     StagedFileSignResponse,
     IngestResult,
@@ -26,8 +22,6 @@ from great_minds.app.api.schemas.ingest import (
 )
 from great_minds.app.api.schemas.jobs import JobResponse
 from great_minds.core.documents.schemas import SourceMetadata
-from great_minds.core.pipeline_runs import PipelineRunCreate, PipelineTrigger
-from great_minds.core.r2_admin import R2Admin
 
 log = logging.getLogger(__name__)
 
@@ -165,38 +159,12 @@ async def ingest_url(
 async def ingest_staged_files_sign(
     req: StagedFileSignRequest,
     vault_id: UUID,
-    vault_service: VaultServiceDep,
-    settings: SettingsDep,
+    ingest_service: IngestServiceDep,
 ) -> StagedFileSignResponse:
-    if settings.storage_backend != "r2":
-        raise HTTPException(
-            status_code=400,
-            detail="staged file upload requires r2 storage backend",
-        )
-    vault = await vault_service.get_vault(vault_id)
-    if not vault.r2_bucket_name:
-        raise HTTPException(
-            status_code=400,
-            detail="vault has no r2 bucket; cannot sign uploads",
-        )
-    if not req.files:
-        raise HTTPException(status_code=400, detail="manifest is empty")
-
-    admin = R2Admin(
-        account_id=settings.r2_account_id,
-        access_key_id=settings.r2_access_key_id,
-        secret_access_key=settings.r2_secret_access_key,
-    )
-    signed: list[StagedFileSignedUrl] = []
-    for f in req.files:
-        key = f"staging/{vault_id}/{f.hash}"
-        url = admin.presign_put(
-            vault.r2_bucket_name,
-            key,
-            content_type=f.mimetype or "application/octet-stream",
-            content_length=f.size,
-        )
-        signed.append(StagedFileSignedUrl(hash=f.hash, url=url))
+    try:
+        signed = await ingest_service.sign_staged_files(vault_id, req.files)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     return StagedFileSignResponse(files=signed)
 
 
@@ -204,28 +172,21 @@ async def ingest_staged_files_sign(
 async def ingest_staged_files_process(
     req: StagedFileProcessRequest,
     vault_id: UUID,
-    task_service: TaskServiceDep,
     pipeline_service: PipelineRunServiceDep,
 ) -> JobResponse:
-    if not req.files:
-        raise HTTPException(status_code=400, detail="no files provided")
-    run = await pipeline_service.create(
-        PipelineRunCreate(
-            id=req.job_id,
+    try:
+        run = await pipeline_service.start_staged_file_ingest(
             vault_id=vault_id,
-            trigger=PipelineTrigger.STAGED_FILES,
+            job_id=req.job_id,
+            files=req.files,
+            content_type=req.content_type,
+            source_type=req.source_type,
         )
-    )
-    detail = await task_service.spawn_staged_file_ingest(
-        vault_id=vault_id,
-        files=[f.model_dump() for f in req.files],
-        content_type=req.content_type,
-        source_type=req.source_type,
-        pipeline_run_id=run.id,
-    )
-    await pipeline_service.repo.attach_ingest_task(run.id, detail.id)
-    await pipeline_service.repo.session.commit()
-    refreshed = await pipeline_service.get(run.id, vault_id)
-    if refreshed is None:
-        raise HTTPException(status_code=404, detail="Job not found")
-    return JobResponse.model_validate(refreshed)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Pipeline run could not be reloaded after creation",
+        ) from exc
+    return JobResponse.model_validate(run)

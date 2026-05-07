@@ -5,12 +5,11 @@ import json
 from uuid import UUID
 
 import asyncpg
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, status
 from fastapi.responses import StreamingResponse
-import httpx
 
 from great_minds.app.api.dependencies import (
-    DocumentRepositoryDep,
+    JobServiceDep,
     PageParamsQuery,
     PipelineRunServiceDep,
     SettingsDep,
@@ -18,10 +17,8 @@ from great_minds.app.api.dependencies import (
 )
 from great_minds.app.api.schemas.ingest import URLSource
 from great_minds.app.api.schemas.jobs import JobResponse
-from great_minds.core.documents.service import DocumentService
-from great_minds.core.ingest_service import IngestService
+from great_minds.core.jobs import JobNotFoundError, UrlJobSourceError
 from great_minds.core.pagination import Page
-from great_minds.core.pipeline_runs import PipelineRunCreate, PipelineTrigger
 from great_minds.core.pipeline_runs.repository import CHANNEL
 
 router = APIRouter(prefix="/jobs", tags=["jobs"])
@@ -32,56 +29,24 @@ async def start_url_pipeline(
     source: URLSource,
     vault_id: UUID,
     storage: VaultStorageDep,
-    doc_repo: DocumentRepositoryDep,
-    pipeline_service: PipelineRunServiceDep,
+    job_service: JobServiceDep,
 ) -> JobResponse:
-    run = await pipeline_service.create(
-        PipelineRunCreate(
-            id=source.job_id,
-            vault_id=vault_id,
-            trigger=PipelineTrigger.URL,
-        )
-    )
-    await pipeline_service.repo.update_progress(
-        run.id,
-        phase="source_ingest",
-        status="started",
-        done=0,
-        total=1,
-        message="fetching source URL",
-    )
-    ingest_service = IngestService(DocumentService(doc_repo, pipeline_run_id=run.id))
     try:
-        await ingest_service.ingest_url(vault_id, storage, source.url, source.metadata)
-    except Exception as exc:
-        message = (
-            f"Failed to fetch URL: {exc}"
-            if isinstance(exc, httpx.HTTPError)
-            else str(exc)
+        run = await job_service.start_url_job(
+            vault_id=vault_id,
+            storage=storage,
+            job_id=source.job_id,
+            url=source.url,
+            metadata=source.metadata,
         )
-        await pipeline_service.repo.update_progress(
-            run.id,
-            phase="source_ingest",
-            status="failed",
-            error=message,
-        )
-        await pipeline_service.repo.session.commit()
-        if isinstance(exc, httpx.HTTPError):
-            raise HTTPException(status_code=400, detail=message) from exc
-        raise
-    await pipeline_service.repo.update_progress(
-        run.id,
-        phase="source_ingest",
-        status="completed",
-        done=1,
-        total=1,
-        message="source prepared for compile",
-    )
-    await pipeline_service.repo.session.commit()
-    refreshed = await pipeline_service.get(run.id, vault_id)
-    if refreshed is None:
-        raise HTTPException(status_code=404, detail="Job not found")
-    return JobResponse.model_validate(refreshed)
+    except UrlJobSourceError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except JobNotFoundError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Job could not be reloaded after creation",
+        ) from exc
+    return JobResponse.model_validate(run)
 
 
 @router.get("")

@@ -12,7 +12,6 @@ from fastapi import APIRouter, HTTPException
 
 from great_minds.app.api.dependencies import (
     VaultStorageDep,
-    DocumentRepositoryDep,
     DocumentServiceDep,
     PageParamsQuery,
 )
@@ -93,7 +92,7 @@ async def read_document(
     vault_id: UUID,
     path: str,
     storage: VaultStorageDep,
-    doc_repo: DocumentRepositoryDep,
+    doc_service: DocumentServiceDep,
 ) -> schemas.DocResponse:
     try:
         path = _safe_document_read_path(path)
@@ -105,7 +104,7 @@ async def read_document(
         raise HTTPException(status_code=404, detail=f"Document not found: {path}")
     _, body = parse_frontmatter(content)
 
-    document = await doc_repo.get_by_path(vault_id, path)
+    document = await doc_service.get_by_path(vault_id, path)
     if document is None:
         # File exists on disk without a DB row — an ingest invariant
         # violation. Surface loudly; a reconciliation pass would repair.

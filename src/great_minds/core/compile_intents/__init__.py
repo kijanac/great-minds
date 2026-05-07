@@ -21,10 +21,12 @@ Invariants (enforced by schema + reconciler):
 from great_minds.core.compile_intents.models import CompileIntentRecord
 from great_minds.core.compile_intents.repository import CompileIntentRepository
 from great_minds.core.compile_intents.schemas import CompileIntent, IntentStatus
+from great_minds.core.compile_intents.service import CompileIntentService
 
 __all__ = [
     "CompileIntent",
     "CompileIntentRecord",
     "CompileIntentRepository",
+    "CompileIntentService",
     "IntentStatus",
 ]

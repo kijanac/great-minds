@@ -70,3 +70,13 @@ class PipelineRunCreate(BaseModel):
     vault_id: UUID
     trigger: PipelineTrigger
     status: PipelineRunStatus = PipelineRunStatus.PENDING
+
+
+class PipelineRunUpdate(BaseModel):
+    phase: str
+    status: str
+    done: int | None = None
+    total: int | None = None
+    failed: int | None = None
+    message: str = ""
+    error: str | None = None

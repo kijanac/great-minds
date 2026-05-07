@@ -12,6 +12,7 @@ from great_minds.core.pipeline_runs.schemas import (
     PipelineRun,
     PipelineRunCreate,
     PipelineRunStatus,
+    PipelineRunUpdate,
 )
 
 CHANNEL = "pipeline_progress"
@@ -134,33 +135,26 @@ class PipelineRunRepository:
     async def update_progress(
         self,
         pipeline_run_id: UUID,
-        *,
-        phase: str,
-        status: str,
-        done: int | None = None,
-        total: int | None = None,
-        failed: int | None = None,
-        message: str = "",
-        error: str | None = None,
+        data: PipelineRunUpdate,
     ) -> UUID | None:
         values: dict[str, object] = {
             "status": PipelineRunStatus.RUNNING.value,
-            "current_phase": phase,
-            "phase_status": status,
-            "progress_message": message,
+            "current_phase": data.phase,
+            "phase_status": data.status,
+            "progress_message": data.message,
             "updated_at": func.now(),
         }
-        if done is not None:
-            values["progress_done"] = done
-        if total is not None:
-            values["progress_total"] = total
-        if failed is not None:
-            values["progress_failed"] = failed
-        if error is not None or status == "failed":
-            values["error"] = error or "Pipeline failed"
+        if data.done is not None:
+            values["progress_done"] = data.done
+        if data.total is not None:
+            values["progress_total"] = data.total
+        if data.failed is not None:
+            values["progress_failed"] = data.failed
+        if data.error is not None or data.status == "failed":
+            values["error"] = data.error or "Pipeline failed"
             values["status"] = PipelineRunStatus.FAILED.value
             values["completed_at"] = func.now()
-        elif phase == "publish" and status == "completed":
+        elif data.phase == "publish" and data.status == "completed":
             values["status"] = PipelineRunStatus.COMPLETED.value
             values["completed_at"] = func.now()
 

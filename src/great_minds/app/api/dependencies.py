@@ -11,10 +11,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from great_minds.core.auth import AuthRepository, AuthService
 from great_minds.core.authz import Forbidden
 from great_minds.core.vaults import VaultAccess, VaultRepository, VaultService
-from great_minds.core.compile_intents import CompileIntentRepository
+from great_minds.core.compile_intents import (
+    CompileIntentRepository,
+    CompileIntentService,
+)
 from great_minds.core.crypto import decode_access_token
 from great_minds.core.documents import DocumentRepository, DocumentService
 from great_minds.core.ingest_service import IngestService
+from great_minds.core.jobs import JobService
 from great_minds.core.llm_costs import LlmCostEventRepository, LlmCostService
 from great_minds.core.mail import Mailer
 from great_minds.core.pagination import PageParams
@@ -145,13 +149,6 @@ def get_llm_cost_service(session: SessionDep) -> LlmCostService:
 LlmCostServiceDep = Annotated[LlmCostService, Depends(get_llm_cost_service)]
 
 
-def get_ingest_service(doc_service: DocumentServiceDep) -> IngestService:
-    return IngestService(doc_service)
-
-
-IngestServiceDep = Annotated[IngestService, Depends(get_ingest_service)]
-
-
 def get_vault_service(
     repo: VaultRepositoryDep,
     user_repo: UserRepositoryDep,
@@ -161,6 +158,17 @@ def get_vault_service(
 
 
 VaultServiceDep = Annotated[VaultService, Depends(get_vault_service)]
+
+
+def get_ingest_service(
+    doc_service: DocumentServiceDep,
+    vault_service: VaultServiceDep,
+    settings: SettingsDep,
+) -> IngestService:
+    return IngestService(doc_service, vault_service=vault_service, settings=settings)
+
+
+IngestServiceDep = Annotated[IngestService, Depends(get_ingest_service)]
 
 
 def get_user_service(
@@ -228,11 +236,36 @@ def get_task_service(
 TaskServiceDep = Annotated[TaskService, Depends(get_task_service)]
 
 
-def get_pipeline_run_service(repo: PipelineRunRepositoryDep) -> PipelineRunService:
-    return PipelineRunService(repo)
+def get_pipeline_run_service(
+    repo: PipelineRunRepositoryDep,
+    task_service: TaskServiceDep,
+) -> PipelineRunService:
+    return PipelineRunService(repo, task_service)
 
 
 PipelineRunServiceDep = Annotated[PipelineRunService, Depends(get_pipeline_run_service)]
+
+
+def get_compile_intent_service(
+    intent_repo: CompileIntentRepositoryDep,
+    pipeline_service: PipelineRunServiceDep,
+) -> CompileIntentService:
+    return CompileIntentService(intent_repo, pipeline_service)
+
+
+CompileIntentServiceDep = Annotated[
+    CompileIntentService, Depends(get_compile_intent_service)
+]
+
+
+def get_job_service(
+    pipeline_service: PipelineRunServiceDep,
+    ingest_service: IngestServiceDep,
+) -> JobService:
+    return JobService(pipeline_service=pipeline_service, ingest_service=ingest_service)
+
+
+JobServiceDep = Annotated[JobService, Depends(get_job_service)]
 
 
 def require_llm(settings: SettingsDep) -> None:

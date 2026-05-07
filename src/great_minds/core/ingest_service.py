@@ -11,8 +11,12 @@ import httpx
 from markitdown import MarkItDown, StreamInfo
 
 from great_minds.core.vaults.config import load_config
+from great_minds.core.r2_admin import R2Admin
+from great_minds.core.settings import Settings
+from great_minds.core.vaults.service import VaultService
 from great_minds.core.documents.builder import write_document
 from great_minds.core.documents.schemas import IngestedDocument, SourceMetadata
+from great_minds.core.ingest_schemas import StagedFileInput, StagedFileSignedUpload
 from great_minds.core.documents.service import DocumentService
 from great_minds.core.paths import raw_path, session_exchange_path
 from great_minds.core.sessions import (
@@ -41,8 +45,54 @@ class IngestService:
     via ``write_document``, and indexes the document row.
     """
 
-    def __init__(self, doc_service: DocumentService) -> None:
+    def __init__(
+        self,
+        doc_service: DocumentService,
+        *,
+        vault_service: VaultService,
+        settings: Settings,
+    ) -> None:
         self.doc_service = doc_service
+        self.vault_service = vault_service
+        self.settings = settings
+
+    def with_pipeline_run(self, pipeline_run_id: UUID) -> IngestService:
+        return IngestService(
+            DocumentService(self.doc_service.repo, pipeline_run_id=pipeline_run_id),
+            vault_service=self.vault_service,
+            settings=self.settings,
+        )
+
+    async def sign_staged_files(
+        self,
+        vault_id: UUID,
+        files: list[StagedFileInput],
+    ) -> list[StagedFileSignedUpload]:
+        """Create presigned R2 PUT URLs for direct-to-staging uploads."""
+        if self.settings.storage_backend != "r2":
+            raise ValueError("staged file upload requires r2 storage backend")
+        if not files:
+            raise ValueError("manifest is empty")
+
+        vault = await self.vault_service.get_vault(vault_id)
+        if not vault.r2_bucket_name:
+            raise ValueError("vault has no r2 bucket; cannot sign uploads")
+
+        admin = R2Admin(
+            account_id=self.settings.r2_account_id,
+            access_key_id=self.settings.r2_access_key_id,
+            secret_access_key=self.settings.r2_secret_access_key,
+        )
+        signed: list[StagedFileSignedUpload] = []
+        for f in files:
+            url = admin.presign_put(
+                vault.r2_bucket_name,
+                f"staging/{vault_id}/{f.hash}",
+                content_type=f.mimetype or "application/octet-stream",
+                content_length=f.size,
+            )
+            signed.append(StagedFileSignedUpload(hash=f.hash, url=url))
+        return signed
 
     async def _ingest_raw(
         self,
