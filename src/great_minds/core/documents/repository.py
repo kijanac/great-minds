@@ -26,7 +26,7 @@ from great_minds.core.documents.schemas import (
 from great_minds.core.ideas.schemas import SourceCard
 from great_minds.core.markdown import parse_frontmatter
 from great_minds.core.pagination import FacetCount
-from great_minds.core.paths import WIKI_PREFIX, raw_prefix, wiki_path
+from great_minds.core.paths import WIKI_INDEX_PATH, raw_prefix, wiki_path
 
 
 class DocumentRepository:
@@ -267,7 +267,7 @@ class DocumentRepository:
         ).where(
             DocumentORM.vault_id == vault_id,
             DocumentORM.doc_kind == DocKind.WIKI,
-            DocumentORM.file_path.not_like(f"{WIKI_PREFIX}_%"),
+            DocumentORM.file_path != WIKI_INDEX_PATH,
         )
         if slug is not None:
             stmt = stmt.where(DocumentORM.file_path == wiki_path(slug))
@@ -291,7 +291,7 @@ class DocumentRepository:
                 select(func.count()).where(
                     DocumentORM.vault_id == vault_id,
                     DocumentORM.doc_kind == DocKind.WIKI,
-                    DocumentORM.file_path.not_like(f"{WIKI_PREFIX}_%"),
+                    DocumentORM.file_path != WIKI_INDEX_PATH,
                 )
             )
         ) or 0
@@ -310,7 +310,7 @@ class DocumentRepository:
                 .where(
                     DocumentORM.vault_id == vault_id,
                     DocumentORM.doc_kind == DocKind.WIKI.value,
-                    DocumentORM.file_path.not_like(f"{WIKI_PREFIX}_%"),
+                    DocumentORM.file_path != WIKI_INDEX_PATH,
                 )
                 .group_by(DocumentORM.id, DocumentORM.file_path, DocumentORM.title)
                 .having(func.count(BacklinkORM.source_document_id) == 0)
