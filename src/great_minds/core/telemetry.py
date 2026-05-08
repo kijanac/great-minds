@@ -59,11 +59,6 @@ _wide_event_logger = logging.getLogger("wide_event")
 # ---------------------------------------------------------------------------
 
 
-def get_logger(component: str) -> logging.Logger:
-    """Return a namespaced logger: ``{service}.{component}``."""
-    return logging.getLogger(f"{_service}.{component}")
-
-
 def log_event(
     event: str,
     *,

@@ -9,7 +9,7 @@ import enum
 import json
 import uuid
 from collections.abc import AsyncGenerator
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from typing import Literal
 from uuid import UUID
 
@@ -18,7 +18,7 @@ from pydantic import BaseModel
 
 from .vaults.config import load_vault_config
 from .vaults.prompts import load_prompt
-from .search import search as hybrid_search
+from .search import SearchIndexRepository, SearchService
 from .markdown import extract_wiki_link_targets
 from .documents.schemas import DocKind
 from .documents.service import DocumentService
@@ -52,6 +52,26 @@ class SourceType(enum.StrEnum):
     RAW = "raw"
     SEARCH = "search"
     QUERY = "query"
+
+
+@dataclass
+class StreamTrace:
+    articles_read: list[str] = field(default_factory=list)
+    sources_read: list[str] = field(default_factory=list)
+    searches: list[str] = field(default_factory=list)
+    llm_rounds: int = 0
+    tool_calls_total: int = 0
+
+
+@dataclass
+class ModelRound:
+    content: str = ""
+    finish_reason: str | None = None
+    tool_calls: dict[int, dict] = field(default_factory=dict)
+
+
+class MalformedToolArgs(ValueError):
+    pass
 
 
 @dataclass
@@ -303,7 +323,8 @@ async def search_wiki(
     vault: QuerySource, query: str, doc_service: DocumentService
 ) -> str:
     """Hybrid BM25 + vector search via the search index."""
-    results = await hybrid_search(doc_service.repo.session, [vault.vault_id], query)
+    svc = SearchService(SearchIndexRepository(doc_service.repo.session))
+    results = await svc.search([vault.vault_id], query)
 
     log_event("tool.search_executed", query=query, results_count=len(results))
 
@@ -496,6 +517,159 @@ async def build_system_prompt(
 # ---------------------------------------------------------------------------
 
 
+async def _stream_model_round(
+    client: AsyncOpenAI,
+    model: str,
+    messages: list[dict],
+    tools: list[dict],
+    state: ModelRound,
+) -> AsyncGenerator[dict, None]:
+    async for chunk in api_stream(
+        client,
+        model=model,
+        messages=messages,
+        tools=tools,
+        temperature=0.3,
+        extra_body=_ROUTING_PREFERENCE,
+    ):
+        # Cost is accumulated by ``api_stream`` from the final usage
+        # chunk; we only consume content/tool-call deltas here.
+        if not chunk.choices:
+            continue
+        choice = chunk.choices[0]
+        delta = choice.delta
+
+        if choice.finish_reason:
+            state.finish_reason = choice.finish_reason
+
+        _accumulate_tool_call_deltas(state.tool_calls, delta.tool_calls)
+
+        if delta.content:
+            state.content += delta.content
+            yield {"event": "token", "data": {"text": delta.content}}
+
+
+def _accumulate_tool_call_deltas(tool_calls: dict[int, dict], deltas) -> None:
+    if not deltas:
+        return
+    for tc_delta in deltas:
+        idx = tc_delta.index
+        if idx not in tool_calls:
+            tool_calls[idx] = {"id": "", "name": "", "arguments": ""}
+        if tc_delta.id:
+            tool_calls[idx]["id"] = tc_delta.id
+        if not tc_delta.function:
+            continue
+        if tc_delta.function.name:
+            tool_calls[idx]["name"] = tc_delta.function.name
+        if tc_delta.function.arguments:
+            tool_calls[idx]["arguments"] += tc_delta.function.arguments
+
+
+def _assistant_tool_message(state: ModelRound) -> dict:
+    return {
+        "role": "assistant",
+        "content": state.content or None,
+        "tool_calls": [
+            {
+                "id": tc["id"],
+                "type": "function",
+                "function": {
+                    "name": tc["name"],
+                    "arguments": tc["arguments"],
+                },
+            }
+            for tc in state.tool_calls.values()
+        ],
+    }
+
+
+def _parse_tool_args(tool_call: dict) -> dict:
+    try:
+        return json.loads(tool_call["arguments"])
+    except json.JSONDecodeError as exc:
+        name = tool_call["name"]
+        raise MalformedToolArgs(f"Malformed tool args for {name}") from exc
+
+
+async def _source_event_for_tool_call(
+    vault: QuerySource,
+    doc_service: DocumentService,
+    trace: StreamTrace,
+    name: str,
+    args: dict,
+) -> dict | None:
+    classified = _classify_tool_call(name, args)
+    if not classified:
+        return None
+
+    source_type, meta = classified
+    event_data: dict = {"type": source_type, **meta}
+    if source_type in (SourceType.ARTICLE, SourceType.RAW):
+        path = meta["path"]
+        event_data["title"] = await doc_service.get_title_by_path(vault.vault_id, path)
+        (
+            trace.articles_read
+            if source_type is SourceType.ARTICLE
+            else trace.sources_read
+        ).append(path)
+    elif source_type is SourceType.SEARCH:
+        trace.searches.append(meta["query"])
+
+    return {"event": "source", "data": event_data}
+
+
+async def _run_tool_calls(
+    vault: QuerySource,
+    doc_service: DocumentService,
+    messages: list[dict],
+    trace: StreamTrace,
+    tool_calls: dict[int, dict],
+) -> AsyncGenerator[dict, None]:
+    for tc in tool_calls.values():
+        trace.tool_calls_total += 1
+        args = _parse_tool_args(tc)
+        name = tc["name"]
+
+        source_event = await _source_event_for_tool_call(
+            vault, doc_service, trace, name, args
+        )
+        if source_event is not None:
+            yield source_event
+
+        result = await _dispatch_tool(vault, name, args, doc_service)
+        messages.append(
+            {
+                "role": "tool",
+                "tool_call_id": tc["id"],
+                "content": result,
+            }
+        )
+
+
+async def _emit_done(
+    vault: QuerySource,
+    doc_service: DocumentService,
+    model: str,
+    trace: StreamTrace,
+) -> dict:
+    enrich(
+        model=model,
+        articles_read=trace.articles_read,
+        sources_read=trace.sources_read,
+        searches=trace.searches,
+        llm_rounds=trace.llm_rounds,
+        tool_calls=trace.tool_calls_total,
+    )
+    sources = await _build_sources_consulted(
+        vault, doc_service, trace.articles_read, trace.sources_read
+    )
+    return {
+        "event": "done",
+        "data": {"sources_consulted": [asdict(s) for s in sources]},
+    }
+
+
 async def stream_chat(
     vault: QuerySource,
     client: AsyncOpenAI,
@@ -514,136 +688,33 @@ async def stream_chat(
       {"event": "error",    "data": {"message": "..."}}
     """
     active_tools = tools or _BASE_TOOLS
-    articles_read: list[str] = []
-    sources_read: list[str] = []
-    searches: list[str] = []
-    llm_rounds = 0
-    tool_calls_total = 0
+    trace = StreamTrace()
 
     while True:
-        llm_rounds += 1
-        tool_calls_acc: dict[int, dict] = {}
-        content_acc = ""
-        finish_reason = None
+        trace.llm_rounds += 1
+        state = ModelRound()
 
-        async for chunk in api_stream(
-            client,
-            model=model,
-            messages=messages,
-            tools=active_tools,
-            temperature=0.3,
-            extra_body=_ROUTING_PREFERENCE,
+        async for event in _stream_model_round(
+            client, model, messages, active_tools, state
         ):
-            # Cost is accumulated by ``api_stream`` from the final usage
-            # chunk; we only consume content/tool-call deltas here.
-            if not chunk.choices:
-                continue
-            choice = chunk.choices[0]
-            delta = choice.delta
+            yield event
 
-            if choice.finish_reason:
-                finish_reason = choice.finish_reason
-
-            if delta.tool_calls:
-                for tc_delta in delta.tool_calls:
-                    idx = tc_delta.index
-                    if idx not in tool_calls_acc:
-                        tool_calls_acc[idx] = {"id": "", "name": "", "arguments": ""}
-                    if tc_delta.id:
-                        tool_calls_acc[idx]["id"] = tc_delta.id
-                    if tc_delta.function:
-                        if tc_delta.function.name:
-                            tool_calls_acc[idx]["name"] = tc_delta.function.name
-                        if tc_delta.function.arguments:
-                            tool_calls_acc[idx]["arguments"] += (
-                                tc_delta.function.arguments
-                            )
-
-            if delta.content:
-                content_acc += delta.content
-                yield {"event": "token", "data": {"text": delta.content}}
-
-        if finish_reason == "tool_calls" and tool_calls_acc:
-            messages.append(
-                {
-                    "role": "assistant",
-                    "content": content_acc or None,
-                    "tool_calls": [
-                        {
-                            "id": tc["id"],
-                            "type": "function",
-                            "function": {
-                                "name": tc["name"],
-                                "arguments": tc["arguments"],
-                            },
-                        }
-                        for tc in tool_calls_acc.values()
-                    ],
-                }
-            )
-
-            for tc in tool_calls_acc.values():
-                tool_calls_total += 1
-                try:
-                    args = json.loads(tc["arguments"])
-                except json.JSONDecodeError:
-                    yield {
-                        "event": "error",
-                        "data": {"message": f"Malformed tool args for {tc['name']}"},
-                    }
-                    return
-                name = tc["name"]
-
-                classified = _classify_tool_call(name, args)
-                if classified:
-                    source_type, meta = classified
-                    event_data: dict = {"type": source_type, **meta}
-                    if source_type in (SourceType.ARTICLE, SourceType.RAW):
-                        event_data["title"] = await doc_service.get_title_by_path(
-                            vault.vault_id, meta["path"]
-                        )
-                    yield {"event": "source", "data": event_data}
-
-                    if source_type is SourceType.SEARCH:
-                        searches.append(meta["query"])
-                    elif source_type in (SourceType.ARTICLE, SourceType.RAW):
-                        (
-                            articles_read
-                            if source_type is SourceType.ARTICLE
-                            else sources_read
-                        ).append(meta["path"])
-
-                result = await _dispatch_tool(vault, name, args, doc_service)
-                messages.append(
-                    {
-                        "role": "tool",
-                        "tool_call_id": tc["id"],
-                        "content": result,
-                    }
-                )
-
+        if state.finish_reason == "tool_calls" and state.tool_calls:
+            messages.append(_assistant_tool_message(state))
+            try:
+                async for event in _run_tool_calls(
+                    vault, doc_service, messages, trace, state.tool_calls
+                ):
+                    yield event
+            except MalformedToolArgs as exc:
+                yield {"event": "error", "data": {"message": str(exc)}}
+                return
             continue
 
-        if content_acc:
-            messages.append({"role": "assistant", "content": content_acc})
+        if state.content:
+            messages.append({"role": "assistant", "content": state.content})
 
-        enrich(
-            model=model,
-            articles_read=articles_read,
-            sources_read=sources_read,
-            searches=searches,
-            llm_rounds=llm_rounds,
-            tool_calls=tool_calls_total,
-        )
-        sources = await _build_sources_consulted(
-            vault, doc_service, articles_read, sources_read
-        )
-        yield {
-            "event": "done",
-            "data": {
-                "sources_consulted": [asdict(s) for s in sources],
-            },
-        }
+        yield await _emit_done(vault, doc_service, model, trace)
         return
 
 

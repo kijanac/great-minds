@@ -10,13 +10,14 @@ after writing articles.
 """
 
 from great_minds.core.pipeline.context import PipelineContext
-from great_minds.core.indexing import rebuild_raw_index
+from great_minds.core.search import SearchIndexRepository, SearchService
 from great_minds.core.telemetry import enrich, log_event
 
 
 async def run(ctx: PipelineContext) -> None:
-    count = await rebuild_raw_index(
-        ctx.session, ctx.vault_id, ctx.storage, client=ctx.client
+    search_svc = SearchService(SearchIndexRepository(ctx.session))
+    count = await search_svc.rebuild_raw_index(
+        ctx.vault_id, ctx.storage, client=ctx.client
     )
     enrich(raw_chunks_indexed=count)
     log_event(

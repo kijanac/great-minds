@@ -14,7 +14,7 @@ import great_minds.core.vaults.models  # noqa: F401
 import great_minds.core.proposals.models  # noqa: F401
 import great_minds.core.tasks  # noqa: F401
 from great_minds.core.vaults.models import VaultORM
-from great_minds.core.indexing import rebuild_raw_index, rebuild_wiki_index
+from great_minds.core.search import SearchIndexRepository, SearchService
 from great_minds.core.settings import get_settings
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from great_minds.core.storage import LocalStorage
@@ -53,8 +53,9 @@ async def main() -> None:
                 continue
 
             print(f"    -> {raw_count} raw docs, {wiki_count} wiki articles")
-            raw_chunks = await rebuild_raw_index(session, vault.id, storage)
-            wiki_chunks = await rebuild_wiki_index(session, vault.id, storage)
+            svc = SearchService(SearchIndexRepository(session))
+            raw_chunks = await svc.rebuild_raw_index(vault.id, storage)
+            wiki_chunks = await svc.rebuild_wiki_index(vault.id, storage)
             print(
                 f"    -> {raw_chunks} raw chunks + {wiki_chunks} wiki chunks indexed\n"
             )

@@ -18,8 +18,9 @@ import great_minds.core.proposals.models  # noqa: F401
 import great_minds.core.tasks  # noqa: F401
 from great_minds.core.vaults.models import VaultORM
 from great_minds.core.search import (
-    search,
     SearchIndexEntry,
+    SearchIndexRepository,
+    SearchService,
 )
 from great_minds.core.llm import (
     EMBEDDING_DIMENSIONS,
@@ -113,7 +114,9 @@ async def test_query(session, vault_ids, query):
         print(f"  {i + 1:2d}. [{row.similarity:.4f}] {slug}{heading}")
 
     # Hybrid (RRF)
-    hybrid_results = await search(session, vault_ids, query, limit=10)
+    hybrid_results = await SearchService(SearchIndexRepository(session)).search(
+        vault_ids, query, limit=10
+    )
     print(f"\n--- Hybrid RRF results ({len(hybrid_results)}) ---")
     for i, r in enumerate(hybrid_results):
         slug = r.path.removeprefix("wiki/").removesuffix(".md")

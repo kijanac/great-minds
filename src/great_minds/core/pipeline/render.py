@@ -43,7 +43,7 @@ from great_minds.core.ideas.source_cards import SourceCardStore, index_ideas_by_
 from great_minds.core.llm import RENDER_MODEL
 from great_minds.core.pipeline.abstract.schemas import ValidatedCanonicalTopic
 from great_minds.core.pipeline.context import PipelineContext
-from great_minds.core.indexing import rebuild_wiki_index
+from great_minds.core.search import SearchIndexRepository, SearchService
 from great_minds.core.settings import get_settings
 from great_minds.core.telemetry import enrich, log_event
 from great_minds.core.topics.repository import TopicRepository
@@ -164,8 +164,9 @@ async def run(
     if not to_render:
         wiki_chunks_indexed = 0
         if materialized:
-            wiki_chunks_indexed = await rebuild_wiki_index(
-                ctx.session, ctx.vault_id, ctx.storage, client=ctx.client
+            search_svc = SearchService(SearchIndexRepository(ctx.session))
+            wiki_chunks_indexed = await search_svc.rebuild_wiki_index(
+                ctx.vault_id, ctx.storage, client=ctx.client
             )
         topics_rendered = cache_hits + materialized
         enrich(
@@ -242,8 +243,9 @@ async def run(
 
     wiki_chunks_indexed = 0
     if materialized or cache_misses:
-        wiki_chunks_indexed = await rebuild_wiki_index(
-            ctx.session, ctx.vault_id, ctx.storage, client=ctx.client
+        search_svc = SearchService(SearchIndexRepository(ctx.session))
+        wiki_chunks_indexed = await search_svc.rebuild_wiki_index(
+            ctx.vault_id, ctx.storage, client=ctx.client
         )
 
     topics_rendered = cache_hits + materialized + cache_misses

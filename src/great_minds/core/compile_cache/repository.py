@@ -26,10 +26,6 @@ class CompileCacheRepository:
             return None
         return entry.value
 
-    async def has(self, *, vault_id: UUID, phase: str, cache_key: str) -> bool:
-        value = await self.get(vault_id=vault_id, phase=phase, cache_key=cache_key)
-        return value is not None
-
     async def put(
         self, *, vault_id: UUID, phase: str, cache_key: str, value: dict
     ) -> None:

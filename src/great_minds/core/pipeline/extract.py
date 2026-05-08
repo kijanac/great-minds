@@ -17,10 +17,9 @@ import json
 import logging
 from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
-from uuid import UUID
+from uuid import UUID, uuid7
 
 from pydantic import ValidationError
-from uuid6 import uuid7
 
 from great_minds.core.vaults.prompts import load_prompt
 from great_minds.core.documents.repository import DocumentRepository

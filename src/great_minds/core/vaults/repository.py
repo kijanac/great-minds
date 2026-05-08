@@ -97,15 +97,6 @@ class VaultRepository:
             )
         ) or 0
 
-    async def is_member(self, vault_id: UUID, user_id: UUID) -> bool:
-        result = await self.session.execute(
-            select(VaultMembership.id).where(
-                VaultMembership.vault_id == vault_id,
-                VaultMembership.user_id == user_id,
-            )
-        )
-        return result.scalar_one_or_none() is not None
-
     async def get_role(self, vault_id: UUID, user_id: UUID) -> MemberRole | None:
         result = await self.session.execute(
             select(VaultMembership.role).where(

@@ -10,7 +10,7 @@ import re
 from collections import defaultdict
 from uuid import UUID
 
-from sqlalchemy import delete, func, select, tuple_
+from sqlalchemy import delete, func, select
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -39,17 +39,6 @@ class SearchIndexRepository:
             )
         )
         return [ChunkHash.model_validate(r) for r in rows]
-
-    async def delete_by_keys(self, vault_id: UUID, keys: list[tuple[str, int]]) -> None:
-        """Bulk delete rows matching (path, chunk_index) pairs."""
-        if not keys:
-            return
-        await self.session.execute(
-            delete(SearchIndexEntry).where(
-                SearchIndexEntry.vault_id == vault_id,
-                tuple_(SearchIndexEntry.path, SearchIndexEntry.chunk_index).in_(keys),
-            )
-        )
 
     async def delete_stale_in_scope(
         self,
@@ -99,43 +88,6 @@ class SearchIndexRepository:
             deleted += result.rowcount or 0
 
         return deleted
-
-    async def upsert_chunk(
-        self,
-        vault_id: UUID,
-        chunk: Chunk,
-        embedding: list[float] | None,
-    ) -> None:
-        """Insert or update a single chunk with its precomputed embedding."""
-        existing = await self.session.execute(
-            select(SearchIndexEntry).where(
-                SearchIndexEntry.vault_id == vault_id,
-                SearchIndexEntry.path == chunk.path,
-                SearchIndexEntry.chunk_index == chunk.chunk_index,
-            )
-        )
-        row = existing.scalar_one_or_none()
-        tsv = func.to_tsvector("english", chunk.body)
-        if row is not None:
-            row.heading = chunk.heading
-            row.body = chunk.body
-            row.content_hash = chunk.content_hash
-            row.tsv = tsv
-            row.embedding = embedding
-            row.updated_at = func.now()
-            return
-        self.session.add(
-            SearchIndexEntry(
-                vault_id=vault_id,
-                path=chunk.path,
-                chunk_index=chunk.chunk_index,
-                heading=chunk.heading,
-                body=chunk.body,
-                content_hash=chunk.content_hash,
-                tsv=tsv,
-                embedding=embedding,
-            )
-        )
 
     async def batch_upsert(
         self,

@@ -235,20 +235,6 @@ class TopicRepository:
                 )
             )
 
-    async def get_membership(self, topic_id: UUID) -> list[UUID]:
-        rows = (
-            (
-                await self.session.execute(
-                    select(TopicMembershipORM.idea_id).where(
-                        TopicMembershipORM.topic_id == topic_id
-                    )
-                )
-            )
-            .scalars()
-            .all()
-        )
-        return list(rows)
-
     # -- Topic links (intent from reduce) ----------------------------------
 
     async def replace_links_for_vault(
@@ -280,20 +266,6 @@ class TopicRepository:
                     [{"source_topic_id": s, "target_topic_id": t} for s, t in edges]
                 )
             )
-
-    async def get_links_from(self, topic_id: UUID) -> list[UUID]:
-        rows = (
-            (
-                await self.session.execute(
-                    select(TopicLinkORM.target_topic_id).where(
-                        TopicLinkORM.source_topic_id == topic_id
-                    )
-                )
-            )
-            .scalars()
-            .all()
-        )
-        return list(rows)
 
     # -- Related (sidebar UI) ----------------------------------------------
 

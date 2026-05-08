@@ -46,16 +46,6 @@ def content_hash(*parts: str) -> str:
     return _hash_framed(*parts)
 
 
-def set_hash(ids: list[str]) -> str:
-    """Order-independent hash of a set of string IDs.
-
-    Sorts internally, so ``set_hash(["b","a"]) == set_hash(["a","b"])``.
-    Use for cache keys keyed on a set of entity IDs where insertion
-    order carries no meaning.
-    """
-    return _hash_framed(*sorted(ids))
-
-
 def prompt_hash(template: str) -> str:
     """Prompt template version hash for cache invalidation.
 

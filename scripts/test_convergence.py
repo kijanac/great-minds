@@ -16,9 +16,7 @@ Usage:
 """
 
 import asyncio
-from uuid import UUID
-
-from uuid6 import uuid7
+from uuid import UUID, uuid7
 
 from great_minds.core.pipeline.abstract.schemas import (
     LocalTopic,
