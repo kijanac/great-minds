@@ -7,7 +7,7 @@ projects:
           - name: great-minds-api
             type: web
             runtime: docker
-            plan: starter
+            plan: standard
             region: virginia
             healthCheckPath: /health
             disk:

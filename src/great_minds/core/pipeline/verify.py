@@ -20,164 +20,170 @@ needing to hit the endpoint.
 import logging
 from uuid import UUID
 
-from great_minds.core.documents import Backlink, DocKind, Document, DocumentRepository
+from great_minds.core.documents import Backlink, DocKind, Document, DocumentService
 from great_minds.core.markdown import extract_wiki_link_targets
 from great_minds.core.paths import wiki_path, wiki_slug
-from great_minds.core.pipeline.context import PipelineContext
+from great_minds.core.storage import Storage
 from great_minds.core.telemetry import enrich, log_event
-from great_minds.core.topics.repository import TopicRepository
-from great_minds.core.topics.schemas import ArticleStatus
+from great_minds.core.topics.service import TopicService
 
 log = logging.getLogger(__name__)
 
 
-async def run(ctx: PipelineContext) -> None:
-    rendered = await TopicRepository(ctx.session).list_by_status(
-        ctx.vault_id, ArticleStatus.RENDERED
-    )
-    if not rendered:
-        log_event(
-            "pipeline.verify_skipped",
-            vault_id=str(ctx.vault_id),
-            reason="no_rendered_topics",
-        )
-        return
+class VerifyPhase:
+    """Phase 5 runner with explicit service-style dependencies."""
 
-    slug_to_topic = {t.slug: t for t in rendered}
-    topic_id_set = {t.topic_id for t in rendered}
-    article_by_topic = await _load_wiki_articles(ctx)
+    def __init__(
+        self,
+        *,
+        vault_id: UUID,
+        storage: Storage,
+        topics: TopicService,
+        documents: DocumentService,
+    ) -> None:
+        self.vault_id = vault_id
+        self.storage = storage
+        self.topics = topics
+        self.documents = documents
 
-    backlinks: list[Backlink] = []
-    source_document_ids: list[UUID] = []
-    # source_topic_id -> set of cited slugs found in its prose (for unmentioned check)
-    cited_by_source: dict[UUID, set[str]] = {}
-    unresolved_count = 0
-    articles_walked = 0
-
-    # FK + partial unique index guarantee a wiki document for every
-    # rendered topic (render commits both writes in one transaction),
-    # so dict access by topic_id is total — KeyError would surface real
-    # schema corruption rather than expected absence.
-    for topic in rendered:
-        article_path = wiki_path(topic.slug)
-        content = await ctx.storage.read(article_path, strict=False)
-        if content is None:
-            # Article status says rendered but file is gone. Skip and log.
+    async def run(self) -> None:
+        rendered = await self.topics.list_rendered(self.vault_id)
+        if not rendered:
             log_event(
-                "verify.missing_rendered_file",
-                level=logging.WARNING,
-                vault_id=str(ctx.vault_id),
-                topic_slug=topic.slug,
-                topic_id=str(topic.topic_id),
+                "pipeline.verify_skipped",
+                vault_id=str(self.vault_id),
+                reason="no_rendered_topics",
             )
-            continue
+            return
 
-        source_article = article_by_topic[topic.topic_id]
-        source_document_ids.append(source_article.id)
-        articles_walked += 1
-        link_paths = extract_wiki_link_targets(content)
-        cited_slugs: set[str] = set()
+        slug_to_topic = {t.slug: t for t in rendered}
+        topic_id_set = {t.topic_id for t in rendered}
+        article_by_topic = await self._load_wiki_articles()
 
-        for link in link_paths:
-            slug = wiki_slug(link.rsplit("/", 1)[-1])
-            target = slug_to_topic.get(slug)
-            if target is None:
-                unresolved_count += 1
+        backlinks: list[Backlink] = []
+        source_document_ids: list[UUID] = []
+        # source_topic_id -> set of cited slugs found in its prose (for unmentioned check)
+        cited_by_source: dict[UUID, set[str]] = {}
+        unresolved_count = 0
+        articles_walked = 0
+
+        # FK + partial unique index guarantee a wiki document for every
+        # rendered topic (render commits both writes in one transaction),
+        # so dict access by topic_id is total — KeyError would surface real
+        # schema corruption rather than expected absence.
+        for topic in rendered:
+            article_path = wiki_path(topic.slug)
+            content = await self.storage.read(article_path, strict=False)
+            if content is None:
+                # Article status says rendered but file is gone. Skip and log.
                 log_event(
-                    "verify.unresolved_citation",
+                    "verify.missing_rendered_file",
                     level=logging.WARNING,
-                    vault_id=str(ctx.vault_id),
-                    source_slug=topic.slug,
-                    missing_slug=slug,
+                    vault_id=str(self.vault_id),
+                    topic_slug=topic.slug,
+                    topic_id=str(topic.topic_id),
                 )
                 continue
-            if target.topic_id == topic.topic_id:
-                # Self-reference — skip (not a semantic backlink)
-                continue
-            target_article = article_by_topic[target.topic_id]
-            cited_slugs.add(slug)
-            backlinks.append(
-                Backlink(
-                    source_document_id=source_article.id,
-                    target_document_id=target_article.id,
+
+            source_article = article_by_topic[topic.topic_id]
+            source_document_ids.append(source_article.id)
+            articles_walked += 1
+            link_paths = extract_wiki_link_targets(content)
+            cited_slugs: set[str] = set()
+
+            for link in link_paths:
+                slug = wiki_slug(link.rsplit("/", 1)[-1])
+                target = slug_to_topic.get(slug)
+                if target is None:
+                    unresolved_count += 1
+                    log_event(
+                        "verify.unresolved_citation",
+                        level=logging.WARNING,
+                        vault_id=str(self.vault_id),
+                        source_slug=topic.slug,
+                        missing_slug=slug,
+                    )
+                    continue
+                if target.topic_id == topic.topic_id:
+                    # Self-reference — skip (not a semantic backlink)
+                    continue
+                target_article = article_by_topic[target.topic_id]
+                cited_slugs.add(slug)
+                backlinks.append(
+                    Backlink(
+                        source_document_id=source_article.id,
+                        target_document_id=target_article.id,
+                    )
                 )
-            )
 
-        cited_by_source[topic.topic_id] = cited_slugs
+            cited_by_source[topic.topic_id] = cited_slugs
 
-    # Unmentioned intended links: topic_links edges whose target isn't
-    # in cited_by_source[source]. Requires the topic_links rows from
-    # phase 3 derive, scoped to this vault.
-    unmentioned_count = await _detect_unmentioned_links(
-        ctx=ctx,
-        topic_id_set=topic_id_set,
-        slug_by_topic_id={t.topic_id: t.slug for t in rendered},
-        cited_by_source=cited_by_source,
-    )
-
-    doc_repo = DocumentRepository(ctx.session)
-    await doc_repo.update_wiki_backlinks(
-        source_document_ids=source_document_ids,
-        backlinks=backlinks,
-    )
-    await ctx.session.commit()
-
-    enrich(
-        verify_articles_walked=articles_walked,
-        verify_backlink_edges=len(backlinks),
-        verify_unresolved_citations=unresolved_count,
-        verify_unmentioned_links=unmentioned_count,
-    )
-    log_event(
-        "pipeline.verify_completed",
-        vault_id=str(ctx.vault_id),
-        articles_walked=articles_walked,
-        backlink_edges=len(backlinks),
-        unresolved_citations=unresolved_count,
-        unmentioned_links=unmentioned_count,
-    )
-
-
-async def _load_wiki_articles(ctx: PipelineContext) -> dict[UUID, Document]:
-    """Map topic_id → wiki Document for the rendered set.
-
-    Wiki documents always carry a topic_id (FK enforced via the partial
-    unique index). Rows missing it would be schema corruption — skip
-    rather than crash so verify can still run on the well-formed set.
-    """
-    docs = await DocumentRepository(ctx.session).list_by_kind(
-        ctx.vault_id, DocKind.WIKI
-    )
-    return {doc.topic_id: doc for doc in docs if doc.topic_id is not None}
-
-
-async def _detect_unmentioned_links(
-    *,
-    ctx: PipelineContext,
-    topic_id_set: set[UUID],
-    slug_by_topic_id: dict[UUID, str],
-    cited_by_source: dict[UUID, set[str]],
-) -> int:
-    if not topic_id_set:
-        return 0
-    edges = await TopicRepository(ctx.session).list_links_for_vault(
-        ctx.vault_id, source_topic_ids=list(topic_id_set)
-    )
-
-    unmentioned = 0
-    for edge in edges:
-        target_slug = slug_by_topic_id.get(edge.target_topic_id)
-        if target_slug is None:
-            continue
-        cited = cited_by_source.get(edge.source_topic_id, set())
-        if target_slug in cited:
-            continue
-        unmentioned += 1
-        log_event(
-            "verify.unmentioned_link",
-            level=logging.INFO,
-            vault_id=str(ctx.vault_id),
-            source_slug=slug_by_topic_id[edge.source_topic_id],
-            missing_target_slug=target_slug,
+        # Unmentioned intended links: topic_links edges whose target isn't
+        # in cited_by_source[source]. Requires the topic_links rows from
+        # phase 3 derive, scoped to this vault.
+        unmentioned_count = await self._detect_unmentioned_links(
+            topic_id_set=topic_id_set,
+            slug_by_topic_id={t.topic_id: t.slug for t in rendered},
+            cited_by_source=cited_by_source,
         )
-    return unmentioned
+
+        await self.documents.replace_wiki_backlinks(
+            source_document_ids=source_document_ids,
+            backlinks=backlinks,
+        )
+
+        enrich(
+            verify_articles_walked=articles_walked,
+            verify_backlink_edges=len(backlinks),
+            verify_unresolved_citations=unresolved_count,
+            verify_unmentioned_links=unmentioned_count,
+        )
+        log_event(
+            "pipeline.verify_completed",
+            vault_id=str(self.vault_id),
+            articles_walked=articles_walked,
+            backlink_edges=len(backlinks),
+            unresolved_citations=unresolved_count,
+            unmentioned_links=unmentioned_count,
+        )
+
+    async def _load_wiki_articles(self) -> dict[UUID, Document]:
+        """Map topic_id → wiki Document for the rendered set.
+
+        Wiki documents always carry a topic_id (FK enforced via the partial
+        unique index). Rows missing it would be schema corruption — skip
+        rather than crash so verify can still run on the well-formed set.
+        """
+        docs = await self.documents.list_by_kind(self.vault_id, DocKind.WIKI)
+        return {doc.topic_id: doc for doc in docs if doc.topic_id is not None}
+
+    async def _detect_unmentioned_links(
+        self,
+        *,
+        topic_id_set: set[UUID],
+        slug_by_topic_id: dict[UUID, str],
+        cited_by_source: dict[UUID, set[str]],
+    ) -> int:
+        if not topic_id_set:
+            return 0
+        edges = await self.topics.list_links_for_vault(
+            self.vault_id, source_topic_ids=list(topic_id_set)
+        )
+
+        unmentioned = 0
+        for edge in edges:
+            target_slug = slug_by_topic_id.get(edge.target_topic_id)
+            if target_slug is None:
+                continue
+            cited = cited_by_source.get(edge.source_topic_id, set())
+            if target_slug in cited:
+                continue
+            unmentioned += 1
+            log_event(
+                "verify.unmentioned_link",
+                level=logging.INFO,
+                vault_id=str(self.vault_id),
+                source_slug=slug_by_topic_id[edge.source_topic_id],
+                missing_target_slug=target_slug,
+            )
+        return unmentioned

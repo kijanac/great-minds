@@ -32,7 +32,12 @@ from great_minds.core.pipeline import (
     verify,
 )
 from great_minds.core.pipeline.context import PipelineContext, build_context
+from great_minds.core.documents import DocumentRepository, DocumentService
+from great_minds.core.search import SearchIndexRepository, SearchService
+from great_minds.core.settings import get_settings
 from great_minds.core.telemetry import log_event
+from great_minds.core.topics.repository import TopicRepository
+from great_minds.core.topics.service import TopicService
 
 __all__ = ["PipelineContext", "build_context", "run"]
 
@@ -55,7 +60,12 @@ async def run(ctx: PipelineContext) -> None:
     await ctx.progress.emit(
         pipeline_run_id=run_id, phase="ingest", status="started", done=0, total=1
     )
-    await ingest.run(ctx)
+    await ingest.IngestPhase(
+        vault_id=ctx.vault_id,
+        storage=ctx.storage,
+        client=ctx.client,
+        search=SearchService(SearchIndexRepository(ctx.session)),
+    ).run()
     await ctx.progress.emit(
         pipeline_run_id=run_id, phase="ingest", status="completed", done=1, total=1
     )
@@ -103,7 +113,11 @@ async def run(ctx: PipelineContext) -> None:
     await ctx.progress.emit(
         pipeline_run_id=run_id, phase="derive", status="started", done=0, total=1
     )
-    await derive.run(ctx, validated)
+    await derive.DerivePhase(
+        vault_id=ctx.vault_id,
+        topics=TopicService(TopicRepository(ctx.session)),
+        related_limit=get_settings().compile_derive_related_limit,
+    ).run(validated)
     await ctx.progress.emit(
         pipeline_run_id=run_id, phase="derive", status="completed", done=1, total=1
     )
@@ -119,7 +133,12 @@ async def run(ctx: PipelineContext) -> None:
     await ctx.progress.emit(
         pipeline_run_id=run_id, phase="verify", status="started", done=0, total=1
     )
-    await verify.run(ctx)
+    await verify.VerifyPhase(
+        vault_id=ctx.vault_id,
+        storage=ctx.storage,
+        topics=TopicService(TopicRepository(ctx.session)),
+        documents=DocumentService(DocumentRepository(ctx.session)),
+    ).run()
     await ctx.progress.emit(
         pipeline_run_id=run_id, phase="verify", status="completed", done=1, total=1
     )
@@ -128,7 +147,14 @@ async def run(ctx: PipelineContext) -> None:
     await ctx.progress.emit(
         pipeline_run_id=run_id, phase="publish", status="started", done=0, total=1
     )
-    await publish.run(ctx)
+    await publish.PublishPhase(
+        vault_id=ctx.vault_id,
+        storage=ctx.storage,
+        sidecar_root=ctx.sidecar_root,
+        topics=TopicService(TopicRepository(ctx.session)),
+        documents=DocumentService(DocumentRepository(ctx.session)),
+        search=SearchService(SearchIndexRepository(ctx.session)),
+    ).run()
     await ctx.progress.emit(
         pipeline_run_id=run_id, phase="publish", status="completed", done=1, total=1
     )

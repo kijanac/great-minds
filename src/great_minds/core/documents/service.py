@@ -6,6 +6,7 @@ from great_minds.core.compile_intents.repository import CompileIntentRepository
 from great_minds.core.markdown import parse_frontmatter
 from great_minds.core.documents.repository import DocumentRepository
 from great_minds.core.documents.schemas import (
+    Backlink,
     DocKind,
     Document,
     DocumentCreate,
@@ -127,6 +128,21 @@ class DocumentService:
 
     async def count_by_kind(self, vault_id: UUID, kind: DocKind) -> int:
         return await self.repo.count_by_kind(vault_id, kind)
+
+    async def list_by_kind(self, vault_id: UUID, kind: DocKind) -> list[Document]:
+        return await self.repo.list_by_kind(vault_id, kind)
+
+    async def replace_wiki_backlinks(
+        self,
+        *,
+        source_document_ids: list[UUID],
+        backlinks: list[Backlink],
+    ) -> None:
+        await self.repo.update_wiki_backlinks(
+            source_document_ids=source_document_ids,
+            backlinks=backlinks,
+        )
+        await self._commit()
 
     async def list_wiki_articles(
         self, vault_id: UUID, *, pagination: PageParams

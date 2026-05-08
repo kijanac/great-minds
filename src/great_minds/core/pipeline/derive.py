@@ -17,38 +17,47 @@ here.
 """
 
 import logging
+from uuid import UUID
 
-from great_minds.core.pipeline.context import PipelineContext
-from great_minds.core.settings import get_settings
 from great_minds.core.telemetry import enrich, log_event
-from great_minds.core.topics.repository import TopicRepository
 from great_minds.core.topics.schemas import TopicDetail
 from great_minds.core.topics.service import TopicService
 
 log = logging.getLogger(__name__)
 
 
-async def run(
-    ctx: PipelineContext,
-    validated: list[TopicDetail],
-) -> None:
-    if not validated:
-        log_event(
-            "pipeline.derive_skipped",
-            vault_id=str(ctx.vault_id),
-            reason="no_topics",
+class DerivePhase:
+    """Phase 3 runner with explicit service-style dependencies."""
+
+    def __init__(
+        self,
+        *,
+        vault_id: UUID,
+        topics: TopicService,
+        related_limit: int,
+    ) -> None:
+        self.vault_id = vault_id
+        self.topics = topics
+        self.related_limit = related_limit
+
+    async def run(self, validated: list[TopicDetail]) -> None:
+        if not validated:
+            log_event(
+                "pipeline.derive_skipped",
+                vault_id=str(self.vault_id),
+                reason="no_topics",
+            )
+            return
+
+        await self.topics.rebuild_derived_tables(
+            self.vault_id,
+            validated,
+            related_limit=self.related_limit,
         )
-        return
 
-    await TopicService(TopicRepository(ctx.session)).rebuild_derived_tables(
-        ctx.vault_id,
-        validated,
-        related_limit=get_settings().compile_derive_related_limit,
-    )
-
-    enrich(derive_topic_count=len(validated))
-    log_event(
-        "pipeline.derive_completed",
-        vault_id=str(ctx.vault_id),
-        topic_count=len(validated),
-    )
+        enrich(derive_topic_count=len(validated))
+        log_event(
+            "pipeline.derive_completed",
+            vault_id=str(self.vault_id),
+            topic_count=len(validated),
+        )

@@ -27,7 +27,9 @@ from great_minds.core.pipeline import (
     verify,
 )
 from great_minds.core.pipeline.steps import absurd_step_runner
+from great_minds.core.topics.repository import TopicRepository
 from great_minds.core.topics.schemas import TopicDetail
+from great_minds.core.topics.service import TopicService
 from great_minds.core.vaults.config import load_config
 from great_minds.core.vaults.repository import VaultRepository
 from great_minds.core.documents.builder import build_document
@@ -39,6 +41,7 @@ from great_minds.core.llm import get_async_client
 from great_minds.core.llm_costs import record_wide_event_cost
 from great_minds.core.markdown import parse_frontmatter
 from great_minds.core.r2_admin import R2Admin
+from great_minds.core.search import SearchIndexRepository, SearchService
 from great_minds.core.settings import get_settings
 from great_minds.core.storage_factory import make_storage
 from great_minds.core.pipeline_runs import PipelineProgressRunner
@@ -169,7 +172,12 @@ async def compile_task(params: dict, ctx) -> None:
                 done=0,
                 total=1,
             )
-            await ingest.run(pipeline_ctx)
+            await ingest.IngestPhase(
+                vault_id=pipeline_ctx.vault_id,
+                storage=pipeline_ctx.storage,
+                client=pipeline_ctx.client,
+                search=SearchService(SearchIndexRepository(pipeline_ctx.session)),
+            ).run()
             await progress.emit(
                 pipeline_run_id=pipeline_run_id,
                 phase="ingest",
@@ -244,7 +252,11 @@ async def compile_task(params: dict, ctx) -> None:
                 done=0,
                 total=1,
             )
-            await derive.run(pipeline_ctx, validated)
+            await derive.DerivePhase(
+                vault_id=pipeline_ctx.vault_id,
+                topics=TopicService(TopicRepository(pipeline_ctx.session)),
+                related_limit=get_settings().compile_derive_related_limit,
+            ).run(validated)
             await progress.emit(
                 pipeline_run_id=pipeline_run_id,
                 phase="derive",
@@ -282,7 +294,12 @@ async def compile_task(params: dict, ctx) -> None:
                 done=0,
                 total=1,
             )
-            await verify.run(pipeline_ctx)
+            await verify.VerifyPhase(
+                vault_id=pipeline_ctx.vault_id,
+                storage=pipeline_ctx.storage,
+                topics=TopicService(TopicRepository(pipeline_ctx.session)),
+                documents=DocumentService(DocumentRepository(pipeline_ctx.session)),
+            ).run()
             await progress.emit(
                 pipeline_run_id=pipeline_run_id,
                 phase="verify",
@@ -302,7 +319,14 @@ async def compile_task(params: dict, ctx) -> None:
                 done=0,
                 total=1,
             )
-            await publish.run(pipeline_ctx)
+            await publish.PublishPhase(
+                vault_id=pipeline_ctx.vault_id,
+                storage=pipeline_ctx.storage,
+                sidecar_root=pipeline_ctx.sidecar_root,
+                topics=TopicService(TopicRepository(pipeline_ctx.session)),
+                documents=DocumentService(DocumentRepository(pipeline_ctx.session)),
+                search=SearchService(SearchIndexRepository(pipeline_ctx.session)),
+            ).run()
             await progress.emit(
                 pipeline_run_id=pipeline_run_id,
                 phase="publish",

@@ -12,11 +12,12 @@ registry drift between compiles.
 
 import logging
 from datetime import datetime, timezone
+from pathlib import Path
+from uuid import UUID
 
 from pydantic import BaseModel
 
-from great_minds.core.documents.repository import DocumentRepository
-from great_minds.core.documents.schemas import DocKind, Document
+from great_minds.core.documents import DocKind, Document, DocumentService
 from great_minds.core.paths import (
     RAW_INDEX_PATH,
     RAW_PREFIX,
@@ -25,11 +26,11 @@ from great_minds.core.paths import (
     compile_log_path,
     wiki_path,
 )
-from great_minds.core.pipeline.context import PipelineContext
-from great_minds.core.search import SearchIndexRepository, SearchService
+from great_minds.core.search import SearchService
+from great_minds.core.storage import Storage
 from great_minds.core.telemetry import enrich, log_event
-from great_minds.core.topics.repository import TopicRepository
 from great_minds.core.topics.schemas import ArticleStatus, Topic
+from great_minds.core.topics.service import TopicService
 
 log = logging.getLogger(__name__)
 
@@ -46,129 +47,137 @@ class CompileLogCounts(BaseModel):
     chunks_wiki: int
 
 
-async def run(ctx: PipelineContext) -> None:
-    rendered_topics = await TopicRepository(ctx.session).list_by_status(
-        ctx.vault_id, ArticleStatus.RENDERED
-    )
-    raw_docs = await _load_raw_documents(ctx)
+class PublishPhase:
+    """Phase 6 runner with explicit service-style dependencies."""
 
-    await _write_wiki_index(ctx, rendered_topics)
-    await _write_raw_index(ctx, raw_docs)
+    def __init__(
+        self,
+        *,
+        vault_id: UUID,
+        storage: Storage,
+        sidecar_root: Path,
+        topics: TopicService,
+        documents: DocumentService,
+        search: SearchService,
+    ) -> None:
+        self.vault_id = vault_id
+        self.storage = storage
+        self.sidecar_root = sidecar_root
+        self.topics = topics
+        self.documents = documents
+        self.search = search
 
-    counts = await _gather_log_counts(ctx)
-    _append_compile_log(ctx, counts)
+    async def run(self) -> None:
+        rendered_topics = await self.topics.list_rendered(self.vault_id)
+        raw_docs = await self._load_raw_documents()
 
-    enrich(
-        publish_wiki_index_topics=len(rendered_topics),
-        publish_raw_index_docs=len(raw_docs),
-    )
-    log_event(
-        "pipeline.publish_completed",
-        vault_id=str(ctx.vault_id),
-        wiki_index_topics=len(rendered_topics),
-        raw_index_docs=len(raw_docs),
-        **counts.model_dump(),
-    )
+        await self._write_wiki_index(rendered_topics)
+        await self._write_raw_index(raw_docs)
 
+        counts = await self._gather_log_counts()
+        self._append_compile_log(counts)
 
-# ---------------------------------------------------------------------------
-# Wiki index
-# ---------------------------------------------------------------------------
+        enrich(
+            publish_wiki_index_topics=len(rendered_topics),
+            publish_raw_index_docs=len(raw_docs),
+        )
+        log_event(
+            "pipeline.publish_completed",
+            vault_id=str(self.vault_id),
+            wiki_index_topics=len(rendered_topics),
+            raw_index_docs=len(raw_docs),
+            **counts.model_dump(),
+        )
 
+    # ---------------------------------------------------------------------------
+    # Wiki index
+    # ---------------------------------------------------------------------------
 
-async def _write_wiki_index(ctx: PipelineContext, topics: list[Topic]) -> None:
-    ordered = sorted(topics, key=lambda t: t.title.lower())
-    lines = [
-        "# Wiki Index",
-        "",
-        f"_{len(ordered)} rendered article{'s' if len(ordered) != 1 else ''}_",
-        "",
-    ]
-    for t in ordered:
-        description = (t.description or "").strip().replace("\n", " ")
-        lines.append(f"- [{t.title}]({wiki_path(t.slug)}) — {description}")
-    lines.append("")
-    await ctx.storage.write(WIKI_INDEX_PATH, "\n".join(lines))
+    async def _write_wiki_index(self, topics: list[Topic]) -> None:
+        ordered = sorted(topics, key=lambda t: t.title.lower())
+        lines = [
+            "# Wiki Index",
+            "",
+            f"_{len(ordered)} rendered article{'s' if len(ordered) != 1 else ''}_",
+            "",
+        ]
+        for t in ordered:
+            description = t.description.strip().replace("\n", " ")
+            lines.append(f"- [{t.title}]({wiki_path(t.slug)}) — {description}")
+        lines.append("")
+        await self.storage.write(WIKI_INDEX_PATH, "\n".join(lines))
 
+    # ---------------------------------------------------------------------------
+    # Raw index
+    # ---------------------------------------------------------------------------
 
-# ---------------------------------------------------------------------------
-# Raw index
-# ---------------------------------------------------------------------------
+    async def _write_raw_index(self, docs: list[Document]) -> None:
+        ordered = sorted(docs, key=lambda d: d.metadata.title.lower())
+        lines = [
+            "# Raw Sources",
+            "",
+            f"_{len(ordered)} document{'s' if len(ordered) != 1 else ''}_",
+            "",
+        ]
+        for d in ordered:
+            metadata = d.metadata
+            meta_bits: list[str] = []
+            if metadata.genre:
+                meta_bits.append(metadata.genre)
+            if metadata.published_date:
+                meta_bits.append(metadata.published_date)
+            if metadata.author:
+                meta_bits.append(metadata.author)
+            meta_suffix = f" — {', '.join(meta_bits)}" if meta_bits else ""
+            precis = (metadata.precis or "").strip().replace("\n", " ")
+            precis_suffix = f"  \n  {precis}" if precis else ""
+            lines.append(
+                f"- [{metadata.title}]({d.file_path}){meta_suffix}{precis_suffix}"
+            )
+        lines.append("")
+        await self.storage.write(RAW_INDEX_PATH, "\n".join(lines))
 
+    # ---------------------------------------------------------------------------
+    # Compile log
+    # ---------------------------------------------------------------------------
 
-async def _write_raw_index(ctx: PipelineContext, docs: list[Document]) -> None:
-    ordered = sorted(docs, key=lambda d: d.metadata.title.lower())
-    lines = [
-        "# Raw Sources",
-        "",
-        f"_{len(ordered)} document{'s' if len(ordered) != 1 else ''}_",
-        "",
-    ]
-    for d in ordered:
-        metadata = d.metadata
-        meta_bits: list[str] = []
-        if metadata.genre:
-            meta_bits.append(metadata.genre)
-        if metadata.published_date:
-            meta_bits.append(metadata.published_date)
-        if metadata.author:
-            meta_bits.append(metadata.author)
-        meta_suffix = f" — {', '.join(meta_bits)}" if meta_bits else ""
-        precis = (metadata.precis or "").strip().replace("\n", " ")
-        precis_suffix = f"  \n  {precis}" if precis else ""
-        lines.append(f"- [{metadata.title}]({d.file_path}){meta_suffix}{precis_suffix}")
-    lines.append("")
-    await ctx.storage.write(RAW_INDEX_PATH, "\n".join(lines))
+    async def _gather_log_counts(self) -> CompileLogCounts:
+        return CompileLogCounts(
+            topics_total=await self.topics.count_all(self.vault_id),
+            topics_rendered=await self.topics.count_by_status(
+                self.vault_id, ArticleStatus.RENDERED
+            ),
+            topics_archived=await self.topics.count_by_status(
+                self.vault_id, ArticleStatus.ARCHIVED
+            ),
+            topics_dirty=await self.topics.count_dirty(self.vault_id),
+            docs_raw=await self.documents.count_by_kind(self.vault_id, DocKind.RAW),
+            chunks_raw=await self.search.count_by_prefix(self.vault_id, RAW_PREFIX),
+            chunks_wiki=await self.search.count_by_prefix(self.vault_id, WIKI_PREFIX),
+        )
 
+    def _append_compile_log(self, counts: CompileLogCounts) -> None:
+        log_path = compile_log_path(self.sidecar_root)
+        log_path.parent.mkdir(parents=True, exist_ok=True)
 
-# ---------------------------------------------------------------------------
-# Compile log
-# ---------------------------------------------------------------------------
+        ts = datetime.now(timezone.utc).isoformat(timespec="seconds")
+        lines = [
+            f"## {ts}",
+            f"- topics: {counts.topics_total} "
+            f"(rendered {counts.topics_rendered}, "
+            f"archived {counts.topics_archived}, "
+            f"dirty {counts.topics_dirty})",
+            f"- raw docs: {counts.docs_raw}",
+            f"- chunks: {counts.chunks_raw} raw + {counts.chunks_wiki} wiki",
+            "",
+        ]
 
+        existing = log_path.read_text(encoding="utf-8") if log_path.exists() else ""
+        log_path.write_text(existing + "\n".join(lines) + "\n", encoding="utf-8")
 
-async def _gather_log_counts(ctx: PipelineContext) -> CompileLogCounts:
-    topic_repo = TopicRepository(ctx.session)
-    doc_repo = DocumentRepository(ctx.session)
-    search_svc = SearchService(SearchIndexRepository(ctx.session))
-    return CompileLogCounts(
-        topics_total=await topic_repo.count_all(ctx.vault_id),
-        topics_rendered=await topic_repo.count_by_status(
-            ctx.vault_id, ArticleStatus.RENDERED
-        ),
-        topics_archived=await topic_repo.count_by_status(
-            ctx.vault_id, ArticleStatus.ARCHIVED
-        ),
-        topics_dirty=await topic_repo.count_dirty(ctx.vault_id),
-        docs_raw=await doc_repo.count_by_kind(ctx.vault_id, DocKind.RAW),
-        chunks_raw=await search_svc.count_by_prefix(ctx.vault_id, RAW_PREFIX),
-        chunks_wiki=await search_svc.count_by_prefix(ctx.vault_id, WIKI_PREFIX),
-    )
+    # ---------------------------------------------------------------------------
+    # Loaders
+    # ---------------------------------------------------------------------------
 
-
-def _append_compile_log(ctx: PipelineContext, counts: CompileLogCounts) -> None:
-    log_path = compile_log_path(ctx.sidecar_root)
-    log_path.parent.mkdir(parents=True, exist_ok=True)
-
-    ts = datetime.now(timezone.utc).isoformat(timespec="seconds")
-    lines = [
-        f"## {ts}",
-        f"- topics: {counts.topics_total} "
-        f"(rendered {counts.topics_rendered}, "
-        f"archived {counts.topics_archived}, "
-        f"dirty {counts.topics_dirty})",
-        f"- raw docs: {counts.docs_raw}",
-        f"- chunks: {counts.chunks_raw} raw + {counts.chunks_wiki} wiki",
-        "",
-    ]
-
-    existing = log_path.read_text(encoding="utf-8") if log_path.exists() else ""
-    log_path.write_text(existing + "\n".join(lines) + "\n", encoding="utf-8")
-
-
-# ---------------------------------------------------------------------------
-# Loaders
-# ---------------------------------------------------------------------------
-
-
-async def _load_raw_documents(ctx: PipelineContext) -> list[Document]:
-    return await DocumentRepository(ctx.session).list_by_kind(ctx.vault_id, DocKind.RAW)
+    async def _load_raw_documents(self) -> list[Document]:
+        return await self.documents.list_by_kind(self.vault_id, DocKind.RAW)

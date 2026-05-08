@@ -13,6 +13,7 @@ from great_minds.core.topics.schemas import (
     ArticleStatus,
     Topic,
     TopicDetail,
+    TopicLink,
 )
 
 
@@ -26,6 +27,15 @@ class TopicService:
     async def list_archived(self, vault_id: UUID) -> list[Topic]:
         return await self.repo.list_by_status(vault_id, ArticleStatus.ARCHIVED)
 
+    async def count_all(self, vault_id: UUID) -> int:
+        return await self.repo.count_all(vault_id)
+
+    async def count_by_status(self, vault_id: UUID, status: ArticleStatus) -> int:
+        return await self.repo.count_by_status(vault_id, status)
+
+    async def count_dirty(self, vault_id: UUID) -> int:
+        return await self.repo.count_dirty(vault_id)
+
     async def get_by_slug(self, vault_id: UUID, slug: str) -> Topic | None:
         return await self.repo.get_by_slug(vault_id, slug)
 
@@ -34,6 +44,11 @@ class TopicService:
 
     async def get_related(self, topic_id: UUID, limit: int = 20) -> list[Topic]:
         return await self.repo.get_related(topic_id, limit)
+
+    async def list_links_for_vault(
+        self, vault_id: UUID, source_topic_ids: list[UUID] | None = None
+    ) -> list[TopicLink]:
+        return await self.repo.list_links_for_vault(vault_id, source_topic_ids)
 
     async def rebuild_derived_tables(
         self,
