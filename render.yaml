@@ -50,7 +50,7 @@ projects:
             runtime: docker
             plan: standard
             region: virginia
-            dockerCommand: sh -c "alembic upgrade head && great-minds worker --concurrency 1"
+            dockerCommand: great-minds worker --concurrency 1
             disk:
               name: data
               mountPath: /data
