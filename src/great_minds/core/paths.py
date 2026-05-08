@@ -103,10 +103,6 @@ def sidecar_root(data_dir: Path, vault_id: UUID | str) -> Path:
     return Path(data_dir) / COMPILE_DIR / str(vault_id)
 
 
-def cache_root(sidecar: Path) -> Path:
-    return sidecar / "cache"
-
-
 def source_cards_path(sidecar: Path) -> Path:
     return sidecar / "source_cards.jsonl"
 

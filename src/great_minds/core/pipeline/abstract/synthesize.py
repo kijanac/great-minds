@@ -152,7 +152,11 @@ async def _synthesize_one(
 
     cache_key = _cache_key(idea_ids=present, prompt_hash=prompt_hash, model=MAP_MODEL)
 
-    cached = ctx.cache.get(PHASE, cache_key)
+    cached = await ctx.compile_cache.get(
+        vault_id=ctx.vault_id,
+        phase=PHASE,
+        cache_key=cache_key,
+    )
     if cached is not None:
         try:
             outcome.local_topics = [
@@ -192,10 +196,11 @@ async def _synthesize_one(
         outcome.error = f"llm_call:{repr(e)[:200]}"
         return outcome
 
-    ctx.cache.put(
-        PHASE,
-        cache_key,
-        {
+    await ctx.compile_cache.put(
+        vault_id=ctx.vault_id,
+        phase=PHASE,
+        cache_key=cache_key,
+        value={
             "local_topics": [t.model_dump(mode="json") for t in outcome.local_topics],
         },
     )

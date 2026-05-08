@@ -118,12 +118,10 @@ async def run(ctx: PipelineContext) -> None:
     # Per-doc trackers for the embedding loop. Populated only inside
     # the success branch below where source_card is narrowed to non-None.
     cards: list[SourceCard] = []
-    cached_embeddings: list[IdeaEmbedding] = []
     embedding_inputs: list[tuple[UUID, UUID, Idea]] = []
     fresh_source_cards: dict[UUID, SourceCard] = {}
-    fresh_cache_keys: dict[UUID, str] = {}
-    pending_per_doc: dict[UUID, int] = {}
-    embeddings_by_doc: dict[UUID, list[IdeaEmbedding]] = {}
+    idea_repo = IdeaEmbeddingRepository(ctx.session)
+    existing_embedding_ids = set(await idea_repo.get_ids_for_vault(ctx.vault_id))
     docs_extracted = 0
     cache_hits = 0
     cache_misses = 0
@@ -150,54 +148,27 @@ async def run(ctx: PipelineContext) -> None:
         ideas_emitted += len(source_card.ideas)
         if outcome.cache_hit:
             cache_hits += 1
-            cached_embeddings.extend(outcome.embeddings)
+            for idea in source_card.ideas:
+                if idea.idea_id not in existing_embedding_ids:
+                    embedding_inputs.append((ctx.vault_id, outcome.document_id, idea))
         else:
             cache_misses += 1
             fresh_source_cards[outcome.document_id] = source_card
-            fresh_cache_keys[outcome.document_id] = outcome.cache_key
-            pending_per_doc[outcome.document_id] = len(source_card.ideas)
-            embeddings_by_doc[outcome.document_id] = []
+            await _write_cache(
+                ctx,
+                cache_key=outcome.cache_key,
+                source_card=source_card,
+            )
             for idea in source_card.ideas:
                 embedding_inputs.append((ctx.vault_id, outcome.document_id, idea))
 
-    # Write each fresh doc's cache entry as soon as all its ideas are
-    # embedded. A mid-phase crash preserves LLM + embedding work for
-    # every doc that completed before the crash; only docs whose
-    # embeddings spanned the failing batch lose work and re-LLM next
-    # attempt. DB writes that follow are idempotent upserts, so caching
-    # ahead of commit can't produce a state the DB won't agree with on
-    # the next run.
+    # Extract cache stores only the LLM output (SourceCard). Embeddings are
+    # derived vector-index rows in idea_embeddings; if a crash happens after
+    # caching but before embedding upsert, replay reuses the SourceCard and
+    # regenerates only missing embeddings.
     fresh_embeddings: list[IdeaEmbedding] = []
-
-    # Cache empty-idea docs immediately (no embeddings to wait on).
-    for doc_id, remaining in list(pending_per_doc.items()):
-        if remaining == 0:
-            _write_cache(
-                ctx,
-                cache_key=fresh_cache_keys[doc_id],
-                source_card=fresh_source_cards[doc_id],
-                embeddings=[],
-            )
-            del pending_per_doc[doc_id]
-
     async for batch in _embed_in_batches(ctx.client, embedding_inputs):
         fresh_embeddings.extend(batch)
-        completed: list[UUID] = []
-        for emb in batch:
-            embeddings_by_doc[emb.document_id].append(emb)
-            pending_per_doc[emb.document_id] -= 1
-            if pending_per_doc[emb.document_id] == 0:
-                completed.append(emb.document_id)
-        for doc_id in completed:
-            _write_cache(
-                ctx,
-                cache_key=fresh_cache_keys[doc_id],
-                source_card=fresh_source_cards[doc_id],
-                embeddings=embeddings_by_doc[doc_id],
-            )
-            del pending_per_doc[doc_id]
-
-    idea_repo = IdeaEmbeddingRepository(ctx.session)
     idea_service = IdeaService(
         vault_id=ctx.vault_id,
         embedding_repo=idea_repo,
@@ -205,7 +176,7 @@ async def run(ctx: PipelineContext) -> None:
     )
     for doc_id in fresh_source_cards:
         await idea_repo.delete_for_document(doc_id)
-    await idea_service.record_extractions(cards, cached_embeddings + fresh_embeddings)
+    await idea_service.record_extractions(cards, fresh_embeddings)
     await DocumentRepository(ctx.session).update_metadata_from_cards(
         ctx.vault_id, cards
     )
@@ -267,12 +238,13 @@ async def _extract_one(
         )
         outcome.cache_key = cache_key
 
-        cached = ctx.cache.get(PHASE, cache_key)
+        cached = await ctx.compile_cache.get(
+            vault_id=ctx.vault_id,
+            phase=PHASE,
+            cache_key=cache_key,
+        )
         if cached is not None:
             outcome.source_card = SourceCard.model_validate(cached["source_card"])
-            outcome.embeddings = [
-                IdeaEmbedding.model_validate(e) for e in cached["embeddings"]
-            ]
             outcome.cache_hit = True
             return outcome
 
@@ -482,18 +454,19 @@ async def _load_documents(session, vault_id: UUID) -> list[Document]:
     return await DocumentRepository(session).list_by_kind(vault_id, DocKind.RAW)
 
 
-def _write_cache(
+async def _write_cache(
     ctx: PipelineContext,
     *,
     cache_key: str,
     source_card: SourceCard,
-    embeddings: list[IdeaEmbedding],
 ) -> None:
-    ctx.cache.put(
-        PHASE,
-        cache_key,
-        {
-            "source_card": source_card.model_dump(mode="json"),
-            "embeddings": [e.model_dump(mode="json") for e in embeddings],
-        },
+    await ctx.compile_cache.put(
+        vault_id=ctx.vault_id,
+        phase=PHASE,
+        cache_key=cache_key,
+        value={"source_card": source_card.model_dump(mode="json")},
     )
+    # Extract writes cache entries before embedding/vector-index upserts.
+    # Commit each entry so a mid-phase crash can replay from DB cache and
+    # repair missing idea/document/vector rows without repeating LLM work.
+    await ctx.session.commit()

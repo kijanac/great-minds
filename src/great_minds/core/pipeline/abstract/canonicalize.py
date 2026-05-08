@@ -64,7 +64,11 @@ async def run(
         thematic_hint=ctx.config.thematic_hint,
     )
 
-    cached = ctx.cache.get(PHASE, cache_key)
+    cached = await ctx.compile_cache.get(
+        vault_id=ctx.vault_id,
+        phase=PHASE,
+        cache_key=cache_key,
+    )
     if cached is not None:
         canonical_topics = [
             CanonicalTopic.model_validate(c) for c in cached["canonical_topics"]
@@ -105,10 +109,13 @@ async def run(
     covered = _covered_local_ids(canonical_topics, set(tag_to_uuid.values()))
     orphans = len(tag_to_uuid) - len(covered)
 
-    ctx.cache.put(
-        PHASE,
-        cache_key,
-        {"canonical_topics": [c.model_dump(mode="json") for c in canonical_topics]},
+    await ctx.compile_cache.put(
+        vault_id=ctx.vault_id,
+        phase=PHASE,
+        cache_key=cache_key,
+        value={
+            "canonical_topics": [c.model_dump(mode="json") for c in canonical_topics]
+        },
     )
 
     enrich(

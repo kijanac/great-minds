@@ -55,7 +55,11 @@ async def run(ctx: PipelineContext, source_cards: list[SourceCard]) -> list[list
         return []
 
     cache_key = _cache_key(id_order, target)
-    cached = ctx.cache.get(PHASE, cache_key)
+    cached = await ctx.compile_cache.get(
+        vault_id=ctx.vault_id,
+        phase=PHASE,
+        cache_key=cache_key,
+    )
     if cached is not None:
         chunks = [[UUID(x) for x in c] for c in cached["chunks"]]
         enrich(
@@ -95,10 +99,11 @@ async def run(ctx: PipelineContext, source_cards: list[SourceCard]) -> list[list
         min_tokens=min_tokens,
     )
 
-    ctx.cache.put(
-        PHASE,
-        cache_key,
-        {
+    await ctx.compile_cache.put(
+        vault_id=ctx.vault_id,
+        phase=PHASE,
+        cache_key=cache_key,
+        value={
             "chunks": [[str(u) for u in c] for c in chunks],
             "k_initial": k,
             "total_tokens": total_tokens,

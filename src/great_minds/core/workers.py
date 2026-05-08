@@ -26,6 +26,7 @@ from great_minds.core.pipeline import (
     render,
     verify,
 )
+from great_minds.core.pipeline.steps import absurd_step_runner
 from great_minds.core.pipeline.abstract.schemas import ValidatedCanonicalTopic
 from great_minds.core.vaults.config import load_config
 from great_minds.core.vaults.repository import VaultRepository
@@ -156,6 +157,7 @@ async def compile_task(params: dict, ctx) -> None:
             storage=storage,
             session=session,
             client=client,
+            steps=absurd_step_runner(ctx),
         )
 
         # Phase 0 — mechanical chunking + embedding of raw docs

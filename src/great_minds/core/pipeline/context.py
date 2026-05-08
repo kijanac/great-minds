@@ -14,8 +14,9 @@ from openai import AsyncOpenAI
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from great_minds.core.vaults.config import VaultConfig, load_vault_config
-from great_minds.core.paths import cache_root, sidecar_root
-from great_minds.core.pipeline.cache import ContentHashCache
+from great_minds.core.paths import sidecar_root
+from great_minds.core.compile_cache import CompileCacheRepository
+from great_minds.core.pipeline.steps import StepRunner, inline_step_runner
 from great_minds.core.settings import get_settings
 from great_minds.core.storage import Storage
 from great_minds.core.pipeline_runs import PipelineProgressRunner
@@ -31,7 +32,8 @@ class PipelineContext:
     session: AsyncSession
     client: AsyncOpenAI
     config: VaultConfig
-    cache: ContentHashCache
+    compile_cache: CompileCacheRepository
+    steps: StepRunner
 
 
 async def build_context(
@@ -42,6 +44,7 @@ async def build_context(
     storage: Storage,
     session: AsyncSession,
     client: AsyncOpenAI,
+    steps: StepRunner | None = None,
 ) -> PipelineContext:
     """Assemble the context a pipeline run needs from its inputs.
 
@@ -60,5 +63,6 @@ async def build_context(
         session=session,
         client=client,
         config=await load_vault_config(storage),
-        cache=ContentHashCache(cache_root(sidecar)),
+        compile_cache=CompileCacheRepository(session),
+        steps=steps or inline_step_runner(),
     )

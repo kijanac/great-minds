@@ -95,13 +95,14 @@ async def run(
     prompt_template = await load_prompt(ctx.storage, "render")
     ph = prompt_hash(prompt_template)
 
-    # Pre-pass: one storage list + N in-memory cache checks decides which
-    # topics actually need rendering. On a full-cache-hit replay this
-    # short-circuits before any sidecar / DB load — single network
-    # roundtrip instead of N storage.exists HEADs.
+    # Pre-pass: one storage list + N DB cache checks decides which topics
+    # need LLM rendering, which can be skipped, and which have a cached
+    # body/tags payload that can repair a missing wiki file.
     existing_wiki = set(await ctx.storage.glob("wiki/*.md"))
     to_render: list[ValidatedCanonicalTopic] = []
+    to_materialize: list[tuple[ValidatedCanonicalTopic, _RenderOutput]] = []
     cache_hits = 0
+    cache_invalid = 0
     for topic in validated:
         cache_key = _cache_key(
             topic_id=topic.topic_id,
@@ -109,37 +110,82 @@ async def run(
             link_targets=topic.link_targets,
             prompt_hash=ph,
         )
-        if ctx.cache.has(PHASE, cache_key) and wiki_path(topic.slug) in existing_wiki:
+        cached = await ctx.compile_cache.get(
+            vault_id=ctx.vault_id,
+            phase=PHASE,
+            cache_key=cache_key,
+        )
+        if cached is None:
+            to_render.append(topic)
+            continue
+        try:
+            output = _RenderOutput.model_validate(cached)
+        except ValidationError:
+            cache_invalid += 1
+            to_render.append(topic)
+            continue
+        if wiki_path(topic.slug) in existing_wiki:
             cache_hits += 1
             continue
-        to_render.append(topic)
+        to_materialize.append((topic, output))
 
-    total_to_render = len(to_render)
-    if total_to_render > 0:
+    total_work = len(to_materialize) + len(to_render)
+    if total_work > 0:
         await ctx.progress.emit(
             pipeline_run_id=ctx.pipeline_run_id,
             phase="render",
             status="progress",
             done=0,
-            total=total_to_render,
+            total=total_work,
         )
 
+    materialized = 0
+    repo = TopicRepository(ctx.session)
+    for topic, output in to_materialize:
+        compiled_from_hash = await _write_rendered_article(
+            ctx=ctx,
+            topic=topic,
+            body=output.body,
+            tags=output.tags,
+        )
+        await repo.set_rendered(topic.topic_id, rendered_from_hash=compiled_from_hash)
+        materialized += 1
+        await ctx.progress.emit(
+            pipeline_run_id=ctx.pipeline_run_id,
+            phase="render",
+            status="progress",
+            done=materialized,
+            total=total_work,
+        )
+
+    if materialized:
+        await ctx.session.commit()
+
     if not to_render:
+        wiki_chunks_indexed = 0
+        if materialized:
+            wiki_chunks_indexed = await rebuild_wiki_index(
+                ctx.session, ctx.vault_id, ctx.storage, client=ctx.client
+            )
+        topics_rendered = cache_hits + materialized
         enrich(
-            render_topics_rendered=cache_hits,
-            render_cache_hits=cache_hits,
+            render_topics_rendered=topics_rendered,
+            render_cache_hits=cache_hits + materialized,
             render_cache_misses=0,
             render_topics_failed=0,
-            render_wiki_chunks_indexed=0,
+            render_cache_invalid=cache_invalid,
+            render_wiki_chunks_indexed=wiki_chunks_indexed,
         )
         log_event(
             "pipeline.render_completed",
             vault_id=str(ctx.vault_id),
-            topics_rendered=cache_hits,
+            topics_rendered=topics_rendered,
             cache_hits=cache_hits,
+            cache_materialized=materialized,
             cache_misses=0,
+            cache_invalid=cache_invalid,
             topics_failed=0,
-            wiki_chunks_indexed=0,
+            wiki_chunks_indexed=wiki_chunks_indexed,
         )
         return
 
@@ -176,11 +222,10 @@ async def run(
             pipeline_run_id=ctx.pipeline_run_id,
             phase="render",
             status="progress",
-            done=topics_done,
-            total=total_to_render,
+            done=materialized + topics_done,
+            total=total_work,
         )
 
-    repo = TopicRepository(ctx.session)
     cache_misses = 0
     topics_failed = 0
     for outcome in outcomes:
@@ -196,17 +241,18 @@ async def run(
     await ctx.session.commit()
 
     wiki_chunks_indexed = 0
-    if cache_misses:
+    if materialized or cache_misses:
         wiki_chunks_indexed = await rebuild_wiki_index(
             ctx.session, ctx.vault_id, ctx.storage, client=ctx.client
         )
 
-    topics_rendered = cache_hits + cache_misses
+    topics_rendered = cache_hits + materialized + cache_misses
     enrich(
         render_topics_rendered=topics_rendered,
-        render_cache_hits=cache_hits,
+        render_cache_hits=cache_hits + materialized,
         render_cache_misses=cache_misses,
         render_topics_failed=topics_failed,
+        render_cache_invalid=cache_invalid,
         render_wiki_chunks_indexed=wiki_chunks_indexed,
     )
     log_event(
@@ -214,7 +260,9 @@ async def run(
         vault_id=str(ctx.vault_id),
         topics_rendered=topics_rendered,
         cache_hits=cache_hits,
+        cache_materialized=materialized,
         cache_misses=cache_misses,
+        cache_invalid=cache_invalid,
         topics_failed=topics_failed,
         wiki_chunks_indexed=wiki_chunks_indexed,
     )
@@ -232,80 +280,15 @@ class _RenderOutcome:
     rendered_from_hash: str = ""
 
 
-async def _render_one(
+async def _write_rendered_article(
     *,
     ctx: PipelineContext,
-    sem: asyncio.Semaphore,
     topic: ValidatedCanonicalTopic,
-    idea_by_id: dict[UUID, tuple[Idea, SourceCard]],
-    doc_by_id: dict[UUID, Document],
-    topic_by_slug: dict[str, ValidatedCanonicalTopic],
-    prompt_template: str,
-    prompt_hash: str,
-) -> _RenderOutcome:
-    """Render one topic. Caller has already determined this is a cache miss."""
-    outcome = _RenderOutcome(topic_id=topic.topic_id)
+    body: str,
+    tags: list[str],
+) -> str:
+    """Materialize a rendered body/tags pair into storage + document index."""
     article_path = wiki_path(topic.slug)
-
-    numbered_anchors = _build_numbered_anchors(topic, idea_by_id, doc_by_id)
-    compiled_from_hash = _topic_content_hash(topic)
-    cache_key = _cache_key(
-        topic_id=topic.topic_id,
-        compiled_from_hash=compiled_from_hash,
-        link_targets=topic.link_targets,
-        prompt_hash=prompt_hash,
-    )
-
-    idea_block = _render_idea_block(
-        topic=topic,
-        numbered_anchors=numbered_anchors,
-        idea_by_id=idea_by_id,
-        doc_by_id=doc_by_id,
-    )
-    link_targets_block = _render_link_targets_block(topic.link_targets, topic_by_slug)
-    prompt = (
-        prompt_template.replace("{title}", topic.title)
-        .replace("{description}", topic.description)
-        .replace("{idea_block}", idea_block)
-        .replace("{link_targets_block}", link_targets_block or "(none)")
-    )
-
-    try:
-        async with sem:
-            data = await json_llm_call(
-                ctx.client,
-                model=RENDER_MODEL,
-                messages=[{"role": "user", "content": prompt}],
-                temperature=0.3,
-            )
-    except Exception as e:
-        outcome.error = f"llm_call:{repr(e)[:200]}"
-        log_event(
-            "render.topic_failed",
-            level=logging.WARNING,
-            vault_id=str(ctx.vault_id),
-            topic_slug=topic.slug,
-            error=outcome.error,
-        )
-        return outcome
-
-    try:
-        output = _RenderOutput.model_validate(data)
-        body = _validate_and_postprocess(output.body, numbered_anchors)
-    except (ValidationError, ValueError) as e:
-        outcome.error = f"body_invalid:{type(e).__name__}:{str(e)[:200]}"
-        log_event(
-            "render.body_invalid",
-            level=logging.WARNING,
-            vault_id=str(ctx.vault_id),
-            topic_slug=topic.slug,
-            error=outcome.error,
-            response_preview=str(data)[:300],
-        )
-        return outcome
-
-    tags = output.tags
-
     fm = {
         "topic_id": str(topic.topic_id),
         "title": topic.title,
@@ -335,8 +318,104 @@ async def _render_one(
             ),
         ),
     )
+    return _topic_content_hash(topic)
 
-    ctx.cache.put(PHASE, cache_key, {"body": body, "tags": tags})
+
+async def _call_render_llm(
+    ctx: PipelineContext,
+    sem: asyncio.Semaphore,
+    prompt: str,
+) -> dict:
+    async with sem:
+        return await json_llm_call(
+            ctx.client,
+            model=RENDER_MODEL,
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0.3,
+        )
+
+
+async def _render_one(
+    *,
+    ctx: PipelineContext,
+    sem: asyncio.Semaphore,
+    topic: ValidatedCanonicalTopic,
+    idea_by_id: dict[UUID, tuple[Idea, SourceCard]],
+    doc_by_id: dict[UUID, Document],
+    topic_by_slug: dict[str, ValidatedCanonicalTopic],
+    prompt_template: str,
+    prompt_hash: str,
+) -> _RenderOutcome:
+    """Render one topic. Caller has already determined this is a cache miss."""
+    outcome = _RenderOutcome(topic_id=topic.topic_id)
+
+    numbered_anchors = _build_numbered_anchors(topic, idea_by_id, doc_by_id)
+    compiled_from_hash = _topic_content_hash(topic)
+    cache_key = _cache_key(
+        topic_id=topic.topic_id,
+        compiled_from_hash=compiled_from_hash,
+        link_targets=topic.link_targets,
+        prompt_hash=prompt_hash,
+    )
+
+    idea_block = _render_idea_block(
+        topic=topic,
+        numbered_anchors=numbered_anchors,
+        idea_by_id=idea_by_id,
+        doc_by_id=doc_by_id,
+    )
+    link_targets_block = _render_link_targets_block(topic.link_targets, topic_by_slug)
+    prompt = (
+        prompt_template.replace("{title}", topic.title)
+        .replace("{description}", topic.description)
+        .replace("{idea_block}", idea_block)
+        .replace("{link_targets_block}", link_targets_block or "(none)")
+    )
+
+    try:
+        data = await ctx.steps.step(
+            f"render-topic-llm-{topic.topic_id}-{cache_key}",
+            _call_render_llm,
+            ctx,
+            sem,
+            prompt,
+        )
+    except Exception as e:
+        outcome.error = f"llm_call:{repr(e)[:200]}"
+        log_event(
+            "render.topic_failed",
+            level=logging.WARNING,
+            vault_id=str(ctx.vault_id),
+            topic_slug=topic.slug,
+            error=outcome.error,
+        )
+        return outcome
+
+    try:
+        output = _RenderOutput.model_validate(data)
+        body = _validate_and_postprocess(output.body, numbered_anchors)
+    except (ValidationError, ValueError) as e:
+        outcome.error = f"body_invalid:{type(e).__name__}:{str(e)[:200]}"
+        log_event(
+            "render.body_invalid",
+            level=logging.WARNING,
+            vault_id=str(ctx.vault_id),
+            topic_slug=topic.slug,
+            error=outcome.error,
+            response_preview=str(data)[:300],
+        )
+        return outcome
+
+    tags = output.tags
+
+    await _write_rendered_article(ctx=ctx, topic=topic, body=body, tags=tags)
+
+    await ctx.compile_cache.put(
+        vault_id=ctx.vault_id,
+        phase=PHASE,
+        cache_key=cache_key,
+        value={"body": body, "tags": tags},
+    )
     outcome.rendered_from_hash = compiled_from_hash
     return outcome
 
