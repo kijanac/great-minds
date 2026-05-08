@@ -43,8 +43,8 @@ async def run(ctx: PipelineContext, source_cards: list[SourceCard]) -> list[list
 
     repo = IdeaEmbeddingRepository(ctx.session)
     idea_embeddings = await repo.list_for_vault(ctx.vault_id)
-    embedding_vectors = {e.idea_id: e.embedding for e in idea_embeddings}
-    id_order = sorted(embedding_vectors)  # deterministic order
+    idea_embeddings.sort(key=lambda e: e.idea_id)
+    id_order = [e.idea_id for e in idea_embeddings]  # deterministic order
 
     if not id_order:
         log_event(
@@ -73,38 +73,38 @@ async def run(ctx: PipelineContext, source_cards: list[SourceCard]) -> list[list
         )
         return chunks
 
-    tokens_per_idea = {
-        iid: _estimate_idea_tokens(idea_index[iid])
+    tokens_by_row = [
+        _estimate_idea_tokens(idea_index[iid]) if iid in idea_index else 100
         for iid in id_order
-        if iid in idea_index
-    }
-    # Ideas with no matching source_card (shouldn't happen post-extract,
-    # but be robust) get a conservative default.
-    for iid in id_order:
-        if iid not in tokens_per_idea:
-            tokens_per_idea[iid] = 100
-    total_tokens = sum(tokens_per_idea.values())
+    ]
+    total_tokens = sum(tokens_by_row)
 
     k = max(1, math.ceil(total_tokens / target))
     k = min(k, len(id_order))
 
-    labels = _seeded_kmeans(embedding_vectors, id_order, k)
+    embedding_matrix = np.asarray(
+        [e.embedding for e in idea_embeddings], dtype=np.float32
+    )
+    del idea_embeddings
 
-    chunks = _group_by_label(id_order, labels)
+    labels = _seeded_kmeans(embedding_matrix, k)
+
+    chunks = _group_by_label(labels)
     chunks = _rebalance(
         chunks=chunks,
-        tokens_per_idea=tokens_per_idea,
-        embeddings=embedding_vectors,
+        tokens_by_row=tokens_by_row,
+        embedding_matrix=embedding_matrix,
         max_tokens=max_tokens,
         min_tokens=min_tokens,
     )
+    chunks_by_id = [[id_order[row] for row in chunk] for chunk in chunks]
 
     await ctx.compile_cache.put(
         vault_id=ctx.vault_id,
         phase=PHASE,
         cache_key=cache_key,
         value={
-            "chunks": [[str(u) for u in c] for c in chunks],
+            "chunks": [[str(u) for u in c] for c in chunks_by_id],
             "k_initial": k,
             "total_tokens": total_tokens,
         },
@@ -113,17 +113,17 @@ async def run(ctx: PipelineContext, source_cards: list[SourceCard]) -> list[list
     enrich(
         partition_cache_hit=False,
         partition_k_initial=k,
-        partition_chunk_count=len(chunks),
+        partition_chunk_count=len(chunks_by_id),
         partition_total_tokens=total_tokens,
     )
     log_event(
         "pipeline.partition_completed",
         vault_id=str(ctx.vault_id),
         k_initial=k,
-        chunk_count=len(chunks),
+        chunk_count=len(chunks_by_id),
         total_tokens=total_tokens,
     )
-    return chunks
+    return chunks_by_id
 
 
 # ---------------------------------------------------------------------------
@@ -161,65 +161,60 @@ def _estimate_idea_tokens(item: tuple[Idea, SourceCard]) -> int:
 # ---------------------------------------------------------------------------
 
 
-def _seeded_kmeans(
-    embeddings: dict[UUID, list[float]],
-    id_order: list[UUID],
-    k: int,
-) -> dict[UUID, int]:
+def _seeded_kmeans(embedding_matrix: np.ndarray, k: int) -> list[int]:
     if k == 1:
-        return {iid: 0 for iid in id_order}
+        return [0] * len(embedding_matrix)
 
-    matrix = np.array([embeddings[iid] for iid in id_order], dtype=np.float32)
     km = KMeans(n_clusters=k, random_state=KMEANS_SEED, n_init=KMEANS_N_INIT)
-    labels = km.fit_predict(matrix)
-    return {iid: int(lab) for iid, lab in zip(id_order, labels)}
+    return [int(lab) for lab in km.fit_predict(embedding_matrix)]
 
 
-def _group_by_label(id_order: list[UUID], labels: dict[UUID, int]) -> list[list[UUID]]:
-    grouped: dict[int, list[UUID]] = {}
-    for iid in id_order:
-        grouped.setdefault(labels[iid], []).append(iid)
-    # Sort by label for determinism; idea_ids within a chunk already
-    # sorted by their position in id_order.
+def _group_by_label(labels: list[int]) -> list[list[int]]:
+    grouped: dict[int, list[int]] = {}
+    for row, label in enumerate(labels):
+        grouped.setdefault(label, []).append(row)
+    # Sort by label for determinism; row indices already follow id_order.
     return [grouped[k] for k in sorted(grouped)]
 
 
 def _rebalance(
     *,
-    chunks: list[list[UUID]],
-    tokens_per_idea: dict[UUID, int],
-    embeddings: dict[UUID, list[float]],
+    chunks: list[list[int]],
+    tokens_by_row: list[int],
+    embedding_matrix: np.ndarray,
     max_tokens: int,
     min_tokens: int,
-) -> list[list[UUID]]:
+) -> list[list[int]]:
     """Split oversize chunks by sub-k-means; merge undersize chunks into
     nearest centroid. Deterministic: ties broken by sorted idea_id.
     """
     chunks = [
         split
         for chunk in chunks
-        for split in _split_recursively(chunk, tokens_per_idea, embeddings, max_tokens)
+        for split in _split_recursively(
+            chunk, tokens_by_row, embedding_matrix, max_tokens
+        )
     ]
     chunks = _merge_undersize(
-        chunks, tokens_per_idea, embeddings, min_tokens, max_tokens
+        chunks, tokens_by_row, embedding_matrix, min_tokens, max_tokens
     )
     return chunks
 
 
-def _chunk_tokens(chunk: list[UUID], tokens_per_idea: dict[UUID, int]) -> int:
-    return sum(tokens_per_idea[i] for i in chunk)
+def _chunk_tokens(chunk: list[int], tokens_by_row: list[int]) -> int:
+    return sum(tokens_by_row[row] for row in chunk)
 
 
 def _split_recursively(
-    chunk: list[UUID],
-    tokens_per_idea: dict[UUID, int],
-    embeddings: dict[UUID, list[float]],
+    chunk: list[int],
+    tokens_by_row: list[int],
+    embedding_matrix: np.ndarray,
     max_tokens: int,
-) -> list[list[UUID]]:
-    if _chunk_tokens(chunk, tokens_per_idea) <= max_tokens or len(chunk) < 2:
+) -> list[list[int]]:
+    if _chunk_tokens(chunk, tokens_by_row) <= max_tokens or len(chunk) < 2:
         return [chunk]
     ordered = sorted(chunk)
-    matrix = np.array([embeddings[i] for i in ordered], dtype=np.float32)
+    matrix = embedding_matrix[ordered]
     km = KMeans(n_clusters=2, random_state=KMEANS_SEED, n_init=KMEANS_N_INIT)
     labels = km.fit_predict(matrix)
     part_a = [i for i, lab in zip(ordered, labels) if lab == 0]
@@ -229,23 +224,26 @@ def _split_recursively(
     if not part_a or not part_b:
         mid = len(ordered) // 2
         part_a, part_b = ordered[:mid], ordered[mid:]
-    return _split_recursively(part_a, tokens_per_idea, embeddings, max_tokens) + (
-        _split_recursively(part_b, tokens_per_idea, embeddings, max_tokens)
+    return _split_recursively(part_a, tokens_by_row, embedding_matrix, max_tokens) + (
+        _split_recursively(part_b, tokens_by_row, embedding_matrix, max_tokens)
     )
 
 
 def _merge_undersize(
-    chunks: list[list[UUID]],
-    tokens_per_idea: dict[UUID, int],
-    embeddings: dict[UUID, list[float]],
+    chunks: list[list[int]],
+    tokens_by_row: list[int],
+    embedding_matrix: np.ndarray,
     min_tokens: int,
     max_tokens: int,
-) -> list[list[UUID]]:
+) -> list[list[int]]:
     if len(chunks) <= 1:
         return chunks
 
-    centroids = [_centroid(c, embeddings) for c in chunks]
-    sizes = [_chunk_tokens(c, tokens_per_idea) for c in chunks]
+    centroids = np.asarray(
+        [embedding_matrix[c].mean(axis=0) for c in chunks], dtype=np.float32
+    )
+    normalized_centroids = _normalize_rows(centroids)
+    sizes = [_chunk_tokens(c, tokens_by_row) for c in chunks]
 
     while True:
         under_indices = [i for i, s in enumerate(sizes) if s < min_tokens]
@@ -255,44 +253,47 @@ def _merge_undersize(
         under_indices.sort(key=lambda i: (sizes[i], sorted(chunks[i])[0]))
         src = under_indices[0]
 
-        nearest, nearest_dist = None, float("inf")
-        for j in range(len(chunks)):
-            if j == src:
-                continue
-            if sizes[src] + sizes[j] > max_tokens:
-                continue
-            dist = _cosine_distance(centroids[src], centroids[j])
-            if dist < nearest_dist:
-                nearest_dist = dist
-                nearest = j
-        if nearest is None:
+        valid = np.asarray(
+            [
+                i != src and sizes[src] + size <= max_tokens
+                for i, size in enumerate(sizes)
+            ]
+        )
+        if not valid.any():
+            # Can't merge without blowing max_tokens — leave as-is.
+            break
+        similarities = normalized_centroids @ normalized_centroids[src]
+        distances = 1.0 - similarities
+        distances[~valid] = np.inf
+        nearest = int(np.argmin(distances))
+        if not np.isfinite(distances[nearest]):
             # Can't merge without blowing max_tokens — leave as-is.
             break
 
         merged = sorted(chunks[src] + chunks[nearest])
-        merged_centroid = _centroid(merged, embeddings)
+        merged_centroid = embedding_matrix[merged].mean(axis=0)
         merged_size = sizes[src] + sizes[nearest]
 
         # Remove the two merged chunks, insert the result (rebuild lists
         # to avoid fiddly index bookkeeping).
         to_drop = {src, nearest}
         chunks = [c for i, c in enumerate(chunks) if i not in to_drop] + [merged]
-        centroids = [c for i, c in enumerate(centroids) if i not in to_drop] + [
-            merged_centroid
-        ]
+        centroids = np.asarray(
+            [c for i, c in enumerate(centroids) if i not in to_drop]
+            + [merged_centroid],
+            dtype=np.float32,
+        )
+        normalized_centroids = _normalize_rows(centroids)
         sizes = [s for i, s in enumerate(sizes) if i not in to_drop] + [merged_size]
 
     return chunks
 
 
-def _centroid(chunk: list[UUID], embeddings: dict[UUID, list[float]]) -> np.ndarray:
-    vecs = np.array([embeddings[i] for i in chunk], dtype=np.float32)
-    return vecs.mean(axis=0)
-
-
-def _cosine_distance(a: np.ndarray, b: np.ndarray) -> float:
-    denom = (np.linalg.norm(a) * np.linalg.norm(b)) or 1.0
-    return float(1.0 - np.dot(a, b) / denom)
+def _normalize_rows(matrix: np.ndarray) -> np.ndarray:
+    norms = np.linalg.norm(matrix, axis=1, keepdims=True)
+    out = np.zeros_like(matrix)
+    np.divide(matrix, norms, out=out, where=norms != 0)
+    return out
 
 
 # ---------------------------------------------------------------------------
