@@ -28,7 +28,7 @@ from great_minds.core.llm import REDUCE_MODEL
 from great_minds.core.pipeline.abstract.schemas import LocalTopic
 from great_minds.core.pipeline.context import PipelineContext
 from great_minds.core.telemetry import enrich, log_event
-from great_minds.core.topics.schemas import CanonicalTopic
+from great_minds.core.topics.schemas import CanonicalTopicDraft
 
 log = logging.getLogger(__name__)
 
@@ -37,7 +37,7 @@ PHASE = "canonicalize"
 
 async def run(
     ctx: PipelineContext, local_topics: list[LocalTopic]
-) -> list[CanonicalTopic]:
+) -> list[CanonicalTopicDraft]:
     """Consolidate local topics into canonical registry.
 
     One LLM call, no retries at this layer — failure propagates. Local
@@ -71,7 +71,7 @@ async def run(
     )
     if cached is not None:
         canonical_topics = [
-            CanonicalTopic.model_validate(c) for c in cached["canonical_topics"]
+            CanonicalTopicDraft.model_validate(c) for c in cached["canonical_topics"]
         ]
         covered = _covered_local_ids(canonical_topics, set(tag_to_uuid.values()))
         orphans = len(tag_to_uuid) - len(covered)
@@ -182,8 +182,8 @@ def _render_prompt(
 
 def _parse_canonicals(
     *, data: dict, tag_to_uuid: dict[str, UUID]
-) -> tuple[list[CanonicalTopic], int]:
-    out: list[CanonicalTopic] = []
+) -> tuple[list[CanonicalTopicDraft], int]:
+    out: list[CanonicalTopicDraft] = []
     unknown_tag_count = 0
     for raw in data.get("canonical_topics") or []:
         slug = (raw.get("slug") or "").strip()
@@ -206,7 +206,7 @@ def _parse_canonicals(
             continue
 
         out.append(
-            CanonicalTopic(
+            CanonicalTopicDraft(
                 slug=slug,
                 title=title,
                 description=description,
@@ -218,7 +218,7 @@ def _parse_canonicals(
 
 
 def _covered_local_ids(
-    canonicals: list[CanonicalTopic], all_uuids: set[UUID]
+    canonicals: list[CanonicalTopicDraft], all_uuids: set[UUID]
 ) -> set[UUID]:
     covered: set[UUID] = set()
     for c in canonicals:

@@ -19,10 +19,9 @@ from great_minds.core.topics.models import (
 )
 from great_minds.core.topics.schemas import (
     ArticleStatus,
-    JaccardPair,
-    RelatedTopic,
     Topic,
     TopicLink,
+    TopicSimilarityPair,
 )
 
 
@@ -292,11 +291,15 @@ class TopicRepository:
                 )
             )
 
-    async def get_related(self, topic_id: UUID, limit: int = 20) -> list[RelatedTopic]:
+    async def get_related(self, topic_id: UUID, limit: int = 20) -> list[Topic]:
         rows = (
             (
                 await self.session.execute(
-                    select(TopicRelatedORM)
+                    select(TopicORM)
+                    .join(
+                        TopicRelatedORM,
+                        TopicRelatedORM.related_topic_id == TopicORM.topic_id,
+                    )
                     .where(TopicRelatedORM.topic_id == topic_id)
                     .order_by(TopicRelatedORM.jaccard.desc())
                     .limit(limit)
@@ -305,16 +308,16 @@ class TopicRepository:
             .scalars()
             .all()
         )
-        return [RelatedTopic.model_validate(r) for r in rows]
+        return [Topic.model_validate(r) for r in rows]
 
     # -- Jaccard computation (SQL-side, replaces O(N²) Python) -----------
 
     async def compute_pairwise_jaccard(
         self, topic_ids: list[UUID]
-    ) -> list[JaccardPair]:
+    ) -> list[TopicSimilarityPair]:
         """Compute Jaccard similarity for all topic pairs via SQL self-join.
 
-        Returns JaccardPair rows for all pairs where topic_a < topic_b
+        Returns TopicSimilarityPair rows for all pairs where topic_a < topic_b
         and shared > 0. Uses topic_membership (populated by
         _replace_membership before _replace_related runs).
         """
@@ -376,4 +379,4 @@ class TopicRepository:
         )
 
         result = await self.session.execute(sized)
-        return [JaccardPair.model_validate(row) for row in result]
+        return [TopicSimilarityPair.model_validate(row) for row in result]

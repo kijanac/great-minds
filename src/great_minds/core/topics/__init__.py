@@ -9,23 +9,33 @@ from great_minds.core.topics.models import (
 from great_minds.core.topics.repository import TopicRepository
 from great_minds.core.topics.schemas import (
     ArticleStatus,
-    CanonicalTopic,
-    ReduceOutput,
-    RelatedTopic,
+    CanonicalTopicDraft,
     Topic,
+    TopicBase,
+    TopicCreate,
+    TopicDetail,
+    TopicLink,
+    TopicReductionOutput,
+    TopicSimilarityPair,
+    TopicUpdate,
 )
 from great_minds.core.topics.service import TopicService
 
 __all__ = [
     "ArticleStatus",
-    "CanonicalTopic",
-    "ReduceOutput",
-    "RelatedTopic",
+    "CanonicalTopicDraft",
     "Topic",
+    "TopicBase",
+    "TopicCreate",
+    "TopicDetail",
+    "TopicLink",
     "TopicLinkORM",
     "TopicMembershipORM",
     "TopicORM",
     "TopicRelatedORM",
+    "TopicReductionOutput",
     "TopicRepository",
     "TopicService",
+    "TopicSimilarityPair",
+    "TopicUpdate",
 ]

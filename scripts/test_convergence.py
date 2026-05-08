@@ -18,10 +18,7 @@ Usage:
 import asyncio
 from uuid import UUID, uuid7
 
-from great_minds.core.pipeline.abstract.schemas import (
-    LocalTopic,
-    ValidatedCanonicalTopic,
-)
+from great_minds.core.pipeline.abstract.schemas import LocalTopic
 from great_minds.core.pipeline.abstract.validate import (
     _apply_renames,
     _assert_no_collision,
@@ -32,8 +29,9 @@ from great_minds.core.pipeline.abstract.validate import (
 )
 from great_minds.core.topics.schemas import (
     ArticleStatus,
-    CanonicalTopic,
+    CanonicalTopicDraft,
     Topic,
+    TopicDetail,
 )
 
 
@@ -48,7 +46,7 @@ class _MockTopicRepo:
 
 
 async def test_slug_continuity() -> None:
-    """Existing slug → reuses topic_id; new slug → fresh uuid7, is_new=True."""
+    """Existing slug → reuses topic_id; new slug → fresh uuid7."""
     vault_id = uuid7()
     existing_topic_id = uuid7()
     existing = Topic(
@@ -62,14 +60,14 @@ async def test_slug_continuity() -> None:
     repo = _MockTopicRepo({"existing-slug": existing})
 
     canonicals = [
-        CanonicalTopic(
+        CanonicalTopicDraft(
             slug="existing-slug",
             title="Updated Title",
             description="Updated description",
             merged_local_topic_ids=[],
             link_targets=[],
         ),
-        CanonicalTopic(
+        CanonicalTopicDraft(
             slug="new-slug",
             title="New",
             description="d",
@@ -90,10 +88,8 @@ async def test_slug_continuity() -> None:
     assert validated[0].topic_id == existing_topic_id, (
         "slug continuity broken: existing slug should reuse its topic_id"
     )
-    assert validated[0].is_new is False
     assert validated[1].slug == "new-slug"
     assert validated[1].topic_id != existing_topic_id
-    assert validated[1].is_new is True
     print("✓ slug_continuity")
 
 
@@ -105,16 +101,15 @@ def test_content_hash_determinism() -> None:
         title: str = "T",
         description: str = "D",
         subsumed: list[UUID] | None = None,
-    ) -> ValidatedCanonicalTopic:
-        return ValidatedCanonicalTopic(
+    ) -> TopicDetail:
+        return TopicDetail(
             topic_id=uuid7(),
+            vault_id=uuid7(),
             slug="x",
             title=title,
             description=description,
-            merged_local_topic_ids=[],
             subsumed_idea_ids=subsumed if subsumed is not None else [i1, i2, i3],
             link_targets=[],
-            is_new=True,
         )
 
     # Same content, shuffled idea order → same hash (sorted internally)
@@ -136,14 +131,14 @@ def test_content_hash_determinism() -> None:
 def test_link_targets_intersection() -> None:
     """Link targets filtered to emitted slugs; self-links dropped."""
     canonicals = [
-        CanonicalTopic(
+        CanonicalTopicDraft(
             slug="a",
             title="A",
             description="d",
             merged_local_topic_ids=[],
             link_targets=["b", "c", "missing", "a"],
         ),
-        CanonicalTopic(
+        CanonicalTopicDraft(
             slug="b",
             title="B",
             description="d",
@@ -161,21 +156,21 @@ def test_collision_detection_and_rename() -> None:
     _assert_no_collision passes.
     """
     topics = [
-        CanonicalTopic(
+        CanonicalTopicDraft(
             slug="x",
             title="T1",
             description="d",
             merged_local_topic_ids=[],
             link_targets=[],
         ),
-        CanonicalTopic(
+        CanonicalTopicDraft(
             slug="x",
             title="T2",
             description="d",
             merged_local_topic_ids=[],
             link_targets=[],
         ),
-        CanonicalTopic(
+        CanonicalTopicDraft(
             slug="y",
             title="T3",
             description="d",
@@ -220,7 +215,7 @@ async def test_subsumed_ideas_resolved_deterministically() -> None:
         ),
     }
 
-    canonical = CanonicalTopic(
+    canonical = CanonicalTopicDraft(
         slug="c",
         title="C",
         description="d",

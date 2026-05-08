@@ -20,7 +20,7 @@ Mechanical + one unified LLM cleanup call:
    frontmatter.
 7. Upsert the canonical registry to the topics table.
 
-Output is list[ValidatedCanonicalTopic] — what phase 3 derive consumes.
+Output is list[TopicDetail] — what phase 3 derive consumes.
 """
 
 import logging
@@ -34,14 +34,16 @@ from great_minds.core.llm.client import json_llm_call
 from great_minds.core.llm import REDUCE_MODEL
 from great_minds.core.markdown import parse_frontmatter, serialize_frontmatter
 from great_minds.core.paths import wiki_path
-from great_minds.core.pipeline.abstract.schemas import (
-    LocalTopic,
-    ValidatedCanonicalTopic,
-)
+from great_minds.core.pipeline.abstract.schemas import LocalTopic
 from great_minds.core.pipeline.context import PipelineContext
 from great_minds.core.telemetry import enrich, log_event
 from great_minds.core.topics.repository import TopicRepository
-from great_minds.core.topics.schemas import ArticleStatus, CanonicalTopic, Topic
+from great_minds.core.topics.schemas import (
+    ArticleStatus,
+    CanonicalTopicDraft,
+    Topic,
+    TopicDetail,
+)
 
 log = logging.getLogger(__name__)
 
@@ -54,9 +56,9 @@ class _CleanupOutput:
 
 async def run(
     ctx: PipelineContext,
-    canonical_topics: list[CanonicalTopic],
+    canonical_topics: list[CanonicalTopicDraft],
     local_topics: list[LocalTopic],
-) -> list[ValidatedCanonicalTopic]:
+) -> list[TopicDetail]:
     if not canonical_topics:
         log_event(
             "pipeline.validate_skipped",
@@ -135,8 +137,8 @@ async def run(
 
 
 def _intersect_link_targets(
-    canonical_topics: list[CanonicalTopic],
-) -> list[CanonicalTopic]:
+    canonical_topics: list[CanonicalTopicDraft],
+) -> list[CanonicalTopicDraft]:
     """Drop link_targets entries that don't resolve to any emitted slug."""
     slugs = {c.slug for c in canonical_topics}
     out = []
@@ -152,7 +154,7 @@ def _intersect_link_targets(
 
 
 def _detect_collisions(
-    canonical_topics: list[CanonicalTopic],
+    canonical_topics: list[CanonicalTopicDraft],
 ) -> dict[str, list[int]]:
     """Returns {slug: [canonical indices]} for slugs with >1 canonical."""
     groups: dict[str, list[int]] = {}
@@ -169,7 +171,7 @@ def _detect_collisions(
 async def _cleanup_llm_call(
     *,
     ctx: PipelineContext,
-    canonical_topics: list[CanonicalTopic],
+    canonical_topics: list[CanonicalTopicDraft],
     collisions: dict[str, list[int]],
     archive_candidates: list[Topic],
 ) -> _CleanupOutput:
@@ -243,7 +245,7 @@ def _tag_to_index(tag: str, prefix: str, upper_bound: int) -> int | None:
     return None
 
 
-def _render_canonical_block(canonical_topics: list[CanonicalTopic]) -> str:
+def _render_canonical_block(canonical_topics: list[CanonicalTopicDraft]) -> str:
     lines: list[str] = []
     for i, c in enumerate(canonical_topics, start=1):
         lines.append(f"## c_{i}")
@@ -287,10 +289,10 @@ def _render_supersession_block(archive_candidates: list[Topic]) -> str:
 
 
 def _apply_renames(
-    canonical_topics: list[CanonicalTopic],
+    canonical_topics: list[CanonicalTopicDraft],
     renames: dict[int, str],
-) -> list[CanonicalTopic]:
-    out: list[CanonicalTopic] = []
+) -> list[CanonicalTopicDraft]:
+    out: list[CanonicalTopicDraft] = []
     for i, c in enumerate(canonical_topics):
         new_slug = renames.get(i)
         if new_slug and new_slug != c.slug:
@@ -300,7 +302,7 @@ def _apply_renames(
     return out
 
 
-def _assert_no_collision(canonical_topics: list[CanonicalTopic]) -> None:
+def _assert_no_collision(canonical_topics: list[CanonicalTopicDraft]) -> None:
     seen: set[str] = set()
     dupes: list[str] = []
     for c in canonical_topics:
@@ -322,18 +324,16 @@ async def _assign_topic_ids(
     *,
     vault_id: UUID,
     repo: TopicRepository,
-    canonicals: list[CanonicalTopic],
+    canonicals: list[CanonicalTopicDraft],
     local_by_id: dict[UUID, LocalTopic],
-) -> list[ValidatedCanonicalTopic]:
-    out: list[ValidatedCanonicalTopic] = []
+) -> list[TopicDetail]:
+    out: list[TopicDetail] = []
     for c in canonicals:
         existing = await repo.get_by_slug(vault_id, c.slug)
         if existing is not None:
             topic_id = existing.topic_id
-            is_new = False
         else:
             topic_id = uuid7()
-            is_new = True
         merged_uuids: list[UUID] = []
         for s in c.merged_local_topic_ids:
             try:
@@ -346,15 +346,14 @@ async def _assign_topic_ids(
             if lt is not None:
                 subsumed.update(lt.subsumed_idea_ids)
         out.append(
-            ValidatedCanonicalTopic(
+            TopicDetail(
                 topic_id=topic_id,
+                vault_id=vault_id,
                 slug=c.slug,
                 title=c.title,
                 description=c.description,
-                merged_local_topic_ids=merged_uuids,
                 subsumed_idea_ids=sorted(subsumed, key=str),
                 link_targets=c.link_targets,
-                is_new=is_new,
             )
         )
     return out
@@ -371,7 +370,7 @@ async def _archive_candidates(
     repo: TopicRepository,
     archive_candidates: list[Topic],
     supersessions: dict[UUID, int | None],
-    validated: list[ValidatedCanonicalTopic],
+    validated: list[TopicDetail],
 ) -> None:
     for candidate in archive_candidates:
         successor_idx = supersessions.get(candidate.topic_id)
@@ -422,7 +421,7 @@ async def _upsert_topics(
     *,
     repo: TopicRepository,
     vault_id: UUID,
-    validated: list[ValidatedCanonicalTopic],
+    validated: list[TopicDetail],
 ) -> None:
     for v in validated:
         compiled_from_hash = _topic_content_hash(v)
@@ -436,7 +435,7 @@ async def _upsert_topics(
         )
 
 
-def _topic_content_hash(v: ValidatedCanonicalTopic) -> str:
+def _topic_content_hash(v: TopicDetail) -> str:
     """Content hash per architecture: topic_membership + title + description."""
     return content_hash(
         v.title,

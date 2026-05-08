@@ -1,6 +1,6 @@
 """Phase 3 — derive.
 
-Mechanical, no LLM, no cache. Reads list[ValidatedCanonicalTopic]
+Mechanical, no LLM, no cache. Reads list[TopicDetail]
 from phase 2 and rebuilds the three derived relational tables:
 
 - topic_membership: (topic_id, idea_id) for each idea in each topic's
@@ -17,20 +17,20 @@ here.
 """
 
 import logging
-from uuid import UUID
 
-from great_minds.core.pipeline.abstract.schemas import ValidatedCanonicalTopic
 from great_minds.core.pipeline.context import PipelineContext
 from great_minds.core.settings import get_settings
 from great_minds.core.telemetry import enrich, log_event
 from great_minds.core.topics.repository import TopicRepository
+from great_minds.core.topics.schemas import TopicDetail
+from great_minds.core.topics.service import TopicService
 
 log = logging.getLogger(__name__)
 
 
 async def run(
     ctx: PipelineContext,
-    validated: list[ValidatedCanonicalTopic],
+    validated: list[TopicDetail],
 ) -> None:
     if not validated:
         log_event(
@@ -40,87 +40,15 @@ async def run(
         )
         return
 
-    settings = get_settings()
-    related_limit = settings.compile_derive_related_limit
-    repo = TopicRepository(ctx.session)
-
-    membership_rows = await _replace_membership(repo, validated)
-    link_edges = await _replace_links(repo, ctx.vault_id, validated)
-    related_rows = await _replace_related(repo, validated, related_limit)
-
-    await ctx.session.commit()
-
-    enrich(
-        derive_topic_count=len(validated),
-        derive_membership_rows=membership_rows,
-        derive_link_edges=link_edges,
-        derive_related_rows=related_rows,
+    await TopicService(TopicRepository(ctx.session)).rebuild_derived_tables(
+        ctx.vault_id,
+        validated,
+        related_limit=get_settings().compile_derive_related_limit,
     )
+
+    enrich(derive_topic_count=len(validated))
     log_event(
         "pipeline.derive_completed",
         vault_id=str(ctx.vault_id),
         topic_count=len(validated),
-        membership_rows=membership_rows,
-        link_edges=link_edges,
-        related_rows=related_rows,
     )
-
-
-async def _replace_membership(
-    repo: TopicRepository, validated: list[ValidatedCanonicalTopic]
-) -> int:
-    total = 0
-    for v in validated:
-        await repo.replace_membership(v.topic_id, v.subsumed_idea_ids)
-        total += len(v.subsumed_idea_ids)
-    return total
-
-
-async def _replace_links(
-    repo: TopicRepository,
-    vault_id: UUID,
-    validated: list[ValidatedCanonicalTopic],
-) -> int:
-    slug_to_id = {v.slug: v.topic_id for v in validated}
-    edges: list[tuple[UUID, UUID]] = []
-    for v in validated:
-        for target_slug in v.link_targets:
-            target_id = slug_to_id.get(target_slug)
-            if target_id is None or target_id == v.topic_id:
-                continue
-            edges.append((v.topic_id, target_id))
-    await repo.replace_links_for_vault(vault_id, edges)
-    return len(edges)
-
-
-async def _replace_related(
-    repo: TopicRepository,
-    validated: list[ValidatedCanonicalTopic],
-    limit: int,
-) -> int:
-    """Compute topic_related via a single SQL self-join on topic_membership.
-
-    Replaces the previous O(N²) Python Jaccard with a DB-side
-    pairwise computation. topic_membership was already populated by
-    _replace_membership above, so the join sees fresh data.
-    """
-    topic_ids = [v.topic_id for v in validated]
-    pairs = await repo.compute_pairwise_jaccard(topic_ids)
-
-    # Fan out each pair into both directions.
-    by_topic: dict[UUID, list[tuple[UUID, int, float]]] = {
-        v.topic_id: [] for v in validated
-    }
-    for p in pairs:
-        by_topic[p.topic_a].append((p.topic_b, p.shared, p.jaccard))
-        by_topic[p.topic_b].append((p.topic_a, p.shared, p.jaccard))
-
-    total = 0
-    for v in validated:
-        candidates = by_topic[v.topic_id]
-        # Deterministic: primary by jaccard desc, tie-break by topic_id.
-        candidates.sort(key=lambda x: (-x[2], str(x[0])))
-        top = candidates[:limit]
-        await repo.replace_related(v.topic_id, top)
-        total += len(top)
-    return total

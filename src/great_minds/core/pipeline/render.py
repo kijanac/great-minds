@@ -41,7 +41,7 @@ from great_minds.core.documents.schemas import (
 from great_minds.core.ideas.schemas import Anchor, Idea, SourceCard
 from great_minds.core.ideas.source_cards import SourceCardStore, index_ideas_by_id
 from great_minds.core.llm import RENDER_MODEL
-from great_minds.core.pipeline.abstract.schemas import ValidatedCanonicalTopic
+from great_minds.core.topics.schemas import TopicDetail
 from great_minds.core.pipeline.context import PipelineContext
 from great_minds.core.search import SearchIndexRepository, SearchService
 from great_minds.core.settings import get_settings
@@ -82,7 +82,7 @@ class _RenderOutput(BaseModel):
 
 async def run(
     ctx: PipelineContext,
-    validated: list[ValidatedCanonicalTopic],
+    validated: list[TopicDetail],
 ) -> None:
     if not validated:
         log_event(
@@ -99,8 +99,8 @@ async def run(
     # need LLM rendering, which can be skipped, and which have a cached
     # body/tags payload that can repair a missing wiki file.
     existing_wiki = set(await ctx.storage.glob("wiki/*.md"))
-    to_render: list[ValidatedCanonicalTopic] = []
-    to_materialize: list[tuple[ValidatedCanonicalTopic, _RenderOutput]] = []
+    to_render: list[TopicDetail] = []
+    to_materialize: list[tuple[TopicDetail, _RenderOutput]] = []
     cache_hits = 0
     cache_invalid = 0
     for topic in validated:
@@ -285,7 +285,7 @@ class _RenderOutcome:
 async def _write_rendered_article(
     *,
     ctx: PipelineContext,
-    topic: ValidatedCanonicalTopic,
+    topic: TopicDetail,
     body: str,
     tags: list[str],
 ) -> str:
@@ -341,10 +341,10 @@ async def _render_one(
     *,
     ctx: PipelineContext,
     sem: asyncio.Semaphore,
-    topic: ValidatedCanonicalTopic,
+    topic: TopicDetail,
     idea_by_id: dict[UUID, tuple[Idea, SourceCard]],
     doc_by_id: dict[UUID, Document],
-    topic_by_slug: dict[str, ValidatedCanonicalTopic],
+    topic_by_slug: dict[str, TopicDetail],
     prompt_template: str,
     prompt_hash: str,
 ) -> _RenderOutcome:
@@ -436,7 +436,7 @@ class _NumberedAnchor:
 
 
 def _build_numbered_anchors(
-    topic: ValidatedCanonicalTopic,
+    topic: TopicDetail,
     idea_by_id: dict[UUID, tuple[Idea, SourceCard]],
     doc_by_id: dict[UUID, Document],
 ) -> list[_NumberedAnchor]:
@@ -458,7 +458,7 @@ def _build_numbered_anchors(
 
 def _render_idea_block(
     *,
-    topic: ValidatedCanonicalTopic,
+    topic: TopicDetail,
     numbered_anchors: list[_NumberedAnchor],
     idea_by_id: dict[UUID, tuple[Idea, SourceCard]],
     doc_by_id: dict[UUID, Document],
@@ -492,7 +492,7 @@ def _render_idea_block(
 
 
 def _render_link_targets_block(
-    link_targets: list[str], topic_by_slug: dict[str, ValidatedCanonicalTopic]
+    link_targets: list[str], topic_by_slug: dict[str, TopicDetail]
 ) -> str:
     lines: list[str] = []
     for slug in link_targets:
@@ -580,7 +580,7 @@ def _format_source_link(na: _NumberedAnchor) -> str:
 # ---------------------------------------------------------------------------
 
 
-def _topic_content_hash(v: ValidatedCanonicalTopic) -> str:
+def _topic_content_hash(v: TopicDetail) -> str:
     return content_hash(
         v.title,
         v.description,

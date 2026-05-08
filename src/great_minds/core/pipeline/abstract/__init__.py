@@ -23,13 +23,13 @@ from great_minds.core.pipeline.abstract import (
     synthesize,
     validate,
 )
-from great_minds.core.pipeline.abstract.schemas import ValidatedCanonicalTopic
+from great_minds.core.topics.schemas import TopicDetail
 from great_minds.core.pipeline.context import PipelineContext
 from great_minds.core.settings import get_settings
 from great_minds.core.telemetry import enrich, log_event
 
 
-async def run(ctx: PipelineContext) -> list[ValidatedCanonicalTopic]:
+async def run(ctx: PipelineContext) -> list[TopicDetail]:
     """Phase 2 orchestrator.
 
     Threads shared state (source_cards) through the sub-phases and

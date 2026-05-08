@@ -1,4 +1,4 @@
-"""Pydantic schemas for topics."""
+"""Pydantic schemas for the topics bounded context."""
 
 from datetime import datetime
 from enum import StrEnum
@@ -14,16 +14,45 @@ class ArticleStatus(StrEnum):
     ARCHIVED = "archived"
 
 
-class Topic(BaseModel):
-    """Row in the topics registry."""
+# ---------------------------------------------------------------------------
+# CRUD / registry schemas
+# ---------------------------------------------------------------------------
+
+
+class TopicBase(BaseModel):
+    """Shared editable topic fields."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    slug: str
+    title: str
+    description: str
+
+
+class TopicCreate(TopicBase):
+    """Input for inserting/upserting a topic registry row."""
+
+    topic_id: UUID
+    vault_id: UUID
+    compiled_from_hash: str | None = None
+
+
+class TopicUpdate(BaseModel):
+    """Patch-style topic update input."""
+
+    slug: str | None = None
+    title: str | None = None
+    description: str | None = None
+    compiled_from_hash: str | None = None
+
+
+class Topic(TopicBase):
+    """Read shape for a row in the topics registry."""
 
     model_config = ConfigDict(from_attributes=True)
 
     topic_id: UUID
     vault_id: UUID
-    slug: str
-    title: str
-    description: str
     article_status: ArticleStatus = ArticleStatus.NO_ARTICLE
     compiled_from_hash: str | None = None
     rendered_from_hash: str | None = None
@@ -33,24 +62,43 @@ class Topic(BaseModel):
     updated_at: datetime | None = None
 
 
-class CanonicalTopic(BaseModel):
-    """Reducer output — one canonical topic plus its intended link targets.
+# ---------------------------------------------------------------------------
+# Compile / reduction schemas
+# ---------------------------------------------------------------------------
 
-    link_targets are slugs; validation intersects them with the emitted
+
+class CanonicalTopicDraft(TopicBase):
+    """Reducer output — one canonical topic plus intended link targets.
+
+    ``link_targets`` are slugs; validation intersects them with the emitted
     canonical slug set before any topic_id minting happens.
     """
 
-    slug: str
-    title: str
-    description: str
     merged_local_topic_ids: list[str]
     link_targets: list[str]
 
 
-class ReduceOutput(BaseModel):
-    """Full structured output from phase 2d reduce."""
+class TopicReductionOutput(BaseModel):
+    """Full structured output from topic canonicalization/reduction."""
 
-    canonical_topics: list[CanonicalTopic]
+    canonical_topics: list[CanonicalTopicDraft]
+
+
+class TopicDetail(Topic):
+    """Topic read shape with joined compile projections.
+
+    Use this when callers need membership/link details in addition to the
+    registry row. Basic topic reads should use ``Topic`` to avoid implying
+    joins that were not loaded.
+    """
+
+    subsumed_idea_ids: list[UUID]
+    link_targets: list[str]
+
+
+# ---------------------------------------------------------------------------
+# Graph / projection schemas
+# ---------------------------------------------------------------------------
 
 
 class TopicLink(BaseModel):
@@ -60,19 +108,8 @@ class TopicLink(BaseModel):
     target_topic_id: UUID
 
 
-class RelatedTopic(BaseModel):
-    """A related-topic row for the sidebar UI."""
-
-    model_config = ConfigDict(from_attributes=True)
-
-    related_topic_id: UUID
-    shared_ideas: int
-    jaccard: float
-
-
-class JaccardPair(BaseModel):
-    """Raw pairwise Jaccard result from SQL self-join — (topic_a, topic_b,
-    shared_idea_count, jaccard_score) for pairs with shared > 0."""
+class TopicSimilarityPair(BaseModel):
+    """Raw pairwise similarity result from SQL self-join."""
 
     model_config = ConfigDict(from_attributes=True)
 

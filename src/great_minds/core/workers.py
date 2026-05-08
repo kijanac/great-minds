@@ -27,7 +27,7 @@ from great_minds.core.pipeline import (
     verify,
 )
 from great_minds.core.pipeline.steps import absurd_step_runner
-from great_minds.core.pipeline.abstract.schemas import ValidatedCanonicalTopic
+from great_minds.core.topics.schemas import TopicDetail
 from great_minds.core.vaults.config import load_config
 from great_minds.core.vaults.repository import VaultRepository
 from great_minds.core.documents.builder import build_document
@@ -233,7 +233,7 @@ async def compile_task(params: dict, ctx) -> None:
             await record_wide_event_cost(session, user_id=None, vault_id=vault_id)
             await session.commit()
             return
-        validated = [ValidatedCanonicalTopic.model_validate(v) for v in validated_raw]
+        validated = [TopicDetail.model_validate(v) for v in validated_raw]
 
         # Phase 3 — mechanical: topic_membership, topic_links, topic_related
         async def _run_derive():
