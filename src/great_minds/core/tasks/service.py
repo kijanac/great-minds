@@ -12,7 +12,7 @@ from uuid import UUID
 
 from absurd_sdk import AsyncAbsurd, RetryStrategy
 
-from great_minds.core.pagination import Page, PageInfo, PageParams
+from great_minds.core.pagination import Page, PageParams, create_page
 from great_minds.core.tasks.repository import TaskRepository
 from great_minds.core.tasks.schemas import Task, TaskDetail, TaskStatus
 from great_minds.core.telemetry import log_event
@@ -168,7 +168,9 @@ class TaskService:
 
     async def find_active_compile(self, vault_id: UUID) -> TaskDetail | None:
         """Most recent compile task for this vault still in pending/running/sleeping."""
-        records = await self.repo.list_for_vault_by_type(vault_id, "compile")
+        records = await self.repo.list_for_vault(
+            vault_id, task_type="compile", limit=10
+        )
         for record in records:
             snapshot = await self.absurd.fetch_task_result(str(record.id))
             if snapshot is None:
@@ -184,14 +186,8 @@ class TaskService:
             vault_id, limit=pagination.limit, offset=pagination.offset
         )
         total = await self.repo.count_for_vault(vault_id)
-        return Page(
-            items=[await fetch_task_response(self.absurd, r) for r in records],
-            pagination=PageInfo(
-                limit=pagination.limit,
-                offset=pagination.offset,
-                total=total,
-            ),
-        )
+        items = [await fetch_task_response(self.absurd, r) for r in records]
+        return create_page(items, pagination, total)
 
     async def get(self, task_id: UUID, vault_id: UUID) -> TaskDetail | None:
         record = await self.repo.get(task_id, vault_id)

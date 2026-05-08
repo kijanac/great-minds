@@ -41,7 +41,9 @@ async def recent_articles(
     _storage: VaultStorageDep,
     doc_service: DocumentServiceDep,
 ) -> Page[WikiArticleOverview]:
-    return await doc_service.list_recent_wiki_articles(vault_id, pagination=pagination)
+    return await doc_service.list_wiki_articles(
+        vault_id, pagination=pagination, recent=True
+    )
 
 
 @router.get("/raw/sources")

@@ -71,10 +71,9 @@ class SynthesizePhase:
 
         prompt_template = await load_prompt(self.storage, "synthesize")
         ph = prompt_hash(prompt_template)
-        idea_index: dict[UUID, tuple[Idea, SourceCard]] = {}
-        for card in source_cards:
-            for idea in card.ideas:
-                idea_index[idea.idea_id] = (idea, card)
+        idea_index = {
+            idea.idea_id: (idea, card) for card in source_cards for idea in card.ideas
+        }
 
         sem = asyncio.Semaphore(self.concurrency)
         tasks = [
@@ -209,8 +208,8 @@ async def _synthesize_one(
             chunk_idx=chunk_idx,
             tag_to_uuid=tag_to_uuid,
         )
-    except json.JSONDecodeError as e:
-        outcome.error = f"json_parse_exhausted:{e}"
+    except (json.JSONDecodeError, ValidationError) as e:
+        outcome.error = f"output_parse:{e}"
         return outcome
     except Exception as e:
         outcome.error = f"llm_call:{repr(e)[:200]}"
@@ -287,15 +286,18 @@ def _parse_topics(
     chunk_idx: int,
     tag_to_uuid: dict[str, UUID],
 ) -> list[LocalTopic]:
+    """Parse raw LLM JSON into internal local-topic models."""
     out: list[LocalTopic] = []
     for raw in data.get("topics") or []:
+        if not isinstance(raw, dict):
+            continue
         slug = _normalize_slug(raw.get("slug") or "")
         title = (raw.get("title") or "").strip()
         description = (raw.get("description") or "").strip()
         subsumed_tags = raw.get("subsumed_idea_ids") or []
-        subsumed_uuids = [
-            tag_to_uuid[tag] for tag in subsumed_tags if tag in tag_to_uuid
-        ]
+        subsumed_uuids = sorted(
+            {tag_to_uuid[tag] for tag in subsumed_tags if tag in tag_to_uuid}, key=str
+        )
         if not slug or not title or not subsumed_uuids:
             continue
         out.append(

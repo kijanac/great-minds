@@ -15,7 +15,7 @@ from great_minds.core.vaults.schemas import (
     Vault,
     VaultWithRole,
 )
-from great_minds.core.pagination import Page, PageInfo, PageParams
+from great_minds.core.pagination import Page, PageParams, create_page
 from great_minds.core.crypto import decode_access_token
 from great_minds.core.paths import CONFIG_PATH
 from great_minds.core.r2_admin import R2Admin, derive_user_bucket_name
@@ -83,14 +83,7 @@ class VaultService:
             user_id, limit=pagination.limit, offset=pagination.offset
         )
         total = await self.repo.count_user_vaults(user_id)
-        return Page(
-            items=rows,
-            pagination=PageInfo(
-                limit=pagination.limit,
-                offset=pagination.offset,
-                total=total,
-            ),
-        )
+        return create_page(rows, pagination, total)
 
     async def create_vault(
         self,
@@ -196,14 +189,7 @@ class VaultService:
             vault_id, limit=pagination.limit, offset=pagination.offset
         )
         total = await self.repo.get_member_count(vault_id)
-        return Page(
-            items=rows,
-            pagination=PageInfo(
-                limit=pagination.limit,
-                offset=pagination.offset,
-                total=total,
-            ),
-        )
+        return create_page(rows, pagination, total)
 
     async def add_member(self, change: MembershipInternal) -> None:
         """Add a member. Idempotent — no-op if already a member.

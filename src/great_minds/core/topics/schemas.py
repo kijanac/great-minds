@@ -74,7 +74,7 @@ class CanonicalTopicDraft(TopicBase):
     canonical slug set before any topic_id minting happens.
     """
 
-    merged_local_topic_ids: list[str]
+    merged_local_topic_ids: list[UUID]
     link_targets: list[str]
 
 

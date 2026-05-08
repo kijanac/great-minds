@@ -24,13 +24,17 @@ import re
 from dataclasses import dataclass
 from uuid import UUID
 
+from openai import AsyncOpenAI
 from pydantic import BaseModel, ValidationError, field_validator
+from sqlalchemy.ext.asyncio import AsyncSession
 
+from great_minds.core.compile_cache import CompileCacheRepository
 from great_minds.core.hashing import content_hash, prompt_hash
 from great_minds.core.vaults.prompts import load_prompt
 from great_minds.core.llm.client import json_llm_call
 from great_minds.core.markdown import serialize_frontmatter
 from great_minds.core.paths import source_cards_path, wiki_path
+from great_minds.core.documents import DocumentService
 from great_minds.core.documents.repository import DocumentRepository
 from great_minds.core.documents.schemas import (
     DocKind,
@@ -43,10 +47,14 @@ from great_minds.core.ideas.source_cards import SourceCardStore, index_ideas_by_
 from great_minds.core.llm import RENDER_MODEL
 from great_minds.core.topics.schemas import TopicDetail
 from great_minds.core.pipeline.context import PipelineContext
+from great_minds.core.pipeline.steps import StepRunner
+from great_minds.core.pipeline_runs import PipelineProgressRunner
 from great_minds.core.search import SearchIndexRepository, SearchService
 from great_minds.core.settings import get_settings
+from great_minds.core.storage import Storage
 from great_minds.core.telemetry import enrich, log_event
 from great_minds.core.topics.repository import TopicRepository
+from great_minds.core.topics.service import TopicService
 
 log = logging.getLogger(__name__)
 
@@ -80,194 +88,246 @@ class _RenderOutput(BaseModel):
         return out
 
 
-async def run(
-    ctx: PipelineContext,
-    validated: list[TopicDetail],
-) -> None:
-    if not validated:
-        log_event(
-            "pipeline.render_skipped",
-            vault_id=str(ctx.vault_id),
-            reason="no_topics",
-        )
-        return
+class RenderPhase:
+    """Phase 4 runner with explicit service-style dependencies."""
 
-    prompt_template = await load_prompt(ctx.storage, "render")
-    ph = prompt_hash(prompt_template)
+    def __init__(
+        self,
+        *,
+        storage: Storage,
+        client: AsyncOpenAI,
+        session: AsyncSession,
+        progress: PipelineProgressRunner,
+        compile_cache: CompileCacheRepository,
+        steps: StepRunner,
+        documents: DocumentService,
+        topics: TopicService,
+        search: SearchService,
+        sidecar_root,
+        concurrency: int,
+    ) -> None:
+        self.storage = storage
+        self.client = client
+        self.session = session
+        self.progress = progress
+        self.compile_cache = compile_cache
+        self.steps = steps
+        self.documents = documents
+        self.topics = topics
+        self.search = search
+        self.sidecar_root = sidecar_root
+        self.concurrency = concurrency
 
-    # Pre-pass: one storage list + N DB cache checks decides which topics
-    # need LLM rendering, which can be skipped, and which have a cached
-    # body/tags payload that can repair a missing wiki file.
-    existing_wiki = set(await ctx.storage.glob("wiki/*.md"))
-    to_render: list[TopicDetail] = []
-    to_materialize: list[tuple[TopicDetail, _RenderOutput]] = []
-    cache_hits = 0
-    cache_invalid = 0
-    for topic in validated:
-        cache_key = _cache_key(
-            topic_id=topic.topic_id,
-            compiled_from_hash=_topic_content_hash(topic),
-            link_targets=topic.link_targets,
-            prompt_hash=ph,
-        )
-        cached = await ctx.compile_cache.get(
-            vault_id=ctx.vault_id,
-            phase=PHASE,
-            cache_key=cache_key,
-        )
-        if cached is None:
-            to_render.append(topic)
-            continue
-        try:
-            output = _RenderOutput.model_validate(cached)
-        except ValidationError:
-            cache_invalid += 1
-            to_render.append(topic)
-            continue
-        if wiki_path(topic.slug) in existing_wiki:
-            cache_hits += 1
-            continue
-        to_materialize.append((topic, output))
-
-    total_work = len(to_materialize) + len(to_render)
-    if total_work > 0:
-        await ctx.progress.emit(
-            pipeline_run_id=ctx.pipeline_run_id,
-            phase="render",
-            status="progress",
-            done=0,
-            total=total_work,
-        )
-
-    materialized = 0
-    repo = TopicRepository(ctx.session)
-    for topic, output in to_materialize:
-        compiled_from_hash = await _write_rendered_article(
-            ctx=ctx,
-            topic=topic,
-            body=output.body,
-            tags=output.tags,
-        )
-        await repo.set_rendered(topic.topic_id, rendered_from_hash=compiled_from_hash)
-        materialized += 1
-        await ctx.progress.emit(
-            pipeline_run_id=ctx.pipeline_run_id,
-            phase="render",
-            status="progress",
-            done=materialized,
-            total=total_work,
-        )
-
-    if materialized:
-        await ctx.session.commit()
-
-    if not to_render:
-        wiki_chunks_indexed = 0
-        if materialized:
-            search_svc = SearchService(SearchIndexRepository(ctx.session))
-            wiki_chunks_indexed = await search_svc.rebuild_wiki_index(
-                ctx.vault_id, ctx.storage, client=ctx.client
+    async def run(
+        self,
+        vault_id: UUID,
+        pipeline_run_id: UUID,
+        validated: list[TopicDetail],
+    ) -> None:
+        if not validated:
+            log_event(
+                "pipeline.render_skipped",
+                vault_id=str(vault_id),
+                reason="no_topics",
             )
-        topics_rendered = cache_hits + materialized
+            return
+
+        prompt_template = await load_prompt(self.storage, "render")
+        ph = prompt_hash(prompt_template)
+
+        # Pre-pass: one storage list + N DB cache checks decides which topics
+        # need LLM rendering, which can be skipped, and which have a cached
+        # body/tags payload that can repair a missing wiki file.
+        existing_wiki = set(await self.storage.glob("wiki/*.md"))
+        to_render: list[TopicDetail] = []
+        to_materialize: list[tuple[TopicDetail, _RenderOutput]] = []
+        cache_hits = 0
+        cache_invalid = 0
+        for topic in validated:
+            cache_key = _cache_key(
+                topic_id=topic.topic_id,
+                compiled_from_hash=_topic_content_hash(topic),
+                link_targets=topic.link_targets,
+                prompt_hash=ph,
+            )
+            cached = await self.compile_cache.get(
+                vault_id=vault_id,
+                phase=PHASE,
+                cache_key=cache_key,
+            )
+            if cached is None:
+                to_render.append(topic)
+                continue
+            try:
+                output = _RenderOutput.model_validate(cached)
+            except ValidationError:
+                cache_invalid += 1
+                to_render.append(topic)
+                continue
+            if wiki_path(topic.slug) in existing_wiki:
+                cache_hits += 1
+                continue
+            to_materialize.append((topic, output))
+
+        total_work = len(to_materialize) + len(to_render)
+        if total_work > 0:
+            await self.progress.emit(
+                pipeline_run_id=pipeline_run_id,
+                phase="render",
+                status="progress",
+                done=0,
+                total=total_work,
+            )
+
+        materialized = 0
+        for topic, output in to_materialize:
+            compiled_from_hash = await _write_rendered_article(
+                phase=self,
+                vault_id=vault_id,
+                topic=topic,
+                body=output.body,
+                tags=output.tags,
+            )
+            await self.topics.set_rendered(
+                topic.topic_id, rendered_from_hash=compiled_from_hash
+            )
+            materialized += 1
+            await self.progress.emit(
+                pipeline_run_id=pipeline_run_id,
+                phase="render",
+                status="progress",
+                done=materialized,
+                total=total_work,
+            )
+
+        if materialized:
+            await self.session.commit()
+
+        if not to_render:
+            wiki_chunks_indexed = 0
+            if materialized:
+                wiki_chunks_indexed = await self.search.rebuild_wiki_index(
+                    vault_id, self.storage, client=self.client
+                )
+            topics_rendered = cache_hits + materialized
+            enrich(
+                render_topics_rendered=topics_rendered,
+                render_cache_hits=cache_hits + materialized,
+                render_cache_misses=0,
+                render_topics_failed=0,
+                render_cache_invalid=cache_invalid,
+                render_wiki_chunks_indexed=wiki_chunks_indexed,
+            )
+            log_event(
+                "pipeline.render_completed",
+                vault_id=str(vault_id),
+                topics_rendered=topics_rendered,
+                cache_hits=cache_hits,
+                cache_materialized=materialized,
+                cache_misses=0,
+                cache_invalid=cache_invalid,
+                topics_failed=0,
+                wiki_chunks_indexed=wiki_chunks_indexed,
+            )
+            return
+
+        # Heavy context loaded only when at least one topic needs rendering.
+        source_cards = SourceCardStore(source_cards_path(self.sidecar_root)).load_all()
+        idea_by_id = index_ideas_by_id(source_cards)
+        docs = await self.documents.list_by_kind(vault_id, DocKind.RAW)
+        doc_by_id = {d.id: d for d in docs}
+        topic_by_slug = {v.slug: v for v in validated}
+
+        sem = asyncio.Semaphore(self.concurrency)
+
+        tasks = [
+            _render_one(
+                phase=self,
+                sem=sem,
+                vault_id=vault_id,
+                topic=v,
+                idea_by_id=idea_by_id,
+                doc_by_id=doc_by_id,
+                topic_by_slug=topic_by_slug,
+                prompt_template=prompt_template,
+                prompt_hash=ph,
+            )
+            for v in to_render
+        ]
+        outcomes: list[_RenderOutcome] = []
+        topics_done = 0
+        for task in asyncio.as_completed(tasks):
+            outcome = await task
+            outcomes.append(outcome)
+            topics_done += 1
+            await self.progress.emit(
+                pipeline_run_id=pipeline_run_id,
+                phase="render",
+                status="progress",
+                done=materialized + topics_done,
+                total=total_work,
+            )
+
+        cache_misses = 0
+        topics_failed = 0
+        for outcome in outcomes:
+            if outcome.error is not None:
+                topics_failed += 1
+                continue
+            cache_misses += 1
+            await self.topics.set_rendered(
+                outcome.topic_id,
+                rendered_from_hash=outcome.rendered_from_hash,
+            )
+
+        await self.session.commit()
+
+        wiki_chunks_indexed = 0
+        if materialized or cache_misses:
+            wiki_chunks_indexed = await self.search.rebuild_wiki_index(
+                vault_id, self.storage, client=self.client
+            )
+
+        topics_rendered = cache_hits + materialized + cache_misses
         enrich(
             render_topics_rendered=topics_rendered,
             render_cache_hits=cache_hits + materialized,
-            render_cache_misses=0,
-            render_topics_failed=0,
+            render_cache_misses=cache_misses,
+            render_topics_failed=topics_failed,
             render_cache_invalid=cache_invalid,
             render_wiki_chunks_indexed=wiki_chunks_indexed,
         )
         log_event(
             "pipeline.render_completed",
-            vault_id=str(ctx.vault_id),
+            vault_id=str(vault_id),
             topics_rendered=topics_rendered,
             cache_hits=cache_hits,
             cache_materialized=materialized,
-            cache_misses=0,
+            cache_misses=cache_misses,
             cache_invalid=cache_invalid,
-            topics_failed=0,
+            topics_failed=topics_failed,
             wiki_chunks_indexed=wiki_chunks_indexed,
         )
-        return
 
-    # Heavy context loaded only when at least one topic needs rendering.
-    source_cards = SourceCardStore(source_cards_path(ctx.sidecar_root)).load_all()
-    idea_by_id = index_ideas_by_id(source_cards)
-    docs = await _load_documents(ctx.session, ctx.vault_id)
-    doc_by_id = {d.id: d for d in docs}
-    topic_by_slug = {v.slug: v for v in validated}
 
+async def run(
+    ctx: PipelineContext,
+    validated: list[TopicDetail],
+) -> None:
     settings = get_settings()
-    sem = asyncio.Semaphore(settings.compile_write_concurrency)
-
-    tasks = [
-        _render_one(
-            ctx=ctx,
-            sem=sem,
-            topic=v,
-            idea_by_id=idea_by_id,
-            doc_by_id=doc_by_id,
-            topic_by_slug=topic_by_slug,
-            prompt_template=prompt_template,
-            prompt_hash=ph,
-        )
-        for v in to_render
-    ]
-    outcomes: list[_RenderOutcome] = []
-    topics_done = 0
-    for task in asyncio.as_completed(tasks):
-        outcome = await task
-        outcomes.append(outcome)
-        topics_done += 1
-        await ctx.progress.emit(
-            pipeline_run_id=ctx.pipeline_run_id,
-            phase="render",
-            status="progress",
-            done=materialized + topics_done,
-            total=total_work,
-        )
-
-    cache_misses = 0
-    topics_failed = 0
-    for outcome in outcomes:
-        if outcome.error is not None:
-            topics_failed += 1
-            continue
-        cache_misses += 1
-        await repo.set_rendered(
-            outcome.topic_id,
-            rendered_from_hash=outcome.rendered_from_hash,
-        )
-
-    await ctx.session.commit()
-
-    wiki_chunks_indexed = 0
-    if materialized or cache_misses:
-        search_svc = SearchService(SearchIndexRepository(ctx.session))
-        wiki_chunks_indexed = await search_svc.rebuild_wiki_index(
-            ctx.vault_id, ctx.storage, client=ctx.client
-        )
-
-    topics_rendered = cache_hits + materialized + cache_misses
-    enrich(
-        render_topics_rendered=topics_rendered,
-        render_cache_hits=cache_hits + materialized,
-        render_cache_misses=cache_misses,
-        render_topics_failed=topics_failed,
-        render_cache_invalid=cache_invalid,
-        render_wiki_chunks_indexed=wiki_chunks_indexed,
-    )
-    log_event(
-        "pipeline.render_completed",
-        vault_id=str(ctx.vault_id),
-        topics_rendered=topics_rendered,
-        cache_hits=cache_hits,
-        cache_materialized=materialized,
-        cache_misses=cache_misses,
-        cache_invalid=cache_invalid,
-        topics_failed=topics_failed,
-        wiki_chunks_indexed=wiki_chunks_indexed,
-    )
+    await RenderPhase(
+        storage=ctx.storage,
+        client=ctx.client,
+        session=ctx.session,
+        progress=ctx.progress,
+        compile_cache=ctx.compile_cache,
+        steps=ctx.steps,
+        documents=DocumentService(DocumentRepository(ctx.session)),
+        topics=TopicService(TopicRepository(ctx.session)),
+        search=SearchService(SearchIndexRepository(ctx.session)),
+        sidecar_root=ctx.sidecar_root,
+        concurrency=settings.compile_write_concurrency,
+    ).run(ctx.vault_id, ctx.pipeline_run_id, validated)
 
 
 # ---------------------------------------------------------------------------
@@ -284,7 +344,8 @@ class _RenderOutcome:
 
 async def _write_rendered_article(
     *,
-    ctx: PipelineContext,
+    phase: RenderPhase,
+    vault_id: UUID,
     topic: TopicDetail,
     body: str,
     tags: list[str],
@@ -297,16 +358,15 @@ async def _write_rendered_article(
         "description": topic.description,
     }
     full_content = serialize_frontmatter(fm, body)
-    await ctx.storage.write(article_path, full_content)
+    await phase.storage.write(article_path, full_content)
 
     # Index the rendered article in the documents table so /wiki/recent,
     # /raw/sources, and search.rebuild_wiki_index all have consistent
     # metadata. topics is the editorial plan; documents holds the
     # on-disk artifacts (raw + wiki). topic_id is the FK that ties the
     # two together — verify, lint, and archive all join on it.
-    doc_repo = DocumentRepository(ctx.session)
-    await doc_repo.upsert(
-        ctx.vault_id,
+    await phase.documents.upsert_compiled_doc(
+        vault_id,
         DocumentCreate(
             file_path=article_path,
             content=full_content,
@@ -324,13 +384,13 @@ async def _write_rendered_article(
 
 
 async def _call_render_llm(
-    ctx: PipelineContext,
+    phase: RenderPhase,
     sem: asyncio.Semaphore,
     prompt: str,
 ) -> dict:
     async with sem:
         return await json_llm_call(
-            ctx.client,
+            phase.client,
             model=RENDER_MODEL,
             messages=[{"role": "user", "content": prompt}],
             temperature=0.3,
@@ -339,8 +399,9 @@ async def _call_render_llm(
 
 async def _render_one(
     *,
-    ctx: PipelineContext,
+    phase: RenderPhase,
     sem: asyncio.Semaphore,
+    vault_id: UUID,
     topic: TopicDetail,
     idea_by_id: dict[UUID, tuple[Idea, SourceCard]],
     doc_by_id: dict[UUID, Document],
@@ -375,10 +436,10 @@ async def _render_one(
     )
 
     try:
-        data = await ctx.steps.step(
+        data = await phase.steps.step(
             f"render-topic-llm-{topic.topic_id}-{cache_key}",
             _call_render_llm,
-            ctx,
+            phase,
             sem,
             prompt,
         )
@@ -387,7 +448,7 @@ async def _render_one(
         log_event(
             "render.topic_failed",
             level=logging.WARNING,
-            vault_id=str(ctx.vault_id),
+            vault_id=str(vault_id),
             topic_slug=topic.slug,
             error=outcome.error,
         )
@@ -401,7 +462,7 @@ async def _render_one(
         log_event(
             "render.body_invalid",
             level=logging.WARNING,
-            vault_id=str(ctx.vault_id),
+            vault_id=str(vault_id),
             topic_slug=topic.slug,
             error=outcome.error,
             response_preview=str(data)[:300],
@@ -410,10 +471,12 @@ async def _render_one(
 
     tags = output.tags
 
-    await _write_rendered_article(ctx=ctx, topic=topic, body=body, tags=tags)
+    await _write_rendered_article(
+        phase=phase, vault_id=vault_id, topic=topic, body=body, tags=tags
+    )
 
-    await ctx.compile_cache.put(
-        vault_id=ctx.vault_id,
+    await phase.compile_cache.put(
+        vault_id=vault_id,
         phase=PHASE,
         cache_key=cache_key,
         value={"body": body, "tags": tags},
@@ -602,19 +665,3 @@ def _cache_key(
         f"prompt={prompt_hash}",
         f"model={RENDER_MODEL}",
     )
-
-
-# ---------------------------------------------------------------------------
-# Shared state loaders
-# ---------------------------------------------------------------------------
-
-
-async def _load_documents(session, vault_id: UUID) -> list[Document]:
-    """Load raw documents used by anchor footnotes.
-
-    Render's footnotes cite source documents (raw), not wiki articles,
-    so the loader filters doc_kind=RAW. Wiki rows exist in the same
-    table (render writes them via DocumentRepository.upsert) but would
-    never be referenced by anchor.document_id.
-    """
-    return await DocumentRepository(session).list_by_kind(vault_id, DocKind.RAW)

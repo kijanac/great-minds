@@ -205,6 +205,8 @@ def upgrade() -> None:
         sa.Column("ingest_task_id", sa.UUID(), nullable=True),
         sa.Column("compile_intent_id", sa.UUID(), nullable=True),
         sa.Column("compile_task_id", sa.UUID(), nullable=True),
+        sa.Column("active_task_id", sa.UUID(), nullable=True),
+        sa.Column("active_task_type", sa.Text(), nullable=True),
         sa.Column(
             "created_at",
             sa.DateTime(timezone=True),
@@ -305,6 +307,36 @@ def upgrade() -> None:
     op.create_index("ix_tasks_vault_id", "tasks", ["vault_id"], unique=False)
     op.create_index(
         "ix_tasks_pipeline_run_id", "tasks", ["pipeline_run_id"], unique=False
+    )
+
+    # -- Compile cache -----------------------------------------------------
+    op.create_table(
+        "compile_cache_entries",
+        sa.Column(
+            "id",
+            sa.UUID(),
+            server_default=sa.text("gen_random_uuid()"),
+            nullable=False,
+        ),
+        sa.Column("vault_id", sa.UUID(), nullable=False),
+        sa.Column("phase", sa.Text(), nullable=False),
+        sa.Column("cache_key", sa.Text(), nullable=False),
+        sa.Column("value", JSONB(), nullable=False),
+        sa.Column(
+            "created_at",
+            sa.DateTime(timezone=True),
+            server_default=sa.text("now()"),
+            nullable=False,
+        ),
+        sa.ForeignKeyConstraint(["vault_id"], ["vaults.id"], ondelete="CASCADE"),
+        sa.PrimaryKeyConstraint("id"),
+        sa.UniqueConstraint("vault_id", "phase", "cache_key"),
+    )
+    op.create_index(
+        "ix_compile_cache_entries_vault_id",
+        "compile_cache_entries",
+        ["vault_id"],
+        unique=False,
     )
 
     # -- Compile intents (outbox: domain-change → eventual compile) --------
@@ -656,6 +688,31 @@ def upgrade() -> None:
             "CREATE INDEX ix_backlinks_target_document_id "
             "ON backlinks (target_document_id)"
         )
+    )
+
+    # -- Sessions listing index --------------------------------------------
+    # JSONL files remain the authoritative event log; this table is a
+    # minimal query index for list/filter/sort pagination.
+    op.create_table(
+        "sessions",
+        sa.Column("id", sa.Text(), nullable=False),
+        sa.Column("vault_id", sa.UUID(), nullable=False),
+        sa.Column("user_id", sa.UUID(), nullable=False),
+        sa.Column("query", sa.Text(), nullable=False),
+        sa.Column("origin", JSONB(), nullable=True),
+        sa.Column("created", sa.Text(), nullable=False),
+        sa.Column("updated", sa.Text(), nullable=False),
+        sa.ForeignKeyConstraint(["user_id"], ["users.id"], ondelete="CASCADE"),
+        sa.ForeignKeyConstraint(["vault_id"], ["vaults.id"], ondelete="CASCADE"),
+        sa.PrimaryKeyConstraint("id", "vault_id"),
+    )
+    op.create_index("ix_sessions_vault_id", "sessions", ["vault_id"])
+    op.create_index("ix_sessions_user_id", "sessions", ["user_id"])
+    op.create_index("ix_sessions_updated", "sessions", ["updated"])
+    op.create_index(
+        "ix_sessions_vault_user_updated",
+        "sessions",
+        ["vault_id", "user_id", "updated"],
     )
 
     # -- Absurd (durable task queue) schema --------------------------------

@@ -25,6 +25,7 @@ from great_minds.core.markdown import extract_wiki_link_targets
 from great_minds.core.paths import wiki_path, wiki_slug
 from great_minds.core.storage import Storage
 from great_minds.core.telemetry import enrich, log_event
+from great_minds.core.topics.schemas import ArticleStatus
 from great_minds.core.topics.service import TopicService
 
 log = logging.getLogger(__name__)
@@ -45,7 +46,7 @@ class VerifyPhase:
         self.documents = documents
 
     async def run(self, vault_id: UUID) -> None:
-        rendered = await self.topics.list_rendered(vault_id)
+        rendered = await self.topics.list_for_vault(vault_id, ArticleStatus.RENDERED)
         if not rendered:
             log_event(
                 "pipeline.verify_skipped",

@@ -5,13 +5,14 @@ from uuid import UUID
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
 from great_minds.core.ingest_schemas import StagedFileInput
-from great_minds.core.pagination import Page, PageInfo, PageParams
+from great_minds.core.pagination import Page, PageParams, create_page
 from great_minds.core.pipeline_runs.repository import PipelineRunRepository
 from great_minds.core.pipeline_runs.schemas import (
     PipelineProgress,
     PipelineRun,
     PipelineRunCreate,
     PipelineRunUpdate,
+    PipelineTaskType,
     PipelineTrigger,
 )
 from great_minds.core.tasks import TaskService
@@ -42,17 +43,12 @@ class PipelineRunService:
             offset=pagination.offset,
         )
         total = await self.repo.count_for_vault(vault_id, status=status)
-        return Page(
-            items=items,
-            pagination=PageInfo(
-                limit=pagination.limit,
-                offset=pagination.offset,
-                total=total,
-            ),
-        )
+        return create_page(items, pagination, total)
 
     async def attach_ingest_task(self, pipeline_run_id: UUID, task_id: UUID) -> None:
-        await self.repo.attach_ingest_task(pipeline_run_id, task_id)
+        await self.repo.attach_task(
+            pipeline_run_id, task_id, PipelineTaskType.STAGED_FILE_INGEST
+        )
 
     async def attach_compile_intent(
         self, pipeline_run_id: UUID, intent_id: UUID

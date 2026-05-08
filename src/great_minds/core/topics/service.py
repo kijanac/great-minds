@@ -8,6 +8,7 @@ how derived topic tables are rebuilt.
 from collections.abc import Sequence
 from uuid import UUID
 
+from great_minds.core.hashing import content_hash
 from great_minds.core.topics.repository import TopicRepository
 from great_minds.core.topics.schemas import (
     ArticleStatus,
@@ -21,17 +22,18 @@ class TopicService:
     def __init__(self, repository: TopicRepository) -> None:
         self.repo = repository
 
-    async def list_rendered(self, vault_id: UUID) -> list[Topic]:
-        return await self.repo.list_by_status(vault_id, ArticleStatus.RENDERED)
+    async def _commit(self) -> None:
+        await self.repo.session.commit()
 
-    async def list_archived(self, vault_id: UUID) -> list[Topic]:
-        return await self.repo.list_by_status(vault_id, ArticleStatus.ARCHIVED)
+    async def list_for_vault(
+        self, vault_id: UUID, status: ArticleStatus | None = None
+    ) -> list[Topic]:
+        return await self.repo.list_for_vault(vault_id, status)
 
-    async def count_all(self, vault_id: UUID) -> int:
-        return await self.repo.count_all(vault_id)
-
-    async def count_by_status(self, vault_id: UUID, status: ArticleStatus) -> int:
-        return await self.repo.count_by_status(vault_id, status)
+    async def count_for_vault(
+        self, vault_id: UUID, status: ArticleStatus | None = None
+    ) -> int:
+        return await self.repo.count_for_vault(vault_id, status)
 
     async def count_dirty(self, vault_id: UUID) -> int:
         return await self.repo.count_dirty(vault_id)
@@ -42,6 +44,9 @@ class TopicService:
     async def get_by_id(self, topic_id: UUID) -> Topic | None:
         return await self.repo.get_by_id(topic_id)
 
+    async def set_rendered(self, topic_id: UUID, rendered_from_hash: str) -> None:
+        await self.repo.set_rendered(topic_id, rendered_from_hash)
+
     async def get_related(self, topic_id: UUID, limit: int = 20) -> list[Topic]:
         return await self.repo.get_related(topic_id, limit)
 
@@ -49,6 +54,31 @@ class TopicService:
         self, vault_id: UUID, source_topic_ids: list[UUID] | None = None
     ) -> list[TopicLink]:
         return await self.repo.list_links_for_vault(vault_id, source_topic_ids)
+
+    async def upsert_validated_topics(
+        self,
+        vault_id: UUID,
+        topics: Sequence[TopicDetail],
+    ) -> None:
+        """Upsert validated canonical topics with compile identity hashes."""
+        for topic in topics:
+            await self.repo.upsert(
+                topic_id=topic.topic_id,
+                vault_id=vault_id,
+                slug=topic.slug,
+                title=topic.title,
+                description=topic.description,
+                compiled_from_hash=self._compiled_from_hash(topic),
+            )
+        await self._commit()
+
+    def _compiled_from_hash(self, topic: TopicDetail) -> str:
+        """Hash fields that define a topic's compiled identity."""
+        return content_hash(
+            topic.title,
+            topic.description,
+            *sorted(str(idea_id) for idea_id in topic.subsumed_idea_ids),
+        )
 
     async def rebuild_derived_tables(
         self,
@@ -67,11 +97,10 @@ class TopicService:
         await self._replace_links(vault_id, topics)
         await self._replace_related(topics, related_limit)
 
-        await self.repo.session.commit()
+        await self._commit()
 
     async def _replace_membership(self, topics: Sequence[TopicDetail]) -> None:
-        for topic in topics:
-            await self.repo.replace_membership(topic.topic_id, topic.subsumed_idea_ids)
+        await self.repo.replace_memberships_for_topics(topics)
 
     async def _replace_links(
         self,

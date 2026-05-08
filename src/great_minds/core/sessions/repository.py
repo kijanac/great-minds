@@ -3,10 +3,16 @@
 import json
 import logging
 from datetime import datetime, timezone
+from uuid import UUID
 
 from pydantic import ValidationError
+from sqlalchemy import Text, cast, func, select, update
+from sqlalchemy.dialects.postgresql import insert
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from great_minds.core.storage import Storage
+
+from .models import SessionRecordORM
 
 from .schemas import (
     BtwEvent,
@@ -46,8 +52,10 @@ def _parse_event(data: dict) -> SessionEvent | None:
 class SessionRepository:
     """Persist and query session JSONL event logs in vault storage."""
 
-    def __init__(self, storage: Storage) -> None:
+    def __init__(self, storage: Storage, session: AsyncSession, vault_id: UUID) -> None:
         self.storage = storage
+        self.session = session
+        self.vault_id = vault_id
 
     async def mkdir(self) -> None:
         await self.storage.mkdir("sessions")
@@ -82,55 +90,80 @@ class SessionRepository:
                 events.append(event)
         return events
 
-    async def list_overviews(
-        self, *, user_id: str | None = None
-    ) -> list[SessionOverview]:
-        """List session overviews sorted by last activity descending."""
-        results: list[SessionOverview] = []
-        for path in await self.storage.glob("sessions/*.jsonl"):
-            content = await self.storage.read(path)
-            if content is None:
-                continue
-            lines = [line for line in content.strip().split("\n") if line.strip()]
-            if not lines:
-                continue
-
-            try:
-                raw_meta = json.loads(lines[0])
-            except json.JSONDecodeError:
-                continue
-            if raw_meta.get("type") != EventType.META:
-                continue
-
-            try:
-                meta = MetaEvent.model_validate(raw_meta)
-            except ValidationError:
-                continue
-
-            if user_id is not None and meta.user_id != user_id:
-                continue
-
-            updated = meta.ts
-            if len(lines) > 1:
-                try:
-                    last = json.loads(lines[-1])
-                    updated = last.get("ts", meta.ts)
-                except json.JSONDecodeError:
-                    pass
-
-            results.append(
-                SessionOverview(
-                    id=meta.id,
-                    query=meta.query,
-                    created=meta.ts,
-                    updated=updated,
-                    user_id=meta.user_id,
-                    origin=meta.origin,
-                )
+    async def upsert_overview(self, meta: MetaEvent, *, updated: str) -> None:
+        """Upsert the DB listing index for a session JSONL event log."""
+        stmt = (
+            insert(SessionRecordORM)
+            .values(
+                id=meta.id,
+                vault_id=self.vault_id,
+                user_id=UUID(meta.user_id),
+                query=meta.query,
+                origin=meta.origin.model_dump(mode="json") if meta.origin else None,
+                created=meta.ts,
+                updated=updated,
             )
+            .on_conflict_do_update(
+                index_elements=[SessionRecordORM.id, SessionRecordORM.vault_id],
+                set_={
+                    "user_id": UUID(meta.user_id),
+                    "query": meta.query,
+                    "origin": meta.origin.model_dump(mode="json")
+                    if meta.origin
+                    else None,
+                    "created": meta.ts,
+                    "updated": updated,
+                },
+            )
+        )
+        await self.session.execute(stmt)
 
-        results.sort(key=lambda s: s.updated, reverse=True)
-        return results
+    async def touch_updated(self, session_id: str, updated: str) -> None:
+        await self.session.execute(
+            update(SessionRecordORM)
+            .where(
+                SessionRecordORM.vault_id == self.vault_id,
+                SessionRecordORM.id == session_id,
+            )
+            .values(updated=updated)
+        )
+
+    async def count_overviews(self, *, user_id: str | None = None) -> int:
+        stmt = (
+            select(func.count())
+            .select_from(SessionRecordORM)
+            .where(SessionRecordORM.vault_id == self.vault_id)
+        )
+        if user_id is not None:
+            stmt = stmt.where(SessionRecordORM.user_id == UUID(user_id))
+        return (await self.session.scalar(stmt)) or 0
+
+    async def list_overviews(
+        self,
+        *,
+        user_id: str | None = None,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> list[SessionOverview]:
+        """List session overviews from the DB index, newest first."""
+        stmt = select(
+            SessionRecordORM.id,
+            SessionRecordORM.query,
+            SessionRecordORM.created,
+            SessionRecordORM.updated,
+            cast(SessionRecordORM.user_id, Text).label("user_id"),
+            SessionRecordORM.origin,
+        ).where(SessionRecordORM.vault_id == self.vault_id)
+        if user_id is not None:
+            stmt = stmt.where(SessionRecordORM.user_id == UUID(user_id))
+        rows = (
+            await self.session.execute(
+                stmt.order_by(SessionRecordORM.updated.desc())
+                .offset(offset)
+                .limit(limit)
+            )
+        ).all()
+        return [SessionOverview.model_validate(row) for row in rows]
 
     @staticmethod
     def find_meta(events: list[SessionEvent]) -> MetaEvent | None:

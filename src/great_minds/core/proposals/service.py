@@ -11,7 +11,7 @@ from uuid import UUID
 from sqlalchemy import update
 
 from great_minds.core.documents.service import DocumentService
-from great_minds.core.pagination import Page, PageInfo, PageParams
+from great_minds.core.pagination import Page, PageParams, create_page
 from great_minds.core.paths import proposal_staging_path
 from great_minds.core.proposals.models import ProposalORM, ProposalStatus
 from great_minds.core.proposals.repository import ProposalRepository
@@ -86,14 +86,7 @@ class ProposalService:
             offset=pagination.offset,
         )
         total = await self.repo.count_for_vault(vault_id, status=status)
-        return Page(
-            items=list(proposals),
-            pagination=PageInfo(
-                limit=pagination.limit,
-                offset=pagination.offset,
-                total=total,
-            ),
-        )
+        return create_page(list(proposals), pagination, total)
 
     async def get(self, proposal_id: UUID) -> Proposal | None:
         return await self.repo.get(proposal_id)

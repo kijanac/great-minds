@@ -3,6 +3,7 @@
 from uuid import UUID
 
 from great_minds.core.compile_intents.repository import CompileIntentRepository
+from great_minds.core.ideas.schemas import SourceCard
 from great_minds.core.markdown import parse_frontmatter
 from great_minds.core.documents.repository import DocumentRepository
 from great_minds.core.documents.schemas import (
@@ -18,6 +19,7 @@ from great_minds.core.pagination import (
     Page,
     PageInfo,
     PageParams,
+    create_page,
 )
 from great_minds.core.pipeline_runs import PipelineRunRepository
 from great_minds.core.telemetry import log_event
@@ -105,6 +107,15 @@ class DocumentService:
         await self._commit()
         return ids
 
+    async def upsert_compiled_doc(self, vault_id: UUID, doc: DocumentCreate) -> UUID:
+        """Upsert a compile output document without emitting a compile intent."""
+        return await self.repo.upsert(vault_id, doc)
+
+    async def update_metadata_from_cards(
+        self, vault_id: UUID, cards: list[SourceCard]
+    ) -> None:
+        await self.repo.update_metadata_from_cards(vault_id, cards)
+
     async def query_documents(self, vault_ids: list[UUID], **filters) -> list[Document]:
         return await self.repo.query_documents(vault_ids, **filters)
 
@@ -116,7 +127,7 @@ class DocumentService:
         query: str | None = None,
         limit: int = 20,
     ) -> list[WikiArticleOverview]:
-        return await self.repo.search_wiki_articles(
+        return await self.repo.list_wiki_overviews(
             vault_id, slug=slug, query=query, limit=limit
         )
 
@@ -145,39 +156,16 @@ class DocumentService:
         await self._commit()
 
     async def list_wiki_articles(
-        self, vault_id: UUID, *, pagination: PageParams
-    ) -> Page[WikiArticleOverview]:
-        items = await self.repo.list_wiki_overviews(
-            vault_id, limit=pagination.limit, offset=pagination.offset
-        )
-        total = await self.repo.count_wiki_article_paths(vault_id)
-        return Page(
-            items=items,
-            pagination=PageInfo(
-                limit=pagination.limit,
-                offset=pagination.offset,
-                total=total,
-            ),
-        )
-
-    async def list_recent_wiki_articles(
-        self, vault_id: UUID, *, pagination: PageParams
+        self, vault_id: UUID, *, pagination: PageParams, recent: bool = False
     ) -> Page[WikiArticleOverview]:
         items = await self.repo.list_wiki_overviews(
             vault_id,
             limit=pagination.limit,
             offset=pagination.offset,
-            recent=True,
+            recent=recent,
         )
         total = await self.repo.count_wiki_article_paths(vault_id)
-        return Page(
-            items=items,
-            pagination=PageInfo(
-                limit=pagination.limit,
-                offset=pagination.offset,
-                total=total,
-            ),
-        )
+        return create_page(items, pagination, total)
 
     async def list_raw_sources(
         self,

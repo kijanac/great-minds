@@ -39,14 +39,18 @@ class TaskRepository:
         return Task.model_validate(record)
 
     async def list_for_vault(
-        self, vault_id: UUID, limit: int = 50, offset: int = 0
+        self,
+        vault_id: UUID,
+        *,
+        task_type: str | None = None,
+        limit: int = 50,
+        offset: int = 0,
     ) -> list[Task]:
+        stmt = select(TaskRecordORM).where(TaskRecordORM.vault_id == vault_id)
+        if task_type is not None:
+            stmt = stmt.where(TaskRecordORM.type == task_type)
         rows = await self.session.execute(
-            select(TaskRecordORM)
-            .where(TaskRecordORM.vault_id == vault_id)
-            .order_by(TaskRecordORM.created_at.desc())
-            .offset(offset)
-            .limit(limit)
+            stmt.order_by(TaskRecordORM.created_at.desc()).offset(offset).limit(limit)
         )
         return [Task.model_validate(r) for r in rows.scalars().all()]
 
@@ -66,18 +70,3 @@ class TaskRepository:
         )
         orm = row.scalar_one_or_none()
         return Task.model_validate(orm) if orm else None
-
-    async def list_for_vault_by_type(
-        self, vault_id: UUID, task_type: str, limit: int = 10
-    ) -> list[Task]:
-        """Most-recent-first list of tasks of a given type for a vault."""
-        rows = await self.session.execute(
-            select(TaskRecordORM)
-            .where(
-                TaskRecordORM.vault_id == vault_id,
-                TaskRecordORM.type == task_type,
-            )
-            .order_by(TaskRecordORM.created_at.desc())
-            .limit(limit)
-        )
-        return [Task.model_validate(r) for r in rows.scalars().all()]

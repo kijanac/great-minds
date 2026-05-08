@@ -377,8 +377,10 @@ async def get_vault_storage(
 VaultStorageDep = Annotated[Storage, Depends(get_vault_storage)]
 
 
-def get_session_repository(storage: VaultStorageDep) -> SessionRepository:
-    return SessionRepository(storage)
+def get_session_repository(
+    storage: VaultStorageDep, session: SessionDep, vault_id: UUID
+) -> SessionRepository:
+    return SessionRepository(storage, session, vault_id)
 
 
 SessionRepositoryDep = Annotated[SessionRepository, Depends(get_session_repository)]

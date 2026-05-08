@@ -7,7 +7,7 @@ from openai import AsyncOpenAI
 from great_minds.core.documents.builder import build_document
 from great_minds.core.llm import QUERY_MODEL
 from great_minds.core.llm.client import api_call, extract_content
-from great_minds.core.pagination import Page, PageInfo, PageParams
+from great_minds.core.pagination import Page, PageParams, create_page
 from great_minds.core.storage import Storage
 
 from .repository import SessionRepository, now_iso
@@ -69,6 +69,8 @@ class SessionService:
             ts=now_iso(),
         )
         await self.repo.append_event(session_id, ex)
+        await self.repo.upsert_overview(meta, updated=ex.ts)
+        await self.repo.session.commit()
 
         await self._rebuild_md(session_id)
         return f"sessions/{session_id}.jsonl"
@@ -87,6 +89,8 @@ class SessionService:
             ts=now_iso(),
         )
         await self.repo.append_event(session_id, ex)
+        await self.repo.touch_updated(session_id, ex.ts)
+        await self.repo.session.commit()
         await self._rebuild_md(session_id)
         return f"sessions/{session_id}.jsonl"
 
@@ -105,6 +109,8 @@ class SessionService:
             ts=now_iso(),
         )
         await self.repo.append_event(session_id, event)
+        await self.repo.touch_updated(session_id, event.ts)
+        await self.repo.session.commit()
         await self._rebuild_md(session_id)
         return f"sessions/{session_id}.jsonl"
 
@@ -118,16 +124,13 @@ class SessionService:
         pagination: PageParams,
     ) -> Page[SessionOverview]:
         """List all sessions with metadata. Sorted by last activity."""
-        results = await self.repo.list_overviews(user_id=user_id)
-        total = len(results)
-        return Page(
-            items=results[pagination.offset : pagination.offset + pagination.limit],
-            pagination=PageInfo(
-                limit=pagination.limit,
-                offset=pagination.offset,
-                total=total,
-            ),
+        total = await self.repo.count_overviews(user_id=user_id)
+        results = await self.repo.list_overviews(
+            user_id=user_id,
+            limit=pagination.limit,
+            offset=pagination.offset,
         )
+        return create_page(results, pagination, total)
 
     async def _rebuild_md(self, session_id: str) -> None:
         events = await self.repo.load_events(session_id)

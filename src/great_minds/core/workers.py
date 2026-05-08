@@ -36,6 +36,8 @@ from great_minds.core.documents.builder import build_document
 from great_minds.core.documents.repository import DocumentRepository
 from great_minds.core.documents.schemas import DocumentCreate
 from great_minds.core.documents.service import DocumentService
+from great_minds.core.ideas.repository import IdeaEmbeddingRepository
+from great_minds.core.ideas.service import IdeaService
 from great_minds.core.ingest_service import _convert_to_markdown
 from great_minds.core.llm import get_async_client
 from great_minds.core.llm_costs import record_wide_event_cost
@@ -196,7 +198,20 @@ async def compile_task(params: dict, ctx) -> None:
                 done=0,
                 total=0,
             )
-            await extract.run(pipeline_ctx)
+            await extract.ExtractPhase(
+                storage=pipeline_ctx.storage,
+                client=pipeline_ctx.client,
+                session=pipeline_ctx.session,
+                progress=progress,
+                compile_cache=pipeline_ctx.compile_cache,
+                documents=DocumentService(DocumentRepository(pipeline_ctx.session)),
+                ideas=IdeaService(
+                    embedding_repo=IdeaEmbeddingRepository(pipeline_ctx.session),
+                    sidecar_root=pipeline_ctx.sidecar_root,
+                ),
+                config=pipeline_ctx.config,
+                concurrency=settings.compile_enrich_concurrency,
+            ).run(pipeline_ctx.vault_id, pipeline_run_id)
             await progress.emit(
                 pipeline_run_id=pipeline_run_id,
                 phase="extract",
@@ -274,7 +289,19 @@ async def compile_task(params: dict, ctx) -> None:
                 done=0,
                 total=0,
             )
-            await render.run(pipeline_ctx, validated)
+            await render.RenderPhase(
+                storage=pipeline_ctx.storage,
+                client=pipeline_ctx.client,
+                session=pipeline_ctx.session,
+                progress=progress,
+                compile_cache=pipeline_ctx.compile_cache,
+                steps=pipeline_ctx.steps,
+                documents=DocumentService(DocumentRepository(pipeline_ctx.session)),
+                topics=TopicService(TopicRepository(pipeline_ctx.session)),
+                search=SearchService(SearchIndexRepository(pipeline_ctx.session)),
+                sidecar_root=pipeline_ctx.sidecar_root,
+                concurrency=settings.compile_write_concurrency,
+            ).run(pipeline_ctx.vault_id, pipeline_run_id, validated)
             await progress.emit(
                 pipeline_run_id=pipeline_run_id,
                 phase="render",

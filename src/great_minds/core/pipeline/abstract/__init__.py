@@ -69,7 +69,12 @@ async def run(ctx: PipelineContext) -> list[TopicDetail]:
         local_topics,
         jaccard_threshold=settings.compile_premerge_jaccard_threshold,
     )
-    canonical_topics = await canonicalize.run(ctx, merged_topics)
+    canonical_topics = await canonicalize.CanonicalizePhase(
+        storage=ctx.storage,
+        client=ctx.client,
+        compile_cache=ctx.compile_cache,
+        thematic_hint=ctx.config.thematic_hint,
+    ).run(ctx.vault_id, merged_topics)
     validated = await validate.run(ctx, canonical_topics, merged_topics)
 
     enrich(validated_topics=len(validated))

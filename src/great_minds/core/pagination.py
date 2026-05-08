@@ -22,6 +22,17 @@ class Page(BaseModel, Generic[T]):
     pagination: PageInfo
 
 
+def create_page(items: list[T], params: PageParams, total: int) -> Page[T]:
+    return Page(
+        items=items,
+        pagination=PageInfo(
+            limit=params.limit,
+            offset=params.offset,
+            total=total,
+        ),
+    )
+
+
 class FacetCount(BaseModel):
     value: str
     count: int

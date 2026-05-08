@@ -33,6 +33,8 @@ from great_minds.core.pipeline import (
 )
 from great_minds.core.pipeline.context import PipelineContext, build_context
 from great_minds.core.documents import DocumentRepository, DocumentService
+from great_minds.core.ideas.repository import IdeaEmbeddingRepository
+from great_minds.core.ideas.service import IdeaService
 from great_minds.core.search import SearchIndexRepository, SearchService
 from great_minds.core.settings import get_settings
 from great_minds.core.telemetry import log_event
@@ -73,7 +75,21 @@ async def run(ctx: PipelineContext) -> None:
     await ctx.progress.emit(
         pipeline_run_id=run_id, phase="extract", status="started", done=0, total=0
     )
-    await extract.run(ctx)
+    settings = get_settings()
+    await extract.ExtractPhase(
+        storage=ctx.storage,
+        client=ctx.client,
+        session=ctx.session,
+        progress=ctx.progress,
+        compile_cache=ctx.compile_cache,
+        documents=DocumentService(DocumentRepository(ctx.session)),
+        ideas=IdeaService(
+            embedding_repo=IdeaEmbeddingRepository(ctx.session),
+            sidecar_root=ctx.sidecar_root,
+        ),
+        config=ctx.config,
+        concurrency=settings.compile_enrich_concurrency,
+    ).run(ctx.vault_id, ctx.pipeline_run_id)
     await ctx.progress.emit(pipeline_run_id=run_id, phase="extract", status="completed")
 
     # Phase 2 — abstract
@@ -114,7 +130,7 @@ async def run(ctx: PipelineContext) -> None:
     )
     await derive.DerivePhase(
         topics=TopicService(TopicRepository(ctx.session)),
-        related_limit=get_settings().compile_derive_related_limit,
+        related_limit=settings.compile_derive_related_limit,
     ).run(ctx.vault_id, validated)
     await ctx.progress.emit(
         pipeline_run_id=run_id, phase="derive", status="completed", done=1, total=1
@@ -124,7 +140,19 @@ async def run(ctx: PipelineContext) -> None:
     await ctx.progress.emit(
         pipeline_run_id=run_id, phase="render", status="started", done=0, total=0
     )
-    await render.run(ctx, validated)
+    await render.RenderPhase(
+        storage=ctx.storage,
+        client=ctx.client,
+        session=ctx.session,
+        progress=ctx.progress,
+        compile_cache=ctx.compile_cache,
+        steps=ctx.steps,
+        documents=DocumentService(DocumentRepository(ctx.session)),
+        topics=TopicService(TopicRepository(ctx.session)),
+        search=SearchService(SearchIndexRepository(ctx.session)),
+        sidecar_root=ctx.sidecar_root,
+        concurrency=settings.compile_write_concurrency,
+    ).run(ctx.vault_id, ctx.pipeline_run_id, validated)
     await ctx.progress.emit(pipeline_run_id=run_id, phase="render", status="completed")
 
     # Phase 5 — verify (mechanical, fast)

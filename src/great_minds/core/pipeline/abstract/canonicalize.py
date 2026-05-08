@@ -21,119 +21,141 @@ a lossy registry still beats no registry, and the user can re-run.
 import logging
 from uuid import UUID
 
+from openai import AsyncOpenAI
+
+from great_minds.core.compile_cache import CompileCacheRepository
 from great_minds.core.hashing import content_hash, prompt_hash
-from great_minds.core.vaults.prompts import load_prompt
-from great_minds.core.llm.client import json_llm_call
 from great_minds.core.llm import REDUCE_MODEL
+from great_minds.core.llm.client import json_llm_call
 from great_minds.core.pipeline.abstract.schemas import LocalTopic
-from great_minds.core.pipeline.context import PipelineContext
+from great_minds.core.storage import Storage
 from great_minds.core.telemetry import enrich, log_event
 from great_minds.core.topics.schemas import CanonicalTopicDraft
+from great_minds.core.vaults.prompts import load_prompt
 
 log = logging.getLogger(__name__)
 
 PHASE = "canonicalize"
 
 
-async def run(
-    ctx: PipelineContext, local_topics: list[LocalTopic]
-) -> list[CanonicalTopicDraft]:
-    """Consolidate local topics into canonical registry.
+class CanonicalizePhase:
+    """Phase 2d runner with explicit service-style dependencies."""
 
-    One LLM call, no retries at this layer — failure propagates. Local
-    topics are referenced in the prompt by short lt_N tags to keep
-    UUIDs out of the LLM's face; parse maps back.
-    """
-    if not local_topics:
-        log_event(
-            "pipeline.canonicalize_skipped",
-            vault_id=str(ctx.vault_id),
-            reason="no_local_topics",
+    def __init__(
+        self,
+        *,
+        storage: Storage,
+        client: AsyncOpenAI,
+        compile_cache: CompileCacheRepository,
+        thematic_hint: str,
+    ) -> None:
+        self.storage = storage
+        self.client = client
+        self.compile_cache = compile_cache
+        self.thematic_hint = thematic_hint
+
+    async def run(
+        self, vault_id: UUID, local_topics: list[LocalTopic]
+    ) -> list[CanonicalTopicDraft]:
+        """Consolidate local topics into canonical registry.
+
+        One LLM call, no retries at this layer — failure propagates. Local
+        topics are referenced in the prompt by short lt_N tags to keep
+        UUIDs out of the LLM's face; parse maps back.
+        """
+        if not local_topics:
+            log_event(
+                "pipeline.canonicalize_skipped",
+                vault_id=str(vault_id),
+                reason="no_local_topics",
+            )
+            return []
+
+        prompt_template = await load_prompt(self.storage, "canonicalize")
+        ph = prompt_hash(prompt_template)
+
+        ordered = sorted(local_topics, key=lambda t: str(t.local_topic_id))
+        tag_to_uuid, local_topic_block = _render_local_topics(ordered)
+
+        cache_key = _cache_key(
+            ordered=ordered,
+            prompt_hash=ph,
+            thematic_hint=self.thematic_hint,
         )
-        return []
 
-    prompt_template = await load_prompt(ctx.storage, "canonicalize")
-    ph = prompt_hash(prompt_template)
+        cached = await self.compile_cache.get(
+            vault_id=vault_id,
+            phase=PHASE,
+            cache_key=cache_key,
+        )
+        if cached is not None:
+            canonical_topics = [
+                CanonicalTopicDraft.model_validate(c)
+                for c in cached["canonical_topics"]
+            ]
+            covered = _covered_local_ids(canonical_topics, set(tag_to_uuid.values()))
+            orphans = len(tag_to_uuid) - len(covered)
+            enrich(
+                canonicalize_cache_hit=True,
+                canonicalize_input_local_topics=len(local_topics),
+                canonicalize_output_canonical_topics=len(canonical_topics),
+                canonicalize_orphan_count=orphans,
+            )
+            log_event(
+                "pipeline.canonicalize_cached",
+                vault_id=str(vault_id),
+                canonical_count=len(canonical_topics),
+                orphan_count=orphans,
+            )
+            return canonical_topics
 
-    ordered = sorted(local_topics, key=lambda t: str(t.local_topic_id))
-    tag_to_uuid, local_topic_block = _render_local_topics(ordered)
+        prompt = _render_prompt(
+            prompt_template=prompt_template,
+            thematic_hint=self.thematic_hint,
+            local_topic_block=local_topic_block,
+        )
 
-    cache_key = _cache_key(
-        ordered=ordered,
-        prompt_hash=ph,
-        thematic_hint=ctx.config.thematic_hint,
-    )
+        data = await json_llm_call(
+            self.client,
+            model=REDUCE_MODEL,
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0.2,
+        )
 
-    cached = await ctx.compile_cache.get(
-        vault_id=ctx.vault_id,
-        phase=PHASE,
-        cache_key=cache_key,
-    )
-    if cached is not None:
-        canonical_topics = [
-            CanonicalTopicDraft.model_validate(c) for c in cached["canonical_topics"]
-        ]
+        canonical_topics, unknown_tag_count = _parse_canonicals(
+            data=data, tag_to_uuid=tag_to_uuid
+        )
+
         covered = _covered_local_ids(canonical_topics, set(tag_to_uuid.values()))
         orphans = len(tag_to_uuid) - len(covered)
+
+        await self.compile_cache.put(
+            vault_id=vault_id,
+            phase=PHASE,
+            cache_key=cache_key,
+            value={
+                "canonical_topics": [
+                    c.model_dump(mode="json") for c in canonical_topics
+                ]
+            },
+        )
+
         enrich(
-            canonicalize_cache_hit=True,
+            canonicalize_cache_hit=False,
             canonicalize_input_local_topics=len(local_topics),
             canonicalize_output_canonical_topics=len(canonical_topics),
             canonicalize_orphan_count=orphans,
+            canonicalize_unknown_tag_count=unknown_tag_count,
         )
         log_event(
-            "pipeline.canonicalize_cached",
-            vault_id=str(ctx.vault_id),
-            canonical_count=len(canonical_topics),
+            "pipeline.canonicalize_completed",
+            vault_id=str(vault_id),
+            input_local_topics=len(local_topics),
+            output_canonical_topics=len(canonical_topics),
             orphan_count=orphans,
+            unknown_tag_count=unknown_tag_count,
         )
         return canonical_topics
-
-    prompt = _render_prompt(
-        prompt_template=prompt_template,
-        thematic_hint=ctx.config.thematic_hint,
-        local_topic_block=local_topic_block,
-    )
-
-    data = await json_llm_call(
-        ctx.client,
-        model=REDUCE_MODEL,
-        messages=[{"role": "user", "content": prompt}],
-        temperature=0.2,
-    )
-
-    canonical_topics, unknown_tag_count = _parse_canonicals(
-        data=data, tag_to_uuid=tag_to_uuid
-    )
-
-    covered = _covered_local_ids(canonical_topics, set(tag_to_uuid.values()))
-    orphans = len(tag_to_uuid) - len(covered)
-
-    await ctx.compile_cache.put(
-        vault_id=ctx.vault_id,
-        phase=PHASE,
-        cache_key=cache_key,
-        value={
-            "canonical_topics": [c.model_dump(mode="json") for c in canonical_topics]
-        },
-    )
-
-    enrich(
-        canonicalize_cache_hit=False,
-        canonicalize_input_local_topics=len(local_topics),
-        canonicalize_output_canonical_topics=len(canonical_topics),
-        canonicalize_orphan_count=orphans,
-        canonicalize_unknown_tag_count=unknown_tag_count,
-    )
-    log_event(
-        "pipeline.canonicalize_completed",
-        vault_id=str(ctx.vault_id),
-        input_local_topics=len(local_topics),
-        output_canonical_topics=len(canonical_topics),
-        orphan_count=orphans,
-        unknown_tag_count=unknown_tag_count,
-    )
-    return canonical_topics
 
 
 # ---------------------------------------------------------------------------
@@ -183,22 +205,25 @@ def _render_prompt(
 def _parse_canonicals(
     *, data: dict, tag_to_uuid: dict[str, UUID]
 ) -> tuple[list[CanonicalTopicDraft], int]:
+    """Parse raw LLM JSON into the internal canonical-topic model."""
     out: list[CanonicalTopicDraft] = []
     unknown_tag_count = 0
     for raw in data.get("canonical_topics") or []:
+        if not isinstance(raw, dict):
+            continue
         slug = (raw.get("slug") or "").strip()
         title = (raw.get("title") or "").strip()
         description = (raw.get("description") or "").strip()
         raw_tags = raw.get("merged_local_topic_ids") or []
         raw_link_targets = raw.get("link_targets") or []
 
-        resolved_ids: list[str] = []
+        resolved_ids: set[UUID] = set()
         for tag in raw_tags:
             uuid = tag_to_uuid.get(tag)
             if uuid is None:
                 unknown_tag_count += 1
                 continue
-            resolved_ids.append(str(uuid))
+            resolved_ids.add(uuid)
 
         if not slug or not title or not resolved_ids:
             # Missing slug/title or no local topics subsumed — can't
@@ -210,7 +235,7 @@ def _parse_canonicals(
                 slug=slug,
                 title=title,
                 description=description,
-                merged_local_topic_ids=resolved_ids,
+                merged_local_topic_ids=sorted(resolved_ids, key=str),
                 link_targets=[str(t).strip() for t in raw_link_targets if t],
             )
         )
@@ -220,14 +245,12 @@ def _parse_canonicals(
 def _covered_local_ids(
     canonicals: list[CanonicalTopicDraft], all_uuids: set[UUID]
 ) -> set[UUID]:
-    covered: set[UUID] = set()
-    for c in canonicals:
-        for s in c.merged_local_topic_ids:
-            try:
-                covered.add(UUID(s))
-            except ValueError, TypeError:
-                continue
-    return covered & all_uuids
+    return {
+        local_topic_id
+        for c in canonicals
+        for local_topic_id in c.merged_local_topic_ids
+        if local_topic_id in all_uuids
+    }
 
 
 # ---------------------------------------------------------------------------

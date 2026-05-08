@@ -64,7 +64,7 @@ async def build_lint_report(
     topic_repo = TopicRepository(session)
 
     orphans = await doc_repo.list_orphan_wiki_documents(vault_id)
-    rendered = await topic_repo.list_by_status(vault_id, ArticleStatus.RENDERED)
+    rendered = await topic_repo.list_for_vault(vault_id, ArticleStatus.RENDERED)
     if not rendered:
         dirty = await topic_repo.list_dirty_topic_ids(vault_id)
         return LintReport(orphans=orphans, dirty_topics=dirty)

@@ -19,11 +19,15 @@ from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
 from uuid import UUID, uuid7
 
+from openai import AsyncOpenAI
 from pydantic import ValidationError
+from sqlalchemy.ext.asyncio import AsyncSession
 
+from great_minds.core.compile_cache import CompileCacheRepository
 from great_minds.core.vaults.prompts import load_prompt
 from great_minds.core.documents.repository import DocumentRepository
-from great_minds.core.documents.schemas import DocKind, Document
+from great_minds.core.documents import DocumentService
+from great_minds.core.documents.schemas import DocKind
 from great_minds.core.llm.client import json_llm_call
 from great_minds.core.hashing import content_hash, prompt_hash
 from great_minds.core.markdown import (
@@ -48,9 +52,12 @@ from great_minds.core.llm.providers import (
     EMBEDDING_MODEL,
 )
 from great_minds.core.pipeline.context import PipelineContext
+from great_minds.core.pipeline_runs import PipelineProgressRunner
 from great_minds.core.llm import truncate_and_normalize
 from great_minds.core.settings import get_settings
+from great_minds.core.storage import Storage
 from great_minds.core.telemetry import enrich, log_event
+from great_minds.core.vaults.config import VaultConfig
 
 log = logging.getLogger(__name__)
 
@@ -58,144 +65,184 @@ PHASE = "extract"
 EMBEDDING_BATCH_SIZE = 50
 
 
-async def run(ctx: PipelineContext) -> None:
-    """Extract every raw document registered in the DB for this vault.
+class ExtractPhase:
+    """Phase 1 runner with explicit service-style dependencies."""
 
-    The documents table is the authoritative registry — ingest writes
-    the file and the DB row together, so iterating the registry catches
-    every document. If a DB row points at a file that's missing from
-    storage, _extract_one records file_not_found via
-    storage.read(strict=False).
-    """
-    settings = get_settings()
-    prompt_template = await load_prompt(ctx.storage, "extract")
-    ph = prompt_hash(prompt_template)
-    kinds_key = "|".join(sorted(ctx.config.kinds))
+    def __init__(
+        self,
+        *,
+        storage: Storage,
+        client: AsyncOpenAI,
+        session: AsyncSession,
+        progress: PipelineProgressRunner,
+        compile_cache: CompileCacheRepository,
+        documents: DocumentService,
+        ideas: IdeaService,
+        config: VaultConfig,
+        concurrency: int,
+    ) -> None:
+        self.storage = storage
+        self.client = client
+        self.session = session
+        self.progress = progress
+        self.compile_cache = compile_cache
+        self.documents = documents
+        self.ideas = ideas
+        self.config = config
+        self.concurrency = concurrency
 
-    docs = await _load_documents(ctx.session, ctx.vault_id)
-    total_docs = len(docs)
-    if total_docs > 0:
-        await ctx.progress.emit(
-            pipeline_run_id=ctx.pipeline_run_id,
-            phase="extract",
-            status="progress",
-            done=0,
-            total=total_docs,
-        )
+    async def run(self, vault_id: UUID, pipeline_run_id: UUID) -> None:
+        """Extract every raw document registered in the DB for this vault.
 
-    sem = asyncio.Semaphore(settings.compile_enrich_concurrency)
-    tasks = [
-        _extract_one(
-            ctx=ctx,
-            sem=sem,
-            raw_path=doc.file_path,
-            document_id=doc.id,
-            source_type=doc.metadata.source_type,
-            body_hash=doc.body_hash,
-            prompt_template=prompt_template,
-            prompt_hash=ph,
-            kinds_key=kinds_key,
-        )
-        for doc in docs
-    ]
+        The documents table is the authoritative registry — ingest writes
+        the file and the DB row together, so iterating the registry catches
+        every document. If a DB row points at a file that's missing from
+        storage, _extract_one records file_not_found via
+        storage.read(strict=False).
+        """
+        prompt_template = await load_prompt(self.storage, "extract")
+        ph = prompt_hash(prompt_template)
+        kinds_key = "|".join(sorted(self.config.kinds))
 
-    outcomes: list[_ExtractOutcome] = []
-    docs_completed = 0
-    for task in asyncio.as_completed(tasks):
-        outcome = await task
-        outcomes.append(outcome)
-        docs_completed += 1
+        docs = await self.documents.list_by_kind(vault_id, DocKind.RAW)
+        total_docs = len(docs)
         if total_docs > 0:
-            await ctx.progress.emit(
-                pipeline_run_id=ctx.pipeline_run_id,
+            await self.progress.emit(
+                pipeline_run_id=pipeline_run_id,
                 phase="extract",
                 status="progress",
-                done=docs_completed,
+                done=0,
                 total=total_docs,
             )
 
-    # Per-doc trackers for the embedding loop. Populated only inside
-    # the success branch below where source_card is narrowed to non-None.
-    cards: list[SourceCard] = []
-    embedding_inputs: list[tuple[UUID, UUID, Idea]] = []
-    fresh_source_cards: dict[UUID, SourceCard] = {}
-    idea_repo = IdeaEmbeddingRepository(ctx.session)
-    existing_embedding_ids = set(await idea_repo.get_ids_for_vault(ctx.vault_id))
-    docs_extracted = 0
-    cache_hits = 0
-    cache_misses = 0
-    docs_failed = 0
-    ideas_emitted = 0
-
-    for outcome in outcomes:
-        if outcome.error is not None:
-            docs_failed += 1
-            log_event(
-                "extract.doc_failed",
-                level=logging.WARNING,
-                vault_id=str(ctx.vault_id),
-                path=outcome.raw_path,
-                error=outcome.error,
+        sem = asyncio.Semaphore(self.concurrency)
+        tasks = [
+            _extract_one(
+                phase=self,
+                sem=sem,
+                vault_id=vault_id,
+                raw_path=doc.file_path,
+                document_id=doc.id,
+                source_type=doc.metadata.source_type,
+                body_hash=doc.body_hash,
+                prompt_template=prompt_template,
+                prompt_hash=ph,
+                kinds_key=kinds_key,
             )
-            continue
-        source_card = outcome.source_card
-        if source_card is None:
-            # Unreachable in practice: success path always sets source_card.
-            continue
-        docs_extracted += 1
-        cards.append(source_card)
-        ideas_emitted += len(source_card.ideas)
-        if outcome.cache_hit:
-            cache_hits += 1
-            for idea in source_card.ideas:
-                if idea.idea_id not in existing_embedding_ids:
-                    embedding_inputs.append((ctx.vault_id, outcome.document_id, idea))
-        else:
-            cache_misses += 1
-            fresh_source_cards[outcome.document_id] = source_card
-            await _write_cache(
-                ctx,
-                cache_key=outcome.cache_key,
-                source_card=source_card,
-            )
-            for idea in source_card.ideas:
-                embedding_inputs.append((ctx.vault_id, outcome.document_id, idea))
+            for doc in docs
+        ]
 
-    # Extract cache stores only the LLM output (SourceCard). Embeddings are
-    # derived vector-index rows in idea_embeddings; if a crash happens after
-    # caching but before embedding upsert, replay reuses the SourceCard and
-    # regenerates only missing embeddings.
-    fresh_embeddings: list[IdeaEmbedding] = []
-    async for batch in _embed_in_batches(ctx.client, embedding_inputs):
-        fresh_embeddings.extend(batch)
-    idea_service = IdeaService(
-        embedding_repo=idea_repo,
-        sidecar_root=ctx.sidecar_root,
-    )
-    for doc_id in fresh_source_cards:
-        await idea_repo.delete_for_document(doc_id)
-    await idea_service.record_extractions(cards, fresh_embeddings)
-    await DocumentRepository(ctx.session).update_metadata_from_cards(
-        ctx.vault_id, cards
-    )
-    await ctx.session.commit()
+        outcomes: list[_ExtractOutcome] = []
+        docs_completed = 0
+        for task in asyncio.as_completed(tasks):
+            outcome = await task
+            outcomes.append(outcome)
+            docs_completed += 1
+            if total_docs > 0:
+                await self.progress.emit(
+                    pipeline_run_id=pipeline_run_id,
+                    phase="extract",
+                    status="progress",
+                    done=docs_completed,
+                    total=total_docs,
+                )
 
-    enrich(
-        docs_extracted=docs_extracted,
-        cache_hits=cache_hits,
-        cache_misses=cache_misses,
-        docs_failed=docs_failed,
-        ideas_emitted=ideas_emitted,
-    )
-    log_event(
-        "pipeline.extract_completed",
-        vault_id=str(ctx.vault_id),
-        docs_extracted=docs_extracted,
-        cache_hits=cache_hits,
-        cache_misses=cache_misses,
-        docs_failed=docs_failed,
-        ideas_emitted=ideas_emitted,
-    )
+        # Per-doc trackers for the embedding loop. Populated only inside
+        # the success branch below where source_card is narrowed to non-None.
+        cards: list[SourceCard] = []
+        embedding_inputs: list[tuple[UUID, UUID, Idea]] = []
+        fresh_source_cards: dict[UUID, SourceCard] = {}
+        idea_repo = self.ideas.embedding_repo
+        existing_embedding_ids = set(await idea_repo.get_ids_for_vault(vault_id))
+        docs_extracted = 0
+        cache_hits = 0
+        cache_misses = 0
+        docs_failed = 0
+        ideas_emitted = 0
+
+        for outcome in outcomes:
+            if outcome.error is not None:
+                docs_failed += 1
+                log_event(
+                    "extract.doc_failed",
+                    level=logging.WARNING,
+                    vault_id=str(vault_id),
+                    path=outcome.raw_path,
+                    error=outcome.error,
+                )
+                continue
+            source_card = outcome.source_card
+            if source_card is None:
+                # Unreachable in practice: success path always sets source_card.
+                continue
+            docs_extracted += 1
+            cards.append(source_card)
+            ideas_emitted += len(source_card.ideas)
+            if outcome.cache_hit:
+                cache_hits += 1
+                for idea in source_card.ideas:
+                    if idea.idea_id not in existing_embedding_ids:
+                        embedding_inputs.append((vault_id, outcome.document_id, idea))
+            else:
+                cache_misses += 1
+                fresh_source_cards[outcome.document_id] = source_card
+                await _write_cache(
+                    compile_cache=self.compile_cache,
+                    session=self.session,
+                    vault_id=vault_id,
+                    cache_key=outcome.cache_key,
+                    source_card=source_card,
+                )
+                for idea in source_card.ideas:
+                    embedding_inputs.append((vault_id, outcome.document_id, idea))
+
+        # Extract cache stores only the LLM output (SourceCard). Embeddings are
+        # derived vector-index rows in idea_embeddings; if a crash happens after
+        # caching but before embedding upsert, replay reuses the SourceCard and
+        # regenerates only missing embeddings.
+        fresh_embeddings: list[IdeaEmbedding] = []
+        async for batch in _embed_in_batches(self.client, embedding_inputs):
+            fresh_embeddings.extend(batch)
+        for doc_id in fresh_source_cards:
+            await idea_repo.delete_for_document(doc_id)
+        await self.ideas.record_extractions(cards, fresh_embeddings)
+        await self.documents.update_metadata_from_cards(vault_id, cards)
+        await self.session.commit()
+
+        enrich(
+            docs_extracted=docs_extracted,
+            cache_hits=cache_hits,
+            cache_misses=cache_misses,
+            docs_failed=docs_failed,
+            ideas_emitted=ideas_emitted,
+        )
+        log_event(
+            "pipeline.extract_completed",
+            vault_id=str(vault_id),
+            docs_extracted=docs_extracted,
+            cache_hits=cache_hits,
+            cache_misses=cache_misses,
+            docs_failed=docs_failed,
+            ideas_emitted=ideas_emitted,
+        )
+
+
+async def run(ctx: PipelineContext) -> None:
+    settings = get_settings()
+    await ExtractPhase(
+        storage=ctx.storage,
+        client=ctx.client,
+        session=ctx.session,
+        progress=ctx.progress,
+        compile_cache=ctx.compile_cache,
+        documents=DocumentService(DocumentRepository(ctx.session)),
+        ideas=IdeaService(
+            embedding_repo=IdeaEmbeddingRepository(ctx.session),
+            sidecar_root=ctx.sidecar_root,
+        ),
+        config=ctx.config,
+        concurrency=settings.compile_enrich_concurrency,
+    ).run(ctx.vault_id, ctx.pipeline_run_id)
 
 
 # ---------------------------------------------------------------------------
@@ -216,8 +263,9 @@ class _ExtractOutcome:
 
 async def _extract_one(
     *,
-    ctx: PipelineContext,
+    phase: ExtractPhase,
     sem: asyncio.Semaphore,
+    vault_id: UUID,
     raw_path: str,
     document_id: UUID,
     source_type: str,
@@ -236,8 +284,8 @@ async def _extract_one(
         )
         outcome.cache_key = cache_key
 
-        cached = await ctx.compile_cache.get(
-            vault_id=ctx.vault_id,
+        cached = await phase.compile_cache.get(
+            vault_id=vault_id,
             phase=PHASE,
             cache_key=cache_key,
         )
@@ -247,7 +295,7 @@ async def _extract_one(
             return outcome
 
         # Cache miss: only now do we need the body to feed the LLM.
-        content = await ctx.storage.read(raw_path, strict=False)
+        content = await phase.storage.read(raw_path, strict=False)
         if content is None:
             outcome.error = "file_not_found"
             return outcome
@@ -256,13 +304,13 @@ async def _extract_one(
         async with sem:
             prompt = _render_prompt(
                 prompt_template=prompt_template,
-                kinds=ctx.config.kinds,
+                kinds=phase.config.kinds,
                 source_type=source_type,
                 doc_content=body,
-                config_raw=ctx.config.raw,
+                config_raw=phase.config.raw,
             )
             data = await json_llm_call(
-                ctx.client,
+                phase.client,
                 model=EXTRACT_MODEL,
                 messages=[{"role": "user", "content": prompt}],
                 temperature=0.2,
@@ -270,7 +318,7 @@ async def _extract_one(
         outcome.source_card = _validate_extract_output(
             data=data,
             document_id=document_id,
-            allowed_kinds=ctx.config.kinds,
+            allowed_kinds=phase.config.kinds,
         )
         _localize_anchors(outcome.source_card, body)
     except json.JSONDecodeError as e:
@@ -282,7 +330,7 @@ async def _extract_one(
         log_event(
             "extract.doc_failed",
             level=logging.WARNING,
-            vault_id=str(ctx.vault_id),
+            vault_id=str(vault_id),
             path=raw_path,
             error=outcome.error,
         )
@@ -447,19 +495,16 @@ async def _embed_in_batches(
 # ---------------------------------------------------------------------------
 
 
-async def _load_documents(session, vault_id: UUID) -> list[Document]:
-    """Load all raw documents for a vault in deterministic path order."""
-    return await DocumentRepository(session).list_by_kind(vault_id, DocKind.RAW)
-
-
 async def _write_cache(
-    ctx: PipelineContext,
     *,
+    compile_cache: CompileCacheRepository,
+    session: AsyncSession,
+    vault_id: UUID,
     cache_key: str,
     source_card: SourceCard,
 ) -> None:
-    await ctx.compile_cache.put(
-        vault_id=ctx.vault_id,
+    await compile_cache.put(
+        vault_id=vault_id,
         phase=PHASE,
         cache_key=cache_key,
         value={"source_card": source_card.model_dump(mode="json")},
@@ -467,4 +512,4 @@ async def _write_cache(
     # Extract writes cache entries before embedding/vector-index upserts.
     # Commit each entry so a mid-phase crash can replay from DB cache and
     # repair missing idea/document/vector rows without repeating LLM work.
-    await ctx.session.commit()
+    await session.commit()

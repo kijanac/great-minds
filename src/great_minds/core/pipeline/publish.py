@@ -66,7 +66,9 @@ class PublishPhase:
         self.search = search
 
     async def run(self, vault_id: UUID) -> None:
-        rendered_topics = await self.topics.list_rendered(vault_id)
+        rendered_topics = await self.topics.list_for_vault(
+            vault_id, ArticleStatus.RENDERED
+        )
         raw_docs = await self._load_raw_documents(vault_id)
 
         await self._write_wiki_index(rendered_topics)
@@ -141,11 +143,11 @@ class PublishPhase:
 
     async def _gather_log_counts(self, vault_id: UUID) -> CompileLogCounts:
         return CompileLogCounts(
-            topics_total=await self.topics.count_all(vault_id),
-            topics_rendered=await self.topics.count_by_status(
+            topics_total=await self.topics.count_for_vault(vault_id),
+            topics_rendered=await self.topics.count_for_vault(
                 vault_id, ArticleStatus.RENDERED
             ),
-            topics_archived=await self.topics.count_by_status(
+            topics_archived=await self.topics.count_for_vault(
                 vault_id, ArticleStatus.ARCHIVED
             ),
             topics_dirty=await self.topics.count_dirty(vault_id),

@@ -97,16 +97,27 @@ class PipelineRunRepository:
         )
         return [PipelineRun.model_validate(r) for r in row.scalars().all()]
 
-    async def attach_ingest_task(self, pipeline_run_id: UUID, task_id: UUID) -> None:
+    async def attach_task(
+        self,
+        pipeline_run_id: UUID,
+        task_id: UUID,
+        task_type: PipelineTaskType,
+    ) -> None:
+        values = {
+            "active_task_id": task_id,
+            "active_task_type": task_type,
+            "updated_at": func.now(),
+        }
+        match task_type:
+            case PipelineTaskType.STAGED_FILE_INGEST:
+                values["ingest_task_id"] = task_id
+            case PipelineTaskType.COMPILE:
+                values["compile_task_id"] = task_id
+
         await self.session.execute(
             update(PipelineRunRecord)
             .where(PipelineRunRecord.id == pipeline_run_id)
-            .values(
-                ingest_task_id=task_id,
-                active_task_id=task_id,
-                active_task_type=PipelineTaskType.STAGED_FILE_INGEST,
-                updated_at=func.now(),
-            )
+            .values(**values)
         )
 
     async def attach_compile_intent(
@@ -116,18 +127,6 @@ class PipelineRunRepository:
             update(PipelineRunRecord)
             .where(PipelineRunRecord.id == pipeline_run_id)
             .values(compile_intent_id=intent_id, updated_at=func.now())
-        )
-
-    async def attach_compile_task(self, pipeline_run_id: UUID, task_id: UUID) -> None:
-        await self.session.execute(
-            update(PipelineRunRecord)
-            .where(PipelineRunRecord.id == pipeline_run_id)
-            .values(
-                compile_task_id=task_id,
-                active_task_id=task_id,
-                active_task_type=PipelineTaskType.COMPILE,
-                updated_at=func.now(),
-            )
         )
 
     async def fail(self, pipeline_run_id: UUID, error: str) -> UUID | None:

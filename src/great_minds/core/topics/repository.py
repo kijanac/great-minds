@@ -5,6 +5,7 @@ route-level services (wiki endpoints). Keeps queries narrow; business
 logic around slug continuity / archive lives in topics.service.
 """
 
+from collections.abc import Sequence
 from uuid import UUID
 
 from sqlalchemy import Float, cast as sa_cast, delete, func, or_, select
@@ -20,9 +21,12 @@ from great_minds.core.topics.models import (
 from great_minds.core.topics.schemas import (
     ArticleStatus,
     Topic,
+    TopicDetail,
     TopicLink,
     TopicSimilarityPair,
 )
+
+_MAX_MEMBERSHIP_INSERT_ROWS = 5000
 
 
 class TopicRepository:
@@ -87,59 +91,28 @@ class TopicRepository:
         ).scalar_one_or_none()
         return Topic.model_validate(row) if row is not None else None
 
-    async def list_by_status(
-        self, vault_id: UUID, status: ArticleStatus
+    async def list_for_vault(
+        self, vault_id: UUID, status: ArticleStatus | None = None
     ) -> list[Topic]:
+        stmt = select(TopicORM).where(TopicORM.vault_id == vault_id)
+        if status is not None:
+            stmt = stmt.where(TopicORM.article_status == status.value)
         rows = (
-            (
-                await self.session.execute(
-                    select(TopicORM)
-                    .where(
-                        TopicORM.vault_id == vault_id,
-                        TopicORM.article_status == status.value,
-                    )
-                    .order_by(TopicORM.title)
-                )
-            )
-            .scalars()
-            .all()
+            (await self.session.execute(stmt.order_by(TopicORM.title))).scalars().all()
         )
         return [Topic.model_validate(r) for r in rows]
 
-    async def list_all(self, vault_id: UUID) -> list[Topic]:
-        rows = (
-            (
-                await self.session.execute(
-                    select(TopicORM)
-                    .where(TopicORM.vault_id == vault_id)
-                    .order_by(TopicORM.title)
-                )
-            )
-            .scalars()
-            .all()
+    async def count_for_vault(
+        self, vault_id: UUID, status: ArticleStatus | None = None
+    ) -> int:
+        stmt = (
+            select(func.count())
+            .select_from(TopicORM)
+            .where(TopicORM.vault_id == vault_id)
         )
-        return [Topic.model_validate(r) for r in rows]
-
-    async def count_all(self, vault_id: UUID) -> int:
-        return (
-            await self.session.scalar(
-                select(func.count())
-                .select_from(TopicORM)
-                .where(TopicORM.vault_id == vault_id)
-            )
-        ) or 0
-
-    async def count_by_status(self, vault_id: UUID, status: ArticleStatus) -> int:
-        return (
-            await self.session.scalar(
-                select(func.count())
-                .select_from(TopicORM)
-                .where(
-                    TopicORM.vault_id == vault_id,
-                    TopicORM.article_status == status.value,
-                )
-            )
-        ) or 0
+        if status is not None:
+            stmt = stmt.where(TopicORM.article_status == status.value)
+        return (await self.session.scalar(stmt)) or 0
 
     async def list_dirty_topic_ids(self, vault_id: UUID) -> list[UUID]:
         """Return topic_ids whose rendered output lags the compiled inputs.
@@ -223,16 +196,32 @@ class TopicRepository:
 
     # -- Membership --------------------------------------------------------
 
-    async def replace_membership(self, topic_id: UUID, idea_ids: list[UUID]) -> None:
+    async def replace_memberships_for_topics(
+        self, topics: Sequence[TopicDetail]
+    ) -> None:
+        """Replace topic_membership rows projected from TopicDetail.
+
+        The service owns the surrounding transaction. Inserts use
+        SQLAlchemy executemany batches instead of constructing one huge
+        multi-VALUES statement.
+        """
+        if not topics:
+            return
+
+        topic_ids = [topic.topic_id for topic in topics]
         await self.session.execute(
-            delete(TopicMembershipORM).where(TopicMembershipORM.topic_id == topic_id)
+            delete(TopicMembershipORM).where(TopicMembershipORM.topic_id.in_(topic_ids))
         )
-        if idea_ids:
-            await self.session.execute(
-                insert(TopicMembershipORM).values(
-                    [{"topic_id": topic_id, "idea_id": i} for i in idea_ids]
-                )
-            )
+
+        batch: list[dict[str, UUID]] = []
+        for topic in topics:
+            for idea_id in topic.subsumed_idea_ids:
+                batch.append({"topic_id": topic.topic_id, "idea_id": idea_id})
+                if len(batch) >= _MAX_MEMBERSHIP_INSERT_ROWS:
+                    await self.session.execute(insert(TopicMembershipORM), batch)
+                    batch = []
+        if batch:
+            await self.session.execute(insert(TopicMembershipORM), batch)
 
     # -- Topic links (intent from reduce) ----------------------------------
 

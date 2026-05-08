@@ -25,8 +25,8 @@ from great_minds.core.pipeline.abstract.validate import (
     _assign_topic_ids,
     _detect_collisions,
     _intersect_link_targets,
-    _topic_content_hash,
 )
+from great_minds.core.topics.service import TopicService
 from great_minds.core.topics.schemas import (
     ArticleStatus,
     CanonicalTopicDraft,
@@ -112,19 +112,27 @@ def test_content_hash_determinism() -> None:
             link_targets=[],
         )
 
+    service = TopicService(_MockTopicRepo({}))
+
     # Same content, shuffled idea order → same hash (sorted internally)
-    assert _topic_content_hash(make()) == _topic_content_hash(
+    assert service._compiled_from_hash(make()) == service._compiled_from_hash(
         make(subsumed=[i3, i1, i2])
     )
 
     # Different idea set → different hash
-    assert _topic_content_hash(make()) != _topic_content_hash(make(subsumed=[i1, i2]))
+    assert service._compiled_from_hash(make()) != service._compiled_from_hash(
+        make(subsumed=[i1, i2])
+    )
 
     # Different title → different hash
-    assert _topic_content_hash(make()) != _topic_content_hash(make(title="OTHER"))
+    assert service._compiled_from_hash(make()) != service._compiled_from_hash(
+        make(title="OTHER")
+    )
 
     # Different description → different hash
-    assert _topic_content_hash(make()) != _topic_content_hash(make(description="OTHER"))
+    assert service._compiled_from_hash(make()) != service._compiled_from_hash(
+        make(description="OTHER")
+    )
     print("✓ content_hash_determinism")
 
 

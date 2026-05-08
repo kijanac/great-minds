@@ -21,7 +21,11 @@ from great_minds.core.vaults.service import VaultService
 from great_minds.core.compile_intents.repository import CompileIntentRepository
 from great_minds.core.settings import Settings
 from great_minds.core.pipeline_runs.repository import PipelineRunRepository
-from great_minds.core.pipeline_runs.schemas import PipelineRunCreate, PipelineTrigger
+from great_minds.core.pipeline_runs.schemas import (
+    PipelineRunCreate,
+    PipelineTaskType,
+    PipelineTrigger,
+)
 from great_minds.core.tasks.service import TaskService
 from great_minds.core.telemetry import log_event
 
@@ -107,7 +111,9 @@ async def _dispatch_pending(
             pipeline_run_id=pipeline_run_id,
         )
         await intent_repo.mark_dispatched(intent.id, task.id)
-        await pipeline_run_repo.attach_compile_task(pipeline_run_id, task.id)
+        await pipeline_run_repo.attach_task(
+            pipeline_run_id, task.id, PipelineTaskType.COMPILE
+        )
         dispatched += 1
         log_event(
             "intent_dispatched",

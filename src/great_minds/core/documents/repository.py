@@ -247,48 +247,17 @@ class DocumentRepository:
         self,
         vault_id: UUID,
         *,
+        slug: str | None = None,
+        query: str | None = None,
         limit: int = 50,
         offset: int = 0,
         recent: bool = False,
     ) -> list[WikiArticleOverview]:
-        rows = (
-            await self.session.execute(
-                select(
-                    DocumentORM.file_path,
-                    DocumentORM.title,
-                    DocumentORM.precis,
-                    DocumentORM.updated_at,
-                )
-                .where(
-                    DocumentORM.vault_id == vault_id,
-                    DocumentORM.doc_kind == DocKind.WIKI,
-                    DocumentORM.file_path.not_like(f"{WIKI_PREFIX}_%"),
-                )
-                .order_by(
-                    DocumentORM.updated_at.desc()
-                    if recent
-                    else func.lower(DocumentORM.title)
-                )
-                .offset(offset)
-                .limit(limit)
-            )
-        ).all()
-        return [WikiArticleOverview.model_validate(r) for r in rows]
+        """List wiki article overview rows with optional slug/query filters.
 
-    async def search_wiki_articles(
-        self,
-        vault_id: UUID,
-        *,
-        slug: str | None = None,
-        query: str | None = None,
-        limit: int = 20,
-    ) -> list[WikiArticleOverview]:
-        """Filter wiki articles by exact slug and/or substring on title/precis.
-
-        SQL-side filter — replaces the previous load-all-and-filter pattern in
-        the agent's ``query_wiki_articles`` tool. ``query`` matches title or
-        precis case-insensitively. ``slug`` is exact. Underscore-prefixed
-        slugs (index pages) are excluded.
+        SQL-side filtering keeps route and query-tool callers on one path.
+        ``query`` matches title or precis case-insensitively; ``slug`` is exact.
+        Underscore-prefixed slugs (index pages) are excluded.
         """
         stmt = select(
             DocumentORM.file_path,
@@ -310,9 +279,10 @@ class DocumentRepository:
                     func.lower(func.coalesce(DocumentORM.precis, "")).like(pattern),
                 )
             )
-        stmt = stmt.order_by(func.lower(DocumentORM.title)).limit(limit)
-
-        rows = (await self.session.execute(stmt)).all()
+        stmt = stmt.order_by(
+            DocumentORM.updated_at.desc() if recent else func.lower(DocumentORM.title)
+        )
+        rows = (await self.session.execute(stmt.offset(offset).limit(limit))).all()
         return [WikiArticleOverview.model_validate(r) for r in rows]
 
     async def count_wiki_article_paths(self, vault_id: UUID) -> int:

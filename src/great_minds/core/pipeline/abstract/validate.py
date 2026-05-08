@@ -27,7 +27,6 @@ import logging
 from dataclasses import dataclass
 from uuid import UUID, uuid7
 
-from great_minds.core.hashing import content_hash
 from great_minds.core.vaults.prompts import load_prompt
 from great_minds.core.documents.repository import DocumentRepository
 from great_minds.core.llm.client import json_llm_call
@@ -38,6 +37,7 @@ from great_minds.core.pipeline.abstract.schemas import LocalTopic
 from great_minds.core.pipeline.context import PipelineContext
 from great_minds.core.telemetry import enrich, log_event
 from great_minds.core.topics.repository import TopicRepository
+from great_minds.core.topics.service import TopicService
 from great_minds.core.topics.schemas import (
     ArticleStatus,
     CanonicalTopicDraft,
@@ -71,7 +71,7 @@ async def run(
     local_by_id = {t.local_topic_id: t for t in local_topics}
 
     repo = TopicRepository(ctx.session)
-    existing = await repo.list_all(ctx.vault_id)
+    existing = await repo.list_for_vault(ctx.vault_id)
     active_existing = [
         t for t in existing if t.article_status != ArticleStatus.ARCHIVED
     ]
@@ -107,8 +107,7 @@ async def run(
         validated=validated,
     )
 
-    await _upsert_topics(repo=repo, vault_id=ctx.vault_id, validated=validated)
-    await ctx.session.commit()
+    await TopicService(repo).upsert_validated_topics(ctx.vault_id, validated)
 
     enrich(
         validate_canonical_count=len(validated),
@@ -334,14 +333,8 @@ async def _assign_topic_ids(
             topic_id = existing.topic_id
         else:
             topic_id = uuid7()
-        merged_uuids: list[UUID] = []
-        for s in c.merged_local_topic_ids:
-            try:
-                merged_uuids.append(UUID(s))
-            except ValueError, TypeError:
-                continue
         subsumed: set[UUID] = set()
-        for lt_id in merged_uuids:
+        for lt_id in c.merged_local_topic_ids:
             lt = local_by_id.get(lt_id)
             if lt is not None:
                 subsumed.update(lt.subsumed_idea_ids)
@@ -409,36 +402,4 @@ async def _move_wiki_to_archive(
     # and /doc reads resolve to the artifact's actual home.
     await DocumentRepository(ctx.session).update_file_path_for_topic(
         ctx.vault_id, topic.topic_id, archive_path
-    )
-
-
-# ---------------------------------------------------------------------------
-# Step 7 — topics table upsert
-# ---------------------------------------------------------------------------
-
-
-async def _upsert_topics(
-    *,
-    repo: TopicRepository,
-    vault_id: UUID,
-    validated: list[TopicDetail],
-) -> None:
-    for v in validated:
-        compiled_from_hash = _topic_content_hash(v)
-        await repo.upsert(
-            topic_id=v.topic_id,
-            vault_id=vault_id,
-            slug=v.slug,
-            title=v.title,
-            description=v.description,
-            compiled_from_hash=compiled_from_hash,
-        )
-
-
-def _topic_content_hash(v: TopicDetail) -> str:
-    """Content hash per architecture: topic_membership + title + description."""
-    return content_hash(
-        v.title,
-        v.description,
-        *sorted(str(i) for i in v.subsumed_idea_ids),
     )
