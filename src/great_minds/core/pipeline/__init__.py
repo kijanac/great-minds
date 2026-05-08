@@ -61,11 +61,10 @@ async def run(ctx: PipelineContext) -> None:
         pipeline_run_id=run_id, phase="ingest", status="started", done=0, total=1
     )
     await ingest.IngestPhase(
-        vault_id=ctx.vault_id,
         storage=ctx.storage,
         client=ctx.client,
         search=SearchService(SearchIndexRepository(ctx.session)),
-    ).run()
+    ).run(ctx.vault_id)
     await ctx.progress.emit(
         pipeline_run_id=run_id, phase="ingest", status="completed", done=1, total=1
     )
@@ -114,10 +113,9 @@ async def run(ctx: PipelineContext) -> None:
         pipeline_run_id=run_id, phase="derive", status="started", done=0, total=1
     )
     await derive.DerivePhase(
-        vault_id=ctx.vault_id,
         topics=TopicService(TopicRepository(ctx.session)),
         related_limit=get_settings().compile_derive_related_limit,
-    ).run(validated)
+    ).run(ctx.vault_id, validated)
     await ctx.progress.emit(
         pipeline_run_id=run_id, phase="derive", status="completed", done=1, total=1
     )
@@ -134,11 +132,10 @@ async def run(ctx: PipelineContext) -> None:
         pipeline_run_id=run_id, phase="verify", status="started", done=0, total=1
     )
     await verify.VerifyPhase(
-        vault_id=ctx.vault_id,
         storage=ctx.storage,
         topics=TopicService(TopicRepository(ctx.session)),
         documents=DocumentService(DocumentRepository(ctx.session)),
-    ).run()
+    ).run(ctx.vault_id)
     await ctx.progress.emit(
         pipeline_run_id=run_id, phase="verify", status="completed", done=1, total=1
     )
@@ -148,13 +145,12 @@ async def run(ctx: PipelineContext) -> None:
         pipeline_run_id=run_id, phase="publish", status="started", done=0, total=1
     )
     await publish.PublishPhase(
-        vault_id=ctx.vault_id,
         storage=ctx.storage,
         sidecar_root=ctx.sidecar_root,
         topics=TopicService(TopicRepository(ctx.session)),
         documents=DocumentService(DocumentRepository(ctx.session)),
         search=SearchService(SearchIndexRepository(ctx.session)),
-    ).run()
+    ).run(ctx.vault_id)
     await ctx.progress.emit(
         pipeline_run_id=run_id, phase="publish", status="completed", done=1, total=1
     )

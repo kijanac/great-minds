@@ -29,23 +29,21 @@ class IngestPhase:
     def __init__(
         self,
         *,
-        vault_id: UUID,
         storage: Storage,
         client: AsyncOpenAI,
         search: SearchService,
     ) -> None:
-        self.vault_id = vault_id
         self.storage = storage
         self.client = client
         self.search = search
 
-    async def run(self) -> None:
+    async def run(self, vault_id: UUID) -> None:
         count = await self.search.rebuild_raw_index(
-            self.vault_id, self.storage, client=self.client
+            vault_id, self.storage, client=self.client
         )
         enrich(raw_chunks_indexed=count)
         log_event(
             "pipeline.ingest_completed",
-            vault_id=str(self.vault_id),
+            vault_id=str(vault_id),
             raw_chunks_indexed=count,
         )

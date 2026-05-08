@@ -32,25 +32,23 @@ class DerivePhase:
     def __init__(
         self,
         *,
-        vault_id: UUID,
         topics: TopicService,
         related_limit: int,
     ) -> None:
-        self.vault_id = vault_id
         self.topics = topics
         self.related_limit = related_limit
 
-    async def run(self, validated: list[TopicDetail]) -> None:
+    async def run(self, vault_id: UUID, validated: list[TopicDetail]) -> None:
         if not validated:
             log_event(
                 "pipeline.derive_skipped",
-                vault_id=str(self.vault_id),
+                vault_id=str(vault_id),
                 reason="no_topics",
             )
             return
 
         await self.topics.rebuild_derived_tables(
-            self.vault_id,
+            vault_id,
             validated,
             related_limit=self.related_limit,
         )
@@ -58,6 +56,6 @@ class DerivePhase:
         enrich(derive_topic_count=len(validated))
         log_event(
             "pipeline.derive_completed",
-            vault_id=str(self.vault_id),
+            vault_id=str(vault_id),
             topic_count=len(validated),
         )

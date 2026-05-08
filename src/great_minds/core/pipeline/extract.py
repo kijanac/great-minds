@@ -169,7 +169,6 @@ async def run(ctx: PipelineContext) -> None:
     async for batch in _embed_in_batches(ctx.client, embedding_inputs):
         fresh_embeddings.extend(batch)
     idea_service = IdeaService(
-        vault_id=ctx.vault_id,
         embedding_repo=idea_repo,
         sidecar_root=ctx.sidecar_root,
     )

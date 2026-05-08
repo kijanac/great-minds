@@ -19,11 +19,10 @@ import numpy as np
 from sklearn.cluster import KMeans
 
 from great_minds.core.hashing import content_hash
-from great_minds.core.ideas.repository import IdeaEmbeddingRepository
+from great_minds.core.compile_cache import CompileCacheRepository
+from great_minds.core.ideas.service import IdeaService
 from great_minds.core.ideas.schemas import Idea, SourceCard
 from great_minds.core.ideas.source_cards import index_ideas_by_id
-from great_minds.core.pipeline.context import PipelineContext
-from great_minds.core.settings import get_settings
 from great_minds.core.telemetry import enrich, log_event
 
 log = logging.getLogger(__name__)
@@ -33,97 +32,115 @@ KMEANS_SEED = 42
 KMEANS_N_INIT = 10
 
 
-async def run(ctx: PipelineContext, source_cards: list[SourceCard]) -> list[list[UUID]]:
-    settings = get_settings()
-    target = settings.compile_partition_target_tokens
-    max_tokens = int(target * settings.compile_partition_max_factor)
-    min_tokens = int(target * settings.compile_partition_min_factor)
+class PartitionPhase:
+    """Phase 2a runner with explicit service-style dependencies."""
 
-    idea_index = index_ideas_by_id(source_cards)
+    def __init__(
+        self,
+        *,
+        ideas: IdeaService,
+        compile_cache: CompileCacheRepository,
+        target_tokens: int,
+        min_factor: float,
+        max_factor: float,
+    ) -> None:
+        self.ideas = ideas
+        self.compile_cache = compile_cache
+        self.target_tokens = target_tokens
+        self.min_factor = min_factor
+        self.max_factor = max_factor
 
-    repo = IdeaEmbeddingRepository(ctx.session)
-    idea_embeddings = await repo.list_for_vault(ctx.vault_id)
-    idea_embeddings.sort(key=lambda e: e.idea_id)
-    id_order = [e.idea_id for e in idea_embeddings]  # deterministic order
+    async def run(
+        self, vault_id: UUID, source_cards: list[SourceCard]
+    ) -> list[list[UUID]]:
+        target = self.target_tokens
+        max_tokens = int(target * self.max_factor)
+        min_tokens = int(target * self.min_factor)
 
-    if not id_order:
-        log_event(
-            "pipeline.partition_skipped",
-            vault_id=str(ctx.vault_id),
-            reason="no_embeddings",
+        idea_index = index_ideas_by_id(source_cards)
+
+        idea_embeddings = await self.ideas.list_embeddings(vault_id)
+        idea_embeddings.sort(key=lambda e: e.idea_id)
+        id_order = [e.idea_id for e in idea_embeddings]  # deterministic order
+
+        if not id_order:
+            log_event(
+                "pipeline.partition_skipped",
+                vault_id=str(vault_id),
+                reason="no_embeddings",
+            )
+            return []
+
+        cache_key = _cache_key(id_order, target)
+        cached = await self.compile_cache.get(
+            vault_id=vault_id,
+            phase=PHASE,
+            cache_key=cache_key,
         )
-        return []
+        if cached is not None:
+            chunks = [[UUID(x) for x in c] for c in cached["chunks"]]
+            enrich(
+                partition_cache_hit=True,
+                partition_chunk_count=len(chunks),
+            )
+            log_event(
+                "pipeline.partition_cached",
+                vault_id=str(vault_id),
+                chunk_count=len(chunks),
+            )
+            return chunks
 
-    cache_key = _cache_key(id_order, target)
-    cached = await ctx.compile_cache.get(
-        vault_id=ctx.vault_id,
-        phase=PHASE,
-        cache_key=cache_key,
-    )
-    if cached is not None:
-        chunks = [[UUID(x) for x in c] for c in cached["chunks"]]
+        tokens_by_row = [
+            _estimate_idea_tokens(idea_index[iid]) if iid in idea_index else 100
+            for iid in id_order
+        ]
+        total_tokens = sum(tokens_by_row)
+
+        k = max(1, math.ceil(total_tokens / target))
+        k = min(k, len(id_order))
+
+        embedding_matrix = np.asarray(
+            [e.embedding for e in idea_embeddings], dtype=np.float32
+        )
+        del idea_embeddings
+
+        labels = _seeded_kmeans(embedding_matrix, k)
+
+        chunks = _group_by_label(labels)
+        chunks = _rebalance(
+            chunks=chunks,
+            tokens_by_row=tokens_by_row,
+            embedding_matrix=embedding_matrix,
+            max_tokens=max_tokens,
+            min_tokens=min_tokens,
+        )
+        chunks_by_id = [[id_order[row] for row in chunk] for chunk in chunks]
+
+        await self.compile_cache.put(
+            vault_id=vault_id,
+            phase=PHASE,
+            cache_key=cache_key,
+            value={
+                "chunks": [[str(u) for u in c] for c in chunks_by_id],
+                "k_initial": k,
+                "total_tokens": total_tokens,
+            },
+        )
+
         enrich(
-            partition_cache_hit=True,
-            partition_chunk_count=len(chunks),
+            partition_cache_hit=False,
+            partition_k_initial=k,
+            partition_chunk_count=len(chunks_by_id),
+            partition_total_tokens=total_tokens,
         )
         log_event(
-            "pipeline.partition_cached",
-            vault_id=str(ctx.vault_id),
-            chunk_count=len(chunks),
+            "pipeline.partition_completed",
+            vault_id=str(vault_id),
+            k_initial=k,
+            chunk_count=len(chunks_by_id),
+            total_tokens=total_tokens,
         )
-        return chunks
-
-    tokens_by_row = [
-        _estimate_idea_tokens(idea_index[iid]) if iid in idea_index else 100
-        for iid in id_order
-    ]
-    total_tokens = sum(tokens_by_row)
-
-    k = max(1, math.ceil(total_tokens / target))
-    k = min(k, len(id_order))
-
-    embedding_matrix = np.asarray(
-        [e.embedding for e in idea_embeddings], dtype=np.float32
-    )
-    del idea_embeddings
-
-    labels = _seeded_kmeans(embedding_matrix, k)
-
-    chunks = _group_by_label(labels)
-    chunks = _rebalance(
-        chunks=chunks,
-        tokens_by_row=tokens_by_row,
-        embedding_matrix=embedding_matrix,
-        max_tokens=max_tokens,
-        min_tokens=min_tokens,
-    )
-    chunks_by_id = [[id_order[row] for row in chunk] for chunk in chunks]
-
-    await ctx.compile_cache.put(
-        vault_id=ctx.vault_id,
-        phase=PHASE,
-        cache_key=cache_key,
-        value={
-            "chunks": [[str(u) for u in c] for c in chunks_by_id],
-            "k_initial": k,
-            "total_tokens": total_tokens,
-        },
-    )
-
-    enrich(
-        partition_cache_hit=False,
-        partition_k_initial=k,
-        partition_chunk_count=len(chunks_by_id),
-        partition_total_tokens=total_tokens,
-    )
-    log_event(
-        "pipeline.partition_completed",
-        vault_id=str(ctx.vault_id),
-        k_initial=k,
-        chunk_count=len(chunks_by_id),
-        total_tokens=total_tokens,
-    )
-    return chunks_by_id
+        return chunks_by_id
 
 
 # ---------------------------------------------------------------------------

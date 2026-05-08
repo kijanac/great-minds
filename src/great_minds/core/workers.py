@@ -173,11 +173,10 @@ async def compile_task(params: dict, ctx) -> None:
                 total=1,
             )
             await ingest.IngestPhase(
-                vault_id=pipeline_ctx.vault_id,
                 storage=pipeline_ctx.storage,
                 client=pipeline_ctx.client,
                 search=SearchService(SearchIndexRepository(pipeline_ctx.session)),
-            ).run()
+            ).run(pipeline_ctx.vault_id)
             await progress.emit(
                 pipeline_run_id=pipeline_run_id,
                 phase="ingest",
@@ -253,10 +252,9 @@ async def compile_task(params: dict, ctx) -> None:
                 total=1,
             )
             await derive.DerivePhase(
-                vault_id=pipeline_ctx.vault_id,
                 topics=TopicService(TopicRepository(pipeline_ctx.session)),
                 related_limit=get_settings().compile_derive_related_limit,
-            ).run(validated)
+            ).run(pipeline_ctx.vault_id, validated)
             await progress.emit(
                 pipeline_run_id=pipeline_run_id,
                 phase="derive",
@@ -295,11 +293,10 @@ async def compile_task(params: dict, ctx) -> None:
                 total=1,
             )
             await verify.VerifyPhase(
-                vault_id=pipeline_ctx.vault_id,
                 storage=pipeline_ctx.storage,
                 topics=TopicService(TopicRepository(pipeline_ctx.session)),
                 documents=DocumentService(DocumentRepository(pipeline_ctx.session)),
-            ).run()
+            ).run(pipeline_ctx.vault_id)
             await progress.emit(
                 pipeline_run_id=pipeline_run_id,
                 phase="verify",
@@ -320,13 +317,12 @@ async def compile_task(params: dict, ctx) -> None:
                 total=1,
             )
             await publish.PublishPhase(
-                vault_id=pipeline_ctx.vault_id,
                 storage=pipeline_ctx.storage,
                 sidecar_root=pipeline_ctx.sidecar_root,
                 topics=TopicService(TopicRepository(pipeline_ctx.session)),
                 documents=DocumentService(DocumentRepository(pipeline_ctx.session)),
                 search=SearchService(SearchIndexRepository(pipeline_ctx.session)),
-            ).run()
+            ).run(pipeline_ctx.vault_id)
             await progress.emit(
                 pipeline_run_id=pipeline_run_id,
                 phase="publish",

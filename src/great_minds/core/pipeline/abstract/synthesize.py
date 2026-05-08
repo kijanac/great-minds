@@ -20,16 +20,17 @@ from collections import defaultdict
 from dataclasses import dataclass, field
 from uuid import UUID, uuid7
 
+from openai import AsyncOpenAI
 from pydantic import ValidationError
 
+from great_minds.core.compile_cache import CompileCacheRepository
 from great_minds.core.hashing import content_hash, prompt_hash
 from great_minds.core.vaults.prompts import load_prompt
 from great_minds.core.llm.client import json_llm_call
 from great_minds.core.ideas.schemas import Idea, SourceCard
 from great_minds.core.llm import MAP_MODEL
 from great_minds.core.pipeline.abstract.schemas import LocalTopic
-from great_minds.core.pipeline.context import PipelineContext
-from great_minds.core.settings import get_settings
+from great_minds.core.storage import Storage
 from great_minds.core.telemetry import enrich, log_event
 
 log = logging.getLogger(__name__)
@@ -38,82 +39,100 @@ PHASE = "synthesize"
 _SLUG_RE = re.compile(r"[^a-z0-9-]+")
 
 
-async def run(
-    ctx: PipelineContext,
-    source_cards: list[SourceCard],
-    chunks: list[list[UUID]],
-) -> list[LocalTopic]:
-    """Synthesize local topics for each chunk.
+class SynthesizePhase:
+    """Phase 2b runner with explicit service-style dependencies."""
 
-    Chunks come from partition; source_cards are loaded once by the
-    phase-2 orchestrator and passed through so we don't re-read jsonl.
-    """
-    if not chunks:
-        return []
+    def __init__(
+        self,
+        *,
+        storage: Storage,
+        client: AsyncOpenAI,
+        compile_cache: CompileCacheRepository,
+        concurrency: int,
+    ) -> None:
+        self.storage = storage
+        self.client = client
+        self.compile_cache = compile_cache
+        self.concurrency = concurrency
 
-    settings = get_settings()
-    prompt_template = await load_prompt(ctx.storage, "synthesize")
-    ph = prompt_hash(prompt_template)
-    idea_index: dict[UUID, tuple[Idea, SourceCard]] = {}
-    for card in source_cards:
-        for idea in card.ideas:
-            idea_index[idea.idea_id] = (idea, card)
+    async def run(
+        self,
+        vault_id: UUID,
+        source_cards: list[SourceCard],
+        chunks: list[list[UUID]],
+    ) -> list[LocalTopic]:
+        """Synthesize local topics for each chunk.
 
-    sem = asyncio.Semaphore(settings.compile_enrich_concurrency)
-    tasks = [
-        _synthesize_one(
-            ctx=ctx,
-            sem=sem,
-            chunk_idx=idx,
-            chunk=chunk,
-            idea_index=idea_index,
-            prompt_template=prompt_template,
-            prompt_hash=ph,
-        )
-        for idx, chunk in enumerate(chunks)
-    ]
-    outcomes = await asyncio.gather(*tasks)
+        Chunks come from partition; source_cards are loaded once by the
+        phase-2 orchestrator and passed through so we don't re-read jsonl.
+        """
+        if not chunks:
+            return []
 
-    local_topics: list[LocalTopic] = []
-    chunks_processed = 0
-    cache_hits = 0
-    cache_misses = 0
-    chunks_failed = 0
-    for outcome in outcomes:
-        if outcome.error is not None:
-            chunks_failed += 1
-            log_event(
-                "synthesize.chunk_failed",
-                level=logging.WARNING,
-                vault_id=str(ctx.vault_id),
-                chunk_idx=outcome.chunk_idx,
-                error=outcome.error,
+        prompt_template = await load_prompt(self.storage, "synthesize")
+        ph = prompt_hash(prompt_template)
+        idea_index: dict[UUID, tuple[Idea, SourceCard]] = {}
+        for card in source_cards:
+            for idea in card.ideas:
+                idea_index[idea.idea_id] = (idea, card)
+
+        sem = asyncio.Semaphore(self.concurrency)
+        tasks = [
+            _synthesize_one(
+                vault_id=vault_id,
+                client=self.client,
+                compile_cache=self.compile_cache,
+                sem=sem,
+                chunk_idx=idx,
+                chunk=chunk,
+                idea_index=idea_index,
+                prompt_template=prompt_template,
+                prompt_hash=ph,
             )
-            continue
-        chunks_processed += 1
-        if outcome.cache_hit:
-            cache_hits += 1
-        else:
-            cache_misses += 1
-        local_topics.extend(outcome.local_topics)
+            for idx, chunk in enumerate(chunks)
+        ]
+        outcomes = await asyncio.gather(*tasks)
 
-    enrich(
-        synthesize_chunks_processed=chunks_processed,
-        synthesize_cache_hits=cache_hits,
-        synthesize_cache_misses=cache_misses,
-        synthesize_chunks_failed=chunks_failed,
-        synthesize_local_topics=len(local_topics),
-    )
-    log_event(
-        "pipeline.synthesize_completed",
-        vault_id=str(ctx.vault_id),
-        chunks_processed=chunks_processed,
-        cache_hits=cache_hits,
-        cache_misses=cache_misses,
-        chunks_failed=chunks_failed,
-        local_topics=len(local_topics),
-    )
-    return local_topics
+        local_topics: list[LocalTopic] = []
+        chunks_processed = 0
+        cache_hits = 0
+        cache_misses = 0
+        chunks_failed = 0
+        for outcome in outcomes:
+            if outcome.error is not None:
+                chunks_failed += 1
+                log_event(
+                    "synthesize.chunk_failed",
+                    level=logging.WARNING,
+                    vault_id=str(vault_id),
+                    chunk_idx=outcome.chunk_idx,
+                    error=outcome.error,
+                )
+                continue
+            chunks_processed += 1
+            if outcome.cache_hit:
+                cache_hits += 1
+            else:
+                cache_misses += 1
+            local_topics.extend(outcome.local_topics)
+
+        enrich(
+            synthesize_chunks_processed=chunks_processed,
+            synthesize_cache_hits=cache_hits,
+            synthesize_cache_misses=cache_misses,
+            synthesize_chunks_failed=chunks_failed,
+            synthesize_local_topics=len(local_topics),
+        )
+        log_event(
+            "pipeline.synthesize_completed",
+            vault_id=str(vault_id),
+            chunks_processed=chunks_processed,
+            cache_hits=cache_hits,
+            cache_misses=cache_misses,
+            chunks_failed=chunks_failed,
+            local_topics=len(local_topics),
+        )
+        return local_topics
 
 
 # ---------------------------------------------------------------------------
@@ -131,7 +150,9 @@ class _ChunkOutcome:
 
 async def _synthesize_one(
     *,
-    ctx: PipelineContext,
+    vault_id: UUID,
+    client: AsyncOpenAI,
+    compile_cache: CompileCacheRepository,
     sem: asyncio.Semaphore,
     chunk_idx: int,
     chunk: list[UUID],
@@ -151,8 +172,8 @@ async def _synthesize_one(
 
     cache_key = _cache_key(idea_ids=present, prompt_hash=prompt_hash, model=MAP_MODEL)
 
-    cached = await ctx.compile_cache.get(
-        vault_id=ctx.vault_id,
+    cached = await compile_cache.get(
+        vault_id=vault_id,
         phase=PHASE,
         cache_key=cache_key,
     )
@@ -178,7 +199,7 @@ async def _synthesize_one(
     try:
         async with sem:
             data = await json_llm_call(
-                ctx.client,
+                client,
                 model=MAP_MODEL,
                 messages=[{"role": "user", "content": prompt}],
                 temperature=0.3,
@@ -195,8 +216,8 @@ async def _synthesize_one(
         outcome.error = f"llm_call:{repr(e)[:200]}"
         return outcome
 
-    await ctx.compile_cache.put(
-        vault_id=ctx.vault_id,
+    await compile_cache.put(
+        vault_id=vault_id,
         phase=PHASE,
         cache_key=cache_key,
         value={

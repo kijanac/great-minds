@@ -53,28 +53,26 @@ class PublishPhase:
     def __init__(
         self,
         *,
-        vault_id: UUID,
         storage: Storage,
         sidecar_root: Path,
         topics: TopicService,
         documents: DocumentService,
         search: SearchService,
     ) -> None:
-        self.vault_id = vault_id
         self.storage = storage
         self.sidecar_root = sidecar_root
         self.topics = topics
         self.documents = documents
         self.search = search
 
-    async def run(self) -> None:
-        rendered_topics = await self.topics.list_rendered(self.vault_id)
-        raw_docs = await self._load_raw_documents()
+    async def run(self, vault_id: UUID) -> None:
+        rendered_topics = await self.topics.list_rendered(vault_id)
+        raw_docs = await self._load_raw_documents(vault_id)
 
         await self._write_wiki_index(rendered_topics)
         await self._write_raw_index(raw_docs)
 
-        counts = await self._gather_log_counts()
+        counts = await self._gather_log_counts(vault_id)
         self._append_compile_log(counts)
 
         enrich(
@@ -83,7 +81,7 @@ class PublishPhase:
         )
         log_event(
             "pipeline.publish_completed",
-            vault_id=str(self.vault_id),
+            vault_id=str(vault_id),
             wiki_index_topics=len(rendered_topics),
             raw_index_docs=len(raw_docs),
             **counts.model_dump(),
@@ -141,19 +139,19 @@ class PublishPhase:
     # Compile log
     # ---------------------------------------------------------------------------
 
-    async def _gather_log_counts(self) -> CompileLogCounts:
+    async def _gather_log_counts(self, vault_id: UUID) -> CompileLogCounts:
         return CompileLogCounts(
-            topics_total=await self.topics.count_all(self.vault_id),
+            topics_total=await self.topics.count_all(vault_id),
             topics_rendered=await self.topics.count_by_status(
-                self.vault_id, ArticleStatus.RENDERED
+                vault_id, ArticleStatus.RENDERED
             ),
             topics_archived=await self.topics.count_by_status(
-                self.vault_id, ArticleStatus.ARCHIVED
+                vault_id, ArticleStatus.ARCHIVED
             ),
-            topics_dirty=await self.topics.count_dirty(self.vault_id),
-            docs_raw=await self.documents.count_by_kind(self.vault_id, DocKind.RAW),
-            chunks_raw=await self.search.count_by_prefix(self.vault_id, RAW_PREFIX),
-            chunks_wiki=await self.search.count_by_prefix(self.vault_id, WIKI_PREFIX),
+            topics_dirty=await self.topics.count_dirty(vault_id),
+            docs_raw=await self.documents.count_by_kind(vault_id, DocKind.RAW),
+            chunks_raw=await self.search.count_by_prefix(vault_id, RAW_PREFIX),
+            chunks_wiki=await self.search.count_by_prefix(vault_id, WIKI_PREFIX),
         )
 
     def _append_compile_log(self, counts: CompileLogCounts) -> None:
@@ -179,5 +177,5 @@ class PublishPhase:
     # Loaders
     # ---------------------------------------------------------------------------
 
-    async def _load_raw_documents(self) -> list[Document]:
-        return await self.documents.list_by_kind(self.vault_id, DocKind.RAW)
+    async def _load_raw_documents(self, vault_id: UUID) -> list[Document]:
+        return await self.documents.list_by_kind(vault_id, DocKind.RAW)

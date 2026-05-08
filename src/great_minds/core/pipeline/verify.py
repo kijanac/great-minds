@@ -36,29 +36,27 @@ class VerifyPhase:
     def __init__(
         self,
         *,
-        vault_id: UUID,
         storage: Storage,
         topics: TopicService,
         documents: DocumentService,
     ) -> None:
-        self.vault_id = vault_id
         self.storage = storage
         self.topics = topics
         self.documents = documents
 
-    async def run(self) -> None:
-        rendered = await self.topics.list_rendered(self.vault_id)
+    async def run(self, vault_id: UUID) -> None:
+        rendered = await self.topics.list_rendered(vault_id)
         if not rendered:
             log_event(
                 "pipeline.verify_skipped",
-                vault_id=str(self.vault_id),
+                vault_id=str(vault_id),
                 reason="no_rendered_topics",
             )
             return
 
         slug_to_topic = {t.slug: t for t in rendered}
         topic_id_set = {t.topic_id for t in rendered}
-        article_by_topic = await self._load_wiki_articles()
+        article_by_topic = await self._load_wiki_articles(vault_id)
 
         backlinks: list[Backlink] = []
         source_document_ids: list[UUID] = []
@@ -79,7 +77,7 @@ class VerifyPhase:
                 log_event(
                     "verify.missing_rendered_file",
                     level=logging.WARNING,
-                    vault_id=str(self.vault_id),
+                    vault_id=str(vault_id),
                     topic_slug=topic.slug,
                     topic_id=str(topic.topic_id),
                 )
@@ -99,7 +97,7 @@ class VerifyPhase:
                     log_event(
                         "verify.unresolved_citation",
                         level=logging.WARNING,
-                        vault_id=str(self.vault_id),
+                        vault_id=str(vault_id),
                         source_slug=topic.slug,
                         missing_slug=slug,
                     )
@@ -122,6 +120,7 @@ class VerifyPhase:
         # in cited_by_source[source]. Requires the topic_links rows from
         # phase 3 derive, scoped to this vault.
         unmentioned_count = await self._detect_unmentioned_links(
+            vault_id=vault_id,
             topic_id_set=topic_id_set,
             slug_by_topic_id={t.topic_id: t.slug for t in rendered},
             cited_by_source=cited_by_source,
@@ -140,26 +139,27 @@ class VerifyPhase:
         )
         log_event(
             "pipeline.verify_completed",
-            vault_id=str(self.vault_id),
+            vault_id=str(vault_id),
             articles_walked=articles_walked,
             backlink_edges=len(backlinks),
             unresolved_citations=unresolved_count,
             unmentioned_links=unmentioned_count,
         )
 
-    async def _load_wiki_articles(self) -> dict[UUID, Document]:
+    async def _load_wiki_articles(self, vault_id: UUID) -> dict[UUID, Document]:
         """Map topic_id → wiki Document for the rendered set.
 
         Wiki documents always carry a topic_id (FK enforced via the partial
         unique index). Rows missing it would be schema corruption — skip
         rather than crash so verify can still run on the well-formed set.
         """
-        docs = await self.documents.list_by_kind(self.vault_id, DocKind.WIKI)
+        docs = await self.documents.list_by_kind(vault_id, DocKind.WIKI)
         return {doc.topic_id: doc for doc in docs if doc.topic_id is not None}
 
     async def _detect_unmentioned_links(
         self,
         *,
+        vault_id: UUID,
         topic_id_set: set[UUID],
         slug_by_topic_id: dict[UUID, str],
         cited_by_source: dict[UUID, set[str]],
@@ -167,7 +167,7 @@ class VerifyPhase:
         if not topic_id_set:
             return 0
         edges = await self.topics.list_links_for_vault(
-            self.vault_id, source_topic_ids=list(topic_id_set)
+            vault_id, source_topic_ids=list(topic_id_set)
         )
 
         unmentioned = 0
@@ -182,7 +182,7 @@ class VerifyPhase:
             log_event(
                 "verify.unmentioned_link",
                 level=logging.INFO,
-                vault_id=str(self.vault_id),
+                vault_id=str(vault_id),
                 source_slug=slug_by_topic_id[edge.source_topic_id],
                 missing_target_slug=target_slug,
             )

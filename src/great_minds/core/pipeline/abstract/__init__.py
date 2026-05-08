@@ -14,6 +14,8 @@ each sub-step's output into the next. Returning composed results
 rather than mutating a bag keeps each sub-phase's contract explicit.
 """
 
+from great_minds.core.ideas.repository import IdeaEmbeddingRepository
+from great_minds.core.ideas.service import IdeaService
 from great_minds.core.ideas.source_cards import SourceCardStore
 from great_minds.core.paths import source_cards_path
 from great_minds.core.pipeline.abstract import (
@@ -39,7 +41,16 @@ async def run(ctx: PipelineContext) -> list[TopicDetail]:
     settings = get_settings()
     source_cards = SourceCardStore(source_cards_path(ctx.sidecar_root)).load_all()
 
-    chunks = await partition.run(ctx, source_cards)
+    chunks = await partition.PartitionPhase(
+        ideas=IdeaService(
+            embedding_repo=IdeaEmbeddingRepository(ctx.session),
+            sidecar_root=ctx.sidecar_root,
+        ),
+        compile_cache=ctx.compile_cache,
+        target_tokens=settings.compile_partition_target_tokens,
+        min_factor=settings.compile_partition_min_factor,
+        max_factor=settings.compile_partition_max_factor,
+    ).run(ctx.vault_id, source_cards)
     if not chunks:
         log_event(
             "pipeline.abstract_skipped",
@@ -48,7 +59,12 @@ async def run(ctx: PipelineContext) -> list[TopicDetail]:
         )
         return []
 
-    local_topics = await synthesize.run(ctx, source_cards, chunks)
+    local_topics = await synthesize.SynthesizePhase(
+        storage=ctx.storage,
+        client=ctx.client,
+        compile_cache=ctx.compile_cache,
+        concurrency=settings.compile_enrich_concurrency,
+    ).run(ctx.vault_id, source_cards, chunks)
     merged_topics = premerge.run(
         local_topics,
         jaccard_threshold=settings.compile_premerge_jaccard_threshold,

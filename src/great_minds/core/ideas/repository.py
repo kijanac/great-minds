@@ -10,6 +10,9 @@ from great_minds.core.ideas.models import IdeaEmbeddingORM
 from great_minds.core.ideas.schemas import IdeaEmbedding
 
 
+_MAX_BULK_UPSERT_ROWS = 1000
+
+
 class IdeaEmbeddingRepository:
     def __init__(self, session: AsyncSession) -> None:
         self.session = session
@@ -20,31 +23,33 @@ class IdeaEmbeddingRepository:
         """
         if not entries:
             return
-        values = [
-            {
-                "idea_id": e.idea_id,
-                "vault_id": e.vault_id,
-                "document_id": e.document_id,
-                "kind": e.kind,
-                "label": e.label,
-                "description": e.description,
-                "embedding": e.embedding,
-            }
-            for e in entries
-        ]
-        stmt = (
-            insert(IdeaEmbeddingORM)
-            .values(values)
-            .on_conflict_do_update(
-                index_elements=[IdeaEmbeddingORM.idea_id],
-                set_={
-                    "label": insert(IdeaEmbeddingORM).excluded.label,
-                    "description": insert(IdeaEmbeddingORM).excluded.description,
-                    "embedding": insert(IdeaEmbeddingORM).excluded.embedding,
-                },
+        for start in range(0, len(entries), _MAX_BULK_UPSERT_ROWS):
+            batch = entries[start : start + _MAX_BULK_UPSERT_ROWS]
+            values = [
+                {
+                    "idea_id": e.idea_id,
+                    "vault_id": e.vault_id,
+                    "document_id": e.document_id,
+                    "kind": e.kind,
+                    "label": e.label,
+                    "description": e.description,
+                    "embedding": e.embedding,
+                }
+                for e in batch
+            ]
+            stmt = (
+                insert(IdeaEmbeddingORM)
+                .values(values)
+                .on_conflict_do_update(
+                    index_elements=[IdeaEmbeddingORM.idea_id],
+                    set_={
+                        "label": insert(IdeaEmbeddingORM).excluded.label,
+                        "description": insert(IdeaEmbeddingORM).excluded.description,
+                        "embedding": insert(IdeaEmbeddingORM).excluded.embedding,
+                    },
+                )
             )
-        )
-        await self.session.execute(stmt)
+            await self.session.execute(stmt)
 
     async def delete_for_document(self, document_id: UUID) -> None:
         await self.session.execute(
