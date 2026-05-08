@@ -45,11 +45,12 @@ async def reconcile_once(
     dispatched = await _dispatch_pending(
         intent_repo, task_service, vault_service, pipeline_run_repo, settings
     )
-    log_event(
-        "intent_reconciler_tick_completed",
-        marked_satisfied=satisfied,
-        dispatched=dispatched,
-    )
+    if satisfied or dispatched:
+        log_event(
+            "intent_reconciler_tick_completed",
+            marked_satisfied=satisfied,
+            dispatched=dispatched,
+        )
 
 
 async def _mark_satisfied_terminal(

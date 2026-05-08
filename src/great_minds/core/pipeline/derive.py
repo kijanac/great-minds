@@ -41,8 +41,7 @@ class DerivePhase:
     async def run(self, vault_id: UUID, validated: list[TopicDetail]) -> None:
         if not validated:
             log_event(
-                "pipeline.derive_skipped",
-                vault_id=str(vault_id),
+                "skipped",
                 reason="no_topics",
             )
             return
@@ -55,7 +54,6 @@ class DerivePhase:
 
         enrich(derive_topic_count=len(validated))
         log_event(
-            "pipeline.derive_completed",
-            vault_id=str(vault_id),
+            "completed",
             topic_count=len(validated),
         )

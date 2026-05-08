@@ -27,15 +27,15 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from great_minds.app.api.server import create_app
-from great_minds.core import pipeline, querier
+from great_minds.core.workers import create_absurd
+from great_minds.core import pipeline as compile_pipeline, querier
 from great_minds.core.documents.builder import write_document, write_file
 from great_minds.core.documents.repository import DocumentRepository
 from great_minds.core.documents.service import DocumentService
 from great_minds.core.llm import get_async_client
 from great_minds.core.paths import VAULT_SUBDIRS, raw_prefix, sidecar_root, vault_dir
 from great_minds.core.settings import get_settings
-from great_minds.core.storage import LocalStorage
-from great_minds.core.storage_factory import make_storage
+from great_minds.core.storage import LocalStorage, make_storage
 from great_minds.core.pipeline_runs import (
     PipelineProgressRunner,
     PipelineRunCreate,
@@ -44,6 +44,7 @@ from great_minds.core.pipeline_runs import (
 )
 from great_minds.core.telemetry import (
     emit_wide_event,
+    enrich,
     init_wide_event,
     setup_logging,
     wide_event,
@@ -101,15 +102,19 @@ async def _run_compile(vault_id: uuid.UUID, data_dir: Path) -> dict:
                 )
             )
             await session.commit()
-            ctx = await pipeline.build_context(
+            enrich(pipeline_run_id=str(run.id))
+            compile_service = await compile_pipeline.build_compile_service(
                 vault_id=vault_id,
                 pipeline_run_id=run.id,
                 progress=PipelineProgressRunner(_cli_sm.get()),
-                storage=make_storage(vault),
+                storage=make_storage(
+                    vault_id=vault.id,
+                    r2_bucket_name=vault.r2_bucket_name,
+                ),
                 session=session,
                 client=client,
             )
-            await pipeline.run(ctx)
+            await compile_service.run()
             return dict(wide_event.get() or {})
     finally:
         emit_wide_event()
@@ -452,6 +457,35 @@ def serve(
         )
     else:
         uvicorn.run(create_app(), host=host, port=port)
+
+
+@app.command()
+def worker(
+    concurrency: int = typer.Option(1, "--concurrency", help="Worker concurrency"),
+    poll_interval: float = typer.Option(
+        0.5, "--poll-interval", help="Queue poll interval"
+    ),
+) -> None:
+    """Start the background Absurd task worker."""
+    asyncio.run(_run_worker(concurrency=concurrency, poll_interval=poll_interval))
+
+
+async def _run_worker(*, concurrency: int, poll_interval: float) -> None:
+    settings = get_settings()
+    setup_logging(service="great-minds-worker", json_output=settings.log_json)
+    engine = create_async_engine(
+        settings.database_url,
+        pool_pre_ping=True,
+        pool_recycle=60,
+    )
+    sm = async_sessionmaker(engine, expire_on_commit=False)
+    absurd = create_absurd(settings.database_url, sm)
+    try:
+        await absurd.start_worker(concurrency=concurrency, poll_interval=poll_interval)
+    finally:
+        absurd.stop_worker()
+        await absurd.close()
+        await engine.dispose()
 
 
 def main() -> None:

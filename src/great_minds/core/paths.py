@@ -10,12 +10,12 @@ R2 storage, under ``<bucket>/vaults/<vault_id>/``)::
     wiki/_index.md                  wiki index
     raw/_index.md                   raw index
 
-Compile sidecar is always machine-local, regardless of storage backend
-— it's build-cache state (think ``node_modules/``), regeneratable from
-content-hash inputs. It lives under ``<data_dir>/.compile/<vault_id>/``::
+Compile intermediates are split by durability needs. The compile cache is
+DB-backed. The extract source-card stream lives in vault storage at
+``compile/source_cards.jsonl`` (local in dev, R2 in prod) so background
+workers can resume on different machines. The remaining local sidecar is
+machine-local scratch state under ``<data_dir>/.compile/<vault_id>/``::
 
-    cache/<phase>/<key>.json        per-phase content-hash cache
-    source_cards.jsonl              extract output stream
     log.md                          human-readable compile timeline
 
 Package-bundled defaults (``default_config.yaml``, ``default_prompts/``)
@@ -101,10 +101,6 @@ COMPILE_DIR = ".compile"
 def sidecar_root(data_dir: Path, vault_id: UUID | str) -> Path:
     """Absolute path to a vault's compile sidecar on local disk."""
     return Path(data_dir) / COMPILE_DIR / str(vault_id)
-
-
-def source_cards_path(sidecar: Path) -> Path:
-    return sidecar / "source_cards.jsonl"
 
 
 def compile_log_path(sidecar: Path) -> Path:

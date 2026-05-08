@@ -6,6 +6,7 @@ from great_minds.app.api.auth_routes import router as auth_router
 from great_minds.app.api.vault_routes import router as vault_router
 from great_minds.app.api.compile_routes import router as compile_router
 from great_minds.app.api.cost_routes import router as cost_router
+from great_minds.app.api.cost_routes import vault_router as vault_cost_router
 from great_minds.app.api.dependencies import require_vault_member
 from great_minds.app.api.ingest_routes import router as ingest_router
 from great_minds.app.api.lint_routes import router as lint_router
@@ -29,6 +30,7 @@ vault_scoped = APIRouter(
     prefix="/vaults/{vault_id}",
     dependencies=[Depends(require_vault_member)],
 )
+vault_scoped.include_router(vault_cost_router)
 vault_scoped.include_router(compile_router)
 vault_scoped.include_router(ingest_router)
 vault_scoped.include_router(lint_router)

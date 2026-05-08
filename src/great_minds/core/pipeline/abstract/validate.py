@@ -27,14 +27,16 @@ import logging
 from dataclasses import dataclass
 from uuid import UUID, uuid7
 
+from openai import AsyncOpenAI
+
 from great_minds.core.vaults.prompts import load_prompt
-from great_minds.core.documents.repository import DocumentRepository
+from great_minds.core.documents import DocumentService
 from great_minds.core.llm.client import json_llm_call
 from great_minds.core.llm import REDUCE_MODEL
 from great_minds.core.markdown import parse_frontmatter, serialize_frontmatter
 from great_minds.core.paths import wiki_path
 from great_minds.core.pipeline.abstract.schemas import LocalTopic
-from great_minds.core.pipeline.context import PipelineContext
+from great_minds.core.storage import Storage
 from great_minds.core.telemetry import enrich, log_event
 from great_minds.core.topics.repository import TopicRepository
 from great_minds.core.topics.service import TopicService
@@ -54,80 +56,144 @@ class _CleanupOutput:
     supersessions: dict[UUID, int | None]  # archived topic_id → canonical index or None
 
 
-async def run(
-    ctx: PipelineContext,
-    canonical_topics: list[CanonicalTopicDraft],
-    local_topics: list[LocalTopic],
-) -> list[TopicDetail]:
-    if not canonical_topics:
-        log_event(
-            "pipeline.validate_skipped",
-            vault_id=str(ctx.vault_id),
-            reason="no_canonicals",
+class ValidatePhase:
+    """Phase 2e runner with explicit service-style dependencies."""
+
+    def __init__(
+        self,
+        *,
+        storage: Storage,
+        client: AsyncOpenAI,
+        topics: TopicService,
+        documents: DocumentService,
+    ) -> None:
+        self.storage = storage
+        self.client = client
+        self.topics = topics
+        self.documents = documents
+
+    async def run(
+        self,
+        vault_id: UUID,
+        canonical_topics: list[CanonicalTopicDraft],
+        local_topics: list[LocalTopic],
+    ) -> list[TopicDetail]:
+        if not canonical_topics:
+            log_event(
+                "skipped",
+                reason="no_canonicals",
+            )
+            return []
+
+        canonical_topics = _intersect_link_targets(canonical_topics)
+        local_by_id = {t.local_topic_id: t for t in local_topics}
+
+        existing = await self.topics.list_for_vault(vault_id)
+        active_existing = [
+            t for t in existing if t.article_status != ArticleStatus.ARCHIVED
+        ]
+
+        emitted_slugs = [c.slug for c in canonical_topics]
+        collisions = _detect_collisions(canonical_topics)
+        archive_candidates = [t for t in active_existing if t.slug not in emitted_slugs]
+
+        cleanup = _CleanupOutput(slug_renames={}, supersessions={})
+        if collisions or archive_candidates:
+            cleanup = await _cleanup_llm_call(
+                storage=self.storage,
+                client=self.client,
+                vault_id=vault_id,
+                canonical_topics=canonical_topics,
+                collisions=collisions,
+                archive_candidates=archive_candidates,
+            )
+
+        renamed_canonicals = _apply_renames(canonical_topics, cleanup.slug_renames)
+        _assert_no_collision(renamed_canonicals)
+
+        validated = await _assign_topic_ids(
+            vault_id=vault_id,
+            repo=self.topics.repo,
+            canonicals=renamed_canonicals,
+            local_by_id=local_by_id,
         )
-        return []
 
-    canonical_topics = _intersect_link_targets(canonical_topics)
-    local_by_id = {t.local_topic_id: t for t in local_topics}
-
-    repo = TopicRepository(ctx.session)
-    existing = await repo.list_for_vault(ctx.vault_id)
-    active_existing = [
-        t for t in existing if t.article_status != ArticleStatus.ARCHIVED
-    ]
-
-    emitted_slugs = [c.slug for c in canonical_topics]
-    collisions = _detect_collisions(canonical_topics)
-    archive_candidates = [t for t in active_existing if t.slug not in emitted_slugs]
-
-    cleanup = _CleanupOutput(slug_renames={}, supersessions={})
-    if collisions or archive_candidates:
-        cleanup = await _cleanup_llm_call(
-            ctx=ctx,
-            canonical_topics=canonical_topics,
-            collisions=collisions,
+        await self._archive_candidates(
+            vault_id=vault_id,
             archive_candidates=archive_candidates,
+            supersessions=cleanup.supersessions,
+            validated=validated,
         )
 
-    renamed_canonicals = _apply_renames(canonical_topics, cleanup.slug_renames)
-    _assert_no_collision(renamed_canonicals)
+        await self.topics.upsert_validated_topics(vault_id, validated)
 
-    validated = await _assign_topic_ids(
-        vault_id=ctx.vault_id,
-        repo=repo,
-        canonicals=renamed_canonicals,
-        local_by_id=local_by_id,
-    )
+        enrich(
+            validate_canonical_count=len(validated),
+            validate_collisions_resolved=len(cleanup.slug_renames),
+            validate_archived_count=len(archive_candidates),
+            validate_supersessions_assigned=sum(
+                1 for v in cleanup.supersessions.values() if v is not None
+            ),
+        )
+        log_event(
+            "completed",
+            canonical_count=len(validated),
+            collisions_resolved=len(cleanup.slug_renames),
+            archived_count=len(archive_candidates),
+            supersessions_assigned=sum(
+                1 for v in cleanup.supersessions.values() if v is not None
+            ),
+        )
+        return validated
 
-    await _archive_candidates(
-        ctx=ctx,
-        repo=repo,
-        archive_candidates=archive_candidates,
-        supersessions=cleanup.supersessions,
-        validated=validated,
-    )
+    async def _archive_candidates(
+        self,
+        *,
+        vault_id: UUID,
+        archive_candidates: list[Topic],
+        supersessions: dict[UUID, int | None],
+        validated: list[TopicDetail],
+    ) -> None:
+        for candidate in archive_candidates:
+            successor_idx = supersessions.get(candidate.topic_id)
+            successor_topic_id: UUID | None = (
+                validated[successor_idx].topic_id if successor_idx is not None else None
+            )
+            await self.topics.repo.set_archived(
+                candidate.topic_id, superseded_by=successor_topic_id
+            )
+            await self._move_wiki_to_archive(
+                vault_id=vault_id,
+                topic=candidate,
+                successor_topic_id=successor_topic_id,
+            )
 
-    await TopicService(repo).upsert_validated_topics(ctx.vault_id, validated)
-
-    enrich(
-        validate_canonical_count=len(validated),
-        validate_collisions_resolved=len(cleanup.slug_renames),
-        validate_archived_count=len(archive_candidates),
-        validate_supersessions_assigned=sum(
-            1 for v in cleanup.supersessions.values() if v is not None
-        ),
-    )
-    log_event(
-        "pipeline.validate_completed",
-        vault_id=str(ctx.vault_id),
-        canonical_count=len(validated),
-        collisions_resolved=len(cleanup.slug_renames),
-        archived_count=len(archive_candidates),
-        supersessions_assigned=sum(
-            1 for v in cleanup.supersessions.values() if v is not None
-        ),
-    )
-    return validated
+    async def _move_wiki_to_archive(
+        self,
+        *,
+        vault_id: UUID,
+        topic: Topic,
+        successor_topic_id: UUID | None,
+    ) -> None:
+        article_path = wiki_path(topic.slug)
+        content = await self.storage.read(article_path, strict=False)
+        if content is None:
+            # Topic had no rendered article yet (e.g., archived before render ran).
+            # Nothing on disk to move.
+            return
+        fm, body = parse_frontmatter(content)
+        fm["archived"] = True
+        if successor_topic_id is not None:
+            fm["superseded_by"] = str(successor_topic_id)
+        updated = serialize_frontmatter(fm, body)
+        archive_path = f"archive/{topic.topic_id}/{topic.slug}.md"
+        await self.storage.write(archive_path, updated)
+        await self.storage.delete(article_path)
+        # Repoint the documents row at the archive location so backlinks
+        # and /doc reads resolve to the artifact's actual home.
+        await self.documents.repo.update_file_path_for_topic(
+            vault_id, topic.topic_id, archive_path
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -169,12 +235,14 @@ def _detect_collisions(
 
 async def _cleanup_llm_call(
     *,
-    ctx: PipelineContext,
+    storage: Storage,
+    client: AsyncOpenAI,
+    vault_id: UUID,
     canonical_topics: list[CanonicalTopicDraft],
     collisions: dict[str, list[int]],
     archive_candidates: list[Topic],
 ) -> _CleanupOutput:
-    prompt_template = await load_prompt(ctx.storage, "cleanup")
+    prompt_template = await load_prompt(storage, "cleanup")
 
     canonical_block = _render_canonical_block(canonical_topics)
     collision_block = _render_collision_block(collisions)
@@ -188,16 +256,15 @@ async def _cleanup_llm_call(
 
     try:
         data = await json_llm_call(
-            ctx.client,
+            client,
             model=REDUCE_MODEL,
             messages=[{"role": "user", "content": prompt}],
             temperature=0.1,
         )
     except Exception as e:
         log_event(
-            "pipeline.validate_cleanup_failed",
+            "cleanup_failed",
             level=logging.ERROR,
-            vault_id=str(ctx.vault_id),
             error=repr(e)[:300],
             collisions=len(collisions),
             archive_candidates=len(archive_candidates),
@@ -350,56 +417,3 @@ async def _assign_topic_ids(
             )
         )
     return out
-
-
-# ---------------------------------------------------------------------------
-# Step 6 — archive flow
-# ---------------------------------------------------------------------------
-
-
-async def _archive_candidates(
-    *,
-    ctx: PipelineContext,
-    repo: TopicRepository,
-    archive_candidates: list[Topic],
-    supersessions: dict[UUID, int | None],
-    validated: list[TopicDetail],
-) -> None:
-    for candidate in archive_candidates:
-        successor_idx = supersessions.get(candidate.topic_id)
-        successor_topic_id: UUID | None = (
-            validated[successor_idx].topic_id if successor_idx is not None else None
-        )
-        await repo.set_archived(candidate.topic_id, superseded_by=successor_topic_id)
-        await _move_wiki_to_archive(
-            ctx=ctx,
-            topic=candidate,
-            successor_topic_id=successor_topic_id,
-        )
-
-
-async def _move_wiki_to_archive(
-    *,
-    ctx: PipelineContext,
-    topic: Topic,
-    successor_topic_id: UUID | None,
-) -> None:
-    article_path = wiki_path(topic.slug)
-    content = await ctx.storage.read(article_path, strict=False)
-    if content is None:
-        # Topic had no rendered article yet (e.g., archived before render ran).
-        # Nothing on disk to move.
-        return
-    fm, body = parse_frontmatter(content)
-    fm["archived"] = True
-    if successor_topic_id is not None:
-        fm["superseded_by"] = str(successor_topic_id)
-    updated = serialize_frontmatter(fm, body)
-    archive_path = f"archive/{topic.topic_id}/{topic.slug}.md"
-    await ctx.storage.write(archive_path, updated)
-    await ctx.storage.delete(article_path)
-    # Repoint the documents row at the archive location so backlinks
-    # and /doc reads resolve to the artifact's actual home.
-    await DocumentRepository(ctx.session).update_file_path_for_topic(
-        ctx.vault_id, topic.topic_id, archive_path
-    )

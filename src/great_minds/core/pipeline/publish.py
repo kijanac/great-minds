@@ -69,7 +69,7 @@ class PublishPhase:
         rendered_topics = await self.topics.list_for_vault(
             vault_id, ArticleStatus.RENDERED
         )
-        raw_docs = await self._load_raw_documents(vault_id)
+        raw_docs = await self.documents.list_by_kind(vault_id, DocKind.RAW)
 
         await self._write_wiki_index(rendered_topics)
         await self._write_raw_index(raw_docs)
@@ -82,8 +82,7 @@ class PublishPhase:
             publish_raw_index_docs=len(raw_docs),
         )
         log_event(
-            "pipeline.publish_completed",
-            vault_id=str(vault_id),
+            "completed",
             wiki_index_topics=len(rendered_topics),
             raw_index_docs=len(raw_docs),
             **counts.model_dump(),
@@ -174,10 +173,3 @@ class PublishPhase:
 
         existing = log_path.read_text(encoding="utf-8") if log_path.exists() else ""
         log_path.write_text(existing + "\n".join(lines) + "\n", encoding="utf-8")
-
-    # ---------------------------------------------------------------------------
-    # Loaders
-    # ---------------------------------------------------------------------------
-
-    async def _load_raw_documents(self, vault_id: UUID) -> list[Document]:
-        return await self.documents.list_by_kind(vault_id, DocKind.RAW)

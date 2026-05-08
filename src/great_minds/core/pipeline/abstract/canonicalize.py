@@ -65,8 +65,7 @@ class CanonicalizePhase:
         """
         if not local_topics:
             log_event(
-                "pipeline.canonicalize_skipped",
-                vault_id=str(vault_id),
+                "skipped",
                 reason="no_local_topics",
             )
             return []
@@ -102,8 +101,7 @@ class CanonicalizePhase:
                 canonicalize_orphan_count=orphans,
             )
             log_event(
-                "pipeline.canonicalize_cached",
-                vault_id=str(vault_id),
+                "cached",
                 canonical_count=len(canonical_topics),
                 orphan_count=orphans,
             )
@@ -148,8 +146,7 @@ class CanonicalizePhase:
             canonicalize_unknown_tag_count=unknown_tag_count,
         )
         log_event(
-            "pipeline.canonicalize_completed",
-            vault_id=str(vault_id),
+            "completed",
             input_local_topics=len(local_topics),
             output_canonical_topics=len(canonical_topics),
             orphan_count=orphans,

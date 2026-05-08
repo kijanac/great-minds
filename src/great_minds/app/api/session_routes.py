@@ -32,8 +32,10 @@ async def create_session(
     req: schemas.CreateSessionRequest,
     session_service: SessionServiceDep,
     user: CurrentUser,
+    vault_id: UUID,
 ) -> schemas.SessionPathResponse:
     path = await session_service.create_session(
+        vault_id,
         req.session_id,
         ExchangeInput(
             id=req.exchange.id,
@@ -52,8 +54,10 @@ async def append_to_session(
     session_id: str,
     exchange: schemas.ExchangeData,
     session_service: SessionServiceDep,
+    vault_id: UUID,
 ) -> schemas.SessionPathResponse:
     path = await session_service.append_exchange(
+        vault_id,
         session_id,
         ExchangeInput(
             id=exchange.id,
@@ -70,8 +74,10 @@ async def append_btw_to_session(
     session_id: str,
     btw: schemas.BtwData,
     session_service: SessionServiceDep,
+    vault_id: UUID,
 ) -> schemas.SessionPathResponse:
     path = await session_service.append_btw(
+        vault_id,
         session_id,
         BtwInput(
             exchangeId=btw.exchangeId,
@@ -89,9 +95,10 @@ async def list_all_sessions(
     pagination: PageParamsQuery,
     session_service: SessionServiceDep,
     user: CurrentUser,
+    vault_id: UUID,
 ) -> Page[SessionOverview]:
     return await session_service.list_sessions(
-        user_id=str(user.id), pagination=pagination
+        vault_id, user_id=str(user.id), pagination=pagination
     )
 
 

@@ -31,7 +31,7 @@ import json
 import logging
 import sys
 import time
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Iterator
 from datetime import UTC, datetime
 
 # ---------------------------------------------------------------------------
@@ -46,6 +46,16 @@ correlation_id: contextvars.ContextVar[str] = contextvars.ContextVar(
 wide_event: contextvars.ContextVar[dict | None] = contextvars.ContextVar(
     "wide_event",
     default=None,
+)
+
+_telemetry_fields: contextvars.ContextVar[dict[str, object]] = contextvars.ContextVar(
+    "telemetry_fields",
+    default={},
+)
+
+_event_prefix: contextvars.ContextVar[tuple[str, ...]] = contextvars.ContextVar(
+    "event_prefix",
+    default=(),
 )
 
 # Set by setup_logging(), included in every structured log entry.
@@ -75,7 +85,45 @@ def log_event(
         **fields: High-cardinality fields (user_id, duration_ms, etc.)
     """
     log = logger or logging.getLogger(_service)
-    log.log(level, event, extra={"event_fields": fields, "event_name": event})
+    event_name = _scoped_event_name(event)
+    event_fields = {**_telemetry_fields.get(), **fields}
+    log.log(
+        level,
+        event_name,
+        extra={"event_fields": event_fields, "event_name": event_name},
+    )
+
+
+def _scoped_event_name(event: str) -> str:
+    prefix = _event_prefix.get()
+    if not prefix:
+        return event
+    dotted_prefix = ".".join(prefix)
+    if event == dotted_prefix or event.startswith(f"{dotted_prefix}."):
+        return event
+    return f"{dotted_prefix}.{event}"
+
+
+@contextlib.contextmanager
+def telemetry_scope(
+    event_prefix: str | None = None, **fields: object
+) -> Iterator[None]:
+    """Bind structured log fields and an optional event-name prefix.
+
+    Context propagates through asyncio tasks via contextvars, matching
+    correlation_id/wide_event behavior while avoiding explicit plumbing through
+    every phase and helper call.
+    """
+    field_token = _telemetry_fields.set({**_telemetry_fields.get(), **fields})
+    current_prefix = _event_prefix.get()
+    prefix_token = _event_prefix.set(
+        (*current_prefix, event_prefix) if event_prefix else current_prefix
+    )
+    try:
+        yield
+    finally:
+        _event_prefix.reset(prefix_token)
+        _telemetry_fields.reset(field_token)
 
 
 # ---------------------------------------------------------------------------

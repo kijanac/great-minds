@@ -88,8 +88,8 @@ class ProposalService:
         total = await self.repo.count_for_vault(vault_id, status=status)
         return create_page(list(proposals), pagination, total)
 
-    async def get(self, proposal_id: UUID) -> Proposal | None:
-        return await self.repo.get(proposal_id)
+    async def get_for_vault(self, vault_id: UUID, proposal_id: UUID) -> Proposal | None:
+        return await self.repo.get_for_vault(vault_id, proposal_id)
 
     async def find_pending_for_dest(
         self, vault_id: UUID, dest_path: str
@@ -98,6 +98,7 @@ class ProposalService:
 
     async def review(
         self,
+        vault_id: UUID,
         proposal_id: UUID,
         new_status: ProposalStatus,
         storage: Storage,
@@ -107,7 +108,7 @@ class ProposalService:
 
         Raises ValueError if the proposal doesn't exist or isn't PENDING.
         """
-        proposal = await self.repo.get(proposal_id)
+        proposal = await self.repo.get_for_vault(vault_id, proposal_id)
         if proposal is None:
             raise ValueError("Proposal not found")
         if proposal.status != ProposalStatus.PENDING:
@@ -118,9 +119,9 @@ class ProposalService:
         elif new_status == ProposalStatus.REJECTED:
             await self._reject(proposal)
 
-        await self.repo.set_status(proposal.id, new_status)
+        await self.repo.set_status(vault_id, proposal.id, new_status)
         await self._commit()
-        result = await self.repo.get(proposal.id)
+        result = await self.repo.get_for_vault(vault_id, proposal.id)
         if result is None:
             raise RuntimeError(f"reviewed proposal {proposal.id} not found")
         return result

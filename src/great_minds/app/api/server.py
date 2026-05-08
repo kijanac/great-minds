@@ -90,9 +90,6 @@ async def lifespan(app: FastAPI):
 
     absurd = create_absurd(settings.database_url, sm)
     app.state.absurd = absurd
-    worker = asyncio.create_task(
-        absurd.start_worker(concurrency=2, poll_interval=0.5),
-    )
 
     # Compile-intent reconciler — single-process choice; tied to API
     # lifespan. To extract for multi-instance deployment, lift the loop
@@ -105,12 +102,6 @@ async def lifespan(app: FastAPI):
     reconciler.cancel()
     try:
         await reconciler
-    except asyncio.CancelledError:
-        pass
-    absurd.stop_worker()
-    worker.cancel()
-    try:
-        await worker
     except asyncio.CancelledError:
         pass
     await absurd.close()

@@ -11,6 +11,7 @@ from great_minds.app.api.dependencies import (
     VaultOwnerGuard,
     VaultServiceDep,
     CurrentUser,
+    LlmGuard,
     DocumentServiceDep,
     MailerDep,
     PageParamsQuery,
@@ -72,6 +73,7 @@ async def create_vault(
 async def draft_hint(
     req: schemas.DraftHintRequest,
     _user: CurrentUser,
+    _llm: LlmGuard,
 ) -> schemas.DraftHintResponse:
     description = req.description.strip()
     if not description:
@@ -119,7 +121,8 @@ async def get_vault_config(
     except ValueError:
         raise HTTPException(status_code=404, detail="Vault not found")
 
-    cfg = await load_vault_config(vault_service.get_storage(vault))
+    storage = vault_service.get_storage(vault)
+    cfg = await load_vault_config(storage)
     return VaultConfig(
         thematic_hint=cfg.thematic_hint,
         kinds=list(cfg.kinds),
@@ -130,17 +133,17 @@ async def get_vault_config(
 async def update_vault_config(
     vault_id: UUID,
     req: VaultConfigUpdate,
-    user: CurrentUser,
     _auth: VaultOwnerGuard,
     vault_service: VaultServiceDep,
 ) -> VaultConfig:
+    vault = await vault_service.get_vault(vault_id)
+    storage = vault_service.get_storage(vault)
     await vault_service.update_config(
-        vault_id,
+        storage,
         thematic_hint=req.thematic_hint,
         kinds=req.kinds,
     )
-    vault = await vault_service.get_vault(vault_id)
-    cfg = await load_vault_config(vault_service.get_storage(vault))
+    cfg = await load_vault_config(storage)
     return VaultConfig(
         thematic_hint=cfg.thematic_hint,
         kinds=list(cfg.kinds),

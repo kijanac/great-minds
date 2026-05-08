@@ -23,7 +23,7 @@ class IngestPhase:
 
     This follows the repo/service style used elsewhere: callers compose
     concrete dependencies up front, while phase logic no longer reaches
-    through the broad ``PipelineContext`` bag.
+    through a broad context bag.
     """
 
     def __init__(
@@ -43,7 +43,6 @@ class IngestPhase:
         )
         enrich(raw_chunks_indexed=count)
         log_event(
-            "pipeline.ingest_completed",
-            vault_id=str(vault_id),
+            "completed",
             raw_chunks_indexed=count,
         )

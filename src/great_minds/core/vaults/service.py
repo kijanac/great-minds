@@ -20,8 +20,7 @@ from great_minds.core.crypto import decode_access_token
 from great_minds.core.paths import CONFIG_PATH
 from great_minds.core.r2_admin import R2Admin, derive_user_bucket_name
 from great_minds.core.settings import Settings
-from great_minds.core.storage import Storage
-from great_minds.core.storage_factory import make_storage
+from great_minds.core.storage import Storage, make_storage
 from great_minds.core.users.repository import UserRepository
 
 log = logging.getLogger(__name__)
@@ -48,14 +47,22 @@ class VaultService:
         await self.repo.session.commit()
 
     def get_storage(self, vault: Vault) -> Storage:
-        return make_storage(vault, self.settings)
+        return make_storage(
+            vault_id=vault.id,
+            r2_bucket_name=vault.r2_bucket_name,
+            settings=self.settings,
+        )
 
     async def get_storage_by_id(self, vault_id: UUID) -> Storage:
         vault = await self.get_vault(vault_id)
         if self.settings.storage_backend == "r2" and not vault.r2_bucket_name:
             bucket_name = await self._ensure_owner_bucket(vault.owner_id)
             vault = await self.repo.set_bucket_name(vault_id, bucket_name)
-        return make_storage(vault, self.settings)
+        return make_storage(
+            vault_id=vault.id,
+            r2_bucket_name=vault.r2_bucket_name,
+            settings=self.settings,
+        )
 
     async def get_vault(self, vault_id: UUID) -> Vault:
         """Fetch a vault by ID. Raises ValueError if not found."""
@@ -96,10 +103,11 @@ class VaultService:
     ) -> Vault:
         bucket_name = await self._ensure_owner_bucket(owner_id)
         vault = await self.repo.create_vault(name, owner_id, r2_bucket_name=bucket_name)
-        await self._init_vault_storage(vault)
+        storage = self.get_storage(vault)
+        await self._init_vault_storage(storage)
         if thematic_hint is not None or kinds is not None:
             await apply_vault_config_overrides(
-                self.get_storage(vault),
+                storage,
                 thematic_hint=thematic_hint,
                 kinds=kinds,
             )
@@ -109,13 +117,13 @@ class VaultService:
 
     async def update_config(
         self,
-        vault_id: UUID,
+        storage: Storage,
         *,
         thematic_hint: str | None = None,
         kinds: list[str] | None = None,
     ) -> None:
         await apply_vault_config_overrides(
-            await self.get_storage_by_id(vault_id),
+            storage,
             thematic_hint=thematic_hint,
             kinds=kinds,
         )
@@ -140,8 +148,7 @@ class VaultService:
     async def list_owned_by(self, user_id: UUID) -> list[Vault]:
         return await self.repo.list_owned_by(user_id)
 
-    async def _init_vault_storage(self, vault: Vault) -> None:
-        storage = self.get_storage(vault)
+    async def _init_vault_storage(self, storage: Storage) -> None:
         if not await storage.exists(CONFIG_PATH):
             await storage.write(CONFIG_PATH, load_default_config_text())
 

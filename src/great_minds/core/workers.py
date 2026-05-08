@@ -16,36 +16,21 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from great_minds.core.hashing import file_hash
 
-from great_minds.core.pipeline import (
-    abstract,
-    build_context,
-    derive,
-    extract,
-    ingest,
-    publish,
-    render,
-    verify,
-)
+from great_minds.core.pipeline import build_compile_service
 from great_minds.core.pipeline.steps import absurd_step_runner
-from great_minds.core.topics.repository import TopicRepository
-from great_minds.core.topics.schemas import TopicDetail
-from great_minds.core.topics.service import TopicService
 from great_minds.core.vaults.config import load_config
 from great_minds.core.vaults.repository import VaultRepository
 from great_minds.core.documents.builder import build_document
 from great_minds.core.documents.repository import DocumentRepository
 from great_minds.core.documents.schemas import DocumentCreate
 from great_minds.core.documents.service import DocumentService
-from great_minds.core.ideas.repository import IdeaEmbeddingRepository
-from great_minds.core.ideas.service import IdeaService
 from great_minds.core.ingest_service import _convert_to_markdown
 from great_minds.core.llm import get_async_client
 from great_minds.core.llm_costs import record_wide_event_cost
 from great_minds.core.markdown import parse_frontmatter
 from great_minds.core.r2_admin import R2Admin
-from great_minds.core.search import SearchIndexRepository, SearchService
 from great_minds.core.settings import get_settings
-from great_minds.core.storage_factory import make_storage
+from great_minds.core.storage import make_storage
 from great_minds.core.pipeline_runs import PipelineProgressRunner
 from great_minds.core.telemetry import (
     correlation_id,
@@ -104,9 +89,9 @@ async def _release_vault_compile_lock(
 
 
 async def compile_task(params: dict, ctx) -> None:
-    """Run the seven-phase compile pipeline as durable Absurd steps.
+    """Run the seven-phase compile as durable Absurd steps.
 
-    Each phase is a `ctx.step()` — on worker crash, Absurd replays from
+    Each compile phase is a `ctx.step()` — on worker crash, Absurd replays from
     the last completed checkpoint. Side effects (storage writes, DB
     upserts) are idempotent via content-addressing and ON CONFLICT.
 
@@ -114,9 +99,9 @@ async def compile_task(params: dict, ctx) -> None:
     `emit_wide_event` for the structured-log pipeline; nothing is
     returned through the task result.
     """
-    correlation_id.set(f"task-{ctx.task_id}")
     vault_id = UUID(params["vault_id"])
     pipeline_run_id = UUID(params["pipeline_run_id"])
+    correlation_id.set(f"compile-{pipeline_run_id}")
     session = _task_session.get()
     progress = PipelineProgressRunner(_task_session_maker.get())
     settings = get_settings()
@@ -124,10 +109,18 @@ async def compile_task(params: dict, ctx) -> None:
     vault = await VaultRepository(session).get_by_id(vault_id)
     if vault is None:
         raise ValueError(f"Vault {vault_id} not found")
-    storage = make_storage(vault)
+    storage = make_storage(
+        vault_id=vault.id,
+        r2_bucket_name=vault.r2_bucket_name,
+    )
     client = get_async_client()
 
-    init_wide_event("compile", vault_id=str(vault_id))
+    init_wide_event(
+        "compile",
+        vault_id=str(vault_id),
+        pipeline_run_id=str(pipeline_run_id),
+        task_id=str(ctx.task_id),
+    )
 
     # Background heartbeat — extends the Absurd task lease every
     # half the claim_timeout (60s of 120s), so long-running phases
@@ -155,7 +148,7 @@ async def compile_task(params: dict, ctx) -> None:
             pipeline_run_id=str(pipeline_run_id),
         )
 
-        pipeline_ctx = await build_context(
+        compile_service = await build_compile_service(
             vault_id=vault_id,
             pipeline_run_id=pipeline_run_id,
             progress=progress,
@@ -163,204 +156,11 @@ async def compile_task(params: dict, ctx) -> None:
             session=session,
             client=client,
             steps=absurd_step_runner(ctx),
+            settings=settings,
         )
 
-        # Phase 0 — mechanical chunking + embedding of raw docs
-        async def _run_ingest():
-            await progress.emit(
-                pipeline_run_id=pipeline_run_id,
-                phase="ingest",
-                status="started",
-                done=0,
-                total=1,
-            )
-            await ingest.IngestPhase(
-                storage=pipeline_ctx.storage,
-                client=pipeline_ctx.client,
-                search=SearchService(SearchIndexRepository(pipeline_ctx.session)),
-            ).run(pipeline_ctx.vault_id)
-            await progress.emit(
-                pipeline_run_id=pipeline_run_id,
-                phase="ingest",
-                status="completed",
-                done=1,
-                total=1,
-            )
+        await compile_service.run()
 
-        await ctx.step("phase-ingest", _run_ingest)
-
-        # Phase 1 — per-doc LLM extraction (ideas, anchors, metadata)
-        async def _run_extract():
-            await progress.emit(
-                pipeline_run_id=pipeline_run_id,
-                phase="extract",
-                status="started",
-                done=0,
-                total=0,
-            )
-            await extract.ExtractPhase(
-                storage=pipeline_ctx.storage,
-                client=pipeline_ctx.client,
-                session=pipeline_ctx.session,
-                progress=progress,
-                compile_cache=pipeline_ctx.compile_cache,
-                documents=DocumentService(DocumentRepository(pipeline_ctx.session)),
-                ideas=IdeaService(
-                    embedding_repo=IdeaEmbeddingRepository(pipeline_ctx.session),
-                    sidecar_root=pipeline_ctx.sidecar_root,
-                ),
-                config=pipeline_ctx.config,
-                concurrency=settings.compile_enrich_concurrency,
-            ).run(pipeline_ctx.vault_id, pipeline_run_id)
-            await progress.emit(
-                pipeline_run_id=pipeline_run_id,
-                phase="extract",
-                status="completed",
-            )
-
-        await ctx.step("phase-extract", _run_extract)
-
-        # Phase 2 — topic clustering, synthesis, canonicalization
-        async def _run_abstract():
-            await progress.emit(
-                pipeline_run_id=pipeline_run_id,
-                phase="abstract",
-                status="started",
-                done=0,
-                total=1,
-            )
-            result = await abstract.run(pipeline_ctx)
-            if not result:
-                await progress.emit(
-                    pipeline_run_id=pipeline_run_id,
-                    phase="abstract",
-                    status="completed",
-                    done=1,
-                    total=1,
-                    message="no validated topics",
-                )
-            else:
-                await progress.emit(
-                    pipeline_run_id=pipeline_run_id,
-                    phase="abstract",
-                    status="completed",
-                    done=1,
-                    total=1,
-                )
-            return [v.model_dump(mode="json") for v in result]
-
-        validated_raw = await ctx.step("phase-abstract", _run_abstract)
-        if not validated_raw:
-            # No topics — pipeline completed early
-            await record_wide_event_cost(session, user_id=None, vault_id=vault_id)
-            await session.commit()
-            return
-        validated = [TopicDetail.model_validate(v) for v in validated_raw]
-
-        # Phase 3 — mechanical: topic_membership, topic_links, topic_related
-        async def _run_derive():
-            await progress.emit(
-                pipeline_run_id=pipeline_run_id,
-                phase="derive",
-                status="started",
-                done=0,
-                total=1,
-            )
-            await derive.DerivePhase(
-                topics=TopicService(TopicRepository(pipeline_ctx.session)),
-                related_limit=get_settings().compile_derive_related_limit,
-            ).run(pipeline_ctx.vault_id, validated)
-            await progress.emit(
-                pipeline_run_id=pipeline_run_id,
-                phase="derive",
-                status="completed",
-                done=1,
-                total=1,
-            )
-
-        await ctx.step("phase-derive", _run_derive)
-
-        # Phase 4 — per-topic LLM article generation
-        async def _run_render():
-            await progress.emit(
-                pipeline_run_id=pipeline_run_id,
-                phase="render",
-                status="started",
-                done=0,
-                total=0,
-            )
-            await render.RenderPhase(
-                storage=pipeline_ctx.storage,
-                client=pipeline_ctx.client,
-                session=pipeline_ctx.session,
-                progress=progress,
-                compile_cache=pipeline_ctx.compile_cache,
-                steps=pipeline_ctx.steps,
-                documents=DocumentService(DocumentRepository(pipeline_ctx.session)),
-                topics=TopicService(TopicRepository(pipeline_ctx.session)),
-                search=SearchService(SearchIndexRepository(pipeline_ctx.session)),
-                sidecar_root=pipeline_ctx.sidecar_root,
-                concurrency=settings.compile_write_concurrency,
-            ).run(pipeline_ctx.vault_id, pipeline_run_id, validated)
-            await progress.emit(
-                pipeline_run_id=pipeline_run_id,
-                phase="render",
-                status="completed",
-            )
-
-        await ctx.step("phase-render", _run_render)
-
-        # Phase 5 — mechanical: backlinks, citation verification
-        async def _run_verify():
-            await progress.emit(
-                pipeline_run_id=pipeline_run_id,
-                phase="verify",
-                status="started",
-                done=0,
-                total=1,
-            )
-            await verify.VerifyPhase(
-                storage=pipeline_ctx.storage,
-                topics=TopicService(TopicRepository(pipeline_ctx.session)),
-                documents=DocumentService(DocumentRepository(pipeline_ctx.session)),
-            ).run(pipeline_ctx.vault_id)
-            await progress.emit(
-                pipeline_run_id=pipeline_run_id,
-                phase="verify",
-                status="completed",
-                done=1,
-                total=1,
-            )
-
-        await ctx.step("phase-verify", _run_verify)
-
-        # Phase 6 — mechanical: index files + compile log
-        async def _run_publish():
-            await progress.emit(
-                pipeline_run_id=pipeline_run_id,
-                phase="publish",
-                status="started",
-                done=0,
-                total=1,
-            )
-            await publish.PublishPhase(
-                storage=pipeline_ctx.storage,
-                sidecar_root=pipeline_ctx.sidecar_root,
-                topics=TopicService(TopicRepository(pipeline_ctx.session)),
-                documents=DocumentService(DocumentRepository(pipeline_ctx.session)),
-                search=SearchService(SearchIndexRepository(pipeline_ctx.session)),
-            ).run(pipeline_ctx.vault_id)
-            await progress.emit(
-                pipeline_run_id=pipeline_run_id,
-                phase="publish",
-                status="completed",
-                done=1,
-                total=1,
-            )
-
-        await ctx.step("phase-publish", _run_publish)
-
-        log_event("pipeline.compile_completed", vault_id=str(pipeline_ctx.vault_id))
         await record_wide_event_cost(session, user_id=None, vault_id=vault_id)
         await session.commit()
     except Exception as exc:
@@ -398,12 +198,6 @@ async def _fetch_and_convert(
 ) -> tuple[dict, str]:
     """Pull one staging blob, convert to markdown, prepend frontmatter."""
     name = entry["name"]
-    log.debug(
-        "fetch_convert start name=%s sem_waiters=%d",
-        name,
-        sem._waiters if hasattr(sem, "_waiters") else -1,
-    )
-    t0 = asyncio.get_event_loop().time()
     async with sem:
         staging_key = f"staging/{vault_id}/{entry['hash']}"
         raw_bytes = await asyncio.to_thread(admin.fetch_bytes, bucket, staging_key)
@@ -411,8 +205,6 @@ async def _fetch_and_convert(
         content_with_fm = build_document(
             config, content, content_type, source_type=source_type
         )
-        elapsed = asyncio.get_event_loop().time() - t0
-        log.debug("fetch_convert done name=%s elapsed=%.2fs", name, elapsed)
         return entry, content_with_fm
 
 
@@ -449,12 +241,12 @@ async def _index_fetched_results(
             await ctx.heartbeat(600)
         if i > 0 and i % 100 == 0:
             remaining = pending - i
-            log.info(
-                "staged_file_ingest drain: %d/%d completed %d failed %d pending",
-                i,
-                pending,
-                failed,
-                remaining,
+            log_event(
+                "staged_file_ingest_drain_progress",
+                completed=i,
+                total=pending,
+                failed=failed,
+                pending=remaining,
             )
         try:
             entry, content_with_fm = await coro
@@ -486,11 +278,7 @@ async def _index_fetched_results(
         ingested += 1
 
         if len(batch) >= _STAGING_BATCH_SIZE:
-            log.debug(
-                "batch_upsert start batch_size=%d ingest_count=%d", len(batch), ingested
-            )
             await doc_service.batch_index_raw_docs(vault_id, batch)
-            log.debug("batch_upsert done")
             batch.clear()
             done = ingested + skipped
             await progress.emit(
@@ -504,11 +292,7 @@ async def _index_fetched_results(
             )
 
     if batch:
-        log.debug(
-            "batch_upsert final batch_size=%d ingest_count=%d", len(batch), ingested
-        )
         await doc_service.batch_index_raw_docs(vault_id, batch)
-        log.debug("batch_upsert final done")
 
     done = ingested + skipped
     await progress.emit(
@@ -562,12 +346,12 @@ async def staged_file_ingest_task(params: dict, ctx) -> None:
     ``DocumentRepository.batch_upsert``'s ``(vault_id, file_path)``
     conflict target. Re-running the task on the same hashes is a no-op.
     """
-    correlation_id.set(f"task-{ctx.task_id}")
     vault_id = UUID(params["vault_id"])
     files = params["files"]
     content_type = params["content_type"]
     source_type = params["source_type"]
     pipeline_run_id = UUID(params["pipeline_run_id"])
+    correlation_id.set(f"source-ingest-{pipeline_run_id}")
     progress = PipelineProgressRunner(_task_session_maker.get())
 
     try:
@@ -582,7 +366,11 @@ async def staged_file_ingest_task(params: dict, ctx) -> None:
         if not vault.r2_bucket_name:
             raise ValueError(f"Vault {vault_id} has no r2_bucket_name")
 
-        storage = make_storage(vault, settings)
+        storage = make_storage(
+            vault_id=vault.id,
+            r2_bucket_name=vault.r2_bucket_name,
+            settings=settings,
+        )
         config = await load_config(storage)
         admin = R2Admin(
             account_id=settings.r2_account_id,
@@ -591,7 +379,13 @@ async def staged_file_ingest_task(params: dict, ctx) -> None:
         )
         bucket = vault.r2_bucket_name
 
-        init_wide_event("staged_file_ingest", vault_id=str(vault_id), total=len(files))
+        init_wide_event(
+            "staged_file_ingest",
+            vault_id=str(vault_id),
+            pipeline_run_id=str(pipeline_run_id),
+            task_id=str(ctx.task_id),
+            total=len(files),
+        )
         await ctx.heartbeat(600)
 
         doc_service = DocumentService(
@@ -631,12 +425,13 @@ async def staged_file_ingest_task(params: dict, ctx) -> None:
             while alive:
                 done = sum(1 for t in fetch_tasks if t.done())
                 pending = len(fetch_tasks) - done
-                log.info(
-                    "staged_file_ingest liveness: %d/%d done %d pending %d failed so far",
-                    done,
-                    len(fetch_tasks),
-                    pending,
-                    0,
+                log_event(
+                    "staged_file_ingest_liveness",
+                    level=logging.DEBUG,
+                    done=done,
+                    total=len(fetch_tasks),
+                    pending=pending,
+                    failed=0,
                 )
                 await asyncio.sleep(10)
 

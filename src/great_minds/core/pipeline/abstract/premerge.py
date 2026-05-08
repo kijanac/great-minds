@@ -127,7 +127,7 @@ def run(
         premerge_merges_by_jaccard=merges_by_jaccard,
     )
     log_event(
-        "pipeline.premerge_completed",
+        "completed",
         initial_count=n,
         final_count=len(merged),
         merges_by_slug=merges_by_slug,

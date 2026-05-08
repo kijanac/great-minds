@@ -1,6 +1,7 @@
 """Session workflow service."""
 
 from collections import defaultdict
+from uuid import UUID
 
 from openai import AsyncOpenAI
 
@@ -43,6 +44,7 @@ class SessionService:
 
     async def create_session(
         self,
+        vault_id: UUID,
         session_id: str,
         exchange: ExchangeInput,
         *,
@@ -69,7 +71,7 @@ class SessionService:
             ts=now_iso(),
         )
         await self.repo.append_event(session_id, ex)
-        await self.repo.upsert_overview(meta, updated=ex.ts)
+        await self.repo.upsert_overview(vault_id, meta, updated=ex.ts)
         await self.repo.session.commit()
 
         await self._rebuild_md(session_id)
@@ -77,6 +79,7 @@ class SessionService:
 
     async def append_exchange(
         self,
+        vault_id: UUID,
         session_id: str,
         exchange: ExchangeInput,
     ) -> str:
@@ -89,13 +92,14 @@ class SessionService:
             ts=now_iso(),
         )
         await self.repo.append_event(session_id, ex)
-        await self.repo.touch_updated(session_id, ex.ts)
+        await self.repo.touch_updated(vault_id, session_id, ex.ts)
         await self.repo.session.commit()
         await self._rebuild_md(session_id)
         return f"sessions/{session_id}.jsonl"
 
     async def append_btw(
         self,
+        vault_id: UUID,
         session_id: str,
         btw: BtwInput,
     ) -> str:
@@ -109,7 +113,7 @@ class SessionService:
             ts=now_iso(),
         )
         await self.repo.append_event(session_id, event)
-        await self.repo.touch_updated(session_id, event.ts)
+        await self.repo.touch_updated(vault_id, session_id, event.ts)
         await self.repo.session.commit()
         await self._rebuild_md(session_id)
         return f"sessions/{session_id}.jsonl"
@@ -119,13 +123,15 @@ class SessionService:
 
     async def list_sessions(
         self,
+        vault_id: UUID,
         *,
         user_id: str | None = None,
         pagination: PageParams,
     ) -> Page[SessionOverview]:
         """List all sessions with metadata. Sorted by last activity."""
-        total = await self.repo.count_overviews(user_id=user_id)
+        total = await self.repo.count_overviews(vault_id, user_id=user_id)
         results = await self.repo.list_overviews(
+            vault_id,
             user_id=user_id,
             limit=pagination.limit,
             offset=pagination.offset,

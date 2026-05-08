@@ -22,7 +22,7 @@ from great_minds.core.hashing import content_hash
 from great_minds.core.compile_cache import CompileCacheRepository
 from great_minds.core.ideas.service import IdeaService
 from great_minds.core.ideas.schemas import Idea, SourceCard
-from great_minds.core.ideas.source_cards import index_ideas_by_id
+from great_minds.core.ideas.source_cards import SourceCardStore
 from great_minds.core.telemetry import enrich, log_event
 
 log = logging.getLogger(__name__)
@@ -51,13 +51,11 @@ class PartitionPhase:
         self.max_factor = max_factor
 
     async def run(
-        self, vault_id: UUID, source_cards: list[SourceCard]
+        self, vault_id: UUID, source_cards: SourceCardStore
     ) -> list[list[UUID]]:
         target = self.target_tokens
         max_tokens = int(target * self.max_factor)
         min_tokens = int(target * self.min_factor)
-
-        idea_index = index_ideas_by_id(source_cards)
 
         idea_embeddings = await self.ideas.list_embeddings(vault_id)
         idea_embeddings.sort(key=lambda e: e.idea_id)
@@ -65,8 +63,7 @@ class PartitionPhase:
 
         if not id_order:
             log_event(
-                "pipeline.partition_skipped",
-                vault_id=str(vault_id),
+                "skipped",
                 reason="no_embeddings",
             )
             return []
@@ -84,16 +81,13 @@ class PartitionPhase:
                 partition_chunk_count=len(chunks),
             )
             log_event(
-                "pipeline.partition_cached",
-                vault_id=str(vault_id),
+                "cached",
                 chunk_count=len(chunks),
             )
             return chunks
 
-        tokens_by_row = [
-            _estimate_idea_tokens(idea_index[iid]) if iid in idea_index else 100
-            for iid in id_order
-        ]
+        tokens_by_id = await _estimate_tokens_by_id(source_cards, id_order)
+        tokens_by_row = [tokens_by_id.get(iid, 100) for iid in id_order]
         total_tokens = sum(tokens_by_row)
 
         k = max(1, math.ceil(total_tokens / target))
@@ -134,8 +128,7 @@ class PartitionPhase:
             partition_total_tokens=total_tokens,
         )
         log_event(
-            "pipeline.partition_completed",
-            vault_id=str(vault_id),
+            "completed",
             k_initial=k,
             chunk_count=len(chunks_by_id),
             total_tokens=total_tokens,
@@ -148,7 +141,27 @@ class PartitionPhase:
 # ---------------------------------------------------------------------------
 
 
-def _estimate_idea_tokens(item: tuple[Idea, SourceCard]) -> int:
+async def _estimate_tokens_by_id(
+    source_cards: SourceCardStore,
+    idea_ids: list[UUID],
+) -> dict[UUID, int]:
+    """Approximate token counts for requested ideas via a streaming scan."""
+    wanted = set(idea_ids)
+    out: dict[UUID, int] = {}
+    if not wanted:
+        return out
+    async for card in source_cards.iter_cards():
+        for idea in card.ideas:
+            if idea.idea_id not in wanted:
+                continue
+            out[idea.idea_id] = _estimate_idea_tokens(idea, card)
+            wanted.discard(idea.idea_id)
+        if not wanted:
+            break
+    return out
+
+
+def _estimate_idea_tokens(idea: Idea, card: SourceCard) -> int:
     """Approximate tokens for one idea rendered with doc provenance.
 
     Matches 2b's rendering shape:
@@ -159,7 +172,6 @@ def _estimate_idea_tokens(item: tuple[Idea, SourceCard]) -> int:
     chars/4 is a rough tokenization heuristic — good enough for rounding
     k to an integer, not exact.
     """
-    idea, card = item
     idea_line = f"[{idea.kind}] {idea.label}: {idea.description}"
     meta = card.doc_metadata
     doc_header = (

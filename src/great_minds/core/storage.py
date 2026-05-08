@@ -28,13 +28,14 @@ import time
 from collections.abc import Callable
 from pathlib import Path
 from typing import Protocol, TypeVar, runtime_checkable
+from uuid import UUID
 
 import boto3
 from botocore.config import Config as BotoConfig
 from botocore.exceptions import ClientError
 
-from great_minds.core.settings import get_settings
-
+from great_minds.core.paths import VAULTS_DIR, vault_dir
+from great_minds.core.settings import Settings, get_settings
 from great_minds.core.telemetry import log_event
 
 T = TypeVar("T")
@@ -190,6 +191,7 @@ class R2Storage:
         )
         log_event(
             "storage.r2_op",
+            level=logging.DEBUG,
             op="read",
             path=path,
             latency_ms=latency_ms,
@@ -212,6 +214,7 @@ class R2Storage:
         )
         log_event(
             "storage.r2_op",
+            level=logging.DEBUG,
             op="write",
             path=path,
             latency_ms=latency_ms,
@@ -233,6 +236,7 @@ class R2Storage:
         )
         log_event(
             "storage.r2_op",
+            level=logging.DEBUG,
             op="exists",
             path=path,
             latency_ms=latency_ms,
@@ -279,6 +283,7 @@ class R2Storage:
         )
         log_event(
             "storage.r2_op",
+            level=logging.DEBUG,
             op="glob",
             path=pattern,
             latency_ms=latency_ms,
@@ -312,6 +317,7 @@ class R2Storage:
         )
         log_event(
             "storage.r2_op",
+            level=logging.DEBUG,
             op="delete",
             path=path,
             latency_ms=latency_ms,
@@ -339,8 +345,33 @@ class R2Storage:
         deleted, latency_ms = await self._timed("clear", self.prefix, self._clear_sync)
         log_event(
             "storage.r2_op",
+            level=logging.DEBUG,
             op="clear",
             path=self.prefix,
             latency_ms=latency_ms,
             match_count=deleted,
         )
+
+
+def make_storage(
+    *,
+    vault_id: UUID,
+    r2_bucket_name: str | None,
+    settings: Settings | None = None,
+) -> Storage:
+    """Create the configured storage backend for a vault."""
+    s = settings or get_settings()
+    if s.storage_backend == "r2":
+        if not r2_bucket_name:
+            raise ValueError(
+                f"Vault {vault_id} has no r2_bucket_name; "
+                "expected VaultService.create_vault to provision one"
+            )
+        return R2Storage(
+            account_id=s.r2_account_id,
+            access_key_id=s.r2_access_key_id,
+            secret_access_key=s.r2_secret_access_key,
+            bucket=r2_bucket_name,
+            prefix=f"{VAULTS_DIR}/{vault_id}",
+        )
+    return LocalStorage(vault_dir(Path(s.data_dir), vault_id))

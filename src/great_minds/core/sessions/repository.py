@@ -52,10 +52,9 @@ def _parse_event(data: dict) -> SessionEvent | None:
 class SessionRepository:
     """Persist and query session JSONL event logs in vault storage."""
 
-    def __init__(self, storage: Storage, session: AsyncSession, vault_id: UUID) -> None:
+    def __init__(self, storage: Storage, session: AsyncSession) -> None:
         self.storage = storage
         self.session = session
-        self.vault_id = vault_id
 
     async def mkdir(self) -> None:
         await self.storage.mkdir("sessions")
@@ -90,13 +89,15 @@ class SessionRepository:
                 events.append(event)
         return events
 
-    async def upsert_overview(self, meta: MetaEvent, *, updated: str) -> None:
+    async def upsert_overview(
+        self, vault_id: UUID, meta: MetaEvent, *, updated: str
+    ) -> None:
         """Upsert the DB listing index for a session JSONL event log."""
         stmt = (
             insert(SessionRecordORM)
             .values(
                 id=meta.id,
-                vault_id=self.vault_id,
+                vault_id=vault_id,
                 user_id=UUID(meta.user_id),
                 query=meta.query,
                 origin=meta.origin.model_dump(mode="json") if meta.origin else None,
@@ -118,21 +119,25 @@ class SessionRepository:
         )
         await self.session.execute(stmt)
 
-    async def touch_updated(self, session_id: str, updated: str) -> None:
+    async def touch_updated(
+        self, vault_id: UUID, session_id: str, updated: str
+    ) -> None:
         await self.session.execute(
             update(SessionRecordORM)
             .where(
-                SessionRecordORM.vault_id == self.vault_id,
+                SessionRecordORM.vault_id == vault_id,
                 SessionRecordORM.id == session_id,
             )
             .values(updated=updated)
         )
 
-    async def count_overviews(self, *, user_id: str | None = None) -> int:
+    async def count_overviews(
+        self, vault_id: UUID, *, user_id: str | None = None
+    ) -> int:
         stmt = (
             select(func.count())
             .select_from(SessionRecordORM)
-            .where(SessionRecordORM.vault_id == self.vault_id)
+            .where(SessionRecordORM.vault_id == vault_id)
         )
         if user_id is not None:
             stmt = stmt.where(SessionRecordORM.user_id == UUID(user_id))
@@ -140,6 +145,7 @@ class SessionRepository:
 
     async def list_overviews(
         self,
+        vault_id: UUID,
         *,
         user_id: str | None = None,
         limit: int = 50,
@@ -153,7 +159,7 @@ class SessionRepository:
             SessionRecordORM.updated,
             cast(SessionRecordORM.user_id, Text).label("user_id"),
             SessionRecordORM.origin,
-        ).where(SessionRecordORM.vault_id == self.vault_id)
+        ).where(SessionRecordORM.vault_id == vault_id)
         if user_id is not None:
             stmt = stmt.where(SessionRecordORM.user_id == UUID(user_id))
         rows = (

@@ -44,10 +44,11 @@ async def list_proposals(
 
 @router.get("/{proposal_id}")
 async def get_proposal(
+    vault_id: UUID,
     proposal_id: UUID,
     proposal_service: ProposalServiceDep,
 ) -> Proposal:
-    proposal = await proposal_service.get(proposal_id)
+    proposal = await proposal_service.get_for_vault(vault_id, proposal_id)
     if proposal is None:
         raise HTTPException(status_code=404, detail="Proposal not found")
     return proposal
@@ -69,6 +70,7 @@ async def review_proposal(
 
     try:
         return await proposal_service.review(
+            vault_id=vault_id,
             proposal_id=proposal_id,
             new_status=req.status,
             storage=storage,

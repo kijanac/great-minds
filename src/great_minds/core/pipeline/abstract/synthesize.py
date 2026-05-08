@@ -28,6 +28,7 @@ from great_minds.core.hashing import content_hash, prompt_hash
 from great_minds.core.vaults.prompts import load_prompt
 from great_minds.core.llm.client import json_llm_call
 from great_minds.core.ideas.schemas import Idea, SourceCard
+from great_minds.core.ideas.source_cards import SourceCardStore
 from great_minds.core.llm import MAP_MODEL
 from great_minds.core.pipeline.abstract.schemas import LocalTopic
 from great_minds.core.storage import Storage
@@ -58,22 +59,19 @@ class SynthesizePhase:
     async def run(
         self,
         vault_id: UUID,
-        source_cards: list[SourceCard],
+        source_cards: SourceCardStore,
         chunks: list[list[UUID]],
     ) -> list[LocalTopic]:
         """Synthesize local topics for each chunk.
 
-        Chunks come from partition; source_cards are loaded once by the
-        phase-2 orchestrator and passed through so we don't re-read jsonl.
+        Chunks come from partition; source cards are loaded lazily per chunk
+        so large compiles don't retain every extracted idea/anchor in memory.
         """
         if not chunks:
             return []
 
         prompt_template = await load_prompt(self.storage, "synthesize")
         ph = prompt_hash(prompt_template)
-        idea_index = {
-            idea.idea_id: (idea, card) for card in source_cards for idea in card.ideas
-        }
 
         sem = asyncio.Semaphore(self.concurrency)
         tasks = [
@@ -84,7 +82,7 @@ class SynthesizePhase:
                 sem=sem,
                 chunk_idx=idx,
                 chunk=chunk,
-                idea_index=idea_index,
+                source_cards=source_cards,
                 prompt_template=prompt_template,
                 prompt_hash=ph,
             )
@@ -101,9 +99,8 @@ class SynthesizePhase:
             if outcome.error is not None:
                 chunks_failed += 1
                 log_event(
-                    "synthesize.chunk_failed",
+                    "chunk_failed",
                     level=logging.WARNING,
-                    vault_id=str(vault_id),
                     chunk_idx=outcome.chunk_idx,
                     error=outcome.error,
                 )
@@ -123,8 +120,7 @@ class SynthesizePhase:
             synthesize_local_topics=len(local_topics),
         )
         log_event(
-            "pipeline.synthesize_completed",
-            vault_id=str(vault_id),
+            "completed",
             chunks_processed=chunks_processed,
             cache_hits=cache_hits,
             cache_misses=cache_misses,
@@ -155,21 +151,17 @@ async def _synthesize_one(
     sem: asyncio.Semaphore,
     chunk_idx: int,
     chunk: list[UUID],
-    idea_index: dict[UUID, tuple[Idea, SourceCard]],
+    source_cards: SourceCardStore,
     prompt_template: str,
     prompt_hash: str,
 ) -> _ChunkOutcome:
     outcome = _ChunkOutcome(chunk_idx=chunk_idx)
 
-    # Filter to ideas we actually have records for. An idea_id present
-    # in partition output but missing from source_cards would be a bug
-    # further upstream — log and skip rather than synthesize a phantom.
-    present = [iid for iid in chunk if iid in idea_index]
-    if not present:
-        outcome.error = "no_ideas_indexed"
+    if not chunk:
+        outcome.error = "empty_chunk"
         return outcome
 
-    cache_key = _cache_key(idea_ids=present, prompt_hash=prompt_hash, model=MAP_MODEL)
+    cache_key = _cache_key(idea_ids=chunk, prompt_hash=prompt_hash, model=MAP_MODEL)
 
     cached = await compile_cache.get(
         vault_id=vault_id,
@@ -186,11 +178,21 @@ async def _synthesize_one(
         except ValidationError as e:
             # Cache corrupted / schema drifted — re-run.
             log_event(
-                "synthesize.cache_invalid",
+                "cache_invalid",
                 level=logging.WARNING,
                 chunk_idx=chunk_idx,
                 error=str(e)[:200],
             )
+
+    # Filter to ideas we actually have records for. An idea_id present
+    # in partition output but missing from source_cards would be a bug
+    # further upstream — log and skip rather than synthesize a phantom. Do this
+    # only on cache miss so cache hits don't scan source_cards.jsonl at all.
+    idea_index = await source_cards.ideas_by_id(chunk)
+    present = [iid for iid in chunk if iid in idea_index]
+    if not present:
+        outcome.error = "no_ideas_indexed"
+        return outcome
 
     idea_block, tag_to_uuid = _render_idea_block(present, idea_index)
     prompt = prompt_template.replace("{idea_block}", idea_block)

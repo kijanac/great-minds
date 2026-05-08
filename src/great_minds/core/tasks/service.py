@@ -6,7 +6,6 @@ reconciler's entry point and uses `idempotency_key=str(intent_id)` so a
 crash between spawn and `mark_dispatched` is safe to retry.
 """
 
-import logging
 from typing import Any, Literal, cast, get_args
 from uuid import UUID
 
@@ -16,8 +15,6 @@ from great_minds.core.pagination import Page, PageParams, create_page
 from great_minds.core.tasks.repository import TaskRepository
 from great_minds.core.tasks.schemas import Task, TaskDetail, TaskStatus
 from great_minds.core.telemetry import log_event
-
-log = logging.getLogger(__name__)
 
 COMPILE_RETRY: RetryStrategy = {
     "kind": "exponential",
@@ -158,11 +155,11 @@ class TaskService:
             pipeline_run_id=pipeline_run_id,
         )
         await self.repo.session.commit()
-        log.info(
-            "compile_spawned task_id=%s vault_id=%s intent_id=%s",
-            record.id,
-            vault_id,
-            intent_id,
+        log_event(
+            "compile_spawned",
+            task_id=str(record.id),
+            vault_id=str(vault_id),
+            intent_id=str(intent_id),
         )
         return await fetch_task_response(self.absurd, record)
 

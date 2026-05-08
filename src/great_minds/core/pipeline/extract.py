@@ -25,7 +25,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from great_minds.core.compile_cache import CompileCacheRepository
 from great_minds.core.vaults.prompts import load_prompt
-from great_minds.core.documents.repository import DocumentRepository
 from great_minds.core.documents import DocumentService
 from great_minds.core.documents.schemas import DocKind
 from great_minds.core.llm.client import json_llm_call
@@ -36,7 +35,6 @@ from great_minds.core.markdown import (
     paragraphs,
     parse_frontmatter,
 )
-from great_minds.core.ideas.repository import IdeaEmbeddingRepository
 from great_minds.core.ideas.schemas import (
     Anchor,
     DocMetadata,
@@ -51,10 +49,8 @@ from great_minds.core.llm.providers import (
     EMBEDDING_DIMENSIONS,
     EMBEDDING_MODEL,
 )
-from great_minds.core.pipeline.context import PipelineContext
 from great_minds.core.pipeline_runs import PipelineProgressRunner
 from great_minds.core.llm import truncate_and_normalize
-from great_minds.core.settings import get_settings
 from great_minds.core.storage import Storage
 from great_minds.core.telemetry import enrich, log_event
 from great_minds.core.vaults.config import VaultConfig
@@ -164,9 +160,8 @@ class ExtractPhase:
             if outcome.error is not None:
                 docs_failed += 1
                 log_event(
-                    "extract.doc_failed",
+                    "doc_failed",
                     level=logging.WARNING,
-                    vault_id=str(vault_id),
                     path=outcome.raw_path,
                     error=outcome.error,
                 )
@@ -217,32 +212,13 @@ class ExtractPhase:
             ideas_emitted=ideas_emitted,
         )
         log_event(
-            "pipeline.extract_completed",
-            vault_id=str(vault_id),
+            "completed",
             docs_extracted=docs_extracted,
             cache_hits=cache_hits,
             cache_misses=cache_misses,
             docs_failed=docs_failed,
             ideas_emitted=ideas_emitted,
         )
-
-
-async def run(ctx: PipelineContext) -> None:
-    settings = get_settings()
-    await ExtractPhase(
-        storage=ctx.storage,
-        client=ctx.client,
-        session=ctx.session,
-        progress=ctx.progress,
-        compile_cache=ctx.compile_cache,
-        documents=DocumentService(DocumentRepository(ctx.session)),
-        ideas=IdeaService(
-            embedding_repo=IdeaEmbeddingRepository(ctx.session),
-            sidecar_root=ctx.sidecar_root,
-        ),
-        config=ctx.config,
-        concurrency=settings.compile_enrich_concurrency,
-    ).run(ctx.vault_id, ctx.pipeline_run_id)
 
 
 # ---------------------------------------------------------------------------
@@ -328,9 +304,8 @@ async def _extract_one(
     except Exception as e:
         outcome.error = f"llm_call:{repr(e)[:200]}"
         log_event(
-            "extract.doc_failed",
+            "doc_failed",
             level=logging.WARNING,
-            vault_id=str(vault_id),
             path=raw_path,
             error=outcome.error,
         )

@@ -49,8 +49,7 @@ class VerifyPhase:
         rendered = await self.topics.list_for_vault(vault_id, ArticleStatus.RENDERED)
         if not rendered:
             log_event(
-                "pipeline.verify_skipped",
-                vault_id=str(vault_id),
+                "skipped",
                 reason="no_rendered_topics",
             )
             return
@@ -76,9 +75,8 @@ class VerifyPhase:
             if content is None:
                 # Article status says rendered but file is gone. Skip and log.
                 log_event(
-                    "verify.missing_rendered_file",
+                    "missing_rendered_file",
                     level=logging.WARNING,
-                    vault_id=str(vault_id),
                     topic_slug=topic.slug,
                     topic_id=str(topic.topic_id),
                 )
@@ -96,9 +94,8 @@ class VerifyPhase:
                 if target is None:
                     unresolved_count += 1
                     log_event(
-                        "verify.unresolved_citation",
+                        "unresolved_citation",
                         level=logging.WARNING,
-                        vault_id=str(vault_id),
                         source_slug=topic.slug,
                         missing_slug=slug,
                     )
@@ -139,8 +136,7 @@ class VerifyPhase:
             verify_unmentioned_links=unmentioned_count,
         )
         log_event(
-            "pipeline.verify_completed",
-            vault_id=str(vault_id),
+            "completed",
             articles_walked=articles_walked,
             backlink_edges=len(backlinks),
             unresolved_citations=unresolved_count,
@@ -181,9 +177,8 @@ class VerifyPhase:
                 continue
             unmentioned += 1
             log_event(
-                "verify.unmentioned_link",
+                "unmentioned_link",
                 level=logging.INFO,
-                vault_id=str(vault_id),
                 source_slug=slug_by_topic_id[edge.source_topic_id],
                 missing_target_slug=target_slug,
             )

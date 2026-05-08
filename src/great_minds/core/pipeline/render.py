@@ -33,9 +33,8 @@ from great_minds.core.hashing import content_hash, prompt_hash
 from great_minds.core.vaults.prompts import load_prompt
 from great_minds.core.llm.client import json_llm_call
 from great_minds.core.markdown import serialize_frontmatter
-from great_minds.core.paths import source_cards_path, wiki_path
+from great_minds.core.paths import wiki_path
 from great_minds.core.documents import DocumentService
-from great_minds.core.documents.repository import DocumentRepository
 from great_minds.core.documents.schemas import (
     DocKind,
     Document,
@@ -43,17 +42,14 @@ from great_minds.core.documents.schemas import (
     DocumentMetadata,
 )
 from great_minds.core.ideas.schemas import Anchor, Idea, SourceCard
-from great_minds.core.ideas.source_cards import SourceCardStore, index_ideas_by_id
+from great_minds.core.ideas.source_cards import SourceCardStore
 from great_minds.core.llm import RENDER_MODEL
 from great_minds.core.topics.schemas import TopicDetail
-from great_minds.core.pipeline.context import PipelineContext
 from great_minds.core.pipeline.steps import StepRunner
 from great_minds.core.pipeline_runs import PipelineProgressRunner
-from great_minds.core.search import SearchIndexRepository, SearchService
-from great_minds.core.settings import get_settings
+from great_minds.core.search import SearchService
 from great_minds.core.storage import Storage
 from great_minds.core.telemetry import enrich, log_event
-from great_minds.core.topics.repository import TopicRepository
 from great_minds.core.topics.service import TopicService
 
 log = logging.getLogger(__name__)
@@ -103,7 +99,7 @@ class RenderPhase:
         documents: DocumentService,
         topics: TopicService,
         search: SearchService,
-        sidecar_root,
+        source_cards: SourceCardStore,
         concurrency: int,
     ) -> None:
         self.storage = storage
@@ -115,7 +111,7 @@ class RenderPhase:
         self.documents = documents
         self.topics = topics
         self.search = search
-        self.sidecar_root = sidecar_root
+        self.source_cards = source_cards
         self.concurrency = concurrency
 
     async def run(
@@ -126,8 +122,7 @@ class RenderPhase:
     ) -> None:
         if not validated:
             log_event(
-                "pipeline.render_skipped",
-                vault_id=str(vault_id),
+                "skipped",
                 reason="no_topics",
             )
             return
@@ -219,8 +214,7 @@ class RenderPhase:
                 render_wiki_chunks_indexed=wiki_chunks_indexed,
             )
             log_event(
-                "pipeline.render_completed",
-                vault_id=str(vault_id),
+                "completed",
                 topics_rendered=topics_rendered,
                 cache_hits=cache_hits,
                 cache_materialized=materialized,
@@ -232,8 +226,10 @@ class RenderPhase:
             return
 
         # Heavy context loaded only when at least one topic needs rendering.
-        source_cards = SourceCardStore(source_cards_path(self.sidecar_root)).load_all()
-        idea_by_id = index_ideas_by_id(source_cards)
+        needed_idea_ids = {
+            idea_id for topic in to_render for idea_id in topic.subsumed_idea_ids
+        }
+        idea_by_id = await self.source_cards.ideas_by_id(needed_idea_ids)
         docs = await self.documents.list_by_kind(vault_id, DocKind.RAW)
         doc_by_id = {d.id: d for d in docs}
         topic_by_slug = {v.slug: v for v in validated}
@@ -298,8 +294,7 @@ class RenderPhase:
             render_wiki_chunks_indexed=wiki_chunks_indexed,
         )
         log_event(
-            "pipeline.render_completed",
-            vault_id=str(vault_id),
+            "completed",
             topics_rendered=topics_rendered,
             cache_hits=cache_hits,
             cache_materialized=materialized,
@@ -308,26 +303,6 @@ class RenderPhase:
             topics_failed=topics_failed,
             wiki_chunks_indexed=wiki_chunks_indexed,
         )
-
-
-async def run(
-    ctx: PipelineContext,
-    validated: list[TopicDetail],
-) -> None:
-    settings = get_settings()
-    await RenderPhase(
-        storage=ctx.storage,
-        client=ctx.client,
-        session=ctx.session,
-        progress=ctx.progress,
-        compile_cache=ctx.compile_cache,
-        steps=ctx.steps,
-        documents=DocumentService(DocumentRepository(ctx.session)),
-        topics=TopicService(TopicRepository(ctx.session)),
-        search=SearchService(SearchIndexRepository(ctx.session)),
-        sidecar_root=ctx.sidecar_root,
-        concurrency=settings.compile_write_concurrency,
-    ).run(ctx.vault_id, ctx.pipeline_run_id, validated)
 
 
 # ---------------------------------------------------------------------------
@@ -446,9 +421,8 @@ async def _render_one(
     except Exception as e:
         outcome.error = f"llm_call:{repr(e)[:200]}"
         log_event(
-            "render.topic_failed",
+            "topic_failed",
             level=logging.WARNING,
-            vault_id=str(vault_id),
             topic_slug=topic.slug,
             error=outcome.error,
         )
@@ -460,9 +434,8 @@ async def _render_one(
     except (ValidationError, ValueError) as e:
         outcome.error = f"body_invalid:{type(e).__name__}:{str(e)[:200]}"
         log_event(
-            "render.body_invalid",
+            "body_invalid",
             level=logging.WARNING,
-            vault_id=str(vault_id),
             topic_slug=topic.slug,
             error=outcome.error,
             response_preview=str(data)[:300],

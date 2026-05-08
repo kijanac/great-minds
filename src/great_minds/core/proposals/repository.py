@@ -55,6 +55,16 @@ class ProposalRepository:
         row = result.scalar_one_or_none()
         return Proposal.model_validate(row) if row else None
 
+    async def get_for_vault(self, vault_id: UUID, proposal_id: UUID) -> Proposal | None:
+        result = await self.session.execute(
+            select(ProposalORM).where(
+                ProposalORM.id == proposal_id,
+                ProposalORM.vault_id == vault_id,
+            )
+        )
+        row = result.scalar_one_or_none()
+        return Proposal.model_validate(row) if row else None
+
     async def find_pending_for_dest(
         self, vault_id: UUID, dest_path: str
     ) -> Proposal | None:
@@ -75,12 +85,13 @@ class ProposalRepository:
 
     async def set_status(
         self,
+        vault_id: UUID,
         proposal_id: UUID,
         status: ProposalStatus,
     ) -> None:
         await self.session.execute(
             update(ProposalORM)
-            .where(ProposalORM.id == proposal_id)
+            .where(ProposalORM.id == proposal_id, ProposalORM.vault_id == vault_id)
             .values(status=status)
         )
 
