@@ -27,7 +27,7 @@ from great_minds.core.compile_cache import CompileCacheRepository
 from great_minds.core.hashing import content_hash, prompt_hash
 from great_minds.core.vaults.prompts import load_prompt
 from great_minds.core.llm.client import json_llm_call
-from great_minds.core.ideas.schemas import Idea, SourceCard
+from great_minds.core.ideas.schemas import DocMetadata
 from great_minds.core.ideas.source_cards import SourceCardStore
 from great_minds.core.llm import MAP_MODEL
 from great_minds.core.pipeline.abstract.schemas import LocalTopic
@@ -79,6 +79,7 @@ class SynthesizePhase:
 
         prompt_template = await load_prompt(self.storage, "synthesize")
         ph = prompt_hash(prompt_template)
+        synthesis_index = await _build_synthesis_index(source_cards, chunks)
 
         sem = asyncio.Semaphore(self.concurrency)
         tasks = [
@@ -89,7 +90,7 @@ class SynthesizePhase:
                 sem=sem,
                 chunk_idx=idx,
                 chunk=chunk,
-                source_cards=source_cards,
+                synthesis_index=synthesis_index,
                 prompt_template=prompt_template,
                 prompt_hash=ph,
             )
@@ -157,6 +158,28 @@ class SynthesizePhase:
 # ---------------------------------------------------------------------------
 
 
+@dataclass(frozen=True)
+class _SynthesisDoc:
+    title: str
+    precis: str
+    metadata: DocMetadata
+
+
+@dataclass(frozen=True)
+class _SynthesisIdea:
+    idea_id: UUID
+    document_id: UUID
+    kind: str
+    label: str
+    description: str
+
+
+@dataclass(frozen=True)
+class _SynthesisIndex:
+    ideas: dict[UUID, _SynthesisIdea]
+    docs: dict[UUID, _SynthesisDoc]
+
+
 @dataclass
 class _ChunkOutcome:
     chunk_idx: int
@@ -173,7 +196,7 @@ async def _synthesize_one(
     sem: asyncio.Semaphore,
     chunk_idx: int,
     chunk: list[UUID],
-    source_cards: SourceCardStore,
+    synthesis_index: _SynthesisIndex,
     prompt_template: str,
     prompt_hash: str,
 ) -> _ChunkOutcome:
@@ -208,19 +231,16 @@ async def _synthesize_one(
 
     # Filter to ideas we actually have records for. An idea_id present
     # in partition output but missing from source_cards would be a bug
-    # further upstream — log and skip rather than synthesize a phantom. Do this
-    # only on cache miss so cache hits don't scan source_cards.jsonl at all.
-    idea_index = await source_cards.ideas_by_id(chunk)
-    present = [iid for iid in chunk if iid in idea_index]
+    # further upstream — log and skip rather than synthesize a phantom.
+    present = [iid for iid in chunk if iid in synthesis_index.ideas]
     if not present:
         outcome.error = "no_ideas_indexed"
         return outcome
 
-    idea_block, tag_to_uuid = _render_idea_block(present, idea_index)
-    prompt = prompt_template.replace("{idea_block}", idea_block)
-
     try:
         async with sem:
+            idea_block, tag_to_uuid = _render_idea_block(present, synthesis_index)
+            prompt = prompt_template.replace("{idea_block}", idea_block)
             data = await json_llm_call(
                 client,
                 model=MAP_MODEL,
@@ -250,6 +270,41 @@ async def _synthesize_one(
     return outcome
 
 
+async def _build_synthesis_index(
+    source_cards: SourceCardStore,
+    chunks: list[list[UUID]],
+) -> _SynthesisIndex:
+    wanted = {idea_id for chunk in chunks for idea_id in chunk}
+    ideas: dict[UUID, _SynthesisIdea] = {}
+    docs: dict[UUID, _SynthesisDoc] = {}
+    if not wanted:
+        return _SynthesisIndex(ideas=ideas, docs=docs)
+
+    async for card in source_cards.iter_cards():
+        matched = False
+        for idea in card.ideas:
+            if idea.idea_id not in wanted:
+                continue
+            matched = True
+            ideas[idea.idea_id] = _SynthesisIdea(
+                idea_id=idea.idea_id,
+                document_id=idea.document_id,
+                kind=idea.kind,
+                label=idea.label,
+                description=idea.description,
+            )
+            wanted.remove(idea.idea_id)
+        if matched:
+            docs[card.document_id] = _SynthesisDoc(
+                title=card.title,
+                precis=card.precis,
+                metadata=card.doc_metadata,
+            )
+        if not wanted:
+            break
+    return _SynthesisIndex(ideas=ideas, docs=docs)
+
+
 def _cache_key(*, idea_ids: list[UUID], prompt_hash: str, model: str) -> str:
     return content_hash(
         *sorted(str(iid) for iid in idea_ids),
@@ -260,25 +315,23 @@ def _cache_key(*, idea_ids: list[UUID], prompt_hash: str, model: str) -> str:
 
 def _render_idea_block(
     idea_ids: list[UUID],
-    idea_index: dict[UUID, tuple[Idea, SourceCard]],
+    synthesis_index: _SynthesisIndex,
 ) -> tuple[str, dict[str, UUID]]:
     """Group ideas by document, render with doc provenance, assign
     local tags (idea_1, idea_2, ...). Returns the prompt block and the
     tag→uuid map used to resolve LLM output.
     """
-    by_doc: dict[UUID, list[Idea]] = defaultdict(list)
-    card_by_doc: dict[UUID, SourceCard] = {}
+    by_doc: dict[UUID, list[_SynthesisIdea]] = defaultdict(list)
     for iid in idea_ids:
-        idea, card = idea_index[iid]
+        idea = synthesis_index.ideas[iid]
         by_doc[idea.document_id].append(idea)
-        card_by_doc[idea.document_id] = card
 
     tag_to_uuid: dict[str, UUID] = {}
     lines: list[str] = []
     counter = 0
     for doc_id in sorted(by_doc, key=str):
-        card = card_by_doc[doc_id]
-        meta = card.doc_metadata
+        card = synthesis_index.docs[doc_id]
+        meta = card.metadata
         lines.append(f"## Doc: {card.title}")
         if meta.genre:
             lines.append(f"Genre: {meta.genre}")
