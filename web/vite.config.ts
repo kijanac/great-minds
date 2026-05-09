@@ -14,7 +14,7 @@ export default defineConfig({
     proxy: {
       // Match vault-scoped SSE endpoint: /api/vaults/{id}/query/stream
       "^/api/vaults/[^/]+/query/stream": {
-        target: "http://localhost:8417",
+        target: "http://localhost:8000",
         rewrite: (path) => path.replace(/^\/api/, "/v1"),
         configure: (proxy) => {
           proxy.on("proxyRes", (proxyRes) => {
@@ -25,7 +25,7 @@ export default defineConfig({
         },
       },
       "/api": {
-        target: "http://localhost:8417",
+        target: "http://localhost:8000",
         rewrite: (path) => path.replace(/^\/api/, "/v1"),
       },
     },
