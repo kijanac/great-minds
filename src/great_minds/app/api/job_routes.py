@@ -126,6 +126,9 @@ async def _event_stream(job_id: UUID, vault_id: UUID, settings):
         )
         if row is None:
             return None
+        progress_steps = row["progress_steps"]
+        if isinstance(progress_steps, str):
+            progress_steps = json.loads(progress_steps)
         return {
             "id": str(row["id"]),
             "vault_id": str(row["vault_id"]),
@@ -133,7 +136,7 @@ async def _event_stream(job_id: UUID, vault_id: UUID, settings):
             "job_status": row["status"],
             "phase": row["current_phase"],
             "phase_status": row["phase_status"],
-            "steps": row["progress_steps"],
+            "steps": progress_steps,
             **({"error": row["error"]} if row["error"] else {}),
             "updated_at": row["updated_at"].isoformat() if row["updated_at"] else None,
             "completed_at": row["completed_at"].isoformat()
