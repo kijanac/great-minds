@@ -31,7 +31,11 @@ from great_minds.core.markdown import parse_frontmatter
 from great_minds.core.r2_admin import R2Admin
 from great_minds.core.settings import get_settings
 from great_minds.core.storage import make_storage
-from great_minds.core.pipeline_runs import PipelineProgressRunner
+from great_minds.core.pipeline_runs import (
+    PipelineProgressRunner,
+    build_progress_steps,
+    phase_step,
+)
 from great_minds.core.telemetry import (
     correlation_id,
     emit_wide_event,
@@ -208,6 +212,15 @@ async def _fetch_and_convert(
         return entry, content_with_fm
 
 
+STAGED_FILE_INGEST_STEP_LABELS = {
+    "prepare_sources": "Preparing uploaded sources",
+    "read_files": "Reading uploaded files",
+    "index_documents": "Indexing source documents",
+    "cleanup_uploads": "Cleaning up uploads",
+    "queue_compile": "Queuing compile",
+}
+
+
 async def _index_fetched_results(
     fetch_tasks: list[asyncio.Task[tuple[dict, str]]],
     *,
@@ -285,10 +298,12 @@ async def _index_fetched_results(
                 pipeline_run_id=pipeline_run_id,
                 phase="source_ingest",
                 status="progress",
-                done=done,
-                total=pending,
-                failed=failed,
-                message="processing uploaded sources",
+                steps=build_progress_steps(
+                    STAGED_FILE_INGEST_STEP_LABELS,
+                    "index_documents",
+                    completed={"prepare_sources", "read_files"},
+                    counts={"index_documents": (done, pending)},
+                ),
             )
 
     if batch:
@@ -299,10 +314,12 @@ async def _index_fetched_results(
         pipeline_run_id=pipeline_run_id,
         phase="source_ingest",
         status="progress",
-        done=done,
-        total=pending,
-        failed=failed,
-        message="processing uploaded sources",
+        steps=build_progress_steps(
+            STAGED_FILE_INGEST_STEP_LABELS,
+            "index_documents",
+            completed={"prepare_sources", "read_files"},
+            counts={"index_documents": (done, pending)},
+        ),
     )
 
     return ingested, skipped, failed, keys_to_clean
@@ -396,9 +413,23 @@ async def staged_file_ingest_task(params: dict, ctx) -> None:
             pipeline_run_id=pipeline_run_id,
             phase="source_ingest",
             status="started",
-            done=0,
-            total=len(files),
-            message="processing uploaded sources",
+            steps=build_progress_steps(
+                STAGED_FILE_INGEST_STEP_LABELS,
+                "prepare_sources",
+                counts={"read_files": (0, len(files))},
+            ),
+        )
+
+        await progress.emit(
+            pipeline_run_id=pipeline_run_id,
+            phase="source_ingest",
+            status="progress",
+            steps=build_progress_steps(
+                STAGED_FILE_INGEST_STEP_LABELS,
+                "read_files",
+                completed={"prepare_sources"},
+                counts={"read_files": (0, len(files))},
+            ),
         )
 
         sem = asyncio.Semaphore(_STAGING_FETCH_CONCURRENCY)
@@ -456,39 +487,92 @@ async def staged_file_ingest_task(params: dict, ctx) -> None:
             except asyncio.CancelledError:
                 pass
 
-        await _cleanup_staging(admin, bucket, keys_to_clean, vault_id=vault_id)
-
-        if ingested > 0:
-            await doc_service.emit_compile_intent(vault_id)
-            await session.commit()
-
         await progress.emit(
             pipeline_run_id=pipeline_run_id,
             phase="source_ingest",
-            status="completed",
-            done=ingested + skipped,
-            total=len(files),
-            failed=failed,
-            message="sources prepared for compile",
+            status="progress",
+            steps=build_progress_steps(
+                STAGED_FILE_INGEST_STEP_LABELS,
+                "cleanup_uploads",
+                completed={"prepare_sources", "read_files", "index_documents"},
+                counts={
+                    "read_files": (len(files), len(files)),
+                    "index_documents": (ingested + skipped, len(files)),
+                    "cleanup_uploads": (0, len(keys_to_clean)),
+                },
+            ),
         )
-        if ingested == 0:
-            if failed > 0:
-                await progress.emit(
-                    pipeline_run_id=pipeline_run_id,
-                    phase="source_ingest",
-                    status="failed",
-                    failed=failed,
-                    error=f"{failed} source(s) failed before compile",
-                )
-            else:
-                await progress.emit(
-                    pipeline_run_id=pipeline_run_id,
-                    phase="publish",
-                    status="completed",
-                    done=1,
-                    total=1,
-                    message="sources already up to date",
-                )
+        await _cleanup_staging(admin, bucket, keys_to_clean, vault_id=vault_id)
+
+        if ingested > 0:
+            await progress.emit(
+                pipeline_run_id=pipeline_run_id,
+                phase="source_ingest",
+                status="progress",
+                steps=build_progress_steps(
+                    STAGED_FILE_INGEST_STEP_LABELS,
+                    "queue_compile",
+                    completed={
+                        "prepare_sources",
+                        "read_files",
+                        "index_documents",
+                        "cleanup_uploads",
+                    },
+                    counts={
+                        "read_files": (len(files), len(files)),
+                        "index_documents": (ingested + skipped, len(files)),
+                        "cleanup_uploads": (len(keys_to_clean), len(keys_to_clean)),
+                    },
+                ),
+            )
+            await doc_service.emit_compile_intent(vault_id)
+            await session.commit()
+            await progress.emit(
+                pipeline_run_id=pipeline_run_id,
+                phase="source_ingest",
+                status="completed",
+                steps=build_progress_steps(
+                    STAGED_FILE_INGEST_STEP_LABELS,
+                    "queue_compile",
+                    completed=set(STAGED_FILE_INGEST_STEP_LABELS),
+                    counts={
+                        "read_files": (len(files), len(files)),
+                        "index_documents": (ingested + skipped, len(files)),
+                        "cleanup_uploads": (len(keys_to_clean), len(keys_to_clean)),
+                    },
+                ),
+            )
+        elif failed > 0:
+            await progress.emit(
+                pipeline_run_id=pipeline_run_id,
+                phase="source_ingest",
+                status="failed",
+                steps=build_progress_steps(
+                    STAGED_FILE_INGEST_STEP_LABELS,
+                    "index_documents",
+                    completed={"prepare_sources", "read_files"},
+                    failed={"index_documents"},
+                    details={
+                        "index_documents": f"{failed} source(s) failed before compile"
+                    },
+                ),
+                error=f"{failed} source(s) failed before compile",
+            )
+        else:
+            await progress.emit(
+                pipeline_run_id=pipeline_run_id,
+                phase="publish",
+                status="completed",
+                steps=[
+                    phase_step(
+                        phase="publish",
+                        status="completed",
+                        label="sources already up to date",
+                        done=1,
+                        total=1,
+                    )
+                ],
+            )
 
         enrich(ingested=ingested, skipped=skipped, failed=failed)
         emit_wide_event()
@@ -497,6 +581,12 @@ async def staged_file_ingest_task(params: dict, ctx) -> None:
             pipeline_run_id=pipeline_run_id,
             phase="source_ingest",
             status="failed",
+            steps=build_progress_steps(
+                STAGED_FILE_INGEST_STEP_LABELS,
+                "prepare_sources",
+                failed={"prepare_sources"},
+                details={"prepare_sources": str(exc)},
+            ),
             error=str(exc),
         )
         raise

@@ -3,6 +3,15 @@ import { z } from "zod";
 import { pageInfoSchema } from "./schemas";
 import { apiFetch, readJson, vaultPath } from "./client";
 
+const progressStepSchema = z.object({
+  key: z.string(),
+  label: z.string(),
+  status: z.enum(["pending", "running", "completed", "failed"]),
+  done: z.number().nullable(),
+  total: z.number().nullable(),
+  detail: z.string(),
+});
+
 export const jobSchema = z.object({
   id: z.string(),
   vault_id: z.string(),
@@ -10,10 +19,7 @@ export const jobSchema = z.object({
   status: z.string(),
   current_phase: z.string(),
   phase_status: z.string(),
-  progress_done: z.number(),
-  progress_total: z.number(),
-  progress_failed: z.number(),
-  progress_message: z.string(),
+  progress_steps: z.array(progressStepSchema),
   error: z.string().nullable(),
   created_at: z.string(),
   updated_at: z.string(),

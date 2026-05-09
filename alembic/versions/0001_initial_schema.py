@@ -197,10 +197,12 @@ def upgrade() -> None:
         sa.Column("status", sa.Text(), nullable=False, server_default="pending"),
         sa.Column("current_phase", sa.Text(), nullable=False, server_default=""),
         sa.Column("phase_status", sa.Text(), nullable=False, server_default=""),
-        sa.Column("progress_done", sa.Integer(), nullable=False, server_default="0"),
-        sa.Column("progress_total", sa.Integer(), nullable=False, server_default="0"),
-        sa.Column("progress_failed", sa.Integer(), nullable=False, server_default="0"),
-        sa.Column("progress_message", sa.Text(), nullable=False, server_default=""),
+        sa.Column(
+            "progress_steps",
+            JSONB(),
+            nullable=False,
+            server_default=sa.text("'[]'::jsonb"),
+        ),
         sa.Column("error", sa.Text(), nullable=True),
         sa.Column("ingest_task_id", sa.UUID(), nullable=True),
         sa.Column("compile_intent_id", sa.UUID(), nullable=True),
@@ -273,10 +275,7 @@ def upgrade() -> None:
             OLD.status IS DISTINCT FROM NEW.status
             OR OLD.current_phase IS DISTINCT FROM NEW.current_phase
             OR OLD.phase_status IS DISTINCT FROM NEW.phase_status
-            OR OLD.progress_done IS DISTINCT FROM NEW.progress_done
-            OR OLD.progress_total IS DISTINCT FROM NEW.progress_total
-            OR OLD.progress_failed IS DISTINCT FROM NEW.progress_failed
-            OR OLD.progress_message IS DISTINCT FROM NEW.progress_message
+            OR OLD.progress_steps IS DISTINCT FROM NEW.progress_steps
             OR OLD.error IS DISTINCT FROM NEW.error
             OR OLD.completed_at IS DISTINCT FROM NEW.completed_at
         )

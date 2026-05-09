@@ -46,7 +46,11 @@ from great_minds.core.ideas.source_cards import SourceCardStore
 from great_minds.core.llm import RENDER_MODEL
 from great_minds.core.topics.schemas import TopicDetail
 from great_minds.core.pipeline.steps import StepRunner
-from great_minds.core.pipeline_runs import PipelineProgressRunner
+from great_minds.core.pipeline_runs import (
+    PipelineProgressRunner,
+    PipelineProgressStep,
+    build_progress_steps,
+)
 from great_minds.core.search import SearchService
 from great_minds.core.storage import Storage
 from great_minds.core.telemetry import enrich, log_event
@@ -84,6 +88,15 @@ class _RenderOutput(BaseModel):
         return out
 
 
+RENDER_STEP_LABELS = {
+    "plan_articles": "Planning articles",
+    "reuse_cached": "Reusing cached articles",
+    "write_articles": "Writing articles",
+    "index_articles": "Indexing articles",
+    "save_index": "Saving article index",
+}
+
+
 class RenderPhase:
     """Phase 4 runner with explicit service-style dependencies."""
 
@@ -114,6 +127,20 @@ class RenderPhase:
         self.source_cards = source_cards
         self.concurrency = concurrency
 
+    def progress_steps(
+        self,
+        active: str,
+        *,
+        completed: set[str] | None = None,
+        counts: dict[str, tuple[int | None, int | None]] | None = None,
+    ) -> list[PipelineProgressStep]:
+        return build_progress_steps(
+            RENDER_STEP_LABELS,
+            active,
+            completed=completed,
+            counts=counts,
+        )
+
     async def run(
         self,
         vault_id: UUID,
@@ -127,6 +154,15 @@ class RenderPhase:
             )
             return
 
+        await self.progress.emit(
+            pipeline_run_id=pipeline_run_id,
+            phase="render",
+            status="progress",
+            steps=self.progress_steps(
+                "plan_articles",
+                counts={"plan_articles": (0, len(validated))},
+            ),
+        )
         prompt_template = await load_prompt(self.storage, "render")
         ph = prompt_hash(prompt_template)
 
@@ -138,6 +174,7 @@ class RenderPhase:
         to_materialize: list[tuple[TopicDetail, _RenderOutput]] = []
         cache_hits = 0
         cache_invalid = 0
+        planned = 0
         for topic in validated:
             cache_key = _cache_key(
                 topic_id=topic.topic_id,
@@ -149,6 +186,16 @@ class RenderPhase:
                 vault_id=vault_id,
                 phase=PHASE,
                 cache_key=cache_key,
+            )
+            planned += 1
+            await self.progress.emit(
+                pipeline_run_id=pipeline_run_id,
+                phase="render",
+                status="progress",
+                steps=self.progress_steps(
+                    "plan_articles",
+                    counts={"plan_articles": (planned, len(validated))},
+                ),
             )
             if cached is None:
                 to_render.append(topic)
@@ -164,15 +211,19 @@ class RenderPhase:
                 continue
             to_materialize.append((topic, output))
 
-        total_work = len(to_materialize) + len(to_render)
-        if total_work > 0:
-            await self.progress.emit(
-                pipeline_run_id=pipeline_run_id,
-                phase="render",
-                status="progress",
-                done=0,
-                total=total_work,
-            )
+        await self.progress.emit(
+            pipeline_run_id=pipeline_run_id,
+            phase="render",
+            status="progress",
+            steps=self.progress_steps(
+                "reuse_cached",
+                completed={"plan_articles"},
+                counts={
+                    "plan_articles": (len(validated), len(validated)),
+                    "reuse_cached": (0, len(to_materialize)),
+                },
+            ),
+        )
 
         materialized = 0
         for topic, output in to_materialize:
@@ -191,16 +242,48 @@ class RenderPhase:
                 pipeline_run_id=pipeline_run_id,
                 phase="render",
                 status="progress",
-                done=materialized,
-                total=total_work,
+                steps=self.progress_steps(
+                    "reuse_cached",
+                    completed={"plan_articles"},
+                    counts={
+                        "plan_articles": (len(validated), len(validated)),
+                        "reuse_cached": (materialized, len(to_materialize)),
+                    },
+                ),
             )
 
         if materialized:
+            await self.progress.emit(
+                pipeline_run_id=pipeline_run_id,
+                phase="render",
+                status="progress",
+                steps=self.progress_steps(
+                    "save_index",
+                    completed={"plan_articles", "reuse_cached"},
+                    counts={
+                        "plan_articles": (len(validated), len(validated)),
+                        "reuse_cached": (materialized, len(to_materialize)),
+                    },
+                ),
+            )
             await self.session.commit()
 
         if not to_render:
             wiki_chunks_indexed = 0
             if materialized:
+                await self.progress.emit(
+                    pipeline_run_id=pipeline_run_id,
+                    phase="render",
+                    status="progress",
+                    steps=self.progress_steps(
+                        "index_articles",
+                        completed={"plan_articles", "reuse_cached", "save_index"},
+                        counts={
+                            "plan_articles": (len(validated), len(validated)),
+                            "reuse_cached": (materialized, len(to_materialize)),
+                        },
+                    ),
+                )
                 wiki_chunks_indexed = await self.search.rebuild_wiki_index(
                     vault_id, self.storage, client=self.client
                 )
@@ -223,7 +306,35 @@ class RenderPhase:
                 topics_failed=0,
                 wiki_chunks_indexed=wiki_chunks_indexed,
             )
+            await self.progress.emit(
+                pipeline_run_id=pipeline_run_id,
+                phase="render",
+                status="completed",
+                steps=self.progress_steps(
+                    "save_index",
+                    completed=set(RENDER_STEP_LABELS),
+                    counts={
+                        "plan_articles": (len(validated), len(validated)),
+                        "reuse_cached": (materialized, len(to_materialize)),
+                    },
+                ),
+            )
             return
+
+        await self.progress.emit(
+            pipeline_run_id=pipeline_run_id,
+            phase="render",
+            status="progress",
+            steps=self.progress_steps(
+                "write_articles",
+                completed={"plan_articles", "reuse_cached"},
+                counts={
+                    "plan_articles": (len(validated), len(validated)),
+                    "reuse_cached": (materialized, len(to_materialize)),
+                    "write_articles": (0, len(to_render)),
+                },
+            ),
+        )
 
         # Heavy context loaded only when at least one topic needs rendering.
         needed_idea_ids = {
@@ -260,8 +371,15 @@ class RenderPhase:
                 pipeline_run_id=pipeline_run_id,
                 phase="render",
                 status="progress",
-                done=materialized + topics_done,
-                total=total_work,
+                steps=self.progress_steps(
+                    "write_articles",
+                    completed={"plan_articles", "reuse_cached"},
+                    counts={
+                        "plan_articles": (len(validated), len(validated)),
+                        "reuse_cached": (materialized, len(to_materialize)),
+                        "write_articles": (topics_done, len(to_render)),
+                    },
+                ),
             )
 
         cache_misses = 0
@@ -276,10 +394,43 @@ class RenderPhase:
                 rendered_from_hash=outcome.rendered_from_hash,
             )
 
+        await self.progress.emit(
+            pipeline_run_id=pipeline_run_id,
+            phase="render",
+            status="progress",
+            steps=self.progress_steps(
+                "save_index",
+                completed={"plan_articles", "reuse_cached", "write_articles"},
+                counts={
+                    "plan_articles": (len(validated), len(validated)),
+                    "reuse_cached": (materialized, len(to_materialize)),
+                    "write_articles": (topics_done, len(to_render)),
+                },
+            ),
+        )
         await self.session.commit()
 
         wiki_chunks_indexed = 0
         if materialized or cache_misses:
+            await self.progress.emit(
+                pipeline_run_id=pipeline_run_id,
+                phase="render",
+                status="progress",
+                steps=self.progress_steps(
+                    "index_articles",
+                    completed={
+                        "plan_articles",
+                        "reuse_cached",
+                        "write_articles",
+                        "save_index",
+                    },
+                    counts={
+                        "plan_articles": (len(validated), len(validated)),
+                        "reuse_cached": (materialized, len(to_materialize)),
+                        "write_articles": (topics_done, len(to_render)),
+                    },
+                ),
+            )
             wiki_chunks_indexed = await self.search.rebuild_wiki_index(
                 vault_id, self.storage, client=self.client
             )
@@ -302,6 +453,20 @@ class RenderPhase:
             cache_invalid=cache_invalid,
             topics_failed=topics_failed,
             wiki_chunks_indexed=wiki_chunks_indexed,
+        )
+        await self.progress.emit(
+            pipeline_run_id=pipeline_run_id,
+            phase="render",
+            status="completed",
+            steps=self.progress_steps(
+                "save_index",
+                completed=set(RENDER_STEP_LABELS),
+                counts={
+                    "plan_articles": (len(validated), len(validated)),
+                    "reuse_cached": (materialized, len(to_materialize)),
+                    "write_articles": (topics_done, len(to_render)),
+                },
+            ),
         )
 
 

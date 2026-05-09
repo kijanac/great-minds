@@ -26,6 +26,11 @@ from great_minds.core.paths import (
     compile_log_path,
     wiki_path,
 )
+from great_minds.core.pipeline_runs import (
+    PipelineProgressRunner,
+    PipelineProgressStep,
+    build_progress_steps,
+)
 from great_minds.core.search import SearchService
 from great_minds.core.storage import Storage
 from great_minds.core.telemetry import enrich, log_event
@@ -33,6 +38,12 @@ from great_minds.core.topics.schemas import ArticleStatus, Topic
 from great_minds.core.topics.service import TopicService
 
 log = logging.getLogger(__name__)
+
+PUBLISH_STEP_LABELS = {
+    "prepare_snapshot": "Preparing published snapshot",
+    "publish_wiki": "Publishing wiki",
+    "finalize_compile": "Finalizing compile",
+}
 
 
 class CompileLogCounts(BaseModel):
@@ -58,22 +69,76 @@ class PublishPhase:
         topics: TopicService,
         documents: DocumentService,
         search: SearchService,
+        progress: PipelineProgressRunner,
+        pipeline_run_id: UUID,
     ) -> None:
         self.storage = storage
         self.sidecar_root = sidecar_root
         self.topics = topics
         self.documents = documents
         self.search = search
+        self.progress = progress
+        self.pipeline_run_id = pipeline_run_id
+
+    def progress_steps(
+        self,
+        active: str,
+        *,
+        completed: set[str] | None = None,
+        counts: dict[str, tuple[int | None, int | None]] | None = None,
+    ) -> list[PipelineProgressStep]:
+        return build_progress_steps(
+            PUBLISH_STEP_LABELS,
+            active,
+            completed=completed,
+            counts=counts,
+        )
 
     async def run(self, vault_id: UUID) -> None:
+        await self.progress.emit(
+            pipeline_run_id=self.pipeline_run_id,
+            phase="publish",
+            status="progress",
+            steps=self.progress_steps("prepare_snapshot"),
+        )
         rendered_topics = await self.topics.list_for_vault(
             vault_id, ArticleStatus.RENDERED
         )
         raw_docs = await self.documents.list_by_kind(vault_id, DocKind.RAW)
 
+        await self.progress.emit(
+            pipeline_run_id=self.pipeline_run_id,
+            phase="publish",
+            status="progress",
+            steps=self.progress_steps(
+                "publish_wiki",
+                completed={"prepare_snapshot"},
+                counts={"publish_wiki": (0, 2)},
+            ),
+        )
         await self._write_wiki_index(rendered_topics)
+        await self.progress.emit(
+            pipeline_run_id=self.pipeline_run_id,
+            phase="publish",
+            status="progress",
+            steps=self.progress_steps(
+                "publish_wiki",
+                completed={"prepare_snapshot"},
+                counts={"publish_wiki": (1, 2)},
+            ),
+        )
         await self._write_raw_index(raw_docs)
 
+        await self.progress.emit(
+            pipeline_run_id=self.pipeline_run_id,
+            phase="publish",
+            status="progress",
+            steps=self.progress_steps(
+                "finalize_compile",
+                completed={"prepare_snapshot", "publish_wiki"},
+                counts={"publish_wiki": (2, 2)},
+            ),
+        )
         counts = await self._gather_log_counts(vault_id)
         self._append_compile_log(counts)
 
@@ -86,6 +151,16 @@ class PublishPhase:
             wiki_index_topics=len(rendered_topics),
             raw_index_docs=len(raw_docs),
             **counts.model_dump(),
+        )
+        await self.progress.emit(
+            pipeline_run_id=self.pipeline_run_id,
+            phase="publish",
+            status="completed",
+            steps=self.progress_steps(
+                "finalize_compile",
+                completed=set(PUBLISH_STEP_LABELS),
+                counts={"publish_wiki": (2, 2)},
+            ),
         )
 
     # ---------------------------------------------------------------------------

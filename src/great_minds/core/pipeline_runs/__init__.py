@@ -1,12 +1,14 @@
 """Public API for the pipeline_runs bounded context."""
 
 from great_minds.core.pipeline_runs.models import PipelineRunRecord
+from great_minds.core.pipeline_runs.progress_steps import build_progress_steps
 from great_minds.core.pipeline_runs.repository import PipelineRunRepository
 from great_minds.core.pipeline_runs.schemas import (
     PipelinePhase,
     PipelinePhaseStatus,
     PipelineTaskType,
-    PipelineProgress,
+    PipelineProgressStep,
+    PipelineStepStatus,
     PipelineRun,
     PipelineRunCreate,
     PipelineRunStatus,
@@ -17,13 +19,16 @@ from great_minds.core.pipeline_runs.service import (
     PipelineProgressRunner,
     PipelineProgressService,
     PipelineRunService,
+    phase_step,
 )
 
 __all__ = [
+    "build_progress_steps",
     "PipelinePhase",
     "PipelinePhaseStatus",
-    "PipelineProgress",
     "PipelineProgressRunner",
+    "PipelineProgressStep",
+    "PipelineStepStatus",
     "PipelineProgressService",
     "PipelineRun",
     "PipelineTaskType",
@@ -31,6 +36,7 @@ __all__ = [
     "PipelineRunRecord",
     "PipelineRunRepository",
     "PipelineRunService",
+    "phase_step",
     "PipelineRunStatus",
     "PipelineRunUpdate",
     "PipelineTrigger",

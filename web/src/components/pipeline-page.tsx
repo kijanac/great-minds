@@ -3,7 +3,7 @@ import { motion, useReducedMotion } from "motion/react";
 import { ArrowLeft } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
-import type { StageProgress } from "@/hooks/use-job-sse";
+import type { ProgressStep, StageProgress } from "@/hooks/use-job-sse";
 import { useViewNavigate } from "@/hooks/use-view-navigate";
 
 interface PipelinePageProps {
@@ -209,6 +209,52 @@ export function PipelinePage({
   );
 }
 
+function PipelineStepChecklist({ steps }: { steps: ProgressStep[] }) {
+  return (
+    <ul className="mt-3 space-y-1.5">
+      {steps.map((step) => {
+        const isRunning = step.status === "running";
+        const isCompleted = step.status === "completed";
+        const isFailed = step.status === "failed";
+        const hasCount = step.total != null && step.total > 0 && step.done != null;
+        return (
+          <li
+            key={step.key}
+            className="flex items-center gap-2 font-mono text-[length:var(--text-chrome)] tracking-[0.06em]"
+          >
+            <span
+              className={
+                isFailed
+                  ? "text-warm-faint"
+                  : isCompleted
+                    ? "text-gold-dim"
+                    : isRunning
+                      ? "text-gold animate-[pulse-fade_1.6s_ease-in-out_infinite]"
+                      : "text-warm-ghost"
+              }
+            >
+              {isFailed ? "✗" : isCompleted ? "✓" : isRunning ? "◉" : "○"}
+            </span>
+            <span
+              className={
+                isCompleted ? "text-warm-ghost" : isRunning ? "text-warm-faint" : "text-warm-ghost"
+              }
+            >
+              {step.label}
+            </span>
+            {hasCount && (
+              <span className="tabular-nums text-warm-ghost">
+                {step.done} / {step.total}
+              </span>
+            )}
+            {step.detail && <span className="truncate text-warm-ghost">· {step.detail}</span>}
+          </li>
+        );
+      })}
+    </ul>
+  );
+}
+
 interface PipelineStageRowProps {
   stage: StageProgress;
   index: number;
@@ -342,6 +388,10 @@ function PipelineStageRow({
           <div className="mt-1.5 font-serif text-[length:var(--text-small)] text-warm-faint">
             {detailLine}
           </div>
+        )}
+
+        {stage.steps.length > 0 && (isActive || isComplete || isErrored) && (
+          <PipelineStepChecklist steps={stage.steps} />
         )}
 
         {/* Progress bar (active stages with total > 0) */}

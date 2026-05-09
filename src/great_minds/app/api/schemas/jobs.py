@@ -5,7 +5,11 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, computed_field
 
-from great_minds.core.pipeline_runs import PipelineRunStatus, PipelineTrigger
+from great_minds.core.pipeline_runs import (
+    PipelineProgressStep,
+    PipelineRunStatus,
+    PipelineTrigger,
+)
 
 
 class JobResponse(BaseModel):
@@ -25,10 +29,7 @@ class JobResponse(BaseModel):
 
     current_phase: str = ""
     phase_status: str = ""
-    progress_done: int = 0
-    progress_total: int = 0
-    progress_failed: int = 0
-    progress_message: str = ""
+    progress_steps: list[PipelineProgressStep]
     error: str | None = None
 
     created_at: datetime

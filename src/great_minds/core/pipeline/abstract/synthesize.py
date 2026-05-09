@@ -31,6 +31,7 @@ from great_minds.core.ideas.schemas import Idea, SourceCard
 from great_minds.core.ideas.source_cards import SourceCardStore
 from great_minds.core.llm import MAP_MODEL
 from great_minds.core.pipeline.abstract.schemas import LocalTopic
+from great_minds.core.pipeline_runs import PipelineProgressRunner
 from great_minds.core.storage import Storage
 from great_minds.core.telemetry import enrich, log_event
 
@@ -50,11 +51,17 @@ class SynthesizePhase:
         client: AsyncOpenAI,
         compile_cache: CompileCacheRepository,
         concurrency: int,
+        progress: PipelineProgressRunner,
+        pipeline_run_id: UUID,
+        progress_steps,
     ) -> None:
         self.storage = storage
         self.client = client
         self.compile_cache = compile_cache
         self.concurrency = concurrency
+        self.progress = progress
+        self.pipeline_run_id = pipeline_run_id
+        self.progress_steps = progress_steps
 
     async def run(
         self,
@@ -88,7 +95,22 @@ class SynthesizePhase:
             )
             for idx, chunk in enumerate(chunks)
         ]
-        outcomes = await asyncio.gather(*tasks)
+        outcomes: list[_ChunkOutcome] = []
+        chunks_done = 0
+        for task in asyncio.as_completed(tasks):
+            outcome = await task
+            outcomes.append(outcome)
+            chunks_done += 1
+            await self.progress.emit(
+                pipeline_run_id=self.pipeline_run_id,
+                phase="abstract",
+                status="progress",
+                steps=self.progress_steps(
+                    "synthesize_topics",
+                    completed={"group_ideas"},
+                    counts={"synthesize_topics": (chunks_done, len(chunks))},
+                ),
+            )
 
         local_topics: list[LocalTopic] = []
         chunks_processed = 0

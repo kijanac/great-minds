@@ -49,7 +49,11 @@ from great_minds.core.llm.providers import (
     EMBEDDING_DIMENSIONS,
     EMBEDDING_MODEL,
 )
-from great_minds.core.pipeline_runs import PipelineProgressRunner
+from great_minds.core.pipeline_runs import (
+    PipelineProgressRunner,
+    PipelineProgressStep,
+    build_progress_steps,
+)
 from great_minds.core.llm import truncate_and_normalize
 from great_minds.core.storage import Storage
 from great_minds.core.telemetry import enrich, log_event
@@ -59,6 +63,13 @@ log = logging.getLogger(__name__)
 
 PHASE = "extract"
 EMBEDDING_BATCH_SIZE = 50
+
+EXTRACT_STEP_LABELS = {
+    "load_documents": "Preparing document list",
+    "extract_cards": "Extracting source cards",
+    "embed_ideas": "Embedding ideas",
+    "save_index": "Saving extraction index",
+}
 
 
 class ExtractPhase:
@@ -87,6 +98,24 @@ class ExtractPhase:
         self.config = config
         self.concurrency = concurrency
 
+    def progress_steps(
+        self,
+        active: str,
+        *,
+        completed: set[str] | None = None,
+        failed: set[str] | None = None,
+        counts: dict[str, tuple[int | None, int | None]] | None = None,
+        details: dict[str, str] | None = None,
+    ) -> list[PipelineProgressStep]:
+        return build_progress_steps(
+            EXTRACT_STEP_LABELS,
+            active,
+            completed=completed,
+            failed=failed,
+            counts=counts,
+            details=details,
+        )
+
     async def run(self, vault_id: UUID, pipeline_run_id: UUID) -> None:
         """Extract every raw document registered in the DB for this vault.
 
@@ -102,14 +131,16 @@ class ExtractPhase:
 
         docs = await self.documents.list_by_kind(vault_id, DocKind.RAW)
         total_docs = len(docs)
-        if total_docs > 0:
-            await self.progress.emit(
-                pipeline_run_id=pipeline_run_id,
-                phase="extract",
-                status="progress",
-                done=0,
-                total=total_docs,
-            )
+        await self.progress.emit(
+            pipeline_run_id=pipeline_run_id,
+            phase="extract",
+            status="progress",
+            steps=self.progress_steps(
+                "extract_cards",
+                completed={"load_documents"},
+                counts={"extract_cards": (0, total_docs)},
+            ),
+        )
 
         sem = asyncio.Semaphore(self.concurrency)
         tasks = [
@@ -139,8 +170,11 @@ class ExtractPhase:
                     pipeline_run_id=pipeline_run_id,
                     phase="extract",
                     status="progress",
-                    done=docs_completed,
-                    total=total_docs,
+                    steps=self.progress_steps(
+                        "extract_cards",
+                        completed={"load_documents"},
+                        counts={"extract_cards": (docs_completed, total_docs)},
+                    ),
                 )
 
         # Per-doc trackers for the embedding loop. Populated only inside
@@ -195,9 +229,56 @@ class ExtractPhase:
         # derived vector-index rows in idea_embeddings; if a crash happens after
         # caching but before embedding upsert, replay reuses the SourceCard and
         # regenerates only missing embeddings.
+        total_embedding_batches = (
+            len(embedding_inputs) + EMBEDDING_BATCH_SIZE - 1
+        ) // EMBEDDING_BATCH_SIZE
+        await self.progress.emit(
+            pipeline_run_id=pipeline_run_id,
+            phase="extract",
+            status="progress",
+            steps=self.progress_steps(
+                "embed_ideas",
+                completed={"load_documents", "extract_cards"},
+                counts={
+                    "extract_cards": (docs_completed, total_docs),
+                    "embed_ideas": (0, total_embedding_batches),
+                },
+            ),
+        )
         fresh_embeddings: list[IdeaEmbedding] = []
+        embedding_batches_done = 0
         async for batch in _embed_in_batches(self.client, embedding_inputs):
             fresh_embeddings.extend(batch)
+            embedding_batches_done += 1
+            await self.progress.emit(
+                pipeline_run_id=pipeline_run_id,
+                phase="extract",
+                status="progress",
+                steps=self.progress_steps(
+                    "embed_ideas",
+                    completed={"load_documents", "extract_cards"},
+                    counts={
+                        "extract_cards": (docs_completed, total_docs),
+                        "embed_ideas": (
+                            embedding_batches_done,
+                            total_embedding_batches,
+                        ),
+                    },
+                ),
+            )
+        await self.progress.emit(
+            pipeline_run_id=pipeline_run_id,
+            phase="extract",
+            status="progress",
+            steps=self.progress_steps(
+                "save_index",
+                completed={"load_documents", "extract_cards", "embed_ideas"},
+                counts={
+                    "extract_cards": (docs_completed, total_docs),
+                    "embed_ideas": (embedding_batches_done, total_embedding_batches),
+                },
+            ),
+        )
         for doc_id in fresh_source_cards:
             await idea_repo.delete_for_document(doc_id)
         await self.ideas.record_extractions(cards, fresh_embeddings)
@@ -218,6 +299,24 @@ class ExtractPhase:
             cache_misses=cache_misses,
             docs_failed=docs_failed,
             ideas_emitted=ideas_emitted,
+        )
+        await self.progress.emit(
+            pipeline_run_id=pipeline_run_id,
+            phase="extract",
+            status="completed",
+            steps=self.progress_steps(
+                "save_index",
+                completed={
+                    "load_documents",
+                    "extract_cards",
+                    "embed_ideas",
+                    "save_index",
+                },
+                counts={
+                    "extract_cards": (docs_completed, total_docs),
+                    "embed_ideas": (embedding_batches_done, total_embedding_batches),
+                },
+            ),
         )
 
 

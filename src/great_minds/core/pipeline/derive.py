@@ -19,11 +19,22 @@ here.
 import logging
 from uuid import UUID
 
+from great_minds.core.pipeline_runs import (
+    PipelineProgressRunner,
+    PipelineProgressStep,
+    build_progress_steps,
+)
 from great_minds.core.telemetry import enrich, log_event
 from great_minds.core.topics.schemas import TopicDetail
 from great_minds.core.topics.service import TopicService
 
 log = logging.getLogger(__name__)
+
+DERIVE_STEP_LABELS = {
+    "load_registry": "Loading topic registry",
+    "find_related": "Finding related topics",
+    "save_connections": "Saving connections",
+}
 
 
 class DerivePhase:
@@ -34,9 +45,27 @@ class DerivePhase:
         *,
         topics: TopicService,
         related_limit: int,
+        progress: PipelineProgressRunner,
+        pipeline_run_id: UUID,
     ) -> None:
         self.topics = topics
         self.related_limit = related_limit
+        self.progress = progress
+        self.pipeline_run_id = pipeline_run_id
+
+    def progress_steps(
+        self,
+        active: str,
+        *,
+        completed: set[str] | None = None,
+        counts: dict[str, tuple[int | None, int | None]] | None = None,
+    ) -> list[PipelineProgressStep]:
+        return build_progress_steps(
+            DERIVE_STEP_LABELS,
+            active,
+            completed=completed,
+            counts=counts,
+        )
 
     async def run(self, vault_id: UUID, validated: list[TopicDetail]) -> None:
         if not validated:
@@ -44,16 +73,64 @@ class DerivePhase:
                 "skipped",
                 reason="no_topics",
             )
+            await self.progress.emit(
+                pipeline_run_id=self.pipeline_run_id,
+                phase="derive",
+                status="completed",
+                steps=self.progress_steps(
+                    "load_registry", completed=set(DERIVE_STEP_LABELS)
+                ),
+            )
             return
 
+        await self.progress.emit(
+            pipeline_run_id=self.pipeline_run_id,
+            phase="derive",
+            status="progress",
+            steps=self.progress_steps(
+                "load_registry",
+                counts={"load_registry": (len(validated), len(validated))},
+            ),
+        )
+        await self.progress.emit(
+            pipeline_run_id=self.pipeline_run_id,
+            phase="derive",
+            status="progress",
+            steps=self.progress_steps(
+                "find_related",
+                completed={"load_registry"},
+                counts={"load_registry": (len(validated), len(validated))},
+            ),
+        )
         await self.topics.rebuild_derived_tables(
             vault_id,
             validated,
             related_limit=self.related_limit,
         )
 
+        await self.progress.emit(
+            pipeline_run_id=self.pipeline_run_id,
+            phase="derive",
+            status="progress",
+            steps=self.progress_steps(
+                "save_connections",
+                completed={"load_registry", "find_related"},
+                counts={"load_registry": (len(validated), len(validated))},
+            ),
+        )
+
         enrich(derive_topic_count=len(validated))
         log_event(
             "completed",
             topic_count=len(validated),
+        )
+        await self.progress.emit(
+            pipeline_run_id=self.pipeline_run_id,
+            phase="derive",
+            status="completed",
+            steps=self.progress_steps(
+                "save_connections",
+                completed=set(DERIVE_STEP_LABELS),
+                counts={"load_registry": (len(validated), len(validated))},
+            ),
         )

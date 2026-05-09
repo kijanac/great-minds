@@ -1,9 +1,7 @@
 """Application service for compiling a vault through all pipeline phases."""
 
-from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import ParamSpec, TypeVar
 from uuid import UUID
 
 from openai import AsyncOpenAI
@@ -22,7 +20,7 @@ import great_minds.core.pipeline.publish as publish
 import great_minds.core.pipeline.render as render
 import great_minds.core.pipeline.verify as verify
 from great_minds.core.pipeline.steps import StepRunner, inline_step_runner
-from great_minds.core.pipeline_runs import PipelineProgressRunner
+from great_minds.core.pipeline_runs import PipelineProgressRunner, phase_step
 from great_minds.core.search import SearchIndexRepository, SearchService
 from great_minds.core.settings import Settings, get_settings
 from great_minds.core.storage import Storage
@@ -31,9 +29,6 @@ from great_minds.core.topics.repository import TopicRepository
 from great_minds.core.topics.schemas import TopicDetail
 from great_minds.core.topics.service import TopicService
 from great_minds.core.vaults.config import load_vault_config
-
-P = ParamSpec("P")
-T = TypeVar("T")
 
 
 @dataclass(frozen=True)
@@ -89,103 +84,66 @@ class CompileService:
 
             log_event("completed")
 
-    async def run_phase(
-        self,
-        phase: str,
-        total: int,
-        done: int | None,
-        message: str | None,
-        fn: Callable[P, Awaitable[T]],
-        *args: P.args,
-        **kwargs: P.kwargs,
-    ) -> T:
-        await self.progress.emit(
-            pipeline_run_id=self.pipeline_run_id,
-            phase=phase,
-            status="started",
-            done=0,
-            total=total,
-        )
-        with telemetry_scope(phase, phase=phase):
-            async with timed_op(phase):
-                result = await fn(*args, **kwargs)
-        await self.progress.emit(
-            pipeline_run_id=self.pipeline_run_id,
-            phase=phase,
-            status="completed",
-            **({"done": done} if done is not None else {}),
-            total=total,
-            **({"message": message} if message is not None else {}),
-        )
-        return result
-
     async def run_ingest_step(self) -> None:
-        await self.run_phase(
-            "ingest", 1, 1, None, self.phases.ingest.run, self.vault_id
-        )
+        with telemetry_scope("ingest", phase="ingest"):
+            async with timed_op("ingest"):
+                await self.phases.ingest.run(self.vault_id)
 
     async def run_extract_step(self) -> None:
-        await self.run_phase(
-            "extract",
-            0,
-            None,
-            None,
-            self.phases.extract.run,
-            self.vault_id,
-            self.pipeline_run_id,
+        await self.progress.emit(
+            pipeline_run_id=self.pipeline_run_id,
+            phase="extract",
+            status="started",
+            steps=self.phases.extract.progress_steps("load_documents"),
         )
+        with telemetry_scope("extract", phase="extract"):
+            async with timed_op("extract"):
+                await self.phases.extract.run(self.vault_id, self.pipeline_run_id)
 
     async def run_abstract_step(self) -> list[dict]:
-        topics = await self.run_phase(
-            "abstract", 1, 1, None, self.phases.abstract.run, self.vault_id
-        )
-        result = [topic.model_dump(mode="json") for topic in topics]
-        if not result:
-            await self.progress.emit(
-                pipeline_run_id=self.pipeline_run_id,
-                phase="abstract",
-                status="completed",
-                done=1,
-                total=1,
-                message="no validated topics",
-            )
-        return result
+        with telemetry_scope("abstract", phase="abstract"):
+            async with timed_op("abstract"):
+                topics = await self.phases.abstract.run(self.vault_id)
+        return [topic.model_dump(mode="json") for topic in topics]
 
     async def run_derive_step(self, validated: list[TopicDetail]) -> None:
-        await self.run_phase(
-            "derive", 1, 1, None, self.phases.derive.run, self.vault_id, validated
-        )
+        with telemetry_scope("derive", phase="derive"):
+            async with timed_op("derive"):
+                await self.phases.derive.run(self.vault_id, validated)
 
     async def run_render_step(self, validated: list[TopicDetail]) -> None:
-        await self.run_phase(
-            "render",
-            0,
-            None,
-            None,
-            self.phases.render.run,
-            self.vault_id,
-            self.pipeline_run_id,
-            validated,
-        )
+        with telemetry_scope("render", phase="render"):
+            async with timed_op("render"):
+                await self.phases.render.run(
+                    self.vault_id,
+                    self.pipeline_run_id,
+                    validated,
+                )
 
     async def run_verify_step(self) -> None:
-        await self.run_phase(
-            "verify", 1, 1, None, self.phases.verify.run, self.vault_id
-        )
+        with telemetry_scope("verify", phase="verify"):
+            async with timed_op("verify"):
+                await self.phases.verify.run(self.vault_id)
 
     async def run_publish_step(self) -> None:
-        await self.run_phase(
-            "publish", 1, 1, None, self.phases.publish.run, self.vault_id
-        )
+        with telemetry_scope("publish", phase="publish"):
+            async with timed_op("publish"):
+                await self.phases.publish.run(self.vault_id)
 
     async def complete_early_no_topics(self) -> None:
         await self.progress.emit(
             pipeline_run_id=self.pipeline_run_id,
             phase="publish",
             status="completed",
-            done=1,
-            total=1,
-            message="compile completed early: no validated topics",
+            steps=[
+                phase_step(
+                    phase="publish",
+                    status="completed",
+                    label="compile completed early: no validated topics",
+                    done=1,
+                    total=1,
+                )
+            ],
         )
         log_event(
             "completed_early",
@@ -226,6 +184,8 @@ async def build_compile_service(
                 storage=storage,
                 client=client,
                 search=search,
+                progress=progress,
+                pipeline_run_id=pipeline_run_id,
             ),
             extract=extract.ExtractPhase(
                 storage=storage,
@@ -247,10 +207,14 @@ async def build_compile_service(
                 documents=documents,
                 thematic_hint=config.thematic_hint,
                 settings=settings,
+                progress=progress,
+                pipeline_run_id=pipeline_run_id,
             ),
             derive=derive.DerivePhase(
                 topics=topics,
                 related_limit=settings.compile_derive_related_limit,
+                progress=progress,
+                pipeline_run_id=pipeline_run_id,
             ),
             render=render.RenderPhase(
                 storage=storage,
@@ -269,6 +233,8 @@ async def build_compile_service(
                 storage=storage,
                 topics=topics,
                 documents=documents,
+                progress=progress,
+                pipeline_run_id=pipeline_run_id,
             ),
             publish=publish.PublishPhase(
                 storage=storage,
@@ -276,6 +242,8 @@ async def build_compile_service(
                 topics=topics,
                 documents=documents,
                 search=search,
+                progress=progress,
+                pipeline_run_id=pipeline_run_id,
             ),
         ),
     )

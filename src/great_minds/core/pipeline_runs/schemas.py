@@ -45,10 +45,20 @@ class PipelinePhaseStatus(StrEnum):
     FAILED = "failed"
 
 
-class PipelineProgress(BaseModel):
-    done: int
-    total: int
-    failed_items: int = 0
+class PipelineStepStatus(StrEnum):
+    PENDING = "pending"
+    RUNNING = "running"
+    COMPLETED = "completed"
+    FAILED = "failed"
+
+
+class PipelineProgressStep(BaseModel):
+    key: str
+    label: str
+    status: PipelineStepStatus
+    done: int | None = None
+    total: int | None = None
+    detail: str = ""
 
 
 class PipelineRun(BaseModel):
@@ -61,10 +71,7 @@ class PipelineRun(BaseModel):
 
     current_phase: str = ""
     phase_status: str = ""
-    progress_done: int = 0
-    progress_total: int = 0
-    progress_failed: int = 0
-    progress_message: str = ""
+    progress_steps: list[PipelineProgressStep]
     error: str | None = None
 
     ingest_task_id: UUID | None = None
@@ -88,6 +95,5 @@ class PipelineRunCreate(BaseModel):
 class PipelineRunUpdate(BaseModel):
     phase: PipelinePhase
     status: PipelinePhaseStatus
-    progress: PipelineProgress | None = None
-    message: str = ""
+    progress_steps: list[PipelineProgressStep]
     error: str | None = None

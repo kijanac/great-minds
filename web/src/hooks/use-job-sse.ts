@@ -24,12 +24,24 @@ type BackendPhase =
   | "verify"
   | "publish";
 
+export type ProgressStepStatus = "pending" | "running" | "completed" | "failed";
+
+export interface ProgressStep {
+  key: string;
+  label: string;
+  status: ProgressStepStatus;
+  done: number | null;
+  total: number | null;
+  detail: string;
+}
+
 export interface StageProgress {
   stage: PipelineStage;
   label: string;
   detail: string;
   done: number;
   total: number;
+  steps: ProgressStep[];
   active: boolean;
   complete: boolean;
   errored: boolean;
@@ -40,13 +52,8 @@ interface BackendPipelineEvent {
   phase: string;
   phase_status: "started" | "progress" | "completed" | "failed";
   job_status?: "pending" | "running" | "completed" | "failed" | "cancelled";
-  progress?: {
-    done: number;
-    total: number;
-    failed_items?: number;
-  };
+  steps: ProgressStep[];
   error?: string;
-  message?: string;
 }
 
 interface PipelineEvent extends BackendPipelineEvent {
@@ -88,6 +95,7 @@ function emptyStages(): StageProgress[] {
     detail: "",
     done: 0,
     total: 1,
+    steps: [],
     active: false,
     complete: false,
     errored: false,
@@ -132,14 +140,11 @@ function applyEvent(prev: StageProgress[], event: PipelineEvent): StageProgress[
       return { ...s, active: false, complete: true, errored: false };
     }
     if (i === phaseIdx) {
-      const progress = event.progress;
-      const total = progress && progress.total > 0 ? progress.total : s.total;
-      const done =
-        event.phase_status === "completed" && !progress ? total : (progress?.done ?? s.done);
-      const isComplete =
-        event.phase_status === "completed" ||
-        (event.phase_status === "progress" && done >= total && total > 0);
+      const isComplete = event.phase_status === "completed";
       const isFailed = event.phase_status === "failed";
+      const activeStep = isComplete ? null : event.steps.find((step) => step.status === "running")!;
+      const total = activeStep?.total && activeStep.total > 0 ? activeStep.total : 1;
+      const done = activeStep?.done ?? 0;
       return {
         ...s,
         active: !isComplete && !isFailed,
@@ -147,19 +152,16 @@ function applyEvent(prev: StageProgress[], event: PipelineEvent): StageProgress[
         errored: isFailed,
         done,
         total,
+        steps: event.steps,
         detail: event.error
           ? event.error
-          : event.message
-            ? event.message
-            : isComplete
-              ? ""
-              : event.phase === "reading"
-                ? `Reading document ${done} of ${total}…`
-                : event.phase === "writing"
-                  ? `Writing article ${done} of ${total}…`
-                  : total > 1
-                    ? `${done} of ${total}`
-                    : STAGES[phaseIdx].activeLabel,
+          : activeStep?.detail
+            ? activeStep.detail
+            : activeStep
+              ? activeStep.total && activeStep.total > 0 && activeStep.done != null
+                ? `${activeStep.label} ${activeStep.done} of ${activeStep.total}…`
+                : `${activeStep.label}…`
+              : "",
       };
     }
     // Future phases — keep as pending
@@ -205,6 +207,10 @@ export function useJobSSE(jobId: string | null) {
     const controller = new AbortController();
     controllerRef.current = controller;
     let cancelled = false;
+    let terminal = false;
+
+    const retryDelay = (attempt: number) => Math.min(1000 * 2 ** attempt, 10000);
+    const sleep = (ms: number) => new Promise((resolve) => window.setTimeout(resolve, ms));
 
     const handleMessage = (msg: SseMessage) => {
       if (msg.event === "connected") {
@@ -213,6 +219,7 @@ export function useJobSSE(jobId: string | null) {
       }
 
       if (msg.event === "done") {
+        terminal = true;
         setOverallDone(true);
         invalidateActivePipeline();
         disconnect();
@@ -231,6 +238,7 @@ export function useJobSSE(jobId: string | null) {
           data.job_status === "failed" ||
           data.job_status === "cancelled"
         ) {
+          terminal = true;
           setOverallError(data.error ?? "Pipeline failed");
           setStages((prev) => applyEvent(prev, data));
           invalidateActivePipeline();
@@ -238,6 +246,7 @@ export function useJobSSE(jobId: string | null) {
         }
 
         if (data.backendPhase === "publish" && data.phase_status === "completed") {
+          terminal = true;
           setStages((prev) => {
             const withLast = applyEvent(prev, data);
             return withLast.map((s) => ({ ...s, active: false, complete: true }));
@@ -248,6 +257,7 @@ export function useJobSSE(jobId: string | null) {
         }
 
         if (data.job_status === "completed") {
+          terminal = true;
           setOverallDone(true);
           invalidateActivePipeline();
         }
@@ -259,50 +269,64 @@ export function useJobSSE(jobId: string | null) {
     };
 
     const run = async () => {
-      try {
-        const res = await apiFetch(vaultPath(`/jobs/${jobId}/stream`), {
-          headers: { Accept: "text/event-stream" },
-          signal: controller.signal,
-        });
+      let attempt = 0;
 
-        if (!res.ok) {
-          setOverallError(await res.text());
-          return;
-        }
-        if (!res.body) {
-          setOverallError("Progress stream unavailable");
-          return;
-        }
+      while (!cancelled && !terminal && !controller.signal.aborted) {
+        try {
+          const res = await apiFetch(vaultPath(`/jobs/${jobId}/stream`), {
+            headers: { Accept: "text/event-stream" },
+            signal: controller.signal,
+          });
 
-        const reader = res.body.getReader();
-        const decoder = new TextDecoder();
-        let buffer = "";
-
-        while (!cancelled) {
-          const { done, value } = await reader.read();
-          if (done) break;
-
-          buffer += decoder.decode(value, { stream: true }).replace(/\r\n/g, "\n");
-
-          let sep = buffer.indexOf("\n\n");
-          while (sep !== -1) {
-            const block = buffer.slice(0, sep);
-            buffer = buffer.slice(sep + 2);
-            const msg = parseSseBlock(block);
-            if (msg) handleMessage(msg);
-            sep = buffer.indexOf("\n\n");
+          if (!res.ok) {
+            terminal = true;
+            setOverallError(await res.text());
+            return;
           }
+          if (!res.body) {
+            terminal = true;
+            setOverallError("Progress stream unavailable");
+            return;
+          }
+
+          attempt = 0;
+          const reader = res.body.getReader();
+          const decoder = new TextDecoder();
+          let buffer = "";
+
+          while (!cancelled && !terminal) {
+            const { done, value } = await reader.read();
+            if (done) break;
+
+            buffer += decoder.decode(value, { stream: true }).replace(/\r\n/g, "\n");
+
+            let sep = buffer.indexOf("\n\n");
+            while (sep !== -1) {
+              const block = buffer.slice(0, sep);
+              buffer = buffer.slice(sep + 2);
+              const msg = parseSseBlock(block);
+              if (msg) handleMessage(msg);
+              sep = buffer.indexOf("\n\n");
+            }
+          }
+        } catch (e) {
+          if (controller.signal.aborted || terminal || cancelled) return;
+          // Safari reports interrupted fetch streams as "Load failed". Treat
+          // transport failures as transient; the job state is durable and the
+          // next connection will replay the latest snapshot.
+          console.warn("Progress stream disconnected; retrying", e);
+        } finally {
+          setConnected(false);
         }
-      } catch (e) {
-        if (!controller.signal.aborted) {
-          setOverallError(e instanceof Error ? e.message : "Progress stream failed");
+
+        if (!cancelled && !terminal && !controller.signal.aborted) {
+          await sleep(retryDelay(attempt));
+          attempt += 1;
         }
-      } finally {
-        setConnected(false);
       }
     };
 
-    run();
+    void run();
 
     return () => {
       cancelled = true;

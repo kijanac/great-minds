@@ -23,12 +23,23 @@ from uuid import UUID
 from great_minds.core.documents import Backlink, DocKind, Document, DocumentService
 from great_minds.core.markdown import extract_wiki_link_targets
 from great_minds.core.paths import wiki_path, wiki_slug
+from great_minds.core.pipeline_runs import (
+    PipelineProgressRunner,
+    PipelineProgressStep,
+    build_progress_steps,
+)
 from great_minds.core.storage import Storage
 from great_minds.core.telemetry import enrich, log_event
 from great_minds.core.topics.schemas import ArticleStatus
 from great_minds.core.topics.service import TopicService
 
 log = logging.getLogger(__name__)
+
+VERIFY_STEP_LABELS = {
+    "load_articles": "Loading articles",
+    "check_links": "Checking links",
+    "record_findings": "Recording findings",
+}
 
 
 class VerifyPhase:
@@ -40,20 +51,62 @@ class VerifyPhase:
         storage: Storage,
         topics: TopicService,
         documents: DocumentService,
+        progress: PipelineProgressRunner,
+        pipeline_run_id: UUID,
     ) -> None:
         self.storage = storage
         self.topics = topics
         self.documents = documents
+        self.progress = progress
+        self.pipeline_run_id = pipeline_run_id
+
+    def progress_steps(
+        self,
+        active: str,
+        *,
+        completed: set[str] | None = None,
+        counts: dict[str, tuple[int | None, int | None]] | None = None,
+    ) -> list[PipelineProgressStep]:
+        return build_progress_steps(
+            VERIFY_STEP_LABELS,
+            active,
+            completed=completed,
+            counts=counts,
+        )
 
     async def run(self, vault_id: UUID) -> None:
+        await self.progress.emit(
+            pipeline_run_id=self.pipeline_run_id,
+            phase="verify",
+            status="progress",
+            steps=self.progress_steps("load_articles"),
+        )
         rendered = await self.topics.list_for_vault(vault_id, ArticleStatus.RENDERED)
         if not rendered:
             log_event(
                 "skipped",
                 reason="no_rendered_topics",
             )
+            await self.progress.emit(
+                pipeline_run_id=self.pipeline_run_id,
+                phase="verify",
+                status="completed",
+                steps=self.progress_steps(
+                    "load_articles", completed=set(VERIFY_STEP_LABELS)
+                ),
+            )
             return
 
+        await self.progress.emit(
+            pipeline_run_id=self.pipeline_run_id,
+            phase="verify",
+            status="progress",
+            steps=self.progress_steps(
+                "check_links",
+                completed={"load_articles"},
+                counts={"check_links": (0, len(rendered))},
+            ),
+        )
         slug_to_topic = {t.slug: t for t in rendered}
         topic_id_set = {t.topic_id for t in rendered}
         article_by_topic = await self._load_wiki_articles(vault_id)
@@ -113,6 +166,27 @@ class VerifyPhase:
                 )
 
             cited_by_source[topic.topic_id] = cited_slugs
+            await self.progress.emit(
+                pipeline_run_id=self.pipeline_run_id,
+                phase="verify",
+                status="progress",
+                steps=self.progress_steps(
+                    "check_links",
+                    completed={"load_articles"},
+                    counts={"check_links": (articles_walked, len(rendered))},
+                ),
+            )
+
+        await self.progress.emit(
+            pipeline_run_id=self.pipeline_run_id,
+            phase="verify",
+            status="progress",
+            steps=self.progress_steps(
+                "record_findings",
+                completed={"load_articles", "check_links"},
+                counts={"check_links": (articles_walked, len(rendered))},
+            ),
+        )
 
         # Unmentioned intended links: topic_links edges whose target isn't
         # in cited_by_source[source]. Requires the topic_links rows from
@@ -141,6 +215,16 @@ class VerifyPhase:
             backlink_edges=len(backlinks),
             unresolved_citations=unresolved_count,
             unmentioned_links=unmentioned_count,
+        )
+        await self.progress.emit(
+            pipeline_run_id=self.pipeline_run_id,
+            phase="verify",
+            status="completed",
+            steps=self.progress_steps(
+                "record_findings",
+                completed=set(VERIFY_STEP_LABELS),
+                counts={"check_links": (articles_walked, len(rendered))},
+            ),
         )
 
     async def _load_wiki_articles(self, vault_id: UUID) -> dict[UUID, Document]:

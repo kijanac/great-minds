@@ -7,12 +7,12 @@ import httpx
 from great_minds.core.documents.schemas import SourceMetadata
 from great_minds.core.ingest_service import IngestService
 from great_minds.core.pipeline_runs import (
-    PipelineProgress,
     PipelineRun,
     PipelineRunCreate,
     PipelineRunService,
     PipelineRunUpdate,
     PipelineTrigger,
+    build_progress_steps,
 )
 from great_minds.core.storage import Storage
 
@@ -23,6 +23,14 @@ class JobNotFoundError(RuntimeError):
 
 class UrlJobSourceError(ValueError):
     """Raised when URL source ingestion fails before the pipeline can continue."""
+
+
+URL_INGEST_STEP_LABELS = {
+    "fetch_url": "Fetching source URL",
+    "convert_document": "Converting source document",
+    "index_document": "Indexing source document",
+    "queue_compile": "Queuing compile",
+}
 
 
 class JobService:
@@ -57,8 +65,11 @@ class JobService:
             PipelineRunUpdate(
                 phase="source_ingest",
                 status="started",
-                progress=PipelineProgress(done=0, total=1),
-                message="fetching source URL",
+                progress_steps=build_progress_steps(
+                    URL_INGEST_STEP_LABELS,
+                    "fetch_url",
+                    counts={"fetch_url": (0, 1)},
+                ),
             ),
         )
 
@@ -76,6 +87,12 @@ class JobService:
                 PipelineRunUpdate(
                     phase="source_ingest",
                     status="failed",
+                    progress_steps=build_progress_steps(
+                        URL_INGEST_STEP_LABELS,
+                        "fetch_url",
+                        failed={"fetch_url"},
+                        details={"fetch_url": message},
+                    ),
                     error=message,
                 ),
             )
@@ -89,8 +106,12 @@ class JobService:
             PipelineRunUpdate(
                 phase="source_ingest",
                 status="completed",
-                progress=PipelineProgress(done=1, total=1),
-                message="source prepared for compile",
+                progress_steps=build_progress_steps(
+                    URL_INGEST_STEP_LABELS,
+                    "queue_compile",
+                    completed=set(URL_INGEST_STEP_LABELS),
+                    counts={"fetch_url": (1, 1)},
+                ),
             ),
         )
         await self.pipeline_service.commit()

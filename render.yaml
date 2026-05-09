@@ -105,7 +105,7 @@ projects:
 
         databases:
           - name: great-minds-db
-            plan: basic-256mb
+            plan: basic-1gb
             region: virginia
             postgresMajorVersion: 18
             ipAllowList: []

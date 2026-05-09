@@ -55,23 +55,38 @@ class DocumentRepository:
             "precis": doc.metadata.precis,
         }
 
-        stmt = (
-            insert(DocumentORM)
-            .values(
-                vault_id=vault_id,
-                file_path=doc.file_path,
-                extra_metadata=doc.metadata.extra_metadata,
-                **columns,
-            )
-            .on_conflict_do_update(
-                constraint="documents_vault_id_file_path_key",
+        stmt = insert(DocumentORM).values(
+            vault_id=vault_id,
+            file_path=doc.file_path,
+            extra_metadata=doc.metadata.extra_metadata,
+            **columns,
+        )
+
+        set_values = {
+            **columns,
+            "metadata": doc.metadata.extra_metadata,
+            "updated_at": func.now(),
+        }
+        if doc.doc_kind == DocKind.WIKI.value and doc.topic_id is not None:
+            # Rendered wiki articles are logically keyed by topic_id. If a
+            # topic's slug changes, the existing row still has the old
+            # file_path, so a file_path-only upsert attempts to insert a
+            # second wiki row for the same topic and trips the partial unique
+            # index ix_documents_topic_id_wiki. Conflict on that index instead
+            # so rerenders can move the document row to the new wiki/<slug>.md.
+            stmt = stmt.on_conflict_do_update(
+                index_elements=[DocumentORM.topic_id],
+                index_where=(DocumentORM.doc_kind == DocKind.WIKI.value),
                 set_={
-                    **columns,
-                    "metadata": doc.metadata.extra_metadata,
-                    "updated_at": func.now(),
+                    **set_values,
+                    "file_path": doc.file_path,
                 },
             )
-        )
+        else:
+            stmt = stmt.on_conflict_do_update(
+                constraint="documents_vault_id_file_path_key",
+                set_=set_values,
+            )
         result = await self.session.execute(stmt.returning(DocumentORM.id))
         doc_id = result.scalar_one()
 

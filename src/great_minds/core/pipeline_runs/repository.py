@@ -1,6 +1,7 @@
 """PipelineRun repository."""
 
 from datetime import datetime
+from typing import Any
 from uuid import UUID
 
 from sqlalchemy import func, select, update
@@ -149,18 +150,14 @@ class PipelineRunRepository:
         pipeline_run_id: UUID,
         data: PipelineRunUpdate,
     ) -> UUID | None:
-        values = {
+        values: dict[str, Any] = {
             "current_phase": data.phase,
             "phase_status": data.status,
-            "progress_message": data.message,
+            "progress_steps": [
+                step.model_dump(mode="json") for step in data.progress_steps
+            ],
             "updated_at": func.now(),
         }
-        if data.progress is not None:
-            values.update(
-                progress_done=data.progress.done,
-                progress_total=data.progress.total,
-                progress_failed=data.progress.failed_items,
-            )
         if data.error is not None:
             values["error"] = data.error
 

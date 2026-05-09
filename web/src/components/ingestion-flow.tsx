@@ -333,7 +333,7 @@ export function IngestionFlow({ hasActivePipeline }: { hasActivePipeline: boolea
           pendingFilesRef.current = [];
           pendingJobIdRef.current = null;
           invalidateActivePipeline();
-          navigate(`/pipeline?job_id=${createdJobId}`);
+          navigate(`/pipeline/runs/${createdJobId}`);
         }
       } else {
         setConfirming(false);

@@ -4,7 +4,7 @@ from datetime import datetime
 from uuid import UUID
 
 from sqlalchemy import DateTime, ForeignKey, Text, text
-from sqlalchemy.dialects.postgresql import UUID as PG_UUID
+from sqlalchemy.dialects.postgresql import JSONB, UUID as PG_UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
 from great_minds.core.db import Base
@@ -26,10 +26,9 @@ class PipelineRunRecord(Base):
 
     current_phase: Mapped[str] = mapped_column(Text, default="")
     phase_status: Mapped[str] = mapped_column(Text, default="")
-    progress_done: Mapped[int] = mapped_column(default=0)
-    progress_total: Mapped[int] = mapped_column(default=0)
-    progress_failed: Mapped[int] = mapped_column(default=0)
-    progress_message: Mapped[str] = mapped_column(Text, default="")
+    progress_steps: Mapped[list[dict]] = mapped_column(
+        JSONB, default=list, server_default=text("'[]'::jsonb")
+    )
     error: Mapped[str | None] = mapped_column(Text)
 
     ingest_task_id: Mapped[UUID | None] = mapped_column(PG_UUID)

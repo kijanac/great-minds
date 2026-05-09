@@ -65,6 +65,7 @@ const router = createBrowserRouter([
           { path: "/sources", element: <SourcesPage /> },
           { path: "/wiki", element: <WikiPage /> },
           { path: "/pipeline", element: <PipelinePage /> },
+          { path: "/pipeline/runs/:jobId", element: <PipelinePage /> },
           { path: "/project/:id/settings", element: <ProjectSettingsPage /> },
           { path: "/sessions", element: <SessionsPage /> },
           { path: "/sessions/:id", element: <SessionPage /> },

@@ -8,7 +8,7 @@ from great_minds.core.ingest_schemas import StagedFileInput
 from great_minds.core.pagination import Page, PageParams, create_page
 from great_minds.core.pipeline_runs.repository import PipelineRunRepository
 from great_minds.core.pipeline_runs.schemas import (
-    PipelineProgress,
+    PipelineProgressStep,
     PipelineRun,
     PipelineRunCreate,
     PipelineRunUpdate,
@@ -16,6 +16,44 @@ from great_minds.core.pipeline_runs.schemas import (
     PipelineTrigger,
 )
 from great_minds.core.tasks import TaskService
+
+
+_PHASE_LABELS = {
+    "source_ingest": "Processing uploaded sources",
+    "ingest": "Indexing documents for search",
+    "extract": "Reading documents",
+    "abstract": "Synthesizing topics",
+    "derive": "Mapping connections",
+    "render": "Writing articles",
+    "verify": "Checking references",
+    "publish": "Finalizing",
+}
+
+_STEP_STATUS_BY_PHASE_STATUS = {
+    "started": "running",
+    "progress": "running",
+    "completed": "completed",
+    "failed": "failed",
+}
+
+
+def phase_step(
+    *,
+    phase: str,
+    status: str,
+    label: str | None = None,
+    done: int | None = None,
+    total: int | None = None,
+    detail: str = "",
+) -> PipelineProgressStep:
+    return PipelineProgressStep(
+        key="phase",
+        label=label if label is not None else _PHASE_LABELS[phase],
+        status=_STEP_STATUS_BY_PHASE_STATUS[status],
+        done=done,
+        total=total,
+        detail=detail,
+    )
 
 
 class PipelineRunService:
@@ -112,26 +150,15 @@ class PipelineProgressService:
         pipeline_run_id: UUID,
         phase: str,
         status: str,
-        done: int | None = None,
-        total: int | None = None,
-        failed: int | None = None,
-        message: str = "",
+        steps: list[PipelineProgressStep],
         error: str | None = None,
     ) -> UUID | None:
-        progress = None
-        if done is not None or total is not None or failed is not None:
-            progress = PipelineProgress(
-                done=done or 0,
-                total=total or 0,
-                failed_items=failed or 0,
-            )
         return await self.repo.update_progress(
             pipeline_run_id,
             PipelineRunUpdate(
                 phase=phase,
                 status=status,
-                progress=progress,
-                message=message,
+                progress_steps=steps,
                 error=error,
             ),
         )
@@ -157,10 +184,7 @@ class PipelineProgressRunner:
         pipeline_run_id: UUID,
         phase: str,
         status: str,
-        done: int | None = None,
-        total: int | None = None,
-        failed: int | None = None,
-        message: str = "",
+        steps: list[PipelineProgressStep],
         error: str | None = None,
     ) -> None:
         """Persist progress in a short independent transaction."""
@@ -170,10 +194,7 @@ class PipelineProgressRunner:
                 pipeline_run_id=pipeline_run_id,
                 phase=phase,
                 status=status,
-                done=done,
-                total=total,
-                failed=failed,
-                message=message,
+                steps=steps,
                 error=error,
             )
             if vault_id is None:

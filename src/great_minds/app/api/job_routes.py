@@ -114,10 +114,7 @@ async def _event_stream(job_id: UUID, vault_id: UUID, settings):
                    status,
                    current_phase,
                    phase_status,
-                   progress_done,
-                   progress_total,
-                   progress_failed,
-                   progress_message,
+                   progress_steps,
                    error,
                    updated_at,
                    completed_at
@@ -129,17 +126,6 @@ async def _event_stream(job_id: UUID, vault_id: UUID, settings):
         )
         if row is None:
             return None
-        progress = None
-        if row["progress_total"] > 0:
-            progress = {
-                "done": row["progress_done"],
-                "total": row["progress_total"],
-                **(
-                    {"failed_items": row["progress_failed"]}
-                    if row["progress_failed"] > 0
-                    else {}
-                ),
-            }
         return {
             "id": str(row["id"]),
             "vault_id": str(row["vault_id"]),
@@ -147,8 +133,7 @@ async def _event_stream(job_id: UUID, vault_id: UUID, settings):
             "job_status": row["status"],
             "phase": row["current_phase"],
             "phase_status": row["phase_status"],
-            **({"progress": progress} if progress is not None else {}),
-            **({"message": row["progress_message"]} if row["progress_message"] else {}),
+            "steps": row["progress_steps"],
             **({"error": row["error"]} if row["error"] else {}),
             "updated_at": row["updated_at"].isoformat() if row["updated_at"] else None,
             "completed_at": row["completed_at"].isoformat()
