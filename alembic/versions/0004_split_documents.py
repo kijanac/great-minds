@@ -26,6 +26,12 @@ def _assert_equal(conn, label: str, query: str) -> None:
 def upgrade() -> None:
     conn = op.get_bind()
 
+    # ── 0. Idempotency — drop any partially-created state ────────────────
+    conn.execute(text("DROP TABLE IF EXISTS backlinks CASCADE"))
+    conn.execute(text("DROP TABLE IF EXISTS source_document_tags CASCADE"))
+    conn.execute(text("DROP TABLE IF EXISTS source_documents CASCADE"))
+    conn.execute(text("DROP TABLE IF EXISTS wiki_articles CASCADE"))
+
     # ── snapshot pre-migration counts ────────────────────────────────────
     raw_count = conn.execute(
         text("SELECT count(*) FROM documents WHERE doc_kind = 'raw'")
@@ -78,11 +84,19 @@ def upgrade() -> None:
         ),
         sa.UniqueConstraint("vault_id", "file_path"),
     )
-    op.create_index("ix_source_documents_vault_id", "source_documents", ["vault_id"])
-    op.create_index("ix_source_documents_compiled", "source_documents", ["compiled"])
     op.execute(
         text(
-            "CREATE INDEX ix_source_documents_metadata_gin "
+            "CREATE INDEX IF NOT EXISTS ix_source_documents_vault_id ON source_documents (vault_id)"
+        )
+    )
+    op.execute(
+        text(
+            "CREATE INDEX IF NOT EXISTS ix_source_documents_compiled ON source_documents (compiled)"
+        )
+    )
+    op.execute(
+        text(
+            "CREATE INDEX IF NOT EXISTS ix_source_documents_metadata_gin "
             "ON source_documents USING GIN (metadata)"
         )
     )
@@ -98,7 +112,11 @@ def upgrade() -> None:
         sa.Column("tag", sa.Text(), nullable=False),
         sa.PrimaryKeyConstraint("document_id", "tag"),
     )
-    op.create_index("ix_source_document_tags_tag", "source_document_tags", ["tag"])
+    op.execute(
+        text(
+            "CREATE INDEX IF NOT EXISTS ix_source_document_tags_tag ON source_document_tags (tag)"
+        )
+    )
 
     op.create_table(
         "wiki_articles",
@@ -131,7 +149,11 @@ def upgrade() -> None:
         sa.UniqueConstraint("vault_id", "file_path"),
         sa.UniqueConstraint("topic_id"),
     )
-    op.create_index("ix_wiki_articles_vault_id", "wiki_articles", ["vault_id"])
+    op.execute(
+        text(
+            "CREATE INDEX IF NOT EXISTS ix_wiki_articles_vault_id ON wiki_articles (vault_id)"
+        )
+    )
 
     # ── 2. Backfill raw docs → source_documents ──────────────────────────
 
@@ -229,13 +251,13 @@ def upgrade() -> None:
     )
     op.execute(
         text(
-            "CREATE INDEX ix_backlinks_source_article_id "
+            "CREATE INDEX IF NOT EXISTS ix_backlinks_source_article_id "
             "ON backlinks (source_article_id)"
         )
     )
     op.execute(
         text(
-            "CREATE INDEX ix_backlinks_target_article_id "
+            "CREATE INDEX IF NOT EXISTS ix_backlinks_target_article_id "
             "ON backlinks (target_article_id)"
         )
     )
