@@ -3,12 +3,12 @@ import { useState } from "react";
 
 import { Button } from "@/components/ui/button";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
-import type { Document } from "@/api/doc";
+import { articleMeta, type Article } from "@/api/doc";
 import { CHIP_BASE, CHIP_INACTIVE } from "@/lib/chip";
 import { cn } from "@/lib/utils";
 
 interface DocHeaderProps {
-  document: Document;
+  document: Article;
   archived?: boolean;
   supersededBy?: string | null;
   onSupersessorClick?: (slug: string) => void;
@@ -29,7 +29,7 @@ export function DocHeader({
   onSupersessorClick,
 }: DocHeaderProps) {
   const [extraOpen, setExtraOpen] = useState(false);
-  const metadata = document.metadata;
+  const metadata = articleMeta(document);
 
   const metaParts: string[] = [];
   if (metadata.author) metaParts.push(metadata.author);

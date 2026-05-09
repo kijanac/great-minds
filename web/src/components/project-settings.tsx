@@ -18,6 +18,7 @@ import {
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
 import { Skeleton } from "@/components/ui/skeleton";
+import { POPOVER_SURFACE_CLASS } from "@/lib/control-styles";
 
 interface ProjectSettingsProps {
   project: VaultDetail | null;
@@ -264,7 +265,7 @@ function DeleteVaultButton({ onDelete }: { onDelete: () => Promise<void> }) {
       >
         delete vault
       </AlertDialogTrigger>
-      <AlertDialogContent>
+      <AlertDialogContent className={POPOVER_SURFACE_CLASS}>
         <AlertDialogHeader>
           <AlertDialogTitle className="font-serif text-[length:var(--text-body)] text-warm">
             Delete this vault?

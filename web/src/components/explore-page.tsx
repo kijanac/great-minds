@@ -11,6 +11,7 @@ import type { ContentTypeFacet } from "@/api/sources";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
+import { FILTER_CHIP_CLASS } from "@/lib/control-styles";
 import { formatShortDate } from "@/lib/utils";
 
 interface ExplorePageProps {
@@ -99,7 +100,11 @@ export function ExplorePage({
                 <ToggleGroup multiple={false} variant="outline" size="sm" className="flex-wrap">
                   {hasSourceTypes && (
                     <>
-                      <ToggleGroupItem value="all-sources" onClick={() => onExploreSources()}>
+                      <ToggleGroupItem
+                        value="all-sources"
+                        onClick={() => onExploreSources()}
+                        className={FILTER_CHIP_CLASS}
+                      >
                         all sources · {contentTypes.reduce((s, ct) => s + ct.count, 0)}
                       </ToggleGroupItem>
                       {contentTypes.map((ct) => (
@@ -107,6 +112,7 @@ export function ExplorePage({
                           key={ct.value}
                           value={`source-${ct.value}`}
                           onClick={() => onExploreSources(ct.value)}
+                          className={FILTER_CHIP_CLASS}
                         >
                           {ct.value} · {ct.count}
                         </ToggleGroupItem>
@@ -114,7 +120,11 @@ export function ExplorePage({
                     </>
                   )}
                   {hasArticles && (
-                    <ToggleGroupItem value="explore-wiki" onClick={onExploreWiki}>
+                    <ToggleGroupItem
+                      value="explore-wiki"
+                      onClick={onExploreWiki}
+                      className={FILTER_CHIP_CLASS}
+                    >
                       explore wiki
                     </ToggleGroupItem>
                   )}

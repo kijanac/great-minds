@@ -88,7 +88,7 @@ export function SearchBar({
                 {s.query}
               </span>
               <span className="font-mono text-[length:var(--text-chrome)] text-muted-foreground shrink-0 ml-3">
-                {formatRelativeDate(s.updated)}
+                {formatRelativeDate(s.updated_at)}
               </span>
             </button>
           ))}

@@ -13,6 +13,7 @@ import {
   SheetTitle,
 } from "@/components/ui/sheet";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
+import { FILTER_CHIP_CLASS } from "@/lib/control-styles";
 
 export interface SuggestionPayload {
   body: string;
@@ -126,7 +127,12 @@ export function SuggestionForm({
                 className="flex-wrap"
               >
                 {INTENT_OPTIONS.map((opt) => (
-                  <ToggleGroupItem key={opt.value} value={opt.value} title={opt.hint}>
+                  <ToggleGroupItem
+                    key={opt.value}
+                    value={opt.value}
+                    title={opt.hint}
+                    className={FILTER_CHIP_CLASS}
+                  >
                     {opt.label}
                   </ToggleGroupItem>
                 ))}

@@ -25,8 +25,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from great_minds.core.compile_cache import CompileCacheRepository
 from great_minds.core.vaults.prompts import load_prompt
-from great_minds.core.documents import DocumentService
-from great_minds.core.documents.schemas import DocKind
+from great_minds.core.documents import SourceDocumentService
 from great_minds.core.llm.client import json_llm_call
 from great_minds.core.hashing import content_hash, prompt_hash
 from great_minds.core.markdown import (
@@ -83,7 +82,7 @@ class ExtractPhase:
         session: AsyncSession,
         progress: PipelineProgressRunner,
         compile_cache: CompileCacheRepository,
-        documents: DocumentService,
+        source_docs: SourceDocumentService,
         ideas: IdeaService,
         config: VaultConfig,
         concurrency: int,
@@ -93,7 +92,7 @@ class ExtractPhase:
         self.session = session
         self.progress = progress
         self.compile_cache = compile_cache
-        self.documents = documents
+        self.source_docs = source_docs
         self.ideas = ideas
         self.config = config
         self.concurrency = concurrency
@@ -129,7 +128,7 @@ class ExtractPhase:
         ph = prompt_hash(prompt_template)
         kinds_key = "|".join(sorted(self.config.kinds))
 
-        docs = await self.documents.list_by_kind(vault_id, DocKind.RAW)
+        docs = await self.source_docs.list_all(vault_id)
         total_docs = len(docs)
         await self.progress.emit(
             pipeline_run_id=pipeline_run_id,
@@ -282,7 +281,7 @@ class ExtractPhase:
         for doc_id in fresh_source_cards:
             await idea_repo.delete_for_document(doc_id)
         await self.ideas.record_extractions(cards, fresh_embeddings)
-        await self.documents.update_metadata_from_cards(vault_id, cards)
+        await self.source_docs.update_metadata_from_cards(vault_id, cards)
         await self.session.commit()
 
         enrich(

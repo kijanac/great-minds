@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 
-import type { Document } from "@/api/doc";
+import type { Article } from "@/api/doc";
+import { isWiki } from "@/api/doc";
 import { postUserSuggestion } from "@/api/ingest";
 import { ArticleChrome } from "@/components/article-chrome";
 import { ArticleView } from "@/components/article-view";
@@ -17,7 +18,7 @@ import type { SelectionInfo } from "@/lib/types";
 
 interface ArticleReaderProps {
   path: string;
-  document: Document | null;
+  document: Article | null;
   body: string | null;
   archived?: boolean;
   supersededBy?: string | null;
@@ -88,7 +89,10 @@ export function ArticleReader({
   }, []);
   const showHint = !hintDismissed && body !== null;
 
-  const displayName = displayTitle(path, document?.metadata.title);
+  const displayName = displayTitle(
+    path,
+    document ? (isWiki(document) ? document.title : document.metadata.title) : null,
+  );
 
   const hint = showHint ? (
     <div className="shrink-0 px-4 md:px-10 py-3 border-t border-ink-subtle animate-[slide-up_0.28s_ease]">

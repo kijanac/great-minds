@@ -17,7 +17,7 @@ from uuid import UUID
 
 from pydantic import BaseModel
 
-from great_minds.core.documents import DocKind, Document, DocumentService
+from great_minds.core.documents import SourceDocumentService, SourceDocument
 from great_minds.core.paths import (
     RAW_INDEX_PATH,
     RAW_PREFIX,
@@ -67,7 +67,7 @@ class PublishPhase:
         storage: Storage,
         sidecar_root: Path,
         topics: TopicService,
-        documents: DocumentService,
+        source_docs: SourceDocumentService,
         search: SearchService,
         progress: PipelineProgressRunner,
         pipeline_run_id: UUID,
@@ -75,7 +75,7 @@ class PublishPhase:
         self.storage = storage
         self.sidecar_root = sidecar_root
         self.topics = topics
-        self.documents = documents
+        self.source_docs = source_docs
         self.search = search
         self.progress = progress
         self.pipeline_run_id = pipeline_run_id
@@ -104,7 +104,7 @@ class PublishPhase:
         rendered_topics = await self.topics.list_for_vault(
             vault_id, ArticleStatus.RENDERED
         )
-        raw_docs = await self.documents.list_by_kind(vault_id, DocKind.RAW)
+        raw_docs = await self.source_docs.list_all(vault_id)
 
         await self.progress.emit(
             pipeline_run_id=self.pipeline_run_id,
@@ -185,7 +185,7 @@ class PublishPhase:
     # Raw index
     # ---------------------------------------------------------------------------
 
-    async def _write_raw_index(self, docs: list[Document]) -> None:
+    async def _write_raw_index(self, docs: list[SourceDocument]) -> None:
         ordered = sorted(docs, key=lambda d: d.metadata.title.lower())
         lines = [
             "# Raw Sources",
@@ -225,7 +225,7 @@ class PublishPhase:
                 vault_id, ArticleStatus.ARCHIVED
             ),
             topics_dirty=await self.topics.count_dirty(vault_id),
-            docs_raw=await self.documents.count_by_kind(vault_id, DocKind.RAW),
+            docs_raw=await self.source_docs.count(vault_id),
             chunks_raw=await self.search.count_by_prefix(vault_id, RAW_PREFIX),
             chunks_wiki=await self.search.count_by_prefix(vault_id, WIKI_PREFIX),
         )

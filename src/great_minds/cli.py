@@ -30,8 +30,8 @@ from great_minds.app.api.server import create_app
 from great_minds.core.workers import create_absurd
 from great_minds.core import pipeline as compile_pipeline, querier
 from great_minds.core.documents.builder import write_document, write_file
-from great_minds.core.documents.repository import DocumentRepository
-from great_minds.core.documents.service import DocumentService
+from great_minds.core.documents.repository import SourceDocumentRepo, WikiArticleRepo
+from great_minds.core.documents.service import SourceDocumentService, WikiArticleService
 from great_minds.core.llm import get_async_client
 from great_minds.core.paths import VAULT_SUBDIRS, raw_prefix, sidecar_root, vault_dir
 from great_minds.core.settings import get_settings
@@ -159,9 +159,11 @@ async def compile(  # noqa: A001
 # query ----------------------------------------------------------------------
 
 
-async def _stream_answer(source, question, doc_service, model):
+async def _stream_answer(source, question, doc_service, wiki_service, model):
     print(f"\n> {question}\n")
-    async for event in querier.run_query(source, question, doc_service, model=model):
+    async for event in querier.run_query(
+        source, question, doc_service, wiki_service, model=model
+    ):
         kind, data = event["event"], event["data"]
         if kind == "token":
             print(data["text"], end="", flush=True)
@@ -193,9 +195,12 @@ async def query(
     )
     async with _cli_session():
         async with _cli_sm.get()() as session:
-            doc_service = DocumentService(DocumentRepository(session))
+            doc_service = SourceDocumentService(SourceDocumentRepo(session))
+            wiki_service = WikiArticleService(WikiArticleRepo(session))
             if question:
-                await _stream_answer(source, " ".join(question), doc_service, model)
+                await _stream_answer(
+                    source, " ".join(question), doc_service, wiki_service, model
+                )
                 return
             console.print(
                 Panel.fit(
@@ -212,7 +217,7 @@ async def query(
                     return
                 if not q or q.lower() in ("quit", "exit", "q"):
                     return
-                await _stream_answer(source, q, doc_service, model)
+                await _stream_answer(source, q, doc_service, wiki_service, model)
 
 
 # ingest ---------------------------------------------------------------------

@@ -10,7 +10,7 @@ from uuid import UUID
 
 from sqlalchemy import update
 
-from great_minds.core.documents.service import DocumentService
+from great_minds.core.documents.service import SourceDocumentService
 from great_minds.core.pagination import Page, PageParams, create_page
 from great_minds.core.paths import proposal_staging_path
 from great_minds.core.proposals.models import ProposalORM, ProposalStatus
@@ -29,7 +29,7 @@ class ProposalService:
     def __init__(
         self,
         repo: ProposalRepository,
-        doc_service: DocumentService,
+        doc_service: SourceDocumentService,
         proposals_storage: Storage,
     ) -> None:
         self.repo = repo
@@ -136,7 +136,7 @@ class ProposalService:
         path = proposal_staging_path(proposal.id)
         rendered = await self.proposals_storage.read(path)
         await storage.write(proposal.dest_path, rendered)
-        document_id = await self.doc_service.index_raw_doc(
+        document_id = await self.doc_service.index(
             proposal.vault_id, proposal.dest_path, rendered
         )
         await self.repo.session.execute(

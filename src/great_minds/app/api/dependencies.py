@@ -16,7 +16,12 @@ from great_minds.core.compile_intents import (
     CompileIntentService,
 )
 from great_minds.core.crypto import decode_access_token
-from great_minds.core.documents import DocumentRepository, DocumentService
+from great_minds.core.documents import (
+    SourceDocumentRepo,
+    SourceDocumentService,
+    WikiArticleRepo,
+    WikiArticleService,
+)
 from great_minds.core.ingest_service import IngestService
 from great_minds.core.jobs import JobService
 from great_minds.core.llm_costs import LlmCostEventRepository, LlmCostService
@@ -93,11 +98,18 @@ def get_vault_repository(session: SessionDep) -> VaultRepository:
 VaultRepositoryDep = Annotated[VaultRepository, Depends(get_vault_repository)]
 
 
-def get_document_repository(session: SessionDep) -> DocumentRepository:
-    return DocumentRepository(session)
+def get_source_document_repo(session: SessionDep) -> SourceDocumentRepo:
+    return SourceDocumentRepo(session)
 
 
-DocumentRepositoryDep = Annotated[DocumentRepository, Depends(get_document_repository)]
+SourceDocumentRepoDep = Annotated[SourceDocumentRepo, Depends(get_source_document_repo)]
+
+
+def get_wiki_article_repo(session: SessionDep) -> WikiArticleRepo:
+    return WikiArticleRepo(session)
+
+
+WikiArticleRepoDep = Annotated[WikiArticleRepo, Depends(get_wiki_article_repo)]
 
 
 def get_proposal_repository(session: SessionDep) -> ProposalRepository:
@@ -137,11 +149,20 @@ CompileIntentRepositoryDep = Annotated[
 # ---------------------------------------------------------------------------
 
 
-def get_document_service(repo: DocumentRepositoryDep) -> DocumentService:
-    return DocumentService(repo)
+def get_source_document_service(repo: SourceDocumentRepoDep) -> SourceDocumentService:
+    return SourceDocumentService(repo)
 
 
-DocumentServiceDep = Annotated[DocumentService, Depends(get_document_service)]
+SourceDocumentServiceDep = Annotated[
+    SourceDocumentService, Depends(get_source_document_service)
+]
+
+
+def get_wiki_article_service(repo: WikiArticleRepoDep) -> WikiArticleService:
+    return WikiArticleService(repo)
+
+
+WikiArticleServiceDep = Annotated[WikiArticleService, Depends(get_wiki_article_service)]
 
 
 def get_llm_cost_service(session: SessionDep) -> LlmCostService:
@@ -163,7 +184,7 @@ VaultServiceDep = Annotated[VaultService, Depends(get_vault_service)]
 
 
 def get_ingest_service(
-    doc_service: DocumentServiceDep,
+    doc_service: SourceDocumentServiceDep,
     vault_service: VaultServiceDep,
     settings: SettingsDep,
 ) -> IngestService:
@@ -212,7 +233,7 @@ ProposalsStorageDep = Annotated[LocalStorage, Depends(get_proposals_storage)]
 
 def get_proposal_service(
     repo: ProposalRepositoryDep,
-    doc_service: DocumentServiceDep,
+    doc_service: SourceDocumentServiceDep,
     proposals_storage: ProposalsStorageDep,
 ) -> ProposalService:
     return ProposalService(repo, doc_service, proposals_storage)

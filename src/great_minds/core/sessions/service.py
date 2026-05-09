@@ -71,7 +71,7 @@ class SessionService:
             ts=now_iso(),
         )
         await self.repo.append_event(session_id, ex)
-        await self.repo.upsert_overview(vault_id, meta, updated=ex.ts)
+        await self.repo.upsert_overview(vault_id, meta, updated_at=ex.ts)
         await self.repo.session.commit()
 
         await self._rebuild_md(session_id)

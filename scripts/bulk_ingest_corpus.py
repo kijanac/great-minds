@@ -25,9 +25,9 @@ from great_minds.core.documents.builder import write_document
 from great_minds.core.markdown import parse_frontmatter
 from great_minds.core.settings import get_settings
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
-from great_minds.core.documents.repository import DocumentRepository
-from great_minds.core.documents.schemas import DocumentCreate
-from great_minds.core.documents.service import DocumentService
+from great_minds.core.documents.repository import SourceDocumentRepo
+from great_minds.core.documents.schemas import SourceDocCreate
+from great_minds.core.documents.service import SourceDocumentService
 from great_minds.core.storage import LocalStorage
 
 
@@ -56,10 +56,10 @@ async def main(
     engine = create_async_engine(settings.database_url)
     sm = async_sessionmaker(engine, expire_on_commit=False)
     async with sm() as session:
-        doc_service = DocumentService(DocumentRepository(session))
+        doc_service = SourceDocumentService(SourceDocumentRepo(session))
         existing_hashes = await doc_service.get_raw_file_hashes(vault_id)
 
-        batch: list[DocumentCreate] = []
+        batch: list[SourceDocCreate] = []
         ingested = 0
         skipped = 0
 
@@ -81,17 +81,17 @@ async def main(
             ingested += 1
 
             fm, _ = parse_frontmatter(content_with_fm)
-            batch.append(DocumentCreate.from_frontmatter(fm, dest, content_with_fm))
+            batch.append(SourceDocCreate.from_frontmatter(fm, dest, content_with_fm))
 
             if len(batch) >= 50:
-                await doc_service.batch_index_raw_docs(vault_id, batch)
+                await doc_service.batch_index(vault_id, batch)
                 batch.clear()
 
             if (i + 1) % 25 == 0:
                 print(f"  {i + 1}/{total} (ingested={ingested}, skipped={skipped})")
 
         if batch:
-            await doc_service.batch_index_raw_docs(vault_id, batch)
+            await doc_service.batch_index(vault_id, batch)
 
     print(f"\nDone: ingested={ingested}, skipped={skipped}, total={total}")
 

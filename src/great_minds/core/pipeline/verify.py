@@ -20,7 +20,7 @@ needing to hit the endpoint.
 import logging
 from uuid import UUID
 
-from great_minds.core.documents import Backlink, DocKind, Document, DocumentService
+from great_minds.core.documents import Backlink, WikiArticle, WikiArticleService
 from great_minds.core.markdown import extract_wiki_link_targets
 from great_minds.core.paths import wiki_path, wiki_slug
 from great_minds.core.pipeline_runs import (
@@ -50,13 +50,13 @@ class VerifyPhase:
         *,
         storage: Storage,
         topics: TopicService,
-        documents: DocumentService,
+        wiki_articles: WikiArticleService,
         progress: PipelineProgressRunner,
         pipeline_run_id: UUID,
     ) -> None:
         self.storage = storage
         self.topics = topics
-        self.documents = documents
+        self.wiki_articles = wiki_articles
         self.progress = progress
         self.pipeline_run_id = pipeline_run_id
 
@@ -112,7 +112,7 @@ class VerifyPhase:
         article_by_topic = await self._load_wiki_articles(vault_id)
 
         backlinks: list[Backlink] = []
-        source_document_ids: list[UUID] = []
+        source_article_ids: list[UUID] = []
         # source_topic_id -> set of cited slugs found in its prose (for unmentioned check)
         cited_by_source: dict[UUID, set[str]] = {}
         unresolved_count = 0
@@ -136,7 +136,7 @@ class VerifyPhase:
                 continue
 
             source_article = article_by_topic[topic.topic_id]
-            source_document_ids.append(source_article.id)
+            source_article_ids.append(source_article.id)
             articles_walked += 1
             link_paths = extract_wiki_link_targets(content)
             cited_slugs: set[str] = set()
@@ -160,8 +160,8 @@ class VerifyPhase:
                 cited_slugs.add(slug)
                 backlinks.append(
                     Backlink(
-                        source_document_id=source_article.id,
-                        target_document_id=target_article.id,
+                        source_article_id=source_article.id,
+                        target_article_id=target_article.id,
                     )
                 )
 
@@ -198,8 +198,8 @@ class VerifyPhase:
             cited_by_source=cited_by_source,
         )
 
-        await self.documents.replace_wiki_backlinks(
-            source_document_ids=source_document_ids,
+        await self.wiki_articles.replace_backlinks(
+            source_ids=source_article_ids,
             backlinks=backlinks,
         )
 
@@ -227,15 +227,10 @@ class VerifyPhase:
             ),
         )
 
-    async def _load_wiki_articles(self, vault_id: UUID) -> dict[UUID, Document]:
-        """Map topic_id → wiki Document for the rendered set.
-
-        Wiki documents always carry a topic_id (FK enforced via the partial
-        unique index). Rows missing it would be schema corruption — skip
-        rather than crash so verify can still run on the well-formed set.
-        """
-        docs = await self.documents.list_by_kind(vault_id, DocKind.WIKI)
-        return {doc.topic_id: doc for doc in docs if doc.topic_id is not None}
+    async def _load_wiki_articles(self, vault_id: UUID) -> dict[UUID, WikiArticle]:
+        """Map topic_id → WikiArticle."""
+        articles = await self.wiki_articles.list_all(vault_id)
+        return {a.topic_id: a for a in articles}
 
     async def _detect_unmentioned_links(
         self,

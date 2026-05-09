@@ -12,7 +12,8 @@ from great_minds.app.api.dependencies import (
     VaultServiceDep,
     CurrentUser,
     LlmGuard,
-    DocumentServiceDep,
+    SourceDocumentServiceDep,
+    WikiArticleServiceDep,
     MailerDep,
     PageParamsQuery,
     UserServiceDep,
@@ -31,7 +32,6 @@ from great_minds.core.vaults.schemas import (
     VaultConfigUpdate,
     VaultCreate,
 )
-from great_minds.core.documents import DocKind
 from great_minds.core.llm import get_async_client
 from great_minds.core.pagination import Page
 
@@ -88,7 +88,8 @@ async def get_vault(
     user: CurrentUser,
     vault_service: VaultServiceDep,
     vault_access: VaultAccessDep,
-    doc_service: DocumentServiceDep,
+    wiki_service: WikiArticleServiceDep,
+    source_service: SourceDocumentServiceDep,
 ) -> VaultDetail:
     try:
         vault = await vault_service.get_vault(vault_id)
@@ -100,7 +101,7 @@ async def get_vault(
         raise HTTPException(status_code=403, detail="Not a member of this vault")
 
     member_count = await vault_service.get_member_count(vault.id)
-    article_count = await doc_service.count_by_kind(vault.id, DocKind.WIKI)
+    article_count = await wiki_service.count(vault.id)
 
     return VaultDetail(
         **vault.model_dump(),

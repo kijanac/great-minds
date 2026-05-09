@@ -1,29 +1,45 @@
 """Public API for the documents bounded context."""
 
-from great_minds.core.documents.models import BacklinkORM, DocumentORM, DocumentTag
-from great_minds.core.documents.repository import DocumentRepository
+from great_minds.core.documents.models import (
+    BacklinkORM,
+    SourceDocumentORM,
+    SourceDocumentTag,
+    WikiArticleORM,
+)
+from great_minds.core.documents.repository import SourceDocumentRepo, WikiArticleRepo
 from great_minds.core.documents.schemas import (
     Backlink,
-    DocKind,
-    Document,
-    DocumentCreate,
     DocumentMetadata,
+    FileHash,
+    IngestedDocument,
+    SourceDocCreate,
+    SourceDocument,
     SourceDocumentFacets,
+    SourceMetadata,
+    WikiArticle,
+    WikiArticleCreate,
     WikiArticleOverview,
 )
-from great_minds.core.documents.service import DocumentService
+from great_minds.core.documents.service import SourceDocumentService, WikiArticleService
 
 __all__ = [
     "Backlink",
     "BacklinkORM",
-    "DocKind",
-    "Document",
-    "DocumentCreate",
     "DocumentMetadata",
-    "DocumentORM",
-    "DocumentRepository",
-    "DocumentService",
-    "DocumentTag",
+    "FileHash",
+    "IngestedDocument",
+    "SourceDocCreate",
+    "SourceDocument",
     "SourceDocumentFacets",
+    "SourceDocumentORM",
+    "SourceDocumentRepo",
+    "SourceDocumentService",
+    "SourceDocumentTag",
+    "SourceMetadata",
+    "WikiArticle",
+    "WikiArticleCreate",
+    "WikiArticleORM",
     "WikiArticleOverview",
+    "WikiArticleRepo",
+    "WikiArticleService",
 ]

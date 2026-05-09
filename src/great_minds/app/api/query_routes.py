@@ -10,7 +10,8 @@ from great_minds.app.api.dependencies import (
     VaultServiceDep,
     VaultStorageDep,
     CurrentUser,
-    DocumentServiceDep,
+    SourceDocumentServiceDep,
+    WikiArticleServiceDep,
     LlmGuard,
 )
 from great_minds.app.api.schemas import query as schemas
@@ -26,7 +27,8 @@ async def query(
     storage: VaultStorageDep,
     user: CurrentUser,
     vault_service: VaultServiceDep,
-    doc_service: DocumentServiceDep,
+    doc_service: SourceDocumentServiceDep,
+    wiki_service: WikiArticleServiceDep,
     _llm: LlmGuard,
 ) -> StreamingResponse:
     """Stream answer events as SSE.
@@ -45,6 +47,7 @@ async def query(
             source,
             req.question,
             doc_service,
+            wiki_service,
             user_id=user.id,
             model=req.model,
             origin_path=req.origin_path,

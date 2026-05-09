@@ -19,7 +19,7 @@ from uuid import UUID
 from openai import AsyncOpenAI
 
 from great_minds.core.compile_cache import CompileCacheRepository
-from great_minds.core.documents import DocumentService
+from great_minds.core.documents import WikiArticleService
 from great_minds.core.ideas.service import IdeaService
 from great_minds.core.pipeline.abstract import (
     canonicalize,
@@ -60,7 +60,7 @@ class AbstractPhase:
         compile_cache: CompileCacheRepository,
         ideas: IdeaService,
         topics: TopicService,
-        documents: DocumentService,
+        wiki_articles: WikiArticleService,
         thematic_hint: str,
         settings: Settings,
         progress: PipelineProgressRunner,
@@ -71,7 +71,7 @@ class AbstractPhase:
         self.compile_cache = compile_cache
         self.ideas = ideas
         self.topics = topics
-        self.documents = documents
+        self.wiki_articles = wiki_articles
         self.thematic_hint = thematic_hint
         self.settings = settings
         self.progress = progress
@@ -203,7 +203,7 @@ class AbstractPhase:
                     storage=self.storage,
                     client=self.client,
                     topics=self.topics,
-                    documents=self.documents,
+                    wiki_articles=self.wiki_articles,
                 ).run(vault_id, canonical_topics, merged_topics)
 
         enrich(validated_topics=len(validated))

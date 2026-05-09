@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 from uuid import UUID
 
 from pydantic import ValidationError
-from sqlalchemy import Text, cast, func, select, update
+from sqlalchemy import func, select, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -28,6 +28,10 @@ log = logging.getLogger(__name__)
 
 def now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+def _parse_iso(ts: str) -> datetime:
+    return datetime.fromisoformat(ts)
 
 
 def _parse_event(data: dict) -> SessionEvent | None:
@@ -90,7 +94,7 @@ class SessionRepository:
         return events
 
     async def upsert_overview(
-        self, vault_id: UUID, meta: MetaEvent, *, updated: str
+        self, vault_id: UUID, meta: MetaEvent, *, updated_at: str
     ) -> None:
         """Upsert the DB listing index for a session JSONL event log."""
         stmt = (
@@ -101,8 +105,8 @@ class SessionRepository:
                 user_id=UUID(meta.user_id),
                 query=meta.query,
                 origin=meta.origin.model_dump(mode="json") if meta.origin else None,
-                created=meta.ts,
-                updated=updated,
+                created_at=_parse_iso(meta.ts),
+                updated_at=_parse_iso(updated_at),
             )
             .on_conflict_do_update(
                 index_elements=[SessionRecordORM.id, SessionRecordORM.vault_id],
@@ -112,15 +116,15 @@ class SessionRepository:
                     "origin": meta.origin.model_dump(mode="json")
                     if meta.origin
                     else None,
-                    "created": meta.ts,
-                    "updated": updated,
+                    "created_at": _parse_iso(meta.ts),
+                    "updated_at": _parse_iso(updated_at),
                 },
             )
         )
         await self.session.execute(stmt)
 
     async def touch_updated(
-        self, vault_id: UUID, session_id: str, updated: str
+        self, vault_id: UUID, session_id: str, updated_at: str
     ) -> None:
         await self.session.execute(
             update(SessionRecordORM)
@@ -128,7 +132,7 @@ class SessionRepository:
                 SessionRecordORM.vault_id == vault_id,
                 SessionRecordORM.id == session_id,
             )
-            .values(updated=updated)
+            .values(updated_at=_parse_iso(updated_at))
         )
 
     async def count_overviews(
@@ -152,24 +156,15 @@ class SessionRepository:
         offset: int = 0,
     ) -> list[SessionOverview]:
         """List session overviews from the DB index, newest first."""
-        stmt = select(
-            SessionRecordORM.id,
-            SessionRecordORM.query,
-            SessionRecordORM.created,
-            SessionRecordORM.updated,
-            cast(SessionRecordORM.user_id, Text).label("user_id"),
-            SessionRecordORM.origin,
-        ).where(SessionRecordORM.vault_id == vault_id)
+        stmt = select(SessionRecordORM).where(SessionRecordORM.vault_id == vault_id)
         if user_id is not None:
             stmt = stmt.where(SessionRecordORM.user_id == UUID(user_id))
-        rows = (
-            await self.session.execute(
-                stmt.order_by(SessionRecordORM.updated.desc())
-                .offset(offset)
-                .limit(limit)
-            )
-        ).all()
-        return [SessionOverview.model_validate(row) for row in rows]
+        result = await self.session.execute(
+            stmt.order_by(SessionRecordORM.updated_at.desc())
+            .offset(offset)
+            .limit(limit)
+        )
+        return [SessionOverview.model_validate(row) for row in result.scalars().all()]
 
     @staticmethod
     def find_meta(events: list[SessionEvent]) -> MetaEvent | None:

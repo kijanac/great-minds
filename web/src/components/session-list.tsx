@@ -128,7 +128,7 @@ export function SessionList({
                     {s.query}
                   </span>
                   <span className="font-mono text-[length:var(--text-chrome)] text-muted-foreground flex items-center gap-3">
-                    <span>{formatDate(s.updated)}</span>
+                    <span>{formatDate(s.updated_at)}</span>
                   </span>
                 </Button>
               </div>

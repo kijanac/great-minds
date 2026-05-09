@@ -4,10 +4,10 @@ import { useNavigate } from "react-router";
 
 import { Button } from "@/components/ui/button";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { MENU_ITEM_CLASS, POPOVER_SURFACE_CLASS } from "@/lib/control-styles";
 import { useActiveVaultId, useVaults, useSwitchVault } from "@/hooks/use-vault";
 
-const ITEM_CLASS =
-  "font-mono text-[length:var(--text-chrome)] tracking-[0.1em] text-warm-faint hover:text-warm hover:bg-ink-raised rounded-sm gap-2 flex-1 justify-start";
+const ITEM_CLASS = `${MENU_ITEM_CLASS} gap-2 flex-1 justify-start`;
 
 export function ProjectSwitcher() {
   const navigate = useNavigate();
@@ -74,7 +74,7 @@ export function ProjectSwitcher() {
         side="bottom"
         align="end"
         sideOffset={8}
-        className="w-auto min-w-[220px] p-1 rounded-sm bg-ink-panel border-ink-border"
+        className={`w-auto min-w-[220px] p-1 ${POPOVER_SURFACE_CLASS}`}
       >
         {list.map((vault) => {
           const isActive = vault.id === activeVaultId;

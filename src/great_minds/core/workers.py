@@ -21,9 +21,9 @@ from great_minds.core.pipeline.steps import absurd_step_runner
 from great_minds.core.vaults.config import load_config
 from great_minds.core.vaults.repository import VaultRepository
 from great_minds.core.documents.builder import build_document
-from great_minds.core.documents.repository import DocumentRepository
-from great_minds.core.documents.schemas import DocumentCreate
-from great_minds.core.documents.service import DocumentService
+from great_minds.core.documents.repository import SourceDocumentRepo
+from great_minds.core.documents.schemas import SourceDocCreate
+from great_minds.core.documents.service import SourceDocumentService
 from great_minds.core.ingest_service import _convert_to_markdown
 from great_minds.core.llm import get_async_client
 from great_minds.core.llm_costs import record_wide_event_cost
@@ -229,21 +229,21 @@ async def _index_fetched_results(
     content_type: str,
     storage,
     existing_hashes: dict[str, str],
-    doc_service: DocumentService,
+    doc_service: SourceDocumentService,
     progress: PipelineProgressRunner,
     pipeline_run_id: UUID,
 ) -> tuple[int, int, int, list[str]]:
     """Drain fetches as they complete, write+upsert in batches.
 
     Returns (ingested, skipped, failed, keys_to_clean). Each batch flush
-    goes through ``DocumentService.batch_index_raw_docs``, which upserts
+    goes through ``SourceDocumentService.batch_index``, which upserts
     and commits without emitting compile intents; the caller emits one
     intent after the full staged upload is indexed.
     """
     ingested = 0
     skipped = 0
     failed = 0
-    batch: list[DocumentCreate] = []
+    batch: list[SourceDocCreate] = []
     keys_to_clean: list[str] = []
     seen_dest: set[str] = set()  # dedupe within this run for batch_upsert
     failed_names: list[str] = []
@@ -287,11 +287,11 @@ async def _index_fetched_results(
         await storage.write(dest, content_with_fm)
         seen_dest.add(dest)
         fm, _ = parse_frontmatter(content_with_fm)
-        batch.append(DocumentCreate.from_frontmatter(fm, dest, content_with_fm))
+        batch.append(SourceDocCreate.from_frontmatter(fm, dest, content_with_fm))
         ingested += 1
 
         if len(batch) >= _STAGING_BATCH_SIZE:
-            await doc_service.batch_index_raw_docs(vault_id, batch)
+            await doc_service.batch_index(vault_id, batch)
             batch.clear()
             done = ingested + skipped
             await progress.emit(
@@ -307,7 +307,7 @@ async def _index_fetched_results(
             )
 
     if batch:
-        await doc_service.batch_index_raw_docs(vault_id, batch)
+        await doc_service.batch_index(vault_id, batch)
 
     done = ingested + skipped
     await progress.emit(
@@ -360,7 +360,7 @@ async def staged_file_ingest_task(params: dict, ctx) -> None:
 
     Idempotency comes from content-addressable dest paths
     (``raw/<content_type>/<hash[:12]>.md``) plus
-    ``DocumentRepository.batch_upsert``'s ``(vault_id, file_path)``
+    ``SourceDocumentRepo.batch_upsert``'s ``(vault_id, file_path)``
     conflict target. Re-running the task on the same hashes is a no-op.
     """
     vault_id = UUID(params["vault_id"])
@@ -405,10 +405,10 @@ async def staged_file_ingest_task(params: dict, ctx) -> None:
         )
         await ctx.heartbeat(600)
 
-        doc_service = DocumentService(
-            DocumentRepository(session), pipeline_run_id=pipeline_run_id
+        doc_service = SourceDocumentService(
+            SourceDocumentRepo(session), pipeline_run_id=pipeline_run_id
         )
-        existing_hashes = await doc_service.get_raw_file_hashes(vault_id)
+        existing_hashes = await doc_service.file_hashes(vault_id)
         await progress.emit(
             pipeline_run_id=pipeline_run_id,
             phase="source_ingest",

@@ -76,8 +76,8 @@ const sessionEventSchema = z.discriminatedUnion("type", [
 const sessionSummarySchema = z.object({
   id: z.string(),
   query: z.string(),
-  created: z.string(),
-  updated: z.string(),
+  created_at: z.string(),
+  updated_at: z.string(),
   user_id: z.string(),
   origin: sessionOriginSchema.nullish(),
 });

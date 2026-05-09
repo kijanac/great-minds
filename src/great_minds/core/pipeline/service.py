@@ -8,7 +8,12 @@ from openai import AsyncOpenAI
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from great_minds.core.compile_cache import CompileCacheRepository
-from great_minds.core.documents import DocumentRepository, DocumentService
+from great_minds.core.documents import (
+    SourceDocumentRepo,
+    SourceDocumentService,
+    WikiArticleRepo,
+    WikiArticleService,
+)
 from great_minds.core.ideas.repository import IdeaEmbeddingRepository
 from great_minds.core.ideas.service import IdeaService
 from great_minds.core.paths import sidecar_root
@@ -164,7 +169,8 @@ async def build_compile_service(
 ) -> CompileService:
     settings = settings or get_settings()
     compile_sidecar_root = sidecar_root(Path(settings.data_dir), vault_id)
-    documents = DocumentService(DocumentRepository(session))
+    source_docs = SourceDocumentService(SourceDocumentRepo(session))
+    wiki_articles = WikiArticleService(WikiArticleRepo(session))
     ideas = IdeaService(
         embedding_repo=IdeaEmbeddingRepository(session),
         storage=storage,
@@ -193,7 +199,7 @@ async def build_compile_service(
                 session=session,
                 progress=progress,
                 compile_cache=compile_cache,
-                documents=documents,
+                source_docs=source_docs,
                 ideas=ideas,
                 config=config,
                 concurrency=settings.compile_enrich_concurrency,
@@ -204,7 +210,7 @@ async def build_compile_service(
                 compile_cache=compile_cache,
                 ideas=ideas,
                 topics=topics,
-                documents=documents,
+                wiki_articles=wiki_articles,
                 thematic_hint=config.thematic_hint,
                 settings=settings,
                 progress=progress,
@@ -223,7 +229,8 @@ async def build_compile_service(
                 progress=progress,
                 compile_cache=compile_cache,
                 steps=step_runner,
-                documents=documents,
+                source_docs=source_docs,
+                wiki_articles=wiki_articles,
                 topics=topics,
                 search=search,
                 source_cards=ideas.source_cards,
@@ -232,7 +239,7 @@ async def build_compile_service(
             verify=verify.VerifyPhase(
                 storage=storage,
                 topics=topics,
-                documents=documents,
+                wiki_articles=wiki_articles,
                 progress=progress,
                 pipeline_run_id=pipeline_run_id,
             ),
@@ -240,7 +247,7 @@ async def build_compile_service(
                 storage=storage,
                 sidecar_root=compile_sidecar_root,
                 topics=topics,
-                documents=documents,
+                source_docs=source_docs,
                 search=search,
                 progress=progress,
                 pipeline_run_id=pipeline_run_id,

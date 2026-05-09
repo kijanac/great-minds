@@ -24,7 +24,7 @@ from dataclasses import dataclass, field
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from great_minds.core.documents import DocumentRepository, WikiArticleOverview
+from great_minds.core.documents import WikiArticleRepo, WikiArticleOverview
 from great_minds.core.markdown import extract_wiki_link_targets
 from great_minds.core.paths import wiki_path, wiki_slug
 from great_minds.core.storage import Storage
@@ -60,10 +60,10 @@ async def build_lint_report(
     vault_id: uuid.UUID,
     storage: Storage,
 ) -> LintReport:
-    doc_repo = DocumentRepository(session)
+    doc_repo = WikiArticleRepo(session)
     topic_repo = TopicRepository(session)
 
-    orphans = await doc_repo.list_orphan_wiki_documents(vault_id)
+    orphans = await doc_repo.list_orphans(vault_id)
     rendered = await topic_repo.list_for_vault(vault_id, ArticleStatus.RENDERED)
     if not rendered:
         dirty = await topic_repo.list_dirty_topic_ids(vault_id)

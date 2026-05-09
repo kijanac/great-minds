@@ -166,6 +166,14 @@
   --color-interactive-ghost: var(--interactive-ghost);
   --color-code-bg: var(--code-bg);
 
+  /* Component surface/control tokens for shadcn/Base UI primitives */
+  --color-control-popover: var(--control-popover);
+  --color-control-popover-foreground: var(--control-popover-foreground);
+  --color-control-hover: var(--control-hover);
+  --color-control-active: var(--control-active);
+  --color-control-active-foreground: var(--control-active-foreground);
+  --color-control-border: var(--control-border);
+
   --radius-sm: calc(var(--radius) * 0.6);
   --radius-md: calc(var(--radius) * 0.8);
   --radius-lg: var(--radius);
@@ -226,6 +234,14 @@
   --interactive-dim: #bab0a0;
   --interactive-ghost: #c8c0b0;
   --code-bg: #c8c0b0;
+
+  /* Component surface/control tokens */
+  --control-popover: var(--ink-panel);
+  --control-popover-foreground: var(--warm-faint);
+  --control-hover: var(--ink-raised);
+  --control-active: color-mix(in oklab, var(--gold) 10%, transparent);
+  --control-active-foreground: var(--gold);
+  --control-border: var(--ink-border);
 }
 
 /* Dark theme */
@@ -277,6 +293,14 @@
   --interactive-dim: #3a3020;
   --interactive-ghost: #1a1a1a;
   --code-bg: #151510;
+
+  /* Component surface/control tokens */
+  --control-popover: var(--ink-panel);
+  --control-popover-foreground: var(--warm-faint);
+  --control-hover: var(--ink-raised);
+  --control-active: color-mix(in oklab, var(--gold) 10%, transparent);
+  --control-active-foreground: var(--gold);
+  --control-border: var(--ink-border);
 }
 
 @layer base {

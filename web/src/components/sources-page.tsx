@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
+import { FILTER_CHIP_CLASS } from "@/lib/control-styles";
 import { formatShortDate } from "@/lib/utils";
 
 const ALL_TYPES_VALUE = "__all";
@@ -80,9 +81,11 @@ export function SourcesPage({
               size="sm"
               className="mb-8 flex-wrap"
             >
-              <ToggleGroupItem value={ALL_TYPES_VALUE}>all · {totalCount}</ToggleGroupItem>
+              <ToggleGroupItem value={ALL_TYPES_VALUE} className={FILTER_CHIP_CLASS}>
+                all · {totalCount}
+              </ToggleGroupItem>
               {contentTypes.map((ct) => (
-                <ToggleGroupItem key={ct.value} value={ct.value}>
+                <ToggleGroupItem key={ct.value} value={ct.value} className={FILTER_CHIP_CLASS}>
                   {ct.value} · {ct.count}
                 </ToggleGroupItem>
               ))}

@@ -20,8 +20,7 @@ from .vaults.config import load_vault_config
 from .vaults.prompts import load_prompt
 from .search import SearchIndexRepository, SearchService
 from .markdown import extract_wiki_link_targets
-from .documents.schemas import DocKind
-from .documents.service import DocumentService
+from .documents.service import SourceDocumentService, WikiArticleService
 from .llm import QUERY_MODEL, get_async_client
 from .llm.client import api_stream, is_retryable, models_with_fallback
 from .llm_costs import record_wide_event_cost
@@ -78,14 +77,15 @@ class MalformedToolArgs(ValueError):
 class SourceConsulted:
     """A document the query engine read while answering."""
 
-    kind: DocKind
+    kind: str
     path: str
     title: str | None = None
 
 
 async def _build_sources_consulted(
     vault: "QuerySource",
-    doc_service: DocumentService,
+    source: SourceDocumentService,
+    wiki: WikiArticleService,
     articles_read: list[str],
     sources_read: list[str],
 ) -> list[SourceConsulted]:
@@ -94,13 +94,13 @@ async def _build_sources_consulted(
     for path in articles_read:
         if path not in seen:
             seen.add(path)
-            title = await doc_service.get_title_by_path(vault.vault_id, path)
-            out.append(SourceConsulted(kind=DocKind.WIKI, path=path, title=title))
+            title = await wiki.get_title_by_path(vault.vault_id, path)
+            out.append(SourceConsulted(kind="wiki", path=path, title=title))
     for path in sources_read:
         if path not in seen:
             seen.add(path)
-            title = await doc_service.get_title_by_path(vault.vault_id, path)
-            out.append(SourceConsulted(kind=DocKind.RAW, path=path, title=title))
+            title = await source.get_title_by_path(vault.vault_id, path)
+            out.append(SourceConsulted(kind="raw", path=path, title=title))
     return out
 
 
@@ -186,10 +186,6 @@ def _build_query_tool(tags: list[str]) -> dict:
                     "author": {
                         "type": "string",
                         "description": "Filter by author name (partial match)",
-                    },
-                    "doc_kind": {
-                        "type": "string",
-                        "description": "Document kind: raw or wiki",
                     },
                     "genre": {
                         "type": "string",
@@ -307,23 +303,15 @@ async def read_document(vault: QuerySource, path: str) -> str:
     return f"# {path} [{vault.label}]\n\n{content}{links_section}"
 
 
-async def read_document_enriched(
-    vault: QuerySource, path: str, doc_service: DocumentService
-) -> str:
-    """Read a document.
-
-    Backlinks will be attached here once the retrieval surface consumes
-    verify's document-keyed backlinks table. Until then this is a straight
-    pass-through to read_document.
-    """
+async def read_document_enriched(vault: QuerySource, path: str) -> str:
     return await read_document(vault, path)
 
 
 async def search_wiki(
-    vault: QuerySource, query: str, doc_service: DocumentService
+    vault: QuerySource, query: str, source: SourceDocumentService
 ) -> str:
     """Hybrid BM25 + vector search via the search index."""
-    svc = SearchService(SearchIndexRepository(doc_service.repo.session))
+    svc = SearchService(SearchIndexRepository(source.repo.session))
     results = await svc.search([vault.vault_id], query)
 
     log_event("tool.search_executed", query=query, results_count=len(results))
@@ -341,9 +329,9 @@ async def search_wiki(
 
 
 async def query_documents(
-    vault: QuerySource, args: dict, doc_service: DocumentService
+    vault: QuerySource, args: dict, source: SourceDocumentService
 ) -> str:
-    """Structured metadata query via the documents table."""
+    """Structured metadata query over source documents."""
     filters = {
         k: v
         for k, v in {
@@ -352,13 +340,12 @@ async def query_documents(
             "genre": args.get("genre"),
             "date_gte": args.get("date_gte"),
             "date_lte": args.get("date_lte"),
-            "doc_kind": args.get("doc_kind"),
             "limit": args.get("limit", 20),
         }.items()
         if v is not None
     }
 
-    results = await doc_service.query_documents([vault.vault_id], **filters)
+    results = await source.query_documents([vault.vault_id], **filters)
     log_event("tool.query_executed", filters=str(filters), results_count=len(results))
 
     if not results:
@@ -368,7 +355,7 @@ async def query_documents(
     for doc in results:
         metadata = doc.metadata
         tags_str = f"  tags: {', '.join(metadata.tags)}" if metadata.tags else ""
-        meta = f"  [{doc.doc_kind}] {doc.file_path}"
+        meta = f"  [raw] {doc.file_path}"
         if metadata.author:
             meta += f" by {metadata.author}"
         if metadata.published_date:
@@ -384,19 +371,14 @@ async def query_documents(
 
 
 async def query_wiki_articles(
-    vault: QuerySource, args: dict, doc_service: DocumentService
+    vault: QuerySource, args: dict, wiki: WikiArticleService
 ) -> str:
-    """Structured query over the wiki article registry.
-
-    Filtering happens SQL-side via ``DocumentService.search_wiki_articles``
-    (case-insensitive substring match on title/precis, exact slug match,
-    underscore-prefixed slugs excluded).
-    """
+    """Structured query over the wiki article registry."""
     slug_filter = args.get("slug")
     query_str = (args.get("query") or "").strip()
     limit = args.get("limit") or 20
 
-    rows = await doc_service.search_wiki_articles(
+    rows = await wiki.search(
         vault.vault_id,
         slug=slug_filter,
         query=query_str or None,
@@ -420,16 +402,20 @@ async def query_wiki_articles(
 
 
 async def _dispatch_tool(
-    vault: QuerySource, name: str, args: dict, doc_service: DocumentService
+    vault: QuerySource,
+    name: str,
+    args: dict,
+    source: SourceDocumentService,
+    wiki: WikiArticleService,
 ) -> str:
     if name == "read_document":
-        return await read_document_enriched(vault, args["path"], doc_service)
+        return await read_document_enriched(vault, args["path"])
     elif name == "search_wiki":
-        return await search_wiki(vault, args["query"], doc_service)
+        return await search_wiki(vault, args["query"], source)
     elif name == "query_documents":
-        return await query_documents(vault, args, doc_service)
+        return await query_documents(vault, args, source)
     elif name == "query_wiki_articles":
-        return await query_wiki_articles(vault, args, doc_service)
+        return await query_wiki_articles(vault, args, wiki)
     else:
         return f"Unknown tool: {name}"
 
@@ -440,18 +426,13 @@ async def _dispatch_tool(
 
 
 async def _build_identity_for_source(
-    source: QuerySource, doc_service: DocumentService
+    source: QuerySource,
+    source_svc: SourceDocumentService,
+    wiki_svc: WikiArticleService,
 ) -> str:
-    """Render a per-vault identity block for the system prompt.
-
-    Identity gives the agent shape awareness (vault name, editorial
-    focus, corpus size) without listing every article. Article-level
-    discovery happens via tools: search_wiki, query_wiki_articles,
-    query_documents.
-    """
     config = await load_vault_config(source.storage)
-    wiki_count = await doc_service.count_by_kind(source.vault_id, DocKind.WIKI)
-    raw_count = await doc_service.count_by_kind(source.vault_id, DocKind.RAW)
+    wiki_count = await wiki_svc.count(source.vault_id)
+    raw_count = await source_svc.count(source.vault_id)
 
     focus = config.thematic_hint.strip() or "(no editorial focus set)"
     return (
@@ -488,12 +469,13 @@ Knowledge base:
 
 async def build_system_prompt(
     vault: "QuerySource",
-    doc_service: DocumentService,
+    source: SourceDocumentService,
+    wiki: WikiArticleService,
     *,
     mode: QueryMode = QueryMode.QUERY,
     extra_instructions: str | None = None,
 ) -> str:
-    identity = await _build_identity_for_source(vault, doc_service) or "(empty vault)"
+    identity = await _build_identity_for_source(vault, source, wiki) or "(empty vault)"
 
     # Layer 1: retrieval discipline (not overridable)
     prompt = _RETRIEVAL_CORE.format(identity=identity)
@@ -594,7 +576,8 @@ def _parse_tool_args(tool_call: dict) -> dict:
 
 async def _source_event_for_tool_call(
     vault: QuerySource,
-    doc_service: DocumentService,
+    source: SourceDocumentService,
+    wiki: WikiArticleService,
     trace: StreamTrace,
     name: str,
     args: dict,
@@ -607,12 +590,12 @@ async def _source_event_for_tool_call(
     event_data: dict = {"type": source_type, **meta}
     if source_type in (SourceType.ARTICLE, SourceType.RAW):
         path = meta["path"]
-        event_data["title"] = await doc_service.get_title_by_path(vault.vault_id, path)
-        (
-            trace.articles_read
-            if source_type is SourceType.ARTICLE
-            else trace.sources_read
-        ).append(path)
+        if source_type is SourceType.ARTICLE:
+            event_data["title"] = await wiki.get_title_by_path(vault.vault_id, path)
+            trace.articles_read.append(path)
+        else:
+            event_data["title"] = await source.get_title_by_path(vault.vault_id, path)
+            trace.sources_read.append(path)
     elif source_type is SourceType.SEARCH:
         trace.searches.append(meta["query"])
 
@@ -621,7 +604,8 @@ async def _source_event_for_tool_call(
 
 async def _run_tool_calls(
     vault: QuerySource,
-    doc_service: DocumentService,
+    source: SourceDocumentService,
+    wiki: WikiArticleService,
     messages: list[dict],
     trace: StreamTrace,
     tool_calls: dict[int, dict],
@@ -632,12 +616,12 @@ async def _run_tool_calls(
         name = tc["name"]
 
         source_event = await _source_event_for_tool_call(
-            vault, doc_service, trace, name, args
+            vault, source, wiki, trace, name, args
         )
         if source_event is not None:
             yield source_event
 
-        result = await _dispatch_tool(vault, name, args, doc_service)
+        result = await _dispatch_tool(vault, name, args, source, wiki)
         messages.append(
             {
                 "role": "tool",
@@ -649,7 +633,8 @@ async def _run_tool_calls(
 
 async def _emit_done(
     vault: QuerySource,
-    doc_service: DocumentService,
+    source: SourceDocumentService,
+    wiki: WikiArticleService,
     model: str,
     trace: StreamTrace,
 ) -> dict:
@@ -662,7 +647,7 @@ async def _emit_done(
         tool_calls=trace.tool_calls_total,
     )
     sources = await _build_sources_consulted(
-        vault, doc_service, trace.articles_read, trace.sources_read
+        vault, source, wiki, trace.articles_read, trace.sources_read
     )
     return {
         "event": "done",
@@ -675,18 +660,11 @@ async def stream_chat(
     client: AsyncOpenAI,
     model: str,
     messages: list[dict],
-    doc_service: DocumentService,
+    source: SourceDocumentService,
+    wiki: WikiArticleService,
     *,
     tools: list[dict] | None = None,
 ) -> AsyncGenerator[dict, None]:
-    """Yield SSE event dicts as the model traverses the knowledge base.
-
-    Events:
-      {"event": "source",   "data": {"type": "article"|"raw"|"search"|"query", ...}}
-      {"event": "token",    "data": {"text": "..."}}
-      {"event": "done",     "data": {"sources_consulted": [...]}}
-      {"event": "error",    "data": {"message": "..."}}
-    """
     active_tools = tools or _BASE_TOOLS
     trace = StreamTrace()
 
@@ -703,7 +681,7 @@ async def stream_chat(
             messages.append(_assistant_tool_message(state))
             try:
                 async for event in _run_tool_calls(
-                    vault, doc_service, messages, trace, state.tool_calls
+                    vault, source, wiki, messages, trace, state.tool_calls
                 ):
                     yield event
             except MalformedToolArgs as exc:
@@ -714,7 +692,7 @@ async def stream_chat(
         if state.content:
             messages.append({"role": "assistant", "content": state.content})
 
-        yield await _emit_done(vault, doc_service, model, trace)
+        yield await _emit_done(vault, source, wiki, model, trace)
         return
 
 
@@ -753,16 +731,16 @@ async def _build_origin_messages(
 # ---------------------------------------------------------------------------
 
 
-async def _load_tools(vault: QuerySource, doc_service: DocumentService) -> list[dict]:
-    """Load tag vocabulary from DB and build the full tool list."""
-    tags = await doc_service.get_distinct_tags([vault.vault_id])
+async def _load_tools(vault: QuerySource, source: SourceDocumentService) -> list[dict]:
+    tags = await source.get_distinct_tags([vault.vault_id])
     return build_tools(tags)
 
 
 async def run_query(
     vault: QuerySource,
     question: str,
-    doc_service: DocumentService,
+    source: SourceDocumentService,
+    wiki: WikiArticleService,
     *,
     user_id: UUID | None = None,
     model: str | None = None,
@@ -775,9 +753,9 @@ async def run_query(
     primary = model or QUERY_MODEL
     client = get_async_client(max_retries=0)
     system_prompt = await build_system_prompt(
-        vault, doc_service, mode=mode, extra_instructions=extra_instructions
+        vault, source, wiki, mode=mode, extra_instructions=extra_instructions
     )
-    tools = await _load_tools(vault, doc_service)
+    tools = await _load_tools(vault, source)
     base_messages: list[dict] = [
         {"role": "system", "content": system_prompt},
     ]
@@ -796,7 +774,7 @@ async def run_query(
             messages = list(base_messages)
             try:
                 async for event in stream_chat(
-                    vault, client, m, messages, doc_service, tools=tools
+                    vault, client, m, messages, source, wiki, tools=tools
                 ):
                     yield event
                 return
@@ -812,24 +790,17 @@ async def run_query(
             "data": {"message": "all models failed — try again in a minute"},
         }
     finally:
-        await _finalize_wide_event(
-            doc_service, user_id=user_id, vault_id=vault.vault_id
-        )
+        await _finalize_wide_event(source, user_id=user_id, vault_id=vault.vault_id)
 
 
 async def _finalize_wide_event(
-    doc_service: DocumentService,
+    source: SourceDocumentService,
     *,
     user_id: UUID | None,
     vault_id: UUID | None,
 ) -> None:
-    """Persist accumulated cost as one cost row, then emit the wide event.
-
-    Pulls the same in-memory accumulator the log entry will read, so the
-    persisted row and the structured-log event carry identical numbers.
-    """
     await record_wide_event_cost(
-        doc_service.repo.session, user_id=user_id, vault_id=vault_id
+        source.repo.session, user_id=user_id, vault_id=vault_id
     )
-    await doc_service.repo.session.commit()
+    await source.repo.session.commit()
     emit_wide_event()

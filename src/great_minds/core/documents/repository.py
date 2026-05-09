@@ -1,4 +1,4 @@
-"""Document index repository: upsert and structured document queries."""
+"""Source document and wiki article repositories."""
 
 from collections import defaultdict
 from uuid import UUID
@@ -11,30 +11,32 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from great_minds.core.documents.models import (
     BacklinkORM,
-    DocumentORM,
-    DocumentTag,
+    SourceDocumentORM,
+    SourceDocumentTag,
+    WikiArticleORM,
 )
 from great_minds.core.documents.schemas import (
     Backlink,
-    DocKind,
-    Document,
-    DocumentCreate,
     DocumentMetadata,
     FileHash,
+    SourceDocCreate,
+    SourceDocument,
+    WikiArticle,
+    WikiArticleCreate,
     WikiArticleOverview,
 )
 from great_minds.core.ideas.schemas import SourceCard
 from great_minds.core.markdown import parse_frontmatter
 from great_minds.core.pagination import FacetCount
 from great_minds.core.paths import WIKI_INDEX_PATH, raw_prefix, wiki_path
+from great_minds.core.topics.models import TopicORM
 
 
-class DocumentRepository:
+class SourceDocumentRepo:
     def __init__(self, session: AsyncSession) -> None:
         self.session = session
 
-    async def upsert(self, vault_id: UUID, doc: DocumentCreate) -> UUID:
-        """Upsert a document row and sync the tags junction table."""
+    async def upsert(self, vault_id: UUID, doc: SourceDocCreate) -> UUID:
         file_hash_val = file_hash(doc.content)
         _, body = parse_frontmatter(doc.content)
         body_hash_val = body_hash(body)
@@ -49,73 +51,44 @@ class DocumentRepository:
             "published_date": doc.metadata.published_date,
             "genre": doc.metadata.genre,
             "compiled": doc.compiled,
-            "doc_kind": doc.doc_kind,
             "source_type": doc.metadata.source_type,
-            "topic_id": doc.topic_id,
             "precis": doc.metadata.precis,
         }
-
-        stmt = insert(DocumentORM).values(
+        stmt = insert(SourceDocumentORM).values(
             vault_id=vault_id,
             file_path=doc.file_path,
             extra_metadata=doc.metadata.extra_metadata,
             **columns,
         )
-
-        set_values = {
-            **columns,
-            "metadata": doc.metadata.extra_metadata,
-            "updated_at": func.now(),
-        }
-        if doc.doc_kind == DocKind.WIKI.value and doc.topic_id is not None:
-            # Rendered wiki articles are logically keyed by topic_id. If a
-            # topic's slug changes, the existing row still has the old
-            # file_path, so a file_path-only upsert attempts to insert a
-            # second wiki row for the same topic and trips the partial unique
-            # index ix_documents_topic_id_wiki. Conflict on that index instead
-            # so rerenders can move the document row to the new wiki/<slug>.md.
-            stmt = stmt.on_conflict_do_update(
-                index_elements=[DocumentORM.topic_id],
-                index_where=(DocumentORM.doc_kind == DocKind.WIKI.value),
-                set_={
-                    **set_values,
-                    "file_path": doc.file_path,
-                },
-            )
-        else:
-            stmt = stmt.on_conflict_do_update(
-                constraint="documents_vault_id_file_path_key",
-                set_=set_values,
-            )
-        result = await self.session.execute(stmt.returning(DocumentORM.id))
+        stmt = stmt.on_conflict_do_update(
+            index_elements=[SourceDocumentORM.vault_id, SourceDocumentORM.file_path],
+            set_={
+                **columns,
+                "metadata": doc.metadata.extra_metadata,
+                "updated_at": func.now(),
+            },
+        )
+        result = await self.session.execute(stmt.returning(SourceDocumentORM.id))
         doc_id = result.scalar_one()
-
         await self._sync_tags(doc_id, doc.metadata.tags)
-
         return doc_id
 
     async def batch_upsert(
-        self, vault_id: UUID, docs: list[DocumentCreate]
+        self, vault_id: UUID, docs: list[SourceDocCreate]
     ) -> list[UUID]:
-        """Upsert documents in a single statement. Returns IDs in input order.
-
-        Tag sync still happens per-doc — a real bulk tag sync (delete-by-doc-id-set
-        + bulk insert junction rows) is a follow-up.
-        """
         if not docs:
             return []
-
         rows = []
         for doc in docs:
-            file_hash_val = file_hash(doc.content)
+            fh = file_hash(doc.content)
             _, body = parse_frontmatter(doc.content)
-            body_hash_val = body_hash(body)
+            bh = body_hash(body)
             rows.append(
                 {
                     "vault_id": vault_id,
                     "file_path": doc.file_path,
-                    "file_hash": file_hash_val,
-                    "body_hash": body_hash_val,
+                    "file_hash": fh,
+                    "body_hash": bh,
                     "title": doc.metadata.title,
                     "author": doc.metadata.author,
                     "url": doc.metadata.url,
@@ -123,17 +96,14 @@ class DocumentRepository:
                     "published_date": doc.metadata.published_date,
                     "genre": doc.metadata.genre,
                     "compiled": doc.compiled,
-                    "doc_kind": doc.doc_kind,
                     "source_type": doc.metadata.source_type,
-                    "topic_id": doc.topic_id,
                     "precis": doc.metadata.precis,
                     "extra_metadata": doc.metadata.extra_metadata,
                 }
             )
-
-        stmt = insert(DocumentORM).values(rows)
+        stmt = insert(SourceDocumentORM).values(rows)
         stmt = stmt.on_conflict_do_update(
-            constraint="documents_vault_id_file_path_key",
+            index_elements=[SourceDocumentORM.vault_id, SourceDocumentORM.file_path],
             set_={
                 "file_hash": stmt.excluded.file_hash,
                 "body_hash": stmt.excluded.body_hash,
@@ -144,20 +114,16 @@ class DocumentRepository:
                 "published_date": stmt.excluded.published_date,
                 "genre": stmt.excluded.genre,
                 "compiled": stmt.excluded.compiled,
-                "doc_kind": stmt.excluded.doc_kind,
                 "source_type": stmt.excluded.source_type,
-                "topic_id": stmt.excluded.topic_id,
                 "precis": stmt.excluded.precis,
                 "metadata": stmt.excluded["metadata"],
                 "updated_at": func.now(),
             },
         )
         result = await self.session.execute(
-            stmt.returning(DocumentORM.id, DocumentORM.file_path)
+            stmt.returning(SourceDocumentORM.id, SourceDocumentORM.file_path)
         )
-        # RETURNING order isn't guaranteed by Postgres, so map back via file_path.
         id_by_path = {row.file_path: row.id for row in result}
-
         doc_ids: list[UUID] = []
         for doc in docs:
             doc_id = id_by_path[doc.file_path]
@@ -166,78 +132,66 @@ class DocumentRepository:
         return doc_ids
 
     async def get_file_hashes(self, vault_id: UUID) -> list[FileHash]:
-        """Return (file_path, file_hash) rows for all documents in a vault.
-
-        Used for skip detection during staged file ingest.
-        """
         result = await self.session.execute(
-            select(DocumentORM.file_path, DocumentORM.file_hash).where(
-                DocumentORM.vault_id == vault_id
+            select(SourceDocumentORM.file_path, SourceDocumentORM.file_hash).where(
+                SourceDocumentORM.vault_id == vault_id
             )
         )
         return [FileHash.model_validate(r) for r in result]
 
-    async def get_title_by_path(self, vault_id: UUID, file_path: str) -> str | None:
-        """Return just the LLM-generated title for a path, or None if the
-        document isn't indexed or hasn't been extracted yet. Single
-        indexed query — no tag JOIN, no full row hydration."""
-        result = await self.session.execute(
-            select(DocumentORM.title).where(
-                DocumentORM.vault_id == vault_id,
-                DocumentORM.file_path == file_path,
+    async def get_by_path(
+        self, vault_id: UUID, file_path: str
+    ) -> SourceDocument | None:
+        row = await self.session.scalar(
+            select(SourceDocumentORM).where(
+                SourceDocumentORM.vault_id == vault_id,
+                SourceDocumentORM.file_path == file_path,
             )
         )
-        title = result.scalar_one_or_none()
-        return title or None
-
-    async def get_by_path(self, vault_id: UUID, file_path: str) -> Document | None:
-        """Return the single document at ``file_path`` for this vault, or None."""
-        result = await self.session.execute(
-            select(DocumentORM).where(
-                DocumentORM.vault_id == vault_id,
-                DocumentORM.file_path == file_path,
-            )
-        )
-        row = result.scalar_one_or_none()
         if row is None:
             return None
-
         tag_rows = await self.session.execute(
-            select(DocumentTag.tag).where(DocumentTag.document_id == row.id)
+            select(SourceDocumentTag.tag).where(SourceDocumentTag.document_id == row.id)
         )
-        tags = list(tag_rows.scalars().all())
-        return _document_from_orm(row, tags=tags)
+        return _source_document_from_orm(row, tags=list(tag_rows.scalars().all()))
 
-    async def list_by_kind(self, vault_id: UUID, kind: DocKind) -> list[Document]:
-        """Return all documents of a given kind, ordered by file_path.
-
-        Used by extract (iterate raw docs) and render (resolve footnote
-        source metadata) — both want a deterministic ordering.
-        """
-        rows = await self.session.execute(
-            select(DocumentORM)
-            .where(
-                DocumentORM.vault_id == vault_id,
-                DocumentORM.doc_kind == kind.value,
+    async def get_title_by_path(self, vault_id: UUID, file_path: str) -> str | None:
+        return (
+            await self.session.scalar(
+                select(SourceDocumentORM.title).where(
+                    SourceDocumentORM.vault_id == vault_id,
+                    SourceDocumentORM.file_path == file_path,
+                )
             )
-            .order_by(DocumentORM.file_path)
+            or None
         )
-        return [_document_from_orm(r) for r in rows.scalars().all()]
+
+    async def list_all(self, vault_id: UUID) -> list[SourceDocument]:
+        rows = await self.session.execute(
+            select(SourceDocumentORM)
+            .where(SourceDocumentORM.vault_id == vault_id)
+            .order_by(SourceDocumentORM.file_path)
+        )
+        return [_source_document_from_orm(r) for r in rows.scalars().all()]
+
+    async def count(self, vault_id: UUID) -> int:
+        return (
+            await self.session.scalar(
+                select(func.count())
+                .select_from(SourceDocumentORM)
+                .where(SourceDocumentORM.vault_id == vault_id)
+            )
+        ) or 0
 
     async def update_metadata_from_cards(
         self, vault_id: UUID, cards: list[SourceCard]
     ) -> None:
-        """Push LLM-produced title, precis, doc_metadata back to DB rows.
-
-        extra_metadata is replaced wholesale — the LLM output is the
-        authoritative source for per-doc enriched fields.
-        """
         for card in cards:
             await self.session.execute(
-                update(DocumentORM)
+                update(SourceDocumentORM)
                 .where(
-                    DocumentORM.vault_id == vault_id,
-                    DocumentORM.id == card.document_id,
+                    SourceDocumentORM.vault_id == vault_id,
+                    SourceDocumentORM.id == card.document_id,
                 )
                 .values(
                     title=card.title,
@@ -246,143 +200,7 @@ class DocumentRepository:
                 )
             )
 
-    async def count_by_kind(self, vault_id: UUID, kind: DocKind) -> int:
-        return (
-            await self.session.scalar(
-                select(func.count())
-                .select_from(DocumentORM)
-                .where(
-                    DocumentORM.vault_id == vault_id,
-                    DocumentORM.doc_kind == kind.value,
-                )
-            )
-        ) or 0
-
-    async def list_wiki_overviews(
-        self,
-        vault_id: UUID,
-        *,
-        slug: str | None = None,
-        query: str | None = None,
-        limit: int = 50,
-        offset: int = 0,
-        recent: bool = False,
-    ) -> list[WikiArticleOverview]:
-        """List wiki article overview rows with optional slug/query filters.
-
-        SQL-side filtering keeps route and query-tool callers on one path.
-        ``query`` matches title or precis case-insensitively; ``slug`` is exact.
-        Underscore-prefixed slugs (index pages) are excluded.
-        """
-        stmt = select(
-            DocumentORM.file_path,
-            DocumentORM.title,
-            DocumentORM.precis,
-            DocumentORM.updated_at,
-        ).where(
-            DocumentORM.vault_id == vault_id,
-            DocumentORM.doc_kind == DocKind.WIKI,
-            DocumentORM.file_path != WIKI_INDEX_PATH,
-        )
-        if slug is not None:
-            stmt = stmt.where(DocumentORM.file_path == wiki_path(slug))
-        if query:
-            pattern = f"%{query.lower()}%"
-            stmt = stmt.where(
-                or_(
-                    func.lower(DocumentORM.title).like(pattern),
-                    func.lower(func.coalesce(DocumentORM.precis, "")).like(pattern),
-                )
-            )
-        stmt = stmt.order_by(
-            DocumentORM.updated_at.desc() if recent else func.lower(DocumentORM.title)
-        )
-        rows = (await self.session.execute(stmt.offset(offset).limit(limit))).all()
-        return [WikiArticleOverview.model_validate(r) for r in rows]
-
-    async def count_wiki_article_paths(self, vault_id: UUID) -> int:
-        return (
-            await self.session.scalar(
-                select(func.count()).where(
-                    DocumentORM.vault_id == vault_id,
-                    DocumentORM.doc_kind == DocKind.WIKI,
-                    DocumentORM.file_path != WIKI_INDEX_PATH,
-                )
-            )
-        ) or 0
-
-    async def list_orphan_wiki_documents(
-        self, vault_id: UUID
-    ) -> list[WikiArticleOverview]:
-        """Return rendered wiki documents with zero incoming backlinks."""
-        rows = (
-            await self.session.execute(
-                select(DocumentORM.file_path, DocumentORM.title)
-                .outerjoin(
-                    BacklinkORM,
-                    BacklinkORM.target_document_id == DocumentORM.id,
-                )
-                .where(
-                    DocumentORM.vault_id == vault_id,
-                    DocumentORM.doc_kind == DocKind.WIKI.value,
-                    DocumentORM.file_path != WIKI_INDEX_PATH,
-                )
-                .group_by(DocumentORM.id, DocumentORM.file_path, DocumentORM.title)
-                .having(func.count(BacklinkORM.source_document_id) == 0)
-                .order_by(func.lower(DocumentORM.title))
-            )
-        ).all()
-        return [WikiArticleOverview.model_validate(r) for r in rows]
-
-    async def update_file_path_for_topic(
-        self, vault_id: UUID, topic_id: UUID, new_file_path: str
-    ) -> None:
-        """Repoint the wiki document for a topic at a new storage path.
-
-        Used by the archive flow when ``wiki/<slug>.md`` is moved to
-        ``archive/<topic_id>/<slug>.md`` — the documents row's file_path
-        must follow the file so backlinks and reads stay consistent.
-        """
-        await self.session.execute(
-            update(DocumentORM)
-            .where(
-                DocumentORM.vault_id == vault_id,
-                DocumentORM.topic_id == topic_id,
-            )
-            .values(file_path=new_file_path)
-        )
-
-    async def update_wiki_backlinks(
-        self,
-        source_document_ids: list[UUID],
-        backlinks: list[Backlink],
-    ) -> None:
-        """Update backlink edges emitted by the given source wiki documents."""
-        if not source_document_ids:
-            return
-
-        await self.session.execute(
-            delete(BacklinkORM).where(
-                BacklinkORM.source_document_id.in_(source_document_ids)
-            )
-        )
-        if backlinks:
-            await self.session.execute(
-                insert(BacklinkORM).values(
-                    [backlink.model_dump() for backlink in backlinks]
-                )
-            )
-
-    async def _sync_tags(self, doc_id: UUID, tags: list[str]) -> None:
-        """Replace all tag rows for a document with the new set."""
-        await self.session.execute(
-            delete(DocumentTag).where(DocumentTag.document_id == doc_id)
-        )
-        rows = [{"document_id": doc_id, "tag": val} for val in tags if val]
-        if rows:
-            await self.session.execute(insert(DocumentTag).values(rows))
-
-    async def query_documents(
+    async def query(
         self,
         vault_ids: list[UUID],
         *,
@@ -390,7 +208,6 @@ class DocumentRepository:
         author: str | None = None,
         genre: str | None = None,
         compiled: bool | None = None,
-        doc_kind: DocKind | None = None,
         source_type: str | None = None,
         content_type: str | None = None,
         search: str | None = None,
@@ -398,44 +215,39 @@ class DocumentRepository:
         date_lte: str | None = None,
         limit: int = 50,
         offset: int = 0,
-    ) -> list[Document]:
-        """Structured query over the documents table with optional filters."""
-        stmt = _document_query(
+    ) -> list[SourceDocument]:
+        stmt = _source_document_query(
             vault_ids,
             tags=tags,
             author=author,
             genre=genre,
             compiled=compiled,
-            doc_kind=doc_kind,
             source_type=source_type,
             content_type=content_type,
             search=search,
             date_gte=date_gte,
             date_lte=date_lte,
         )
-        stmt = stmt.order_by(DocumentORM.updated_at.desc()).offset(offset).limit(limit)
-
-        result = await self.session.execute(stmt)
-        docs = result.scalars().all()
-
+        stmt = (
+            stmt.order_by(SourceDocumentORM.updated_at.desc())
+            .offset(offset)
+            .limit(limit)
+        )
+        docs = (await self.session.execute(stmt)).scalars().all()
         if not docs:
             return []
-
-        doc_ids = [doc.id for doc in docs]
-
+        doc_ids = [d.id for d in docs]
         tag_result = await self.session.execute(
-            select(DocumentTag.document_id, DocumentTag.tag).where(
-                DocumentTag.document_id.in_(doc_ids)
+            select(SourceDocumentTag.document_id, SourceDocumentTag.tag).where(
+                SourceDocumentTag.document_id.in_(doc_ids)
             )
         )
-
         tags_by_doc: dict[UUID, list[str]] = defaultdict(list)
         for doc_id, tag in tag_result:
             tags_by_doc[doc_id].append(tag)
+        return [_source_document_from_orm(d, tags=tags_by_doc[d.id]) for d in docs]
 
-        return [_document_from_orm(orm, tags=tags_by_doc[orm.id]) for orm in docs]
-
-    async def count_documents(
+    async def count_query(
         self,
         vault_ids: list[UUID],
         *,
@@ -443,21 +255,18 @@ class DocumentRepository:
         author: str | None = None,
         genre: str | None = None,
         compiled: bool | None = None,
-        doc_kind: DocKind | None = None,
         source_type: str | None = None,
         content_type: str | None = None,
         search: str | None = None,
         date_gte: str | None = None,
         date_lte: str | None = None,
     ) -> int:
-        """Count documents using the same filters as ``query_documents``."""
-        filtered = _document_query(
+        filtered = _source_document_query(
             vault_ids,
             tags=tags,
             author=author,
             genre=genre,
             compiled=compiled,
-            doc_kind=doc_kind,
             source_type=source_type,
             content_type=content_type,
             search=search,
@@ -468,45 +277,319 @@ class DocumentRepository:
             await self.session.scalar(select(func.count()).select_from(filtered))
         ) or 0
 
-    async def get_content_type_counts(self, vault_ids: list[UUID]) -> list[FacetCount]:
-        """Return content_type facet counts for raw documents.
-
-        Extracts the content type from file_path: raw/{content_type}/...
-        """
-        # split_part(file_path, '/', 2) extracts the second path segment
-        content_type_col = func.split_part(DocumentORM.file_path, "/", 2).label(
+    async def content_type_counts(self, vault_ids: list[UUID]) -> list[FacetCount]:
+        ct_col = func.split_part(SourceDocumentORM.file_path, "/", 2).label(
             "content_type"
         )
         result = await self.session.execute(
-            select(content_type_col, func.count().label("cnt"))
-            .where(
-                DocumentORM.vault_id.in_(vault_ids),
-                DocumentORM.doc_kind == DocKind.RAW,
-            )
-            .group_by(content_type_col)
+            select(ct_col, func.count().label("cnt"))
+            .where(SourceDocumentORM.vault_id.in_(vault_ids))
+            .group_by(ct_col)
             .order_by(func.count().desc())
         )
         return [FacetCount(value=row.content_type, count=row.cnt) for row in result]
 
-    async def get_distinct_tags(self, vault_ids: list[UUID]) -> list[str]:
+    async def distinct_tags(self, vault_ids: list[UUID]) -> list[str]:
         result = await self.session.execute(
-            select(distinct(DocumentTag.tag))
-            .join(DocumentORM, DocumentORM.id == DocumentTag.document_id)
-            .where(DocumentORM.vault_id.in_(vault_ids))
-            .order_by(DocumentTag.tag)
+            select(distinct(SourceDocumentTag.tag))
+            .join(
+                SourceDocumentORM, SourceDocumentORM.id == SourceDocumentTag.document_id
+            )
+            .where(SourceDocumentORM.vault_id.in_(vault_ids))
+            .order_by(SourceDocumentTag.tag)
         )
         return list(result.scalars().all())
 
+    async def _sync_tags(self, doc_id: UUID, tags: list[str]) -> None:
+        await self.session.execute(
+            delete(SourceDocumentTag).where(SourceDocumentTag.document_id == doc_id)
+        )
+        rows = [{"document_id": doc_id, "tag": val} for val in tags if val]
+        if rows:
+            await self.session.execute(insert(SourceDocumentTag).values(rows))
 
-def _document_from_orm(orm: DocumentORM, *, tags: list[str] | None = None) -> Document:
-    return Document(
+
+# ---------------------------------------------------------------------------
+# Wiki articles
+# ---------------------------------------------------------------------------
+
+
+class WikiArticleRepo:
+    def __init__(self, session: AsyncSession) -> None:
+        self.session = session
+
+    async def upsert(self, vault_id: UUID, article: WikiArticleCreate) -> UUID:
+        fh = file_hash(article.content)
+        _, body = parse_frontmatter(article.content)
+        bh = body_hash(body)
+        stmt = insert(WikiArticleORM).values(
+            vault_id=vault_id,
+            topic_id=article.topic_id,
+            file_path=article.file_path,
+            file_hash=fh,
+            body_hash=bh,
+            extra_metadata=article.metadata.extra_metadata,
+        )
+        stmt = stmt.on_conflict_do_update(
+            index_elements=[WikiArticleORM.topic_id],
+            set_={
+                "file_path": article.file_path,
+                "file_hash": fh,
+                "body_hash": bh,
+                "metadata": article.metadata.extra_metadata,
+                "updated_at": func.now(),
+            },
+        )
+        result = await self.session.execute(stmt.returning(WikiArticleORM.id))
+        return result.scalar_one()
+
+    async def get_by_path(self, vault_id: UUID, file_path: str) -> WikiArticle | None:
+        row = await self.session.execute(
+            select(
+                WikiArticleORM.id,
+                WikiArticleORM.vault_id,
+                WikiArticleORM.topic_id,
+                WikiArticleORM.file_path,
+                WikiArticleORM.body_hash,
+                TopicORM.title,
+                TopicORM.description.label("precis"),
+                WikiArticleORM.created_at,
+                WikiArticleORM.updated_at,
+            )
+            .outerjoin(TopicORM, TopicORM.topic_id == WikiArticleORM.topic_id)
+            .where(
+                WikiArticleORM.vault_id == vault_id,
+                WikiArticleORM.file_path == file_path,
+            )
+        ).first()
+        if row is None:
+            return None
+        return WikiArticle(
+            id=row.id,
+            vault_id=row.vault_id,
+            topic_id=row.topic_id,
+            file_path=row.file_path,
+            body_hash=row.body_hash,
+            title=row.title or "",
+            precis=row.precis,
+            created_at=row.created_at,
+            updated_at=row.updated_at,
+        )
+
+    async def get_by_topic(self, vault_id: UUID, topic_id: UUID) -> WikiArticle | None:
+        row = await self.session.execute(
+            select(
+                WikiArticleORM.id,
+                WikiArticleORM.vault_id,
+                WikiArticleORM.topic_id,
+                WikiArticleORM.file_path,
+                WikiArticleORM.body_hash,
+                TopicORM.title,
+                TopicORM.description.label("precis"),
+                WikiArticleORM.created_at,
+                WikiArticleORM.updated_at,
+            )
+            .outerjoin(TopicORM, TopicORM.topic_id == WikiArticleORM.topic_id)
+            .where(
+                WikiArticleORM.vault_id == vault_id,
+                WikiArticleORM.topic_id == topic_id,
+            )
+        ).first()
+        if row is None:
+            return None
+        return WikiArticle(
+            id=row.id,
+            vault_id=row.vault_id,
+            topic_id=row.topic_id,
+            file_path=row.file_path,
+            body_hash=row.body_hash,
+            title=row.title or "",
+            precis=row.precis,
+            created_at=row.created_at,
+            updated_at=row.updated_at,
+        )
+
+    async def list_all(self, vault_id: UUID) -> list[WikiArticle]:
+        rows = await self.session.execute(
+            select(
+                WikiArticleORM.id,
+                WikiArticleORM.vault_id,
+                WikiArticleORM.topic_id,
+                WikiArticleORM.file_path,
+                WikiArticleORM.body_hash,
+                TopicORM.title,
+                TopicORM.description.label("precis"),
+                WikiArticleORM.created_at,
+                WikiArticleORM.updated_at,
+            )
+            .outerjoin(TopicORM, TopicORM.topic_id == WikiArticleORM.topic_id)
+            .where(WikiArticleORM.vault_id == vault_id)
+            .order_by(WikiArticleORM.file_path)
+        )
+        return [
+            WikiArticle(
+                id=row.id,
+                vault_id=row.vault_id,
+                topic_id=row.topic_id,
+                file_path=row.file_path,
+                body_hash=row.body_hash,
+                title=row.title or "",
+                precis=row.precis,
+                created_at=row.created_at,
+                updated_at=row.updated_at,
+            )
+            for row in rows
+        ]
+
+    async def count(self, vault_id: UUID) -> int:
+        return (
+            await self.session.scalar(
+                select(func.count())
+                .select_from(WikiArticleORM)
+                .where(WikiArticleORM.vault_id == vault_id)
+            )
+        ) or 0
+
+    async def get_title_by_path(self, vault_id: UUID, file_path: str) -> str | None:
+        """Return a wiki article title by joining topics."""
+        title = await self.session.scalar(
+            select(TopicORM.title)
+            .join(WikiArticleORM, WikiArticleORM.topic_id == TopicORM.topic_id)
+            .where(
+                WikiArticleORM.vault_id == vault_id,
+                WikiArticleORM.file_path == file_path,
+            )
+        )
+        return title or None
+
+    async def list_overviews(
+        self,
+        vault_id: UUID,
+        *,
+        slug: str | None = None,
+        query: str | None = None,
+        limit: int = 50,
+        offset: int = 0,
+        recent: bool = False,
+    ) -> list[WikiArticleOverview]:
+        stmt = (
+            select(
+                WikiArticleORM.file_path,
+                TopicORM.title,
+                TopicORM.description.label("precis"),
+                WikiArticleORM.updated_at,
+            )
+            .join(TopicORM, TopicORM.topic_id == WikiArticleORM.topic_id)
+            .where(
+                WikiArticleORM.vault_id == vault_id,
+                WikiArticleORM.file_path != WIKI_INDEX_PATH,
+            )
+        )
+        if slug is not None:
+            stmt = stmt.where(WikiArticleORM.file_path == wiki_path(slug))
+        if query:
+            pattern = f"%{query.lower()}%"
+            stmt = stmt.where(
+                or_(
+                    func.lower(TopicORM.title).like(pattern),
+                    func.lower(TopicORM.description).like(pattern),
+                )
+            )
+        stmt = stmt.order_by(
+            WikiArticleORM.updated_at.desc() if recent else func.lower(TopicORM.title)
+        )
+        rows = (await self.session.execute(stmt.offset(offset).limit(limit))).all()
+        return [WikiArticleOverview.model_validate(r) for r in rows]
+
+    async def count_overview_paths(self, vault_id: UUID) -> int:
+        return (
+            await self.session.scalar(
+                select(func.count()).where(
+                    WikiArticleORM.vault_id == vault_id,
+                    WikiArticleORM.file_path != WIKI_INDEX_PATH,
+                )
+            )
+        ) or 0
+
+    async def list_orphans(self, vault_id: UUID) -> list[WikiArticleOverview]:
+        rows = (
+            await self.session.execute(
+                select(WikiArticleORM.file_path, TopicORM.title)
+                .join(TopicORM, TopicORM.topic_id == WikiArticleORM.topic_id)
+                .outerjoin(
+                    BacklinkORM,
+                    BacklinkORM.target_article_id == WikiArticleORM.id,
+                )
+                .where(
+                    WikiArticleORM.vault_id == vault_id,
+                    WikiArticleORM.file_path != WIKI_INDEX_PATH,
+                )
+                .group_by(WikiArticleORM.id, WikiArticleORM.file_path, TopicORM.title)
+                .having(func.count(BacklinkORM.source_article_id) == 0)
+                .order_by(func.lower(TopicORM.title))
+            )
+        ).all()
+        return [WikiArticleOverview.model_validate(r) for r in rows]
+
+    async def update_file_path_for_topic(
+        self, vault_id: UUID, topic_id: UUID, new_file_path: str
+    ) -> None:
+        await self.session.execute(
+            update(WikiArticleORM)
+            .where(
+                WikiArticleORM.vault_id == vault_id,
+                WikiArticleORM.topic_id == topic_id,
+            )
+            .values(file_path=new_file_path)
+        )
+
+    async def update_backlinks(
+        self,
+        source_ids: list[UUID],
+        backlinks: list[Backlink],
+    ) -> None:
+        if not source_ids:
+            return
+        await self.session.execute(
+            delete(BacklinkORM).where(BacklinkORM.source_article_id.in_(source_ids))
+        )
+        if backlinks:
+            await self.session.execute(
+                insert(BacklinkORM).values([b.model_dump() for b in backlinks])
+            )
+
+    async def count_by_search(
+        self, vault_ids: list[UUID], *, search: str | None = None
+    ) -> int:
+        stmt = (
+            select(func.count())
+            .select_from(WikiArticleORM)
+            .where(WikiArticleORM.vault_id.in_(vault_ids))
+        )
+        if search:
+            stmt = stmt.join(
+                TopicORM, TopicORM.topic_id == WikiArticleORM.topic_id
+            ).where(
+                func.lower(TopicORM.title).like(f"%{search.lower()}%")
+                | func.lower(TopicORM.description).like(f"%{search.lower()}%")
+            )
+        return (await self.session.scalar(stmt)) or 0
+
+
+# ---------------------------------------------------------------------------
+# ORM → schema helpers
+# ---------------------------------------------------------------------------
+
+
+def _source_document_from_orm(
+    orm: SourceDocumentORM, *, tags: list[str] | None = None
+) -> SourceDocument:
+    return SourceDocument(
         id=orm.id,
         vault_id=orm.vault_id,
         file_path=orm.file_path,
         body_hash=orm.body_hash,
         compiled=orm.compiled,
-        doc_kind=orm.doc_kind,
-        topic_id=orm.topic_id,
         metadata=DocumentMetadata(
             title=orm.title,
             author=orm.author,
@@ -524,51 +607,47 @@ def _document_from_orm(orm: DocumentORM, *, tags: list[str] | None = None) -> Do
     )
 
 
-def _document_query(
+def _source_document_query(
     vault_ids: list[UUID],
     *,
     tags: list[str] | None = None,
     author: str | None = None,
     genre: str | None = None,
     compiled: bool | None = None,
-    doc_kind: DocKind | None = None,
     source_type: str | None = None,
     content_type: str | None = None,
     search: str | None = None,
     date_gte: str | None = None,
     date_lte: str | None = None,
-) -> Select[tuple[DocumentORM]]:
-    stmt = select(DocumentORM).where(DocumentORM.vault_id.in_(vault_ids))
-
+) -> Select[tuple[SourceDocumentORM]]:
+    stmt = select(SourceDocumentORM).where(SourceDocumentORM.vault_id.in_(vault_ids))
     if tags:
         tag_subq = (
-            select(DocumentTag.document_id)
-            .where(DocumentTag.tag.in_(tags))
-            .group_by(DocumentTag.document_id)
-            .having(func.count(distinct(DocumentTag.tag)) >= len(tags))
+            select(SourceDocumentTag.document_id)
+            .where(SourceDocumentTag.tag.in_(tags))
+            .group_by(SourceDocumentTag.document_id)
+            .having(func.count(distinct(SourceDocumentTag.tag)) >= len(tags))
         )
-        stmt = stmt.where(DocumentORM.id.in_(tag_subq))
-
+        stmt = stmt.where(SourceDocumentORM.id.in_(tag_subq))
     if author:
-        stmt = stmt.where(DocumentORM.author.ilike(f"%{author}%"))
+        stmt = stmt.where(SourceDocumentORM.author.ilike(f"%{author}%"))
     if genre:
-        stmt = stmt.where(DocumentORM.genre == genre)
+        stmt = stmt.where(SourceDocumentORM.genre == genre)
     if compiled is not None:
-        stmt = stmt.where(DocumentORM.compiled == compiled)
-    if doc_kind:
-        stmt = stmt.where(DocumentORM.doc_kind == doc_kind)
+        stmt = stmt.where(SourceDocumentORM.compiled == compiled)
     if source_type:
-        stmt = stmt.where(DocumentORM.source_type == source_type)
+        stmt = stmt.where(SourceDocumentORM.source_type == source_type)
     if content_type:
-        stmt = stmt.where(DocumentORM.file_path.like(f"{raw_prefix(content_type)}/%"))
+        stmt = stmt.where(
+            SourceDocumentORM.file_path.like(f"{raw_prefix(content_type)}/%")
+        )
     if search:
         stmt = stmt.where(
-            DocumentORM.title.ilike(f"%{search}%")
-            | DocumentORM.author.ilike(f"%{search}%")
+            SourceDocumentORM.title.ilike(f"%{search}%")
+            | SourceDocumentORM.author.ilike(f"%{search}%")
         )
     if date_gte:
-        stmt = stmt.where(DocumentORM.published_date >= date_gte)
+        stmt = stmt.where(SourceDocumentORM.published_date >= date_gte)
     if date_lte:
-        stmt = stmt.where(DocumentORM.published_date <= date_lte)
-
+        stmt = stmt.where(SourceDocumentORM.published_date <= date_lte)
     return stmt

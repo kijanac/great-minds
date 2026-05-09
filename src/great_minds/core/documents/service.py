@@ -1,48 +1,36 @@
-"""Document index service: frontmatter sync and structured queries."""
+"""Source document and wiki article services."""
 
 from uuid import UUID
 
 from great_minds.core.compile_intents.repository import CompileIntentRepository
-from great_minds.core.ideas.schemas import SourceCard
-from great_minds.core.markdown import parse_frontmatter
-from great_minds.core.documents.repository import DocumentRepository
+from great_minds.core.documents.repository import SourceDocumentRepo, WikiArticleRepo
 from great_minds.core.documents.schemas import (
     Backlink,
-    DocKind,
-    Document,
-    DocumentCreate,
+    SourceDocCreate,
+    SourceDocument,
     SourceDocumentFacets,
+    WikiArticle,
+    WikiArticleCreate,
     WikiArticleOverview,
 )
-from great_minds.core.pagination import (
-    FacetedPage,
-    Page,
-    PageInfo,
-    PageParams,
-    create_page,
-)
+from great_minds.core.ideas.schemas import SourceCard
+from great_minds.core.markdown import parse_frontmatter
+from great_minds.core.pagination import FacetedPage, Page, PageParams, create_page
 from great_minds.core.pipeline_runs import PipelineRunRepository
 from great_minds.core.telemetry import log_event
 
 
-class DocumentService:
+class SourceDocumentService:
     def __init__(
-        self, repository: DocumentRepository, pipeline_run_id: UUID | None = None
+        self, repo: SourceDocumentRepo, pipeline_run_id: UUID | None = None
     ) -> None:
-        self.repo = repository
+        self.repo = repo
         self.pipeline_run_id = pipeline_run_id
 
     async def _commit(self) -> None:
         await self.repo.session.commit()
 
     async def emit_compile_intent(self, vault_id: UUID) -> None:
-        """Mark the vault as having pending changes for the reconciler.
-
-        ``upsert_pending`` is idempotent — the partial unique index on
-        ``(vault_id) WHERE dispatched_at IS NULL`` coalesces concurrent
-        ingests into one pending intent, so emitting per-write is safe.
-        Logs ``intent_created`` only when a new row is inserted.
-        """
         intent_repo = CompileIntentRepository(self.repo.session)
         intent = await intent_repo.upsert_pending(
             vault_id, pipeline_run_id=self.pipeline_run_id
@@ -64,110 +52,53 @@ class DocumentService:
                 trigger="document_indexed",
             )
 
-    async def index_raw_doc(
-        self,
-        vault_id: UUID,
-        file_path: str,
-        content: str,
-    ) -> UUID:
-        """Parse frontmatter, upsert a raw doc, and emit a compile intent.
-
-        Always doc_kind=RAW. Wiki articles are written by the render
-        phase via ``DocumentRepository.upsert`` directly — they're
-        compile *outputs*, not inputs, so they don't trigger a recompile.
-        """
+    async def index(self, vault_id: UUID, file_path: str, content: str) -> UUID:
         fm, _ = parse_frontmatter(content)
-        doc = DocumentCreate.from_frontmatter(fm, file_path, content, DocKind.RAW)
+        doc = SourceDocCreate.from_frontmatter(fm, file_path, content)
         result = await self.repo.upsert(vault_id, doc)
         await self.emit_compile_intent(vault_id)
         await self._commit()
         return result
 
-    async def get_raw_file_hashes(self, vault_id: UUID) -> dict[str, str]:
-        """Return {file_path: file_hash} for every document in this vault.
-
-        Used by staged file ingest to skip unchanged files. Builds the lookup
-        dict from domain schemas returned by the repository.
-        """
+    async def file_hashes(self, vault_id: UUID) -> dict[str, str]:
         entries = await self.repo.get_file_hashes(vault_id)
         return {e.file_path: e.file_hash for e in entries}
 
-    async def batch_index_raw_docs(
-        self, vault_id: UUID, docs: list[DocumentCreate]
+    async def batch_index(
+        self, vault_id: UUID, docs: list[SourceDocCreate]
     ) -> list[UUID]:
-        """Upsert raw docs in one batch without requesting a compile.
-
-        Empty input is a no-op. Bulk source-ingest callers should emit one
-        compile intent after the full ingest unit is durably indexed, not
-        once per persistence batch.
-        """
         if not docs:
             return []
         ids = await self.repo.batch_upsert(vault_id, docs)
         await self._commit()
         return ids
 
-    async def upsert_compiled_doc(self, vault_id: UUID, doc: DocumentCreate) -> UUID:
-        """Upsert a compile output document without emitting a compile intent."""
-        return await self.repo.upsert(vault_id, doc)
-
     async def update_metadata_from_cards(
         self, vault_id: UUID, cards: list[SourceCard]
     ) -> None:
         await self.repo.update_metadata_from_cards(vault_id, cards)
 
-    async def query_documents(self, vault_ids: list[UUID], **filters) -> list[Document]:
-        return await self.repo.query_documents(vault_ids, **filters)
-
-    async def search_wiki_articles(
-        self,
-        vault_id: UUID,
-        *,
-        slug: str | None = None,
-        query: str | None = None,
-        limit: int = 20,
-    ) -> list[WikiArticleOverview]:
-        return await self.repo.list_wiki_overviews(
-            vault_id, slug=slug, query=query, limit=limit
-        )
-
-    async def get_by_path(self, vault_id: UUID, file_path: str) -> Document | None:
+    async def get_by_path(
+        self, vault_id: UUID, file_path: str
+    ) -> SourceDocument | None:
         return await self.repo.get_by_path(vault_id, file_path)
 
     async def get_title_by_path(self, vault_id: UUID, file_path: str) -> str | None:
         return await self.repo.get_title_by_path(vault_id, file_path)
 
-    async def count_by_kind(self, vault_id: UUID, kind: DocKind) -> int:
-        return await self.repo.count_by_kind(vault_id, kind)
+    async def list_all(self, vault_id: UUID) -> list[SourceDocument]:
+        return await self.repo.list_all(vault_id)
 
-    async def list_by_kind(self, vault_id: UUID, kind: DocKind) -> list[Document]:
-        return await self.repo.list_by_kind(vault_id, kind)
+    async def count(self, vault_id: UUID) -> int:
+        return await self.repo.count(vault_id)
 
-    async def replace_wiki_backlinks(
-        self,
-        *,
-        source_document_ids: list[UUID],
-        backlinks: list[Backlink],
-    ) -> None:
-        await self.repo.update_wiki_backlinks(
-            source_document_ids=source_document_ids,
-            backlinks=backlinks,
-        )
-        await self._commit()
+    async def query_documents(self, vault_ids: list[UUID], **filters):
+        return await self.repo.query(vault_ids, **filters)
 
-    async def list_wiki_articles(
-        self, vault_id: UUID, *, pagination: PageParams, recent: bool = False
-    ) -> Page[WikiArticleOverview]:
-        items = await self.repo.list_wiki_overviews(
-            vault_id,
-            limit=pagination.limit,
-            offset=pagination.offset,
-            recent=recent,
-        )
-        total = await self.repo.count_wiki_article_paths(vault_id)
-        return create_page(items, pagination, total)
+    async def get_distinct_tags(self, vault_ids: list[UUID]) -> list[str]:
+        return await self.repo.distinct_tags(vault_ids)
 
-    async def list_raw_sources(
+    async def list_sources(
         self,
         vault_id: UUID,
         *,
@@ -175,34 +106,84 @@ class DocumentService:
         content_type: str | None = None,
         search: str | None = None,
         compiled: bool | None = None,
-    ) -> FacetedPage[Document, SourceDocumentFacets]:
-        """Return raw documents and content-type folder counts."""
-        docs = await self.repo.query_documents(
+    ) -> FacetedPage[SourceDocument, SourceDocumentFacets]:
+        docs = await self.repo.query(
             [vault_id],
-            doc_kind=DocKind.RAW,
             content_type=content_type,
             search=search,
             compiled=compiled,
             limit=pagination.limit,
             offset=pagination.offset,
         )
-        total = await self.repo.count_documents(
+        total = await self.repo.count_query(
             [vault_id],
-            doc_kind=DocKind.RAW,
             content_type=content_type,
             search=search,
             compiled=compiled,
         )
-        content_types = await self.repo.get_content_type_counts([vault_id])
+        facets = SourceDocumentFacets(
+            content_types=await self.repo.content_type_counts([vault_id])
+        )
         return FacetedPage(
             items=docs,
-            pagination=PageInfo(
-                limit=pagination.limit,
-                offset=pagination.offset,
-                total=total,
-            ),
-            facets=SourceDocumentFacets(content_types=content_types),
+            pagination=create_page(docs, pagination, total).pagination,
+            facets=facets,
         )
 
-    async def get_distinct_tags(self, vault_ids: list[UUID]) -> list[str]:
-        return await self.repo.get_distinct_tags(vault_ids)
+
+class WikiArticleService:
+    def __init__(self, repo: WikiArticleRepo) -> None:
+        self.repo = repo
+
+    async def upsert(self, vault_id: UUID, article: WikiArticleCreate) -> UUID:
+        return await self.repo.upsert(vault_id, article)
+
+    async def get_by_path(self, vault_id: UUID, file_path: str) -> WikiArticle | None:
+        return await self.repo.get_by_path(vault_id, file_path)
+
+    async def get_title_by_path(self, vault_id: UUID, file_path: str) -> str | None:
+        return await self.repo.get_title_by_path(vault_id, file_path)
+
+    async def get_by_topic(self, vault_id: UUID, topic_id: UUID) -> WikiArticle | None:
+        return await self.repo.get_by_topic(vault_id, topic_id)
+
+    async def list_all(self, vault_id: UUID) -> list[WikiArticle]:
+        return await self.repo.list_all(vault_id)
+
+    async def count(self, vault_id: UUID) -> int:
+        return await self.repo.count(vault_id)
+
+    async def search(
+        self,
+        vault_id: UUID,
+        *,
+        slug: str | None = None,
+        query: str | None = None,
+        limit: int = 20,
+    ) -> list[WikiArticleOverview]:
+        return await self.repo.list_overviews(
+            vault_id, slug=slug, query=query, limit=limit
+        )
+
+    async def list_articles(
+        self, vault_id: UUID, *, pagination: PageParams, recent: bool = False
+    ) -> Page[WikiArticleOverview]:
+        items = await self.repo.list_overviews(
+            vault_id, limit=pagination.limit, offset=pagination.offset, recent=recent
+        )
+        total = await self.repo.count_overview_paths(vault_id)
+        return create_page(items, pagination, total)
+
+    async def list_orphans(self, vault_id: UUID) -> list[WikiArticleOverview]:
+        return await self.repo.list_orphans(vault_id)
+
+    async def update_file_path_for_topic(
+        self, vault_id: UUID, topic_id: UUID, new_file_path: str
+    ) -> None:
+        await self.repo.update_file_path_for_topic(vault_id, topic_id, new_file_path)
+
+    async def replace_backlinks(
+        self, *, source_ids: list[UUID], backlinks: list[Backlink]
+    ) -> None:
+        await self.repo.update_backlinks(source_ids=source_ids, backlinks=backlinks)
+        await self.repo.session.commit()

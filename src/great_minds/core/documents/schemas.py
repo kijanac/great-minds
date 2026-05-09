@@ -1,8 +1,7 @@
-"""Document domain schemas."""
+"""Source document and wiki article domain schemas."""
 
 import uuid
 from datetime import datetime
-from enum import StrEnum
 
 from pydantic import BaseModel, ConfigDict, Field, computed_field
 
@@ -10,19 +9,16 @@ from great_minds.core.documents.builder import UNIVERSAL_ALL
 from great_minds.core.pagination import FacetCount
 from great_minds.core.paths import wiki_slug
 
-
-class DocKind(StrEnum):
-    RAW = "raw"
-    WIKI = "wiki"
+# ---------------------------------------------------------------------------
+# Ingest-time source metadata (caller-supplied request input)
+# ---------------------------------------------------------------------------
 
 
 class SourceMetadata(BaseModel):
     """Caller-supplied metadata accompanying an ingest request.
 
     Universal frontmatter fields the API and CLI hand to ``IngestService``
-    before a document is constructed. Distinct from ``DocumentMetadata``
-    (which is the parsed view of an already-indexed document's
-    frontmatter): this model is the request-side input.
+    before a source document is constructed.
     """
 
     content_type: str = "texts"
@@ -37,8 +33,13 @@ class SourceMetadata(BaseModel):
 _UNIVERSAL_KEYS = frozenset(UNIVERSAL_ALL) | {"url"}
 
 
+# ---------------------------------------------------------------------------
+# Shared metadata (parsed frontmatter view)
+# ---------------------------------------------------------------------------
+
+
 class DocumentMetadata(BaseModel):
-    """Source and enrichment metadata for an indexed document."""
+    """Source and enrichment metadata for an indexed source document."""
 
     title: str = ""
     author: str | None = None
@@ -47,27 +48,24 @@ class DocumentMetadata(BaseModel):
     origin: str | None = None
     genre: str | None = None
     precis: str | None = None
-    # NULL for rendered wiki rows; populated for raw docs.
     source_type: str | None = None
     tags: list[str] = Field(default_factory=list)
     extra_metadata: dict = Field(default_factory=dict)
 
 
-class DocumentCreate(BaseModel):
-    """Input for creating/upserting a document.
+# ---------------------------------------------------------------------------
+# Create inputs
+# ---------------------------------------------------------------------------
 
-    Universal frontmatter fields (title, author, origin, date, genre, tags)
-    are explicit. Config-driven fields live in extra_metadata. ``topic_id``
-    is set for wiki rows by render and NULL for raw rows.
-    """
+
+class SourceDocCreate(BaseModel):
+    """Input for creating / upserting a source document."""
 
     model_config = ConfigDict(extra="ignore")
 
     file_path: str
     content: str
-    doc_kind: str = DocKind.RAW
     compiled: bool = False
-    topic_id: uuid.UUID | None = None
     metadata: DocumentMetadata = Field(default_factory=DocumentMetadata)
 
     @staticmethod
@@ -75,18 +73,11 @@ class DocumentCreate(BaseModel):
         fm: dict,
         file_path: str,
         content: str,
-        doc_kind: str = DocKind.RAW,
-    ) -> "DocumentCreate":
-        """Build a DocumentCreate from parsed frontmatter.
-
-        Splits universal fields into explicit params and everything else
-        into extra_metadata.
-        """
+    ) -> "SourceDocCreate":
         extra = {k: v for k, v in fm.items() if k not in _UNIVERSAL_KEYS}
-        return DocumentCreate(
+        return SourceDocCreate(
             file_path=file_path,
             content=content,
-            doc_kind=doc_kind,
             compiled=fm.get("compiled", False),
             metadata=DocumentMetadata(
                 source_type=fm.get("source_type"),
@@ -102,8 +93,22 @@ class DocumentCreate(BaseModel):
         )
 
 
-class Document(BaseModel):
-    """Indexed document record. Body content lives in storage."""
+class WikiArticleCreate(BaseModel):
+    """Input for creating / upserting a rendered wiki article."""
+
+    file_path: str
+    content: str
+    topic_id: uuid.UUID
+    metadata: DocumentMetadata = Field(default_factory=DocumentMetadata)
+
+
+# ---------------------------------------------------------------------------
+# Read models
+# ---------------------------------------------------------------------------
+
+
+class SourceDocument(BaseModel):
+    """Indexed source document.  Body lives in storage."""
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -112,24 +117,34 @@ class Document(BaseModel):
     file_path: str
     body_hash: str
     compiled: bool
-    doc_kind: str
-    topic_id: uuid.UUID | None = None
     metadata: DocumentMetadata
     created_at: datetime | None = None
     updated_at: datetime | None = None
 
 
+class WikiArticle(BaseModel):
+    """Rendered wiki article.  Title / description joined from topics at read time."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: uuid.UUID
+    vault_id: uuid.UUID
+    topic_id: uuid.UUID
+    file_path: str
+    body_hash: str
+    title: str = ""
+    precis: str | None = None
+    created_at: datetime | None = None
+    updated_at: datetime | None = None
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def slug(self) -> str:
+        return wiki_slug(self.file_path)
+
+
 class WikiArticleOverview(BaseModel):
-    """Wiki article overview shape.
-
-    ``file_path`` is the canonical document identity (matches the
-    documents table). ``slug`` is derived from file_path via the wiki
-    path convention.
-
-    ``from_attributes=True`` lets the repository pass SQLAlchemy ``Row``
-    objects straight to ``model_validate`` (rows have labeled-column
-    attribute access), avoiding manual unpacking.
-    """
+    """Wiki article list row — joins topics for title / precis."""
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -144,13 +159,23 @@ class WikiArticleOverview(BaseModel):
         return wiki_slug(self.file_path)
 
 
+# ---------------------------------------------------------------------------
+# Backlinks
+# ---------------------------------------------------------------------------
+
+
 class Backlink(BaseModel):
-    source_document_id: uuid.UUID
-    target_document_id: uuid.UUID
+    source_article_id: uuid.UUID
+    target_article_id: uuid.UUID
+
+
+# ---------------------------------------------------------------------------
+# Utility
+# ---------------------------------------------------------------------------
 
 
 class FileHash(BaseModel):
-    """(file_path, file_hash) row — used for staged file ingest skip detection."""
+    """(file_path, file_hash) row for staged ingest skip detection."""
 
     model_config = ConfigDict(from_attributes=True)
     file_path: str
@@ -158,7 +183,7 @@ class FileHash(BaseModel):
 
 
 class IngestedDocument(BaseModel):
-    """Result of a successful ingest operation."""
+    """Result of a successful source ingest operation."""
 
     file_path: str
     title: str

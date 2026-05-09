@@ -5,8 +5,9 @@ minimal query index for list/filter/sort pagination.
 """
 
 import uuid
+from datetime import datetime
 
-from sqlalchemy import ForeignKey, Text
+from sqlalchemy import DateTime, ForeignKey, Text
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -30,5 +31,5 @@ class SessionRecordORM(Base):
     )
     query: Mapped[str] = mapped_column(Text)
     origin: Mapped[dict | None] = mapped_column(JSONB)
-    created: Mapped[str] = mapped_column(Text)
-    updated: Mapped[str] = mapped_column(Text, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)

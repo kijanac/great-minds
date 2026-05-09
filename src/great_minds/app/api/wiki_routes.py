@@ -1,9 +1,4 @@
-"""Wiki and document routes.
-
-Archive lookups are disabled during the seven-phase refactor — the topics
-table and the topic-scoped archive flow will restore them. Raw wiki and
-raw-doc reads continue to work off the filesystem.
-"""
+"""Wiki and document routes."""
 
 from pathlib import PurePosixPath
 from uuid import UUID
@@ -11,8 +6,9 @@ from uuid import UUID
 from fastapi import APIRouter, HTTPException
 
 from great_minds.app.api.dependencies import (
+    SourceDocumentServiceDep,
     VaultStorageDep,
-    DocumentServiceDep,
+    WikiArticleServiceDep,
     PageParamsQuery,
 )
 from great_minds.app.api.schemas import wiki as schemas
@@ -28,20 +24,18 @@ router = APIRouter(tags=["wiki"])
 async def list_articles(
     vault_id: UUID,
     pagination: PageParamsQuery,
-    _storage: VaultStorageDep,
-    doc_service: DocumentServiceDep,
+    wiki_service: WikiArticleServiceDep,
 ) -> Page[WikiArticleOverview]:
-    return await doc_service.list_wiki_articles(vault_id, pagination=pagination)
+    return await wiki_service.list_articles(vault_id, pagination=pagination)
 
 
 @router.get("/wiki/recent")
 async def recent_articles(
     vault_id: UUID,
     pagination: PageParamsQuery,
-    _storage: VaultStorageDep,
-    doc_service: DocumentServiceDep,
+    wiki_service: WikiArticleServiceDep,
 ) -> Page[WikiArticleOverview]:
-    return await doc_service.list_wiki_articles(
+    return await wiki_service.list_articles(
         vault_id, pagination=pagination, recent=True
     )
 
@@ -50,13 +44,12 @@ async def recent_articles(
 async def list_raw_sources(
     vault_id: UUID,
     pagination: PageParamsQuery,
-    _storage: VaultStorageDep,
-    doc_service: DocumentServiceDep,
+    source_service: SourceDocumentServiceDep,
     content_type: str | None = None,
     search: str | None = None,
     compiled: bool | None = None,
 ) -> FacetedPage[schemas.SourceDocumentSummary, SourceDocumentFacets]:
-    result = await doc_service.list_raw_sources(
+    result = await source_service.list_sources(
         vault_id,
         content_type=content_type,
         search=search,
@@ -87,7 +80,8 @@ async def read_document(
     vault_id: UUID,
     path: str,
     storage: VaultStorageDep,
-    doc_service: DocumentServiceDep,
+    source_service: SourceDocumentServiceDep,
+    wiki_service: WikiArticleServiceDep,
 ) -> schemas.DocResponse:
     try:
         path = _safe_document_read_path(path)
@@ -99,16 +93,20 @@ async def read_document(
         raise HTTPException(status_code=404, detail=f"Document not found: {path}")
     _, body = parse_frontmatter(content)
 
-    document = await doc_service.get_by_path(vault_id, path)
-    if document is None:
-        # File exists on disk without a DB row — an ingest invariant
-        # violation. Surface loudly; a reconciliation pass would repair.
-        raise HTTPException(
-            status_code=500,
-            detail=f"Document on disk lacks a registry row: {path}",
-        )
+    # Callers know: wiki/ paths → wiki_articles table, raw/ paths → source_documents.
+    if path.startswith("wiki/"):
+        article = await wiki_service.get_by_path(vault_id, path)
+        if article is not None:
+            return schemas.DocResponse(article=article, body=body)
+    else:
+        source = await source_service.get_by_path(vault_id, path)
+        if source is not None:
+            return schemas.DocResponse(article=source, body=body)
 
-    return schemas.DocResponse(document=document, body=body)
+    raise HTTPException(
+        status_code=500,
+        detail=f"Document on disk lacks a registry row: {path}",
+    )
 
 
 def _safe_document_read_path(path: str) -> str:

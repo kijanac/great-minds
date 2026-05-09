@@ -30,7 +30,7 @@ from uuid import UUID, uuid7
 from openai import AsyncOpenAI
 
 from great_minds.core.vaults.prompts import load_prompt
-from great_minds.core.documents import DocumentService
+from great_minds.core.documents import WikiArticleService
 from great_minds.core.llm.client import json_llm_call
 from great_minds.core.llm import REDUCE_MODEL
 from great_minds.core.markdown import parse_frontmatter, serialize_frontmatter
@@ -65,12 +65,12 @@ class ValidatePhase:
         storage: Storage,
         client: AsyncOpenAI,
         topics: TopicService,
-        documents: DocumentService,
+        wiki_articles: WikiArticleService,
     ) -> None:
         self.storage = storage
         self.client = client
         self.topics = topics
-        self.documents = documents
+        self.wiki_articles = wiki_articles
 
     async def run(
         self,
@@ -191,7 +191,7 @@ class ValidatePhase:
         await self.storage.delete(article_path)
         # Repoint the documents row at the archive location so backlinks
         # and /doc reads resolve to the artifact's actual home.
-        await self.documents.repo.update_file_path_for_topic(
+        await self.wiki_articles.update_file_path_for_topic(
             vault_id, topic.topic_id, archive_path
         )
 

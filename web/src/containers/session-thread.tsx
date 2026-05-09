@@ -2,7 +2,7 @@ import { useCallback, useState } from "react";
 
 import { useViewNavigate } from "@/hooks/use-view-navigate";
 
-import { readDocument } from "@/api/doc";
+import { readDocument, isWiki } from "@/api/doc";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
@@ -41,8 +41,10 @@ export function SessionThread({ session, onFollowUp }: SessionThreadProps) {
         prev?.path === path
           ? {
               path,
-              title: data.document.metadata.title || null,
-              kind: data.document.doc_kind,
+              title: isWiki(data.article)
+                ? data.article.title || null
+                : data.article.metadata.title || null,
+              kind: path.startsWith("wiki/") ? "wiki" : "raw",
               body: data.body,
               loading: false,
             }

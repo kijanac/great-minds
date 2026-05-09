@@ -14,6 +14,12 @@ import {
 } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
+import {
+  FILTER_CHIP_CLASS,
+  SELECT_CONTENT_CLASS,
+  SELECT_ITEM_CLASS,
+  SELECT_TRIGGER_CLASS,
+} from "@/lib/control-styles";
 import { formatShortDate } from "@/lib/utils";
 
 const STATUS_FILTERS: { value: ProposalFilter; label: string }[] = [
@@ -92,7 +98,7 @@ export function ProposalsSection({
         className="mb-4"
       >
         {STATUS_FILTERS.map((f) => (
-          <ToggleGroupItem key={f.value} value={f.value}>
+          <ToggleGroupItem key={f.value} value={f.value} className={FILTER_CHIP_CLASS}>
             {f.label}
           </ToggleGroupItem>
         ))}
@@ -189,16 +195,19 @@ export function ProposalsSection({
               onValueChange={(val) => val && setContentType(val)}
               disabled={creating}
             >
-              <SelectTrigger
-                size="sm"
-                className="h-8 rounded-sm font-mono text-[length:var(--text-small)] text-warm border-ink-border focus-visible:border-gold-dim focus-visible:ring-0"
-              >
+              <SelectTrigger size="sm" className={`h-8 ${SELECT_TRIGGER_CLASS}`}>
                 <SelectValue />
               </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="texts">texts</SelectItem>
-                <SelectItem value="news">news</SelectItem>
-                <SelectItem value="ideas">ideas</SelectItem>
+              <SelectContent className={SELECT_CONTENT_CLASS}>
+                <SelectItem value="texts" className={SELECT_ITEM_CLASS}>
+                  texts
+                </SelectItem>
+                <SelectItem value="news" className={SELECT_ITEM_CLASS}>
+                  news
+                </SelectItem>
+                <SelectItem value="ideas" className={SELECT_ITEM_CLASS}>
+                  ideas
+                </SelectItem>
               </SelectContent>
             </Select>
           </div>

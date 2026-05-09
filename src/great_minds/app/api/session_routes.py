@@ -7,7 +7,7 @@ from fastapi import APIRouter, HTTPException
 from great_minds.app.api.dependencies import (
     VaultAccessDep,
     CurrentUser,
-    DocumentServiceDep,
+    SourceDocumentServiceDep,
     IngestServiceDep,
     LlmGuard,
     PageParamsQuery,
@@ -126,7 +126,7 @@ async def promote_exchange(
     access: VaultAccessDep,
     ingest_service: IngestServiceDep,
     proposal_service: ProposalServiceDep,
-    doc_service: DocumentServiceDep,
+    doc_service: SourceDocumentServiceDep,
     _llm: LlmGuard,
     vault_id: UUID,
 ) -> schemas.PromoteExchangeResponse:

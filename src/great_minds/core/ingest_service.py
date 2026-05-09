@@ -17,7 +17,7 @@ from great_minds.core.vaults.service import VaultService
 from great_minds.core.documents.builder import write_document
 from great_minds.core.documents.schemas import IngestedDocument, SourceMetadata
 from great_minds.core.ingest_schemas import StagedFileInput, StagedFileSignedUpload
-from great_minds.core.documents.service import DocumentService
+from great_minds.core.documents.service import SourceDocumentService
 from great_minds.core.paths import raw_path, session_exchange_path
 from great_minds.core.sessions.schemas import ExchangeEvent, SessionOrigin
 from great_minds.core.sessions.service import SessionService
@@ -44,7 +44,7 @@ class IngestService:
 
     def __init__(
         self,
-        doc_service: DocumentService,
+        doc_service: SourceDocumentService,
         *,
         vault_service: VaultService,
         settings: Settings,
@@ -55,7 +55,9 @@ class IngestService:
 
     def with_pipeline_run(self, pipeline_run_id: UUID) -> IngestService:
         return IngestService(
-            DocumentService(self.doc_service.repo, pipeline_run_id=pipeline_run_id),
+            SourceDocumentService(
+                self.doc_service.repo, pipeline_run_id=pipeline_run_id
+            ),
             vault_service=self.vault_service,
             settings=self.settings,
         )
@@ -113,7 +115,7 @@ class IngestService:
             source_type=source_type,
             **frontmatter,
         )
-        return await self.doc_service.index_raw_doc(vault_id, dest, rendered)
+        return await self.doc_service.index(vault_id, dest, rendered)
 
     async def ingest_text(
         self,

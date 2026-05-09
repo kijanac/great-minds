@@ -34,13 +34,11 @@ from great_minds.core.vaults.prompts import load_prompt
 from great_minds.core.llm.client import json_llm_call
 from great_minds.core.markdown import serialize_frontmatter
 from great_minds.core.paths import wiki_path
-from great_minds.core.documents import DocumentService
+from great_minds.core.documents import SourceDocumentService, WikiArticleService
 from great_minds.core.documents.schemas import (
-    DocKind,
-    Document,
-    DocumentCreate,
-    DocumentMetadata,
+    WikiArticleCreate,
 )
+from great_minds.core.documents.schemas import SourceDocument
 from great_minds.core.ideas.schemas import Anchor, Idea, SourceCard
 from great_minds.core.ideas.source_cards import SourceCardStore
 from great_minds.core.llm import RENDER_MODEL
@@ -109,7 +107,8 @@ class RenderPhase:
         progress: PipelineProgressRunner,
         compile_cache: CompileCacheRepository,
         steps: StepRunner,
-        documents: DocumentService,
+        source_docs: SourceDocumentService,
+        wiki_articles: WikiArticleService,
         topics: TopicService,
         search: SearchService,
         source_cards: SourceCardStore,
@@ -121,7 +120,8 @@ class RenderPhase:
         self.progress = progress
         self.compile_cache = compile_cache
         self.steps = steps
-        self.documents = documents
+        self.source_docs = source_docs
+        self.wiki_articles = wiki_articles
         self.topics = topics
         self.search = search
         self.source_cards = source_cards
@@ -341,7 +341,7 @@ class RenderPhase:
             idea_id for topic in to_render for idea_id in topic.subsumed_idea_ids
         }
         idea_by_id = await self.source_cards.ideas_by_id(needed_idea_ids)
-        docs = await self.documents.list_by_kind(vault_id, DocKind.RAW)
+        docs = await self.source_docs.list_all(vault_id)
         doc_by_id = {d.id: d for d in docs}
         topic_by_slug = {v.slug: v for v in validated}
 
@@ -505,19 +505,12 @@ async def _write_rendered_article(
     # metadata. topics is the editorial plan; documents holds the
     # on-disk artifacts (raw + wiki). topic_id is the FK that ties the
     # two together — verify, lint, and archive all join on it.
-    await phase.documents.upsert_compiled_doc(
+    await phase.wiki_articles.upsert(
         vault_id,
-        DocumentCreate(
+        WikiArticleCreate(
             file_path=article_path,
             content=full_content,
-            doc_kind=DocKind.WIKI,
-            compiled=True,
             topic_id=topic.topic_id,
-            metadata=DocumentMetadata(
-                title=topic.title,
-                precis=topic.description,
-                tags=tags,
-            ),
         ),
     )
     return _topic_content_hash(topic)
@@ -544,7 +537,7 @@ async def _render_one(
     vault_id: UUID,
     topic: TopicDetail,
     idea_by_id: dict[UUID, tuple[Idea, SourceCard]],
-    doc_by_id: dict[UUID, Document],
+    doc_by_id: dict[UUID, SourceDocument],
     topic_by_slug: dict[str, TopicDetail],
     prompt_template: str,
     prompt_hash: str,
@@ -633,13 +626,13 @@ class _NumberedAnchor:
     number: int
     anchor: Anchor
     idea: Idea
-    doc: Document | None
+    doc: SourceDocument | None
 
 
 def _build_numbered_anchors(
     topic: TopicDetail,
     idea_by_id: dict[UUID, tuple[Idea, SourceCard]],
-    doc_by_id: dict[UUID, Document],
+    doc_by_id: dict[UUID, SourceDocument],
 ) -> list[_NumberedAnchor]:
     out: list[_NumberedAnchor] = []
     counter = 0
@@ -662,7 +655,7 @@ def _render_idea_block(
     topic: TopicDetail,
     numbered_anchors: list[_NumberedAnchor],
     idea_by_id: dict[UUID, tuple[Idea, SourceCard]],
-    doc_by_id: dict[UUID, Document],
+    doc_by_id: dict[UUID, SourceDocument],
 ) -> str:
     anchors_by_idea: dict[UUID, list[_NumberedAnchor]] = {}
     for na in numbered_anchors:
@@ -704,7 +697,7 @@ def _render_link_targets_block(
     return "\n".join(lines)
 
 
-def _source_label(doc: Document) -> str:
+def _source_label(doc: SourceDocument) -> str:
     title = (doc.metadata.title or "").strip() or "Untitled"
     date = (doc.metadata.published_date or "").strip()
     return f"{title} ({date})" if date else title

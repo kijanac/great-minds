@@ -1,9 +1,11 @@
 """Session domain schemas and persisted event models."""
 
+from datetime import datetime
 from enum import StrEnum
 from typing import Literal
+from uuid import UUID
 
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 
 
 class ThinkingSource(BaseModel):
@@ -97,9 +99,11 @@ class BtwInput(BaseModel):
 
 
 class SessionOverview(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
     id: str
     query: str
-    created: str
-    updated: str
-    user_id: str
+    created_at: datetime
+    updated_at: datetime
+    user_id: UUID
     origin: SessionOrigin | None = None
