@@ -1,6 +1,6 @@
 """Source document and wiki article domain schemas."""
 
-import uuid
+from uuid import UUID
 from datetime import datetime
 
 from pydantic import BaseModel, ConfigDict, Field, computed_field
@@ -50,7 +50,7 @@ class DocumentMetadata(BaseModel):
     precis: str | None = None
     source_type: str | None = None
     tags: list[str] = Field(default_factory=list)
-    extra_metadata: dict = Field(default_factory=dict)
+    doc_metadata: dict = Field(default_factory=dict)
 
 
 # ---------------------------------------------------------------------------
@@ -66,6 +66,7 @@ class SourceDocCreate(BaseModel):
     file_path: str
     content: str
     compiled: bool = False
+    etag: str | None = None
     metadata: DocumentMetadata = Field(default_factory=DocumentMetadata)
 
     @staticmethod
@@ -88,7 +89,7 @@ class SourceDocCreate(BaseModel):
                 published_date=str(fm["date"]) if "date" in fm else None,
                 genre=fm.get("genre"),
                 tags=fm.get("tags", []),
-                extra_metadata=extra,
+                doc_metadata=extra,
             ),
         )
 
@@ -98,7 +99,7 @@ class WikiArticleCreate(BaseModel):
 
     file_path: str
     content: str
-    topic_id: uuid.UUID
+    topic_id: UUID
     metadata: DocumentMetadata = Field(default_factory=DocumentMetadata)
 
 
@@ -112,11 +113,12 @@ class SourceDocument(BaseModel):
 
     model_config = ConfigDict(from_attributes=True)
 
-    id: uuid.UUID
-    vault_id: uuid.UUID
+    id: UUID
+    vault_id: UUID
     file_path: str
     body_hash: str
     compiled: bool
+    etag: str | None = None
     metadata: DocumentMetadata
     created_at: datetime | None = None
     updated_at: datetime | None = None
@@ -127,9 +129,9 @@ class WikiArticle(BaseModel):
 
     model_config = ConfigDict(from_attributes=True)
 
-    id: uuid.UUID
-    vault_id: uuid.UUID
-    topic_id: uuid.UUID
+    id: UUID
+    vault_id: UUID
+    topic_id: UUID
     file_path: str
     body_hash: str
     title: str = ""
@@ -165,8 +167,8 @@ class WikiArticleOverview(BaseModel):
 
 
 class Backlink(BaseModel):
-    source_article_id: uuid.UUID
-    target_article_id: uuid.UUID
+    source_article_id: UUID
+    target_article_id: UUID
 
 
 # ---------------------------------------------------------------------------
@@ -180,6 +182,18 @@ class FileHash(BaseModel):
     model_config = ConfigDict(from_attributes=True)
     file_path: str
     file_hash: str
+
+
+class SourceDocumentUpdate(BaseModel):
+    """Partial update for source documents."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    document_id: UUID
+    etag: str | None = None
+    title: str | None = None
+    precis: str | None = None
+    doc_metadata: dict | None = None
 
 
 class IngestedDocument(BaseModel):

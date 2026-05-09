@@ -5,7 +5,7 @@ from uuid import UUID
 
 from great_minds.core.hashing import body_hash, file_hash
 
-from sqlalchemy import Select, delete, distinct, func, or_, select, update
+from sqlalchemy import Select, case, delete, distinct, func, or_, select, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -21,6 +21,7 @@ from great_minds.core.documents.schemas import (
     FileHash,
     SourceDocCreate,
     SourceDocument,
+    SourceDocumentUpdate,
     WikiArticle,
     WikiArticleCreate,
     WikiArticleOverview,
@@ -57,14 +58,14 @@ class SourceDocumentRepo:
         stmt = insert(SourceDocumentORM).values(
             vault_id=vault_id,
             file_path=doc.file_path,
-            extra_metadata=doc.metadata.extra_metadata,
+            doc_metadata=doc.metadata.doc_metadata,
             **columns,
         )
         stmt = stmt.on_conflict_do_update(
             index_elements=[SourceDocumentORM.vault_id, SourceDocumentORM.file_path],
             set_={
                 **columns,
-                "metadata": doc.metadata.extra_metadata,
+                "metadata": doc.metadata.doc_metadata,
                 "updated_at": func.now(),
             },
         )
@@ -96,9 +97,10 @@ class SourceDocumentRepo:
                     "published_date": doc.metadata.published_date,
                     "genre": doc.metadata.genre,
                     "compiled": doc.compiled,
+                    "etag": doc.etag,
                     "source_type": doc.metadata.source_type,
                     "precis": doc.metadata.precis,
-                    "extra_metadata": doc.metadata.extra_metadata,
+                    "doc_metadata": doc.metadata.doc_metadata,
                 }
             )
         stmt = insert(SourceDocumentORM).values(rows)
@@ -114,6 +116,7 @@ class SourceDocumentRepo:
                 "published_date": stmt.excluded.published_date,
                 "genre": stmt.excluded.genre,
                 "compiled": stmt.excluded.compiled,
+                "etag": stmt.excluded.etag,
                 "source_type": stmt.excluded.source_type,
                 "precis": stmt.excluded.precis,
                 "metadata": stmt.excluded["metadata"],
@@ -138,6 +141,31 @@ class SourceDocumentRepo:
             )
         )
         return [FileHash.model_validate(r) for r in result]
+
+    async def update_batch(
+        self, vault_id: UUID, updates: list[SourceDocumentUpdate]
+    ) -> None:
+        """Batch-update source documents."""
+        if not updates:
+            return
+        ids = [u.document_id for u in updates]
+        values: dict = {"updated_at": func.now()}
+        for attr in ("etag", "title", "precis", "doc_metadata"):
+            mapping = {
+                u.document_id: getattr(u, attr)
+                for u in updates
+                if getattr(u, attr) is not None
+            }
+            if mapping:
+                values[attr] = case(mapping, value=SourceDocumentORM.id)
+        await self.session.execute(
+            update(SourceDocumentORM)
+            .where(
+                SourceDocumentORM.vault_id == vault_id,
+                SourceDocumentORM.id.in_(ids),
+            )
+            .values(**values)
+        )
 
     async def get_by_path(
         self, vault_id: UUID, file_path: str
@@ -186,19 +214,10 @@ class SourceDocumentRepo:
     async def update_metadata_from_cards(
         self, vault_id: UUID, cards: list[SourceCard]
     ) -> None:
-        for card in cards:
-            await self.session.execute(
-                update(SourceDocumentORM)
-                .where(
-                    SourceDocumentORM.vault_id == vault_id,
-                    SourceDocumentORM.id == card.document_id,
-                )
-                .values(
-                    title=card.title,
-                    precis=card.precis,
-                    extra_metadata=card.doc_metadata.model_dump(mode="json"),
-                )
-            )
+        await self.update_batch(
+            vault_id,
+            [SourceDocumentUpdate.model_validate(c) for c in cards],
+        )
 
     async def query(
         self,
@@ -590,6 +609,7 @@ def _source_document_from_orm(
         file_path=orm.file_path,
         body_hash=orm.body_hash,
         compiled=orm.compiled,
+        etag=orm.etag,
         metadata=DocumentMetadata(
             title=orm.title,
             author=orm.author,
@@ -600,7 +620,7 @@ def _source_document_from_orm(
             precis=orm.precis,
             source_type=orm.source_type,
             tags=tags or [],
-            extra_metadata=orm.extra_metadata,
+            doc_metadata=orm.doc_metadata,
         ),
         created_at=orm.created_at,
         updated_at=orm.updated_at,

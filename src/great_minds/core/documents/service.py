@@ -9,6 +9,7 @@ from great_minds.core.documents.schemas import (
     SourceDocCreate,
     SourceDocument,
     SourceDocumentFacets,
+    SourceDocumentUpdate,
     WikiArticle,
     WikiArticleCreate,
     WikiArticleOverview,
@@ -63,6 +64,12 @@ class SourceDocumentService:
     async def file_hashes(self, vault_id: UUID) -> dict[str, str]:
         entries = await self.repo.get_file_hashes(vault_id)
         return {e.file_path: e.file_hash for e in entries}
+
+    async def update_batch(
+        self, vault_id: UUID, updates: list[SourceDocumentUpdate]
+    ) -> None:
+        """Batch-update source documents."""
+        await self.repo.update_batch(vault_id, updates)
 
     async def batch_index(
         self, vault_id: UUID, docs: list[SourceDocCreate]

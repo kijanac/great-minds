@@ -26,6 +26,7 @@ import logging
 import shutil
 import time
 from collections.abc import Callable
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol, TypeVar, runtime_checkable
 from uuid import UUID
@@ -41,6 +42,14 @@ from great_minds.core.telemetry import log_event
 T = TypeVar("T")
 
 
+@dataclass(frozen=True)
+class FileInfo:
+    """A file path with its R2 ETag (or None for local storage, which forces re-index)."""
+
+    path: str
+    etag: str | None
+
+
 @runtime_checkable
 class Storage(Protocol):
     """Structural interface for vault file storage."""
@@ -48,7 +57,7 @@ class Storage(Protocol):
     async def read(self, path: str, *, strict: bool = True) -> str | None: ...
     async def write(self, path: str, content: str) -> None: ...
     async def exists(self, path: str) -> bool: ...
-    async def glob(self, pattern: str) -> list[str]: ...
+    async def glob(self, pattern: str) -> list[FileInfo]: ...
     async def append(self, path: str, content: str) -> None: ...
     async def mkdir(self, path: str) -> None: ...
     async def delete(self, path: str, *, missing_ok: bool = True) -> None: ...
@@ -84,9 +93,17 @@ class LocalStorage:
     async def exists(self, path: str) -> bool:
         return self._resolve(path).exists()
 
-    async def glob(self, pattern: str) -> list[str]:
+    async def glob(self, pattern: str) -> list[FileInfo]:
+        """Match glob, return files with ETag.
+
+        LocalStorage has no ETags — returns empty strings. Every file
+        is considered "changed" so indexing always re-reads. Acceptable
+        for local dev; prod uses R2Storage which provides real ETags.
+        """
         matches = sorted(self.root.glob(pattern))
-        return [str(m.relative_to(self.root)) for m in matches]
+        return [
+            FileInfo(path=str(m.relative_to(self.root)), etag=None) for m in matches
+        ]
 
     async def append(self, path: str, content: str) -> None:
         full = self._resolve(path)
@@ -152,16 +169,31 @@ class R2Storage:
         op: str,
         path: str,
         sync_fn: Callable[[], T],
+        *,
+        timeout: float = 120.0,
     ) -> tuple[T, int]:
         """Run a boto3 op in a thread, log on failure, return (result, latency_ms).
 
         Success-path logging lives at the call site so each op can emit
         op-specific fields (hit, bytes, match_count) without a dict-spread
         helper that fights the type checker.
+
+        Wraps the thread call in ``asyncio.wait_for`` so a hung boto3
+        client (e.g. stalled TCP connection) doesn't block the worker
+        indefinitely.
         """
         t0 = time.perf_counter()
         try:
-            result = await asyncio.to_thread(sync_fn)
+            result = await asyncio.wait_for(asyncio.to_thread(sync_fn), timeout=timeout)
+        except asyncio.TimeoutError:
+            log_event(
+                "storage.r2_op_timeout",
+                level=logging.ERROR,
+                op=op,
+                path=path,
+                timeout=timeout,
+            )
+            raise TimeoutError(f"R2 {op} '{path}' timed out after {timeout}s") from None
         except Exception as e:
             log_event(
                 "storage.r2_op",
@@ -244,7 +276,7 @@ class R2Storage:
         )
         return result
 
-    def _glob_sync(self, pattern: str) -> list[str]:
+    def _glob_sync(self, pattern: str) -> list[FileInfo]:
         if "**/" in pattern:
             list_prefix, filename_pattern = pattern.split("**/", 1)
             recursive = True
@@ -261,25 +293,34 @@ class R2Storage:
         if not recursive:
             kwargs["Delimiter"] = "/"
 
-        matches: list[str] = []
+        matches: list[FileInfo] = []
         for page in paginator.paginate(**kwargs):
             for obj in page.get("Contents", []):
                 rel = self._strip_prefix(obj["Key"])
                 filename = rel.rsplit("/", 1)[-1]
                 if fnmatch.fnmatch(filename, filename_pattern):
-                    matches.append(rel)
-        return sorted(matches)
+                    etag = obj.get("ETag", "").strip('"')
+                    matches.append(FileInfo(path=rel, etag=etag))
+        return sorted(matches, key=lambda f: f.path)
 
-    async def glob(self, pattern: str) -> list[str]:
-        """Match a glob pattern against keys under the vault prefix.
+    async def glob(self, pattern: str) -> list[FileInfo]:
+        """Match files and return paths with their R2 ETag.
 
         Supports patterns like ``raw/**/*.md`` (recursive) and
-        ``wiki/*.md`` (single-level). The pattern's leading path segment
-        becomes the R2 prefix; the trailing filename portion is matched
-        via fnmatch against each object's basename.
+        ``wiki/*.md`` (single-level). The pattern's leading path
+        segment becomes the R2 prefix; the trailing filename is
+        matched via fnmatch against each object's basename.
+
+        The ETag comes from ``list_objects_v2`` response metadata —
+        it's already in the paginated listing, zero extra cost. For
+        single-part uploads (which we use exclusively), the ETag is
+        the MD5 of the object.
         """
         result, latency_ms = await self._timed(
-            "glob", pattern, lambda: self._glob_sync(pattern)
+            "glob",
+            pattern,
+            lambda: self._glob_sync(pattern),
+            timeout=180.0,  # large vaults may paginate many pages
         )
         log_event(
             "storage.r2_op",

@@ -25,6 +25,7 @@ class SourceDocumentORM(Base):
     file_path: Mapped[str] = mapped_column(Text)
     file_hash: Mapped[str] = mapped_column(Text)
     body_hash: Mapped[str] = mapped_column(Text)
+    etag: Mapped[str | None] = mapped_column(Text)
     title: Mapped[str] = mapped_column(Text, server_default="")
     author: Mapped[str | None] = mapped_column(Text)
     url: Mapped[str | None] = mapped_column(Text)
@@ -34,7 +35,7 @@ class SourceDocumentORM(Base):
     compiled: Mapped[bool] = mapped_column(Boolean, server_default="false")
     source_type: Mapped[str | None] = mapped_column(Text)
     precis: Mapped[str | None] = mapped_column(Text)
-    extra_metadata: Mapped[dict] = mapped_column("metadata", JSONB, server_default="{}")
+    doc_metadata: Mapped[dict] = mapped_column("metadata", JSONB, server_default="{}")
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )

@@ -192,6 +192,7 @@ async def build_compile_service(
                 search=search,
                 progress=progress,
                 pipeline_run_id=pipeline_run_id,
+                source_docs=source_docs,
             ),
             extract=extract.ExtractPhase(
                 storage=storage,

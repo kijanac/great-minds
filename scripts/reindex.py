@@ -5,6 +5,7 @@ Usage:
 """
 
 import asyncio
+from uuid import uuid4
 
 from sqlalchemy import select
 
@@ -18,6 +19,15 @@ from great_minds.core.search import SearchIndexRepository, SearchService
 from great_minds.core.settings import get_settings
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from great_minds.core.storage import LocalStorage
+
+
+class _NoopProgress:
+    async def emit(self, **kwargs) -> None:
+        pass
+
+
+_noop_progress = _NoopProgress()
+_noop_run_id = uuid4()
 
 
 async def main() -> None:
@@ -54,8 +64,18 @@ async def main() -> None:
 
             print(f"    -> {raw_count} raw docs, {wiki_count} wiki articles")
             svc = SearchService(SearchIndexRepository(session))
-            raw_chunks = await svc.rebuild_raw_index(vault.id, storage)
-            wiki_chunks = await svc.rebuild_wiki_index(vault.id, storage)
+            raw_chunks = await svc.rebuild_raw_index(
+                vault.id,
+                storage,
+                progress=_noop_progress,
+                pipeline_run_id=_noop_run_id,
+            )
+            wiki_chunks = await svc.rebuild_wiki_index(
+                vault.id,
+                storage,
+                progress=_noop_progress,
+                pipeline_run_id=_noop_run_id,
+            )
             print(
                 f"    -> {raw_chunks} raw chunks + {wiki_chunks} wiki chunks indexed\n"
             )

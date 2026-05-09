@@ -169,7 +169,7 @@ class RenderPhase:
         # Pre-pass: one storage list + N DB cache checks decides which topics
         # need LLM rendering, which can be skipped, and which have a cached
         # body/tags payload that can repair a missing wiki file.
-        existing_wiki = set(await self.storage.glob("wiki/*.md"))
+        existing_wiki = {f.path for f in await self.storage.glob("wiki/*.md")}
         to_render: list[TopicDetail] = []
         to_materialize: list[tuple[TopicDetail, _RenderOutput]] = []
         cache_hits = 0
@@ -285,7 +285,11 @@ class RenderPhase:
                     ),
                 )
                 wiki_chunks_indexed = await self.search.rebuild_wiki_index(
-                    vault_id, self.storage, client=self.client
+                    vault_id,
+                    self.storage,
+                    client=self.client,
+                    progress=self.progress,
+                    pipeline_run_id=pipeline_run_id,
                 )
             topics_rendered = cache_hits + materialized
             enrich(
@@ -432,7 +436,11 @@ class RenderPhase:
                 ),
             )
             wiki_chunks_indexed = await self.search.rebuild_wiki_index(
-                vault_id, self.storage, client=self.client
+                vault_id,
+                self.storage,
+                client=self.client,
+                progress=self.progress,
+                pipeline_run_id=pipeline_run_id,
             )
 
         topics_rendered = cache_hits + materialized + cache_misses

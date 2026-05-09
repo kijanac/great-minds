@@ -13,6 +13,8 @@ from uuid import UUID
 
 from openai import AsyncOpenAI
 
+from great_minds.core.documents.schemas import SourceDocumentUpdate
+from great_minds.core.documents.service import SourceDocumentService
 from great_minds.core.pipeline_runs import (
     PipelineProgressRunner,
     PipelineProgressStep,
@@ -45,12 +47,14 @@ class IngestPhase:
         search: SearchService,
         progress: PipelineProgressRunner,
         pipeline_run_id: UUID,
+        source_docs: SourceDocumentService,
     ) -> None:
         self.storage = storage
         self.client = client
         self.search = search
         self.progress = progress
         self.pipeline_run_id = pipeline_run_id
+        self.source_docs = source_docs
 
     def progress_steps(
         self,
@@ -79,6 +83,13 @@ class IngestPhase:
             status="progress",
             steps=self.progress_steps("prepare_text", completed={"load_sources"}),
         )
+
+        # Load stored documents so we can compare ETags and skip
+        # files whose R2 content hasn't changed since last index.
+        docs = await self.source_docs.list_all(vault_id)
+        stored_etags = {d.file_path: d.etag for d in docs}
+        id_by_path = {d.file_path: d.id for d in docs}
+
         await self.progress.emit(
             pipeline_run_id=self.pipeline_run_id,
             phase="ingest",
@@ -88,9 +99,29 @@ class IngestPhase:
                 completed={"load_sources", "prepare_text"},
             ),
         )
+        out_etags: list[tuple[str, str]] = []
         count = await self.search.rebuild_raw_index(
-            vault_id, self.storage, client=self.client
+            vault_id,
+            self.storage,
+            client=self.client,
+            stored_etags=stored_etags,
+            out_etags=out_etags,
+            progress=self.progress,
+            pipeline_run_id=self.pipeline_run_id,
         )
+
+        # Persist the current ETags so the next compile can skip unchanged
+        # files without reading them from R2.
+        if out_etags:
+            await self.source_docs.update_batch(
+                vault_id,
+                [
+                    SourceDocumentUpdate(document_id=id_by_path[p], etag=e)
+                    for p, e in out_etags
+                    if p in id_by_path
+                ],
+            )
+
         enrich(raw_chunks_indexed=count)
         log_event(
             "completed",

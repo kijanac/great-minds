@@ -15,6 +15,7 @@ from great_minds.core.hashing import content_hash
 from great_minds.core.llm import embed_batch, get_async_client
 from great_minds.core.markdown import paragraphs, parse_frontmatter
 from great_minds.core.paths import RAW_GLOB, RAW_PREFIX, WIKI_GLOB, WIKI_PREFIX
+from great_minds.core.pipeline_runs import PipelineProgressRunner, build_progress_steps
 from great_minds.core.search.repository import SearchIndexRepository
 from great_minds.core.search.schemas import Chunk, SearchResult
 from great_minds.core.settings import get_settings
@@ -110,6 +111,10 @@ class SearchService:
         storage: Storage,
         *,
         client: AsyncOpenAI | None = None,
+        stored_etags: dict[str, str | None] | None = None,
+        out_etags: list[tuple[str, str]] | None = None,
+        progress: PipelineProgressRunner,
+        pipeline_run_id: UUID,
     ) -> int:
         return await self._rebuild_scope(
             vault_id,
@@ -117,6 +122,10 @@ class SearchService:
             glob_pattern=RAW_GLOB,
             path_prefix=RAW_PREFIX,
             client=client,
+            stored_etags=stored_etags,
+            out_etags=out_etags,
+            progress=progress,
+            pipeline_run_id=pipeline_run_id,
         )
 
     async def rebuild_wiki_index(
@@ -125,6 +134,10 @@ class SearchService:
         storage: Storage,
         *,
         client: AsyncOpenAI | None = None,
+        stored_etags: dict[str, str | None] | None = None,
+        out_etags: list[tuple[str, str]] | None = None,
+        progress: PipelineProgressRunner,
+        pipeline_run_id: UUID,
     ) -> int:
         return await self._rebuild_scope(
             vault_id,
@@ -132,6 +145,10 @@ class SearchService:
             glob_pattern=WIKI_GLOB,
             path_prefix=WIKI_PREFIX,
             client=client,
+            stored_etags=stored_etags,
+            out_etags=out_etags,
+            progress=progress,
+            pipeline_run_id=pipeline_run_id,
         )
 
     async def _rebuild_scope(
@@ -142,6 +159,10 @@ class SearchService:
         glob_pattern: str,
         path_prefix: str,
         client: AsyncOpenAI | None = None,
+        stored_etags: dict[str, str | None] | None = None,
+        out_etags: list[tuple[str, str]] | None = None,
+        progress: PipelineProgressRunner,
+        pipeline_run_id: UUID,
     ) -> int:
         """Rebuild search_index rows whose path is inside ``path_prefix/``.
 
@@ -158,13 +179,16 @@ class SearchService:
             client = get_async_client()
         settings = get_settings()
 
-        # 1. Fetch existing hashes for change detection.
+        # 1. Fetch existing hashes for chunk-level change detection.
         hash_entries = await self.repo.list_hashes_by_prefix(vault_id, path_prefix)
         existing_hashes = {
             (e.path, e.chunk_index): e.content_hash for e in hash_entries
         }
 
-        # 2. Producer-consumer pipeline: file reader produces batches into
+        # 2. Resolve stored ETags (pass-through dict, caller owns the query).
+        _stored_etags = stored_etags or {}
+
+        # 3. Producer-consumer pipeline: file reader produces batches into
         #    a queue; a fixed pool of workers consumes, embedding and
         #    writing to DB with bounded concurrency.
         concurrency = max(1, settings.compile_enrich_concurrency // 4)
@@ -178,14 +202,77 @@ class SearchService:
 
         total_chunks = 0
         changed_count = 0
+        skipped_etag = 0
+        files_processed = 0
         current_keys: list[tuple[str, int]] = []
         batch_buffer: list[Chunk] = []
 
-        paths = await storage.glob(glob_pattern)
-        for path in paths:
+        # Compare R2 ETags (free from listing metadata) against
+        # stored_etags to skip unchanged files without R2 reads.
+        files = await storage.glob(glob_pattern)
+        total_files = len(files)
+
+        await progress.emit(
+            pipeline_run_id=pipeline_run_id,
+            phase="ingest",
+            status="progress",
+            steps=build_progress_steps(
+                {
+                    "load_sources": "Loading sources",
+                    "prepare_text": "Preparing searchable text",
+                    "index_sources": "Indexing sources",
+                },
+                "index_sources",
+                completed={"load_sources", "prepare_text"},
+                counts={"index_sources": (0, total_files)},
+            ),
+        )
+
+        for file_info in files:
+            files_processed += 1
+            if files_processed % 100 == 0:
+                await progress.emit(
+                    pipeline_run_id=pipeline_run_id,
+                    phase="ingest",
+                    status="progress",
+                    steps=build_progress_steps(
+                        {
+                            "load_sources": "Loading sources",
+                            "prepare_text": "Preparing searchable text",
+                            "index_sources": "Indexing sources",
+                        },
+                        "index_sources",
+                        completed={"load_sources", "prepare_text"},
+                        counts={"index_sources": (files_processed, total_files)},
+                    ),
+                )
+
+            path = file_info.path
             filename = path.rsplit("/", 1)[-1]
             if filename.startswith("_"):
                 continue
+
+            # Record current ETag so the caller can persist it for the
+            # next compile's skip check.
+            if out_etags is not None and file_info.etag:
+                out_etags.append((path, file_info.etag))
+
+            # Skip files whose R2 ETag matches the stored ETag from the
+            # last successful index. NULL stored etag (first compile) or
+            # mismatched etag (re-ingested) forces a re-read.
+            stored = _stored_etags.get(path)
+            if stored is not None and stored == file_info.etag and file_info.etag:
+                skipped_etag += 1
+                # Still register current keys so stale-deletion knows
+                # these paths are still present.
+                for chunk_idx in range(999):
+                    key = (path, chunk_idx)
+                    if key in existing_hashes:
+                        current_keys.append(key)
+                    else:
+                        break
+                continue
+
             content = await storage.read(path)
             if not content:
                 continue
@@ -214,6 +301,22 @@ class SearchService:
         if batch_buffer:
             await queue.put(batch_buffer)
 
+        await progress.emit(
+            pipeline_run_id=pipeline_run_id,
+            phase="ingest",
+            status="progress",
+            steps=build_progress_steps(
+                {
+                    "load_sources": "Loading sources",
+                    "prepare_text": "Preparing searchable text",
+                    "index_sources": "Indexing sources",
+                },
+                "index_sources",
+                completed={"load_sources", "prepare_text"},
+                counts={"index_sources": (total_files, total_files)},
+            ),
+        )
+
         # Signal workers to exit.
         for _ in workers:
             await queue.put(None)
@@ -229,7 +332,7 @@ class SearchService:
             )
             return 0
 
-        # 3. Delete stale entries (paths no longer present).
+        # 4. Delete stale entries (paths no longer present).
         stale_count = await self.repo.delete_stale_in_scope(
             vault_id, path_prefix, current_keys
         )
@@ -243,13 +346,14 @@ class SearchService:
         await self._commit()
         log.info(
             "vault %s scope=%s: %d total chunks, %d changed (%d embedded), "
-            "%d unchanged",
+            "%d unchanged, %d files skipped (etag match)",
             vault_id,
             path_prefix.rstrip("/"),
             total_chunks,
             changed_count,
             embedded_total,
             total_chunks - changed_count,
+            skipped_etag,
         )
         return total_chunks
 

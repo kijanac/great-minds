@@ -261,7 +261,7 @@ async def ingest(
     elif path.is_dir():
         source_files = sorted(path.rglob("*.md"))
         total = len(source_files)
-        existing = set(await storage.glob(f"{dest}/**/*.md"))
+        existing = {f.path for f in await storage.glob(f"{dest}/**/*.md")}
         console.print(
             f"Found [bold]{total}[/bold] .md files in [cyan]{path}[/cyan] ([dim]{len(existing)} already ingested[/dim])"
         )

@@ -232,9 +232,9 @@ def upgrade() -> None:
 
     # ── 6. Drop old tables ───────────────────────────────────────────────
 
-    op.drop_table("backlinks")
-    op.drop_table("document_tags")
-    op.drop_table("documents")
+    conn.execute(text("DROP TABLE IF EXISTS backlinks CASCADE"))
+    conn.execute(text("DROP TABLE IF EXISTS document_tags CASCADE"))
+    conn.execute(text("DROP TABLE IF EXISTS documents CASCADE"))
 
     # ── 7. Recreate backlinks with new FKs to wiki_articles ──────────────
 

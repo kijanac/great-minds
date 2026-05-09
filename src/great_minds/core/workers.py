@@ -134,7 +134,7 @@ async def compile_task(params: dict, ctx) -> None:
             await asyncio.sleep(60)
             await ctx.heartbeat(120)
 
-    hb_task = asyncio.create_task(_heartbeat_loop())
+    hb_task: asyncio.Task | None = None
 
     try:
         log_event(
@@ -151,6 +151,12 @@ async def compile_task(params: dict, ctx) -> None:
             vault_id=str(vault_id),
             pipeline_run_id=str(pipeline_run_id),
         )
+
+        # Start heartbeat only after the lock is acquired — otherwise
+        # a stuck lock acquisition (stale pg_advisory_lock) keeps the
+        # Absurd claim alive forever, preventing the zombie detector
+        # from marking the pipeline run as failed.
+        hb_task = asyncio.create_task(_heartbeat_loop())
 
         compile_service = await build_compile_service(
             vault_id=vault_id,
@@ -172,11 +178,12 @@ async def compile_task(params: dict, ctx) -> None:
         raise
     finally:
         await _release_vault_compile_lock(compile_lock_conn, vault_id=vault_id)
-        hb_task.cancel()
-        try:
-            await hb_task
-        except asyncio.CancelledError:
-            pass
+        if hb_task is not None:
+            hb_task.cancel()
+            try:
+                await hb_task
+            except asyncio.CancelledError:
+                pass
         emit_wide_event()
 
 
