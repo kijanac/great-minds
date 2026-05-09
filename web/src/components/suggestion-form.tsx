@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 
 import type { UserSuggestionIntent } from "@/api/ingest";
 import { Button } from "@/components/ui/button";
+import { Textarea } from "@/components/ui/textarea";
 import {
   Sheet,
   SheetContent,
@@ -9,8 +10,7 @@ import {
   SheetHeader,
   SheetTitle,
 } from "@/components/ui/sheet";
-import { CHIP_ACTIVE, CHIP_BASE, CHIP_INACTIVE } from "@/lib/chip";
-import { cn } from "@/lib/utils";
+import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 
 export interface SuggestionPayload {
   body: string;
@@ -113,19 +113,20 @@ export function SuggestionForm({
               <p className="font-mono text-[length:var(--text-chrome)] tracking-[0.1em] text-warm-ghost uppercase">
                 intent
               </p>
-              <div className="flex flex-wrap gap-2">
+              <ToggleGroup
+                multiple={false}
+                value={[intent]}
+                onValueChange={(vals) => vals[0] && setIntent(vals[0] as UserSuggestionIntent)}
+                variant="outline"
+                size="sm"
+                className="flex-wrap"
+              >
                 {INTENT_OPTIONS.map((opt) => (
-                  <button
-                    key={opt.value}
-                    type="button"
-                    onClick={() => setIntent(opt.value)}
-                    className={cn(CHIP_BASE, intent === opt.value ? CHIP_ACTIVE : CHIP_INACTIVE)}
-                    title={opt.hint}
-                  >
+                  <ToggleGroupItem key={opt.value} value={opt.value} title={opt.hint}>
                     {opt.label}
-                  </button>
+                  </ToggleGroupItem>
                 ))}
-              </div>
+              </ToggleGroup>
               <p className="font-mono text-[length:var(--text-chrome)] tracking-[0.04em] text-warm-ghost">
                 {INTENT_OPTIONS.find((o) => o.value === intent)?.hint}
               </p>
@@ -138,13 +139,13 @@ export function SuggestionForm({
               >
                 your suggestion
               </label>
-              <textarea
+              <Textarea
                 id="suggestion-body"
                 value={body}
                 onChange={(e) => setBody(e.target.value)}
                 placeholder="Write in your own words. What do you want the knowledge base to know?"
                 rows={8}
-                className="w-full bg-transparent border border-ink-border rounded-sm px-3 py-2 font-serif text-[length:var(--text-body)] text-foreground placeholder:text-input focus:outline-none focus:border-gold-dim resize-none"
+                className="rounded-sm font-serif text-[length:var(--text-body)] text-foreground placeholder:text-input focus-visible:border-gold-dim focus-visible:ring-0 resize-none"
                 autoFocus
               />
             </div>

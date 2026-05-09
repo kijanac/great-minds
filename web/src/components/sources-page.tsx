@@ -3,8 +3,8 @@ import { Home, Search } from "lucide-react";
 import type { ContentTypeFacet, SourceDocumentSummary } from "@/api/sources";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { CHIP_ACTIVE, CHIP_BASE, CHIP_INACTIVE } from "@/lib/chip";
-import { cn, formatShortDate } from "@/lib/utils";
+import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
+import { formatShortDate } from "@/lib/utils";
 
 interface SourcesPageProps {
   items: SourceDocumentSummary[];
@@ -66,23 +66,21 @@ export function SourcesPage({
       <div className="flex-1 min-h-0 overflow-y-auto">
         <div className="max-w-[740px] mx-auto px-4 md:px-10 pt-8 pb-20">
           {contentTypes.length > 0 && (
-            <div className="flex flex-wrap gap-2 mb-8">
-              <button
-                onClick={() => onTypeFilter(null)}
-                className={cn(CHIP_BASE, activeType === null ? CHIP_ACTIVE : CHIP_INACTIVE)}
-              >
-                all · {totalCount}
-              </button>
+            <ToggleGroup
+              multiple={false}
+              value={activeType ? [activeType] : []}
+              onValueChange={(vals) => onTypeFilter(vals[0] || null)}
+              variant="outline"
+              size="sm"
+              className="mb-8 flex-wrap"
+            >
+              <ToggleGroupItem value="">all · {totalCount}</ToggleGroupItem>
               {contentTypes.map((ct) => (
-                <button
-                  key={ct.value}
-                  onClick={() => onTypeFilter(activeType === ct.value ? null : ct.value)}
-                  className={cn(CHIP_BASE, activeType === ct.value ? CHIP_ACTIVE : CHIP_INACTIVE)}
-                >
+                <ToggleGroupItem key={ct.value} value={ct.value}>
                   {ct.value} · {ct.count}
-                </button>
+                </ToggleGroupItem>
               ))}
-            </div>
+            </ToggleGroup>
           )}
 
           {loading && items.length === 0 && (

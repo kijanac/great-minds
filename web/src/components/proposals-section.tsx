@@ -5,8 +5,16 @@ import type { ProposalOverview } from "@/api/proposals";
 import type { ProposalFilter } from "@/containers/proposals-section-container";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { CHIP_ACTIVE, CHIP_BASE, CHIP_INACTIVE } from "@/lib/chip";
-import { cn, formatShortDate } from "@/lib/utils";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { Textarea } from "@/components/ui/textarea";
+import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
+import { formatShortDate } from "@/lib/utils";
 
 const STATUS_FILTERS: { value: ProposalFilter; label: string }[] = [
   { value: "pending", label: "pending" },
@@ -33,9 +41,6 @@ interface ProposalsSectionProps {
   onReview: (proposalId: string, status: "approved" | "rejected") => Promise<void>;
   onLoadMore: () => void;
 }
-
-const TEXTAREA_CLASS =
-  "w-full bg-secondary border border-input focus-within:border-ring rounded-sm px-[14px] py-[10px] font-serif text-[length:var(--text-body)] text-foreground placeholder:text-warm-ghost outline-none resize-y min-h-[120px] caret-gold";
 
 export function ProposalsSection({
   proposals,
@@ -78,17 +83,20 @@ export function ProposalsSection({
         proposals
       </h2>
 
-      <div className="flex flex-wrap gap-2 mb-4">
+      <ToggleGroup
+        multiple={false}
+        value={[activeStatus]}
+        onValueChange={(vals) => vals[0] && onStatusFilter(vals[0] as ProposalFilter)}
+        variant="outline"
+        size="sm"
+        className="mb-4"
+      >
         {STATUS_FILTERS.map((f) => (
-          <button
-            key={f.value}
-            onClick={() => onStatusFilter(f.value)}
-            className={cn(CHIP_BASE, activeStatus === f.value ? CHIP_ACTIVE : CHIP_INACTIVE)}
-          >
+          <ToggleGroupItem key={f.value} value={f.value}>
             {f.label}
-          </button>
+          </ToggleGroupItem>
         ))}
-      </div>
+      </ToggleGroup>
 
       {loading && proposals.length === 0 ? (
         <p className="font-mono text-[length:var(--text-chrome)] tracking-[0.06em] text-warm-ghost">
@@ -176,24 +184,31 @@ export function ProposalsSection({
               disabled={creating}
               className="h-8 flex-1 bg-transparent dark:bg-transparent border-ink-border rounded-sm font-mono text-[length:var(--text-small)] text-warm px-3 caret-gold placeholder:text-warm-ghost focus-visible:ring-0 focus-visible:border-gold-dim"
             />
-            <select
+            <Select
               value={contentType}
-              onChange={(e) => setContentType(e.target.value)}
+              onValueChange={(val) => val && setContentType(val)}
               disabled={creating}
-              className="h-8 bg-transparent border border-ink-border rounded-sm font-mono text-[length:var(--text-small)] text-warm px-3 focus:outline-none focus:border-gold-dim"
             >
-              <option value="texts">texts</option>
-              <option value="news">news</option>
-              <option value="ideas">ideas</option>
-            </select>
+              <SelectTrigger
+                size="sm"
+                className="h-8 rounded-sm font-mono text-[length:var(--text-small)] text-warm border-ink-border focus-visible:border-gold-dim focus-visible:ring-0"
+              >
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="texts">texts</SelectItem>
+                <SelectItem value="news">news</SelectItem>
+                <SelectItem value="ideas">ideas</SelectItem>
+              </SelectContent>
+            </Select>
           </div>
-          <textarea
+          <Textarea
             value={content}
             onChange={(e) => setContent(e.target.value)}
             placeholder="paste source content here"
             disabled={creating}
             rows={6}
-            className={TEXTAREA_CLASS}
+            className="rounded-sm font-serif text-[length:var(--text-body)] text-foreground placeholder:text-warm-ghost min-h-[120px] caret-gold focus-visible:ring-0"
           />
           <div className="flex items-center gap-3">
             <Button

@@ -1,8 +1,9 @@
 import { useState } from "react";
-import { Check, Copy, X } from "lucide-react";
+import { Check, ChevronDown, ChevronRight, Copy, X } from "lucide-react";
 
 import type { ApiKey, ApiKeyCreated } from "@/api/api-keys";
 import { Button } from "@/components/ui/button";
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { Input } from "@/components/ui/input";
 import { formatShortDate } from "@/lib/utils";
 
@@ -27,6 +28,7 @@ export function ApiKeysSection({
 }: ApiKeysSectionProps) {
   const [label, setLabel] = useState("");
   const [copied, setCopied] = useState(false);
+  const [revokedOpen, setRevokedOpen] = useState(false);
 
   async function handleCreate(e: React.FormEvent) {
     e.preventDefault();
@@ -118,26 +120,36 @@ export function ApiKeysSection({
             </div>
           ))}
           {revoked.length > 0 && (
-            <details className="mt-2">
-              <summary className="font-mono text-[length:var(--text-chrome)] tracking-[0.06em] text-warm-ghost cursor-pointer hover:text-warm-faint py-1">
+            <Collapsible open={revokedOpen} onOpenChange={setRevokedOpen} className="mt-2">
+              <CollapsibleTrigger
+                render={
+                  <Button
+                    variant="ghost"
+                    className="font-mono text-[length:var(--text-chrome)] tracking-[0.06em] text-warm-ghost hover:text-warm-faint py-1 h-auto p-0 rounded-none hover:bg-transparent gap-1"
+                  />
+                }
+              >
+                {revokedOpen ? <ChevronDown size={10} /> : <ChevronRight size={10} />}
                 {revoked.length} revoked
-              </summary>
-              <div className="mt-1 space-y-1">
-                {revoked.map((k) => (
-                  <div
-                    key={k.id}
-                    className="flex items-center justify-between py-2 px-3 rounded-sm opacity-60"
-                  >
-                    <span className="font-mono text-[length:var(--text-small)] text-warm-ghost truncate line-through">
-                      {k.label}
-                    </span>
-                    <span className="font-mono text-[length:var(--text-chrome)] text-warm-ghost shrink-0">
-                      {formatShortDate(k.created_at)}
-                    </span>
-                  </div>
-                ))}
-              </div>
-            </details>
+              </CollapsibleTrigger>
+              <CollapsibleContent>
+                <div className="mt-1 space-y-1">
+                  {revoked.map((k) => (
+                    <div
+                      key={k.id}
+                      className="flex items-center justify-between py-2 px-3 rounded-sm opacity-60"
+                    >
+                      <span className="font-mono text-[length:var(--text-small)] text-warm-ghost truncate line-through">
+                        {k.label}
+                      </span>
+                      <span className="font-mono text-[length:var(--text-chrome)] text-warm-ghost shrink-0">
+                        {formatShortDate(k.created_at)}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              </CollapsibleContent>
+            </Collapsible>
           )}
         </div>
       )}

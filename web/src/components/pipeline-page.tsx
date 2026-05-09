@@ -3,6 +3,7 @@ import { motion, useReducedMotion } from "motion/react";
 import { ArrowLeft } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
+import { Progress } from "@/components/ui/progress";
 import type { ProgressStep, StageProgress } from "@/hooks/use-job-sse";
 import { useViewNavigate } from "@/hooks/use-view-navigate";
 
@@ -396,14 +397,10 @@ function PipelineStageRow({
 
         {/* Progress bar (active stages with total > 0) */}
         {isActive && stage.total > 1 && (
-          <div className="mt-2 w-full h-1 rounded-full bg-ink-border overflow-hidden">
-            <div
-              className="h-full rounded-full bg-gold transition-all duration-500 ease-out"
-              style={{
-                width: `${(stage.done / stage.total) * 100}%`,
-              }}
-            />
-          </div>
+          <Progress
+            value={(stage.done / stage.total) * 100}
+            className="mt-2 [&_[data-slot=progress-track]]:bg-ink-border [&_[data-slot=progress-indicator]]:bg-gold"
+          />
         )}
       </div>
 

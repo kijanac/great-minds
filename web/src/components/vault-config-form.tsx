@@ -3,6 +3,7 @@ import { useState } from "react";
 import { draftThematicHint } from "@/api/vaults";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
 
 export interface VaultConfigFormSubmit {
   name?: string;
@@ -18,9 +19,6 @@ interface VaultConfigFormProps {
   onCancel?: () => void;
   submitLabel?: string;
 }
-
-const TEXTAREA_CLASS =
-  "w-full bg-secondary border border-input focus-within:border-ring rounded-sm px-[14px] py-[10px] font-serif text-[length:var(--text-body)] text-foreground placeholder:text-warm-ghost outline-none resize-y min-h-[120px] caret-gold";
 
 const SECTION_LABEL =
   "font-mono text-[length:var(--text-chrome)] tracking-[0.14em] text-gold-muted uppercase mb-2 block";
@@ -95,14 +93,14 @@ export function VaultConfigForm({
             (optional, used to draft a focus statement)
           </span>
         </label>
-        <textarea
+        <Textarea
           id="vault-description"
           disabled={submitting || drafting}
           placeholder="e.g. a knowledge base on Marxist political economy, with emphasis on debates and events over biography"
           value={description}
           onChange={(e) => setDescription(e.target.value)}
           rows={3}
-          className={TEXTAREA_CLASS}
+          className="rounded-sm font-serif text-[length:var(--text-body)] text-foreground placeholder:text-warm-ghost focus-visible:ring-0"
         />
         <div className="mt-2 flex items-center gap-3">
           <Button
@@ -130,14 +128,14 @@ export function VaultConfigForm({
             (steers how topics are framed; leave blank to use defaults)
           </span>
         </label>
-        <textarea
+        <Textarea
           id="vault-thematic-hint"
           disabled={submitting}
           placeholder="prefer event-centric and debate-centric framings over biographical summaries"
           value={thematicHint}
           onChange={(e) => setThematicHint(e.target.value)}
           rows={5}
-          className={TEXTAREA_CLASS}
+          className="rounded-sm font-serif text-[length:var(--text-body)] text-foreground placeholder:text-warm-ghost focus-visible:ring-0"
         />
         <p className={`${HELPER_TEXT} mt-2`}>
           this text is prepended to the canonicalize prompt during compile.

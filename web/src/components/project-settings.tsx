@@ -5,6 +5,17 @@ import type { VaultConfig, VaultDetail, Membership } from "@/api/vaults";
 import { VaultConfigForm, type VaultConfigFormSubmit } from "@/components/vault-config-form";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from "@/components/ui/alert-dialog";
 
 interface ProjectSettingsProps {
   project: VaultDetail | null;
@@ -201,52 +212,56 @@ export function ProjectSettings({
 }
 
 function DeleteVaultButton({ onDelete }: { onDelete: () => Promise<void> }) {
-  const [confirming, setConfirming] = useState(false);
   const [deleting, setDeleting] = useState(false);
-
-  if (!confirming) {
-    return (
-      <Button
-        variant="ghost"
-        onClick={() => setConfirming(true)}
-        className="h-auto px-3 py-1.5 font-mono text-[length:var(--text-chrome)] tracking-[0.06em] text-red-400/70 hover:text-red-400 hover:bg-red-400/5 rounded-sm"
-      >
-        delete vault
-      </Button>
-    );
-  }
+  const [open, setOpen] = useState(false);
 
   return (
-    <div className="flex items-center gap-3">
-      <span className="font-mono text-[length:var(--text-small)] text-red-400/80">
-        type &ldquo;delete&rdquo; to confirm:
-      </span>
-      <Input
-        autoFocus
-        disabled={deleting}
-        onKeyDown={async (e) => {
-          if (e.key === "Enter" && e.currentTarget.value === "delete") {
-            setDeleting(true);
-            try {
-              await onDelete();
-            } finally {
-              setDeleting(false);
-              setConfirming(false);
-            }
-          }
-          if (e.key === "Escape") setConfirming(false);
-        }}
-        className="h-8 w-32 bg-transparent dark:bg-transparent border-red-400/30 rounded-sm font-mono text-[length:var(--text-small)] text-red-400 px-3 caret-red-400 placeholder:text-red-400/30 focus-visible:ring-0 focus-visible:border-red-400/60"
-        placeholder="delete"
-      />
-      <Button
-        variant="ghost"
-        size="xs"
-        onClick={() => setConfirming(false)}
-        className="font-mono text-[length:var(--text-chrome)] text-warm-ghost hover:text-warm hover:bg-transparent"
+    <AlertDialog open={open} onOpenChange={setOpen}>
+      <AlertDialogTrigger
+        render={
+          <Button
+            variant="ghost"
+            className="h-auto px-3 py-1.5 font-mono text-[length:var(--text-chrome)] tracking-[0.06em] text-red-400/70 hover:text-red-400 hover:bg-red-400/5 rounded-sm"
+          />
+        }
       >
-        cancel
-      </Button>
-    </div>
+        delete vault
+      </AlertDialogTrigger>
+      <AlertDialogContent>
+        <AlertDialogHeader>
+          <AlertDialogTitle className="font-serif text-[length:var(--text-body)] text-warm">
+            Delete this vault?
+          </AlertDialogTitle>
+          <AlertDialogDescription className="font-mono text-[length:var(--text-chrome)] tracking-[0.04em] text-warm-ghost">
+            This permanently deletes the vault, all its documents, wiki articles, and R2 storage.
+            This cannot be undone.
+          </AlertDialogDescription>
+        </AlertDialogHeader>
+        <AlertDialogFooter>
+          <AlertDialogCancel
+            disabled={deleting}
+            className="font-mono text-[length:var(--text-chrome)] tracking-[0.08em]"
+          >
+            cancel
+          </AlertDialogCancel>
+          <AlertDialogAction
+            disabled={deleting}
+            onClick={async (e) => {
+              e.preventDefault();
+              setDeleting(true);
+              try {
+                await onDelete();
+              } finally {
+                setDeleting(false);
+                setOpen(false);
+              }
+            }}
+            className="font-mono text-[length:var(--text-chrome)] tracking-[0.08em] bg-red-400/10 text-red-400 hover:bg-red-400/20 border border-red-400/30"
+          >
+            {deleting ? "deleting…" : "delete vault"}
+          </AlertDialogAction>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
   );
 }

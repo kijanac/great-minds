@@ -4,7 +4,7 @@ import { Home } from "lucide-react";
 import { Navigate } from "react-router";
 
 import { Button } from "@/components/ui/button";
-import { ErrorState, Spinner } from "@/components/ui/feedback";
+import { ErrorState, LoadingState } from "@/components/ui/feedback";
 import { IngestionFlow } from "@/components/ingestion-flow";
 import { useActiveJob } from "@/hooks/use-active-job";
 import { ProjectSwitcher } from "@/containers/project-switcher";
@@ -32,7 +32,7 @@ export function HomeContainer({ sessionId, initialQuery, origin }: HomeContainer
     return <ErrorState message="Couldn't load your projects." onRetry={() => vaults.refetch()} />;
   }
 
-  if (vaults.isLoading) return <Spinner label="Loading…" />;
+  if (vaults.isLoading) return <LoadingState label="Loading…" />;
 
   if ((vaults.data?.length ?? 0) === 0 && !sessionId) {
     return <Navigate to="/vaults/new" replace />;
@@ -42,7 +42,7 @@ export function HomeContainer({ sessionId, initialQuery, origin }: HomeContainer
     if (saved.error) {
       return <ErrorState message="Couldn't load this session." onRetry={() => saved.refetch()} />;
     }
-    if (saved.isLoading) return <Spinner label="Loading session…" />;
+    if (saved.isLoading) return <LoadingState label="Loading session…" />;
   }
 
   return (

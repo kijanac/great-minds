@@ -1,9 +1,11 @@
 import { Button } from "@/components/ui/button";
+import { Spinner } from "@/components/ui/spinner";
 
-export function Spinner({ label = "Loading…" }: { label?: string }) {
+export function LoadingState({ label = "Loading…" }: { label?: string }) {
   return (
-    <div className="flex h-full w-full items-center justify-center py-10">
-      <p className="text-[length:var(--text-body)] text-warm-faint animate-[pulse-fade_1.6s_ease-in-out_infinite]">
+    <div className="flex h-full w-full flex-col items-center justify-center gap-2 py-10">
+      <Spinner />
+      <p className="font-mono text-[length:var(--text-chrome)] tracking-[0.06em] text-warm-ghost">
         {label}
       </p>
     </div>

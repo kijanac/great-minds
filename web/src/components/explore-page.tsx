@@ -9,8 +9,7 @@ import type {
 } from "@/api/explore";
 import type { ContentTypeFacet } from "@/api/sources";
 import { Button } from "@/components/ui/button";
-import { CHIP_BASE, CHIP_INACTIVE } from "@/lib/chip";
-import { cn, formatShortDate } from "@/lib/utils";
+import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 
 interface ExplorePageProps {
   orphans: Orphan[];
@@ -28,8 +27,7 @@ interface ExplorePageProps {
   ingestionZone: ReactNode;
 }
 
-const CHIP_CLASS = cn(CHIP_BASE, CHIP_INACTIVE);
-
+import { formatShortDate } from "@/lib/utils";
 export function ExplorePage({
   orphans,
   dirtyCount,
@@ -88,29 +86,29 @@ export function ExplorePage({
           ) : (
             <>
               <section className="mb-10">
-                <div className="flex flex-wrap items-center gap-2">
+                <ToggleGroup multiple={false} variant="outline" size="sm" className="flex-wrap">
                   {hasSourceTypes && (
                     <>
-                      <button onClick={() => onExploreSources()} className={CHIP_CLASS}>
+                      <ToggleGroupItem value="all-sources" onClick={() => onExploreSources()}>
                         all sources · {contentTypes.reduce((s, ct) => s + ct.count, 0)}
-                      </button>
+                      </ToggleGroupItem>
                       {contentTypes.map((ct) => (
-                        <button
+                        <ToggleGroupItem
                           key={ct.value}
+                          value={`source-${ct.value}`}
                           onClick={() => onExploreSources(ct.value)}
-                          className={CHIP_CLASS}
                         >
                           {ct.value} · {ct.count}
-                        </button>
+                        </ToggleGroupItem>
                       ))}
                     </>
                   )}
                   {hasArticles && (
-                    <button onClick={onExploreWiki} className={CHIP_CLASS}>
+                    <ToggleGroupItem value="explore-wiki" onClick={onExploreWiki}>
                       explore wiki
-                    </button>
+                    </ToggleGroupItem>
                   )}
-                </div>
+                </ToggleGroup>
               </section>
 
               {hasDirty && (
