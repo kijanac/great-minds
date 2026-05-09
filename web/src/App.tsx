@@ -4,12 +4,14 @@ import { createBrowserRouter, Navigate, Outlet, RouterProvider } from "react-rou
 
 import { AppShell } from "@/components/app-shell";
 import { CornerMenuContainer } from "@/containers/corner-menu-container";
-import { AuthProvider, useAuth } from "@/lib/auth";
+import { AuthProvider } from "@/lib/auth";
+import { useAuth } from "@/lib/use-auth";
 import { queryClient } from "@/lib/query-client";
 import VaultNewPage from "@/pages/vault-new";
 import HomePage from "@/pages/home";
 import LoginPage from "@/pages/login";
-import DocPage, { docLoader } from "@/pages/doc";
+import DocPage from "@/pages/doc";
+import { docLoader } from "@/pages/doc-loader";
 import ExplorePage from "@/pages/explore";
 import ProjectSettingsPage from "@/pages/project-settings";
 import SessionPage from "@/pages/session";

@@ -4,6 +4,7 @@ import Markdown from "react-markdown";
 import { remarkPlugins } from "@/lib/markdown";
 import { displayTitle } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
+import { Skeleton } from "@/components/ui/skeleton";
 
 interface ArticlePanelProps {
   path: string;
@@ -66,9 +67,13 @@ export function ArticlePanel({
       <div className="flex-1 min-h-0 overflow-y-auto">
         <div className="px-5 py-[18px]">
           {loading && (
-            <p className="text-[length:var(--text-small)] text-warm-faint animate-[pulse-fade_1.6s_ease-in-out_infinite]">
-              Loading...
-            </p>
+            <div className="space-y-3">
+              <Skeleton className="h-4 w-full bg-ink-raised" />
+              <Skeleton className="h-4 w-11/12 bg-ink-raised" />
+              <Skeleton className="h-4 w-4/5 bg-ink-raised" />
+              <Skeleton className="h-4 w-full bg-ink-raised" />
+              <Skeleton className="h-4 w-2/3 bg-ink-raised" />
+            </div>
           )}
           {!loading && body && (
             <div className="text-[length:var(--text-small)] leading-[1.76] text-warm-faint [&_p]:mb-[13px] [&_h2]:text-[length:var(--text-body)] [&_h2]:font-bold [&_h2]:text-foreground [&_h2]:mt-5 [&_h2]:mb-2 [&_h3]:text-[length:var(--text-caption)] [&_h3]:font-mono [&_h3]:text-gold [&_h3]:tracking-[0.1em] [&_h3]:uppercase [&_h3]:mt-4 [&_h3]:mb-2">

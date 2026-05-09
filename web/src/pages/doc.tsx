@@ -1,18 +1,7 @@
-import { useParams, useLoaderData, Navigate, type LoaderFunctionArgs } from "react-router";
+import { useParams, useLoaderData, Navigate } from "react-router";
 
-import { readDocument } from "@/api/doc";
 import { ArticleReader } from "@/containers/article-reader";
-
-export async function docLoader({ params, request }: LoaderFunctionArgs) {
-  const path = params["*"];
-  if (!path) return null;
-
-  try {
-    return await readDocument(path, request.signal);
-  } catch {
-    return null;
-  }
-}
+import { docLoader } from "@/pages/doc-loader";
 
 export default function DocPage() {
   const { "*": path } = useParams();

@@ -10,8 +10,11 @@ export function useBtw(originPath?: string) {
   const navigate = useViewNavigate();
   const [btws, setBtws] = useState<BtwThread[]>([]);
   const btwsRef = useRef(btws);
-  btwsRef.current = btws;
   const cleanupRef = useRef<(() => void)[]>([]);
+
+  useEffect(() => {
+    btwsRef.current = btws;
+  }, [btws]);
 
   // Self-contained unmount cleanup — intervals are cleared
   // regardless of what the consumer does

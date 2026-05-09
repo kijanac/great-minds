@@ -5,6 +5,7 @@ import type { VaultConfig, VaultDetail, Membership } from "@/api/vaults";
 import { VaultConfigForm, type VaultConfigFormSubmit } from "@/components/vault-config-form";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Alert, AlertDescription } from "@/components/ui/alert";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -16,6 +17,7 @@ import {
   AlertDialogTitle,
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
+import { Skeleton } from "@/components/ui/skeleton";
 
 interface ProjectSettingsProps {
   project: VaultDetail | null;
@@ -103,9 +105,17 @@ export function ProjectSettings({
       <div className="flex-1 min-h-0 overflow-y-auto">
         <div className="max-w-[740px] mx-auto px-4 md:px-10 pt-8 pb-20">
           {loading || !project ? (
-            <p className="text-[length:var(--text-body)] text-warm-faint animate-[pulse-fade_1.6s_ease-in-out_infinite]">
-              Loading...
-            </p>
+            <div className="space-y-6">
+              <div className="space-y-2">
+                <Skeleton className="h-9 w-48 bg-ink-raised" />
+                <Skeleton className="h-4 w-36 bg-ink-raised" />
+              </div>
+              <div className="space-y-3">
+                <Skeleton className="h-4 w-24 bg-ink-raised" />
+                <Skeleton className="h-10 w-full bg-ink-raised" />
+                <Skeleton className="h-10 w-5/6 bg-ink-raised" />
+              </div>
+            </div>
           ) : (
             <>
               <h1 className="font-serif text-[length:var(--text-heading)] text-warm mb-1">
@@ -214,9 +224,36 @@ export function ProjectSettings({
 function DeleteVaultButton({ onDelete }: { onDelete: () => Promise<void> }) {
   const [deleting, setDeleting] = useState(false);
   const [open, setOpen] = useState(false);
+  const [confirmation, setConfirmation] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const canDelete = confirmation === "delete";
+
+  function handleOpenChange(nextOpen: boolean) {
+    if (deleting) return;
+    setOpen(nextOpen);
+    if (!nextOpen) {
+      setConfirmation("");
+      setError(null);
+    }
+  }
+
+  async function handleDelete() {
+    if (!canDelete || deleting) return;
+    setDeleting(true);
+    setError(null);
+    try {
+      await onDelete();
+      setOpen(false);
+      setConfirmation("");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to delete vault.");
+    } finally {
+      setDeleting(false);
+    }
+  }
 
   return (
-    <AlertDialog open={open} onOpenChange={setOpen}>
+    <AlertDialog open={open} onOpenChange={handleOpenChange}>
       <AlertDialogTrigger
         render={
           <Button
@@ -234,9 +271,35 @@ function DeleteVaultButton({ onDelete }: { onDelete: () => Promise<void> }) {
           </AlertDialogTitle>
           <AlertDialogDescription className="font-mono text-[length:var(--text-chrome)] tracking-[0.04em] text-warm-ghost">
             This permanently deletes the vault, all its documents, wiki articles, and R2 storage.
-            This cannot be undone.
+            This cannot be undone. Type <span className="text-red-400">delete</span> to confirm.
           </AlertDialogDescription>
         </AlertDialogHeader>
+        <div className="space-y-2">
+          <Input
+            autoFocus
+            disabled={deleting}
+            value={confirmation}
+            onChange={(e) => {
+              setConfirmation(e.target.value);
+              setError(null);
+            }}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && canDelete && !deleting) {
+                e.preventDefault();
+                void handleDelete();
+              }
+            }}
+            className="h-8 bg-transparent dark:bg-transparent border-red-400/30 rounded-sm font-mono text-[length:var(--text-small)] text-red-400 px-3 caret-red-400 placeholder:text-red-400/30 focus-visible:ring-0 focus-visible:border-red-400/60"
+            placeholder="delete"
+          />
+          {error && (
+            <Alert variant="destructive" className="rounded-sm border-red-400/25 bg-red-400/5">
+              <AlertDescription className="font-mono text-[length:var(--text-chrome)] tracking-[0.04em] text-red-400/90">
+                {error}
+              </AlertDescription>
+            </Alert>
+          )}
+        </div>
         <AlertDialogFooter>
           <AlertDialogCancel
             disabled={deleting}
@@ -245,18 +308,12 @@ function DeleteVaultButton({ onDelete }: { onDelete: () => Promise<void> }) {
             cancel
           </AlertDialogCancel>
           <AlertDialogAction
-            disabled={deleting}
-            onClick={async (e) => {
+            disabled={deleting || !canDelete}
+            onClick={(e) => {
               e.preventDefault();
-              setDeleting(true);
-              try {
-                await onDelete();
-              } finally {
-                setDeleting(false);
-                setOpen(false);
-              }
+              void handleDelete();
             }}
-            className="font-mono text-[length:var(--text-chrome)] tracking-[0.08em] bg-red-400/10 text-red-400 hover:bg-red-400/20 border border-red-400/30"
+            className="font-mono text-[length:var(--text-chrome)] tracking-[0.08em] bg-red-400/10 text-red-400 hover:bg-red-400/20 border border-red-400/30 disabled:opacity-40"
           >
             {deleting ? "deleting…" : "delete vault"}
           </AlertDialogAction>

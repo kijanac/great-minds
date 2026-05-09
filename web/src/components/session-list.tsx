@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button";
 import { ErrorState } from "@/components/ui/feedback";
 import { Input } from "@/components/ui/input";
 import { Separator } from "@/components/ui/separator";
+import { Skeleton } from "@/components/ui/skeleton";
 import type { SessionSummary } from "@/api/sessions";
 
 interface SessionListProps {
@@ -79,9 +80,14 @@ export function SessionList({
           {error && <ErrorState message="Couldn't load your sessions." onRetry={onRetry} />}
 
           {!error && loading && (
-            <p className="text-[length:var(--text-body)] text-warm-faint animate-[pulse-fade_1.6s_ease-in-out_infinite]">
-              Loading...
-            </p>
+            <div className="space-y-4">
+              {[0, 1, 2, 3].map((idx) => (
+                <div key={idx} className="space-y-2 px-3 py-3">
+                  <Skeleton className="h-5 w-3/4 bg-ink-raised" />
+                  <Skeleton className="h-3 w-24 bg-ink-raised" />
+                </div>
+              ))}
+            </div>
           )}
 
           {!error && !loading && filtered.length === 0 && filter && (

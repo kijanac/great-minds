@@ -18,7 +18,7 @@ import { ProjectSettings } from "@/components/project-settings";
 import { ApiKeysSectionContainer } from "@/containers/api-keys-section-container";
 import { ProposalsSectionContainer } from "@/containers/proposals-section-container";
 import { useViewNavigate } from "@/hooks/use-view-navigate";
-import { useAuth } from "@/lib/auth";
+import { useAuth } from "@/lib/use-auth";
 
 export function ProjectSettingsContainer() {
   const { id } = useParams<{ id: string }>();

@@ -2,6 +2,7 @@ import { Home } from "lucide-react";
 
 import type { WikiArticleOverview } from "@/api/wiki";
 import { Button } from "@/components/ui/button";
+import { Skeleton } from "@/components/ui/skeleton";
 import { formatShortDate } from "@/lib/utils";
 
 interface WikiPageProps {
@@ -49,9 +50,15 @@ export function WikiPage({
       <div className="flex-1 min-h-0 overflow-y-auto">
         <div className="max-w-[740px] mx-auto px-4 md:px-10 pt-8 pb-20">
           {loading && items.length === 0 && (
-            <p className="text-[length:var(--text-body)] text-warm-faint animate-[pulse-fade_1.6s_ease-in-out_infinite]">
-              Loading...
-            </p>
+            <div className="space-y-4">
+              {[0, 1, 2].map((idx) => (
+                <div key={idx} className="space-y-2 px-3 py-3">
+                  <Skeleton className="h-5 w-2/3 bg-ink-raised" />
+                  <Skeleton className="h-4 w-full bg-ink-raised" />
+                  <Skeleton className="h-4 w-5/6 bg-ink-raised" />
+                </div>
+              ))}
+            </div>
           )}
 
           {!loading && items.length === 0 && (
@@ -105,9 +112,10 @@ export function WikiPage({
           )}
 
           {loading && items.length > 0 && (
-            <p className="mt-6 text-center text-[length:var(--text-chrome)] text-warm-faint animate-[pulse-fade_1.6s_ease-in-out_infinite] font-mono">
-              Loading...
-            </p>
+            <div className="mt-6 space-y-2 px-3">
+              <Skeleton className="h-4 w-1/2 bg-ink-raised" />
+              <Skeleton className="h-4 w-2/3 bg-ink-raised" />
+            </div>
           )}
         </div>
       </div>

@@ -3,8 +3,11 @@ import { Home, Search } from "lucide-react";
 import type { ContentTypeFacet, SourceDocumentSummary } from "@/api/sources";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Skeleton } from "@/components/ui/skeleton";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { formatShortDate } from "@/lib/utils";
+
+const ALL_TYPES_VALUE = "__all";
 
 interface SourcesPageProps {
   items: SourceDocumentSummary[];
@@ -68,13 +71,16 @@ export function SourcesPage({
           {contentTypes.length > 0 && (
             <ToggleGroup
               multiple={false}
-              value={activeType ? [activeType] : []}
-              onValueChange={(vals) => onTypeFilter(vals[0] || null)}
+              value={[activeType ?? ALL_TYPES_VALUE]}
+              onValueChange={(vals) => {
+                const next = vals[0];
+                onTypeFilter(!next || next === ALL_TYPES_VALUE ? null : next);
+              }}
               variant="outline"
               size="sm"
               className="mb-8 flex-wrap"
             >
-              <ToggleGroupItem value="">all · {totalCount}</ToggleGroupItem>
+              <ToggleGroupItem value={ALL_TYPES_VALUE}>all · {totalCount}</ToggleGroupItem>
               {contentTypes.map((ct) => (
                 <ToggleGroupItem key={ct.value} value={ct.value}>
                   {ct.value} · {ct.count}
@@ -84,9 +90,17 @@ export function SourcesPage({
           )}
 
           {loading && items.length === 0 && (
-            <p className="text-[length:var(--text-body)] text-warm-faint animate-[pulse-fade_1.6s_ease-in-out_infinite]">
-              Loading...
-            </p>
+            <div className="space-y-3">
+              {[0, 1, 2, 3].map((idx) => (
+                <div key={idx} className="flex items-center justify-between gap-4 px-3 py-2.5">
+                  <div className="min-w-0 flex-1 space-y-2">
+                    <Skeleton className="h-5 w-2/3 bg-ink-raised" />
+                    <Skeleton className="h-3 w-1/2 bg-ink-raised" />
+                  </div>
+                  <Skeleton className="h-3 w-16 bg-ink-raised" />
+                </div>
+              ))}
+            </div>
           )}
 
           {!loading && items.length === 0 && (
@@ -147,9 +161,10 @@ export function SourcesPage({
           )}
 
           {loading && items.length > 0 && (
-            <p className="mt-6 text-center text-[length:var(--text-chrome)] text-warm-faint animate-[pulse-fade_1.6s_ease-in-out_infinite] font-mono">
-              Loading...
-            </p>
+            <div className="mt-6 space-y-2 px-3">
+              <Skeleton className="h-4 w-1/2 bg-ink-raised" />
+              <Skeleton className="h-4 w-2/3 bg-ink-raised" />
+            </div>
           )}
         </div>
       </div>

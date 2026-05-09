@@ -2,8 +2,10 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { motion, useReducedMotion } from "motion/react";
 import { ArrowLeft } from "lucide-react";
 
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
+import { Skeleton } from "@/components/ui/skeleton";
 import type { ProgressStep, StageProgress } from "@/hooks/use-job-sse";
 import { useViewNavigate } from "@/hooks/use-view-navigate";
 
@@ -33,13 +35,7 @@ function formatRate(perSecond: number): string {
   return "";
 }
 
-export function PipelinePage({
-  stages,
-  overallDone,
-  overallError,
-  noJobFound,
-  connected: _connected,
-}: PipelinePageProps) {
+export function PipelinePage({ stages, overallDone, overallError, noJobFound }: PipelinePageProps) {
   const navigate = useViewNavigate();
   const prefersReducedMotion = useReducedMotion();
   const shouldAnimate = !prefersReducedMotion;
@@ -62,12 +58,9 @@ export function PipelinePage({
   // ---- Completion flourish ----
   const [showCompletion, setShowCompletion] = useState(false);
   useEffect(() => {
-    if (overallDone && !overallError) {
-      const t = setTimeout(() => setShowCompletion(true), 300);
-      return () => clearTimeout(t);
-    } else {
-      setShowCompletion(false);
-    }
+    const shouldShow = overallDone && !overallError;
+    const t = setTimeout(() => setShowCompletion(shouldShow), shouldShow ? 300 : 0);
+    return () => clearTimeout(t);
   }, [overallDone, overallError]);
 
   return (
@@ -117,33 +110,36 @@ export function PipelinePage({
           )}
 
           {!noJobFound && stages.length === 0 && !overallError && (
-            <p className="text-[length:var(--text-body)] text-warm-faint animate-[pulse-fade_1.6s_ease-in-out_infinite] font-mono">
-              preparing…
-            </p>
+            <div className="space-y-3">
+              <Skeleton className="h-4 w-28 bg-ink-raised" />
+              <Skeleton className="h-12 w-full bg-ink-raised" />
+              <Skeleton className="h-12 w-5/6 bg-ink-raised" />
+            </div>
           )}
 
           {overallError && (
-            <div className="mb-10 p-5 rounded-sm border border-ink-border bg-ink-raised">
-              <p className="font-serif text-[length:var(--text-body)] text-warm-dim mb-3">
+            <Alert
+              variant="destructive"
+              className="mb-10 rounded-sm border-red-400/25 bg-red-400/5 p-5"
+            >
+              <AlertTitle className="font-serif text-[length:var(--text-body)] text-warm-dim mb-3">
                 Something went wrong during{" "}
                 {firstErrored ? firstErrored.label.toLowerCase() : "processing"}.
-              </p>
-              <p className="font-mono text-[length:var(--text-chrome)] text-warm-faint mb-4">
+              </AlertTitle>
+              <AlertDescription className="font-mono text-[length:var(--text-chrome)] text-red-400/90 mb-4">
                 {overallError}
-              </p>
-              <div className="flex gap-3">
-                <Button
-                  variant="ghost"
-                  size="xs"
-                  onClick={() => navigate("/")}
-                  className="font-mono text-[length:var(--text-chrome)] tracking-[0.1em]
-                             text-gold-dim hover:text-gold hover:bg-transparent
-                             rounded-sm h-auto px-3 py-1"
-                >
-                  back to home
-                </Button>
-              </div>
-            </div>
+              </AlertDescription>
+              <Button
+                variant="ghost"
+                size="xs"
+                onClick={() => navigate("/")}
+                className="font-mono text-[length:var(--text-chrome)] tracking-[0.1em]
+                           text-gold-dim hover:text-gold hover:bg-transparent
+                           rounded-sm h-auto px-3 py-1"
+              >
+                back to home
+              </Button>
+            </Alert>
           )}
 
           {!noJobFound && stages.length > 0 && (

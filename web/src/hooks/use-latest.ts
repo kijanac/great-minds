@@ -1,4 +1,4 @@
-import { useRef } from "react";
+import { useEffect, useRef } from "react";
 
 // Stable ref that always reads the latest value. Use when a callback or value
 // needs to be readable from a memoized closure (e.g. useMemo with empty deps)
@@ -8,6 +8,10 @@ import { useRef } from "react";
 // Pattern: https://www.epicreact.dev/the-latest-ref-pattern-in-react
 export function useLatest<T>(value: T) {
   const ref = useRef(value);
-  ref.current = value;
+
+  useEffect(() => {
+    ref.current = value;
+  }, [value]);
+
   return ref;
 }

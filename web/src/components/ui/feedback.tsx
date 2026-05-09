@@ -1,3 +1,4 @@
+import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Spinner } from "@/components/ui/spinner";
 
@@ -28,9 +29,11 @@ interface ErrorStateProps {
 export function ErrorState({ message = "Something went wrong.", onRetry }: ErrorStateProps) {
   return (
     <div className="flex h-full w-full flex-col items-center justify-center gap-3 py-10 px-4">
-      <p className="font-mono text-[length:var(--text-chrome)] tracking-[0.1em] text-warm-faint text-center">
-        {message}
-      </p>
+      <Alert variant="destructive" className="max-w-sm rounded-sm border-red-400/25 bg-red-400/5">
+        <AlertDescription className="font-mono text-[length:var(--text-chrome)] tracking-[0.1em] text-red-400/90 text-center">
+          {message}
+        </AlertDescription>
+      </Alert>
       {onRetry && (
         <Button
           variant="outline"

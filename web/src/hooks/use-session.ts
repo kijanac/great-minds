@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useEffectEvent, useRef, useState } from "react";
 
 import { consumeStream, streamQuery } from "@/api/query";
 import { appendBtw, appendExchange, createSession, type ExchangePayload } from "@/api/sessions";
@@ -44,7 +44,6 @@ export function useSession(options?: UseSessionOptions) {
   const [sessionId, setSessionId] = useState<string | null>(options?.sessionId ?? null);
   const sessionIdRef = useRef<string | null>(options?.sessionId ?? null);
   const threadRef = useRef(thread);
-  threadRef.current = thread;
   const [liveThinking, setLiveThinking] = useState<ThinkingBlock[]>([]);
   const [liveText, setLiveText] = useState("");
   const [chips, setChips] = useState<string[]>([]);
@@ -54,16 +53,25 @@ export function useSession(options?: UseSessionOptions) {
   const abortRef = useRef<AbortController | null>(null);
 
   useEffect(() => {
-    return () => {
-      for (const fn of cleanupRef.current) fn();
-    };
+    threadRef.current = thread;
+  }, [thread]);
+
+  const runCleanup = useEffectEvent(() => {
+    for (const fn of cleanupRef.current) fn();
+  });
+
+  useEffect(() => {
+    return () => runCleanup();
   }, []);
 
   const originPathRef = useRef<string | undefined>(options?.originPath);
   const initialQueryRef = useRef<string | undefined>(options?.initialQuery);
   const onSessionCreatedRef = useRef(options?.onSessionCreated);
-  onSessionCreatedRef.current = options?.onSessionCreated;
   const isFirstExchange = useRef(true);
+
+  useEffect(() => {
+    onSessionCreatedRef.current = options?.onSessionCreated;
+  }, [options?.onSessionCreated]);
 
   const runExchange = useCallback(async (question: string) => {
     const exId = genId("ex");

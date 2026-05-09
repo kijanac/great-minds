@@ -2,7 +2,10 @@ import { useEffect, useRef } from "react";
 
 export function useKeyHandler(handler: (e: KeyboardEvent) => void) {
   const handlerRef = useRef(handler);
-  handlerRef.current = handler;
+
+  useEffect(() => {
+    handlerRef.current = handler;
+  }, [handler]);
 
   useEffect(() => {
     const listener = (e: KeyboardEvent) => handlerRef.current(e);

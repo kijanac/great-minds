@@ -143,6 +143,19 @@ export function IngestionFlow({ hasActivePipeline }: { hasActivePipeline: boolea
   const prefersReducedMotion = useReducedMotion();
   const shouldAnimate = !prefersReducedMotion;
 
+  // ---- Actions ----
+
+  const close = useCallback(() => {
+    setExpanded(false);
+    pendingFilesRef.current = [];
+    pendingUrlRef.current = "";
+    pendingJobIdRef.current = null;
+    setUrl("");
+    setSummary(null);
+    setIngestError(null);
+    setFailedUploads([]);
+  }, []);
+
   // ---- Side-effect: close on click-outside / Escape ----
 
   useEffect(() => {
@@ -157,7 +170,7 @@ export function IngestionFlow({ hasActivePipeline }: { hasActivePipeline: boolea
       clearTimeout(t);
       document.removeEventListener("mousedown", handler);
     };
-  }, [expanded]);
+  }, [expanded, close]);
 
   useEffect(() => {
     if (!expanded) return;
@@ -166,25 +179,25 @@ export function IngestionFlow({ hasActivePipeline }: { hasActivePipeline: boolea
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, [expanded]);
+  }, [expanded, close]);
 
   // ---- Side-effect: document-level drag triggers expansion ----
 
   useEffect(() => {
-    let _dragCounter = 0;
+    let dragDepth = 0;
     const onDragEnter = (e: DragEvent) => {
       e.preventDefault();
-      _dragCounter++;
-      if (!expanded) setExpanded(true);
+      dragDepth += 1;
+      if (dragDepth > 0 && !expanded) setExpanded(true);
     };
     const onDragLeave = (e: DragEvent) => {
       e.preventDefault();
-      _dragCounter--;
+      dragDepth = Math.max(0, dragDepth - 1);
     };
     const onDragOver = (e: DragEvent) => e.preventDefault();
     const onDrop = (e: DragEvent) => {
       e.preventDefault();
-      _dragCounter = 0;
+      dragDepth = 0;
     };
 
     document.addEventListener("dragenter", onDragEnter);
@@ -199,19 +212,6 @@ export function IngestionFlow({ hasActivePipeline }: { hasActivePipeline: boolea
       document.removeEventListener("drop", onDrop);
     };
   }, [expanded]);
-
-  // ---- Actions ----
-
-  const close = useCallback(() => {
-    setExpanded(false);
-    pendingFilesRef.current = [];
-    pendingUrlRef.current = "";
-    pendingJobIdRef.current = null;
-    setUrl("");
-    setSummary(null);
-    setIngestError(null);
-    setFailedUploads([]);
-  }, []);
 
   const invalidateActivePipeline = useCallback(() => {
     if (!vaultId) return;
@@ -248,10 +248,13 @@ export function IngestionFlow({ hasActivePipeline }: { hasActivePipeline: boolea
     input.onchange = async () => {
       const files = Array.from(input.files ?? []);
       if (files.length > 0) {
-        const dropped: DroppedFile[] = files.map((f) => ({
-          file: f,
-          path: (f as any).webkitRelativePath || f.name,
-        }));
+        const dropped: DroppedFile[] = files.map((f) => {
+          const fileWithPath = f as File & { webkitRelativePath?: string };
+          return {
+            file: f,
+            path: fileWithPath.webkitRelativePath || f.name,
+          };
+        });
         pendingFilesRef.current = dropped;
         pendingUrlRef.current = "";
         pendingJobIdRef.current = crypto.randomUUID();

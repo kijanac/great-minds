@@ -1,10 +1,9 @@
-import { useMemo, useRef, type ComponentProps } from "react";
+import { useMemo, type ComponentProps } from "react";
 import Markdown from "react-markdown";
 
 import type { Document } from "@/api/doc";
 import { BtwThread } from "@/components/btw-thread";
 import { DocHeader } from "@/components/doc-header";
-import { useLatest } from "@/hooks/use-latest";
 import { baseMdComponents, remarkPlugins } from "@/lib/markdown";
 import type { BtwThread as BtwThreadType, SelectionInfo } from "@/lib/types";
 
@@ -41,108 +40,90 @@ export function ArticleView({
   supersededBy = null,
   onSupersessorClick,
 }: ArticleViewProps) {
-  // Stable refs so the empty-deps useMemo below sees latest props without
-  // invalidating mdComponents identity (which would re-render all markdown).
-  const onSelectionRef = useLatest(onSelection);
-  const onBtwReplyRef = useLatest(onBtwReply);
-  const onBtwDismissRef = useLatest(onBtwDismiss);
-  const onBtwSpinOffRef = useLatest(onBtwSpinOff);
-  const documentIdRef = useLatest(documentId);
-  const btwsRef = useLatest(btws);
+  // Markdown calls p() sequentially during render; reset so indices match BTW paragraphIndex.
+  let paraCount = 0;
 
-  const paraCountRef = useRef(0);
-
-  const mdComponents = useMemo<ComponentProps<typeof Markdown>["components"]>(
-    () => ({
-      ...baseMdComponents,
-      h1: ({ children }) => (
-        <h1 className="text-[length:var(--text-heading)] font-bold text-foreground mt-8 mb-4 first:mt-0">
-          {children}
-        </h1>
-      ),
-      h2: ({ children }) => (
-        <h2 className="text-[length:var(--text-heading)] font-bold text-foreground mt-8 mb-3">
-          {children}
-        </h2>
-      ),
-      h3: ({ children }) => (
-        <h3 className="font-mono text-[length:var(--text-caption)] font-medium text-gold mt-6 mb-2 tracking-[0.14em] uppercase">
-          {children}
-        </h3>
-      ),
-      p: ({ children }) => {
-        const pi = paraCountRef.current++;
-        const blockBtws = btwsRef.current.filter((b) => b.paragraphIndex === pi);
-        return (
-          <>
-            <p
-              id={`^p${pi}`}
-              className="text-[length:var(--text-body)] leading-[1.85] text-warm-dim mb-4 scroll-mt-20 target:bg-gold/10 target:border-l-2 target:border-gold target:pl-3"
-              onMouseUp={(e) => {
-                e.stopPropagation();
-                const sel = window.getSelection();
-                if (!sel || sel.isCollapsed || sel.toString().trim().length < 5) return;
-                const rect = sel.getRangeAt(0).getBoundingClientRect();
-                const paraText = e.currentTarget.textContent ?? "";
-                onSelectionRef.current({
-                  text: sel.toString().trim(),
-                  x: rect.left + rect.width / 2,
-                  y: rect.top - 6,
-                  paragraphIndex: pi,
-                  exchangeId: documentIdRef.current,
-                  paragraph: paraText,
-                });
-              }}
-            >
-              {children}
-            </p>
-            {blockBtws.map((btw) => (
-              <BtwThread
-                key={btw.id}
-                btw={btw}
-                onReply={(id, text) => onBtwReplyRef.current(id, text)}
-                onDismiss={
-                  onBtwDismissRef.current ? (id) => onBtwDismissRef.current!(id) : undefined
-                }
-                onSpinOff={
-                  onBtwSpinOffRef.current ? (id) => onBtwSpinOffRef.current!(id) : undefined
-                }
-              />
-            ))}
-          </>
-        );
-      },
-      ul: ({ children }) => (
-        <ul className="list-disc list-inside text-[length:var(--text-body)] leading-[1.85] text-warm-dim mb-4 ml-2">
-          {children}
-        </ul>
-      ),
-      ol: ({ children }) => (
-        <ol className="list-decimal list-inside text-[length:var(--text-body)] leading-[1.85] text-warm-dim mb-4 ml-2">
-          {children}
-        </ol>
-      ),
-      li: ({ children, id }) => (
-        <li id={id} className="mb-1">
-          {children}
-        </li>
-      ),
-      blockquote: ({ children }) => (
-        <blockquote className="border-l-2 border-gold-dim pl-4 text-warm-faint italic my-4">
-          {children}
-        </blockquote>
-      ),
-      code: ({ children }) => (
-        <code className="font-mono text-[length:var(--text-small)] bg-code-bg px-1.5 py-0.5 rounded-sm text-gold">
-          {children}
-        </code>
-      ),
-    }),
-    [],
-  );
-
-  // Markdown calls p() sequentially during render; reset so indices match BTW paragraphIndex
-  paraCountRef.current = 0;
+  const mdComponents: ComponentProps<typeof Markdown>["components"] = {
+    ...baseMdComponents,
+    h1: ({ children }) => (
+      <h1 className="text-[length:var(--text-heading)] font-bold text-foreground mt-8 mb-4 first:mt-0">
+        {children}
+      </h1>
+    ),
+    h2: ({ children }) => (
+      <h2 className="text-[length:var(--text-heading)] font-bold text-foreground mt-8 mb-3">
+        {children}
+      </h2>
+    ),
+    h3: ({ children }) => (
+      <h3 className="font-mono text-[length:var(--text-caption)] font-medium text-gold mt-6 mb-2 tracking-[0.14em] uppercase">
+        {children}
+      </h3>
+    ),
+    p: ({ children }) => {
+      const pi = paraCount++;
+      const blockBtws = btws.filter((b) => b.paragraphIndex === pi);
+      return (
+        <>
+          <p
+            id={`^p${pi}`}
+            className="text-[length:var(--text-body)] leading-[1.85] text-warm-dim mb-4 scroll-mt-20 target:bg-gold/10 target:border-l-2 target:border-gold target:pl-3"
+            onMouseUp={(e) => {
+              e.stopPropagation();
+              const sel = window.getSelection();
+              if (!sel || sel.isCollapsed || sel.toString().trim().length < 5) return;
+              const rect = sel.getRangeAt(0).getBoundingClientRect();
+              const paraText = e.currentTarget.textContent ?? "";
+              onSelection({
+                text: sel.toString().trim(),
+                x: rect.left + rect.width / 2,
+                y: rect.top - 6,
+                paragraphIndex: pi,
+                exchangeId: documentId,
+                paragraph: paraText,
+              });
+            }}
+          >
+            {children}
+          </p>
+          {blockBtws.map((btw) => (
+            <BtwThread
+              key={btw.id}
+              btw={btw}
+              onReply={onBtwReply}
+              onDismiss={onBtwDismiss}
+              onSpinOff={onBtwSpinOff}
+            />
+          ))}
+        </>
+      );
+    },
+    ul: ({ children }) => (
+      <ul className="list-disc list-inside text-[length:var(--text-body)] leading-[1.85] text-warm-dim mb-4 ml-2">
+        {children}
+      </ul>
+    ),
+    ol: ({ children }) => (
+      <ol className="list-decimal list-inside text-[length:var(--text-body)] leading-[1.85] text-warm-dim mb-4 ml-2">
+        {children}
+      </ol>
+    ),
+    li: ({ children, id }) => (
+      <li id={id} className="mb-1">
+        {children}
+      </li>
+    ),
+    blockquote: ({ children }) => (
+      <blockquote className="border-l-2 border-gold-dim pl-4 text-warm-faint italic my-4">
+        {children}
+      </blockquote>
+    ),
+    code: ({ children }) => (
+      <code className="font-mono text-[length:var(--text-small)] bg-code-bg px-1.5 py-0.5 rounded-sm text-gold">
+        {children}
+      </code>
+    ),
+  };
 
   // Strip `^pN` block-ref markers from visible prose — they're metadata
   // for deep-link fragments, not content.

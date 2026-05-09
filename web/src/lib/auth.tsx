@@ -1,14 +1,8 @@
-import {
-  createContext,
-  useCallback,
-  useContext,
-  useEffect,
-  useMemo,
-  useSyncExternalStore,
-} from "react";
+import { useCallback, useEffect, useMemo, useSyncExternalStore } from "react";
 import type { ReactNode } from "react";
 import { decodeJwt } from "jose";
 import { clearTokens, ensureVaultId } from "@/api/client";
+import { AuthContext } from "@/lib/auth-context";
 import { queryClient } from "@/lib/query-client";
 
 function isTokenValid(token: string | null): boolean {
@@ -31,15 +25,6 @@ function getUserIdFromToken(): string | null {
     return null;
   }
 }
-
-interface AuthContextValue {
-  isAuthenticated: boolean;
-  userId: string | null;
-  login: () => void;
-  logout: () => void;
-}
-
-const AuthContext = createContext<AuthContextValue | null>(null);
 
 function subscribe(callback: () => void) {
   window.addEventListener("auth:changed", callback);
@@ -80,10 +65,4 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   );
 
   return <AuthContext value={value}>{children}</AuthContext>;
-}
-
-export function useAuth(): AuthContextValue {
-  const ctx = useContext(AuthContext);
-  if (!ctx) throw new Error("useAuth must be used within AuthProvider");
-  return ctx;
 }

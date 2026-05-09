@@ -1,7 +1,9 @@
 import { useEffect, useState } from "react";
 
 import type { UserSuggestionIntent } from "@/api/ingest";
+import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
+import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import {
   Sheet,
@@ -65,12 +67,14 @@ export function SuggestionForm({
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    if (open) {
+    if (!open) return;
+    const reset = window.setTimeout(() => {
       setIntent("add_context");
       setBody("");
       setError(null);
       setSubmitting(false);
-    }
+    }, 0);
+    return () => window.clearTimeout(reset);
   }, [open]);
 
   const canSubmit = body.trim().length > 0 && !submitting;
@@ -133,12 +137,12 @@ export function SuggestionForm({
             </div>
 
             <div className="space-y-2">
-              <label
+              <Label
                 htmlFor="suggestion-body"
                 className="font-mono text-[length:var(--text-chrome)] tracking-[0.1em] text-warm-ghost uppercase block"
               >
                 your suggestion
-              </label>
+              </Label>
               <Textarea
                 id="suggestion-body"
                 value={body}
@@ -151,9 +155,11 @@ export function SuggestionForm({
             </div>
 
             {error && (
-              <p className="font-mono text-[length:var(--text-chrome)] tracking-[0.04em] text-red-400">
-                {error}
-              </p>
+              <Alert variant="destructive" className="rounded-sm border-red-400/25 bg-red-400/5">
+                <AlertDescription className="font-mono text-[length:var(--text-chrome)] tracking-[0.04em] text-red-400/90">
+                  {error}
+                </AlertDescription>
+              </Alert>
             )}
 
             <div className="flex items-center gap-3 pt-2">

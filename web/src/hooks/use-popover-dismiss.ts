@@ -2,7 +2,10 @@ import { useEffect, useRef } from "react";
 
 export function usePopoverDismiss(onDismiss: () => void) {
   const ref = useRef(onDismiss);
-  ref.current = onDismiss;
+
+  useEffect(() => {
+    ref.current = onDismiss;
+  }, [onDismiss]);
 
   useEffect(() => {
     const handler = () => {

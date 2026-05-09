@@ -1,3 +1,6 @@
+import { Alert, AlertDescription } from "@/components/ui/alert";
+import { Label } from "@/components/ui/label";
+
 interface LoginFormProps {
   step: "email" | "code";
   email: string;
@@ -33,11 +36,21 @@ export default function LoginForm({
           </p>
         </div>
 
-        {error && <p className="text-center text-small text-destructive">{error}</p>}
+        {error && (
+          <Alert variant="destructive" className="rounded-sm border-red-400/25 bg-red-400/5">
+            <AlertDescription className="text-center text-small text-red-400/90">
+              {error}
+            </AlertDescription>
+          </Alert>
+        )}
 
         {step === "email" ? (
           <form onSubmit={onRequestCode} className="space-y-4">
+            <Label htmlFor="login-email" className="sr-only">
+              Email address
+            </Label>
             <input
+              id="login-email"
               type="email"
               value={email}
               onChange={(e) => onEmailChange(e.target.value)}
@@ -56,7 +69,11 @@ export default function LoginForm({
           </form>
         ) : (
           <form onSubmit={onVerifyCode} className="space-y-4">
+            <Label htmlFor="login-code" className="sr-only">
+              Verification code
+            </Label>
             <input
+              id="login-code"
               type="text"
               value={code}
               onChange={(e) => onCodeChange(e.target.value)}

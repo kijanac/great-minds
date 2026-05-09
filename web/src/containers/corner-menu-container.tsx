@@ -1,5 +1,5 @@
 import { CornerMenu } from "@/components/corner-menu";
-import { useAuth } from "@/lib/auth";
+import { useAuth } from "@/lib/use-auth";
 import { useTheme } from "@/hooks/use-theme";
 
 export function CornerMenuContainer() {

@@ -1,8 +1,10 @@
 import { useState } from "react";
 
 import { draftThematicHint } from "@/api/vaults";
+import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 
 export interface VaultConfigFormSubmit {
@@ -71,9 +73,9 @@ export function VaultConfigForm({
     <form onSubmit={handleSubmit} className="space-y-8">
       {isCreate && (
         <div>
-          <label htmlFor="vault-name" className={SECTION_LABEL}>
+          <Label htmlFor="vault-name" className={SECTION_LABEL}>
             project name
-          </label>
+          </Label>
           <Input
             id="vault-name"
             autoFocus
@@ -87,12 +89,12 @@ export function VaultConfigForm({
       )}
 
       <div>
-        <label htmlFor="vault-description" className={SECTION_LABEL}>
+        <Label htmlFor="vault-description" className={SECTION_LABEL}>
           describe what to focus on
           <span className="ml-2 text-warm-ghost normal-case tracking-normal">
             (optional, used to draft a focus statement)
           </span>
-        </label>
+        </Label>
         <Textarea
           id="vault-description"
           disabled={submitting || drafting}
@@ -114,20 +116,25 @@ export function VaultConfigForm({
             {drafting ? "drafting…" : "draft focus from description"}
           </Button>
           {draftError && (
-            <span className="font-mono text-[length:var(--text-chrome)] text-red-400">
-              {draftError}
-            </span>
+            <Alert
+              variant="destructive"
+              className="rounded-sm border-red-400/25 bg-red-400/5 py-1.5"
+            >
+              <AlertDescription className="font-mono text-[length:var(--text-chrome)] text-red-400/90">
+                {draftError}
+              </AlertDescription>
+            </Alert>
           )}
         </div>
       </div>
 
       <div>
-        <label htmlFor="vault-thematic-hint" className={SECTION_LABEL}>
+        <Label htmlFor="vault-thematic-hint" className={SECTION_LABEL}>
           editorial focus
           <span className="ml-2 text-warm-ghost normal-case tracking-normal">
             (steers how topics are framed; leave blank to use defaults)
           </span>
-        </label>
+        </Label>
         <Textarea
           id="vault-thematic-hint"
           disabled={submitting}

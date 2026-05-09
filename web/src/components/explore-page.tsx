@@ -9,7 +9,9 @@ import type {
 } from "@/api/explore";
 import type { ContentTypeFacet } from "@/api/sources";
 import { Button } from "@/components/ui/button";
+import { Skeleton } from "@/components/ui/skeleton";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
+import { formatShortDate } from "@/lib/utils";
 
 interface ExplorePageProps {
   orphans: Orphan[];
@@ -27,7 +29,6 @@ interface ExplorePageProps {
   ingestionZone: ReactNode;
 }
 
-import { formatShortDate } from "@/lib/utils";
 export function ExplorePage({
   orphans,
   dirtyCount,
@@ -71,9 +72,18 @@ export function ExplorePage({
       <div className="flex-1 min-h-0 overflow-y-auto">
         <div className="max-w-[740px] mx-auto px-4 md:px-10 pt-8 pb-20">
           {loading ? (
-            <p className="text-[length:var(--text-body)] text-warm-faint animate-[pulse-fade_1.6s_ease-in-out_infinite]">
-              Loading...
-            </p>
+            <div className="space-y-8">
+              <div className="flex flex-wrap gap-2">
+                <Skeleton className="h-7 w-28 bg-ink-raised" />
+                <Skeleton className="h-7 w-24 bg-ink-raised" />
+                <Skeleton className="h-7 w-32 bg-ink-raised" />
+              </div>
+              <div className="space-y-3">
+                <Skeleton className="h-4 w-32 bg-ink-raised" />
+                <Skeleton className="h-10 w-full bg-ink-raised" />
+                <Skeleton className="h-10 w-5/6 bg-ink-raised" />
+              </div>
+            </div>
           ) : !hasContent ? (
             <div className="text-center pt-8">
               <p className="font-serif text-[length:var(--text-body)] text-warm-dim mb-2">

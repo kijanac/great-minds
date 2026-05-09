@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { useAuth } from "@/lib/auth";
+import { useAuth } from "@/lib/use-auth";
 import { loginWithCode, requestCode } from "@/api/client";
 import LoginForm from "@/components/login-form";
 import { useViewNavigate } from "@/hooks/use-view-navigate";
