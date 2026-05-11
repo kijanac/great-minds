@@ -23,8 +23,9 @@ async def embed_batch(client: AsyncOpenAI, texts: list[str]) -> list[list[float]
     """Embed a batch of texts via OpenRouter with retries + MRL truncation."""
     for attempt in range(1, MAX_EMBED_RETRIES + 1):
         try:
-            response = await client.embeddings.create(
-                model=EMBEDDING_MODEL, input=texts
+            response = await asyncio.wait_for(
+                client.embeddings.create(model=EMBEDDING_MODEL, input=texts),
+                timeout=300.0,
             )
             return [
                 truncate_and_normalize(item.embedding, EMBEDDING_DIMENSIONS)

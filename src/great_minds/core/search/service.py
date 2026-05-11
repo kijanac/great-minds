@@ -191,7 +191,7 @@ class SearchService:
         # 3. Producer-consumer pipeline: file reader produces batches into
         #    a queue; a fixed pool of workers consumes, embedding and
         #    writing to DB with bounded concurrency.
-        concurrency = max(1, settings.compile_enrich_concurrency // 4)
+        concurrency = max(1, settings.compile_enrich_concurrency // 10)
         embed_sem = asyncio.Semaphore(concurrency)
         queue: asyncio.Queue = asyncio.Queue(maxsize=concurrency * 2)
 
@@ -373,9 +373,16 @@ class SearchService:
             if batch is None:
                 queue.task_done()
                 break
-            async with sem:
-                embeddings = await embed_batch(client, [c.body for c in batch])
-                await self.repo.batch_upsert(vault_id, list(zip(batch, embeddings)))
-                count += len(batch)
-            queue.task_done()
+            try:
+                async with sem:
+                    embeddings = await embed_batch(client, [c.body for c in batch])
+                    await self.repo.batch_upsert(vault_id, list(zip(batch, embeddings)))
+                    count += len(batch)
+            except Exception:
+                log.exception(
+                    "embed_worker batch failed, dropping %d chunks",
+                    len(batch),
+                )
+            finally:
+                queue.task_done()
         return count
