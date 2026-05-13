@@ -20,10 +20,12 @@ from great_minds.core.pipeline import build_compile_service
 from great_minds.core.pipeline.steps import absurd_step_runner
 from great_minds.core.vaults.config import load_config
 from great_minds.core.vaults.repository import VaultRepository
+from great_minds.core.compile_intents.repository import CompileIntentRepository
 from great_minds.core.documents.builder import build_document
 from great_minds.core.documents.repository import SourceDocumentRepo
 from great_minds.core.documents.schemas import SourceDocCreate
 from great_minds.core.documents.service import SourceDocumentService
+from great_minds.core.pipeline_runs.repository import PipelineRunRepository
 from great_minds.core.ingest_service import _convert_to_markdown
 from great_minds.core.llm import get_async_client
 from great_minds.core.llm_costs import record_wide_event_cost
@@ -412,9 +414,9 @@ async def staged_file_ingest_task(params: dict, ctx) -> None:
         )
         await ctx.heartbeat(600)
 
-        doc_service = SourceDocumentService(
-            SourceDocumentRepo(session), pipeline_run_id=pipeline_run_id
-        )
+        doc_service = SourceDocumentService(SourceDocumentRepo(session))
+        intent_repo = CompileIntentRepository(session)
+        pipeline_run_repo = PipelineRunRepository(session)
         existing_hashes = await doc_service.file_hashes(vault_id)
         await progress.emit(
             pipeline_run_id=pipeline_run_id,
@@ -532,7 +534,12 @@ async def staged_file_ingest_task(params: dict, ctx) -> None:
                     },
                 ),
             )
-            await doc_service.emit_compile_intent(vault_id)
+            intent = await intent_repo.ensure_pending(
+                vault_id, pipeline_run_id=pipeline_run_id
+            )
+            if intent.pipeline_run_id is None:
+                await intent_repo.attach_pipeline_run(intent.id, pipeline_run_id)
+            await pipeline_run_repo.attach_compile_intent(pipeline_run_id, intent.id)
             await session.commit()
             await progress.emit(
                 pipeline_run_id=pipeline_run_id,

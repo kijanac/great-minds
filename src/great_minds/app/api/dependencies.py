@@ -185,10 +185,18 @@ VaultServiceDep = Annotated[VaultService, Depends(get_vault_service)]
 
 def get_ingest_service(
     doc_service: SourceDocumentServiceDep,
+    intent_repo: CompileIntentRepositoryDep,
+    pipeline_run_repo: PipelineRunRepositoryDep,
     vault_service: VaultServiceDep,
     settings: SettingsDep,
 ) -> IngestService:
-    return IngestService(doc_service, vault_service=vault_service, settings=settings)
+    return IngestService(
+        doc_service,
+        intent_repo=intent_repo,
+        pipeline_run_repo=pipeline_run_repo,
+        vault_service=vault_service,
+        settings=settings,
+    )
 
 
 IngestServiceDep = Annotated[IngestService, Depends(get_ingest_service)]
@@ -234,9 +242,10 @@ ProposalsStorageDep = Annotated[LocalStorage, Depends(get_proposals_storage)]
 def get_proposal_service(
     repo: ProposalRepositoryDep,
     doc_service: SourceDocumentServiceDep,
+    intent_repo: CompileIntentRepositoryDep,
     proposals_storage: ProposalsStorageDep,
 ) -> ProposalService:
-    return ProposalService(repo, doc_service, proposals_storage)
+    return ProposalService(repo, doc_service, intent_repo, proposals_storage)
 
 
 ProposalServiceDep = Annotated[ProposalService, Depends(get_proposal_service)]

@@ -95,6 +95,13 @@ class ProposalRepository:
             .values(status=status)
         )
 
+    async def set_document_id(self, proposal_id: UUID, document_id: UUID) -> None:
+        await self.session.execute(
+            update(ProposalORM)
+            .where(ProposalORM.id == proposal_id)
+            .values(document_id=document_id)
+        )
+
 
 def _proposal_query(
     vault_id: UUID, *, status: ProposalStatus | None = None

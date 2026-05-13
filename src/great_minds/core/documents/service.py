@@ -2,7 +2,6 @@
 
 from uuid import UUID
 
-from great_minds.core.compile_intents.repository import CompileIntentRepository
 from great_minds.core.documents.repository import SourceDocumentRepo, WikiArticleRepo
 from great_minds.core.documents.schemas import (
     Backlink,
@@ -17,47 +16,19 @@ from great_minds.core.documents.schemas import (
 from great_minds.core.ideas.schemas import SourceCard
 from great_minds.core.markdown import parse_frontmatter
 from great_minds.core.pagination import FacetedPage, Page, PageParams, create_page
-from great_minds.core.pipeline_runs import PipelineRunRepository
-from great_minds.core.telemetry import log_event
 
 
 class SourceDocumentService:
-    def __init__(
-        self, repo: SourceDocumentRepo, pipeline_run_id: UUID | None = None
-    ) -> None:
+    def __init__(self, repo: SourceDocumentRepo) -> None:
         self.repo = repo
-        self.pipeline_run_id = pipeline_run_id
 
     async def _commit(self) -> None:
         await self.repo.session.commit()
-
-    async def emit_compile_intent(self, vault_id: UUID) -> None:
-        intent_repo = CompileIntentRepository(self.repo.session)
-        intent = await intent_repo.upsert_pending(
-            vault_id, pipeline_run_id=self.pipeline_run_id
-        )
-        created = intent is not None
-        if intent is None and self.pipeline_run_id is not None:
-            intent = await intent_repo.get_pending_for_vault(vault_id)
-            if intent is not None and intent.pipeline_run_id is None:
-                await intent_repo.attach_pipeline_run(intent.id, self.pipeline_run_id)
-        if intent is not None and self.pipeline_run_id is not None:
-            await PipelineRunRepository(self.repo.session).attach_compile_intent(
-                self.pipeline_run_id, intent.id
-            )
-        if created and intent is not None:
-            log_event(
-                "intent_created",
-                intent_id=str(intent.id),
-                vault_id=str(vault_id),
-                trigger="document_indexed",
-            )
 
     async def index(self, vault_id: UUID, file_path: str, content: str) -> UUID:
         fm, _ = parse_frontmatter(content)
         doc = SourceDocCreate.from_frontmatter(fm, file_path, content)
         result = await self.repo.upsert(vault_id, doc)
-        await self.emit_compile_intent(vault_id)
         await self._commit()
         return result
 

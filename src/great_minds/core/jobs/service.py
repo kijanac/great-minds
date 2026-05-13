@@ -73,9 +73,10 @@ class JobService:
             ),
         )
 
-        run_ingest_service = self.ingest_service.with_pipeline_run(run.id)
         try:
-            await run_ingest_service.ingest_url(vault_id, storage, url, metadata)
+            await self.ingest_service.ingest_url(
+                vault_id, storage, url, metadata, pipeline_run_id=run.id
+            )
         except Exception as exc:
             message = (
                 f"Failed to fetch URL: {exc}"

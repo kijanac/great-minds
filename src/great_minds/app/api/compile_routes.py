@@ -7,7 +7,7 @@ within ~5s. CompileIntent remains an internal outbox detail.
 
 from uuid import UUID
 
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, status
 
 from great_minds.app.api.dependencies import (
     CompileIntentServiceDep,
@@ -28,10 +28,7 @@ async def request_compile(
 ) -> JobResponse:
     run = await compile_service.request_compile(vault_id=vault_id, job_id=req.job_id)
     if run is None:
-        # Race: a reconciler dispatched between upsert and lookup. Caller
-        # should refresh the active jobs list.
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail="Intent dispatched between request and lookup; refresh task list",
+        raise RuntimeError(
+            f"compile pipeline run missing for vault {vault_id}, job {req.job_id}"
         )
     return JobResponse.model_validate(run)

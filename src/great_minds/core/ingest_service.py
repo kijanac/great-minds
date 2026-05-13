@@ -10,19 +10,21 @@ from uuid import UUID
 import httpx
 from markitdown import MarkItDown, StreamInfo
 
-from great_minds.core.vaults.config import load_config
-from great_minds.core.r2_admin import R2Admin
-from great_minds.core.settings import Settings
-from great_minds.core.vaults.service import VaultService
+from great_minds.core.compile_intents.repository import CompileIntentRepository
 from great_minds.core.documents.builder import write_document
 from great_minds.core.documents.schemas import IngestedDocument, SourceMetadata
-from great_minds.core.ingest_schemas import StagedFileInput, StagedFileSignedUpload
 from great_minds.core.documents.service import SourceDocumentService
+from great_minds.core.ingest_schemas import StagedFileInput, StagedFileSignedUpload
 from great_minds.core.paths import raw_path, session_exchange_path
+from great_minds.core.pipeline_runs.repository import PipelineRunRepository
+from great_minds.core.r2_admin import R2Admin
 from great_minds.core.sessions.schemas import ExchangeEvent, SessionOrigin
 from great_minds.core.sessions.service import SessionService
+from great_minds.core.settings import Settings
 from great_minds.core.storage import Storage
 from great_minds.core.text import normalize_url, slugify
+from great_minds.core.vaults.config import load_config
+from great_minds.core.vaults.service import VaultService
 
 
 class UserSuggestionIntent(StrEnum):
@@ -46,21 +48,28 @@ class IngestService:
         self,
         doc_service: SourceDocumentService,
         *,
+        intent_repo: CompileIntentRepository,
+        pipeline_run_repo: PipelineRunRepository,
         vault_service: VaultService,
         settings: Settings,
     ) -> None:
         self.doc_service = doc_service
+        self.intent_repo = intent_repo
+        self.pipeline_run_repo = pipeline_run_repo
         self.vault_service = vault_service
         self.settings = settings
 
-    def with_pipeline_run(self, pipeline_run_id: UUID) -> IngestService:
-        return IngestService(
-            SourceDocumentService(
-                self.doc_service.repo, pipeline_run_id=pipeline_run_id
-            ),
-            vault_service=self.vault_service,
-            settings=self.settings,
+    async def _emit_compile_intent(
+        self, vault_id: UUID, pipeline_run_id: UUID | None
+    ) -> None:
+        intent = await self.intent_repo.ensure_pending(
+            vault_id, pipeline_run_id=pipeline_run_id
         )
+        if pipeline_run_id is None:
+            return
+        if intent.pipeline_run_id is None:
+            await self.intent_repo.attach_pipeline_run(intent.id, pipeline_run_id)
+        await self.pipeline_run_repo.attach_compile_intent(pipeline_run_id, intent.id)
 
     async def sign_staged_files(
         self,
@@ -98,13 +107,15 @@ class IngestService:
         vault_id: UUID,
         storage: Storage,
         *,
+        pipeline_run_id: UUID | None,
         content: str,
         content_type: str,
         dest: str,
         source_type: str,
         **frontmatter: object,
     ) -> UUID:
-        """Build markdown from raw content + metadata, write, and index."""
+        """Build markdown from raw content + metadata, write, index, and
+        guarantee a compile intent exists in the same transaction."""
         config = await load_config(storage)
         rendered = await write_document(
             storage,
@@ -115,7 +126,9 @@ class IngestService:
             source_type=source_type,
             **frontmatter,
         )
-        return await self.doc_service.index(vault_id, dest, rendered)
+        doc_id = await self.doc_service.index(vault_id, dest, rendered)
+        await self._emit_compile_intent(vault_id, pipeline_run_id)
+        return doc_id
 
     async def ingest_text(
         self,
@@ -124,11 +137,14 @@ class IngestService:
         content: str,
         dest: str,
         metadata: SourceMetadata,
+        *,
+        pipeline_run_id: UUID | None = None,
     ) -> IngestedDocument:
         """Ingest raw text content."""
         await self._ingest_raw(
             vault_id,
             storage,
+            pipeline_run_id=pipeline_run_id,
             content=content,
             content_type=metadata.content_type,
             dest=dest,
@@ -150,6 +166,7 @@ class IngestService:
         *,
         mimetype: str = "",
         dest_path: str | None = None,
+        pipeline_run_id: UUID | None = None,
     ) -> IngestedDocument:
         """Ingest an uploaded file."""
         content = await _convert_to_markdown(raw_bytes, filename, mimetype)
@@ -163,6 +180,7 @@ class IngestService:
         await self._ingest_raw(
             vault_id,
             storage,
+            pipeline_run_id=pipeline_run_id,
             content=content,
             content_type=metadata.content_type,
             dest=dest,
@@ -183,6 +201,7 @@ class IngestService:
         intent: UserSuggestionIntent,
         anchored_to: str = "",
         anchored_section: str = "",
+        pipeline_run_id: UUID | None = None,
     ) -> IngestedDocument:
         """Persist a user suggestion as a source document.
 
@@ -203,6 +222,7 @@ class IngestService:
         await self._ingest_raw(
             vault_id,
             storage,
+            pipeline_run_id=pipeline_run_id,
             content=body,
             content_type="user",
             dest=dest,
@@ -226,6 +246,7 @@ class IngestService:
         exchange: ExchangeEvent,
         title: str,
         session_origin: SessionOrigin | None = None,
+        pipeline_run_id: UUID | None = None,
     ) -> IngestedDocument:
         """Persist a promoted session exchange as a raw/sessions/ source.
 
@@ -236,6 +257,7 @@ class IngestService:
         await self._ingest_raw(
             vault_id,
             storage,
+            pipeline_run_id=pipeline_run_id,
             dest=dest,
             **SessionService.session_exchange_build_args(
                 session_id=session_id,
@@ -255,6 +277,8 @@ class IngestService:
         storage: Storage,
         url: str,
         metadata: SourceMetadata,
+        *,
+        pipeline_run_id: UUID | None = None,
     ) -> IngestedDocument:
         """Fetch a URL, convert to markdown, and ingest."""
         url = normalize_url(url)
@@ -276,6 +300,7 @@ class IngestService:
         await self._ingest_raw(
             vault_id,
             storage,
+            pipeline_run_id=pipeline_run_id,
             content=result.text_content,
             content_type=metadata.content_type,
             dest=dest,

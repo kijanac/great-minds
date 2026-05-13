@@ -8,12 +8,11 @@ to ``create()`` so the service stays agnostic to content source.
 import logging
 from uuid import UUID
 
-from sqlalchemy import update
-
+from great_minds.core.compile_intents.repository import CompileIntentRepository
 from great_minds.core.documents.service import SourceDocumentService
 from great_minds.core.pagination import Page, PageParams, create_page
 from great_minds.core.paths import proposal_staging_path
-from great_minds.core.proposals.models import ProposalORM, ProposalStatus
+from great_minds.core.proposals.models import ProposalStatus
 from great_minds.core.proposals.repository import ProposalRepository
 from great_minds.core.proposals.schemas import (
     Proposal,
@@ -30,10 +29,12 @@ class ProposalService:
         self,
         repo: ProposalRepository,
         doc_service: SourceDocumentService,
+        intent_repo: CompileIntentRepository,
         proposals_storage: Storage,
     ) -> None:
         self.repo = repo
         self.doc_service = doc_service
+        self.intent_repo = intent_repo
         self.proposals_storage = proposals_storage
 
     async def _commit(self) -> None:
@@ -139,11 +140,8 @@ class ProposalService:
         document_id = await self.doc_service.index(
             proposal.vault_id, proposal.dest_path, rendered
         )
-        await self.repo.session.execute(
-            update(ProposalORM)
-            .where(ProposalORM.id == proposal.id)
-            .values(document_id=document_id)
-        )
+        await self.repo.set_document_id(proposal.id, document_id)
+        await self.intent_repo.ensure_pending(proposal.vault_id)
 
     async def _reject(self, proposal: Proposal) -> None:
         """Clean up staged content for a rejected proposal."""
