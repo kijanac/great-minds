@@ -23,6 +23,8 @@ class Chunk(BaseModel):
 class ChunkScore(BaseModel):
     """One ranked row from either BM25 or vector search, pre-fusion."""
 
+    model_config = ConfigDict(from_attributes=True)
+
     vault_id: UUID
     path: str
     chunk_index: int

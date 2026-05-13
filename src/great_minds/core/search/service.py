@@ -27,6 +27,34 @@ RRF_K = 60
 MAX_SEARCH_RESULTS = 20
 EMBEDDING_BATCH_SIZE = 50
 
+# Sentinel chunk index for the per-file frontmatter-metadata chunk
+# (title + precis/description + author). Lives alongside body
+# paragraph chunks (0..N) and lets searches match against curator-
+# supplied summary fields that ``parse_frontmatter`` strips out
+# before paragraph chunking.
+METADATA_CHUNK_INDEX = -1
+
+
+def _metadata_chunk_text(fm: dict) -> str | None:
+    """Synthesize the searchable text for a file's frontmatter metadata.
+
+    Combines ``title``, ``precis``/``description``, and ``author`` into
+    a single chunk body so curator-supplied summary fields appear in
+    BM25 / vector results alongside paragraph hits. Returns ``None``
+    when no field is set — callers skip emitting a metadata chunk.
+    """
+    parts: list[str] = []
+    title = fm.get("title")
+    if title:
+        parts.append(str(title))
+    precis = fm.get("precis") or fm.get("description")
+    if precis:
+        parts.append(str(precis))
+    author = fm.get("author")
+    if author:
+        parts.append(f"by {author}")
+    return "\n\n".join(parts) if parts else None
+
 
 class SearchService:
     """Route-facing facade over SearchIndexRepository.
@@ -259,24 +287,47 @@ class SearchService:
 
             # Skip files whose R2 ETag matches the stored ETag from the
             # last successful index. NULL stored etag (first compile) or
-            # mismatched etag (re-ingested) forces a re-read.
+            # mismatched etag (re-ingested) forces a re-read. A missing
+            # metadata chunk also forces a re-read so this index revision
+            # can backfill the synthetic frontmatter chunk on files
+            # indexed under earlier code.
             stored = _stored_etags.get(path)
-            if stored is not None and stored == file_info.etag and file_info.etag:
+            has_metadata_chunk = (path, METADATA_CHUNK_INDEX) in existing_hashes
+            if (
+                stored is not None
+                and stored == file_info.etag
+                and file_info.etag
+                and has_metadata_chunk
+            ):
                 skipped_etag += 1
-                # Still register current keys so stale-deletion knows
-                # these paths are still present.
-                for chunk_idx in range(999):
-                    key = (path, chunk_idx)
-                    if key in existing_hashes:
-                        current_keys.append(key)
-                    else:
-                        break
+                # Register every existing chunk for this path so
+                # stale-deletion knows they're still in use.
+                current_keys.extend(k for k in existing_hashes if k[0] == path)
                 continue
 
             content = await storage.read(path)
             if not content:
                 continue
-            _, body = parse_frontmatter(content)
+            fm, body = parse_frontmatter(content)
+            metadata_text = _metadata_chunk_text(fm)
+            if metadata_text is not None:
+                h = content_hash("chunk", metadata_text)
+                chunk = Chunk(
+                    path=path,
+                    chunk_index=METADATA_CHUNK_INDEX,
+                    heading="",
+                    body=metadata_text,
+                    content_hash=h,
+                )
+                total_chunks += 1
+                key = (chunk.path, chunk.chunk_index)
+                current_keys.append(key)
+                if existing_hashes.get(key) != chunk.content_hash:
+                    changed_count += 1
+                    batch_buffer.append(chunk)
+                    if len(batch_buffer) >= EMBEDDING_BATCH_SIZE:
+                        await queue.put(batch_buffer)
+                        batch_buffer = []
             for p in paragraphs(body):
                 full_text = f"{p.heading}\n\n{p.body}" if p.heading else p.body
                 h = content_hash("chunk", full_text)

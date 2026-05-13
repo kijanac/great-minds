@@ -182,17 +182,7 @@ class SearchIndexRepository:
             .order_by(rank_expr.desc())
             .limit(limit)
         )
-        return [
-            ChunkScore(
-                vault_id=row.vault_id,
-                path=row.path,
-                chunk_index=row.chunk_index,
-                heading=row.heading,
-                body=row.body,
-                score=float(row.score),
-            )
-            for row in result.fetchall()
-        ]
+        return [ChunkScore.model_validate(row) for row in result.fetchall()]
 
     async def vector_search(
         self,
@@ -218,14 +208,4 @@ class SearchIndexRepository:
             .order_by(dist_expr)
             .limit(limit)
         )
-        return [
-            ChunkScore(
-                vault_id=row.vault_id,
-                path=row.path,
-                chunk_index=row.chunk_index,
-                heading=row.heading,
-                body=row.body,
-                score=float(row.score),
-            )
-            for row in result.fetchall()
-        ]
+        return [ChunkScore.model_validate(row) for row in result.fetchall()]

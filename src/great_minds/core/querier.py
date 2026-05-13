@@ -141,11 +141,14 @@ _BASE_TOOLS = [
     {
         "type": "function",
         "function": {
-            "name": "search_wiki",
+            "name": "search_content",
             "description": (
-                "Search across wiki articles for a term or phrase. "
-                "Returns matching excerpts with article paths. Use when "
-                "you're not sure which article covers a topic."
+                "Hybrid text + semantic search across the entire knowledge "
+                "base — both raw sources and rendered wiki articles. Indexes "
+                "frontmatter title/precis/author alongside body paragraphs, "
+                "so this is the right tool for any text-shaped discovery "
+                "question. Returns ranked excerpts with paths you can pass "
+                "to read_document."
             ),
             "parameters": {
                 "type": "object",
@@ -170,9 +173,11 @@ def _build_query_tool(tags: list[str]) -> dict:
         "function": {
             "name": "query_documents",
             "description": (
-                "Search documents by structured metadata filters. "
-                "Use when you need to find documents by tag, author, date, genre, "
-                "or type — not by content similarity. "
+                "Filter raw source documents by structured metadata "
+                "(tag, author, genre, date). Use when you have a concrete "
+                "attribute to narrow by — not for text discovery (use "
+                "search_content for that). Wiki articles aren't returned "
+                "by this tool; they have no structured-filter dimensions. "
                 f"{tags_desc}."
             ),
             "parameters": {
@@ -209,41 +214,9 @@ def _build_query_tool(tags: list[str]) -> dict:
     }
 
 
-_QUERY_WIKI_ARTICLES_TOOL: dict = {
-    "type": "function",
-    "function": {
-        "name": "query_wiki_articles",
-        "description": (
-            "Find wiki articles by title/description or slug. Returns article "
-            "paths you can pass to read_document to fetch content."
-        ),
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "query": {
-                    "type": "string",
-                    "description": (
-                        "Text match against title and description "
-                        "(case-insensitive, partial match)"
-                    ),
-                },
-                "slug": {
-                    "type": "string",
-                    "description": "Exact slug match",
-                },
-                "limit": {
-                    "type": "integer",
-                    "description": "Max results (default 20)",
-                },
-            },
-        },
-    },
-}
-
-
 def build_tools(tags: list[str]) -> list[dict]:
     """Build the full tool list with vocabulary injected into query_documents."""
-    return _BASE_TOOLS + [_build_query_tool(tags), _QUERY_WIKI_ARTICLES_TOOL]
+    return _BASE_TOOLS + [_build_query_tool(tags)]
 
 
 # OpenRouter routing preferences for the agent's chat calls. Tells the
@@ -264,11 +237,9 @@ def _classify_tool_call(name: str, args: dict) -> tuple[SourceType, dict] | None
         path = args["path"]
         doc_type = SourceType.ARTICLE if path.startswith("wiki/") else SourceType.RAW
         return doc_type, {"path": path}
-    if name == "search_wiki":
+    if name == "search_content":
         return SourceType.SEARCH, {"query": args["query"]}
     if name == "query_documents":
-        return SourceType.QUERY, {"filters": {k: v for k, v in args.items() if v}}
-    if name == "query_wiki_articles":
         return SourceType.QUERY, {"filters": {k: v for k, v in args.items() if v}}
     return None
 
@@ -307,10 +278,15 @@ async def read_document_enriched(vault: QuerySource, path: str) -> str:
     return await read_document(vault, path)
 
 
-async def search_wiki(
+async def search_content(
     vault: QuerySource, query: str, source: SourceDocumentService
 ) -> str:
-    """Hybrid BM25 + vector search via the search index."""
+    """Hybrid BM25 + vector search over the unified content index.
+
+    Indexes both raw sources and rendered wiki articles, including each
+    file's frontmatter title/precis/author as a synthetic chunk so
+    curator-supplied summary fields are hit alongside body paragraphs.
+    """
     svc = SearchService(SearchIndexRepository(source.repo.session))
     results = await svc.search([vault.vault_id], query)
 
@@ -369,52 +345,18 @@ async def query_documents(
     return f"Found {len(results)} documents:\n\n" + "\n\n".join(parts)
 
 
-async def query_wiki_articles(
-    vault: QuerySource, args: dict, wiki: WikiArticleService
-) -> str:
-    """Structured query over the wiki article registry."""
-    slug_filter = args.get("slug")
-    query_str = (args.get("query") or "").strip()
-    limit = args.get("limit") or 20
-
-    rows = await wiki.search(
-        vault.vault_id,
-        slug=slug_filter,
-        query=query_str or None,
-        limit=limit,
-    )
-
-    log_event(
-        "tool.query_wiki_articles_executed",
-        filters=str(args),
-        results_count=len(rows),
-    )
-
-    if not rows:
-        return f"No wiki articles match: {json.dumps(args)}"
-
-    parts = [
-        f"### {row.title}\n  path: {row.file_path}\n  {row.precis or ''}"
-        for row in rows
-    ]
-    return f"Found {len(rows)} wiki articles:\n\n" + "\n\n".join(parts)
-
-
 async def _dispatch_tool(
     vault: QuerySource,
     name: str,
     args: dict,
     source: SourceDocumentService,
-    wiki: WikiArticleService,
 ) -> str:
     if name == "read_document":
         return await read_document_enriched(vault, args["path"])
-    elif name == "search_wiki":
-        return await search_wiki(vault, args["query"], source)
+    elif name == "search_content":
+        return await search_content(vault, args["query"], source)
     elif name == "query_documents":
         return await query_documents(vault, args, source)
-    elif name == "query_wiki_articles":
-        return await query_wiki_articles(vault, args, wiki)
     else:
         return f"Unknown tool: {name}"
 
@@ -449,18 +391,23 @@ You have access to tools that let you search and read documents in the \
 knowledge base. Use them to answer questions based on the actual texts.
 
 Approach:
-1. Use `search_wiki` or `query_wiki_articles` to find articles relevant to \
-the question.
-2. Read the relevant articles via `read_document` (e.g. wiki/slug.md).
-3. To verify a claim or get more depth, follow source citations in the wiki \
-article to read raw primary texts (e.g. raw/texts/...).
-4. Use `query_documents` when filtering by tag, author, date, or kind.
+1. Use `search_content` for text-shaped discovery — finds matching \
+passages across both rendered wiki articles and raw sources, including \
+each file's title/precis/author.
+2. Use `query_documents` when filtering raw sources by structured \
+attributes (tag, author, date, genre). Wiki articles aren't returned by \
+this tool — they have no structured-filter dimensions.
+3. Read documents via `read_document(path)`. Paths look like \
+`wiki/<slug>.md` for rendered articles or `raw/<content_type>/...` for \
+sources.
+4. To verify a claim or get more depth, follow source citations in a \
+wiki article to read raw primary texts.
 
 Rules:
-- Always ground answers in the actual texts via tools — do not rely on your \
-general knowledge.
-- If the knowledge base doesn't cover something, say so rather than making \
-it up.
+- Always ground answers in the actual texts via tools — do not rely on \
+your general knowledge.
+- If the knowledge base doesn't cover something, say so rather than \
+making it up.
 
 Knowledge base:
 {identity}"""
@@ -620,7 +567,7 @@ async def _run_tool_calls(
         if source_event is not None:
             yield source_event
 
-        result = await _dispatch_tool(vault, name, args, source, wiki)
+        result = await _dispatch_tool(vault, name, args, source)
         messages.append(
             {
                 "role": "tool",
