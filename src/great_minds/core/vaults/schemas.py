@@ -19,6 +19,8 @@ class Vault(BaseModel):
 
 
 class MemberWithEmail(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
     user_id: uuid.UUID
     role: MemberRole
     email: str

@@ -17,40 +17,14 @@ Shape reflects the topic-based architecture directly:
 from uuid import UUID
 
 from fastapi import APIRouter
-from pydantic import BaseModel
 
 from great_minds.app.api.dependencies import (
     VaultStorageDep,
     SessionDep,
 )
-from great_minds.core.lint import build_lint_report
+from great_minds.core.lint import LintReport, build_lint_report
 
 router = APIRouter(prefix="/lint", tags=["lint"])
-
-
-class OrphanResponse(BaseModel):
-    slug: str
-    title: str
-
-
-class UnresolvedCitationResponse(BaseModel):
-    source_slug: str
-    source_title: str
-    missing_slug: str
-
-
-class UnmentionedLinkResponse(BaseModel):
-    source_slug: str
-    source_title: str
-    target_slug: str
-    target_title: str
-
-
-class LintReportResponse(BaseModel):
-    orphans: list[OrphanResponse]
-    dirty_topics: list[UUID]
-    unresolved_citations: list[UnresolvedCitationResponse]
-    unmentioned_links: list[UnmentionedLinkResponse]
 
 
 @router.get("")
@@ -58,26 +32,5 @@ async def lint(
     vault_id: UUID,
     storage: VaultStorageDep,
     session: SessionDep,
-) -> LintReportResponse:
-    report = await build_lint_report(session, vault_id, storage)
-    return LintReportResponse(
-        orphans=[OrphanResponse(slug=o.slug, title=o.title) for o in report.orphans],
-        dirty_topics=report.dirty_topics,
-        unresolved_citations=[
-            UnresolvedCitationResponse(
-                source_slug=u.source_slug,
-                source_title=u.source_title,
-                missing_slug=u.missing_slug,
-            )
-            for u in report.unresolved_citations
-        ],
-        unmentioned_links=[
-            UnmentionedLinkResponse(
-                source_slug=u.source_slug,
-                source_title=u.source_title,
-                target_slug=u.target_slug,
-                target_title=u.target_title,
-            )
-            for u in report.unmentioned_links
-        ],
-    )
+) -> LintReport:
+    return await build_lint_report(session, vault_id, storage)

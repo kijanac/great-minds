@@ -16,12 +16,12 @@ separate vertical — don't grow this one into billing.
 """
 
 from great_minds.core.llm_costs.models import LlmCostEventORM
-from great_minds.core.llm_costs.repository import (
+from great_minds.core.llm_costs.repository import LlmCostEventRepository
+from great_minds.core.llm_costs.schemas import (
     CostAggregate,
     CostBreakdown,
-    LlmCostEventRepository,
+    LlmCostEvent,
 )
-from great_minds.core.llm_costs.schemas import LlmCostEvent
 from great_minds.core.llm_costs.service import (
     LlmCostService,
     record_wide_event_cost,

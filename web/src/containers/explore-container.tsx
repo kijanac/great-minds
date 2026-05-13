@@ -1,7 +1,6 @@
 import { useEffect, useState } from "react";
 
 import {
-  type Orphan,
   type WikiArticleOverview,
   type UnmentionedLink,
   type UnresolvedCitation,
@@ -14,7 +13,7 @@ import { useViewNavigate } from "@/hooks/use-view-navigate";
 
 export function ExploreContainer() {
   const navigate = useViewNavigate();
-  const [orphans, setOrphans] = useState<Orphan[]>([]);
+  const [orphans, setOrphans] = useState<WikiArticleOverview[]>([]);
   const [dirtyCount, setDirtyCount] = useState(0);
   const [unresolvedCitations, setUnresolvedCitations] = useState<UnresolvedCitation[]>([]);
   const [unmentionedLinks, setUnmentionedLinks] = useState<UnmentionedLink[]>([]);

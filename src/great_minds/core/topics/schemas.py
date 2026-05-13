@@ -104,6 +104,8 @@ class TopicDetail(Topic):
 class TopicLink(BaseModel):
     """A directed edge between two topics in a vault's link graph."""
 
+    model_config = ConfigDict(from_attributes=True)
+
     source_topic_id: UUID
     target_topic_id: UUID
 

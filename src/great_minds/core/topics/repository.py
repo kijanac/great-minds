@@ -168,9 +168,7 @@ class TopicRepository:
         if source_topic_ids is not None:
             stmt = stmt.where(TopicLinkORM.source_topic_id.in_(source_topic_ids))
         rows = (await self.session.execute(stmt)).all()
-        return [
-            TopicLink(source_topic_id=src, target_topic_id=tgt) for src, tgt in rows
-        ]
+        return [TopicLink.model_validate(row) for row in rows]
 
     async def set_archived(
         self, topic_id: UUID, superseded_by: UUID | None = None

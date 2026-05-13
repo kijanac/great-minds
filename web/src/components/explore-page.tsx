@@ -1,12 +1,7 @@
 import { Home } from "lucide-react";
 import type { ReactNode } from "react";
 
-import type {
-  Orphan,
-  WikiArticleOverview,
-  UnmentionedLink,
-  UnresolvedCitation,
-} from "@/api/explore";
+import type { WikiArticleOverview, UnmentionedLink, UnresolvedCitation } from "@/api/explore";
 import type { ContentTypeFacet } from "@/api/sources";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -15,7 +10,7 @@ import { FILTER_CHIP_CLASS } from "@/lib/control-styles";
 import { formatShortDate } from "@/lib/utils";
 
 interface ExplorePageProps {
-  orphans: Orphan[];
+  orphans: WikiArticleOverview[];
   dirtyCount: number;
   unresolvedCitations: UnresolvedCitation[];
   unmentionedLinks: UnmentionedLink[];

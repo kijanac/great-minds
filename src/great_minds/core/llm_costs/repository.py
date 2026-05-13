@@ -1,7 +1,6 @@
 """Repository for llm_cost_events. Persistence + aggregation queries."""
 
 import uuid
-from dataclasses import dataclass
 from datetime import datetime
 from decimal import Decimal
 
@@ -9,25 +8,7 @@ from sqlalchemy import func, insert, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from great_minds.core.llm_costs.models import LlmCostEventORM
-
-
-@dataclass(frozen=True)
-class CostBreakdown:
-    """A single bucket in an aggregation query."""
-
-    key: str
-    total_usd: Decimal
-    event_count: int
-
-
-@dataclass(frozen=True)
-class CostAggregate:
-    """Aggregation result with per-vault and per-event-type breakdowns."""
-
-    total_usd: Decimal
-    event_count: int
-    by_vault: list[CostBreakdown]
-    by_event_type: list[CostBreakdown]
+from great_minds.core.llm_costs.schemas import CostAggregate, CostBreakdown
 
 
 class LlmCostEventRepository:

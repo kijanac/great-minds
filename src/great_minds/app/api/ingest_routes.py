@@ -15,13 +15,12 @@ from great_minds.app.api.schemas.ingest import (
     StagedFileProcessRequest,
     StagedFileSignRequest,
     StagedFileSignResponse,
-    IngestResult,
     RawSource,
     URLSource,
     UserSuggestion,
 )
 from great_minds.app.api.schemas.jobs import JobResponse
-from great_minds.core.documents.schemas import SourceMetadata
+from great_minds.core.documents.schemas import IngestedDocument, SourceMetadata
 
 log = logging.getLogger(__name__)
 
@@ -34,17 +33,13 @@ async def ingest(
     vault_id: UUID,
     storage: VaultStorageDep,
     ingest_service: IngestServiceDep,
-) -> IngestResult:
-    result = await ingest_service.ingest_text(
+) -> IngestedDocument:
+    return await ingest_service.ingest_text(
         vault_id,
         storage,
         source.content,
         source.dest,
         source.metadata,
-    )
-    return IngestResult(
-        file_path=result.file_path,
-        title=result.title,
     )
 
 
@@ -54,9 +49,9 @@ async def ingest_user_suggestion(
     vault_id: UUID,
     storage: VaultStorageDep,
     ingest_service: IngestServiceDep,
-) -> IngestResult:
+) -> IngestedDocument:
     try:
-        result = await ingest_service.ingest_user_suggestion(
+        return await ingest_service.ingest_user_suggestion(
             vault_id,
             storage,
             body=suggestion.body,
@@ -66,10 +61,6 @@ async def ingest_user_suggestion(
         )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
-    return IngestResult(
-        file_path=result.file_path,
-        title=result.title,
-    )
 
 
 @router.post("/upload", status_code=201)
@@ -85,7 +76,7 @@ async def ingest_upload(
     url: str | None = None,
     dest_path: str | None = None,
     source_type: str = "document",
-) -> IngestResult:
+) -> IngestedDocument:
     raw_bytes = await file.read()
     if not file.filename:
         raise HTTPException(
@@ -101,7 +92,7 @@ async def ingest_upload(
         url=url,
     )
     try:
-        result = await ingest_service.ingest_upload(
+        return await ingest_service.ingest_upload(
             vault_id,
             storage,
             raw_bytes,
@@ -116,10 +107,6 @@ async def ingest_upload(
         )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
-    return IngestResult(
-        file_path=result.file_path,
-        title=result.title,
-    )
 
 
 @router.post("/url", status_code=201)
@@ -128,9 +115,9 @@ async def ingest_url(
     vault_id: UUID,
     storage: VaultStorageDep,
     ingest_service: IngestServiceDep,
-) -> IngestResult:
+) -> IngestedDocument:
     try:
-        result = await ingest_service.ingest_url(
+        return await ingest_service.ingest_url(
             vault_id,
             storage,
             source.url,
@@ -138,10 +125,6 @@ async def ingest_url(
         )
     except httpx.HTTPError as exc:
         raise HTTPException(status_code=400, detail=f"Failed to fetch URL: {exc}")
-    return IngestResult(
-        file_path=result.file_path,
-        title=result.title,
-    )
 
 
 # ---------------------------------------------------------------------------

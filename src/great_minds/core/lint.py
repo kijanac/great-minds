@@ -20,8 +20,8 @@ reserved — the endpoint returns empty arrays for both.
 """
 
 import uuid
-from dataclasses import dataclass, field
 
+from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from great_minds.core.documents import WikiArticleRepo, WikiArticleOverview
@@ -32,27 +32,24 @@ from great_minds.core.topics.repository import TopicRepository
 from great_minds.core.topics.schemas import ArticleStatus, Topic
 
 
-@dataclass
-class UnresolvedCitation:
+class UnresolvedCitation(BaseModel):
     source_slug: str
     source_title: str
     missing_slug: str
 
 
-@dataclass
-class UnmentionedLink:
+class UnmentionedLink(BaseModel):
     source_slug: str
     source_title: str
     target_slug: str
     target_title: str
 
 
-@dataclass
-class LintReport:
-    orphans: list[WikiArticleOverview] = field(default_factory=list)
-    dirty_topics: list[uuid.UUID] = field(default_factory=list)
-    unresolved_citations: list[UnresolvedCitation] = field(default_factory=list)
-    unmentioned_links: list[UnmentionedLink] = field(default_factory=list)
+class LintReport(BaseModel):
+    orphans: list[WikiArticleOverview] = Field(default_factory=list)
+    dirty_topics: list[uuid.UUID] = Field(default_factory=list)
+    unresolved_citations: list[UnresolvedCitation] = Field(default_factory=list)
+    unmentioned_links: list[UnmentionedLink] = Field(default_factory=list)
 
 
 async def build_lint_report(

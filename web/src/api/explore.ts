@@ -3,9 +3,12 @@ import { z } from "zod";
 import { apiFetch, vaultPath, readJson } from "./client";
 import { paginatedSchema } from "./schemas";
 
-const orphanSchema = z.object({
+const wikiArticleOverviewSchema = z.object({
+  file_path: z.string(),
   slug: z.string(),
   title: z.string(),
+  precis: z.string().nullable(),
+  updated_at: z.string().nullable(),
 });
 
 const unresolvedCitationSchema = z.object({
@@ -22,13 +25,13 @@ const unmentionedLinkSchema = z.object({
 });
 
 const lintResponseSchema = z.object({
-  orphans: z.array(orphanSchema),
+  orphans: z.array(wikiArticleOverviewSchema),
   dirty_topics: z.array(z.string()),
   unresolved_citations: z.array(unresolvedCitationSchema),
   unmentioned_links: z.array(unmentionedLinkSchema),
 });
 
-export type Orphan = z.infer<typeof orphanSchema>;
+export type WikiArticleOverview = z.infer<typeof wikiArticleOverviewSchema>;
 export type UnresolvedCitation = z.infer<typeof unresolvedCitationSchema>;
 export type UnmentionedLink = z.infer<typeof unmentionedLinkSchema>;
 export type LintResponse = z.infer<typeof lintResponseSchema>;
@@ -39,16 +42,7 @@ export async function fetchLintResults(): Promise<LintResponse> {
   return readJson(res, lintResponseSchema);
 }
 
-const wikiArticleOverviewSchema = z.object({
-  file_path: z.string(),
-  slug: z.string(),
-  title: z.string(),
-  precis: z.string().nullable(),
-  updated_at: z.string().nullable(),
-});
 const recentArticlesSchema = paginatedSchema(wikiArticleOverviewSchema);
-
-export type WikiArticleOverview = z.infer<typeof wikiArticleOverviewSchema>;
 
 export async function fetchRecentArticles(limit: number = 10): Promise<WikiArticleOverview[]> {
   const res = await apiFetch(vaultPath(`/wiki/recent?limit=${limit}`));

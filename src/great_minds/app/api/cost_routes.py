@@ -7,7 +7,7 @@ from uuid import UUID
 from fastapi import APIRouter, Query
 
 from great_minds.app.api.dependencies import CurrentUser, LlmCostServiceDep
-from great_minds.app.api.schemas import costs as schemas
+from great_minds.core.llm_costs import CostAggregate
 
 router = APIRouter(prefix="/costs", tags=["costs"])
 vault_router = APIRouter(prefix="/costs", tags=["costs"])
@@ -19,10 +19,9 @@ async def get_user_costs(
     cost_service: LlmCostServiceDep,
     since: Annotated[datetime | None, Query()] = None,
     until: Annotated[datetime | None, Query()] = None,
-) -> schemas.CostAggregateResponse:
+) -> CostAggregate:
     """Aggregate the caller's own user-attributed LLM costs across vaults."""
-    aggregate = await cost_service.aggregate(user_id=user.id, since=since, until=until)
-    return _cost_response(aggregate)
+    return await cost_service.aggregate(user_id=user.id, since=since, until=until)
 
 
 @vault_router.get("")
@@ -31,31 +30,9 @@ async def get_vault_costs(
     cost_service: LlmCostServiceDep,
     since: Annotated[datetime | None, Query()] = None,
     until: Annotated[datetime | None, Query()] = None,
-) -> schemas.CostAggregateResponse:
+) -> CostAggregate:
     """Aggregate all cost-bearing events for a vault.
 
     Membership is enforced by the vault-scoped router in ``v1``.
     """
-    aggregate = await cost_service.aggregate(
-        vault_id=vault_id, since=since, until=until
-    )
-    return _cost_response(aggregate)
-
-
-def _cost_response(aggregate) -> schemas.CostAggregateResponse:
-    return schemas.CostAggregateResponse(
-        total_usd=aggregate.total_usd,
-        event_count=aggregate.event_count,
-        by_vault=[
-            schemas.CostBreakdownItem(
-                key=b.key, total_usd=b.total_usd, event_count=b.event_count
-            )
-            for b in aggregate.by_vault
-        ],
-        by_event_type=[
-            schemas.CostBreakdownItem(
-                key=b.key, total_usd=b.total_usd, event_count=b.event_count
-            )
-            for b in aggregate.by_event_type
-        ],
-    )
+    return await cost_service.aggregate(vault_id=vault_id, since=since, until=until)

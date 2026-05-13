@@ -28,11 +28,6 @@ class UserSuggestion(BaseModel):
     anchored_section: str = ""
 
 
-class IngestResult(BaseModel):
-    file_path: str
-    title: str
-
-
 # ---------------------------------------------------------------------------
 # Staged direct-to-R2 upload flow
 # ---------------------------------------------------------------------------

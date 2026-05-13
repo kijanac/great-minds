@@ -127,10 +127,7 @@ class VaultRepository:
             .offset(offset)
             .limit(limit)
         )
-        return [
-            MemberWithEmail(user_id=user_id, role=role, email=email)
-            for user_id, role, email in result.all()
-        ]
+        return [MemberWithEmail.model_validate(row) for row in result.all()]
 
     async def add_member(self, vault_id: UUID, user_id: UUID, role: MemberRole) -> None:
         """Add a member to a vault. Idempotent — no-op if already a member.
