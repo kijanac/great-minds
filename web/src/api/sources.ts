@@ -6,18 +6,16 @@ import { facetedPaginatedSchema, facetCountSchema, type FacetCount } from "./sch
 const sourceDocumentSummarySchema = z.object({
   file_path: z.string(),
   compiled: z.boolean(),
-  metadata: z.object({
-    title: z.string(),
-    author: z.string().nullable(),
-    published_date: z.string().nullable(),
-    url: z.string().nullable(),
-    origin: z.string().nullable(),
-    genre: z.string().nullable(),
-    precis: z.string().nullable(),
-    source_type: z.string().nullable(),
-    tags: z.array(z.string()),
-    extra_metadata: z.record(z.string(), z.unknown()),
-  }),
+  title: z.string(),
+  author: z.string().nullable(),
+  published_date: z.string().nullable(),
+  url: z.string().nullable(),
+  origin: z.string().nullable(),
+  genre: z.string().nullable(),
+  precis: z.string().nullable(),
+  source_type: z.string().nullable(),
+  tags: z.array(z.string()),
+  doc_metadata: z.record(z.string(), z.unknown()),
   updated_at: z.string().nullable(),
 });
 

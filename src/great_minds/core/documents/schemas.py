@@ -1,11 +1,13 @@
 """Source document and wiki article domain schemas."""
 
+from typing import Literal
 from uuid import UUID
 from datetime import datetime
 
 from pydantic import BaseModel, ConfigDict, Field, computed_field
 
 from great_minds.core.documents.builder import UNIVERSAL_ALL
+from great_minds.core.ideas.schemas import DocMetadata
 from great_minds.core.pagination import FacetCount
 from great_minds.core.paths import wiki_slug
 
@@ -50,7 +52,7 @@ class DocumentMetadata(BaseModel):
     precis: str | None = None
     source_type: str | None = None
     tags: list[str] = Field(default_factory=list)
-    doc_metadata: dict = Field(default_factory=dict)
+    doc_metadata: DocMetadata = Field(default_factory=DocMetadata)
 
 
 # ---------------------------------------------------------------------------
@@ -89,18 +91,25 @@ class SourceDocCreate(BaseModel):
                 published_date=str(fm["date"]) if "date" in fm else None,
                 genre=fm.get("genre"),
                 tags=fm.get("tags", []),
-                doc_metadata=extra,
+                doc_metadata=DocMetadata.model_validate(extra),
             ),
         )
 
 
 class WikiArticleCreate(BaseModel):
-    """Input for creating / upserting a rendered wiki article."""
+    """Input for creating / upserting a rendered wiki article.
+
+    ``title`` and ``precis`` are snapshots from the topic at render
+    time. They live on the article row so reads don't JOIN topics for
+    display; drift between snapshot and live topic is a queryable
+    staleness signal.
+    """
 
     file_path: str
     content: str
     topic_id: UUID
-    metadata: DocumentMetadata = Field(default_factory=DocumentMetadata)
+    title: str
+    precis: str
 
 
 # ---------------------------------------------------------------------------
@@ -109,33 +118,63 @@ class WikiArticleCreate(BaseModel):
 
 
 class SourceDocument(BaseModel):
-    """Indexed source document.  Body lives in storage."""
+    """Indexed source document.  Body lives in storage.
+
+    Flat by design: every field maps 1:1 to a column on the
+    ``source_documents`` table so reads are a clean
+    ``SourceDocument.model_validate(orm)`` with no helper. The nested
+    ``DocumentMetadata`` shape is retained for *input* schemas only
+    (``SourceDocCreate``) where it mirrors parsed frontmatter.
+
+    ``kind`` is a class-Literal tag used as the discriminator for the
+    ``SourceDocument | WikiArticle`` union exposed at the API edge.
+    It's not stored — class identity is the source of truth, and the
+    default kicks in for ``model_validate(orm)`` calls since the ORM
+    has no corresponding column.
+    """
 
     model_config = ConfigDict(from_attributes=True)
 
+    kind: Literal["source"] = "source"
     id: UUID
     vault_id: UUID
     file_path: str
     body_hash: str
     compiled: bool
     etag: str | None = None
-    metadata: DocumentMetadata
+    title: str
+    author: str | None = None
+    published_date: str | None = None
+    url: str | None = None
+    origin: str | None = None
+    genre: str | None = None
+    precis: str | None = None
+    source_type: str | None = None
+    tags: list[str] = Field(default_factory=list)
+    doc_metadata: DocMetadata = Field(default_factory=DocMetadata)
     created_at: datetime | None = None
     updated_at: datetime | None = None
 
 
 class WikiArticle(BaseModel):
-    """Rendered wiki article.  Title / description joined from topics at read time."""
+    """Rendered wiki article.  Title / precis are snapshots from the
+    topic at render time, stored on the article row.
+
+    ``kind`` is a class-Literal tag used as the discriminator for the
+    ``SourceDocument | WikiArticle`` union exposed at the API edge.
+    See ``SourceDocument`` for the full rationale.
+    """
 
     model_config = ConfigDict(from_attributes=True)
 
+    kind: Literal["wiki"] = "wiki"
     id: UUID
     vault_id: UUID
     topic_id: UUID
     file_path: str
     body_hash: str
-    title: str = ""
-    precis: str | None = None
+    title: str
+    precis: str
     created_at: datetime | None = None
     updated_at: datetime | None = None
 
@@ -146,13 +185,14 @@ class WikiArticle(BaseModel):
 
 
 class WikiArticleOverview(BaseModel):
-    """Wiki article list row — joins topics for title / precis."""
+    """Wiki article list row — title / precis read directly from the
+    article row (snapshot at last render)."""
 
     model_config = ConfigDict(from_attributes=True)
 
     file_path: str
     title: str
-    precis: str | None = None
+    precis: str
     updated_at: datetime | None = None
 
     @computed_field  # type: ignore[prop-decorator]
@@ -193,7 +233,7 @@ class SourceDocumentUpdate(BaseModel):
     etag: str | None = None
     title: str | None = None
     precis: str | None = None
-    doc_metadata: dict | None = None
+    doc_metadata: DocMetadata | None = None
 
 
 class IngestedDocument(BaseModel):

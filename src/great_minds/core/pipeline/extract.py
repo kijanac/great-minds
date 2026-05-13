@@ -149,7 +149,7 @@ class ExtractPhase:
                 vault_id=vault_id,
                 raw_path=doc.file_path,
                 document_id=doc.id,
-                source_type=doc.metadata.source_type,
+                source_type=doc.source_type,
                 body_hash=doc.body_hash,
                 prompt_template=prompt_template,
                 prompt_hash=ph,

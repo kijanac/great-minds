@@ -147,7 +147,7 @@ async def promote_exchange(
             return schemas.PromoteExchangeResponse(
                 mode="ingested",
                 path=dest,
-                title=existing_doc.metadata.title or exchange_id,
+                title=existing_doc.title or exchange_id,
                 document_id=str(existing_doc.id),
             )
     else:

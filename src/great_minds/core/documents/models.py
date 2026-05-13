@@ -4,7 +4,7 @@ import uuid
 from datetime import datetime
 
 from sqlalchemy import Boolean, DateTime, ForeignKey, Text, UniqueConstraint, func
-from sqlalchemy.dialects.postgresql import JSONB, UUID
+from sqlalchemy.dialects.postgresql import ARRAY, JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
 from great_minds.core.db import Base
@@ -26,7 +26,7 @@ class SourceDocumentORM(Base):
     file_hash: Mapped[str] = mapped_column(Text)
     body_hash: Mapped[str] = mapped_column(Text)
     etag: Mapped[str | None] = mapped_column(Text)
-    title: Mapped[str] = mapped_column(Text, server_default="")
+    title: Mapped[str] = mapped_column(Text)
     author: Mapped[str | None] = mapped_column(Text)
     url: Mapped[str | None] = mapped_column(Text)
     origin: Mapped[str | None] = mapped_column(Text)
@@ -35,6 +35,7 @@ class SourceDocumentORM(Base):
     compiled: Mapped[bool] = mapped_column(Boolean, server_default="false")
     source_type: Mapped[str | None] = mapped_column(Text)
     precis: Mapped[str | None] = mapped_column(Text)
+    tags: Mapped[list[str]] = mapped_column(ARRAY(Text))
     doc_metadata: Mapped[dict] = mapped_column("metadata", JSONB, server_default="{}")
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
@@ -44,23 +45,16 @@ class SourceDocumentORM(Base):
     )
 
 
-class SourceDocumentTag(Base):
-    __tablename__ = "source_document_tags"
-
-    document_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True),
-        ForeignKey("source_documents.id", ondelete="CASCADE"),
-        primary_key=True,
-    )
-    tag: Mapped[str] = mapped_column(Text, primary_key=True, index=True)
-
-
 class WikiArticleORM(Base):
     """One rendered wiki article per canonical topic.
 
-    Title and description live on ``topics`` — join for display.  This
-    table stores the artifact metadata needed for IO, search indexing,
-    and backlink tracking.
+    ``title`` and ``precis`` are snapshots from the canonical topic
+    captured at render time — they live on this row so reads don't
+    JOIN topics for display. ``topics`` holds the live editorial
+    values; drift between the snapshot and live topic is a queryable
+    staleness signal. ``file_path`` / ``file_hash`` / ``body_hash``
+    track the on-disk artifact for IO, search indexing, and backlink
+    resolution.
     """
 
     __tablename__ = "wiki_articles"
@@ -83,7 +77,8 @@ class WikiArticleORM(Base):
     file_path: Mapped[str] = mapped_column(Text)
     file_hash: Mapped[str] = mapped_column(Text)
     body_hash: Mapped[str] = mapped_column(Text)
-    extra_metadata: Mapped[dict] = mapped_column("metadata", JSONB, server_default="{}")
+    title: Mapped[str] = mapped_column(Text)
+    precis: Mapped[str] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )

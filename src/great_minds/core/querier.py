@@ -353,16 +353,15 @@ async def query_documents(
 
     parts = []
     for doc in results:
-        metadata = doc.metadata
-        tags_str = f"  tags: {', '.join(metadata.tags)}" if metadata.tags else ""
+        tags_str = f"  tags: {', '.join(doc.tags)}" if doc.tags else ""
         meta = f"  [raw] {doc.file_path}"
-        if metadata.author:
-            meta += f" by {metadata.author}"
-        if metadata.published_date:
-            meta += f" ({metadata.published_date})"
-        lines = [f"### {metadata.title or doc.file_path}", meta]
-        if metadata.genre:
-            lines.append(f"  genre: {metadata.genre}")
+        if doc.author:
+            meta += f" by {doc.author}"
+        if doc.published_date:
+            meta += f" ({doc.published_date})"
+        lines = [f"### {doc.title or doc.file_path}", meta]
+        if doc.genre:
+            lines.append(f"  genre: {doc.genre}")
         if tags_str:
             lines.append(tags_str)
         parts.append("\n".join(lines))

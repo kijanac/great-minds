@@ -1,23 +1,20 @@
 """Source document and wiki article repositories."""
 
-from collections import defaultdict
 from uuid import UUID
 
 from great_minds.core.hashing import body_hash, file_hash
 
-from sqlalchemy import Select, case, delete, distinct, func, or_, select, update
+from sqlalchemy import Select, case, delete, func, or_, select, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from great_minds.core.documents.models import (
     BacklinkORM,
     SourceDocumentORM,
-    SourceDocumentTag,
     WikiArticleORM,
 )
 from great_minds.core.documents.schemas import (
     Backlink,
-    DocumentMetadata,
     FileHash,
     SourceDocCreate,
     SourceDocument,
@@ -30,7 +27,6 @@ from great_minds.core.ideas.schemas import SourceCard
 from great_minds.core.markdown import parse_frontmatter
 from great_minds.core.pagination import FacetCount
 from great_minds.core.paths import WIKI_INDEX_PATH, raw_prefix, wiki_path
-from great_minds.core.topics.models import TopicORM
 
 
 class SourceDocumentRepo:
@@ -54,25 +50,25 @@ class SourceDocumentRepo:
             "compiled": doc.compiled,
             "source_type": doc.metadata.source_type,
             "precis": doc.metadata.precis,
+            "tags": doc.metadata.tags,
         }
+        meta_dump = doc.metadata.doc_metadata.model_dump()
         stmt = insert(SourceDocumentORM).values(
             vault_id=vault_id,
             file_path=doc.file_path,
-            doc_metadata=doc.metadata.doc_metadata,
+            doc_metadata=meta_dump,
             **columns,
         )
         stmt = stmt.on_conflict_do_update(
             index_elements=[SourceDocumentORM.vault_id, SourceDocumentORM.file_path],
             set_={
                 **columns,
-                "metadata": doc.metadata.doc_metadata,
+                "metadata": meta_dump,
                 "updated_at": func.now(),
             },
         )
         result = await self.session.execute(stmt.returning(SourceDocumentORM.id))
-        doc_id = result.scalar_one()
-        await self._sync_tags(doc_id, doc.metadata.tags)
-        return doc_id
+        return result.scalar_one()
 
     async def batch_upsert(
         self, vault_id: UUID, docs: list[SourceDocCreate]
@@ -100,7 +96,8 @@ class SourceDocumentRepo:
                     "etag": doc.etag,
                     "source_type": doc.metadata.source_type,
                     "precis": doc.metadata.precis,
-                    "doc_metadata": doc.metadata.doc_metadata,
+                    "tags": doc.metadata.tags,
+                    "doc_metadata": doc.metadata.doc_metadata.model_dump(),
                 }
             )
         stmt = insert(SourceDocumentORM).values(rows)
@@ -119,6 +116,7 @@ class SourceDocumentRepo:
                 "etag": stmt.excluded.etag,
                 "source_type": stmt.excluded.source_type,
                 "precis": stmt.excluded.precis,
+                "tags": stmt.excluded.tags,
                 "metadata": stmt.excluded["metadata"],
                 "updated_at": func.now(),
             },
@@ -127,12 +125,7 @@ class SourceDocumentRepo:
             stmt.returning(SourceDocumentORM.id, SourceDocumentORM.file_path)
         )
         id_by_path = {row.file_path: row.id for row in result}
-        doc_ids: list[UUID] = []
-        for doc in docs:
-            doc_id = id_by_path[doc.file_path]
-            await self._sync_tags(doc_id, doc.metadata.tags)
-            doc_ids.append(doc_id)
-        return doc_ids
+        return [id_by_path[doc.file_path] for doc in docs]
 
     async def get_file_hashes(self, vault_id: UUID) -> list[FileHash]:
         result = await self.session.execute(
@@ -151,11 +144,12 @@ class SourceDocumentRepo:
         ids = [u.document_id for u in updates]
         values: dict = {"updated_at": func.now()}
         for attr in ("etag", "title", "precis", "doc_metadata"):
-            mapping = {
-                u.document_id: getattr(u, attr)
-                for u in updates
-                if getattr(u, attr) is not None
-            }
+            mapping: dict = {}
+            for u in updates:
+                v = getattr(u, attr)
+                if v is None:
+                    continue
+                mapping[u.document_id] = v.model_dump() if attr == "doc_metadata" else v
             if mapping:
                 values[attr] = case(mapping, value=SourceDocumentORM.id)
         await self.session.execute(
@@ -176,12 +170,7 @@ class SourceDocumentRepo:
                 SourceDocumentORM.file_path == file_path,
             )
         )
-        if row is None:
-            return None
-        tag_rows = await self.session.execute(
-            select(SourceDocumentTag.tag).where(SourceDocumentTag.document_id == row.id)
-        )
-        return _source_document_from_orm(row, tags=list(tag_rows.scalars().all()))
+        return SourceDocument.model_validate(row) if row is not None else None
 
     async def get_title_by_path(self, vault_id: UUID, file_path: str) -> str | None:
         return (
@@ -200,7 +189,7 @@ class SourceDocumentRepo:
             .where(SourceDocumentORM.vault_id == vault_id)
             .order_by(SourceDocumentORM.file_path)
         )
-        return [_source_document_from_orm(r) for r in rows.scalars().all()]
+        return [SourceDocument.model_validate(r) for r in rows.scalars().all()]
 
     async def count(self, vault_id: UUID) -> int:
         return (
@@ -253,18 +242,7 @@ class SourceDocumentRepo:
             .limit(limit)
         )
         docs = (await self.session.execute(stmt)).scalars().all()
-        if not docs:
-            return []
-        doc_ids = [d.id for d in docs]
-        tag_result = await self.session.execute(
-            select(SourceDocumentTag.document_id, SourceDocumentTag.tag).where(
-                SourceDocumentTag.document_id.in_(doc_ids)
-            )
-        )
-        tags_by_doc: dict[UUID, list[str]] = defaultdict(list)
-        for doc_id, tag in tag_result:
-            tags_by_doc[doc_id].append(tag)
-        return [_source_document_from_orm(d, tags=tags_by_doc[d.id]) for d in docs]
+        return [SourceDocument.model_validate(d) for d in docs]
 
     async def count_query(
         self,
@@ -309,23 +287,15 @@ class SourceDocumentRepo:
         return [FacetCount(value=row.content_type, count=row.cnt) for row in result]
 
     async def distinct_tags(self, vault_ids: list[UUID]) -> list[str]:
-        result = await self.session.execute(
-            select(distinct(SourceDocumentTag.tag))
-            .join(
-                SourceDocumentORM, SourceDocumentORM.id == SourceDocumentTag.document_id
-            )
+        tag_col = func.unnest(SourceDocumentORM.tags).label("tag")
+        stmt = (
+            select(tag_col)
             .where(SourceDocumentORM.vault_id.in_(vault_ids))
-            .order_by(SourceDocumentTag.tag)
+            .distinct()
+            .order_by(tag_col)
         )
+        result = await self.session.execute(stmt)
         return list(result.scalars().all())
-
-    async def _sync_tags(self, doc_id: UUID, tags: list[str]) -> None:
-        await self.session.execute(
-            delete(SourceDocumentTag).where(SourceDocumentTag.document_id == doc_id)
-        )
-        rows = [{"document_id": doc_id, "tag": val} for val in tags if val]
-        if rows:
-            await self.session.execute(insert(SourceDocumentTag).values(rows))
 
 
 # ---------------------------------------------------------------------------
@@ -347,7 +317,8 @@ class WikiArticleRepo:
             file_path=article.file_path,
             file_hash=fh,
             body_hash=bh,
-            extra_metadata=article.metadata.extra_metadata,
+            title=article.title,
+            precis=article.precis,
         )
         stmt = stmt.on_conflict_do_update(
             index_elements=[WikiArticleORM.topic_id],
@@ -355,7 +326,8 @@ class WikiArticleRepo:
                 "file_path": article.file_path,
                 "file_hash": fh,
                 "body_hash": bh,
-                "metadata": article.metadata.extra_metadata,
+                "title": article.title,
+                "precis": article.precis,
                 "updated_at": func.now(),
             },
         )
@@ -363,102 +335,30 @@ class WikiArticleRepo:
         return result.scalar_one()
 
     async def get_by_path(self, vault_id: UUID, file_path: str) -> WikiArticle | None:
-        row = await self.session.execute(
-            select(
-                WikiArticleORM.id,
-                WikiArticleORM.vault_id,
-                WikiArticleORM.topic_id,
-                WikiArticleORM.file_path,
-                WikiArticleORM.body_hash,
-                TopicORM.title,
-                TopicORM.description.label("precis"),
-                WikiArticleORM.created_at,
-                WikiArticleORM.updated_at,
-            )
-            .outerjoin(TopicORM, TopicORM.topic_id == WikiArticleORM.topic_id)
-            .where(
+        orm = await self.session.scalar(
+            select(WikiArticleORM).where(
                 WikiArticleORM.vault_id == vault_id,
                 WikiArticleORM.file_path == file_path,
             )
-        ).first()
-        if row is None:
-            return None
-        return WikiArticle(
-            id=row.id,
-            vault_id=row.vault_id,
-            topic_id=row.topic_id,
-            file_path=row.file_path,
-            body_hash=row.body_hash,
-            title=row.title or "",
-            precis=row.precis,
-            created_at=row.created_at,
-            updated_at=row.updated_at,
         )
+        return WikiArticle.model_validate(orm) if orm is not None else None
 
     async def get_by_topic(self, vault_id: UUID, topic_id: UUID) -> WikiArticle | None:
-        row = await self.session.execute(
-            select(
-                WikiArticleORM.id,
-                WikiArticleORM.vault_id,
-                WikiArticleORM.topic_id,
-                WikiArticleORM.file_path,
-                WikiArticleORM.body_hash,
-                TopicORM.title,
-                TopicORM.description.label("precis"),
-                WikiArticleORM.created_at,
-                WikiArticleORM.updated_at,
-            )
-            .outerjoin(TopicORM, TopicORM.topic_id == WikiArticleORM.topic_id)
-            .where(
+        orm = await self.session.scalar(
+            select(WikiArticleORM).where(
                 WikiArticleORM.vault_id == vault_id,
                 WikiArticleORM.topic_id == topic_id,
             )
-        ).first()
-        if row is None:
-            return None
-        return WikiArticle(
-            id=row.id,
-            vault_id=row.vault_id,
-            topic_id=row.topic_id,
-            file_path=row.file_path,
-            body_hash=row.body_hash,
-            title=row.title or "",
-            precis=row.precis,
-            created_at=row.created_at,
-            updated_at=row.updated_at,
         )
+        return WikiArticle.model_validate(orm) if orm is not None else None
 
     async def list_all(self, vault_id: UUID) -> list[WikiArticle]:
-        rows = await self.session.execute(
-            select(
-                WikiArticleORM.id,
-                WikiArticleORM.vault_id,
-                WikiArticleORM.topic_id,
-                WikiArticleORM.file_path,
-                WikiArticleORM.body_hash,
-                TopicORM.title,
-                TopicORM.description.label("precis"),
-                WikiArticleORM.created_at,
-                WikiArticleORM.updated_at,
-            )
-            .outerjoin(TopicORM, TopicORM.topic_id == WikiArticleORM.topic_id)
+        rows = await self.session.scalars(
+            select(WikiArticleORM)
             .where(WikiArticleORM.vault_id == vault_id)
             .order_by(WikiArticleORM.file_path)
         )
-        return [
-            WikiArticle(
-                id=row.id,
-                vault_id=row.vault_id,
-                topic_id=row.topic_id,
-                file_path=row.file_path,
-                body_hash=row.body_hash,
-                title=row.title or "",
-                precis=row.precis,
-                created_at=row.created_at,
-                updated_at=row.updated_at,
-            )
-            for row in rows
-        ]
+        return [WikiArticle.model_validate(orm) for orm in rows.all()]
 
     async def count(self, vault_id: UUID) -> int:
         return (
@@ -470,11 +370,8 @@ class WikiArticleRepo:
         ) or 0
 
     async def get_title_by_path(self, vault_id: UUID, file_path: str) -> str | None:
-        """Return a wiki article title by joining topics."""
         title = await self.session.scalar(
-            select(TopicORM.title)
-            .join(WikiArticleORM, WikiArticleORM.topic_id == TopicORM.topic_id)
-            .where(
+            select(WikiArticleORM.title).where(
                 WikiArticleORM.vault_id == vault_id,
                 WikiArticleORM.file_path == file_path,
             )
@@ -491,18 +388,9 @@ class WikiArticleRepo:
         offset: int = 0,
         recent: bool = False,
     ) -> list[WikiArticleOverview]:
-        stmt = (
-            select(
-                WikiArticleORM.file_path,
-                TopicORM.title,
-                TopicORM.description.label("precis"),
-                WikiArticleORM.updated_at,
-            )
-            .join(TopicORM, TopicORM.topic_id == WikiArticleORM.topic_id)
-            .where(
-                WikiArticleORM.vault_id == vault_id,
-                WikiArticleORM.file_path != WIKI_INDEX_PATH,
-            )
+        stmt = select(WikiArticleORM).where(
+            WikiArticleORM.vault_id == vault_id,
+            WikiArticleORM.file_path != WIKI_INDEX_PATH,
         )
         if slug is not None:
             stmt = stmt.where(WikiArticleORM.file_path == wiki_path(slug))
@@ -510,15 +398,17 @@ class WikiArticleRepo:
             pattern = f"%{query.lower()}%"
             stmt = stmt.where(
                 or_(
-                    func.lower(TopicORM.title).like(pattern),
-                    func.lower(TopicORM.description).like(pattern),
+                    func.lower(WikiArticleORM.title).like(pattern),
+                    func.lower(WikiArticleORM.precis).like(pattern),
                 )
             )
         stmt = stmt.order_by(
-            WikiArticleORM.updated_at.desc() if recent else func.lower(TopicORM.title)
+            WikiArticleORM.updated_at.desc()
+            if recent
+            else func.lower(WikiArticleORM.title)
         )
-        rows = (await self.session.execute(stmt.offset(offset).limit(limit))).all()
-        return [WikiArticleOverview.model_validate(r) for r in rows]
+        rows = (await self.session.scalars(stmt.offset(offset).limit(limit))).all()
+        return [WikiArticleOverview.model_validate(orm) for orm in rows]
 
     async def count_overview_paths(self, vault_id: UUID) -> int:
         return (
@@ -532,9 +422,8 @@ class WikiArticleRepo:
 
     async def list_orphans(self, vault_id: UUID) -> list[WikiArticleOverview]:
         rows = (
-            await self.session.execute(
-                select(WikiArticleORM.file_path, TopicORM.title)
-                .join(TopicORM, TopicORM.topic_id == WikiArticleORM.topic_id)
+            await self.session.scalars(
+                select(WikiArticleORM)
                 .outerjoin(
                     BacklinkORM,
                     BacklinkORM.target_article_id == WikiArticleORM.id,
@@ -543,12 +432,12 @@ class WikiArticleRepo:
                     WikiArticleORM.vault_id == vault_id,
                     WikiArticleORM.file_path != WIKI_INDEX_PATH,
                 )
-                .group_by(WikiArticleORM.id, WikiArticleORM.file_path, TopicORM.title)
+                .group_by(WikiArticleORM.id)
                 .having(func.count(BacklinkORM.source_article_id) == 0)
-                .order_by(func.lower(TopicORM.title))
+                .order_by(func.lower(WikiArticleORM.title))
             )
         ).all()
-        return [WikiArticleOverview.model_validate(r) for r in rows]
+        return [WikiArticleOverview.model_validate(orm) for orm in rows]
 
     async def update_file_path_for_topic(
         self, vault_id: UUID, topic_id: UUID, new_file_path: str
@@ -586,45 +475,12 @@ class WikiArticleRepo:
             .where(WikiArticleORM.vault_id.in_(vault_ids))
         )
         if search:
-            stmt = stmt.join(
-                TopicORM, TopicORM.topic_id == WikiArticleORM.topic_id
-            ).where(
-                func.lower(TopicORM.title).like(f"%{search.lower()}%")
-                | func.lower(TopicORM.description).like(f"%{search.lower()}%")
+            pattern = f"%{search.lower()}%"
+            stmt = stmt.where(
+                func.lower(WikiArticleORM.title).like(pattern)
+                | func.lower(WikiArticleORM.precis).like(pattern)
             )
         return (await self.session.scalar(stmt)) or 0
-
-
-# ---------------------------------------------------------------------------
-# ORM → schema helpers
-# ---------------------------------------------------------------------------
-
-
-def _source_document_from_orm(
-    orm: SourceDocumentORM, *, tags: list[str] | None = None
-) -> SourceDocument:
-    return SourceDocument(
-        id=orm.id,
-        vault_id=orm.vault_id,
-        file_path=orm.file_path,
-        body_hash=orm.body_hash,
-        compiled=orm.compiled,
-        etag=orm.etag,
-        metadata=DocumentMetadata(
-            title=orm.title,
-            author=orm.author,
-            published_date=orm.published_date,
-            url=orm.url,
-            origin=orm.origin,
-            genre=orm.genre,
-            precis=orm.precis,
-            source_type=orm.source_type,
-            tags=tags or [],
-            doc_metadata=orm.doc_metadata,
-        ),
-        created_at=orm.created_at,
-        updated_at=orm.updated_at,
-    )
 
 
 def _source_document_query(
@@ -642,13 +498,7 @@ def _source_document_query(
 ) -> Select[tuple[SourceDocumentORM]]:
     stmt = select(SourceDocumentORM).where(SourceDocumentORM.vault_id.in_(vault_ids))
     if tags:
-        tag_subq = (
-            select(SourceDocumentTag.document_id)
-            .where(SourceDocumentTag.tag.in_(tags))
-            .group_by(SourceDocumentTag.document_id)
-            .having(func.count(distinct(SourceDocumentTag.tag)) >= len(tags))
-        )
-        stmt = stmt.where(SourceDocumentORM.id.in_(tag_subq))
+        stmt = stmt.where(SourceDocumentORM.tags.contains(tags))
     if author:
         stmt = stmt.where(SourceDocumentORM.author.ilike(f"%{author}%"))
     if genre:

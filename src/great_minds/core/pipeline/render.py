@@ -519,6 +519,8 @@ async def _write_rendered_article(
             file_path=article_path,
             content=full_content,
             topic_id=topic.topic_id,
+            title=topic.title,
+            precis=topic.description,
         ),
     )
     return _topic_content_hash(topic)
@@ -706,8 +708,8 @@ def _render_link_targets_block(
 
 
 def _source_label(doc: SourceDocument) -> str:
-    title = (doc.metadata.title or "").strip() or "Untitled"
-    date = (doc.metadata.published_date or "").strip()
+    title = (doc.title or "").strip() or "Untitled"
+    date = (doc.published_date or "").strip()
     return f"{title} ({date})" if date else title
 
 

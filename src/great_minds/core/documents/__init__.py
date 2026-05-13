@@ -3,7 +3,6 @@
 from great_minds.core.documents.models import (
     BacklinkORM,
     SourceDocumentORM,
-    SourceDocumentTag,
     WikiArticleORM,
 )
 from great_minds.core.documents.repository import SourceDocumentRepo, WikiArticleRepo
@@ -35,7 +34,6 @@ __all__ = [
     "SourceDocumentORM",
     "SourceDocumentRepo",
     "SourceDocumentService",
-    "SourceDocumentTag",
     "SourceDocumentUpdate",
     "SourceMetadata",
     "WikiArticle",

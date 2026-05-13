@@ -130,11 +130,11 @@ export function SourcesPage({
                 >
                   <div className="flex flex-col items-start gap-0.5 min-w-0 flex-1">
                     <span className="font-serif text-[length:var(--text-body)] text-warm-dim group-hover:text-warm transition-colors truncate w-full text-left">
-                      {item.metadata.title}
+                      {item.title}
                     </span>
-                    {(item.metadata.author || item.metadata.origin) && (
+                    {(item.author || item.origin) && (
                       <span className="font-mono text-[length:var(--text-chrome)] tracking-[0.04em] text-warm-ghost truncate w-full text-left">
-                        {[item.metadata.author, item.metadata.origin].filter(Boolean).join(" · ")}
+                        {[item.author, item.origin].filter(Boolean).join(" · ")}
                       </span>
                     )}
                   </div>
