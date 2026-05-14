@@ -109,9 +109,9 @@ class IngestService:
         )
         signed: list[StagedFileSignedUpload] = []
         for f in files:
-            url = admin.presigned_put_url(
-                bucket=vault.r2_bucket_name,
-                key=f"staging/{vault_id}/{f.hash}",
+            url = admin.presign_put(
+                vault.r2_bucket_name,
+                f"staging/{vault_id}/{f.hash}",
                 content_type=f.mimetype or "application/octet-stream",
                 content_length=f.size,
             )
