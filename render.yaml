@@ -89,7 +89,7 @@ projects:
           - name: great-minds-web
             type: web
             runtime: static
-            buildCommand: cd web && pnpm install --frozen-lockfile && pnpm run build
+            buildCommand: pnpm install --frozen-lockfile && pnpm --filter web run build
             staticPublishPath: web/dist
             headers:
               - path: /*
