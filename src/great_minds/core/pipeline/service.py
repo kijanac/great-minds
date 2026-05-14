@@ -103,7 +103,9 @@ class CompileService:
         )
         with telemetry_scope("extract", phase="extract"):
             async with timed_op("extract"):
-                await self.phases.extract.run(self.vault_id, self.pipeline_run_id)
+                await self.phases.extract.run(
+                    vault_id=self.vault_id, pipeline_run_id=self.pipeline_run_id
+                )
 
     async def run_abstract_step(self) -> list[dict]:
         with telemetry_scope("abstract", phase="abstract"):

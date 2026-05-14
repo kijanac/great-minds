@@ -1,6 +1,6 @@
 import { Home, Search } from "lucide-react";
 
-import type { ContentTypeFacet, SourceDocumentSummary } from "@/api/sources";
+import type { SourceTypeFacet, SourceDocumentSummary } from "@/api/sources";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -12,7 +12,7 @@ const ALL_TYPES_VALUE = "__all";
 
 interface SourcesPageProps {
   items: SourceDocumentSummary[];
-  contentTypes: ContentTypeFacet[];
+  sourceTypes: SourceTypeFacet[];
   activeType: string | null;
   search: string;
   loading: boolean;
@@ -26,7 +26,7 @@ interface SourcesPageProps {
 
 export function SourcesPage({
   items,
-  contentTypes,
+  sourceTypes,
   activeType,
   search,
   loading,
@@ -37,7 +37,7 @@ export function SourcesPage({
   onSearchChange,
   onLoadMore,
 }: SourcesPageProps) {
-  const totalCount = contentTypes.reduce((sum, ct) => sum + ct.count, 0);
+  const totalCount = sourceTypes.reduce((sum, ct) => sum + ct.count, 0);
 
   return (
     <div className="h-screen flex flex-col overflow-hidden">
@@ -69,7 +69,7 @@ export function SourcesPage({
 
       <div className="flex-1 min-h-0 overflow-y-auto">
         <div className="max-w-[740px] mx-auto px-4 md:px-10 pt-8 pb-20">
-          {contentTypes.length > 0 && (
+          {sourceTypes.length > 0 && (
             <ToggleGroup
               multiple={false}
               value={[activeType ?? ALL_TYPES_VALUE]}
@@ -84,7 +84,7 @@ export function SourcesPage({
               <ToggleGroupItem value={ALL_TYPES_VALUE} className={FILTER_CHIP_CLASS}>
                 all · {totalCount}
               </ToggleGroupItem>
-              {contentTypes.map((ct) => (
+              {sourceTypes.map((ct) => (
                 <ToggleGroupItem key={ct.value} value={ct.value} className={FILTER_CHIP_CLASS}>
                   {ct.value} · {ct.count}
                 </ToggleGroupItem>
@@ -130,7 +130,7 @@ export function SourcesPage({
                 >
                   <div className="flex flex-col items-start gap-0.5 min-w-0 flex-1">
                     <span className="font-serif text-[length:var(--text-body)] text-warm-dim group-hover:text-warm transition-colors truncate w-full text-left">
-                      {item.title}
+                      {item.title ?? item.file_path}
                     </span>
                     {(item.author || item.origin) && (
                       <span className="font-mono text-[length:var(--text-chrome)] tracking-[0.04em] text-warm-ghost truncate w-full text-left">
@@ -139,9 +139,6 @@ export function SourcesPage({
                     )}
                   </div>
                   <div className="flex items-center gap-3 shrink-0 ml-4">
-                    {!item.compiled && (
-                      <span className="w-1.5 h-1.5 rounded-full bg-gold/60" title="Uncompiled" />
-                    )}
                     <span className="font-mono text-[length:var(--text-chrome)] text-warm-ghost">
                       {formatShortDate(item.updated_at)}
                     </span>

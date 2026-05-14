@@ -4,12 +4,10 @@ import { apiFetch, vaultPath, readJson } from "./client";
 
 export interface IngestResult {
   file_path: string;
-  title: string;
 }
 
 const ingestResultSchema: z.ZodType<IngestResult> = z.object({
   file_path: z.string(),
-  title: z.string(),
 });
 
 const stagedFileSignedUrlSchema = z.object({
@@ -94,7 +92,6 @@ async function pMap<T, R>(
  */
 export async function* ingestStagedFiles(
   files: File[],
-  contentType: string = "texts",
   jobId: string = crypto.randomUUID(),
 ): AsyncGenerator<StagedFileUploadProgress> {
   if (files.length === 0) return;
@@ -231,8 +228,6 @@ export async function* ingestStagedFiles(
         size: m.size,
         mimetype: m.mimetype,
       })),
-      content_type: contentType,
-      source_type: "document",
     }),
   });
   if (!processRes.ok) {

@@ -1,11 +1,8 @@
 """Vault config: storage-backed config.yaml loading and override editing.
 
-One config.yaml per vault at {storage.root}/config.yaml. The same file
-backs the ingester's per-source-type metadata schemas and the compile
-pipeline's editorial settings (kinds, thematic_hint); this module
-parses both views.
+One config.yaml per vault at {storage.root}/config.yaml. Shape:
 
-Shape:
+    name: "..."
 
     kinds:
       - person
@@ -17,16 +14,21 @@ Shape:
       Prefer topics shaped like events and intellectual debates.
 
     metadata:
-      texts:
-        tradition: {type: string, source: enriched, description: ...}
-        interlocutors: {type: list, source: enriched, description: ...}
-      news:
-        outlet: {type: string, source: provided}
-        ...
+      # Vault-configured enriched fields. Each entry declares a field the
+      # extract LLM should look for in every document. The LLM's value
+      # lands in source_documents.derived_extras (JSONB) and gets
+      # surfaced in partition / synthesize editorial context.
+      tradition:
+        type: string
+        description: ...
+      interlocutors:
+        type: list
+        description: ...
 """
 
 from dataclasses import dataclass, field
 from io import StringIO
+from typing import Literal
 
 from openai import AsyncOpenAI
 from ruamel.yaml import YAML
@@ -55,6 +57,21 @@ _DRAFT_HINT_SYSTEM = (
 )
 
 
+@dataclass(frozen=True)
+class EnrichedFieldSpec:
+    """A vault-configured enriched metadata field.
+
+    Declares a key the extract LLM should look for in every document.
+    ``type`` constrains the JSON shape returned ("string" or list of
+    strings); ``description`` is rendered into the extract prompt to
+    guide what the LLM should fill in.
+    """
+
+    name: str
+    type: Literal["string", "list"]
+    description: str = ""
+
+
 async def load_config(storage: Storage) -> dict:
     """Load vault config as a raw dict, returning empty if absent."""
     content = await storage.read(CONFIG_PATH, strict=False)
@@ -69,17 +86,44 @@ def load_default_config_text() -> str:
     return DEFAULT_CONFIG_PATH.read_text(encoding="utf-8")
 
 
+def load_enriched_field_specs(config: dict) -> list[EnrichedFieldSpec]:
+    """Parse the flat ``metadata:`` block into typed field specs.
+
+    Vaults that haven't authored a ``metadata:`` block (or whose block
+    is the legacy per-content-type shape) get an empty list — extract
+    runs with the universal fields only.
+    """
+    metadata = config.get("metadata")
+    if not isinstance(metadata, dict):
+        return []
+    specs: list[EnrichedFieldSpec] = []
+    for name, defn in metadata.items():
+        if not isinstance(defn, dict):
+            continue
+        type_ = defn.get("type")
+        if type_ not in ("string", "list"):
+            continue
+        specs.append(
+            EnrichedFieldSpec(
+                name=name,
+                type=type_,
+                description=defn.get("description", ""),
+            )
+        )
+    return specs
+
+
 @dataclass(frozen=True)
 class VaultConfig:
     """Parsed view of the compile-relevant sections of config.yaml.
 
     `raw` preserves the full dict so callers that need other sections
-    (ingester's metadata schemas, etc.) can access them without a
-    second load.
+    can access them without a second load.
     """
 
     kinds: tuple[str, ...] = DEFAULT_KINDS
     thematic_hint: str = DEFAULT_THEMATIC_HINT
+    enriched_fields: tuple[EnrichedFieldSpec, ...] = ()
     raw: dict = field(default_factory=dict)
 
 
@@ -91,9 +135,11 @@ async def load_vault_config(storage: Storage) -> VaultConfig:
     kinds_raw = data.get("kinds")
     kinds = tuple(kinds_raw) if kinds_raw else DEFAULT_KINDS
     thematic_hint = data.get("thematic_hint") or DEFAULT_THEMATIC_HINT
+    enriched_fields = tuple(load_enriched_field_specs(dict(data)))
     return VaultConfig(
         kinds=kinds,
         thematic_hint=thematic_hint,
+        enriched_fields=enriched_fields,
         raw=dict(data),
     )
 

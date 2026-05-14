@@ -27,7 +27,6 @@ from great_minds.core.compile_cache import CompileCacheRepository
 from great_minds.core.hashing import content_hash, prompt_hash
 from great_minds.core.vaults.prompts import load_prompt
 from great_minds.core.llm.client import json_llm_call
-from great_minds.core.ideas.schemas import DocMetadata
 from great_minds.core.ideas.source_cards import SourceCardStore
 from great_minds.core.llm import MAP_MODEL
 from great_minds.core.pipeline.abstract.schemas import LocalTopic
@@ -162,7 +161,8 @@ class SynthesizePhase:
 class _SynthesisDoc:
     title: str
     precis: str
-    metadata: DocMetadata
+    genre: str | None
+    tags: tuple[str, ...]
 
 
 @dataclass(frozen=True)
@@ -298,7 +298,9 @@ async def _build_synthesis_index(
             docs[card.document_id] = _SynthesisDoc(
                 title=card.title,
                 precis=card.precis,
-                metadata=card.doc_metadata,
+                genre=card.genre,
+                tags=tuple(card.tags),
+                derived_extras=card.derived_extras,
             )
         if not wanted:
             break
@@ -331,21 +333,13 @@ def _render_idea_block(
     counter = 0
     for doc_id in sorted(by_doc, key=str):
         card = synthesis_index.docs[doc_id]
-        meta = card.metadata
         lines.append(f"## Doc: {card.title}")
-        if meta.genre:
-            lines.append(f"Genre: {meta.genre}")
+        if card.genre:
+            lines.append(f"Genre: {card.genre}")
         if card.precis:
             lines.append(f"Precis: {card.precis}")
-        context_bits = []
-        if meta.tradition:
-            context_bits.append(f"Tradition: {meta.tradition}")
-        if meta.interlocutors:
-            context_bits.append(f"Interlocutors: {', '.join(meta.interlocutors)}")
-        if meta.tags:
-            context_bits.append(f"Tags: {', '.join(meta.tags)}")
-        if context_bits:
-            lines.append("; ".join(context_bits))
+        if card.tags:
+            lines.append(f"Tags: {', '.join(card.tags)}")
         lines.append("Ideas:")
         for idea in by_doc[doc_id]:
             counter += 1

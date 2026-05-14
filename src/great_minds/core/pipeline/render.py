@@ -63,7 +63,7 @@ _HEADING_RE = re.compile(r"^# ", re.MULTILINE)
 
 class _RenderOutput(BaseModel):
     """LLM output contract for render. Transient — body is written to
-    storage, tags become DocumentMetadata.tags. Never persisted as a
+    storage, tags land on the wiki article's row. Never persisted as a
     bundle, so it lives here rather than in a domain schemas module.
     """
 

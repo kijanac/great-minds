@@ -4,7 +4,6 @@ from uuid import UUID
 
 import httpx
 
-from great_minds.core.documents.schemas import SourceMetadata
 from great_minds.core.ingest_service import IngestService
 from great_minds.core.pipeline_runs import (
     PipelineRun,
@@ -50,7 +49,7 @@ class JobService:
         storage: Storage,
         job_id: UUID,
         url: str,
-        metadata: SourceMetadata,
+        origin: str | None = None,
     ) -> PipelineRun:
         """Create a URL ingest job and run its source-ingest phase."""
         run = await self.pipeline_service.create(
@@ -75,7 +74,11 @@ class JobService:
 
         try:
             await self.ingest_service.ingest_url(
-                vault_id, storage, url, metadata, pipeline_run_id=run.id
+                vault_id,
+                storage,
+                url=url,
+                origin=origin,
+                pipeline_run_id=run.id,
             )
         except Exception as exc:
             message = (

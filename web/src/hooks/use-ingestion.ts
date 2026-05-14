@@ -127,7 +127,7 @@ export function useIngestion() {
     try {
       const result = await ingestUrl(urlValue);
       setQueue((q) =>
-        q.map((i) => (i.id === id ? { ...i, status: "done" as const, name: result.title } : i)),
+        q.map((i) => (i.id === id ? { ...i, status: "done" as const, name: result.file_path } : i)),
       );
     } catch (e) {
       const message = e instanceof Error ? e.message : "URL ingest failed";

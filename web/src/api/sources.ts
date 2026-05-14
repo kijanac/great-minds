@@ -5,22 +5,21 @@ import { facetedPaginatedSchema, facetCountSchema, type FacetCount } from "./sch
 
 const sourceDocumentSummarySchema = z.object({
   file_path: z.string(),
-  compiled: z.boolean(),
-  title: z.string(),
+  source_type: z.string(),
+  title: z.string().nullable(),
   author: z.string().nullable(),
   published_date: z.string().nullable(),
   url: z.string().nullable(),
   origin: z.string().nullable(),
   genre: z.string().nullable(),
   precis: z.string().nullable(),
-  source_type: z.string().nullable(),
   tags: z.array(z.string()),
-  doc_metadata: z.record(z.string(), z.unknown()),
+  derived_extras: z.record(z.string(), z.unknown()),
   updated_at: z.string().nullable(),
 });
 
 const sourceDocumentFacetsSchema = z.object({
-  content_types: z.array(facetCountSchema),
+  source_types: z.array(facetCountSchema),
 });
 
 const sourceDocumentPageSchema = facetedPaginatedSchema(
@@ -29,20 +28,18 @@ const sourceDocumentPageSchema = facetedPaginatedSchema(
 );
 
 export type SourceDocumentSummary = z.infer<typeof sourceDocumentSummarySchema>;
-export type ContentTypeFacet = FacetCount;
+export type SourceTypeFacet = FacetCount;
 export type SourceDocumentPage = z.infer<typeof sourceDocumentPageSchema>;
 
 export async function fetchSourceDocuments(params?: {
-  content_type?: string;
+  source_type?: string;
   search?: string;
-  compiled?: boolean;
   limit?: number;
   offset?: number;
 }): Promise<SourceDocumentPage> {
   const query = new URLSearchParams();
-  if (params?.content_type) query.set("content_type", params.content_type);
+  if (params?.source_type) query.set("source_type", params.source_type);
   if (params?.search) query.set("search", params.search);
-  if (params?.compiled !== undefined) query.set("compiled", String(params.compiled));
   if (params?.limit !== undefined) query.set("limit", String(params.limit));
   if (params?.offset !== undefined) query.set("offset", String(params.offset));
 

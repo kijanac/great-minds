@@ -2,7 +2,7 @@
 
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class Anchor(BaseModel):
@@ -41,28 +41,24 @@ class Idea(BaseModel):
     anchors: list[Anchor] = []
 
 
-class DocMetadata(BaseModel):
-    """Document-level metadata extracted alongside ideas.
-
-    Known fields (genre/tags/tradition/interlocutors) are typed; per-vault
-    config may declare additional fields which land in the extra bag.
-    """
-
-    model_config = ConfigDict(extra="allow")
-
-    genre: str | None = None
-    tags: list[str] = []
-    tradition: str | None = None
-    interlocutors: list[str] = []
-
-
 class SourceCard(BaseModel):
-    """One line in source_cards.jsonl — the full extract output for one doc."""
+    """One line in source_cards.jsonl — the full extract output for one doc.
+
+    All fields except ``ideas`` map 1:1 to the LLM-derived columns and
+    ``derived_extras`` JSONB on ``source_documents``. ``derived_extras``
+    carries whatever vault-configured enriched fields the vault's
+    config declared; its shape is dynamic and surfaces in compile's
+    editorial context (partition / synthesize) generically.
+    """
 
     document_id: UUID
     title: str
-    doc_metadata: DocMetadata
     precis: str
+    author: str | None = None
+    published_date: str | None = None
+    genre: str | None = None
+    tags: list[str] = Field(default_factory=list)
+    derived_extras: dict = Field(default_factory=dict)
     ideas: list[Idea]
 
 

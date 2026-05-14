@@ -37,7 +37,7 @@ async def start_url_pipeline(
             storage=storage,
             job_id=source.job_id,
             url=source.url,
-            metadata=source.metadata,
+            origin=source.origin,
         )
     except UrlJobSourceError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc

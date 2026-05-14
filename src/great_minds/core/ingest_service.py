@@ -1,10 +1,28 @@
-"""Ingest service: content conversion, ingestion, and indexing."""
+"""Ingestion service — write source documents into the vault.
+
+Five entry points, one per ingest shape: text body, uploaded file, URL,
+user suggestion, promoted session exchange. All paths share two
+guarantees:
+
+1. Only ingest-known fields are written (paths, hashes, etag,
+   source_type, url, origin, and per-source-kind provenance). Title,
+   precis, author, published_date, genre, tags, and any
+   vault-configured ``derived_extras`` are left for the extract phase
+   on first compile.
+2. A pending compile intent is emitted in the same transaction as the
+   row write, via the compile-intents outbox. Either both land or
+   neither does.
+"""
+
+from __future__ import annotations
 
 import asyncio
 import io
+import logging
 from datetime import datetime, timezone
 from enum import StrEnum
 from pathlib import PurePosixPath
+from urllib.parse import urlparse
 from uuid import UUID
 
 import httpx
@@ -12,7 +30,7 @@ from markitdown import MarkItDown, StreamInfo
 
 from great_minds.core.compile_intents.repository import CompileIntentRepository
 from great_minds.core.documents.builder import write_document
-from great_minds.core.documents.schemas import IngestedDocument, SourceMetadata
+from great_minds.core.documents.schemas import IngestedDocument
 from great_minds.core.documents.service import SourceDocumentService
 from great_minds.core.ingest_schemas import StagedFileInput, StagedFileSignedUpload
 from great_minds.core.paths import raw_path, session_exchange_path
@@ -23,8 +41,9 @@ from great_minds.core.sessions.service import SessionService
 from great_minds.core.settings import Settings
 from great_minds.core.storage import Storage
 from great_minds.core.text import normalize_url, slugify
-from great_minds.core.vaults.config import load_config
 from great_minds.core.vaults.service import VaultService
+
+log = logging.getLogger(__name__)
 
 
 class UserSuggestionIntent(StrEnum):
@@ -34,15 +53,18 @@ class UserSuggestionIntent(StrEnum):
     RESTRUCTURE = "restructure"
 
 
-class IngestService:
-    """Coordinator for the API-side ingest entry points.
+# Source-kind directories under raw/. Curator docs live under raw/docs/,
+# system-generated kinds under their own dirs so lifecycle/cleanup code
+# can distinguish them by path.
+_RAW_DIR_FOR_KIND = {
+    "document": "docs",
+    "session": "sessions",
+    "user": "user",
+}
 
-    Each public ``ingest_*`` method is an input adapter — it derives
-    ``content``, ``dest``, and frontmatter extras from its source
-    (text, upload, URL, suggestion, session exchange) and funnels them
-    into ``_ingest_raw``, which loads vault config, builds the markdown
-    via ``write_document``, and indexes the document row.
-    """
+
+class IngestService:
+    """All entry points share the same write contract; see module docstring."""
 
     def __init__(
         self,
@@ -76,16 +98,10 @@ class IngestService:
         vault_id: UUID,
         files: list[StagedFileInput],
     ) -> list[StagedFileSignedUpload]:
-        """Create presigned R2 PUT URLs for direct-to-staging uploads."""
-        if self.settings.storage_backend != "r2":
-            raise ValueError("staged file upload requires r2 storage backend")
-        if not files:
-            raise ValueError("manifest is empty")
-
-        vault = await self.vault_service.get_vault(vault_id)
-        if not vault.r2_bucket_name:
-            raise ValueError("vault has no r2 bucket; cannot sign uploads")
-
+        """Generate presigned PUT URLs for direct-to-R2 staged uploads."""
+        vault = await self.vault_service.get(vault_id, strict=True)
+        if vault.r2_bucket_name is None:
+            raise ValueError(f"Vault {vault_id} has no r2_bucket_name")
         admin = R2Admin(
             account_id=self.settings.r2_account_id,
             access_key_id=self.settings.r2_access_key_id,
@@ -93,39 +109,28 @@ class IngestService:
         )
         signed: list[StagedFileSignedUpload] = []
         for f in files:
-            url = admin.presign_put(
-                vault.r2_bucket_name,
-                f"staging/{vault_id}/{f.hash}",
+            url = admin.presigned_put_url(
+                bucket=vault.r2_bucket_name,
+                key=f"staging/{vault_id}/{f.hash}",
                 content_type=f.mimetype or "application/octet-stream",
                 content_length=f.size,
             )
             signed.append(StagedFileSignedUpload(hash=f.hash, url=url))
         return signed
 
-    async def _ingest_raw(
+    async def _write_and_index(
         self,
         vault_id: UUID,
         storage: Storage,
         *,
-        pipeline_run_id: UUID | None,
         content: str,
-        content_type: str,
         dest: str,
-        source_type: str,
-        **frontmatter: object,
+        pipeline_run_id: UUID | None,
+        **build_args,
     ) -> UUID:
-        """Build markdown from raw content + metadata, write, index, and
-        guarantee a compile intent exists in the same transaction."""
-        config = await load_config(storage)
-        rendered = await write_document(
-            storage,
-            config,
-            content,
-            content_type,
-            dest=dest,
-            source_type=source_type,
-            **frontmatter,
-        )
+        """Build markdown, persist to storage, upsert the DB row, and
+        emit a pending compile intent — all in one transaction."""
+        rendered = await write_document(storage, content, dest=dest, **build_args)
         doc_id = await self.doc_service.index(vault_id, dest, rendered)
         await self._emit_compile_intent(vault_id, pipeline_run_id)
         return doc_id
@@ -134,63 +139,93 @@ class IngestService:
         self,
         vault_id: UUID,
         storage: Storage,
+        *,
         content: str,
         dest: str,
-        metadata: SourceMetadata,
-        *,
+        origin: str | None = None,
         pipeline_run_id: UUID | None = None,
     ) -> IngestedDocument:
-        """Ingest raw text content."""
-        await self._ingest_raw(
+        """Ingest raw markdown text. source_type='document'."""
+        await self._write_and_index(
             vault_id,
             storage,
-            pipeline_run_id=pipeline_run_id,
             content=content,
-            content_type=metadata.content_type,
             dest=dest,
-            source_type=metadata.source_type,
-            **_metadata_extras(metadata),
+            pipeline_run_id=pipeline_run_id,
+            source_type="document",
+            origin=origin,
         )
-        return IngestedDocument(
-            file_path=dest,
-            title=metadata.title or dest,
-        )
+        return IngestedDocument(file_path=dest)
 
     async def ingest_upload(
         self,
         vault_id: UUID,
         storage: Storage,
+        *,
         raw_bytes: bytes,
         filename: str,
-        metadata: SourceMetadata,
-        *,
         mimetype: str = "",
         dest_path: str | None = None,
+        origin: str | None = None,
         pipeline_run_id: UUID | None = None,
     ) -> IngestedDocument:
-        """Ingest an uploaded file."""
+        """Convert an uploaded file to markdown and ingest. source_type='document'."""
         content = await _convert_to_markdown(raw_bytes, filename, mimetype)
-
         if dest_path:
-            dest = _safe_upload_dest(metadata.content_type, dest_path)
+            dest = _safe_doc_dest(dest_path)
         else:
             slug = slugify(filename.rsplit(".", 1)[0])
-            dest = _safe_upload_dest(metadata.content_type, f"{slug}.md")
-
-        await self._ingest_raw(
+            dest = _safe_doc_dest(f"{slug}.md")
+        await self._write_and_index(
             vault_id,
             storage,
-            pipeline_run_id=pipeline_run_id,
             content=content,
-            content_type=metadata.content_type,
             dest=dest,
-            source_type=metadata.source_type,
-            **_metadata_extras(metadata),
+            pipeline_run_id=pipeline_run_id,
+            source_type="document",
+            origin=origin,
         )
-        return IngestedDocument(
-            file_path=dest,
-            title=metadata.title or filename,
+        return IngestedDocument(file_path=dest)
+
+    async def ingest_url(
+        self,
+        vault_id: UUID,
+        storage: Storage,
+        *,
+        url: str,
+        origin: str | None = None,
+        pipeline_run_id: UUID | None = None,
+    ) -> IngestedDocument:
+        """Fetch a URL, convert to markdown, and ingest. source_type='document'.
+
+        ``origin`` defaults to the URL's netloc when not supplied.
+        """
+        url = normalize_url(url)
+        response = await _fetch_url(url)
+        converter = MarkItDown()
+        result = await asyncio.to_thread(
+            converter.convert_stream,
+            io.BytesIO(response.content),
+            stream_info=StreamInfo(
+                extension=".html",
+                mimetype=response.headers.get("content-type", "text/html"),
+            ),
         )
+        # Filename for dest path: best-effort from the URL path tail.
+        # Extract owns the real title — this is just the on-disk slug.
+        url_tail = PurePosixPath(urlparse(url).path).stem or "doc"
+        dest = raw_path("docs", f"{slugify(url_tail)}.md")
+        await self._write_and_index(
+            vault_id,
+            storage,
+            content=result.text_content,
+            dest=dest,
+            pipeline_run_id=pipeline_run_id,
+            source_type="document",
+            url=url,
+            origin=origin or urlparse(url).netloc,
+        )
+        return IngestedDocument(file_path=dest)
 
     async def ingest_user_suggestion(
         self,
@@ -203,39 +238,26 @@ class IngestService:
         anchored_section: str = "",
         pipeline_run_id: UUID | None = None,
     ) -> IngestedDocument:
-        """Persist a user suggestion as a source document.
-
-        Writes to raw/user/<ts>-<slug>.md with source_type=user. body is
-        expected to be substantive prose (either user-written or
-        UI-reframed); this method does no reframing — it persists the
-        authored content as a first-class source that enters the
-        pipeline through the same rail as ingested documents.
-        """
+        """Persist a user suggestion as a source document. source_type='user'."""
         if not body.strip():
             raise ValueError("body is empty")
-
         ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
         anchor_slug = slugify(anchored_to) if anchored_to else "general"
         filename = f"{ts}-{anchor_slug}-{intent.value}.md"
-        dest = _safe_upload_dest("user", filename)
-
-        await self._ingest_raw(
+        dest = raw_path("user", filename)
+        await self._write_and_index(
             vault_id,
             storage,
-            pipeline_run_id=pipeline_run_id,
             content=body,
-            content_type="user",
             dest=dest,
+            pipeline_run_id=pipeline_run_id,
             source_type="user",
             origin="user-suggestion",
-            intent=intent.value,
             anchored_to=anchored_to,
             anchored_section=anchored_section,
+            intent=intent.value,
         )
-        return IngestedDocument(
-            file_path=dest,
-            title=filename,
-        )
+        return IngestedDocument(file_path=dest)
 
     async def ingest_session_exchange(
         self,
@@ -244,107 +266,43 @@ class IngestService:
         *,
         session_id: str,
         exchange: ExchangeEvent,
-        title: str,
         session_origin: SessionOrigin | None = None,
         pipeline_run_id: UUID | None = None,
     ) -> IngestedDocument:
-        """Persist a promoted session exchange as a raw/sessions/ source.
+        """Persist a promoted session exchange. source_type='session'.
 
         The path is content-addressable on ``exchange.exId`` so the
         documents-table upsert is idempotent on re-promotion.
         """
         dest = session_exchange_path(exchange.exId)
-        await self._ingest_raw(
+        args = SessionService.session_exchange_build_args(
+            session_id=session_id,
+            exchange=exchange,
+            session_origin=session_origin,
+        )
+        await self._write_and_index(
             vault_id,
             storage,
-            pipeline_run_id=pipeline_run_id,
             dest=dest,
-            **SessionService.session_exchange_build_args(
-                session_id=session_id,
-                exchange=exchange,
-                title=title,
-                session_origin=session_origin,
-            ),
-        )
-        return IngestedDocument(
-            file_path=dest,
-            title=title,
-        )
-
-    async def ingest_url(
-        self,
-        vault_id: UUID,
-        storage: Storage,
-        url: str,
-        metadata: SourceMetadata,
-        *,
-        pipeline_run_id: UUID | None = None,
-    ) -> IngestedDocument:
-        """Fetch a URL, convert to markdown, and ingest."""
-        url = normalize_url(url)
-        response = await _fetch_url(url)
-
-        converter = MarkItDown()
-        result = await asyncio.to_thread(
-            converter.convert_stream,
-            io.BytesIO(response.content),
-            stream_info=StreamInfo(
-                extension=".html",
-                mimetype=response.headers.get("content-type", "text/html"),
-            ),
-        )
-
-        title = metadata.title or result.title or url
-        dest = raw_path(metadata.content_type, f"{slugify(title)}.md")
-
-        await self._ingest_raw(
-            vault_id,
-            storage,
             pipeline_run_id=pipeline_run_id,
-            content=result.text_content,
-            content_type=metadata.content_type,
-            dest=dest,
-            source_type=metadata.source_type,
-            title=title,
-            **_metadata_extras(metadata, exclude_title=True),
+            **args,
         )
-        return IngestedDocument(
-            file_path=dest,
-            title=title,
-        )
+        return IngestedDocument(file_path=dest)
 
 
-def _metadata_extras(metadata: SourceMetadata, *, exclude_title: bool = False) -> dict:
-    """Project SourceMetadata into **extras kwargs for ``write_document``.
-
-    ``content_type`` and ``source_type`` are passed positionally; title
-    is excluded when the caller is passing it explicitly.
-    """
-    exclude: set[str] = {"content_type", "source_type"}
-    if exclude_title:
-        exclude.add("title")
-    return metadata.model_dump(by_alias=True, exclude_none=True, exclude=exclude)
+# ---------------------------------------------------------------------------
+# Path-safety + markdown conversion helpers
+# ---------------------------------------------------------------------------
 
 
-def _safe_upload_dest(content_type: str, dest_path: str) -> str:
-    content_type_path = PurePosixPath(content_type)
-    if (
-        not content_type
-        or "\\" in content_type
-        or content_type_path.is_absolute()
-        or content_type_path.parts != (content_type,)
-        or content_type in {".", ".."}
-    ):
-        raise ValueError(f"Invalid content_type: {content_type}")
-
+def _safe_doc_dest(dest_path: str) -> str:
+    """Compose a safe ``raw/docs/...`` destination from a user-supplied subpath."""
     if "\\" in dest_path:
         raise ValueError(f"Invalid dest_path: {dest_path}")
-
     rel = PurePosixPath(dest_path)
     if not rel.parts or rel.is_absolute() or ".." in rel.parts:
         raise ValueError(f"Invalid dest_path: {dest_path}")
-
-    return str(PurePosixPath("raw") / content_type / rel.with_suffix(".md"))
+    return str(PurePosixPath("raw") / "docs" / rel.with_suffix(".md"))
 
 
 async def _convert_to_markdown(raw_bytes: bytes, filename: str, mimetype: str) -> str:

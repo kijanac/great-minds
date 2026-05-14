@@ -71,8 +71,6 @@ class TaskService:
         *,
         vault_id: UUID,
         files: list[dict],
-        content_type: str,
-        source_type: str,
         pipeline_run_id: UUID | None = None,
     ) -> TaskDetail:
         """Spawn a staged-file ingest task that pulls from R2 ``staging/<vault>/<hash>``.
@@ -81,12 +79,11 @@ class TaskService:
         the same /process call returns/reuses the same task. The worker is
         also idempotent at the document level via content-addressable dest
         paths + ``batch_upsert`` ON CONFLICT, so task retries are safe.
+        Staged-file ingest always lands as ``source_type='document'``.
         """
         params: dict = {
             "vault_id": str(vault_id),
             "files": files,
-            "content_type": content_type,
-            "source_type": source_type,
             **({"pipeline_run_id": str(pipeline_run_id)} if pipeline_run_id else {}),
         }
         spawn_kwargs: dict[str, Any] = {"max_attempts": 2}
@@ -110,8 +107,6 @@ class TaskService:
             task_id=str(record.id),
             vault_id=str(vault_id),
             file_count=len(files),
-            content_type=content_type,
-            source_type=source_type,
         )
         return await fetch_task_response(self.absurd, record)
 

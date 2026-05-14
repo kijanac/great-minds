@@ -18,7 +18,6 @@ from great_minds.core.hashing import file_hash
 
 from great_minds.core.pipeline import build_compile_service
 from great_minds.core.pipeline.steps import absurd_step_runner
-from great_minds.core.vaults.config import load_config
 from great_minds.core.vaults.repository import VaultRepository
 from great_minds.core.compile_intents.repository import CompileIntentRepository
 from great_minds.core.documents.builder import build_document
@@ -204,9 +203,6 @@ async def _fetch_and_convert(
     vault_id: UUID,
     bucket: str,
     admin: R2Admin,
-    config: dict,
-    content_type: str,
-    source_type: str,
     sem: asyncio.Semaphore,
 ) -> tuple[dict, str]:
     """Pull one staging blob, convert to markdown, prepend frontmatter."""
@@ -215,9 +211,7 @@ async def _fetch_and_convert(
         staging_key = f"staging/{vault_id}/{entry['hash']}"
         raw_bytes = await asyncio.to_thread(admin.fetch_bytes, bucket, staging_key)
         content = await _convert_to_markdown(raw_bytes, name, entry.get("mimetype", ""))
-        content_with_fm = build_document(
-            config, content, content_type, source_type=source_type
-        )
+        content_with_fm = build_document(content, source_type="document")
         return entry, content_with_fm
 
 
@@ -235,7 +229,6 @@ async def _index_fetched_results(
     *,
     ctx,
     vault_id: UUID,
-    content_type: str,
     storage,
     existing_hashes: dict[str, str],
     doc_service: SourceDocumentService,
@@ -286,7 +279,7 @@ async def _index_fetched_results(
             continue
 
         file_hash_val = file_hash(content_with_fm)
-        dest = f"raw/{content_type}/{entry['hash'][:12]}.md"
+        dest = f"raw/docs/{entry['hash'][:12]}.md"
         keys_to_clean.append(f"staging/{vault_id}/{entry['hash']}")
 
         if existing_hashes.get(dest) == file_hash_val or dest in seen_dest:
@@ -363,19 +356,16 @@ async def staged_file_ingest_task(params: dict, ctx) -> None:
         {
           "vault_id": str,
           "files": [{"hash": str, "name": str, "mimetype": str}, ...],
-          "content_type": str,    # vault category, e.g. "texts"
-          "source_type": str,     # frontmatter source_type, e.g. "document"
         }
 
     Idempotency comes from content-addressable dest paths
-    (``raw/<content_type>/<hash[:12]>.md``) plus
+    (``raw/docs/<hash[:12]>.md``) plus
     ``SourceDocumentRepo.batch_upsert``'s ``(vault_id, file_path)``
     conflict target. Re-running the task on the same hashes is a no-op.
+    Staged-file ingest always lands as ``source_type='document'``.
     """
     vault_id = UUID(params["vault_id"])
     files = params["files"]
-    content_type = params["content_type"]
-    source_type = params["source_type"]
     pipeline_run_id = UUID(params["pipeline_run_id"])
     correlation_id.set(f"source-ingest-{pipeline_run_id}")
     progress = PipelineProgressRunner(_task_session_maker.get())
@@ -397,7 +387,6 @@ async def staged_file_ingest_task(params: dict, ctx) -> None:
             r2_bucket_name=vault.r2_bucket_name,
             settings=settings,
         )
-        config = await load_config(storage)
         admin = R2Admin(
             account_id=settings.r2_account_id,
             access_key_id=settings.r2_access_key_id,
@@ -449,9 +438,6 @@ async def staged_file_ingest_task(params: dict, ctx) -> None:
                     vault_id=vault_id,
                     bucket=bucket,
                     admin=admin,
-                    config=config,
-                    content_type=content_type,
-                    source_type=source_type,
                     sem=sem,
                 )
             )
@@ -481,7 +467,6 @@ async def staged_file_ingest_task(params: dict, ctx) -> None:
                 fetch_tasks,
                 ctx=ctx,
                 vault_id=vault_id,
-                content_type=content_type,
                 storage=storage,
                 existing_hashes=existing_hashes,
                 doc_service=doc_service,

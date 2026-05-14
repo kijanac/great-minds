@@ -166,20 +166,19 @@ def _estimate_idea_tokens(idea: Idea, card: SourceCard) -> int:
 
     Matches 2b's rendering shape:
       [kind] label: description
-      ← from {title} ({genre}, ...) interlocutors: ... tags: ...
+      ← from {title} ({genre}); tags: ...
       ← precis: ...
 
     chars/4 is a rough tokenization heuristic — good enough for rounding
-    k to an integer, not exact.
+    k to an integer, not exact. Must stay in sync with what synthesize
+    actually puts in the prompt — if synthesize starts rendering
+    additional fields, this estimate has to follow.
     """
     idea_line = f"[{idea.kind}] {idea.label}: {idea.description}"
-    meta = card.doc_metadata
-    doc_header = (
-        f"from {card.title} ({meta.genre or ''}); "
-        f"tradition: {meta.tradition or ''}; "
-        f"interlocutors: {','.join(meta.interlocutors)}; "
-        f"tags: {','.join(meta.tags)}"
-    )
+    title_part = f"from {card.title}"
+    if card.genre:
+        title_part += f" ({card.genre})"
+    doc_header = f"{title_part}; tags: {','.join(card.tags)}"
     precis_line = f"precis: {card.precis}"
     chars = len(idea_line) + len(doc_header) + len(precis_line)
     return max(1, chars // 4)

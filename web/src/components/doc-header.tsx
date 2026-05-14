@@ -36,7 +36,7 @@ export function DocHeader({
   if (metadata.published_date) metaParts.push(metadata.published_date);
   if (metadata.genre) metaParts.push(metadata.genre);
 
-  const extraEntries = Object.entries(metadata.doc_metadata ?? {}).filter(
+  const extraEntries = Object.entries(metadata.derived_extras ?? {}).filter(
     ([k]) => k !== "topic_id", // internal identifier, not for display
   );
 

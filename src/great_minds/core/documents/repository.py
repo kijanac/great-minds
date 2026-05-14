@@ -4,8 +4,8 @@ from uuid import UUID
 
 from great_minds.core.hashing import body_hash, file_hash
 
-from sqlalchemy import Select, case, delete, func, or_, select, update
-from sqlalchemy.dialects.postgresql import insert
+from sqlalchemy import Select, case, delete, func, or_, select, type_coerce, update
+from sqlalchemy.dialects.postgresql import JSONB, insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from great_minds.core.documents.models import (
@@ -26,7 +26,56 @@ from great_minds.core.documents.schemas import (
 from great_minds.core.ideas.schemas import SourceCard
 from great_minds.core.markdown import parse_frontmatter
 from great_minds.core.pagination import FacetCount
-from great_minds.core.paths import WIKI_INDEX_PATH, raw_prefix, wiki_path
+from great_minds.core.paths import WIKI_INDEX_PATH, wiki_path
+
+
+# Columns the ingest path writes. Zone-3 (LLM-derived) columns are
+# deliberately excluded — extract owns those via ``update_batch``. The
+# on-conflict SET clause uses this same list so re-ingest can't clobber
+# extract's output.
+_INGEST_COLUMNS = (
+    "file_hash",
+    "body_hash",
+    "source_type",
+    "etag",
+    "url",
+    "origin",
+    "provenance_session_id",
+    "provenance_exchange_id",
+    "provenance_session_query",
+    "provenance_source_doc_path",
+    "provenance_source_anchor",
+    "provenance_source_paragraph_index",
+    "provenance_anchored_to",
+    "provenance_anchored_section",
+    "provenance_intent",
+)
+
+
+def _ingest_row(doc: SourceDocCreate, vault_id: UUID) -> dict:
+    """Project a SourceDocCreate into an ingest-write row dict."""
+    fh = file_hash(doc.content)
+    _, body = parse_frontmatter(doc.content)
+    bh = body_hash(body)
+    return {
+        "vault_id": vault_id,
+        "file_path": doc.file_path,
+        "file_hash": fh,
+        "body_hash": bh,
+        "source_type": doc.source_type,
+        "etag": doc.etag,
+        "url": doc.url,
+        "origin": doc.origin,
+        "provenance_session_id": doc.provenance_session_id,
+        "provenance_exchange_id": doc.provenance_exchange_id,
+        "provenance_session_query": doc.provenance_session_query,
+        "provenance_source_doc_path": doc.provenance_source_doc_path,
+        "provenance_source_anchor": doc.provenance_source_anchor,
+        "provenance_source_paragraph_index": doc.provenance_source_paragraph_index,
+        "provenance_anchored_to": doc.provenance_anchored_to,
+        "provenance_anchored_section": doc.provenance_anchored_section,
+        "provenance_intent": doc.provenance_intent,
+    }
 
 
 class SourceDocumentRepo:
@@ -34,38 +83,12 @@ class SourceDocumentRepo:
         self.session = session
 
     async def upsert(self, vault_id: UUID, doc: SourceDocCreate) -> UUID:
-        file_hash_val = file_hash(doc.content)
-        _, body = parse_frontmatter(doc.content)
-        body_hash_val = body_hash(body)
-
-        columns = {
-            "file_hash": file_hash_val,
-            "body_hash": body_hash_val,
-            "title": doc.metadata.title,
-            "author": doc.metadata.author,
-            "url": doc.metadata.url,
-            "origin": doc.metadata.origin,
-            "published_date": doc.metadata.published_date,
-            "genre": doc.metadata.genre,
-            "compiled": doc.compiled,
-            "source_type": doc.metadata.source_type,
-            "precis": doc.metadata.precis,
-            "tags": doc.metadata.tags,
-        }
-        meta_dump = doc.metadata.doc_metadata.model_dump()
-        stmt = insert(SourceDocumentORM).values(
-            vault_id=vault_id,
-            file_path=doc.file_path,
-            doc_metadata=meta_dump,
-            **columns,
-        )
+        row = _ingest_row(doc, vault_id)
+        stmt = insert(SourceDocumentORM).values(**row)
         stmt = stmt.on_conflict_do_update(
             index_elements=[SourceDocumentORM.vault_id, SourceDocumentORM.file_path],
-            set_={
-                **columns,
-                "metadata": meta_dump,
-                "updated_at": func.now(),
-            },
+            set_={col: stmt.excluded[col] for col in _INGEST_COLUMNS}
+            | {"updated_at": func.now()},
         )
         result = await self.session.execute(stmt.returning(SourceDocumentORM.id))
         return result.scalar_one()
@@ -75,51 +98,12 @@ class SourceDocumentRepo:
     ) -> list[UUID]:
         if not docs:
             return []
-        rows = []
-        for doc in docs:
-            fh = file_hash(doc.content)
-            _, body = parse_frontmatter(doc.content)
-            bh = body_hash(body)
-            rows.append(
-                {
-                    "vault_id": vault_id,
-                    "file_path": doc.file_path,
-                    "file_hash": fh,
-                    "body_hash": bh,
-                    "title": doc.metadata.title,
-                    "author": doc.metadata.author,
-                    "url": doc.metadata.url,
-                    "origin": doc.metadata.origin,
-                    "published_date": doc.metadata.published_date,
-                    "genre": doc.metadata.genre,
-                    "compiled": doc.compiled,
-                    "etag": doc.etag,
-                    "source_type": doc.metadata.source_type,
-                    "precis": doc.metadata.precis,
-                    "tags": doc.metadata.tags,
-                    "doc_metadata": doc.metadata.doc_metadata.model_dump(),
-                }
-            )
+        rows = [_ingest_row(doc, vault_id) for doc in docs]
         stmt = insert(SourceDocumentORM).values(rows)
         stmt = stmt.on_conflict_do_update(
             index_elements=[SourceDocumentORM.vault_id, SourceDocumentORM.file_path],
-            set_={
-                "file_hash": stmt.excluded.file_hash,
-                "body_hash": stmt.excluded.body_hash,
-                "title": stmt.excluded.title,
-                "author": stmt.excluded.author,
-                "url": stmt.excluded.url,
-                "origin": stmt.excluded.origin,
-                "published_date": stmt.excluded.published_date,
-                "genre": stmt.excluded.genre,
-                "compiled": stmt.excluded.compiled,
-                "etag": stmt.excluded.etag,
-                "source_type": stmt.excluded.source_type,
-                "precis": stmt.excluded.precis,
-                "tags": stmt.excluded.tags,
-                "metadata": stmt.excluded["metadata"],
-                "updated_at": func.now(),
-            },
+            set_={col: stmt.excluded[col] for col in _INGEST_COLUMNS}
+            | {"updated_at": func.now()},
         )
         result = await self.session.execute(
             stmt.returning(SourceDocumentORM.id, SourceDocumentORM.file_path)
@@ -138,18 +122,37 @@ class SourceDocumentRepo:
     async def update_batch(
         self, vault_id: UUID, updates: list[SourceDocumentUpdate]
     ) -> None:
-        """Batch-update source documents."""
+        """Batch-update LLM-derived columns from extract output.
+
+        Each field assembled as a polymorphic CASE over document_id.
+        ``derived_extras`` (JSONB) needs explicit ``type_coerce`` so
+        SQLAlchemy emits ``::jsonb`` casts on the WHEN/THEN bindparams;
+        otherwise asyncpg sends dicts as text and Postgres rejects the
+        assignment.
+        """
         if not updates:
             return
         ids = [u.document_id for u in updates]
         values: dict = {"updated_at": func.now()}
-        for attr in ("etag", "title", "precis", "doc_metadata"):
+        for attr in (
+            "etag",
+            "title",
+            "precis",
+            "author",
+            "published_date",
+            "genre",
+            "tags",
+            "derived_extras",
+        ):
             mapping: dict = {}
             for u in updates:
                 v = getattr(u, attr)
                 if v is None:
                     continue
-                mapping[u.document_id] = v.model_dump() if attr == "doc_metadata" else v
+                if attr == "derived_extras":
+                    mapping[u.document_id] = type_coerce(v, JSONB)
+                else:
+                    mapping[u.document_id] = v
             if mapping:
                 values[attr] = case(mapping, value=SourceDocumentORM.id)
         await self.session.execute(
@@ -159,6 +162,14 @@ class SourceDocumentRepo:
                 SourceDocumentORM.id.in_(ids),
             )
             .values(**values)
+        )
+
+    async def update_metadata_from_cards(
+        self, vault_id: UUID, cards: list[SourceCard]
+    ) -> None:
+        await self.update_batch(
+            vault_id,
+            [SourceDocumentUpdate.model_validate(c) for c in cards],
         )
 
     async def get_by_path(
@@ -200,14 +211,6 @@ class SourceDocumentRepo:
             )
         ) or 0
 
-    async def update_metadata_from_cards(
-        self, vault_id: UUID, cards: list[SourceCard]
-    ) -> None:
-        await self.update_batch(
-            vault_id,
-            [SourceDocumentUpdate.model_validate(c) for c in cards],
-        )
-
     async def query(
         self,
         vault_ids: list[UUID],
@@ -215,9 +218,7 @@ class SourceDocumentRepo:
         tags: list[str] | None = None,
         author: str | None = None,
         genre: str | None = None,
-        compiled: bool | None = None,
         source_type: str | None = None,
-        content_type: str | None = None,
         search: str | None = None,
         date_gte: str | None = None,
         date_lte: str | None = None,
@@ -229,9 +230,7 @@ class SourceDocumentRepo:
             tags=tags,
             author=author,
             genre=genre,
-            compiled=compiled,
             source_type=source_type,
-            content_type=content_type,
             search=search,
             date_gte=date_gte,
             date_lte=date_lte,
@@ -251,9 +250,7 @@ class SourceDocumentRepo:
         tags: list[str] | None = None,
         author: str | None = None,
         genre: str | None = None,
-        compiled: bool | None = None,
         source_type: str | None = None,
-        content_type: str | None = None,
         search: str | None = None,
         date_gte: str | None = None,
         date_lte: str | None = None,
@@ -263,9 +260,7 @@ class SourceDocumentRepo:
             tags=tags,
             author=author,
             genre=genre,
-            compiled=compiled,
             source_type=source_type,
-            content_type=content_type,
             search=search,
             date_gte=date_gte,
             date_lte=date_lte,
@@ -274,17 +269,15 @@ class SourceDocumentRepo:
             await self.session.scalar(select(func.count()).select_from(filtered))
         ) or 0
 
-    async def content_type_counts(self, vault_ids: list[UUID]) -> list[FacetCount]:
-        ct_col = func.split_part(SourceDocumentORM.file_path, "/", 2).label(
-            "content_type"
-        )
+    async def source_type_counts(self, vault_ids: list[UUID]) -> list[FacetCount]:
+        """Counts per source_type for faceted source listings."""
         result = await self.session.execute(
-            select(ct_col, func.count().label("cnt"))
+            select(SourceDocumentORM.source_type, func.count().label("cnt"))
             .where(SourceDocumentORM.vault_id.in_(vault_ids))
-            .group_by(ct_col)
+            .group_by(SourceDocumentORM.source_type)
             .order_by(func.count().desc())
         )
-        return [FacetCount(value=row.content_type, count=row.cnt) for row in result]
+        return [FacetCount(value=row.source_type, count=row.cnt) for row in result]
 
     async def distinct_tags(self, vault_ids: list[UUID]) -> list[str]:
         tag_col = func.unnest(SourceDocumentORM.tags).label("tag")
@@ -489,9 +482,7 @@ def _source_document_query(
     tags: list[str] | None = None,
     author: str | None = None,
     genre: str | None = None,
-    compiled: bool | None = None,
     source_type: str | None = None,
-    content_type: str | None = None,
     search: str | None = None,
     date_gte: str | None = None,
     date_lte: str | None = None,
@@ -503,14 +494,8 @@ def _source_document_query(
         stmt = stmt.where(SourceDocumentORM.author.ilike(f"%{author}%"))
     if genre:
         stmt = stmt.where(SourceDocumentORM.genre == genre)
-    if compiled is not None:
-        stmt = stmt.where(SourceDocumentORM.compiled == compiled)
     if source_type:
         stmt = stmt.where(SourceDocumentORM.source_type == source_type)
-    if content_type:
-        stmt = stmt.where(
-            SourceDocumentORM.file_path.like(f"{raw_prefix(content_type)}/%")
-        )
     if search:
         stmt = stmt.where(
             SourceDocumentORM.title.ilike(f"%{search}%")

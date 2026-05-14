@@ -7,7 +7,7 @@ import {
   fetchLintResults,
   fetchRecentArticles,
 } from "@/api/explore";
-import { type ContentTypeFacet, fetchSourceDocuments } from "@/api/sources";
+import { type SourceTypeFacet, fetchSourceDocuments } from "@/api/sources";
 import { ExplorePage } from "@/components/explore-page";
 import { useViewNavigate } from "@/hooks/use-view-navigate";
 
@@ -18,7 +18,7 @@ export function ExploreContainer() {
   const [unresolvedCitations, setUnresolvedCitations] = useState<UnresolvedCitation[]>([]);
   const [unmentionedLinks, setUnmentionedLinks] = useState<UnmentionedLink[]>([]);
   const [recentArticles, setRecentArticles] = useState<WikiArticleOverview[]>([]);
-  const [contentTypes, setContentTypes] = useState<ContentTypeFacet[]>([]);
+  const [sourceTypes, setSourceTypes] = useState<SourceTypeFacet[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -29,7 +29,7 @@ export function ExploreContainer() {
         setUnresolvedCitations(lint.unresolved_citations);
         setUnmentionedLinks(lint.unmentioned_links);
         setRecentArticles(articles);
-        setContentTypes(sources.facets.content_types ?? []);
+        setSourceTypes(sources.facets.source_types ?? []);
       })
       .catch(() => {
         setOrphans([]);
@@ -37,7 +37,7 @@ export function ExploreContainer() {
         setUnresolvedCitations([]);
         setUnmentionedLinks([]);
         setRecentArticles([]);
-        setContentTypes([]);
+        setSourceTypes([]);
       })
       .finally(() => setLoading(false));
   }, []);
@@ -49,7 +49,7 @@ export function ExploreContainer() {
       unresolvedCitations={unresolvedCitations}
       unmentionedLinks={unmentionedLinks}
       recentArticles={recentArticles}
-      contentTypes={contentTypes}
+      sourceTypes={sourceTypes}
       loading={loading}
       onHome={() => navigate("/")}
       onArticleClick={(path) => navigate(`/doc/${path}`)}

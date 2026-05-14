@@ -5,7 +5,7 @@ R2 storage, under ``<bucket>/vaults/<vault_id>/``)::
 
     config.yaml                     user config
     prompts/<name>.md               optional prompt overrides
-    raw/<content_type>/<path>.md    ingested source files
+    raw/<source_kind>/<path>.md     ingested source files
     wiki/<slug>.md                  rendered articles
     wiki/_index.md                  wiki index
     raw/_index.md                   raw index
@@ -72,14 +72,20 @@ def wiki_slug(path: str) -> str:
     return path.removeprefix(WIKI_PREFIX).removesuffix(".md")
 
 
-def raw_prefix(content_type: str) -> str:
-    """Storage-relative directory for a content type's raw files."""
-    return f"{RAW_PREFIX}{content_type}"
+def raw_prefix(source_kind: str) -> str:
+    """Storage-relative directory for a source kind's raw files.
+
+    ``source_kind`` is the on-disk dirname — "docs" for curator-ingested
+    documents, "sessions" for promoted exchanges, "user" for anchored
+    suggestions. This is independent of the ``source_type`` column
+    value (which uses the singular form).
+    """
+    return f"{RAW_PREFIX}{source_kind}"
 
 
-def raw_path(content_type: str, rel: str) -> str:
-    """Full storage-relative path to a raw file of a given type."""
-    return f"{RAW_PREFIX}{content_type}/{rel}"
+def raw_path(source_kind: str, rel: str) -> str:
+    """Full storage-relative path to a raw file of a given source kind."""
+    return f"{RAW_PREFIX}{source_kind}/{rel}"
 
 
 def session_exchange_path(exchange_id: str) -> str:

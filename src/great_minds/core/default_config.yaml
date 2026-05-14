@@ -13,122 +13,24 @@ kinds:
 # biographical framings"). Empty string disables the steer.
 thematic_hint: ""
 
+# Vault-configured enriched metadata fields. Each entry declares a field
+# the extract LLM should look for in every document. The LLM's value
+# lands in source_documents.derived_extras (JSONB) and gets surfaced in
+# compile's editorial context (partition / synthesize per-doc context)
+# automatically.
+#
+# Curator never fills these — extract owns them end-to-end. A vault with
+# no `metadata:` block gets no extra enriched fields; the universal
+# title/precis/genre/tags/author/published_date set is always populated.
 metadata:
-  texts:
-    tradition:
-      type: string
-      source: enriched
-      description: >-
-        the intellectual or political tradition this text belongs to
-        (e.g. "marxist-leninist", "anarchist", "liberal"). Use a short
-        lowercase label. Empty string if unclear.
-    interlocutors:
-      type: list
-      source: enriched
-      description: >-
-        names of thinkers, writers, or figures this text is responding to,
-        arguing against, or in direct dialogue with. Empty list if none.
-    notes:
-      type: string
-      source: provided
-      default: ""
-
-  news:
-    outlet:
-      type: string
-      source: provided
-    relevance:
-      type: string
-      source: enriched
-      description: >-
-        a short label describing why this news item is relevant to the
-        knowledge base.
-    notes:
-      type: string
-      source: provided
-      default: ""
-
-  ideas:
-    status:
-      type: string
-      source: provided
-    notes:
-      type: string
-      source: provided
-      default: ""
-
-  user:
-    anchored_to:
-      type: string
-      source: provided
-      description: >-
-        slug of the wiki article this suggestion is attached to, if any.
-      default: ""
-    anchored_section:
-      type: string
-      source: provided
-      description: >-
-        section header within the anchored article this suggestion
-        targets, if any.
-      default: ""
-    intent:
-      type: string
-      source: provided
-      description: >-
-        what the user is doing with this suggestion (e.g. disagree,
-        correct, add_context, restructure).
-      default: ""
-
-  sessions:
-    source_session_id:
-      type: string
-      source: provided
-      description: >-
-        id of the session this exchange was promoted from.
-    source_exchange_id:
-      type: string
-      source: provided
-      description: >-
-        id of the specific exchange (Q/A pair) within that session.
-    source_query:
-      type: string
-      source: provided
-      description: >-
-        the verbatim user question this answer responded to.
-    source_doc_path:
-      type: string
-      source: provided
-      default: ""
-      description: >-
-        if the originating session was BTW-spun off an article, the
-        path of that article. Empty for ordinary query sessions.
-    source_anchor:
-      type: string
-      source: provided
-      default: ""
-      description: >-
-        the anchor passage on the originating article, if BTW-spun.
-    source_paragraph_index:
-      type: string
-      source: provided
-      default: ""
-      description: >-
-        paragraph index of the anchor, if BTW-spun.
-    notes:
-      type: string
-      source: provided
-      default: ""
-
-fields:
-  genre:
-    max_per_doc: 2
-    allow_new: true
-    min_uses_to_keep: 3
   tradition:
-    allow_new: true
-    min_uses_to_keep: 3
-  tags:
-    allow_new: true
-    min_uses_to_keep: 2
+    type: string
+    description: >-
+      the intellectual or political tradition this text belongs to
+      (e.g. "marxist-leninist", "anarchist", "liberal"). Use a short
+      lowercase label. Empty string if unclear.
   interlocutors:
-    allow_new: true
+    type: list
+    description: >-
+      names of thinkers, writers, or figures this text is responding to,
+      arguing against, or in direct dialogue with. Empty list if none.

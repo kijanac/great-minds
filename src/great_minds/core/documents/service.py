@@ -81,26 +81,23 @@ class SourceDocumentService:
         vault_id: UUID,
         *,
         pagination: PageParams,
-        content_type: str | None = None,
+        source_type: str | None = None,
         search: str | None = None,
-        compiled: bool | None = None,
     ) -> FacetedPage[SourceDocument, SourceDocumentFacets]:
         docs = await self.repo.query(
             [vault_id],
-            content_type=content_type,
+            source_type=source_type,
             search=search,
-            compiled=compiled,
             limit=pagination.limit,
             offset=pagination.offset,
         )
         total = await self.repo.count_query(
             [vault_id],
-            content_type=content_type,
+            source_type=source_type,
             search=search,
-            compiled=compiled,
         )
         facets = SourceDocumentFacets(
-            content_types=await self.repo.content_type_counts([vault_id])
+            source_types=await self.repo.source_type_counts([vault_id])
         )
         return FacetedPage(
             items=docs,

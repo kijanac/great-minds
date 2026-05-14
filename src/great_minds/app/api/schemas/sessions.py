@@ -53,6 +53,6 @@ class PromoteExchangeResponse(BaseModel):
 
     mode: Literal["ingested", "proposed"]
     path: str
-    title: str
+    title: str | None
     document_id: str | None = None
     proposal_id: str | None = None

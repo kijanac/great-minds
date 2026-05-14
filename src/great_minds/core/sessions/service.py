@@ -3,11 +3,7 @@
 from collections import defaultdict
 from uuid import UUID
 
-from openai import AsyncOpenAI
-
 from great_minds.core.documents.builder import build_document
-from great_minds.core.llm import QUERY_MODEL
-from great_minds.core.llm.client import api_call, extract_content
 from great_minds.core.pagination import Page, PageParams, create_page
 from great_minds.core.storage import Storage
 
@@ -21,14 +17,6 @@ from .schemas import (
     SessionEvent,
     SessionOrigin,
     SessionOverview,
-)
-
-
-_SESSION_TITLE_SYSTEM = (
-    "You generate concise titles for distilled Q&A excerpts that have "
-    "been promoted to a knowledge base. Output a 3-7 word noun phrase "
-    "in Title Case, no question marks, no leading articles, no quotes. "
-    "Output ONLY the title text — no preamble, no explanation."
 )
 
 
@@ -200,71 +188,46 @@ class SessionService:
         return "".join(parts).rstrip() + "\n"
 
     @staticmethod
-    async def generate_session_title(
-        client: AsyncOpenAI, query: str, answer: str
-    ) -> str:
-        """One-shot title for a promoted session exchange."""
-        response = await api_call(
-            client,
-            model=QUERY_MODEL,
-            messages=[
-                {"role": "system", "content": _SESSION_TITLE_SYSTEM},
-                {"role": "user", "content": f"Q: {query}\n\nA: {answer}"},
-            ],
-            temperature=0.4,
-        )
-        title = (extract_content(response) or "").strip().strip('"').strip()
-        if not title:
-            raise ValueError("LLM returned empty title")
-        return title
-
-    @staticmethod
     def session_exchange_build_args(
         *,
         session_id: str,
         exchange: ExchangeEvent,
-        title: str,
         session_origin: SessionOrigin | None,
     ) -> dict:
-        """Args dict shared by document rendering and direct ingest."""
-        extras: dict[str, str] = {
-            "source_session_id": session_id,
-            "source_exchange_id": exchange.exId,
-            "source_query": exchange.query,
+        """Build kwargs for ``build_document`` / ``IngestService.ingest_session_exchange``.
+
+        Provenance fields are passed individually so they land in typed
+        columns. Title is intentionally absent — extract owns titling.
+        """
+        args: dict = {
+            "content": exchange.answer,
+            "source_type": "session",
+            "origin": "session-exchange",
+            "session_id": session_id,
+            "exchange_id": exchange.exId,
+            "session_query": exchange.query,
         }
         if session_origin is not None:
-            extras["source_doc_path"] = session_origin.doc_path
+            args["source_doc_path"] = session_origin.doc_path
             if session_origin.anchor:
-                extras["source_anchor"] = session_origin.anchor
+                args["source_anchor"] = session_origin.anchor
             if session_origin.paragraph_index is not None:
-                extras["source_paragraph_index"] = str(session_origin.paragraph_index)
-
-        return dict(
-            content=exchange.answer,
-            content_type="sessions",
-            source_type="user",
-            title=title,
-            origin="session-exchange",
-            **extras,
-        )
+                args["source_paragraph_index"] = session_origin.paragraph_index
+        return args
 
     @classmethod
     def render_session_exchange_source(
         cls,
-        config: dict,
         *,
         session_id: str,
         exchange: ExchangeEvent,
-        title: str,
         session_origin: SessionOrigin | None,
     ) -> str:
         """Build the full markdown (frontmatter + body) for a promoted exchange."""
         return build_document(
-            config,
             **cls.session_exchange_build_args(
                 session_id=session_id,
                 exchange=exchange,
-                title=title,
                 session_origin=session_origin,
             ),
         )

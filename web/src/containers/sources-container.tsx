@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useSearchParams } from "react-router";
 
 import {
-  type ContentTypeFacet,
+  type SourceTypeFacet,
   type SourceDocumentSummary,
   fetchSourceDocuments,
 } from "@/api/sources";
@@ -19,7 +19,7 @@ export function SourcesContainer() {
   const initialType = searchParams.get("type") || null;
 
   const [items, setItems] = useState<SourceDocumentSummary[]>([]);
-  const [contentTypes, setContentTypes] = useState<ContentTypeFacet[]>([]);
+  const [sourceTypes, setSourceTypes] = useState<SourceTypeFacet[]>([]);
   const [activeType, setActiveType] = useState<string | null>(initialType);
   const [search, setSearch] = useState("");
   const [loading, setLoading] = useState(true);
@@ -35,24 +35,24 @@ export function SourcesContainer() {
   }, []);
 
   const load = useCallback(
-    async (params: { content_type?: string; search?: string; offset: number; append: boolean }) => {
+    async (params: { source_type?: string; search?: string; offset: number; append: boolean }) => {
       setLoading(true);
       try {
         const data = await fetchSourceDocuments({
-          content_type: params.content_type || undefined,
+          source_type: params.source_type || undefined,
           search: params.search || undefined,
           limit: PAGE_SIZE,
           offset: params.offset,
         });
         setItems((prev) => (params.append ? [...prev, ...data.items] : data.items));
         if (!params.append) {
-          setContentTypes(data.facets.content_types ?? []);
+          setSourceTypes(data.facets.source_types ?? []);
         }
         setHasMore(data.pagination.offset + data.items.length < data.pagination.total);
       } catch {
         if (!params.append) {
           setItems([]);
-          setContentTypes([]);
+          setSourceTypes([]);
         }
         setHasMore(false);
       } finally {
@@ -65,7 +65,7 @@ export function SourcesContainer() {
   useEffect(() => {
     setOffset(0);
     load({
-      content_type: activeType ?? undefined,
+      source_type: activeType ?? undefined,
       search: searchRef.current,
       offset: 0,
       append: false,
@@ -87,7 +87,7 @@ export function SourcesContainer() {
     debounceRef.current = setTimeout(() => {
       setOffset(0);
       load({
-        content_type: activeType ?? undefined,
+        source_type: activeType ?? undefined,
         search: query,
         offset: 0,
         append: false,
@@ -99,7 +99,7 @@ export function SourcesContainer() {
     const newOffset = offset + PAGE_SIZE;
     setOffset(newOffset);
     load({
-      content_type: activeType ?? undefined,
+      source_type: activeType ?? undefined,
       search,
       offset: newOffset,
       append: true,
@@ -109,7 +109,7 @@ export function SourcesContainer() {
   return (
     <SourcesPage
       items={items}
-      contentTypes={contentTypes}
+      sourceTypes={sourceTypes}
       activeType={activeType}
       search={search}
       loading={loading}

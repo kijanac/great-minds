@@ -7,20 +7,20 @@ import httpx
 from fastapi import APIRouter, HTTPException, UploadFile, status
 
 from great_minds.app.api.dependencies import (
-    VaultStorageDep,
     IngestServiceDep,
     PipelineRunServiceDep,
+    VaultStorageDep,
 )
 from great_minds.app.api.schemas.ingest import (
+    RawSource,
     StagedFileProcessRequest,
     StagedFileSignRequest,
     StagedFileSignResponse,
-    RawSource,
     URLSource,
     UserSuggestion,
 )
 from great_minds.app.api.schemas.jobs import JobResponse
-from great_minds.core.documents.schemas import IngestedDocument, SourceMetadata
+from great_minds.core.documents.schemas import IngestedDocument
 
 log = logging.getLogger(__name__)
 
@@ -37,9 +37,9 @@ async def ingest(
     return await ingest_service.ingest_text(
         vault_id,
         storage,
-        source.content,
-        source.dest,
-        source.metadata,
+        content=source.content,
+        dest=source.dest,
+        origin=source.origin,
     )
 
 
@@ -69,41 +69,27 @@ async def ingest_upload(
     vault_id: UUID,
     storage: VaultStorageDep,
     ingest_service: IngestServiceDep,
-    content_type: str = "texts",
-    author: str | None = None,
-    date: str | None = None,
     origin: str | None = None,
-    url: str | None = None,
     dest_path: str | None = None,
-    source_type: str = "document",
 ) -> IngestedDocument:
     raw_bytes = await file.read()
     if not file.filename:
         raise HTTPException(
             status_code=400, detail="Uploaded file must have a filename"
         )
-    filename = file.filename
-    metadata = SourceMetadata(
-        content_type=content_type,
-        source_type=source_type,
-        author=author,
-        published_date=date,
-        origin=origin,
-        url=url,
-    )
     try:
         return await ingest_service.ingest_upload(
             vault_id,
             storage,
-            raw_bytes,
-            filename,
-            metadata,
+            raw_bytes=raw_bytes,
+            filename=file.filename,
             mimetype=file.content_type or "",
             dest_path=dest_path,
+            origin=origin,
         )
     except UnicodeDecodeError:
         raise HTTPException(
-            status_code=400, detail=f"File is not valid UTF-8: {filename}"
+            status_code=400, detail=f"File is not valid UTF-8: {file.filename}"
         )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
@@ -120,8 +106,8 @@ async def ingest_url(
         return await ingest_service.ingest_url(
             vault_id,
             storage,
-            source.url,
-            source.metadata,
+            url=source.url,
+            origin=source.origin,
         )
     except httpx.HTTPError as exc:
         raise HTTPException(status_code=400, detail=f"Failed to fetch URL: {exc}")
@@ -162,8 +148,6 @@ async def ingest_staged_files_process(
             vault_id=vault_id,
             job_id=req.job_id,
             files=req.files,
-            content_type=req.content_type,
-            source_type=req.source_type,
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc

@@ -45,15 +45,13 @@ async def list_raw_sources(
     vault_id: UUID,
     pagination: PageParamsQuery,
     source_service: SourceDocumentServiceDep,
-    content_type: str | None = None,
+    source_type: str | None = None,
     search: str | None = None,
-    compiled: bool | None = None,
 ) -> FacetedPage[schemas.SourceDocumentSummary, SourceDocumentFacets]:
     result = await source_service.list_sources(
         vault_id,
-        content_type=content_type,
+        source_type=source_type,
         search=search,
-        compiled=compiled,
         pagination=pagination,
     )
     return FacetedPage(

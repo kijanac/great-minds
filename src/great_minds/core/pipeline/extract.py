@@ -1,15 +1,13 @@
 """Phase 1 — extract.
 
-One LLM call per document. Produces a SourceCard (title, doc_metadata,
-precis, ideas with anchors) and corresponding idea embeddings. Per-doc
-cache keyed on sha256(doc_content + prompt_hash + kinds_config +
-extract_model) short-circuits the LLM + embedding work for incremental
-compiles.
+One LLM call per document. Produces a SourceCard (title, precis,
+author, published_date, genre, tags, derived_extras, ideas) plus
+embeddings for each idea. Per-doc cache keyed on
+sha256(doc_body + rendered_prompt_hash + extract_model) short-circuits
+the LLM + embedding work on incremental compiles.
 
-Per-source-type metadata fields (tradition, interlocutors, outlet, etc.)
-are pulled from the vault's config.yaml metadata.<source_type> section
-via documents.builder.load_field_specs and formatted into the prompt's
-{extra_fields} slot. Universal fields (genre, tags) are hardcoded.
+The rendered_prompt_hash folds in both the prompt template and the
+vault's enriched-field config; either changing invalidates the cache.
 """
 
 import asyncio
@@ -24,39 +22,29 @@ from pydantic import ValidationError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from great_minds.core.compile_cache import CompileCacheRepository
-from great_minds.core.vaults.prompts import load_prompt
-from great_minds.core.documents import SourceDocumentService
-from great_minds.core.llm.client import json_llm_call
+from great_minds.core.documents import SourceDocument, SourceDocumentService
+from great_minds.core.documents.builder import build_frontmatter
 from great_minds.core.hashing import content_hash, prompt_hash
+from great_minds.core.ideas.schemas import Anchor, Idea, IdeaEmbedding, SourceCard
+from great_minds.core.ideas.service import IdeaService
+from great_minds.core.llm import EXTRACT_MODEL, truncate_and_normalize
+from great_minds.core.llm.client import json_llm_call
+from great_minds.core.llm.providers import EMBEDDING_DIMENSIONS, EMBEDDING_MODEL
 from great_minds.core.markdown import (
     normalized_bodies,
     paragraph_for_quote,
     paragraphs,
     parse_frontmatter,
 )
-from great_minds.core.ideas.schemas import (
-    Anchor,
-    DocMetadata,
-    Idea,
-    IdeaEmbedding,
-    SourceCard,
-)
-from great_minds.core.ideas.service import IdeaService
-from great_minds.core.documents.builder import load_field_specs
-from great_minds.core.llm import EXTRACT_MODEL
-from great_minds.core.llm.providers import (
-    EMBEDDING_DIMENSIONS,
-    EMBEDDING_MODEL,
-)
 from great_minds.core.pipeline_runs import (
     PipelineProgressRunner,
     PipelineProgressStep,
     build_progress_steps,
 )
-from great_minds.core.llm import truncate_and_normalize
 from great_minds.core.storage import Storage
 from great_minds.core.telemetry import enrich, log_event
-from great_minds.core.vaults.config import VaultConfig
+from great_minds.core.vaults.config import EnrichedFieldSpec, VaultConfig
+from great_minds.core.vaults.prompts import load_prompt
 
 log = logging.getLogger(__name__)
 
@@ -80,20 +68,20 @@ class ExtractPhase:
         storage: Storage,
         client: AsyncOpenAI,
         session: AsyncSession,
-        progress: PipelineProgressRunner,
-        compile_cache: CompileCacheRepository,
         source_docs: SourceDocumentService,
         ideas: IdeaService,
+        compile_cache: CompileCacheRepository,
+        progress: PipelineProgressRunner,
         config: VaultConfig,
-        concurrency: int,
+        concurrency: int = 8,
     ) -> None:
         self.storage = storage
         self.client = client
         self.session = session
-        self.progress = progress
-        self.compile_cache = compile_cache
         self.source_docs = source_docs
         self.ideas = ideas
+        self.compile_cache = compile_cache
+        self.progress = progress
         self.config = config
         self.concurrency = concurrency
 
@@ -102,21 +90,14 @@ class ExtractPhase:
         active: str,
         *,
         completed: set[str] | None = None,
-        failed: set[str] | None = None,
-        counts: dict[str, tuple[int | None, int | None]] | None = None,
-        details: dict[str, str] | None = None,
+        counts: dict[str, tuple[int, int]] | None = None,
     ) -> list[PipelineProgressStep]:
         return build_progress_steps(
-            EXTRACT_STEP_LABELS,
-            active,
-            completed=completed,
-            failed=failed,
-            counts=counts,
-            details=details,
+            EXTRACT_STEP_LABELS, active, completed=completed, counts=counts
         )
 
-    async def run(self, vault_id: UUID, pipeline_run_id: UUID) -> None:
-        """Extract every raw document registered in the DB for this vault.
+    async def run(self, *, vault_id: UUID, pipeline_run_id: UUID) -> None:
+        """Drive Phase 1 — extract — over every doc in the docs registry.
 
         The documents table is the authoritative registry — ingest writes
         the file and the DB row together, so iterating the registry catches
@@ -125,8 +106,8 @@ class ExtractPhase:
         storage.read(strict=False).
         """
         prompt_template = await load_prompt(self.storage, "extract")
-        ph = prompt_hash(prompt_template)
-        kinds_key = "|".join(sorted(self.config.kinds))
+        rendered_template = _render_template_for_hash(prompt_template, self.config)
+        ph = prompt_hash(rendered_template)
 
         docs = await self.source_docs.list_all(vault_id)
         total_docs = len(docs)
@@ -149,11 +130,9 @@ class ExtractPhase:
                 vault_id=vault_id,
                 raw_path=doc.file_path,
                 document_id=doc.id,
-                source_type=doc.source_type,
                 body_hash=doc.body_hash,
-                prompt_template=prompt_template,
+                rendered_template=rendered_template,
                 prompt_hash=ph,
-                kinds_key=kinds_key,
             )
             for doc in docs
         ]
@@ -284,6 +263,15 @@ class ExtractPhase:
         await self.source_docs.update_metadata_from_cards(vault_id, cards)
         await self.session.commit()
 
+        # Mirror LLM-derived fields back into on-disk frontmatter so the
+        # vault is portable (a clone of R2 + a fresh DB reconstructs to
+        # the same state). Only freshly-extracted docs need rewriting;
+        # cache-hit docs already have correct frontmatter from a prior
+        # compile.
+        docs_by_id = {d.id: d for d in docs}
+        for doc_id, card in fresh_source_cards.items():
+            await _mirror_frontmatter(self.storage, docs_by_id[doc_id], card)
+
         enrich(
             docs_extracted=docs_extracted,
             cache_hits=cache_hits,
@@ -342,20 +330,13 @@ async def _extract_one(
     vault_id: UUID,
     raw_path: str,
     document_id: UUID,
-    source_type: str,
     body_hash: str,
-    prompt_template: str,
+    rendered_template: str,
     prompt_hash: str,
-    kinds_key: str,
 ) -> _ExtractOutcome:
     outcome = _ExtractOutcome(raw_path=raw_path, document_id=document_id)
     try:
-        cache_key = _cache_key(
-            body_hash=body_hash,
-            prompt_hash=prompt_hash,
-            kinds_key=kinds_key,
-            source_type=source_type,
-        )
+        cache_key = _cache_key(body_hash=body_hash, prompt_hash=prompt_hash)
         outcome.cache_key = cache_key
 
         cached = await phase.compile_cache.get(
@@ -376,13 +357,7 @@ async def _extract_one(
         _, body = parse_frontmatter(content)
 
         async with sem:
-            prompt = _render_prompt(
-                prompt_template=prompt_template,
-                kinds=phase.config.kinds,
-                source_type=source_type,
-                doc_content=body,
-                config_raw=phase.config.raw,
-            )
+            prompt = rendered_template.replace("{doc_content}", body)
             data = await json_llm_call(
                 phase.client,
                 model=EXTRACT_MODEL,
@@ -410,52 +385,37 @@ async def _extract_one(
     return outcome
 
 
-def _cache_key(
-    *, body_hash: str, prompt_hash: str, kinds_key: str, source_type: str
-) -> str:
+def _cache_key(*, body_hash: str, prompt_hash: str) -> str:
     return content_hash(
         body_hash,
         f"prompt={prompt_hash}",
-        f"kinds={kinds_key}",
-        f"source_type={source_type}",
         f"model={EXTRACT_MODEL}",
     )
 
 
-def _render_prompt(
-    *,
-    prompt_template: str,
-    kinds: tuple[str, ...],
-    source_type: str,
-    doc_content: str,
-    config_raw: dict,
-) -> str:
-    extra_fields = _build_extra_fields(config_raw, source_type)
-    return (
-        prompt_template.replace("{kinds}", ", ".join(kinds))
-        .replace("{source_type}", source_type)
-        .replace("{extra_fields}", extra_fields)
-        .replace("{doc_content}", doc_content)
+def _render_template_for_hash(prompt_template: str, config: VaultConfig) -> str:
+    """Substitute everything except ``{doc_content}`` into the template.
+
+    The result is identical for every doc in this compile, so we hash
+    it once and pass that as the cache-key component. Per-doc rendering
+    is a single ``replace("{doc_content}", body)``.
+    """
+    return prompt_template.replace("{kinds}", ", ".join(config.kinds)).replace(
+        "{vault_enriched_fields}",
+        _format_enriched_fields(config.enriched_fields),
     )
 
 
-def _build_extra_fields(config_raw: dict, source_type: str) -> str:
-    """Format per-source-type enriched fields into prompt lines.
+def _format_enriched_fields(specs: tuple[EnrichedFieldSpec, ...]) -> str:
+    """Render the vault's enriched fields as nested prompt lines.
 
-    Pulls from config.metadata.<source_type>, keeps fields with
-    source=="enriched", writes lines matching the sibling genre/tags
-    entries' format. Returns empty string if the vault has no
-    per-source-type enriched fields.
+    Matches the indentation of the surrounding ``derived_extras`` block
+    in extract.md. Empty when the vault has no enriched fields.
     """
-    try:
-        specs = load_field_specs(config_raw, source_type)
-    except ValueError:
-        return ""
-    enriched = [s for s in specs if s.source == "enriched"]
-    if not enriched:
+    if not specs:
         return ""
     lines = []
-    for spec in enriched:
+    for spec in specs:
         kind_hint = "array of strings" if spec.type == "list" else "string or null"
         desc = spec.description.strip() if spec.description else f"{spec.name} value"
         lines.append(f"    - `{spec.name}` ({kind_hint}): {desc}")
@@ -516,55 +476,21 @@ def _validate_extract_output(
             )
         )
 
-    doc_metadata = DocMetadata.model_validate(data.get("doc_metadata") or {})
-
     return SourceCard(
         document_id=document_id,
         title=data.get("title") or "",
-        doc_metadata=doc_metadata,
         precis=data.get("precis") or "",
+        author=data.get("author") or None,
+        published_date=data.get("published_date") or None,
+        genre=data.get("genre") or None,
+        tags=data.get("tags") or [],
+        derived_extras=data.get("derived_extras") or {},
         ideas=ideas,
     )
 
 
 # ---------------------------------------------------------------------------
-# Embedding
-# ---------------------------------------------------------------------------
-
-
-async def _embed_in_batches(
-    client, inputs: list[tuple[UUID, UUID, Idea]]
-) -> AsyncIterator[list[IdeaEmbedding]]:
-    """Yield IdeaEmbedding lists one batch at a time.
-
-    Per-batch yielding lets the caller checkpoint cache writes as docs
-    finish embedding, instead of waiting for the whole list to complete.
-    """
-    for start in range(0, len(inputs), EMBEDDING_BATCH_SIZE):
-        batch_inputs = inputs[start : start + EMBEDDING_BATCH_SIZE]
-        texts = [
-            f"{idea.label}. {idea.description}".strip() for _, _, idea in batch_inputs
-        ]
-        response = await client.embeddings.create(model=EMBEDDING_MODEL, input=texts)
-        out: list[IdeaEmbedding] = []
-        for (vault_id, document_id, idea), item in zip(batch_inputs, response.data):
-            vec = truncate_and_normalize(item.embedding, EMBEDDING_DIMENSIONS)
-            out.append(
-                IdeaEmbedding(
-                    idea_id=idea.idea_id,
-                    vault_id=vault_id,
-                    document_id=document_id,
-                    kind=idea.kind,
-                    label=idea.label,
-                    description=idea.description,
-                    embedding=vec,
-                )
-            )
-        yield out
-
-
-# ---------------------------------------------------------------------------
-# DB persistence helpers
+# Cache write
 # ---------------------------------------------------------------------------
 
 
@@ -582,7 +508,102 @@ async def _write_cache(
         cache_key=cache_key,
         value={"source_card": source_card.model_dump(mode="json")},
     )
-    # Extract writes cache entries before embedding/vector-index upserts.
-    # Commit each entry so a mid-phase crash can replay from DB cache and
-    # repair missing idea/document/vector rows without repeating LLM work.
     await session.commit()
+
+
+# ---------------------------------------------------------------------------
+# Embedding
+# ---------------------------------------------------------------------------
+
+
+async def _embed_in_batches(
+    client: AsyncOpenAI,
+    inputs: list[tuple[UUID, UUID, Idea]],
+) -> AsyncIterator[list[IdeaEmbedding]]:
+    """Yield ``IdeaEmbedding`` batches as embeddings come back.
+
+    Per-batch yielding lets the caller checkpoint cache writes as docs
+    finish embedding, instead of waiting for the whole list to complete.
+    A 300s per-batch timeout prevents the queue from deadlocking on a
+    stalled embeddings call.
+    """
+    for start in range(0, len(inputs), EMBEDDING_BATCH_SIZE):
+        batch_inputs = inputs[start : start + EMBEDDING_BATCH_SIZE]
+        texts = [
+            f"{idea.label}. {idea.description}".strip() for _, _, idea in batch_inputs
+        ]
+        try:
+            response = await asyncio.wait_for(
+                client.embeddings.create(model=EMBEDDING_MODEL, input=texts),
+                timeout=300,
+            )
+        except asyncio.TimeoutError:
+            log_event(
+                "embed_batch.timeout",
+                level=logging.WARNING,
+                batch_size=len(batch_inputs),
+            )
+            continue
+        yield [
+            IdeaEmbedding(
+                idea_id=idea.idea_id,
+                vault_id=vault_id,
+                document_id=document_id,
+                kind=idea.kind,
+                label=idea.label,
+                description=idea.description,
+                embedding=truncate_and_normalize(item.embedding, EMBEDDING_DIMENSIONS),
+            )
+            for (vault_id, document_id, idea), item in zip(batch_inputs, response.data)
+        ]
+
+
+# ---------------------------------------------------------------------------
+# Frontmatter mirror (post-extract)
+# ---------------------------------------------------------------------------
+
+
+async def _mirror_frontmatter(
+    storage: Storage, doc: SourceDocument, card: SourceCard
+) -> None:
+    """Rewrite this doc's on-disk frontmatter to reflect the new extract.
+
+    Identity / provenance comes from the (already-committed) DB row;
+    LLM-derived fields come from the SourceCard; vault-configured extras
+    are flattened to top-level frontmatter keys. Body is preserved
+    verbatim — anchors were injected at ingest time.
+
+    Raises if the file vanished between extract and mirror. The DB
+    update has already committed, so a missing file here is a real
+    inconsistency, not a silent-skip case.
+    """
+    existing = await storage.read(doc.file_path)
+    if existing is None:
+        raise RuntimeError(
+            f"document file missing during frontmatter mirror: {doc.file_path}"
+        )
+    _, body = parse_frontmatter(existing)
+    new_fm: dict = {
+        "source_type": doc.source_type,
+        "url": doc.url,
+        "origin": doc.origin,
+        "session_id": (
+            str(doc.provenance_session_id) if doc.provenance_session_id else None
+        ),
+        "exchange_id": doc.provenance_exchange_id,
+        "session_query": doc.provenance_session_query,
+        "source_doc_path": doc.provenance_source_doc_path,
+        "source_anchor": doc.provenance_source_anchor,
+        "source_paragraph_index": doc.provenance_source_paragraph_index,
+        "anchored_to": doc.provenance_anchored_to,
+        "anchored_section": doc.provenance_anchored_section,
+        "intent": doc.provenance_intent,
+        "title": card.title,
+        "precis": card.precis,
+        "author": card.author,
+        "date": card.published_date,
+        "genre": card.genre,
+        "tags": card.tags or None,
+        **card.derived_extras,
+    }
+    await storage.write(doc.file_path, build_frontmatter(new_fm) + body)

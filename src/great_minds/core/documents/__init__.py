@@ -8,14 +8,12 @@ from great_minds.core.documents.models import (
 from great_minds.core.documents.repository import SourceDocumentRepo, WikiArticleRepo
 from great_minds.core.documents.schemas import (
     Backlink,
-    DocumentMetadata,
     FileHash,
     IngestedDocument,
     SourceDocCreate,
     SourceDocument,
     SourceDocumentFacets,
     SourceDocumentUpdate,
-    SourceMetadata,
     WikiArticle,
     WikiArticleCreate,
     WikiArticleOverview,
@@ -25,7 +23,6 @@ from great_minds.core.documents.service import SourceDocumentService, WikiArticl
 __all__ = [
     "Backlink",
     "BacklinkORM",
-    "DocumentMetadata",
     "FileHash",
     "IngestedDocument",
     "SourceDocCreate",
@@ -35,7 +32,6 @@ __all__ = [
     "SourceDocumentRepo",
     "SourceDocumentService",
     "SourceDocumentUpdate",
-    "SourceMetadata",
     "WikiArticle",
     "WikiArticleCreate",
     "WikiArticleORM",

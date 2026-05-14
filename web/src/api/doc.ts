@@ -8,18 +8,28 @@ export const sourceDocumentSchema = z.object({
   vault_id: z.string(),
   file_path: z.string(),
   body_hash: z.string(),
-  compiled: z.boolean(),
+  source_type: z.string(),
   etag: z.string().nullable(),
-  title: z.string(),
-  author: z.string().nullable(),
-  published_date: z.string().nullable(),
   url: z.string().nullable(),
   origin: z.string().nullable(),
-  genre: z.string().nullable(),
+  // Provenance (set at ingest for session/user-suggestion docs; null for source_type='document'):
+  provenance_session_id: z.string().nullable(),
+  provenance_exchange_id: z.string().nullable(),
+  provenance_session_query: z.string().nullable(),
+  provenance_source_doc_path: z.string().nullable(),
+  provenance_source_anchor: z.string().nullable(),
+  provenance_source_paragraph_index: z.number().nullable(),
+  provenance_anchored_to: z.string().nullable(),
+  provenance_anchored_section: z.string().nullable(),
+  provenance_intent: z.string().nullable(),
+  // LLM-derived (null until first compile):
+  title: z.string().nullable(),
   precis: z.string().nullable(),
-  source_type: z.string().nullable(),
+  author: z.string().nullable(),
+  published_date: z.string().nullable(),
+  genre: z.string().nullable(),
   tags: z.array(z.string()),
-  doc_metadata: z.record(z.string(), z.unknown()),
+  derived_extras: z.record(z.string(), z.unknown()),
   created_at: z.string().nullable(),
   updated_at: z.string().nullable(),
 });
@@ -64,7 +74,7 @@ export function articleMeta(article: Article) {
       precis: article.precis || null,
       source_type: null as string | null,
       tags: [] as string[],
-      doc_metadata: {} as Record<string, unknown>,
+      derived_extras: {} as Record<string, unknown>,
     };
   }
   return {
@@ -77,7 +87,7 @@ export function articleMeta(article: Article) {
     precis: article.precis,
     source_type: article.source_type,
     tags: article.tags,
-    doc_metadata: article.doc_metadata,
+    derived_extras: article.derived_extras,
   };
 }
 

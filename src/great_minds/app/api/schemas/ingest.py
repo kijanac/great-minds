@@ -2,9 +2,8 @@
 
 from uuid import UUID
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 
-from great_minds.core.documents.schemas import SourceMetadata
 from great_minds.core.ingest_schemas import StagedFileInput, StagedFileSignedUpload
 from great_minds.core.ingest_service import UserSuggestionIntent
 
@@ -12,13 +11,13 @@ from great_minds.core.ingest_service import UserSuggestionIntent
 class RawSource(BaseModel):
     content: str
     dest: str
-    metadata: SourceMetadata = Field(default_factory=SourceMetadata)
+    origin: str | None = None
 
 
 class URLSource(BaseModel):
     job_id: UUID
     url: str
-    metadata: SourceMetadata = Field(default_factory=SourceMetadata)
+    origin: str | None = None
 
 
 class UserSuggestion(BaseModel):
@@ -44,5 +43,3 @@ class StagedFileSignResponse(BaseModel):
 class StagedFileProcessRequest(BaseModel):
     job_id: UUID
     files: list[StagedFileInput]
-    content_type: str = "texts"
-    source_type: str = "document"

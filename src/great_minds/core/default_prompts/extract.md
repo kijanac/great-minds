@@ -3,11 +3,13 @@ You are extracting structured knowledge from a source document. Your output feed
 Return a single JSON object with exactly these fields:
 
 - `title` (string): a clear, meaningful title for this document. Filenames are often uninformative placeholders — invent a title that captures what this document *is*. If the document has a clear natural title in its body (e.g. a pamphlet title, an article headline), use that.
-- `doc_metadata` (object):
-    - `genre` (string or null): what kind of document this is — e.g. "theoretical_pamphlet", "polemical_essay", "news_report", "biographical_sketch", "letter", "speech". Use snake_case. Null if genuinely unclear.
-    - `tags` (array of strings): 2-6 short lowercase topical tags.
-{extra_fields}
 - `precis` (string): 2-3 sentences on what this document is doing — its argument or purpose, not just its topic.
+- `author` (string or null): the author's name as it appears in or is most naturally inferred from the document. Null if the document has no identifiable author (anonymous pamphlet, collective publication, etc.).
+- `published_date` (string or null): the publication date if discernible from the document. Use ISO 8601 format (YYYY-MM-DD) when day is known, or partial forms (YYYY-MM, YYYY) when not. Null if not discernible.
+- `genre` (string or null): what kind of document this is — e.g. "theoretical_pamphlet", "polemical_essay", "news_report", "biographical_sketch", "letter", "speech". Use snake_case. Null if genuinely unclear.
+- `tags` (array of strings): 2-6 short lowercase topical tags.
+- `derived_extras` (object): values for vault-configured enriched fields, listed below. Omit the object or pass an empty object if no fields are configured for this vault.
+{vault_enriched_fields}
 - `ideas` (array of objects): specific factual things discussed in the document — people, events, organizations, concepts. Each idea:
     - `label` (string): a short canonical name for this thing as it appears in this document (e.g. "Lenin", "Paris Commune", "surplus value"). Use the form most consistent with how the document refers to it.
     - `kind` (string): one of the allowed kinds listed below. If nothing fits, use "other".
@@ -26,8 +28,6 @@ Ground rules:
 - If the document is very short, sparse, or not substantively about any specific ideas, return few or no ideas — an empty ideas array is acceptable.
 
 Allowed kinds: {kinds}
-
-Source type: {source_type}
 
 Document:
 

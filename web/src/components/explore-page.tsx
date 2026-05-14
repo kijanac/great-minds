@@ -2,7 +2,7 @@ import { Home } from "lucide-react";
 import type { ReactNode } from "react";
 
 import type { WikiArticleOverview, UnmentionedLink, UnresolvedCitation } from "@/api/explore";
-import type { ContentTypeFacet } from "@/api/sources";
+import type { SourceTypeFacet } from "@/api/sources";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
@@ -15,7 +15,7 @@ interface ExplorePageProps {
   unresolvedCitations: UnresolvedCitation[];
   unmentionedLinks: UnmentionedLink[];
   recentArticles: WikiArticleOverview[];
-  contentTypes: ContentTypeFacet[];
+  sourceTypes: SourceTypeFacet[];
   loading: boolean;
   onHome: () => void;
   onArticleClick: (path: string) => void;
@@ -31,7 +31,7 @@ export function ExplorePage({
   unresolvedCitations,
   unmentionedLinks,
   recentArticles,
-  contentTypes,
+  sourceTypes,
   loading,
   onHome,
   onArticleClick,
@@ -45,7 +45,7 @@ export function ExplorePage({
   const hasUnresolved = unresolvedCitations.length > 0;
   const hasUnmentioned = unmentionedLinks.length > 0;
   const hasArticles = recentArticles.length > 0;
-  const hasSourceTypes = contentTypes.length > 0;
+  const hasSourceTypes = sourceTypes.length > 0;
   const hasContent =
     hasOrphans || hasDirty || hasUnresolved || hasUnmentioned || hasArticles || hasSourceTypes;
 
@@ -100,9 +100,9 @@ export function ExplorePage({
                         onClick={() => onExploreSources()}
                         className={FILTER_CHIP_CLASS}
                       >
-                        all sources · {contentTypes.reduce((s, ct) => s + ct.count, 0)}
+                        all sources · {sourceTypes.reduce((s, ct) => s + ct.count, 0)}
                       </ToggleGroupItem>
-                      {contentTypes.map((ct) => (
+                      {sourceTypes.map((ct) => (
                         <ToggleGroupItem
                           key={ct.value}
                           value={`source-${ct.value}`}

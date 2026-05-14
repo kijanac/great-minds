@@ -1,17 +1,17 @@
 """Bulk-ingest a corpus directory into a vault.
 
-Mirrors workers.bulk_ingest_task but runs standalone — no absurd task
-queue, no heartbeats. For local dev + first-compile sanity checks.
+Mirrors workers.staged_file_ingest_task but runs standalone — no absurd
+task queue, no heartbeats. For local dev + first-compile sanity checks.
 
 Usage:
     uv run python scripts/bulk_ingest_corpus.py \\
-        <vault_id> <source_dir> <dest_rel> [--data-dir PATH] [--author NAME]
+        <vault_id> <source_dir> <dest_rel> [--data-dir PATH] [--origin LABEL]
 
 Example:
     uv run python scripts/bulk_ingest_corpus.py \\
         6d5f211f-a0b3-48c2-a361-fd83816765b8 \\
-        corpus/lenin/works/1897 raw/texts/lenin/1897 \\
-        --data-dir test_data --author "V.I. Lenin"
+        corpus/lenin/works/1897 raw/docs/lenin/1897 \\
+        --data-dir test_data --origin "MIA Archive"
 """
 
 import argparse
@@ -20,14 +20,14 @@ import hashlib
 from pathlib import Path
 from uuid import UUID
 
-from great_minds.core.vaults.config import load_config
-from great_minds.core.documents.builder import write_document
-from great_minds.core.markdown import parse_frontmatter
-from great_minds.core.settings import get_settings
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+
+from great_minds.core.documents.builder import write_document
 from great_minds.core.documents.repository import SourceDocumentRepo
 from great_minds.core.documents.schemas import SourceDocCreate
 from great_minds.core.documents.service import SourceDocumentService
+from great_minds.core.markdown import parse_frontmatter
+from great_minds.core.settings import get_settings
 from great_minds.core.storage import LocalStorage
 
 
@@ -36,10 +36,9 @@ async def main(
     source_dir: Path,
     dest_rel: str,
     data_dir: Path,
-    author: str | None,
+    origin: str | None,
 ) -> None:
     storage = LocalStorage(data_dir / "vaults" / str(vault_id))
-    config = await load_config(storage)
     source_files = sorted(source_dir.rglob("*.md"))
     total = len(source_files)
     if total == 0:
@@ -48,16 +47,12 @@ async def main(
 
     print(f"Ingesting {total} files from {source_dir} → {dest_rel}/")
 
-    ingest_kwargs: dict = {}
-    if author:
-        ingest_kwargs["author"] = author
-
     settings = get_settings()
     engine = create_async_engine(settings.database_url)
     sm = async_sessionmaker(engine, expire_on_commit=False)
     async with sm() as session:
         doc_service = SourceDocumentService(SourceDocumentRepo(session))
-        existing_hashes = await doc_service.get_raw_file_hashes(vault_id)
+        existing_hashes = await doc_service.file_hashes(vault_id)
 
         batch: list[SourceDocCreate] = []
         ingested = 0
@@ -69,7 +64,11 @@ async def main(
 
             raw_content = fp.read_text(encoding="utf-8")
             content_with_fm = await write_document(
-                storage, config, raw_content, "texts", dest=dest, **ingest_kwargs
+                storage,
+                raw_content,
+                dest=dest,
+                source_type="document",
+                origin=origin,
             )
             file_hash = hashlib.sha256(content_with_fm.encode()).hexdigest()
 
@@ -104,10 +103,10 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("source_dir", type=Path)
     p.add_argument(
         "dest_rel",
-        help="Destination path relative to vault root, e.g. raw/texts/lenin/1897",
+        help="Destination path relative to vault root, e.g. raw/docs/lenin/1897",
     )
     p.add_argument("--data-dir", type=Path, default=Path("/data"))
-    p.add_argument("--author", default=None)
+    p.add_argument("--origin", default=None, help="Origin label for the ingested batch")
     return p.parse_args()
 
 
@@ -115,10 +114,10 @@ if __name__ == "__main__":
     args = parse_args()
     asyncio.run(
         main(
-            vault_id=args.vault_id,
-            source_dir=args.source_dir,
-            dest_rel=args.dest_rel,
-            data_dir=args.data_dir,
-            author=args.author,
+            args.vault_id,
+            args.source_dir,
+            args.dest_rel,
+            args.data_dir,
+            args.origin,
         )
     )

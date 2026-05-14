@@ -106,8 +106,6 @@ class PipelineRunService:
         vault_id: UUID,
         job_id: UUID,
         files: list[StagedFileInput],
-        content_type: str,
-        source_type: str,
     ) -> PipelineRun:
         if not files:
             raise ValueError("no files provided")
@@ -121,8 +119,6 @@ class PipelineRunService:
         detail = await self.task_service.spawn_staged_file_ingest(
             vault_id=vault_id,
             files=[f.model_dump() for f in files],
-            content_type=content_type,
-            source_type=source_type,
             pipeline_run_id=run.id,
         )
         await self.attach_ingest_task(run.id, detail.id)

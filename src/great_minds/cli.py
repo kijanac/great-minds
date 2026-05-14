@@ -50,7 +50,6 @@ from great_minds.core.telemetry import (
     wide_event,
 )
 from great_minds.core.users.repository import UserRepository
-from great_minds.core.vaults.config import load_config
 from great_minds.core.vaults.repository import VaultRepository
 from great_minds.core.vaults.service import VaultService
 
@@ -225,38 +224,28 @@ async def query(
 
 @app.command()
 async def ingest(
-    content_type: str = typer.Argument(help="Content type (texts, news, ideas)"),
     path: Path = typer.Argument(help="File or directory of .md files to ingest"),
-    dest: str | None = typer.Option(None, "--dest", help="Destination directory"),
-    author: str | None = typer.Option(None, "--author", help="Author name"),
-    date: str | None = typer.Option(None, "--date", help="Publication date"),
-    origin: str | None = typer.Option(
-        None, "--origin", help="Publication or organization name"
+    dest: str | None = typer.Option(
+        None, "--dest", help="Destination subdir (default: raw/docs/)"
     ),
+    origin: str | None = typer.Option(None, "--origin", help="Origin label"),
     url: str | None = typer.Option(None, "--url", help="Source URL"),
-    outlet: str | None = typer.Option(
-        None, "--outlet", help="News outlet (for news type)"
-    ),
 ) -> None:
-    """Ingest documents into the knowledge base."""
+    """Ingest documents into the knowledge base.
+
+    LLM-derived metadata (title, precis, author, date, genre, tags, plus
+    any vault-configured enriched fields) is filled in by the extract
+    phase on first compile. Only mechanically-known fields (url, origin)
+    can be supplied at ingest time.
+    """
     setup_logging(service="great-minds")
     storage = _make_storage()
-    config = await load_config(storage)
-    dest = dest or raw_prefix(content_type)
-    kwargs = {
-        k: v
-        for k, v in (
-            ("author", author),
-            ("date", date),
-            ("origin", origin),
-            ("url", url),
-            ("outlet", outlet),
-        )
-        if v
-    }
+    dest = dest or raw_prefix("docs")
 
     if path.is_file():
-        result = await write_file(storage, config, path, content_type, dest, **kwargs)
+        result = await write_file(
+            storage, path, dest, source_type="document", url=url, origin=origin
+        )
         console.print(f"[green]✓[/green] [bold]{path}[/bold] → [cyan]{result}[/cyan]")
     elif path.is_dir():
         source_files = sorted(path.rglob("*.md"))
@@ -279,9 +268,7 @@ async def ingest(
             TimeRemainingColumn(),
             console=console,
         ) as progress:
-            task = progress.add_task(
-                f"Ingesting [cyan]{content_type}[/cyan] files", total=total
-            )
+            task = progress.add_task("Ingesting files", total=total)
             for filepath in source_files:
                 relative = filepath.relative_to(path)
                 file_dest = f"{dest}/{relative}"
@@ -291,11 +278,11 @@ async def ingest(
                     continue
                 await write_document(
                     storage,
-                    config,
                     filepath.read_text("utf-8"),
-                    content_type,
                     dest=file_dest,
-                    **kwargs,
+                    source_type="document",
+                    url=url,
+                    origin=origin,
                 )
                 ingested += 1
                 progress.advance(task)

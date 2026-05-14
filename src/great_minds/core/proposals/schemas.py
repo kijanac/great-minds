@@ -34,7 +34,7 @@ class ProposalCreate(BaseModel):
     """
 
     content_type: str
-    title: str
+    title: str | None
     author: str | None
     dest_path: str
     rendered: str

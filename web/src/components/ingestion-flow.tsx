@@ -289,7 +289,6 @@ export function IngestionFlow({ hasActivePipeline }: { hasActivePipeline: boolea
       let lastFailedUploads: FailedUpload[] = [];
       for await (const event of ingestStagedFiles(
         files.map((f) => f.file),
-        "texts",
         stableJobId,
       )) {
         if (event.phase === "uploading" && event.failed_uploads) {

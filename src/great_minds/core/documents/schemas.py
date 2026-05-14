@@ -6,53 +6,43 @@ from datetime import datetime
 
 from pydantic import BaseModel, ConfigDict, Field, computed_field
 
-from great_minds.core.documents.builder import UNIVERSAL_ALL
-from great_minds.core.ideas.schemas import DocMetadata
 from great_minds.core.pagination import FacetCount
 from great_minds.core.paths import wiki_slug
 
 # ---------------------------------------------------------------------------
-# Ingest-time source metadata (caller-supplied request input)
+# Frontmatter ↔ column key mapping
 # ---------------------------------------------------------------------------
-
-
-class SourceMetadata(BaseModel):
-    """Caller-supplied metadata accompanying an ingest request.
-
-    Universal frontmatter fields the API and CLI hand to ``IngestService``
-    before a source document is constructed.
-    """
-
-    content_type: str = "texts"
-    source_type: str = "document"
-    author: str | None = None
-    published_date: str | None = Field(default=None, serialization_alias="date")
-    origin: str | None = None
-    title: str | None = None
-    url: str | None = None
-
-
-_UNIVERSAL_KEYS = frozenset(UNIVERSAL_ALL) | {"url"}
-
-
-# ---------------------------------------------------------------------------
-# Shared metadata (parsed frontmatter view)
-# ---------------------------------------------------------------------------
-
-
-class DocumentMetadata(BaseModel):
-    """Source and enrichment metadata for an indexed source document."""
-
-    title: str = ""
-    author: str | None = None
-    published_date: str | None = None
-    url: str | None = None
-    origin: str | None = None
-    genre: str | None = None
-    precis: str | None = None
-    source_type: str | None = None
-    tags: list[str] = Field(default_factory=list)
-    doc_metadata: DocMetadata = Field(default_factory=DocMetadata)
+#
+# On-disk frontmatter uses natural names (``date``, ``session_id``,
+# ``anchored_to``); columns use prefixed names where needed for clarity
+# in the wider source_documents table (``published_date``,
+# ``provenance_session_id``). This module owns the mapping in
+# ``SourceDocCreate.from_frontmatter``.
+#
+# Anything outside this known set lands in ``derived_extras`` — that's
+# how vault-configured enriched fields (e.g. ``tradition``,
+# ``interlocutors``) flow from disk to DB.
+_FM_IDENTITY = {"source_type", "url", "origin"}
+_FM_PROVENANCE_SESSION = {
+    "session_id",
+    "exchange_id",
+    "session_query",
+    "source_doc_path",
+    "source_anchor",
+    "source_paragraph_index",
+}
+_FM_PROVENANCE_USER = {"anchored_to", "anchored_section", "intent"}
+_FM_LLM_DERIVED = {
+    "title",
+    "precis",
+    "author",
+    "date",
+    "genre",
+    "tags",
+}
+_FM_KNOWN_KEYS = (
+    _FM_IDENTITY | _FM_PROVENANCE_SESSION | _FM_PROVENANCE_USER | _FM_LLM_DERIVED
+)
 
 
 # ---------------------------------------------------------------------------
@@ -61,15 +51,35 @@ class DocumentMetadata(BaseModel):
 
 
 class SourceDocCreate(BaseModel):
-    """Input for creating / upserting a source document."""
+    """Input for creating / upserting a source document.
+
+    Carries identity / mechanically-known fields (zone 1) and
+    per-source-kind provenance (zone 2). LLM-derived fields (zone 3)
+    are owned by extract and never written through this schema —
+    ingest sets them to None, and ``update_metadata_from_cards`` is the
+    sole writer downstream.
+    """
 
     model_config = ConfigDict(extra="ignore")
 
+    # Identity / content (zone 1):
     file_path: str
     content: str
-    compiled: bool = False
+    source_type: str = "document"
     etag: str | None = None
-    metadata: DocumentMetadata = Field(default_factory=DocumentMetadata)
+    url: str | None = None
+    origin: str | None = None
+
+    # Per-source-kind provenance (zone 2):
+    provenance_session_id: UUID | None = None
+    provenance_exchange_id: str | None = None
+    provenance_session_query: str | None = None
+    provenance_source_doc_path: str | None = None
+    provenance_source_anchor: str | None = None
+    provenance_source_paragraph_index: int | None = None
+    provenance_anchored_to: str | None = None
+    provenance_anchored_section: str | None = None
+    provenance_intent: str | None = None
 
     @staticmethod
     def from_frontmatter(
@@ -77,22 +87,34 @@ class SourceDocCreate(BaseModel):
         file_path: str,
         content: str,
     ) -> "SourceDocCreate":
-        extra = {k: v for k, v in fm.items() if k not in _UNIVERSAL_KEYS}
+        """Build a SourceDocCreate from parsed frontmatter.
+
+        Maps natural frontmatter key names to typed fields. Zone 3
+        keys (title, precis, etc.) and anything in ``derived_extras``
+        are deliberately not consumed — those reflect prior extract
+        output and the next compile will refresh them from scratch.
+        """
+        session_paragraph_index = fm.get("source_paragraph_index")
+        if isinstance(session_paragraph_index, str):
+            session_paragraph_index = (
+                int(session_paragraph_index) if session_paragraph_index else None
+            )
+
         return SourceDocCreate(
             file_path=file_path,
             content=content,
-            compiled=fm.get("compiled", False),
-            metadata=DocumentMetadata(
-                source_type=fm.get("source_type"),
-                url=fm.get("url"),
-                title=fm.get("title", ""),
-                author=fm.get("author"),
-                origin=fm.get("origin"),
-                published_date=str(fm["date"]) if "date" in fm else None,
-                genre=fm.get("genre"),
-                tags=fm.get("tags", []),
-                doc_metadata=DocMetadata.model_validate(extra),
-            ),
+            source_type=fm.get("source_type", "document"),
+            url=fm.get("url"),
+            origin=fm.get("origin"),
+            provenance_session_id=fm.get("session_id"),
+            provenance_exchange_id=fm.get("exchange_id"),
+            provenance_session_query=fm.get("session_query"),
+            provenance_source_doc_path=fm.get("source_doc_path"),
+            provenance_source_anchor=fm.get("source_anchor"),
+            provenance_source_paragraph_index=session_paragraph_index,
+            provenance_anchored_to=fm.get("anchored_to"),
+            provenance_anchored_section=fm.get("anchored_section"),
+            provenance_intent=fm.get("intent"),
         )
 
 
@@ -118,13 +140,11 @@ class WikiArticleCreate(BaseModel):
 
 
 class SourceDocument(BaseModel):
-    """Indexed source document.  Body lives in storage.
+    """Indexed source document. Body lives in storage.
 
     Flat by design: every field maps 1:1 to a column on the
     ``source_documents`` table so reads are a clean
-    ``SourceDocument.model_validate(orm)`` with no helper. The nested
-    ``DocumentMetadata`` shape is retained for *input* schemas only
-    (``SourceDocCreate``) where it mirrors parsed frontmatter.
+    ``SourceDocument.model_validate(orm)`` with no helper.
 
     ``kind`` is a class-Literal tag used as the discriminator for the
     ``SourceDocument | WikiArticle`` union exposed at the API edge.
@@ -136,28 +156,43 @@ class SourceDocument(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     kind: Literal["source"] = "source"
+
+    # Identity / mechanically-known:
     id: UUID
     vault_id: UUID
     file_path: str
     body_hash: str
-    compiled: bool
+    source_type: str
     etag: str | None = None
-    title: str
-    author: str | None = None
-    published_date: str | None = None
     url: str | None = None
     origin: str | None = None
-    genre: str | None = None
+
+    # Per-source-kind provenance:
+    provenance_session_id: UUID | None = None
+    provenance_exchange_id: str | None = None
+    provenance_session_query: str | None = None
+    provenance_source_doc_path: str | None = None
+    provenance_source_anchor: str | None = None
+    provenance_source_paragraph_index: int | None = None
+    provenance_anchored_to: str | None = None
+    provenance_anchored_section: str | None = None
+    provenance_intent: str | None = None
+
+    # LLM-derived (NULL until first compile):
+    title: str | None = None
     precis: str | None = None
-    source_type: str | None = None
+    author: str | None = None
+    published_date: str | None = None
+    genre: str | None = None
     tags: list[str] = Field(default_factory=list)
-    doc_metadata: DocMetadata = Field(default_factory=DocMetadata)
+    derived_extras: dict = Field(default_factory=dict)
+
     created_at: datetime | None = None
     updated_at: datetime | None = None
 
 
 class WikiArticle(BaseModel):
-    """Rendered wiki article.  Title / precis are snapshots from the
+    """Rendered wiki article. Title / precis are snapshots from the
     topic at render time, stored on the article row.
 
     ``kind`` is a class-Literal tag used as the discriminator for the
@@ -225,23 +260,27 @@ class FileHash(BaseModel):
 
 
 class SourceDocumentUpdate(BaseModel):
-    """Partial update for source documents."""
+    """Partial update for source documents — used by the extract phase
+    to write LLM-derived fields back into the docs table."""
 
     model_config = ConfigDict(from_attributes=True)
 
     document_id: UUID
-    etag: str | None = None
     title: str | None = None
     precis: str | None = None
-    doc_metadata: DocMetadata | None = None
+    author: str | None = None
+    published_date: str | None = None
+    genre: str | None = None
+    tags: list[str] | None = None
+    derived_extras: dict | None = None
+    etag: str | None = None
 
 
 class IngestedDocument(BaseModel):
     """Result of a successful source ingest operation."""
 
     file_path: str
-    title: str
 
 
 class SourceDocumentFacets(BaseModel):
-    content_types: list[FacetCount] = Field(default_factory=list)
+    source_types: list[FacetCount] = Field(default_factory=list)

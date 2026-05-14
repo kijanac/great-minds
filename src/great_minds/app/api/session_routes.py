@@ -18,9 +18,7 @@ from great_minds.app.api.schemas import sessions as schemas
 from great_minds.core.sessions.schemas import BtwInput, ExchangeInput, SessionOverview
 from great_minds.core.sessions.service import SessionService
 from great_minds.core.vaults.models import MemberRole
-from great_minds.core.llm import get_async_client
 from great_minds.core.paths import session_exchange_path
-from great_minds.core.vaults.config import load_config
 from great_minds.core.pagination import Page
 from great_minds.core.proposals.schemas import ProposalCreate
 
@@ -170,9 +168,6 @@ async def promote_exchange(
     if not exchange.answer.strip():
         raise HTTPException(400, "Exchange has no answer yet")
 
-    title = await SessionService.generate_session_title(
-        get_async_client(), exchange.query, exchange.answer
-    )
     session_origin = meta.origin if meta else None
 
     if is_owner:
@@ -181,29 +176,25 @@ async def promote_exchange(
             session_service.storage,
             session_id=session_id,
             exchange=exchange,
-            title=title,
             session_origin=session_origin,
         )
         return schemas.PromoteExchangeResponse(
             mode="ingested",
             path=result.file_path,
-            title=result.title,
+            title=None,
         )
 
-    config = await load_config(session_service.storage)
     rendered = SessionService.render_session_exchange_source(
-        config,
         session_id=session_id,
         exchange=exchange,
-        title=title,
         session_origin=session_origin,
     )
     proposal = await proposal_service.create(
         vault_id=vault_id,
         user_id=user.id,
         data=ProposalCreate(
-            content_type="sessions",
-            title=title,
+            content_type="session",
+            title=None,
             author=None,
             dest_path=dest,
             rendered=rendered,
@@ -212,6 +203,6 @@ async def promote_exchange(
     return schemas.PromoteExchangeResponse(
         mode="proposed",
         path=dest,
-        title=title,
+        title=None,
         proposal_id=str(proposal.id),
     )
