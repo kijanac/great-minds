@@ -99,9 +99,9 @@ class IngestService:
         files: list[StagedFileInput],
     ) -> list[StagedFileSignedUpload]:
         """Generate presigned PUT URLs for direct-to-R2 staged uploads."""
-        vault = await self.vault_service.get(vault_id, strict=True)
-        if vault.r2_bucket_name is None:
-            raise ValueError(f"Vault {vault_id} has no r2_bucket_name")
+        vault = await self.vault_service.get_vault(vault_id)
+        if not vault.r2_bucket_name:
+            raise ValueError("vault has no r2 bucket; cannot sign uploads")
         admin = R2Admin(
             account_id=self.settings.r2_account_id,
             access_key_id=self.settings.r2_access_key_id,
