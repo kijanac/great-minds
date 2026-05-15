@@ -25,7 +25,7 @@ from great_minds.core.compile_cache import CompileCacheRepository
 from great_minds.core.documents import SourceDocument, SourceDocumentService
 from great_minds.core.documents.builder import build_frontmatter
 from great_minds.core.hashing import content_hash, prompt_hash
-from great_minds.core.ideas.schemas import Anchor, Idea, IdeaEmbedding, SourceCard
+from great_minds.core.ideas.schemas import Anchor, Idea, IdeaCreate, SourceCard
 from great_minds.core.ideas.service import IdeaService
 from great_minds.core.llm import EXTRACT_MODEL, truncate_and_normalize
 from great_minds.core.llm.client import json_llm_call
@@ -222,10 +222,10 @@ class ExtractPhase:
                 },
             ),
         )
-        fresh_embeddings: list[IdeaEmbedding] = []
+        fresh_ideas: list[IdeaCreate] = []
         embedding_batches_done = 0
         async for batch in _embed_in_batches(self.client, embedding_inputs):
-            fresh_embeddings.extend(batch)
+            fresh_ideas.extend(batch)
             embedding_batches_done += 1
             await self.progress.emit(
                 pipeline_run_id=pipeline_run_id,
@@ -257,7 +257,7 @@ class ExtractPhase:
             ),
         )
         await self.ideas.delete_for_documents(c.document_id for c in fresh_cards)
-        await self.ideas.record_extractions(fresh_embeddings)
+        await self.ideas.record_extractions(fresh_ideas)
         await self.source_docs.update_metadata_from_cards(vault_id, fresh_cards)
         await self.session.commit()
 
@@ -315,7 +315,7 @@ class _ExtractOutcome:
     raw_path: str
     document_id: UUID
     source_card: SourceCard | None = None
-    embeddings: list[IdeaEmbedding] = field(default_factory=list)
+    embeddings: list[IdeaCreate] = field(default_factory=list)
     cache_key: str = ""
     cache_hit: bool = False
     error: str | None = None
@@ -516,8 +516,8 @@ async def _write_cache(
 async def _embed_in_batches(
     client: AsyncOpenAI,
     inputs: list[tuple[UUID, UUID, Idea]],
-) -> AsyncIterator[list[IdeaEmbedding]]:
-    """Yield ``IdeaEmbedding`` batches as embeddings come back.
+) -> AsyncIterator[list[IdeaCreate]]:
+    """Yield ``IdeaCreate`` batches as embeddings come back.
 
     Per-batch yielding lets the caller checkpoint cache writes as docs
     finish embedding, instead of waiting for the whole list to complete.
@@ -542,7 +542,7 @@ async def _embed_in_batches(
             )
             continue
         yield [
-            IdeaEmbedding(
+            IdeaCreate(
                 idea_id=idea.idea_id,
                 vault_id=vault_id,
                 document_id=document_id,

@@ -45,6 +45,35 @@ class Idea(BaseModel):
     anchors: list[Anchor] = Field(default_factory=list)
 
 
+class IdeaCreate(Idea):
+    """Input for inserting/upserting an idea row.
+
+    Extends the domain ``Idea`` with the storage columns (``vault_id``
+    and ``embedding``) that extract supplies post-LLM, post-embedding.
+    ``_embed_in_batches`` produces these and the repository writes the
+    ``ideas`` row plus the corresponding ``anchors`` rows in one pass.
+    """
+
+    vault_id: UUID
+    embedding: list[float]
+
+
+class IdeaOverview(BaseModel):
+    """Narrow read of an idea — ``idea_id`` and ``embedding`` only.
+
+    Used by partition's k-means: only the vector and a row identifier
+    are needed to assemble the input matrix. Omitting anchors avoids the
+    lazy-load relationship that can't be accessed in an async session,
+    and trimming the doc/kind/label/description columns keeps vault-wide
+    scans light.
+    """
+
+    model_config = ConfigDict(from_attributes=True)
+
+    idea_id: UUID
+    embedding: list[float]
+
+
 class SourceCard(BaseModel):
     """Read-time aggregate over ``source_documents`` + ``ideas`` + ``anchors``.
 
@@ -64,24 +93,3 @@ class SourceCard(BaseModel):
     tags: list[str] = Field(default_factory=list)
     derived_extras: dict = Field(default_factory=dict)
     ideas: list[Idea]
-
-
-class IdeaEmbedding(BaseModel):
-    """Write-shape for one row in ``ideas`` — carries embedding + anchors.
-
-    Used during extract: ``_embed_in_batches`` produces these from the
-    domain ``Idea`` plus the freshly-computed embedding vector, and the
-    repository writes the ``ideas`` row and the corresponding ``anchors``
-    rows from this single record.
-    """
-
-    model_config = ConfigDict(from_attributes=True)
-
-    idea_id: UUID
-    vault_id: UUID
-    document_id: UUID
-    kind: str
-    label: str
-    description: str
-    anchors: list[Anchor] = Field(default_factory=list)
-    embedding: list[float]

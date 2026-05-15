@@ -9,20 +9,20 @@ from collections.abc import AsyncIterator, Iterable
 from uuid import UUID
 
 from great_minds.core.ideas.repository import IdeaRepository
-from great_minds.core.ideas.schemas import Idea, IdeaEmbedding, SourceCard
+from great_minds.core.ideas.schemas import Idea, IdeaCreate, IdeaOverview, SourceCard
 
 
 class IdeaService:
     def __init__(self, *, repo: IdeaRepository) -> None:
         self.repo = repo
 
-    async def record_extractions(self, entries: list[IdeaEmbedding]) -> None:
+    async def record_extractions(self, entries: list[IdeaCreate]) -> None:
         await self.repo.bulk_upsert(entries)
 
     async def delete_for_documents(self, document_ids: Iterable[UUID]) -> None:
         await self.repo.delete_for_documents(document_ids)
 
-    async def list_embeddings(self, vault_id: UUID) -> list[IdeaEmbedding]:
+    async def list_for_vault(self, vault_id: UUID) -> list[IdeaOverview]:
         return await self.repo.list_for_vault(vault_id)
 
     async def get_ids_for_vault(self, vault_id: UUID) -> list[UUID]:

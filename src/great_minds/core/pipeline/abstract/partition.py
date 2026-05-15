@@ -54,9 +54,8 @@ class PartitionPhase:
         max_tokens = int(target * self.max_factor)
         min_tokens = int(target * self.min_factor)
 
-        idea_embeddings = await self.ideas.list_embeddings(vault_id)
-        idea_embeddings.sort(key=lambda e: e.idea_id)
-        id_order = [e.idea_id for e in idea_embeddings]  # deterministic order
+        idea_overviews = await self.ideas.list_for_vault(vault_id)
+        id_order = [o.idea_id for o in idea_overviews]
 
         if not id_order:
             log_event(
@@ -91,9 +90,9 @@ class PartitionPhase:
         k = min(k, len(id_order))
 
         embedding_matrix = np.asarray(
-            [e.embedding for e in idea_embeddings], dtype=np.float32
+            [o.embedding for o in idea_overviews], dtype=np.float32
         )
-        del idea_embeddings
+        del idea_overviews
 
         labels = _seeded_kmeans(embedding_matrix, k)
 

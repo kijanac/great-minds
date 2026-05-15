@@ -4,9 +4,9 @@ Writes upsert ``ideas`` rows (one per extracted idea, embedding included)
 and replace their ``anchors`` rows in one transaction. Reads come in
 three flavors:
 
-- Embedding-shape (``list_for_vault`` / ``get_ids_for_vault``): used by
-  map / partition for clustering and vault-scoped checks. Returns the
-  ``IdeaEmbedding`` projection.
+- Overview-shape (``list_for_vault`` / ``get_ids_for_vault``): used by
+  partition for k-means clustering. Returns ``IdeaOverview`` — narrow
+  projection of idea_id + embedding.
 - Source-card-shape (``iter_source_cards``): used by partition /
   synthesize for vault-wide iteration with doc-level metadata attached.
 - Idea-only-shape (``get_ideas_by_id``): used by render for spot-lookups
@@ -23,7 +23,7 @@ from sqlalchemy.orm import selectinload
 
 from great_minds.core.documents.models import SourceDocumentORM
 from great_minds.core.ideas.models import AnchorORM, IdeaORM
-from great_minds.core.ideas.schemas import Idea, IdeaEmbedding, SourceCard
+from great_minds.core.ideas.schemas import Idea, IdeaCreate, IdeaOverview, SourceCard
 
 
 _MAX_BULK_UPSERT_ROWS = 1000
@@ -33,7 +33,7 @@ class IdeaRepository:
     def __init__(self, session: AsyncSession) -> None:
         self.session = session
 
-    async def bulk_upsert(self, entries: list[IdeaEmbedding]) -> None:
+    async def bulk_upsert(self, entries: list[IdeaCreate]) -> None:
         """Upsert ``ideas`` rows and replace their ``anchors`` rows.
 
         ``ideas`` upserts by ``idea_id``; label/description/embedding may
@@ -103,17 +103,22 @@ class IdeaRepository:
             return
         await self.session.execute(delete(IdeaORM).where(IdeaORM.document_id.in_(ids)))
 
-    async def list_for_vault(self, vault_id: UUID) -> list[IdeaEmbedding]:
+    async def list_for_vault(self, vault_id: UUID) -> list[IdeaOverview]:
+        """Narrow read for partition's k-means: ``idea_id`` + ``embedding``.
+
+        Ordered by ``idea_id`` so row order is deterministic across
+        re-runs (KMeans tie-breaking depends on it). Returns the
+        ``IdeaOverview`` projection — anchors aren't loaded, so this
+        read is safe to call without a ``selectinload`` option.
+        """
         rows = (
-            (
-                await self.session.execute(
-                    select(IdeaORM).where(IdeaORM.vault_id == vault_id)
-                )
+            await self.session.execute(
+                select(IdeaORM.idea_id, IdeaORM.embedding)
+                .where(IdeaORM.vault_id == vault_id)
+                .order_by(IdeaORM.idea_id)
             )
-            .scalars()
-            .all()
-        )
-        return [IdeaEmbedding.model_validate(row) for row in rows]
+        ).all()
+        return [IdeaOverview.model_validate(row) for row in rows]
 
     async def get_ids_for_vault(self, vault_id: UUID) -> list[UUID]:
         rows = (
