@@ -14,7 +14,7 @@ from great_minds.core.documents import (
     WikiArticleRepo,
     WikiArticleService,
 )
-from great_minds.core.ideas.repository import IdeaEmbeddingRepository
+from great_minds.core.ideas.repository import IdeaRepository
 from great_minds.core.ideas.service import IdeaService
 from great_minds.core.paths import sidecar_root
 import great_minds.core.pipeline.abstract as abstract
@@ -173,10 +173,7 @@ async def build_compile_service(
     compile_sidecar_root = sidecar_root(Path(settings.data_dir), vault_id)
     source_docs = SourceDocumentService(SourceDocumentRepo(session))
     wiki_articles = WikiArticleService(WikiArticleRepo(session))
-    ideas = IdeaService(
-        embedding_repo=IdeaEmbeddingRepository(session),
-        storage=storage,
-    )
+    ideas = IdeaService(repo=IdeaRepository(session))
     search = SearchService(SearchIndexRepository(session))
     topics = TopicService(TopicRepository(session))
     compile_cache = CompileCacheRepository(session)
@@ -236,7 +233,7 @@ async def build_compile_service(
                 wiki_articles=wiki_articles,
                 topics=topics,
                 search=search,
-                source_cards=ideas.source_cards,
+                ideas=ideas,
                 concurrency=settings.compile_write_concurrency,
             ),
             verify=verify.VerifyPhase(

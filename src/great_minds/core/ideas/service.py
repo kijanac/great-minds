@@ -1,46 +1,36 @@
-"""IdeaService — coordinates source_cards.jsonl and idea_embeddings.
+"""IdeaService — thin orchestration over IdeaRepository.
 
-Extract writes to both stores; partition/map/derive read from one or
-the other. The service is the single entry point so the two stores
-stay aligned.
+Reads and writes both flow through the repository; the service layer
+exists for consistency with the rest of ``core/*/service.py`` and to
+give phases one DI handle for everything idea-related.
 """
 
+from collections.abc import AsyncIterator, Iterable
 from uuid import UUID
 
-from great_minds.core.ideas.repository import IdeaEmbeddingRepository
-from great_minds.core.ideas.schemas import IdeaEmbedding, SourceCard
-from great_minds.core.ideas.source_cards import SourceCardStore
-from great_minds.core.storage import Storage
+from great_minds.core.ideas.repository import IdeaRepository
+from great_minds.core.ideas.schemas import Idea, IdeaEmbedding, SourceCard
 
 
 class IdeaService:
-    def __init__(
-        self,
-        *,
-        embedding_repo: IdeaEmbeddingRepository,
-        storage: Storage,
-    ) -> None:
-        self.embedding_repo = embedding_repo
-        self.source_cards = SourceCardStore(storage)
+    def __init__(self, *, repo: IdeaRepository) -> None:
+        self.repo = repo
 
-    async def record_extractions(
-        self,
-        cards: list[SourceCard],
-        embeddings: list[IdeaEmbedding],
-    ) -> None:
-        """Persist a batch of extractions. Caller is responsible for
-        grouping cards + their embeddings together and committing the
-        DB session at a sensible boundary.
-        """
-        await self.source_cards.upsert_many(cards)
-        await self.embedding_repo.bulk_upsert(embeddings)
+    async def record_extractions(self, entries: list[IdeaEmbedding]) -> None:
+        await self.repo.bulk_upsert(entries)
 
-    async def remove_document(self, document_id: UUID) -> None:
-        await self.source_cards.delete([document_id])
-        await self.embedding_repo.delete_for_document(document_id)
-
-    async def load_source_cards(self) -> list[SourceCard]:
-        return await self.source_cards.load_all()
+    async def delete_for_documents(self, document_ids: Iterable[UUID]) -> None:
+        await self.repo.delete_for_documents(document_ids)
 
     async def list_embeddings(self, vault_id: UUID) -> list[IdeaEmbedding]:
-        return await self.embedding_repo.list_for_vault(vault_id)
+        return await self.repo.list_for_vault(vault_id)
+
+    async def get_ids_for_vault(self, vault_id: UUID) -> list[UUID]:
+        return await self.repo.get_ids_for_vault(vault_id)
+
+    async def get_ideas_by_id(self, idea_ids: Iterable[UUID]) -> dict[UUID, Idea]:
+        return await self.repo.get_ideas_by_id(idea_ids)
+
+    async def iter_source_cards(self, vault_id: UUID) -> AsyncIterator[SourceCard]:
+        async for card in self.repo.iter_source_cards(vault_id):
+            yield card

@@ -39,8 +39,8 @@ from great_minds.core.documents.schemas import (
     WikiArticleCreate,
 )
 from great_minds.core.documents.schemas import SourceDocument
-from great_minds.core.ideas.schemas import Anchor, Idea, SourceCard
-from great_minds.core.ideas.source_cards import SourceCardStore
+from great_minds.core.ideas.schemas import Anchor, Idea
+from great_minds.core.ideas.service import IdeaService
 from great_minds.core.llm import RENDER_MODEL
 from great_minds.core.topics.schemas import TopicDetail
 from great_minds.core.pipeline.steps import StepRunner
@@ -111,7 +111,7 @@ class RenderPhase:
         wiki_articles: WikiArticleService,
         topics: TopicService,
         search: SearchService,
-        source_cards: SourceCardStore,
+        ideas: IdeaService,
         concurrency: int,
     ) -> None:
         self.storage = storage
@@ -124,7 +124,7 @@ class RenderPhase:
         self.wiki_articles = wiki_articles
         self.topics = topics
         self.search = search
-        self.source_cards = source_cards
+        self.ideas = ideas
         self.concurrency = concurrency
 
     def progress_steps(
@@ -344,7 +344,7 @@ class RenderPhase:
         needed_idea_ids = {
             idea_id for topic in to_render for idea_id in topic.subsumed_idea_ids
         }
-        idea_by_id = await self.source_cards.ideas_by_id(needed_idea_ids)
+        idea_by_id = await self.ideas.get_ideas_by_id(needed_idea_ids)
         docs = await self.source_docs.list_all(vault_id)
         doc_by_id = {d.id: d for d in docs}
         topic_by_slug = {v.slug: v for v in validated}
@@ -546,7 +546,7 @@ async def _render_one(
     sem: asyncio.Semaphore,
     vault_id: UUID,
     topic: TopicDetail,
-    idea_by_id: dict[UUID, tuple[Idea, SourceCard]],
+    idea_by_id: dict[UUID, Idea],
     doc_by_id: dict[UUID, SourceDocument],
     topic_by_slug: dict[str, TopicDetail],
     prompt_template: str,
@@ -641,16 +641,15 @@ class _NumberedAnchor:
 
 def _build_numbered_anchors(
     topic: TopicDetail,
-    idea_by_id: dict[UUID, tuple[Idea, SourceCard]],
+    idea_by_id: dict[UUID, Idea],
     doc_by_id: dict[UUID, SourceDocument],
 ) -> list[_NumberedAnchor]:
     out: list[_NumberedAnchor] = []
     counter = 0
     for idea_id in topic.subsumed_idea_ids:
-        item = idea_by_id.get(idea_id)
-        if item is None:
+        idea = idea_by_id.get(idea_id)
+        if idea is None:
             continue
-        idea, _ = item
         doc = doc_by_id.get(idea.document_id)
         for anchor in idea.anchors:
             counter += 1
@@ -664,7 +663,7 @@ def _render_idea_block(
     *,
     topic: TopicDetail,
     numbered_anchors: list[_NumberedAnchor],
-    idea_by_id: dict[UUID, tuple[Idea, SourceCard]],
+    idea_by_id: dict[UUID, Idea],
     doc_by_id: dict[UUID, SourceDocument],
 ) -> str:
     anchors_by_idea: dict[UUID, list[_NumberedAnchor]] = {}
@@ -673,10 +672,9 @@ def _render_idea_block(
 
     lines: list[str] = []
     for idea_id in topic.subsumed_idea_ids:
-        item = idea_by_id.get(idea_id)
-        if item is None:
+        idea = idea_by_id.get(idea_id)
+        if idea is None:
             continue
-        idea, card = item
         doc = doc_by_id.get(idea.document_id)
 
         lines.append(f"### Idea: [{idea.kind}] {idea.label}")

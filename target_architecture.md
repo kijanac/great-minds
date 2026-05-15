@@ -55,7 +55,7 @@ document_id       uuid
 kind              one of vault's configured kinds (fallback: other)
 label             short canonical name as it appears in this doc
 description       one-sentence description of what this is, as treated in this doc
-anchors           list of {anchor_id, claim, quote}
+anchors           ordered list of {claim, quote}
 ```
 
 Idea rows are rewritten on every extract re-run for a document: delete-then-insert keyed on `document_id`. Cache hits on `sha256(doc_content + prompt_version + kinds_config + extract_model)` short-circuit extract entirely and return the stored `source_card` verbatim, so `idea_id`s stay stable across incremental compiles without any derivation trick. On cache miss the LLM re-draws and fresh ids are minted — that's expected, not a regression.

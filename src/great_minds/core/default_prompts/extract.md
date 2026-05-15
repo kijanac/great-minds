@@ -15,7 +15,6 @@ Return a single JSON object with exactly these fields:
     - `kind` (string): one of the allowed kinds listed below. If nothing fits, use "other".
     - `description` (string): one sentence describing what this is, as treated in this document.
     - `anchors` (array of objects): 1-5 supporting claim-quote pairs, where
-        - `anchor_id` (string): a short identifier unique within this idea (e.g. "a1", "a2")
         - `claim` (string): a clear paraphrase of what the document says about this idea at this location
         - `quote` (string): the verbatim supporting text from the document. Must appear in the source exactly as written.
 

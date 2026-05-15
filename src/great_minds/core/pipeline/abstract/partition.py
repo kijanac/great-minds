@@ -22,7 +22,6 @@ from great_minds.core.hashing import content_hash
 from great_minds.core.compile_cache import CompileCacheRepository
 from great_minds.core.ideas.service import IdeaService
 from great_minds.core.ideas.schemas import Idea, SourceCard
-from great_minds.core.ideas.source_cards import SourceCardStore
 from great_minds.core.telemetry import enrich, log_event
 
 log = logging.getLogger(__name__)
@@ -50,9 +49,7 @@ class PartitionPhase:
         self.min_factor = min_factor
         self.max_factor = max_factor
 
-    async def run(
-        self, vault_id: UUID, source_cards: SourceCardStore
-    ) -> list[list[UUID]]:
+    async def run(self, vault_id: UUID) -> list[list[UUID]]:
         target = self.target_tokens
         max_tokens = int(target * self.max_factor)
         min_tokens = int(target * self.min_factor)
@@ -86,7 +83,7 @@ class PartitionPhase:
             )
             return chunks
 
-        tokens_by_id = await _estimate_tokens_by_id(source_cards, id_order)
+        tokens_by_id = await _estimate_tokens_by_id(self.ideas, vault_id, id_order)
         tokens_by_row = [tokens_by_id.get(iid, 100) for iid in id_order]
         total_tokens = sum(tokens_by_row)
 
@@ -142,7 +139,8 @@ class PartitionPhase:
 
 
 async def _estimate_tokens_by_id(
-    source_cards: SourceCardStore,
+    ideas: IdeaService,
+    vault_id: UUID,
     idea_ids: list[UUID],
 ) -> dict[UUID, int]:
     """Approximate token counts for requested ideas via a streaming scan."""
@@ -150,7 +148,7 @@ async def _estimate_tokens_by_id(
     out: dict[UUID, int] = {}
     if not wanted:
         return out
-    async for card in source_cards.iter_cards():
+    async for card in ideas.iter_source_cards(vault_id):
         for idea in card.ideas:
             if idea.idea_id not in wanted:
                 continue

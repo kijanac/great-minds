@@ -27,7 +27,7 @@ from great_minds.core.compile_cache import CompileCacheRepository
 from great_minds.core.hashing import content_hash, prompt_hash
 from great_minds.core.vaults.prompts import load_prompt
 from great_minds.core.llm.client import json_llm_call
-from great_minds.core.ideas.source_cards import SourceCardStore
+from great_minds.core.ideas.service import IdeaService
 from great_minds.core.llm import MAP_MODEL
 from great_minds.core.pipeline.abstract.schemas import LocalTopic
 from great_minds.core.pipeline_runs import PipelineProgressRunner
@@ -65,7 +65,7 @@ class SynthesizePhase:
     async def run(
         self,
         vault_id: UUID,
-        source_cards: SourceCardStore,
+        ideas: IdeaService,
         chunks: list[list[UUID]],
     ) -> list[LocalTopic]:
         """Synthesize local topics for each chunk.
@@ -78,7 +78,7 @@ class SynthesizePhase:
 
         prompt_template = await load_prompt(self.storage, "synthesize")
         ph = prompt_hash(prompt_template)
-        synthesis_index = await _build_synthesis_index(source_cards, chunks)
+        synthesis_index = await _build_synthesis_index(ideas, vault_id, chunks)
 
         sem = asyncio.Semaphore(self.concurrency)
         tasks = [
@@ -230,8 +230,8 @@ async def _synthesize_one(
             )
 
     # Filter to ideas we actually have records for. An idea_id present
-    # in partition output but missing from source_cards would be a bug
-    # further upstream — log and skip rather than synthesize a phantom.
+    # in partition output but missing from the synthesis index would be
+    # a bug further upstream — log and skip rather than synthesize a phantom.
     present = [iid for iid in chunk if iid in synthesis_index.ideas]
     if not present:
         outcome.error = "no_ideas_indexed"
@@ -271,7 +271,8 @@ async def _synthesize_one(
 
 
 async def _build_synthesis_index(
-    source_cards: SourceCardStore,
+    ideas_service: IdeaService,
+    vault_id: UUID,
     chunks: list[list[UUID]],
 ) -> _SynthesisIndex:
     wanted = {idea_id for chunk in chunks for idea_id in chunk}
@@ -280,7 +281,7 @@ async def _build_synthesis_index(
     if not wanted:
         return _SynthesisIndex(ideas=ideas, docs=docs)
 
-    async for card in source_cards.iter_cards():
+    async for card in ideas_service.iter_source_cards(vault_id):
         matched = False
         for idea in card.ideas:
             if idea.idea_id not in wanted:

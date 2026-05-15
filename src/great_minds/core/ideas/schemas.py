@@ -8,8 +8,9 @@ from pydantic import BaseModel, ConfigDict, Field
 class Anchor(BaseModel):
     """One claim paired with its verbatim supporting quote.
 
-    anchor_id is whatever the LLM assigned (stable within this idea);
-    render normalizes to sequential [^n] footnotes at article time.
+    Order within an idea's ``anchors`` list is the only identity an
+    anchor has — render numbers them sequentially as ``[^n]`` footnotes
+    at article time.
 
     chunk_index is the paragraph in the source doc where the quote
     lives — resolved post-extract via substring match against the
@@ -17,7 +18,8 @@ class Anchor(BaseModel):
     (`raw/.../file.md#^pN`). None if the quote couldn't be localized.
     """
 
-    anchor_id: str
+    model_config = ConfigDict(from_attributes=True)
+
     claim: str
     quote: str
     chunk_index: int | None = None
@@ -33,16 +35,18 @@ class Idea(BaseModel):
     delete-then-insert keyed on document_id handles cleanup.
     """
 
+    model_config = ConfigDict(from_attributes=True)
+
     idea_id: UUID
     document_id: UUID
     kind: str
     label: str
     description: str
-    anchors: list[Anchor] = []
+    anchors: list[Anchor] = Field(default_factory=list)
 
 
 class SourceCard(BaseModel):
-    """One line in source_cards.jsonl — the full extract output for one doc.
+    """Read-time aggregate over ``source_documents`` + ``ideas`` + ``anchors``.
 
     All fields except ``ideas`` map 1:1 to the LLM-derived columns and
     ``derived_extras`` JSONB on ``source_documents``. ``derived_extras``
@@ -63,7 +67,13 @@ class SourceCard(BaseModel):
 
 
 class IdeaEmbedding(BaseModel):
-    """Projection of one row in idea_embeddings."""
+    """Write-shape for one row in ``ideas`` — carries embedding + anchors.
+
+    Used during extract: ``_embed_in_batches`` produces these from the
+    domain ``Idea`` plus the freshly-computed embedding vector, and the
+    repository writes the ``ideas`` row and the corresponding ``anchors``
+    rows from this single record.
+    """
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -73,4 +83,5 @@ class IdeaEmbedding(BaseModel):
     kind: str
     label: str
     description: str
+    anchors: list[Anchor] = Field(default_factory=list)
     embedding: list[float]

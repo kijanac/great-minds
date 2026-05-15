@@ -157,11 +157,11 @@ class ExtractPhase:
 
         # Per-doc trackers for the embedding loop. Populated only inside
         # the success branch below where source_card is narrowed to non-None.
-        cards: list[SourceCard] = []
+        # ``fresh_cards`` only carries cache misses — cache hits already have
+        # their ideas+anchors and source_documents columns from a prior compile.
+        fresh_cards: list[SourceCard] = []
         embedding_inputs: list[tuple[UUID, UUID, Idea]] = []
-        fresh_source_cards: dict[UUID, SourceCard] = {}
-        idea_repo = self.ideas.embedding_repo
-        existing_embedding_ids = set(await idea_repo.get_ids_for_vault(vault_id))
+        existing_idea_ids = set(await self.ideas.get_ids_for_vault(vault_id))
         docs_extracted = 0
         cache_hits = 0
         cache_misses = 0
@@ -183,16 +183,15 @@ class ExtractPhase:
                 # Unreachable in practice: success path always sets source_card.
                 continue
             docs_extracted += 1
-            cards.append(source_card)
             ideas_emitted += len(source_card.ideas)
             if outcome.cache_hit:
                 cache_hits += 1
                 for idea in source_card.ideas:
-                    if idea.idea_id not in existing_embedding_ids:
+                    if idea.idea_id not in existing_idea_ids:
                         embedding_inputs.append((vault_id, outcome.document_id, idea))
             else:
                 cache_misses += 1
-                fresh_source_cards[outcome.document_id] = source_card
+                fresh_cards.append(source_card)
                 await _write_cache(
                     compile_cache=self.compile_cache,
                     session=self.session,
@@ -257,10 +256,9 @@ class ExtractPhase:
                 },
             ),
         )
-        for doc_id in fresh_source_cards:
-            await idea_repo.delete_for_document(doc_id)
-        await self.ideas.record_extractions(cards, fresh_embeddings)
-        await self.source_docs.update_metadata_from_cards(vault_id, cards)
+        await self.ideas.delete_for_documents(c.document_id for c in fresh_cards)
+        await self.ideas.record_extractions(fresh_embeddings)
+        await self.source_docs.update_metadata_from_cards(vault_id, fresh_cards)
         await self.session.commit()
 
         # Mirror LLM-derived fields back into on-disk frontmatter so the
@@ -269,8 +267,8 @@ class ExtractPhase:
         # cache-hit docs already have correct frontmatter from a prior
         # compile.
         docs_by_id = {d.id: d for d in docs}
-        for doc_id, card in fresh_source_cards.items():
-            await _mirror_frontmatter(self.storage, docs_by_id[doc_id], card)
+        for card in fresh_cards:
+            await _mirror_frontmatter(self.storage, docs_by_id[card.document_id], card)
 
         enrich(
             docs_extracted=docs_extracted,
@@ -459,11 +457,10 @@ def _validate_extract_output(
             kind = "other"
         anchors = [
             Anchor(
-                anchor_id=str(a.get("anchor_id") or f"a{i + 1}"),
                 claim=a.get("claim") or "",
                 quote=a.get("quote") or "",
             )
-            for i, a in enumerate(raw_idea.get("anchors") or [])
+            for a in raw_idea.get("anchors") or []
         ]
         ideas.append(
             Idea(
@@ -552,6 +549,7 @@ async def _embed_in_batches(
                 kind=idea.kind,
                 label=idea.label,
                 description=idea.description,
+                anchors=idea.anchors,
                 embedding=truncate_and_normalize(item.embedding, EMBEDDING_DIMENSIONS),
             )
             for (vault_id, document_id, idea), item in zip(batch_inputs, response.data)

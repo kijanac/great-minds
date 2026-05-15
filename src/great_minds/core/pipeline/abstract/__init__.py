@@ -8,10 +8,11 @@ Five sub-steps:
   2e. validate     (mechanical)  — link_targets intersection, slug
                                    collision cleanup, archive flow
 
-Only 2b and 2d draw from the LLM. This orchestrator owns the shared
-state (source_cards loaded once, chunks passed through) and threads
-each sub-step's output into the next. Returning composed results
-rather than mutating a bag keeps each sub-phase's contract explicit.
+Only 2b and 2d draw from the LLM. This orchestrator threads each
+sub-step's output into the next; sub-phases fetch source cards lazily
+from ``IdeaService`` rather than receiving a shared in-memory snapshot.
+Returning composed results rather than mutating a bag keeps each
+sub-phase's contract explicit.
 """
 
 from uuid import UUID
@@ -93,8 +94,6 @@ class AbstractPhase:
 
     async def run(self, vault_id: UUID) -> list[TopicDetail]:
         """Return validated canonical topics for phase 3 derive."""
-        source_cards = self.ideas.source_cards
-
         await self.progress.emit(
             pipeline_run_id=self.pipeline_run_id,
             phase="abstract",
@@ -109,7 +108,7 @@ class AbstractPhase:
                     target_tokens=self.settings.compile_partition_target_tokens,
                     min_factor=self.settings.compile_partition_min_factor,
                     max_factor=self.settings.compile_partition_max_factor,
-                ).run(vault_id, source_cards)
+                ).run(vault_id)
         if not chunks:
             log_event(
                 "skipped",
@@ -143,7 +142,7 @@ class AbstractPhase:
                     progress=self.progress,
                     pipeline_run_id=self.pipeline_run_id,
                     progress_steps=self.progress_steps,
-                ).run(vault_id, source_cards, chunks)
+                ).run(vault_id, self.ideas, chunks)
         await self.progress.emit(
             pipeline_run_id=self.pipeline_run_id,
             phase="abstract",
