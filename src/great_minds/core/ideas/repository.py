@@ -13,6 +13,7 @@ three flavors:
   by idea id. Doc metadata is resolved render-side from its own doc map.
 """
 
+import logging
 from collections.abc import AsyncIterator, Iterable
 from uuid import UUID
 
@@ -24,6 +25,7 @@ from sqlalchemy.orm import selectinload
 from great_minds.core.documents.models import SourceDocumentORM
 from great_minds.core.ideas.models import AnchorORM, IdeaORM
 from great_minds.core.ideas.schemas import Idea, IdeaCreate, IdeaOverview, SourceCard
+from great_minds.core.telemetry import log_event
 
 
 _MAX_BULK_UPSERT_ROWS = 1000
@@ -46,6 +48,32 @@ class IdeaRepository:
             return
         for start in range(0, len(entries), _MAX_BULK_UPSERT_ROWS):
             batch = entries[start : start + _MAX_BULK_UPSERT_ROWS]
+
+            # Diagnostic: surface duplicate idea_ids within a batch BEFORE the
+            # INSERT. ``ON CONFLICT DO UPDATE`` rejects batches with repeated
+            # conflict-targets ("cannot affect row a second time"). Logging
+            # the duplicates plus their contributing document_ids tells us
+            # whether the dup is intra-doc (one doc's source_card has two
+            # ideas with the same id — points at cache corruption or a
+            # validator bug) or cross-doc (cache aliasing across same-body
+            # documents).
+            by_id: dict[UUID, list[UUID]] = {}
+            for e in batch:
+                by_id.setdefault(e.idea_id, []).append(e.document_id)
+            duplicates = {iid: docs for iid, docs in by_id.items() if len(docs) > 1}
+            if duplicates:
+                log_event(
+                    "bulk_upsert.duplicate_idea_ids",
+                    level=logging.WARNING,
+                    batch_start=start,
+                    batch_size=len(batch),
+                    duplicate_count=len(duplicates),
+                    duplicates={
+                        str(iid): [str(d) for d in docs]
+                        for iid, docs in duplicates.items()
+                    },
+                )
+
             idea_values = [
                 {
                     "idea_id": e.idea_id,
