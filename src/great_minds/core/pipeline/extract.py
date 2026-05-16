@@ -336,7 +336,9 @@ async def _extract_one(
 ) -> _ExtractOutcome:
     outcome = _ExtractOutcome(raw_path=raw_path, document_id=document_id)
     try:
-        cache_key = _cache_key(body_hash=body_hash, prompt_hash=prompt_hash)
+        cache_key = _cache_key(
+            document_id=document_id, body_hash=body_hash, prompt_hash=prompt_hash
+        )
         outcome.cache_key = cache_key
 
         cached = await phase.compile_cache.get(
@@ -385,8 +387,24 @@ async def _extract_one(
     return outcome
 
 
-def _cache_key(*, body_hash: str, prompt_hash: str) -> str:
+def _cache_key(*, document_id: UUID, body_hash: str, prompt_hash: str) -> str:
+    """Per-doc extract cache key.
+
+    ``document_id`` is in the key so each doc owns its own cache entry.
+    Cross-doc sharing on identical body content created two failure
+    modes — a cached ``source_card``'s idea_ids could end up
+    referenced by a second doc's ``outcome.document_id`` on cache hit,
+    producing either ``CardinalityViolationError`` (two outcomes queue
+    the same idea_id) or ``title=NULL``-with-ideas (the second doc
+    skips ``fresh_cards`` and never gets its metadata written). Per-doc
+    keys eliminate both classes.
+
+    Trade-off: identical-content docs each pay one LLM call instead of
+    sharing. With ingest-time client-hash dedup at upload, that's a
+    rare case in practice.
+    """
     return content_hash(
+        f"doc={document_id}",
         body_hash,
         f"prompt={prompt_hash}",
         f"model={EXTRACT_MODEL}",
