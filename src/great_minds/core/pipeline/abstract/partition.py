@@ -197,9 +197,18 @@ def _seeded_kmeans(embedding_matrix: np.ndarray, k: int) -> np.ndarray:
 
 
 def _group_by_label(labels: np.ndarray) -> list[np.ndarray]:
-    """Row indices grouped by cluster label. ``np.unique`` returns labels
-    sorted, so chunk order is deterministic without an explicit sort."""
-    return [np.where(labels == k)[0] for k in np.unique(labels)]
+    """Row indices grouped by cluster label.
+
+    Stable argsort + split-at-boundaries — the canonical numpy
+    group-by-integer-label pattern. Stable sort preserves the original
+    row order within each label group, and ``np.split`` returns chunks
+    in ascending-label order, so this is deterministic without an
+    explicit secondary sort.
+    """
+    order = np.argsort(labels, kind="stable")
+    sorted_labels = labels[order]
+    boundaries = np.where(np.diff(sorted_labels) != 0)[0] + 1
+    return np.split(order, boundaries)
 
 
 def _rebalance(
@@ -277,13 +286,14 @@ def _merge_undersize(
         if not under_mask.any():
             break
         # Deterministic pick: smallest chunk first, ties by smallest idea_id
-        # in the chunk. ``under_mask`` is small (only undersize chunks); a
-        # Python sort on its indices is fine.
-        under_indices = sorted(
-            np.where(under_mask)[0].tolist(),
-            key=lambda i: (int(sizes[i]), int(chunks[i].min())),
+        # in the chunk. ``min`` with a tuple key expresses the two-level
+        # comparison cleanly; the iterable is small (only undersize chunks).
+        src = int(
+            min(
+                np.where(under_mask)[0],
+                key=lambda i: (int(sizes[i]), int(chunks[i].min())),
+            )
         )
-        src = under_indices[0]
 
         valid = (np.arange(len(sizes)) != src) & (sizes + sizes[src] <= max_tokens)
         if not valid.any():
