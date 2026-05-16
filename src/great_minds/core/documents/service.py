@@ -36,6 +36,11 @@ class SourceDocumentService:
         entries = await self.repo.get_file_hashes(vault_id)
         return {e.file_path: e.file_hash for e in entries}
 
+    async def existing_client_hashes(
+        self, vault_id: UUID, client_hashes: list[str]
+    ) -> list[str]:
+        return await self.repo.existing_client_hashes(vault_id, client_hashes)
+
     async def update_batch(
         self, vault_id: UUID, updates: list[SourceDocumentUpdate]
     ) -> None:

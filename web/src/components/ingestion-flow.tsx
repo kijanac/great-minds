@@ -5,7 +5,7 @@ import { motion, useReducedMotion } from "motion/react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { ingestStagedFiles } from "@/api/ingest";
+import { checkDupes, hashFile, ingestStagedFiles, type HashedFile } from "@/api/ingest";
 import { useActiveVaultId } from "@/hooks/use-vault";
 import { useViewNavigate } from "@/hooks/use-view-navigate";
 import type { DroppedFile } from "@/lib/types";
@@ -36,7 +36,7 @@ const RECOGNISED_EXTS = new Set([
   ".odt",
 ]);
 
-/** Number of files above which we show a "large batch" note. */
+const HASH_CONCURRENCY = 4;
 const LARGE_BATCH_THRESHOLD = 200;
 
 interface FailedUpload {
@@ -44,18 +44,34 @@ interface FailedUpload {
   error: string;
 }
 
-type FileSummary = {
-  count: number;
-  byType: Map<string, number>;
-  duplicates: number;
-  totalSize: number;
-  unrecognisedExts: Set<string>;
-};
+/** Per-file lifecycle in the ingestion preview. */
+type FileStatus =
+  | "checking" // hash in progress
+  | "unique" // fresh content, included by default
+  | "duplicate-in-batch" // another selected file has the same hash
+  | "duplicate-in-vault" // hash already in this vault
+  | "unrecognised" // extension not in RECOGNISED_EXTS
+  | "error"; // couldn't read or hash
+
+interface IngestableFile {
+  id: string;
+  file: File;
+  path: string;
+  ext: string;
+  status: FileStatus;
+  hash?: string;
+  selected: boolean;
+  error?: string;
+}
 
 function formatSize(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function extOf(name: string): string {
+  return name.includes(".") ? `.${name.split(".").pop()?.toLowerCase()}` : "";
 }
 
 async function filesFromDrop(dataTransfer: DataTransfer): Promise<DroppedFile[]> {
@@ -97,31 +113,23 @@ async function collectAll(entries: FileSystemEntry[], prefix: string): Promise<D
   return results;
 }
 
-function computeSummary(files: DroppedFile[]): FileSummary {
-  const byType = new Map<string, number>();
-  const seen = new Set<string>();
-  const unrecognisedExts = new Set<string>();
-  let duplicates = 0;
-  let totalSize = 0;
-
-  for (const { file } of files) {
-    totalSize += file.size;
-    const ext = file.name.includes(".") ? `.${file.name.split(".").pop()?.toLowerCase()}` : "other";
-    byType.set(ext, (byType.get(ext) ?? 0) + 1);
-
-    if (ext !== "other" && !RECOGNISED_EXTS.has(ext)) {
-      unrecognisedExts.add(ext);
-    }
-
-    const key = `${file.name}:${file.size}`;
-    if (seen.has(key)) {
-      duplicates++;
-    } else {
-      seen.add(key);
-    }
-  }
-
-  return { count: files.length, byType, duplicates, totalSize, unrecognisedExts };
+function initialIngestable(dropped: DroppedFile[]): IngestableFile[] {
+  return dropped.map((d) => {
+    const ext = extOf(d.file.name);
+    const recognised = ext === "" || RECOGNISED_EXTS.has(ext);
+    return {
+      id: crypto.randomUUID(),
+      file: d.file,
+      path: d.path,
+      ext,
+      // Start unrecognised files in their terminal state — they don't
+      // get a vault check. Everything else starts in checking.
+      status: recognised ? "checking" : "unrecognised",
+      selected: true,
+      // Unrecognised files still upload (backend may handle them);
+      // they just don't participate in dupe detection.
+    };
+  });
 }
 
 export function IngestionFlow({ hasActivePipeline }: { hasActivePipeline: boolean }) {
@@ -129,13 +137,12 @@ export function IngestionFlow({ hasActivePipeline }: { hasActivePipeline: boolea
   const [confirming, setConfirming] = useState(false);
   const [isDragOver, setDragOver] = useState(false);
   const [url, setUrl] = useState("");
-  const [summary, setSummary] = useState<FileSummary | null>(null);
+  const [files, setFiles] = useState<IngestableFile[]>([]);
   const [ingestError, setIngestError] = useState<string | null>(null);
   const [failedUploads, setFailedUploads] = useState<FailedUpload[]>([]);
   const dragCounter = useRef(0);
-  const pendingFilesRef = useRef<DroppedFile[]>([]);
-  const pendingUrlRef = useRef<string>("");
   const pendingJobIdRef = useRef<string | null>(null);
+  const hashRunIdRef = useRef(0);
   const zoneRef = useRef<HTMLDivElement>(null);
   const navigate = useViewNavigate();
   const queryClient = useQueryClient();
@@ -147,11 +154,10 @@ export function IngestionFlow({ hasActivePipeline }: { hasActivePipeline: boolea
 
   const close = useCallback(() => {
     setExpanded(false);
-    pendingFilesRef.current = [];
-    pendingUrlRef.current = "";
+    setFiles([]);
     pendingJobIdRef.current = null;
+    hashRunIdRef.current += 1; // cancel any in-flight hashing run
     setUrl("");
-    setSummary(null);
     setIngestError(null);
     setFailedUploads([]);
   }, []);
@@ -225,20 +231,116 @@ export function IngestionFlow({ hasActivePipeline }: { hasActivePipeline: boolea
     setFailedUploads([]);
   }, []);
 
-  const handleDrop = useCallback(async (e: React.DragEvent) => {
-    e.preventDefault();
-    dragCounter.current = 0;
-    setDragOver(false);
-    setIngestError(null);
-    setFailedUploads([]);
-    const files = await filesFromDrop(e.dataTransfer);
-    if (files.length > 0) {
-      pendingFilesRef.current = files;
-      pendingUrlRef.current = "";
-      pendingJobIdRef.current = crypto.randomUUID();
-      setSummary(computeSummary(files));
+  // ---- Hashing pipeline ----
+  //
+  // Each picked batch increments hashRunIdRef. In-flight workers check
+  // the run id before applying their result, so a fresh pick (or
+  // close) cancels stale updates.
+
+  const runHashingPipeline = useCallback(async (initial: IngestableFile[]) => {
+    hashRunIdRef.current += 1;
+    const runId = hashRunIdRef.current;
+
+    // Concurrent hashing — yields per-file updates as each completes.
+    let cursor = 0;
+    async function worker() {
+      while (true) {
+        const i = cursor++;
+        if (i >= initial.length) return;
+        const item = initial[i];
+        if (item.status !== "checking") continue;
+        try {
+          const hash = await hashFile(item.file);
+          if (hashRunIdRef.current !== runId) return;
+          setFiles((prev) => applyHash(prev, item.id, hash));
+        } catch (e) {
+          if (hashRunIdRef.current !== runId) return;
+          const message = e instanceof Error ? e.message : "hash failed";
+          setFiles((prev) =>
+            prev.map((f) => (f.id === item.id ? { ...f, status: "error", error: message } : f)),
+          );
+        }
+      }
     }
+    const workers = Array.from({ length: Math.min(HASH_CONCURRENCY, initial.length) }, worker);
+    await Promise.all(workers);
+    if (hashRunIdRef.current !== runId) return;
+
+    // Once everyone's hashed, ask the server which already exist.
+    const hashes = initial
+      .filter((f) => f.status === "checking")
+      .map((f) => f.hash)
+      .filter((h): h is string => !!h);
+    // Some hashes were populated by the setFiles updates above; the
+    // initial array still has the snapshot, so use latest state via a
+    // setFiles read-then-write. Simpler: read from current state.
+    setFiles((current) => {
+      const hashList = current
+        .filter((f) => f.status === "unique" || f.status === "duplicate-in-batch")
+        .map((f) => f.hash!)
+        .filter((h) => !!h);
+      // Kick off the server check; soft-fail keeps the UI usable
+      // even if the endpoint is unreachable.
+      void (async () => {
+        const existing = await checkDupes(Array.from(new Set(hashList)));
+        if (hashRunIdRef.current !== runId) return;
+        if (existing.size === 0) return;
+        setFiles((prev) =>
+          prev.map((f) =>
+            f.hash && existing.has(f.hash)
+              ? { ...f, status: "duplicate-in-vault", selected: false }
+              : f,
+          ),
+        );
+      })();
+      return current;
+    });
+    void hashes; // referenced to keep the compiler quiet about the unused intermediate
   }, []);
+
+  /** Update one file in the list with its computed hash, deriving the
+   *  intra-batch dup status against the rest of the list. */
+  function applyHash(prev: IngestableFile[], id: string, hash: string): IngestableFile[] {
+    const matchesElsewhere = prev.some((f) => f.id !== id && f.hash === hash);
+    return prev.map((f) => {
+      if (f.id === id) {
+        return {
+          ...f,
+          hash,
+          status: matchesElsewhere ? "duplicate-in-batch" : "unique",
+          selected: !matchesElsewhere,
+        };
+      }
+      // If this hash already existed on another row, the existing one
+      // keeps its status (the FIRST occurrence is "unique"). The new
+      // arrival is the duplicate.
+      return f;
+    });
+  }
+
+  const startWithFiles = useCallback(
+    (dropped: DroppedFile[]) => {
+      if (dropped.length === 0) return;
+      const initial = initialIngestable(dropped);
+      pendingJobIdRef.current = crypto.randomUUID();
+      setIngestError(null);
+      setFailedUploads([]);
+      setFiles(initial);
+      void runHashingPipeline(initial);
+    },
+    [runHashingPipeline],
+  );
+
+  const handleDrop = useCallback(
+    async (e: React.DragEvent) => {
+      e.preventDefault();
+      dragCounter.current = 0;
+      setDragOver(false);
+      const dropped = await filesFromDrop(e.dataTransfer);
+      startWithFiles(dropped);
+    },
+    [startWithFiles],
+  );
 
   const handleBrowse = useCallback(() => {
     const input = document.createElement("input");
@@ -246,25 +348,19 @@ export function IngestionFlow({ hasActivePipeline }: { hasActivePipeline: boolea
     input.multiple = true;
     input.webkitdirectory = true;
     input.onchange = async () => {
-      const files = Array.from(input.files ?? []);
-      if (files.length > 0) {
-        const dropped: DroppedFile[] = files.map((f) => {
-          const fileWithPath = f as File & { webkitRelativePath?: string };
-          return {
-            file: f,
-            path: fileWithPath.webkitRelativePath || f.name,
-          };
-        });
-        pendingFilesRef.current = dropped;
-        pendingUrlRef.current = "";
-        pendingJobIdRef.current = crypto.randomUUID();
-        setIngestError(null);
-        setFailedUploads([]);
-        setSummary(computeSummary(dropped));
-      }
+      const picked = Array.from(input.files ?? []);
+      if (picked.length === 0) return;
+      const dropped: DroppedFile[] = picked.map((f) => {
+        const fileWithPath = f as File & { webkitRelativePath?: string };
+        return {
+          file: f,
+          path: fileWithPath.webkitRelativePath || f.name,
+        };
+      });
+      startWithFiles(dropped);
     };
     input.click();
-  }, []);
+  }, [startWithFiles]);
 
   const handleUrlSubmit = useCallback(() => {
     const trimmed = url.trim();
@@ -273,11 +369,25 @@ export function IngestionFlow({ hasActivePipeline }: { hasActivePipeline: boolea
     navigate(`/pipeline?url=${encodeURIComponent(trimmed)}`);
   }, [navigate, url]);
 
+  const toggleSelected = useCallback((id: string) => {
+    setFiles((prev) => prev.map((f) => (f.id === id ? { ...f, selected: !f.selected } : f)));
+  }, []);
+
+  const selectAllNonDupe = useCallback(() => {
+    setFiles((prev) =>
+      prev.map((f) => ({
+        ...f,
+        selected: f.status === "unique" || f.status === "unrecognised" || f.status === "checking",
+      })),
+    );
+  }, []);
+
   const handleConfirm = useCallback(
-    async (retryOnly?: DroppedFile[]) => {
-      const allFiles = pendingFilesRef.current;
-      const files = retryOnly ?? allFiles;
-      if (files.length === 0) return;
+    async (retryHashes?: Set<string>) => {
+      const candidates = retryHashes
+        ? files.filter((f) => f.hash && retryHashes.has(f.hash))
+        : files.filter((f) => f.selected && f.hash && f.status !== "error");
+      if (candidates.length === 0) return;
 
       setIngestError(null);
       setFailedUploads([]);
@@ -285,21 +395,20 @@ export function IngestionFlow({ hasActivePipeline }: { hasActivePipeline: boolea
 
       const stableJobId = pendingJobIdRef.current ?? crypto.randomUUID();
       pendingJobIdRef.current = stableJobId;
+      const hashed: HashedFile[] = candidates.map((f) => ({
+        file: f.file,
+        hash: f.hash!,
+      }));
+
       let createdJobId: string | null = null;
       let lastFailedUploads: FailedUpload[] = [];
-      for await (const event of ingestStagedFiles(
-        files.map((f) => f.file),
-        stableJobId,
-      )) {
+      for await (const event of ingestStagedFiles(hashed, stableJobId)) {
         if (event.phase === "uploading" && event.failed_uploads) {
           lastFailedUploads = event.failed_uploads;
           setFailedUploads(lastFailedUploads);
         }
         if (event.phase === "processing") {
           if (event.id) createdJobId = event.id;
-          // Capture partial failures on the success path — some files
-          // may have uploaded but others failed. Show the error UI even
-          // though a pipeline was created for the survivors.
           if (event.failed_uploads && event.failed_uploads.length > 0) {
             lastFailedUploads = event.failed_uploads;
             setFailedUploads(lastFailedUploads);
@@ -316,15 +425,10 @@ export function IngestionFlow({ hasActivePipeline }: { hasActivePipeline: boolea
 
       if (createdJobId) {
         if (lastFailedUploads.length > 0) {
-          // Partial success: some files made it, others didn't.
-          // Show the failures instead of navigating away silently.
-          // Keep pendingFilesRef so retry can find the failed subset. A
-          // backend pipeline already exists for the successful files, so a
-          // later retry of only failed files must be a new job.
           pendingJobIdRef.current = crypto.randomUUID();
           setConfirming(false);
           const failedNames = new Set(lastFailedUploads.map((f) => f.name));
-          const succeeded = allFiles.length - failedNames.size;
+          const succeeded = candidates.length - failedNames.size;
           setIngestError(
             succeeded > 0
               ? `${succeeded} file${succeeded !== 1 ? "s" : ""} ingested, ${failedNames.size} failed. The pipeline will process successful uploads.`
@@ -332,7 +436,7 @@ export function IngestionFlow({ hasActivePipeline }: { hasActivePipeline: boolea
           );
           invalidateActivePipeline();
         } else {
-          pendingFilesRef.current = [];
+          setFiles([]);
           pendingJobIdRef.current = null;
           invalidateActivePipeline();
           navigate(`/pipeline/runs/${createdJobId}`);
@@ -342,19 +446,19 @@ export function IngestionFlow({ hasActivePipeline }: { hasActivePipeline: boolea
         setIngestError("No job was created — the server may be unavailable.");
       }
     },
-    [invalidateActivePipeline, navigate],
+    [files, invalidateActivePipeline, navigate],
   );
 
   const handleRetry = useCallback(() => {
-    // Retry only the files that failed, looked up by name.
     const failedNames = new Set(failedUploads.map((f) => f.name));
-    const retryFiles = pendingFilesRef.current.filter((f) => failedNames.has(f.file.name));
-    if (retryFiles.length > 0) {
-      // Build a fresh DroppedFile[] from the pending ref so the batch
-      // size is accurate for partial-success messaging.
-      handleConfirm(retryFiles);
-    }
-  }, [failedUploads, handleConfirm]);
+    const retryHashes = new Set(
+      files
+        .filter((f) => failedNames.has(f.file.name))
+        .map((f) => f.hash!)
+        .filter(Boolean),
+    );
+    if (retryHashes.size > 0) handleConfirm(retryHashes);
+  }, [failedUploads, files, handleConfirm]);
 
   const handleCircleClick = useCallback(() => {
     if (hasActivePipeline) {
@@ -368,16 +472,20 @@ export function IngestionFlow({ hasActivePipeline }: { hasActivePipeline: boolea
 
   const isCircle = !expanded && !confirming;
   const showContent = expanded || confirming;
-  const hasUnrecognised = summary && summary.unrecognisedExts.size > 0;
-  const isLargeBatch = summary && summary.count > LARGE_BATCH_THRESHOLD;
+  const hasFiles = files.length > 0;
+  const selectedCount = files.filter((f) => f.selected).length;
+  const checkingCount = files.filter((f) => f.status === "checking").length;
+  const dupBatchCount = files.filter((f) => f.status === "duplicate-in-batch").length;
+  const dupVaultCount = files.filter((f) => f.status === "duplicate-in-vault").length;
+  const unrecognisedCount = files.filter((f) => f.status === "unrecognised").length;
+  const totalSize = files.reduce((s, f) => s + f.file.size, 0);
+  const isLargeBatch = files.length > LARGE_BATCH_THRESHOLD;
 
   // ---- Transition ----
 
   const shellSpring = shouldAnimate
     ? { type: "spring" as const, stiffness: 300, damping: 28, mass: 0.6 }
     : { duration: 0 };
-
-  // ---- Shell classes ----
 
   const shellClass = isCircle
     ? "w-12 h-12 rounded-full border border-dashed border-ink-border bg-transparent cursor-pointer"
@@ -417,7 +525,6 @@ export function IngestionFlow({ hasActivePipeline }: { hasActivePipeline: boolea
         }
         onDrop={showContent ? handleDrop : undefined}
       >
-        {/* ── Anchor: "+" — always present, fades as shell expands ── */}
         <motion.span
           animate={{ opacity: isCircle ? 1 : 0 }}
           transition={shouldAnimate ? { duration: 0.1, ease: [0.25, 1, 0.5, 1] } : { duration: 0 }}
@@ -431,7 +538,6 @@ export function IngestionFlow({ hasActivePipeline }: { hasActivePipeline: boolea
           )}
         </motion.span>
 
-        {/* ── Content: revealed after shell opens ── */}
         <motion.div
           animate={{ opacity: showContent ? 1 : 0 }}
           transition={
@@ -444,13 +550,12 @@ export function IngestionFlow({ hasActivePipeline }: { hasActivePipeline: boolea
           {/* Error state */}
           {expanded && ingestError && (
             <div className="px-10 pt-8 pb-4">
-              {/* File summary — keep visible for context */}
-              {summary && (
+              {hasFiles && (
                 <div className="mb-4 flex flex-wrap items-center gap-x-4 gap-y-1 font-mono text-[length:var(--text-chrome)] tracking-[0.06em] text-warm-ghost">
                   <span>
-                    {summary.count} file{summary.count !== 1 ? "s" : ""}
+                    {files.length} file{files.length !== 1 ? "s" : ""}
                   </span>
-                  <span>{formatSize(summary.totalSize)}</span>
+                  <span>{formatSize(totalSize)}</span>
                 </div>
               )}
 
@@ -522,46 +627,40 @@ export function IngestionFlow({ hasActivePipeline }: { hasActivePipeline: boolea
           {/* Expanded zone */}
           {expanded && !confirming && !ingestError && (
             <>
-              {summary && summary.count > 0 ? (
+              {hasFiles ? (
                 /* ── With files selected ── */
                 <div className="px-10 py-8">
-                  <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5 font-mono text-[length:var(--text-chrome)] tracking-[0.06em] text-warm-ghost mb-4">
+                  <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5 font-mono text-[length:var(--text-chrome)] tracking-[0.06em] text-warm-ghost mb-3">
                     <span>
-                      {summary.count} file{summary.count !== 1 ? "s" : ""}
+                      {selectedCount} / {files.length} selected
                     </span>
-                    <span>{formatSize(summary.totalSize)}</span>
-                    {Array.from(summary.byType.entries()).map(([ext, count]) => (
-                      <span key={ext} className="text-warm-faint">
-                        {ext} · {count}
-                      </span>
-                    ))}
+                    <span>{formatSize(totalSize)}</span>
+                    {checkingCount > 0 && (
+                      <span className="text-gold-dim">{checkingCount} hashing</span>
+                    )}
+                    {dupBatchCount > 0 && (
+                      <span className="text-warm-faint">{dupBatchCount} dup in batch</span>
+                    )}
+                    {dupVaultCount > 0 && (
+                      <span className="text-warm-faint">{dupVaultCount} already in vault</span>
+                    )}
+                    {unrecognisedCount > 0 && (
+                      <span className="text-warm-faint">{unrecognisedCount} unrecognised</span>
+                    )}
                   </div>
 
-                  {hasUnrecognised && (
-                    <p className="mb-1.5 font-mono text-[length:var(--text-chrome)] tracking-[0.06em] text-warm-faint">
-                      Unrecognised format{summary.unrecognisedExts.size > 1 ? "s" : ""}:{" "}
-                      {Array.from(summary.unrecognisedExts).join(", ")}. These may fail during
-                      processing.
-                    </p>
-                  )}
-
-                  {summary.duplicates > 0 && (
-                    <p className="mb-1.5 font-mono text-[length:var(--text-chrome)] tracking-[0.06em] text-warm-faint">
-                      {summary.duplicates} duplicate
-                      {summary.duplicates !== 1 ? "s" : ""} detected — duplicates will be skipped
-                    </p>
-                  )}
-
-                  {summary.totalSize > 100 * 1024 * 1024 && (
-                    <p className="mb-1.5 font-mono text-[length:var(--text-chrome)] tracking-[0.06em] text-warm-faint">
-                      Large upload — may take a few minutes
-                    </p>
-                  )}
+                  <ScrollArea className="h-[320px] rounded-sm border border-ink-subtle">
+                    <ul className="divide-y divide-ink-subtle">
+                      {files.map((f) => (
+                        <FileRow key={f.id} item={f} onToggle={toggleSelected} />
+                      ))}
+                    </ul>
+                  </ScrollArea>
 
                   <div className="mt-6 pt-5 border-t border-ink-subtle">
                     {isLargeBatch && (
                       <p className="mb-4 font-mono text-[length:var(--text-chrome)] tracking-[0.06em] text-warm-faint text-center">
-                        {summary.count} files — a large batch. Ingest may take a while. The pipeline
+                        {files.length} files — a large batch. Ingest may take a while. The pipeline
                         runs in the background if you navigate away.
                       </p>
                     )}
@@ -570,13 +669,26 @@ export function IngestionFlow({ hasActivePipeline }: { hasActivePipeline: boolea
                         variant="ghost"
                         size="xs"
                         onClick={() => handleConfirm()}
+                        disabled={selectedCount === 0 || checkingCount > 0}
                         className="font-mono text-[length:var(--text-chrome)] tracking-[0.1em]
                                    text-gold hover:text-gold-hover hover:bg-transparent
+                                   disabled:text-warm-ghost disabled:cursor-not-allowed
                                    rounded-sm h-auto px-3 py-0.5"
                       >
-                        ingest {summary.count} file
-                        {summary.count !== 1 ? "s" : ""}
+                        ingest {selectedCount} file{selectedCount !== 1 ? "s" : ""}
                       </Button>
+                      {(dupBatchCount > 0 || dupVaultCount > 0) && (
+                        <Button
+                          variant="ghost"
+                          size="xs"
+                          onClick={selectAllNonDupe}
+                          className="font-mono text-[length:var(--text-chrome)] tracking-[0.1em]
+                                     text-warm-ghost hover:text-warm-faint hover:bg-transparent
+                                     rounded-sm h-auto px-3 py-0.5"
+                        >
+                          deselect duplicates
+                        </Button>
+                      )}
                       <Button
                         variant="ghost"
                         size="xs"
@@ -585,7 +697,7 @@ export function IngestionFlow({ hasActivePipeline }: { hasActivePipeline: boolea
                                    text-warm-ghost hover:text-warm-faint hover:bg-transparent
                                    rounded-sm h-auto px-3 py-0.5"
                       >
-                        add more
+                        replace
                       </Button>
                     </div>
                   </div>
@@ -640,5 +752,73 @@ export function IngestionFlow({ hasActivePipeline }: { hasActivePipeline: boolea
         </motion.div>
       </motion.div>
     </div>
+  );
+}
+
+/** Status glyph + label per FileStatus. Kept inline in the row so the
+ *  styling lives next to its semantics. */
+function statusIndicator(status: FileStatus): { glyph: string; label: string; className: string } {
+  switch (status) {
+    case "checking":
+      return {
+        glyph: "◌",
+        label: "checking…",
+        className: "text-gold-dim animate-[pulse-fade_1.6s_ease-in-out_infinite]",
+      };
+    case "unique":
+      return { glyph: "◉", label: "unique", className: "text-warm-dim" };
+    case "duplicate-in-batch":
+      return { glyph: "◯", label: "duplicate in batch", className: "text-warm-faint" };
+    case "duplicate-in-vault":
+      return { glyph: "⊘", label: "already in vault", className: "text-warm-faint" };
+    case "unrecognised":
+      return { glyph: "⚠", label: "unrecognised format", className: "text-warm-faint" };
+    case "error":
+      return { glyph: "✗", label: "error", className: "text-warm-faint" };
+  }
+}
+
+function FileRow({ item, onToggle }: { item: IngestableFile; onToggle: (id: string) => void }) {
+  const { glyph, label, className } = statusIndicator(item.status);
+  const isDupe = item.status === "duplicate-in-batch" || item.status === "duplicate-in-vault";
+  return (
+    <li
+      className={`flex items-center gap-3 px-3 py-1.5 transition-opacity ${
+        isDupe && !item.selected ? "opacity-50" : ""
+      }`}
+    >
+      <button
+        type="button"
+        onClick={() => onToggle(item.id)}
+        title={item.selected ? "Click to exclude" : "Click to include"}
+        className="font-mono text-[length:var(--text-chrome)] text-warm-ghost
+                   hover:text-gold transition-colors w-4 text-center shrink-0
+                   bg-transparent border-0 cursor-pointer"
+      >
+        {item.selected ? "☑" : "☐"}
+      </button>
+      <span
+        className="font-serif text-[length:var(--text-small)] text-warm-dim truncate flex-1 min-w-0"
+        title={item.path}
+      >
+        {item.path}
+      </span>
+      <span className="font-mono text-[length:var(--text-chrome)] tracking-[0.06em] text-warm-ghost shrink-0 w-16 text-right">
+        {formatSize(item.file.size)}
+      </span>
+      <span
+        className="font-mono text-[length:var(--text-chrome)] tracking-[0.06em] text-warm-ghost shrink-0 w-14 truncate"
+        title={item.ext || "no ext"}
+      >
+        {item.ext || "—"}
+      </span>
+      <span
+        className={`font-mono text-[length:var(--text-chrome)] tracking-[0.06em] shrink-0 w-44 truncate flex items-center gap-1.5 ${className}`}
+        title={item.error ?? label}
+      >
+        <span className="shrink-0">{glyph}</span>
+        <span className="truncate">{label}</span>
+      </span>
+    </li>
   );
 }

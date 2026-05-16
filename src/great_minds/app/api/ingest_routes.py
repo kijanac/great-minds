@@ -9,9 +9,12 @@ from fastapi import APIRouter, HTTPException, UploadFile, status
 from great_minds.app.api.dependencies import (
     IngestServiceDep,
     PipelineRunServiceDep,
+    SourceDocumentServiceDep,
     VaultStorageDep,
 )
 from great_minds.app.api.schemas.ingest import (
+    CheckDupesRequest,
+    CheckDupesResponse,
     RawSource,
     StagedFileProcessRequest,
     StagedFileSignRequest,
@@ -122,6 +125,22 @@ async def ingest_url(
 # sees file bytes — sidesteps multipart caps, BaseHTTPMiddleware
 # disconnects, and per-request memory pressure entirely.
 # ---------------------------------------------------------------------------
+
+
+@router.post("/staged-files/check-dupes")
+async def ingest_staged_files_check_dupes(
+    req: CheckDupesRequest,
+    vault_id: UUID,
+    doc_service: SourceDocumentServiceDep,
+) -> CheckDupesResponse:
+    """Return the subset of submitted client-hashes that already exist in this vault.
+
+    The frontend hashes files at pick-time (``sha256`` of the raw
+    bytes) and calls this before showing the staged-upload preview so
+    rows can be styled with "already in vault" status.
+    """
+    existing = await doc_service.existing_client_hashes(vault_id, req.client_hashes)
+    return CheckDupesResponse(existing=existing)
 
 
 @router.post("/staged-files/sign")

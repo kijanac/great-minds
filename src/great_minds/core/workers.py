@@ -289,7 +289,11 @@ async def _index_fetched_results(
         await storage.write(dest, content_with_fm)
         seen_dest.add(dest)
         fm, _ = parse_frontmatter(content_with_fm)
-        batch.append(SourceDocCreate.from_frontmatter(fm, dest, content_with_fm))
+        batch.append(
+            SourceDocCreate.from_frontmatter(
+                fm, dest, content_with_fm, client_hash=entry["hash"]
+            )
+        )
         ingested += 1
 
         if len(batch) >= _STAGING_BATCH_SIZE:

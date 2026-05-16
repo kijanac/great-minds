@@ -36,6 +36,7 @@ from great_minds.core.paths import WIKI_INDEX_PATH, wiki_path
 _INGEST_COLUMNS = (
     "file_hash",
     "body_hash",
+    "client_hash",
     "source_type",
     "etag",
     "url",
@@ -62,6 +63,7 @@ def _ingest_row(doc: SourceDocCreate, vault_id: UUID) -> dict:
         "file_path": doc.file_path,
         "file_hash": fh,
         "body_hash": bh,
+        "client_hash": doc.client_hash,
         "source_type": doc.source_type,
         "etag": doc.etag,
         "url": doc.url,
@@ -118,6 +120,24 @@ class SourceDocumentRepo:
             )
         )
         return [FileHash.model_validate(r) for r in result]
+
+    async def existing_client_hashes(
+        self, vault_id: UUID, client_hashes: list[str]
+    ) -> list[str]:
+        """Return the subset of ``client_hashes`` already present in this vault.
+
+        Used by the ingest dupe-check pre-flight so the UI can mark
+        files as "already in vault" before uploading.
+        """
+        if not client_hashes:
+            return []
+        result = await self.session.execute(
+            select(SourceDocumentORM.client_hash).where(
+                SourceDocumentORM.vault_id == vault_id,
+                SourceDocumentORM.client_hash.in_(client_hashes),
+            )
+        )
+        return [h for h in result.scalars() if h is not None]
 
     async def update_batch(
         self, vault_id: UUID, updates: list[SourceDocumentUpdate]

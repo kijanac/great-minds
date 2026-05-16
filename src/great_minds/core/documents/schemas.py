@@ -69,6 +69,11 @@ class SourceDocCreate(BaseModel):
     etag: str | None = None
     url: str | None = None
     origin: str | None = None
+    # SHA-256 of the original uploaded bytes, supplied by the client
+    # at ingest time. Only present for staged-file uploads — other
+    # ingest shapes (URL fetch, user suggestion, session promotion)
+    # leave this NULL.
+    client_hash: str | None = None
 
     # Per-source-kind provenance (zone 2):
     provenance_session_id: UUID | None = None
@@ -86,6 +91,8 @@ class SourceDocCreate(BaseModel):
         fm: dict,
         file_path: str,
         content: str,
+        *,
+        client_hash: str | None = None,
     ) -> "SourceDocCreate":
         """Build a SourceDocCreate from parsed frontmatter.
 
@@ -93,6 +100,10 @@ class SourceDocCreate(BaseModel):
         keys (title, precis, etc.) and anything in ``derived_extras``
         are deliberately not consumed — those reflect prior extract
         output and the next compile will refresh them from scratch.
+
+        ``client_hash`` is passed separately because it lives outside
+        the frontmatter — it's a staged-upload manifest field that the
+        worker carries through from the original upload request.
         """
         session_paragraph_index = fm.get("source_paragraph_index")
         if isinstance(session_paragraph_index, str):
@@ -106,6 +117,7 @@ class SourceDocCreate(BaseModel):
             source_type=fm.get("source_type", "document"),
             url=fm.get("url"),
             origin=fm.get("origin"),
+            client_hash=client_hash,
             provenance_session_id=fm.get("session_id"),
             provenance_exchange_id=fm.get("exchange_id"),
             provenance_session_query=fm.get("session_query"),

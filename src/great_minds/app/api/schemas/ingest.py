@@ -43,3 +43,13 @@ class StagedFileSignResponse(BaseModel):
 class StagedFileProcessRequest(BaseModel):
     job_id: UUID
     files: list[StagedFileInput]
+
+
+class CheckDupesRequest(BaseModel):
+    """Pre-flight: which of these client-side hashes already exist in this vault?"""
+
+    client_hashes: list[str]
+
+
+class CheckDupesResponse(BaseModel):
+    existing: list[str]

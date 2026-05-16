@@ -46,6 +46,10 @@ class SourceDocumentORM(Base):
     file_path: Mapped[str] = mapped_column(Text)
     file_hash: Mapped[str] = mapped_column(Text)
     body_hash: Mapped[str] = mapped_column(Text)
+    # SHA-256 of the original uploaded bytes, captured client-side at
+    # pick time. Used by the ingest dupe-check pre-flight so the UI can
+    # mark a file as "already in this vault" before upload.
+    client_hash: Mapped[str | None] = mapped_column(Text)
     etag: Mapped[str | None] = mapped_column(Text)
     source_type: Mapped[str] = mapped_column(Text)  # 'document' | 'session' | 'user'
     url: Mapped[str | None] = mapped_column(Text)

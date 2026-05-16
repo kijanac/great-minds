@@ -57,11 +57,39 @@ export async function uploadFile(file: File, destPath?: string): Promise<IngestR
   return readJson(res, ingestResultSchema);
 }
 
-async function sha256Hex(bytes: ArrayBuffer): Promise<string> {
+export async function sha256Hex(bytes: ArrayBuffer): Promise<string> {
   const digest = await crypto.subtle.digest("SHA-256", bytes);
   return Array.from(new Uint8Array(digest))
     .map((b) => b.toString(16).padStart(2, "0"))
     .join("");
+}
+
+/** SHA-256 of a File's raw bytes. Used by the ingest UI at pick time
+ *  to detect duplicates within the current batch and against the vault. */
+export async function hashFile(file: File): Promise<string> {
+  return sha256Hex(await file.arrayBuffer());
+}
+
+const checkDupesResponseSchema = z.object({
+  existing: z.array(z.string()),
+});
+
+/** Pre-flight: which of these client hashes already exist in the vault? */
+export async function checkDupes(clientHashes: string[]): Promise<Set<string>> {
+  if (clientHashes.length === 0) return new Set();
+  const res = await apiFetch(vaultPath("/ingest/staged-files/check-dupes"), {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ client_hashes: clientHashes }),
+  });
+  if (!res.ok) {
+    // Soft-fail: the pre-flight is an enhancement, not a hard
+    // requirement. Surface dup-in-vault as unknown rather than
+    // blocking the upload flow.
+    return new Set();
+  }
+  const { existing } = await readJson(res, checkDupesResponseSchema);
+  return new Set(existing);
 }
 
 async function pMap<T, R>(
@@ -83,49 +111,47 @@ async function pMap<T, R>(
   return results;
 }
 
+/** One file paired with its client-computed SHA-256 hash. */
+export interface HashedFile {
+  file: File;
+  hash: string;
+}
+
 /**
- * Ingest one or more files via direct-to-R2 staged upload.
+ * Ingest pre-hashed files via direct-to-R2 staged upload.
+ *
+ * The UI is expected to have already hashed at pick-time and (for the
+ * current preview UX) excluded duplicates. A defensive within-batch
+ * dedupe still runs here so legacy callers can't accidentally send
+ * conflicting hashes.
  *
  * Yields progress events: per-file "uploading" updates while PUTs are
  * in flight, then a single "processing" event with the durable job_id.
  * Caller drives backend progress from the job SSE stream.
  */
 export async function* ingestStagedFiles(
-  files: File[],
+  hashedFiles: HashedFile[],
   jobId: string = crypto.randomUUID(),
 ): AsyncGenerator<StagedFileUploadProgress> {
-  if (files.length === 0) return;
+  if (hashedFiles.length === 0) return;
 
-  // Build manifest with bounded concurrency so we don't exhaust browser
-  // file handles or memory when reading thousands of files at once.
-  const manifest = await pMap(
-    files,
-    async (f) => ({
-      name: f.name,
-      size: f.size,
-      hash: await sha256Hex(await f.arrayBuffer()),
-      mimetype: f.type,
-    }),
-    PUT_CONCURRENCY,
-  );
+  const manifest = hashedFiles.map(({ file, hash }) => ({
+    name: file.name,
+    size: file.size,
+    hash,
+    mimetype: file.type,
+  }));
 
-  // Deduplicate by content hash before uploading — identical files
-  // (e.g. scrape failures) would produce the same dest path and cause
-  // Postgres ON CONFLICT errors in the worker.
-  const originalCount = files.length;
+  // Defensive within-batch dedupe — the UI is supposed to have done
+  // this already, but the cost is one hash-set scan.
+  const originalCount = hashedFiles.length;
   const seen = new Set<string>();
   const uniqueManifest = manifest.filter((m) => {
     if (seen.has(m.hash)) return false;
     seen.add(m.hash);
     return true;
   });
-  const skippedDuplicate = originalCount - uniqueManifest.length;
-  yield {
-    phase: "uploading",
-    uploaded: 0,
-    total: originalCount,
-    ...(skippedDuplicate > 0 ? { skipped_duplicate: skippedDuplicate } : {}),
-  };
+  yield { phase: "uploading", uploaded: 0, total: originalCount };
 
   // 1. sign (unique hashes only)
   const signRes = await apiFetch(vaultPath("/ingest/staged-files/sign"), {
@@ -146,12 +172,9 @@ export async function* ingestStagedFiles(
   const urlByHash = new Map(signed.map((s) => [s.hash, s.url]));
 
   // 2. PUT to R2 (unique files only, one per hash).
-  //    Build a hash→File map from the original file list for upload.
   const fileByHash = new Map<string, File>();
-  for (let i = 0; i < manifest.length; i++) {
-    if (!fileByHash.has(manifest[i].hash)) {
-      fileByHash.set(manifest[i].hash, files[i]);
-    }
+  for (const { file, hash } of hashedFiles) {
+    if (!fileByHash.has(hash)) fileByHash.set(hash, file);
   }
 
   let uploaded = 0;
