@@ -203,8 +203,8 @@ class ExtractPhase:
                     embedding_inputs.append((vault_id, outcome.document_id, idea))
 
         # Extract cache stores only the LLM output (SourceCard). Embeddings are
-        # derived vector-index rows in idea_embeddings; if a crash happens after
-        # caching but before embedding upsert, replay reuses the SourceCard and
+        # derived vector-index rows in ideas; if a crash happens after caching
+        # but before embedding upsert, replay reuses the SourceCard and
         # regenerates only missing embeddings.
         total_embedding_batches = (
             len(embedding_inputs) + EMBEDDING_BATCH_SIZE - 1
@@ -222,10 +222,14 @@ class ExtractPhase:
                 },
             ),
         )
-        fresh_ideas: list[IdeaCreate] = []
+        # Clear stale idea rows for cache-miss docs once, up front: the LLM
+        # minted fresh uuid7s, so the prior rows are orphans. With this done,
+        # embedding batches can stream straight into ``bulk_upsert`` without
+        # accumulating a corpus-sized ``fresh_ideas`` list in Python memory.
+        await self.ideas.delete_for_documents(c.document_id for c in fresh_cards)
         embedding_batches_done = 0
         async for batch in _embed_in_batches(self.client, embedding_inputs):
-            fresh_ideas.extend(batch)
+            await self.ideas.record_extractions(batch)
             embedding_batches_done += 1
             await self.progress.emit(
                 pipeline_run_id=pipeline_run_id,
@@ -256,8 +260,6 @@ class ExtractPhase:
                 },
             ),
         )
-        await self.ideas.delete_for_documents(c.document_id for c in fresh_cards)
-        await self.ideas.record_extractions(fresh_ideas)
         await self.source_docs.update_metadata_from_cards(vault_id, fresh_cards)
         await self.session.commit()
 
