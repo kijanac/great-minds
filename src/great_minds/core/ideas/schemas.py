@@ -1,8 +1,24 @@
 """Pydantic schemas for ideas, anchors, and source cards."""
 
+from typing import Annotated
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field
+import numpy as np
+from pydantic import BaseModel, BeforeValidator, ConfigDict, Field, PlainSerializer
+
+
+# Embedding vectors are stored as ``np.ndarray[float32]`` rather than
+# ``list[float]``: a 1500-dim Python float-list is ~48 KB (each PyFloat
+# is a heap object), vs ~6 KB as a numpy float32 buffer. At ~40k ideas
+# per vault the difference is ~1.7 GB on the partition read path.
+# pgvector-python already returns ``np.ndarray`` from the DB; the
+# ``BeforeValidator`` only kicks in when the input is a ``list[float]``
+# (e.g. fresh from the LLM-provider embeddings API).
+Embedding = Annotated[
+    np.ndarray,
+    BeforeValidator(lambda v: np.asarray(v, dtype=np.float32)),
+    PlainSerializer(lambda a: a.tolist(), return_type=list),
+]
 
 
 class Anchor(BaseModel):
@@ -54,8 +70,10 @@ class IdeaCreate(Idea):
     ``ideas`` row plus the corresponding ``anchors`` rows in one pass.
     """
 
+    model_config = ConfigDict(from_attributes=True, arbitrary_types_allowed=True)
+
     vault_id: UUID
-    embedding: list[float]
+    embedding: Embedding
 
 
 class IdeaOverview(BaseModel):
@@ -68,10 +86,10 @@ class IdeaOverview(BaseModel):
     scans light.
     """
 
-    model_config = ConfigDict(from_attributes=True)
+    model_config = ConfigDict(from_attributes=True, arbitrary_types_allowed=True)
 
     idea_id: UUID
-    embedding: list[float]
+    embedding: Embedding
 
 
 class SourceCard(BaseModel):
