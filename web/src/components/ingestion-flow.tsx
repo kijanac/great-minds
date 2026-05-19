@@ -1,13 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { useQueryClient } from "@tanstack/react-query";
 import { motion, useReducedMotion } from "motion/react";
 
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { checkDupes, hashFile, ingestStagedFiles, type HashedFile } from "@/api/ingest";
-import { useActiveVaultId } from "@/hooks/use-vault";
+import { checkDupes, hashFile, type HashedFile } from "@/api/ingest";
 import { useViewNavigate } from "@/hooks/use-view-navigate";
 import type { DroppedFile } from "@/lib/types";
 
@@ -39,11 +37,6 @@ const RECOGNISED_EXTS = new Set([
 
 const HASH_CONCURRENCY = 4;
 const LARGE_BATCH_THRESHOLD = 200;
-
-interface FailedUpload {
-  name: string;
-  error: string;
-}
 
 /** Per-file lifecycle in the ingestion preview. */
 type FileStatus =
@@ -135,19 +128,13 @@ function initialIngestable(dropped: DroppedFile[]): IngestableFile[] {
 
 export function IngestionFlow({ hasActivePipeline }: { hasActivePipeline: boolean }) {
   const [expanded, setExpanded] = useState(false);
-  const [confirming, setConfirming] = useState(false);
   const [isDragOver, setDragOver] = useState(false);
   const [url, setUrl] = useState("");
   const [files, setFiles] = useState<IngestableFile[]>([]);
-  const [ingestError, setIngestError] = useState<string | null>(null);
-  const [failedUploads, setFailedUploads] = useState<FailedUpload[]>([]);
   const dragCounter = useRef(0);
-  const pendingJobIdRef = useRef<string | null>(null);
   const hashRunIdRef = useRef(0);
   const zoneRef = useRef<HTMLDivElement>(null);
   const navigate = useViewNavigate();
-  const queryClient = useQueryClient();
-  const vaultId = useActiveVaultId();
   const prefersReducedMotion = useReducedMotion();
   const shouldAnimate = !prefersReducedMotion;
 
@@ -156,11 +143,8 @@ export function IngestionFlow({ hasActivePipeline }: { hasActivePipeline: boolea
   const close = useCallback(() => {
     setExpanded(false);
     setFiles([]);
-    pendingJobIdRef.current = null;
     hashRunIdRef.current += 1; // cancel any in-flight hashing run
     setUrl("");
-    setIngestError(null);
-    setFailedUploads([]);
   }, []);
 
   // ---- Side-effect: close on click-outside / Escape ----
@@ -219,18 +203,6 @@ export function IngestionFlow({ hasActivePipeline }: { hasActivePipeline: boolea
       document.removeEventListener("drop", onDrop);
     };
   }, [expanded]);
-
-  const invalidateActivePipeline = useCallback(() => {
-    if (!vaultId) return;
-    queryClient.invalidateQueries({
-      queryKey: ["vault", vaultId, "active-job"],
-    });
-  }, [queryClient, vaultId]);
-
-  const clearError = useCallback(() => {
-    setIngestError(null);
-    setFailedUploads([]);
-  }, []);
 
   // ---- Hashing pipeline ----
   //
@@ -323,9 +295,6 @@ export function IngestionFlow({ hasActivePipeline }: { hasActivePipeline: boolea
     (dropped: DroppedFile[]) => {
       if (dropped.length === 0) return;
       const initial = initialIngestable(dropped);
-      pendingJobIdRef.current = crypto.randomUUID();
-      setIngestError(null);
-      setFailedUploads([]);
       setFiles(initial);
       void runHashingPipeline(initial);
     },
@@ -366,7 +335,6 @@ export function IngestionFlow({ hasActivePipeline }: { hasActivePipeline: boolea
   const handleUrlSubmit = useCallback(() => {
     const trimmed = url.trim();
     if (!trimmed) return;
-    setConfirming(true);
     navigate(`/pipeline?url=${encodeURIComponent(trimmed)}`);
   }, [navigate, url]);
 
@@ -383,83 +351,25 @@ export function IngestionFlow({ hasActivePipeline }: { hasActivePipeline: boolea
     );
   }, []);
 
-  const handleConfirm = useCallback(
-    async (retryHashes?: Set<string>) => {
-      const candidates = retryHashes
-        ? files.filter((f) => f.hash && retryHashes.has(f.hash))
-        : files.filter((f) => f.selected && f.hash && f.status !== "error");
-      if (candidates.length === 0) return;
+  const handleConfirm = useCallback(() => {
+    const candidates = files.filter((f) => f.selected && f.hash && f.status !== "error");
+    if (candidates.length === 0) return;
 
-      setIngestError(null);
-      setFailedUploads([]);
-      setConfirming(true);
+    const uploadFiles: HashedFile[] = candidates.map((f) => ({
+      file: f.file,
+      hash: f.hash!,
+    }));
 
-      const stableJobId = pendingJobIdRef.current ?? crypto.randomUUID();
-      pendingJobIdRef.current = stableJobId;
-      const hashed: HashedFile[] = candidates.map((f) => ({
-        file: f.file,
-        hash: f.hash!,
-      }));
-
-      let createdJobId: string | null = null;
-      let lastFailedUploads: FailedUpload[] = [];
-      for await (const event of ingestStagedFiles(hashed, stableJobId)) {
-        if (event.phase === "uploading" && event.failed_uploads) {
-          lastFailedUploads = event.failed_uploads;
-          setFailedUploads(lastFailedUploads);
-        }
-        if (event.phase === "processing") {
-          if (event.id) createdJobId = event.id;
-          if (event.failed_uploads && event.failed_uploads.length > 0) {
-            lastFailedUploads = event.failed_uploads;
-            setFailedUploads(lastFailedUploads);
-          }
-          break;
-        }
-        if (event.phase === "error") {
-          setConfirming(false);
-          setIngestError(event.error ?? "Ingest failed");
-          if (event.failed_uploads) setFailedUploads(event.failed_uploads);
-          return;
-        }
-      }
-
-      if (createdJobId) {
-        if (lastFailedUploads.length > 0) {
-          pendingJobIdRef.current = crypto.randomUUID();
-          setConfirming(false);
-          const failedNames = new Set(lastFailedUploads.map((f) => f.name));
-          const succeeded = candidates.length - failedNames.size;
-          setIngestError(
-            succeeded > 0
-              ? `${succeeded} file${succeeded !== 1 ? "s" : ""} ingested, ${failedNames.size} failed. The pipeline will process successful uploads.`
-              : `All ${failedNames.size} upload${failedNames.size !== 1 ? "s" : ""} failed.`,
-          );
-          invalidateActivePipeline();
-        } else {
-          setFiles([]);
-          pendingJobIdRef.current = null;
-          invalidateActivePipeline();
-          navigate(`/pipeline/runs/${createdJobId}`);
-        }
-      } else {
-        setConfirming(false);
-        setIngestError("No job was created — the server may be unavailable.");
-      }
-    },
-    [files, invalidateActivePipeline, navigate],
-  );
-
-  const handleRetry = useCallback(() => {
-    const failedNames = new Set(failedUploads.map((f) => f.name));
-    const retryHashes = new Set(
-      files
-        .filter((f) => failedNames.has(f.file.name))
-        .map((f) => f.hash!)
-        .filter(Boolean),
-    );
-    if (retryHashes.size > 0) handleConfirm(retryHashes);
-  }, [failedUploads, files, handleConfirm]);
+    // Hand the actual upload off to the pipeline container via router
+    // state — File objects survive history's structured-clone, so we
+    // don't need a separate stash. Client-upload progress will render
+    // as the "Uploading" stage on the pipeline page; once the server
+    // returns a job_id the page transitions to SSE-driven phases.
+    navigate("/pipeline", {
+      state: { uploadFiles, stableJobId: crypto.randomUUID() },
+    });
+    setFiles([]);
+  }, [files, navigate]);
 
   const handleCircleClick = useCallback(() => {
     if (hasActivePipeline) {
@@ -471,8 +381,8 @@ export function IngestionFlow({ hasActivePipeline }: { hasActivePipeline: boolea
 
   // ---- Derived state ----
 
-  const isCircle = !expanded && !confirming;
-  const showContent = expanded || confirming;
+  const isCircle = !expanded;
+  const showContent = expanded;
   const hasFiles = files.length > 0;
   const selectedCount = files.filter((f) => f.selected).length;
   const checkingCount = files.filter((f) => f.status === "checking").length;
@@ -549,85 +459,8 @@ export function IngestionFlow({ hasActivePipeline }: { hasActivePipeline: boolea
           }
           className={showContent ? "" : "pointer-events-none"}
         >
-          {/* Error state */}
-          {expanded && ingestError && (
-            <div className="px-10 pt-8 pb-4">
-              {hasFiles && (
-                <div className="mb-4 flex flex-wrap items-center gap-x-4 gap-y-1 font-mono text-[length:var(--text-chrome)] tracking-[0.06em] text-warm-ghost">
-                  <span>
-                    {files.length} file{files.length !== 1 ? "s" : ""}
-                  </span>
-                  <span>{formatSize(totalSize)}</span>
-                </div>
-              )}
-
-              <div className="flex items-start gap-3">
-                <span className="text-warm-faint shrink-0 mt-0.5">✗</span>
-                <div className="flex-1 min-w-0">
-                  <p className="font-serif text-[length:var(--text-small)] text-warm-dim mb-1">
-                    {ingestError}
-                  </p>
-                  {failedUploads.length > 0 && (
-                    <div className="mt-2">
-                      <p className="font-mono text-[length:var(--text-chrome)] tracking-[0.06em] text-warm-ghost mb-1.5">
-                        {failedUploads.length} file{failedUploads.length !== 1 ? "s" : ""} failed
-                      </p>
-                      <ScrollArea className="max-h-32 rounded-sm border border-ink-border">
-                        <div className="p-3 space-y-1">
-                          {failedUploads.map((f, i) => (
-                            <div
-                              key={i}
-                              className="font-mono text-[length:var(--text-chrome)] text-warm-faint truncate"
-                            >
-                              <span className="text-warm-ghost">{f.name}</span>{" "}
-                              <span className="opacity-60">{f.error}</span>
-                            </div>
-                          ))}
-                        </div>
-                      </ScrollArea>
-                    </div>
-                  )}
-                </div>
-              </div>
-              <div className="flex items-center gap-3 mt-4 pb-3">
-                <Button
-                  variant="ghost"
-                  size="xs"
-                  onClick={handleRetry}
-                  className="font-mono text-[length:var(--text-chrome)] tracking-[0.1em]
-                             text-gold hover:text-gold-hover hover:bg-transparent
-                             rounded-sm h-auto px-3 py-0.5"
-                >
-                  retry failed
-                </Button>
-                <Button
-                  variant="ghost"
-                  size="xs"
-                  onClick={clearError}
-                  className="font-mono text-[length:var(--text-chrome)] tracking-[0.1em]
-                             text-warm-ghost hover:text-warm-faint hover:bg-transparent
-                             rounded-sm h-auto px-3 py-0.5"
-                >
-                  dismiss
-                </Button>
-              </div>
-            </div>
-          )}
-
-          {/* Confirming pulse */}
-          {confirming && (
-            <div className="flex items-center justify-center gap-3 px-10 py-12">
-              <span className="text-gold animate-[pulse-fade_1.6s_ease-in-out_infinite] shrink-0 text-lg">
-                ◉
-              </span>
-              <span className="font-mono text-[length:var(--text-chrome)] tracking-[0.1em] text-warm-faint">
-                uploading to vault…
-              </span>
-            </div>
-          )}
-
           {/* Expanded zone */}
-          {expanded && !confirming && !ingestError && (
+          {expanded && (
             <>
               {hasFiles ? (
                 /* ── With files selected ── */

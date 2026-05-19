@@ -216,10 +216,24 @@ class IdeaRepository:
         if not idea_rows:
             return
 
+        # Construct Idea explicitly with anchors=[]: callers of this
+        # iterator (partition's token estimate, synthesize's index build)
+        # don't read anchors, and going through ``Idea.model_validate``
+        # on a non-selectinload'd ORM would trigger a lazy load of the
+        # anchors relationship from inside an async session — which
+        # blows up with MissingGreenlet. Render needs anchors and uses
+        # ``get_ideas_by_id`` which keeps its own selectinload.
         ideas_by_doc: dict[UUID, list[Idea]] = {}
         for orm in idea_rows:
             ideas_by_doc.setdefault(orm.document_id, []).append(
-                Idea.model_validate(orm)
+                Idea(
+                    idea_id=orm.idea_id,
+                    document_id=orm.document_id,
+                    kind=orm.kind,
+                    label=orm.label,
+                    description=orm.description,
+                    anchors=[],
+                )
             )
 
         doc_rows = (

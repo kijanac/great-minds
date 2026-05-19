@@ -102,6 +102,43 @@ function emptyStages(): StageProgress[] {
   }));
 }
 
+/** Stages array driven by client-side R2 upload progress.
+ *
+ * Used by the pipeline container while files are still being uploaded
+ * from the browser, before a job id exists and SSE can take over. The
+ * uploading stage (index 0) is marked active and shows ``uploaded / total``
+ * file count; later stages are pending. Once the server responds with a
+ * job id, ``useJobSSE`` takes over and SSE-driven stages replace these.
+ */
+export function buildClientUploadStages(uploaded: number, total: number): StageProgress[] {
+  const safeTotal = Math.max(total, 1);
+  return STAGES.map((s, i) =>
+    i === 0
+      ? {
+          stage: s.stage,
+          label: s.activeLabel,
+          detail: "",
+          done: uploaded,
+          total: safeTotal,
+          steps: [],
+          active: true,
+          complete: false,
+          errored: false,
+        }
+      : {
+          stage: s.stage,
+          label: s.label,
+          detail: "",
+          done: 0,
+          total: 1,
+          steps: [],
+          active: false,
+          complete: false,
+          errored: false,
+        },
+  );
+}
+
 function normalizeEvent(raw: BackendPipelineEvent): PipelineEvent | null {
   const backendPhase = raw.phase as BackendPhase;
   const stage = PHASE_TO_STAGE[backendPhase];

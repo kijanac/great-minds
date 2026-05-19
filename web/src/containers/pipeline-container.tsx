@@ -1,27 +1,46 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { useNavigate, useParams, useSearchParams } from "react-router";
+import { useLocation, useNavigate, useParams, useSearchParams } from "react-router";
 
+import { ingestStagedFiles, type HashedFile } from "@/api/ingest";
 import { listJobs, startUrlJob } from "@/api/jobs";
 import { PipelinePage } from "@/components/pipeline-page";
 import { useActiveVaultId } from "@/hooks/use-vault";
-import { useJobSSE } from "@/hooks/use-job-sse";
+import { buildClientUploadStages, useJobSSE } from "@/hooks/use-job-sse";
+
+interface StagedUploadState {
+  uploadFiles?: HashedFile[];
+  stableJobId?: string;
+}
 
 export function PipelineContainer() {
   const { jobId: routeJobId } = useParams<{ jobId: string }>();
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const urlParam = searchParams.get("url");
+  const location = useLocation();
+  const stagedUpload = (location.state ?? null) as StagedUploadState | null;
   const queryClient = useQueryClient();
   const vaultId = useActiveVaultId();
 
   const [resolvedJobId, setResolvedJobId] = useState<string | null>(null);
   const [noJobFound, setNoJobFound] = useState(false);
   const [resolveError, setResolveError] = useState<string | null>(null);
+  const [clientUpload, setClientUpload] = useState<{
+    uploaded: number;
+    total: number;
+  } | null>(null);
   const startedRef = useRef(false);
 
   const jobId = routeJobId ?? resolvedJobId;
-  const { stages, overallDone, overallError, connected } = useJobSSE(jobId);
+  const { stages: sseStages, overallDone, overallError, connected } = useJobSSE(jobId);
+
+  const stages = useMemo(() => {
+    if (!jobId && clientUpload) {
+      return buildClientUploadStages(clientUpload.uploaded, clientUpload.total);
+    }
+    return sseStages;
+  }, [clientUpload, jobId, sseStages]);
 
   useEffect(() => {
     if (startedRef.current || jobId) return;
@@ -29,6 +48,35 @@ export function PipelineContainer() {
 
     (async () => {
       try {
+        const upload = stagedUpload?.uploadFiles;
+        if (upload && upload.length > 0 && stagedUpload?.stableJobId) {
+          setClientUpload({ uploaded: 0, total: upload.length });
+          for await (const event of ingestStagedFiles(upload, stagedUpload.stableJobId)) {
+            if (event.phase === "uploading") {
+              setClientUpload({ uploaded: event.uploaded, total: event.total });
+            } else if (event.phase === "processing") {
+              if (event.id) {
+                setResolvedJobId(event.id);
+                if (vaultId) {
+                  queryClient.invalidateQueries({
+                    queryKey: ["vault", vaultId, "active-job"],
+                  });
+                }
+                navigate(`/pipeline/runs/${event.id}`, { replace: true, state: null });
+              } else {
+                setResolveError("No job was created — the server may be unavailable.");
+              }
+              setClientUpload(null);
+              return;
+            } else if (event.phase === "error") {
+              setResolveError(event.error ?? "Upload failed");
+              setClientUpload(null);
+              return;
+            }
+          }
+          return;
+        }
+
         if (urlParam) {
           const run = await startUrlJob(urlParam);
           if (vaultId) {
@@ -49,9 +97,10 @@ export function PipelineContainer() {
         }
       } catch (e) {
         setResolveError(e instanceof Error ? e.message : "Job unavailable");
+        setClientUpload(null);
       }
     })();
-  }, [jobId, navigate, queryClient, routeJobId, urlParam, vaultId]);
+  }, [jobId, navigate, queryClient, routeJobId, stagedUpload, urlParam, vaultId]);
 
   return (
     <PipelinePage
@@ -59,7 +108,7 @@ export function PipelineContainer() {
       overallDone={overallDone}
       overallError={overallError ?? resolveError}
       connected={connected}
-      noJobFound={!jobId && noJobFound}
+      noJobFound={!jobId && !clientUpload && noJobFound}
     />
   );
 }
