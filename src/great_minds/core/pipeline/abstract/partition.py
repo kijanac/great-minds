@@ -23,6 +23,7 @@ from great_minds.core.hashing import content_hash
 from great_minds.core.compile_cache import CompileCacheRepository
 from great_minds.core.ideas.service import IdeaService
 from great_minds.core.ideas.schemas import Idea, SourceCard
+from great_minds.core.llm.providers import EMBEDDING_DIMENSIONS
 from great_minds.core.telemetry import enrich, log_event
 
 log = logging.getLogger(__name__)
@@ -64,14 +65,12 @@ class PartitionPhase:
         max_tokens = int(target * self.max_factor)
         min_tokens = int(target * self.min_factor)
 
-        idea_overviews = await self.ideas.list_for_vault(vault_id)
-        id_order = [o.idea_id for o in idea_overviews]
+        # IDs first — cheap, narrow read; cache hit returns without ever
+        # loading the 43k+ vector embeddings into memory.
+        id_order = sorted(await self.ideas.get_ids_for_vault(vault_id))
 
         if not id_order:
-            log_event(
-                "skipped",
-                reason="no_embeddings",
-            )
+            log_event("skipped", reason="no_embeddings")
             return []
 
         cache_key = _cache_key(id_order, target)
@@ -86,10 +85,7 @@ class PartitionPhase:
                 partition_cache_hit=True,
                 partition_chunk_count=len(chunks),
             )
-            log_event(
-                "cached",
-                chunk_count=len(chunks),
-            )
+            log_event("cached", chunk_count=len(chunks))
             return chunks
 
         tokens_by_id = await _estimate_tokens_by_id(self.ideas, vault_id, id_order)
@@ -101,10 +97,19 @@ class PartitionPhase:
         k = max(1, math.ceil(total_tokens / target))
         k = min(k, len(id_order))
 
-        embedding_matrix = np.asarray(
-            [o.embedding for o in idea_overviews], dtype=np.float32
-        )
-        del idea_overviews
+        # Stream embeddings into a pre-allocated matrix to avoid the 2×
+        # transient that np.asarray([list]) creates at OOM-risky scale.
+        # iter_overviews and sorted(id_order) share idea_id ordering, so
+        # positional fill aligns.
+        n = len(id_order)
+        embedding_matrix = np.empty((n, EMBEDDING_DIMENSIONS), dtype=np.float32)
+        row = 0
+        async for batch in self.ideas.iter_overviews(
+            vault_id, batch_size=KMEANS_BATCH_SIZE
+        ):
+            for overview in batch:
+                embedding_matrix[row] = overview.embedding
+                row += 1
 
         labels = await _seeded_kmeans(
             embedding_matrix, k, report_progress=self.report_progress

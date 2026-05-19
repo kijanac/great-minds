@@ -4,13 +4,17 @@ Writes upsert ``ideas`` rows (one per extracted idea, embedding included)
 and replace their ``anchors`` rows in one transaction. Reads come in
 three flavors:
 
-- Overview-shape (``list_for_vault`` / ``get_ids_for_vault``): used by
-  partition for k-means clustering. Returns ``IdeaOverview`` — narrow
-  projection of idea_id + embedding.
+- Overview-shape (``iter_overviews`` / ``get_ids_for_vault``): used by
+  partition for k-means clustering. ``iter_overviews`` keyset-paginates
+  to keep peak memory bounded by batch size; ``get_ids_for_vault`` is a
+  narrow id-only read for cache-key computation.
 - Source-card-shape (``iter_source_cards``): used by partition /
   synthesize for vault-wide iteration with doc-level metadata attached.
+  Anchors deliberately not loaded — neither caller reads them.
 - Idea-only-shape (``get_ideas_by_id``): used by render for spot-lookups
   by idea id. Doc metadata is resolved render-side from its own doc map.
+  Selectinloads anchors because render builds footnoted articles from
+  claim/quote pairs.
 """
 
 import logging
@@ -131,22 +135,30 @@ class IdeaRepository:
             return
         await self.session.execute(delete(IdeaORM).where(IdeaORM.document_id.in_(ids)))
 
-    async def list_for_vault(self, vault_id: UUID) -> list[IdeaOverview]:
-        """Narrow read for partition's k-means: ``idea_id`` + ``embedding``.
+    async def iter_overviews(
+        self, vault_id: UUID, *, batch_size: int = 1024
+    ) -> AsyncIterator[list[IdeaOverview]]:
+        """Stream ``IdeaOverview`` batches for partition's k-means.
 
-        Ordered by ``idea_id`` so row order is deterministic across
-        re-runs (KMeans tie-breaking depends on it). Returns the
-        ``IdeaOverview`` projection — anchors aren't loaded, so this
-        read is safe to call without a ``selectinload`` option.
+        Keyset pagination over ``idea_id`` (already the PK / indexed) so
+        peak memory is bounded by ``batch_size × embedding_dim`` rather
+        than the full corpus. Stable order across passes — multiple
+        epochs of ``partial_fit`` see the same idea sequence.
         """
-        rows = (
-            await self.session.execute(
-                select(IdeaORM.idea_id, IdeaORM.embedding)
-                .where(IdeaORM.vault_id == vault_id)
-                .order_by(IdeaORM.idea_id)
+        last_seen: UUID | None = None
+        while True:
+            stmt = select(IdeaORM.idea_id, IdeaORM.embedding).where(
+                IdeaORM.vault_id == vault_id
             )
-        ).all()
-        return [IdeaOverview.model_validate(row) for row in rows]
+            if last_seen is not None:
+                stmt = stmt.where(IdeaORM.idea_id > last_seen)
+            stmt = stmt.order_by(IdeaORM.idea_id).limit(batch_size)
+            rows = (await self.session.execute(stmt)).all()
+            if not rows:
+                return
+            batch = [IdeaOverview.model_validate(r) for r in rows]
+            yield batch
+            last_seen = batch[-1].idea_id
 
     async def get_ids_for_vault(self, vault_id: UUID) -> list[UUID]:
         rows = (
@@ -185,13 +197,17 @@ class IdeaRepository:
         ``ideas``. Docs that exist in ``source_documents`` but have no
         ideas (e.g. ingested but never compiled) are skipped, matching
         the prior JSONL semantics.
+
+        Anchors are *not* loaded — the two callers (partition's token
+        estimate, synthesize's index build) only read idea metadata.
+        Render needs anchors and uses ``get_ideas_by_id`` instead, which
+        keeps its own ``selectinload``. Skipping the selectinload here
+        avoids materializing all anchor rows into Python objects.
         """
         idea_rows = (
             (
                 await self.session.execute(
-                    select(IdeaORM)
-                    .options(selectinload(IdeaORM.anchors))
-                    .where(IdeaORM.vault_id == vault_id)
+                    select(IdeaORM).where(IdeaORM.vault_id == vault_id)
                 )
             )
             .scalars()

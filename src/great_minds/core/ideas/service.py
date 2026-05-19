@@ -22,8 +22,11 @@ class IdeaService:
     async def delete_for_documents(self, document_ids: Iterable[UUID]) -> None:
         await self.repo.delete_for_documents(document_ids)
 
-    async def list_for_vault(self, vault_id: UUID) -> list[IdeaOverview]:
-        return await self.repo.list_for_vault(vault_id)
+    async def iter_overviews(
+        self, vault_id: UUID, *, batch_size: int = 1024
+    ) -> AsyncIterator[list[IdeaOverview]]:
+        async for batch in self.repo.iter_overviews(vault_id, batch_size=batch_size):
+            yield batch
 
     async def get_ids_for_vault(self, vault_id: UUID) -> list[UUID]:
         return await self.repo.get_ids_for_vault(vault_id)
