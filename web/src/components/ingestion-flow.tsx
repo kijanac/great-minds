@@ -3,6 +3,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { motion, useReducedMotion } from "motion/react";
 
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { checkDupes, hashFile, ingestStagedFiles, type HashedFile } from "@/api/ingest";
@@ -494,7 +495,7 @@ export function IngestionFlow({ hasActivePipeline }: { hasActivePipeline: boolea
   // ---- Render ----
 
   return (
-    <div className="flex justify-center" ref={zoneRef}>
+    <div className="w-full flex justify-center" ref={zoneRef}>
       <motion.div
         layout
         layoutId={LAYOUT_ID}
@@ -788,16 +789,12 @@ function FileRow({ item, onToggle }: { item: IngestableFile; onToggle: (id: stri
         isDupe && !item.selected ? "opacity-50" : ""
       }`}
     >
-      <button
-        type="button"
-        onClick={() => onToggle(item.id)}
-        title={item.selected ? "Click to exclude" : "Click to include"}
-        className="font-mono text-[length:var(--text-chrome)] text-warm-ghost
-                   hover:text-gold transition-colors w-4 text-center shrink-0
-                   bg-transparent border-0 cursor-pointer"
-      >
-        {item.selected ? "☑" : "☐"}
-      </button>
+      <Checkbox
+        checked={item.selected}
+        onCheckedChange={() => onToggle(item.id)}
+        aria-label={item.selected ? "Click to exclude" : "Click to include"}
+        className="shrink-0"
+      />
       <span
         className="font-serif text-[length:var(--text-small)] text-warm-dim truncate flex-1 min-w-0"
         title={item.path}
