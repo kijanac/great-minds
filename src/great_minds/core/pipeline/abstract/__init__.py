@@ -100,6 +100,18 @@ class AbstractPhase:
             status="progress",
             steps=self.progress_steps("group_ideas"),
         )
+
+        async def _report_partition_progress(done: int, total: int) -> None:
+            await self.progress.emit(
+                pipeline_run_id=self.pipeline_run_id,
+                phase="abstract",
+                status="progress",
+                steps=self.progress_steps(
+                    "group_ideas",
+                    counts={"group_ideas": (done, total)},
+                ),
+            )
+
         with telemetry_scope("partition", subphase="partition"):
             async with timed_op("abstract_partition"):
                 chunks = await partition.PartitionPhase(
@@ -108,6 +120,7 @@ class AbstractPhase:
                     target_tokens=self.settings.compile_partition_target_tokens,
                     min_factor=self.settings.compile_partition_min_factor,
                     max_factor=self.settings.compile_partition_max_factor,
+                    report_progress=_report_partition_progress,
                 ).run(vault_id)
         if not chunks:
             log_event(

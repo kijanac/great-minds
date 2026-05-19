@@ -13,10 +13,11 @@ speed — exact tokenization isn't needed for cluster-count rounding.
 
 import logging
 import math
+from collections.abc import Awaitable, Callable
 from uuid import UUID
 
 import numpy as np
-from sklearn.cluster import KMeans
+from sklearn.cluster import KMeans, MiniBatchKMeans
 
 from great_minds.core.hashing import content_hash
 from great_minds.core.compile_cache import CompileCacheRepository
@@ -28,7 +29,14 @@ log = logging.getLogger(__name__)
 
 PHASE = "partition"
 KMEANS_SEED = 42
-KMEANS_N_INIT = 10
+# MiniBatch params for the corpus-wide cluster. batch_size is sklearn's
+# default; max_epochs caps the work while convergence-shift early-stops
+# in practice. Tune these together if cluster quality drifts.
+KMEANS_BATCH_SIZE = 1024
+KMEANS_MAX_EPOCHS = 10
+KMEANS_TOL = 1e-3
+
+ProgressCallback = Callable[[int, int], Awaitable[None]]
 
 
 class PartitionPhase:
@@ -42,12 +50,14 @@ class PartitionPhase:
         target_tokens: int,
         min_factor: float,
         max_factor: float,
+        report_progress: ProgressCallback | None = None,
     ) -> None:
         self.ideas = ideas
         self.compile_cache = compile_cache
         self.target_tokens = target_tokens
         self.min_factor = min_factor
         self.max_factor = max_factor
+        self.report_progress = report_progress
 
     async def run(self, vault_id: UUID) -> list[list[UUID]]:
         target = self.target_tokens
@@ -96,7 +106,9 @@ class PartitionPhase:
         )
         del idea_overviews
 
-        labels = _seeded_kmeans(embedding_matrix, k)
+        labels = await _seeded_kmeans(
+            embedding_matrix, k, report_progress=self.report_progress
+        )
 
         chunks = _group_by_label(labels)
         chunks = _rebalance(
@@ -188,12 +200,71 @@ def _estimate_idea_tokens(idea: Idea, card: SourceCard) -> int:
 # ---------------------------------------------------------------------------
 
 
-def _seeded_kmeans(embedding_matrix: np.ndarray, k: int) -> np.ndarray:
-    if k == 1:
-        return np.zeros(len(embedding_matrix), dtype=np.int64)
+async def _seeded_kmeans(
+    embedding_matrix: np.ndarray,
+    k: int,
+    *,
+    report_progress: ProgressCallback | None = None,
+) -> np.ndarray:
+    """Cluster ``embedding_matrix`` into ``k`` groups via MiniBatchKMeans.
 
-    km = KMeans(n_clusters=k, random_state=KMEANS_SEED, n_init=KMEANS_N_INIT)
-    return km.fit_predict(embedding_matrix)
+    Manual partial_fit loop so we can emit per-epoch progress to the
+    pipeline UI. With ``n_init=1`` and k-means++ init the single run is
+    almost always within a couple percent of inertia-optimal — full
+    multi-init wasn't paying for itself at the scale this runs at.
+
+    Early-stops when centroid shift between epochs falls below
+    ``KMEANS_TOL``; the final progress emit always reports
+    ``(max_epochs, max_epochs)`` so the UI doesn't show a partial bar
+    when we converged ahead of schedule.
+    """
+    n = embedding_matrix.shape[0]
+    if k == 1:
+        if report_progress is not None:
+            await report_progress(KMEANS_MAX_EPOCHS, KMEANS_MAX_EPOCHS)
+        return np.zeros(n, dtype=np.int64)
+
+    mbkm = MiniBatchKMeans(
+        n_clusters=k,
+        random_state=KMEANS_SEED,
+        n_init=1,
+        batch_size=KMEANS_BATCH_SIZE,
+    )
+    rng = np.random.default_rng(KMEANS_SEED)
+    prev_centers: np.ndarray | None = None
+    epochs_run = 0
+
+    if report_progress is not None:
+        await report_progress(0, KMEANS_MAX_EPOCHS)
+
+    for epoch in range(KMEANS_MAX_EPOCHS):
+        order = rng.permutation(n)
+        for start in range(0, n, KMEANS_BATCH_SIZE):
+            batch_idx = order[start : start + KMEANS_BATCH_SIZE]
+            mbkm.partial_fit(embedding_matrix[batch_idx])
+        epochs_run = epoch + 1
+
+        if report_progress is not None:
+            await report_progress(epochs_run, KMEANS_MAX_EPOCHS)
+
+        if prev_centers is not None:
+            shift = float(np.linalg.norm(mbkm.cluster_centers_ - prev_centers))
+            if shift < KMEANS_TOL:
+                break
+        prev_centers = mbkm.cluster_centers_.copy()
+
+    log_event(
+        "kmeans_completed",
+        n_samples=n,
+        n_clusters=k,
+        epochs_run=epochs_run,
+        epochs_max=KMEANS_MAX_EPOCHS,
+    )
+
+    if report_progress is not None and epochs_run < KMEANS_MAX_EPOCHS:
+        await report_progress(KMEANS_MAX_EPOCHS, KMEANS_MAX_EPOCHS)
+
+    return mbkm.predict(embedding_matrix)
 
 
 def _group_by_label(labels: np.ndarray) -> list[np.ndarray]:
@@ -249,7 +320,7 @@ def _split_recursively(
         return [chunk]
     ordered = np.sort(chunk)
     matrix = embedding_matrix[ordered]
-    km = KMeans(n_clusters=2, random_state=KMEANS_SEED, n_init=KMEANS_N_INIT)
+    km = KMeans(n_clusters=2, random_state=KMEANS_SEED, n_init=1)
     labels = km.fit_predict(matrix)
     part_a = ordered[labels == 0]
     part_b = ordered[labels == 1]
