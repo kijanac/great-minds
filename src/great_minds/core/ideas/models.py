@@ -6,7 +6,7 @@ from datetime import datetime
 from pgvector.sqlalchemy import Vector
 from sqlalchemy import DateTime, ForeignKey, Integer, Text, func
 from sqlalchemy.dialects.postgresql import UUID
-from sqlalchemy.orm import Mapped, mapped_column, relationship
+from sqlalchemy.orm import Mapped, deferred, mapped_column, relationship
 
 from great_minds.core.db import Base
 from great_minds.core.llm.providers import EMBEDDING_DIMENSIONS
@@ -32,7 +32,19 @@ class IdeaORM(Base):
     kind: Mapped[str] = mapped_column(Text)
     label: Mapped[str] = mapped_column(Text)
     description: Mapped[str] = mapped_column(Text)
-    embedding: Mapped[list[float]] = mapped_column(Vector(EMBEDDING_DIMENSIONS))
+    # Deferred: heavy column (~4 KB per row at 1024 dims). Excluded from
+    # default ``select(IdeaORM)`` so phases that scan ideas for metadata
+    # (synthesize's index build, partition's token estimate) don't pay
+    # for ~180 MB of vectors they never read. The only consumer that
+    # needs embeddings is partition's kmeans matrix path, which loads
+    # them via an explicit column-tuple ``select(IdeaORM.idea_id,
+    # IdeaORM.embedding)`` in ``iter_overviews`` — column-tuple selects
+    # bypass ``deferred()``. Accessing ``idea.embedding`` on an instance
+    # loaded by a default-shape select will trigger an N+1 lazy load,
+    # which would be a bug — keep the explicit-projection pattern.
+    embedding: Mapped[list[float]] = deferred(
+        mapped_column(Vector(EMBEDDING_DIMENSIONS))
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )
