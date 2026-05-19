@@ -45,6 +45,25 @@ _FM_KNOWN_KEYS = (
 )
 
 
+def frontmatter_to_mirror_fields(fm: dict) -> dict:
+    """Project parsed frontmatter into the Zone-3 mirror columns.
+
+    Known LLM-derived keys map to typed columns; anything outside
+    ``_FM_KNOWN_KEYS`` lands in ``derived_extras`` — that's how
+    vault-configured enriched fields flow from disk back to DB.
+    ``date`` on disk renames to ``published_date`` in the column.
+    """
+    return {
+        "title": fm.get("title"),
+        "precis": fm.get("precis"),
+        "author": fm.get("author"),
+        "published_date": fm.get("date"),
+        "genre": fm.get("genre"),
+        "tags": fm.get("tags") or [],
+        "derived_extras": {k: v for k, v in fm.items() if k not in _FM_KNOWN_KEYS},
+    }
+
+
 # ---------------------------------------------------------------------------
 # Create inputs
 # ---------------------------------------------------------------------------
@@ -56,8 +75,8 @@ class SourceDocCreate(BaseModel):
     Carries identity / mechanically-known fields (zone 1) and
     per-source-kind provenance (zone 2). LLM-derived fields (zone 3)
     are owned by extract and never written through this schema —
-    ingest sets them to None, and ``update_metadata_from_cards`` is the
-    sole writer downstream.
+    ingest sets them to None, and extract reflects them via
+    ``reindex_from_file`` after writing new frontmatter.
     """
 
     model_config = ConfigDict(extra="ignore")
@@ -269,23 +288,6 @@ class FileHash(BaseModel):
     model_config = ConfigDict(from_attributes=True)
     file_path: str
     file_hash: str
-
-
-class SourceDocumentUpdate(BaseModel):
-    """Partial update for source documents — used by the extract phase
-    to write LLM-derived fields back into the docs table."""
-
-    model_config = ConfigDict(from_attributes=True)
-
-    document_id: UUID
-    title: str | None = None
-    precis: str | None = None
-    author: str | None = None
-    published_date: str | None = None
-    genre: str | None = None
-    tags: list[str] | None = None
-    derived_extras: dict | None = None
-    etag: str | None = None
 
 
 class IngestedDocument(BaseModel):

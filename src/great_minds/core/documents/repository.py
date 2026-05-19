@@ -4,8 +4,8 @@ from uuid import UUID
 
 from great_minds.core.hashing import body_hash, file_hash
 
-from sqlalchemy import Select, case, delete, func, or_, select, type_coerce, update
-from sqlalchemy.dialects.postgresql import JSONB, insert
+from sqlalchemy import Select, delete, func, or_, select, update
+from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from great_minds.core.documents.models import (
@@ -18,21 +18,20 @@ from great_minds.core.documents.schemas import (
     FileHash,
     SourceDocCreate,
     SourceDocument,
-    SourceDocumentUpdate,
     WikiArticle,
     WikiArticleCreate,
     WikiArticleOverview,
+    frontmatter_to_mirror_fields,
 )
-from great_minds.core.ideas.schemas import SourceCard
 from great_minds.core.markdown import parse_frontmatter
 from great_minds.core.pagination import FacetCount
 from great_minds.core.paths import WIKI_INDEX_PATH, wiki_path
 
 
 # Columns the ingest path writes. Zone-3 (LLM-derived) columns are
-# deliberately excluded — extract owns those via ``update_batch``. The
-# on-conflict SET clause uses this same list so re-ingest can't clobber
-# extract's output.
+# deliberately excluded — extract owns those via ``reindex_from_file``.
+# The on-conflict SET clause uses this same list so re-ingest can't
+# clobber extract's output.
 _INGEST_COLUMNS = (
     "file_hash",
     "body_hash",
@@ -139,57 +138,33 @@ class SourceDocumentRepo:
         )
         return [h for h in result.scalars() if h is not None]
 
-    async def update_batch(
-        self, vault_id: UUID, updates: list[SourceDocumentUpdate]
-    ) -> None:
-        """Batch-update LLM-derived columns from extract output.
+    async def refresh_etag_batch(self, etags: list[tuple[UUID, str]]) -> None:
+        """Update etag for many docs in one prepared-statement executemany.
 
-        Each field assembled as a polymorphic CASE over document_id.
-        ``derived_extras`` (JSONB) needs explicit ``type_coerce`` so
-        SQLAlchemy emits ``::jsonb`` casts on the WHEN/THEN bindparams;
-        otherwise asyncpg sends dicts as text and Postgres rejects the
-        assignment.
+        Single-column write owned by ingest. The vault_id constraint is
+        implicit — callers pass ids resolved from the vault.
         """
-        if not updates:
+        if not etags:
             return
-        ids = [u.document_id for u in updates]
-        values: dict = {"updated_at": func.now()}
-        for attr in (
-            "etag",
-            "title",
-            "precis",
-            "author",
-            "published_date",
-            "genre",
-            "tags",
-            "derived_extras",
-        ):
-            mapping: dict = {}
-            for u in updates:
-                v = getattr(u, attr)
-                if v is None:
-                    continue
-                if attr == "derived_extras":
-                    mapping[u.document_id] = type_coerce(v, JSONB)
-                else:
-                    mapping[u.document_id] = v
-            if mapping:
-                values[attr] = case(mapping, value=SourceDocumentORM.id)
         await self.session.execute(
-            update(SourceDocumentORM)
-            .where(
-                SourceDocumentORM.vault_id == vault_id,
-                SourceDocumentORM.id.in_(ids),
-            )
-            .values(**values)
+            update(SourceDocumentORM).values(updated_at=func.now()),
+            [{"id": doc_id, "etag": etag} for doc_id, etag in etags],
         )
 
-    async def update_metadata_from_cards(
-        self, vault_id: UUID, cards: list[SourceCard]
-    ) -> None:
-        await self.update_batch(
-            vault_id,
-            [SourceDocumentUpdate.model_validate(c) for c in cards],
+    async def reindex_from_file(self, doc_id: UUID, file_content: str) -> None:
+        """Reflect a file's frontmatter into the doc's Zone-3 mirror columns.
+
+        The single canonical ``file → row`` translator. Frontmatter is
+        canonical; this row write derives from it. Each value flows
+        through its column's type descriptor (executemany over one
+        dict), so arrays/JSONB don't lose type information the way the
+        prior CASE-WHEN build did.
+        """
+        fm, _ = parse_frontmatter(file_content)
+        payload = frontmatter_to_mirror_fields(fm)
+        await self.session.execute(
+            update(SourceDocumentORM).values(updated_at=func.now()),
+            [{"id": doc_id, **payload}],
         )
 
     async def get_by_path(

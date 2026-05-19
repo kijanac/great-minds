@@ -8,12 +8,10 @@ from great_minds.core.documents.schemas import (
     SourceDocCreate,
     SourceDocument,
     SourceDocumentFacets,
-    SourceDocumentUpdate,
     WikiArticle,
     WikiArticleCreate,
     WikiArticleOverview,
 )
-from great_minds.core.ideas.schemas import SourceCard
 from great_minds.core.markdown import parse_frontmatter
 from great_minds.core.pagination import FacetedPage, Page, PageParams, create_page
 
@@ -41,11 +39,9 @@ class SourceDocumentService:
     ) -> list[str]:
         return await self.repo.existing_client_hashes(vault_id, client_hashes)
 
-    async def update_batch(
-        self, vault_id: UUID, updates: list[SourceDocumentUpdate]
-    ) -> None:
-        """Batch-update source documents."""
-        await self.repo.update_batch(vault_id, updates)
+    async def refresh_etag_batch(self, etags: list[tuple[UUID, str]]) -> None:
+        """Update etag for many docs in one executemany. Owned by ingest."""
+        await self.repo.refresh_etag_batch(etags)
 
     async def batch_index(
         self, vault_id: UUID, docs: list[SourceDocCreate]
@@ -56,10 +52,9 @@ class SourceDocumentService:
         await self._commit()
         return ids
 
-    async def update_metadata_from_cards(
-        self, vault_id: UUID, cards: list[SourceCard]
-    ) -> None:
-        await self.repo.update_metadata_from_cards(vault_id, cards)
+    async def reindex_from_file(self, doc_id: UUID, file_content: str) -> None:
+        """Reflect a file's frontmatter into the doc's mirror columns."""
+        await self.repo.reindex_from_file(doc_id, file_content)
 
     async def get_by_path(
         self, vault_id: UUID, file_path: str

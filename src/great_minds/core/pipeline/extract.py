@@ -260,17 +260,17 @@ class ExtractPhase:
                 },
             ),
         )
-        await self.source_docs.update_metadata_from_cards(vault_id, fresh_cards)
-        await self.session.commit()
-
-        # Mirror LLM-derived fields back into on-disk frontmatter so the
-        # vault is portable (a clone of R2 + a fresh DB reconstructs to
-        # the same state). Only freshly-extracted docs need rewriting;
-        # cache-hit docs already have correct frontmatter from a prior
-        # compile.
+        # File is canonical for content-about-content; the DB row mirrors it
+        # for query. So write new frontmatter to the file first, then reflect
+        # the file into the row via the single canonical reindex translator.
+        # Only freshly-extracted docs need rewriting; cache-hit docs already
+        # have correct frontmatter (and row state) from a prior compile.
         docs_by_id = {d.id: d for d in docs}
         for card in fresh_cards:
-            await _mirror_frontmatter(self.storage, docs_by_id[card.document_id], card)
+            doc = docs_by_id[card.document_id]
+            new_content = await _write_extract_frontmatter(self.storage, doc, card)
+            await self.source_docs.reindex_from_file(doc.id, new_content)
+        await self.session.commit()
 
         enrich(
             docs_extracted=docs_extracted,
@@ -581,19 +581,21 @@ async def _embed_in_batches(
 # ---------------------------------------------------------------------------
 
 
-async def _mirror_frontmatter(
+async def _write_extract_frontmatter(
     storage: Storage, doc: SourceDocument, card: SourceCard
-) -> None:
+) -> str:
     """Rewrite this doc's on-disk frontmatter to reflect the new extract.
 
-    Identity / provenance comes from the (already-committed) DB row;
-    LLM-derived fields come from the SourceCard; vault-configured extras
-    are flattened to top-level frontmatter keys. Body is preserved
-    verbatim — anchors were injected at ingest time.
+    Identity / provenance comes from the existing DB row; LLM-derived
+    fields come from the SourceCard; vault-configured extras are
+    flattened to top-level frontmatter keys. Body is preserved verbatim
+    — anchors were injected at ingest time. Returns the new file content
+    so the caller can hand it straight to ``reindex_from_file`` without
+    a second storage read.
 
-    Raises if the file vanished between extract and mirror. The DB
-    update has already committed, so a missing file here is a real
-    inconsistency, not a silent-skip case.
+    Raises if the file vanished between extract and write. The DB
+    reflection will then naturally be skipped for this doc, leaving the
+    file/row pair coherent (both stale, recoverable on next compile).
     """
     existing = await storage.read(doc.file_path)
     if existing is None:
@@ -624,4 +626,6 @@ async def _mirror_frontmatter(
         "tags": card.tags or None,
         **card.derived_extras,
     }
-    await storage.write(doc.file_path, build_frontmatter(new_fm) + body)
+    new_content = build_frontmatter(new_fm) + body
+    await storage.write(doc.file_path, new_content)
+    return new_content

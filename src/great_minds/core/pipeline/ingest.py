@@ -13,7 +13,6 @@ from uuid import UUID
 
 from openai import AsyncOpenAI
 
-from great_minds.core.documents.schemas import SourceDocumentUpdate
 from great_minds.core.documents.service import SourceDocumentService
 from great_minds.core.pipeline_runs import (
     PipelineProgressRunner,
@@ -113,13 +112,8 @@ class IngestPhase:
         # Persist the current ETags so the next compile can skip unchanged
         # files without reading them from R2.
         if out_etags:
-            await self.source_docs.update_batch(
-                vault_id,
-                [
-                    SourceDocumentUpdate(document_id=id_by_path[p], etag=e)
-                    for p, e in out_etags
-                    if p in id_by_path
-                ],
+            await self.source_docs.refresh_etag_batch(
+                [(id_by_path[p], e) for p, e in out_etags if p in id_by_path],
             )
 
         enrich(raw_chunks_indexed=count)
