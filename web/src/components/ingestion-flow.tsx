@@ -488,8 +488,8 @@ export function IngestionFlow({ hasActivePipeline }: { hasActivePipeline: boolea
     : { duration: 0 };
 
   const shellClass = isCircle
-    ? "w-12 h-12 rounded-full border border-dashed border-ink-border bg-transparent cursor-pointer"
-    : "w-full max-w-[800px] rounded-sm border border-solid border-gold-dim bg-ink-raised overflow-hidden";
+    ? "w-12 h-12 border border-dashed border-ink-border bg-transparent cursor-pointer"
+    : "w-full max-w-[800px] border border-solid border-gold-dim bg-ink-raised overflow-hidden";
 
   // ---- Render ----
 
@@ -499,6 +499,7 @@ export function IngestionFlow({ hasActivePipeline }: { hasActivePipeline: boolea
         layout
         layoutId={LAYOUT_ID}
         transition={shellSpring}
+        animate={{ borderRadius: isCircle ? 24 : 4 }}
         onClick={isCircle ? handleCircleClick : undefined}
         className={`relative ${shellClass}`}
         onDragEnter={
@@ -704,7 +705,7 @@ export function IngestionFlow({ hasActivePipeline }: { hasActivePipeline: boolea
                 </div>
               ) : (
                 /* ── Empty: generous drop target ── */
-                <div className="px-10 py-14 flex flex-col items-center gap-6">
+                <div className="px-10 py-14 flex flex-col items-center justify-center gap-6 min-h-[500px]">
                   <div className="text-center">
                     <p className="font-serif text-[length:var(--text-body)] text-warm-dim mb-1">
                       {isDragOver ? "drop to add to knowledge base" : "drop files or folders here"}
