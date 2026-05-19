@@ -32,7 +32,7 @@ from great_minds.core.llm import MAP_MODEL
 from great_minds.core.pipeline.abstract.schemas import LocalTopic
 from great_minds.core.pipeline_runs import PipelineProgressRunner
 from great_minds.core.storage import Storage
-from great_minds.core.telemetry import enrich, log_event
+from great_minds.core.telemetry import current_rss_mb, enrich, log_event
 
 log = logging.getLogger(__name__)
 
@@ -78,7 +78,21 @@ class SynthesizePhase:
 
         prompt_template = await load_prompt(self.storage, "synthesize")
         ph = prompt_hash(prompt_template)
+        log_event(
+            "memory_checkpoint",
+            phase="synthesize",
+            at="before_index",
+            rss_mb=current_rss_mb(),
+        )
         synthesis_index = await _build_synthesis_index(ideas, vault_id, chunks)
+        log_event(
+            "memory_checkpoint",
+            phase="synthesize",
+            at="after_index",
+            rss_mb=current_rss_mb(),
+            indexed_ideas=len(synthesis_index.ideas),
+            indexed_docs=len(synthesis_index.docs),
+        )
 
         sem = asyncio.Semaphore(self.concurrency)
         tasks = [
@@ -101,6 +115,15 @@ class SynthesizePhase:
             outcome = await task
             outcomes.append(outcome)
             chunks_done += 1
+            if chunks_done == 1 or chunks_done % 10 == 0 or chunks_done == len(chunks):
+                log_event(
+                    "memory_checkpoint",
+                    phase="synthesize",
+                    at="chunk_done",
+                    chunks_done=chunks_done,
+                    chunks_total=len(chunks),
+                    rss_mb=current_rss_mb(),
+                )
             await self.progress.emit(
                 pipeline_run_id=self.pipeline_run_id,
                 phase="abstract",

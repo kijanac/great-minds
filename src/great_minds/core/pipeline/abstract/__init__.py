@@ -36,7 +36,13 @@ from great_minds.core.pipeline_runs import (
 )
 from great_minds.core.settings import Settings
 from great_minds.core.storage import Storage
-from great_minds.core.telemetry import enrich, log_event, telemetry_scope, timed_op
+from great_minds.core.telemetry import (
+    current_rss_mb,
+    enrich,
+    log_event,
+    telemetry_scope,
+    timed_op,
+)
 from great_minds.core.topics.schemas import TopicDetail
 from great_minds.core.topics.service import TopicService
 
@@ -112,6 +118,9 @@ class AbstractPhase:
                 ),
             )
 
+        log_event(
+            "memory_checkpoint", phase="partition", at="start", rss_mb=current_rss_mb()
+        )
         with telemetry_scope("partition", subphase="partition"):
             async with timed_op("abstract_partition"):
                 chunks = await partition.PartitionPhase(
@@ -122,6 +131,9 @@ class AbstractPhase:
                     max_factor=self.settings.compile_partition_max_factor,
                     report_progress=_report_partition_progress,
                 ).run(vault_id)
+        log_event(
+            "memory_checkpoint", phase="partition", at="end", rss_mb=current_rss_mb()
+        )
         if not chunks:
             log_event(
                 "skipped",
@@ -145,6 +157,9 @@ class AbstractPhase:
                 counts={"synthesize_topics": (0, len(chunks))},
             ),
         )
+        log_event(
+            "memory_checkpoint", phase="synthesize", at="start", rss_mb=current_rss_mb()
+        )
         with telemetry_scope("synthesize", subphase="synthesize"):
             async with timed_op("abstract_synthesize"):
                 local_topics = await synthesize.SynthesizePhase(
@@ -156,6 +171,9 @@ class AbstractPhase:
                     pipeline_run_id=self.pipeline_run_id,
                     progress_steps=self.progress_steps,
                 ).run(vault_id, self.ideas, chunks)
+        log_event(
+            "memory_checkpoint", phase="synthesize", at="end", rss_mb=current_rss_mb()
+        )
         await self.progress.emit(
             pipeline_run_id=self.pipeline_run_id,
             phase="abstract",
@@ -166,12 +184,18 @@ class AbstractPhase:
                 counts={"synthesize_topics": (len(chunks), len(chunks))},
             ),
         )
+        log_event(
+            "memory_checkpoint", phase="premerge", at="start", rss_mb=current_rss_mb()
+        )
         with telemetry_scope("premerge", subphase="premerge"):
             async with timed_op("abstract_premerge"):
                 merged_topics = premerge.run(
                     local_topics,
                     jaccard_threshold=self.settings.compile_premerge_jaccard_threshold,
                 )
+        log_event(
+            "memory_checkpoint", phase="premerge", at="end", rss_mb=current_rss_mb()
+        )
         await self.progress.emit(
             pipeline_run_id=self.pipeline_run_id,
             phase="abstract",
@@ -186,6 +210,12 @@ class AbstractPhase:
                 counts={"synthesize_topics": (len(chunks), len(chunks))},
             ),
         )
+        log_event(
+            "memory_checkpoint",
+            phase="canonicalize",
+            at="start",
+            rss_mb=current_rss_mb(),
+        )
         with telemetry_scope("canonicalize", subphase="canonicalize"):
             async with timed_op("abstract_canonicalize"):
                 canonical_topics = await canonicalize.CanonicalizePhase(
@@ -194,6 +224,9 @@ class AbstractPhase:
                     compile_cache=self.compile_cache,
                     thematic_hint=self.thematic_hint,
                 ).run(vault_id, merged_topics)
+        log_event(
+            "memory_checkpoint", phase="canonicalize", at="end", rss_mb=current_rss_mb()
+        )
         await self.progress.emit(
             pipeline_run_id=self.pipeline_run_id,
             phase="abstract",
@@ -209,6 +242,9 @@ class AbstractPhase:
                 counts={"synthesize_topics": (len(chunks), len(chunks))},
             ),
         )
+        log_event(
+            "memory_checkpoint", phase="validate", at="start", rss_mb=current_rss_mb()
+        )
         with telemetry_scope("validate", subphase="validate"):
             async with timed_op("abstract_validate"):
                 validated = await validate.ValidatePhase(
@@ -217,6 +253,9 @@ class AbstractPhase:
                     topics=self.topics,
                     wiki_articles=self.wiki_articles,
                 ).run(vault_id, canonical_topics, merged_topics)
+        log_event(
+            "memory_checkpoint", phase="validate", at="end", rss_mb=current_rss_mb()
+        )
 
         enrich(validated_topics=len(validated))
         log_event(

@@ -34,6 +34,24 @@ import time
 from collections.abc import AsyncIterator, Iterator
 from datetime import UTC, datetime
 
+
+def current_rss_mb() -> float:
+    """Current resident-set size in MB, read from /proc/self/status.
+
+    Linux only — returns 0.0 on platforms without /proc (e.g. macOS local
+    runs). Used by phase-boundary memory checkpoints to surface peaks
+    during compile, so OOM hot spots can be located from logs alone.
+    """
+    try:
+        with open("/proc/self/status") as f:
+            for line in f:
+                if line.startswith("VmRSS:"):
+                    return int(line.split()[1]) / 1024
+    except OSError:
+        pass
+    return 0.0
+
+
 # ---------------------------------------------------------------------------
 # Context variables — async-safe, zero signature pollution
 # ---------------------------------------------------------------------------
