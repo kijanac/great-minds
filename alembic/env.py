@@ -10,15 +10,20 @@ from great_minds.core.db import Base
 from great_minds.core.settings import get_settings
 
 # Register all domain models with Base.metadata
-import great_minds.core.vaults.models  # noqa: F401
-import great_minds.core.search.models  # noqa: F401
-import great_minds.core.documents.models  # noqa: F401
-import great_minds.core.users.models  # noqa: F401
 import great_minds.core.auth.models  # noqa: F401
+import great_minds.core.compile_cache.models  # noqa: F401
+import great_minds.core.compile_intents.models  # noqa: F401
+import great_minds.core.documents.models  # noqa: F401
+import great_minds.core.ideas.models  # noqa: F401
+import great_minds.core.llm_costs.models  # noqa: F401
+import great_minds.core.pipeline_runs.models  # noqa: F401
+import great_minds.core.proposals.models  # noqa: F401
+import great_minds.core.search.models  # noqa: F401
+import great_minds.core.sessions.models  # noqa: F401
 import great_minds.core.tasks.models  # noqa: F401
 import great_minds.core.topics.models  # noqa: F401
-import great_minds.core.ideas.models  # noqa: F401
-import great_minds.core.compile_cache.models  # noqa: F401
+import great_minds.core.users.models  # noqa: F401
+import great_minds.core.vaults.models  # noqa: F401
 
 config = context.config
 

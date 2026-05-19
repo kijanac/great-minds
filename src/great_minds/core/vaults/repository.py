@@ -2,7 +2,7 @@
 
 from uuid import UUID
 
-from sqlalchemy import delete, func, select, text, update
+from sqlalchemy import delete, func, select, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -54,18 +54,13 @@ class VaultRepository:
         return [Vault.model_validate(row) for row in result.scalars().all()]
 
     async def delete_vault(self, vault_id: UUID) -> None:
-        """Drop the vault row and explicitly clean up non-cascading rows.
-
-        ``idea_embeddings`` has no FK to vaults so it doesn't cascade —
-        delete it explicitly first. The vault row delete cascades to
-        memberships, documents (→ tags), proposals, tasks, search_index,
-        topics (→ topic_membership, topic_links, topic_related, backlinks).
+        """Drop the vault row. Every child table has ON DELETE CASCADE on
+        its ``vault_id`` FK, so memberships, documents (→ ideas → anchors,
+        proposals), tasks, sessions, search_index, topics (→ membership,
+        links, related, wiki_articles → backlinks), compile_cache_entries,
+        compile_intents, pipeline_runs, and llm_cost_events all follow.
         Caller commits.
         """
-        await self.session.execute(
-            text("DELETE FROM idea_embeddings WHERE vault_id = :bid"),
-            {"bid": str(vault_id)},
-        )
         await self.session.execute(delete(VaultORM).where(VaultORM.id == vault_id))
 
     async def list_user_vaults(

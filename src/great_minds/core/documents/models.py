@@ -7,6 +7,7 @@ import sqlalchemy as sa
 from sqlalchemy import (
     DateTime,
     ForeignKey,
+    Index,
     Integer,
     Text,
     UniqueConstraint,
@@ -34,14 +35,27 @@ class SourceDocumentORM(Base):
     """
 
     __tablename__ = "source_documents"
-    __table_args__ = (UniqueConstraint("vault_id", "file_path"),)
+    __table_args__ = (
+        UniqueConstraint("vault_id", "file_path"),
+        # Partial index for the dupe-check preflight: "is this client_hash
+        # already in this vault?" Only NOT NULL rows matter, so the partial
+        # WHERE clause keeps the index tight.
+        Index(
+            "ix_source_documents_vault_client_hash",
+            "vault_id",
+            "client_hash",
+            postgresql_where=sa.text("client_hash IS NOT NULL"),
+        ),
+    )
 
     # --- Zone 1: identity / mechanically-known ---
     id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
     )
     vault_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("vaults.id")
+        UUID(as_uuid=True),
+        ForeignKey("vaults.id", ondelete="CASCADE"),
+        index=True,
     )
     file_path: Mapped[str] = mapped_column(Text)
     file_hash: Mapped[str] = mapped_column(Text)
@@ -109,10 +123,13 @@ class WikiArticleORM(Base):
         UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
     )
     vault_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("vaults.id")
+        UUID(as_uuid=True),
+        ForeignKey("vaults.id", ondelete="CASCADE"),
+        index=True,
     )
     topic_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("topics.topic_id")
+        UUID(as_uuid=True),
+        ForeignKey("topics.topic_id", ondelete="CASCADE"),
     )
     file_path: Mapped[str] = mapped_column(Text)
     file_hash: Mapped[str] = mapped_column(Text)

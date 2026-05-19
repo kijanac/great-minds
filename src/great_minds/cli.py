@@ -324,7 +324,7 @@ async def reset(
         console.print(
             Panel.fit(
                 f"[bold]Vault:[/bold] [cyan]{vault_id}[/cyan]\n\nThis will [bold red]DELETE ALL CONTENT[/bold red]:\n"
-                "  • Database: documents, search_index, backlinks, tasks, source_proposals\n"
+                "  • Database: source_documents, ideas, search_index, backlinks, tasks, source_proposals\n"
                 f"  • Disk: {', '.join(str(vault_root / s) for s in VAULT_SUBDIRS)}",
                 title="[bold yellow]⚠ Reset Vault[/bold yellow]",
                 border_style="red",
@@ -342,8 +342,8 @@ async def reset(
                 "tasks",
                 "source_proposals",
                 "topics",
-                "idea_embeddings",
-                "documents",
+                "ideas",
+                "source_documents",
             ):
                 result = await session.execute(
                     text(f"DELETE FROM {table} WHERE vault_id = :bid"),
@@ -391,7 +391,7 @@ async def delete_vault(
                 f"[bold]Vault:[/bold] [cyan]{vault_id}[/cyan]\n\n"
                 "This will [bold red]PERMANENTLY DELETE[/bold red]:\n"
                 "  • Database: the vaults row + all FK-cascaded content\n"
-                "              (documents, topics, backlinks, idea_embeddings, tasks, ...)\n"
+                "              (source_documents, topics, backlinks, ideas, tasks, ...)\n"
                 f"{storage_detail}\n  • Sidecar:  {sidecar}\n\n"
                 "The vault row itself is removed — not just its content.\n"
                 "Use [bold]reset[/bold] if you only want to clear content.",

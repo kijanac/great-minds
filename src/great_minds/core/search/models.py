@@ -10,7 +10,7 @@ from datetime import datetime
 from uuid import UUID
 
 from pgvector.sqlalchemy import Vector
-from sqlalchemy import DateTime, Integer, Text, UniqueConstraint, func
+from sqlalchemy import DateTime, ForeignKey, Integer, Text, UniqueConstraint, func
 from sqlalchemy.dialects.postgresql import TSVECTOR, UUID as PG_UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -25,7 +25,11 @@ class SearchIndexEntry(Base):
     id: Mapped[UUID] = mapped_column(
         PG_UUID, primary_key=True, server_default=func.gen_random_uuid()
     )
-    vault_id: Mapped[UUID] = mapped_column(PG_UUID, index=True)
+    vault_id: Mapped[UUID] = mapped_column(
+        PG_UUID,
+        ForeignKey("vaults.id", ondelete="CASCADE"),
+        index=True,
+    )
     path: Mapped[str] = mapped_column(Text)
     chunk_index: Mapped[int] = mapped_column(Integer, default=0)
     heading: Mapped[str] = mapped_column(Text, default="")

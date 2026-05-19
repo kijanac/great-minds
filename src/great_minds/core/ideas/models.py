@@ -23,7 +23,11 @@ class IdeaORM(Base):
     __tablename__ = "ideas"
 
     idea_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True)
-    vault_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), index=True)
+    vault_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("vaults.id", ondelete="CASCADE"),
+        index=True,
+    )
     document_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True),
         ForeignKey("source_documents.id", ondelete="CASCADE"),
