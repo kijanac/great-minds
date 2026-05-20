@@ -36,7 +36,6 @@ const RECOGNISED_EXTS = new Set([
 ]);
 
 const HASH_CONCURRENCY = 4;
-const LARGE_BATCH_THRESHOLD = 200;
 
 /** Per-file lifecycle in the ingestion preview. */
 type FileStatus =
@@ -390,7 +389,6 @@ export function IngestionFlow({ hasActivePipeline }: { hasActivePipeline: boolea
   const dupVaultCount = files.filter((f) => f.status === "duplicate-in-vault").length;
   const unrecognisedCount = files.filter((f) => f.status === "unrecognised").length;
   const totalSize = files.reduce((s, f) => s + f.file.size, 0);
-  const isLargeBatch = files.length > LARGE_BATCH_THRESHOLD;
 
   // ---- Transition ----
 
@@ -493,12 +491,6 @@ export function IngestionFlow({ hasActivePipeline }: { hasActivePipeline: boolea
                   </ScrollArea>
 
                   <div className="mt-6 pt-5 border-t border-ink-subtle">
-                    {isLargeBatch && (
-                      <p className="mb-4 font-mono text-[length:var(--text-chrome)] tracking-[0.06em] text-warm-faint text-center">
-                        {files.length} files — a large batch. Ingest may take a while. The pipeline
-                        runs in the background if you navigate away.
-                      </p>
-                    )}
                     <div className="flex items-center justify-center gap-2">
                       <Button
                         variant="ghost"
