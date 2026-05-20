@@ -3,7 +3,7 @@
 from datetime import datetime
 from uuid import UUID
 
-from sqlalchemy import DateTime, ForeignKey, text
+from sqlalchemy import DateTime, ForeignKey, Index, text
 from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -12,6 +12,24 @@ from great_minds.core.db import Base
 
 class CompileIntentRecord(Base):
     __tablename__ = "compile_intents"
+    __table_args__ = (
+        # Coalesces concurrent ingests to one pending intent per vault at the
+        # DB level. Required by the ON CONFLICT (vault_id) WHERE dispatched_at
+        # IS NULL clause in ``IntentRepository.ensure_pending``.
+        Index(
+            "ix_compile_intents_one_pending",
+            "vault_id",
+            unique=True,
+            postgresql_where=text("dispatched_at IS NULL"),
+        ),
+        # Reconciler scans pending intents by created_at; partial index keeps
+        # the scan bounded as the table grows with dispatched rows.
+        Index(
+            "ix_compile_intents_pending",
+            "created_at",
+            postgresql_where=text("dispatched_at IS NULL"),
+        ),
+    )
 
     id: Mapped[UUID] = mapped_column(
         PG_UUID, primary_key=True, server_default=text("gen_random_uuid()")

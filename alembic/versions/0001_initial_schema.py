@@ -2,7 +2,7 @@
 
 Revision ID: 0001
 Revises:
-Create Date: 2026-05-19 14:50:14.815613
+Create Date: 2026-05-19 16:22:11.599247
 
 """
 
@@ -381,6 +381,20 @@ def upgrade() -> None:
         ),
         sa.ForeignKeyConstraint(["vault_id"], ["vaults.id"], ondelete="CASCADE"),
         sa.PrimaryKeyConstraint("id"),
+    )
+    op.create_index(
+        "ix_compile_intents_one_pending",
+        "compile_intents",
+        ["vault_id"],
+        unique=True,
+        postgresql_where=sa.text("dispatched_at IS NULL"),
+    )
+    op.create_index(
+        "ix_compile_intents_pending",
+        "compile_intents",
+        ["created_at"],
+        unique=False,
+        postgresql_where=sa.text("dispatched_at IS NULL"),
     )
     op.create_index(
         op.f("ix_compile_intents_pipeline_run_id"),

@@ -204,15 +204,28 @@ async def _fetch_and_convert(
     bucket: str,
     admin: R2Admin,
     sem: asyncio.Semaphore,
-) -> tuple[dict, str]:
-    """Pull one staging blob, convert to markdown, prepend frontmatter."""
+) -> tuple[dict, str | None, Exception | None]:
+    """Pull one staging blob, convert to markdown, prepend frontmatter.
+
+    Always returns ``entry`` so callers can identify the source on failure.
+    Never raises — exceptions are returned as the third tuple slot. This
+    matters because the caller drains via ``asyncio.as_completed``, which
+    only yields the awaitable's result, not the original entry — re-raising
+    here would leave the caller without enough context to log which file
+    failed.
+    """
     name = entry["name"]
-    async with sem:
-        staging_key = f"staging/{vault_id}/{entry['hash']}"
-        raw_bytes = await asyncio.to_thread(admin.fetch_bytes, bucket, staging_key)
-        content = await _convert_to_markdown(raw_bytes, name, entry.get("mimetype", ""))
-        content_with_fm = build_document(content, source_type="document")
-        return entry, content_with_fm
+    try:
+        async with sem:
+            staging_key = f"staging/{vault_id}/{entry['hash']}"
+            raw_bytes = await asyncio.to_thread(admin.fetch_bytes, bucket, staging_key)
+            content = await _convert_to_markdown(
+                raw_bytes, name, entry.get("mimetype", "")
+            )
+            content_with_fm = build_document(content, source_type="document")
+            return entry, content_with_fm, None
+    except Exception as e:
+        return entry, None, e
 
 
 STAGED_FILE_INGEST_STEP_LABELS = {
@@ -225,7 +238,7 @@ STAGED_FILE_INGEST_STEP_LABELS = {
 
 
 async def _index_fetched_results(
-    fetch_tasks: list[asyncio.Task[tuple[dict, str]]],
+    fetch_tasks: list[asyncio.Task[tuple[dict, str | None, Exception | None]]],
     *,
     ctx,
     vault_id: UUID,
@@ -263,15 +276,14 @@ async def _index_fetched_results(
                 failed=failed,
                 pending=remaining,
             )
-        try:
-            entry, content_with_fm = await coro
-        except Exception as e:
+        entry, content_with_fm, err = await coro
+        if err is not None or content_with_fm is None:
             log_event(
                 "staged_file_ingest.fetch_failed",
                 level=logging.WARNING,
                 vault_id=str(vault_id),
-                error_type=type(e).__name__,
-                error=str(e),
+                error_type=type(err).__name__ if err else "unknown",
+                error=str(err) if err else "no content",
                 file_name=entry.get("name", "?"),
             )
             failed += 1
@@ -485,23 +497,6 @@ async def staged_file_ingest_task(params: dict, ctx) -> None:
             except asyncio.CancelledError:
                 pass
 
-        await progress.emit(
-            pipeline_run_id=pipeline_run_id,
-            phase="source_ingest",
-            status="progress",
-            steps=build_progress_steps(
-                STAGED_FILE_INGEST_STEP_LABELS,
-                "cleanup_uploads",
-                completed={"prepare_sources", "read_files", "index_documents"},
-                counts={
-                    "read_files": (len(files), len(files)),
-                    "index_documents": (ingested + skipped, len(files)),
-                    "cleanup_uploads": (0, len(keys_to_clean)),
-                },
-            ),
-        )
-        await _cleanup_staging(admin, bucket, keys_to_clean, vault_id=vault_id)
-
         if ingested > 0:
             await progress.emit(
                 pipeline_run_id=pipeline_run_id,
@@ -530,6 +525,26 @@ async def staged_file_ingest_task(params: dict, ctx) -> None:
                 await intent_repo.attach_pipeline_run(intent.id, pipeline_run_id)
             await pipeline_run_repo.attach_compile_intent(pipeline_run_id, intent.id)
             await session.commit()
+            # Cleanup runs only after the commit succeeds. Doing it before
+            # the commit means a failure between cleanup and commit leaves
+            # staging keys gone, and the task retry can't re-fetch them →
+            # NoSuchKey on retry, masking the real error.
+            await progress.emit(
+                pipeline_run_id=pipeline_run_id,
+                phase="source_ingest",
+                status="progress",
+                steps=build_progress_steps(
+                    STAGED_FILE_INGEST_STEP_LABELS,
+                    "cleanup_uploads",
+                    completed={"prepare_sources", "read_files", "index_documents"},
+                    counts={
+                        "read_files": (len(files), len(files)),
+                        "index_documents": (ingested + skipped, len(files)),
+                        "cleanup_uploads": (0, len(keys_to_clean)),
+                    },
+                ),
+            )
+            await _cleanup_staging(admin, bucket, keys_to_clean, vault_id=vault_id)
             await progress.emit(
                 pipeline_run_id=pipeline_run_id,
                 phase="source_ingest",
