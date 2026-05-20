@@ -3,7 +3,7 @@ import { z } from "zod";
 import { apiFetch, vaultPath, readJson } from "./client";
 import { paginatedSchema } from "./schemas";
 
-const wikiArticleOverviewSchema = z.object({
+export const wikiArticleOverviewSchema = z.object({
   file_path: z.string(),
   slug: z.string(),
   title: z.string(),
@@ -27,5 +27,13 @@ export async function fetchWikiArticles(params?: {
   const path = vaultPath(`/wiki${qs ? `?${qs}` : ""}`);
   const res = await apiFetch(path);
   if (!res.ok) throw new Error("Failed to fetch wiki articles");
+  return readJson(res, wikiArticleListSchema);
+}
+
+/** Recency-ordered page (newest first) with the total count retained — used by
+ *  the compile completion card to show what was just built. */
+export async function fetchRecentWikiArticles(limit: number = 6): Promise<WikiArticleList> {
+  const res = await apiFetch(vaultPath(`/wiki/recent?limit=${limit}`));
+  if (!res.ok) throw new Error("Failed to fetch recent wiki articles");
   return readJson(res, wikiArticleListSchema);
 }

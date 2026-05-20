@@ -1,7 +1,8 @@
 import { Home } from "lucide-react";
 import type { ReactNode } from "react";
 
-import type { WikiArticleOverview, UnmentionedLink, UnresolvedCitation } from "@/api/explore";
+import type { UnmentionedLink, UnresolvedCitation } from "@/api/explore";
+import type { WikiArticleOverview } from "@/api/wiki";
 import type { SourceTypeFacet } from "@/api/sources";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";

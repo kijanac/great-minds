@@ -1,15 +1,7 @@
 import { z } from "zod";
 
 import { apiFetch, vaultPath, readJson } from "./client";
-import { paginatedSchema } from "./schemas";
-
-const wikiArticleOverviewSchema = z.object({
-  file_path: z.string(),
-  slug: z.string(),
-  title: z.string(),
-  precis: z.string().nullable(),
-  updated_at: z.string().nullable(),
-});
+import { wikiArticleOverviewSchema } from "./wiki";
 
 const unresolvedCitationSchema = z.object({
   source_slug: z.string(),
@@ -31,7 +23,6 @@ const lintResponseSchema = z.object({
   unmentioned_links: z.array(unmentionedLinkSchema),
 });
 
-export type WikiArticleOverview = z.infer<typeof wikiArticleOverviewSchema>;
 export type UnresolvedCitation = z.infer<typeof unresolvedCitationSchema>;
 export type UnmentionedLink = z.infer<typeof unmentionedLinkSchema>;
 export type LintResponse = z.infer<typeof lintResponseSchema>;
@@ -40,12 +31,4 @@ export async function fetchLintResults(): Promise<LintResponse> {
   const res = await apiFetch(vaultPath("/lint"));
   if (!res.ok) throw new Error("Failed to fetch lint results");
   return readJson(res, lintResponseSchema);
-}
-
-const recentArticlesSchema = paginatedSchema(wikiArticleOverviewSchema);
-
-export async function fetchRecentArticles(limit: number = 10): Promise<WikiArticleOverview[]> {
-  const res = await apiFetch(vaultPath(`/wiki/recent?limit=${limit}`));
-  if (!res.ok) throw new Error("Failed to fetch recent articles");
-  return (await readJson(res, recentArticlesSchema)).items;
 }

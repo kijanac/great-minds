@@ -1,12 +1,7 @@
 import { useEffect, useState } from "react";
 
-import {
-  type WikiArticleOverview,
-  type UnmentionedLink,
-  type UnresolvedCitation,
-  fetchLintResults,
-  fetchRecentArticles,
-} from "@/api/explore";
+import { type UnmentionedLink, type UnresolvedCitation, fetchLintResults } from "@/api/explore";
+import { type WikiArticleOverview, fetchRecentWikiArticles } from "@/api/wiki";
 import { type SourceTypeFacet, fetchSourceDocuments } from "@/api/sources";
 import { ExplorePage } from "@/components/explore-page";
 import { useViewNavigate } from "@/hooks/use-view-navigate";
@@ -22,13 +17,17 @@ export function ExploreContainer() {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    Promise.all([fetchLintResults(), fetchRecentArticles(), fetchSourceDocuments({ limit: 0 })])
+    Promise.all([
+      fetchLintResults(),
+      fetchRecentWikiArticles(10),
+      fetchSourceDocuments({ limit: 0 }),
+    ])
       .then(([lint, articles, sources]) => {
         setOrphans(lint.orphans);
         setDirtyCount(lint.dirty_topics.length);
         setUnresolvedCitations(lint.unresolved_citations);
         setUnmentionedLinks(lint.unmentioned_links);
-        setRecentArticles(articles);
+        setRecentArticles(articles.items);
         setSourceTypes(sources.facets.source_types ?? []);
       })
       .catch(() => {

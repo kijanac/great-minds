@@ -1,9 +1,10 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { useQueryClient } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useLocation, useNavigate, useParams, useSearchParams } from "react-router";
 
 import { ingestStagedFiles, type HashedFile } from "@/api/ingest";
 import { listJobs, startUrlJob } from "@/api/jobs";
+import { fetchRecentWikiArticles } from "@/api/wiki";
 import { PipelinePage } from "@/components/pipeline-page";
 import { useActiveVaultId } from "@/hooks/use-vault";
 import { buildClientUploadStages, useJobSSE } from "@/hooks/use-job-sse";
@@ -41,6 +42,14 @@ export function PipelineContainer() {
     }
     return sseStages;
   }, [clientUpload, jobId, sseStages]);
+
+  // Once the compile finishes, pull the article count + a recent sample so the
+  // completion card can show what was built rather than how many phases ran.
+  const { data: result } = useQuery({
+    queryKey: ["vault", vaultId, "compile-result"],
+    queryFn: () => fetchRecentWikiArticles(6),
+    enabled: overallDone && !!vaultId,
+  });
 
   useEffect(() => {
     if (startedRef.current || jobId) return;
@@ -109,6 +118,7 @@ export function PipelineContainer() {
       overallError={overallError ?? resolveError}
       connected={connected}
       noJobFound={!jobId && !clientUpload && noJobFound}
+      result={result}
     />
   );
 }

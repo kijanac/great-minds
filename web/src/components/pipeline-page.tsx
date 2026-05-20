@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { Progress } from "@/components/ui/progress";
 import { Skeleton } from "@/components/ui/skeleton";
+import type { WikiArticleList } from "@/api/wiki";
 import type { ProgressStep, StageProgress } from "@/hooks/use-job-sse";
 import { useViewNavigate } from "@/hooks/use-view-navigate";
 
@@ -16,11 +17,20 @@ interface PipelinePageProps {
   overallError: string | null;
   noJobFound?: boolean;
   connected?: boolean;
+  /** Wiki article count + a recent sample, fetched once the compile completes.
+   *  Drives the completion card's "what you built" summary. */
+  result?: WikiArticleList;
 }
 
 const EASE_OUT: [number, number, number, number] = [0.25, 1, 0.5, 1];
 
-export function PipelinePage({ stages, overallDone, overallError, noJobFound }: PipelinePageProps) {
+export function PipelinePage({
+  stages,
+  overallDone,
+  overallError,
+  noJobFound,
+  result,
+}: PipelinePageProps) {
   const navigate = useViewNavigate();
   const prefersReducedMotion = useReducedMotion();
   const shouldAnimate = !prefersReducedMotion;
@@ -61,13 +71,6 @@ export function PipelinePage({ stages, overallDone, overallError, noJobFound }: 
         >
           <ArrowLeft size={14} />
         </Button>
-        <span
-          className={`font-mono text-[length:var(--text-chrome)] tracking-[0.14em] uppercase transition-colors duration-700 ${
-            overallDone ? "text-gold" : "text-gold-muted"
-          }`}
-        >
-          {overallDone ? "complete" : "compile"}
-        </span>
       </div>
 
       {/* Pipeline stages */}
@@ -158,9 +161,27 @@ export function PipelinePage({ stages, overallDone, overallError, noJobFound }: 
               <p className="font-serif text-[length:var(--text-body)] text-warm-dim mb-1">
                 Compile complete
               </p>
-              <p className="font-mono text-[length:var(--text-chrome)] tracking-[0.06em] text-warm-ghost mb-5">
-                {stages.filter((s) => s.complete).length} of {stages.length} stages finished
-              </p>
+              {result && (
+                <p className="font-mono text-[length:var(--text-chrome)] tracking-[0.06em] text-warm-ghost mb-5">
+                  {result.pagination.total} {result.pagination.total === 1 ? "article" : "articles"}{" "}
+                  in your knowledge base
+                </p>
+              )}
+              {result && result.items.length > 0 && (
+                <ul className="mb-6 space-y-1.5">
+                  {result.items.map((a) => (
+                    <li key={a.slug}>
+                      <button
+                        onClick={() => navigate(`/doc/${a.file_path}`)}
+                        className="text-left font-serif text-[length:var(--text-small)] text-gold-dim
+                                   hover:text-gold transition-colors"
+                      >
+                        {a.title}
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              )}
               <div className="flex items-center gap-4">
                 <Button
                   variant="ghost"
