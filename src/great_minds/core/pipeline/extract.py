@@ -202,9 +202,9 @@ class ExtractPhase:
         # derived vector-index rows in ideas; if a crash happens after caching
         # but before embedding upsert, replay reuses the SourceCard and
         # regenerates only missing embeddings.
-        total_embedding_batches = (
-            len(embedding_inputs) + EMBEDDING_BATCH_SIZE - 1
-        ) // EMBEDDING_BATCH_SIZE
+        # Progress is reported in ideas, not batches, so the UI count matches
+        # the user's mental model ("embedding 1,350 of 7,200 ideas").
+        total_ideas = len(embedding_inputs)
         await self.progress.emit(
             pipeline_run_id=pipeline_run_id,
             phase="extract",
@@ -214,7 +214,7 @@ class ExtractPhase:
                 completed={"extract_cards"},
                 counts={
                     "extract_cards": (docs_completed, total_docs),
-                    "embed_ideas": (0, total_embedding_batches),
+                    "embed_ideas": (0, total_ideas),
                 },
             ),
         )
@@ -223,10 +223,10 @@ class ExtractPhase:
         # embedding batches can stream straight into ``bulk_upsert`` without
         # accumulating a corpus-sized ``fresh_ideas`` list in Python memory.
         await self.ideas.delete_for_documents(c.document_id for c in fresh_cards)
-        embedding_batches_done = 0
+        ideas_embedded = 0
         async for batch in _embed_in_batches(self.client, embedding_inputs):
             await self.ideas.record_extractions(batch)
-            embedding_batches_done += 1
+            ideas_embedded += len(batch)
             await self.progress.emit(
                 pipeline_run_id=pipeline_run_id,
                 phase="extract",
@@ -236,10 +236,7 @@ class ExtractPhase:
                     completed={"extract_cards"},
                     counts={
                         "extract_cards": (docs_completed, total_docs),
-                        "embed_ideas": (
-                            embedding_batches_done,
-                            total_embedding_batches,
-                        ),
+                        "embed_ideas": (ideas_embedded, total_ideas),
                     },
                 ),
             )
@@ -279,7 +276,7 @@ class ExtractPhase:
                 completed={"extract_cards", "embed_ideas"},
                 counts={
                     "extract_cards": (docs_completed, total_docs),
-                    "embed_ideas": (embedding_batches_done, total_embedding_batches),
+                    "embed_ideas": (total_ideas, total_ideas),
                 },
             ),
         )
