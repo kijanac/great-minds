@@ -259,13 +259,8 @@ class SearchService:
                     phase="ingest",
                     status="progress",
                     steps=build_progress_steps(
-                        {
-                            "load_sources": "Loading sources",
-                            "prepare_text": "Preparing searchable text",
-                            "index_sources": "Indexing sources",
-                        },
+                        {"index_sources": "Indexing for search"},
                         "index_sources",
-                        completed={"load_sources", "prepare_text"},
                         counts={"index_sources": (files_processed, total_files)},
                     ),
                 )

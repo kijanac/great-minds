@@ -28,7 +28,6 @@ URL_INGEST_STEP_LABELS = {
     "fetch_url": "Fetching source URL",
     "convert_document": "Converting source document",
     "index_document": "Indexing source document",
-    "queue_compile": "Queuing compile",
 }
 
 
@@ -112,7 +111,7 @@ class JobService:
                 status="completed",
                 progress_steps=build_progress_steps(
                     URL_INGEST_STEP_LABELS,
-                    "queue_compile",
+                    "index_document",
                     completed=set(URL_INGEST_STEP_LABELS),
                     counts={"fetch_url": (1, 1)},
                 ),
