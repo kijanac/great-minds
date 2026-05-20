@@ -50,9 +50,9 @@ from great_minds.core.topics.service import TopicService
 ABSTRACT_STEP_LABELS = {
     "group_ideas": "Grouping ideas",
     "synthesize_topics": "Synthesizing topics",
-    "merge_candidates": "Merging topic candidates",
-    "canonicalize_registry": "Canonicalizing topic registry",
-    "validate_registry": "Validating topic registry",
+    "merge_candidates": "Merging similar topics",
+    "canonicalize_registry": "Organizing topics",
+    "validate_registry": "Finalizing topics",
 }
 
 

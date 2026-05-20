@@ -24,9 +24,7 @@ from great_minds.core.storage import Storage
 from great_minds.core.telemetry import enrich, log_event
 
 INGEST_STEP_LABELS = {
-    "load_sources": "Loading sources",
-    "prepare_text": "Preparing searchable text",
-    "index_sources": "Indexing sources",
+    "index_sources": "Indexing for search",
 }
 
 
@@ -74,13 +72,7 @@ class IngestPhase:
             pipeline_run_id=self.pipeline_run_id,
             phase="ingest",
             status="progress",
-            steps=self.progress_steps("load_sources"),
-        )
-        await self.progress.emit(
-            pipeline_run_id=self.pipeline_run_id,
-            phase="ingest",
-            status="progress",
-            steps=self.progress_steps("prepare_text", completed={"load_sources"}),
+            steps=self.progress_steps("index_sources"),
         )
 
         # Load stored documents so we can compare ETags and skip
@@ -88,16 +80,6 @@ class IngestPhase:
         docs = await self.source_docs.list_all(vault_id)
         stored_etags = {d.file_path: d.etag for d in docs}
         id_by_path = {d.file_path: d.id for d in docs}
-
-        await self.progress.emit(
-            pipeline_run_id=self.pipeline_run_id,
-            phase="ingest",
-            status="progress",
-            steps=self.progress_steps(
-                "index_sources",
-                completed={"load_sources", "prepare_text"},
-            ),
-        )
         out_etags: list[tuple[str, str]] = []
         count = await self.search.rebuild_raw_index(
             vault_id,

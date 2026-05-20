@@ -52,10 +52,8 @@ PHASE = "extract"
 EMBEDDING_BATCH_SIZE = 50
 
 EXTRACT_STEP_LABELS = {
-    "load_documents": "Preparing document list",
     "extract_cards": "Extracting source cards",
     "embed_ideas": "Embedding ideas",
-    "save_index": "Saving extraction index",
 }
 
 

@@ -88,10 +88,8 @@ class _RenderOutput(BaseModel):
 
 RENDER_STEP_LABELS = {
     "plan_articles": "Planning articles",
-    "reuse_cached": "Reusing cached articles",
     "write_articles": "Writing articles",
     "index_articles": "Indexing articles",
-    "save_index": "Saving article index",
 }
 
 

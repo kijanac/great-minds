@@ -99,7 +99,7 @@ class CompileService:
             pipeline_run_id=self.pipeline_run_id,
             phase="extract",
             status="started",
-            steps=self.phases.extract.progress_steps("load_documents"),
+            steps=self.phases.extract.progress_steps("extract_cards"),
         )
         with telemetry_scope("extract", phase="extract"):
             async with timed_op("extract"):

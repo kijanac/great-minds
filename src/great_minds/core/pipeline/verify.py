@@ -36,9 +36,7 @@ from great_minds.core.topics.service import TopicService
 log = logging.getLogger(__name__)
 
 VERIFY_STEP_LABELS = {
-    "load_articles": "Loading articles",
-    "check_links": "Checking links",
-    "record_findings": "Recording findings",
+    "check_links": "Checking references",
 }
 
 
@@ -79,7 +77,7 @@ class VerifyPhase:
             pipeline_run_id=self.pipeline_run_id,
             phase="verify",
             status="progress",
-            steps=self.progress_steps("load_articles"),
+            steps=self.progress_steps("check_links"),
         )
         rendered = await self.topics.list_for_vault(vault_id, ArticleStatus.RENDERED)
         if not rendered:

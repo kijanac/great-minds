@@ -31,9 +31,7 @@ from great_minds.core.topics.service import TopicService
 log = logging.getLogger(__name__)
 
 DERIVE_STEP_LABELS = {
-    "load_registry": "Loading topic registry",
-    "find_related": "Finding related topics",
-    "save_connections": "Saving connections",
+    "find_related": "Connecting related topics",
 }
 
 

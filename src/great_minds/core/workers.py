@@ -231,9 +231,7 @@ async def _fetch_and_convert(
 STAGED_FILE_INGEST_STEP_LABELS = {
     "prepare_sources": "Preparing uploaded sources",
     "read_files": "Reading uploaded files",
-    "index_documents": "Indexing source documents",
-    "cleanup_uploads": "Cleaning up uploads",
-    "queue_compile": "Queuing compile",
+    "index_documents": "Indexing documents",
 }
 
 

@@ -40,9 +40,8 @@ from great_minds.core.topics.service import TopicService
 log = logging.getLogger(__name__)
 
 PUBLISH_STEP_LABELS = {
-    "prepare_snapshot": "Preparing published snapshot",
     "publish_wiki": "Publishing wiki",
-    "finalize_compile": "Finalizing compile",
+    "finalize_compile": "Finalizing",
 }
 
 
@@ -99,7 +98,7 @@ class PublishPhase:
             pipeline_run_id=self.pipeline_run_id,
             phase="publish",
             status="progress",
-            steps=self.progress_steps("prepare_snapshot"),
+            steps=self.progress_steps("publish_wiki"),
         )
         rendered_topics = await self.topics.list_for_vault(
             vault_id, ArticleStatus.RENDERED
