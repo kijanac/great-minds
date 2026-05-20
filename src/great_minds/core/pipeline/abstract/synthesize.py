@@ -324,7 +324,6 @@ async def _build_synthesis_index(
                 precis=card.precis,
                 genre=card.genre,
                 tags=tuple(card.tags),
-                derived_extras=card.derived_extras,
             )
         if not wanted:
             break
