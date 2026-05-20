@@ -548,7 +548,7 @@ def upgrade() -> None:
         sa.ForeignKeyConstraint(["topic_id"], ["topics.topic_id"], ondelete="CASCADE"),
         sa.ForeignKeyConstraint(["vault_id"], ["vaults.id"], ondelete="CASCADE"),
         sa.PrimaryKeyConstraint("id"),
-        sa.UniqueConstraint("vault_id", "topic_id"),
+        sa.UniqueConstraint("topic_id"),
     )
     op.create_index(
         op.f("ix_wiki_articles_vault_id"), "wiki_articles", ["vault_id"], unique=False

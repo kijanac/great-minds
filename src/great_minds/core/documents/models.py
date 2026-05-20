@@ -117,7 +117,10 @@ class WikiArticleORM(Base):
     """
 
     __tablename__ = "wiki_articles"
-    __table_args__ = (UniqueConstraint("vault_id", "topic_id"),)
+    # One article per topic. topic_id is globally unique (topics PK), so a
+    # single-column constraint suffices — and the render upsert targets
+    # ON CONFLICT (topic_id), which requires exactly this.
+    __table_args__ = (UniqueConstraint("topic_id"),)
 
     id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
