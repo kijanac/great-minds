@@ -10,7 +10,15 @@ from datetime import datetime
 from uuid import UUID
 
 from pgvector.sqlalchemy import Vector
-from sqlalchemy import DateTime, ForeignKey, Integer, Text, UniqueConstraint, func
+from sqlalchemy import (
+    DateTime,
+    ForeignKey,
+    Index,
+    Integer,
+    Text,
+    UniqueConstraint,
+    func,
+)
 from sqlalchemy.dialects.postgresql import TSVECTOR, UUID as PG_UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -20,7 +28,19 @@ from great_minds.core.llm import EMBEDDING_DIMENSIONS
 
 class SearchIndexEntry(Base):
     __tablename__ = "search_index"
-    __table_args__ = (UniqueConstraint("vault_id", "path", "chunk_index"),)
+    __table_args__ = (
+        UniqueConstraint("vault_id", "path", "chunk_index"),
+        # BM25 full-text over the tsvector.
+        Index("ix_search_index_tsv", "tsv", postgresql_using="gin"),
+        # ANN over the embedding (cosine). SearchRepository ranks by
+        # ``embedding.cosine_distance(query)``.
+        Index(
+            "ix_search_index_embedding",
+            "embedding",
+            postgresql_using="hnsw",
+            postgresql_ops={"embedding": "vector_cosine_ops"},
+        ),
+    )
 
     id: Mapped[UUID] = mapped_column(
         PG_UUID, primary_key=True, server_default=func.gen_random_uuid()

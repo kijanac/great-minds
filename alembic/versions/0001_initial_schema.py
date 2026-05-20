@@ -6,9 +6,11 @@ Create Date: 2026-05-19 16:22:11.599247
 
 """
 
+from pathlib import Path
 from typing import Sequence, Union
 
 import pgvector.sqlalchemy
+import psycopg
 import sqlalchemy as sa
 from alembic import op
 from sqlalchemy.dialects import postgresql
@@ -574,6 +576,76 @@ def upgrade() -> None:
         sa.PrimaryKeyConstraint("source_article_id", "target_article_id"),
     )
     # ### end Alembic commands ###
+
+    # --- Specialized search_index indexes (not expressible via the ORM) ---
+    # Full-text (BM25) over the tsvector and ANN over the embedding. Both
+    # are queried by SearchRepository (tsquery + cosine_distance).
+    op.execute("CREATE INDEX ix_search_index_tsv ON search_index USING GIN (tsv)")
+    op.execute(
+        "CREATE INDEX ix_search_index_embedding ON search_index "
+        "USING hnsw (embedding vector_cosine_ops)"
+    )
+
+    # --- Pipeline progress LISTEN/NOTIFY ---
+    # The DB row is the durable source of truth; this trigger emits a tiny
+    # "go re-read this run" wakeup so SSE handlers don't poll. Insert fires
+    # always; update fires only on a meaningful column change.
+    op.execute(
+        """
+        CREATE OR REPLACE FUNCTION notify_pipeline_run_changed()
+        RETURNS trigger AS $$
+        BEGIN
+            PERFORM pg_notify(
+                'pipeline_progress',
+                json_build_object(
+                    'pipeline_run_id', NEW.id,
+                    'vault_id', NEW.vault_id
+                )::text
+            );
+            RETURN NEW;
+        END;
+        $$ LANGUAGE plpgsql;
+        """
+    )
+    op.execute(
+        """
+        CREATE TRIGGER pipeline_runs_notify_insert
+        AFTER INSERT ON pipeline_runs
+        FOR EACH ROW
+        EXECUTE FUNCTION notify_pipeline_run_changed();
+        """
+    )
+    op.execute(
+        """
+        CREATE TRIGGER pipeline_runs_notify_update
+        AFTER UPDATE ON pipeline_runs
+        FOR EACH ROW
+        WHEN (
+            OLD.status IS DISTINCT FROM NEW.status
+            OR OLD.current_phase IS DISTINCT FROM NEW.current_phase
+            OR OLD.phase_status IS DISTINCT FROM NEW.phase_status
+            OR OLD.progress_steps IS DISTINCT FROM NEW.progress_steps
+            OR OLD.error IS DISTINCT FROM NEW.error
+            OR OLD.completed_at IS DISTINCT FROM NEW.completed_at
+        )
+        EXECUTE FUNCTION notify_pipeline_run_changed();
+        """
+    )
+
+    # --- Absurd durable task queue schema ---
+    # absurd.sql is a multi-statement script; asyncpg's extended query
+    # protocol can't run it in one call, so load it over a side psycopg
+    # connection (simple query protocol). Runs once on the fresh DB.
+    url = op.get_bind().engine.url
+    pg_url = (
+        f"postgresql://{url.username or ''}"
+        f"{':%s' % url.password if url.password else ''}"
+        f"@{url.host or 'localhost'}:{url.port or 5432}/{url.database}"
+    )
+    sql = (Path(__file__).resolve().parent.parent / "absurd.sql").read_text()
+    with psycopg.connect(pg_url, autocommit=True) as conn:
+        conn.execute(sql.encode())
+        conn.execute(b"SELECT absurd.create_queue('default')")
 
 
 def downgrade() -> None:
