@@ -76,7 +76,7 @@ class DerivePhase:
                 phase="derive",
                 status="completed",
                 steps=self.progress_steps(
-                    "load_registry", completed=set(DERIVE_STEP_LABELS)
+                    "find_related", completed=set(DERIVE_STEP_LABELS)
                 ),
             )
             return
@@ -86,35 +86,14 @@ class DerivePhase:
             phase="derive",
             status="progress",
             steps=self.progress_steps(
-                "load_registry",
-                counts={"load_registry": (len(validated), len(validated))},
-            ),
-        )
-        await self.progress.emit(
-            pipeline_run_id=self.pipeline_run_id,
-            phase="derive",
-            status="progress",
-            steps=self.progress_steps(
                 "find_related",
-                completed={"load_registry"},
-                counts={"load_registry": (len(validated), len(validated))},
+                counts={"find_related": (0, len(validated))},
             ),
         )
         await self.topics.rebuild_derived_tables(
             vault_id,
             validated,
             related_limit=self.related_limit,
-        )
-
-        await self.progress.emit(
-            pipeline_run_id=self.pipeline_run_id,
-            phase="derive",
-            status="progress",
-            steps=self.progress_steps(
-                "save_connections",
-                completed={"load_registry", "find_related"},
-                counts={"load_registry": (len(validated), len(validated))},
-            ),
         )
 
         enrich(derive_topic_count=len(validated))
@@ -127,8 +106,8 @@ class DerivePhase:
             phase="derive",
             status="completed",
             steps=self.progress_steps(
-                "save_connections",
+                "find_related",
                 completed=set(DERIVE_STEP_LABELS),
-                counts={"load_registry": (len(validated), len(validated))},
+                counts={"find_related": (len(validated), len(validated))},
             ),
         )

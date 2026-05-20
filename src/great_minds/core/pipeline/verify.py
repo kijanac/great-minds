@@ -90,7 +90,7 @@ class VerifyPhase:
                 phase="verify",
                 status="completed",
                 steps=self.progress_steps(
-                    "load_articles", completed=set(VERIFY_STEP_LABELS)
+                    "check_links", completed=set(VERIFY_STEP_LABELS)
                 ),
             )
             return
@@ -101,7 +101,6 @@ class VerifyPhase:
             status="progress",
             steps=self.progress_steps(
                 "check_links",
-                completed={"load_articles"},
                 counts={"check_links": (0, len(rendered))},
             ),
         )
@@ -170,21 +169,9 @@ class VerifyPhase:
                 status="progress",
                 steps=self.progress_steps(
                     "check_links",
-                    completed={"load_articles"},
                     counts={"check_links": (articles_walked, len(rendered))},
                 ),
             )
-
-        await self.progress.emit(
-            pipeline_run_id=self.pipeline_run_id,
-            phase="verify",
-            status="progress",
-            steps=self.progress_steps(
-                "record_findings",
-                completed={"load_articles", "check_links"},
-                counts={"check_links": (articles_walked, len(rendered))},
-            ),
-        )
 
         # Unmentioned intended links: topic_links edges whose target isn't
         # in cited_by_source[source]. Requires the topic_links rows from
@@ -219,7 +206,7 @@ class VerifyPhase:
             phase="verify",
             status="completed",
             steps=self.progress_steps(
-                "record_findings",
+                "check_links",
                 completed=set(VERIFY_STEP_LABELS),
                 counts={"check_links": (articles_walked, len(rendered))},
             ),

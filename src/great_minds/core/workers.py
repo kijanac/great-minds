@@ -496,26 +496,6 @@ async def staged_file_ingest_task(params: dict, ctx) -> None:
                 pass
 
         if ingested > 0:
-            await progress.emit(
-                pipeline_run_id=pipeline_run_id,
-                phase="source_ingest",
-                status="progress",
-                steps=build_progress_steps(
-                    STAGED_FILE_INGEST_STEP_LABELS,
-                    "queue_compile",
-                    completed={
-                        "prepare_sources",
-                        "read_files",
-                        "index_documents",
-                        "cleanup_uploads",
-                    },
-                    counts={
-                        "read_files": (len(files), len(files)),
-                        "index_documents": (ingested + skipped, len(files)),
-                        "cleanup_uploads": (len(keys_to_clean), len(keys_to_clean)),
-                    },
-                ),
-            )
             intent = await intent_repo.ensure_pending(
                 vault_id, pipeline_run_id=pipeline_run_id
             )
@@ -527,21 +507,6 @@ async def staged_file_ingest_task(params: dict, ctx) -> None:
             # the commit means a failure between cleanup and commit leaves
             # staging keys gone, and the task retry can't re-fetch them →
             # NoSuchKey on retry, masking the real error.
-            await progress.emit(
-                pipeline_run_id=pipeline_run_id,
-                phase="source_ingest",
-                status="progress",
-                steps=build_progress_steps(
-                    STAGED_FILE_INGEST_STEP_LABELS,
-                    "cleanup_uploads",
-                    completed={"prepare_sources", "read_files", "index_documents"},
-                    counts={
-                        "read_files": (len(files), len(files)),
-                        "index_documents": (ingested + skipped, len(files)),
-                        "cleanup_uploads": (0, len(keys_to_clean)),
-                    },
-                ),
-            )
             await _cleanup_staging(admin, bucket, keys_to_clean, vault_id=vault_id)
             await progress.emit(
                 pipeline_run_id=pipeline_run_id,
@@ -549,12 +514,11 @@ async def staged_file_ingest_task(params: dict, ctx) -> None:
                 status="completed",
                 steps=build_progress_steps(
                     STAGED_FILE_INGEST_STEP_LABELS,
-                    "queue_compile",
+                    "index_documents",
                     completed=set(STAGED_FILE_INGEST_STEP_LABELS),
                     counts={
                         "read_files": (len(files), len(files)),
                         "index_documents": (ingested + skipped, len(files)),
-                        "cleanup_uploads": (len(keys_to_clean), len(keys_to_clean)),
                     },
                 ),
             )

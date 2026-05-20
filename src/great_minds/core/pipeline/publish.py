@@ -111,7 +111,6 @@ class PublishPhase:
             status="progress",
             steps=self.progress_steps(
                 "publish_wiki",
-                completed={"prepare_snapshot"},
                 counts={"publish_wiki": (0, 2)},
             ),
         )
@@ -122,7 +121,6 @@ class PublishPhase:
             status="progress",
             steps=self.progress_steps(
                 "publish_wiki",
-                completed={"prepare_snapshot"},
                 counts={"publish_wiki": (1, 2)},
             ),
         )
@@ -134,7 +132,7 @@ class PublishPhase:
             status="progress",
             steps=self.progress_steps(
                 "finalize_compile",
-                completed={"prepare_snapshot", "publish_wiki"},
+                completed={"publish_wiki"},
                 counts={"publish_wiki": (2, 2)},
             ),
         )

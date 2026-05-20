@@ -115,7 +115,6 @@ class ExtractPhase:
             status="progress",
             steps=self.progress_steps(
                 "extract_cards",
-                completed={"load_documents"},
                 counts={"extract_cards": (0, total_docs)},
             ),
         )
@@ -148,7 +147,6 @@ class ExtractPhase:
                     status="progress",
                     steps=self.progress_steps(
                         "extract_cards",
-                        completed={"load_documents"},
                         counts={"extract_cards": (docs_completed, total_docs)},
                     ),
                 )
@@ -213,7 +211,7 @@ class ExtractPhase:
             status="progress",
             steps=self.progress_steps(
                 "embed_ideas",
-                completed={"load_documents", "extract_cards"},
+                completed={"extract_cards"},
                 counts={
                     "extract_cards": (docs_completed, total_docs),
                     "embed_ideas": (0, total_embedding_batches),
@@ -235,7 +233,7 @@ class ExtractPhase:
                 status="progress",
                 steps=self.progress_steps(
                     "embed_ideas",
-                    completed={"load_documents", "extract_cards"},
+                    completed={"extract_cards"},
                     counts={
                         "extract_cards": (docs_completed, total_docs),
                         "embed_ideas": (
@@ -245,19 +243,6 @@ class ExtractPhase:
                     },
                 ),
             )
-        await self.progress.emit(
-            pipeline_run_id=pipeline_run_id,
-            phase="extract",
-            status="progress",
-            steps=self.progress_steps(
-                "save_index",
-                completed={"load_documents", "extract_cards", "embed_ideas"},
-                counts={
-                    "extract_cards": (docs_completed, total_docs),
-                    "embed_ideas": (embedding_batches_done, total_embedding_batches),
-                },
-            ),
-        )
         # File is canonical for content-about-content; the DB row mirrors it
         # for query. So write new frontmatter to the file first, then reflect
         # the file into the row via the single canonical reindex translator.
@@ -290,13 +275,8 @@ class ExtractPhase:
             phase="extract",
             status="completed",
             steps=self.progress_steps(
-                "save_index",
-                completed={
-                    "load_documents",
-                    "extract_cards",
-                    "embed_ideas",
-                    "save_index",
-                },
+                "embed_ideas",
+                completed={"extract_cards", "embed_ideas"},
                 counts={
                     "extract_cards": (docs_completed, total_docs),
                     "embed_ideas": (embedding_batches_done, total_embedding_batches),

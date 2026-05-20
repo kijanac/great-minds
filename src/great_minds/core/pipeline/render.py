@@ -209,20 +209,6 @@ class RenderPhase:
                 continue
             to_materialize.append((topic, output))
 
-        await self.progress.emit(
-            pipeline_run_id=pipeline_run_id,
-            phase="render",
-            status="progress",
-            steps=self.progress_steps(
-                "reuse_cached",
-                completed={"plan_articles"},
-                counts={
-                    "plan_articles": (len(validated), len(validated)),
-                    "reuse_cached": (0, len(to_materialize)),
-                },
-            ),
-        )
-
         materialized = 0
         for topic, output in to_materialize:
             compiled_from_hash = await _write_rendered_article(
@@ -236,35 +222,8 @@ class RenderPhase:
                 topic.topic_id, rendered_from_hash=compiled_from_hash
             )
             materialized += 1
-            await self.progress.emit(
-                pipeline_run_id=pipeline_run_id,
-                phase="render",
-                status="progress",
-                steps=self.progress_steps(
-                    "reuse_cached",
-                    completed={"plan_articles"},
-                    counts={
-                        "plan_articles": (len(validated), len(validated)),
-                        "reuse_cached": (materialized, len(to_materialize)),
-                    },
-                ),
-            )
 
-        if materialized:
-            await self.progress.emit(
-                pipeline_run_id=pipeline_run_id,
-                phase="render",
-                status="progress",
-                steps=self.progress_steps(
-                    "save_index",
-                    completed={"plan_articles", "reuse_cached"},
-                    counts={
-                        "plan_articles": (len(validated), len(validated)),
-                        "reuse_cached": (materialized, len(to_materialize)),
-                    },
-                ),
-            )
-            await self.session.commit()
+        await self.session.commit()
 
         if not to_render:
             wiki_chunks_indexed = 0
@@ -275,11 +234,8 @@ class RenderPhase:
                     status="progress",
                     steps=self.progress_steps(
                         "index_articles",
-                        completed={"plan_articles", "reuse_cached", "save_index"},
-                        counts={
-                            "plan_articles": (len(validated), len(validated)),
-                            "reuse_cached": (materialized, len(to_materialize)),
-                        },
+                        completed={"plan_articles"},
+                        counts={"plan_articles": (len(validated), len(validated))},
                     ),
                 )
                 wiki_chunks_indexed = await self.search.rebuild_wiki_index(
@@ -313,12 +269,9 @@ class RenderPhase:
                 phase="render",
                 status="completed",
                 steps=self.progress_steps(
-                    "save_index",
+                    "index_articles",
                     completed=set(RENDER_STEP_LABELS),
-                    counts={
-                        "plan_articles": (len(validated), len(validated)),
-                        "reuse_cached": (materialized, len(to_materialize)),
-                    },
+                    counts={"plan_articles": (len(validated), len(validated))},
                 ),
             )
             return
@@ -329,10 +282,9 @@ class RenderPhase:
             status="progress",
             steps=self.progress_steps(
                 "write_articles",
-                completed={"plan_articles", "reuse_cached"},
+                completed={"plan_articles"},
                 counts={
                     "plan_articles": (len(validated), len(validated)),
-                    "reuse_cached": (materialized, len(to_materialize)),
                     "write_articles": (0, len(to_render)),
                 },
             ),
@@ -375,10 +327,9 @@ class RenderPhase:
                 status="progress",
                 steps=self.progress_steps(
                     "write_articles",
-                    completed={"plan_articles", "reuse_cached"},
+                    completed={"plan_articles"},
                     counts={
                         "plan_articles": (len(validated), len(validated)),
-                        "reuse_cached": (materialized, len(to_materialize)),
                         "write_articles": (topics_done, len(to_render)),
                     },
                 ),
@@ -396,20 +347,6 @@ class RenderPhase:
                 rendered_from_hash=outcome.rendered_from_hash,
             )
 
-        await self.progress.emit(
-            pipeline_run_id=pipeline_run_id,
-            phase="render",
-            status="progress",
-            steps=self.progress_steps(
-                "save_index",
-                completed={"plan_articles", "reuse_cached", "write_articles"},
-                counts={
-                    "plan_articles": (len(validated), len(validated)),
-                    "reuse_cached": (materialized, len(to_materialize)),
-                    "write_articles": (topics_done, len(to_render)),
-                },
-            ),
-        )
         await self.session.commit()
 
         wiki_chunks_indexed = 0
@@ -420,15 +357,9 @@ class RenderPhase:
                 status="progress",
                 steps=self.progress_steps(
                     "index_articles",
-                    completed={
-                        "plan_articles",
-                        "reuse_cached",
-                        "write_articles",
-                        "save_index",
-                    },
+                    completed={"plan_articles", "write_articles"},
                     counts={
                         "plan_articles": (len(validated), len(validated)),
-                        "reuse_cached": (materialized, len(to_materialize)),
                         "write_articles": (topics_done, len(to_render)),
                     },
                 ),
@@ -465,11 +396,10 @@ class RenderPhase:
             phase="render",
             status="completed",
             steps=self.progress_steps(
-                "save_index",
+                "index_articles",
                 completed=set(RENDER_STEP_LABELS),
                 counts={
                     "plan_articles": (len(validated), len(validated)),
-                    "reuse_cached": (materialized, len(to_materialize)),
                     "write_articles": (topics_done, len(to_render)),
                 },
             ),
