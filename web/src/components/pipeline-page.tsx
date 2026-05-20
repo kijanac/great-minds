@@ -1,9 +1,10 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { motion, useReducedMotion } from "motion/react";
-import { ArrowLeft } from "lucide-react";
+import { ArrowLeft, ChevronDown } from "lucide-react";
 
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { Progress } from "@/components/ui/progress";
 import { Skeleton } from "@/components/ui/skeleton";
 import type { ProgressStep, StageProgress } from "@/hooks/use-job-sse";
@@ -244,6 +245,33 @@ interface PipelineStageRowProps {
   ref?: React.Ref<HTMLDivElement>;
 }
 
+/** Per-row open state derived from stage status, with a manual override
+ *  scoped to the current status. Keying the override by status means a
+ *  status transition (running → completed → failed) auto-invalidates a
+ *  stale manual choice — e.g. collapsing an active phase that then errors
+ *  re-expands on its own to surface the failure. */
+function useStageOpen(stage: StageProgress): {
+  expandable: boolean;
+  open: boolean;
+  setOpen: (open: boolean) => void;
+} {
+  const status = stage.errored
+    ? "failed"
+    : stage.complete
+      ? "completed"
+      : stage.active
+        ? "running"
+        : "pending";
+  const expandable = stage.active || stage.complete || stage.errored;
+  const [override, setOverride] = useState<{ status: string; open: boolean } | null>(null);
+  const open = override?.status === status ? override.open : expandable;
+  return {
+    expandable,
+    open: expandable && open,
+    setOpen: (next: boolean) => setOverride({ status, open: next }),
+  };
+}
+
 function PipelineStageRow({
   stage,
   index,
@@ -254,11 +282,13 @@ function PipelineStageRow({
   const isActive = stage.active;
   const isComplete = stage.complete;
   const isErrored = stage.errored;
+  const hasCount = isActive && stage.total > 1;
+  const { expandable, open, setOpen } = useStageOpen(stage);
 
   return (
     <motion.div
       ref={ref}
-      className="flex items-start gap-4 py-4 border-b border-ink-subtle last:border-b-0"
+      className="border-b border-ink-subtle last:border-b-0"
       initial={shouldAnimate ? { opacity: 0, x: -8 } : {}}
       animate={{ opacity: 1, x: 0 }}
       transition={
@@ -271,68 +301,71 @@ function PipelineStageRow({
           : { duration: 0 }
       }
     >
-      {/* Status icon */}
-      <motion.div
-        className="shrink-0 w-5 h-5 flex items-center justify-center mt-0.5"
-        animate={showCompletionFlourish && shouldAnimate ? { scale: [1, 1.4, 1] } : {}}
-        transition={
-          showCompletionFlourish && shouldAnimate
-            ? {
-                duration: 0.4,
-                ease: EASE_OUT,
-                delay: index * 0.08,
-              }
-            : { duration: 0 }
-        }
-      >
-        {isErrored ? (
-          <span className="text-warm-faint text-sm">✗</span>
-        ) : isComplete ? (
-          <span className="text-gold-dim text-sm">✓</span>
-        ) : isActive ? (
-          <span className="text-gold animate-[pulse-fade_1.6s_ease-in-out_infinite] text-sm">
-            ◉
+      <Collapsible open={open} onOpenChange={setOpen} disabled={!expandable}>
+        <CollapsibleTrigger className="w-full flex items-center gap-4 py-4 text-left disabled:cursor-default">
+          {/* Status icon */}
+          <motion.span
+            className="shrink-0 w-5 h-5 flex items-center justify-center"
+            animate={showCompletionFlourish && shouldAnimate ? { scale: [1, 1.4, 1] } : {}}
+            transition={
+              showCompletionFlourish && shouldAnimate
+                ? { duration: 0.4, ease: EASE_OUT, delay: index * 0.08 }
+                : { duration: 0 }
+            }
+          >
+            {isErrored ? (
+              <span className="text-warm-faint text-sm">✗</span>
+            ) : isComplete ? (
+              <span className="text-gold-dim text-sm">✓</span>
+            ) : isActive ? (
+              <span className="text-gold animate-[pulse-fade_1.6s_ease-in-out_infinite] text-sm">
+                ◉
+              </span>
+            ) : (
+              <span className="text-warm-ghost text-sm">○</span>
+            )}
+          </motion.span>
+
+          <span
+            className={`flex-1 min-w-0 font-mono text-[length:var(--text-chrome)] tracking-[0.1em] uppercase
+                       ${isComplete ? "text-gold-dim" : isActive ? "text-gold" : isErrored ? "text-warm-faint" : "text-warm-ghost"}`}
+          >
+            {stage.label}
           </span>
-        ) : (
-          <span className="text-warm-ghost text-sm">○</span>
-        )}
-      </motion.div>
 
-      {/* Content */}
-      <div className="flex-1 min-w-0">
-        <div
-          className={`font-mono text-[length:var(--text-chrome)] tracking-[0.1em] uppercase
-                     ${isComplete ? "text-gold-dim" : isActive ? "text-gold" : isErrored ? "text-warm-faint" : "text-warm-ghost"}`}
-        >
-          {stage.label}
-        </div>
+          {hasCount && (
+            <span className="shrink-0 font-mono text-[length:var(--text-chrome)] tracking-[0.1em] text-warm-ghost">
+              {stage.done} / {stage.total}
+            </span>
+          )}
 
-        {isActive && stage.detail && (
-          <div className="mt-1.5 font-serif text-[length:var(--text-small)] text-warm-faint">
-            {stage.detail}
+          {expandable && (
+            <ChevronDown
+              size={14}
+              className={`shrink-0 text-warm-ghost transition-transform duration-200 ${open ? "rotate-180" : ""}`}
+            />
+          )}
+        </CollapsibleTrigger>
+
+        <CollapsibleContent>
+          <div className="pl-9 pb-4">
+            {isActive && stage.detail && (
+              <div className="font-serif text-[length:var(--text-small)] text-warm-faint">
+                {stage.detail}
+              </div>
+            )}
+
+            {stage.steps.length > 0 && <PipelineStepChecklist steps={stage.steps} />}
+
+            {isActive && stage.total > 1 && (
+              <Progress
+                value={(stage.done / stage.total) * 100}
+                className="mt-2 [&_[data-slot=progress-track]]:bg-ink-border [&_[data-slot=progress-indicator]]:bg-gold"
+              />
+            )}
           </div>
-        )}
-
-        {stage.steps.length > 0 && (isActive || isComplete || isErrored) && (
-          <PipelineStepChecklist steps={stage.steps} />
-        )}
-
-        {/* Progress bar (active stages with total > 0) */}
-        {isActive && stage.total > 1 && (
-          <Progress
-            value={(stage.done / stage.total) * 100}
-            className="mt-2 [&_[data-slot=progress-track]]:bg-ink-border [&_[data-slot=progress-indicator]]:bg-gold"
-          />
-        )}
-      </div>
-
-      {/* Count (only for stages with real progress) */}
-      {isActive && stage.total > 1 && (
-        <div className="shrink-0 font-mono text-[length:var(--text-chrome)] tracking-[0.1em] text-warm-ghost">
-          {stage.done}
-          {stage.total > 1 && <> / {stage.total}</>}
-        </div>
-      )}
+        </CollapsibleContent>
+      </Collapsible>
     </motion.div>
   );
 }
