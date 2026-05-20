@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { motion, useReducedMotion } from "motion/react";
 import { ArrowLeft } from "lucide-react";
 
@@ -18,22 +18,6 @@ interface PipelinePageProps {
 }
 
 const EASE_OUT: [number, number, number, number] = [0.25, 1, 0.5, 1];
-
-/** Stages that have meaningful per-item progress (show throughput). */
-const STAGES_WITH_THROUGHPUT = new Set(["uploading", "reading", "writing"]);
-
-function formatETA(seconds: number): string {
-  if (seconds <= 0) return "";
-  if (seconds < 60) return `~${Math.round(seconds)}s remaining`;
-  const m = Math.floor(seconds / 60);
-  return `~${m}m remaining`;
-}
-
-function formatRate(perSecond: number): string {
-  if (perSecond <= 0) return "";
-  if (perSecond >= 1) return `~${Math.round(perSecond)}/sec`;
-  return "";
-}
 
 export function PipelinePage({ stages, overallDone, overallError, noJobFound }: PipelinePageProps) {
   const navigate = useViewNavigate();
@@ -271,64 +255,6 @@ function PipelineStageRow({
   const isComplete = stage.complete;
   const isErrored = stage.errored;
 
-  // ---- Throughput tracking (synchronous, driven by a 1s tick) ----
-  const [tick, setTick] = useState(0);
-  const startTimeRef = useRef(Date.now());
-  const startDoneRef = useRef(0);
-
-  // Reset baseline when this stage becomes active
-  useEffect(() => {
-    if (isActive) {
-      startTimeRef.current = Date.now();
-      startDoneRef.current = stage.done;
-      setTick(0);
-    }
-  }, [isActive, stage.done]);
-
-  const tickInterval = useCallback(() => {
-    if (!isActive) return null;
-    return setInterval(() => setTick((t) => t + 1), 1000);
-  }, [isActive]);
-
-  useEffect(() => {
-    const id = tickInterval();
-    return () => {
-      if (id !== null) clearInterval(id);
-    };
-  }, [tickInterval]);
-
-  const throughput = useMemo(() => {
-    if (!isActive || !STAGES_WITH_THROUGHPUT.has(stage.stage) || stage.total <= 1) return null;
-    const done = stage.done - startDoneRef.current;
-    if (done <= 1) return null;
-    const elapsed = (Date.now() - startTimeRef.current) / 1000;
-    if (elapsed <= 1) return null;
-    const rate = done / elapsed;
-    const remaining = stage.total - stage.done;
-    const eta = rate > 0 ? remaining / rate : 0;
-    return { rate, eta };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isActive, stage.stage, stage.done, stage.total, tick]);
-
-  // ---- Build detail line ----
-  const detailLine = useMemo(() => {
-    if (!isActive || !stage.detail) return stage.detail;
-
-    if (throughput) {
-      const parts = [stage.detail];
-      if (throughput.rate > 0) {
-        const rateStr = formatRate(throughput.rate);
-        if (rateStr) parts.push(rateStr);
-      }
-      if (throughput.eta > 0) {
-        parts.push(formatETA(throughput.eta));
-      }
-      return parts.join(" · ");
-    }
-
-    return stage.detail;
-  }, [isActive, stage.detail, throughput]);
-
   return (
     <motion.div
       ref={ref}
@@ -381,9 +307,9 @@ function PipelineStageRow({
           {stage.label}
         </div>
 
-        {isActive && detailLine && (
+        {isActive && stage.detail && (
           <div className="mt-1.5 font-serif text-[length:var(--text-small)] text-warm-faint">
-            {detailLine}
+            {stage.detail}
           </div>
         )}
 
