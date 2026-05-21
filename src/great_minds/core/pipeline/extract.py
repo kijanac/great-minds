@@ -106,6 +106,7 @@ class ExtractPhase:
         prompt_template = await load_prompt(self.storage, "extract")
         rendered_template = _render_template_for_hash(prompt_template, self.config)
         ph = prompt_hash(rendered_template)
+        response_format = _extract_response_format(self.config)
 
         docs = await self.source_docs.list_all(vault_id)
         total_docs = len(docs)
@@ -130,6 +131,7 @@ class ExtractPhase:
                 body_hash=doc.body_hash,
                 rendered_template=rendered_template,
                 prompt_hash=ph,
+                response_format=response_format,
             )
             for doc in docs
         ]
@@ -308,6 +310,7 @@ async def _extract_one(
     body_hash: str,
     rendered_template: str,
     prompt_hash: str,
+    response_format: dict,
 ) -> _ExtractOutcome:
     outcome = _ExtractOutcome(raw_path=raw_path, document_id=document_id)
     try:
@@ -340,6 +343,7 @@ async def _extract_one(
                 model=EXTRACT_MODEL,
                 messages=[{"role": "user", "content": prompt}],
                 temperature=0.2,
+                response_format=response_format,
             )
         outcome.source_card = _validate_extract_output(
             data=data,
@@ -360,6 +364,79 @@ async def _extract_one(
             error=outcome.error,
         )
     return outcome
+
+
+def _extract_response_format(config: VaultConfig) -> dict:
+    """Strict json_schema for the extract output (OpenRouter structured
+    outputs).
+
+    Constrained decoding guarantees parseable JSON in the SourceCard
+    shape — killing the json_parse_exhausted failure class — and forces
+    ``title``/``precis`` to always be present, so a doc can never come
+    back identity-less. ``ideas`` is allowed empty (minItems 0), so a
+    content-light doc succeeds-with-nothing rather than erroring.
+
+    The schema is per-vault: ``kind`` is the configured kinds plus an
+    ``other`` escape hatch, and ``derived_extras`` carries exactly the
+    vault's enriched fields (an empty closed object when none).
+    """
+    extras_props: dict = {}
+    for f in config.enriched_fields:
+        extras_props[f.name] = (
+            {"type": "array", "items": {"type": "string"}}
+            if f.type == "list"
+            else {"type": "string"}
+        )
+    anchor = {
+        "type": "object",
+        "properties": {"claim": {"type": "string"}, "quote": {"type": "string"}},
+        "required": ["claim", "quote"],
+        "additionalProperties": False,
+    }
+    idea = {
+        "type": "object",
+        "properties": {
+            "kind": {"type": "string", "enum": [*config.kinds, "other"]},
+            "label": {"type": "string"},
+            "description": {"type": "string"},
+            "anchors": {"type": "array", "items": anchor},
+        },
+        "required": ["kind", "label", "description", "anchors"],
+        "additionalProperties": False,
+    }
+    schema = {
+        "type": "object",
+        "properties": {
+            "title": {"type": "string"},
+            "precis": {"type": "string"},
+            "author": {"type": ["string", "null"]},
+            "published_date": {"type": ["string", "null"]},
+            "genre": {"type": ["string", "null"]},
+            "tags": {"type": "array", "items": {"type": "string"}},
+            "ideas": {"type": "array", "items": idea},
+            "derived_extras": {
+                "type": "object",
+                "properties": extras_props,
+                "required": list(extras_props),
+                "additionalProperties": False,
+            },
+        },
+        "required": [
+            "title",
+            "precis",
+            "author",
+            "published_date",
+            "genre",
+            "tags",
+            "ideas",
+            "derived_extras",
+        ],
+        "additionalProperties": False,
+    }
+    return {
+        "type": "json_schema",
+        "json_schema": {"name": "source_card", "strict": True, "schema": schema},
+    }
 
 
 def _cache_key(*, document_id: UUID, body_hash: str, prompt_hash: str) -> str:

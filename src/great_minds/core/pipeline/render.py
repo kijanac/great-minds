@@ -614,8 +614,13 @@ def _render_idea_block(
             lines.append(f"Source: (unresolved document {idea.document_id})")
 
         for na in anchors_by_idea.get(idea_id, []):
+            # Only the claim + anchor number go in the prompt — enough for
+            # the model to place [^N] citations. The verbatim quote and
+            # source link are restored code-side in _validate_and_postprocess
+            # from numbered_anchors, so omitting quotes here cuts prompt size
+            # dramatically (the 1M-token render failures) with zero loss of
+            # citation fidelity in the rendered article.
             lines.append(f"[^{na.number}] claim: {na.anchor.claim}")
-            lines.append(f'     quote: "{na.anchor.quote.strip()}"')
         lines.append("")
 
     return "\n".join(lines)
