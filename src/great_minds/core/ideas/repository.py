@@ -34,6 +34,12 @@ from great_minds.core.telemetry import log_event
 
 _MAX_BULK_UPSERT_ROWS = 1000
 
+# Postgres' wire protocol caps a statement at 32767 bind parameters. A
+# WHERE idea_id IN (...) binds one parameter per id, so id lists are read
+# in chunks well under that ceiling. A render of a large vault can subsume
+# tens of thousands of ideas in a single pass.
+_MAX_IDS_PER_SELECT = 10000
+
 
 class IdeaRepository:
     def __init__(self, session: AsyncSession) -> None:
@@ -173,22 +179,29 @@ class IdeaRepository:
         return list(rows)
 
     async def get_ideas_by_id(self, idea_ids: Iterable[UUID]) -> dict[UUID, Idea]:
-        """Spot-lookup ideas (with anchors) by id."""
+        """Spot-lookup ideas (with anchors) by id.
+
+        Render subsumes the whole corpus across a single pass, so the id
+        set can exceed Postgres' 32767-bind-parameter cap; the ``IN`` is
+        chunked under ``_MAX_IDS_PER_SELECT`` to stay well below it.
+        """
         wanted = list(idea_ids)
-        if not wanted:
-            return {}
-        rows = (
-            (
-                await self.session.execute(
-                    select(IdeaORM)
-                    .options(selectinload(IdeaORM.anchors))
-                    .where(IdeaORM.idea_id.in_(wanted))
+        out: dict[UUID, Idea] = {}
+        for start in range(0, len(wanted), _MAX_IDS_PER_SELECT):
+            chunk = wanted[start : start + _MAX_IDS_PER_SELECT]
+            rows = (
+                (
+                    await self.session.execute(
+                        select(IdeaORM)
+                        .options(selectinload(IdeaORM.anchors))
+                        .where(IdeaORM.idea_id.in_(chunk))
+                    )
                 )
+                .scalars()
+                .all()
             )
-            .scalars()
-            .all()
-        )
-        return {orm.idea_id: Idea.model_validate(orm) for orm in rows}
+            out.update((orm.idea_id, Idea.model_validate(orm)) for orm in rows)
+        return out
 
     async def iter_source_cards(self, vault_id: UUID) -> AsyncIterator[SourceCard]:
         """Yield one ``SourceCard`` per document that has been extracted.
