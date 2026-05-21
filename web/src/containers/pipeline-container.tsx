@@ -4,7 +4,7 @@ import { useLocation, useNavigate, useParams, useSearchParams } from "react-rout
 
 import { ingestStagedFiles, type HashedFile } from "@/api/ingest";
 import { listJobs, startUrlJob } from "@/api/jobs";
-import { fetchRecentWikiArticles } from "@/api/wiki";
+import { fetchArticlesByRun } from "@/api/wiki";
 import { PipelinePage } from "@/components/pipeline-page";
 import { useActiveVaultId } from "@/hooks/use-vault";
 import { buildClientUploadStages, useJobSSE } from "@/hooks/use-job-sse";
@@ -43,12 +43,12 @@ export function PipelineContainer() {
     return sseStages;
   }, [clientUpload, jobId, sseStages]);
 
-  // Once the compile finishes, pull the article count + a recent sample so the
-  // completion card can show what was built rather than how many phases ran.
+  // Once the compile finishes, pull the articles this run produced so the
+  // completion card shows what was built rather than how many phases ran.
   const { data: result } = useQuery({
-    queryKey: ["vault", vaultId, "compile-result"],
-    queryFn: () => fetchRecentWikiArticles(6),
-    enabled: overallDone && !!vaultId,
+    queryKey: ["vault", vaultId, "compile-result", jobId],
+    queryFn: () => fetchArticlesByRun(jobId!),
+    enabled: overallDone && !!vaultId && !!jobId,
   });
 
   useEffect(() => {

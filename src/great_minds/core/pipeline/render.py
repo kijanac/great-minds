@@ -124,6 +124,9 @@ class RenderPhase:
         self.search = search
         self.ideas = ideas
         self.concurrency = concurrency
+        # Set per-run in run(); read by _write_rendered_article to stamp
+        # provenance on each article it writes.
+        self.pipeline_run_id: UUID | None = None
 
     def progress_steps(
         self,
@@ -145,6 +148,7 @@ class RenderPhase:
         pipeline_run_id: UUID,
         validated: list[TopicDetail],
     ) -> None:
+        self.pipeline_run_id = pipeline_run_id
         if not validated:
             log_event(
                 "skipped",
@@ -449,6 +453,7 @@ async def _write_rendered_article(
             topic_id=topic.topic_id,
             title=topic.title,
             precis=topic.description,
+            render_run_id=phase.pipeline_run_id,
         ),
     )
     return _topic_content_hash(topic)

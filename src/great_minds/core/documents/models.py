@@ -120,7 +120,17 @@ class WikiArticleORM(Base):
     # One article per topic. topic_id is globally unique (topics PK), so a
     # single-column constraint suffices — and the render upsert targets
     # ON CONFLICT (topic_id), which requires exactly this.
-    __table_args__ = (UniqueConstraint("topic_id"),)
+    __table_args__ = (
+        UniqueConstraint("topic_id"),
+        # Provenance lookup: "which articles did this compile build?"
+        # Partial — the column is NULL for pre-provenance rows and only
+        # the per-run delta query reads it.
+        Index(
+            "ix_wiki_articles_render_run_id",
+            "render_run_id",
+            postgresql_where=sa.text("render_run_id IS NOT NULL"),
+        ),
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
@@ -139,6 +149,13 @@ class WikiArticleORM(Base):
     body_hash: Mapped[str] = mapped_column(Text)
     title: Mapped[str] = mapped_column(Text)
     precis: Mapped[str] = mapped_column(Text)
+    # The pipeline run that last rendered (or re-materialized) this article.
+    # SET NULL, never CASCADE: purging a run must not delete the article it
+    # produced — provenance is lost, the wiki survives.
+    render_run_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("pipeline_runs.id", ondelete="SET NULL"),
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )

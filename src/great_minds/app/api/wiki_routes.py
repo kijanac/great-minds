@@ -25,8 +25,11 @@ async def list_articles(
     vault_id: UUID,
     pagination: PageParamsQuery,
     wiki_service: WikiArticleServiceDep,
+    run: UUID | None = None,
 ) -> Page[WikiArticleOverview]:
-    return await wiki_service.list_articles(vault_id, pagination=pagination)
+    # ``run`` filters to articles produced by that pipeline run — used by the
+    # compile completion card to show "what this compile built".
+    return await wiki_service.list_articles(vault_id, pagination=pagination, run_id=run)
 
 
 @router.get("/wiki/recent")

@@ -307,6 +307,7 @@ class WikiArticleRepo:
             body_hash=bh,
             title=article.title,
             precis=article.precis,
+            render_run_id=article.render_run_id,
         )
         stmt = stmt.on_conflict_do_update(
             index_elements=[WikiArticleORM.topic_id],
@@ -316,6 +317,7 @@ class WikiArticleRepo:
                 "body_hash": bh,
                 "title": article.title,
                 "precis": article.precis,
+                "render_run_id": article.render_run_id,
                 "updated_at": func.now(),
             },
         )
@@ -372,6 +374,7 @@ class WikiArticleRepo:
         *,
         slug: str | None = None,
         query: str | None = None,
+        render_run_id: UUID | None = None,
         limit: int = 50,
         offset: int = 0,
         recent: bool = False,
@@ -382,6 +385,8 @@ class WikiArticleRepo:
         )
         if slug is not None:
             stmt = stmt.where(WikiArticleORM.file_path == wiki_path(slug))
+        if render_run_id is not None:
+            stmt = stmt.where(WikiArticleORM.render_run_id == render_run_id)
         if query:
             pattern = f"%{query.lower()}%"
             stmt = stmt.where(
@@ -398,15 +403,16 @@ class WikiArticleRepo:
         rows = (await self.session.scalars(stmt.offset(offset).limit(limit))).all()
         return [WikiArticleOverview.model_validate(orm) for orm in rows]
 
-    async def count_overview_paths(self, vault_id: UUID) -> int:
-        return (
-            await self.session.scalar(
-                select(func.count()).where(
-                    WikiArticleORM.vault_id == vault_id,
-                    WikiArticleORM.file_path != WIKI_INDEX_PATH,
-                )
-            )
-        ) or 0
+    async def count_overview_paths(
+        self, vault_id: UUID, *, render_run_id: UUID | None = None
+    ) -> int:
+        stmt = select(func.count()).where(
+            WikiArticleORM.vault_id == vault_id,
+            WikiArticleORM.file_path != WIKI_INDEX_PATH,
+        )
+        if render_run_id is not None:
+            stmt = stmt.where(WikiArticleORM.render_run_id == render_run_id)
+        return (await self.session.scalar(stmt)) or 0
 
     async def list_orphans(self, vault_id: UUID) -> list[WikiArticleOverview]:
         rows = (

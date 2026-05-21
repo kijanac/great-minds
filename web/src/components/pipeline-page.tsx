@@ -163,8 +163,9 @@ export function PipelinePage({
               </p>
               {result && (
                 <p className="font-mono text-[length:var(--text-chrome)] tracking-[0.06em] text-warm-ghost mb-5">
-                  {result.pagination.total} {result.pagination.total === 1 ? "article" : "articles"}{" "}
-                  in your knowledge base
+                  {result.pagination.total === 0
+                    ? "Already up to date — nothing changed"
+                    : `${result.pagination.total} ${result.pagination.total === 1 ? "article" : "articles"} built this compile`}
                 </p>
               )}
               {result && result.items.length > 0 && (

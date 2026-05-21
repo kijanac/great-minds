@@ -163,6 +163,9 @@ class WikiArticleCreate(BaseModel):
     topic_id: UUID
     title: str
     precis: str
+    # The pipeline run rendering this article — stamped on the row so the
+    # compile completion card can show "what this run built".
+    render_run_id: UUID | None = None
 
 
 # ---------------------------------------------------------------------------

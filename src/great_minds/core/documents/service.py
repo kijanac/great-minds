@@ -141,12 +141,21 @@ class WikiArticleService:
         )
 
     async def list_articles(
-        self, vault_id: UUID, *, pagination: PageParams, recent: bool = False
+        self,
+        vault_id: UUID,
+        *,
+        pagination: PageParams,
+        recent: bool = False,
+        run_id: UUID | None = None,
     ) -> Page[WikiArticleOverview]:
         items = await self.repo.list_overviews(
-            vault_id, limit=pagination.limit, offset=pagination.offset, recent=recent
+            vault_id,
+            limit=pagination.limit,
+            offset=pagination.offset,
+            recent=recent,
+            render_run_id=run_id,
         )
-        total = await self.repo.count_overview_paths(vault_id)
+        total = await self.repo.count_overview_paths(vault_id, render_run_id=run_id)
         return create_page(items, pagination, total)
 
     async def list_orphans(self, vault_id: UUID) -> list[WikiArticleOverview]:
