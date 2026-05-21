@@ -145,6 +145,34 @@ class PipelineRunRepository:
         )
         return row.scalar_one_or_none()
 
+    async def cancel(
+        self, pipeline_run_id: UUID, vault_id: UUID, error: str
+    ) -> UUID | None:
+        """Atomically cancel an active run, returning its active_task_id.
+
+        The ``status IN (active)`` guard makes this a conditional, race-free
+        transition: a run that's already terminal matches no row and isn't
+        clobbered. Returns the run's active_task_id (the Absurd task to tear
+        down) — or None when nothing was cancelled or there was no task.
+        """
+        row = await self.session.execute(
+            update(PipelineRunRecord)
+            .where(
+                PipelineRunRecord.id == pipeline_run_id,
+                PipelineRunRecord.vault_id == vault_id,
+                PipelineRunRecord.status.in_(_ACTIVE),
+            )
+            .values(
+                status=PipelineRunStatus.CANCELLED.value,
+                phase_status="failed",
+                error=error,
+                completed_at=func.now(),
+                updated_at=func.now(),
+            )
+            .returning(PipelineRunRecord.active_task_id)
+        )
+        return row.scalar_one_or_none()
+
     async def update_progress(
         self,
         pipeline_run_id: UUID,

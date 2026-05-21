@@ -217,6 +217,7 @@ export function useJobSSE(jobId: string | null) {
   const [stages, setStages] = useState<StageProgress[]>(emptyStages);
   const [overallDone, setOverallDone] = useState(false);
   const [overallError, setOverallError] = useState<string | null>(null);
+  const [overallCancelled, setOverallCancelled] = useState(false);
   const [connected, setConnected] = useState(false);
   const controllerRef = useRef<AbortController | null>(null);
 
@@ -239,6 +240,7 @@ export function useJobSSE(jobId: string | null) {
     disconnect();
     setOverallDone(false);
     setOverallError(null);
+    setOverallCancelled(false);
     setStages(emptyStages());
 
     const controller = new AbortController();
@@ -270,11 +272,15 @@ export function useJobSSE(jobId: string | null) {
         const data = normalizeEvent(raw);
         if (!data) return;
 
-        if (
-          data.phase_status === "failed" ||
-          data.job_status === "failed" ||
-          data.job_status === "cancelled"
-        ) {
+        if (data.job_status === "cancelled") {
+          terminal = true;
+          setOverallCancelled(true);
+          setStages((prev) => applyEvent(prev, data));
+          invalidateActivePipeline();
+          return;
+        }
+
+        if (data.phase_status === "failed" || data.job_status === "failed") {
           terminal = true;
           setOverallError(data.error ?? "Pipeline failed");
           setStages((prev) => applyEvent(prev, data));
@@ -375,6 +381,7 @@ export function useJobSSE(jobId: string | null) {
     stages,
     overallDone,
     overallError,
+    overallCancelled,
     connected,
     disconnect,
   };

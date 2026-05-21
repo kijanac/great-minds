@@ -15,11 +15,14 @@ interface PipelinePageProps {
   stages: StageProgress[];
   overallDone: boolean;
   overallError: string | null;
+  overallCancelled?: boolean;
   noJobFound?: boolean;
   connected?: boolean;
-  /** Wiki article count + a recent sample, fetched once the compile completes.
-   *  Drives the completion card's "what you built" summary. */
+  /** Articles this run produced, fetched once the update finishes. Drives the
+   *  completion card's "what you built" summary. */
   result?: WikiArticleList;
+  onCancel?: () => void;
+  onRetry?: () => void;
 }
 
 const EASE_OUT: [number, number, number, number] = [0.25, 1, 0.5, 1];
@@ -28,8 +31,11 @@ export function PipelinePage({
   stages,
   overallDone,
   overallError,
+  overallCancelled,
   noJobFound,
   result,
+  onCancel,
+  onRetry,
 }: PipelinePageProps) {
   const navigate = useViewNavigate();
   const prefersReducedMotion = useReducedMotion();
@@ -49,6 +55,8 @@ export function PipelinePage({
   }, [activeStageKey]);
 
   const firstErrored = stages.find((s) => s.errored);
+  const isRunning =
+    !noJobFound && !overallDone && !overallError && !overallCancelled && stages.length > 0;
 
   // ---- Completion flourish ----
   const [showCompletion, setShowCompletion] = useState(false);
@@ -71,6 +79,18 @@ export function PipelinePage({
         >
           <ArrowLeft size={14} />
         </Button>
+        {isRunning && onCancel && (
+          <Button
+            variant="ghost"
+            size="xs"
+            onClick={onCancel}
+            className="ml-auto font-mono text-[length:var(--text-chrome)] tracking-[0.1em]
+                       text-warm-ghost hover:text-red-400/90 hover:bg-transparent
+                       rounded-sm h-auto px-3 py-1"
+          >
+            cancel
+          </Button>
+        )}
       </div>
 
       {/* Pipeline stages */}
@@ -117,17 +137,63 @@ export function PipelinePage({
               <AlertDescription className="font-mono text-[length:var(--text-chrome)] text-red-400/90 mb-4">
                 {overallError}
               </AlertDescription>
-              <Button
-                variant="ghost"
-                size="xs"
-                onClick={() => navigate("/")}
-                className="font-mono text-[length:var(--text-chrome)] tracking-[0.1em]
-                           text-gold-dim hover:text-gold hover:bg-transparent
-                           rounded-sm h-auto px-3 py-1"
-              >
-                back to home
-              </Button>
+              <div className="flex items-center gap-4">
+                {onRetry && (
+                  <Button
+                    variant="ghost"
+                    size="xs"
+                    onClick={onRetry}
+                    className="font-mono text-[length:var(--text-chrome)] tracking-[0.1em]
+                               text-gold hover:text-gold-hover hover:bg-transparent
+                               rounded-sm h-auto px-3 py-1"
+                  >
+                    retry
+                  </Button>
+                )}
+                <Button
+                  variant="ghost"
+                  size="xs"
+                  onClick={() => navigate("/")}
+                  className="font-mono text-[length:var(--text-chrome)] tracking-[0.1em]
+                             text-warm-ghost hover:text-warm-faint hover:bg-transparent
+                             rounded-sm h-auto px-3 py-1"
+                >
+                  back to home
+                </Button>
+              </div>
             </Alert>
+          )}
+
+          {overallCancelled && (
+            <div className="mb-10 rounded-sm border border-ink-border bg-ink-raised p-5">
+              <p className="font-serif text-[length:var(--text-body)] text-warm-dim mb-4">
+                Update cancelled
+              </p>
+              <div className="flex items-center gap-4">
+                {onRetry && (
+                  <Button
+                    variant="ghost"
+                    size="xs"
+                    onClick={onRetry}
+                    className="font-mono text-[length:var(--text-chrome)] tracking-[0.1em]
+                               text-gold hover:text-gold-hover hover:bg-transparent
+                               rounded-sm h-auto px-3 py-1"
+                  >
+                    run again
+                  </Button>
+                )}
+                <Button
+                  variant="ghost"
+                  size="xs"
+                  onClick={() => navigate("/")}
+                  className="font-mono text-[length:var(--text-chrome)] tracking-[0.1em]
+                             text-warm-ghost hover:text-warm-faint hover:bg-transparent
+                             rounded-sm h-auto px-3 py-1"
+                >
+                  back to home
+                </Button>
+              </div>
+            </div>
           )}
 
           {!noJobFound && stages.length > 0 && (
@@ -159,13 +225,13 @@ export function PipelinePage({
               }
             >
               <p className="font-serif text-[length:var(--text-body)] text-warm-dim mb-1">
-                Compile complete
+                Knowledge base updated
               </p>
               {result && (
                 <p className="font-mono text-[length:var(--text-chrome)] tracking-[0.06em] text-warm-ghost mb-5">
                   {result.pagination.total === 0
                     ? "Already up to date — nothing changed"
-                    : `${result.pagination.total} ${result.pagination.total === 1 ? "article" : "articles"} built this compile`}
+                    : `${result.pagination.total} ${result.pagination.total === 1 ? "article" : "articles"} written`}
                 </p>
               )}
               {result && result.items.length > 0 && (

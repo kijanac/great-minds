@@ -1,9 +1,9 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useLocation, useNavigate, useParams, useSearchParams } from "react-router";
 
 import { ingestStagedFiles, type HashedFile } from "@/api/ingest";
-import { listJobs, startUrlJob } from "@/api/jobs";
+import { cancelJob, listJobs, requestCompile, startUrlJob } from "@/api/jobs";
 import { fetchArticlesByRun } from "@/api/wiki";
 import { PipelinePage } from "@/components/pipeline-page";
 import { useActiveVaultId } from "@/hooks/use-vault";
@@ -34,7 +34,13 @@ export function PipelineContainer() {
   const startedRef = useRef(false);
 
   const jobId = routeJobId ?? resolvedJobId;
-  const { stages: sseStages, overallDone, overallError, connected } = useJobSSE(jobId);
+  const {
+    stages: sseStages,
+    overallDone,
+    overallError,
+    overallCancelled,
+    connected,
+  } = useJobSSE(jobId);
 
   const stages = useMemo(() => {
     if (!jobId && clientUpload) {
@@ -111,14 +117,26 @@ export function PipelineContainer() {
     })();
   }, [jobId, navigate, queryClient, routeJobId, stagedUpload, urlParam, vaultId]);
 
+  const handleCancel = useCallback(async () => {
+    if (jobId) await cancelJob(jobId);
+  }, [jobId]);
+
+  const handleRetry = useCallback(async () => {
+    const job = await requestCompile();
+    navigate(`/pipeline/runs/${job.id}`, { replace: true });
+  }, [navigate]);
+
   return (
     <PipelinePage
       stages={stages}
       overallDone={overallDone}
       overallError={overallError ?? resolveError}
+      overallCancelled={overallCancelled}
       connected={connected}
       noJobFound={!jobId && !clientUpload && noJobFound}
       result={result}
+      onCancel={jobId ? handleCancel : undefined}
+      onRetry={handleRetry}
     />
   );
 }

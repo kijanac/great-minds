@@ -186,3 +186,9 @@ class TaskService:
         if record is None:
             return None
         return await fetch_task_response(self.absurd, record)
+
+    async def cancel(self, task_id: UUID) -> None:
+        """Cancel a queued/running Absurd task. Cooperative — takes effect at
+        the task's next step boundary, so a long-running phase finishes before
+        the task tears down."""
+        await self.absurd.cancel_task(str(task_id))

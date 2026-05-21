@@ -67,6 +67,16 @@ class PipelineRunService:
     async def get(self, pipeline_run_id: UUID, vault_id: UUID) -> PipelineRun | None:
         return await self.repo.get(pipeline_run_id, vault_id)
 
+    async def cancel(self, pipeline_run_id: UUID, vault_id: UUID) -> None:
+        # Commit the cancelled status (NOTIFY → UI) before the cooperative
+        # task cancel, which lands at the task's next step boundary.
+        active_task_id = await self.repo.cancel(
+            pipeline_run_id, vault_id, "Update cancelled"
+        )
+        await self.commit()
+        if active_task_id is not None:
+            await self.task_service.cancel(active_task_id)
+
     async def list_for_vault(
         self,
         vault_id: UUID,

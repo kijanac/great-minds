@@ -12,6 +12,7 @@ from fastapi import APIRouter, status
 from great_minds.app.api.dependencies import (
     CompileIntentServiceDep,
     LlmGuard,
+    PipelineRunServiceDep,
 )
 from great_minds.app.api.schemas.jobs import JobResponse
 from great_minds.app.api.schemas.tasks import CompileRequest
@@ -32,3 +33,14 @@ async def request_compile(
             f"compile pipeline run missing for vault {vault_id}, job {req.job_id}"
         )
     return JobResponse.model_validate(run)
+
+
+@router.post("/{run_id}/cancel", status_code=status.HTTP_204_NO_CONTENT)
+async def cancel_compile(
+    run_id: UUID,
+    vault_id: UUID,
+    pipeline_service: PipelineRunServiceDep,
+) -> None:
+    # Idempotent: cancelling an already-finished run is a no-op. The UI learns
+    # the outcome from the job's SSE stream, not this response.
+    await pipeline_service.cancel(run_id, vault_id)

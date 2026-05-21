@@ -57,3 +57,20 @@ export async function startUrlJob(url: string, jobId: string = crypto.randomUUID
   if (!res.ok) throw new Error(await res.text());
   return readJson(res, jobSchema);
 }
+
+/** Re-run the compile for this vault (sources already ingested; content-hash
+ *  caches make it resume cheaply). Returns the new job to follow. */
+export async function requestCompile(jobId: string = crypto.randomUUID()): Promise<Job> {
+  const res = await apiFetch(vaultPath("/compile"), {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ job_id: jobId }),
+  });
+  if (!res.ok) throw new Error(await res.text());
+  return readJson(res, jobSchema);
+}
+
+export async function cancelJob(runId: string): Promise<void> {
+  const res = await apiFetch(vaultPath(`/compile/${runId}/cancel`), { method: "POST" });
+  if (!res.ok) throw new Error(await res.text());
+}
