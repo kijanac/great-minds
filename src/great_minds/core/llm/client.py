@@ -73,6 +73,7 @@ async def api_call(client: AsyncOpenAI, **kwargs):
             cost = getattr(usage, "cost", None) if usage else None
             if cost is not None:
                 accumulate_cost(float(cost))
+            prompt_details = getattr(usage, "prompt_tokens_details", None)
             log_event(
                 "llm_call_completed",
                 model=model,
@@ -82,6 +83,7 @@ async def api_call(client: AsyncOpenAI, **kwargs):
                 output_tokens=getattr(usage, "completion_tokens", None)
                 if usage
                 else None,
+                cached_tokens=getattr(prompt_details, "cached_tokens", None),
                 cost_usd=cost,
             )
             return response

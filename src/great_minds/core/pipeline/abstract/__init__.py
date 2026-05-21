@@ -223,6 +223,7 @@ class AbstractPhase:
                     client=self.client,
                     compile_cache=self.compile_cache,
                     thematic_hint=self.thematic_hint,
+                    concurrency=self.settings.compile_enrich_concurrency,
                 ).run(vault_id, merged_topics)
         log_event(
             "memory_checkpoint", phase="canonicalize", at="end", rss_mb=current_rss_mb()
