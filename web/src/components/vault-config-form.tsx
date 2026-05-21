@@ -25,8 +25,6 @@ interface VaultConfigFormProps {
 const SECTION_LABEL =
   "font-mono text-[length:var(--text-chrome)] tracking-[0.14em] text-gold-muted uppercase mb-2 block";
 
-const HELPER_TEXT = "font-mono text-[length:var(--text-chrome)] tracking-[0.06em] text-warm-ghost";
-
 export function VaultConfigForm({
   mode,
   initialName = "",
@@ -144,9 +142,6 @@ export function VaultConfigForm({
           rows={5}
           className="rounded-sm font-serif text-[length:var(--text-body)] text-foreground placeholder:text-warm-ghost focus-visible:ring-0"
         />
-        <p className={`${HELPER_TEXT} mt-2`}>
-          this text is prepended to the canonicalize prompt during compile.
-        </p>
       </div>
 
       <div className="flex items-center gap-3 pt-2">

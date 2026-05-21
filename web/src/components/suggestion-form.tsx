@@ -101,8 +101,7 @@ export function SuggestionForm({
             suggest · {anchoredTo}
           </SheetTitle>
           <SheetDescription className="font-mono text-[length:var(--text-chrome)] tracking-[0.04em] text-warm-ghost">
-            Your suggestion enters the pipeline as a source document and influences the next
-            compile.
+            Your suggestion enters the pipeline as a source document and influences the next update.
           </SheetDescription>
         </SheetHeader>
 

@@ -130,11 +130,11 @@ export function ExplorePage({
               {hasDirty && (
                 <section className="mb-10">
                   <h2 className="font-mono text-[length:var(--text-chrome)] tracking-[0.14em] text-gold-muted uppercase mb-4">
-                    needs recompile
+                    needs update
                   </h2>
                   <p className="font-serif text-[length:var(--text-body)] text-warm-dim">
                     {dirtyCount} article{dirtyCount === 1 ? "" : "s"} drifted from the current topic
-                    registry and will be refreshed on the next compile.
+                    registry and will be refreshed on the next update.
                   </p>
                 </section>
               )}

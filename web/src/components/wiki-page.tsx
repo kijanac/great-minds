@@ -67,7 +67,7 @@ export function WikiPage({
                 No articles yet
               </p>
               <p className="font-mono text-[length:var(--text-chrome)] tracking-[0.06em] text-warm-ghost">
-                ingest sources and run a compile to generate articles
+                add sources to update your knowledge base
               </p>
             </div>
           )}
