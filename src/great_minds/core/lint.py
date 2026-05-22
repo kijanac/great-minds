@@ -1,41 +1,38 @@
 """Detection-only lint surfaces for the /lint endpoint.
 
-Runs a set of mechanical queries over post-compile state and surfaces
-what the user should look at. No LLM calls, no writes, no persistence
-— queries re-derive on every request so the view always reflects
-current DB state + wiki files on disk.
+Runs a set of mechanical queries over post-compile DB state and surfaces
+what the user should look at. No LLM calls, no writes, no file reads —
+every signal is derived from tables that verify already populated at
+compile time (backlinks, topic_links), so the endpoint is a handful of
+indexed queries rather than a walk over object storage.
 
 Signals:
 - orphans: rendered articles with zero incoming backlinks
 - dirty_topics: topics whose rendered_from_hash drifts from current
   compiled_from_hash (compiled inputs shifted since last render)
-- unresolved_citations: wiki article body cites wiki/<slug>.md for
-  a slug that has no matching topic row
-- unmentioned_links: topic_links edge (reduce's intent) whose target
-  doesn't appear in the source article's prose
+- unmentioned_links: a topic_links edge (reduce's intent) whose target
+  article isn't actually cited in the source article's prose — i.e. the
+  intended edge has no matching backlink. Diagnostic: render diverged
+  from reduce's plan.
 
-The research_suggestions and contradictions signals from the six-
-phase lint module don't map cleanly onto the topic layer and are
-reserved — the endpoint returns empty arrays for both.
+Unresolved citations (prose links to a slug with no live topic) aren't
+surfaced here: verify already does the file walk at compile time and
+emits them as ``unresolved_citation`` log events. Re-deriving them on
+demand would mean re-reading every article body from object storage.
 """
 
 import uuid
 
 from pydantic import BaseModel, Field
+from sqlalchemy import exists, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import aliased
 
-from great_minds.core.documents import WikiArticleRepo, WikiArticleOverview
-from great_minds.core.markdown import extract_wiki_link_targets
-from great_minds.core.paths import wiki_path, wiki_slug
-from great_minds.core.storage import Storage
+from great_minds.core.documents import WikiArticleOverview, WikiArticleRepo
+from great_minds.core.documents.models import BacklinkORM, WikiArticleORM
+from great_minds.core.topics.models import TopicLinkORM, TopicORM
 from great_minds.core.topics.repository import TopicRepository
-from great_minds.core.topics.schemas import ArticleStatus, Topic
-
-
-class UnresolvedCitation(BaseModel):
-    source_slug: str
-    source_title: str
-    missing_slug: str
+from great_minds.core.topics.schemas import ArticleStatus
 
 
 class UnmentionedLink(BaseModel):
@@ -48,123 +45,62 @@ class UnmentionedLink(BaseModel):
 class LintReport(BaseModel):
     orphans: list[WikiArticleOverview] = Field(default_factory=list)
     dirty_topics: list[uuid.UUID] = Field(default_factory=list)
-    unresolved_citations: list[UnresolvedCitation] = Field(default_factory=list)
     unmentioned_links: list[UnmentionedLink] = Field(default_factory=list)
 
 
-async def build_lint_report(
-    session: AsyncSession,
-    vault_id: uuid.UUID,
-    storage: Storage,
-) -> LintReport:
+async def build_lint_report(session: AsyncSession, vault_id: uuid.UUID) -> LintReport:
     doc_repo = WikiArticleRepo(session)
     topic_repo = TopicRepository(session)
-
-    orphans = await doc_repo.list_orphans(vault_id)
-    rendered = await topic_repo.list_for_vault(vault_id, ArticleStatus.RENDERED)
-    if not rendered:
-        dirty = await topic_repo.list_dirty_topic_ids(vault_id)
-        return LintReport(orphans=orphans, dirty_topics=dirty)
-
-    topic_by_id = {t.topic_id: t for t in rendered}
-    slug_to_topic = {t.slug: t for t in rendered}
-
-    dirty = await topic_repo.list_dirty_topic_ids(vault_id)
-    unresolved, cited_by_source = await _walk_articles(
-        storage=storage,
-        rendered=rendered,
-        slug_to_topic=slug_to_topic,
-    )
-    unmentioned = await _unmentioned_intended_links(
-        topic_repo=topic_repo,
-        vault_id=vault_id,
-        topic_by_id=topic_by_id,
-        cited_by_source=cited_by_source,
-    )
-
     return LintReport(
-        orphans=orphans,
-        dirty_topics=dirty,
-        unresolved_citations=unresolved,
-        unmentioned_links=unmentioned,
+        orphans=await doc_repo.list_orphans(vault_id),
+        dirty_topics=await topic_repo.list_dirty_topic_ids(vault_id),
+        unmentioned_links=await _unmentioned_links(session, vault_id),
     )
 
 
-async def _walk_articles(
-    *,
-    storage: Storage,
-    rendered: list[Topic],
-    slug_to_topic: dict[str, Topic],
-) -> tuple[list[UnresolvedCitation], dict[uuid.UUID, set[str]]]:
-    """Parse citations from every rendered article's prose.
-
-    Returns (unresolved_citations, {source_topic_id: cited_slugs}).
-    Re-walks wiki files on every lint request — cheap at typical scale
-    and always reflects current file state, catching manual edits.
-    """
-    unresolved: list[UnresolvedCitation] = []
-    cited_by_source: dict[uuid.UUID, set[str]] = {}
-
-    for topic in rendered:
-        content = await storage.read(wiki_path(topic.slug), strict=False)
-        if content is None:
-            continue
-        cited_slugs: set[str] = set()
-        for path in extract_wiki_link_targets(content):
-            slug = wiki_slug(path.rsplit("/", 1)[-1])
-            target = slug_to_topic.get(slug)
-            if target is None:
-                unresolved.append(
-                    UnresolvedCitation(
-                        source_slug=topic.slug,
-                        source_title=topic.title,
-                        missing_slug=slug,
-                    )
-                )
-                continue
-            if target.topic_id == topic.topic_id:
-                continue
-            cited_slugs.add(slug)
-        cited_by_source[topic.topic_id] = cited_slugs
-
-    unresolved.sort(key=lambda u: (u.source_slug, u.missing_slug))
-    return unresolved, cited_by_source
-
-
-async def _unmentioned_intended_links(
-    *,
-    topic_repo: TopicRepository,
-    vault_id: uuid.UUID,
-    topic_by_id: dict[uuid.UUID, Topic],
-    cited_by_source: dict[uuid.UUID, set[str]],
+async def _unmentioned_links(
+    session: AsyncSession, vault_id: uuid.UUID
 ) -> list[UnmentionedLink]:
-    """topic_links edges whose target isn't in the source article's prose.
+    """Intended topic_links edges with no matching backlink.
 
-    Reduce said the article should link there; renderer didn't comply.
-    Diagnostic, not structural — shows up when reduce's judgment and
-    render's output diverge.
+    topic_links is reduce's intent; backlinks is what render actually
+    wrote into the prose. An intended edge between two rendered articles
+    whose article pair is absent from backlinks is one the renderer
+    didn't honor — the same check verify logs at compile time, here as a
+    single anti-join instead of a file walk.
     """
-    if not cited_by_source:
-        return []
-    edges = await topic_repo.list_links_for_vault(
-        vault_id, source_topic_ids=list(cited_by_source.keys())
-    )
+    src_topic = aliased(TopicORM)
+    tgt_topic = aliased(TopicORM)
+    src_art = aliased(WikiArticleORM)
+    tgt_art = aliased(WikiArticleORM)
 
-    out: list[UnmentionedLink] = []
-    for edge in edges:
-        source = topic_by_id.get(edge.source_topic_id)
-        target = topic_by_id.get(edge.target_topic_id)
-        if source is None or target is None:
-            continue
-        if target.slug in cited_by_source.get(edge.source_topic_id, set()):
-            continue
-        out.append(
-            UnmentionedLink(
-                source_slug=source.slug,
-                source_title=source.title,
-                target_slug=target.slug,
-                target_title=target.title,
-            )
+    realized = exists().where(
+        BacklinkORM.source_article_id == src_art.id,
+        BacklinkORM.target_article_id == tgt_art.id,
+    )
+    stmt = (
+        select(src_topic.slug, src_topic.title, tgt_topic.slug, tgt_topic.title)
+        .select_from(TopicLinkORM)
+        .join(src_topic, src_topic.topic_id == TopicLinkORM.source_topic_id)
+        .join(tgt_topic, tgt_topic.topic_id == TopicLinkORM.target_topic_id)
+        .join(src_art, src_art.topic_id == src_topic.topic_id)
+        .join(tgt_art, tgt_art.topic_id == tgt_topic.topic_id)
+        .where(
+            src_topic.vault_id == vault_id,
+            src_topic.article_status == ArticleStatus.RENDERED.value,
+            tgt_topic.article_status == ArticleStatus.RENDERED.value,
+            TopicLinkORM.source_topic_id != TopicLinkORM.target_topic_id,
+            ~realized,
         )
-    out.sort(key=lambda u: (u.source_slug, u.target_slug))
-    return out
+        .order_by(func.lower(src_topic.slug), func.lower(tgt_topic.slug))
+    )
+    rows = (await session.execute(stmt)).all()
+    return [
+        UnmentionedLink(
+            source_slug=r[0],
+            source_title=r[1],
+            target_slug=r[2],
+            target_title=r[3],
+        )
+        for r in rows
+    ]

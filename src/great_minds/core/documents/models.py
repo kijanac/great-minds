@@ -5,6 +5,7 @@ from datetime import datetime
 
 import sqlalchemy as sa
 from sqlalchemy import (
+    Boolean,
     DateTime,
     ForeignKey,
     Index,
@@ -147,6 +148,10 @@ class WikiArticleORM(Base):
     file_path: Mapped[str] = mapped_column(Text)
     file_hash: Mapped[str] = mapped_column(Text)
     body_hash: Mapped[str] = mapped_column(Text)
+    # True once the topic is archived (file moved under archive/, repointed
+    # by validate). Archived rows are excluded from the wiki list and orphan
+    # lint; the row survives so backlinks and supersession reads still resolve.
+    archived: Mapped[bool] = mapped_column(Boolean, server_default=sa.false())
     title: Mapped[str] = mapped_column(Text)
     precis: Mapped[str] = mapped_column(Text)
     # The pipeline run that last rendered (or re-materialized) this article.

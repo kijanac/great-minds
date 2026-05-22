@@ -73,7 +73,6 @@ function HomeContent({ sessionId, initialExchanges, initialQuery, origin }: Home
   const badgeCount =
     (lint?.orphans.length ?? 0) +
     (lint?.dirty_topics.length ?? 0) +
-    (lint?.unresolved_citations.length ?? 0) +
     (lint?.unmentioned_links.length ?? 0);
   const [query, setQuery] = useState(initialQuery ?? initialExchanges?.[0]?.query ?? "");
   const sessions = useSessions();

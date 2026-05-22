@@ -7,15 +7,23 @@ from fastapi import APIRouter, HTTPException
 
 from great_minds.app.api.dependencies import (
     SourceDocumentServiceDep,
+    TopicServiceDep,
     VaultStorageDep,
     WikiArticleServiceDep,
     PageParamsQuery,
 )
 from great_minds.app.api.schemas import wiki as schemas
-from great_minds.core.documents import SourceDocumentFacets, WikiArticleOverview
+from great_minds.core.documents import (
+    SourceDocumentFacets,
+    WikiArticleOverview,
+    WikiArticleService,
+)
 from great_minds.core.markdown import parse_frontmatter
 from great_minds.core.pagination import FacetedPage, Page
-from great_minds.core.paths import wiki_path
+from great_minds.core.paths import wiki_path, wiki_slug
+from great_minds.core.storage import Storage
+from great_minds.core.topics.schemas import ArticleStatus
+from great_minds.core.topics.service import TopicService
 
 router = APIRouter(tags=["wiki"])
 
@@ -83,6 +91,7 @@ async def read_document(
     storage: VaultStorageDep,
     source_service: SourceDocumentServiceDep,
     wiki_service: WikiArticleServiceDep,
+    topic_service: TopicServiceDep,
 ) -> schemas.DocResponse:
     try:
         path = _safe_document_read_path(path)
@@ -91,6 +100,15 @@ async def read_document(
 
     content = await storage.read(path, strict=False)
     if content is None:
+        # A link minted before a recompile may point at wiki/<slug>.md for
+        # a topic since archived (file moved under archive/). Resolve it to
+        # the archived artifact + successor instead of a dead 404.
+        if path.startswith("wiki/"):
+            archived = await _read_archived_wiki(
+                vault_id, path, storage, wiki_service, topic_service
+            )
+            if archived is not None:
+                return archived
         raise HTTPException(status_code=404, detail=f"Document not found: {path}")
     _, body = parse_frontmatter(content)
 
@@ -107,6 +125,43 @@ async def read_document(
     raise HTTPException(
         status_code=500,
         detail=f"Document on disk lacks a registry row: {path}",
+    )
+
+
+async def _read_archived_wiki(
+    vault_id: UUID,
+    path: str,
+    storage: Storage,
+    wiki_service: WikiArticleService,
+    topic_service: TopicService,
+) -> schemas.DocResponse | None:
+    """Resolve an archived article whose live wiki/<slug>.md is gone.
+
+    Returns the archived body (read from its archive/ home) plus the
+    successor's slug, so the reader shows an "archived — see successor"
+    banner rather than a dead link. ``None`` if the slug isn't an
+    archived topic, so the caller falls through to a normal 404.
+    """
+    slug = wiki_slug(path.rsplit("/", 1)[-1])
+    topic = await topic_service.get_by_slug(vault_id, slug)
+    if topic is None or topic.article_status != ArticleStatus.ARCHIVED:
+        return None
+    article = await wiki_service.get_by_topic(vault_id, topic.topic_id)
+    if article is None:
+        return None
+    content = await storage.read(article.file_path, strict=False)
+    if content is None:
+        return None
+    _, body = parse_frontmatter(content)
+    successor_slug: str | None = None
+    if topic.superseded_by is not None:
+        successor = await topic_service.get_by_id(topic.superseded_by)
+        successor_slug = successor.slug if successor is not None else None
+    return schemas.DocResponse(
+        article=article,
+        body=body,
+        archived=True,
+        superseded_by=successor_slug,
     )
 
 

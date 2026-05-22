@@ -161,10 +161,10 @@ class WikiArticleService:
     async def list_orphans(self, vault_id: UUID) -> list[WikiArticleOverview]:
         return await self.repo.list_orphans(vault_id)
 
-    async def update_file_path_for_topic(
-        self, vault_id: UUID, topic_id: UUID, new_file_path: str
+    async def archive_article(
+        self, vault_id: UUID, topic_id: UUID, archive_path: str
     ) -> None:
-        await self.repo.update_file_path_for_topic(vault_id, topic_id, new_file_path)
+        await self.repo.archive_article(vault_id, topic_id, archive_path)
 
     async def replace_backlinks(
         self, *, source_ids: list[UUID], backlinks: list[Backlink]

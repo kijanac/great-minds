@@ -4,7 +4,7 @@ from uuid import UUID
 
 from great_minds.core.hashing import body_hash, file_hash
 
-from sqlalchemy import Select, delete, func, or_, select, update
+from sqlalchemy import Select, delete, exists, func, or_, select, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -382,6 +382,7 @@ class WikiArticleRepo:
         stmt = select(WikiArticleORM).where(
             WikiArticleORM.vault_id == vault_id,
             WikiArticleORM.file_path != WIKI_INDEX_PATH,
+            WikiArticleORM.archived.is_(False),
         )
         if slug is not None:
             stmt = stmt.where(WikiArticleORM.file_path == wiki_path(slug))
@@ -409,40 +410,52 @@ class WikiArticleRepo:
         stmt = select(func.count()).where(
             WikiArticleORM.vault_id == vault_id,
             WikiArticleORM.file_path != WIKI_INDEX_PATH,
+            WikiArticleORM.archived.is_(False),
         )
         if render_run_id is not None:
             stmt = stmt.where(WikiArticleORM.render_run_id == render_run_id)
         return (await self.session.scalar(stmt)) or 0
 
     async def list_orphans(self, vault_id: UUID) -> list[WikiArticleOverview]:
+        """Live articles with zero inbound backlinks.
+
+        Anti-join (``NOT EXISTS``) rather than ``OUTER JOIN + GROUP BY +
+        HAVING COUNT()=0``: the planner can short-circuit on the first
+        matching backlink instead of aggregating every edge per article.
+        """
+        no_backlink = ~exists().where(
+            BacklinkORM.target_article_id == WikiArticleORM.id
+        )
         rows = (
             await self.session.scalars(
                 select(WikiArticleORM)
-                .outerjoin(
-                    BacklinkORM,
-                    BacklinkORM.target_article_id == WikiArticleORM.id,
-                )
                 .where(
                     WikiArticleORM.vault_id == vault_id,
                     WikiArticleORM.file_path != WIKI_INDEX_PATH,
+                    WikiArticleORM.archived.is_(False),
+                    no_backlink,
                 )
-                .group_by(WikiArticleORM.id)
-                .having(func.count(BacklinkORM.source_article_id) == 0)
                 .order_by(func.lower(WikiArticleORM.title))
             )
         ).all()
         return [WikiArticleOverview.model_validate(orm) for orm in rows]
 
-    async def update_file_path_for_topic(
-        self, vault_id: UUID, topic_id: UUID, new_file_path: str
+    async def archive_article(
+        self, vault_id: UUID, topic_id: UUID, archive_path: str
     ) -> None:
+        """Repoint a topic's article at its archive location and flag it.
+
+        Called when validate archives a superseded topic: the file has
+        moved under archive/, so the row points there and ``archived``
+        excludes it from the wiki list and orphan lint.
+        """
         await self.session.execute(
             update(WikiArticleORM)
             .where(
                 WikiArticleORM.vault_id == vault_id,
                 WikiArticleORM.topic_id == topic_id,
             )
-            .values(file_path=new_file_path)
+            .values(file_path=archive_path, archived=True)
         )
 
     async def update_backlinks(

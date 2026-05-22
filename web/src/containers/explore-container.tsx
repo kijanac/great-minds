@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 
-import { type UnmentionedLink, type UnresolvedCitation, fetchLintResults } from "@/api/explore";
+import { type UnmentionedLink, fetchLintResults } from "@/api/explore";
 import { type WikiArticleOverview, fetchRecentWikiArticles } from "@/api/wiki";
 import { type SourceTypeFacet, fetchSourceDocuments } from "@/api/sources";
 import { ExplorePage } from "@/components/explore-page";
@@ -10,7 +10,6 @@ export function ExploreContainer() {
   const navigate = useViewNavigate();
   const [orphans, setOrphans] = useState<WikiArticleOverview[]>([]);
   const [dirtyCount, setDirtyCount] = useState(0);
-  const [unresolvedCitations, setUnresolvedCitations] = useState<UnresolvedCitation[]>([]);
   const [unmentionedLinks, setUnmentionedLinks] = useState<UnmentionedLink[]>([]);
   const [recentArticles, setRecentArticles] = useState<WikiArticleOverview[]>([]);
   const [sourceTypes, setSourceTypes] = useState<SourceTypeFacet[]>([]);
@@ -25,7 +24,6 @@ export function ExploreContainer() {
       .then(([lint, articles, sources]) => {
         setOrphans(lint.orphans);
         setDirtyCount(lint.dirty_topics.length);
-        setUnresolvedCitations(lint.unresolved_citations);
         setUnmentionedLinks(lint.unmentioned_links);
         setRecentArticles(articles.items);
         setSourceTypes(sources.facets.source_types ?? []);
@@ -33,7 +31,6 @@ export function ExploreContainer() {
       .catch(() => {
         setOrphans([]);
         setDirtyCount(0);
-        setUnresolvedCitations([]);
         setUnmentionedLinks([]);
         setRecentArticles([]);
         setSourceTypes([]);
@@ -45,7 +42,6 @@ export function ExploreContainer() {
     <ExplorePage
       orphans={orphans}
       dirtyCount={dirtyCount}
-      unresolvedCitations={unresolvedCitations}
       unmentionedLinks={unmentionedLinks}
       recentArticles={recentArticles}
       sourceTypes={sourceTypes}

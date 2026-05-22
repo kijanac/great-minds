@@ -28,6 +28,8 @@ from great_minds.core.llm_costs import LlmCostEventRepository, LlmCostService
 from great_minds.core.mail import Mailer
 from great_minds.core.pagination import PageParams
 from great_minds.core.pipeline_runs import PipelineRunRepository, PipelineRunService
+from great_minds.core.topics.repository import TopicRepository
+from great_minds.core.topics.service import TopicService
 from great_minds.core.proposals import ProposalRepository, ProposalService
 from great_minds.core.settings import Settings, get_settings
 from great_minds.core.paths import PROPOSALS_DIR
@@ -112,6 +114,13 @@ def get_wiki_article_repo(session: SessionDep) -> WikiArticleRepo:
 WikiArticleRepoDep = Annotated[WikiArticleRepo, Depends(get_wiki_article_repo)]
 
 
+def get_topic_repository(session: SessionDep) -> TopicRepository:
+    return TopicRepository(session)
+
+
+TopicRepositoryDep = Annotated[TopicRepository, Depends(get_topic_repository)]
+
+
 def get_proposal_repository(session: SessionDep) -> ProposalRepository:
     return ProposalRepository(session)
 
@@ -163,6 +172,13 @@ def get_wiki_article_service(repo: WikiArticleRepoDep) -> WikiArticleService:
 
 
 WikiArticleServiceDep = Annotated[WikiArticleService, Depends(get_wiki_article_service)]
+
+
+def get_topic_service(repo: TopicRepositoryDep) -> TopicService:
+    return TopicService(repo)
+
+
+TopicServiceDep = Annotated[TopicService, Depends(get_topic_service)]
 
 
 def get_llm_cost_service(session: SessionDep) -> LlmCostService:

@@ -189,11 +189,10 @@ class ValidatePhase:
         archive_path = f"archive/{topic.topic_id}/{topic.slug}.md"
         await self.storage.write(archive_path, updated)
         await self.storage.delete(article_path)
-        # Repoint the documents row at the archive location so backlinks
-        # and /doc reads resolve to the artifact's actual home.
-        await self.wiki_articles.update_file_path_for_topic(
-            vault_id, topic.topic_id, archive_path
-        )
+        # Repoint the documents row at the archive location and flag it
+        # archived, so backlinks and /doc reads still resolve while the
+        # wiki list and orphan lint exclude it.
+        await self.wiki_articles.archive_article(vault_id, topic.topic_id, archive_path)
 
 
 # ---------------------------------------------------------------------------

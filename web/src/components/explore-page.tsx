@@ -1,7 +1,7 @@
 import { Home } from "lucide-react";
 import type { ReactNode } from "react";
 
-import type { UnmentionedLink, UnresolvedCitation } from "@/api/explore";
+import type { UnmentionedLink } from "@/api/explore";
 import type { WikiArticleOverview } from "@/api/wiki";
 import type { SourceTypeFacet } from "@/api/sources";
 import { Button } from "@/components/ui/button";
@@ -13,7 +13,6 @@ import { formatShortDate } from "@/lib/utils";
 interface ExplorePageProps {
   orphans: WikiArticleOverview[];
   dirtyCount: number;
-  unresolvedCitations: UnresolvedCitation[];
   unmentionedLinks: UnmentionedLink[];
   recentArticles: WikiArticleOverview[];
   sourceTypes: SourceTypeFacet[];
@@ -29,7 +28,6 @@ interface ExplorePageProps {
 export function ExplorePage({
   orphans,
   dirtyCount,
-  unresolvedCitations,
   unmentionedLinks,
   recentArticles,
   sourceTypes,
@@ -43,12 +41,10 @@ export function ExplorePage({
 }: ExplorePageProps) {
   const hasOrphans = orphans.length > 0;
   const hasDirty = dirtyCount > 0;
-  const hasUnresolved = unresolvedCitations.length > 0;
   const hasUnmentioned = unmentionedLinks.length > 0;
   const hasArticles = recentArticles.length > 0;
   const hasSourceTypes = sourceTypes.length > 0;
-  const hasContent =
-    hasOrphans || hasDirty || hasUnresolved || hasUnmentioned || hasArticles || hasSourceTypes;
+  const hasContent = hasOrphans || hasDirty || hasUnmentioned || hasArticles || hasSourceTypes;
 
   return (
     <div className="h-screen flex flex-col overflow-hidden">
@@ -136,32 +132,6 @@ export function ExplorePage({
                     {dirtyCount} article{dirtyCount === 1 ? "" : "s"} drifted from the current topic
                     registry and will be refreshed on the next update.
                   </p>
-                </section>
-              )}
-
-              {hasUnresolved && (
-                <section className="mb-10">
-                  <h2 className="font-mono text-[length:var(--text-chrome)] tracking-[0.14em] text-gold-muted uppercase mb-4">
-                    broken links
-                  </h2>
-                  <p className="font-mono text-[length:var(--text-chrome)] tracking-[0.04em] text-warm-ghost mb-5">
-                    articles citing wiki slugs that have no matching topic
-                  </p>
-                  <div className="space-y-1">
-                    {unresolvedCitations.map((u, i) => (
-                      <div
-                        key={`${u.source_slug}-${u.missing_slug}-${i}`}
-                        className="py-2.5 px-3 rounded-sm"
-                      >
-                        <div className="font-serif text-[length:var(--text-body)] text-warm-dim">
-                          {u.source_title}
-                        </div>
-                        <div className="font-mono text-[length:var(--text-chrome)] text-warm-ghost mt-0.5">
-                          → {u.missing_slug}
-                        </div>
-                      </div>
-                    ))}
-                  </div>
                 </section>
               )}
 
