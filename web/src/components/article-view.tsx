@@ -4,7 +4,7 @@ import Markdown from "react-markdown";
 import type { Article } from "@/api/doc";
 import { BtwThread } from "@/components/btw-thread";
 import { DocHeader } from "@/components/doc-header";
-import { baseMdComponents, remarkPlugins } from "@/lib/markdown";
+import { baseMdComponents, remarkPlugins, rehypePlugins } from "@/lib/markdown";
 import type { BtwThread as BtwThreadType, SelectionInfo } from "@/lib/types";
 
 // Obsidian-style block ref markers (`^pN`) get baked into raw markdown at
@@ -137,7 +137,11 @@ export function ArticleView({
         supersededBy={supersededBy}
         onSupersessorClick={onSupersessorClick}
       />
-      <Markdown remarkPlugins={remarkPlugins} components={mdComponents}>
+      <Markdown
+        remarkPlugins={remarkPlugins}
+        rehypePlugins={rehypePlugins}
+        components={mdComponents}
+      >
         {displayBody}
       </Markdown>
     </article>

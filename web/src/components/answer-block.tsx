@@ -1,7 +1,7 @@
 import { Fragment, useCallback, type ComponentProps } from "react";
 import Markdown from "react-markdown";
 
-import { baseMdComponents, remarkPlugins } from "@/lib/markdown";
+import { baseMdComponents, remarkPlugins, rehypePlugins } from "@/lib/markdown";
 import type { BtwThread as BtwThreadType, SelectionInfo } from "@/lib/types";
 import { BtwThread } from "./btw-thread";
 
@@ -99,7 +99,11 @@ export function AnswerBlock({
         return (
           <Fragment key={i}>
             <div onMouseUp={makeSelectionHandler(pi, block)}>
-              <Markdown remarkPlugins={remarkPlugins} components={mdComponents}>
+              <Markdown
+                remarkPlugins={remarkPlugins}
+                rehypePlugins={rehypePlugins}
+                components={mdComponents}
+              >
                 {block}
               </Markdown>
               {streaming && isLast && (

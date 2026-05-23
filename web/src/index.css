@@ -345,11 +345,8 @@
   [data-footnote-ref] {
     @apply text-gold text-[11px] no-underline;
   }
-  /* Each ref is wrapped in its own <sup>, so consecutive refs are adjacent
-     <sup> siblings — not adjacent [data-footnote-ref]. Target the sups so
-     "[^6][^7][^8]" reads "6,7,8", not "678". */
-  sup:has(> [data-footnote-ref]) + sup:has(> [data-footnote-ref])::before {
-    content: ",";
+  /* Comma between consecutive footnote refs (inserted by rehypeFootnoteSeparators). */
+  .footnote-sep {
     @apply text-gold text-[11px];
   }
   [data-footnotes] {

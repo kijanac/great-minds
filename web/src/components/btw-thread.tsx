@@ -5,7 +5,7 @@ import { displayTitle } from "@/lib/utils";
 
 import { Button } from "@/components/ui/button";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
-import { baseMdComponents, remarkPlugins } from "@/lib/markdown";
+import { baseMdComponents, remarkPlugins, rehypePlugins } from "@/lib/markdown";
 import type { BtwThread as BtwThreadType } from "@/lib/types";
 
 interface BtwThreadProps {
@@ -110,7 +110,11 @@ export function BtwThread({ btw, onReply, onDismiss, onSpinOff }: BtwThreadProps
               </div>
             )}
             <div className="text-[length:var(--text-small)] leading-[1.72] mb-[9px] text-warm-faint">
-              <Markdown remarkPlugins={remarkPlugins} components={btwMdComponents}>
+              <Markdown
+                remarkPlugins={remarkPlugins}
+                rehypePlugins={rehypePlugins}
+                components={btwMdComponents}
+              >
                 {ex.answer}
               </Markdown>
             </div>
@@ -148,7 +152,11 @@ export function BtwThread({ btw, onReply, onDismiss, onSpinOff }: BtwThreadProps
 
         {btw.streaming && btw.streamText && (
           <div className="text-[length:var(--text-small)] leading-[1.72] mb-[9px] text-warm-faint">
-            <Markdown remarkPlugins={remarkPlugins} components={btwMdComponents}>
+            <Markdown
+              remarkPlugins={remarkPlugins}
+              rehypePlugins={rehypePlugins}
+              components={btwMdComponents}
+            >
               {btw.streamText}
             </Markdown>
             <span className="inline-block w-px h-2.5 bg-gold-muted animate-[blink_1s_step-end_infinite] align-middle ml-px" />

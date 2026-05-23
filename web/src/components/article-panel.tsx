@@ -1,7 +1,7 @@
 import { Maximize2, X } from "lucide-react";
 import Markdown from "react-markdown";
 
-import { remarkPlugins } from "@/lib/markdown";
+import { remarkPlugins, rehypePlugins } from "@/lib/markdown";
 import { displayTitle } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -77,7 +77,9 @@ export function ArticlePanel({
           )}
           {!loading && body && (
             <div className="text-[length:var(--text-small)] leading-[1.76] text-warm-faint [&_p]:mb-[13px] [&_h2]:text-[length:var(--text-body)] [&_h2]:font-bold [&_h2]:text-foreground [&_h2]:mt-5 [&_h2]:mb-2 [&_h3]:text-[length:var(--text-caption)] [&_h3]:font-mono [&_h3]:text-gold [&_h3]:tracking-[0.1em] [&_h3]:uppercase [&_h3]:mt-4 [&_h3]:mb-2">
-              <Markdown remarkPlugins={remarkPlugins}>{body}</Markdown>
+              <Markdown remarkPlugins={remarkPlugins} rehypePlugins={rehypePlugins}>
+                {body}
+              </Markdown>
             </div>
           )}
           {!loading && !body && (
