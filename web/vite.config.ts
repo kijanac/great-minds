@@ -3,7 +3,10 @@ import { defineConfig } from "vite"
 import react from "@vitejs/plugin-react"
 import tailwindcss from "@tailwindcss/vite"
 
+const host = process.env.TAURI_DEV_HOST
+
 export default defineConfig({
+  base: "./",
   plugins: [react(), tailwindcss()],
   resolve: {
     alias: {
@@ -11,6 +14,16 @@ export default defineConfig({
     },
   },
   server: {
+    host: host || false,
+    port: 5173,
+    strictPort: true,
+    hmr: host
+      ? {
+          protocol: "ws",
+          host,
+          port: 5174,
+        }
+      : undefined,
     proxy: {
       // Match vault-scoped SSE endpoint: /api/vaults/{id}/query/stream
       "^/api/vaults/[^/]+/query/stream": {

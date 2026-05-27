@@ -165,20 +165,25 @@ class VaultService:
         user = await self.user_repo.get_by_id(owner_id)
         if user is None:
             raise ValueError(f"User {owner_id} not found")
-        if user.r2_bucket_name:
-            return user.r2_bucket_name
-        bucket_name = derive_user_bucket_name(self.settings.r2_bucket_prefix, owner_id)
+        bucket_name = user.r2_bucket_name or derive_user_bucket_name(
+            self.settings.r2_bucket_prefix, owner_id
+        )
         admin = R2Admin(
             account_id=self.settings.r2_account_id,
             access_key_id=self.settings.r2_access_key_id,
             secret_access_key=self.settings.r2_secret_access_key,
         )
+        # Re-apply CORS/lifecycle when this bucket is ensured so new vault
+        # creation converges after deployed origin changes (e.g. adding the
+        # packaged Tauri origin). Existing buckets can be forced with the
+        # `great-minds sync-r2-cors` maintenance command.
         await asyncio.to_thread(
             admin.ensure_bucket,
             bucket_name,
             cors_origins=self.settings.cors_origins,
         )
-        await self.user_repo.set_r2_bucket_name(owner_id, bucket_name)
+        if not user.r2_bucket_name:
+            await self.user_repo.set_r2_bucket_name(owner_id, bucket_name)
         return bucket_name
 
     async def get_member_count(self, vault_id: UUID) -> int:

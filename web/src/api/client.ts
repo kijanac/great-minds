@@ -1,3 +1,4 @@
+import { invoke } from "@tauri-apps/api/core";
 import { z } from "zod";
 
 import {
@@ -8,7 +9,32 @@ import {
 
 export type { VaultOverview } from "./schemas";
 
-const API_BASE = import.meta.env.VITE_API_BASE || "/api";
+declare global {
+  interface Window {
+    __TAURI_INTERNALS__?: unknown;
+  }
+}
+
+const HOSTED_API_BASE = "https://great-minds-api.onrender.com/v1";
+const AUTH_PERSISTED_KEY = "auth_persisted";
+let accessTokenMemory: string | null = null;
+
+function isTauriRuntime(): boolean {
+  return (
+    Boolean(window.__TAURI_INTERNALS__) ||
+    location.hostname === "tauri.localhost" ||
+    location.protocol === "tauri:"
+  );
+}
+
+function defaultApiBase(): string {
+  if (isTauriRuntime()) {
+    return HOSTED_API_BASE;
+  }
+  return "/api";
+}
+
+const API_BASE = import.meta.env.VITE_API_BASE || defaultApiBase();
 
 export async function readJson<T>(res: Response, schema: z.ZodType<T>): Promise<T> {
   return schema.parse(await res.json());
@@ -20,20 +46,45 @@ const authTokensSchema = z.object({
 });
 
 function getAccessToken(): string | null {
-  return localStorage.getItem("access_token");
+  return isTauriRuntime() ? accessTokenMemory : localStorage.getItem("access_token");
 }
 
-function getRefreshToken(): string | null {
-  return localStorage.getItem("refresh_token");
+async function getRefreshToken(): Promise<string | null> {
+  if (!isTauriRuntime()) return localStorage.getItem("refresh_token");
+  try {
+    return await invoke<string | null>("get_refresh_token");
+  } catch (err) {
+    console.warn("Failed to read refresh token from secure storage", err);
+    return null;
+  }
+}
+
+export function hasPersistedAuth(): boolean {
+  if (!isTauriRuntime()) return Boolean(localStorage.getItem("refresh_token"));
+  return localStorage.getItem(AUTH_PERSISTED_KEY) === "true";
+}
+
+export function getCurrentAccessToken(): string | null {
+  return getAccessToken();
 }
 
 export function getVaultId(): string | null {
   return localStorage.getItem("vault_id");
 }
 
-function storeTokens(accessToken: string, refreshToken: string) {
+async function storeTokens(accessToken: string, refreshToken: string): Promise<void> {
+  if (isTauriRuntime()) {
+    accessTokenMemory = accessToken;
+    await invoke("store_refresh_token", { refreshToken });
+    localStorage.setItem(AUTH_PERSISTED_KEY, "true");
+    localStorage.removeItem("access_token");
+    localStorage.removeItem("refresh_token");
+    window.dispatchEvent(new Event("auth:changed"));
+    return;
+  }
   localStorage.setItem("access_token", accessToken);
   localStorage.setItem("refresh_token", refreshToken);
+  window.dispatchEvent(new Event("auth:changed"));
 }
 
 export function storeVaultId(vaultId: string) {
@@ -41,17 +92,26 @@ export function storeVaultId(vaultId: string) {
   window.dispatchEvent(new Event("auth:changed"));
 }
 
-export function clearTokens() {
+export async function clearTokens(): Promise<void> {
+  accessTokenMemory = null;
   localStorage.removeItem("access_token");
   localStorage.removeItem("refresh_token");
   localStorage.removeItem("vault_id");
+  localStorage.removeItem(AUTH_PERSISTED_KEY);
+  if (isTauriRuntime()) {
+    try {
+      await invoke("delete_refresh_token");
+    } catch (err) {
+      console.warn("Failed to delete refresh token from secure storage", err);
+    }
+  }
   window.dispatchEvent(new Event("auth:changed"));
 }
 
 let refreshInFlight: Promise<string | null> | null = null;
 
 async function doRefresh(): Promise<string | null> {
-  const rt = getRefreshToken();
+  const rt = await getRefreshToken();
   if (!rt) return null;
 
   const res = await fetch(`${API_BASE}/auth/refresh`, {
@@ -61,12 +121,12 @@ async function doRefresh(): Promise<string | null> {
   });
 
   if (!res.ok) {
-    clearTokens();
+    await clearTokens();
     return null;
   }
 
   const data = await readJson(res, authTokensSchema);
-  storeTokens(data.access_token, data.refresh_token);
+  await storeTokens(data.access_token, data.refresh_token);
   return data.access_token;
 }
 
@@ -97,7 +157,10 @@ export async function apiFetch(path: string, init?: RequestInit): Promise<Respon
   const url = new URL(`${API_BASE}${path}`, location.origin);
 
   const headers = new Headers(init?.headers);
-  const token = getAccessToken();
+  let token = getAccessToken();
+  if (!token && hasPersistedAuth()) {
+    token = await refreshAccessToken();
+  }
   if (token) {
     headers.set("Authorization", `Bearer ${token}`);
   }
@@ -117,7 +180,7 @@ export async function apiFetch(path: string, init?: RequestInit): Promise<Respon
 
 export async function ensureVaultId(): Promise<void> {
   if (getVaultId()) return;
-  if (!getAccessToken()) return;
+  if (!getAccessToken() && !hasPersistedAuth()) return;
   const vaultId = await resolveDefaultVault();
   storeVaultId(vaultId);
 }
@@ -131,7 +194,7 @@ export async function loginWithCode(email: string, code: string): Promise<void> 
   if (!res.ok) throw new Error("Invalid or expired code");
 
   const data = await readJson(res, authTokensSchema);
-  storeTokens(data.access_token, data.refresh_token);
+  await storeTokens(data.access_token, data.refresh_token);
 
   try {
     const vaultId = await resolveDefaultVault();

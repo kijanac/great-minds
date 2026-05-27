@@ -124,23 +124,33 @@ class R2Admin:
             if not exists:
                 self._create_bucket(bucket)
             if cors_origins:
-                self._client.put_bucket_cors(
-                    Bucket=bucket,
-                    CORSConfiguration={
-                        "CORSRules": [
-                            {
-                                "AllowedMethods": ["PUT"],
-                                "AllowedOrigins": cors_origins,
-                                "AllowedHeaders": [
-                                    "Content-Type",
-                                    "Content-Length",
-                                ],
-                                "ExposeHeaders": ["ETag"],
-                                "MaxAgeSeconds": 3600,
-                            }
-                        ]
-                    },
-                )
+                # S3/R2 CORS origins are HTTP origins. Keep non-HTTP custom
+                # protocol origins (e.g. tauri://localhost for API CORS) out
+                # of the bucket policy so one desktop origin does not make the
+                # whole R2 CORS update invalid.
+                bucket_cors_origins = [
+                    origin
+                    for origin in cors_origins
+                    if origin.startswith(("http://", "https://"))
+                ]
+                if bucket_cors_origins:
+                    self._client.put_bucket_cors(
+                        Bucket=bucket,
+                        CORSConfiguration={
+                            "CORSRules": [
+                                {
+                                    "AllowedMethods": ["PUT"],
+                                    "AllowedOrigins": bucket_cors_origins,
+                                    "AllowedHeaders": [
+                                        "Content-Type",
+                                        "Content-Length",
+                                    ],
+                                    "ExposeHeaders": ["ETag"],
+                                    "MaxAgeSeconds": 3600,
+                                }
+                            ]
+                        },
+                    )
             self._client.put_bucket_lifecycle_configuration(
                 Bucket=bucket,
                 LifecycleConfiguration={

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useSyncExternalStore } from "react";
 import type { ReactNode } from "react";
 import { decodeJwt } from "jose";
-import { clearTokens, ensureVaultId } from "@/api/client";
+import { clearTokens, ensureVaultId, getCurrentAccessToken, hasPersistedAuth } from "@/api/client";
 import { AuthContext } from "@/lib/auth-context";
 import { queryClient } from "@/lib/query-client";
 
@@ -16,7 +16,7 @@ function isTokenValid(token: string | null): boolean {
 }
 
 function getUserIdFromToken(): string | null {
-  const token = localStorage.getItem("access_token");
+  const token = getCurrentAccessToken();
   if (!token) return null;
   try {
     const { sub } = decodeJwt(token);
@@ -36,10 +36,7 @@ function subscribe(callback: () => void) {
 }
 
 function getSnapshot(): boolean {
-  return (
-    isTokenValid(localStorage.getItem("access_token")) ||
-    isTokenValid(localStorage.getItem("refresh_token"))
-  );
+  return isTokenValid(getCurrentAccessToken()) || hasPersistedAuth();
 }
 
 export function AuthProvider({ children }: { children: ReactNode }) {
@@ -56,7 +53,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const logout = useCallback(() => {
     queryClient.clear();
-    clearTokens();
+    void clearTokens();
   }, []);
 
   const value = useMemo(

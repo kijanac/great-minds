@@ -24,7 +24,7 @@ projects:
               - key: DATA_DIR
                 value: /data
               - key: CORS_ORIGINS
-                value: '["https://great-minds-web.onrender.com","https://greatmind.dev","https://www.greatmind.dev"]'
+                value: '["https://great-minds-web.onrender.com","https://greatmind.dev","https://www.greatmind.dev","http://tauri.localhost","tauri://localhost"]'
               - key: OPENROUTER_API_KEY
                 sync: false
               - key: STORAGE_BACKEND
@@ -65,7 +65,7 @@ projects:
               - key: DATA_DIR
                 value: /data
               - key: CORS_ORIGINS
-                value: '["https://great-minds-web.onrender.com","https://greatmind.dev","https://www.greatmind.dev"]'
+                value: '["https://great-minds-web.onrender.com","https://greatmind.dev","https://www.greatmind.dev","http://tauri.localhost","tauri://localhost"]'
               - key: OPENROUTER_API_KEY
                 sync: false
               - key: STORAGE_BACKEND

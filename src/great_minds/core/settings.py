@@ -5,6 +5,15 @@ from pydantic import model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
+DEFAULT_CORS_ORIGINS = [
+    "http://localhost:5173",
+    "http://127.0.0.1:5173",
+    # Tauri production origins vary by platform/WebView protocol mapping.
+    "http://tauri.localhost",
+    "tauri://localhost",
+]
+
+
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_prefix="")
 
@@ -26,7 +35,7 @@ class Settings(BaseSettings):
     resend_api_key: str | None = None
     resend_from_email: str | None = None
     data_dir: str = "/data"
-    cors_origins: list[str] = ["http://localhost:5173"]
+    cors_origins: list[str] = DEFAULT_CORS_ORIGINS
     suppress_auth: bool = False
 
     # Storage backend for vault content (raw/, wiki/, config, prompts).

@@ -34,6 +34,7 @@ from great_minds.core.documents.repository import SourceDocumentRepo, WikiArticl
 from great_minds.core.documents.service import SourceDocumentService, WikiArticleService
 from great_minds.core.llm import get_async_client
 from great_minds.core.paths import VAULT_SUBDIRS, raw_prefix, sidecar_root, vault_dir
+from great_minds.core.r2_admin import R2Admin
 from great_minds.core.settings import get_settings
 from great_minds.core.storage import LocalStorage, make_storage
 from great_minds.core.pipeline_runs import (
@@ -80,6 +81,58 @@ async def _cli_session():
     finally:
         _cli_sm.reset(token)
         await engine.dispose()
+
+
+# R2 maintenance --------------------------------------------------------------
+
+
+@app.command("sync-r2-cors")
+async def sync_r2_cors(
+    dry_run: bool = typer.Option(False, "--dry-run", help="List buckets only"),
+) -> None:
+    """Re-apply configured R2 CORS/lifecycle policies to existing user buckets."""
+    settings = get_settings()
+    if settings.storage_backend != "r2":
+        err_console.print(
+            "[yellow]STORAGE_BACKEND is not r2; nothing to sync.[/yellow]"
+        )
+        return
+    admin = R2Admin(
+        account_id=settings.r2_account_id,
+        access_key_id=settings.r2_access_key_id,
+        secret_access_key=settings.r2_secret_access_key,
+    )
+    async with _cli_session():
+        async with _cli_sm.get()() as session:
+            result = await session.execute(
+                text(
+                    """
+                    SELECT DISTINCT r2_bucket_name
+                    FROM users
+                    WHERE r2_bucket_name IS NOT NULL
+                    UNION
+                    SELECT DISTINCT r2_bucket_name
+                    FROM vaults
+                    WHERE r2_bucket_name IS NOT NULL
+                    """
+                )
+            )
+            buckets = [row[0] for row in result.fetchall() if row[0]]
+
+    if not buckets:
+        console.print("No R2 buckets found.")
+        return
+
+    for bucket in buckets:
+        if dry_run:
+            console.print(f"[dim]would sync[/dim] {bucket}")
+            continue
+        await asyncio.to_thread(
+            admin.ensure_bucket,
+            bucket,
+            cors_origins=settings.cors_origins,
+        )
+        console.print(f"[green]synced[/green] {bucket}")
 
 
 # compile --------------------------------------------------------------------
