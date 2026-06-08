@@ -51,6 +51,25 @@ class AuthService:
             body=f"Your Great Minds sign-in code is: {code}\n\nExpires in {self.settings.auth_code_expiry_minutes} minutes.",
         )
 
+    async def _mint_tokens_for_user(self, user_id: UUID) -> TokenPair:
+        access_token = create_access_token(user_id, self.settings)
+        refresh_token = create_refresh_token_value()
+        await self.auth_repo.store_refresh_token(user_id, refresh_token, self.settings)
+        await self._commit()
+        return TokenPair(access_token=access_token, refresh_token=refresh_token)
+
+    async def bootstrap_local(self) -> TokenPair:
+        """Create/get the single local desktop user and mint a session.
+
+        Enabled only in LOCAL_MODE. This is the desktop local-first bootstrap:
+        no email round trip, no code entry, just a local account inside the
+        app-owned database.
+        """
+        if not self.settings.local_mode:
+            raise ValueError("local bootstrap is disabled")
+        user = await self.user_service.ensure_user("local@great-minds.local")
+        return await self._mint_tokens_for_user(user.id)
+
     async def verify_code(self, email: str, code: str) -> TokenPair:
         """Verify auth code, ensure user row exists, mint tokens.
 
@@ -68,13 +87,7 @@ class AuthService:
                 raise ValueError("Invalid or expired code")
 
         user = await self.user_service.ensure_user(email)
-
-        access_token = create_access_token(user.id, self.settings)
-        refresh_token = create_refresh_token_value()
-        await self.auth_repo.store_refresh_token(user.id, refresh_token, self.settings)
-
-        await self._commit()
-        return TokenPair(access_token=access_token, refresh_token=refresh_token)
+        return await self._mint_tokens_for_user(user.id)
 
     async def refresh_tokens(self, refresh_token: str) -> TokenPair:
         """Validate refresh token, rotate it, return a new TokenPair."""

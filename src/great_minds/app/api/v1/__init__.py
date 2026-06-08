@@ -10,6 +10,7 @@ from great_minds.app.api.cost_routes import vault_router as vault_cost_router
 from great_minds.app.api.dependencies import require_vault_member
 from great_minds.app.api.ingest_routes import router as ingest_router
 from great_minds.app.api.lint_routes import router as lint_router
+from great_minds.app.api.local_routes import router as local_router
 from great_minds.app.api.proposal_routes import router as proposal_router
 from great_minds.app.api.job_routes import router as job_router
 from great_minds.app.api.query_routes import router as query_router
@@ -20,6 +21,7 @@ router = APIRouter(prefix="/v1")
 
 # Non-vault-scoped routes
 router.include_router(auth_router)
+router.include_router(local_router)
 router.include_router(vault_router)
 router.include_router(cost_router)
 

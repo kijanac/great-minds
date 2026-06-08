@@ -21,15 +21,24 @@ export default function LoginContainer() {
     setLoading(true);
     try {
       await requestCode(email);
-      if (import.meta.env.VITE_SUPPRESS_AUTH) {
-        await loginWithCode(email, "000000");
-        login();
-        navigate("/");
-      } else {
-        setStep("code");
-      }
     } catch {
       setError("Failed to send code. Check your email and try again.");
+      setLoading(false);
+      return;
+    }
+
+    if (!import.meta.env.VITE_SUPPRESS_AUTH) {
+      setStep("code");
+      setLoading(false);
+      return;
+    }
+
+    try {
+      await loginWithCode(email, "000000");
+      login();
+      navigate("/");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Sign-in failed. Please try again.");
     } finally {
       setLoading(false);
     }

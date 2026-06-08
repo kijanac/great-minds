@@ -1,7 +1,13 @@
 import { useCallback, useEffect, useMemo, useSyncExternalStore } from "react";
 import type { ReactNode } from "react";
 import { decodeJwt } from "jose";
-import { clearTokens, ensureVaultId, getCurrentAccessToken, hasPersistedAuth } from "@/api/client";
+import {
+  bootstrapLocalAuth,
+  clearTokens,
+  ensureVaultId,
+  getCurrentAccessToken,
+  hasPersistedAuth,
+} from "@/api/client";
 import { AuthContext } from "@/lib/auth-context";
 import { queryClient } from "@/lib/query-client";
 
@@ -44,7 +50,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const userId = isAuthenticated ? getUserIdFromToken() : null;
 
   useEffect(() => {
-    if (isAuthenticated) ensureVaultId();
+    if (isAuthenticated) {
+      ensureVaultId();
+      return;
+    }
+    void bootstrapLocalAuth().catch(() => {
+      // Not in local desktop mode, local API unavailable, or bootstrap disabled.
+      // Keep the normal login screen in those cases.
+    });
   }, [isAuthenticated]);
 
   const login = useCallback(() => {

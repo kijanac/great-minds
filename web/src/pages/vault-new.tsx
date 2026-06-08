@@ -14,7 +14,7 @@ export default function VaultNewPage() {
     if (!data.name) return;
     await createVault.mutateAsync({
       name: data.name,
-      thematic_hint: data.thematic_hint || undefined,
+      thematicHint: data.thematicHint || undefined,
     });
     navigate("/");
   }

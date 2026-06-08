@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useLocation, useNavigate, useParams, useSearchParams } from "react-router";
 
-import { ingestStagedFiles, type HashedFile } from "@/api/ingest";
+import { ingestFiles, type HashedFile } from "@/api/ingest";
 import { cancelJob, listJobs, requestCompile, startUrlJob } from "@/api/jobs";
 import { fetchArticlesByRun } from "@/api/wiki";
 import { PipelinePage } from "@/components/pipeline-page";
@@ -66,7 +66,7 @@ export function PipelineContainer() {
         const upload = stagedUpload?.uploadFiles;
         if (upload && upload.length > 0 && stagedUpload?.stableJobId) {
           setClientUpload({ uploaded: 0, total: upload.length });
-          for await (const event of ingestStagedFiles(upload, stagedUpload.stableJobId)) {
+          for await (const event of ingestFiles(upload, stagedUpload.stableJobId)) {
             if (event.phase === "uploading") {
               setClientUpload({ uploaded: event.uploaded, total: event.total });
             } else if (event.phase === "processing") {

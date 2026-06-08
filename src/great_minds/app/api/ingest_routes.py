@@ -1,10 +1,10 @@
 """Ingest routes."""
 
-import logging
+import json
 from uuid import UUID
 
 import httpx
-from fastapi import APIRouter, HTTPException, UploadFile, status
+from fastapi import APIRouter, File, Form, HTTPException, UploadFile, status
 
 from great_minds.app.api.dependencies import (
     IngestServiceDep,
@@ -15,6 +15,7 @@ from great_minds.app.api.dependencies import (
 from great_minds.app.api.schemas.ingest import (
     CheckDupesRequest,
     CheckDupesResponse,
+    LocalFileManifest,
     RawSource,
     StagedFileProcessRequest,
     StagedFileSignRequest,
@@ -24,8 +25,7 @@ from great_minds.app.api.schemas.ingest import (
 )
 from great_minds.app.api.schemas.jobs import JobResponse
 from great_minds.core.documents.schemas import IngestedDocument
-
-log = logging.getLogger(__name__)
+from great_minds.core.ingest_service import LocalFilePayload
 
 router = APIRouter(prefix="/ingest", tags=["ingest"])
 
@@ -141,6 +141,59 @@ async def ingest_staged_files_check_dupes(
     """
     existing = await doc_service.existing_client_hashes(vault_id, req.client_hashes)
     return CheckDupesResponse(existing=existing)
+
+
+@router.post("/local-files")
+async def ingest_local_files(
+    vault_id: UUID,
+    storage: VaultStorageDep,
+    ingest_service: IngestServiceDep,
+    manifest: str = Form(...),
+    files: list[UploadFile] = File(...),
+) -> JobResponse:
+    """Direct local desktop ingest.
+
+    The route owns HTTP/multipart parsing only; the ingest service owns
+    validation, hash verification, storage writes, indexing, and pipeline
+    progress transitions.
+    """
+    try:
+        parsed = LocalFileManifest.model_validate(json.loads(manifest))
+    except (json.JSONDecodeError, ValueError) as exc:
+        raise HTTPException(
+            status_code=400, detail="invalid local file manifest"
+        ) from exc
+
+    if len(parsed.files) != len(files):
+        raise HTTPException(status_code=400, detail="manifest/file count mismatch")
+
+    payloads = [
+        LocalFilePayload(
+            name=entry.name,
+            path=entry.path,
+            size=entry.size,
+            hash=entry.hash,
+            mimetype=entry.mimetype or upload.content_type or "",
+            raw_bytes=await upload.read(),
+        )
+        for entry, upload in zip(parsed.files, files)
+    ]
+
+    try:
+        run = await ingest_service.ingest_local_files(
+            vault_id,
+            storage,
+            job_id=parsed.job_id,
+            files=payloads,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Pipeline run could not be reloaded after local ingest",
+        ) from exc
+    return JobResponse.model_validate(run)
 
 
 @router.post("/staged-files/sign")

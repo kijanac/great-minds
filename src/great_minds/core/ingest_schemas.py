@@ -15,3 +15,9 @@ class StagedFileInput(BaseModel):
 class StagedFileSignedUpload(BaseModel):
     hash: str
     url: str
+
+
+class LocalFileInput(StagedFileInput):
+    """One direct local ingest file manifest entry."""
+
+    path: str | None = None

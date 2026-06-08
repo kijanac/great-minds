@@ -67,3 +67,13 @@ def body_hash(body: str) -> str:
 def file_hash(content: str) -> str:
     """Full file content hash (including frontmatter)."""
     return _hash_framed("file", content)
+
+
+def raw_bytes_sha256(content: bytes) -> str:
+    """SHA-256 of original uploaded bytes.
+
+    This intentionally matches browser `crypto.subtle.digest("SHA-256", bytes)`
+    for client/server verification of local and staged uploads. It is not
+    length-prefixed because the raw upload payload is a single byte string.
+    """
+    return hashlib.sha256(content).hexdigest()

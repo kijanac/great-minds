@@ -79,10 +79,10 @@ function HomeContent({ sessionId, initialExchanges, initialQuery, origin }: Home
 
   const handleSessionCreated = useCallback(
     (sid: string) => {
-      window.history.replaceState(null, "", `/sessions/${sid}`);
+      navigate(`/sessions/${sid}`, { replace: true });
       sessions.refetch();
     },
-    [sessions],
+    [navigate, sessions],
   );
 
   const session = useSession(
@@ -125,6 +125,7 @@ function HomeContent({ sessionId, initialExchanges, initialQuery, origin }: Home
               transition={barTransition}
             >
               <Button
+                type="button"
                 variant="ghost"
                 size="icon-xs"
                 onClick={() => navigate("/")}

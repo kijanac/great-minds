@@ -134,7 +134,7 @@ export function PipelinePage({
                 Something went wrong during{" "}
                 {firstErrored ? firstErrored.label.toLowerCase() : "processing"}.
               </AlertTitle>
-              <AlertDescription className="font-mono text-[length:var(--text-chrome)] text-red-400/90 mb-4">
+              <AlertDescription className="font-mono text-[length:var(--text-chrome)] text-red-400/90 mb-4 whitespace-pre-wrap">
                 {overallError}
               </AlertDescription>
               <div className="flex items-center gap-4">

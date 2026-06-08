@@ -1,0 +1,1 @@
+ALTER TABLE "vaults" ALTER COLUMN "kinds" SET DEFAULT ARRAY['person', 'event', 'organization', 'concept']::text[];

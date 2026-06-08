@@ -78,7 +78,7 @@ const PHASE_TO_STAGE: Record<BackendPhase, PipelineStage> = {
 };
 
 const STAGES: { stage: PipelineStage; label: string; activeLabel: string }[] = [
-  { stage: "uploading", label: "Uploading", activeLabel: "Uploading files…" },
+  { stage: "uploading", label: "Importing", activeLabel: "Importing files…" },
   { stage: "indexing", label: "Indexing", activeLabel: "Indexing documents for search…" },
   { stage: "reading", label: "Reading", activeLabel: "Reading documents…" },
   { stage: "synthesizing", label: "Synthesizing", activeLabel: "Synthesizing topics…" },
@@ -104,9 +104,9 @@ function emptyStages(): StageProgress[] {
 
 /** Stages array driven by client-side R2 upload progress.
  *
- * Used by the pipeline container while files are still being uploaded
- * from the browser, before a job id exists and SSE can take over. The
- * uploading stage (index 0) is marked active and shows ``uploaded / total``
+ * Used by the pipeline container while files are still being imported
+ * from the client, before a job id exists and SSE can take over. The
+ * importing stage (index 0) is marked active and shows ``uploaded / total``
  * file count; later stages are pending. Once the server responds with a
  * job id, ``useJobSSE`` takes over and SSE-driven stages replace these.
  */

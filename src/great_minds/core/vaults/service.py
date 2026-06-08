@@ -71,7 +71,9 @@ class VaultService:
             raise ValueError(f"Vault {vault_id} not found")
         return vault
 
-    async def ensure_default_for_user(self, access_token: str, email: str) -> None:
+    async def ensure_default_for_user(
+        self, access_token: str, email: str, *, default_name: str | None = None
+    ) -> None:
         """Create a default vault for a user who has none. Idempotent.
 
         Decodes the ``sub`` claim from the access token to identify the
@@ -81,7 +83,7 @@ class VaultService:
         existing = await self.repo.count_user_vaults(user_id)
         if existing:
             return
-        await self.create_vault(f"{email}'s vault", user_id)
+        await self.create_vault(default_name or f"{email}'s vault", user_id)
 
     async def list_vaults_page(
         self, user_id: UUID, *, pagination: PageParams

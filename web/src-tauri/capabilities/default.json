@@ -1,11 +1,12 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "Default desktop shell capability set. The thin wrapper exposes no native IPC permissions yet.",
+  "description": "Default desktop shell capability set for auth secrets, folder ingestion, and optional local backend discovery.",
   "windows": [
     "main"
   ],
   "permissions": [
-    "auth-secrets"
+    "auth-secrets",
+    "dialog:default"
   ]
 }

@@ -1,6 +1,5 @@
 import { useState } from "react";
 
-import { draftThematicHint } from "@/api/vaults";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -9,7 +8,7 @@ import { Textarea } from "@/components/ui/textarea";
 
 export interface VaultConfigFormSubmit {
   name?: string;
-  thematic_hint: string;
+  thematicHint: string;
 }
 
 interface VaultConfigFormProps {
@@ -19,6 +18,7 @@ interface VaultConfigFormProps {
   submitting?: boolean;
   onSubmit: (data: VaultConfigFormSubmit) => Promise<void> | void;
   onCancel?: () => void;
+  onDraftThematicHint?: (description: string) => Promise<string>;
   submitLabel?: string;
 }
 
@@ -32,6 +32,7 @@ export function VaultConfigForm({
   submitting = false,
   onSubmit,
   onCancel,
+  onDraftThematicHint,
   submitLabel,
 }: VaultConfigFormProps) {
   const [name, setName] = useState(initialName);
@@ -48,8 +49,9 @@ export function VaultConfigForm({
     if (!trimmed || drafting) return;
     setDraftError(null);
     setDrafting(true);
+    if (!onDraftThematicHint) return;
     try {
-      const hint = await draftThematicHint(trimmed);
+      const hint = await onDraftThematicHint(trimmed);
       setThematicHint(hint);
     } catch (err) {
       setDraftError(err instanceof Error ? err.message : "Failed to draft");
@@ -63,7 +65,7 @@ export function VaultConfigForm({
     if (!canSubmit) return;
     await onSubmit({
       name: isCreate ? name.trim() : undefined,
-      thematic_hint: thematicHint,
+      thematicHint,
     });
   }
 
@@ -102,28 +104,30 @@ export function VaultConfigForm({
           rows={3}
           className="rounded-sm font-serif text-[length:var(--text-body)] text-foreground placeholder:text-warm-ghost focus-visible:ring-0"
         />
-        <div className="mt-2 flex items-center gap-3">
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            onClick={handleDraft}
-            disabled={!description.trim() || drafting || submitting}
-            className="font-mono text-[length:var(--text-chrome)] tracking-[0.1em] text-warm-faint hover:text-gold border-ink-border hover:border-gold-dim"
-          >
-            {drafting ? "drafting…" : "draft focus from description"}
-          </Button>
-          {draftError && (
-            <Alert
-              variant="destructive"
-              className="rounded-sm border-red-400/25 bg-red-400/5 py-1.5"
+        {onDraftThematicHint ? (
+          <div className="mt-2 flex items-center gap-3">
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={handleDraft}
+              disabled={!description.trim() || drafting || submitting}
+              className="font-mono text-[length:var(--text-chrome)] tracking-[0.1em] text-warm-faint hover:text-gold border-ink-border hover:border-gold-dim"
             >
-              <AlertDescription className="font-mono text-[length:var(--text-chrome)] text-red-400/90">
-                {draftError}
-              </AlertDescription>
-            </Alert>
-          )}
-        </div>
+              {drafting ? "drafting…" : "draft focus from description"}
+            </Button>
+            {draftError && (
+              <Alert
+                variant="destructive"
+                className="rounded-sm border-red-400/25 bg-red-400/5 py-1.5"
+              >
+                <AlertDescription className="font-mono text-[length:var(--text-chrome)] text-red-400/90">
+                  {draftError}
+                </AlertDescription>
+              </Alert>
+            )}
+          </div>
+        ) : null}
       </div>
 
       <div>

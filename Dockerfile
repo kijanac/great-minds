@@ -30,7 +30,9 @@ RUN --mount=type=cache,target=/root/.cache/uv \
 FROM python:3.14-slim
 
 RUN groupadd --system --gid 999 app \
- && useradd --system --gid 999 --uid 999 --create-home app
+ && useradd --system --gid 999 --uid 999 --create-home app \
+ && mkdir -p /data \
+ && chown -R app:app /data
 
 COPY --from=builder --chown=app:app /app/.venv /app/.venv
 COPY --from=builder --chown=app:app /app/alembic.ini /app/alembic.ini

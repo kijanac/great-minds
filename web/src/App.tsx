@@ -4,12 +4,10 @@ import { createBrowserRouter, Navigate, Outlet, RouterProvider } from "react-rou
 
 import { AppShell } from "@/components/app-shell";
 import { CornerMenuContainer } from "@/containers/corner-menu-container";
-import { AuthProvider } from "@/lib/auth";
-import { useAuth } from "@/lib/use-auth";
 import { queryClient } from "@/lib/query-client";
+import { LocalAppProvider } from "@/local/app-provider";
 import VaultNewPage from "@/pages/vault-new";
 import HomePage from "@/pages/home";
-import LoginPage from "@/pages/login";
 import DocPage from "@/pages/doc";
 import { docLoader } from "@/pages/doc-loader";
 import ExplorePage from "@/pages/explore";
@@ -23,56 +21,36 @@ import PipelinePage from "@/pages/pipeline";
 function RootLayout() {
   return (
     <QueryClientProvider client={queryClient}>
-      <AuthProvider>
+      <LocalAppProvider>
         <AppShell utility={<CornerMenuContainer />}>
           <Outlet />
         </AppShell>
-      </AuthProvider>
-      {import.meta.env.DEV && <ReactQueryDevtools initialIsOpen={false} />}
+        {import.meta.env.DEV && <ReactQueryDevtools initialIsOpen={false} />}
+      </LocalAppProvider>
     </QueryClientProvider>
   );
-}
-
-function RequireAuth() {
-  const { isAuthenticated } = useAuth();
-  if (!isAuthenticated) return <Navigate to="/login" replace />;
-  return <Outlet />;
-}
-
-function RedirectIfAuth() {
-  const { isAuthenticated } = useAuth();
-  if (isAuthenticated) return <Navigate to="/" replace />;
-  return <Outlet />;
 }
 
 const router = createBrowserRouter([
   {
     element: <RootLayout />,
     children: [
+      { path: "/login", element: <Navigate to="/" replace /> },
+      { path: "/", element: <HomePage /> },
+      { path: "/vaults/new", element: <VaultNewPage /> },
       {
-        element: <RedirectIfAuth />,
-        children: [{ path: "/login", element: <LoginPage /> }],
+        path: "/doc/*",
+        element: <DocPage />,
+        loader: docLoader,
       },
-      {
-        element: <RequireAuth />,
-        children: [
-          { path: "/", element: <HomePage /> },
-          { path: "/vaults/new", element: <VaultNewPage /> },
-          {
-            path: "/doc/*",
-            element: <DocPage />,
-            loader: docLoader,
-          },
-          { path: "/explore", element: <ExplorePage /> },
-          { path: "/sources", element: <SourcesPage /> },
-          { path: "/wiki", element: <WikiPage /> },
-          { path: "/pipeline", element: <PipelinePage /> },
-          { path: "/pipeline/runs/:jobId", element: <PipelinePage /> },
-          { path: "/project/:id/settings", element: <ProjectSettingsPage /> },
-          { path: "/sessions", element: <SessionsPage /> },
-          { path: "/sessions/:id", element: <SessionPage /> },
-        ],
-      },
+      { path: "/explore", element: <ExplorePage /> },
+      { path: "/sources", element: <SourcesPage /> },
+      { path: "/wiki", element: <WikiPage /> },
+      { path: "/pipeline", element: <PipelinePage /> },
+      { path: "/pipeline/runs/:jobId", element: <PipelinePage /> },
+      { path: "/project/:id/settings", element: <ProjectSettingsPage /> },
+      { path: "/sessions", element: <SessionsPage /> },
+      { path: "/sessions/:id", element: <SessionPage /> },
     ],
   },
 ]);

@@ -1,6 +1,8 @@
 import { invoke } from "@tauri-apps/api/core";
 import { z } from "zod";
 
+import { isDesktopRuntime } from "@/lib/runtime";
+
 import {
   vaultPageSchema as vaultOverviewListSchema,
   vaultSchema as vaultOverviewSchema,
@@ -9,32 +11,37 @@ import {
 
 export type { VaultOverview } from "./schemas";
 
-declare global {
-  interface Window {
-    __TAURI_INTERNALS__?: unknown;
-  }
-}
-
 const HOSTED_API_BASE = "https://great-minds-api.onrender.com/v1";
 const AUTH_PERSISTED_KEY = "auth_persisted";
 let accessTokenMemory: string | null = null;
 
-function isTauriRuntime(): boolean {
-  return (
-    Boolean(window.__TAURI_INTERNALS__) ||
-    location.hostname === "tauri.localhost" ||
-    location.protocol === "tauri:"
-  );
-}
+let apiBaseInFlight: Promise<string> | null = null;
 
-function defaultApiBase(): string {
-  if (isTauriRuntime()) {
+async function resolveApiBase(): Promise<string> {
+  if (import.meta.env.VITE_API_BASE) return import.meta.env.VITE_API_BASE;
+  if (!isDesktopRuntime()) return "/api";
+  try {
+    return (await invoke<string | null>("desktop_api_base")) ?? HOSTED_API_BASE;
+  } catch (err) {
+    console.warn("Failed to resolve desktop API base", err);
     return HOSTED_API_BASE;
   }
-  return "/api";
 }
 
-const API_BASE = import.meta.env.VITE_API_BASE || defaultApiBase();
+export function getApiBase(): Promise<string> {
+  if (!apiBaseInFlight) apiBaseInFlight = resolveApiBase();
+  return apiBaseInFlight;
+}
+
+export async function isLocalApiBase(): Promise<boolean> {
+  const apiBase = await getApiBase();
+  try {
+    const { hostname } = new URL(apiBase, location.origin);
+    return hostname === "127.0.0.1" || hostname === "localhost" || hostname === "::1";
+  } catch {
+    return false;
+  }
+}
 
 export async function readJson<T>(res: Response, schema: z.ZodType<T>): Promise<T> {
   return schema.parse(await res.json());
@@ -46,11 +53,11 @@ const authTokensSchema = z.object({
 });
 
 function getAccessToken(): string | null {
-  return isTauriRuntime() ? accessTokenMemory : localStorage.getItem("access_token");
+  return isDesktopRuntime() ? accessTokenMemory : localStorage.getItem("access_token");
 }
 
 async function getRefreshToken(): Promise<string | null> {
-  if (!isTauriRuntime()) return localStorage.getItem("refresh_token");
+  if (!isDesktopRuntime()) return localStorage.getItem("refresh_token");
   try {
     return await invoke<string | null>("get_refresh_token");
   } catch (err) {
@@ -60,7 +67,7 @@ async function getRefreshToken(): Promise<string | null> {
 }
 
 export function hasPersistedAuth(): boolean {
-  if (!isTauriRuntime()) return Boolean(localStorage.getItem("refresh_token"));
+  if (!isDesktopRuntime()) return Boolean(localStorage.getItem("refresh_token"));
   return localStorage.getItem(AUTH_PERSISTED_KEY) === "true";
 }
 
@@ -73,7 +80,7 @@ export function getVaultId(): string | null {
 }
 
 async function storeTokens(accessToken: string, refreshToken: string): Promise<void> {
-  if (isTauriRuntime()) {
+  if (isDesktopRuntime()) {
     accessTokenMemory = accessToken;
     await invoke("store_refresh_token", { refreshToken });
     localStorage.setItem(AUTH_PERSISTED_KEY, "true");
@@ -98,7 +105,7 @@ export async function clearTokens(): Promise<void> {
   localStorage.removeItem("refresh_token");
   localStorage.removeItem("vault_id");
   localStorage.removeItem(AUTH_PERSISTED_KEY);
-  if (isTauriRuntime()) {
+  if (isDesktopRuntime()) {
     try {
       await invoke("delete_refresh_token");
     } catch (err) {
@@ -114,7 +121,8 @@ async function doRefresh(): Promise<string | null> {
   const rt = await getRefreshToken();
   if (!rt) return null;
 
-  const res = await fetch(`${API_BASE}/auth/refresh`, {
+  const apiBase = await getApiBase();
+  const res = await fetch(`${apiBase}/auth/refresh`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ refresh_token: rt }),
@@ -138,13 +146,12 @@ function refreshAccessToken(): Promise<string | null> {
   return refreshInFlight;
 }
 
-async function resolveDefaultVault(): Promise<string> {
+async function resolveDefaultVault(): Promise<string | null> {
   const res = await apiFetch("/vaults");
   if (!res.ok) throw new Error("Failed to fetch vaults");
 
   const vaults = await readJson(res, vaultOverviewListSchema);
-  if (!vaults.items.length) throw new Error("No vaults found");
-  return vaults.items[0].id;
+  return vaults.items[0]?.id ?? null;
 }
 
 export function vaultPath(path: string): string {
@@ -154,7 +161,8 @@ export function vaultPath(path: string): string {
 }
 
 export async function apiFetch(path: string, init?: RequestInit): Promise<Response> {
-  const url = new URL(`${API_BASE}${path}`, location.origin);
+  const apiBase = await getApiBase();
+  const url = new URL(`${apiBase}${path}`, location.origin);
 
   const headers = new Headers(init?.headers);
   let token = getAccessToken();
@@ -182,11 +190,36 @@ export async function ensureVaultId(): Promise<void> {
   if (getVaultId()) return;
   if (!getAccessToken() && !hasPersistedAuth()) return;
   const vaultId = await resolveDefaultVault();
-  storeVaultId(vaultId);
+  if (vaultId) storeVaultId(vaultId);
+}
+
+let localBootstrapInFlight: Promise<void> | null = null;
+
+async function doBootstrapLocalAuth(): Promise<void> {
+  if (!isDesktopRuntime() || !(await isLocalApiBase())) return;
+  const apiBase = await getApiBase();
+  const res = await fetch(`${apiBase}/local/bootstrap`, { method: "POST" });
+  if (!res.ok) throw new Error("Local bootstrap failed");
+
+  const data = await readJson(res, authTokensSchema);
+  await storeTokens(data.access_token, data.refresh_token);
+
+  const vaultId = await resolveDefaultVault();
+  if (vaultId) storeVaultId(vaultId);
+}
+
+export function bootstrapLocalAuth(): Promise<void> {
+  if (!localBootstrapInFlight) {
+    localBootstrapInFlight = doBootstrapLocalAuth().finally(() => {
+      localBootstrapInFlight = null;
+    });
+  }
+  return localBootstrapInFlight;
 }
 
 export async function loginWithCode(email: string, code: string): Promise<void> {
-  const res = await fetch(`${API_BASE}/auth/verify-code`, {
+  const apiBase = await getApiBase();
+  const res = await fetch(`${apiBase}/auth/verify-code`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ email, code }),
@@ -198,9 +231,9 @@ export async function loginWithCode(email: string, code: string): Promise<void> 
 
   try {
     const vaultId = await resolveDefaultVault();
-    storeVaultId(vaultId);
+    if (vaultId) storeVaultId(vaultId);
   } catch {
-    throw new Error("Signed in, but failed to load your workspace. Please refresh.");
+    throw new Error("Signed in, but failed to load your projects. Please refresh.");
   }
 }
 
@@ -228,7 +261,8 @@ export async function createVault(input: CreateVaultInput): Promise<VaultOvervie
 }
 
 export async function requestCode(email: string): Promise<void> {
-  const res = await fetch(`${API_BASE}/auth/request-code`, {
+  const apiBase = await getApiBase();
+  const res = await fetch(`${apiBase}/auth/request-code`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ email }),

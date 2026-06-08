@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-import { apiFetch, vaultPath, readJson } from "./client";
+import { apiFetch, isLocalApiBase, vaultPath, readJson } from "./client";
 
 export interface IngestResult {
   file_path: string;
@@ -111,10 +111,43 @@ async function pMap<T, R>(
   return results;
 }
 
+function explainUploadFailure(error: string): string {
+  const normalized = error.toLowerCase();
+  if (normalized.includes("failed to fetch") || normalized.includes("load failed")) {
+    return `${error} — likely CORS/preflight, network, or WebView transport issue`;
+  }
+  if (normalized.includes("signaturedoesnotmatch")) {
+    return `${error} — presigned URL signature mismatch`;
+  }
+  if (normalized.includes("cors") || normalized.includes("access-control")) {
+    return `${error} — R2 bucket CORS likely needs the desktop origin`;
+  }
+  if (normalized.startsWith("put 403")) {
+    return `${error} — R2 rejected the presigned upload; check signature, expiry, and bucket policy`;
+  }
+  return error;
+}
+
+function formatUploadFailureSummary(
+  failedUploads: { name: string; error: string }[],
+  { intro }: { intro: string },
+): string {
+  if (failedUploads.length === 0) return intro;
+  const visible = failedUploads.slice(0, 3);
+  const lines = visible.map(
+    (failure) => `• ${failure.name}: ${explainUploadFailure(failure.error)}`,
+  );
+  const remaining = failedUploads.length - visible.length;
+  if (remaining > 0)
+    lines.push(`• …and ${remaining} more upload failure${remaining === 1 ? "" : "s"}`);
+  return `${intro}\n\nFirst failure${failedUploads.length === 1 ? "" : "s"}:\n${lines.join("\n")}`;
+}
+
 /** One file paired with its client-computed SHA-256 hash. */
 export interface HashedFile {
   file: File;
   hash: string;
+  path?: string;
 }
 
 /**
@@ -129,6 +162,62 @@ export interface HashedFile {
  * in flight, then a single "processing" event with the durable job_id.
  * Caller drives backend progress from the job SSE stream.
  */
+export async function* ingestLocalFiles(
+  hashedFiles: HashedFile[],
+  jobId: string = crypto.randomUUID(),
+): AsyncGenerator<StagedFileUploadProgress> {
+  if (hashedFiles.length === 0) return;
+
+  yield { phase: "uploading", uploaded: 0, total: hashedFiles.length };
+
+  const formData = new FormData();
+  formData.append(
+    "manifest",
+    JSON.stringify({
+      job_id: jobId,
+      files: hashedFiles.map(({ file, hash, path }) => ({
+        name: file.name,
+        path: path ?? file.name,
+        size: file.size,
+        hash,
+        mimetype: file.type,
+      })),
+    }),
+  );
+  for (const { file } of hashedFiles) {
+    formData.append("files", file, file.name);
+  }
+
+  const res = await apiFetch(vaultPath("/ingest/local-files"), {
+    method: "POST",
+    body: formData,
+  });
+
+  if (!res.ok) {
+    yield {
+      phase: "error",
+      uploaded: 0,
+      total: hashedFiles.length,
+      error: await res.text(),
+    };
+    return;
+  }
+
+  const { id } = await readJson(res, stagedFileProcessResponseSchema);
+  yield { phase: "processing", uploaded: hashedFiles.length, total: hashedFiles.length, id };
+}
+
+export async function* ingestFiles(
+  hashedFiles: HashedFile[],
+  jobId: string = crypto.randomUUID(),
+): AsyncGenerator<StagedFileUploadProgress> {
+  if (await isLocalApiBase()) {
+    yield* ingestLocalFiles(hashedFiles, jobId);
+    return;
+  }
+  yield* ingestStagedFiles(hashedFiles, jobId);
+}
+
 export async function* ingestStagedFiles(
   hashedFiles: HashedFile[],
   jobId: string = crypto.randomUUID(),
@@ -231,7 +320,9 @@ export async function* ingestStagedFiles(
       phase: "error",
       uploaded,
       total: originalCount,
-      error: "all uploads failed",
+      error: formatUploadFailureSummary(failedUploads, {
+        intro: "All uploads failed before the server could process them.",
+      }),
       failed_uploads: failedUploads,
     };
     return;
@@ -254,11 +345,14 @@ export async function* ingestStagedFiles(
     }),
   });
   if (!processRes.ok) {
+    const serverError = await processRes.text();
     yield {
       phase: "error",
       uploaded,
       total: originalCount,
-      error: await processRes.text(),
+      error: formatUploadFailureSummary(failedUploads, {
+        intro: `Server could not start processing uploaded files: ${serverError}`,
+      }),
       failed_uploads: failedUploads,
     };
     return;

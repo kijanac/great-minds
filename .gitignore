@@ -4,6 +4,7 @@ raw/
 wiki/
 outputs/
 produced/
+var/
 __pycache__/
 *.pyc
 *.egg-info/

@@ -1,8 +1,9 @@
 import { useState, type ReactNode } from "react";
 import { Home, X } from "lucide-react";
 
-import type { VaultConfig, VaultDetail, Membership } from "@/api/vaults";
 import { VaultConfigForm, type VaultConfigFormSubmit } from "@/components/vault-config-form";
+import type { Vault } from "@/local/schema/vault";
+import type { VaultMember } from "@/local/schema/vault-settings";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Alert, AlertDescription } from "@/components/ui/alert";
@@ -21,18 +22,20 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { POPOVER_SURFACE_CLASS } from "@/lib/control-styles";
 
 interface ProjectSettingsProps {
-  project: VaultDetail | null;
-  members: Membership[];
-  config: VaultConfig | null;
+  project: Vault | null;
+  members: VaultMember[];
+  articleCount: number;
   isOwner: boolean;
   loading: boolean;
+  memberManagementEnabled: boolean;
+  dangerZoneEnabled: boolean;
   proposalsSlot: ReactNode;
   apiKeysSlot: ReactNode;
   onHome: () => void;
   onInvite: (email: string) => Promise<void>;
   onChangeRole: (userId: string, role: string) => Promise<void>;
   onRemoveMember: (userId: string) => Promise<void>;
-  onSaveConfig: (thematic_hint: string) => Promise<void>;
+  onSaveConfig: (thematicHint: string) => Promise<void>;
   onDeleteVault: () => Promise<void>;
 }
 
@@ -47,9 +50,11 @@ function nextRole(current: string): string {
 export function ProjectSettings({
   project,
   members,
-  config,
+  articleCount,
   isOwner,
   loading,
+  memberManagementEnabled,
+  dangerZoneEnabled,
   proposalsSlot,
   apiKeysSlot,
   onHome,
@@ -79,7 +84,7 @@ export function ProjectSettings({
   async function handleSaveConfig(data: VaultConfigFormSubmit) {
     setSavingConfig(true);
     try {
-      await onSaveConfig(data.thematic_hint);
+      await onSaveConfig(data.thematicHint);
     } finally {
       setSavingConfig(false);
     }
@@ -123,8 +128,8 @@ export function ProjectSettings({
                 {project.name}
               </h1>
               <p className="font-mono text-[length:var(--text-chrome)] tracking-[0.06em] text-warm-ghost mb-8">
-                {project.article_count} articles · {project.member_count} member
-                {project.member_count !== 1 && "s"}
+                {articleCount} articles · {members.length} member
+                {members.length !== 1 && "s"}
               </p>
 
               <h2 className="font-mono text-[length:var(--text-chrome)] tracking-[0.14em] text-gold-muted uppercase mb-4">
@@ -134,16 +139,16 @@ export function ProjectSettings({
               <div className="space-y-1 mb-6">
                 {members.map((m) => (
                   <div
-                    key={m.user_id}
+                    key={m.userId}
                     className="flex items-center justify-between py-2 px-3 rounded-sm hover:bg-ink-raised group"
                   >
                     <span className="font-mono text-[length:var(--text-small)] text-warm-dim">
                       {m.email}
                     </span>
                     <div className="flex items-center gap-2">
-                      {isOwner && m.role !== "owner" ? (
+                      {memberManagementEnabled && isOwner && m.role !== "owner" ? (
                         <button
-                          onClick={() => onChangeRole(m.user_id, nextRole(m.role))}
+                          onClick={() => onChangeRole(m.userId, nextRole(m.role))}
                           className="font-mono text-[length:var(--text-chrome)] tracking-[0.06em] text-warm-ghost hover:text-gold transition-colors cursor-pointer"
                         >
                           {m.role}
@@ -153,11 +158,11 @@ export function ProjectSettings({
                           {m.role}
                         </span>
                       )}
-                      {isOwner && m.role !== "owner" && (
+                      {memberManagementEnabled && isOwner && m.role !== "owner" && (
                         <Button
                           variant="ghost"
                           size="icon-xs"
-                          onClick={() => onRemoveMember(m.user_id)}
+                          onClick={() => onRemoveMember(m.userId)}
                           className="text-warm-ghost hover:text-red-400 hover:bg-transparent opacity-0 group-hover:opacity-100 transition-opacity"
                         >
                           <X size={12} />
@@ -168,7 +173,7 @@ export function ProjectSettings({
                 ))}
               </div>
 
-              {isOwner && (
+              {memberManagementEnabled && isOwner && (
                 <form onSubmit={handleInvite} className="flex items-center gap-3">
                   <Input
                     type="email"
@@ -184,25 +189,23 @@ export function ProjectSettings({
                 </form>
               )}
 
-              {config && (
-                <div className="mt-12">
-                  <h2 className="font-mono text-[length:var(--text-chrome)] tracking-[0.14em] text-gold-muted uppercase mb-4">
-                    configuration
-                  </h2>
-                  <VaultConfigForm
-                    mode="edit"
-                    initialThematicHint={config.thematic_hint}
-                    submitting={savingConfig}
-                    onSubmit={handleSaveConfig}
-                    submitLabel="save changes"
-                  />
-                </div>
-              )}
+              <div className="mt-12">
+                <h2 className="font-mono text-[length:var(--text-chrome)] tracking-[0.14em] text-gold-muted uppercase mb-4">
+                  configuration
+                </h2>
+                <VaultConfigForm
+                  mode="edit"
+                  initialThematicHint={project.thematicHint}
+                  submitting={savingConfig}
+                  onSubmit={handleSaveConfig}
+                  submitLabel="save changes"
+                />
+              </div>
 
               {proposalsSlot}
               {apiKeysSlot}
 
-              {isOwner && (
+              {dangerZoneEnabled && isOwner && (
                 <div className="mt-16 pt-8 border-t border-ink-border">
                   <h2 className="font-mono text-[length:var(--text-chrome)] tracking-[0.14em] text-red-400/70 uppercase mb-4">
                     danger zone

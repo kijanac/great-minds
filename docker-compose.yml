@@ -1,3 +1,13 @@
+x-great-minds-env: &great-minds-env
+  DATABASE_URL: postgresql://great_minds:great_minds@db:5432/great_minds
+  JWT_SECRET: dev-secret
+  SUPPRESS_AUTH: "true"
+  LOCAL_MODE: "true"
+  STORAGE_BACKEND: local
+  DATA_DIR: /data
+  CORS_ORIGINS: '["http://localhost:5173","http://127.0.0.1:5173","http://tauri.localhost","tauri://localhost"]'
+  OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
+
 services:
   db:
     image: pgvector/pgvector:pg18
@@ -15,6 +25,58 @@ services:
       interval: 5s
       timeout: 3s
       retries: 5
+
+  init-data:
+    profiles: ["desktop"]
+    build: .
+    user: "0:0"
+    restart: "no"
+    volumes:
+      - ${GREAT_MINDS_DATA_DIR:-./var/desktop-data}:/data
+    command: sh -c "mkdir -p /data && chown -R 999:999 /data"
+
+  migrate:
+    profiles: ["desktop"]
+    build: .
+    restart: "no"
+    environment:
+      <<: *great-minds-env
+    depends_on:
+      db:
+        condition: service_healthy
+    command: alembic upgrade head
+
+  api:
+    profiles: ["desktop"]
+    build: .
+    restart: unless-stopped
+    environment:
+      <<: *great-minds-env
+    ports:
+      - "8000:8000"
+    volumes:
+      - ${GREAT_MINDS_DATA_DIR:-./var/desktop-data}:/data
+    depends_on:
+      init-data:
+        condition: service_completed_successfully
+      migrate:
+        condition: service_completed_successfully
+    command: great-minds serve --host 0.0.0.0 --port 8000
+
+  worker:
+    profiles: ["desktop"]
+    build: .
+    restart: unless-stopped
+    environment:
+      <<: *great-minds-env
+    volumes:
+      - ${GREAT_MINDS_DATA_DIR:-./var/desktop-data}:/data
+    depends_on:
+      init-data:
+        condition: service_completed_successfully
+      migrate:
+        condition: service_completed_successfully
+    command: great-minds worker --concurrency 1
 
 volumes:
   pgdata:

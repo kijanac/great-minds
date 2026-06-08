@@ -24,7 +24,10 @@ const sourceEventDataSchema = z.discriminatedUnion("type", [
     title: z.string().nullable().optional(),
   }),
   z.object({ type: z.literal("search"), query: z.string() }),
-  z.object({ type: z.literal("query"), filters: z.record(z.unknown()).optional() }),
+  z.object({
+    type: z.literal("query"),
+    filters: z.record(z.string(), z.unknown()).optional(),
+  }),
 ]);
 
 const tokenEventSchema = z.object({

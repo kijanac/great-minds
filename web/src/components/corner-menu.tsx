@@ -12,7 +12,7 @@ import { MENU_ITEM_CLASS, POPOVER_SURFACE_CLASS } from "@/lib/control-styles";
 interface CornerMenuProps {
   theme: "light" | "dark";
   onToggleTheme: () => void;
-  onSignOut: () => void;
+  onSignOut?: () => void;
 }
 
 export function CornerMenu({ theme, onToggleTheme, onSignOut }: CornerMenuProps) {
@@ -43,10 +43,15 @@ export function CornerMenu({ theme, onToggleTheme, onSignOut }: CornerMenuProps)
           {theme === "dark" ? <Sun className="size-3.5" /> : <Moon className="size-3.5" />}
           {theme === "dark" ? "light mode" : "dark mode"}
         </DropdownMenuItem>
-        <DropdownMenuItem onClick={onSignOut} className={`${MENU_ITEM_CLASS} gap-2 cursor-pointer`}>
-          <LogOut className="size-3.5" />
-          sign out
-        </DropdownMenuItem>
+        {onSignOut ? (
+          <DropdownMenuItem
+            onClick={onSignOut}
+            className={`${MENU_ITEM_CLASS} gap-2 cursor-pointer`}
+          >
+            <LogOut className="size-3.5" />
+            sign out
+          </DropdownMenuItem>
+        ) : null}
       </DropdownMenuContent>
     </DropdownMenu>
   );

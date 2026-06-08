@@ -4,7 +4,11 @@ from uuid import UUID
 
 from pydantic import BaseModel
 
-from great_minds.core.ingest_schemas import StagedFileInput, StagedFileSignedUpload
+from great_minds.core.ingest_schemas import (
+    LocalFileInput,
+    StagedFileInput,
+    StagedFileSignedUpload,
+)
 from great_minds.core.ingest_service import UserSuggestionIntent
 
 
@@ -53,3 +57,8 @@ class CheckDupesRequest(BaseModel):
 
 class CheckDupesResponse(BaseModel):
     existing: list[str]
+
+
+class LocalFileManifest(BaseModel):
+    job_id: UUID
+    files: list[LocalFileInput]

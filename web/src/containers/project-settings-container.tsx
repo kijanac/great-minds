@@ -1,103 +1,69 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useParams } from "react-router";
 
-import {
-  type VaultConfig,
-  type VaultDetail,
-  type Membership,
-  deleteVault,
-  getVaultConfig,
-  getVaultDetail,
-  inviteMember,
-  listMembers,
-  removeMember,
-  updateVaultConfig,
-  updateMemberRole,
-} from "@/api/vaults";
 import { ProjectSettings } from "@/components/project-settings";
-import { ApiKeysSectionContainer } from "@/containers/api-keys-section-container";
-import { ProposalsSectionContainer } from "@/containers/proposals-section-container";
 import { useViewNavigate } from "@/hooks/use-view-navigate";
-import { useAuth } from "@/lib/use-auth";
+import { useLocalApp } from "@/local/app-provider";
+import { localApi } from "@/local/worker/client";
 
 export function ProjectSettingsContainer() {
   const { id } = useParams<{ id: string }>();
-  const { userId } = useAuth();
+  const {
+    workspace: { user },
+    updateVault,
+  } = useLocalApp();
   const navigate = useViewNavigate();
-  const [project, setProject] = useState<VaultDetail | null>(null);
-  const [members, setMembers] = useState<Membership[]>([]);
-  const [config, setConfig] = useState<VaultConfig | null>(null);
-  const [loading, setLoading] = useState(true);
+  const queryClient = useQueryClient();
 
-  useEffect(() => {
-    if (!id) return;
-    Promise.all([getVaultDetail(id), listMembers(id), getVaultConfig(id)])
-      .then(([detail, memberList, cfg]) => {
-        setProject(detail);
-        setMembers(memberList);
-        setConfig(cfg);
-      })
-      .catch(() => {
-        setProject(null);
-        setMembers([]);
-        setConfig(null);
-      })
-      .finally(() => setLoading(false));
-  }, [id]);
+  const settings = useQuery({
+    queryKey: ["vault", id, "settings"],
+    enabled: Boolean(id),
+    queryFn: () => localApi.getVaultSettings(id!),
+  });
 
-  const isOwner = members.some((m) => m.user_id === userId && m.role === "owner");
+  const members = settings.data?.members ?? [];
+  const isOwner = members.some((member) => member.userId === user.id && member.role === "owner");
 
-  const handleInvite = useCallback(
-    async (email: string) => {
-      if (!id) return;
-      const member = await inviteMember(id, email);
-      setMembers((prev) => [...prev, member]);
-    },
-    [id],
-  );
+  const handleInvite = useCallback(async (_email: string) => {
+    throw new Error("Local sharing is not available yet.");
+  }, []);
 
-  const handleChangeRole = useCallback(
-    async (memberId: string, role: string) => {
-      if (!id) return;
-      const updated = await updateMemberRole(id, memberId, role);
-      setMembers((prev) => prev.map((m) => (m.user_id === memberId ? updated : m)));
-    },
-    [id],
-  );
+  const handleChangeRole = useCallback(async (_memberId: string, _role: string) => {
+    throw new Error("Local sharing is not available yet.");
+  }, []);
 
-  const handleRemoveMember = useCallback(
-    async (memberId: string) => {
-      if (!id) return;
-      await removeMember(id, memberId);
-      setMembers((prev) => prev.filter((m) => m.user_id !== memberId));
-    },
-    [id],
-  );
+  const handleRemoveMember = useCallback(async (_memberId: string) => {
+    throw new Error("Local sharing is not available yet.");
+  }, []);
 
   const handleSaveConfig = useCallback(
-    async (thematic_hint: string) => {
+    async (thematicHint: string) => {
       if (!id) return;
-      const updated = await updateVaultConfig(id, { thematic_hint });
-      setConfig(updated);
+      await updateVault({ vaultId: id, thematicHint });
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["vault", id, "settings"] }),
+        queryClient.invalidateQueries({ queryKey: ["vaults"] }),
+      ]);
     },
-    [id],
+    [id, queryClient, updateVault],
   );
 
   const handleDeleteVault = useCallback(async () => {
-    if (!id) return;
-    await deleteVault(id);
-    navigate("/", { replace: true });
-  }, [id, navigate]);
+    throw new Error("Local vault deletion is not available yet.");
+  }, []);
 
   return (
     <ProjectSettings
-      project={project}
+      project={settings.data?.vault ?? null}
       members={members}
-      config={config}
+      articleCount={settings.data?.articleCount ?? 0}
       isOwner={isOwner}
-      loading={loading}
-      proposalsSlot={id ? <ProposalsSectionContainer vaultId={id} isOwner={isOwner} /> : null}
-      apiKeysSlot={<ApiKeysSectionContainer />}
+      loading={settings.isLoading}
+      memberManagementEnabled={false}
+      dangerZoneEnabled={false}
+      proposalsSlot={null}
+      apiKeysSlot={null}
       onHome={() => navigate("/")}
       onInvite={handleInvite}
       onChangeRole={handleChangeRole}

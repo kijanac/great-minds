@@ -37,6 +37,7 @@ class Settings(BaseSettings):
     data_dir: str = "/data"
     cors_origins: list[str] = DEFAULT_CORS_ORIGINS
     suppress_auth: bool = False
+    local_mode: bool = False
 
     # Storage backend for vault content (raw/, wiki/, config, prompts).
     # "local" writes to data_dir/vaults/<id>/. "r2" provisions one

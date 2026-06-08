@@ -23,9 +23,18 @@ class SourceDocumentService:
     async def _commit(self) -> None:
         await self.repo.session.commit()
 
-    async def index(self, vault_id: UUID, file_path: str, content: str) -> UUID:
+    async def index(
+        self,
+        vault_id: UUID,
+        file_path: str,
+        content: str,
+        *,
+        client_hash: str | None = None,
+    ) -> UUID:
         fm, _ = parse_frontmatter(content)
-        doc = SourceDocCreate.from_frontmatter(fm, file_path, content)
+        doc = SourceDocCreate.from_frontmatter(
+            fm, file_path, content, client_hash=client_hash
+        )
         result = await self.repo.upsert(vault_id, doc)
         await self._commit()
         return result

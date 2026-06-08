@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { invoke } from "@tauri-apps/api/core";
 import { motion, useReducedMotion } from "motion/react";
 
 import { Button } from "@/components/ui/button";
@@ -7,6 +8,7 @@ import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { checkDupes, hashFile, type HashedFile } from "@/api/ingest";
 import { useViewNavigate } from "@/hooks/use-view-navigate";
+import { isDesktopRuntime } from "@/lib/runtime";
 import type { DroppedFile } from "@/lib/types";
 
 const LAYOUT_ID = "ingestion-zone";
@@ -36,6 +38,12 @@ const RECOGNISED_EXTS = new Set([
 ]);
 
 const HASH_CONCURRENCY = 4;
+
+interface DesktopIngestFile {
+  name: string;
+  path: string;
+  bytes: number[];
+}
 
 /** Per-file lifecycle in the ingestion preview. */
 type FileStatus =
@@ -311,7 +319,22 @@ export function IngestionFlow({ hasActivePipeline }: { hasActivePipeline: boolea
     [startWithFiles],
   );
 
-  const handleBrowse = useCallback(() => {
+  const handleBrowse = useCallback(async () => {
+    if (isDesktopRuntime()) {
+      try {
+        const picked = await invoke<DesktopIngestFile[] | null>("browse_ingest_folder");
+        if (!picked || picked.length === 0) return;
+        const dropped: DroppedFile[] = picked.map((entry) => ({
+          file: new File([new Uint8Array(entry.bytes)], entry.name),
+          path: entry.path,
+        }));
+        startWithFiles(dropped);
+      } catch (e) {
+        console.error("Failed to browse folder", e);
+      }
+      return;
+    }
+
     const input = document.createElement("input");
     input.type = "file";
     input.multiple = true;
@@ -357,6 +380,7 @@ export function IngestionFlow({ hasActivePipeline }: { hasActivePipeline: boolea
     const uploadFiles: HashedFile[] = candidates.map((f) => ({
       file: f.file,
       hash: f.hash!,
+      path: f.path,
     }));
 
     // Hand the actual upload off to the pipeline container via router
