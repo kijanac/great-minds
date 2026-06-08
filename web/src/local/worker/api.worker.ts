@@ -1,6 +1,7 @@
 import * as Comlink from "comlink";
 import { createLocalContext } from "../db/client";
 import { ensureWorkspace } from "../services/bootstrap";
+import { listSources } from "../services/sources";
 import {
   createVault,
   getVaultSettings,
@@ -8,6 +9,7 @@ import {
   switchVault,
   updateVault,
 } from "../services/vaults";
+import { ListSourcesQuerySchema } from "../schema/source";
 import { CreateVaultCommandSchema, UpdateVaultCommandSchema } from "../schema/vault";
 import type { LocalApi } from "./api";
 
@@ -29,6 +31,11 @@ const localApi = {
   async getVaultSettings(vaultId: string) {
     const ctx = await ctxPromise;
     return getVaultSettings(ctx, vaultId);
+  },
+  async listSources(query) {
+    const parsed = ListSourcesQuerySchema.parse(query);
+    const ctx = await ctxPromise;
+    return listSources(ctx, parsed);
   },
   async createVault(command) {
     const parsed = CreateVaultCommandSchema.parse(command);

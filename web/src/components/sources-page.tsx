@@ -1,6 +1,6 @@
 import { Home, Search } from "lucide-react";
 
-import type { SourceTypeFacet, SourceDocumentSummary } from "@/api/sources";
+import type { SourceDocumentSummary, SourceTypeFacet } from "@/local/schema/source";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -123,14 +123,14 @@ export function SourcesPage({
             <div className="space-y-1">
               {items.map((item) => (
                 <Button
-                  key={item.file_path}
+                  key={item.filePath}
                   variant="ghost"
-                  onClick={() => onSourceClick(item.file_path)}
+                  onClick={() => onSourceClick(item.filePath)}
                   className="w-full h-auto py-2.5 px-3 rounded-sm justify-between hover:bg-ink-raised group"
                 >
                   <div className="flex flex-col items-start gap-0.5 min-w-0 flex-1">
                     <span className="font-serif text-[length:var(--text-body)] text-warm-dim group-hover:text-warm transition-colors truncate w-full text-left">
-                      {item.title ?? item.file_path}
+                      {item.title ?? item.filePath}
                     </span>
                     {(item.author || item.origin) && (
                       <span className="font-mono text-[length:var(--text-chrome)] tracking-[0.04em] text-warm-ghost truncate w-full text-left">
@@ -140,7 +140,7 @@ export function SourcesPage({
                   </div>
                   <div className="flex items-center gap-3 shrink-0 ml-4">
                     <span className="font-mono text-[length:var(--text-chrome)] text-warm-ghost">
-                      {formatShortDate(item.updated_at)}
+                      {formatShortDate(item.updatedAt)}
                     </span>
                   </div>
                 </Button>

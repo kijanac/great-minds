@@ -23,9 +23,9 @@ export function slugToTitle(slug: string): string {
     .join(" ");
 }
 
-export function formatShortDate(iso: string | null): string {
-  if (!iso) return "";
-  const d = new Date(iso);
+export function formatShortDate(value: string | Date | null): string {
+  if (!value) return "";
+  const d = value instanceof Date ? value : new Date(value);
   return d.toLocaleDateString("en-US", { month: "short", day: "numeric" });
 }
 
