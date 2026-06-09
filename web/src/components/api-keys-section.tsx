@@ -70,12 +70,12 @@ export function ApiKeysSection({
           </div>
           <div className="flex items-center gap-2">
             <code className="flex-1 font-mono text-[length:var(--text-small)] text-warm bg-ink-raised px-3 py-2 rounded-sm break-all">
-              {justCreated.raw_key}
+              {justCreated.rawKey}
             </code>
             <Button
               variant="ghost"
               size="icon-sm"
-              onClick={() => handleCopy(justCreated.raw_key)}
+              onClick={() => handleCopy(justCreated.rawKey)}
               className="text-warm-ghost hover:text-gold shrink-0"
               aria-label="copy"
             >
@@ -105,7 +105,7 @@ export function ApiKeysSection({
               </span>
               <div className="flex items-center gap-3">
                 <span className="font-mono text-[length:var(--text-chrome)] text-warm-ghost shrink-0">
-                  {formatShortDate(k.created_at)}
+                  {formatShortDate(k.createdAt)}
                 </span>
                 <Button
                   variant="ghost"
@@ -143,7 +143,7 @@ export function ApiKeysSection({
                         {k.label}
                       </span>
                       <span className="font-mono text-[length:var(--text-chrome)] text-warm-ghost shrink-0">
-                        {formatShortDate(k.created_at)}
+                        {formatShortDate(k.createdAt)}
                       </span>
                     </div>
                   ))}

@@ -1,0 +1,23 @@
+{
+  "extends": "../../tsconfig.package.json",
+  "compilerOptions": {
+    "baseUrl": ".",
+    "paths": {
+      "@great-minds/core": ["../../packages/core/src/index.ts"],
+      "@great-minds/core/*": ["../../packages/core/src/*.ts"],
+      "@great-minds/db": ["../../packages/db/src/index.ts"],
+      "@great-minds/db/*": ["../../packages/db/src/*.ts"],
+      "@great-minds/domain": ["../../packages/domain/src/index.ts"],
+      "@great-minds/domain/*": ["../../packages/domain/src/*.ts"],
+      "@great-minds/protocol-openai": ["../../packages/protocol-openai/src/index.ts"],
+      "@great-minds/protocol-openai/*": ["../../packages/protocol-openai/src/*.ts"]
+    }
+  },
+  "include": ["src/**/*.ts"],
+  "references": [
+    { "path": "../../packages/core" },
+    { "path": "../../packages/db" },
+    { "path": "../../packages/domain" },
+    { "path": "../../packages/protocol-openai" }
+  ]
+}

@@ -1,5 +1,12 @@
 {
-	"devDependencies": {
-		"oxfmt": "^0.44.0"
-	}
+  "private": true,
+  "scripts": {
+    "typecheck:ts": "tsc -b",
+    "build:ts": "tsc -b",
+    "clean:ts": "tsc -b --clean"
+  },
+  "devDependencies": {
+    "oxfmt": "^0.44.0",
+    "typescript": "~5.9.3"
+  }
 }

@@ -1,0 +1,14 @@
+{
+  "extends": "../../tsconfig.package.json",
+  "compilerOptions": {
+    "baseUrl": ".",
+    "paths": {
+      "@great-minds/db": ["../db/src/index.ts"],
+      "@great-minds/db/*": ["../db/src/*.ts"],
+      "@great-minds/domain": ["../domain/src/index.ts"],
+      "@great-minds/domain/*": ["../domain/src/*.ts"]
+    }
+  },
+  "include": ["src/**/*.ts"],
+  "references": [{ "path": "../db" }, { "path": "../domain" }]
+}

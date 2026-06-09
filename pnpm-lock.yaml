@@ -11,15 +11,33 @@ importers:
       oxfmt:
         specifier: ^0.44.0
         version: 0.44.0
+      typescript:
+        specifier: ~5.9.3
+        version: 5.9.3
 
-  packages/backend:
+  apps/api:
     dependencies:
-      drizzle-orm:
-        specifier: 1.0.0-rc.3
-        version: 1.0.0-rc.3(@electric-sql/pglite@0.5.1)(@types/pg@8.20.0)(pg@8.21.0)(zod@4.4.3)
-      pg:
-        specifier: ^8.16.3
-        version: 8.21.0
+      '@great-minds/core':
+        specifier: workspace:*
+        version: link:../../packages/core
+      '@great-minds/db':
+        specifier: workspace:*
+        version: link:../../packages/db
+      '@great-minds/domain':
+        specifier: workspace:*
+        version: link:../../packages/domain
+      '@great-minds/protocol-openai':
+        specifier: workspace:*
+        version: link:../../packages/protocol-openai
+      '@hono/node-server':
+        specifier: ^1.19.6
+        version: 1.19.14(hono@4.12.18)
+      '@hono/zod-validator':
+        specifier: ^0.8.0
+        version: 0.8.0(hono@4.12.18)(zod@4.4.3)
+      hono:
+        specifier: ^4.10.6
+        version: 4.12.18
       zod:
         specifier: ^4.4.3
         version: 4.4.3
@@ -27,9 +45,76 @@ importers:
       '@types/node':
         specifier: ^24.12.0
         version: 24.12.3
+      typescript:
+        specifier: ~5.9.3
+        version: 5.9.3
+
+  packages/core:
+    dependencies:
+      '@great-minds/db':
+        specifier: workspace:*
+        version: link:../db
+      '@great-minds/domain':
+        specifier: workspace:*
+        version: link:../domain
+      drizzle-orm:
+        specifier: 1.0.0-rc.3
+        version: 1.0.0-rc.3(@electric-sql/pglite@0.5.1)(@types/pg@8.20.0)(pg@8.21.0)(zod@4.4.3)
+      jose:
+        specifier: ^6.2.2
+        version: 6.2.3
+    devDependencies:
+      '@types/node':
+        specifier: ^24.12.0
+        version: 24.12.3
+      typescript:
+        specifier: ~5.9.3
+        version: 5.9.3
+
+  packages/db:
+    dependencies:
+      drizzle-orm:
+        specifier: 1.0.0-rc.3
+        version: 1.0.0-rc.3(@electric-sql/pglite@0.5.1)(@types/pg@8.20.0)(pg@8.21.0)(zod@4.4.3)
+      pg:
+        specifier: ^8.16.3
+        version: 8.21.0
+    devDependencies:
+      '@types/node':
+        specifier: ^24.12.0
+        version: 24.12.3
       '@types/pg':
         specifier: ^8.16.0
         version: 8.20.0
+      drizzle-kit:
+        specifier: 1.0.0-rc.3
+        version: 1.0.0-rc.3
+      typescript:
+        specifier: ~5.9.3
+        version: 5.9.3
+
+  packages/domain:
+    dependencies:
+      '@great-minds/db':
+        specifier: workspace:*
+        version: link:../db
+      drizzle-orm:
+        specifier: 1.0.0-rc.3
+        version: 1.0.0-rc.3(@electric-sql/pglite@0.5.1)(@types/pg@8.20.0)(pg@8.21.0)(zod@4.4.3)
+      zod:
+        specifier: ^4.4.3
+        version: 4.4.3
+    devDependencies:
+      typescript:
+        specifier: ~5.9.3
+        version: 5.9.3
+
+  packages/protocol-openai:
+    dependencies:
+      zod:
+        specifier: ^4.4.3
+        version: 4.4.3
+    devDependencies:
       typescript:
         specifier: ~5.9.3
         version: 5.9.3
@@ -741,6 +826,12 @@ packages:
     engines: {node: '>=18.14.1'}
     peerDependencies:
       hono: ^4
+
+  '@hono/zod-validator@0.8.0':
+    resolution: {integrity: sha512-5uS4S1/LKtZQYvD4BtpPUFkOv8d1wNxHHrChm26buMiEYc1FrHWvDUaKVBwkiVtvSExHSpLGDvcnpI2Copyj9w==}
+    peerDependencies:
+      hono: '>=4.10.0'
+      zod: ^3.25.0 || ^4.0.0
 
   '@humanfs/core@0.19.2':
     resolution: {integrity: sha512-UhXNm+CFMWcbChXywFwkmhqjs3PRCmcSa/hfBgLIb7oQ5HNb1wS0icWsGtSAUNgefHeI+eBrA8I1fxmbHsGdvA==}
@@ -4289,6 +4380,11 @@ snapshots:
   '@hono/node-server@1.19.14(hono@4.12.18)':
     dependencies:
       hono: 4.12.18
+
+  '@hono/zod-validator@0.8.0(hono@4.12.18)(zod@4.4.3)':
+    dependencies:
+      hono: 4.12.18
+      zod: 4.4.3
 
   '@humanfs/core@0.19.2':
     dependencies:

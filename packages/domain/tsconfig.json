@@ -1,0 +1,12 @@
+{
+  "extends": "../../tsconfig.package.json",
+  "compilerOptions": {
+    "baseUrl": ".",
+    "paths": {
+      "@great-minds/db": ["../db/src/index.ts"],
+      "@great-minds/db/*": ["../db/src/*.ts"]
+    }
+  },
+  "include": ["src/**/*.ts"],
+  "references": [{ "path": "../db" }]
+}

@@ -1077,3 +1077,15 @@ Define durable protocol schemas, durable internal normalized types, and explicit
 The OpenAI-compatible surface must remain a protocol facade, not the app’s domain model.
 
 
+
+## Additional lessons from the backend TS/Drizzle/Zod refactor
+
+- Prefer semantic service signatures over HTTP-shaped objects. Example: `updateVault(db, scope, patch)` where `scope` carries identity/authorization (`userId`, `vaultId`) and `patch` carries only editable fields. Do not include route params like `vaultId` inside patch bodies unless the protocol truly requires it.
+- If a service only needs a branded ID, pass the ID directly (`userId: UserId`) instead of wrapping it in a one-field object like `Actor`. Introduce context objects only when they carry multiple meaningful facts.
+- Use Drizzle/Zod factory overrides for branded IDs and field refinements directly inside `createSelectSchema`/`createInsertSchema`, instead of deriving then `.extend(...)` afterward when the field belongs to the table shape.
+- Derive patch schemas from create/editable schemas with `.partial()`. Avoid bespoke patch DTOs unless the patch has genuinely different semantics.
+- In update services, let Drizzle handle `undefined` values in `.set(...)`, but guard empty patches explicitly with a readable variable such as `const hasChanges = Object.keys(patch).length > 0`.
+- Avoid hand-building Drizzle insert/update objects field-by-field when the validated input already has exactly the intended semantic shape. Prefer `{ ownerId, ...input }` over a bespoke intermediate type.
+- Combine authorization and loading when one query can express both. For vault-scoped reads, join through membership and load the vault in the same query instead of doing a separate `assertCanRead` followed by a fetch.
+- Parse arrays as arrays when validating DB output with Zod: `EntitySchema.array().parse(rows)` is usually clearer and gives better error paths than `rows.map(row => EntitySchema.parse(row))`.
+- Use Drizzle object selects like `.select({ vault: vaults })` when joining tables and you want a named nested result shape. It avoids column collisions and makes downstream parsing explicit.

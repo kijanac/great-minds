@@ -1,0 +1,10 @@
+{
+  "files": [],
+  "references": [
+    { "path": "packages/db" },
+    { "path": "packages/domain" },
+    { "path": "packages/core" },
+    { "path": "packages/protocol-openai" },
+    { "path": "apps/api" }
+  ]
+}

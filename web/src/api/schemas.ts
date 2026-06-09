@@ -73,15 +73,24 @@ export const draftHintResponseSchema = z.object({
   thematic_hint: z.string(),
 });
 
+export const apiKeyScopeSchema = z.enum([
+  "query",
+  "vaults:read",
+  "vaults:write",
+  "sources:read",
+  "sources:write",
+]);
+
 export const apiKeySchema = z.object({
   id: z.string(),
   label: z.string(),
+  scopes: z.array(apiKeyScopeSchema),
   revoked: z.boolean(),
-  created_at: z.string(),
+  createdAt: z.string(),
 });
 
 export const apiKeyCreatedSchema = apiKeySchema.extend({
-  raw_key: z.string(),
+  rawKey: z.string(),
 });
 
 export const proposalStatusSchema = z.enum(["pending", "approved", "rejected"]);
@@ -114,6 +123,7 @@ export type VaultDetail = z.infer<typeof vaultDetailSchema>;
 export type Membership = z.infer<typeof membershipSchema>;
 export type MembershipList = z.infer<typeof membershipListSchema>;
 export type VaultConfig = z.infer<typeof vaultConfigSchema>;
+export type ApiKeyScope = z.infer<typeof apiKeyScopeSchema>;
 export type ApiKey = z.infer<typeof apiKeySchema>;
 export type ApiKeyCreated = z.infer<typeof apiKeyCreatedSchema>;
 export type ProposalStatus = z.infer<typeof proposalStatusSchema>;
