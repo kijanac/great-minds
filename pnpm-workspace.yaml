@@ -1,5 +1,6 @@
 packages:
   - web
+  - packages/*
 
 # msw is a dev/test dep; its post-install service-worker copy isn't
 # needed for build or runtime.
