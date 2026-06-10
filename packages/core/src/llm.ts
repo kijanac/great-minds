@@ -12,7 +12,7 @@ export type LlmCompletion = {
 
 export class LlmRateLimited extends Data.TaggedError("LlmRateLimited")<{
   message: string;
-  retryAfterMs?: number;
+  retryAfterMs: number | undefined;
 }> {}
 
 export class LlmUnavailable extends Data.TaggedError("LlmUnavailable")<{

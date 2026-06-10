@@ -79,11 +79,10 @@ function requestOnce(
 
 function classifyResponse(response: Response): Effect.Effect<Response, LlmRateLimited | LlmUnavailable | LlmRejected> {
   if (response.status === 429) {
-    const retryAfter = retryAfterMs(response);
     return Effect.fail(
       new LlmRateLimited({
         message: "LLM provider rate limited the request",
-        ...(retryAfter !== undefined ? { retryAfterMs: retryAfter } : {}),
+        retryAfterMs: retryAfterMs(response),
       }),
     );
   }
@@ -105,10 +104,10 @@ const retrySchedule = Schedule.identity<LlmProviderError>().pipe(
 );
 
 function retryDelay(error: LlmProviderError, attempt: number): number {
-  if (error._tag === "LlmRateLimited" && error.retryAfterMs !== undefined) {
-    return error.retryAfterMs;
-  }
+  return error._tag === "LlmRateLimited" ? (error.retryAfterMs ?? backoffDelayMs(attempt)) : backoffDelayMs(attempt);
+}
 
+function backoffDelayMs(attempt: number): number {
   return (2 ** attempt + Math.random() * 0.5) * 1000;
 }
 
@@ -121,7 +120,10 @@ function retryAfterMs(response: Response): number | undefined {
   if (!header) return undefined;
 
   const seconds = Number.parseFloat(header);
-  return Number.isFinite(seconds) ? seconds * 1000 : undefined;
+  if (Number.isFinite(seconds)) return seconds * 1000;
+
+  const dateMs = Date.parse(header) - Date.now();
+  return Number.isFinite(dateMs) && dateMs > 0 ? dateMs : undefined;
 }
 
 function isTransientStatus(status: number): boolean {
