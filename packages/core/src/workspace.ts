@@ -1,3 +1,4 @@
+import { Data } from "effect";
 import { and, eq } from "drizzle-orm";
 import type { DbSession } from "@great-minds/db/context";
 import { users, vaultMemberships, vaults } from "@great-minds/db/schema";
@@ -10,6 +11,8 @@ export type VaultScope = {
   vaultId: VaultId;
 };
 
+export class VaultUnavailable extends Data.TaggedError("VaultUnavailable") {}
+
 export async function loadWorkspace(db: DbSession, scope: VaultScope): Promise<Workspace> {
   const [workspace] = await db
     .select({ user: users, vault: vaults })
@@ -19,7 +22,7 @@ export async function loadWorkspace(db: DbSession, scope: VaultScope): Promise<W
     .where(and(eq(vaultMemberships.userId, scope.userId), eq(vaultMemberships.vaultId, scope.vaultId)))
     .limit(1);
 
-  if (!workspace) throw new Error("Vault does not exist or is not available to this user");
+  if (!workspace) throw new VaultUnavailable();
 
   return WorkspaceSchema.parse(workspace);
 }

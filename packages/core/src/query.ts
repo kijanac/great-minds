@@ -1,20 +1,26 @@
+import { Effect } from "effect";
 import type { DbSession } from "@great-minds/db/context";
 import type { QueryAnswer, QueryRequest } from "@great-minds/domain/query";
-import { loadWorkspace, type VaultScope } from "./workspace.js";
+import { LlmClient, LlmProviderError } from "./llm.js";
+import { loadWorkspace, VaultUnavailable, type VaultScope } from "./workspace.js";
 
-export async function answerQuery(
+export function answerQuery(
   db: DbSession,
   scope: VaultScope,
   query: QueryRequest,
-  complete: (request: {
-    model: string;
-    messages: Array<{ role: "user" | "assistant"; content: string }>;
-  }) => Promise<{ answer: string }>,
-): Promise<QueryAnswer> {
-  await loadWorkspace(db, scope);
+): Effect.Effect<QueryAnswer, VaultUnavailable | LlmProviderError, LlmClient> {
+  return Effect.gen(function* () {
+    yield* Effect.tryPromise({
+      try: () => loadWorkspace(db, scope),
+      catch: () => new VaultUnavailable(),
+    });
 
-  return complete({
-    model: query.model,
-    messages: [...query.history, { role: "user", content: query.question }],
+    const llm = yield* LlmClient;
+    const completion = yield* llm.complete({
+      model: query.model,
+      messages: [...query.history, { role: "user", content: query.question }],
+    });
+
+    return { answer: completion.content };
   });
 }

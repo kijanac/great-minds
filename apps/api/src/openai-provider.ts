@@ -1,5 +1,6 @@
+import { Effect, type Context } from "effect";
+import { LlmProviderError, type LlmClient } from "@great-minds/core/llm";
 import type { OpenAIChatCompletionRequest, OpenAIErrorResponse } from "@great-minds/protocol-openai/chat";
-import { HTTPException } from "hono/http-exception";
 import type { OpenAiProviderConfig } from "./context.js";
 
 export async function modelListResponse(config: OpenAiProviderConfig, requestId: string): Promise<Response> {
@@ -46,31 +47,39 @@ export async function chatCompletionResponse(
   }
 }
 
-export async function completeChat(
-  config: OpenAiProviderConfig,
-  request: OpenAIChatCompletionRequest,
-): Promise<{ answer: string }> {
-  if (config.kind === "disabled") throw new HTTPException(503, { message: "LLM provider is not configured" });
+export function openRouterLlmClient(config: OpenAiProviderConfig): Context.Tag.Service<LlmClient> {
+  return {
+    complete: (request) =>
+      Effect.gen(function* () {
+        if (config.kind === "disabled") {
+          return yield* Effect.fail(new LlmProviderError({ message: "LLM provider is not configured" }));
+        }
 
-  let upstream: Response;
-  try {
-    upstream = await fetch(`${config.baseUrl}/chat/completions`, {
-      method: "POST",
-      headers: providerHeaders(config),
-      body: JSON.stringify(request),
-    });
-  } catch {
-    throw new HTTPException(502, { message: "LLM provider is unavailable" });
-  }
+        const upstream = yield* Effect.tryPromise({
+          try: () =>
+            fetch(`${config.baseUrl}/chat/completions`, {
+              method: "POST",
+              headers: providerHeaders(config),
+              body: JSON.stringify(request),
+            }),
+          catch: () => new LlmProviderError({ message: "LLM provider is unavailable" }),
+        });
 
-  if (!upstream.ok) throw new HTTPException(502, { message: "LLM provider rejected the request" });
+        if (!upstream.ok) {
+          return yield* Effect.fail(new LlmProviderError({ message: "LLM provider rejected the request" }));
+        }
 
-  try {
-    const body = JSON.parse(await upstream.text());
-    return { answer: body.choices[0].message.content };
-  } catch {
-    throw new HTTPException(502, { message: "LLM provider returned an incompatible chat completion" });
-  }
+        const text = yield* Effect.tryPromise({
+          try: () => upstream.text(),
+          catch: () => new LlmProviderError({ message: "LLM provider returned an incompatible chat completion" }),
+        });
+
+        return yield* Effect.try({
+          try: () => ({ content: JSON.parse(text).choices[0].message.content }),
+          catch: () => new LlmProviderError({ message: "LLM provider returned an incompatible chat completion" }),
+        });
+      }),
+  };
 }
 
 function providerHeaders(config: Extract<OpenAiProviderConfig, { kind: "openrouter" }>) {

@@ -1,7 +1,9 @@
 import { zValidator } from "@hono/zod-validator";
+import { Effect } from "effect";
 import { Hono } from "hono";
 import { createMiddleware } from "hono/factory";
 import { HTTPException } from "hono/http-exception";
+import { LlmClient } from "@great-minds/core/llm";
 import { answerQuery } from "@great-minds/core/query";
 import { listSources, upsertSourceDocument } from "@great-minds/core/sources";
 import {
@@ -17,7 +19,7 @@ import { SourceDocumentUpsertSchema, SourceListQuerySchema } from "@great-minds/
 import { VaultCreateSchema, VaultIdSchema, VaultPatchSchema } from "@great-minds/domain/vault";
 import { authenticateBearer, currentPrincipal, requireScope } from "../auth.js";
 import type { AppEnv } from "../context.js";
-import { completeChat } from "../openai-provider.js";
+import { openRouterLlmClient } from "../openai-provider.js";
 
 const bindVaultScope = createMiddleware<AppEnv>(async (c, next) => {
   const principal = currentPrincipal(c);
@@ -78,15 +80,15 @@ const vaultScopedRoutes = new Hono<AppEnv>()
     }
   })
   .post("/query", requireScope("query"), zValidator("json", QueryRequestSchema), async (c) => {
-    try {
-      const answer = await answerQuery(c.get("db"), c.get("vaultScope"), c.req.valid("json"), (request) =>
-        completeChat(c.get("openAiProvider"), request),
-      );
-      return c.json(answer);
-    } catch (error) {
-      if (error instanceof HTTPException) throw error;
-      throw new HTTPException(404, { message: "Vault not found" });
-    }
+    const program = answerQuery(c.get("db"), c.get("vaultScope"), c.req.valid("json")).pipe(
+      Effect.provideService(LlmClient, openRouterLlmClient(c.get("openAiProvider"))),
+      Effect.catchTags({
+        VaultUnavailable: () => Effect.fail(new HTTPException(404, { message: "Vault not found" })),
+        LlmProviderError: (error) => Effect.fail(new HTTPException(502, { message: error.message })),
+      }),
+    );
+
+    return c.json(await Effect.runPromise(program));
   });
 
 export const vaultRoutes = new Hono<AppEnv>()

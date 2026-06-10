@@ -16,6 +16,10 @@
       "types": "./dist/auth.d.ts",
       "import": "./dist/auth.js"
     },
+    "./llm": {
+      "types": "./dist/llm.d.ts",
+      "import": "./dist/llm.js"
+    },
     "./query": {
       "types": "./dist/query.d.ts",
       "import": "./dist/query.js"
@@ -41,6 +45,7 @@
     "@great-minds/db": "workspace:*",
     "@great-minds/domain": "workspace:*",
     "drizzle-orm": "1.0.0-rc.3",
+    "effect": "^3.21.3",
     "jose": "^6.2.2"
   },
   "devDependencies": {
