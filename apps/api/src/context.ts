@@ -1,4 +1,5 @@
 import type { AuthConfig, AuthenticatedPrincipal } from "@great-minds/core/auth";
+import type { OpenRouterConfig } from "@great-minds/core/openrouter";
 import type { VaultScope } from "@great-minds/core/workspace";
 import type { BackendDb } from "@great-minds/db/context";
 
@@ -6,20 +7,10 @@ export type AuthCodeDeliveryConfig =
   | { kind: "console" }
   | { kind: "resend"; apiKey: string; fromEmail: string };
 
-export type OpenAiProviderConfig =
-  | { kind: "disabled" }
-  | {
-      kind: "openrouter";
-      apiKey: string;
-      baseUrl: string;
-      appName?: string;
-      siteUrl?: string;
-    };
-
 export type ApiConfig = {
   auth: AuthConfig;
   authCodeDelivery: AuthCodeDeliveryConfig;
-  openAiProvider: OpenAiProviderConfig;
+  openAiProvider: OpenRouterConfig;
 };
 
 export type AppEnv = {
@@ -27,7 +18,7 @@ export type AppEnv = {
     db: BackendDb;
     authConfig: AuthConfig;
     authCodeDelivery: AuthCodeDeliveryConfig;
-    openAiProvider: OpenAiProviderConfig;
+    openAiProvider: OpenRouterConfig;
     principal?: AuthenticatedPrincipal;
     vaultScope: VaultScope;
     requestId: string;

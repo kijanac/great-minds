@@ -20,6 +20,10 @@
       "types": "./dist/llm.d.ts",
       "import": "./dist/llm.js"
     },
+    "./openrouter": {
+      "types": "./dist/openrouter.d.ts",
+      "import": "./dist/openrouter.js"
+    },
     "./query": {
       "types": "./dist/query.d.ts",
       "import": "./dist/query.js"

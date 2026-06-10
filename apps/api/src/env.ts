@@ -1,5 +1,6 @@
 import { z } from "zod";
-import type { AuthCodeDeliveryConfig, OpenAiProviderConfig } from "./context.js";
+import type { OpenRouterConfig } from "@great-minds/core/openrouter";
+import type { AuthCodeDeliveryConfig } from "./context.js";
 
 const BooleanEnvSchema = z
   .enum(["true", "false", "1", "0"])
@@ -37,7 +38,7 @@ export function authCodeDeliveryFromEnv(): AuthCodeDeliveryConfig {
   return { kind: "console" };
 }
 
-export function openAiProviderFromEnv(): OpenAiProviderConfig {
+export function openAiProviderFromEnv(): OpenRouterConfig {
   if (!env.OPENROUTER_API_KEY) return { kind: "disabled" };
 
   return {

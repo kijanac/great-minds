@@ -1,4 +1,5 @@
 export * from "./auth.js";
+export * from "./llm.js";
 export * from "./pagination.js";
 export * from "./query.js";
 export * from "./source.js";

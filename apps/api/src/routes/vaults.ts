@@ -4,6 +4,7 @@ import { Hono } from "hono";
 import { createMiddleware } from "hono/factory";
 import { HTTPException } from "hono/http-exception";
 import { LlmClient } from "@great-minds/core/llm";
+import { openRouterLlmClient } from "@great-minds/core/openrouter";
 import { answerQuery } from "@great-minds/core/query";
 import { listSources, upsertSourceDocument } from "@great-minds/core/sources";
 import {
@@ -19,7 +20,6 @@ import { SourceDocumentUpsertSchema, SourceListQuerySchema } from "@great-minds/
 import { VaultCreateSchema, VaultIdSchema, VaultPatchSchema } from "@great-minds/domain/vault";
 import { authenticateBearer, currentPrincipal, requireScope } from "../auth.js";
 import type { AppEnv } from "../context.js";
-import { openRouterLlmClient } from "../openai-provider.js";
 
 const bindVaultScope = createMiddleware<AppEnv>(async (c, next) => {
   const principal = currentPrincipal(c);

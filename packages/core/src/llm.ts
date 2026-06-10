@@ -1,9 +1,5 @@
 import { Context, Data, Effect } from "effect";
-
-export type LlmMessage = {
-  role: "system" | "user" | "assistant";
-  content: string;
-};
+import type { LlmMessage } from "@great-minds/domain/llm";
 
 export type LlmCompletionRequest = {
   model: string;
