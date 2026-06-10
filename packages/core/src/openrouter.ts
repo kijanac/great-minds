@@ -100,11 +100,16 @@ function classifyResponse(response: Response): Effect.Effect<Response, LlmRateLi
 
 const retrySchedule = Schedule.identity<LlmProviderError>().pipe(
   Schedule.intersect(Schedule.recurs(OPENROUTER_RETRIES)),
-  Schedule.addDelay(([error, attempt]) => retryDelay(error, attempt + 1)),
+  Schedule.addDelayEffect(([error, attempt]) => retryDelay(error, attempt + 1)),
 );
 
-function retryDelay(error: LlmProviderError, attempt: number): number {
-  return error._tag === "LlmRateLimited" ? (error.retryAfterMs ?? backoffDelayMs(attempt)) : backoffDelayMs(attempt);
+function retryDelay(error: LlmProviderError, attempt: number): Effect.Effect<number> {
+  const backoff = () => backoffDelayMs(attempt);
+
+  return Effect.fail(error).pipe(
+    Effect.catchTag("LlmRateLimited", (rateLimited) => Effect.sync(() => rateLimited.retryAfterMs ?? backoff())),
+    Effect.catchAll(() => Effect.sync(backoff)),
+  );
 }
 
 function backoffDelayMs(attempt: number): number {

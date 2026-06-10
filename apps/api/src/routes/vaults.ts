@@ -82,13 +82,13 @@ const vaultScopedRoutes = new Hono<AppEnv>()
   .post("/query", requireScope("query"), zValidator("json", QueryRequestSchema), async (c) => {
     const response = answerQuery(c.get("db"), c.get("vaultScope"), c.req.valid("json")).pipe(
       Effect.provideService(LlmClient, openRouterLlmClient(c.get("openAiProvider"))),
-      Effect.match({
-        onFailure: (error) =>
-          error._tag === "VaultUnavailable"
-            ? c.json({ error: { message: "Vault not found", requestId: c.get("requestId") } }, 404)
-            : c.json({ error: { message: error.message, requestId: c.get("requestId") } }, 502),
-        onSuccess: (answer) => c.json(answer),
-      }),
+      Effect.map((answer) => c.json(answer)),
+      Effect.catchTag("VaultUnavailable", () =>
+        Effect.succeed(c.json({ error: { message: "Vault not found", requestId: c.get("requestId") } }, 404)),
+      ),
+      Effect.catchAll((error) =>
+        Effect.succeed(c.json({ error: { message: error.message, requestId: c.get("requestId") } }, 502)),
+      ),
     );
 
     return Effect.runPromise(response);
