@@ -101,6 +101,27 @@ describe("POST /v1/vaults/:id/query", () => {
     expect(await response.json()).toEqual({ answer: "Recovered." });
   });
 
+  test("returns an answer after provider rate limiting", async () => {
+    vi.useFakeTimers();
+    const fetch = vi
+      .fn()
+      .mockResolvedValueOnce(new Response(null, { status: 429, headers: { "retry-after": "1" } }))
+      .mockResolvedValueOnce(Response.json({ choices: [{ message: { content: "After retry." } }] }));
+    vi.stubGlobal("fetch", fetch);
+    const app = createApp(fakeDb({ workspace: { user, vault } }), {
+      ...baseConfig,
+      openAiProvider: { kind: "openrouter", apiKey: "test", baseUrl: "https://openrouter.test/api/v1" },
+    });
+
+    const responsePromise = postQuery(app);
+    await vi.runAllTimersAsync();
+    const response = await responsePromise;
+
+    expect(fetch).toHaveBeenCalledTimes(2);
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({ answer: "After retry." });
+  });
+
   test("rejects API keys without query scope", async () => {
     const app = createApp(fakeDb({ workspace: { user, vault }, apiKeyScopes: ["vaults:read"] }), baseConfig);
 

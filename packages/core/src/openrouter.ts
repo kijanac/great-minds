@@ -1,10 +1,15 @@
-import { Effect, type Context } from "effect";
-import { LlmClient, LlmProviderError } from "./llm.js";
+import { Effect, Schedule, type Context } from "effect";
+import {
+  LlmBadResponse,
+  LlmClient,
+  LlmRateLimited,
+  LlmRejected,
+  LlmUnavailable,
+  type LlmProviderError,
+} from "./llm.js";
 
 const OPENROUTER_REQUEST_TIMEOUT = "60 seconds";
-const RATE_LIMIT_RETRIES = 6;
-const GENERIC_RETRIES = 2;
-const MAX_BACKOFF_SECONDS = 60;
+const OPENROUTER_RETRIES = 2;
 
 export type OpenRouterConfig =
   | { kind: "disabled" }
@@ -21,23 +26,18 @@ export function openRouterLlmClient(config: OpenRouterConfig): Context.Tag.Servi
     complete: (request) =>
       Effect.gen(function* () {
         if (config.kind === "disabled") {
-          return yield* Effect.fail(new LlmProviderError({ message: "LLM provider is not configured" }));
+          return yield* Effect.fail(new LlmUnavailable({ message: "LLM provider is not configured" }));
         }
 
         const upstream = yield* fetchChatCompletion(config, JSON.stringify(request));
-
-        if (!upstream.ok) {
-          return yield* Effect.fail(new LlmProviderError({ message: "LLM provider rejected the request" }));
-        }
-
         const text = yield* Effect.tryPromise({
           try: () => upstream.text(),
-          catch: () => new LlmProviderError({ message: "LLM provider returned an incompatible chat completion" }),
+          catch: () => new LlmBadResponse({ message: "LLM provider returned an incompatible chat completion" }),
         });
 
         return yield* Effect.try({
           try: () => ({ content: JSON.parse(text).choices[0].message.content }),
-          catch: () => new LlmProviderError({ message: "LLM provider returned an incompatible chat completion" }),
+          catch: () => new LlmBadResponse({ message: "LLM provider returned an incompatible chat completion" }),
         });
       }),
   };
@@ -47,37 +47,13 @@ function fetchChatCompletion(
   config: Extract<OpenRouterConfig, { kind: "openrouter" }>,
   body: string,
 ): Effect.Effect<Response, LlmProviderError> {
-  const attempt = (rateLimitAttempts: number, genericAttempts: number): Effect.Effect<Response, LlmProviderError> =>
-    requestOnce(config, body).pipe(
-      Effect.flatMap((response) => {
-        if (response.status === 429) {
-          if (rateLimitAttempts >= RATE_LIMIT_RETRIES) {
-            return Effect.fail(new LlmProviderError({ message: "LLM provider rate limit exhausted" }));
-          }
-
-          return sleepBeforeRetry(rateLimitDelayMs(response, rateLimitAttempts + 1)).pipe(
-            Effect.flatMap(() => attempt(rateLimitAttempts + 1, genericAttempts)),
-          );
-        }
-
-        if (isTransientStatus(response.status) && genericAttempts < GENERIC_RETRIES) {
-          return sleepBeforeRetry(genericDelayMs(genericAttempts + 1)).pipe(
-            Effect.flatMap(() => attempt(rateLimitAttempts, genericAttempts + 1)),
-          );
-        }
-
-        return Effect.succeed(response);
-      }),
-      Effect.catchAll((error) => {
-        if (genericAttempts >= GENERIC_RETRIES) return Effect.fail(error);
-
-        return sleepBeforeRetry(genericDelayMs(genericAttempts + 1)).pipe(
-          Effect.flatMap(() => attempt(rateLimitAttempts, genericAttempts + 1)),
-        );
-      }),
-    );
-
-  return attempt(0, 0);
+  return requestOnce(config, body).pipe(
+    Effect.flatMap(classifyResponse),
+    Effect.retry({
+      while: isRetryableProviderError,
+      schedule: retrySchedule,
+    }),
+  );
 }
 
 function requestOnce(
@@ -91,40 +67,65 @@ function requestOnce(
         headers: openRouterHeaders(config),
         body,
       }),
-    catch: () => new LlmProviderError({ message: "LLM provider is unavailable" }),
+    catch: () => new LlmUnavailable({ message: "LLM provider is unavailable" }),
   }).pipe(
     Effect.timeoutFail({
       duration: OPENROUTER_REQUEST_TIMEOUT,
-      onTimeout: () => new LlmProviderError({ message: "LLM provider timed out" }),
+      onTimeout: () => new LlmUnavailable({ message: "LLM provider timed out" }),
     }),
   );
 }
 
-function sleepBeforeRetry(ms: number): Effect.Effect<void> {
-  return Effect.sleep(`${ms} millis`);
+function classifyResponse(response: Response): Effect.Effect<Response, LlmRateLimited | LlmUnavailable | LlmRejected> {
+  if (response.status === 429) {
+    const retryAfter = retryAfterMs(response);
+    return Effect.fail(
+      new LlmRateLimited({
+        message: "LLM provider rate limited the request",
+        ...(retryAfter !== undefined ? { retryAfterMs: retryAfter } : {}),
+      }),
+    );
+  }
+
+  if (isTransientStatus(response.status)) {
+    return Effect.fail(new LlmUnavailable({ message: "LLM provider is unavailable" }));
+  }
+
+  if (!response.ok) {
+    return Effect.fail(new LlmRejected({ message: "LLM provider rejected the request" }));
+  }
+
+  return Effect.succeed(response);
 }
 
-function rateLimitDelayMs(response: Response, attempt: number): number {
-  const retryAfter = retryAfterMs(response);
-  if (retryAfter !== null) return retryAfter;
+const retrySchedule = Schedule.identity<LlmProviderError>().pipe(
+  Schedule.intersect(Schedule.recurs(OPENROUTER_RETRIES)),
+  Schedule.whileInput(isRetryableProviderError),
+  Schedule.addDelay(([error, attempt]) => retryDelay(error, attempt + 1)),
+);
 
-  return (Math.min(MAX_BACKOFF_SECONDS, 2 ** attempt) + Math.random()) * 1000;
-}
+function retryDelay(error: LlmProviderError, attempt: number): number {
+  if (error._tag === "LlmRateLimited" && error.retryAfterMs !== undefined) {
+    return error.retryAfterMs;
+  }
 
-function genericDelayMs(attempt: number): number {
   return (2 ** attempt + Math.random() * 0.5) * 1000;
 }
 
-function retryAfterMs(response: Response): number | null {
+function isRetryableProviderError(error: LlmProviderError): error is LlmRateLimited | LlmUnavailable {
+  return error._tag === "LlmRateLimited" || error._tag === "LlmUnavailable";
+}
+
+function retryAfterMs(response: Response): number | undefined {
   const header = response.headers.get("retry-after");
-  if (!header) return null;
+  if (!header) return undefined;
 
   const seconds = Number.parseFloat(header);
-  return Number.isFinite(seconds) ? seconds * 1000 : null;
+  return Number.isFinite(seconds) ? seconds * 1000 : undefined;
 }
 
 function isTransientStatus(status: number): boolean {
-  return status === 408 || status >= 500;
+  return status === 408 || status === 500 || status === 502 || status === 503 || status === 504;
 }
 
 export function openRouterHeaders(config: Extract<OpenRouterConfig, { kind: "openrouter" }>): Headers {

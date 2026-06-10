@@ -10,9 +10,24 @@ export type LlmCompletion = {
   content: string;
 };
 
-export class LlmProviderError extends Data.TaggedError("LlmProviderError")<{
+export class LlmRateLimited extends Data.TaggedError("LlmRateLimited")<{
+  message: string;
+  retryAfterMs?: number;
+}> {}
+
+export class LlmUnavailable extends Data.TaggedError("LlmUnavailable")<{
   message: string;
 }> {}
+
+export class LlmRejected extends Data.TaggedError("LlmRejected")<{
+  message: string;
+}> {}
+
+export class LlmBadResponse extends Data.TaggedError("LlmBadResponse")<{
+  message: string;
+}> {}
+
+export type LlmProviderError = LlmRateLimited | LlmUnavailable | LlmRejected | LlmBadResponse;
 
 export class LlmClient extends Context.Tag("LlmClient")<
   LlmClient,

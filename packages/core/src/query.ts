@@ -1,7 +1,7 @@
 import { Effect } from "effect";
 import type { DbSession } from "@great-minds/db/context";
 import type { QueryAnswer, QueryRequest } from "@great-minds/domain/query";
-import { LlmClient, LlmProviderError } from "./llm.js";
+import { LlmClient, type LlmProviderError } from "./llm.js";
 import { loadWorkspace, VaultUnavailable, type VaultScope } from "./workspace.js";
 
 export function answerQuery(
