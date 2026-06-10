@@ -6,7 +6,8 @@
   "scripts": {
     "typecheck": "tsc -b",
     "build": "tsc -b",
-    "db:generate": "drizzle-kit generate --config=drizzle.config.ts"
+    "db:generate": "drizzle-kit generate --config=drizzle.config.ts",
+    "db:migrate": "pnpm build && node dist/migrate.js"
   },
   "exports": {
     ".": {
@@ -20,6 +21,10 @@
     "./schema": {
       "types": "./dist/schema.d.ts",
       "import": "./dist/schema.js"
+    },
+    "./migrate": {
+      "types": "./dist/migrate.d.ts",
+      "import": "./dist/migrate.js"
     }
   },
   "dependencies": {
