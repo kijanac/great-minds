@@ -20,6 +20,10 @@
       "types": "./dist/pagination.d.ts",
       "import": "./dist/pagination.js"
     },
+    "./query": {
+      "types": "./dist/query.d.ts",
+      "import": "./dist/query.js"
+    },
     "./source": {
       "types": "./dist/source.d.ts",
       "import": "./dist/source.js"

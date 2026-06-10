@@ -2,6 +2,7 @@ import { zValidator } from "@hono/zod-validator";
 import { Hono } from "hono";
 import { createMiddleware } from "hono/factory";
 import { HTTPException } from "hono/http-exception";
+import { answerQuery } from "@great-minds/core/query";
 import { listSources, upsertSourceDocument } from "@great-minds/core/sources";
 import {
   createVault,
@@ -11,10 +12,12 @@ import {
   listVaults,
   updateVault,
 } from "@great-minds/core/vaults";
+import { QueryRequestSchema } from "@great-minds/domain/query";
 import { SourceDocumentUpsertSchema, SourceListQuerySchema } from "@great-minds/domain/source";
 import { VaultCreateSchema, VaultIdSchema, VaultPatchSchema } from "@great-minds/domain/vault";
 import { authenticateBearer, currentPrincipal, requireScope } from "../auth.js";
 import type { AppEnv } from "../context.js";
+import { completeChat } from "../openai-provider.js";
 
 const bindVaultScope = createMiddleware<AppEnv>(async (c, next) => {
   const principal = currentPrincipal(c);
@@ -71,6 +74,17 @@ const vaultScopedRoutes = new Hono<AppEnv>()
       const source = await upsertSourceDocument(c.get("db"), c.get("vaultScope"), c.req.valid("json"));
       return c.json(source);
     } catch {
+      throw new HTTPException(404, { message: "Vault not found" });
+    }
+  })
+  .post("/query", requireScope("query"), zValidator("json", QueryRequestSchema), async (c) => {
+    try {
+      const answer = await answerQuery(c.get("db"), c.get("vaultScope"), c.req.valid("json"), (request) =>
+        completeChat(c.get("openAiProvider"), request),
+      );
+      return c.json(answer);
+    } catch (error) {
+      if (error instanceof HTTPException) throw error;
       throw new HTTPException(404, { message: "Vault not found" });
     }
   });

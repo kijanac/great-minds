@@ -1,4 +1,5 @@
 export * from "./auth.js";
+export * from "./query.js";
 export * from "./sources.js";
 export * from "./users.js";
 export * from "./vaults.js";
