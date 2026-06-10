@@ -100,7 +100,6 @@ function classifyResponse(response: Response): Effect.Effect<Response, LlmRateLi
 
 const retrySchedule = Schedule.identity<LlmProviderError>().pipe(
   Schedule.intersect(Schedule.recurs(OPENROUTER_RETRIES)),
-  Schedule.whileInput(isRetryableProviderError),
   Schedule.addDelay(([error, attempt]) => retryDelay(error, attempt + 1)),
 );
 
