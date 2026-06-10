@@ -42,5 +42,5 @@ export const OpenAIErrorResponseSchema = z.object({
 
 export type OpenAIChatRole = z.infer<typeof OpenAIChatRoleSchema>;
 export type OpenAIChatMessage = z.infer<typeof OpenAIChatMessageSchema>;
-export type OpenAIChatCompletionRequest = z.input<typeof OpenAIChatCompletionRequestSchema>;
+export type OpenAIChatCompletionRequest = z.output<typeof OpenAIChatCompletionRequestSchema>;
 export type OpenAIErrorResponse = z.infer<typeof OpenAIErrorResponseSchema>;

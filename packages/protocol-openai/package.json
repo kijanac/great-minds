@@ -15,10 +15,6 @@
     "./chat": {
       "types": "./dist/chat.d.ts",
       "import": "./dist/chat.js"
-    },
-    "./models": {
-      "types": "./dist/models.d.ts",
-      "import": "./dist/models.js"
     }
   },
   "dependencies": {

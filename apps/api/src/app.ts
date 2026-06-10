@@ -17,6 +17,7 @@ export function createApp(db: BackendDb, config: ApiConfig) {
     c.set("db", db);
     c.set("authConfig", config.auth);
     c.set("authCodeDelivery", config.authCodeDelivery);
+    c.set("openAiProvider", config.openAiProvider);
     await next();
   });
 

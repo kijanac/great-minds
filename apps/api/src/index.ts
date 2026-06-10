@@ -1,7 +1,7 @@
 import { serve } from "@hono/node-server";
 import { createBackendContext } from "@great-minds/db/context";
 import { createApp } from "./app.js";
-import { authCodeDeliveryFromEnv, env } from "./env.js";
+import { authCodeDeliveryFromEnv, env, openAiProviderFromEnv } from "./env.js";
 
 const backend = createBackendContext({ connectionString: env.DATABASE_URL });
 const app = createApp(backend.db, {
@@ -13,6 +13,7 @@ const app = createApp(backend.db, {
     suppressAuth: env.SUPPRESS_AUTH,
   },
   authCodeDelivery: authCodeDeliveryFromEnv(),
+  openAiProvider: openAiProviderFromEnv(),
 });
 
 const server = serve(
