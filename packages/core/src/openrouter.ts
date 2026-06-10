@@ -61,11 +61,12 @@ function requestOnce(
   body: string,
 ): Effect.Effect<Response, LlmProviderError> {
   return Effect.tryPromise({
-    try: () =>
+    try: (signal) =>
       fetch(`${config.baseUrl}/chat/completions`, {
         method: "POST",
         headers: openRouterHeaders(config),
         body,
+        signal,
       }),
     catch: () => new LlmUnavailable({ message: "LLM provider is unavailable" }),
   }).pipe(
