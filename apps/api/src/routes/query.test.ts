@@ -122,6 +122,21 @@ describe("POST /v1/vaults/:id/query", () => {
     expect(await response.json()).toEqual({ answer: "After retry." });
   });
 
+  test("does not retry provider request rejections", async () => {
+    const fetch = vi.fn(() => Promise.resolve(new Response(null, { status: 400 })));
+    vi.stubGlobal("fetch", fetch);
+    const app = createApp(fakeDb({ workspace: { user, vault } }), {
+      ...baseConfig,
+      openAiProvider: { kind: "openrouter", apiKey: "test", baseUrl: "https://openrouter.test/api/v1" },
+    });
+
+    const response = await postQuery(app);
+
+    expect(fetch).toHaveBeenCalledTimes(1);
+    expect(response.status).toBe(502);
+    expect(await response.json()).toMatchObject({ error: { message: "LLM provider rejected the request" } });
+  });
+
   test("rejects API keys without query scope", async () => {
     const app = createApp(fakeDb({ workspace: { user, vault }, apiKeyScopes: ["vaults:read"] }), baseConfig);
 

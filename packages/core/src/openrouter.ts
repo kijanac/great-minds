@@ -49,10 +49,7 @@ function fetchChatCompletion(
 ): Effect.Effect<Response, LlmProviderError> {
   return requestOnce(config, body).pipe(
     Effect.flatMap(classifyResponse),
-    Effect.retry({
-      while: isRetryableProviderError,
-      schedule: retrySchedule,
-    }),
+    Effect.retry(retrySchedule),
   );
 }
 
@@ -100,6 +97,7 @@ function classifyResponse(response: Response): Effect.Effect<Response, LlmRateLi
 
 const retrySchedule = Schedule.identity<LlmProviderError>().pipe(
   Schedule.intersect(Schedule.recurs(OPENROUTER_RETRIES)),
+  Schedule.whileInput(isRetryableProviderError),
   Schedule.addDelayEffect(([error, attempt]) => retryDelay(error, attempt + 1)),
 );
 
@@ -107,8 +105,12 @@ function retryDelay(error: LlmProviderError, attempt: number): Effect.Effect<num
   const backoff = () => backoffDelayMs(attempt);
 
   return Effect.fail(error).pipe(
-    Effect.catchTag("LlmRateLimited", (rateLimited) => Effect.sync(() => rateLimited.retryAfterMs ?? backoff())),
-    Effect.catchAll(() => Effect.sync(backoff)),
+    Effect.catchTags({
+      LlmRateLimited: (rateLimited) => Effect.sync(() => rateLimited.retryAfterMs ?? backoff()),
+      LlmUnavailable: () => Effect.sync(backoff),
+      LlmRejected: () => Effect.dieMessage("Non-retryable LLM error reached retry schedule"),
+      LlmBadResponse: () => Effect.dieMessage("Non-retryable LLM error reached retry schedule"),
+    }),
   );
 }
 

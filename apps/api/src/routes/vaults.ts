@@ -80,15 +80,20 @@ const vaultScopedRoutes = new Hono<AppEnv>()
     }
   })
   .post("/query", requireScope("query"), zValidator("json", QueryRequestSchema), async (c) => {
+    const requestId = c.get("requestId");
+    const providerError = (error: { message: string }) =>
+      Effect.succeed(c.json({ error: { message: error.message, requestId } }, 502));
+
     const response = answerQuery(c.get("db"), c.get("vaultScope"), c.req.valid("json")).pipe(
       Effect.provideService(LlmClient, openRouterLlmClient(c.get("openAiProvider"))),
       Effect.map((answer) => c.json(answer)),
-      Effect.catchTag("VaultUnavailable", () =>
-        Effect.succeed(c.json({ error: { message: "Vault not found", requestId: c.get("requestId") } }, 404)),
-      ),
-      Effect.catchAll((error) =>
-        Effect.succeed(c.json({ error: { message: error.message, requestId: c.get("requestId") } }, 502)),
-      ),
+      Effect.catchTags({
+        VaultUnavailable: () => Effect.succeed(c.json({ error: { message: "Vault not found", requestId } }, 404)),
+        LlmRateLimited: providerError,
+        LlmUnavailable: providerError,
+        LlmRejected: providerError,
+        LlmBadResponse: providerError,
+      }),
     );
 
     return Effect.runPromise(response);
