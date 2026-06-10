@@ -118,15 +118,7 @@ function backoffDelayMs(attempt: number): number {
 }
 
 function isRetryableProviderError(error: LlmProviderError): error is LlmRateLimited | LlmUnavailable {
-  return isLlmRateLimited(error) || isLlmUnavailable(error);
-}
-
-function isLlmRateLimited(error: LlmProviderError): error is LlmRateLimited {
-  return isTagged("LlmRateLimited")(error);
-}
-
-function isLlmUnavailable(error: LlmProviderError): error is LlmUnavailable {
-  return isTagged("LlmUnavailable")(error);
+  return isTagged("LlmRateLimited")(error) || isTagged("LlmUnavailable")(error);
 }
 
 function retryAfterMs(response: Response): number | undefined {
