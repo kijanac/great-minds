@@ -1,4 +1,5 @@
-import { Effect, Schedule, type Context } from "effect";
+import { Effect, Match, Schedule, type Context } from "effect";
+import { isTagged } from "effect/Predicate";
 import {
   LlmBadResponse,
   LlmClient,
@@ -49,7 +50,10 @@ function fetchChatCompletion(
 ): Effect.Effect<Response, LlmProviderError> {
   return requestOnce(config, body).pipe(
     Effect.flatMap(classifyResponse),
-    Effect.retry(retrySchedule),
+    Effect.retry({
+      while: isRetryableProviderError,
+      schedule: retrySchedule,
+    }),
   );
 }
 
@@ -97,20 +101,15 @@ function classifyResponse(response: Response): Effect.Effect<Response, LlmRateLi
 
 const retrySchedule = Schedule.identity<LlmProviderError>().pipe(
   Schedule.intersect(Schedule.recurs(OPENROUTER_RETRIES)),
-  Schedule.whileInput(isRetryableProviderError),
-  Schedule.addDelayEffect(([error, attempt]) => retryDelay(error, attempt + 1)),
+  Schedule.addDelay(([error, attempt]) => retryDelay(error, attempt + 1)),
 );
 
-function retryDelay(error: LlmProviderError, attempt: number): Effect.Effect<number> {
+function retryDelay(error: LlmProviderError, attempt: number): number {
   const backoff = () => backoffDelayMs(attempt);
 
-  return Effect.fail(error).pipe(
-    Effect.catchTags({
-      LlmRateLimited: (rateLimited) => Effect.sync(() => rateLimited.retryAfterMs ?? backoff()),
-      LlmUnavailable: () => Effect.sync(backoff),
-      LlmRejected: () => Effect.dieMessage("Non-retryable LLM error reached retry schedule"),
-      LlmBadResponse: () => Effect.dieMessage("Non-retryable LLM error reached retry schedule"),
-    }),
+  return Match.value(error).pipe(
+    Match.tag("LlmRateLimited", (rateLimited) => rateLimited.retryAfterMs ?? backoff()),
+    Match.orElse(backoff),
   );
 }
 
@@ -119,7 +118,15 @@ function backoffDelayMs(attempt: number): number {
 }
 
 function isRetryableProviderError(error: LlmProviderError): error is LlmRateLimited | LlmUnavailable {
-  return error._tag === "LlmRateLimited" || error._tag === "LlmUnavailable";
+  return isLlmRateLimited(error) || isLlmUnavailable(error);
+}
+
+function isLlmRateLimited(error: LlmProviderError): error is LlmRateLimited {
+  return isTagged("LlmRateLimited")(error);
+}
+
+function isLlmUnavailable(error: LlmProviderError): error is LlmUnavailable {
+  return isTagged("LlmUnavailable")(error);
 }
 
 function retryAfterMs(response: Response): number | undefined {
