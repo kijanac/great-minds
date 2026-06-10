@@ -29,6 +29,7 @@ const baseConfig: ApiConfig = {
 };
 
 afterEach(() => {
+  vi.useRealTimers();
   vi.unstubAllGlobals();
 });
 
@@ -50,13 +51,17 @@ describe("POST /v1/vaults/:id/query", () => {
   });
 
   test("returns 502 when the LLM provider is unavailable", async () => {
+    vi.useFakeTimers();
     vi.stubGlobal("fetch", vi.fn(() => Promise.reject(new Error("network down"))));
     const app = createApp(fakeDb({ workspace: { user, vault } }), {
       ...baseConfig,
       openAiProvider: { kind: "openrouter", apiKey: "test", baseUrl: "https://openrouter.test/api/v1" },
     });
 
-    const response = await postQuery(app);
+    const responsePromise = postQuery(app);
+    await vi.runAllTimersAsync();
+    const response = await responsePromise;
+
     expect(response.status).toBe(502);
     expect(await response.json()).toMatchObject({ error: { message: "LLM provider is unavailable" } });
   });
@@ -64,11 +69,7 @@ describe("POST /v1/vaults/:id/query", () => {
   test("returns an answer from the provider chat completion", async () => {
     vi.stubGlobal(
       "fetch",
-      vi.fn(() =>
-        Promise.resolve(
-          Response.json({ choices: [{ message: { content: "The answer." } }] }),
-        ),
-      ),
+      vi.fn(() => Promise.resolve(Response.json({ choices: [{ message: { content: "The answer." } }] }))),
     );
     const app = createApp(fakeDb({ workspace: { user, vault } }), {
       ...baseConfig,
@@ -78,6 +79,26 @@ describe("POST /v1/vaults/:id/query", () => {
     const response = await postQuery(app);
     expect(response.status).toBe(200);
     expect(await response.json()).toEqual({ answer: "The answer." });
+  });
+
+  test("returns an answer after a transient provider failure", async () => {
+    vi.useFakeTimers();
+    const fetch = vi
+      .fn()
+      .mockRejectedValueOnce(new Error("network down"))
+      .mockResolvedValueOnce(Response.json({ choices: [{ message: { content: "Recovered." } }] }));
+    vi.stubGlobal("fetch", fetch);
+    const app = createApp(fakeDb({ workspace: { user, vault } }), {
+      ...baseConfig,
+      openAiProvider: { kind: "openrouter", apiKey: "test", baseUrl: "https://openrouter.test/api/v1" },
+    });
+
+    const responsePromise = postQuery(app);
+    await vi.runAllTimersAsync();
+    const response = await responsePromise;
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({ answer: "Recovered." });
   });
 
   test("rejects API keys without query scope", async () => {
