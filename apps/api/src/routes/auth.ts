@@ -14,18 +14,18 @@ import { ApiKeyCreateSchema, ApiKeyIdSchema, AuthCodeSchema, RefreshTokenSecretS
 import { UserCreateSchema } from "@great-minds/domain/user";
 import { z } from "zod";
 import { createAuthenticateBearer, currentPrincipal, requireSession } from "../auth.js";
-import type { ApiConfig, AppEnv } from "../context.js";
+import type { AppEnv } from "../context.js";
 import type { ApiRuntime } from "../runtime.js";
 import { tokenResponse } from "../schemas/auth.js";
 
-export function createAuthRoutes(runtime: ApiRuntime, config: ApiConfig) {
-  const authenticateBearer = createAuthenticateBearer(runtime, config.auth);
+export function createAuthRoutes(runtime: ApiRuntime) {
+  const authenticateBearer = createAuthenticateBearer(runtime);
 
   return new Hono<AppEnv>()
   .post("/request-code", zValidator("json", UserCreateSchema), async (c) => {
     const input = c.req.valid("json");
     return runtime.runPromise(
-      requestAuthCode(input, config.auth).pipe(
+      requestAuthCode(input).pipe(
         Effect.map(() => c.body(null, 204)),
         Effect.catchTag("AuthCodeDeliveryFailed", (error) =>
           Effect.succeed(c.json({ error: { message: error.message } }, 502)),
@@ -39,7 +39,6 @@ export function createAuthRoutes(runtime: ApiRuntime, config: ApiConfig) {
       verifyCode(
         { email: body.email },
         body.code,
-        config.auth,
       ).pipe(
         Effect.map((tokenPair) => c.json(tokenResponse(tokenPair))),
         Effect.catchTag("InvalidAuthCode", () =>
@@ -51,7 +50,7 @@ export function createAuthRoutes(runtime: ApiRuntime, config: ApiConfig) {
   .post("/refresh", zValidator("json", z.object({ refresh_token: RefreshTokenSecretSchema })), async (c) => {
     const body = c.req.valid("json");
     return runtime.runPromise(
-      refreshAuthTokens(body.refresh_token, config.auth).pipe(
+      refreshAuthTokens(body.refresh_token).pipe(
         Effect.map((tokenPair) => c.json(tokenResponse(tokenPair))),
         Effect.catchTag("InvalidRefreshToken", () =>
           Effect.fail(new HTTPException(401, { message: "Invalid or expired refresh token" })),

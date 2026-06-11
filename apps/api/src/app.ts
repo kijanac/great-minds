@@ -16,9 +16,9 @@ export function createApp(runtime: ApiRuntime, config: ApiConfig) {
 
   app.route("/health", healthRoutes);
   app.route("/v1", createOpenAiRoutes(runtime, config));
-  app.route("/v1", createMeRoutes(runtime, config));
-  app.route("/v1/auth", createAuthRoutes(runtime, config));
-  app.route("/v1/vaults", createVaultRoutes(runtime, config));
+  app.route("/v1", createMeRoutes(runtime));
+  app.route("/v1/auth", createAuthRoutes(runtime));
+  app.route("/v1/vaults", createVaultRoutes(runtime));
 
   app.notFound((c) =>
     c.json(

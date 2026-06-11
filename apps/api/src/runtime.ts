@@ -1,14 +1,15 @@
 import { Effect, Layer, ManagedRuntime } from "effect";
-import { AuthCodeDelivery, AuthCodeDeliveryFailed } from "@great-minds/core/auth";
+import { AuthCodeDelivery, AuthCodeDeliveryFailed, AuthConfig } from "@great-minds/core/auth";
 import { LlmClient } from "@great-minds/core/llm";
 import { openRouterLlmClient } from "@great-minds/core/openrouter";
 import { createDbLayer, Db, type BackendDbConfig } from "@great-minds/db/context";
 import type { ApiConfig } from "./context.js";
 
-export type ApiRuntime = ManagedRuntime.ManagedRuntime<Db | LlmClient | AuthCodeDelivery, never>;
+export type ApiRuntime = ManagedRuntime.ManagedRuntime<Db | LlmClient | AuthCodeDelivery | AuthConfig, never>;
 
 export async function createApiRuntime(dbConfig: BackendDbConfig, config: ApiConfig): Promise<ApiRuntime> {
   const appLayer = createDbLayer(dbConfig).pipe(
+    Layer.merge(Layer.succeed(AuthConfig, AuthConfig.of(config.auth))),
     Layer.merge(Layer.succeed(LlmClient, openRouterLlmClient(config.openAiProvider))),
     Layer.merge(Layer.succeed(AuthCodeDelivery, authCodeDelivery(config))),
   );

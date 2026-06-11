@@ -1,6 +1,6 @@
 import { Effect, Layer, ManagedRuntime } from "effect";
 import { describe, expect, test, vi, afterEach } from "vitest";
-import { AuthCodeDelivery } from "@great-minds/core/auth";
+import { AuthCodeDelivery, AuthConfig } from "@great-minds/core/auth";
 import { LlmClient } from "@great-minds/core/llm";
 import { openRouterLlmClient } from "@great-minds/core/openrouter";
 import { Db, type BackendDb } from "@great-minds/db/context";
@@ -162,6 +162,7 @@ function createTestApp(options: FakeRuntimeOptions = {}, config = baseConfig) {
 
 function fakeRuntime({ openAiProvider = { kind: "disabled" }, ...options }: FakeRuntimeOptions = {}): ApiRuntime {
   const layer = Layer.succeed(Db, fakeDb(options)).pipe(
+    Layer.merge(Layer.succeed(AuthConfig, AuthConfig.of(baseConfig.auth))),
     Layer.merge(Layer.succeed(LlmClient, openRouterLlmClient(openAiProvider))),
     Layer.merge(Layer.succeed(AuthCodeDelivery, AuthCodeDelivery.of({ deliver: () => Effect.void }))),
   );

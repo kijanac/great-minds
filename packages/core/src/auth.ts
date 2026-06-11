@@ -25,13 +25,18 @@ import {
 import { firstOrDie, firstOrFail } from "./effect-helpers.js";
 import { ensureUser } from "./users.js";
 
-export type AuthConfig = {
+export type AuthConfigService = {
   jwtSecret: string;
   jwtAccessExpiryMinutes: number;
   jwtRefreshExpiryDays: number;
   authCodeExpiryMinutes: number;
   suppressAuth?: boolean;
 };
+
+export class AuthConfig extends Context.Service<
+  AuthConfig,
+  AuthConfigService
+>()("AuthConfig") {}
 
 export type AuthenticatedPrincipal =
   | {
@@ -75,11 +80,11 @@ export class ApiKeyUnavailable extends Data.TaggedError("ApiKeyUnavailable")<{
 
 export function requestAuthCode(
   input: UserCreate,
-  config: AuthConfig,
-): Effect.Effect<void, AuthCodeDeliveryFailed, Db | AuthCodeDelivery> {
-  if (config.suppressAuth) return Effect.void;
-
+): Effect.Effect<void, AuthCodeDeliveryFailed, Db | AuthCodeDelivery | AuthConfig> {
   return Effect.gen(function* () {
+    const config = yield* AuthConfig;
+    if (config.suppressAuth) return;
+
     const db = yield* Db;
     const code = generateAuthCode();
     yield* db
@@ -105,9 +110,9 @@ export function requestAuthCode(
 export function verifyCode(
   input: UserCreate,
   code: string,
-  config: AuthConfig,
-): Effect.Effect<TokenPair, InvalidAuthCode, Db> {
+): Effect.Effect<TokenPair, InvalidAuthCode, Db | AuthConfig> {
   return Effect.gen(function* () {
+    const config = yield* AuthConfig;
     const db = yield* Db;
     if (!config.suppressAuth) {
       const valid = yield* consumeAuthCode(db, input.email, code);
@@ -121,9 +126,9 @@ export function verifyCode(
 
 export function refreshAuthTokens(
   refreshToken: string,
-  config: AuthConfig,
-): Effect.Effect<TokenPair, InvalidRefreshToken, Db> {
+): Effect.Effect<TokenPair, InvalidRefreshToken, Db | AuthConfig> {
   return Effect.gen(function* () {
+    const config = yield* AuthConfig;
     const db = yield* Db;
     const tokenHash = hashSecret(refreshToken);
     const rows = yield* db
@@ -158,9 +163,9 @@ export function refreshAuthTokens(
 
 export function resolveBearerToken(
   token: string,
-  config: AuthConfig,
-): Effect.Effect<AuthenticatedPrincipal | null, never, Db> {
+): Effect.Effect<AuthenticatedPrincipal | null, never, Db | AuthConfig> {
   return Effect.gen(function* () {
+    const config = yield* AuthConfig;
     const db = yield* Db;
     const userFromAccessToken = yield* resolveAccessToken(db, token, config);
     if (userFromAccessToken) return userFromAccessToken;
@@ -245,7 +250,7 @@ function consumeAuthCode(db: BackendDb, email: string, code: string): Effect.Eff
   });
 }
 
-function mintTokenPair(db: DbSession, userId: UserId, config: AuthConfig): Effect.Effect<TokenPair> {
+function mintTokenPair(db: DbSession, userId: UserId, config: AuthConfigService): Effect.Effect<TokenPair> {
   return Effect.gen(function* () {
     const accessToken = yield* Effect.promise(() => createAccessToken(userId, config));
     const refreshToken = createRefreshTokenValue();
@@ -266,7 +271,7 @@ function mintTokenPair(db: DbSession, userId: UserId, config: AuthConfig): Effec
 function resolveAccessToken(
   db: BackendDb,
   token: string,
-  config: AuthConfig,
+  config: AuthConfigService,
 ): Effect.Effect<AuthenticatedPrincipal | null> {
   return Effect.gen(function* () {
     const userId = yield* Effect.promise(() => decodeAccessToken(token, config));
@@ -307,7 +312,7 @@ function resolveApiKey(db: BackendDb, rawKey: string): Effect.Effect<Authenticat
   });
 }
 
-async function createAccessToken(userId: UserId, config: AuthConfig): Promise<string> {
+async function createAccessToken(userId: UserId, config: AuthConfigService): Promise<string> {
   const secret = new TextEncoder().encode(config.jwtSecret);
   return new SignJWT({ type: "access" })
     .setProtectedHeader({ alg: "HS256" })
@@ -317,7 +322,7 @@ async function createAccessToken(userId: UserId, config: AuthConfig): Promise<st
     .sign(secret);
 }
 
-async function decodeAccessToken(token: string, config: AuthConfig): Promise<UserId | null> {
+async function decodeAccessToken(token: string, config: AuthConfigService): Promise<UserId | null> {
   try {
     const secret = new TextEncoder().encode(config.jwtSecret);
     const { payload } = await jwtVerify(token, secret, {

@@ -1,4 +1,4 @@
-import type { AuthConfig, AuthenticatedPrincipal } from "@great-minds/core/auth";
+import type { AuthConfigService, AuthenticatedPrincipal } from "@great-minds/core/auth";
 import type { OpenRouterConfig } from "@great-minds/core/openrouter";
 import type { VaultScope } from "@great-minds/core/workspace";
 
@@ -7,7 +7,7 @@ export type AuthCodeDeliveryConfig =
   | { kind: "resend"; apiKey: string; fromEmail: string };
 
 export type ApiConfig = {
-  auth: AuthConfig;
+  auth: AuthConfigService;
   authCodeDelivery: AuthCodeDeliveryConfig;
   openAiProvider: OpenRouterConfig;
 };

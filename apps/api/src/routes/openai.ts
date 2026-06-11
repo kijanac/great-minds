@@ -7,7 +7,7 @@ import type { ApiRuntime } from "../runtime.js";
 import { chatCompletionResponse, modelListResponse } from "../openai-provider.js";
 
 export function createOpenAiRoutes(runtime: ApiRuntime, config: ApiConfig) {
-  const authenticateBearer = createAuthenticateBearer(runtime, config.auth);
+  const authenticateBearer = createAuthenticateBearer(runtime);
 
   return new Hono<AppEnv>()
   .get("/models", authenticateBearer, requireApiKeyScope("query"), (c) =>

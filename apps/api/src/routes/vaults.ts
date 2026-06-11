@@ -17,7 +17,7 @@ import { QueryRequestSchema } from "@great-minds/domain/query";
 import { SourceDocumentUpsertSchema, SourceListQuerySchema } from "@great-minds/domain/source";
 import { VaultCreateSchema, VaultIdSchema, VaultPatchSchema } from "@great-minds/domain/vault";
 import { createAuthenticateBearer, currentPrincipal, requireScope } from "../auth.js";
-import type { ApiConfig, AppEnv } from "../context.js";
+import type { AppEnv } from "../context.js";
 import type { ApiRuntime } from "../runtime.js";
 
 const bindVaultScope = createMiddleware<AppEnv>(async (c, next) => {
@@ -112,8 +112,8 @@ function createVaultScopedRoutes(runtime: ApiRuntime, authenticateBearer: Return
   });
 }
 
-export function createVaultRoutes(runtime: ApiRuntime, config: ApiConfig) {
-  const authenticateBearer = createAuthenticateBearer(runtime, config.auth);
+export function createVaultRoutes(runtime: ApiRuntime) {
+  const authenticateBearer = createAuthenticateBearer(runtime);
 
   return new Hono<AppEnv>()
   .get("/", authenticateBearer, requireScope("vaults:read"), async (c) => {
