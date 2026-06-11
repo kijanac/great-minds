@@ -11,7 +11,7 @@ import {
   type SourceDocumentUpsert,
   type SourceListQuery,
 } from "@great-minds/domain/source";
-import { firstOrDie, parseOrDie } from "./effect-helpers.js";
+import { firstOrDie } from "./effect-helpers.js";
 import { loadWorkspace, VaultUnavailable, type VaultScope } from "./workspace.js";
 
 export function listSources(
@@ -60,17 +60,15 @@ export function listSources(
       .orderBy(desc(count()), asc(sourceDocuments.sourceType))
       .pipe(Effect.orDie);
 
-    return yield* parseOrDie(() =>
-      SourceDocumentPageSchema.parse({
-        items: rows,
-        pagination: {
-          limit: query.limit,
-          offset: query.offset,
-          total: totalRow.total,
-        },
-        facets: { sourceTypes: facetRows },
-      }),
-    );
+    return SourceDocumentPageSchema.parse({
+      items: rows,
+      pagination: {
+        limit: query.limit,
+        offset: query.offset,
+        total: totalRow.total,
+      },
+      facets: { sourceTypes: facetRows },
+    });
   });
 }
 
@@ -95,7 +93,7 @@ export function upsertSourceDocument(
       .pipe(Effect.orDie);
 
     const document = yield* firstOrDie(rows, "Failed to upsert source document");
-    return yield* parseOrDie(() => SourceDocumentSchema.parse(document));
+    return SourceDocumentSchema.parse(document);
   });
 }
 

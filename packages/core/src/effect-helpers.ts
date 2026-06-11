@@ -9,7 +9,3 @@ export function firstOrDie<A>(rows: readonly A[], message: string): Effect.Effec
   const first = rows[0];
   return first === undefined ? Effect.die(new Error(message)) : Effect.succeed(first);
 }
-
-export function parseOrDie<A>(parse: () => A): Effect.Effect<A> {
-  return Effect.sync(parse);
-}

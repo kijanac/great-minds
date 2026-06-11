@@ -22,7 +22,7 @@ import {
   type UserCreate,
   type UserId,
 } from "@great-minds/domain/user";
-import { firstOrDie, firstOrFail, parseOrDie } from "./effect-helpers.js";
+import { firstOrDie, firstOrFail } from "./effect-helpers.js";
 import { ensureUser } from "./users.js";
 
 export type AuthConfig = {
@@ -177,7 +177,7 @@ export function createApiKey(
       .pipe(Effect.orDie);
 
     const apiKey = yield* firstOrDie(rows, "Failed to create API key");
-    return yield* parseOrDie(() => ApiKeyWithSecretSchema.parse({ ...apiKey, rawKey }));
+    return ApiKeyWithSecretSchema.parse({ ...apiKey, rawKey });
   });
 }
 
@@ -190,7 +190,7 @@ export function listApiKeys(db: BackendDb, userId: UserId): Effect.Effect<ApiKey
       .orderBy(desc(apiKeys.createdAt))
       .pipe(Effect.orDie);
 
-    return yield* parseOrDie(() => ApiKeySchema.array().parse(rows));
+    return ApiKeySchema.array().parse(rows);
   });
 }
 
@@ -273,7 +273,7 @@ function resolveAccessToken(
       .pipe(Effect.orDie);
     const user = rows[0];
     if (!user) return null;
-    return yield* parseOrDie(() => ({ user: UserSchema.parse(user), credential: { kind: "session" as const } }));
+    return { user: UserSchema.parse(user), credential: { kind: "session" as const } };
   });
 }
 
@@ -289,14 +289,14 @@ function resolveApiKey(db: BackendDb, rawKey: string): Effect.Effect<Authenticat
 
     const row = rows[0];
     if (!row) return null;
-    return yield* parseOrDie(() => ({
+    return {
       user: UserSchema.parse(row.user),
       credential: {
         kind: "apiKey" as const,
         apiKeyId: ApiKeyIdSchema.parse(row.apiKeyId),
         scopes: ApiKeyScopeSchema.array().parse(row.scopes),
       },
-    }));
+    };
   });
 }
 

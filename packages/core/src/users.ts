@@ -3,7 +3,7 @@ import { eq } from "drizzle-orm";
 import type { BackendDb } from "@great-minds/db/context";
 import { users } from "@great-minds/db/schema";
 import { UserSchema, type User, type UserCreate } from "@great-minds/domain/user";
-import { firstOrDie, parseOrDie } from "./effect-helpers.js";
+import { firstOrDie } from "./effect-helpers.js";
 
 export function ensureUser(db: BackendDb, input: UserCreate): Effect.Effect<User> {
   return Effect.gen(function* () {
@@ -14,7 +14,7 @@ export function ensureUser(db: BackendDb, input: UserCreate): Effect.Effect<User
       .returning()
       .pipe(Effect.orDie);
 
-    if (created) return yield* parseUser(created);
+    if (created) return parseUser(created);
 
     const rows = yield* db
       .select()
@@ -24,10 +24,10 @@ export function ensureUser(db: BackendDb, input: UserCreate): Effect.Effect<User
       .pipe(Effect.orDie);
 
     const existing = yield* firstOrDie(rows, "Failed to ensure user");
-    return yield* parseUser(existing);
+    return parseUser(existing);
   });
 }
 
-function parseUser(value: unknown): Effect.Effect<User> {
-  return parseOrDie(() => UserSchema.parse(value));
+function parseUser(value: unknown): User {
+  return UserSchema.parse(value);
 }

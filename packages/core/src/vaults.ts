@@ -14,7 +14,7 @@ import {
   type VaultStats,
 } from "@great-minds/domain/vault";
 import type { Workspace } from "@great-minds/domain/workspace";
-import { firstOrDie, firstOrFail, parseOrDie } from "./effect-helpers.js";
+import { firstOrDie, firstOrFail } from "./effect-helpers.js";
 import { loadWorkspace, VaultUnavailable, type VaultScope } from "./workspace.js";
 
 export class VaultForbidden extends Data.TaggedError("VaultForbidden")<{
@@ -31,7 +31,7 @@ export function listVaults(db: BackendDb, userId: UserId): Effect.Effect<Vault[]
       .orderBy(vaults.createdAt)
       .pipe(Effect.orDie);
 
-    return yield* parseOrDie(() => VaultSchema.array().parse(rows.map((row) => row.vault)));
+    return VaultSchema.array().parse(rows.map((row) => row.vault));
   });
 }
 
@@ -92,7 +92,7 @@ export function getVault(db: BackendDb, scope: VaultScope): Effect.Effect<Vault,
       .pipe(Effect.orDie);
 
     const row = yield* firstOrFail(rows, () => new VaultUnavailable());
-    return yield* parseOrDie(() => VaultSchema.parse(row.vault));
+    return VaultSchema.parse(row.vault);
   });
 }
 
@@ -114,7 +114,7 @@ export function listVaultMembers(
       .orderBy(vaultMemberships.createdAt)
       .pipe(Effect.orDie);
 
-    return yield* parseOrDie(() => VaultMemberDetailsSchema.array().parse(rows));
+    return VaultMemberDetailsSchema.array().parse(rows);
   });
 }
 
@@ -129,7 +129,7 @@ export function getVaultStats(db: BackendDb, scope: VaultScope): Effect.Effect<V
       .pipe(Effect.orDie);
 
     const countRow = yield* firstOrDie(rows, "Failed to count vault articles");
-    return yield* parseOrDie(() => VaultStatsSchema.parse({ articleCount: countRow.total }));
+    return VaultStatsSchema.parse({ articleCount: countRow.total });
   });
 }
 
@@ -155,7 +155,7 @@ function createOwnedVault(
       })
       .pipe(Effect.orDie);
 
-    return yield* parseOrDie(() => VaultSchema.parse(vault));
+    return VaultSchema.parse(vault);
   });
 }
 
