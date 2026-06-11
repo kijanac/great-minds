@@ -3,11 +3,12 @@ import { AuthCodeDelivery, AuthCodeDeliveryFailed, AuthConfig, AuthService, auth
 import { LlmClient } from "@great-minds/core/llm";
 import { openRouterLlmClient } from "@great-minds/core/openrouter";
 import { QueryService, queryServiceLayer } from "@great-minds/core/query";
+import { SourceService, sourceServiceLayer } from "@great-minds/core/sources";
 import { VaultService, vaultServiceLayer } from "@great-minds/core/vaults";
 import { createDbLayer, Db, type BackendDbConfig } from "@great-minds/db/context";
 import type { ApiConfig } from "./context.js";
 
-export type ApiRuntime = ManagedRuntime.ManagedRuntime<Db | AuthService | QueryService | VaultService, never>;
+export type ApiRuntime = ManagedRuntime.ManagedRuntime<AuthService | QueryService | SourceService | VaultService, never>;
 
 export async function createApiRuntime(dbConfig: BackendDbConfig, config: ApiConfig): Promise<ApiRuntime> {
   const dbLayer = createDbLayer(dbConfig);
@@ -16,8 +17,9 @@ export async function createApiRuntime(dbConfig: BackendDbConfig, config: ApiCon
   const llmLayer = Layer.succeed(LlmClient, openRouterLlmClient(config.openAiProvider));
   const authLayer = authServiceLayer.pipe(Layer.provide(Layer.mergeAll(dbLayer, authConfigLayer, authCodeDeliveryLayer)));
   const queryLayer = queryServiceLayer.pipe(Layer.provide(Layer.mergeAll(dbLayer, llmLayer)));
+  const sourceLayer = sourceServiceLayer.pipe(Layer.provide(dbLayer));
   const vaultLayer = vaultServiceLayer.pipe(Layer.provide(dbLayer));
-  const appLayer = Layer.mergeAll(dbLayer, authLayer, queryLayer, vaultLayer);
+  const appLayer = Layer.mergeAll(dbLayer, authLayer, queryLayer, sourceLayer, vaultLayer);
   const runtime = ManagedRuntime.make(appLayer);
   await runtime.runPromise(Db);
   return runtime;

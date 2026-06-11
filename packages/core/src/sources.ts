@@ -1,4 +1,4 @@
-import { Effect } from "effect";
+import { Context, Effect, Layer } from "effect";
 import { and, asc, count, desc, eq, ilike, or, type SQL } from "drizzle-orm";
 import { Db } from "@great-minds/db/context";
 import { sourceDocuments } from "@great-minds/db/schema";
@@ -13,6 +13,26 @@ import {
 } from "@great-minds/domain/source";
 import { firstOrDie } from "./effect-helpers.js";
 import { loadWorkspace, VaultUnavailable, type VaultScope } from "./workspace.js";
+
+export class SourceService extends Context.Service<
+  SourceService,
+  {
+    readonly listSources: (scope: VaultScope, query: SourceListQuery) => Effect.Effect<SourceDocumentPage, VaultUnavailable>;
+    readonly upsertSourceDocument: (scope: VaultScope, metadata: SourceDocumentUpsert) => Effect.Effect<SourceDocument, VaultUnavailable>;
+  }
+>()("SourceService") {}
+
+export const sourceServiceLayer = Layer.effect(
+  SourceService,
+  Effect.gen(function* () {
+    const db = yield* Db;
+
+    return SourceService.of({
+      listSources: (scope, query) => listSources(scope, query).pipe(Effect.provideService(Db, db)),
+      upsertSourceDocument: (scope, metadata) => upsertSourceDocument(scope, metadata).pipe(Effect.provideService(Db, db)),
+    });
+  }),
+);
 
 export function listSources(
   scope: VaultScope,

@@ -4,7 +4,7 @@ import { Hono } from "hono";
 import { createMiddleware } from "hono/factory";
 import { HTTPException } from "hono/http-exception";
 import { QueryService } from "@great-minds/core/query";
-import { listSources, upsertSourceDocument } from "@great-minds/core/sources";
+import { SourceService } from "@great-minds/core/sources";
 import { VaultService } from "@great-minds/core/vaults";
 import { QueryRequestSchema } from "@great-minds/domain/query";
 import { SourceDocumentUpsertSchema, SourceListQuerySchema } from "@great-minds/domain/source";
@@ -67,7 +67,7 @@ function createVaultScopedRoutes(runtime: ApiRuntime, authenticateBearer: Return
   )
   .get("/sources", requireScope("sources:read"), zValidator("query", SourceListQuerySchema), async (c) =>
     runtime.runPromise(
-      listSources(c.get("vaultScope"), c.req.valid("query")).pipe(
+      Effect.flatMap(SourceService, (sources) => sources.listSources(c.get("vaultScope"), c.req.valid("query"))).pipe(
         Effect.map((page) => c.json(page)),
         Effect.catchTag("VaultUnavailable", () =>
           Effect.fail(new HTTPException(404, { message: "Vault not found" })),
@@ -77,7 +77,7 @@ function createVaultScopedRoutes(runtime: ApiRuntime, authenticateBearer: Return
   )
   .post("/sources", requireScope("sources:write"), zValidator("json", SourceDocumentUpsertSchema), async (c) =>
     runtime.runPromise(
-      upsertSourceDocument(c.get("vaultScope"), c.req.valid("json")).pipe(
+      Effect.flatMap(SourceService, (sources) => sources.upsertSourceDocument(c.get("vaultScope"), c.req.valid("json"))).pipe(
         Effect.map((source) => c.json(source)),
         Effect.catchTag("VaultUnavailable", () =>
           Effect.fail(new HTTPException(404, { message: "Vault not found" })),

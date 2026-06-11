@@ -8,6 +8,7 @@ import {
   type AuthConfigService,
 } from "@great-minds/core/auth";
 import { queryServiceLayer } from "@great-minds/core/query";
+import { sourceServiceLayer } from "@great-minds/core/sources";
 import { vaultServiceLayer } from "@great-minds/core/vaults";
 import { LlmClient } from "@great-minds/core/llm";
 import { openRouterLlmClient } from "@great-minds/core/openrouter";
@@ -75,8 +76,9 @@ function fakeRuntime({
   const authLayer = authServiceLayer.pipe(Layer.provide(Layer.mergeAll(dbLayer, authConfigLayer, authCodeDeliveryLayer)));
   const llmLayer = Layer.succeed(LlmClient, openRouterLlmClient({ kind: "disabled" }));
   const queryLayer = queryServiceLayer.pipe(Layer.provide(Layer.mergeAll(dbLayer, llmLayer)));
+  const sourceLayer = sourceServiceLayer.pipe(Layer.provide(dbLayer));
   const vaultLayer = vaultServiceLayer.pipe(Layer.provide(dbLayer));
-  return ManagedRuntime.make(Layer.mergeAll(dbLayer, authLayer, queryLayer, vaultLayer));
+  return ManagedRuntime.make(Layer.mergeAll(dbLayer, authLayer, queryLayer, sourceLayer, vaultLayer));
 }
 
 function fakeDb(): BackendDb {
