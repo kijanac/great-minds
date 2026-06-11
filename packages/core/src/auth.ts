@@ -1,5 +1,5 @@
 import { createHash, randomBytes, randomInt } from "node:crypto";
-import { Context, Data, Effect } from "effect";
+import { Context, Data, Effect, Layer } from "effect";
 import { and, desc, eq, gt, sql } from "drizzle-orm";
 import { jwtVerify, SignJWT } from "jose";
 import { Db, type BackendDb, type DbSession } from "@great-minds/db/context";
@@ -77,6 +77,55 @@ export class InvalidRefreshToken extends Data.TaggedError("InvalidRefreshToken")
 export class ApiKeyUnavailable extends Data.TaggedError("ApiKeyUnavailable")<{
   message: string;
 }> {}
+
+export class AuthService extends Context.Service<
+  AuthService,
+  {
+    readonly requestCode: (input: UserCreate) => Effect.Effect<void, AuthCodeDeliveryFailed>;
+    readonly verifyCode: (input: UserCreate, code: string) => Effect.Effect<TokenPair, InvalidAuthCode>;
+    readonly refreshTokens: (refreshToken: string) => Effect.Effect<TokenPair, InvalidRefreshToken>;
+    readonly resolveBearerToken: (token: string) => Effect.Effect<AuthenticatedPrincipal | null>;
+    readonly createApiKey: (userId: UserId, input: ApiKeyCreate) => Effect.Effect<ApiKeyWithSecret>;
+    readonly listApiKeys: (userId: UserId) => Effect.Effect<ApiKey[]>;
+    readonly revokeApiKey: (userId: UserId, keyId: ApiKeyId) => Effect.Effect<void, ApiKeyUnavailable>;
+  }
+>()("AuthService") {}
+
+export const AuthServiceLive = Layer.effect(
+  AuthService,
+  Effect.gen(function* () {
+    const db = yield* Db;
+    const config = yield* AuthConfig;
+    const delivery = yield* AuthCodeDelivery;
+
+    return AuthService.of({
+      requestCode: (input) =>
+        requestAuthCode(input).pipe(
+          Effect.provideService(Db, db),
+          Effect.provideService(AuthConfig, config),
+          Effect.provideService(AuthCodeDelivery, delivery),
+        ),
+      verifyCode: (input, code) =>
+        verifyCode(input, code).pipe(
+          Effect.provideService(Db, db),
+          Effect.provideService(AuthConfig, config),
+        ),
+      refreshTokens: (refreshToken) =>
+        refreshAuthTokens(refreshToken).pipe(
+          Effect.provideService(Db, db),
+          Effect.provideService(AuthConfig, config),
+        ),
+      resolveBearerToken: (token) =>
+        resolveBearerToken(token).pipe(
+          Effect.provideService(Db, db),
+          Effect.provideService(AuthConfig, config),
+        ),
+      createApiKey: (userId, input) => createApiKey(userId, input).pipe(Effect.provideService(Db, db)),
+      listApiKeys: (userId) => listApiKeys(userId).pipe(Effect.provideService(Db, db)),
+      revokeApiKey: (userId, keyId) => revokeApiKey(userId, keyId).pipe(Effect.provideService(Db, db)),
+    });
+  }),
+);
 
 export function requestAuthCode(
   input: UserCreate,

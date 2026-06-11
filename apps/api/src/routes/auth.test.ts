@@ -4,6 +4,7 @@ import {
   AuthCodeDelivery,
   AuthCodeDeliveryFailed,
   AuthConfig,
+  AuthServiceLive,
   type AuthConfigService,
 } from "@great-minds/core/auth";
 import { Db, type BackendDb } from "@great-minds/db/context";
@@ -64,11 +65,11 @@ function fakeRuntime({
   auth?: AuthConfigService;
   deliver?: (email: string, code: string, expiresInMinutes: number) => Effect.Effect<void, AuthCodeDeliveryFailed>;
 } = {}): ApiRuntime {
-  const layer = Layer.succeed(Db, fakeDb()).pipe(
-    Layer.merge(Layer.succeed(AuthConfig, AuthConfig.of(auth))),
-    Layer.merge(Layer.succeed(AuthCodeDelivery, AuthCodeDelivery.of({ deliver }))),
-  );
-  return ManagedRuntime.make(layer) as ApiRuntime;
+  const dbLayer = Layer.succeed(Db, fakeDb());
+  const authConfigLayer = Layer.succeed(AuthConfig, AuthConfig.of(auth));
+  const authCodeDeliveryLayer = Layer.succeed(AuthCodeDelivery, AuthCodeDelivery.of({ deliver }));
+  const authLayer = AuthServiceLive.pipe(Layer.provide(Layer.mergeAll(dbLayer, authConfigLayer, authCodeDeliveryLayer)));
+  return ManagedRuntime.make(Layer.mergeAll(dbLayer, authLayer)) as ApiRuntime;
 }
 
 function fakeDb(): BackendDb {
