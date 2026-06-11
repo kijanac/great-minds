@@ -1,7 +1,7 @@
 import type { AuthConfig, AuthenticatedPrincipal } from "@great-minds/core/auth";
 import type { OpenRouterConfig } from "@great-minds/core/openrouter";
 import type { VaultScope } from "@great-minds/core/workspace";
-import type { BackendDb } from "@great-minds/db/context";
+import type { BackendRuntime } from "@great-minds/db/context";
 
 export type AuthCodeDeliveryConfig =
   | { kind: "console" }
@@ -15,7 +15,7 @@ export type ApiConfig = {
 
 export type AppEnv = {
   Variables: {
-    db: BackendDb;
+    runtime: BackendRuntime;
     authConfig: AuthConfig;
     authCodeDelivery: AuthCodeDeliveryConfig;
     openAiProvider: OpenRouterConfig;

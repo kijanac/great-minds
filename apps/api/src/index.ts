@@ -4,7 +4,7 @@ import { createApp } from "./app.js";
 import { authCodeDeliveryFromEnv, env, openAiProviderFromEnv } from "./env.js";
 
 const backend = await createBackendContext({ connectionString: env.DATABASE_URL });
-const app = createApp(backend.db, {
+const app = createApp(backend.runtime, {
   auth: {
     jwtSecret: env.JWT_SECRET,
     jwtAccessExpiryMinutes: env.JWT_ACCESS_EXPIRY_MINUTES,

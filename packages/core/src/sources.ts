@@ -1,6 +1,6 @@
 import { Effect } from "effect";
 import { and, asc, count, desc, eq, ilike, or, type SQL } from "drizzle-orm";
-import type { BackendDb } from "@great-minds/db/context";
+import { Db } from "@great-minds/db/context";
 import { sourceDocuments } from "@great-minds/db/schema";
 import type { VaultId } from "@great-minds/domain/vault";
 import {
@@ -15,12 +15,12 @@ import { firstOrDie } from "./effect-helpers.js";
 import { loadWorkspace, VaultUnavailable, type VaultScope } from "./workspace.js";
 
 export function listSources(
-  db: BackendDb,
   scope: VaultScope,
   query: SourceListQuery,
-): Effect.Effect<SourceDocumentPage, VaultUnavailable> {
+): Effect.Effect<SourceDocumentPage, VaultUnavailable, Db> {
   return Effect.gen(function* () {
-    yield* loadWorkspace(db, scope);
+    const db = yield* Db;
+    yield* loadWorkspace(scope);
     const where = sourceFilter(scope.vaultId, query);
 
     const rows = yield* db
@@ -73,12 +73,12 @@ export function listSources(
 }
 
 export function upsertSourceDocument(
-  db: BackendDb,
   scope: VaultScope,
   metadata: SourceDocumentUpsert,
-): Effect.Effect<SourceDocument, VaultUnavailable> {
+): Effect.Effect<SourceDocument, VaultUnavailable, Db> {
   return Effect.gen(function* () {
-    yield* loadWorkspace(db, scope);
+    const db = yield* Db;
+    yield* loadWorkspace(scope);
 
     const values = { ...metadata, vaultId: scope.vaultId, updatedAt: new Date() };
 

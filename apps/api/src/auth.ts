@@ -9,7 +9,7 @@ import type { AppEnv } from "./context.js";
 
 export const authenticateBearer = bearerAuth({
   verifyToken: async (token, c) => {
-    const principal = await Effect.runPromise(resolveBearerToken(c.get("db"), token, c.get("authConfig")));
+    const principal = await c.get("runtime").runPromise(resolveBearerToken(token, c.get("authConfig")));
     if (!principal) return false;
 
     c.set("principal", principal);

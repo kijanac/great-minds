@@ -2,7 +2,7 @@ import { createHash, randomBytes, randomInt } from "node:crypto";
 import { Data, Effect } from "effect";
 import { and, desc, eq, gt, sql } from "drizzle-orm";
 import { jwtVerify, SignJWT } from "jose";
-import type { BackendDb, DbSession } from "@great-minds/db/context";
+import { Db, type BackendDb, type DbSession } from "@great-minds/db/context";
 import { apiKeys, authCodes, refreshTokens, users } from "@great-minds/db/schema";
 import {
   ApiKeyIdSchema,
@@ -65,14 +65,14 @@ export class ApiKeyUnavailable extends Data.TaggedError("ApiKeyUnavailable")<{
 }> {}
 
 export function requestAuthCode(
-  db: BackendDb,
   input: UserCreate,
   config: AuthConfig,
   deliverCode: (email: string, code: string) => Promise<void> | void,
-): Effect.Effect<void, AuthCodeDeliveryFailed> {
+): Effect.Effect<void, AuthCodeDeliveryFailed, Db> {
   if (config.suppressAuth) return Effect.void;
 
   return Effect.gen(function* () {
+    const db = yield* Db;
     const code = generateAuthCode();
     yield* db
       .update(authCodes)
@@ -97,28 +97,28 @@ export function requestAuthCode(
 }
 
 export function verifyCode(
-  db: BackendDb,
   input: UserCreate,
   code: string,
   config: AuthConfig,
-): Effect.Effect<TokenPair, InvalidAuthCode> {
+): Effect.Effect<TokenPair, InvalidAuthCode, Db> {
   return Effect.gen(function* () {
+    const db = yield* Db;
     if (!config.suppressAuth) {
       const valid = yield* consumeAuthCode(db, input.email, code);
       if (!valid) return yield* Effect.fail(new InvalidAuthCode({ message: "Invalid or expired code" }));
     }
 
-    const user = yield* ensureUser(db, input);
+    const user = yield* ensureUser(input);
     return yield* mintTokenPair(db, user.id, config);
   });
 }
 
 export function refreshAuthTokens(
-  db: BackendDb,
   refreshToken: string,
   config: AuthConfig,
-): Effect.Effect<TokenPair, InvalidRefreshToken> {
+): Effect.Effect<TokenPair, InvalidRefreshToken, Db> {
   return Effect.gen(function* () {
+    const db = yield* Db;
     const tokenHash = hashSecret(refreshToken);
     const rows = yield* db
       .select()
@@ -151,11 +151,11 @@ export function refreshAuthTokens(
 }
 
 export function resolveBearerToken(
-  db: BackendDb,
   token: string,
   config: AuthConfig,
-): Effect.Effect<AuthenticatedPrincipal | null> {
+): Effect.Effect<AuthenticatedPrincipal | null, never, Db> {
   return Effect.gen(function* () {
+    const db = yield* Db;
     const userFromAccessToken = yield* resolveAccessToken(db, token, config);
     if (userFromAccessToken) return userFromAccessToken;
 
@@ -164,11 +164,11 @@ export function resolveBearerToken(
 }
 
 export function createApiKey(
-  db: BackendDb,
   userId: UserId,
   input: ApiKeyCreate,
-): Effect.Effect<ApiKeyWithSecret> {
+): Effect.Effect<ApiKeyWithSecret, never, Db> {
   return Effect.gen(function* () {
+    const db = yield* Db;
     const rawKey = `gm_${randomBytes(32).toString("base64url")}`;
     const rows = yield* db
       .insert(apiKeys)
@@ -181,8 +181,9 @@ export function createApiKey(
   });
 }
 
-export function listApiKeys(db: BackendDb, userId: UserId): Effect.Effect<ApiKey[]> {
+export function listApiKeys(userId: UserId): Effect.Effect<ApiKey[], never, Db> {
   return Effect.gen(function* () {
+    const db = yield* Db;
     const rows = yield* db
       .select()
       .from(apiKeys)
@@ -195,11 +196,11 @@ export function listApiKeys(db: BackendDb, userId: UserId): Effect.Effect<ApiKey
 }
 
 export function revokeApiKey(
-  db: BackendDb,
   userId: UserId,
   keyId: ApiKeyId,
-): Effect.Effect<void, ApiKeyUnavailable> {
+): Effect.Effect<void, ApiKeyUnavailable, Db> {
   return Effect.gen(function* () {
+    const db = yield* Db;
     const rows = yield* db
       .update(apiKeys)
       .set({ revoked: true })

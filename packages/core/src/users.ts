@@ -1,12 +1,13 @@
 import { Effect } from "effect";
 import { eq } from "drizzle-orm";
-import type { BackendDb } from "@great-minds/db/context";
+import { Db } from "@great-minds/db/context";
 import { users } from "@great-minds/db/schema";
 import { UserSchema, type User, type UserCreate } from "@great-minds/domain/user";
 import { firstOrDie } from "./effect-helpers.js";
 
-export function ensureUser(db: BackendDb, input: UserCreate): Effect.Effect<User> {
+export function ensureUser(input: UserCreate): Effect.Effect<User, never, Db> {
   return Effect.gen(function* () {
+    const db = yield* Db;
     const [created] = yield* db
       .insert(users)
       .values({ email: input.email })

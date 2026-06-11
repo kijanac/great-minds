@@ -1,6 +1,6 @@
 import { Data, Effect } from "effect";
 import { and, count, eq } from "drizzle-orm";
-import type { BackendDb, DbSession } from "@great-minds/db/context";
+import { Db, type DbSession } from "@great-minds/db/context";
 import { sourceDocuments, users, vaultMemberships, vaults } from "@great-minds/db/schema";
 import type { UserId } from "@great-minds/domain/user";
 import {
@@ -15,14 +15,15 @@ import {
 } from "@great-minds/domain/vault";
 import type { Workspace } from "@great-minds/domain/workspace";
 import { firstOrDie, firstOrFail } from "./effect-helpers.js";
-import { loadWorkspace, VaultUnavailable, type VaultScope } from "./workspace.js";
+import { loadWorkspaceWith, VaultUnavailable, type VaultScope } from "./workspace.js";
 
 export class VaultForbidden extends Data.TaggedError("VaultForbidden")<{
   message: string;
 }> {}
 
-export function listVaults(db: BackendDb, userId: UserId): Effect.Effect<Vault[]> {
+export function listVaults(userId: UserId): Effect.Effect<Vault[], never, Db> {
   return Effect.gen(function* () {
+    const db = yield* Db;
     const rows = yield* db
       .select({ vault: vaults })
       .from(vaultMemberships)
@@ -36,53 +37,65 @@ export function listVaults(db: BackendDb, userId: UserId): Effect.Effect<Vault[]
 }
 
 export function createVault(
-  db: BackendDb,
   userId: UserId,
   input: VaultCreate,
-): Effect.Effect<Workspace, VaultUnavailable> {
-  return db
-    .transaction((tx) =>
-      Effect.gen(function* () {
-        const vault = yield* createOwnedVault(tx, userId, input);
-        return yield* loadWorkspace(tx, { userId, vaultId: vault.id });
-      }),
-    )
-    .pipe(
-      Effect.catchAll((error) => (error instanceof VaultUnavailable ? Effect.fail(error) : Effect.die(error))),
-    );
+): Effect.Effect<Workspace, VaultUnavailable, Db> {
+  return Effect.gen(function* () {
+    const db = yield* Db;
+    return yield* db
+      .transaction((tx) =>
+        Effect.gen(function* () {
+          const vault = yield* createOwnedVault(tx, userId, input);
+          return yield* loadWorkspaceWith(tx, { userId, vaultId: vault.id });
+        }),
+      )
+      .pipe(
+        Effect.catchIf(
+          (error): error is VaultUnavailable => error instanceof VaultUnavailable,
+          (error) => Effect.fail(error),
+        ),
+        Effect.orDie,
+      );
+  });
 }
 
 export function updateVault(
-  db: BackendDb,
   scope: VaultScope,
   patch: VaultPatch,
-): Effect.Effect<Workspace, VaultForbidden | VaultUnavailable> {
-  return db
-    .transaction((tx) =>
-      Effect.gen(function* () {
-        yield* assertCanEditVault(tx, scope);
+): Effect.Effect<Workspace, VaultForbidden | VaultUnavailable, Db> {
+  return Effect.gen(function* () {
+    const db = yield* Db;
+    return yield* db
+      .transaction((tx) =>
+        Effect.gen(function* () {
+          yield* assertCanEditVault(tx, scope);
 
-        const hasChanges = Object.keys(patch).length > 0;
-        if (hasChanges) {
-          yield* tx
-            .update(vaults)
-            .set(patch)
-            .where(eq(vaults.id, scope.vaultId))
-            .pipe(Effect.orDie);
-        }
+          const hasChanges = Object.keys(patch).length > 0;
+          if (hasChanges) {
+            yield* tx
+              .update(vaults)
+              .set(patch)
+              .where(eq(vaults.id, scope.vaultId))
+              .pipe(Effect.orDie);
+          }
 
-        return yield* loadWorkspace(tx, scope);
-      }),
-    )
-    .pipe(
-      Effect.catchAll((error) =>
-        error instanceof VaultUnavailable || error instanceof VaultForbidden ? Effect.fail(error) : Effect.die(error),
-      ),
-    );
+          return yield* loadWorkspaceWith(tx, scope);
+        }),
+      )
+      .pipe(
+        Effect.catchIf(
+          (error): error is VaultUnavailable | VaultForbidden =>
+            error instanceof VaultUnavailable || error instanceof VaultForbidden,
+          (error) => Effect.fail(error),
+        ),
+        Effect.orDie,
+      );
+  });
 }
 
-export function getVault(db: BackendDb, scope: VaultScope): Effect.Effect<Vault, VaultUnavailable> {
+export function getVault(scope: VaultScope): Effect.Effect<Vault, VaultUnavailable, Db> {
   return Effect.gen(function* () {
+    const db = yield* Db;
     const rows = yield* db
       .select({ vault: vaults })
       .from(vaultMemberships)
@@ -97,10 +110,10 @@ export function getVault(db: BackendDb, scope: VaultScope): Effect.Effect<Vault,
 }
 
 export function listVaultMembers(
-  db: BackendDb,
   scope: VaultScope,
-): Effect.Effect<VaultMemberDetails[], VaultUnavailable> {
+): Effect.Effect<VaultMemberDetails[], VaultUnavailable, Db> {
   return Effect.gen(function* () {
+    const db = yield* Db;
     yield* assertCanReadVault(db, scope);
 
     const rows = yield* db
@@ -118,8 +131,9 @@ export function listVaultMembers(
   });
 }
 
-export function getVaultStats(db: BackendDb, scope: VaultScope): Effect.Effect<VaultStats, VaultUnavailable> {
+export function getVaultStats(scope: VaultScope): Effect.Effect<VaultStats, VaultUnavailable, Db> {
   return Effect.gen(function* () {
+    const db = yield* Db;
     yield* assertCanReadVault(db, scope);
 
     const rows = yield* db

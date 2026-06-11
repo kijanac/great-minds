@@ -1,6 +1,6 @@
 import { Data, Effect } from "effect";
 import { and, eq } from "drizzle-orm";
-import type { DbSession } from "@great-minds/db/context";
+import { Db, type DbSession } from "@great-minds/db/context";
 import { users, vaultMemberships, vaults } from "@great-minds/db/schema";
 import type { UserId } from "@great-minds/domain/user";
 import type { VaultId } from "@great-minds/domain/vault";
@@ -14,7 +14,14 @@ export type VaultScope = {
 
 export class VaultUnavailable extends Data.TaggedError("VaultUnavailable") {}
 
-export function loadWorkspace(db: DbSession, scope: VaultScope): Effect.Effect<Workspace, VaultUnavailable> {
+export function loadWorkspace(scope: VaultScope): Effect.Effect<Workspace, VaultUnavailable, Db> {
+  return Effect.gen(function* () {
+    const db = yield* Db;
+    return yield* loadWorkspaceWith(db, scope);
+  });
+}
+
+export function loadWorkspaceWith(db: DbSession, scope: VaultScope): Effect.Effect<Workspace, VaultUnavailable> {
   return Effect.gen(function* () {
     const rows = yield* db
       .select({ user: users, vault: vaults })

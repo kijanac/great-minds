@@ -1,4 +1,4 @@
-import { Effect, Match, Schedule, type Context } from "effect";
+import { Duration, Effect, Schedule } from "effect";
 import { isTagged } from "effect/Predicate";
 import {
   LlmBadResponse,
@@ -6,6 +6,7 @@ import {
   LlmRateLimited,
   LlmRejected,
   LlmUnavailable,
+  type LlmCompletionRequest,
   type LlmProviderError,
 } from "./llm.js";
 
@@ -22,9 +23,9 @@ export type OpenRouterConfig =
       siteUrl?: string;
     };
 
-export function openRouterLlmClient(config: OpenRouterConfig): Context.Tag.Service<LlmClient> {
-  return {
-    complete: (request) =>
+export function openRouterLlmClient(config: OpenRouterConfig) {
+  return LlmClient.of({
+    complete: (request: LlmCompletionRequest) =>
       Effect.gen(function* () {
         if (config.kind === "disabled") {
           return yield* Effect.fail(new LlmUnavailable({ message: "LLM provider is not configured" }));
@@ -41,7 +42,7 @@ export function openRouterLlmClient(config: OpenRouterConfig): Context.Tag.Servi
           catch: () => new LlmBadResponse({ message: "LLM provider returned an incompatible chat completion" }),
         });
       }),
-  };
+  });
 }
 
 function fetchChatCompletion(
@@ -71,10 +72,10 @@ function requestOnce(
       }),
     catch: () => new LlmUnavailable({ message: "LLM provider is unavailable" }),
   }).pipe(
-    Effect.timeoutFail({
-      duration: OPENROUTER_REQUEST_TIMEOUT,
-      onTimeout: () => new LlmUnavailable({ message: "LLM provider timed out" }),
-    }),
+    Effect.timeout(OPENROUTER_REQUEST_TIMEOUT),
+    Effect.catchTag("TimeoutError", () =>
+      Effect.fail(new LlmUnavailable({ message: "LLM provider timed out" })),
+    ),
   );
 }
 
@@ -99,19 +100,9 @@ function classifyResponse(response: Response): Effect.Effect<Response, LlmRateLi
   return Effect.succeed(response);
 }
 
-const retrySchedule = Schedule.identity<LlmProviderError>().pipe(
-  Schedule.intersect(Schedule.recurs(OPENROUTER_RETRIES)),
-  Schedule.addDelay(([error, attempt]) => retryDelay(error, attempt + 1)),
+const retrySchedule = Schedule.recurs(OPENROUTER_RETRIES).pipe(
+  Schedule.addDelay((attempt) => Effect.succeed(Duration.millis(backoffDelayMs(attempt + 1)))),
 );
-
-function retryDelay(error: LlmProviderError, attempt: number): number {
-  const backoff = () => backoffDelayMs(attempt);
-
-  return Match.value(error).pipe(
-    Match.tag("LlmRateLimited", (rateLimited) => rateLimited.retryAfterMs ?? backoff()),
-    Match.orElse(backoff),
-  );
-}
 
 function backoffDelayMs(attempt: number): number {
   return (2 ** attempt + Math.random() * 0.5) * 1000;

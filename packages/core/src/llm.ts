@@ -29,9 +29,9 @@ export class LlmBadResponse extends Data.TaggedError("LlmBadResponse")<{
 
 export type LlmProviderError = LlmRateLimited | LlmUnavailable | LlmRejected | LlmBadResponse;
 
-export class LlmClient extends Context.Tag("LlmClient")<
+export class LlmClient extends Context.Service<
   LlmClient,
   {
     readonly complete: (request: LlmCompletionRequest) => Effect.Effect<LlmCompletion, LlmProviderError>;
   }
->() {}
+>()("LlmClient") {}

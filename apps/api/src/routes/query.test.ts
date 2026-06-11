@@ -1,6 +1,6 @@
-import { Effect } from "effect";
+import { Effect, Layer, ManagedRuntime } from "effect";
 import { describe, expect, test, vi, afterEach } from "vitest";
-import type { BackendDb } from "@great-minds/db/context";
+import { Db, type BackendDb, type BackendRuntime } from "@great-minds/db/context";
 import { createApp } from "../app.js";
 import type { ApiConfig } from "../context.js";
 
@@ -36,7 +36,7 @@ afterEach(() => {
 
 describe("POST /v1/vaults/:id/query", () => {
   test("returns 404 when the authenticated user cannot access the vault", async () => {
-    const app = createApp(fakeDb({ workspace: null }), baseConfig);
+    const app = createApp(fakeRuntime({ workspace: null }), baseConfig);
 
     const response = await postQuery(app);
     expect(response.status).toBe(404);
@@ -44,7 +44,7 @@ describe("POST /v1/vaults/:id/query", () => {
   });
 
   test("returns 502 when the LLM provider is not configured", async () => {
-    const app = createApp(fakeDb({ workspace: { user, vault } }), baseConfig);
+    const app = createApp(fakeRuntime({ workspace: { user, vault } }), baseConfig);
 
     const response = await postQuery(app);
     expect(response.status).toBe(502);
@@ -54,7 +54,7 @@ describe("POST /v1/vaults/:id/query", () => {
   test("returns 502 when the LLM provider is unavailable", async () => {
     vi.useFakeTimers();
     vi.stubGlobal("fetch", vi.fn(() => Promise.reject(new Error("network down"))));
-    const app = createApp(fakeDb({ workspace: { user, vault } }), {
+    const app = createApp(fakeRuntime({ workspace: { user, vault } }), {
       ...baseConfig,
       openAiProvider: { kind: "openrouter", apiKey: "test", baseUrl: "https://openrouter.test/api/v1" },
     });
@@ -72,7 +72,7 @@ describe("POST /v1/vaults/:id/query", () => {
       "fetch",
       vi.fn(() => Promise.resolve(Response.json({ choices: [{ message: { content: "The answer." } }] }))),
     );
-    const app = createApp(fakeDb({ workspace: { user, vault } }), {
+    const app = createApp(fakeRuntime({ workspace: { user, vault } }), {
       ...baseConfig,
       openAiProvider: { kind: "openrouter", apiKey: "test", baseUrl: "https://openrouter.test/api/v1" },
     });
@@ -89,7 +89,7 @@ describe("POST /v1/vaults/:id/query", () => {
       .mockRejectedValueOnce(new Error("network down"))
       .mockResolvedValueOnce(Response.json({ choices: [{ message: { content: "Recovered." } }] }));
     vi.stubGlobal("fetch", fetch);
-    const app = createApp(fakeDb({ workspace: { user, vault } }), {
+    const app = createApp(fakeRuntime({ workspace: { user, vault } }), {
       ...baseConfig,
       openAiProvider: { kind: "openrouter", apiKey: "test", baseUrl: "https://openrouter.test/api/v1" },
     });
@@ -109,7 +109,7 @@ describe("POST /v1/vaults/:id/query", () => {
       .mockResolvedValueOnce(new Response(null, { status: 429, headers: { "retry-after": "1" } }))
       .mockResolvedValueOnce(Response.json({ choices: [{ message: { content: "After retry." } }] }));
     vi.stubGlobal("fetch", fetch);
-    const app = createApp(fakeDb({ workspace: { user, vault } }), {
+    const app = createApp(fakeRuntime({ workspace: { user, vault } }), {
       ...baseConfig,
       openAiProvider: { kind: "openrouter", apiKey: "test", baseUrl: "https://openrouter.test/api/v1" },
     });
@@ -126,7 +126,7 @@ describe("POST /v1/vaults/:id/query", () => {
   test("does not retry provider request rejections", async () => {
     const fetch = vi.fn(() => Promise.resolve(new Response(null, { status: 400 })));
     vi.stubGlobal("fetch", fetch);
-    const app = createApp(fakeDb({ workspace: { user, vault } }), {
+    const app = createApp(fakeRuntime({ workspace: { user, vault } }), {
       ...baseConfig,
       openAiProvider: { kind: "openrouter", apiKey: "test", baseUrl: "https://openrouter.test/api/v1" },
     });
@@ -139,7 +139,7 @@ describe("POST /v1/vaults/:id/query", () => {
   });
 
   test("rejects API keys without query scope", async () => {
-    const app = createApp(fakeDb({ workspace: { user, vault }, apiKeyScopes: ["vaults:read"] }), baseConfig);
+    const app = createApp(fakeRuntime({ workspace: { user, vault }, apiKeyScopes: ["vaults:read"] }), baseConfig);
 
     const response = await postQuery(app);
     expect(response.status).toBe(403);
@@ -156,6 +156,10 @@ function postQuery(app: ReturnType<typeof createApp>) {
     },
     body: JSON.stringify({ question: "What matters?", model: "test/model" }),
   });
+}
+
+function fakeRuntime(options: Parameters<typeof fakeDb>[0] = {}): BackendRuntime {
+  return ManagedRuntime.make(Layer.succeed(Db, fakeDb(options))) as BackendRuntime;
 }
 
 function fakeDb({

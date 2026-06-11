@@ -20,8 +20,8 @@ import { tokenResponse } from "../schemas/auth.js";
 export const authRoutes = new Hono<AppEnv>()
   .post("/request-code", zValidator("json", UserCreateSchema), async (c) => {
     const input = c.req.valid("json");
-    return Effect.runPromise(
-      requestAuthCode(c.get("db"), input, c.get("authConfig"), (email, code) =>
+    return c.get("runtime").runPromise(
+      requestAuthCode(input, c.get("authConfig"), (email, code) =>
         deliverAuthCode(
           c.get("authCodeDelivery"),
           email,
@@ -38,9 +38,8 @@ export const authRoutes = new Hono<AppEnv>()
   })
   .post("/verify-code", zValidator("json", UserCreateSchema.extend({ code: AuthCodeSchema })), async (c) => {
     const body = c.req.valid("json");
-    return Effect.runPromise(
+    return c.get("runtime").runPromise(
       verifyCode(
-        c.get("db"),
         { email: body.email },
         body.code,
         c.get("authConfig"),
@@ -54,8 +53,8 @@ export const authRoutes = new Hono<AppEnv>()
   })
   .post("/refresh", zValidator("json", z.object({ refresh_token: RefreshTokenSecretSchema })), async (c) => {
     const body = c.req.valid("json");
-    return Effect.runPromise(
-      refreshAuthTokens(c.get("db"), body.refresh_token, c.get("authConfig")).pipe(
+    return c.get("runtime").runPromise(
+      refreshAuthTokens(body.refresh_token, c.get("authConfig")).pipe(
         Effect.map((tokenPair) => c.json(tokenResponse(tokenPair))),
         Effect.catchTag("InvalidRefreshToken", () =>
           Effect.fail(new HTTPException(401, { message: "Invalid or expired refresh token" })),
@@ -65,23 +64,23 @@ export const authRoutes = new Hono<AppEnv>()
   })
   .get("/api-keys", authenticateBearer, requireSession, async (c) => {
     const principal = currentPrincipal(c);
-    return Effect.runPromise(
-      listApiKeys(c.get("db"), principal.user.id).pipe(Effect.map((apiKeys) => c.json(apiKeys))),
+    return c.get("runtime").runPromise(
+      listApiKeys(principal.user.id).pipe(Effect.map((apiKeys) => c.json(apiKeys))),
     );
   })
   .post("/api-keys", authenticateBearer, requireSession, zValidator("json", ApiKeyCreateSchema), async (c) => {
     const principal = currentPrincipal(c);
     const body = c.req.valid("json");
-    return Effect.runPromise(
-      createApiKey(c.get("db"), principal.user.id, body).pipe(Effect.map((apiKey) => c.json(apiKey, 201))),
+    return c.get("runtime").runPromise(
+      createApiKey(principal.user.id, body).pipe(Effect.map((apiKey) => c.json(apiKey, 201))),
     );
   })
   .delete("/api-keys/:id", authenticateBearer, requireSession, zValidator("param", z.object({ id: ApiKeyIdSchema })), async (c) => {
     const principal = currentPrincipal(c);
     const { id } = c.req.valid("param");
 
-    return Effect.runPromise(
-      revokeApiKey(c.get("db"), principal.user.id, id).pipe(
+    return c.get("runtime").runPromise(
+      revokeApiKey(principal.user.id, id).pipe(
         Effect.map(() => c.body(null, 204)),
         Effect.catchTag("ApiKeyUnavailable", () =>
           Effect.fail(new HTTPException(404, { message: "API key not found" })),

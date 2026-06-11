@@ -1,13 +1,15 @@
 import { migrate } from "drizzle-orm/effect-postgres/migrator";
 import { fileURLToPath } from "node:url";
 import { Effect } from "effect";
-import { createBackendContext, closeBackendContext } from "./context.js";
+import { createBackendContext, closeBackendContext, Db } from "./context.js";
 
 export async function runMigrations(connectionString: string): Promise<void> {
   const context = await createBackendContext({ connectionString });
 
   try {
-    await Effect.runPromise(migrate(context.db, { migrationsFolder: migrationsFolder() }));
+    await context.runtime.runPromise(
+      Effect.flatMap(Db, (db) => migrate(db, { migrationsFolder: migrationsFolder() })),
+    );
   } finally {
     await closeBackendContext(context);
   }
