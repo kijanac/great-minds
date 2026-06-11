@@ -12,29 +12,9 @@
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
     },
-    "./auth": {
-      "types": "./dist/auth.d.ts",
-      "import": "./dist/auth.js"
-    },
-    "./llm": {
-      "types": "./dist/llm.d.ts",
-      "import": "./dist/llm.js"
-    },
     "./openrouter": {
       "types": "./dist/openrouter.d.ts",
       "import": "./dist/openrouter.js"
-    },
-    "./query": {
-      "types": "./dist/query.d.ts",
-      "import": "./dist/query.js"
-    },
-    "./sources": {
-      "types": "./dist/sources.d.ts",
-      "import": "./dist/sources.js"
-    },
-    "./vaults": {
-      "types": "./dist/vaults.d.ts",
-      "import": "./dist/vaults.js"
     }
   },
   "dependencies": {

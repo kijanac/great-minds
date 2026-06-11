@@ -3,7 +3,7 @@ import type { Context } from "hono";
 import { bearerAuth } from "hono/bearer-auth";
 import { createMiddleware } from "hono/factory";
 import { HTTPException } from "hono/http-exception";
-import { AuthService } from "@great-minds/core/auth";
+import { AuthService } from "@great-minds/core";
 import type { ApiKeyScope } from "@great-minds/domain/auth";
 import type { AppEnv } from "./context.js";
 import type { ApiRuntime } from "./runtime.js";

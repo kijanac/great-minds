@@ -4,15 +4,19 @@ import {
   AuthCodeDeliveryFailed,
   AuthConfig,
   AuthService,
+  LlmClient,
+  QueryService,
+  SourceService,
+  VaultService,
   authServiceLayer,
+  queryServiceLayer,
+  sourceServiceLayer,
+  vaultServiceLayer,
   type AuthCodeDeliveryService,
   type AuthConfigService,
-} from "@great-minds/core/auth";
-import { LlmClient, type LlmClientService } from "@great-minds/core/llm";
+  type LlmClientService,
+} from "@great-minds/core";
 import { openRouterLlmClient } from "@great-minds/core/openrouter";
-import { QueryService, queryServiceLayer } from "@great-minds/core/query";
-import { SourceService, sourceServiceLayer } from "@great-minds/core/sources";
-import { VaultService, vaultServiceLayer } from "@great-minds/core/vaults";
 import { createDbLayer, Db, type BackendDbConfig } from "@great-minds/db/context";
 import type { ApiConfig } from "./context.js";
 

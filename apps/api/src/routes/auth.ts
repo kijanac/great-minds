@@ -2,7 +2,7 @@ import { zValidator } from "@hono/zod-validator";
 import { Effect } from "effect";
 import { Hono } from "hono";
 import { HTTPException } from "hono/http-exception";
-import { AuthService } from "@great-minds/core/auth";
+import { AuthService } from "@great-minds/core";
 import { ApiKeyCreateSchema, ApiKeyIdSchema, AuthCodeSchema, RefreshTokenSecretSchema } from "@great-minds/domain/auth";
 import { UserCreateSchema } from "@great-minds/domain/user";
 import { z } from "zod";

@@ -1,6 +1,6 @@
 import { Effect, Layer, ManagedRuntime } from "effect";
 import { describe, expect, test } from "vitest";
-import { AuthCodeDeliveryFailed, type AuthConfigService } from "@great-minds/core/auth";
+import { AuthCodeDeliveryFailed, type AuthConfigService } from "@great-minds/core";
 import { Db, type BackendDb } from "@great-minds/db/context";
 import { createApp } from "../app.js";
 import type { ApiConfig } from "../context.js";
