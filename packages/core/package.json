@@ -11,10 +11,6 @@
     ".": {
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
-    },
-    "./openrouter": {
-      "types": "./dist/openrouter.d.ts",
-      "import": "./dist/openrouter.js"
     }
   },
   "dependencies": {
@@ -23,8 +19,7 @@
     "@great-minds/domain": "workspace:*",
     "drizzle-orm": "1.0.0-rc.3",
     "effect": "4.0.0-beta.78",
-    "jose": "^6.2.2",
-    "openai": "^6.42.0"
+    "jose": "^6.2.2"
   },
   "devDependencies": {
     "@types/node": "^24.12.0",

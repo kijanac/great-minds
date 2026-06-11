@@ -41,6 +41,9 @@ importers:
       hono:
         specifier: ^4.10.6
         version: 4.12.18
+      openai:
+        specifier: ^6.42.0
+        version: 6.42.0(zod@4.4.3)
       zod:
         specifier: ^4.4.3
         version: 4.4.3
@@ -75,9 +78,6 @@ importers:
       jose:
         specifier: ^6.2.2
         version: 6.2.3
-      openai:
-        specifier: ^6.42.0
-        version: 6.42.0(zod@4.4.3)
     devDependencies:
       '@types/node':
         specifier: ^24.12.0

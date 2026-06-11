@@ -1,4 +1,4 @@
-import { openRouterHeaders, type OpenRouterConfig } from "@great-minds/core/openrouter";
+import { openRouterHeaders, type OpenRouterConfig } from "./openrouter.js";
 import type { OpenAIChatCompletionRequest, OpenAIErrorResponse } from "@great-minds/protocol-openai/chat";
 
 export async function modelListResponse(config: OpenRouterConfig, requestId: string): Promise<Response> {

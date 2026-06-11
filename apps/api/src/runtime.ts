@@ -16,7 +16,7 @@ import {
   type AuthConfigService,
   type LlmClientService,
 } from "@great-minds/core";
-import { openRouterLlmClient } from "@great-minds/core/openrouter";
+import { openRouterLlmClient } from "./openrouter.js";
 import { createDbLayer, Db, type BackendDbConfig } from "@great-minds/db/context";
 import type { ApiConfig } from "./context.js";
 

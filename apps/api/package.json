@@ -19,6 +19,7 @@
     "@hono/zod-validator": "^0.8.0",
     "effect": "4.0.0-beta.78",
     "hono": "^4.10.6",
+    "openai": "^6.42.0",
     "zod": "^4.4.3"
   },
   "devDependencies": {

@@ -1,6 +1,6 @@
 import { z } from "zod";
-import type { OpenRouterConfig } from "@great-minds/core/openrouter";
 import type { AuthCodeDeliveryConfig } from "./context.js";
+import type { OpenRouterConfig } from "./openrouter.js";
 
 const BooleanEnvSchema = z
   .enum(["true", "false", "1", "0"])

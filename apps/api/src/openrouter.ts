@@ -14,7 +14,7 @@ import {
   type LlmCompletion,
   type LlmCompletionRequest,
   type LlmProviderError,
-} from "./llm.js";
+} from "@great-minds/core";
 
 const OPENROUTER_REQUEST_TIMEOUT_MS = 60_000;
 const OPENROUTER_RETRIES = 2;

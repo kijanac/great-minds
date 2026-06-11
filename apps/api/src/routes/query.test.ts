@@ -1,6 +1,6 @@
 import { Effect, Layer, ManagedRuntime } from "effect";
 import { describe, expect, test, vi, afterEach } from "vitest";
-import { openRouterLlmClient } from "@great-minds/core/openrouter";
+import { openRouterLlmClient } from "../openrouter.js";
 import { Db, type BackendDb } from "@great-minds/db/context";
 import { createApp } from "../app.js";
 import type { ApiConfig } from "../context.js";

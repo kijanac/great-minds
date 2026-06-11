@@ -1,5 +1,5 @@
 import type { AuthConfigService, AuthenticatedPrincipal, VaultScope } from "@great-minds/core";
-import type { OpenRouterConfig } from "@great-minds/core/openrouter";
+import type { OpenRouterConfig } from "./openrouter.js";
 
 export type AuthCodeDeliveryConfig =
   | { kind: "console" }
