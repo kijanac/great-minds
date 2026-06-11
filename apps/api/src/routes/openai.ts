@@ -2,11 +2,11 @@ import { zValidator } from "@hono/zod-validator";
 import { Hono } from "hono";
 import { OpenAIChatCompletionRequestSchema } from "@great-minds/protocol-openai/chat";
 import { createAuthenticateBearer, requireApiKeyScope } from "../auth.js";
-import type { BackendRuntime } from "@great-minds/db/context";
 import type { ApiConfig, AppEnv } from "../context.js";
+import type { ApiRuntime } from "../runtime.js";
 import { chatCompletionResponse, modelListResponse } from "../openai-provider.js";
 
-export function createOpenAiRoutes(runtime: BackendRuntime, config: ApiConfig) {
+export function createOpenAiRoutes(runtime: ApiRuntime, config: ApiConfig) {
   const authenticateBearer = createAuthenticateBearer(runtime, config.auth);
 
   return new Hono<AppEnv>()

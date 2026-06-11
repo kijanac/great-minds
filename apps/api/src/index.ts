@@ -1,10 +1,9 @@
 import { serve } from "@hono/node-server";
-import { createBackendRuntime } from "@great-minds/db/context";
 import { createApp } from "./app.js";
+import { createApiRuntime } from "./runtime.js";
 import { authCodeDeliveryFromEnv, env, openAiProviderFromEnv } from "./env.js";
 
-const runtime = await createBackendRuntime({ connectionString: env.DATABASE_URL });
-const app = createApp(runtime, {
+const config = {
   auth: {
     jwtSecret: env.JWT_SECRET,
     jwtAccessExpiryMinutes: env.JWT_ACCESS_EXPIRY_MINUTES,
@@ -14,7 +13,9 @@ const app = createApp(runtime, {
   },
   authCodeDelivery: authCodeDeliveryFromEnv(),
   openAiProvider: openAiProviderFromEnv(),
-});
+};
+const runtime = await createApiRuntime({ connectionString: env.DATABASE_URL }, config);
+const app = createApp(runtime, config);
 
 const server = serve(
   {

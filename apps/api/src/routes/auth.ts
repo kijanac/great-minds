@@ -14,11 +14,11 @@ import { ApiKeyCreateSchema, ApiKeyIdSchema, AuthCodeSchema, RefreshTokenSecretS
 import { UserCreateSchema } from "@great-minds/domain/user";
 import { z } from "zod";
 import { createAuthenticateBearer, currentPrincipal, requireSession } from "../auth.js";
-import type { BackendRuntime } from "@great-minds/db/context";
 import type { ApiConfig, AppEnv, AuthCodeDeliveryConfig } from "../context.js";
+import type { ApiRuntime } from "../runtime.js";
 import { tokenResponse } from "../schemas/auth.js";
 
-export function createAuthRoutes(runtime: BackendRuntime, config: ApiConfig) {
+export function createAuthRoutes(runtime: ApiRuntime, config: ApiConfig) {
   const authenticateBearer = createAuthenticateBearer(runtime, config.auth);
 
   return new Hono<AppEnv>()

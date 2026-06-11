@@ -5,10 +5,10 @@ import { createMiddleware } from "hono/factory";
 import { HTTPException } from "hono/http-exception";
 import { resolveBearerToken, type AuthConfig } from "@great-minds/core/auth";
 import type { ApiKeyScope } from "@great-minds/domain/auth";
-import type { BackendRuntime } from "@great-minds/db/context";
 import type { AppEnv } from "./context.js";
+import type { ApiRuntime } from "./runtime.js";
 
-export function createAuthenticateBearer(runtime: BackendRuntime, authConfig: AuthConfig) {
+export function createAuthenticateBearer(runtime: ApiRuntime, authConfig: AuthConfig) {
   return bearerAuth({
     verifyToken: async (token, c) => {
       const principal = await runtime.runPromise(resolveBearerToken(token, authConfig));

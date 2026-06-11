@@ -1,12 +1,20 @@
 import { Effect, Layer, ManagedRuntime } from "effect";
 import { describe, expect, test, vi, afterEach } from "vitest";
-import { Db, type BackendDb, type BackendRuntime } from "@great-minds/db/context";
+import { LlmClient } from "@great-minds/core/llm";
+import { openRouterLlmClient } from "@great-minds/core/openrouter";
+import { Db, type BackendDb } from "@great-minds/db/context";
 import { createApp } from "../app.js";
 import type { ApiConfig } from "../context.js";
+import type { ApiRuntime } from "../runtime.js";
 
 const userId = "11111111-1111-4111-8111-111111111111";
 const vaultId = "22222222-2222-4222-8222-222222222222";
 const apiKeyId = "33333333-3333-4333-8333-333333333333";
+const openRouterProvider = {
+  kind: "openrouter",
+  apiKey: "test",
+  baseUrl: "https://openrouter.test/api/v1",
+} satisfies ApiConfig["openAiProvider"];
 
 const user = { id: userId, email: "test@greatminds.local", createdAt: new Date("2026-01-01T00:00:00Z") };
 const vault = {
@@ -36,7 +44,7 @@ afterEach(() => {
 
 describe("POST /v1/vaults/:id/query", () => {
   test("returns 404 when the authenticated user cannot access the vault", async () => {
-    const app = createApp(fakeRuntime({ workspace: null }), baseConfig);
+    const app = createTestApp({ workspace: null });
 
     const response = await postQuery(app);
     expect(response.status).toBe(404);
@@ -44,7 +52,7 @@ describe("POST /v1/vaults/:id/query", () => {
   });
 
   test("returns 502 when the LLM provider is not configured", async () => {
-    const app = createApp(fakeRuntime({ workspace: { user, vault } }), baseConfig);
+    const app = createTestApp({ workspace: { user, vault } });
 
     const response = await postQuery(app);
     expect(response.status).toBe(502);
@@ -54,10 +62,7 @@ describe("POST /v1/vaults/:id/query", () => {
   test("returns 502 when the LLM provider is unavailable", async () => {
     vi.useFakeTimers();
     vi.stubGlobal("fetch", vi.fn(() => Promise.reject(new Error("network down"))));
-    const app = createApp(fakeRuntime({ workspace: { user, vault } }), {
-      ...baseConfig,
-      openAiProvider: { kind: "openrouter", apiKey: "test", baseUrl: "https://openrouter.test/api/v1" },
-    });
+    const app = createTestApp({ workspace: { user, vault } }, { ...baseConfig, openAiProvider: openRouterProvider });
 
     const responsePromise = postQuery(app);
     await vi.runAllTimersAsync();
@@ -72,10 +77,7 @@ describe("POST /v1/vaults/:id/query", () => {
       "fetch",
       vi.fn(() => Promise.resolve(Response.json({ choices: [{ message: { content: "The answer." } }] }))),
     );
-    const app = createApp(fakeRuntime({ workspace: { user, vault } }), {
-      ...baseConfig,
-      openAiProvider: { kind: "openrouter", apiKey: "test", baseUrl: "https://openrouter.test/api/v1" },
-    });
+    const app = createTestApp({ workspace: { user, vault } }, { ...baseConfig, openAiProvider: openRouterProvider });
 
     const response = await postQuery(app);
     expect(response.status).toBe(200);
@@ -89,10 +91,7 @@ describe("POST /v1/vaults/:id/query", () => {
       .mockRejectedValueOnce(new Error("network down"))
       .mockResolvedValueOnce(Response.json({ choices: [{ message: { content: "Recovered." } }] }));
     vi.stubGlobal("fetch", fetch);
-    const app = createApp(fakeRuntime({ workspace: { user, vault } }), {
-      ...baseConfig,
-      openAiProvider: { kind: "openrouter", apiKey: "test", baseUrl: "https://openrouter.test/api/v1" },
-    });
+    const app = createTestApp({ workspace: { user, vault } }, { ...baseConfig, openAiProvider: openRouterProvider });
 
     const responsePromise = postQuery(app);
     await vi.runAllTimersAsync();
@@ -109,10 +108,7 @@ describe("POST /v1/vaults/:id/query", () => {
       .mockResolvedValueOnce(new Response(null, { status: 429, headers: { "retry-after": "1" } }))
       .mockResolvedValueOnce(Response.json({ choices: [{ message: { content: "After retry." } }] }));
     vi.stubGlobal("fetch", fetch);
-    const app = createApp(fakeRuntime({ workspace: { user, vault } }), {
-      ...baseConfig,
-      openAiProvider: { kind: "openrouter", apiKey: "test", baseUrl: "https://openrouter.test/api/v1" },
-    });
+    const app = createTestApp({ workspace: { user, vault } }, { ...baseConfig, openAiProvider: openRouterProvider });
 
     const responsePromise = postQuery(app);
     await vi.runAllTimersAsync();
@@ -126,10 +122,7 @@ describe("POST /v1/vaults/:id/query", () => {
   test("does not retry provider request rejections", async () => {
     const fetch = vi.fn(() => Promise.resolve(new Response(null, { status: 400 })));
     vi.stubGlobal("fetch", fetch);
-    const app = createApp(fakeRuntime({ workspace: { user, vault } }), {
-      ...baseConfig,
-      openAiProvider: { kind: "openrouter", apiKey: "test", baseUrl: "https://openrouter.test/api/v1" },
-    });
+    const app = createTestApp({ workspace: { user, vault } }, { ...baseConfig, openAiProvider: openRouterProvider });
 
     const response = await postQuery(app);
 
@@ -139,7 +132,7 @@ describe("POST /v1/vaults/:id/query", () => {
   });
 
   test("rejects API keys without query scope", async () => {
-    const app = createApp(fakeRuntime({ workspace: { user, vault }, apiKeyScopes: ["vaults:read"] }), baseConfig);
+    const app = createTestApp({ workspace: { user, vault }, apiKeyScopes: ["vaults:read"] });
 
     const response = await postQuery(app);
     expect(response.status).toBe(403);
@@ -158,8 +151,19 @@ function postQuery(app: ReturnType<typeof createApp>) {
   });
 }
 
-function fakeRuntime(options: Parameters<typeof fakeDb>[0] = {}): BackendRuntime {
-  return ManagedRuntime.make(Layer.succeed(Db, fakeDb(options))) as BackendRuntime;
+type FakeRuntimeOptions = Parameters<typeof fakeDb>[0] & {
+  openAiProvider?: ApiConfig["openAiProvider"];
+};
+
+function createTestApp(options: FakeRuntimeOptions = {}, config = baseConfig) {
+  return createApp(fakeRuntime({ ...options, openAiProvider: config.openAiProvider }), config);
+}
+
+function fakeRuntime({ openAiProvider = { kind: "disabled" }, ...options }: FakeRuntimeOptions = {}): ApiRuntime {
+  const layer = Layer.succeed(Db, fakeDb(options)).pipe(
+    Layer.merge(Layer.succeed(LlmClient, openRouterLlmClient(openAiProvider))),
+  );
+  return ManagedRuntime.make(layer) as ApiRuntime;
 }
 
 function fakeDb({

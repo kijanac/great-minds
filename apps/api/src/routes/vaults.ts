@@ -3,8 +3,6 @@ import { Effect } from "effect";
 import { Hono } from "hono";
 import { createMiddleware } from "hono/factory";
 import { HTTPException } from "hono/http-exception";
-import { LlmClient } from "@great-minds/core/llm";
-import { openRouterLlmClient } from "@great-minds/core/openrouter";
 import { answerQuery } from "@great-minds/core/query";
 import { listSources, upsertSourceDocument } from "@great-minds/core/sources";
 import {
@@ -19,8 +17,8 @@ import { QueryRequestSchema } from "@great-minds/domain/query";
 import { SourceDocumentUpsertSchema, SourceListQuerySchema } from "@great-minds/domain/source";
 import { VaultCreateSchema, VaultIdSchema, VaultPatchSchema } from "@great-minds/domain/vault";
 import { createAuthenticateBearer, currentPrincipal, requireScope } from "../auth.js";
-import type { BackendRuntime } from "@great-minds/db/context";
 import type { ApiConfig, AppEnv } from "../context.js";
+import type { ApiRuntime } from "../runtime.js";
 
 const bindVaultScope = createMiddleware<AppEnv>(async (c, next) => {
   const principal = currentPrincipal(c);
@@ -30,11 +28,7 @@ const bindVaultScope = createMiddleware<AppEnv>(async (c, next) => {
   await next();
 });
 
-function createVaultScopedRoutes(
-  runtime: BackendRuntime,
-  config: ApiConfig,
-  authenticateBearer: ReturnType<typeof createAuthenticateBearer>,
-) {
+function createVaultScopedRoutes(runtime: ApiRuntime, authenticateBearer: ReturnType<typeof createAuthenticateBearer>) {
   return new Hono<AppEnv>()
   .use("*", authenticateBearer, bindVaultScope)
   .get("/", requireScope("vaults:read"), async (c) =>
@@ -104,7 +98,6 @@ function createVaultScopedRoutes(
       Effect.succeed(c.json({ error: { message: error.message, requestId } }, 502));
 
     const response = answerQuery(c.get("vaultScope"), c.req.valid("json")).pipe(
-      Effect.provideService(LlmClient, openRouterLlmClient(config.openAiProvider)),
       Effect.map((answer) => c.json(answer)),
       Effect.catchTags({
         VaultUnavailable: () => Effect.succeed(c.json({ error: { message: "Vault not found", requestId } }, 404)),
@@ -119,7 +112,7 @@ function createVaultScopedRoutes(
   });
 }
 
-export function createVaultRoutes(runtime: BackendRuntime, config: ApiConfig) {
+export function createVaultRoutes(runtime: ApiRuntime, config: ApiConfig) {
   const authenticateBearer = createAuthenticateBearer(runtime, config.auth);
 
   return new Hono<AppEnv>()
@@ -140,5 +133,5 @@ export function createVaultRoutes(runtime: BackendRuntime, config: ApiConfig) {
       ),
     );
   })
-  .route("/:id", createVaultScopedRoutes(runtime, config, authenticateBearer));
+  .route("/:id", createVaultScopedRoutes(runtime, authenticateBearer));
 }
