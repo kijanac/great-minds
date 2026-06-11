@@ -127,9 +127,6 @@ export function createVaultRoutes(runtime: ApiRuntime) {
     return runtime.runPromise(
       createVault(principal.user.id, c.req.valid("json")).pipe(
         Effect.map((workspace) => c.json(workspace, 201)),
-        Effect.catchTag("VaultUnavailable", () =>
-          Effect.fail(new HTTPException(404, { message: "Vault not found" })),
-        ),
       ),
     );
   })

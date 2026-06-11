@@ -39,20 +39,17 @@ export function listVaults(userId: UserId): Effect.Effect<Vault[], never, Db> {
 export function createVault(
   userId: UserId,
   input: VaultCreate,
-): Effect.Effect<Workspace, VaultUnavailable, Db> {
+): Effect.Effect<Workspace, never, Db> {
   return Effect.gen(function* () {
     const db = yield* Db;
     return yield* db
       .transaction((tx) =>
         Effect.gen(function* () {
           const vault = yield* createOwnedVault(tx, userId, input);
-          return yield* loadWorkspaceWith(tx, { userId, vaultId: vault.id });
+          return yield* loadWorkspaceWith(tx, { userId, vaultId: vault.id }).pipe(Effect.orDie);
         }),
       )
-      .pipe(
-        Effect.catchTag("VaultUnavailable", (error) => Effect.fail(error)),
-        Effect.orDie,
-      );
+      .pipe(Effect.orDie);
   });
 }
 
