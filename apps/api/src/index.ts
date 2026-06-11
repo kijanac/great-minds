@@ -1,10 +1,10 @@
 import { serve } from "@hono/node-server";
-import { createBackendContext } from "@great-minds/db/context";
+import { createBackendRuntime } from "@great-minds/db/context";
 import { createApp } from "./app.js";
 import { authCodeDeliveryFromEnv, env, openAiProviderFromEnv } from "./env.js";
 
-const backend = await createBackendContext({ connectionString: env.DATABASE_URL });
-const app = createApp(backend.runtime, {
+const runtime = await createBackendRuntime({ connectionString: env.DATABASE_URL });
+const app = createApp(runtime, {
   auth: {
     jwtSecret: env.JWT_SECRET,
     jwtAccessExpiryMinutes: env.JWT_ACCESS_EXPIRY_MINUTES,
@@ -27,7 +27,7 @@ const server = serve(
 );
 
 async function shutdown() {
-  await backend.runtime.dispose();
+  await runtime.dispose();
   server.close();
 }
 
