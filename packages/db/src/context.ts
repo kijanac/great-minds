@@ -1,7 +1,7 @@
 import { PgClient } from "@effect/sql-pg";
 import * as PgDrizzle from "drizzle-orm/effect-postgres";
 import type { EmptyRelations } from "drizzle-orm/relations";
-import { Context, Effect, Layer, ManagedRuntime, Redacted } from "effect";
+import { Context, Layer, ManagedRuntime, Redacted } from "effect";
 import type { PoolConfig } from "pg";
 
 export type BackendDb = PgDrizzle.EffectPgDatabase<EmptyRelations>;
@@ -10,10 +10,7 @@ export type DbSession = BackendDb | BackendTx;
 
 export class Db extends Context.Service<Db, BackendDb>()("Db") {}
 
-export type BackendRuntime = {
-  runPromise<A, E>(effect: Effect.Effect<A, E, Db>): Promise<A>;
-  dispose(): Promise<void>;
-};
+export type BackendRuntime = ManagedRuntime.ManagedRuntime<Db, unknown>;
 
 export type BackendContext = {
   runtime: BackendRuntime;
@@ -25,7 +22,7 @@ function createBackendRuntime(config: PoolConfig): BackendRuntime {
   const dbLayer = Layer.effect(Db, PgDrizzle.makeWithDefaults()).pipe(
     Layer.provide(PgClient.layer({ url: Redacted.make(config.connectionString) })),
   );
-  return ManagedRuntime.make(dbLayer) as BackendRuntime;
+  return ManagedRuntime.make(dbLayer);
 }
 
 export async function createBackendContext(config: PoolConfig): Promise<BackendContext> {

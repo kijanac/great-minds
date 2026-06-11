@@ -50,10 +50,7 @@ export function createVault(
         }),
       )
       .pipe(
-        Effect.catchIf(
-          (error): error is VaultUnavailable => error instanceof VaultUnavailable,
-          (error) => Effect.fail(error),
-        ),
+        Effect.catchTag("VaultUnavailable", (error) => Effect.fail(error)),
         Effect.orDie,
       );
   });
@@ -83,11 +80,10 @@ export function updateVault(
         }),
       )
       .pipe(
-        Effect.catchIf(
-          (error): error is VaultUnavailable | VaultForbidden =>
-            error instanceof VaultUnavailable || error instanceof VaultForbidden,
-          (error) => Effect.fail(error),
-        ),
+        Effect.catchTags({
+          VaultUnavailable: (error) => Effect.fail(error),
+          VaultForbidden: (error) => Effect.fail(error),
+        }),
         Effect.orDie,
       );
   });
