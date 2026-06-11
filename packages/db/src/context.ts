@@ -10,7 +10,7 @@ export type DbSession = BackendDb | BackendTx;
 
 export class Db extends Context.Service<Db, BackendDb>()("Db") {}
 
-export type BackendRuntime = ManagedRuntime.ManagedRuntime<Db, unknown>;
+export type BackendRuntime = ManagedRuntime.ManagedRuntime<Db, never>;
 
 export type BackendContext = {
   runtime: BackendRuntime;
@@ -21,6 +21,7 @@ function createBackendRuntime(config: PoolConfig): BackendRuntime {
 
   const dbLayer = Layer.effect(Db, PgDrizzle.makeWithDefaults()).pipe(
     Layer.provide(PgClient.layer({ url: Redacted.make(config.connectionString) })),
+    Layer.orDie,
   );
   return ManagedRuntime.make(dbLayer);
 }
