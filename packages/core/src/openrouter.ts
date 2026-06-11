@@ -64,7 +64,7 @@ function openAiCompatibleClient(config: Extract<OpenRouterConfig, { kind: "openr
 
 function extractCompletion(completion: OpenAI.Chat.Completions.ChatCompletion): Effect.Effect<LlmCompletion, LlmBadResponse> {
   const content = completion.choices[0]?.message.content;
-  return typeof content === "string" && content.length > 0
+  return typeof content === "string"
     ? Effect.succeed({ content })
     : Effect.fail(new LlmBadResponse({ message: "LLM provider returned an incompatible chat completion" }));
 }
