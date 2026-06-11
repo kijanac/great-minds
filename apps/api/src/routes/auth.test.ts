@@ -1,21 +1,10 @@
 import { Effect, Layer, ManagedRuntime } from "effect";
 import { describe, expect, test } from "vitest";
-import {
-  AuthCodeDelivery,
-  AuthCodeDeliveryFailed,
-  AuthConfig,
-  authServiceLayer,
-  type AuthConfigService,
-} from "@great-minds/core/auth";
-import { queryServiceLayer } from "@great-minds/core/query";
-import { sourceServiceLayer } from "@great-minds/core/sources";
-import { vaultServiceLayer } from "@great-minds/core/vaults";
-import { LlmClient } from "@great-minds/core/llm";
-import { openRouterLlmClient } from "@great-minds/core/openrouter";
+import { AuthCodeDeliveryFailed, type AuthConfigService } from "@great-minds/core/auth";
 import { Db, type BackendDb } from "@great-minds/db/context";
 import { createApp } from "../app.js";
 import type { ApiConfig } from "../context.js";
-import type { ApiRuntime } from "../runtime.js";
+import { createApiLayer, type ApiRuntime } from "../runtime.js";
 
 const baseAuthConfig: AuthConfigService = {
   jwtSecret: "test-secret-test-secret-test-secret-test-secret",
@@ -70,15 +59,14 @@ function fakeRuntime({
   auth?: AuthConfigService;
   deliver?: (email: string, code: string, expiresInMinutes: number) => Effect.Effect<void, AuthCodeDeliveryFailed>;
 } = {}): ApiRuntime {
-  const dbLayer = Layer.succeed(Db, fakeDb());
-  const authConfigLayer = Layer.succeed(AuthConfig, AuthConfig.of(auth));
-  const authCodeDeliveryLayer = Layer.succeed(AuthCodeDelivery, AuthCodeDelivery.of({ deliver }));
-  const authLayer = authServiceLayer.pipe(Layer.provide(Layer.mergeAll(dbLayer, authConfigLayer, authCodeDeliveryLayer)));
-  const llmLayer = Layer.succeed(LlmClient, openRouterLlmClient({ kind: "disabled" }));
-  const queryLayer = queryServiceLayer.pipe(Layer.provide(Layer.mergeAll(dbLayer, llmLayer)));
-  const sourceLayer = sourceServiceLayer.pipe(Layer.provide(dbLayer));
-  const vaultLayer = vaultServiceLayer.pipe(Layer.provide(dbLayer));
-  return ManagedRuntime.make(Layer.mergeAll(dbLayer, authLayer, queryLayer, sourceLayer, vaultLayer));
+  return ManagedRuntime.make(
+    createApiLayer({
+      dbLayer: Layer.succeed(Db, fakeDb()),
+      authConfig: auth,
+      authCodeDelivery: { deliver },
+      llmClient: { complete: () => Effect.die("unused LLM client") },
+    }),
+  );
 }
 
 function fakeDb(): BackendDb {

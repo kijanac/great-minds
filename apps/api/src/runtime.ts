@@ -1,6 +1,14 @@
 import { Effect, Layer, ManagedRuntime } from "effect";
-import { AuthCodeDelivery, AuthCodeDeliveryFailed, AuthConfig, AuthService, authServiceLayer } from "@great-minds/core/auth";
-import { LlmClient } from "@great-minds/core/llm";
+import {
+  AuthCodeDelivery,
+  AuthCodeDeliveryFailed,
+  AuthConfig,
+  AuthService,
+  authServiceLayer,
+  type AuthCodeDeliveryService,
+  type AuthConfigService,
+} from "@great-minds/core/auth";
+import { LlmClient, type LlmClientService } from "@great-minds/core/llm";
 import { openRouterLlmClient } from "@great-minds/core/openrouter";
 import { QueryService, queryServiceLayer } from "@great-minds/core/query";
 import { SourceService, sourceServiceLayer } from "@great-minds/core/sources";
@@ -10,17 +18,33 @@ import type { ApiConfig } from "./context.js";
 
 export type ApiRuntime = ManagedRuntime.ManagedRuntime<AuthService | QueryService | SourceService | VaultService, never>;
 
+export type ApiLayerOptions = {
+  readonly dbLayer: Layer.Layer<Db, never>;
+  readonly authConfig: AuthConfigService;
+  readonly authCodeDelivery: AuthCodeDeliveryService;
+  readonly llmClient: LlmClientService;
+};
+
+export function createApiLayer(options: ApiLayerOptions) {
+  const authConfigLayer = Layer.succeed(AuthConfig, AuthConfig.of(options.authConfig));
+  const authCodeDeliveryLayer = Layer.succeed(AuthCodeDelivery, AuthCodeDelivery.of(options.authCodeDelivery));
+  const llmLayer = Layer.succeed(LlmClient, LlmClient.of(options.llmClient));
+  const authLayer = authServiceLayer.pipe(Layer.provide(Layer.mergeAll(options.dbLayer, authConfigLayer, authCodeDeliveryLayer)));
+  const queryLayer = queryServiceLayer.pipe(Layer.provide(Layer.mergeAll(options.dbLayer, llmLayer)));
+  const sourceLayer = sourceServiceLayer.pipe(Layer.provide(options.dbLayer));
+  const vaultLayer = vaultServiceLayer.pipe(Layer.provide(options.dbLayer));
+  return Layer.mergeAll(options.dbLayer, authLayer, queryLayer, sourceLayer, vaultLayer);
+}
+
 export async function createApiRuntime(dbConfig: BackendDbConfig, config: ApiConfig): Promise<ApiRuntime> {
-  const dbLayer = createDbLayer(dbConfig);
-  const authConfigLayer = Layer.succeed(AuthConfig, AuthConfig.of(config.auth));
-  const authCodeDeliveryLayer = Layer.succeed(AuthCodeDelivery, authCodeDelivery(config));
-  const llmLayer = Layer.succeed(LlmClient, openRouterLlmClient(config.openAiProvider));
-  const authLayer = authServiceLayer.pipe(Layer.provide(Layer.mergeAll(dbLayer, authConfigLayer, authCodeDeliveryLayer)));
-  const queryLayer = queryServiceLayer.pipe(Layer.provide(Layer.mergeAll(dbLayer, llmLayer)));
-  const sourceLayer = sourceServiceLayer.pipe(Layer.provide(dbLayer));
-  const vaultLayer = vaultServiceLayer.pipe(Layer.provide(dbLayer));
-  const appLayer = Layer.mergeAll(dbLayer, authLayer, queryLayer, sourceLayer, vaultLayer);
-  const runtime = ManagedRuntime.make(appLayer);
+  const runtime = ManagedRuntime.make(
+    createApiLayer({
+      dbLayer: createDbLayer(dbConfig),
+      authConfig: config.auth,
+      authCodeDelivery: authCodeDelivery(config),
+      llmClient: openRouterLlmClient(config.openAiProvider),
+    }),
+  );
   await runtime.runPromise(Db);
   return runtime;
 }

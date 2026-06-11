@@ -1,15 +1,10 @@
 import { Effect, Layer, ManagedRuntime } from "effect";
 import { describe, expect, test, vi, afterEach } from "vitest";
-import { AuthCodeDelivery, AuthConfig, authServiceLayer } from "@great-minds/core/auth";
-import { LlmClient } from "@great-minds/core/llm";
 import { openRouterLlmClient } from "@great-minds/core/openrouter";
-import { queryServiceLayer } from "@great-minds/core/query";
-import { sourceServiceLayer } from "@great-minds/core/sources";
-import { vaultServiceLayer } from "@great-minds/core/vaults";
 import { Db, type BackendDb } from "@great-minds/db/context";
 import { createApp } from "../app.js";
 import type { ApiConfig } from "../context.js";
-import type { ApiRuntime } from "../runtime.js";
+import { createApiLayer, type ApiRuntime } from "../runtime.js";
 
 const userId = "11111111-1111-4111-8111-111111111111";
 const vaultId = "22222222-2222-4222-8222-222222222222";
@@ -164,15 +159,14 @@ function createTestApp(options: FakeRuntimeOptions = {}, config = baseConfig) {
 }
 
 function fakeRuntime({ openAiProvider = { kind: "disabled" }, ...options }: FakeRuntimeOptions = {}): ApiRuntime {
-  const dbLayer = Layer.succeed(Db, fakeDb(options));
-  const llmLayer = Layer.succeed(LlmClient, openRouterLlmClient(openAiProvider));
-  const authConfigLayer = Layer.succeed(AuthConfig, AuthConfig.of(baseConfig.auth));
-  const authCodeDeliveryLayer = Layer.succeed(AuthCodeDelivery, AuthCodeDelivery.of({ deliver: () => Effect.void }));
-  const authLayer = authServiceLayer.pipe(Layer.provide(Layer.mergeAll(dbLayer, authConfigLayer, authCodeDeliveryLayer)));
-  const queryLayer = queryServiceLayer.pipe(Layer.provide(Layer.mergeAll(dbLayer, llmLayer)));
-  const sourceLayer = sourceServiceLayer.pipe(Layer.provide(dbLayer));
-  const vaultLayer = vaultServiceLayer.pipe(Layer.provide(dbLayer));
-  return ManagedRuntime.make(Layer.mergeAll(dbLayer, authLayer, queryLayer, sourceLayer, vaultLayer));
+  return ManagedRuntime.make(
+    createApiLayer({
+      dbLayer: Layer.succeed(Db, fakeDb(options)),
+      authConfig: baseConfig.auth,
+      authCodeDelivery: { deliver: () => Effect.void },
+      llmClient: openRouterLlmClient(openAiProvider),
+    }),
+  );
 }
 
 function fakeDb({
