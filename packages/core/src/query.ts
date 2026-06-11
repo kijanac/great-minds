@@ -4,16 +4,14 @@ import type { QueryAnswer, QueryRequest } from "@great-minds/domain/query";
 import { LlmClient, type LlmClientService, type LlmProviderError } from "./llm.js";
 import { loadWorkspaceWith, VaultUnavailable, type VaultScope } from "./workspace.js";
 
-export type QueryServiceShape = {
-  readonly answer: (scope: VaultScope, query: QueryRequest) => Effect.Effect<QueryAnswer, VaultUnavailable | LlmProviderError>;
-};
-
 export class QueryService extends Context.Service<
   QueryService,
-  QueryServiceShape
+  {
+    readonly answer: (scope: VaultScope, query: QueryRequest) => Effect.Effect<QueryAnswer, VaultUnavailable | LlmProviderError>;
+  }
 >()("QueryService") {}
 
-export const QueryServiceLive = Layer.effect(
+export const queryServiceLayer = Layer.effect(
   QueryService,
   Effect.gen(function* () {
     const db = yield* Db;

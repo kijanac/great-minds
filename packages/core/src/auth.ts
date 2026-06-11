@@ -91,7 +91,7 @@ export class AuthService extends Context.Service<
   }
 >()("AuthService") {}
 
-export const AuthServiceLive = Layer.effect(
+export const authServiceLayer = Layer.effect(
   AuthService,
   Effect.gen(function* () {
     const db = yield* Db;

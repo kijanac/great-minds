@@ -5,14 +5,7 @@ import { createMiddleware } from "hono/factory";
 import { HTTPException } from "hono/http-exception";
 import { QueryService } from "@great-minds/core/query";
 import { listSources, upsertSourceDocument } from "@great-minds/core/sources";
-import {
-  createVault,
-  getVault,
-  getVaultStats,
-  listVaultMembers,
-  listVaults,
-  updateVault,
-} from "@great-minds/core/vaults";
+import { VaultService } from "@great-minds/core/vaults";
 import { QueryRequestSchema } from "@great-minds/domain/query";
 import { SourceDocumentUpsertSchema, SourceListQuerySchema } from "@great-minds/domain/source";
 import { VaultCreateSchema, VaultIdSchema, VaultPatchSchema } from "@great-minds/domain/vault";
@@ -33,7 +26,7 @@ function createVaultScopedRoutes(runtime: ApiRuntime, authenticateBearer: Return
   .use("*", authenticateBearer, bindVaultScope)
   .get("/", requireScope("vaults:read"), async (c) =>
     runtime.runPromise(
-      getVault(c.get("vaultScope")).pipe(
+      Effect.flatMap(VaultService, (vaults) => vaults.getVault(c.get("vaultScope"))).pipe(
         Effect.map((vault) => c.json(vault)),
         Effect.catchTag("VaultUnavailable", () =>
           Effect.fail(new HTTPException(404, { message: "Vault not found" })),
@@ -43,7 +36,7 @@ function createVaultScopedRoutes(runtime: ApiRuntime, authenticateBearer: Return
   )
   .patch("/", requireScope("vaults:write"), zValidator("json", VaultPatchSchema), async (c) =>
     runtime.runPromise(
-      updateVault(c.get("vaultScope"), c.req.valid("json")).pipe(
+      Effect.flatMap(VaultService, (vaults) => vaults.updateVault(c.get("vaultScope"), c.req.valid("json"))).pipe(
         Effect.map((workspace) => c.json(workspace)),
         Effect.catchTags({
           VaultUnavailable: () => Effect.fail(new HTTPException(404, { message: "Vault not found" })),
@@ -54,7 +47,7 @@ function createVaultScopedRoutes(runtime: ApiRuntime, authenticateBearer: Return
   )
   .get("/members", requireScope("vaults:read"), async (c) =>
     runtime.runPromise(
-      listVaultMembers(c.get("vaultScope")).pipe(
+      Effect.flatMap(VaultService, (vaults) => vaults.listMembers(c.get("vaultScope"))).pipe(
         Effect.map((members) => c.json({ items: members })),
         Effect.catchTag("VaultUnavailable", () =>
           Effect.fail(new HTTPException(404, { message: "Vault not found" })),
@@ -64,7 +57,7 @@ function createVaultScopedRoutes(runtime: ApiRuntime, authenticateBearer: Return
   )
   .get("/stats", requireScope("vaults:read"), async (c) =>
     runtime.runPromise(
-      getVaultStats(c.get("vaultScope")).pipe(
+      Effect.flatMap(VaultService, (vaults) => vaults.getStats(c.get("vaultScope"))).pipe(
         Effect.map((stats) => c.json(stats)),
         Effect.catchTag("VaultUnavailable", () =>
           Effect.fail(new HTTPException(404, { message: "Vault not found" })),
@@ -122,13 +115,13 @@ export function createVaultRoutes(runtime: ApiRuntime) {
   .get("/", authenticateBearer, requireScope("vaults:read"), async (c) => {
     const principal = currentPrincipal(c);
     return runtime.runPromise(
-      listVaults(principal.user.id).pipe(Effect.map((vaults) => c.json({ items: vaults }))),
+      Effect.flatMap(VaultService, (vaults) => vaults.listVaults(principal.user.id)).pipe(Effect.map((vaults) => c.json({ items: vaults }))),
     );
   })
   .post("/", authenticateBearer, requireScope("vaults:write"), zValidator("json", VaultCreateSchema), async (c) => {
     const principal = currentPrincipal(c);
     return runtime.runPromise(
-      createVault(principal.user.id, c.req.valid("json")).pipe(
+      Effect.flatMap(VaultService, (vaults) => vaults.createVault(principal.user.id, c.req.valid("json"))).pipe(
         Effect.map((workspace) => c.json(workspace, 201)),
       ),
     );

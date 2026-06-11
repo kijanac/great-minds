@@ -1,4 +1,4 @@
-import { Data, Effect } from "effect";
+import { Context, Data, Effect, Layer } from "effect";
 import { and, count, eq } from "drizzle-orm";
 import { Db, type DbSession } from "@great-minds/db/context";
 import { sourceDocuments, users, vaultMemberships, vaults } from "@great-minds/db/schema";
@@ -20,6 +20,34 @@ import { loadWorkspaceWith, VaultUnavailable, type VaultScope } from "./workspac
 export class VaultForbidden extends Data.TaggedError("VaultForbidden")<{
   message: string;
 }> {}
+
+export class VaultService extends Context.Service<
+  VaultService,
+  {
+    readonly listVaults: (userId: UserId) => Effect.Effect<Vault[]>;
+    readonly createVault: (userId: UserId, input: VaultCreate) => Effect.Effect<Workspace>;
+    readonly getVault: (scope: VaultScope) => Effect.Effect<Vault, VaultUnavailable>;
+    readonly updateVault: (scope: VaultScope, patch: VaultPatch) => Effect.Effect<Workspace, VaultForbidden | VaultUnavailable>;
+    readonly listMembers: (scope: VaultScope) => Effect.Effect<VaultMemberDetails[], VaultUnavailable>;
+    readonly getStats: (scope: VaultScope) => Effect.Effect<VaultStats, VaultUnavailable>;
+  }
+>()("VaultService") {}
+
+export const vaultServiceLayer = Layer.effect(
+  VaultService,
+  Effect.gen(function* () {
+    const db = yield* Db;
+
+    return VaultService.of({
+      listVaults: (userId) => listVaults(userId).pipe(Effect.provideService(Db, db)),
+      createVault: (userId, input) => createVault(userId, input).pipe(Effect.provideService(Db, db)),
+      getVault: (scope) => getVault(scope).pipe(Effect.provideService(Db, db)),
+      updateVault: (scope, patch) => updateVault(scope, patch).pipe(Effect.provideService(Db, db)),
+      listMembers: (scope) => listVaultMembers(scope).pipe(Effect.provideService(Db, db)),
+      getStats: (scope) => getVaultStats(scope).pipe(Effect.provideService(Db, db)),
+    });
+  }),
+);
 
 export function listVaults(userId: UserId): Effect.Effect<Vault[], never, Db> {
   return Effect.gen(function* () {

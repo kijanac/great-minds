@@ -4,9 +4,13 @@ import {
   AuthCodeDelivery,
   AuthCodeDeliveryFailed,
   AuthConfig,
-  AuthServiceLive,
+  authServiceLayer,
   type AuthConfigService,
 } from "@great-minds/core/auth";
+import { queryServiceLayer } from "@great-minds/core/query";
+import { vaultServiceLayer } from "@great-minds/core/vaults";
+import { LlmClient } from "@great-minds/core/llm";
+import { openRouterLlmClient } from "@great-minds/core/openrouter";
 import { Db, type BackendDb } from "@great-minds/db/context";
 import { createApp } from "../app.js";
 import type { ApiConfig } from "../context.js";
@@ -68,8 +72,11 @@ function fakeRuntime({
   const dbLayer = Layer.succeed(Db, fakeDb());
   const authConfigLayer = Layer.succeed(AuthConfig, AuthConfig.of(auth));
   const authCodeDeliveryLayer = Layer.succeed(AuthCodeDelivery, AuthCodeDelivery.of({ deliver }));
-  const authLayer = AuthServiceLive.pipe(Layer.provide(Layer.mergeAll(dbLayer, authConfigLayer, authCodeDeliveryLayer)));
-  return ManagedRuntime.make(Layer.mergeAll(dbLayer, authLayer)) as ApiRuntime;
+  const authLayer = authServiceLayer.pipe(Layer.provide(Layer.mergeAll(dbLayer, authConfigLayer, authCodeDeliveryLayer)));
+  const llmLayer = Layer.succeed(LlmClient, openRouterLlmClient({ kind: "disabled" }));
+  const queryLayer = queryServiceLayer.pipe(Layer.provide(Layer.mergeAll(dbLayer, llmLayer)));
+  const vaultLayer = vaultServiceLayer.pipe(Layer.provide(dbLayer));
+  return ManagedRuntime.make(Layer.mergeAll(dbLayer, authLayer, queryLayer, vaultLayer));
 }
 
 function fakeDb(): BackendDb {
