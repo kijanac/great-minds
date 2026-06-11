@@ -52,11 +52,13 @@ export class AuthCodeDeliveryFailed extends Data.TaggedError("AuthCodeDeliveryFa
   message: string;
 }> {}
 
+export type AuthCodeDeliveryService = {
+  readonly deliver: (email: string, code: string, expiresInMinutes: number) => Effect.Effect<void, AuthCodeDeliveryFailed>;
+};
+
 export class AuthCodeDelivery extends Context.Service<
   AuthCodeDelivery,
-  {
-    readonly deliver: (email: string, code: string, expiresInMinutes: number) => Effect.Effect<void, AuthCodeDeliveryFailed>;
-  }
+  AuthCodeDeliveryService
 >()("AuthCodeDelivery") {}
 
 export class InvalidAuthCode extends Data.TaggedError("InvalidAuthCode")<{
