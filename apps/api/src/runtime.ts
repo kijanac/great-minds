@@ -6,16 +6,18 @@ import { QueryService, QueryServiceLive } from "@great-minds/core/query";
 import { createDbLayer, Db, type BackendDbConfig } from "@great-minds/db/context";
 import type { ApiConfig } from "./context.js";
 
-export type ApiRuntime = ManagedRuntime.ManagedRuntime<Db | LlmClient | AuthCodeDelivery | AuthConfig | QueryService, never>;
+export type ApiRuntime = ManagedRuntime.ManagedRuntime<Db | AuthCodeDelivery | AuthConfig | QueryService, never>;
 
 export async function createApiRuntime(dbConfig: BackendDbConfig, config: ApiConfig): Promise<ApiRuntime> {
-  const baseLayer = Layer.mergeAll(
-    createDbLayer(dbConfig),
+  const dbLayer = createDbLayer(dbConfig);
+  const llmLayer = Layer.succeed(LlmClient, openRouterLlmClient(config.openAiProvider));
+  const visibleLayer = Layer.mergeAll(
+    dbLayer,
     Layer.succeed(AuthConfig, AuthConfig.of(config.auth)),
-    Layer.succeed(LlmClient, openRouterLlmClient(config.openAiProvider)),
     Layer.succeed(AuthCodeDelivery, authCodeDelivery(config)),
   );
-  const appLayer = QueryServiceLive.pipe(Layer.provideMerge(baseLayer));
+  const queryLayer = QueryServiceLive.pipe(Layer.provide(Layer.mergeAll(dbLayer, llmLayer)));
+  const appLayer = visibleLayer.pipe(Layer.merge(queryLayer));
   const runtime = ManagedRuntime.make(appLayer);
   await runtime.runPromise(Db);
   return runtime;

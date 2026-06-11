@@ -6,8 +6,6 @@ import {
   AuthConfig,
   type AuthConfigService,
 } from "@great-minds/core/auth";
-import { LlmClient } from "@great-minds/core/llm";
-import { openRouterLlmClient } from "@great-minds/core/openrouter";
 import { Db, type BackendDb } from "@great-minds/db/context";
 import { createApp } from "../app.js";
 import type { ApiConfig } from "../context.js";
@@ -68,7 +66,6 @@ function fakeRuntime({
 } = {}): ApiRuntime {
   const layer = Layer.succeed(Db, fakeDb()).pipe(
     Layer.merge(Layer.succeed(AuthConfig, AuthConfig.of(auth))),
-    Layer.merge(Layer.succeed(LlmClient, openRouterLlmClient({ kind: "disabled" }))),
     Layer.merge(Layer.succeed(AuthCodeDelivery, AuthCodeDelivery.of({ deliver }))),
   );
   return ManagedRuntime.make(layer) as ApiRuntime;

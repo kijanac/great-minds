@@ -162,13 +162,15 @@ function createTestApp(options: FakeRuntimeOptions = {}, config = baseConfig) {
 }
 
 function fakeRuntime({ openAiProvider = { kind: "disabled" }, ...options }: FakeRuntimeOptions = {}): ApiRuntime {
-  const baseLayer = Layer.mergeAll(
-    Layer.succeed(Db, fakeDb(options)),
+  const dbLayer = Layer.succeed(Db, fakeDb(options));
+  const llmLayer = Layer.succeed(LlmClient, openRouterLlmClient(openAiProvider));
+  const visibleLayer = Layer.mergeAll(
+    dbLayer,
     Layer.succeed(AuthConfig, AuthConfig.of(baseConfig.auth)),
-    Layer.succeed(LlmClient, openRouterLlmClient(openAiProvider)),
     Layer.succeed(AuthCodeDelivery, AuthCodeDelivery.of({ deliver: () => Effect.void })),
   );
-  return ManagedRuntime.make(QueryServiceLive.pipe(Layer.provideMerge(baseLayer))) as ApiRuntime;
+  const queryLayer = QueryServiceLive.pipe(Layer.provide(Layer.mergeAll(dbLayer, llmLayer)));
+  return ManagedRuntime.make(visibleLayer.pipe(Layer.merge(queryLayer))) as ApiRuntime;
 }
 
 function fakeDb({
