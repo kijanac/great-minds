@@ -63,9 +63,6 @@ async def review_proposal(
     vault_service: VaultServiceDep,
     proposal_service: ProposalServiceDep,
 ) -> Proposal:
-    if req.status == ProposalStatus.PENDING:
-        raise HTTPException(status_code=400, detail="Cannot set status back to pending")
-
     storage = await vault_service.get_storage_by_id(vault_id)
 
     try:

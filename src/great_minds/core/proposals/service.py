@@ -68,10 +68,7 @@ class ProposalService:
         )
 
         await self._commit()
-        result = await self.repo.get(proposal.id)
-        if result is None:
-            raise RuntimeError(f"created proposal {proposal.id} not found")
-        return result
+        return proposal
 
     async def list_for_vault(
         self,
@@ -115,10 +112,13 @@ class ProposalService:
         if proposal.status != ProposalStatus.PENDING:
             raise ValueError("Proposal already reviewed")
 
-        if new_status == ProposalStatus.APPROVED:
-            await self._approve(proposal, storage)
-        elif new_status == ProposalStatus.REJECTED:
-            await self._reject(proposal)
+        match new_status:
+            case ProposalStatus.APPROVED:
+                await self._approve(proposal, storage)
+            case ProposalStatus.REJECTED:
+                await self._reject(proposal)
+            case ProposalStatus.PENDING:
+                raise ValueError("Cannot review a proposal back to pending")
 
         await self.repo.set_status(vault_id, proposal.id, new_status)
         await self._commit()

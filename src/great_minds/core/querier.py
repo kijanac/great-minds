@@ -274,10 +274,6 @@ async def read_document(vault: QuerySource, path: str) -> str:
     return f"# {path} [{vault.label}]\n\n{content}{links_section}"
 
 
-async def read_document_enriched(vault: QuerySource, path: str) -> str:
-    return await read_document(vault, path)
-
-
 async def search_content(
     vault: QuerySource, query: str, source: SourceDocumentService
 ) -> str:
@@ -352,7 +348,7 @@ async def _dispatch_tool(
     source: SourceDocumentService,
 ) -> str:
     if name == "read_document":
-        return await read_document_enriched(vault, args["path"])
+        return await read_document(vault, args["path"])
     elif name == "search_content":
         return await search_content(vault, args["query"], source)
     elif name == "query_documents":

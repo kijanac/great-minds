@@ -183,7 +183,7 @@ class PublishPhase:
     # ---------------------------------------------------------------------------
 
     async def _write_raw_index(self, docs: list[SourceDocument]) -> None:
-        ordered = sorted(docs, key=lambda d: d.title.lower())
+        ordered = sorted(docs, key=lambda d: (d.title or d.file_path).lower())
         lines = [
             "# Raw Sources",
             "",
@@ -191,17 +191,13 @@ class PublishPhase:
             "",
         ]
         for d in ordered:
-            meta_bits: list[str] = []
-            if d.genre:
-                meta_bits.append(d.genre)
-            if d.published_date:
-                meta_bits.append(d.published_date)
-            if d.author:
-                meta_bits.append(d.author)
+            meta_bits = [b for b in (d.genre, d.published_date, d.author) if b]
             meta_suffix = f" — {', '.join(meta_bits)}" if meta_bits else ""
             precis = (d.precis or "").strip().replace("\n", " ")
             precis_suffix = f"  \n  {precis}" if precis else ""
-            lines.append(f"- [{d.title}]({d.file_path}){meta_suffix}{precis_suffix}")
+            lines.append(
+                f"- [{d.title or d.file_path}]({d.file_path}){meta_suffix}{precis_suffix}"
+            )
         lines.append("")
         await self.storage.write(RAW_INDEX_PATH, "\n".join(lines))
 

@@ -29,23 +29,6 @@ class TopicBase(BaseModel):
     description: str
 
 
-class TopicCreate(TopicBase):
-    """Input for inserting/upserting a topic registry row."""
-
-    topic_id: UUID
-    vault_id: UUID
-    compiled_from_hash: str | None = None
-
-
-class TopicUpdate(BaseModel):
-    """Patch-style topic update input."""
-
-    slug: str | None = None
-    title: str | None = None
-    description: str | None = None
-    compiled_from_hash: str | None = None
-
-
 class Topic(TopicBase):
     """Read shape for a row in the topics registry."""
 

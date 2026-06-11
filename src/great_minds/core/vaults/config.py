@@ -72,15 +72,6 @@ class EnrichedFieldSpec:
     description: str = ""
 
 
-async def load_config(storage: Storage) -> dict:
-    """Load vault config as a raw dict, returning empty if absent."""
-    content = await storage.read(CONFIG_PATH, strict=False)
-    if content is None:
-        return {}
-    raw = _yaml.load(content)
-    return dict(raw) if raw else {}
-
-
 def load_default_config_text() -> str:
     """Read the package-bundled default config.yaml."""
     return DEFAULT_CONFIG_PATH.read_text(encoding="utf-8")

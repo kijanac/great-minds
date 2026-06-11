@@ -12,12 +12,10 @@ from great_minds.core.topics.schemas import (
     CanonicalTopicDraft,
     Topic,
     TopicBase,
-    TopicCreate,
     TopicDetail,
     TopicLink,
     TopicReductionOutput,
     TopicSimilarityPair,
-    TopicUpdate,
 )
 from great_minds.core.topics.service import TopicService
 
@@ -26,7 +24,6 @@ __all__ = [
     "CanonicalTopicDraft",
     "Topic",
     "TopicBase",
-    "TopicCreate",
     "TopicDetail",
     "TopicLink",
     "TopicLinkORM",
@@ -37,5 +34,4 @@ __all__ = [
     "TopicRepository",
     "TopicService",
     "TopicSimilarityPair",
-    "TopicUpdate",
 ]
