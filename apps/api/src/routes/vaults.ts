@@ -26,8 +26,11 @@ function createVaultScopedRoutes(runtime: ApiRuntime, authenticateBearer: Return
   .use("*", authenticateBearer, bindVaultScope)
   .get("/", requireScope("vaults:read"), async (c) =>
     runtime.runPromise(
-      Effect.flatMap(VaultService, (vaults) => vaults.getVault(c.get("vaultScope"))).pipe(
-        Effect.map((vault) => c.json(vault)),
+      Effect.gen(function* () {
+        const vaults = yield* VaultService;
+        const vault = yield* vaults.getVault(c.get("vaultScope"));
+        return c.json(vault);
+      }).pipe(
         Effect.catchTag("VaultUnavailable", () =>
           Effect.fail(new HTTPException(404, { message: "Vault not found" })),
         ),
@@ -36,8 +39,11 @@ function createVaultScopedRoutes(runtime: ApiRuntime, authenticateBearer: Return
   )
   .patch("/", requireScope("vaults:write"), zValidator("json", VaultPatchSchema), async (c) =>
     runtime.runPromise(
-      Effect.flatMap(VaultService, (vaults) => vaults.updateVault(c.get("vaultScope"), c.req.valid("json"))).pipe(
-        Effect.map((workspace) => c.json(workspace)),
+      Effect.gen(function* () {
+        const vaults = yield* VaultService;
+        const workspace = yield* vaults.updateVault(c.get("vaultScope"), c.req.valid("json"));
+        return c.json(workspace);
+      }).pipe(
         Effect.catchTags({
           VaultUnavailable: () => Effect.fail(new HTTPException(404, { message: "Vault not found" })),
           VaultForbidden: (error) => Effect.succeed(c.json({ error: { message: error.message } }, 403)),
@@ -47,8 +53,11 @@ function createVaultScopedRoutes(runtime: ApiRuntime, authenticateBearer: Return
   )
   .get("/members", requireScope("vaults:read"), async (c) =>
     runtime.runPromise(
-      Effect.flatMap(VaultService, (vaults) => vaults.listMembers(c.get("vaultScope"))).pipe(
-        Effect.map((members) => c.json({ items: members })),
+      Effect.gen(function* () {
+        const vaults = yield* VaultService;
+        const members = yield* vaults.listMembers(c.get("vaultScope"));
+        return c.json({ items: members });
+      }).pipe(
         Effect.catchTag("VaultUnavailable", () =>
           Effect.fail(new HTTPException(404, { message: "Vault not found" })),
         ),
@@ -57,8 +66,11 @@ function createVaultScopedRoutes(runtime: ApiRuntime, authenticateBearer: Return
   )
   .get("/stats", requireScope("vaults:read"), async (c) =>
     runtime.runPromise(
-      Effect.flatMap(VaultService, (vaults) => vaults.getStats(c.get("vaultScope"))).pipe(
-        Effect.map((stats) => c.json(stats)),
+      Effect.gen(function* () {
+        const vaults = yield* VaultService;
+        const stats = yield* vaults.getStats(c.get("vaultScope"));
+        return c.json(stats);
+      }).pipe(
         Effect.catchTag("VaultUnavailable", () =>
           Effect.fail(new HTTPException(404, { message: "Vault not found" })),
         ),
@@ -67,8 +79,11 @@ function createVaultScopedRoutes(runtime: ApiRuntime, authenticateBearer: Return
   )
   .get("/sources", requireScope("sources:read"), zValidator("query", SourceListQuerySchema), async (c) =>
     runtime.runPromise(
-      Effect.flatMap(SourceService, (sources) => sources.listSources(c.get("vaultScope"), c.req.valid("query"))).pipe(
-        Effect.map((page) => c.json(page)),
+      Effect.gen(function* () {
+        const sources = yield* SourceService;
+        const page = yield* sources.listSources(c.get("vaultScope"), c.req.valid("query"));
+        return c.json(page);
+      }).pipe(
         Effect.catchTag("VaultUnavailable", () =>
           Effect.fail(new HTTPException(404, { message: "Vault not found" })),
         ),
@@ -77,8 +92,11 @@ function createVaultScopedRoutes(runtime: ApiRuntime, authenticateBearer: Return
   )
   .post("/sources", requireScope("sources:write"), zValidator("json", SourceDocumentUpsertSchema), async (c) =>
     runtime.runPromise(
-      Effect.flatMap(SourceService, (sources) => sources.upsertSourceDocument(c.get("vaultScope"), c.req.valid("json"))).pipe(
-        Effect.map((source) => c.json(source)),
+      Effect.gen(function* () {
+        const sources = yield* SourceService;
+        const source = yield* sources.upsertSourceDocument(c.get("vaultScope"), c.req.valid("json"));
+        return c.json(source);
+      }).pipe(
         Effect.catchTag("VaultUnavailable", () =>
           Effect.fail(new HTTPException(404, { message: "Vault not found" })),
         ),
@@ -115,15 +133,21 @@ export function createVaultRoutes(runtime: ApiRuntime) {
   .get("/", authenticateBearer, requireScope("vaults:read"), async (c) => {
     const principal = currentPrincipal(c);
     return runtime.runPromise(
-      Effect.flatMap(VaultService, (vaults) => vaults.listVaults(principal.user.id)).pipe(Effect.map((vaults) => c.json({ items: vaults }))),
+      Effect.gen(function* () {
+        const vaults = yield* VaultService;
+        const items = yield* vaults.listVaults(principal.user.id);
+        return c.json({ items });
+      }),
     );
   })
   .post("/", authenticateBearer, requireScope("vaults:write"), zValidator("json", VaultCreateSchema), async (c) => {
     const principal = currentPrincipal(c);
     return runtime.runPromise(
-      Effect.flatMap(VaultService, (vaults) => vaults.createVault(principal.user.id, c.req.valid("json"))).pipe(
-        Effect.map((workspace) => c.json(workspace, 201)),
-      ),
+      Effect.gen(function* () {
+        const vaults = yield* VaultService;
+        const workspace = yield* vaults.createVault(principal.user.id, c.req.valid("json"));
+        return c.json(workspace, 201);
+      }),
     );
   })
   .route("/:id", createVaultScopedRoutes(runtime, authenticateBearer));

@@ -12,7 +12,10 @@ export function createAuthenticateBearer(runtime: ApiRuntime) {
   return bearerAuth({
     verifyToken: async (token, c) => {
       const principal = await runtime.runPromise(
-        Effect.flatMap(AuthService, (auth) => auth.resolveBearerToken(token)),
+        Effect.gen(function* () {
+          const auth = yield* AuthService;
+          return yield* auth.resolveBearerToken(token);
+        }),
       );
       if (!principal) return false;
 

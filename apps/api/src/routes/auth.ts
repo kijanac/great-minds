@@ -18,8 +18,11 @@ export function createAuthRoutes(runtime: ApiRuntime) {
   .post("/request-code", zValidator("json", UserCreateSchema), async (c) => {
     const input = c.req.valid("json");
     return runtime.runPromise(
-      Effect.flatMap(AuthService, (auth) => auth.requestCode(input)).pipe(
-        Effect.map(() => c.body(null, 204)),
+      Effect.gen(function* () {
+        const auth = yield* AuthService;
+        yield* auth.requestCode(input);
+        return c.body(null, 204);
+      }).pipe(
         Effect.catchTag("AuthCodeDeliveryFailed", (error) =>
           Effect.succeed(c.json({ error: { message: error.message } }, 502)),
         ),
@@ -29,8 +32,11 @@ export function createAuthRoutes(runtime: ApiRuntime) {
   .post("/verify-code", zValidator("json", UserCreateSchema.extend({ code: AuthCodeSchema })), async (c) => {
     const body = c.req.valid("json");
     return runtime.runPromise(
-      Effect.flatMap(AuthService, (auth) => auth.verifyCode({ email: body.email }, body.code)).pipe(
-        Effect.map((tokenPair) => c.json(tokenResponse(tokenPair))),
+      Effect.gen(function* () {
+        const auth = yield* AuthService;
+        const tokenPair = yield* auth.verifyCode({ email: body.email }, body.code);
+        return c.json(tokenResponse(tokenPair));
+      }).pipe(
         Effect.catchTag("InvalidAuthCode", () =>
           Effect.fail(new HTTPException(401, { message: "Invalid or expired code" })),
         ),
@@ -40,8 +46,11 @@ export function createAuthRoutes(runtime: ApiRuntime) {
   .post("/refresh", zValidator("json", z.object({ refresh_token: RefreshTokenSecretSchema })), async (c) => {
     const body = c.req.valid("json");
     return runtime.runPromise(
-      Effect.flatMap(AuthService, (auth) => auth.refreshTokens(body.refresh_token)).pipe(
-        Effect.map((tokenPair) => c.json(tokenResponse(tokenPair))),
+      Effect.gen(function* () {
+        const auth = yield* AuthService;
+        const tokenPair = yield* auth.refreshTokens(body.refresh_token);
+        return c.json(tokenResponse(tokenPair));
+      }).pipe(
         Effect.catchTag("InvalidRefreshToken", () =>
           Effect.fail(new HTTPException(401, { message: "Invalid or expired refresh token" })),
         ),
@@ -51,14 +60,22 @@ export function createAuthRoutes(runtime: ApiRuntime) {
   .get("/api-keys", authenticateBearer, requireSession, async (c) => {
     const principal = currentPrincipal(c);
     return runtime.runPromise(
-      Effect.flatMap(AuthService, (auth) => auth.listApiKeys(principal.user.id)).pipe(Effect.map((apiKeys) => c.json(apiKeys))),
+      Effect.gen(function* () {
+        const auth = yield* AuthService;
+        const apiKeys = yield* auth.listApiKeys(principal.user.id);
+        return c.json(apiKeys);
+      }),
     );
   })
   .post("/api-keys", authenticateBearer, requireSession, zValidator("json", ApiKeyCreateSchema), async (c) => {
     const principal = currentPrincipal(c);
     const body = c.req.valid("json");
     return runtime.runPromise(
-      Effect.flatMap(AuthService, (auth) => auth.createApiKey(principal.user.id, body)).pipe(Effect.map((apiKey) => c.json(apiKey, 201))),
+      Effect.gen(function* () {
+        const auth = yield* AuthService;
+        const apiKey = yield* auth.createApiKey(principal.user.id, body);
+        return c.json(apiKey, 201);
+      }),
     );
   })
   .delete("/api-keys/:id", authenticateBearer, requireSession, zValidator("param", z.object({ id: ApiKeyIdSchema })), async (c) => {
@@ -66,8 +83,11 @@ export function createAuthRoutes(runtime: ApiRuntime) {
     const { id } = c.req.valid("param");
 
     return runtime.runPromise(
-      Effect.flatMap(AuthService, (auth) => auth.revokeApiKey(principal.user.id, id)).pipe(
-        Effect.map(() => c.body(null, 204)),
+      Effect.gen(function* () {
+        const auth = yield* AuthService;
+        yield* auth.revokeApiKey(principal.user.id, id);
+        return c.body(null, 204);
+      }).pipe(
         Effect.catchTag("ApiKeyUnavailable", () =>
           Effect.fail(new HTTPException(404, { message: "API key not found" })),
         ),
