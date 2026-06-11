@@ -1,6 +1,5 @@
-import type { AuthConfigService, AuthenticatedPrincipal } from "@great-minds/core/auth";
+import type { AuthConfigService, AuthenticatedPrincipal, VaultScope } from "@great-minds/core";
 import type { OpenRouterConfig } from "@great-minds/core/openrouter";
-import type { VaultScope } from "@great-minds/core/workspace";
 
 export type AuthCodeDeliveryConfig =
   | { kind: "console" }

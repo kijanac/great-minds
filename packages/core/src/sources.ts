@@ -34,7 +34,7 @@ export const sourceServiceLayer = Layer.effect(
   }),
 );
 
-export function listSources(
+function listSources(
   scope: VaultScope,
   query: SourceListQuery,
 ): Effect.Effect<SourceDocumentPage, VaultUnavailable, Db> {
@@ -92,7 +92,7 @@ export function listSources(
   });
 }
 
-export function upsertSourceDocument(
+function upsertSourceDocument(
   scope: VaultScope,
   metadata: SourceDocumentUpsert,
 ): Effect.Effect<SourceDocument, VaultUnavailable, Db> {

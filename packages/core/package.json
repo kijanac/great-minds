@@ -32,17 +32,9 @@
       "types": "./dist/sources.d.ts",
       "import": "./dist/sources.js"
     },
-    "./users": {
-      "types": "./dist/users.d.ts",
-      "import": "./dist/users.js"
-    },
     "./vaults": {
       "types": "./dist/vaults.d.ts",
       "import": "./dist/vaults.js"
-    },
-    "./workspace": {
-      "types": "./dist/workspace.d.ts",
-      "import": "./dist/workspace.js"
     }
   },
   "dependencies": {

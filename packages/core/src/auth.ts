@@ -127,7 +127,7 @@ export const authServiceLayer = Layer.effect(
   }),
 );
 
-export function requestAuthCode(
+function requestAuthCode(
   input: UserCreate,
 ): Effect.Effect<void, AuthCodeDeliveryFailed, Db | AuthCodeDelivery | AuthConfig> {
   return Effect.gen(function* () {
@@ -156,7 +156,7 @@ export function requestAuthCode(
   });
 }
 
-export function verifyCode(
+function verifyCode(
   input: UserCreate,
   code: string,
 ): Effect.Effect<TokenPair, InvalidAuthCode, Db | AuthConfig> {
@@ -173,7 +173,7 @@ export function verifyCode(
   });
 }
 
-export function refreshAuthTokens(
+function refreshAuthTokens(
   refreshToken: string,
 ): Effect.Effect<TokenPair, InvalidRefreshToken, Db | AuthConfig> {
   return Effect.gen(function* () {
@@ -210,7 +210,7 @@ export function refreshAuthTokens(
   });
 }
 
-export function resolveBearerToken(
+function resolveBearerToken(
   token: string,
 ): Effect.Effect<AuthenticatedPrincipal | null, never, Db | AuthConfig> {
   return Effect.gen(function* () {
@@ -223,7 +223,7 @@ export function resolveBearerToken(
   });
 }
 
-export function createApiKey(
+function createApiKey(
   userId: UserId,
   input: ApiKeyCreate,
 ): Effect.Effect<ApiKeyWithSecret, never, Db> {
@@ -241,7 +241,7 @@ export function createApiKey(
   });
 }
 
-export function listApiKeys(userId: UserId): Effect.Effect<ApiKey[], never, Db> {
+function listApiKeys(userId: UserId): Effect.Effect<ApiKey[], never, Db> {
   return Effect.gen(function* () {
     const db = yield* Db;
     const rows = yield* db
@@ -255,7 +255,7 @@ export function listApiKeys(userId: UserId): Effect.Effect<ApiKey[], never, Db> 
   });
 }
 
-export function revokeApiKey(
+function revokeApiKey(
   userId: UserId,
   keyId: ApiKeyId,
 ): Effect.Effect<void, ApiKeyUnavailable, Db> {

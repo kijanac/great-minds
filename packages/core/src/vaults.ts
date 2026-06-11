@@ -49,7 +49,7 @@ export const vaultServiceLayer = Layer.effect(
   }),
 );
 
-export function listVaults(userId: UserId): Effect.Effect<Vault[], never, Db> {
+function listVaults(userId: UserId): Effect.Effect<Vault[], never, Db> {
   return Effect.gen(function* () {
     const db = yield* Db;
     const rows = yield* db
@@ -64,7 +64,7 @@ export function listVaults(userId: UserId): Effect.Effect<Vault[], never, Db> {
   });
 }
 
-export function createVault(
+function createVault(
   userId: UserId,
   input: VaultCreate,
 ): Effect.Effect<Workspace, never, Db> {
@@ -81,7 +81,7 @@ export function createVault(
   });
 }
 
-export function updateVault(
+function updateVault(
   scope: VaultScope,
   patch: VaultPatch,
 ): Effect.Effect<Workspace, VaultForbidden | VaultUnavailable, Db> {
@@ -114,7 +114,7 @@ export function updateVault(
   });
 }
 
-export function getVault(scope: VaultScope): Effect.Effect<Vault, VaultUnavailable, Db> {
+function getVault(scope: VaultScope): Effect.Effect<Vault, VaultUnavailable, Db> {
   return Effect.gen(function* () {
     const db = yield* Db;
     const rows = yield* db
@@ -130,7 +130,7 @@ export function getVault(scope: VaultScope): Effect.Effect<Vault, VaultUnavailab
   });
 }
 
-export function listVaultMembers(
+function listVaultMembers(
   scope: VaultScope,
 ): Effect.Effect<VaultMemberDetails[], VaultUnavailable, Db> {
   return Effect.gen(function* () {
@@ -152,7 +152,7 @@ export function listVaultMembers(
   });
 }
 
-export function getVaultStats(scope: VaultScope): Effect.Effect<VaultStats, VaultUnavailable, Db> {
+function getVaultStats(scope: VaultScope): Effect.Effect<VaultStats, VaultUnavailable, Db> {
   return Effect.gen(function* () {
     const db = yield* Db;
     yield* assertCanReadVault(db, scope);
