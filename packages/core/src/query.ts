@@ -1,17 +1,39 @@
-import { Effect } from "effect";
-import type { Db } from "@great-minds/db/context";
+import { Context, Effect, Layer } from "effect";
+import { Db, type BackendDb } from "@great-minds/db/context";
 import type { QueryAnswer, QueryRequest } from "@great-minds/domain/query";
-import { LlmClient, type LlmProviderError } from "./llm.js";
-import { loadWorkspace, VaultUnavailable, type VaultScope } from "./workspace.js";
+import { LlmClient, type LlmClientService, type LlmProviderError } from "./llm.js";
+import { loadWorkspaceWith, VaultUnavailable, type VaultScope } from "./workspace.js";
 
-export function answerQuery(
+export type QueryServiceShape = {
+  readonly answer: (scope: VaultScope, query: QueryRequest) => Effect.Effect<QueryAnswer, VaultUnavailable | LlmProviderError>;
+};
+
+export class QueryService extends Context.Service<
+  QueryService,
+  QueryServiceShape
+>()("QueryService") {}
+
+export const QueryServiceLive = Layer.effect(
+  QueryService,
+  Effect.gen(function* () {
+    const db = yield* Db;
+    const llm = yield* LlmClient;
+
+    return QueryService.of({
+      answer: (scope, query) => answerQueryWith(db, llm, scope, query),
+    });
+  }),
+);
+
+function answerQueryWith(
+  db: BackendDb,
+  llm: LlmClientService,
   scope: VaultScope,
   query: QueryRequest,
-): Effect.Effect<QueryAnswer, VaultUnavailable | LlmProviderError, LlmClient | Db> {
+): Effect.Effect<QueryAnswer, VaultUnavailable | LlmProviderError> {
   return Effect.gen(function* () {
-    yield* loadWorkspace(scope);
+    yield* loadWorkspaceWith(db, scope);
 
-    const llm = yield* LlmClient;
     const completion = yield* llm.complete({
       model: query.model,
       messages: [...query.history, { role: "user", content: query.question }],

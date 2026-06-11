@@ -29,9 +29,11 @@ export class LlmBadResponse extends Data.TaggedError("LlmBadResponse")<{
 
 export type LlmProviderError = LlmRateLimited | LlmUnavailable | LlmRejected | LlmBadResponse;
 
+export type LlmClientService = {
+  readonly complete: (request: LlmCompletionRequest) => Effect.Effect<LlmCompletion, LlmProviderError>;
+};
+
 export class LlmClient extends Context.Service<
   LlmClient,
-  {
-    readonly complete: (request: LlmCompletionRequest) => Effect.Effect<LlmCompletion, LlmProviderError>;
-  }
+  LlmClientService
 >()("LlmClient") {}

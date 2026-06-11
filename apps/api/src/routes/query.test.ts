@@ -3,6 +3,7 @@ import { describe, expect, test, vi, afterEach } from "vitest";
 import { AuthCodeDelivery, AuthConfig } from "@great-minds/core/auth";
 import { LlmClient } from "@great-minds/core/llm";
 import { openRouterLlmClient } from "@great-minds/core/openrouter";
+import { QueryServiceLive } from "@great-minds/core/query";
 import { Db, type BackendDb } from "@great-minds/db/context";
 import { createApp } from "../app.js";
 import type { ApiConfig } from "../context.js";
@@ -161,12 +162,13 @@ function createTestApp(options: FakeRuntimeOptions = {}, config = baseConfig) {
 }
 
 function fakeRuntime({ openAiProvider = { kind: "disabled" }, ...options }: FakeRuntimeOptions = {}): ApiRuntime {
-  const layer = Layer.succeed(Db, fakeDb(options)).pipe(
-    Layer.merge(Layer.succeed(AuthConfig, AuthConfig.of(baseConfig.auth))),
-    Layer.merge(Layer.succeed(LlmClient, openRouterLlmClient(openAiProvider))),
-    Layer.merge(Layer.succeed(AuthCodeDelivery, AuthCodeDelivery.of({ deliver: () => Effect.void }))),
+  const baseLayer = Layer.mergeAll(
+    Layer.succeed(Db, fakeDb(options)),
+    Layer.succeed(AuthConfig, AuthConfig.of(baseConfig.auth)),
+    Layer.succeed(LlmClient, openRouterLlmClient(openAiProvider)),
+    Layer.succeed(AuthCodeDelivery, AuthCodeDelivery.of({ deliver: () => Effect.void })),
   );
-  return ManagedRuntime.make(layer) as ApiRuntime;
+  return ManagedRuntime.make(QueryServiceLive.pipe(Layer.provideMerge(baseLayer))) as ApiRuntime;
 }
 
 function fakeDb({

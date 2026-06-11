@@ -3,7 +3,7 @@ import { Effect } from "effect";
 import { Hono } from "hono";
 import { createMiddleware } from "hono/factory";
 import { HTTPException } from "hono/http-exception";
-import { answerQuery } from "@great-minds/core/query";
+import { QueryService } from "@great-minds/core/query";
 import { listSources, upsertSourceDocument } from "@great-minds/core/sources";
 import {
   createVault,
@@ -97,8 +97,11 @@ function createVaultScopedRoutes(runtime: ApiRuntime, authenticateBearer: Return
     const providerError = (error: { message: string }) =>
       Effect.succeed(c.json({ error: { message: error.message, requestId } }, 502));
 
-    const response = answerQuery(c.get("vaultScope"), c.req.valid("json")).pipe(
-      Effect.map((answer) => c.json(answer)),
+    const response = Effect.gen(function* () {
+      const queries = yield* QueryService;
+      const answer = yield* queries.answer(c.get("vaultScope"), c.req.valid("json"));
+      return c.json(answer);
+    }).pipe(
       Effect.catchTags({
         VaultUnavailable: () => Effect.succeed(c.json({ error: { message: "Vault not found", requestId } }, 404)),
         LlmRateLimited: providerError,
