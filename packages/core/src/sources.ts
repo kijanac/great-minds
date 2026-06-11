@@ -1,3 +1,4 @@
+import { Data, Effect } from "effect";
 import { and, asc, count, desc, eq, ilike, or, type SQL } from "drizzle-orm";
 import type { BackendDb } from "@great-minds/db/context";
 import { sourceDocuments } from "@great-minds/db/schema";
@@ -10,78 +11,101 @@ import {
   type SourceDocumentUpsert,
   type SourceListQuery,
 } from "@great-minds/domain/source";
-import { loadWorkspace, type VaultScope } from "./workspace.js";
+import { firstOrFail, parseOrFail } from "./effect-helpers.js";
+import { loadWorkspace, VaultUnavailable, type VaultScope } from "./workspace.js";
 
-export async function listSources(
+export class SourcePersistenceFailed extends Data.TaggedError("SourcePersistenceFailed")<{
+  message: string;
+}> {}
+
+export function listSources(
   db: BackendDb,
   scope: VaultScope,
   query: SourceListQuery,
-): Promise<SourceDocumentPage> {
-  await loadWorkspace(db, scope);
-  const where = sourceFilter(scope.vaultId, query);
+): Effect.Effect<SourceDocumentPage, SourcePersistenceFailed | VaultUnavailable> {
+  return Effect.gen(function* () {
+    yield* loadWorkspace(db, scope);
+    const where = sourceFilter(scope.vaultId, query);
 
-  const rows = await db
-    .select({
-      filePath: sourceDocuments.filePath,
-      sourceType: sourceDocuments.sourceType,
-      title: sourceDocuments.title,
-      author: sourceDocuments.author,
-      publishedDate: sourceDocuments.publishedDate,
-      url: sourceDocuments.url,
-      origin: sourceDocuments.origin,
-      genre: sourceDocuments.genre,
-      precis: sourceDocuments.precis,
-      tags: sourceDocuments.tags,
-      derivedExtras: sourceDocuments.derivedExtras,
-      updatedAt: sourceDocuments.updatedAt,
-    })
-    .from(sourceDocuments)
-    .where(where)
-    .orderBy(desc(sourceDocuments.updatedAt))
-    .limit(query.limit)
-    .offset(query.offset);
+    const rows = yield* db
+      .select({
+        filePath: sourceDocuments.filePath,
+        sourceType: sourceDocuments.sourceType,
+        title: sourceDocuments.title,
+        author: sourceDocuments.author,
+        publishedDate: sourceDocuments.publishedDate,
+        url: sourceDocuments.url,
+        origin: sourceDocuments.origin,
+        genre: sourceDocuments.genre,
+        precis: sourceDocuments.precis,
+        tags: sourceDocuments.tags,
+        derivedExtras: sourceDocuments.derivedExtras,
+        updatedAt: sourceDocuments.updatedAt,
+      })
+      .from(sourceDocuments)
+      .where(where)
+      .orderBy(desc(sourceDocuments.updatedAt))
+      .limit(query.limit)
+      .offset(query.offset)
+      .pipe(Effect.mapError(() => new SourcePersistenceFailed({ message: "Failed to list source documents" })));
 
-  const [totalRow] = await db.select({ total: count() }).from(sourceDocuments).where(where);
-  if (!totalRow) throw new Error("Failed to count source documents");
+    const totalRows = yield* db
+      .select({ total: count() })
+      .from(sourceDocuments)
+      .where(where)
+      .pipe(Effect.mapError(() => new SourcePersistenceFailed({ message: "Failed to count source documents" })));
+    const totalRow = yield* firstOrFail(totalRows, () => new SourcePersistenceFailed({ message: "Failed to count source documents" }));
 
-  const facetRows = await db
-    .select({ value: sourceDocuments.sourceType, count: count() })
-    .from(sourceDocuments)
-    .where(eq(sourceDocuments.vaultId, scope.vaultId))
-    .groupBy(sourceDocuments.sourceType)
-    .orderBy(desc(count()), asc(sourceDocuments.sourceType));
+    const facetRows = yield* db
+      .select({ value: sourceDocuments.sourceType, count: count() })
+      .from(sourceDocuments)
+      .where(eq(sourceDocuments.vaultId, scope.vaultId))
+      .groupBy(sourceDocuments.sourceType)
+      .orderBy(desc(count()), asc(sourceDocuments.sourceType))
+      .pipe(Effect.mapError(() => new SourcePersistenceFailed({ message: "Failed to list source facets" })));
 
-  return SourceDocumentPageSchema.parse({
-    items: rows,
-    pagination: {
-      limit: query.limit,
-      offset: query.offset,
-      total: totalRow.total,
-    },
-    facets: { sourceTypes: facetRows },
+    return yield* parseOrFail(
+      () =>
+        SourceDocumentPageSchema.parse({
+          items: rows,
+          pagination: {
+            limit: query.limit,
+            offset: query.offset,
+            total: totalRow.total,
+          },
+          facets: { sourceTypes: facetRows },
+        }),
+      () => new SourcePersistenceFailed({ message: "Failed to list source documents" }),
+    );
   });
 }
 
-export async function upsertSourceDocument(
+export function upsertSourceDocument(
   db: BackendDb,
   scope: VaultScope,
   metadata: SourceDocumentUpsert,
-): Promise<SourceDocument> {
-  await loadWorkspace(db, scope);
+): Effect.Effect<SourceDocument, SourcePersistenceFailed | VaultUnavailable> {
+  return Effect.gen(function* () {
+    yield* loadWorkspace(db, scope);
 
-  const values = { ...metadata, vaultId: scope.vaultId, updatedAt: new Date() };
+    const values = { ...metadata, vaultId: scope.vaultId, updatedAt: new Date() };
 
-  const [document] = await db
-    .insert(sourceDocuments)
-    .values(values)
-    .onConflictDoUpdate({
-      target: [sourceDocuments.vaultId, sourceDocuments.filePath],
-      set: values,
-    })
-    .returning();
+    const rows = yield* db
+      .insert(sourceDocuments)
+      .values(values)
+      .onConflictDoUpdate({
+        target: [sourceDocuments.vaultId, sourceDocuments.filePath],
+        set: values,
+      })
+      .returning()
+      .pipe(Effect.mapError(() => new SourcePersistenceFailed({ message: "Failed to upsert source document" })));
 
-  if (!document) throw new Error("Failed to upsert source document");
-  return SourceDocumentSchema.parse(document);
+    const document = yield* firstOrFail(rows, () => new SourcePersistenceFailed({ message: "Failed to upsert source document" }));
+    return yield* parseOrFail(
+      () => SourceDocumentSchema.parse(document),
+      () => new SourcePersistenceFailed({ message: "Failed to upsert source document" }),
+    );
+  });
 }
 
 function sourceFilter(vaultId: VaultId, query: SourceListQuery): SQL {

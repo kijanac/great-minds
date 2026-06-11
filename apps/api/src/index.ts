@@ -3,7 +3,7 @@ import { createBackendContext } from "@great-minds/db/context";
 import { createApp } from "./app.js";
 import { authCodeDeliveryFromEnv, env, openAiProviderFromEnv } from "./env.js";
 
-const backend = createBackendContext({ connectionString: env.DATABASE_URL });
+const backend = await createBackendContext({ connectionString: env.DATABASE_URL });
 const app = createApp(backend.db, {
   auth: {
     jwtSecret: env.JWT_SECRET,
@@ -27,7 +27,7 @@ const server = serve(
 );
 
 async function shutdown() {
-  await backend.pool.end();
+  await backend.runtime.dispose();
   server.close();
 }
 

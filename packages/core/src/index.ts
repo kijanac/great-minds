@@ -1,4 +1,5 @@
 export * from "./auth.js";
+export * from "./effect-helpers.js";
 export * from "./llm.js";
 export * from "./openrouter.js";
 export * from "./query.js";

@@ -1,3 +1,4 @@
+import { Effect } from "effect";
 import type { Context } from "hono";
 import { bearerAuth } from "hono/bearer-auth";
 import { createMiddleware } from "hono/factory";
@@ -8,7 +9,11 @@ import type { AppEnv } from "./context.js";
 
 export const authenticateBearer = bearerAuth({
   verifyToken: async (token, c) => {
-    const principal = await resolveBearerToken(c.get("db"), token, c.get("authConfig"));
+    const principal = await Effect.runPromise(
+      resolveBearerToken(c.get("db"), token, c.get("authConfig")).pipe(
+        Effect.catchTag("AuthPersistenceFailed", () => Effect.succeed(null)),
+      ),
+    );
     if (!principal) return false;
 
     c.set("principal", principal);

@@ -1,3 +1,4 @@
+import { Effect } from "effect";
 import { describe, expect, test, vi, afterEach } from "vitest";
 import type { BackendDb } from "@great-minds/db/context";
 import { createApp } from "../app.js";
@@ -184,7 +185,7 @@ function chain<T>(rows: T[]) {
     from: () => query,
     innerJoin: () => query,
     where: () => query,
-    limit: async () => rows,
+    limit: () => Effect.succeed(rows),
   };
   return query;
 }

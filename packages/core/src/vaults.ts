@@ -1,3 +1,4 @@
+import { Data, Effect } from "effect";
 import { and, count, eq } from "drizzle-orm";
 import type { BackendDb, DbSession } from "@great-minds/db/context";
 import { sourceDocuments, users, vaultMemberships, vaults } from "@great-minds/db/schema";
@@ -13,125 +14,197 @@ import {
   type VaultStats,
 } from "@great-minds/domain/vault";
 import type { Workspace } from "@great-minds/domain/workspace";
-import { loadWorkspace, type VaultScope } from "./workspace.js";
+import { firstOrFail, parseOrFail } from "./effect-helpers.js";
+import { loadWorkspace, VaultUnavailable, type VaultScope } from "./workspace.js";
 
-export async function listVaults(db: BackendDb, userId: UserId): Promise<Vault[]> {
-  const rows = await db
-    .select({ vault: vaults })
-    .from(vaultMemberships)
-    .innerJoin(vaults, eq(vaults.id, vaultMemberships.vaultId))
-    .where(eq(vaultMemberships.userId, userId))
-    .orderBy(vaults.createdAt);
+export class VaultForbidden extends Data.TaggedError("VaultForbidden")<{
+  message: string;
+}> {}
 
-  return VaultSchema.array().parse(rows.map((row) => row.vault));
+export class VaultPersistenceFailed extends Data.TaggedError("VaultPersistenceFailed")<{
+  message: string;
+}> {}
+
+export function listVaults(db: BackendDb, userId: UserId): Effect.Effect<Vault[], VaultPersistenceFailed> {
+  return Effect.gen(function* () {
+    const rows = yield* db
+      .select({ vault: vaults })
+      .from(vaultMemberships)
+      .innerJoin(vaults, eq(vaults.id, vaultMemberships.vaultId))
+      .where(eq(vaultMemberships.userId, userId))
+      .orderBy(vaults.createdAt)
+      .pipe(Effect.mapError(() => new VaultPersistenceFailed({ message: "Failed to list vaults" })));
+
+    return yield* parseOrFail(
+      () => VaultSchema.array().parse(rows.map((row) => row.vault)),
+      () => new VaultPersistenceFailed({ message: "Failed to list vaults" }),
+    );
+  });
 }
 
-export async function createVault(
+export function createVault(
   db: BackendDb,
   userId: UserId,
   input: VaultCreate,
-): Promise<Workspace> {
-  return db.transaction(async (tx) => {
-    const vault = await createOwnedVault(tx, userId, input);
-    return loadWorkspace(tx, { userId, vaultId: vault.id });
-  });
+): Effect.Effect<Workspace, VaultPersistenceFailed | VaultUnavailable> {
+  return db
+    .transaction((tx) =>
+      Effect.gen(function* () {
+        const vault = yield* createOwnedVault(tx, userId, input);
+        return yield* loadWorkspace(tx, { userId, vaultId: vault.id });
+      }),
+    )
+    .pipe(
+      Effect.mapError((error) =>
+        error instanceof VaultUnavailable || error instanceof VaultPersistenceFailed
+          ? error
+          : new VaultPersistenceFailed({ message: "Failed to create vault" }),
+      ),
+    );
 }
 
-export async function updateVault(
+export function updateVault(
   db: BackendDb,
   scope: VaultScope,
   patch: VaultPatch,
-): Promise<Workspace> {
-  return db.transaction(async (tx) => {
-    await assertCanEditVault(tx, scope);
+): Effect.Effect<Workspace, VaultForbidden | VaultPersistenceFailed | VaultUnavailable> {
+  return db
+    .transaction((tx) =>
+      Effect.gen(function* () {
+        yield* assertCanEditVault(tx, scope);
 
-    const hasChanges = Object.keys(patch).length > 0;
-    if (hasChanges) {
-      await tx.update(vaults).set(patch).where(eq(vaults.id, scope.vaultId));
-    }
+        const hasChanges = Object.keys(patch).length > 0;
+        if (hasChanges) {
+          yield* tx
+            .update(vaults)
+            .set(patch)
+            .where(eq(vaults.id, scope.vaultId))
+            .pipe(Effect.mapError(() => new VaultPersistenceFailed({ message: "Failed to update vault" })));
+        }
 
-    return loadWorkspace(tx, scope);
+        return yield* loadWorkspace(tx, scope);
+      }),
+    )
+    .pipe(
+      Effect.mapError((error) =>
+        error instanceof VaultUnavailable || error instanceof VaultForbidden || error instanceof VaultPersistenceFailed
+          ? error
+          : new VaultPersistenceFailed({ message: "Failed to update vault" }),
+      ),
+    );
+}
+
+export function getVault(db: BackendDb, scope: VaultScope): Effect.Effect<Vault, VaultPersistenceFailed | VaultUnavailable> {
+  return Effect.gen(function* () {
+    const rows = yield* db
+      .select({ vault: vaults })
+      .from(vaultMemberships)
+      .innerJoin(vaults, eq(vaults.id, vaultMemberships.vaultId))
+      .where(and(eq(vaultMemberships.userId, scope.userId), eq(vaultMemberships.vaultId, scope.vaultId)))
+      .limit(1)
+      .pipe(Effect.mapError(() => new VaultPersistenceFailed({ message: "Failed to load vault" })));
+
+    const row = yield* firstOrFail(rows, () => new VaultUnavailable());
+    return yield* parseOrFail(() => VaultSchema.parse(row.vault), () => new VaultPersistenceFailed({ message: "Failed to load vault" }));
   });
 }
 
-export async function getVault(db: BackendDb, scope: VaultScope): Promise<Vault> {
-  const [row] = await db
-    .select({ vault: vaults })
-    .from(vaultMemberships)
-    .innerJoin(vaults, eq(vaults.id, vaultMemberships.vaultId))
-    .where(and(eq(vaultMemberships.userId, scope.userId), eq(vaultMemberships.vaultId, scope.vaultId)))
-    .limit(1);
-
-  if (!row) throw new Error("Vault does not exist or is not available to this user");
-  return VaultSchema.parse(row.vault);
-}
-
-export async function listVaultMembers(
+export function listVaultMembers(
   db: BackendDb,
   scope: VaultScope,
-): Promise<VaultMemberDetails[]> {
-  await assertCanReadVault(db, scope);
+): Effect.Effect<VaultMemberDetails[], VaultPersistenceFailed | VaultUnavailable> {
+  return Effect.gen(function* () {
+    yield* assertCanReadVault(db, scope);
 
-  const rows = await db
-    .select({
-      user: users,
-      role: vaultMemberships.role,
-    })
-    .from(vaultMemberships)
-    .innerJoin(users, eq(users.id, vaultMemberships.userId))
-    .where(eq(vaultMemberships.vaultId, scope.vaultId))
-    .orderBy(vaultMemberships.createdAt);
+    const rows = yield* db
+      .select({
+        user: users,
+        role: vaultMemberships.role,
+      })
+      .from(vaultMemberships)
+      .innerJoin(users, eq(users.id, vaultMemberships.userId))
+      .where(eq(vaultMemberships.vaultId, scope.vaultId))
+      .orderBy(vaultMemberships.createdAt)
+      .pipe(Effect.mapError(() => new VaultPersistenceFailed({ message: "Failed to list vault members" })));
 
-  return VaultMemberDetailsSchema.array().parse(rows);
+    return yield* parseOrFail(
+      () => VaultMemberDetailsSchema.array().parse(rows),
+      () => new VaultPersistenceFailed({ message: "Failed to list vault members" }),
+    );
+  });
 }
 
-export async function getVaultStats(db: BackendDb, scope: VaultScope): Promise<VaultStats> {
-  await assertCanReadVault(db, scope);
+export function getVaultStats(db: BackendDb, scope: VaultScope): Effect.Effect<VaultStats, VaultPersistenceFailed | VaultUnavailable> {
+  return Effect.gen(function* () {
+    yield* assertCanReadVault(db, scope);
 
-  const [countRow] = await db
-    .select({ total: count() })
-    .from(sourceDocuments)
-    .where(and(eq(sourceDocuments.vaultId, scope.vaultId), eq(sourceDocuments.sourceType, "wiki")));
+    const rows = yield* db
+      .select({ total: count() })
+      .from(sourceDocuments)
+      .where(and(eq(sourceDocuments.vaultId, scope.vaultId), eq(sourceDocuments.sourceType, "wiki")))
+      .pipe(Effect.mapError(() => new VaultPersistenceFailed({ message: "Failed to count vault articles" })));
 
-  if (!countRow) throw new Error("Failed to count vault articles");
-  return VaultStatsSchema.parse({ articleCount: countRow.total });
+    const countRow = yield* firstOrFail(rows, () => new VaultPersistenceFailed({ message: "Failed to count vault articles" }));
+    return yield* parseOrFail(
+      () => VaultStatsSchema.parse({ articleCount: countRow.total }),
+      () => new VaultPersistenceFailed({ message: "Failed to count vault articles" }),
+    );
+  });
 }
 
-async function createOwnedVault(
+function createOwnedVault(
   db: DbSession,
   ownerId: UserId,
   input: VaultCreate,
-): Promise<Vault> {
-  const [vault] = await db.insert(vaults).values({ ownerId, ...input }).returning();
-  if (!vault) throw new Error("Failed to create vault");
+): Effect.Effect<Vault, VaultPersistenceFailed> {
+  return Effect.gen(function* () {
+    const rows = yield* db
+      .insert(vaults)
+      .values({ ownerId, ...input })
+      .returning()
+      .pipe(Effect.mapError(() => new VaultPersistenceFailed({ message: "Failed to create vault" })));
+    const vault = yield* firstOrFail(rows, () => new VaultPersistenceFailed({ message: "Failed to create vault" }));
 
-  await db.insert(vaultMemberships).values({
-    vaultId: vault.id,
-    userId: ownerId,
-    role: "owner",
+    yield* db
+      .insert(vaultMemberships)
+      .values({
+        vaultId: vault.id,
+        userId: ownerId,
+        role: "owner",
+      })
+      .pipe(Effect.mapError(() => new VaultPersistenceFailed({ message: "Failed to create vault" })));
+
+    return yield* parseOrFail(() => VaultSchema.parse(vault), () => new VaultPersistenceFailed({ message: "Failed to create vault" }));
   });
-
-  return VaultSchema.parse(vault);
 }
 
-async function assertCanReadVault(db: DbSession, scope: VaultScope): Promise<void> {
-  const role = await loadVaultRole(db, scope);
-  if (!role) throw new Error("Vault does not exist or is not available to this user");
+function assertCanReadVault(db: DbSession, scope: VaultScope): Effect.Effect<void, VaultPersistenceFailed | VaultUnavailable> {
+  return Effect.gen(function* () {
+    const role = yield* loadVaultRole(db, scope);
+    if (!role) return yield* Effect.fail(new VaultUnavailable());
+  });
 }
 
-async function assertCanEditVault(db: DbSession, scope: VaultScope): Promise<void> {
-  const role = await loadVaultRole(db, scope);
-  if (!role || role === "viewer") {
-    throw new Error("Vault does not exist or cannot be edited by this user");
-  }
+function assertCanEditVault(
+  db: DbSession,
+  scope: VaultScope,
+): Effect.Effect<void, VaultForbidden | VaultPersistenceFailed | VaultUnavailable> {
+  return Effect.gen(function* () {
+    const role = yield* loadVaultRole(db, scope);
+    if (!role) return yield* Effect.fail(new VaultUnavailable());
+    if (role === "viewer") return yield* Effect.fail(new VaultForbidden({ message: "Vault cannot be edited by this user" }));
+  });
 }
 
-async function loadVaultRole(db: DbSession, scope: VaultScope) {
-  const [membership] = await db
-    .select({ role: vaultMemberships.role })
-    .from(vaultMemberships)
-    .where(and(eq(vaultMemberships.userId, scope.userId), eq(vaultMemberships.vaultId, scope.vaultId)))
-    .limit(1);
+function loadVaultRole(db: DbSession, scope: VaultScope) {
+  return Effect.gen(function* () {
+    const rows = yield* db
+      .select({ role: vaultMemberships.role })
+      .from(vaultMemberships)
+      .where(and(eq(vaultMemberships.userId, scope.userId), eq(vaultMemberships.vaultId, scope.vaultId)))
+      .limit(1)
+      .pipe(Effect.mapError(() => new VaultPersistenceFailed({ message: "Failed to load vault membership" })));
 
-  return membership?.role;
+    return rows[0]?.role;
+  });
 }

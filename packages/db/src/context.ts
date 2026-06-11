@@ -1,23 +1,28 @@
-import { drizzle, type NodePgDatabase, type NodePgTransaction } from "drizzle-orm/node-postgres";
+import { PgClient } from "@effect/sql-pg";
+import * as PgDrizzle from "drizzle-orm/effect-postgres";
 import type { EmptyRelations } from "drizzle-orm/relations";
-import pg, { type PoolConfig } from "pg";
+import { ManagedRuntime, Redacted } from "effect";
+import type { PoolConfig } from "pg";
 
-const { Pool } = pg;
-
-export type BackendDb = NodePgDatabase<EmptyRelations>;
-export type BackendTx = NodePgTransaction<EmptyRelations>;
+export type BackendDb = PgDrizzle.EffectPgDatabase<EmptyRelations>;
+export type BackendTx = PgDrizzle.EffectPgTransaction<PgDrizzle.EffectPgQueryResultHKT, EmptyRelations>;
 export type DbSession = BackendDb | BackendTx;
 
 export type BackendContext = {
   db: BackendDb;
-  pool: pg.Pool;
+  runtime: { dispose: () => Promise<void> };
 };
 
-export function createBackendContext(config: PoolConfig): BackendContext {
-  const pool = new Pool(config);
-  return { pool, db: drizzle({ client: pool }) };
+export async function createBackendContext(config: PoolConfig): Promise<BackendContext> {
+  if (!config.connectionString) throw new Error("connectionString is required for Effect Postgres");
+
+  const runtime = ManagedRuntime.make(
+    PgClient.layer({ url: Redacted.make(config.connectionString) }),
+  );
+  const db = await runtime.runPromise(PgDrizzle.makeWithDefaults());
+  return { db, runtime };
 }
 
 export async function closeBackendContext(context: BackendContext): Promise<void> {
-  await context.pool.end();
+  await context.runtime.dispose();
 }

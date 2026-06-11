@@ -28,6 +28,7 @@
     }
   },
   "dependencies": {
+    "@effect/sql-pg": "^0.52.1",
     "drizzle-orm": "1.0.0-rc.3",
     "effect": "^3.21.3",
     "pg": "^8.16.3"

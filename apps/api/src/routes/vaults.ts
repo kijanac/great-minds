@@ -31,54 +31,73 @@ const bindVaultScope = createMiddleware<AppEnv>(async (c, next) => {
 
 const vaultScopedRoutes = new Hono<AppEnv>()
   .use("*", authenticateBearer, bindVaultScope)
-  .get("/", requireScope("vaults:read"), async (c) => {
-    try {
-      const vault = await getVault(c.get("db"), c.get("vaultScope"));
-      return c.json(vault);
-    } catch {
-      throw new HTTPException(404, { message: "Vault not found" });
-    }
-  })
-  .patch("/", requireScope("vaults:write"), zValidator("json", VaultPatchSchema), async (c) => {
-    try {
-      const workspace = await updateVault(c.get("db"), c.get("vaultScope"), c.req.valid("json"));
-      return c.json(workspace);
-    } catch {
-      throw new HTTPException(404, { message: "Vault not found" });
-    }
-  })
-  .get("/members", requireScope("vaults:read"), async (c) => {
-    try {
-      const members = await listVaultMembers(c.get("db"), c.get("vaultScope"));
-      return c.json({ items: members });
-    } catch {
-      throw new HTTPException(404, { message: "Vault not found" });
-    }
-  })
-  .get("/stats", requireScope("vaults:read"), async (c) => {
-    try {
-      const stats = await getVaultStats(c.get("db"), c.get("vaultScope"));
-      return c.json(stats);
-    } catch {
-      throw new HTTPException(404, { message: "Vault not found" });
-    }
-  })
-  .get("/sources", requireScope("sources:read"), zValidator("query", SourceListQuerySchema), async (c) => {
-    try {
-      const page = await listSources(c.get("db"), c.get("vaultScope"), c.req.valid("query"));
-      return c.json(page);
-    } catch {
-      throw new HTTPException(404, { message: "Vault not found" });
-    }
-  })
-  .post("/sources", requireScope("sources:write"), zValidator("json", SourceDocumentUpsertSchema), async (c) => {
-    try {
-      const source = await upsertSourceDocument(c.get("db"), c.get("vaultScope"), c.req.valid("json"));
-      return c.json(source);
-    } catch {
-      throw new HTTPException(404, { message: "Vault not found" });
-    }
-  })
+  .get("/", requireScope("vaults:read"), async (c) =>
+    Effect.runPromise(
+      getVault(c.get("db"), c.get("vaultScope")).pipe(
+        Effect.map((vault) => c.json(vault)),
+        Effect.catchTags({
+          VaultUnavailable: () => Effect.fail(new HTTPException(404, { message: "Vault not found" })),
+          VaultPersistenceFailed: (error) => Effect.succeed(c.json({ error: { message: error.message } }, 500)),
+        }),
+      ),
+    ),
+  )
+  .patch("/", requireScope("vaults:write"), zValidator("json", VaultPatchSchema), async (c) =>
+    Effect.runPromise(
+      updateVault(c.get("db"), c.get("vaultScope"), c.req.valid("json")).pipe(
+        Effect.map((workspace) => c.json(workspace)),
+        Effect.catchTags({
+          VaultUnavailable: () => Effect.fail(new HTTPException(404, { message: "Vault not found" })),
+          VaultForbidden: (error) => Effect.succeed(c.json({ error: { message: error.message } }, 403)),
+          VaultPersistenceFailed: (error) => Effect.succeed(c.json({ error: { message: error.message } }, 500)),
+        }),
+      ),
+    ),
+  )
+  .get("/members", requireScope("vaults:read"), async (c) =>
+    Effect.runPromise(
+      listVaultMembers(c.get("db"), c.get("vaultScope")).pipe(
+        Effect.map((members) => c.json({ items: members })),
+        Effect.catchTags({
+          VaultUnavailable: () => Effect.fail(new HTTPException(404, { message: "Vault not found" })),
+          VaultPersistenceFailed: (error) => Effect.succeed(c.json({ error: { message: error.message } }, 500)),
+        }),
+      ),
+    ),
+  )
+  .get("/stats", requireScope("vaults:read"), async (c) =>
+    Effect.runPromise(
+      getVaultStats(c.get("db"), c.get("vaultScope")).pipe(
+        Effect.map((stats) => c.json(stats)),
+        Effect.catchTags({
+          VaultUnavailable: () => Effect.fail(new HTTPException(404, { message: "Vault not found" })),
+          VaultPersistenceFailed: (error) => Effect.succeed(c.json({ error: { message: error.message } }, 500)),
+        }),
+      ),
+    ),
+  )
+  .get("/sources", requireScope("sources:read"), zValidator("query", SourceListQuerySchema), async (c) =>
+    Effect.runPromise(
+      listSources(c.get("db"), c.get("vaultScope"), c.req.valid("query")).pipe(
+        Effect.map((page) => c.json(page)),
+        Effect.catchTags({
+          VaultUnavailable: () => Effect.fail(new HTTPException(404, { message: "Vault not found" })),
+          SourcePersistenceFailed: (error) => Effect.succeed(c.json({ error: { message: error.message } }, 500)),
+        }),
+      ),
+    ),
+  )
+  .post("/sources", requireScope("sources:write"), zValidator("json", SourceDocumentUpsertSchema), async (c) =>
+    Effect.runPromise(
+      upsertSourceDocument(c.get("db"), c.get("vaultScope"), c.req.valid("json")).pipe(
+        Effect.map((source) => c.json(source)),
+        Effect.catchTags({
+          VaultUnavailable: () => Effect.fail(new HTTPException(404, { message: "Vault not found" })),
+          SourcePersistenceFailed: (error) => Effect.succeed(c.json({ error: { message: error.message } }, 500)),
+        }),
+      ),
+    ),
+  )
   .post("/query", requireScope("query"), zValidator("json", QueryRequestSchema), async (c) => {
     const requestId = c.get("requestId");
     const providerError = (error: { message: string }) =>
@@ -102,12 +121,25 @@ const vaultScopedRoutes = new Hono<AppEnv>()
 export const vaultRoutes = new Hono<AppEnv>()
   .get("/", authenticateBearer, requireScope("vaults:read"), async (c) => {
     const principal = currentPrincipal(c);
-    const vaults = await listVaults(c.get("db"), principal.user.id);
-    return c.json({ items: vaults });
+    return Effect.runPromise(
+      listVaults(c.get("db"), principal.user.id).pipe(
+        Effect.map((vaults) => c.json({ items: vaults })),
+        Effect.catchTag("VaultPersistenceFailed", (error) =>
+          Effect.succeed(c.json({ error: { message: error.message } }, 500)),
+        ),
+      ),
+    );
   })
   .post("/", authenticateBearer, requireScope("vaults:write"), zValidator("json", VaultCreateSchema), async (c) => {
     const principal = currentPrincipal(c);
-    const workspace = await createVault(c.get("db"), principal.user.id, c.req.valid("json"));
-    return c.json(workspace, 201);
+    return Effect.runPromise(
+      createVault(c.get("db"), principal.user.id, c.req.valid("json")).pipe(
+        Effect.map((workspace) => c.json(workspace, 201)),
+        Effect.catchTags({
+          VaultUnavailable: () => Effect.fail(new HTTPException(404, { message: "Vault not found" })),
+          VaultPersistenceFailed: (error) => Effect.succeed(c.json({ error: { message: error.message } }, 500)),
+        }),
+      ),
+    );
   })
   .route("/:id", vaultScopedRoutes);

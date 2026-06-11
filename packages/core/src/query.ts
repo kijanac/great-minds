@@ -10,10 +10,7 @@ export function answerQuery(
   query: QueryRequest,
 ): Effect.Effect<QueryAnswer, VaultUnavailable | LlmProviderError, LlmClient> {
   return Effect.gen(function* () {
-    yield* Effect.tryPromise({
-      try: () => loadWorkspace(db, scope),
-      catch: () => new VaultUnavailable(),
-    });
+    yield* loadWorkspace(db, scope);
 
     const llm = yield* LlmClient;
     const completion = yield* llm.complete({
