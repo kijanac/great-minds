@@ -14,7 +14,7 @@ import { ApiKeyCreateSchema, ApiKeyIdSchema, AuthCodeSchema, RefreshTokenSecretS
 import { UserCreateSchema } from "@great-minds/domain/user";
 import { z } from "zod";
 import { createAuthenticateBearer, currentPrincipal, requireSession } from "../auth.js";
-import type { ApiConfig, AppEnv, AuthCodeDeliveryConfig } from "../context.js";
+import type { ApiConfig, AppEnv } from "../context.js";
 import type { ApiRuntime } from "../runtime.js";
 import { tokenResponse } from "../schemas/auth.js";
 
@@ -25,14 +25,7 @@ export function createAuthRoutes(runtime: ApiRuntime, config: ApiConfig) {
   .post("/request-code", zValidator("json", UserCreateSchema), async (c) => {
     const input = c.req.valid("json");
     return runtime.runPromise(
-      requestAuthCode(input, config.auth, (email, code) =>
-        deliverAuthCode(
-          config.authCodeDelivery,
-          email,
-          code,
-          config.auth.authCodeExpiryMinutes,
-        ),
-      ).pipe(
+      requestAuthCode(input, config.auth).pipe(
         Effect.map(() => c.body(null, 204)),
         Effect.catchTag("AuthCodeDeliveryFailed", (error) =>
           Effect.succeed(c.json({ error: { message: error.message } }, 502)),
@@ -92,33 +85,5 @@ export function createAuthRoutes(runtime: ApiRuntime, config: ApiConfig) {
       ),
     );
   });
-}
-
-async function deliverAuthCode(
-  delivery: AuthCodeDeliveryConfig,
-  email: string,
-  code: string,
-  expiresInMinutes: number,
-): Promise<void> {
-  if (delivery.kind === "console") {
-    console.warn(`Auth code for ${email}: ${code}`);
-    return;
-  }
-
-  const response = await fetch("https://api.resend.com/emails", {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${delivery.apiKey}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      from: delivery.fromEmail,
-      to: [email],
-      subject: "Your sign-in code",
-      text: `Your Great Minds sign-in code is: ${code}\n\nExpires in ${expiresInMinutes} minutes.`,
-    }),
-  });
-
-  if (!response.ok) throw new Error("Failed to send auth code");
 }
 

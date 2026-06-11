@@ -1,5 +1,5 @@
 import { createHash, randomBytes, randomInt } from "node:crypto";
-import { Data, Effect } from "effect";
+import { Context, Data, Effect } from "effect";
 import { and, desc, eq, gt, sql } from "drizzle-orm";
 import { jwtVerify, SignJWT } from "jose";
 import { Db, type BackendDb, type DbSession } from "@great-minds/db/context";
@@ -52,6 +52,13 @@ export class AuthCodeDeliveryFailed extends Data.TaggedError("AuthCodeDeliveryFa
   message: string;
 }> {}
 
+export class AuthCodeDelivery extends Context.Service<
+  AuthCodeDelivery,
+  {
+    readonly deliver: (email: string, code: string, expiresInMinutes: number) => Effect.Effect<void, AuthCodeDeliveryFailed>;
+  }
+>()("AuthCodeDelivery") {}
+
 export class InvalidAuthCode extends Data.TaggedError("InvalidAuthCode")<{
   message: string;
 }> {}
@@ -67,8 +74,7 @@ export class ApiKeyUnavailable extends Data.TaggedError("ApiKeyUnavailable")<{
 export function requestAuthCode(
   input: UserCreate,
   config: AuthConfig,
-  deliverCode: (email: string, code: string) => Promise<void> | void,
-): Effect.Effect<void, AuthCodeDeliveryFailed, Db> {
+): Effect.Effect<void, AuthCodeDeliveryFailed, Db | AuthCodeDelivery> {
   if (config.suppressAuth) return Effect.void;
 
   return Effect.gen(function* () {
@@ -89,10 +95,8 @@ export function requestAuthCode(
       })
       .pipe(Effect.orDie);
 
-    yield* Effect.tryPromise({
-      try: () => Promise.resolve(deliverCode(input.email, code)),
-      catch: () => new AuthCodeDeliveryFailed({ message: "Failed to send auth code" }),
-    });
+    const delivery = yield* AuthCodeDelivery;
+    yield* delivery.deliver(input.email, code, config.authCodeExpiryMinutes);
   });
 }
 
