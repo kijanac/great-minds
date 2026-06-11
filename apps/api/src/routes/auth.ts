@@ -30,10 +30,9 @@ export const authRoutes = new Hono<AppEnv>()
         ),
       ).pipe(
         Effect.map(() => c.body(null, 204)),
-        Effect.catchTags({
-          AuthCodeDeliveryFailed: (error) => Effect.succeed(c.json({ error: { message: error.message } }, 502)),
-          AuthPersistenceFailed: (error) => Effect.succeed(c.json({ error: { message: error.message } }, 500)),
-        }),
+        Effect.catchTag("AuthCodeDeliveryFailed", (error) =>
+          Effect.succeed(c.json({ error: { message: error.message } }, 502)),
+        ),
       ),
     );
   })
@@ -47,11 +46,9 @@ export const authRoutes = new Hono<AppEnv>()
         c.get("authConfig"),
       ).pipe(
         Effect.map((tokenPair) => c.json(tokenResponse(tokenPair))),
-        Effect.catchTags({
-          InvalidAuthCode: () => Effect.fail(new HTTPException(401, { message: "Invalid or expired code" })),
-          AuthPersistenceFailed: (error) => Effect.succeed(c.json({ error: { message: error.message } }, 500)),
-          UserPersistenceFailed: (error) => Effect.succeed(c.json({ error: { message: error.message } }, 500)),
-        }),
+        Effect.catchTag("InvalidAuthCode", () =>
+          Effect.fail(new HTTPException(401, { message: "Invalid or expired code" })),
+        ),
       ),
     );
   })
@@ -60,34 +57,23 @@ export const authRoutes = new Hono<AppEnv>()
     return Effect.runPromise(
       refreshAuthTokens(c.get("db"), body.refresh_token, c.get("authConfig")).pipe(
         Effect.map((tokenPair) => c.json(tokenResponse(tokenPair))),
-        Effect.catchTags({
-          InvalidRefreshToken: () => Effect.fail(new HTTPException(401, { message: "Invalid or expired refresh token" })),
-          AuthPersistenceFailed: (error) => Effect.succeed(c.json({ error: { message: error.message } }, 500)),
-        }),
+        Effect.catchTag("InvalidRefreshToken", () =>
+          Effect.fail(new HTTPException(401, { message: "Invalid or expired refresh token" })),
+        ),
       ),
     );
   })
   .get("/api-keys", authenticateBearer, requireSession, async (c) => {
     const principal = currentPrincipal(c);
     return Effect.runPromise(
-      listApiKeys(c.get("db"), principal.user.id).pipe(
-        Effect.map((apiKeys) => c.json(apiKeys)),
-        Effect.catchTag("AuthPersistenceFailed", (error) =>
-          Effect.succeed(c.json({ error: { message: error.message } }, 500)),
-        ),
-      ),
+      listApiKeys(c.get("db"), principal.user.id).pipe(Effect.map((apiKeys) => c.json(apiKeys))),
     );
   })
   .post("/api-keys", authenticateBearer, requireSession, zValidator("json", ApiKeyCreateSchema), async (c) => {
     const principal = currentPrincipal(c);
     const body = c.req.valid("json");
     return Effect.runPromise(
-      createApiKey(c.get("db"), principal.user.id, body).pipe(
-        Effect.map((apiKey) => c.json(apiKey, 201)),
-        Effect.catchTag("AuthPersistenceFailed", (error) =>
-          Effect.succeed(c.json({ error: { message: error.message } }, 500)),
-        ),
-      ),
+      createApiKey(c.get("db"), principal.user.id, body).pipe(Effect.map((apiKey) => c.json(apiKey, 201))),
     );
   })
   .delete("/api-keys/:id", authenticateBearer, requireSession, zValidator("param", z.object({ id: ApiKeyIdSchema })), async (c) => {
@@ -97,10 +83,9 @@ export const authRoutes = new Hono<AppEnv>()
     return Effect.runPromise(
       revokeApiKey(c.get("db"), principal.user.id, id).pipe(
         Effect.map(() => c.body(null, 204)),
-        Effect.catchTags({
-          ApiKeyUnavailable: () => Effect.fail(new HTTPException(404, { message: "API key not found" })),
-          AuthPersistenceFailed: (error) => Effect.succeed(c.json({ error: { message: error.message } }, 500)),
-        }),
+        Effect.catchTag("ApiKeyUnavailable", () =>
+          Effect.fail(new HTTPException(404, { message: "API key not found" })),
+        ),
       ),
     );
   });

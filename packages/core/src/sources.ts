@@ -1,4 +1,4 @@
-import { Data, Effect } from "effect";
+import { Effect } from "effect";
 import { and, asc, count, desc, eq, ilike, or, type SQL } from "drizzle-orm";
 import type { BackendDb } from "@great-minds/db/context";
 import { sourceDocuments } from "@great-minds/db/schema";
@@ -11,18 +11,14 @@ import {
   type SourceDocumentUpsert,
   type SourceListQuery,
 } from "@great-minds/domain/source";
-import { firstOrFail, parseOrFail } from "./effect-helpers.js";
+import { firstOrDie, parseOrDie } from "./effect-helpers.js";
 import { loadWorkspace, VaultUnavailable, type VaultScope } from "./workspace.js";
-
-export class SourcePersistenceFailed extends Data.TaggedError("SourcePersistenceFailed")<{
-  message: string;
-}> {}
 
 export function listSources(
   db: BackendDb,
   scope: VaultScope,
   query: SourceListQuery,
-): Effect.Effect<SourceDocumentPage, SourcePersistenceFailed | VaultUnavailable> {
+): Effect.Effect<SourceDocumentPage, VaultUnavailable> {
   return Effect.gen(function* () {
     yield* loadWorkspace(db, scope);
     const where = sourceFilter(scope.vaultId, query);
@@ -47,14 +43,14 @@ export function listSources(
       .orderBy(desc(sourceDocuments.updatedAt))
       .limit(query.limit)
       .offset(query.offset)
-      .pipe(Effect.mapError(() => new SourcePersistenceFailed({ message: "Failed to list source documents" })));
+      .pipe(Effect.orDie);
 
     const totalRows = yield* db
       .select({ total: count() })
       .from(sourceDocuments)
       .where(where)
-      .pipe(Effect.mapError(() => new SourcePersistenceFailed({ message: "Failed to count source documents" })));
-    const totalRow = yield* firstOrFail(totalRows, () => new SourcePersistenceFailed({ message: "Failed to count source documents" }));
+      .pipe(Effect.orDie);
+    const totalRow = yield* firstOrDie(totalRows, "Failed to count source documents");
 
     const facetRows = yield* db
       .select({ value: sourceDocuments.sourceType, count: count() })
@@ -62,20 +58,18 @@ export function listSources(
       .where(eq(sourceDocuments.vaultId, scope.vaultId))
       .groupBy(sourceDocuments.sourceType)
       .orderBy(desc(count()), asc(sourceDocuments.sourceType))
-      .pipe(Effect.mapError(() => new SourcePersistenceFailed({ message: "Failed to list source facets" })));
+      .pipe(Effect.orDie);
 
-    return yield* parseOrFail(
-      () =>
-        SourceDocumentPageSchema.parse({
-          items: rows,
-          pagination: {
-            limit: query.limit,
-            offset: query.offset,
-            total: totalRow.total,
-          },
-          facets: { sourceTypes: facetRows },
-        }),
-      () => new SourcePersistenceFailed({ message: "Failed to list source documents" }),
+    return yield* parseOrDie(() =>
+      SourceDocumentPageSchema.parse({
+        items: rows,
+        pagination: {
+          limit: query.limit,
+          offset: query.offset,
+          total: totalRow.total,
+        },
+        facets: { sourceTypes: facetRows },
+      }),
     );
   });
 }
@@ -84,7 +78,7 @@ export function upsertSourceDocument(
   db: BackendDb,
   scope: VaultScope,
   metadata: SourceDocumentUpsert,
-): Effect.Effect<SourceDocument, SourcePersistenceFailed | VaultUnavailable> {
+): Effect.Effect<SourceDocument, VaultUnavailable> {
   return Effect.gen(function* () {
     yield* loadWorkspace(db, scope);
 
@@ -98,13 +92,10 @@ export function upsertSourceDocument(
         set: values,
       })
       .returning()
-      .pipe(Effect.mapError(() => new SourcePersistenceFailed({ message: "Failed to upsert source document" })));
+      .pipe(Effect.orDie);
 
-    const document = yield* firstOrFail(rows, () => new SourcePersistenceFailed({ message: "Failed to upsert source document" }));
-    return yield* parseOrFail(
-      () => SourceDocumentSchema.parse(document),
-      () => new SourcePersistenceFailed({ message: "Failed to upsert source document" }),
-    );
+    const document = yield* firstOrDie(rows, "Failed to upsert source document");
+    return yield* parseOrDie(() => SourceDocumentSchema.parse(document));
   });
 }
 

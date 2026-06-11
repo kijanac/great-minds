@@ -22,8 +22,8 @@ import {
   type UserCreate,
   type UserId,
 } from "@great-minds/domain/user";
-import { firstOrFail, parseOrFail } from "./effect-helpers.js";
-import { ensureUser, type UserPersistenceFailed } from "./users.js";
+import { firstOrDie, firstOrFail, parseOrDie } from "./effect-helpers.js";
+import { ensureUser } from "./users.js";
 
 export type AuthConfig = {
   jwtSecret: string;
@@ -60,10 +60,6 @@ export class InvalidRefreshToken extends Data.TaggedError("InvalidRefreshToken")
   message: string;
 }> {}
 
-export class AuthPersistenceFailed extends Data.TaggedError("AuthPersistenceFailed")<{
-  message: string;
-}> {}
-
 export class ApiKeyUnavailable extends Data.TaggedError("ApiKeyUnavailable")<{
   message: string;
 }> {}
@@ -73,7 +69,7 @@ export function requestAuthCode(
   input: UserCreate,
   config: AuthConfig,
   deliverCode: (email: string, code: string) => Promise<void> | void,
-): Effect.Effect<void, AuthCodeDeliveryFailed | AuthPersistenceFailed> {
+): Effect.Effect<void, AuthCodeDeliveryFailed> {
   if (config.suppressAuth) return Effect.void;
 
   return Effect.gen(function* () {
@@ -82,7 +78,7 @@ export function requestAuthCode(
       .update(authCodes)
       .set({ used: true })
       .where(and(eq(authCodes.email, input.email), eq(authCodes.used, false)))
-      .pipe(Effect.mapError(() => new AuthPersistenceFailed({ message: "Failed to store auth code" })));
+      .pipe(Effect.orDie);
 
     yield* db
       .insert(authCodes)
@@ -91,7 +87,7 @@ export function requestAuthCode(
         codeHash: hashSecret(code),
         expiresAt: sql`now() + ${config.authCodeExpiryMinutes} * interval '1 minute'`,
       })
-      .pipe(Effect.mapError(() => new AuthPersistenceFailed({ message: "Failed to store auth code" })));
+      .pipe(Effect.orDie);
 
     yield* Effect.tryPromise({
       try: () => Promise.resolve(deliverCode(input.email, code)),
@@ -105,7 +101,7 @@ export function verifyCode(
   input: UserCreate,
   code: string,
   config: AuthConfig,
-): Effect.Effect<TokenPair, AuthPersistenceFailed | InvalidAuthCode | UserPersistenceFailed> {
+): Effect.Effect<TokenPair, InvalidAuthCode> {
   return Effect.gen(function* () {
     if (!config.suppressAuth) {
       const valid = yield* consumeAuthCode(db, input.email, code);
@@ -121,7 +117,7 @@ export function refreshAuthTokens(
   db: BackendDb,
   refreshToken: string,
   config: AuthConfig,
-): Effect.Effect<TokenPair, AuthPersistenceFailed | InvalidRefreshToken> {
+): Effect.Effect<TokenPair, InvalidRefreshToken> {
   return Effect.gen(function* () {
     const tokenHash = hashSecret(refreshToken);
     const rows = yield* db
@@ -135,7 +131,7 @@ export function refreshAuthTokens(
         ),
       )
       .limit(1)
-      .pipe(Effect.mapError(() => new AuthPersistenceFailed({ message: "Failed to refresh auth tokens" })));
+      .pipe(Effect.orDie);
 
     const stored = yield* firstOrFail(rows, () => new InvalidRefreshToken({ message: "Invalid or expired refresh token" }));
 
@@ -146,17 +142,11 @@ export function refreshAuthTokens(
             .update(refreshTokens)
             .set({ revoked: true })
             .where(eq(refreshTokens.id, stored.id))
-            .pipe(Effect.mapError(() => new AuthPersistenceFailed({ message: "Failed to refresh auth tokens" })));
+            .pipe(Effect.orDie);
           return yield* mintTokenPair(tx, UserIdSchema.parse(stored.userId), config);
         }),
       )
-      .pipe(
-        Effect.mapError((error) =>
-          error instanceof AuthPersistenceFailed
-            ? error
-            : new AuthPersistenceFailed({ message: "Failed to refresh auth tokens" }),
-        ),
-      );
+      .pipe(Effect.orDie);
   });
 }
 
@@ -164,7 +154,7 @@ export function resolveBearerToken(
   db: BackendDb,
   token: string,
   config: AuthConfig,
-): Effect.Effect<AuthenticatedPrincipal | null, AuthPersistenceFailed> {
+): Effect.Effect<AuthenticatedPrincipal | null> {
   return Effect.gen(function* () {
     const userFromAccessToken = yield* resolveAccessToken(db, token, config);
     if (userFromAccessToken) return userFromAccessToken;
@@ -177,36 +167,30 @@ export function createApiKey(
   db: BackendDb,
   userId: UserId,
   input: ApiKeyCreate,
-): Effect.Effect<ApiKeyWithSecret, AuthPersistenceFailed> {
+): Effect.Effect<ApiKeyWithSecret> {
   return Effect.gen(function* () {
     const rawKey = `gm_${randomBytes(32).toString("base64url")}`;
     const rows = yield* db
       .insert(apiKeys)
       .values({ userId, keyHash: hashSecret(rawKey), label: input.label, scopes: input.scopes })
       .returning()
-      .pipe(Effect.mapError(() => new AuthPersistenceFailed({ message: "Failed to create API key" })));
+      .pipe(Effect.orDie);
 
-    const apiKey = yield* firstOrFail(rows, () => new AuthPersistenceFailed({ message: "Failed to create API key" }));
-    return yield* parseOrFail(
-      () => ApiKeyWithSecretSchema.parse({ ...apiKey, rawKey }),
-      () => new AuthPersistenceFailed({ message: "Failed to create API key" }),
-    );
+    const apiKey = yield* firstOrDie(rows, "Failed to create API key");
+    return yield* parseOrDie(() => ApiKeyWithSecretSchema.parse({ ...apiKey, rawKey }));
   });
 }
 
-export function listApiKeys(db: BackendDb, userId: UserId): Effect.Effect<ApiKey[], AuthPersistenceFailed> {
+export function listApiKeys(db: BackendDb, userId: UserId): Effect.Effect<ApiKey[]> {
   return Effect.gen(function* () {
     const rows = yield* db
       .select()
       .from(apiKeys)
       .where(eq(apiKeys.userId, userId))
       .orderBy(desc(apiKeys.createdAt))
-      .pipe(Effect.mapError(() => new AuthPersistenceFailed({ message: "Failed to list API keys" })));
+      .pipe(Effect.orDie);
 
-    return yield* parseOrFail(
-      () => ApiKeySchema.array().parse(rows),
-      () => new AuthPersistenceFailed({ message: "Failed to list API keys" }),
-    );
+    return yield* parseOrDie(() => ApiKeySchema.array().parse(rows));
   });
 }
 
@@ -214,20 +198,20 @@ export function revokeApiKey(
   db: BackendDb,
   userId: UserId,
   keyId: ApiKeyId,
-): Effect.Effect<void, ApiKeyUnavailable | AuthPersistenceFailed> {
+): Effect.Effect<void, ApiKeyUnavailable> {
   return Effect.gen(function* () {
     const rows = yield* db
       .update(apiKeys)
       .set({ revoked: true })
       .where(and(eq(apiKeys.id, keyId), eq(apiKeys.userId, userId)))
       .returning({ id: apiKeys.id })
-      .pipe(Effect.mapError(() => new AuthPersistenceFailed({ message: "Failed to revoke API key" })));
+      .pipe(Effect.orDie);
 
     yield* firstOrFail(rows, () => new ApiKeyUnavailable({ message: "API key not found" }));
   });
 }
 
-function consumeAuthCode(db: BackendDb, email: string, code: string): Effect.Effect<boolean, AuthPersistenceFailed> {
+function consumeAuthCode(db: BackendDb, email: string, code: string): Effect.Effect<boolean> {
   return Effect.gen(function* () {
     const rows = yield* db
       .select({ id: authCodes.id })
@@ -241,7 +225,7 @@ function consumeAuthCode(db: BackendDb, email: string, code: string): Effect.Eff
         ),
       )
       .limit(1)
-      .pipe(Effect.mapError(() => new AuthPersistenceFailed({ message: "Failed to consume auth code" })));
+      .pipe(Effect.orDie);
 
     const authCode = rows[0];
     if (!authCode) return false;
@@ -249,17 +233,14 @@ function consumeAuthCode(db: BackendDb, email: string, code: string): Effect.Eff
       .update(authCodes)
       .set({ used: true })
       .where(eq(authCodes.id, authCode.id))
-      .pipe(Effect.mapError(() => new AuthPersistenceFailed({ message: "Failed to consume auth code" })));
+      .pipe(Effect.orDie);
     return true;
   });
 }
 
-function mintTokenPair(db: DbSession, userId: UserId, config: AuthConfig): Effect.Effect<TokenPair, AuthPersistenceFailed> {
+function mintTokenPair(db: DbSession, userId: UserId, config: AuthConfig): Effect.Effect<TokenPair> {
   return Effect.gen(function* () {
-    const accessToken = yield* Effect.tryPromise({
-      try: () => createAccessToken(userId, config),
-      catch: () => new AuthPersistenceFailed({ message: "Failed to mint auth tokens" }),
-    });
+    const accessToken = yield* Effect.promise(() => createAccessToken(userId, config));
     const refreshToken = createRefreshTokenValue();
 
     yield* db
@@ -269,7 +250,7 @@ function mintTokenPair(db: DbSession, userId: UserId, config: AuthConfig): Effec
         tokenHash: hashSecret(refreshToken),
         expiresAt: sql`now() + ${config.jwtRefreshExpiryDays} * interval '1 day'`,
       })
-      .pipe(Effect.mapError(() => new AuthPersistenceFailed({ message: "Failed to mint auth tokens" })));
+      .pipe(Effect.orDie);
 
     return { accessToken, refreshToken };
   });
@@ -279,7 +260,7 @@ function resolveAccessToken(
   db: BackendDb,
   token: string,
   config: AuthConfig,
-): Effect.Effect<AuthenticatedPrincipal | null, AuthPersistenceFailed> {
+): Effect.Effect<AuthenticatedPrincipal | null> {
   return Effect.gen(function* () {
     const userId = yield* Effect.promise(() => decodeAccessToken(token, config));
     if (!userId) return null;
@@ -289,17 +270,14 @@ function resolveAccessToken(
       .from(users)
       .where(eq(users.id, userId))
       .limit(1)
-      .pipe(Effect.mapError(() => new AuthPersistenceFailed({ message: "Failed to resolve bearer token" })));
+      .pipe(Effect.orDie);
     const user = rows[0];
     if (!user) return null;
-    return yield* parseOrFail(
-      () => ({ user: UserSchema.parse(user), credential: { kind: "session" as const } }),
-      () => new AuthPersistenceFailed({ message: "Failed to resolve bearer token" }),
-    );
+    return yield* parseOrDie(() => ({ user: UserSchema.parse(user), credential: { kind: "session" as const } }));
   });
 }
 
-function resolveApiKey(db: BackendDb, rawKey: string): Effect.Effect<AuthenticatedPrincipal | null, AuthPersistenceFailed> {
+function resolveApiKey(db: BackendDb, rawKey: string): Effect.Effect<AuthenticatedPrincipal | null> {
   return Effect.gen(function* () {
     const rows = yield* db
       .select({ apiKeyId: apiKeys.id, scopes: apiKeys.scopes, user: users })
@@ -307,21 +285,18 @@ function resolveApiKey(db: BackendDb, rawKey: string): Effect.Effect<Authenticat
       .innerJoin(users, eq(users.id, apiKeys.userId))
       .where(and(eq(apiKeys.keyHash, hashSecret(rawKey)), eq(apiKeys.revoked, false)))
       .limit(1)
-      .pipe(Effect.mapError(() => new AuthPersistenceFailed({ message: "Failed to resolve bearer token" })));
+      .pipe(Effect.orDie);
 
     const row = rows[0];
     if (!row) return null;
-    return yield* parseOrFail(
-      () => ({
-        user: UserSchema.parse(row.user),
-        credential: {
-          kind: "apiKey" as const,
-          apiKeyId: ApiKeyIdSchema.parse(row.apiKeyId),
-          scopes: ApiKeyScopeSchema.array().parse(row.scopes),
-        },
-      }),
-      () => new AuthPersistenceFailed({ message: "Failed to resolve bearer token" }),
-    );
+    return yield* parseOrDie(() => ({
+      user: UserSchema.parse(row.user),
+      credential: {
+        kind: "apiKey" as const,
+        apiKeyId: ApiKeyIdSchema.parse(row.apiKeyId),
+        scopes: ApiKeyScopeSchema.array().parse(row.scopes),
+      },
+    }));
   });
 }
 

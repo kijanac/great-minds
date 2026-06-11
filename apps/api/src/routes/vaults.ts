@@ -35,10 +35,9 @@ const vaultScopedRoutes = new Hono<AppEnv>()
     Effect.runPromise(
       getVault(c.get("db"), c.get("vaultScope")).pipe(
         Effect.map((vault) => c.json(vault)),
-        Effect.catchTags({
-          VaultUnavailable: () => Effect.fail(new HTTPException(404, { message: "Vault not found" })),
-          VaultPersistenceFailed: (error) => Effect.succeed(c.json({ error: { message: error.message } }, 500)),
-        }),
+        Effect.catchTag("VaultUnavailable", () =>
+          Effect.fail(new HTTPException(404, { message: "Vault not found" })),
+        ),
       ),
     ),
   )
@@ -49,7 +48,6 @@ const vaultScopedRoutes = new Hono<AppEnv>()
         Effect.catchTags({
           VaultUnavailable: () => Effect.fail(new HTTPException(404, { message: "Vault not found" })),
           VaultForbidden: (error) => Effect.succeed(c.json({ error: { message: error.message } }, 403)),
-          VaultPersistenceFailed: (error) => Effect.succeed(c.json({ error: { message: error.message } }, 500)),
         }),
       ),
     ),
@@ -58,10 +56,9 @@ const vaultScopedRoutes = new Hono<AppEnv>()
     Effect.runPromise(
       listVaultMembers(c.get("db"), c.get("vaultScope")).pipe(
         Effect.map((members) => c.json({ items: members })),
-        Effect.catchTags({
-          VaultUnavailable: () => Effect.fail(new HTTPException(404, { message: "Vault not found" })),
-          VaultPersistenceFailed: (error) => Effect.succeed(c.json({ error: { message: error.message } }, 500)),
-        }),
+        Effect.catchTag("VaultUnavailable", () =>
+          Effect.fail(new HTTPException(404, { message: "Vault not found" })),
+        ),
       ),
     ),
   )
@@ -69,10 +66,9 @@ const vaultScopedRoutes = new Hono<AppEnv>()
     Effect.runPromise(
       getVaultStats(c.get("db"), c.get("vaultScope")).pipe(
         Effect.map((stats) => c.json(stats)),
-        Effect.catchTags({
-          VaultUnavailable: () => Effect.fail(new HTTPException(404, { message: "Vault not found" })),
-          VaultPersistenceFailed: (error) => Effect.succeed(c.json({ error: { message: error.message } }, 500)),
-        }),
+        Effect.catchTag("VaultUnavailable", () =>
+          Effect.fail(new HTTPException(404, { message: "Vault not found" })),
+        ),
       ),
     ),
   )
@@ -80,10 +76,9 @@ const vaultScopedRoutes = new Hono<AppEnv>()
     Effect.runPromise(
       listSources(c.get("db"), c.get("vaultScope"), c.req.valid("query")).pipe(
         Effect.map((page) => c.json(page)),
-        Effect.catchTags({
-          VaultUnavailable: () => Effect.fail(new HTTPException(404, { message: "Vault not found" })),
-          SourcePersistenceFailed: (error) => Effect.succeed(c.json({ error: { message: error.message } }, 500)),
-        }),
+        Effect.catchTag("VaultUnavailable", () =>
+          Effect.fail(new HTTPException(404, { message: "Vault not found" })),
+        ),
       ),
     ),
   )
@@ -91,10 +86,9 @@ const vaultScopedRoutes = new Hono<AppEnv>()
     Effect.runPromise(
       upsertSourceDocument(c.get("db"), c.get("vaultScope"), c.req.valid("json")).pipe(
         Effect.map((source) => c.json(source)),
-        Effect.catchTags({
-          VaultUnavailable: () => Effect.fail(new HTTPException(404, { message: "Vault not found" })),
-          SourcePersistenceFailed: (error) => Effect.succeed(c.json({ error: { message: error.message } }, 500)),
-        }),
+        Effect.catchTag("VaultUnavailable", () =>
+          Effect.fail(new HTTPException(404, { message: "Vault not found" })),
+        ),
       ),
     ),
   )
@@ -122,12 +116,7 @@ export const vaultRoutes = new Hono<AppEnv>()
   .get("/", authenticateBearer, requireScope("vaults:read"), async (c) => {
     const principal = currentPrincipal(c);
     return Effect.runPromise(
-      listVaults(c.get("db"), principal.user.id).pipe(
-        Effect.map((vaults) => c.json({ items: vaults })),
-        Effect.catchTag("VaultPersistenceFailed", (error) =>
-          Effect.succeed(c.json({ error: { message: error.message } }, 500)),
-        ),
-      ),
+      listVaults(c.get("db"), principal.user.id).pipe(Effect.map((vaults) => c.json({ items: vaults }))),
     );
   })
   .post("/", authenticateBearer, requireScope("vaults:write"), zValidator("json", VaultCreateSchema), async (c) => {
@@ -135,10 +124,9 @@ export const vaultRoutes = new Hono<AppEnv>()
     return Effect.runPromise(
       createVault(c.get("db"), principal.user.id, c.req.valid("json")).pipe(
         Effect.map((workspace) => c.json(workspace, 201)),
-        Effect.catchTags({
-          VaultUnavailable: () => Effect.fail(new HTTPException(404, { message: "Vault not found" })),
-          VaultPersistenceFailed: (error) => Effect.succeed(c.json({ error: { message: error.message } }, 500)),
-        }),
+        Effect.catchTag("VaultUnavailable", () =>
+          Effect.fail(new HTTPException(404, { message: "Vault not found" })),
+        ),
       ),
     );
   })

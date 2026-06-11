@@ -5,7 +5,7 @@ import { users, vaultMemberships, vaults } from "@great-minds/db/schema";
 import type { UserId } from "@great-minds/domain/user";
 import type { VaultId } from "@great-minds/domain/vault";
 import { WorkspaceSchema, type Workspace } from "@great-minds/domain/workspace";
-import { firstOrFail, parseOrFail } from "./effect-helpers.js";
+import { firstOrFail, parseOrDie } from "./effect-helpers.js";
 
 export type VaultScope = {
   userId: UserId;
@@ -23,10 +23,10 @@ export function loadWorkspace(db: DbSession, scope: VaultScope): Effect.Effect<W
       .innerJoin(vaults, eq(vaults.id, vaultMemberships.vaultId))
       .where(and(eq(vaultMemberships.userId, scope.userId), eq(vaultMemberships.vaultId, scope.vaultId)))
       .limit(1)
-      .pipe(Effect.mapError(() => new VaultUnavailable()));
+      .pipe(Effect.orDie);
 
     const workspace = yield* firstOrFail(rows, () => new VaultUnavailable());
-    return yield* parseOrFail(() => WorkspaceSchema.parse(workspace), () => new VaultUnavailable());
+    return yield* parseOrDie(() => WorkspaceSchema.parse(workspace));
   });
 }
 
