@@ -307,6 +307,7 @@ class WikiArticleRepo:
             body_hash=bh,
             title=article.title,
             precis=article.precis,
+            tags=article.tags,
             render_run_id=article.render_run_id,
         )
         stmt = stmt.on_conflict_do_update(
@@ -317,6 +318,7 @@ class WikiArticleRepo:
                 "body_hash": bh,
                 "title": article.title,
                 "precis": article.precis,
+                "tags": article.tags,
                 "render_run_id": article.render_run_id,
                 "updated_at": func.now(),
             },
@@ -472,22 +474,6 @@ class WikiArticleRepo:
             await self.session.execute(
                 insert(BacklinkORM).values([b.model_dump() for b in backlinks])
             )
-
-    async def count_by_search(
-        self, vault_ids: list[UUID], *, search: str | None = None
-    ) -> int:
-        stmt = (
-            select(func.count())
-            .select_from(WikiArticleORM)
-            .where(WikiArticleORM.vault_id.in_(vault_ids))
-        )
-        if search:
-            pattern = f"%{search.lower()}%"
-            stmt = stmt.where(
-                func.lower(WikiArticleORM.title).like(pattern)
-                | func.lower(WikiArticleORM.precis).like(pattern)
-            )
-        return (await self.session.scalar(stmt)) or 0
 
 
 def _source_document_query(

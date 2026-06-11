@@ -436,6 +436,7 @@ async def _write_rendered_article(
         "topic_id": str(topic.topic_id),
         "title": topic.title,
         "description": topic.description,
+        "tags": tags,
     }
     full_content = serialize_frontmatter(fm, body)
     await phase.storage.write(article_path, full_content)
@@ -453,6 +454,7 @@ async def _write_rendered_article(
             topic_id=topic.topic_id,
             title=topic.title,
             precis=topic.description,
+            tags=tags,
             render_run_id=phase.pipeline_run_id,
         ),
     )

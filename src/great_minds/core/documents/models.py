@@ -154,6 +154,11 @@ class WikiArticleORM(Base):
     archived: Mapped[bool] = mapped_column(Boolean, server_default=sa.false())
     title: Mapped[str] = mapped_column(Text)
     precis: Mapped[str] = mapped_column(Text)
+    # 3-6 LLM-generated tags for the rendered article, mirrored onto the
+    # row so wiki reads and tag queries don't have to parse frontmatter.
+    tags: Mapped[list[str]] = mapped_column(
+        ARRAY(Text), server_default=sa.text("ARRAY[]::text[]")
+    )
     # The pipeline run that last rendered (or re-materialized) this article.
     # SET NULL, never CASCADE: purging a run must not delete the article it
     # produced — provenance is lost, the wiki survives.
