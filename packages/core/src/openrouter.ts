@@ -1,16 +1,22 @@
-import { Duration, Effect, Schedule } from "effect";
-import { isTagged } from "effect/Predicate";
+import OpenAI, {
+  APIConnectionError,
+  APIConnectionTimeoutError,
+  APIError,
+  RateLimitError,
+} from "openai";
+import { Effect } from "effect";
 import {
   LlmBadResponse,
   LlmClient,
   LlmRateLimited,
   LlmRejected,
   LlmUnavailable,
+  type LlmCompletion,
   type LlmCompletionRequest,
   type LlmProviderError,
 } from "./llm.js";
 
-const OPENROUTER_REQUEST_TIMEOUT = "60 seconds";
+const OPENROUTER_REQUEST_TIMEOUT_MS = 60_000;
 const OPENROUTER_RETRIES = 2;
 
 export type OpenRouterConfig =
@@ -31,89 +37,65 @@ export function openRouterLlmClient(config: OpenRouterConfig) {
           return yield* Effect.fail(new LlmUnavailable({ message: "LLM provider is not configured" }));
         }
 
-        const upstream = yield* fetchChatCompletion(config, JSON.stringify(request));
-        const text = yield* Effect.tryPromise({
-          try: () => upstream.text(),
-          catch: () => new LlmBadResponse({ message: "LLM provider returned an incompatible chat completion" }),
+        const client = openAiCompatibleClient(config);
+        const completion = yield* Effect.tryPromise({
+          try: () =>
+            client.chat.completions.create({
+              model: request.model,
+              messages: request.messages,
+            }),
+          catch: providerError,
         });
 
-        return yield* Effect.try({
-          try: () => ({ content: JSON.parse(text).choices[0].message.content }),
-          catch: () => new LlmBadResponse({ message: "LLM provider returned an incompatible chat completion" }),
-        });
+        return yield* extractCompletion(completion);
       }),
   });
 }
 
-function fetchChatCompletion(
-  config: Extract<OpenRouterConfig, { kind: "openrouter" }>,
-  body: string,
-): Effect.Effect<Response, LlmProviderError> {
-  return requestOnce(config, body).pipe(
-    Effect.flatMap(classifyResponse),
-    Effect.retry({
-      while: isRetryableProviderError,
-      schedule: retrySchedule,
-    }),
-  );
+function openAiCompatibleClient(config: Extract<OpenRouterConfig, { kind: "openrouter" }>): OpenAI {
+  return new OpenAI({
+    apiKey: config.apiKey,
+    baseURL: config.baseUrl,
+    timeout: OPENROUTER_REQUEST_TIMEOUT_MS,
+    maxRetries: OPENROUTER_RETRIES,
+    defaultHeaders: openRouterAttributionHeaders(config),
+  });
 }
 
-function requestOnce(
-  config: Extract<OpenRouterConfig, { kind: "openrouter" }>,
-  body: string,
-): Effect.Effect<Response, LlmProviderError> {
-  return Effect.tryPromise({
-    try: (signal) =>
-      fetch(`${config.baseUrl}/chat/completions`, {
-        method: "POST",
-        headers: openRouterHeaders(config),
-        body,
-        signal,
-      }),
-    catch: () => new LlmUnavailable({ message: "LLM provider is unavailable" }),
-  }).pipe(
-    Effect.timeout(OPENROUTER_REQUEST_TIMEOUT),
-    Effect.catchTag("TimeoutError", () =>
-      Effect.fail(new LlmUnavailable({ message: "LLM provider timed out" })),
-    ),
-  );
+function extractCompletion(completion: OpenAI.Chat.Completions.ChatCompletion): Effect.Effect<LlmCompletion, LlmBadResponse> {
+  const content = completion.choices[0]?.message.content;
+  return typeof content === "string" && content.length > 0
+    ? Effect.succeed({ content })
+    : Effect.fail(new LlmBadResponse({ message: "LLM provider returned an incompatible chat completion" }));
 }
 
-function classifyResponse(response: Response): Effect.Effect<Response, LlmRateLimited | LlmUnavailable | LlmRejected> {
-  if (response.status === 429) {
-    return Effect.fail(
-      new LlmRateLimited({
-        message: "LLM provider rate limited the request",
-        retryAfterMs: retryAfterMs(response),
-      }),
-    );
+function providerError(error: unknown): LlmProviderError {
+  if (error instanceof RateLimitError) {
+    return new LlmRateLimited({
+      message: "LLM provider rate limited the request",
+      retryAfterMs: retryAfterMs(error.headers),
+    });
   }
 
-  if (isTransientStatus(response.status)) {
-    return Effect.fail(new LlmUnavailable({ message: "LLM provider is unavailable" }));
+  if (error instanceof APIConnectionTimeoutError) {
+    return new LlmUnavailable({ message: "LLM provider timed out" });
   }
 
-  if (!response.ok) {
-    return Effect.fail(new LlmRejected({ message: "LLM provider rejected the request" }));
+  if (error instanceof APIConnectionError) {
+    return new LlmUnavailable({ message: "LLM provider is unavailable" });
   }
 
-  return Effect.succeed(response);
+  if (error instanceof APIError) {
+    return isTransientStatus(error.status)
+      ? new LlmUnavailable({ message: "LLM provider is unavailable" })
+      : new LlmRejected({ message: "LLM provider rejected the request" });
+  }
+
+  return new LlmUnavailable({ message: "LLM provider is unavailable" });
 }
 
-const retrySchedule = Schedule.recurs(OPENROUTER_RETRIES).pipe(
-  Schedule.addDelay((attempt) => Effect.succeed(Duration.millis(backoffDelayMs(attempt + 1)))),
-);
-
-function backoffDelayMs(attempt: number): number {
-  return (2 ** attempt + Math.random() * 0.5) * 1000;
-}
-
-function isRetryableProviderError(error: LlmProviderError): error is LlmRateLimited | LlmUnavailable {
-  return isTagged("LlmRateLimited")(error) || isTagged("LlmUnavailable")(error);
-}
-
-function retryAfterMs(response: Response): number | undefined {
-  const header = response.headers.get("retry-after");
+function retryAfterMs(headers: Headers | undefined): number | undefined {
+  const header = headers?.get("retry-after");
   if (!header) return undefined;
 
   const seconds = Number.parseFloat(header);
@@ -123,8 +105,15 @@ function retryAfterMs(response: Response): number | undefined {
   return Number.isFinite(dateMs) && dateMs > 0 ? dateMs : undefined;
 }
 
-function isTransientStatus(status: number): boolean {
+function isTransientStatus(status: number | undefined): boolean {
   return status === 408 || status === 500 || status === 502 || status === 503 || status === 504;
+}
+
+function openRouterAttributionHeaders(config: Extract<OpenRouterConfig, { kind: "openrouter" }>): Record<string, string> {
+  const headers: Record<string, string> = {};
+  if (config.siteUrl) headers["HTTP-Referer"] = config.siteUrl;
+  if (config.appName) headers["X-Title"] = config.appName;
+  return headers;
 }
 
 export function openRouterHeaders(config: Extract<OpenRouterConfig, { kind: "openrouter" }>): Headers {
@@ -133,8 +122,9 @@ export function openRouterHeaders(config: Extract<OpenRouterConfig, { kind: "ope
     "Content-Type": "application/json",
   });
 
-  if (config.siteUrl) headers.set("HTTP-Referer", config.siteUrl);
-  if (config.appName) headers.set("X-Title", config.appName);
+  for (const [name, value] of Object.entries(openRouterAttributionHeaders(config))) {
+    headers.set(name, value);
+  }
 
   return headers;
 }
