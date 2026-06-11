@@ -1,13 +1,17 @@
 import { zValidator } from "@hono/zod-validator";
 import { Hono } from "hono";
 import { OpenAIChatCompletionRequestSchema } from "@great-minds/protocol-openai/chat";
-import { authenticateBearer, requireApiKeyScope } from "../auth.js";
-import type { AppEnv } from "../context.js";
+import { createAuthenticateBearer, requireApiKeyScope } from "../auth.js";
+import type { BackendRuntime } from "@great-minds/db/context";
+import type { ApiConfig, AppEnv } from "../context.js";
 import { chatCompletionResponse, modelListResponse } from "../openai-provider.js";
 
-export const openAiRoutes = new Hono<AppEnv>()
+export function createOpenAiRoutes(runtime: BackendRuntime, config: ApiConfig) {
+  const authenticateBearer = createAuthenticateBearer(runtime, config.auth);
+
+  return new Hono<AppEnv>()
   .get("/models", authenticateBearer, requireApiKeyScope("query"), (c) =>
-    modelListResponse(c.get("openAiProvider"), c.get("requestId")),
+    modelListResponse(config.openAiProvider, c.get("requestId")),
   )
   .post(
     "/chat/completions",
@@ -16,8 +20,9 @@ export const openAiRoutes = new Hono<AppEnv>()
     zValidator("json", OpenAIChatCompletionRequestSchema),
     (c) =>
       chatCompletionResponse(
-        c.get("openAiProvider"),
+        config.openAiProvider,
         c.req.valid("json"),
         c.get("requestId"),
       ),
   );
+}

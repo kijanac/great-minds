@@ -3,29 +3,22 @@ import { HTTPException } from "hono/http-exception";
 import { requestId } from "hono/request-id";
 import type { BackendRuntime } from "@great-minds/db/context";
 import type { ApiConfig, AppEnv } from "./context.js";
-import { authRoutes } from "./routes/auth.js";
+import { createAuthRoutes } from "./routes/auth.js";
 import { healthRoutes } from "./routes/health.js";
-import { meRoutes } from "./routes/me.js";
-import { openAiRoutes } from "./routes/openai.js";
-import { vaultRoutes } from "./routes/vaults.js";
+import { createMeRoutes } from "./routes/me.js";
+import { createOpenAiRoutes } from "./routes/openai.js";
+import { createVaultRoutes } from "./routes/vaults.js";
 
 export function createApp(runtime: BackendRuntime, config: ApiConfig) {
   const app = new Hono<AppEnv>();
 
   app.use("*", requestId());
-  app.use("*", async (c, next) => {
-    c.set("runtime", runtime);
-    c.set("authConfig", config.auth);
-    c.set("authCodeDelivery", config.authCodeDelivery);
-    c.set("openAiProvider", config.openAiProvider);
-    await next();
-  });
 
   app.route("/health", healthRoutes);
-  app.route("/v1", openAiRoutes);
-  app.route("/v1", meRoutes);
-  app.route("/v1/auth", authRoutes);
-  app.route("/v1/vaults", vaultRoutes);
+  app.route("/v1", createOpenAiRoutes(runtime, config));
+  app.route("/v1", createMeRoutes(runtime, config));
+  app.route("/v1/auth", createAuthRoutes(runtime, config));
+  app.route("/v1/vaults", createVaultRoutes(runtime, config));
 
   app.notFound((c) =>
     c.json(

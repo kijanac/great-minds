@@ -13,20 +13,24 @@ import {
 import { ApiKeyCreateSchema, ApiKeyIdSchema, AuthCodeSchema, RefreshTokenSecretSchema } from "@great-minds/domain/auth";
 import { UserCreateSchema } from "@great-minds/domain/user";
 import { z } from "zod";
-import { authenticateBearer, currentPrincipal, requireSession } from "../auth.js";
-import type { AppEnv, AuthCodeDeliveryConfig } from "../context.js";
+import { createAuthenticateBearer, currentPrincipal, requireSession } from "../auth.js";
+import type { BackendRuntime } from "@great-minds/db/context";
+import type { ApiConfig, AppEnv, AuthCodeDeliveryConfig } from "../context.js";
 import { tokenResponse } from "../schemas/auth.js";
 
-export const authRoutes = new Hono<AppEnv>()
+export function createAuthRoutes(runtime: BackendRuntime, config: ApiConfig) {
+  const authenticateBearer = createAuthenticateBearer(runtime, config.auth);
+
+  return new Hono<AppEnv>()
   .post("/request-code", zValidator("json", UserCreateSchema), async (c) => {
     const input = c.req.valid("json");
-    return c.get("runtime").runPromise(
-      requestAuthCode(input, c.get("authConfig"), (email, code) =>
+    return runtime.runPromise(
+      requestAuthCode(input, config.auth, (email, code) =>
         deliverAuthCode(
-          c.get("authCodeDelivery"),
+          config.authCodeDelivery,
           email,
           code,
-          c.get("authConfig").authCodeExpiryMinutes,
+          config.auth.authCodeExpiryMinutes,
         ),
       ).pipe(
         Effect.map(() => c.body(null, 204)),
@@ -38,11 +42,11 @@ export const authRoutes = new Hono<AppEnv>()
   })
   .post("/verify-code", zValidator("json", UserCreateSchema.extend({ code: AuthCodeSchema })), async (c) => {
     const body = c.req.valid("json");
-    return c.get("runtime").runPromise(
+    return runtime.runPromise(
       verifyCode(
         { email: body.email },
         body.code,
-        c.get("authConfig"),
+        config.auth,
       ).pipe(
         Effect.map((tokenPair) => c.json(tokenResponse(tokenPair))),
         Effect.catchTag("InvalidAuthCode", () =>
@@ -53,8 +57,8 @@ export const authRoutes = new Hono<AppEnv>()
   })
   .post("/refresh", zValidator("json", z.object({ refresh_token: RefreshTokenSecretSchema })), async (c) => {
     const body = c.req.valid("json");
-    return c.get("runtime").runPromise(
-      refreshAuthTokens(body.refresh_token, c.get("authConfig")).pipe(
+    return runtime.runPromise(
+      refreshAuthTokens(body.refresh_token, config.auth).pipe(
         Effect.map((tokenPair) => c.json(tokenResponse(tokenPair))),
         Effect.catchTag("InvalidRefreshToken", () =>
           Effect.fail(new HTTPException(401, { message: "Invalid or expired refresh token" })),
@@ -64,14 +68,14 @@ export const authRoutes = new Hono<AppEnv>()
   })
   .get("/api-keys", authenticateBearer, requireSession, async (c) => {
     const principal = currentPrincipal(c);
-    return c.get("runtime").runPromise(
+    return runtime.runPromise(
       listApiKeys(principal.user.id).pipe(Effect.map((apiKeys) => c.json(apiKeys))),
     );
   })
   .post("/api-keys", authenticateBearer, requireSession, zValidator("json", ApiKeyCreateSchema), async (c) => {
     const principal = currentPrincipal(c);
     const body = c.req.valid("json");
-    return c.get("runtime").runPromise(
+    return runtime.runPromise(
       createApiKey(principal.user.id, body).pipe(Effect.map((apiKey) => c.json(apiKey, 201))),
     );
   })
@@ -79,7 +83,7 @@ export const authRoutes = new Hono<AppEnv>()
     const principal = currentPrincipal(c);
     const { id } = c.req.valid("param");
 
-    return c.get("runtime").runPromise(
+    return runtime.runPromise(
       revokeApiKey(principal.user.id, id).pipe(
         Effect.map(() => c.body(null, 204)),
         Effect.catchTag("ApiKeyUnavailable", () =>
@@ -88,6 +92,7 @@ export const authRoutes = new Hono<AppEnv>()
       ),
     );
   });
+}
 
 async function deliverAuthCode(
   delivery: AuthCodeDeliveryConfig,

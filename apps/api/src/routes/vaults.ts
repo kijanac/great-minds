@@ -18,8 +18,9 @@ import {
 import { QueryRequestSchema } from "@great-minds/domain/query";
 import { SourceDocumentUpsertSchema, SourceListQuerySchema } from "@great-minds/domain/source";
 import { VaultCreateSchema, VaultIdSchema, VaultPatchSchema } from "@great-minds/domain/vault";
-import { authenticateBearer, currentPrincipal, requireScope } from "../auth.js";
-import type { AppEnv } from "../context.js";
+import { createAuthenticateBearer, currentPrincipal, requireScope } from "../auth.js";
+import type { BackendRuntime } from "@great-minds/db/context";
+import type { ApiConfig, AppEnv } from "../context.js";
 
 const bindVaultScope = createMiddleware<AppEnv>(async (c, next) => {
   const principal = currentPrincipal(c);
@@ -29,10 +30,15 @@ const bindVaultScope = createMiddleware<AppEnv>(async (c, next) => {
   await next();
 });
 
-const vaultScopedRoutes = new Hono<AppEnv>()
+function createVaultScopedRoutes(
+  runtime: BackendRuntime,
+  config: ApiConfig,
+  authenticateBearer: ReturnType<typeof createAuthenticateBearer>,
+) {
+  return new Hono<AppEnv>()
   .use("*", authenticateBearer, bindVaultScope)
   .get("/", requireScope("vaults:read"), async (c) =>
-    c.get("runtime").runPromise(
+    runtime.runPromise(
       getVault(c.get("vaultScope")).pipe(
         Effect.map((vault) => c.json(vault)),
         Effect.catchTag("VaultUnavailable", () =>
@@ -42,7 +48,7 @@ const vaultScopedRoutes = new Hono<AppEnv>()
     ),
   )
   .patch("/", requireScope("vaults:write"), zValidator("json", VaultPatchSchema), async (c) =>
-    c.get("runtime").runPromise(
+    runtime.runPromise(
       updateVault(c.get("vaultScope"), c.req.valid("json")).pipe(
         Effect.map((workspace) => c.json(workspace)),
         Effect.catchTags({
@@ -53,7 +59,7 @@ const vaultScopedRoutes = new Hono<AppEnv>()
     ),
   )
   .get("/members", requireScope("vaults:read"), async (c) =>
-    c.get("runtime").runPromise(
+    runtime.runPromise(
       listVaultMembers(c.get("vaultScope")).pipe(
         Effect.map((members) => c.json({ items: members })),
         Effect.catchTag("VaultUnavailable", () =>
@@ -63,7 +69,7 @@ const vaultScopedRoutes = new Hono<AppEnv>()
     ),
   )
   .get("/stats", requireScope("vaults:read"), async (c) =>
-    c.get("runtime").runPromise(
+    runtime.runPromise(
       getVaultStats(c.get("vaultScope")).pipe(
         Effect.map((stats) => c.json(stats)),
         Effect.catchTag("VaultUnavailable", () =>
@@ -73,7 +79,7 @@ const vaultScopedRoutes = new Hono<AppEnv>()
     ),
   )
   .get("/sources", requireScope("sources:read"), zValidator("query", SourceListQuerySchema), async (c) =>
-    c.get("runtime").runPromise(
+    runtime.runPromise(
       listSources(c.get("vaultScope"), c.req.valid("query")).pipe(
         Effect.map((page) => c.json(page)),
         Effect.catchTag("VaultUnavailable", () =>
@@ -83,7 +89,7 @@ const vaultScopedRoutes = new Hono<AppEnv>()
     ),
   )
   .post("/sources", requireScope("sources:write"), zValidator("json", SourceDocumentUpsertSchema), async (c) =>
-    c.get("runtime").runPromise(
+    runtime.runPromise(
       upsertSourceDocument(c.get("vaultScope"), c.req.valid("json")).pipe(
         Effect.map((source) => c.json(source)),
         Effect.catchTag("VaultUnavailable", () =>
@@ -98,7 +104,7 @@ const vaultScopedRoutes = new Hono<AppEnv>()
       Effect.succeed(c.json({ error: { message: error.message, requestId } }, 502));
 
     const response = answerQuery(c.get("vaultScope"), c.req.valid("json")).pipe(
-      Effect.provideService(LlmClient, openRouterLlmClient(c.get("openAiProvider"))),
+      Effect.provideService(LlmClient, openRouterLlmClient(config.openAiProvider)),
       Effect.map((answer) => c.json(answer)),
       Effect.catchTags({
         VaultUnavailable: () => Effect.succeed(c.json({ error: { message: "Vault not found", requestId } }, 404)),
@@ -109,19 +115,23 @@ const vaultScopedRoutes = new Hono<AppEnv>()
       }),
     );
 
-    return c.get("runtime").runPromise(response);
+    return runtime.runPromise(response);
   });
+}
 
-export const vaultRoutes = new Hono<AppEnv>()
+export function createVaultRoutes(runtime: BackendRuntime, config: ApiConfig) {
+  const authenticateBearer = createAuthenticateBearer(runtime, config.auth);
+
+  return new Hono<AppEnv>()
   .get("/", authenticateBearer, requireScope("vaults:read"), async (c) => {
     const principal = currentPrincipal(c);
-    return c.get("runtime").runPromise(
+    return runtime.runPromise(
       listVaults(principal.user.id).pipe(Effect.map((vaults) => c.json({ items: vaults }))),
     );
   })
   .post("/", authenticateBearer, requireScope("vaults:write"), zValidator("json", VaultCreateSchema), async (c) => {
     const principal = currentPrincipal(c);
-    return c.get("runtime").runPromise(
+    return runtime.runPromise(
       createVault(principal.user.id, c.req.valid("json")).pipe(
         Effect.map((workspace) => c.json(workspace, 201)),
         Effect.catchTag("VaultUnavailable", () =>
@@ -130,4 +140,5 @@ export const vaultRoutes = new Hono<AppEnv>()
       ),
     );
   })
-  .route("/:id", vaultScopedRoutes);
+  .route("/:id", createVaultScopedRoutes(runtime, config, authenticateBearer));
+}

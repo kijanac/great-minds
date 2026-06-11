@@ -3,19 +3,22 @@ import type { Context } from "hono";
 import { bearerAuth } from "hono/bearer-auth";
 import { createMiddleware } from "hono/factory";
 import { HTTPException } from "hono/http-exception";
-import { resolveBearerToken } from "@great-minds/core/auth";
+import { resolveBearerToken, type AuthConfig } from "@great-minds/core/auth";
 import type { ApiKeyScope } from "@great-minds/domain/auth";
+import type { BackendRuntime } from "@great-minds/db/context";
 import type { AppEnv } from "./context.js";
 
-export const authenticateBearer = bearerAuth({
-  verifyToken: async (token, c) => {
-    const principal = await c.get("runtime").runPromise(resolveBearerToken(token, c.get("authConfig")));
-    if (!principal) return false;
+export function createAuthenticateBearer(runtime: BackendRuntime, authConfig: AuthConfig) {
+  return bearerAuth({
+    verifyToken: async (token, c) => {
+      const principal = await runtime.runPromise(resolveBearerToken(token, authConfig));
+      if (!principal) return false;
 
-    c.set("principal", principal);
-    return true;
-  },
-});
+      c.set("principal", principal);
+      return true;
+    },
+  });
+}
 
 export const requirePrincipal = createMiddleware<AppEnv>(async (c, next) => {
   currentPrincipal(c);
