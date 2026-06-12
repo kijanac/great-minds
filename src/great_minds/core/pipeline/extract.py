@@ -14,7 +14,7 @@ import asyncio
 import json
 import logging
 from collections.abc import AsyncIterator
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from uuid import UUID, uuid7
 
 from openai import AsyncOpenAI
@@ -154,7 +154,8 @@ class ExtractPhase:
                 )
 
         # Per-doc trackers for the embedding loop. Populated only inside
-        # the success branch below where source_card is narrowed to non-None.
+        # the success branch below; _ExtractCached/_ExtractFresh carry a
+        # non-Optional source_card by construction.
         # ``fresh_cards`` only carries cache misses — cache hits already have
         # their ideas+anchors and source_documents columns from a prior compile.
         fresh_cards: list[SourceCard] = []
@@ -167,7 +168,7 @@ class ExtractPhase:
         ideas_emitted = 0
 
         for outcome in outcomes:
-            if outcome.error is not None:
+            if isinstance(outcome, _ExtractFailed):
                 docs_failed += 1
                 log_event(
                     "doc_failed",
@@ -177,12 +178,9 @@ class ExtractPhase:
                 )
                 continue
             source_card = outcome.source_card
-            if source_card is None:
-                # Unreachable in practice: success path always sets source_card.
-                continue
             docs_extracted += 1
             ideas_emitted += len(source_card.ideas)
-            if outcome.cache_hit:
+            if isinstance(outcome, _ExtractCached):
                 cache_hits += 1
                 for idea in source_card.ideas:
                     if idea.idea_id not in existing_idea_ids:
@@ -289,15 +287,26 @@ class ExtractPhase:
 # ---------------------------------------------------------------------------
 
 
-@dataclass
-class _ExtractOutcome:
+@dataclass(frozen=True)
+class _ExtractFailed:
     raw_path: str
+    error: str
+
+
+@dataclass(frozen=True)
+class _ExtractCached:
     document_id: UUID
-    source_card: SourceCard | None = None
-    embeddings: list[IdeaCreate] = field(default_factory=list)
-    cache_key: str = ""
-    cache_hit: bool = False
-    error: str | None = None
+    source_card: SourceCard
+
+
+@dataclass(frozen=True)
+class _ExtractFresh:
+    document_id: UUID
+    source_card: SourceCard
+    cache_key: str
+
+
+_ExtractOutcome = _ExtractFailed | _ExtractCached | _ExtractFresh
 
 
 async def _extract_one(
@@ -312,12 +321,10 @@ async def _extract_one(
     prompt_hash: str,
     response_format: dict,
 ) -> _ExtractOutcome:
-    outcome = _ExtractOutcome(raw_path=raw_path, document_id=document_id)
     try:
         cache_key = _cache_key(
             document_id=document_id, body_hash=body_hash, prompt_hash=prompt_hash
         )
-        outcome.cache_key = cache_key
 
         cached = await phase.compile_cache.get(
             vault_id=vault_id,
@@ -325,15 +332,13 @@ async def _extract_one(
             cache_key=cache_key,
         )
         if cached is not None:
-            outcome.source_card = SourceCard.model_validate(cached["source_card"])
-            outcome.cache_hit = True
-            return outcome
+            source_card = SourceCard.model_validate(cached["source_card"])
+            return _ExtractCached(document_id=document_id, source_card=source_card)
 
         # Cache miss: only now do we need the body to feed the LLM.
         content = await phase.storage.read(raw_path, strict=False)
         if content is None:
-            outcome.error = "file_not_found"
-            return outcome
+            return _ExtractFailed(raw_path=raw_path, error="file_not_found")
         _, body = parse_frontmatter(content)
 
         async with sem:
@@ -345,25 +350,28 @@ async def _extract_one(
                 temperature=0.2,
                 response_format=response_format,
             )
-        outcome.source_card = _validate_extract_output(
+        source_card = _validate_extract_output(
             data=data,
             document_id=document_id,
             allowed_kinds=phase.config.kinds,
         )
-        _localize_anchors(outcome.source_card, body)
+        _localize_anchors(source_card, body)
+        return _ExtractFresh(
+            document_id=document_id, source_card=source_card, cache_key=cache_key
+        )
     except json.JSONDecodeError as e:
-        outcome.error = f"json_parse_exhausted:{e}"
+        return _ExtractFailed(raw_path=raw_path, error=f"json_parse_exhausted:{e}")
     except ValidationError as e:
-        outcome.error = f"schema_invalid:{str(e)[:200]}"
+        return _ExtractFailed(raw_path=raw_path, error=f"schema_invalid:{str(e)[:200]}")
     except Exception as e:
-        outcome.error = f"llm_call:{repr(e)[:200]}"
+        error = f"llm_call:{e!r:.200}"
         log_event(
             "doc_failed",
             level=logging.WARNING,
             path=raw_path,
-            error=outcome.error,
+            error=error,
         )
-    return outcome
+        return _ExtractFailed(raw_path=raw_path, error=error)
 
 
 def _extract_response_format(config: VaultConfig) -> dict:
