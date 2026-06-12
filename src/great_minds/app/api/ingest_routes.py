@@ -10,6 +10,8 @@ from great_minds.app.api.dependencies import (
     IngestServiceDep,
     PipelineRunServiceDep,
     SourceDocumentServiceDep,
+    VaultEditorGuard,
+    VaultOwnerGuard,
     VaultStorageDep,
 )
 from great_minds.app.api.schemas.ingest import (
@@ -36,6 +38,7 @@ async def ingest(
     vault_id: UUID,
     storage: VaultStorageDep,
     ingest_service: IngestServiceDep,
+    _auth: VaultEditorGuard,
 ) -> IngestedDocument:
     return await ingest_service.ingest_text(
         vault_id,
@@ -52,6 +55,7 @@ async def ingest_user_suggestion(
     vault_id: UUID,
     storage: VaultStorageDep,
     ingest_service: IngestServiceDep,
+    _auth: VaultEditorGuard,
 ) -> IngestedDocument:
     try:
         return await ingest_service.ingest_user_suggestion(
@@ -72,6 +76,7 @@ async def ingest_upload(
     vault_id: UUID,
     storage: VaultStorageDep,
     ingest_service: IngestServiceDep,
+    _auth: VaultEditorGuard,
     origin: str | None = None,
     dest_path: str | None = None,
 ) -> IngestedDocument:
@@ -104,6 +109,7 @@ async def ingest_url(
     vault_id: UUID,
     storage: VaultStorageDep,
     ingest_service: IngestServiceDep,
+    _auth: VaultEditorGuard,
 ) -> IngestedDocument:
     try:
         return await ingest_service.ingest_url(
@@ -132,6 +138,7 @@ async def ingest_staged_files_check_dupes(
     req: CheckDupesRequest,
     vault_id: UUID,
     doc_service: SourceDocumentServiceDep,
+    _auth: VaultOwnerGuard,
 ) -> CheckDupesResponse:
     """Return the subset of submitted client-hashes that already exist in this vault.
 
@@ -148,6 +155,7 @@ async def ingest_staged_files_sign(
     req: StagedFileSignRequest,
     vault_id: UUID,
     ingest_service: IngestServiceDep,
+    _auth: VaultOwnerGuard,
 ) -> StagedFileSignResponse:
     try:
         signed = await ingest_service.sign_staged_files(vault_id, req.files)
@@ -161,6 +169,7 @@ async def ingest_staged_files_process(
     req: StagedFileProcessRequest,
     vault_id: UUID,
     pipeline_service: PipelineRunServiceDep,
+    _auth: VaultOwnerGuard,
 ) -> JobResponse:
     try:
         run = await pipeline_service.start_staged_file_ingest(

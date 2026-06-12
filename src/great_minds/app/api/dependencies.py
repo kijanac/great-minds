@@ -408,7 +408,23 @@ async def require_vault_owner(
         )
 
 
+async def require_vault_editor(
+    vault_id: UUID,
+    user: CurrentUser,
+    access: VaultAccessDep,
+) -> None:
+    """Raises 403 unless the user is an editor or owner of this vault."""
+    try:
+        await access.require_editor(vault_id, user.id)
+    except Forbidden:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only vault editors or owners can perform this action",
+        )
+
+
 VaultMemberGuard = Annotated[None, Depends(require_vault_member)]
+VaultEditorGuard = Annotated[None, Depends(require_vault_editor)]
 VaultOwnerGuard = Annotated[None, Depends(require_vault_owner)]
 
 
