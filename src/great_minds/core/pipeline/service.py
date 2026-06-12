@@ -1,5 +1,7 @@
 """Application service for compiling a vault through all pipeline phases."""
 
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from uuid import UUID
@@ -94,10 +96,15 @@ class CompileService:
 
             log_event("completed")
 
+    @asynccontextmanager
+    async def _phase(self, name: str) -> AsyncIterator[None]:
+        with telemetry_scope(name, phase=name):
+            async with timed_op(name):
+                yield
+
     async def run_ingest_step(self) -> None:
-        with telemetry_scope("ingest", phase="ingest"):
-            async with timed_op("ingest"):
-                await self.phases.ingest.run(self.vault_id)
+        async with self._phase("ingest"):
+            await self.phases.ingest.run(self.vault_id)
 
     async def run_extract_step(self) -> None:
         await self.progress.emit(
@@ -106,41 +113,35 @@ class CompileService:
             status="started",
             steps=self.phases.extract.progress_steps("extract_cards"),
         )
-        with telemetry_scope("extract", phase="extract"):
-            async with timed_op("extract"):
-                await self.phases.extract.run(
-                    vault_id=self.vault_id, pipeline_run_id=self.pipeline_run_id
-                )
+        async with self._phase("extract"):
+            await self.phases.extract.run(
+                vault_id=self.vault_id, pipeline_run_id=self.pipeline_run_id
+            )
 
     async def run_abstract_step(self) -> list[dict]:
-        with telemetry_scope("abstract", phase="abstract"):
-            async with timed_op("abstract"):
-                topics = await self.phases.abstract.run(self.vault_id)
+        async with self._phase("abstract"):
+            topics = await self.phases.abstract.run(self.vault_id)
         return [topic.model_dump(mode="json") for topic in topics]
 
     async def run_derive_step(self, validated: list[TopicDetail]) -> None:
-        with telemetry_scope("derive", phase="derive"):
-            async with timed_op("derive"):
-                await self.phases.derive.run(self.vault_id, validated)
+        async with self._phase("derive"):
+            await self.phases.derive.run(self.vault_id, validated)
 
     async def run_render_step(self, validated: list[TopicDetail]) -> None:
-        with telemetry_scope("render", phase="render"):
-            async with timed_op("render"):
-                await self.phases.render.run(
-                    self.vault_id,
-                    self.pipeline_run_id,
-                    validated,
-                )
+        async with self._phase("render"):
+            await self.phases.render.run(
+                self.vault_id,
+                self.pipeline_run_id,
+                validated,
+            )
 
     async def run_verify_step(self) -> None:
-        with telemetry_scope("verify", phase="verify"):
-            async with timed_op("verify"):
-                await self.phases.verify.run(self.vault_id)
+        async with self._phase("verify"):
+            await self.phases.verify.run(self.vault_id)
 
     async def run_publish_step(self) -> None:
-        with telemetry_scope("publish", phase="publish"):
-            async with timed_op("publish"):
-                await self.phases.publish.run(self.vault_id)
+        async with self._phase("publish"):
+            await self.phases.publish.run(self.vault_id)
 
     async def complete_early_no_topics(self) -> None:
         await self.progress.emit(
