@@ -146,34 +146,6 @@ class PipelineRunService:
         await self.repo.session.commit()
 
 
-class PipelineProgressService:
-    def __init__(self, repo: PipelineRunRepository) -> None:
-        self.repo = repo
-
-    async def fail(self, pipeline_run_id: UUID, error: str) -> UUID | None:
-        # The pipeline_runs trigger emits the LISTEN/NOTIFY wakeup on commit.
-        return await self.repo.fail(pipeline_run_id, error)
-
-    async def emit(
-        self,
-        *,
-        pipeline_run_id: UUID,
-        phase: str,
-        status: str,
-        steps: list[PipelineProgressStep],
-        error: str | None = None,
-    ) -> UUID | None:
-        return await self.repo.update_progress(
-            pipeline_run_id,
-            PipelineRunUpdate(
-                phase=phase,
-                status=status,
-                progress_steps=steps,
-                error=error,
-            ),
-        )
-
-
 class PipelineProgressRunner:
     def __init__(self, session_maker: async_sessionmaker) -> None:
         self.session_maker = session_maker
@@ -181,8 +153,8 @@ class PipelineProgressRunner:
     async def fail(self, pipeline_run_id: UUID, error: str) -> None:
         """Mark the current phase failed in a short independent transaction."""
         async with self.session_maker() as session:
-            service = PipelineProgressService(PipelineRunRepository(session))
-            vault_id = await service.fail(pipeline_run_id, error)
+            # The pipeline_runs trigger emits the LISTEN/NOTIFY wakeup on commit.
+            vault_id = await PipelineRunRepository(session).fail(pipeline_run_id, error)
             if vault_id is None:
                 await session.rollback()
                 return
@@ -199,13 +171,14 @@ class PipelineProgressRunner:
     ) -> None:
         """Persist progress in a short independent transaction."""
         async with self.session_maker() as session:
-            service = PipelineProgressService(PipelineRunRepository(session))
-            vault_id = await service.emit(
-                pipeline_run_id=pipeline_run_id,
-                phase=phase,
-                status=status,
-                steps=steps,
-                error=error,
+            vault_id = await PipelineRunRepository(session).update_progress(
+                pipeline_run_id,
+                PipelineRunUpdate(
+                    phase=phase,
+                    status=status,
+                    progress_steps=steps,
+                    error=error,
+                ),
             )
             if vault_id is None:
                 await session.rollback()

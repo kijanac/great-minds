@@ -21,7 +21,6 @@ from great_minds.core.pipeline_runs.schemas import (
 )
 from great_minds.core.pipeline_runs.service import (
     PipelineProgressRunner,
-    PipelineProgressService,
     PipelineRunService,
     phase_step,
 )
@@ -34,7 +33,6 @@ __all__ = [
     "PipelineProgressRunner",
     "PipelineProgressStep",
     "PipelineStepStatus",
-    "PipelineProgressService",
     "PipelineRun",
     "PipelineTaskType",
     "PipelineRunCreate",
