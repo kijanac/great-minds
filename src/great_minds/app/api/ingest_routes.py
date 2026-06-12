@@ -87,6 +87,12 @@ async def ingest_user_suggestion(
     dest = ingest_service.user_suggestion_dest(
         intent=suggestion.intent, anchored_to=suggestion.anchored_to
     )
+    rendered = ingest_service.render_user_suggestion_source(
+        body=suggestion.body,
+        intent=suggestion.intent,
+        anchored_to=suggestion.anchored_to,
+        anchored_section=suggestion.anchored_section,
+    )
     await proposal_service.create(
         vault_id=vault_id,
         user_id=user.id,
@@ -95,7 +101,7 @@ async def ingest_user_suggestion(
             title=None,
             author=None,
             dest_path=dest,
-            rendered=suggestion.body,
+            rendered=rendered,
         ),
     )
     return IngestedDocument(file_path=dest)
