@@ -168,11 +168,7 @@ class VaultService:
         if user.r2_bucket_name:
             return user.r2_bucket_name
         bucket_name = derive_user_bucket_name(self.settings.r2_bucket_prefix, owner_id)
-        admin = R2Admin(
-            account_id=self.settings.r2_account_id,
-            access_key_id=self.settings.r2_access_key_id,
-            secret_access_key=self.settings.r2_secret_access_key,
-        )
+        admin = R2Admin.from_settings(self.settings)
         await asyncio.to_thread(
             admin.ensure_bucket,
             bucket_name,

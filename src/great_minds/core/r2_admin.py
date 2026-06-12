@@ -18,7 +18,7 @@ import boto3
 from botocore.config import Config as BotoConfig
 from botocore.exceptions import ClientError
 
-from great_minds.core.settings import get_settings
+from great_minds.core.settings import Settings, get_settings
 from great_minds.core.telemetry import log_event
 
 log = logging.getLogger(__name__)
@@ -86,6 +86,26 @@ class R2Admin:
             config=BotoConfig(
                 max_pool_connections=get_settings().compile_enrich_concurrency
             ),
+        )
+
+    @classmethod
+    def from_settings(cls, settings: Settings) -> "R2Admin":
+        """Build from settings, failing loud if R2 credentials are unset.
+
+        Settings types the credentials as optional; this is the one place that
+        narrows them to the ``str`` the client requires, so callers don't each
+        re-pass a ``str | None`` into a ``str`` parameter.
+        """
+        if (
+            settings.r2_account_id is None
+            or settings.r2_access_key_id is None
+            or settings.r2_secret_access_key is None
+        ):
+            raise ValueError("R2 credentials are not configured")
+        return cls(
+            account_id=settings.r2_account_id,
+            access_key_id=settings.r2_access_key_id,
+            secret_access_key=settings.r2_secret_access_key,
         )
 
     def _bucket_exists(self, bucket: str) -> bool:

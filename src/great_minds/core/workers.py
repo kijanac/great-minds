@@ -403,11 +403,7 @@ async def staged_file_ingest_task(params: dict, ctx) -> None:
             r2_bucket_name=vault.r2_bucket_name,
             settings=settings,
         )
-        admin = R2Admin(
-            account_id=settings.r2_account_id,
-            access_key_id=settings.r2_access_key_id,
-            secret_access_key=settings.r2_secret_access_key,
-        )
+        admin = R2Admin.from_settings(settings)
         bucket = vault.r2_bucket_name
 
         init_wide_event(

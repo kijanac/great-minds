@@ -59,9 +59,5 @@ class UserService:
         await self.repo.session.commit()
 
         if bucket_name and self.settings.storage_backend == "r2":
-            admin = R2Admin(
-                account_id=self.settings.r2_account_id,
-                access_key_id=self.settings.r2_access_key_id,
-                secret_access_key=self.settings.r2_secret_access_key,
-            )
+            admin = R2Admin.from_settings(self.settings)
             await asyncio.to_thread(admin.delete_bucket, bucket_name)
