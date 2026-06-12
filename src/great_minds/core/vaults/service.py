@@ -222,12 +222,15 @@ class VaultService:
     ) -> None:
         """Atomically hand ownership to another member (single-owner invariant).
 
-        The new owner must already be a member; they become OWNER and the
-        previous owner is demoted to EDITOR in one transaction. Raises
-        ValueError if the target isn't a member or is already the owner.
+        The new owner must already be a member; they become OWNER, the previous
+        owner is demoted to EDITOR, and vault.owner_id is moved to the new owner
+        — all in one transaction, so role and owner_id stay in parity. (The R2
+        bucket is not migrated; storage stays in place.) Raises ValueError if the
+        target isn't a member or is already the owner.
         """
         if new_owner_id == current_owner_id:
             raise ValueError("Cannot transfer ownership to the current owner")
         await self.repo.set_member_role(vault_id, new_owner_id, MemberRole.OWNER)
         await self.repo.set_member_role(vault_id, current_owner_id, MemberRole.EDITOR)
+        await self.repo.set_owner(vault_id, new_owner_id)
         await self._commit()

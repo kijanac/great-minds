@@ -169,6 +169,12 @@ class VaultRepository:
         result = await self.session.execute(stmt)
         return Vault.model_validate(result.scalar_one())
 
+    async def set_owner(self, vault_id: UUID, owner_id: UUID) -> None:
+        """Update the vault's owner_id (kept in parity with the OWNER membership)."""
+        await self.session.execute(
+            update(VaultORM).where(VaultORM.id == vault_id).values(owner_id=owner_id)
+        )
+
     async def delete_membership(self, vault_id: UUID, user_id: UUID) -> bool:
         result = await self.session.execute(
             select(VaultMembership).where(
