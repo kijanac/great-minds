@@ -96,7 +96,7 @@ class TopicRepository:
     ) -> list[Topic]:
         stmt = select(TopicORM).where(TopicORM.vault_id == vault_id)
         if status is not None:
-            stmt = stmt.where(TopicORM.article_status == status.value)
+            stmt = stmt.where(TopicORM.article_status == status)
         rows = (
             (await self.session.execute(stmt.order_by(TopicORM.title))).scalars().all()
         )
@@ -111,7 +111,7 @@ class TopicRepository:
             .where(TopicORM.vault_id == vault_id)
         )
         if status is not None:
-            stmt = stmt.where(TopicORM.article_status == status.value)
+            stmt = stmt.where(TopicORM.article_status == status)
         return (await self.session.scalar(stmt)) or 0
 
     async def list_dirty_topic_ids(self, vault_id: UUID) -> list[UUID]:
@@ -124,7 +124,7 @@ class TopicRepository:
         result = await self.session.execute(
             select(TopicORM.topic_id).where(
                 TopicORM.vault_id == vault_id,
-                TopicORM.article_status != ArticleStatus.ARCHIVED.value,
+                TopicORM.article_status != ArticleStatus.ARCHIVED,
                 TopicORM.compiled_from_hash.is_not(None),
                 or_(
                     TopicORM.rendered_from_hash.is_(None),
@@ -142,7 +142,7 @@ class TopicRepository:
                 .select_from(TopicORM)
                 .where(
                     TopicORM.vault_id == vault_id,
-                    TopicORM.article_status != ArticleStatus.ARCHIVED.value,
+                    TopicORM.article_status != ArticleStatus.ARCHIVED,
                     TopicORM.compiled_from_hash.is_not(None),
                     or_(
                         TopicORM.rendered_from_hash.is_(None),
@@ -177,7 +177,7 @@ class TopicRepository:
             TopicORM.__table__.update()
             .where(TopicORM.topic_id == topic_id)
             .values(
-                article_status=ArticleStatus.ARCHIVED.value,
+                article_status=ArticleStatus.ARCHIVED,
                 superseded_by=superseded_by,
             )
         )
@@ -187,7 +187,7 @@ class TopicRepository:
             TopicORM.__table__.update()
             .where(TopicORM.topic_id == topic_id)
             .values(
-                article_status=ArticleStatus.RENDERED.value,
+                article_status=ArticleStatus.RENDERED,
                 rendered_from_hash=rendered_from_hash,
             )
         )

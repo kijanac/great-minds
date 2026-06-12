@@ -1,18 +1,11 @@
 """Pydantic schemas for the topics bounded context."""
 
 from datetime import datetime
-from enum import StrEnum
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict
 
-
-class ArticleStatus(StrEnum):
-    NO_ARTICLE = "no_article"
-    RENDERED = "rendered"
-    NEEDS_REVISION = "needs_revision"
-    ARCHIVED = "archived"
-
+from great_minds.core.topics.models import ArticleStatus
 
 # ---------------------------------------------------------------------------
 # CRUD / registry schemas
