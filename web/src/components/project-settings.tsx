@@ -7,6 +7,13 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import {
   AlertDialog,
   AlertDialogAction,
   AlertDialogCancel,
@@ -34,18 +41,6 @@ interface ProjectSettingsProps {
   onRemoveMember: (userId: string) => Promise<void>;
   onSaveConfig: (thematic_hint: string) => Promise<void>;
   onDeleteVault: () => Promise<void>;
-}
-
-// Roles a member can be cycled between by clicking their role. Owner is
-// deliberately excluded: transferring ownership must be an explicit action,
-// never a side effect of cycling (the previous wrap-around turned the last
-// role, viewer, straight into owner).
-const ASSIGNABLE_ROLES = ["editor", "viewer"] as const;
-
-function nextRole(current: string): string {
-  const idx = ASSIGNABLE_ROLES.indexOf(current as (typeof ASSIGNABLE_ROLES)[number]);
-  if (idx === -1) return current;
-  return ASSIGNABLE_ROLES[(idx + 1) % ASSIGNABLE_ROLES.length] || current;
 }
 
 export function ProjectSettings({
@@ -146,12 +141,21 @@ export function ProjectSettings({
                     </span>
                     <div className="flex items-center gap-2">
                       {isOwner && m.role !== "owner" ? (
-                        <button
-                          onClick={() => onChangeRole(m.user_id, nextRole(m.role))}
-                          className="font-mono text-[length:var(--text-chrome)] tracking-[0.06em] text-warm-ghost hover:text-gold transition-colors cursor-pointer"
+                        <Select
+                          value={m.role}
+                          onValueChange={(role) => role && onChangeRole(m.user_id, role)}
                         >
-                          {m.role}
-                        </button>
+                          <SelectTrigger
+                            size="sm"
+                            className="h-7 w-24 font-mono text-[length:var(--text-chrome)] tracking-[0.06em] text-warm-ghost"
+                          >
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent className={POPOVER_SURFACE_CLASS}>
+                            <SelectItem value="editor">editor</SelectItem>
+                            <SelectItem value="viewer">viewer</SelectItem>
+                          </SelectContent>
+                        </Select>
                       ) : (
                         <span className="font-mono text-[length:var(--text-chrome)] tracking-[0.06em] text-warm-ghost">
                           {m.role}
