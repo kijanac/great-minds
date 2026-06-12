@@ -6,6 +6,7 @@ from fastapi import APIRouter, HTTPException
 
 from great_minds.app.api.dependencies import (
     VaultAccessDep,
+    VaultEditorGuard,
     CurrentUser,
     SourceDocumentServiceDep,
     IngestServiceDep,
@@ -126,6 +127,7 @@ async def promote_exchange(
     proposal_service: ProposalServiceDep,
     doc_service: SourceDocumentServiceDep,
     _llm: LlmGuard,
+    _auth: VaultEditorGuard,
     vault_id: UUID,
 ) -> schemas.PromoteExchangeResponse:
     """Promote one session exchange into the vault's raw corpus.
