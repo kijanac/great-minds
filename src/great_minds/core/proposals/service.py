@@ -89,7 +89,7 @@ class ProposalService:
             offset=pagination.offset,
         )
         total = await self.repo.count_for_vault(vault_id, status=status)
-        return create_page(list(proposals), pagination, total)
+        return create_page(proposals, pagination, total)
 
     async def get_for_vault(self, vault_id: UUID, proposal_id: UUID) -> Proposal | None:
         return await self.repo.get_for_vault(vault_id, proposal_id)

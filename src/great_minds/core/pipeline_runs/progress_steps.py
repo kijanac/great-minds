@@ -14,10 +14,10 @@ def build_progress_steps(
     counts: dict[str, tuple[int | None, int | None]] | None = None,
     details: dict[str, str] | None = None,
 ) -> list[PipelineProgressStep]:
-    completed_steps = set() if completed is None else completed
-    failed_steps = set() if failed is None else failed
-    step_counts = {} if counts is None else counts
-    step_details = {} if details is None else details
+    completed_steps = completed or set()
+    failed_steps = failed or set()
+    step_counts = counts or {}
+    step_details = details or {}
 
     steps: list[PipelineProgressStep] = []
     for key, label in labels.items():

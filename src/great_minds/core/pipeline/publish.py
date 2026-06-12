@@ -223,5 +223,5 @@ class PublishPhase(ProgressStepsMixin):
             "",
         ]
 
-        existing = log_path.read_text(encoding="utf-8") if log_path.exists() else ""
-        log_path.write_text(existing + "\n".join(lines) + "\n", encoding="utf-8")
+        with log_path.open("a", encoding="utf-8") as f:
+            f.write("\n".join(lines) + "\n")

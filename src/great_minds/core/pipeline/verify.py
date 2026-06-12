@@ -20,7 +20,7 @@ needing to hit the endpoint.
 import logging
 from uuid import UUID
 
-from great_minds.core.documents import Backlink, WikiArticle, WikiArticleService
+from great_minds.core.documents import Backlink, WikiArticleService
 from great_minds.core.markdown import extract_wiki_link_targets
 from great_minds.core.paths import wiki_path, wiki_slug
 from great_minds.core.pipeline_runs import (
@@ -93,7 +93,8 @@ class VerifyPhase(ProgressStepsMixin):
         )
         slug_to_topic = {t.slug: t for t in rendered}
         topic_id_set = {t.topic_id for t in rendered}
-        article_by_topic = await self._load_wiki_articles(vault_id)
+        articles = await self.wiki_articles.list_all(vault_id)
+        article_by_topic = {a.topic_id: a for a in articles}
 
         backlinks: list[Backlink] = []
         source_article_ids: list[UUID] = []
@@ -198,11 +199,6 @@ class VerifyPhase(ProgressStepsMixin):
                 counts={"check_links": (articles_walked, len(rendered))},
             ),
         )
-
-    async def _load_wiki_articles(self, vault_id: UUID) -> dict[UUID, WikiArticle]:
-        """Map topic_id → WikiArticle."""
-        articles = await self.wiki_articles.list_all(vault_id)
-        return {a.topic_id: a for a in articles}
 
     async def _detect_unmentioned_links(
         self,

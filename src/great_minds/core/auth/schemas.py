@@ -2,8 +2,9 @@
 
 import uuid
 from datetime import datetime
+from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict
 
 
 class TokenPair(BaseModel):
@@ -12,7 +13,7 @@ class TokenPair(BaseModel):
 
     access_token: str
     refresh_token: str
-    token_type: str = Field(default="bearer")
+    token_type: Literal["bearer"] = "bearer"
 
 
 class ApiKey(BaseModel):
