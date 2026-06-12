@@ -38,7 +38,7 @@ async def ingest(
     vault_id: UUID,
     storage: VaultStorageDep,
     ingest_service: IngestServiceDep,
-    _auth: VaultEditorGuard,
+    _auth: VaultOwnerGuard,
 ) -> IngestedDocument:
     return await ingest_service.ingest_text(
         vault_id,
@@ -76,7 +76,7 @@ async def ingest_upload(
     vault_id: UUID,
     storage: VaultStorageDep,
     ingest_service: IngestServiceDep,
-    _auth: VaultEditorGuard,
+    _auth: VaultOwnerGuard,
     origin: str | None = None,
     dest_path: str | None = None,
 ) -> IngestedDocument:
@@ -109,7 +109,7 @@ async def ingest_url(
     vault_id: UUID,
     storage: VaultStorageDep,
     ingest_service: IngestServiceDep,
-    _auth: VaultEditorGuard,
+    _auth: VaultOwnerGuard,
 ) -> IngestedDocument:
     try:
         return await ingest_service.ingest_url(
