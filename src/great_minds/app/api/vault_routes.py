@@ -243,6 +243,25 @@ async def remove_member(
         raise HTTPException(status_code=404, detail="Membership not found")
 
 
+@router.post("/{vault_id}/transfer-ownership", status_code=status.HTTP_204_NO_CONTENT)
+async def transfer_ownership(
+    req: schemas.OwnershipTransfer,
+    vault_id: UUID,
+    user: CurrentUser,
+    _auth: VaultOwnerGuard,
+    vault_service: VaultServiceDep,
+) -> None:
+    """Hand ownership to another member; the caller becomes an editor."""
+    try:
+        await vault_service.transfer_ownership(
+            vault_id,
+            current_owner_id=user.id,
+            new_owner_id=req.new_owner_user_id,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
 @router.delete("/{vault_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_vault(
     vault_id: UUID,

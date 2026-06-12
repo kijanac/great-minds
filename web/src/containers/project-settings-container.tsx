@@ -11,6 +11,7 @@ import {
   inviteMember,
   listMembers,
   removeMember,
+  transferOwnership,
   updateVaultConfig,
   updateMemberRole,
 } from "@/api/vaults";
@@ -48,9 +49,9 @@ export function ProjectSettingsContainer() {
   const isOwner = members.some((m) => m.user_id === userId && m.role === "owner");
 
   const handleInvite = useCallback(
-    async (email: string) => {
+    async (email: string, role: string) => {
       if (!id) return;
-      const member = await inviteMember(id, email);
+      const member = await inviteMember(id, email, role);
       setMembers((prev) => [...prev, member]);
     },
     [id],
@@ -72,6 +73,23 @@ export function ProjectSettingsContainer() {
       setMembers((prev) => prev.filter((m) => m.user_id !== memberId));
     },
     [id],
+  );
+
+  const handleTransferOwnership = useCallback(
+    async (memberId: string) => {
+      if (!id) return;
+      await transferOwnership(id, memberId);
+      setMembers((prev) =>
+        prev.map((m) =>
+          m.user_id === memberId
+            ? { ...m, role: "owner" }
+            : m.user_id === userId
+              ? { ...m, role: "editor" }
+              : m,
+        ),
+      );
+    },
+    [id, userId],
   );
 
   const handleSaveConfig = useCallback(
@@ -102,6 +120,7 @@ export function ProjectSettingsContainer() {
       onInvite={handleInvite}
       onChangeRole={handleChangeRole}
       onRemoveMember={handleRemoveMember}
+      onTransferOwnership={handleTransferOwnership}
       onSaveConfig={handleSaveConfig}
       onDeleteVault={handleDeleteVault}
     />

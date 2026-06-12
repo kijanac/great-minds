@@ -60,6 +60,15 @@ export async function removeMember(vaultId: string, userId: string): Promise<voi
   if (!res.ok) throw new Error("Failed to remove member");
 }
 
+export async function transferOwnership(vaultId: string, newOwnerUserId: string): Promise<void> {
+  const res = await apiFetch(`/vaults/${vaultId}/transfer-ownership`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ new_owner_user_id: newOwnerUserId }),
+  });
+  if (!res.ok) throw new Error("Failed to transfer ownership");
+}
+
 export async function deleteVault(vaultId: string): Promise<void> {
   const res = await apiFetch(`/vaults/${vaultId}`, { method: "DELETE" });
   if (!res.ok) throw new Error("Failed to delete vault");

@@ -6,6 +6,7 @@ from fastapi import APIRouter, HTTPException
 
 from great_minds.app.api.dependencies import (
     VaultAccessDep,
+    VaultEditorGuard,
     CurrentUser,
     SourceDocumentServiceDep,
     IngestServiceDep,
@@ -20,6 +21,7 @@ from great_minds.core.sessions.service import SessionService
 from great_minds.core.vaults.models import MemberRole
 from great_minds.core.paths import session_exchange_path
 from great_minds.core.pagination import Page
+from great_minds.core.proposals.models import ProposalContentType
 from great_minds.core.proposals.schemas import ProposalCreate
 
 router = APIRouter(prefix="/sessions", tags=["sessions"])
@@ -126,6 +128,7 @@ async def promote_exchange(
     proposal_service: ProposalServiceDep,
     doc_service: SourceDocumentServiceDep,
     _llm: LlmGuard,
+    _auth: VaultEditorGuard,
     vault_id: UUID,
 ) -> schemas.PromoteExchangeResponse:
     """Promote one session exchange into the vault's raw corpus.
@@ -193,7 +196,7 @@ async def promote_exchange(
         vault_id=vault_id,
         user_id=user.id,
         data=ProposalCreate(
-            content_type="session",
+            content_type=ProposalContentType.SESSION,
             title=None,
             author=None,
             dest_path=dest,

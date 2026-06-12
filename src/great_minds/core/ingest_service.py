@@ -29,7 +29,7 @@ import httpx
 from markitdown import MarkItDown, StreamInfo
 
 from great_minds.core.compile_intents.repository import CompileIntentRepository
-from great_minds.core.documents.builder import write_document
+from great_minds.core.documents.builder import build_document, write_document
 from great_minds.core.documents.schemas import IngestedDocument
 from great_minds.core.documents.service import SourceDocumentService
 from great_minds.core.ingest_schemas import StagedFileInput, StagedFileSignedUpload
@@ -223,6 +223,37 @@ class IngestService:
         )
         return IngestedDocument(file_path=dest)
 
+    def user_suggestion_dest(
+        self, *, intent: UserSuggestionIntent, anchored_to: str
+    ) -> str:
+        """Compute the raw-corpus path for a user suggestion (timestamped)."""
+        ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+        anchor_slug = slugify(anchored_to) if anchored_to else "general"
+        return raw_path("user", f"{ts}-{anchor_slug}-{intent.value}.md")
+
+    @staticmethod
+    def render_user_suggestion_source(
+        *,
+        body: str,
+        intent: UserSuggestionIntent,
+        anchored_to: str,
+        anchored_section: str,
+    ) -> str:
+        """Build the full markdown (frontmatter + body) for a user suggestion.
+
+        Carries the same provenance the direct-ingest path writes, so an
+        approved suggestion is indexed identically to a directly-ingested one
+        (source_type='user', intent, anchors all preserved).
+        """
+        return build_document(
+            body,
+            source_type="user",
+            origin="user-suggestion",
+            anchored_to=anchored_to,
+            anchored_section=anchored_section,
+            intent=intent.value,
+        )
+
     async def ingest_user_suggestion(
         self,
         vault_id: UUID,
@@ -237,10 +268,7 @@ class IngestService:
         """Persist a user suggestion as a source document. source_type='user'."""
         if not body.strip():
             raise ValueError("body is empty")
-        ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-        anchor_slug = slugify(anchored_to) if anchored_to else "general"
-        filename = f"{ts}-{anchor_slug}-{intent.value}.md"
-        dest = raw_path("user", filename)
+        dest = self.user_suggestion_dest(intent=intent, anchored_to=anchored_to)
         await self._write_and_index(
             vault_id,
             storage,

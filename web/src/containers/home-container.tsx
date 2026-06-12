@@ -16,6 +16,7 @@ import { useSavedSession } from "@/hooks/use-saved-session";
 import { useSession } from "@/hooks/use-session";
 import { useSessions } from "@/hooks/use-sessions";
 import { useViewNavigate } from "@/hooks/use-view-navigate";
+import { useAuth } from "@/lib/use-auth";
 import type { Exchange } from "@/lib/types";
 
 interface HomeContainerProps {
@@ -67,6 +68,7 @@ const EASE_OUT: [number, number, number, number] = [0.25, 1, 0.5, 1];
 function HomeContent({ sessionId, initialExchanges, initialQuery, origin }: HomeContentProps) {
   const navigate = useViewNavigate();
   const { activeVault } = useActiveVault();
+  const { userId } = useAuth();
   const hasActivePipeline = useActiveJob();
   const badge = useExploreBadge();
   const lint = badge.data;
@@ -185,9 +187,11 @@ function HomeContent({ sessionId, initialExchanges, initialQuery, origin }: Home
               </motion.div>
 
               {/* Stable-height container so expansion doesn't shift the query bar */}
-              <div className="w-full max-w-[800px] min-h-[360px] flex flex-col items-center justify-start pt-10">
-                <IngestionFlow hasActivePipeline={hasActivePipeline} />
-              </div>
+              {activeVault?.owner_id === userId && (
+                <div className="w-full max-w-[800px] min-h-[360px] flex flex-col items-center justify-start pt-10">
+                  <IngestionFlow hasActivePipeline={hasActivePipeline} />
+                </div>
+              )}
             </motion.div>
           )}
         </AnimatePresence>

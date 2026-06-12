@@ -1,11 +1,18 @@
 import { useState, type ReactNode } from "react";
-import { Home, X } from "lucide-react";
+import { Home, X, Crown } from "lucide-react";
 
 import type { VaultConfig, VaultDetail, Membership } from "@/api/vaults";
 import { VaultConfigForm, type VaultConfigFormSubmit } from "@/components/vault-config-form";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Alert, AlertDescription } from "@/components/ui/alert";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -20,6 +27,34 @@ import {
 import { Skeleton } from "@/components/ui/skeleton";
 import { POPOVER_SURFACE_CLASS } from "@/lib/control-styles";
 
+const ROLE_OPTIONS = ["editor", "viewer"] as const;
+
+function RoleSelect({
+  value,
+  onValueChange,
+}: {
+  value: string;
+  onValueChange: (role: string) => void;
+}) {
+  return (
+    <Select value={value} onValueChange={(r) => r && onValueChange(r)}>
+      <SelectTrigger
+        size="sm"
+        className="h-8 w-24 font-mono text-[length:var(--text-chrome)] tracking-[0.06em] text-warm-ghost"
+      >
+        <SelectValue />
+      </SelectTrigger>
+      <SelectContent className={POPOVER_SURFACE_CLASS}>
+        {ROLE_OPTIONS.map((role) => (
+          <SelectItem key={role} value={role}>
+            {role}
+          </SelectItem>
+        ))}
+      </SelectContent>
+    </Select>
+  );
+}
+
 interface ProjectSettingsProps {
   project: VaultDetail | null;
   members: Membership[];
@@ -29,19 +64,12 @@ interface ProjectSettingsProps {
   proposalsSlot: ReactNode;
   apiKeysSlot: ReactNode;
   onHome: () => void;
-  onInvite: (email: string) => Promise<void>;
+  onInvite: (email: string, role: string) => Promise<void>;
   onChangeRole: (userId: string, role: string) => Promise<void>;
   onRemoveMember: (userId: string) => Promise<void>;
+  onTransferOwnership: (userId: string) => Promise<void>;
   onSaveConfig: (thematic_hint: string) => Promise<void>;
   onDeleteVault: () => Promise<void>;
-}
-
-const ROLES = ["owner", "editor", "viewer"] as const;
-
-function nextRole(current: string): string {
-  const idx = ROLES.indexOf(current as (typeof ROLES)[number]);
-  if (idx === -1 || idx === 0) return current;
-  return ROLES[(idx + 1) % ROLES.length] || current;
 }
 
 export function ProjectSettings({
@@ -56,10 +84,12 @@ export function ProjectSettings({
   onInvite,
   onChangeRole,
   onRemoveMember,
+  onTransferOwnership,
   onSaveConfig,
   onDeleteVault,
 }: ProjectSettingsProps) {
   const [email, setEmail] = useState("");
+  const [inviteRole, setInviteRole] = useState("editor");
   const [inviting, setInviting] = useState(false);
   const [savingConfig, setSavingConfig] = useState(false);
 
@@ -69,7 +99,7 @@ export function ProjectSettings({
     if (!trimmed) return;
     setInviting(true);
     try {
-      await onInvite(trimmed);
+      await onInvite(trimmed, inviteRole);
       setEmail("");
     } finally {
       setInviting(false);
@@ -142,16 +172,20 @@ export function ProjectSettings({
                     </span>
                     <div className="flex items-center gap-2">
                       {isOwner && m.role !== "owner" ? (
-                        <button
-                          onClick={() => onChangeRole(m.user_id, nextRole(m.role))}
-                          className="font-mono text-[length:var(--text-chrome)] tracking-[0.06em] text-warm-ghost hover:text-gold transition-colors cursor-pointer"
-                        >
-                          {m.role}
-                        </button>
+                        <RoleSelect
+                          value={m.role}
+                          onValueChange={(role) => onChangeRole(m.user_id, role)}
+                        />
                       ) : (
                         <span className="font-mono text-[length:var(--text-chrome)] tracking-[0.06em] text-warm-ghost">
                           {m.role}
                         </span>
+                      )}
+                      {isOwner && m.role !== "owner" && (
+                        <TransferOwnershipButton
+                          email={m.email}
+                          onTransfer={() => onTransferOwnership(m.user_id)}
+                        />
                       )}
                       {isOwner && m.role !== "owner" && (
                         <Button
@@ -178,6 +212,7 @@ export function ProjectSettings({
                     disabled={inviting}
                     className="h-8 bg-transparent dark:bg-transparent border-ink-border rounded-sm font-mono text-[length:var(--text-small)] text-warm px-3 caret-gold placeholder:text-warm-ghost focus-visible:ring-0 focus-visible:border-gold-dim"
                   />
+                  <RoleSelect value={inviteRole} onValueChange={setInviteRole} />
                   <span className="font-mono text-[length:var(--text-chrome)] text-warm-ghost shrink-0">
                     ↵
                   </span>
@@ -219,6 +254,84 @@ export function ProjectSettings({
         </div>
       </div>
     </div>
+  );
+}
+
+function TransferOwnershipButton({
+  email,
+  onTransfer,
+}: {
+  email: string;
+  onTransfer: () => Promise<void>;
+}) {
+  const [open, setOpen] = useState(false);
+  const [transferring, setTransferring] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  async function handleTransfer() {
+    if (transferring) return;
+    setTransferring(true);
+    setError(null);
+    try {
+      await onTransfer();
+      setOpen(false);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to transfer ownership.");
+    } finally {
+      setTransferring(false);
+    }
+  }
+
+  return (
+    <AlertDialog open={open} onOpenChange={(o) => !transferring && setOpen(o)}>
+      <AlertDialogTrigger
+        render={
+          <Button
+            variant="ghost"
+            size="icon-xs"
+            className="text-warm-ghost hover:text-gold hover:bg-transparent opacity-0 group-hover:opacity-100 transition-opacity"
+          />
+        }
+      >
+        <Crown size={12} />
+      </AlertDialogTrigger>
+      <AlertDialogContent className={POPOVER_SURFACE_CLASS}>
+        <AlertDialogHeader>
+          <AlertDialogTitle className="font-serif text-[length:var(--text-body)] text-warm">
+            Transfer ownership?
+          </AlertDialogTitle>
+          <AlertDialogDescription className="font-mono text-[length:var(--text-chrome)] tracking-[0.04em] text-warm-ghost">
+            Make <span className="text-gold">{email}</span> the owner of this project. You will
+            become an editor and lose owner privileges; only the new owner can transfer it back.
+          </AlertDialogDescription>
+        </AlertDialogHeader>
+        {error && (
+          <Alert variant="destructive" className="rounded-sm border-red-400/25 bg-red-400/5">
+            <AlertDescription className="font-mono text-[length:var(--text-chrome)] tracking-[0.04em] text-red-400/90">
+              {error}
+            </AlertDescription>
+          </Alert>
+        )}
+        <AlertDialogFooter>
+          <AlertDialogCancel
+            disabled={transferring}
+            className="font-mono text-[length:var(--text-chrome)] tracking-[0.08em]"
+          >
+            cancel
+          </AlertDialogCancel>
+          <AlertDialogAction
+            disabled={transferring}
+            onClick={(e) => {
+              e.preventDefault();
+              void handleTransfer();
+            }}
+            className="font-mono text-[length:var(--text-chrome)] tracking-[0.08em] text-gold border border-gold-dim hover:bg-ink-raised disabled:opacity-40"
+          >
+            {transferring ? "transferring…" : "transfer ownership"}
+          </AlertDialogAction>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
   );
 }
 
