@@ -1,5 +1,5 @@
 import { useState, type ReactNode } from "react";
-import { Home, X } from "lucide-react";
+import { Home, X, Crown } from "lucide-react";
 
 import type { VaultConfig, VaultDetail, Membership } from "@/api/vaults";
 import { VaultConfigForm, type VaultConfigFormSubmit } from "@/components/vault-config-form";
@@ -39,6 +39,7 @@ interface ProjectSettingsProps {
   onInvite: (email: string, role: string) => Promise<void>;
   onChangeRole: (userId: string, role: string) => Promise<void>;
   onRemoveMember: (userId: string) => Promise<void>;
+  onTransferOwnership: (userId: string) => Promise<void>;
   onSaveConfig: (thematic_hint: string) => Promise<void>;
   onDeleteVault: () => Promise<void>;
 }
@@ -55,6 +56,7 @@ export function ProjectSettings({
   onInvite,
   onChangeRole,
   onRemoveMember,
+  onTransferOwnership,
   onSaveConfig,
   onDeleteVault,
 }: ProjectSettingsProps) {
@@ -163,6 +165,12 @@ export function ProjectSettings({
                         </span>
                       )}
                       {isOwner && m.role !== "owner" && (
+                        <TransferOwnershipButton
+                          email={m.email}
+                          onTransfer={() => onTransferOwnership(m.user_id)}
+                        />
+                      )}
+                      {isOwner && m.role !== "owner" && (
                         <Button
                           variant="ghost"
                           size="icon-xs"
@@ -240,6 +248,84 @@ export function ProjectSettings({
         </div>
       </div>
     </div>
+  );
+}
+
+function TransferOwnershipButton({
+  email,
+  onTransfer,
+}: {
+  email: string;
+  onTransfer: () => Promise<void>;
+}) {
+  const [open, setOpen] = useState(false);
+  const [transferring, setTransferring] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  async function handleTransfer() {
+    if (transferring) return;
+    setTransferring(true);
+    setError(null);
+    try {
+      await onTransfer();
+      setOpen(false);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to transfer ownership.");
+    } finally {
+      setTransferring(false);
+    }
+  }
+
+  return (
+    <AlertDialog open={open} onOpenChange={(o) => !transferring && setOpen(o)}>
+      <AlertDialogTrigger
+        render={
+          <Button
+            variant="ghost"
+            size="icon-xs"
+            className="text-warm-ghost hover:text-gold hover:bg-transparent opacity-0 group-hover:opacity-100 transition-opacity"
+          />
+        }
+      >
+        <Crown size={12} />
+      </AlertDialogTrigger>
+      <AlertDialogContent className={POPOVER_SURFACE_CLASS}>
+        <AlertDialogHeader>
+          <AlertDialogTitle className="font-serif text-[length:var(--text-body)] text-warm">
+            Transfer ownership?
+          </AlertDialogTitle>
+          <AlertDialogDescription className="font-mono text-[length:var(--text-chrome)] tracking-[0.04em] text-warm-ghost">
+            Make <span className="text-gold">{email}</span> the owner of this project. You will
+            become an editor and lose owner privileges; only the new owner can transfer it back.
+          </AlertDialogDescription>
+        </AlertDialogHeader>
+        {error && (
+          <Alert variant="destructive" className="rounded-sm border-red-400/25 bg-red-400/5">
+            <AlertDescription className="font-mono text-[length:var(--text-chrome)] tracking-[0.04em] text-red-400/90">
+              {error}
+            </AlertDescription>
+          </Alert>
+        )}
+        <AlertDialogFooter>
+          <AlertDialogCancel
+            disabled={transferring}
+            className="font-mono text-[length:var(--text-chrome)] tracking-[0.08em]"
+          >
+            cancel
+          </AlertDialogCancel>
+          <AlertDialogAction
+            disabled={transferring}
+            onClick={(e) => {
+              e.preventDefault();
+              void handleTransfer();
+            }}
+            className="font-mono text-[length:var(--text-chrome)] tracking-[0.08em] text-gold border border-gold-dim hover:bg-ink-raised disabled:opacity-40"
+          >
+            {transferring ? "transferring…" : "transfer ownership"}
+          </AlertDialogAction>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
   );
 }
 

@@ -1,5 +1,7 @@
 """Vault API schemas — endpoint-specific shapes that compose from core."""
 
+from uuid import UUID
+
 from pydantic import BaseModel
 
 from great_minds.core.pagination import Page
@@ -43,3 +45,7 @@ class MembershipInvite(BaseModel):
 
 class MembershipUpdate(BaseModel):
     role: MemberRole
+
+
+class OwnershipTransfer(BaseModel):
+    new_owner_user_id: UUID

@@ -8,6 +8,7 @@ from great_minds.core.vaults.config import (
     apply_vault_config_overrides,
     load_default_config_text,
 )
+from great_minds.core.vaults.models import MemberRole
 from great_minds.core.vaults.repository import VaultRepository
 from great_minds.core.vaults.schemas import (
     MemberWithEmail,
@@ -215,3 +216,18 @@ class VaultService:
         deleted = await self.repo.delete_membership(vault_id, user_id)
         await self._commit()
         return deleted
+
+    async def transfer_ownership(
+        self, vault_id: UUID, current_owner_id: UUID, new_owner_id: UUID
+    ) -> None:
+        """Atomically hand ownership to another member (single-owner invariant).
+
+        The new owner must already be a member; they become OWNER and the
+        previous owner is demoted to EDITOR in one transaction. Raises
+        ValueError if the target isn't a member or is already the owner.
+        """
+        if new_owner_id == current_owner_id:
+            raise ValueError("Cannot transfer ownership to the current owner")
+        await self.repo.set_member_role(vault_id, new_owner_id, MemberRole.OWNER)
+        await self.repo.set_member_role(vault_id, current_owner_id, MemberRole.EDITOR)
+        await self._commit()
