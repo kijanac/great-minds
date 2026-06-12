@@ -46,8 +46,7 @@ from great_minds.core.topics.schemas import TopicDetail
 from great_minds.core.pipeline.steps import StepRunner
 from great_minds.core.pipeline_runs import (
     PipelineProgressRunner,
-    PipelineProgressStep,
-    build_progress_steps,
+    ProgressStepsMixin,
 )
 from great_minds.core.search import SearchService
 from great_minds.core.storage import Storage
@@ -93,8 +92,10 @@ RENDER_STEP_LABELS = {
 }
 
 
-class RenderPhase:
+class RenderPhase(ProgressStepsMixin):
     """Phase 4 runner with explicit service-style dependencies."""
+
+    STEP_LABELS = RENDER_STEP_LABELS
 
     def __init__(
         self,
@@ -127,20 +128,6 @@ class RenderPhase:
         # Set per-run in run(); read by _write_rendered_article to stamp
         # provenance on each article it writes.
         self.pipeline_run_id: UUID | None = None
-
-    def progress_steps(
-        self,
-        active: str,
-        *,
-        completed: set[str] | None = None,
-        counts: dict[str, tuple[int | None, int | None]] | None = None,
-    ) -> list[PipelineProgressStep]:
-        return build_progress_steps(
-            RENDER_STEP_LABELS,
-            active,
-            completed=completed,
-            counts=counts,
-        )
 
     async def run(
         self,
@@ -342,7 +329,7 @@ class RenderPhase:
         cache_misses = 0
         topics_failed = 0
         for outcome in outcomes:
-            if outcome.error is not None:
+            if isinstance(outcome, _RenderFailed):
                 topics_failed += 1
                 continue
             cache_misses += 1
@@ -415,11 +402,19 @@ class RenderPhase:
 # ---------------------------------------------------------------------------
 
 
-@dataclass
-class _RenderOutcome:
+@dataclass(frozen=True)
+class _RenderOk:
     topic_id: UUID
-    error: str | None = None
-    rendered_from_hash: str = ""
+    rendered_from_hash: str
+
+
+@dataclass(frozen=True)
+class _RenderFailed:
+    topic_id: UUID
+    error: str
+
+
+_RenderOutcome = _RenderOk | _RenderFailed
 
 
 async def _write_rendered_article(
@@ -436,6 +431,7 @@ async def _write_rendered_article(
         "topic_id": str(topic.topic_id),
         "title": topic.title,
         "description": topic.description,
+        "tags": tags,
     }
     full_content = serialize_frontmatter(fm, body)
     await phase.storage.write(article_path, full_content)
@@ -453,6 +449,7 @@ async def _write_rendered_article(
             topic_id=topic.topic_id,
             title=topic.title,
             precis=topic.description,
+            tags=tags,
             render_run_id=phase.pipeline_run_id,
         ),
     )
@@ -486,8 +483,6 @@ async def _render_one(
     prompt_hash: str,
 ) -> _RenderOutcome:
     """Render one topic. Caller has already determined this is a cache miss."""
-    outcome = _RenderOutcome(topic_id=topic.topic_id)
-
     numbered_anchors = _build_numbered_anchors(topic, idea_by_id, doc_by_id)
     compiled_from_hash = _topic_content_hash(topic)
     cache_key = _cache_key(
@@ -520,28 +515,28 @@ async def _render_one(
             prompt,
         )
     except Exception as e:
-        outcome.error = f"llm_call:{repr(e)[:200]}"
+        error = f"llm_call:{e!r:.200}"
         log_event(
             "topic_failed",
             level=logging.WARNING,
             topic_slug=topic.slug,
-            error=outcome.error,
+            error=error,
         )
-        return outcome
+        return _RenderFailed(topic_id=topic.topic_id, error=error)
 
     try:
         output = _RenderOutput.model_validate(data)
         body = _validate_and_postprocess(output.body, numbered_anchors)
     except (ValidationError, ValueError) as e:
-        outcome.error = f"body_invalid:{type(e).__name__}:{str(e)[:200]}"
+        error = f"body_invalid:{type(e).__name__}:{str(e)[:200]}"
         log_event(
             "body_invalid",
             level=logging.WARNING,
             topic_slug=topic.slug,
-            error=outcome.error,
+            error=error,
             response_preview=str(data)[:300],
         )
-        return outcome
+        return _RenderFailed(topic_id=topic.topic_id, error=error)
 
     tags = output.tags
 
@@ -555,8 +550,7 @@ async def _render_one(
         cache_key=cache_key,
         value={"body": body, "tags": tags},
     )
-    outcome.rendered_from_hash = compiled_from_hash
-    return outcome
+    return _RenderOk(topic_id=topic.topic_id, rendered_from_hash=compiled_from_hash)
 
 
 # ---------------------------------------------------------------------------

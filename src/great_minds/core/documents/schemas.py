@@ -163,6 +163,7 @@ class WikiArticleCreate(BaseModel):
     topic_id: UUID
     title: str
     precis: str
+    tags: list[str]
     # The pipeline run rendering this article — stamped on the row so the
     # compile completion card can show "what this run built".
     render_run_id: UUID | None = None
@@ -244,6 +245,7 @@ class WikiArticle(BaseModel):
     body_hash: str
     title: str
     precis: str
+    tags: list[str] = []
     created_at: datetime | None = None
     updated_at: datetime | None = None
 

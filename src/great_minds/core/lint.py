@@ -87,8 +87,8 @@ async def _unmentioned_links(
         .join(tgt_art, tgt_art.topic_id == tgt_topic.topic_id)
         .where(
             src_topic.vault_id == vault_id,
-            src_topic.article_status == ArticleStatus.RENDERED.value,
-            tgt_topic.article_status == ArticleStatus.RENDERED.value,
+            src_topic.article_status == ArticleStatus.RENDERED,
+            tgt_topic.article_status == ArticleStatus.RENDERED,
             TopicLinkORM.source_topic_id != TopicLinkORM.target_topic_id,
             ~realized,
         )

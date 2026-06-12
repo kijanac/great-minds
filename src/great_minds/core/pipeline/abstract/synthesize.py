@@ -17,7 +17,7 @@ import json
 import logging
 import re
 from collections import defaultdict
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from uuid import UUID, uuid7
 
 from openai import AsyncOpenAI
@@ -141,7 +141,7 @@ class SynthesizePhase:
         cache_misses = 0
         chunks_failed = 0
         for outcome in outcomes:
-            if outcome.error is not None:
+            if isinstance(outcome, _ChunkFailed):
                 chunks_failed += 1
                 log_event(
                     "chunk_failed",
@@ -203,12 +203,20 @@ class _SynthesisIndex:
     docs: dict[UUID, _SynthesisDoc]
 
 
-@dataclass
-class _ChunkOutcome:
+@dataclass(frozen=True)
+class _ChunkOk:
     chunk_idx: int
-    local_topics: list[LocalTopic] = field(default_factory=list)
-    cache_hit: bool = False
-    error: str | None = None
+    local_topics: list[LocalTopic]
+    cache_hit: bool
+
+
+@dataclass(frozen=True)
+class _ChunkFailed:
+    chunk_idx: int
+    error: str
+
+
+_ChunkOutcome = _ChunkOk | _ChunkFailed
 
 
 async def _synthesize_one(
@@ -223,11 +231,8 @@ async def _synthesize_one(
     prompt_template: str,
     prompt_hash: str,
 ) -> _ChunkOutcome:
-    outcome = _ChunkOutcome(chunk_idx=chunk_idx)
-
     if not chunk:
-        outcome.error = "empty_chunk"
-        return outcome
+        return _ChunkFailed(chunk_idx=chunk_idx, error="empty_chunk")
 
     cache_key = _cache_key(idea_ids=chunk, prompt_hash=prompt_hash, model=MAP_MODEL)
 
@@ -238,11 +243,12 @@ async def _synthesize_one(
     )
     if cached is not None:
         try:
-            outcome.local_topics = [
+            local_topics = [
                 LocalTopic.model_validate(t) for t in cached["local_topics"]
             ]
-            outcome.cache_hit = True
-            return outcome
+            return _ChunkOk(
+                chunk_idx=chunk_idx, local_topics=local_topics, cache_hit=True
+            )
         except ValidationError as e:
             # Cache corrupted / schema drifted — re-run.
             log_event(
@@ -257,8 +263,7 @@ async def _synthesize_one(
     # a bug further upstream — log and skip rather than synthesize a phantom.
     present = [iid for iid in chunk if iid in synthesis_index.ideas]
     if not present:
-        outcome.error = "no_ideas_indexed"
-        return outcome
+        return _ChunkFailed(chunk_idx=chunk_idx, error="no_ideas_indexed")
 
     try:
         async with sem:
@@ -270,27 +275,25 @@ async def _synthesize_one(
                 messages=[{"role": "user", "content": prompt}],
                 temperature=0.3,
             )
-        outcome.local_topics = _parse_topics(
+        local_topics = _parse_topics(
             data=data,
             chunk_idx=chunk_idx,
             tag_to_uuid=tag_to_uuid,
         )
     except (json.JSONDecodeError, ValidationError) as e:
-        outcome.error = f"output_parse:{e}"
-        return outcome
+        return _ChunkFailed(chunk_idx=chunk_idx, error=f"output_parse:{e}")
     except Exception as e:
-        outcome.error = f"llm_call:{repr(e)[:200]}"
-        return outcome
+        return _ChunkFailed(chunk_idx=chunk_idx, error=f"llm_call:{e!r:.200}")
 
     await compile_cache.put(
         vault_id=vault_id,
         phase=PHASE,
         cache_key=cache_key,
         value={
-            "local_topics": [t.model_dump(mode="json") for t in outcome.local_topics],
+            "local_topics": [t.model_dump(mode="json") for t in local_topics],
         },
     )
-    return outcome
+    return _ChunkOk(chunk_idx=chunk_idx, local_topics=local_topics, cache_hit=False)
 
 
 async def _build_synthesis_index(

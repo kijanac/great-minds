@@ -1,18 +1,11 @@
 """Pydantic schemas for the topics bounded context."""
 
 from datetime import datetime
-from enum import StrEnum
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict
 
-
-class ArticleStatus(StrEnum):
-    NO_ARTICLE = "no_article"
-    RENDERED = "rendered"
-    NEEDS_REVISION = "needs_revision"
-    ARCHIVED = "archived"
-
+from great_minds.core.topics.models import ArticleStatus
 
 # ---------------------------------------------------------------------------
 # CRUD / registry schemas
@@ -27,23 +20,6 @@ class TopicBase(BaseModel):
     slug: str
     title: str
     description: str
-
-
-class TopicCreate(TopicBase):
-    """Input for inserting/upserting a topic registry row."""
-
-    topic_id: UUID
-    vault_id: UUID
-    compiled_from_hash: str | None = None
-
-
-class TopicUpdate(BaseModel):
-    """Patch-style topic update input."""
-
-    slug: str | None = None
-    title: str | None = None
-    description: str | None = None
-    compiled_from_hash: str | None = None
 
 
 class Topic(TopicBase):

@@ -21,8 +21,7 @@ from uuid import UUID
 
 from great_minds.core.pipeline_runs import (
     PipelineProgressRunner,
-    PipelineProgressStep,
-    build_progress_steps,
+    ProgressStepsMixin,
 )
 from great_minds.core.telemetry import enrich, log_event
 from great_minds.core.topics.schemas import TopicDetail
@@ -35,8 +34,10 @@ DERIVE_STEP_LABELS = {
 }
 
 
-class DerivePhase:
+class DerivePhase(ProgressStepsMixin):
     """Phase 3 runner with explicit service-style dependencies."""
+
+    STEP_LABELS = DERIVE_STEP_LABELS
 
     def __init__(
         self,
@@ -50,20 +51,6 @@ class DerivePhase:
         self.related_limit = related_limit
         self.progress = progress
         self.pipeline_run_id = pipeline_run_id
-
-    def progress_steps(
-        self,
-        active: str,
-        *,
-        completed: set[str] | None = None,
-        counts: dict[str, tuple[int | None, int | None]] | None = None,
-    ) -> list[PipelineProgressStep]:
-        return build_progress_steps(
-            DERIVE_STEP_LABELS,
-            active,
-            completed=completed,
-            counts=counts,
-        )
 
     async def run(self, vault_id: UUID, validated: list[TopicDetail]) -> None:
         if not validated:

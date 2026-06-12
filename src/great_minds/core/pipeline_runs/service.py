@@ -8,39 +8,43 @@ from great_minds.core.ingest_schemas import StagedFileInput
 from great_minds.core.pagination import Page, PageParams, create_page
 from great_minds.core.pipeline_runs.repository import PipelineRunRepository
 from great_minds.core.pipeline_runs.schemas import (
+    PipelinePhase,
+    PipelinePhaseStatus,
     PipelineProgressStep,
     PipelineRun,
     PipelineRunCreate,
+    PipelineRunFilter,
     PipelineRunUpdate,
+    PipelineStepStatus,
     PipelineTaskType,
     PipelineTrigger,
 )
 from great_minds.core.tasks import TaskService
 
 
-_PHASE_LABELS = {
-    "source_ingest": "Processing uploaded sources",
-    "ingest": "Indexing documents for search",
-    "extract": "Reading documents",
-    "abstract": "Synthesizing topics",
-    "derive": "Mapping connections",
-    "render": "Writing articles",
-    "verify": "Checking references",
-    "publish": "Finalizing",
+_PHASE_LABELS: dict[PipelinePhase, str] = {
+    PipelinePhase.SOURCE_INGEST: "Processing uploaded sources",
+    PipelinePhase.INGEST: "Indexing documents for search",
+    PipelinePhase.EXTRACT: "Reading documents",
+    PipelinePhase.ABSTRACT: "Synthesizing topics",
+    PipelinePhase.DERIVE: "Mapping connections",
+    PipelinePhase.RENDER: "Writing articles",
+    PipelinePhase.VERIFY: "Checking references",
+    PipelinePhase.PUBLISH: "Finalizing",
 }
 
-_STEP_STATUS_BY_PHASE_STATUS = {
-    "started": "running",
-    "progress": "running",
-    "completed": "completed",
-    "failed": "failed",
+_STEP_STATUS_BY_PHASE_STATUS: dict[PipelinePhaseStatus, PipelineStepStatus] = {
+    PipelinePhaseStatus.STARTED: PipelineStepStatus.RUNNING,
+    PipelinePhaseStatus.PROGRESS: PipelineStepStatus.RUNNING,
+    PipelinePhaseStatus.COMPLETED: PipelineStepStatus.COMPLETED,
+    PipelinePhaseStatus.FAILED: PipelineStepStatus.FAILED,
 }
 
 
 def phase_step(
     *,
-    phase: str,
-    status: str,
+    phase: PipelinePhase,
+    status: PipelinePhaseStatus,
     label: str | None = None,
     done: int | None = None,
     total: int | None = None,
@@ -81,7 +85,7 @@ class PipelineRunService:
         self,
         vault_id: UUID,
         *,
-        status: str | None = None,
+        status: PipelineRunFilter | None = None,
         pagination: PageParams,
     ) -> Page[PipelineRun]:
         items = await self.repo.list_for_vault(
@@ -142,34 +146,6 @@ class PipelineRunService:
         await self.repo.session.commit()
 
 
-class PipelineProgressService:
-    def __init__(self, repo: PipelineRunRepository) -> None:
-        self.repo = repo
-
-    async def fail(self, pipeline_run_id: UUID, error: str) -> UUID | None:
-        # The pipeline_runs trigger emits the LISTEN/NOTIFY wakeup on commit.
-        return await self.repo.fail(pipeline_run_id, error)
-
-    async def emit(
-        self,
-        *,
-        pipeline_run_id: UUID,
-        phase: str,
-        status: str,
-        steps: list[PipelineProgressStep],
-        error: str | None = None,
-    ) -> UUID | None:
-        return await self.repo.update_progress(
-            pipeline_run_id,
-            PipelineRunUpdate(
-                phase=phase,
-                status=status,
-                progress_steps=steps,
-                error=error,
-            ),
-        )
-
-
 class PipelineProgressRunner:
     def __init__(self, session_maker: async_sessionmaker) -> None:
         self.session_maker = session_maker
@@ -177,8 +153,8 @@ class PipelineProgressRunner:
     async def fail(self, pipeline_run_id: UUID, error: str) -> None:
         """Mark the current phase failed in a short independent transaction."""
         async with self.session_maker() as session:
-            service = PipelineProgressService(PipelineRunRepository(session))
-            vault_id = await service.fail(pipeline_run_id, error)
+            # The pipeline_runs trigger emits the LISTEN/NOTIFY wakeup on commit.
+            vault_id = await PipelineRunRepository(session).fail(pipeline_run_id, error)
             if vault_id is None:
                 await session.rollback()
                 return
@@ -195,13 +171,14 @@ class PipelineProgressRunner:
     ) -> None:
         """Persist progress in a short independent transaction."""
         async with self.session_maker() as session:
-            service = PipelineProgressService(PipelineRunRepository(session))
-            vault_id = await service.emit(
-                pipeline_run_id=pipeline_run_id,
-                phase=phase,
-                status=status,
-                steps=steps,
-                error=error,
+            vault_id = await PipelineRunRepository(session).update_progress(
+                pipeline_run_id,
+                PipelineRunUpdate(
+                    phase=phase,
+                    status=status,
+                    progress_steps=steps,
+                    error=error,
+                ),
             )
             if vault_id is None:
                 await session.rollback()

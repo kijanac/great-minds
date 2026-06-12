@@ -20,7 +20,6 @@ from great_minds.core.llm_costs.repository import LlmCostEventRepository
 from great_minds.core.llm_costs.schemas import (
     CostAggregate,
     CostBreakdown,
-    LlmCostEvent,
 )
 from great_minds.core.llm_costs.service import (
     LlmCostService,
@@ -30,7 +29,6 @@ from great_minds.core.llm_costs.service import (
 __all__ = [
     "CostAggregate",
     "CostBreakdown",
-    "LlmCostEvent",
     "LlmCostEventORM",
     "LlmCostEventRepository",
     "LlmCostService",

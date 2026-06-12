@@ -28,8 +28,7 @@ from great_minds.core.paths import (
 )
 from great_minds.core.pipeline_runs import (
     PipelineProgressRunner,
-    PipelineProgressStep,
-    build_progress_steps,
+    ProgressStepsMixin,
 )
 from great_minds.core.search import SearchService
 from great_minds.core.storage import Storage
@@ -57,8 +56,10 @@ class CompileLogCounts(BaseModel):
     chunks_wiki: int
 
 
-class PublishPhase:
+class PublishPhase(ProgressStepsMixin):
     """Phase 6 runner with explicit service-style dependencies."""
+
+    STEP_LABELS = PUBLISH_STEP_LABELS
 
     def __init__(
         self,
@@ -78,20 +79,6 @@ class PublishPhase:
         self.search = search
         self.progress = progress
         self.pipeline_run_id = pipeline_run_id
-
-    def progress_steps(
-        self,
-        active: str,
-        *,
-        completed: set[str] | None = None,
-        counts: dict[str, tuple[int | None, int | None]] | None = None,
-    ) -> list[PipelineProgressStep]:
-        return build_progress_steps(
-            PUBLISH_STEP_LABELS,
-            active,
-            completed=completed,
-            counts=counts,
-        )
 
     async def run(self, vault_id: UUID) -> None:
         await self.progress.emit(
@@ -183,7 +170,7 @@ class PublishPhase:
     # ---------------------------------------------------------------------------
 
     async def _write_raw_index(self, docs: list[SourceDocument]) -> None:
-        ordered = sorted(docs, key=lambda d: d.title.lower())
+        ordered = sorted(docs, key=lambda d: (d.title or d.file_path).lower())
         lines = [
             "# Raw Sources",
             "",
@@ -191,17 +178,13 @@ class PublishPhase:
             "",
         ]
         for d in ordered:
-            meta_bits: list[str] = []
-            if d.genre:
-                meta_bits.append(d.genre)
-            if d.published_date:
-                meta_bits.append(d.published_date)
-            if d.author:
-                meta_bits.append(d.author)
+            meta_bits = [b for b in (d.genre, d.published_date, d.author) if b]
             meta_suffix = f" — {', '.join(meta_bits)}" if meta_bits else ""
             precis = (d.precis or "").strip().replace("\n", " ")
             precis_suffix = f"  \n  {precis}" if precis else ""
-            lines.append(f"- [{d.title}]({d.file_path}){meta_suffix}{precis_suffix}")
+            lines.append(
+                f"- [{d.title or d.file_path}]({d.file_path}){meta_suffix}{precis_suffix}"
+            )
         lines.append("")
         await self.storage.write(RAW_INDEX_PATH, "\n".join(lines))
 
@@ -240,5 +223,5 @@ class PublishPhase:
             "",
         ]
 
-        existing = log_path.read_text(encoding="utf-8") if log_path.exists() else ""
-        log_path.write_text(existing + "\n".join(lines) + "\n", encoding="utf-8")
+        with log_path.open("a", encoding="utf-8") as f:
+            f.write("\n".join(lines) + "\n")

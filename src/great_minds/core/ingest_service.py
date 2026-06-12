@@ -102,11 +102,7 @@ class IngestService:
         vault = await self.vault_service.get_vault(vault_id)
         if not vault.r2_bucket_name:
             raise ValueError("vault has no r2 bucket; cannot sign uploads")
-        admin = R2Admin(
-            account_id=self.settings.r2_account_id,
-            access_key_id=self.settings.r2_access_key_id,
-            secret_access_key=self.settings.r2_secret_access_key,
-        )
+        admin = R2Admin.from_settings(self.settings)
         signed: list[StagedFileSignedUpload] = []
         for f in files:
             url = admin.presign_put(

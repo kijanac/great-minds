@@ -19,6 +19,7 @@ from great_minds.app.api.schemas.ingest import URLSource
 from great_minds.app.api.schemas.jobs import JobResponse
 from great_minds.core.jobs import JobNotFoundError, UrlJobSourceError
 from great_minds.core.pagination import Page
+from great_minds.core.pipeline_runs import PipelineRunFilter
 from great_minds.core.pipeline_runs.repository import CHANNEL
 
 router = APIRouter(prefix="/jobs", tags=["jobs"])
@@ -54,7 +55,7 @@ async def list_jobs(
     vault_id: UUID,
     pipeline_service: PipelineRunServiceDep,
     pagination: PageParamsQuery,
-    status: str | None = None,
+    status: PipelineRunFilter | None = None,
 ) -> Page[JobResponse]:
     page = await pipeline_service.list_for_vault(
         vault_id, status=status, pagination=pagination

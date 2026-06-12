@@ -20,13 +20,12 @@ needing to hit the endpoint.
 import logging
 from uuid import UUID
 
-from great_minds.core.documents import Backlink, WikiArticle, WikiArticleService
+from great_minds.core.documents import Backlink, WikiArticleService
 from great_minds.core.markdown import extract_wiki_link_targets
 from great_minds.core.paths import wiki_path, wiki_slug
 from great_minds.core.pipeline_runs import (
     PipelineProgressRunner,
-    PipelineProgressStep,
-    build_progress_steps,
+    ProgressStepsMixin,
 )
 from great_minds.core.storage import Storage
 from great_minds.core.telemetry import enrich, log_event
@@ -40,8 +39,10 @@ VERIFY_STEP_LABELS = {
 }
 
 
-class VerifyPhase:
+class VerifyPhase(ProgressStepsMixin):
     """Phase 5 runner with explicit service-style dependencies."""
+
+    STEP_LABELS = VERIFY_STEP_LABELS
 
     def __init__(
         self,
@@ -57,20 +58,6 @@ class VerifyPhase:
         self.wiki_articles = wiki_articles
         self.progress = progress
         self.pipeline_run_id = pipeline_run_id
-
-    def progress_steps(
-        self,
-        active: str,
-        *,
-        completed: set[str] | None = None,
-        counts: dict[str, tuple[int | None, int | None]] | None = None,
-    ) -> list[PipelineProgressStep]:
-        return build_progress_steps(
-            VERIFY_STEP_LABELS,
-            active,
-            completed=completed,
-            counts=counts,
-        )
 
     async def run(self, vault_id: UUID) -> None:
         await self.progress.emit(
@@ -106,7 +93,8 @@ class VerifyPhase:
         )
         slug_to_topic = {t.slug: t for t in rendered}
         topic_id_set = {t.topic_id for t in rendered}
-        article_by_topic = await self._load_wiki_articles(vault_id)
+        articles = await self.wiki_articles.list_all(vault_id)
+        article_by_topic = {a.topic_id: a for a in articles}
 
         backlinks: list[Backlink] = []
         source_article_ids: list[UUID] = []
@@ -211,11 +199,6 @@ class VerifyPhase:
                 counts={"check_links": (articles_walked, len(rendered))},
             ),
         )
-
-    async def _load_wiki_articles(self, vault_id: UUID) -> dict[UUID, WikiArticle]:
-        """Map topic_id → WikiArticle."""
-        articles = await self.wiki_articles.list_all(vault_id)
-        return {a.topic_id: a for a in articles}
 
     async def _detect_unmentioned_links(
         self,

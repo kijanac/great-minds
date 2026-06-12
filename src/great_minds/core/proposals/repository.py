@@ -49,20 +49,18 @@ class ProposalRepository:
         ) or 0
 
     async def get(self, proposal_id: UUID) -> Proposal | None:
-        result = await self.session.execute(
+        row = await self.session.scalar(
             select(ProposalORM).where(ProposalORM.id == proposal_id)
         )
-        row = result.scalar_one_or_none()
         return Proposal.model_validate(row) if row else None
 
     async def get_for_vault(self, vault_id: UUID, proposal_id: UUID) -> Proposal | None:
-        result = await self.session.execute(
+        row = await self.session.scalar(
             select(ProposalORM).where(
                 ProposalORM.id == proposal_id,
                 ProposalORM.vault_id == vault_id,
             )
         )
-        row = result.scalar_one_or_none()
         return Proposal.model_validate(row) if row else None
 
     async def find_pending_for_dest(
@@ -73,14 +71,13 @@ class ProposalRepository:
         Backed by the partial unique index ``(vault_id, dest_path)`` for
         ``status = 'PENDING'``, so at most one row matches.
         """
-        result = await self.session.execute(
+        row = await self.session.scalar(
             select(ProposalORM).where(
                 ProposalORM.vault_id == vault_id,
                 ProposalORM.dest_path == dest_path,
                 ProposalORM.status == ProposalStatus.PENDING,
             )
         )
-        row = result.scalar_one_or_none()
         return Proposal.model_validate(row) if row else None
 
     async def set_status(

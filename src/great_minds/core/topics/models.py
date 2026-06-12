@@ -2,10 +2,12 @@
 
 import uuid
 from datetime import datetime
+from enum import StrEnum
 
 from sqlalchemy import (
     DateTime,
     Double,
+    Enum,
     ForeignKey,
     Integer,
     Text,
@@ -16,6 +18,13 @@ from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
 from great_minds.core.db import Base
+
+
+class ArticleStatus(StrEnum):
+    NO_ARTICLE = "no_article"
+    RENDERED = "rendered"
+    NEEDS_REVISION = "needs_revision"
+    ARCHIVED = "archived"
 
 
 class TopicORM(Base):
@@ -31,7 +40,16 @@ class TopicORM(Base):
     slug: Mapped[str] = mapped_column(Text)
     title: Mapped[str] = mapped_column(Text)
     description: Mapped[str] = mapped_column(Text)
-    article_status: Mapped[str] = mapped_column(Text, server_default="no_article")
+    article_status: Mapped[ArticleStatus] = mapped_column(
+        Enum(
+            ArticleStatus,
+            native_enum=False,
+            length=20,
+            values_callable=lambda enum: [member.value for member in enum],
+            create_constraint=False,
+        ),
+        server_default=ArticleStatus.NO_ARTICLE.value,
+    )
     compiled_from_hash: Mapped[str | None] = mapped_column(Text)
     rendered_from_hash: Mapped[str | None] = mapped_column(Text)
     supersedes: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))

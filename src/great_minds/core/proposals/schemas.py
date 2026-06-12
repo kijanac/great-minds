@@ -2,6 +2,7 @@
 
 import uuid
 from datetime import datetime
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict
 
@@ -40,5 +41,8 @@ class ProposalCreate(BaseModel):
     rendered: str
 
 
+ReviewTarget = Literal[ProposalStatus.APPROVED, ProposalStatus.REJECTED]
+
+
 class ProposalUpdate(BaseModel):
-    status: ProposalStatus
+    status: ReviewTarget
