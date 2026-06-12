@@ -36,7 +36,7 @@ interface ProjectSettingsProps {
   proposalsSlot: ReactNode;
   apiKeysSlot: ReactNode;
   onHome: () => void;
-  onInvite: (email: string) => Promise<void>;
+  onInvite: (email: string, role: string) => Promise<void>;
   onChangeRole: (userId: string, role: string) => Promise<void>;
   onRemoveMember: (userId: string) => Promise<void>;
   onSaveConfig: (thematic_hint: string) => Promise<void>;
@@ -59,6 +59,7 @@ export function ProjectSettings({
   onDeleteVault,
 }: ProjectSettingsProps) {
   const [email, setEmail] = useState("");
+  const [inviteRole, setInviteRole] = useState("editor");
   const [inviting, setInviting] = useState(false);
   const [savingConfig, setSavingConfig] = useState(false);
 
@@ -68,7 +69,7 @@ export function ProjectSettings({
     if (!trimmed) return;
     setInviting(true);
     try {
-      await onInvite(trimmed);
+      await onInvite(trimmed, inviteRole);
       setEmail("");
     } finally {
       setInviting(false);
@@ -186,6 +187,18 @@ export function ProjectSettings({
                     disabled={inviting}
                     className="h-8 bg-transparent dark:bg-transparent border-ink-border rounded-sm font-mono text-[length:var(--text-small)] text-warm px-3 caret-gold placeholder:text-warm-ghost focus-visible:ring-0 focus-visible:border-gold-dim"
                   />
+                  <Select value={inviteRole} onValueChange={(r) => r && setInviteRole(r)}>
+                    <SelectTrigger
+                      size="sm"
+                      className="h-8 w-24 font-mono text-[length:var(--text-chrome)] tracking-[0.06em] text-warm-ghost"
+                    >
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent className={POPOVER_SURFACE_CLASS}>
+                      <SelectItem value="editor">editor</SelectItem>
+                      <SelectItem value="viewer">viewer</SelectItem>
+                    </SelectContent>
+                  </Select>
                   <span className="font-mono text-[length:var(--text-chrome)] text-warm-ghost shrink-0">
                     ↵
                   </span>

@@ -48,9 +48,9 @@ export function ProjectSettingsContainer() {
   const isOwner = members.some((m) => m.user_id === userId && m.role === "owner");
 
   const handleInvite = useCallback(
-    async (email: string) => {
+    async (email: string, role: string) => {
       if (!id) return;
-      const member = await inviteMember(id, email);
+      const member = await inviteMember(id, email, role);
       setMembers((prev) => [...prev, member]);
     },
     [id],
