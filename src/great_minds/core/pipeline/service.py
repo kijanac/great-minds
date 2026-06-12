@@ -25,7 +25,12 @@ import great_minds.core.pipeline.publish as publish
 import great_minds.core.pipeline.render as render
 import great_minds.core.pipeline.verify as verify
 from great_minds.core.pipeline.steps import StepRunner, inline_step_runner
-from great_minds.core.pipeline_runs import PipelineProgressRunner, phase_step
+from great_minds.core.pipeline_runs import (
+    PipelinePhase,
+    PipelinePhaseStatus,
+    PipelineProgressRunner,
+    phase_step,
+)
 from great_minds.core.search import SearchIndexRepository, SearchService
 from great_minds.core.settings import Settings, get_settings
 from great_minds.core.storage import Storage
@@ -144,8 +149,8 @@ class CompileService:
             status="completed",
             steps=[
                 phase_step(
-                    phase="publish",
-                    status="completed",
+                    phase=PipelinePhase.PUBLISH,
+                    status=PipelinePhaseStatus.COMPLETED,
                     label="compile completed early: no validated topics",
                     done=1,
                     total=1,

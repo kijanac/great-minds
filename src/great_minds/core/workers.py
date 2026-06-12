@@ -33,6 +33,8 @@ from great_minds.core.r2_admin import R2Admin
 from great_minds.core.settings import get_settings
 from great_minds.core.storage import make_storage
 from great_minds.core.pipeline_runs import (
+    PipelinePhase,
+    PipelinePhaseStatus,
     PipelineProgressRunner,
     build_progress_steps,
     phase_step,
@@ -545,8 +547,8 @@ async def staged_file_ingest_task(params: dict, ctx) -> None:
                 status="completed",
                 steps=[
                     phase_step(
-                        phase="publish",
-                        status="completed",
+                        phase=PipelinePhase.PUBLISH,
+                        status=PipelinePhaseStatus.COMPLETED,
                         label="sources already up to date",
                         done=1,
                         total=1,

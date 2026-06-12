@@ -8,39 +8,42 @@ from great_minds.core.ingest_schemas import StagedFileInput
 from great_minds.core.pagination import Page, PageParams, create_page
 from great_minds.core.pipeline_runs.repository import PipelineRunRepository
 from great_minds.core.pipeline_runs.schemas import (
+    PipelinePhase,
+    PipelinePhaseStatus,
     PipelineProgressStep,
     PipelineRun,
     PipelineRunCreate,
     PipelineRunUpdate,
+    PipelineStepStatus,
     PipelineTaskType,
     PipelineTrigger,
 )
 from great_minds.core.tasks import TaskService
 
 
-_PHASE_LABELS = {
-    "source_ingest": "Processing uploaded sources",
-    "ingest": "Indexing documents for search",
-    "extract": "Reading documents",
-    "abstract": "Synthesizing topics",
-    "derive": "Mapping connections",
-    "render": "Writing articles",
-    "verify": "Checking references",
-    "publish": "Finalizing",
+_PHASE_LABELS: dict[PipelinePhase, str] = {
+    PipelinePhase.SOURCE_INGEST: "Processing uploaded sources",
+    PipelinePhase.INGEST: "Indexing documents for search",
+    PipelinePhase.EXTRACT: "Reading documents",
+    PipelinePhase.ABSTRACT: "Synthesizing topics",
+    PipelinePhase.DERIVE: "Mapping connections",
+    PipelinePhase.RENDER: "Writing articles",
+    PipelinePhase.VERIFY: "Checking references",
+    PipelinePhase.PUBLISH: "Finalizing",
 }
 
-_STEP_STATUS_BY_PHASE_STATUS = {
-    "started": "running",
-    "progress": "running",
-    "completed": "completed",
-    "failed": "failed",
+_STEP_STATUS_BY_PHASE_STATUS: dict[PipelinePhaseStatus, PipelineStepStatus] = {
+    PipelinePhaseStatus.STARTED: PipelineStepStatus.RUNNING,
+    PipelinePhaseStatus.PROGRESS: PipelineStepStatus.RUNNING,
+    PipelinePhaseStatus.COMPLETED: PipelineStepStatus.COMPLETED,
+    PipelinePhaseStatus.FAILED: PipelineStepStatus.FAILED,
 }
 
 
 def phase_step(
     *,
-    phase: str,
-    status: str,
+    phase: PipelinePhase,
+    status: PipelinePhaseStatus,
     label: str | None = None,
     done: int | None = None,
     total: int | None = None,

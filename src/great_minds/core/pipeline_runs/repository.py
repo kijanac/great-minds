@@ -135,8 +135,8 @@ class PipelineRunRepository:
             update(PipelineRunRecord)
             .where(PipelineRunRecord.id == pipeline_run_id)
             .values(
-                status=PipelineRunStatus.FAILED.value,
-                phase_status="failed",
+                status=PipelineRunStatus.FAILED,
+                phase_status=PipelinePhaseStatus.FAILED,
                 error=error,
                 completed_at=func.now(),
                 updated_at=func.now(),
@@ -163,8 +163,8 @@ class PipelineRunRepository:
                 PipelineRunRecord.status.in_(_ACTIVE),
             )
             .values(
-                status=PipelineRunStatus.CANCELLED.value,
-                phase_status="failed",
+                status=PipelineRunStatus.CANCELLED,
+                phase_status=PipelinePhaseStatus.FAILED,
                 error=error,
                 completed_at=func.now(),
                 updated_at=func.now(),
