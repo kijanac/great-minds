@@ -36,12 +36,16 @@ interface ProjectSettingsProps {
   onDeleteVault: () => Promise<void>;
 }
 
-const ROLES = ["owner", "editor", "viewer"] as const;
+// Roles a member can be cycled between by clicking their role. Owner is
+// deliberately excluded: transferring ownership must be an explicit action,
+// never a side effect of cycling (the previous wrap-around turned the last
+// role, viewer, straight into owner).
+const ASSIGNABLE_ROLES = ["editor", "viewer"] as const;
 
 function nextRole(current: string): string {
-  const idx = ROLES.indexOf(current as (typeof ROLES)[number]);
-  if (idx === -1 || idx === 0) return current;
-  return ROLES[(idx + 1) % ROLES.length] || current;
+  const idx = ASSIGNABLE_ROLES.indexOf(current as (typeof ASSIGNABLE_ROLES)[number]);
+  if (idx === -1) return current;
+  return ASSIGNABLE_ROLES[(idx + 1) % ASSIGNABLE_ROLES.length] || current;
 }
 
 export function ProjectSettings({
