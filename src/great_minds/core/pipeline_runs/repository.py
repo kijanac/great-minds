@@ -4,7 +4,7 @@ from datetime import datetime
 from typing import Any
 from uuid import UUID
 
-from sqlalchemy import func, select, update
+from sqlalchemy import Select, func, select, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -12,6 +12,7 @@ from great_minds.core.pipeline_runs.models import PipelineRunRecord
 from great_minds.core.pipeline_runs.schemas import (
     PipelineRun,
     PipelineRunCreate,
+    PipelineRunFilter,
     PipelinePhase,
     PipelinePhaseStatus,
     PipelineRunStatus,
@@ -22,6 +23,16 @@ from great_minds.core.pipeline_runs.schemas import (
 CHANNEL = "pipeline_progress"
 
 _ACTIVE = (PipelineRunStatus.PENDING.value, PipelineRunStatus.RUNNING.value)
+
+
+def _with_status_filter(
+    stmt: Select[Any], status: PipelineRunFilter | None
+) -> Select[Any]:
+    if status is PipelineRunFilter.ACTIVE:
+        return stmt.where(PipelineRunRecord.status.in_(_ACTIVE))
+    if status is not None:
+        return stmt.where(PipelineRunRecord.status == status)
+    return stmt
 
 
 class PipelineRunRepository:
@@ -59,15 +70,12 @@ class PipelineRunRepository:
         self,
         vault_id: UUID,
         *,
-        status: str | None = None,
+        status: PipelineRunFilter | None = None,
         limit: int = 50,
         offset: int = 0,
     ) -> list[PipelineRun]:
         stmt = select(PipelineRunRecord).where(PipelineRunRecord.vault_id == vault_id)
-        if status == "active":
-            stmt = stmt.where(PipelineRunRecord.status.in_(_ACTIVE))
-        elif status is not None:
-            stmt = stmt.where(PipelineRunRecord.status == status)
+        stmt = _with_status_filter(stmt, status)
         stmt = (
             stmt.order_by(PipelineRunRecord.created_at.desc())
             .offset(offset)
@@ -77,13 +85,10 @@ class PipelineRunRepository:
         return [PipelineRun.model_validate(r) for r in row.scalars().all()]
 
     async def count_for_vault(
-        self, vault_id: UUID, *, status: str | None = None
+        self, vault_id: UUID, *, status: PipelineRunFilter | None = None
     ) -> int:
         stmt = select(func.count()).where(PipelineRunRecord.vault_id == vault_id)
-        if status == "active":
-            stmt = stmt.where(PipelineRunRecord.status.in_(_ACTIVE))
-        elif status is not None:
-            stmt = stmt.where(PipelineRunRecord.status == status)
+        stmt = _with_status_filter(stmt, status)
         return (await self.session.scalar(stmt)) or 0
 
     async def list_stale_active(self, older_than: datetime) -> list[PipelineRun]:

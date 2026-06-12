@@ -15,6 +15,22 @@ class PipelineRunStatus(StrEnum):
     CANCELLED = "cancelled"
 
 
+class PipelineRunFilter(StrEnum):
+    """Status filter for the jobs list query.
+
+    Mirrors PipelineRunStatus plus the synthetic ACTIVE (PENDING | RUNNING) so
+    the ``status=`` query param is a closed set — an out-of-set value is a 422
+    at the boundary instead of a silently empty page.
+    """
+
+    ACTIVE = "active"
+    PENDING = "pending"
+    RUNNING = "running"
+    COMPLETED = "completed"
+    FAILED = "failed"
+    CANCELLED = "cancelled"
+
+
 class PipelineTrigger(StrEnum):
     STAGED_FILES = "staged_files"
     URL = "url"

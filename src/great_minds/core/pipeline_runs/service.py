@@ -13,6 +13,7 @@ from great_minds.core.pipeline_runs.schemas import (
     PipelineProgressStep,
     PipelineRun,
     PipelineRunCreate,
+    PipelineRunFilter,
     PipelineRunUpdate,
     PipelineStepStatus,
     PipelineTaskType,
@@ -84,7 +85,7 @@ class PipelineRunService:
         self,
         vault_id: UUID,
         *,
-        status: str | None = None,
+        status: PipelineRunFilter | None = None,
         pagination: PageParams,
     ) -> Page[PipelineRun]:
         items = await self.repo.list_for_vault(
