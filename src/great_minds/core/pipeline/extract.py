@@ -38,8 +38,7 @@ from great_minds.core.markdown import (
 )
 from great_minds.core.pipeline_runs import (
     PipelineProgressRunner,
-    PipelineProgressStep,
-    build_progress_steps,
+    ProgressStepsMixin,
 )
 from great_minds.core.storage import Storage
 from great_minds.core.telemetry import enrich, log_event
@@ -57,8 +56,10 @@ EXTRACT_STEP_LABELS = {
 }
 
 
-class ExtractPhase:
+class ExtractPhase(ProgressStepsMixin):
     """Phase 1 runner with explicit service-style dependencies."""
+
+    STEP_LABELS = EXTRACT_STEP_LABELS
 
     def __init__(
         self,
@@ -82,17 +83,6 @@ class ExtractPhase:
         self.progress = progress
         self.config = config
         self.concurrency = concurrency
-
-    def progress_steps(
-        self,
-        active: str,
-        *,
-        completed: set[str] | None = None,
-        counts: dict[str, tuple[int, int]] | None = None,
-    ) -> list[PipelineProgressStep]:
-        return build_progress_steps(
-            EXTRACT_STEP_LABELS, active, completed=completed, counts=counts
-        )
 
     async def run(self, *, vault_id: UUID, pipeline_run_id: UUID) -> None:
         """Drive Phase 1 — extract — over every doc in the docs registry.

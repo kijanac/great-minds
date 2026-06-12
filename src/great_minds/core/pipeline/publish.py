@@ -28,8 +28,7 @@ from great_minds.core.paths import (
 )
 from great_minds.core.pipeline_runs import (
     PipelineProgressRunner,
-    PipelineProgressStep,
-    build_progress_steps,
+    ProgressStepsMixin,
 )
 from great_minds.core.search import SearchService
 from great_minds.core.storage import Storage
@@ -57,8 +56,10 @@ class CompileLogCounts(BaseModel):
     chunks_wiki: int
 
 
-class PublishPhase:
+class PublishPhase(ProgressStepsMixin):
     """Phase 6 runner with explicit service-style dependencies."""
+
+    STEP_LABELS = PUBLISH_STEP_LABELS
 
     def __init__(
         self,
@@ -78,20 +79,6 @@ class PublishPhase:
         self.search = search
         self.progress = progress
         self.pipeline_run_id = pipeline_run_id
-
-    def progress_steps(
-        self,
-        active: str,
-        *,
-        completed: set[str] | None = None,
-        counts: dict[str, tuple[int | None, int | None]] | None = None,
-    ) -> list[PipelineProgressStep]:
-        return build_progress_steps(
-            PUBLISH_STEP_LABELS,
-            active,
-            completed=completed,
-            counts=counts,
-        )
 
     async def run(self, vault_id: UUID) -> None:
         await self.progress.emit(

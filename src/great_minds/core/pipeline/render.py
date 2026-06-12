@@ -46,8 +46,7 @@ from great_minds.core.topics.schemas import TopicDetail
 from great_minds.core.pipeline.steps import StepRunner
 from great_minds.core.pipeline_runs import (
     PipelineProgressRunner,
-    PipelineProgressStep,
-    build_progress_steps,
+    ProgressStepsMixin,
 )
 from great_minds.core.search import SearchService
 from great_minds.core.storage import Storage
@@ -93,8 +92,10 @@ RENDER_STEP_LABELS = {
 }
 
 
-class RenderPhase:
+class RenderPhase(ProgressStepsMixin):
     """Phase 4 runner with explicit service-style dependencies."""
+
+    STEP_LABELS = RENDER_STEP_LABELS
 
     def __init__(
         self,
@@ -127,20 +128,6 @@ class RenderPhase:
         # Set per-run in run(); read by _write_rendered_article to stamp
         # provenance on each article it writes.
         self.pipeline_run_id: UUID | None = None
-
-    def progress_steps(
-        self,
-        active: str,
-        *,
-        completed: set[str] | None = None,
-        counts: dict[str, tuple[int | None, int | None]] | None = None,
-    ) -> list[PipelineProgressStep]:
-        return build_progress_steps(
-            RENDER_STEP_LABELS,
-            active,
-            completed=completed,
-            counts=counts,
-        )
 
     async def run(
         self,

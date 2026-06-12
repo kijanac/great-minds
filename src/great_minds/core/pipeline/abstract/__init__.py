@@ -31,8 +31,7 @@ from great_minds.core.pipeline.abstract import (
 )
 from great_minds.core.pipeline_runs import (
     PipelineProgressRunner,
-    PipelineProgressStep,
-    build_progress_steps,
+    ProgressStepsMixin,
 )
 from great_minds.core.settings import Settings
 from great_minds.core.storage import Storage
@@ -56,8 +55,10 @@ ABSTRACT_STEP_LABELS = {
 }
 
 
-class AbstractPhase:
+class AbstractPhase(ProgressStepsMixin):
     """Phase 2 runner with explicit service-style dependencies."""
+
+    STEP_LABELS = ABSTRACT_STEP_LABELS
 
     def __init__(
         self,
@@ -83,20 +84,6 @@ class AbstractPhase:
         self.settings = settings
         self.progress = progress
         self.pipeline_run_id = pipeline_run_id
-
-    def progress_steps(
-        self,
-        active: str,
-        *,
-        completed: set[str] | None = None,
-        counts: dict[str, tuple[int | None, int | None]] | None = None,
-    ) -> list[PipelineProgressStep]:
-        return build_progress_steps(
-            ABSTRACT_STEP_LABELS,
-            active,
-            completed=completed,
-            counts=counts,
-        )
 
     async def run(self, vault_id: UUID) -> list[TopicDetail]:
         """Return validated canonical topics for phase 3 derive."""

@@ -16,8 +16,7 @@ from openai import AsyncOpenAI
 from great_minds.core.documents.service import SourceDocumentService
 from great_minds.core.pipeline_runs import (
     PipelineProgressRunner,
-    PipelineProgressStep,
-    build_progress_steps,
+    ProgressStepsMixin,
 )
 from great_minds.core.search import SearchService
 from great_minds.core.storage import Storage
@@ -28,13 +27,15 @@ INGEST_STEP_LABELS = {
 }
 
 
-class IngestPhase:
+class IngestPhase(ProgressStepsMixin):
     """Phase 0 runner with explicit dependencies.
 
     This follows the repo/service style used elsewhere: callers compose
     concrete dependencies up front, while phase logic no longer reaches
     through a broad context bag.
     """
+
+    STEP_LABELS = INGEST_STEP_LABELS
 
     def __init__(
         self,
@@ -52,20 +53,6 @@ class IngestPhase:
         self.progress = progress
         self.pipeline_run_id = pipeline_run_id
         self.source_docs = source_docs
-
-    def progress_steps(
-        self,
-        active: str,
-        *,
-        completed: set[str] | None = None,
-        counts: dict[str, tuple[int | None, int | None]] | None = None,
-    ) -> list[PipelineProgressStep]:
-        return build_progress_steps(
-            INGEST_STEP_LABELS,
-            active,
-            completed=completed,
-            counts=counts,
-        )
 
     async def run(self, vault_id: UUID) -> None:
         await self.progress.emit(

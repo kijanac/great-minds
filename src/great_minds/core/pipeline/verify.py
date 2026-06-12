@@ -25,8 +25,7 @@ from great_minds.core.markdown import extract_wiki_link_targets
 from great_minds.core.paths import wiki_path, wiki_slug
 from great_minds.core.pipeline_runs import (
     PipelineProgressRunner,
-    PipelineProgressStep,
-    build_progress_steps,
+    ProgressStepsMixin,
 )
 from great_minds.core.storage import Storage
 from great_minds.core.telemetry import enrich, log_event
@@ -40,8 +39,10 @@ VERIFY_STEP_LABELS = {
 }
 
 
-class VerifyPhase:
+class VerifyPhase(ProgressStepsMixin):
     """Phase 5 runner with explicit service-style dependencies."""
+
+    STEP_LABELS = VERIFY_STEP_LABELS
 
     def __init__(
         self,
@@ -57,20 +58,6 @@ class VerifyPhase:
         self.wiki_articles = wiki_articles
         self.progress = progress
         self.pipeline_run_id = pipeline_run_id
-
-    def progress_steps(
-        self,
-        active: str,
-        *,
-        completed: set[str] | None = None,
-        counts: dict[str, tuple[int | None, int | None]] | None = None,
-    ) -> list[PipelineProgressStep]:
-        return build_progress_steps(
-            VERIFY_STEP_LABELS,
-            active,
-            completed=completed,
-            counts=counts,
-        )
 
     async def run(self, vault_id: UUID) -> None:
         await self.progress.emit(

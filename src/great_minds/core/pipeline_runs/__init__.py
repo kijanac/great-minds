@@ -1,7 +1,10 @@
 """Public API for the pipeline_runs bounded context."""
 
 from great_minds.core.pipeline_runs.models import PipelineRunRecord
-from great_minds.core.pipeline_runs.progress_steps import build_progress_steps
+from great_minds.core.pipeline_runs.progress_steps import (
+    ProgressStepsMixin,
+    build_progress_steps,
+)
 from great_minds.core.pipeline_runs.repository import PipelineRunRepository
 from great_minds.core.pipeline_runs.schemas import (
     PipelinePhase,
@@ -24,6 +27,7 @@ from great_minds.core.pipeline_runs.service import (
 
 __all__ = [
     "build_progress_steps",
+    "ProgressStepsMixin",
     "PipelinePhase",
     "PipelinePhaseStatus",
     "PipelineProgressRunner",

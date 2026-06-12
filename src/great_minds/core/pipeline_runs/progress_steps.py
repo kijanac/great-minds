@@ -1,5 +1,7 @@
 """Helpers for structured pipeline progress checklists."""
 
+from typing import ClassVar
+
 from great_minds.core.pipeline_runs.schemas import PipelineProgressStep
 
 
@@ -40,3 +42,32 @@ def build_progress_steps(
             )
         )
     return steps
+
+
+class ProgressStepsMixin:
+    """Bind a phase's STEP_LABELS once and forward to build_progress_steps.
+
+    Phase runners set ``STEP_LABELS`` (checklist key -> label) as a class
+    attribute and inherit ``progress_steps`` instead of re-declaring the same
+    forwarder in every phase.
+    """
+
+    STEP_LABELS: ClassVar[dict[str, str]]
+
+    def progress_steps(
+        self,
+        active: str,
+        *,
+        completed: set[str] | None = None,
+        failed: set[str] | None = None,
+        counts: dict[str, tuple[int | None, int | None]] | None = None,
+        details: dict[str, str] | None = None,
+    ) -> list[PipelineProgressStep]:
+        return build_progress_steps(
+            self.STEP_LABELS,
+            active,
+            completed=completed,
+            failed=failed,
+            counts=counts,
+            details=details,
+        )
