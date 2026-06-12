@@ -7,9 +7,12 @@ import httpx
 from fastapi import APIRouter, HTTPException, UploadFile, status
 
 from great_minds.app.api.dependencies import (
+    CurrentUser,
     IngestServiceDep,
     PipelineRunServiceDep,
+    ProposalServiceDep,
     SourceDocumentServiceDep,
+    VaultAccessDep,
     VaultEditorGuard,
     VaultOwnerGuard,
     VaultStorageDep,
@@ -26,6 +29,8 @@ from great_minds.app.api.schemas.ingest import (
 )
 from great_minds.app.api.schemas.jobs import JobResponse
 from great_minds.core.documents.schemas import IngestedDocument
+from great_minds.core.proposals.schemas import ProposalCreate
+from great_minds.core.vaults.models import MemberRole
 
 log = logging.getLogger(__name__)
 
@@ -55,9 +60,21 @@ async def ingest_user_suggestion(
     vault_id: UUID,
     storage: VaultStorageDep,
     ingest_service: IngestServiceDep,
+    proposal_service: ProposalServiceDep,
+    user: CurrentUser,
+    access: VaultAccessDep,
     _auth: VaultEditorGuard,
 ) -> IngestedDocument:
-    try:
+    """Add a user suggestion to the vault.
+
+    Owners ingest directly; non-owner members (editors) stage it as a proposal
+    the owner approves, mirroring the session-promote path.
+    """
+    if not suggestion.body.strip():
+        raise HTTPException(status_code=400, detail="body is empty")
+
+    role = await access.get_member_role(vault_id, user.id)
+    if role == MemberRole.OWNER:
         return await ingest_service.ingest_user_suggestion(
             vault_id,
             storage,
@@ -66,8 +83,22 @@ async def ingest_user_suggestion(
             anchored_to=suggestion.anchored_to,
             anchored_section=suggestion.anchored_section,
         )
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
+
+    dest = ingest_service.user_suggestion_dest(
+        intent=suggestion.intent, anchored_to=suggestion.anchored_to
+    )
+    await proposal_service.create(
+        vault_id=vault_id,
+        user_id=user.id,
+        data=ProposalCreate(
+            content_type="user_suggestion",
+            title=None,
+            author=None,
+            dest_path=dest,
+            rendered=suggestion.body,
+        ),
+    )
+    return IngestedDocument(file_path=dest)
 
 
 @router.post("/upload", status_code=201)

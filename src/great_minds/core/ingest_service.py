@@ -223,6 +223,14 @@ class IngestService:
         )
         return IngestedDocument(file_path=dest)
 
+    def user_suggestion_dest(
+        self, *, intent: UserSuggestionIntent, anchored_to: str
+    ) -> str:
+        """Compute the raw-corpus path for a user suggestion (timestamped)."""
+        ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+        anchor_slug = slugify(anchored_to) if anchored_to else "general"
+        return raw_path("user", f"{ts}-{anchor_slug}-{intent.value}.md")
+
     async def ingest_user_suggestion(
         self,
         vault_id: UUID,
@@ -237,10 +245,7 @@ class IngestService:
         """Persist a user suggestion as a source document. source_type='user'."""
         if not body.strip():
             raise ValueError("body is empty")
-        ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-        anchor_slug = slugify(anchored_to) if anchored_to else "general"
-        filename = f"{ts}-{anchor_slug}-{intent.value}.md"
-        dest = raw_path("user", filename)
+        dest = self.user_suggestion_dest(intent=intent, anchored_to=anchored_to)
         await self._write_and_index(
             vault_id,
             storage,
