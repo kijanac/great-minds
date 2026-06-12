@@ -20,6 +20,11 @@ class ProposalStatus(enum.StrEnum):
     REJECTED = "rejected"
 
 
+class ProposalContentType(enum.StrEnum):
+    SESSION = "session"
+    USER_SUGGESTION = "user_suggestion"
+
+
 class ProposalORM(Base):
     __tablename__ = "source_proposals"
 

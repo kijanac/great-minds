@@ -27,6 +27,34 @@ import {
 import { Skeleton } from "@/components/ui/skeleton";
 import { POPOVER_SURFACE_CLASS } from "@/lib/control-styles";
 
+const ROLE_OPTIONS = ["editor", "viewer"] as const;
+
+function RoleSelect({
+  value,
+  onValueChange,
+}: {
+  value: string;
+  onValueChange: (role: string) => void;
+}) {
+  return (
+    <Select value={value} onValueChange={(r) => r && onValueChange(r)}>
+      <SelectTrigger
+        size="sm"
+        className="h-8 w-24 font-mono text-[length:var(--text-chrome)] tracking-[0.06em] text-warm-ghost"
+      >
+        <SelectValue />
+      </SelectTrigger>
+      <SelectContent className={POPOVER_SURFACE_CLASS}>
+        {ROLE_OPTIONS.map((role) => (
+          <SelectItem key={role} value={role}>
+            {role}
+          </SelectItem>
+        ))}
+      </SelectContent>
+    </Select>
+  );
+}
+
 interface ProjectSettingsProps {
   project: VaultDetail | null;
   members: Membership[];
@@ -144,21 +172,10 @@ export function ProjectSettings({
                     </span>
                     <div className="flex items-center gap-2">
                       {isOwner && m.role !== "owner" ? (
-                        <Select
+                        <RoleSelect
                           value={m.role}
-                          onValueChange={(role) => role && onChangeRole(m.user_id, role)}
-                        >
-                          <SelectTrigger
-                            size="sm"
-                            className="h-7 w-24 font-mono text-[length:var(--text-chrome)] tracking-[0.06em] text-warm-ghost"
-                          >
-                            <SelectValue />
-                          </SelectTrigger>
-                          <SelectContent className={POPOVER_SURFACE_CLASS}>
-                            <SelectItem value="editor">editor</SelectItem>
-                            <SelectItem value="viewer">viewer</SelectItem>
-                          </SelectContent>
-                        </Select>
+                          onValueChange={(role) => onChangeRole(m.user_id, role)}
+                        />
                       ) : (
                         <span className="font-mono text-[length:var(--text-chrome)] tracking-[0.06em] text-warm-ghost">
                           {m.role}
@@ -195,18 +212,7 @@ export function ProjectSettings({
                     disabled={inviting}
                     className="h-8 bg-transparent dark:bg-transparent border-ink-border rounded-sm font-mono text-[length:var(--text-small)] text-warm px-3 caret-gold placeholder:text-warm-ghost focus-visible:ring-0 focus-visible:border-gold-dim"
                   />
-                  <Select value={inviteRole} onValueChange={(r) => r && setInviteRole(r)}>
-                    <SelectTrigger
-                      size="sm"
-                      className="h-8 w-24 font-mono text-[length:var(--text-chrome)] tracking-[0.06em] text-warm-ghost"
-                    >
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent className={POPOVER_SURFACE_CLASS}>
-                      <SelectItem value="editor">editor</SelectItem>
-                      <SelectItem value="viewer">viewer</SelectItem>
-                    </SelectContent>
-                  </Select>
+                  <RoleSelect value={inviteRole} onValueChange={setInviteRole} />
                   <span className="font-mono text-[length:var(--text-chrome)] text-warm-ghost shrink-0">
                     ↵
                   </span>

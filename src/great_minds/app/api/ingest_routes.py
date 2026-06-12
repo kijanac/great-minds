@@ -29,6 +29,7 @@ from great_minds.app.api.schemas.ingest import (
 )
 from great_minds.app.api.schemas.jobs import JobResponse
 from great_minds.core.documents.schemas import IngestedDocument
+from great_minds.core.proposals.models import ProposalContentType
 from great_minds.core.proposals.schemas import ProposalCreate
 from great_minds.core.vaults.models import MemberRole
 
@@ -97,7 +98,7 @@ async def ingest_user_suggestion(
         vault_id=vault_id,
         user_id=user.id,
         data=ProposalCreate(
-            content_type="user_suggestion",
+            content_type=ProposalContentType.USER_SUGGESTION,
             title=None,
             author=None,
             dest_path=dest,

@@ -6,7 +6,7 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict
 
-from great_minds.core.proposals.models import ProposalStatus
+from great_minds.core.proposals.models import ProposalContentType, ProposalStatus
 
 
 class ProposalOverview(BaseModel):
@@ -16,7 +16,7 @@ class ProposalOverview(BaseModel):
     vault_id: uuid.UUID
     status: ProposalStatus
     title: str | None
-    content_type: str
+    content_type: ProposalContentType
     created_at: datetime
 
 
@@ -34,7 +34,7 @@ class ProposalCreate(BaseModel):
     markdown, compute dest_path, and pass the bundled result here.
     """
 
-    content_type: str
+    content_type: ProposalContentType
     title: str | None
     author: str | None
     dest_path: str
