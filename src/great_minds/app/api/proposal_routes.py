@@ -19,6 +19,10 @@ from great_minds.app.api.dependencies import (
 )
 from great_minds.core.pagination import Page
 from great_minds.core.proposals import ProposalStatus
+from great_minds.core.proposals.errors import (
+    ProposalAlreadyReviewed,
+    ProposalNotFound,
+)
 from great_minds.core.proposals.schemas import (
     Proposal,
     ProposalOverview,
@@ -72,8 +76,7 @@ async def review_proposal(
             new_status=req.status,
             storage=storage,
         )
-    except ValueError as e:
-        msg = str(e)
-        if msg == "Proposal not found":
-            raise HTTPException(status_code=404, detail=msg)
-        raise HTTPException(status_code=409, detail=msg)
+    except ProposalNotFound:
+        raise HTTPException(status_code=404, detail="Proposal not found")
+    except ProposalAlreadyReviewed:
+        raise HTTPException(status_code=409, detail="Proposal already reviewed")

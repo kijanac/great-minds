@@ -12,12 +12,17 @@ from great_minds.core.compile_intents.repository import CompileIntentRepository
 from great_minds.core.documents.service import SourceDocumentService
 from great_minds.core.pagination import Page, PageParams, create_page
 from great_minds.core.paths import proposal_staging_path
+from great_minds.core.proposals.errors import (
+    ProposalAlreadyReviewed,
+    ProposalNotFound,
+)
 from great_minds.core.proposals.models import ProposalStatus
 from great_minds.core.proposals.repository import ProposalRepository
 from great_minds.core.proposals.schemas import (
     Proposal,
     ProposalCreate,
     ProposalOverview,
+    ReviewTarget,
 )
 from great_minds.core.storage import Storage
 
@@ -98,27 +103,26 @@ class ProposalService:
         self,
         vault_id: UUID,
         proposal_id: UUID,
-        new_status: ProposalStatus,
+        new_status: ReviewTarget,
         storage: Storage,
     ) -> Proposal:
         """Review a pending proposal. Approve promotes it into the vault corpus;
         reject cleans up the staged content.
 
-        Raises ValueError if the proposal doesn't exist or isn't PENDING.
+        Raises ProposalNotFound if no such proposal exists, or
+        ProposalAlreadyReviewed if it is no longer PENDING.
         """
         proposal = await self.repo.get_for_vault(vault_id, proposal_id)
         if proposal is None:
-            raise ValueError("Proposal not found")
+            raise ProposalNotFound(str(proposal_id))
         if proposal.status != ProposalStatus.PENDING:
-            raise ValueError("Proposal already reviewed")
+            raise ProposalAlreadyReviewed(str(proposal_id))
 
         match new_status:
             case ProposalStatus.APPROVED:
                 await self._approve(proposal, storage)
             case ProposalStatus.REJECTED:
                 await self._reject(proposal)
-            case ProposalStatus.PENDING:
-                raise ValueError("Cannot review a proposal back to pending")
 
         await self.repo.set_status(vault_id, proposal.id, new_status)
         await self._commit()
