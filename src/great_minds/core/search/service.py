@@ -117,6 +117,7 @@ class SearchService:
             results.append(
                 SearchResult(
                     path=path,
+                    chunk_index=chunk_index,
                     heading=heading,
                     snippet=snippet,
                     score=score,
@@ -124,6 +125,27 @@ class SearchService:
                 )
             )
         return results
+
+    async def fetch_context_window(
+        self,
+        vault_ids: list[UUID],
+        path: str,
+        chunk_index: int,
+        *,
+        before: int,
+        after: int,
+    ) -> list[Chunk]:
+        """Return the paragraphs around ``chunk_index`` in ``path``.
+
+        Used by the query agent's ``expand_context`` tool to widen a tight
+        search hit into its surrounding paragraphs without loading the
+        whole file. The window is clamped at the document start; the
+        caller bounds ``before``/``after`` so expansion can't become a
+        full-document dump.
+        """
+        return await self.repo.fetch_window(
+            vault_ids, path, chunk_index - before, chunk_index + after
+        )
 
     # -- Diagnostics ------------------------------------------------------
 

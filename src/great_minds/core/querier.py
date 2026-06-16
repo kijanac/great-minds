@@ -141,6 +141,44 @@ _BASE_TOOLS = [
     {
         "type": "function",
         "function": {
+            "name": "expand_context",
+            "description": (
+                "Read the paragraphs surrounding a specific chunk of a "
+                "document — use it to see a search_content hit in its fuller "
+                "context without loading the whole file. Pass the `path` and "
+                "`chunk_index` from a search result. Returns the matched "
+                "paragraph plus a few before and after."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "path": {
+                        "type": "string",
+                        "description": (
+                            "Document path from a search result, e.g. "
+                            "raw/texts/lenin/works/1916/imperialism/03.md"
+                        ),
+                    },
+                    "chunk_index": {
+                        "type": "integer",
+                        "description": "The chunk index from a search result",
+                    },
+                    "before": {
+                        "type": "integer",
+                        "description": "Paragraphs before to include (default 2)",
+                    },
+                    "after": {
+                        "type": "integer",
+                        "description": "Paragraphs after to include (default 2)",
+                    },
+                },
+                "required": ["path", "chunk_index"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "search_content",
             "description": (
                 "Hybrid text + semantic search across the entire knowledge "
@@ -233,7 +271,7 @@ _ROUTING_PREFERENCE = {
 
 def _classify_tool_call(name: str, args: dict) -> tuple[SourceType, dict] | None:
     """Return (source_type, metadata) for telemetry and SSE source events."""
-    if name == "read_document":
+    if name in ("read_document", "expand_context"):
         path = args["path"]
         doc_type = SourceType.ARTICLE if path.startswith("wiki/") else SourceType.RAW
         return doc_type, {"path": path}
@@ -293,11 +331,65 @@ async def search_content(
 
     parts = []
     for r in results:
-        filename = r.path.rsplit("/", 1)[-1]
-        heading = f" > {r.heading}" if r.heading else ""
-        parts.append(f"### {filename}{heading}\n{r.snippet}")
+        heading = f" — {r.heading}" if r.heading else ""
+        parts.append(f"### {r.path} [chunk {r.chunk_index}]{heading}\n{r.snippet}")
 
-    return f"Found {len(results)} results for '{query}':\n\n" + "\n\n".join(parts)
+    return (
+        f"Found {len(results)} results for '{query}'. Each result shows its "
+        f"document `path` and `chunk_index` — pass those to expand_context to "
+        f"read the surrounding paragraphs, or to read_document for the full "
+        f"file.\n\n" + "\n\n".join(parts)
+    )
+
+
+_EXPAND_MAX_EACH = 6  # cap before/after so expand_context can't become a dump
+
+
+async def expand_context(
+    vault: QuerySource,
+    path: str,
+    chunk_index: int,
+    source: SourceDocumentService,
+    *,
+    before: int = 2,
+    after: int = 2,
+) -> str:
+    """Read the paragraphs around a search hit's chunk.
+
+    Small-to-big retrieval: a search snippet is deliberately tight, so the
+    agent widens around it here instead of reading the whole file. Bodies
+    are served straight from search_index — no storage round-trip — and
+    ``before``/``after`` are clamped so this can't degrade into a dump.
+    """
+    before = max(0, min(before, _EXPAND_MAX_EACH))
+    after = max(0, min(after, _EXPAND_MAX_EACH))
+    svc = SearchService(SearchIndexRepository(source.repo.session))
+    chunks = await svc.fetch_context_window(
+        [vault.vault_id], path, chunk_index, before=before, after=after
+    )
+    if not chunks:
+        log_event("tool.expand_context_empty", path=path, chunk_index=chunk_index)
+        return (
+            f"No indexed paragraphs found at {path} around chunk {chunk_index}. "
+            f"Check the path and chunk_index against a search_content result."
+        )
+
+    log_event(
+        "tool.expand_context",
+        path=path,
+        chunk_index=chunk_index,
+        returned=len(chunks),
+    )
+    sections: list[str] = []
+    for c in chunks:
+        marker = "  ← matched" if c.chunk_index == chunk_index else ""
+        heading = f"{c.heading}\n" if c.heading else ""
+        sections.append(f"[chunk {c.chunk_index}]{marker}\n{heading}{c.body}")
+    header = (
+        f"# {path} [{vault.label}] "
+        f"(chunks {chunks[0].chunk_index}–{chunks[-1].chunk_index})"
+    )
+    return f"{header}\n\n" + "\n\n".join(sections)
 
 
 async def query_documents(
@@ -349,6 +441,15 @@ async def _dispatch_tool(
 ) -> str:
     if name == "read_document":
         return await read_document(vault, args["path"])
+    elif name == "expand_context":
+        return await expand_context(
+            vault,
+            args["path"],
+            int(args["chunk_index"]),
+            source,
+            before=int(args.get("before", 2)),
+            after=int(args.get("after", 2)),
+        )
     elif name == "search_content":
         return await search_content(vault, args["query"], source)
     elif name == "query_documents":
@@ -389,14 +490,18 @@ knowledge base. Use them to answer questions based on the actual texts.
 Approach:
 1. Use `search_content` for text-shaped discovery — finds matching \
 passages across both rendered wiki articles and raw sources, including \
-each file's title/precis/author.
-2. Use `query_documents` when filtering raw sources by structured \
+each file's title/precis/author. Each hit carries a `path` and \
+`chunk_index`.
+2. Use `expand_context(path, chunk_index)` to read the paragraphs around \
+a search hit when the snippet is too narrow — more focused and cheaper \
+than pulling in the whole document.
+3. Use `query_documents` when filtering raw sources by structured \
 attributes (tag, author, date, genre). Wiki articles aren't returned by \
 this tool — they have no structured-filter dimensions.
-3. Read documents via `read_document(path)`. Paths look like \
-`wiki/<slug>.md` for rendered articles or `raw/<content_type>/...` for \
-sources.
-4. To verify a claim or get more depth, follow source citations in a \
+4. Read whole documents via `read_document(path)` when you need the full \
+text. Paths look like `wiki/<slug>.md` for rendered articles or \
+`raw/<content_type>/...` for sources.
+5. To verify a claim or get more depth, follow source citations in a \
 wiki article to read raw primary texts.
 
 Rules:

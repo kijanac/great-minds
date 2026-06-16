@@ -133,6 +133,40 @@ class SearchIndexRepository:
         )
         await self.session.execute(stmt)
 
+    # -- Context expansion ----------------------------------------------
+
+    async def fetch_window(
+        self,
+        vault_ids: list[UUID],
+        path: str,
+        start_index: int,
+        end_index: int,
+    ) -> list[Chunk]:
+        """Return body chunks for ``path`` in ``[start_index, end_index]``.
+
+        Ordered by ``chunk_index``. Excludes the synthetic metadata chunk
+        (``-1``): expansion is about reading body paragraphs in context,
+        not the title/precis summary row. Bodies already live in the
+        table, so this is a single indexed read with no storage round-trip.
+        """
+        rows = await self.session.execute(
+            select(
+                SearchIndexEntry.path,
+                SearchIndexEntry.chunk_index,
+                SearchIndexEntry.heading,
+                SearchIndexEntry.body,
+                SearchIndexEntry.content_hash,
+            )
+            .where(
+                SearchIndexEntry.vault_id.in_(vault_ids),
+                SearchIndexEntry.path == path,
+                SearchIndexEntry.chunk_index >= max(0, start_index),
+                SearchIndexEntry.chunk_index <= end_index,
+            )
+            .order_by(SearchIndexEntry.chunk_index)
+        )
+        return [Chunk.model_validate(row) for row in rows]
+
     # -- Diagnostics -----------------------------------------------------
 
     async def count_by_prefix(self, vault_id: UUID, path_prefix: str) -> int:

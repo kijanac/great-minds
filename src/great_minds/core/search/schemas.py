@@ -13,6 +13,15 @@ from pydantic import BaseModel, ConfigDict
 
 
 class Chunk(BaseModel):
+    """A single indexed chunk.
+
+    Built pre-persist by the rebuild path (carrying body + content_hash
+    ready to embed) and also hydrated from existing rows by
+    ``fetch_window`` for context expansion — hence ``from_attributes``.
+    """
+
+    model_config = ConfigDict(from_attributes=True)
+
     path: str
     chunk_index: int
     heading: str
@@ -35,6 +44,7 @@ class ChunkScore(BaseModel):
 
 class SearchResult(BaseModel):
     path: str
+    chunk_index: int
     heading: str
     snippet: str
     score: float
