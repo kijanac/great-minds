@@ -51,6 +51,7 @@ class SourceType(enum.StrEnum):
     RAW = "raw"
     SEARCH = "search"
     QUERY = "query"
+    LINKS = "links"
 
 
 @dataclass
@@ -271,6 +272,8 @@ def _classify_tool_call(name: str, args: dict) -> tuple[SourceType, dict] | None
         return SourceType.SEARCH, {"query": args["query"]}
     if name == "query_documents":
         return SourceType.QUERY, {"filters": {k: v for k, v in args.items() if v}}
+    if name == "linked_articles":
+        return SourceType.LINKS, {"path": args["path"]}
     return None
 
 
@@ -798,6 +801,12 @@ class QueryEngine:
                 trace.sources_read.append(path)
         elif source_type is SourceType.SEARCH:
             trace.searches.append(meta["query"])
+        elif source_type is SourceType.LINKS:
+            # Navigation, not a read: surface a card with the article's title
+            # but don't count it as a consulted source.
+            event_data["title"] = await self.wiki.get_title_by_path(
+                self.vault_id, meta["path"]
+            )
 
         return {"event": "source", "data": event_data}
 

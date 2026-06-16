@@ -2,7 +2,7 @@ import { z } from "zod";
 
 export const sourceRefSchema = z.object({
   label: z.string(),
-  type: z.enum(["article", "raw", "search"]),
+  type: z.enum(["article", "raw", "search", "query", "links"]),
   title: z.string().nullable().optional(),
   thinking: z.string().optional(),
 });

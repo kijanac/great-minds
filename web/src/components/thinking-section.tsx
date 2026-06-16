@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { ChevronDown, ChevronRight, Search } from "lucide-react";
+import { ChevronDown, ChevronRight, ListFilter, Search, Waypoints } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -29,11 +29,15 @@ export function ThinkingSection({
   const articles = allSources.filter((s) => s.type === "article").length;
   const raw = allSources.filter((s) => s.type === "raw").length;
   const searches = allSources.filter((s) => s.type === "search").length;
+  const queries = allSources.filter((s) => s.type === "query").length;
+  const links = allSources.filter((s) => s.type === "links").length;
 
   const summaryParts: string[] = [];
   if (searches) summaryParts.push(`${searches} search${searches !== 1 ? "es" : ""}`);
+  if (queries) summaryParts.push(`${queries} filter${queries !== 1 ? "s" : ""}`);
   if (articles) summaryParts.push(`${articles} article${articles !== 1 ? "s" : ""} read`);
   if (raw) summaryParts.push(`${raw} source${raw !== 1 ? "s" : ""} read`);
+  if (links) summaryParts.push(`${links} connection${links !== 1 ? "s" : ""} explored`);
   const summary = summaryParts.join(", ") || "no sources";
 
   return (
@@ -59,20 +63,27 @@ export function ThinkingSection({
           <div className="relative z-[200] flex flex-wrap gap-[5px]">
             {blocks
               .flatMap((b) => b.sources)
-              .map((src) =>
-                src.type === "search" ? (
-                  <SearchBadge key={`search:${src.label}`} query={src.label} />
-                ) : (
+              .map((src, i) => {
+                if (src.type === "search")
+                  return <SearchBadge key={`search:${i}:${src.label}`} query={src.label} />;
+                if (src.type === "query")
+                  return <FilterBadge key={`query:${i}:${src.label}`} summary={src.label} />;
+                return (
                   <ArticleBadge
-                    key={`${src.type}:${src.label}`}
+                    key={`${src.type}:${i}:${src.label}`}
                     label={src.label}
                     title={src.title}
                     thinking={src.thinking}
                     active={activeCard === src.label}
                     onClick={() => onCardClick(src.label)}
+                    icon={
+                      src.type === "links" ? (
+                        <Waypoints size={9} className="mr-1.5 opacity-60" />
+                      ) : undefined
+                    }
                   />
-                ),
-              )}
+                );
+              })}
           </div>
         </div>
       )}
@@ -92,18 +103,32 @@ function SearchBadge({ query }: { query: string }) {
   );
 }
 
+function FilterBadge({ summary }: { summary: string }) {
+  return (
+    <Badge
+      variant="outline"
+      className="cursor-default rounded-sm h-auto px-[9px] py-[3px] font-mono text-[length:var(--text-chrome)] tracking-[0.06em] whitespace-nowrap bg-ink-raised border-ink-border text-warm-ghost italic"
+    >
+      <ListFilter size={9} className="mr-1.5 opacity-60" />
+      {summary}
+    </Badge>
+  );
+}
+
 function ArticleBadge({
   label,
   title,
   thinking,
   active,
   onClick,
+  icon,
 }: {
   label: string;
   title?: string | null;
   thinking?: string;
   active: boolean;
   onClick?: () => void;
+  icon?: React.ReactNode;
 }) {
   return (
     <Badge
@@ -130,6 +155,7 @@ function ArticleBadge({
           : undefined
       }
     >
+      {icon}
       {displayTitle(label, title)}
     </Badge>
   );

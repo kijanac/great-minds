@@ -25,6 +25,11 @@ const sourceEventDataSchema = z.discriminatedUnion("type", [
   }),
   z.object({ type: z.literal("search"), query: z.string() }),
   z.object({ type: z.literal("query"), filters: z.record(z.unknown()).optional() }),
+  z.object({
+    type: z.literal("links"),
+    path: z.string(),
+    title: z.string().nullable().optional(),
+  }),
 ]);
 
 const tokenEventSchema = z.object({
@@ -154,6 +159,28 @@ export async function consumeStream(
         sources.push({
           label: event.data.query,
           type: "search",
+          thinking: streamText || undefined,
+        });
+        callbacks?.onSources?.([...sources]);
+        clearOnNextToken = true;
+      } else if (event.data.type === "links") {
+        sources.push({
+          label: event.data.path,
+          type: "links",
+          title: event.data.title ?? null,
+          thinking: streamText || undefined,
+        });
+        callbacks?.onSources?.([...sources]);
+        clearOnNextToken = true;
+      } else if (event.data.type === "query") {
+        const filters = event.data.filters ?? {};
+        const summary =
+          Object.entries(filters)
+            .map(([k, v]) => `${k}: ${String(v)}`)
+            .join(", ") || "filtered sources";
+        sources.push({
+          label: summary,
+          type: "query",
           thinking: streamText || undefined,
         });
         callbacks?.onSources?.([...sources]);

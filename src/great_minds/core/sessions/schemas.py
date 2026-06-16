@@ -10,7 +10,7 @@ from pydantic import BaseModel, ConfigDict
 
 class ThinkingSource(BaseModel):
     label: str
-    type: Literal["article", "raw", "search"]
+    type: Literal["article", "raw", "search", "query", "links"]
     thinking: str | None = None
 
 
