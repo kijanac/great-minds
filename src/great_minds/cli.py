@@ -159,13 +159,9 @@ async def compile(  # noqa: A001
 # query ----------------------------------------------------------------------
 
 
-async def _stream_answer(
-    source, question, doc_service, wiki_service, search_service, model
-):
+async def _stream_answer(engine, question, model):
     print(f"\n> {question}\n")
-    async for event in querier.run_query(
-        source, question, doc_service, wiki_service, search_service, model=model
-    ):
+    async for event in engine.run(question, model=model):
         kind, data = event["event"], event["data"]
         if kind == "token":
             print(data["text"], end="", flush=True)
@@ -192,23 +188,19 @@ async def query(
 ) -> None:
     """Query the knowledge base (interactive if no question given)."""
     setup_logging(service="great-minds", json_output=json_logs)
-    source = querier.QuerySource(
-        storage=_make_storage(), label="local", vault_id=uuid.UUID(int=0)
-    )
     async with _cli_session():
         async with _cli_sm.get()() as session:
-            doc_service = SourceDocumentService(SourceDocumentRepo(session))
-            wiki_service = WikiArticleService(WikiArticleRepo(session))
-            search_service = SearchService(SearchIndexRepository(session))
+            engine = querier.QueryEngine(
+                storage=_make_storage(),
+                label="local",
+                vault_id=uuid.UUID(int=0),
+                source=SourceDocumentService(SourceDocumentRepo(session)),
+                wiki=WikiArticleService(WikiArticleRepo(session)),
+                search=SearchService(SearchIndexRepository(session)),
+                client=get_async_client(max_retries=0),
+            )
             if question:
-                await _stream_answer(
-                    source,
-                    " ".join(question),
-                    doc_service,
-                    wiki_service,
-                    search_service,
-                    model,
-                )
+                await _stream_answer(engine, " ".join(question), model)
                 return
             console.print(
                 Panel.fit(
@@ -225,9 +217,7 @@ async def query(
                     return
                 if not q or q.lower() in ("quit", "exit", "q"):
                     return
-                await _stream_answer(
-                    source, q, doc_service, wiki_service, search_service, model
-                )
+                await _stream_answer(engine, q, model)
 
 
 # ingest ---------------------------------------------------------------------

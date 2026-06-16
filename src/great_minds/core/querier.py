@@ -21,7 +21,7 @@ from .vaults.prompts import load_prompt
 from .search import Chunk, SearchService
 from .markdown import extract_wiki_link_targets
 from .documents.service import SourceDocumentService, WikiArticleService
-from .llm import QUERY_MODEL, get_async_client
+from .llm import QUERY_MODEL
 from .llm.client import api_stream, is_retryable, models_with_fallback
 from .llm_costs import record_wide_event_cost
 from .storage import Storage
@@ -80,37 +80,6 @@ class SourceConsulted:
     kind: str
     path: str
     title: str | None = None
-
-
-async def _build_sources_consulted(
-    vault: "QuerySource",
-    source: SourceDocumentService,
-    wiki: WikiArticleService,
-    articles_read: list[str],
-    sources_read: list[str],
-) -> list[SourceConsulted]:
-    seen: set[str] = set()
-    out: list[SourceConsulted] = []
-    for path in articles_read:
-        if path not in seen:
-            seen.add(path)
-            title = await wiki.get_title_by_path(vault.vault_id, path)
-            out.append(SourceConsulted(kind="wiki", path=path, title=title))
-    for path in sources_read:
-        if path not in seen:
-            seen.add(path)
-            title = await source.get_title_by_path(vault.vault_id, path)
-            out.append(SourceConsulted(kind="raw", path=path, title=title))
-    return out
-
-
-@dataclass
-class QuerySource:
-    """A labeled storage that the query engine can search across."""
-
-    storage: Storage
-    label: str
-    vault_id: UUID
 
 
 _BASE_TOOLS = [
@@ -281,212 +250,12 @@ def _classify_tool_call(name: str, args: dict) -> tuple[SourceType, dict] | None
 
 
 # ---------------------------------------------------------------------------
-# Tool implementations
+# Retrieval discipline + stateless helpers
 # ---------------------------------------------------------------------------
 
 
 _READ_WHOLE_LIMIT = 20_000  # docs at or under this many chars are returned whole
 _MAX_RANGE_CHUNKS = 40  # cap one expand_context read so it can't dump a document
-
-
-def _render_chunk_window(path: str, label: str, chunks: list[Chunk]) -> str:
-    """Render a contiguous run of indexed chunks as readable text."""
-    sections: list[str] = []
-    for c in chunks:
-        heading = f"{c.heading}\n" if c.heading else ""
-        sections.append(f"[chunk {c.chunk_index}]\n{heading}{c.body}")
-    header = (
-        f"# {path} [{label}] (chunks {chunks[0].chunk_index}–{chunks[-1].chunk_index})"
-    )
-    return f"{header}\n\n" + "\n\n".join(sections)
-
-
-async def read_document(vault: QuerySource, path: str, search: SearchService) -> str:
-    """Read a whole document, or its outline if it is large.
-
-    A small document is returned in full. A large document returns its
-    heading outline (sections with chunk ranges) instead of a truncated
-    dump; the agent then reads a section with expand_context(path, start,
-    end).
-    """
-    content = await vault.storage.read(path, strict=False)
-    if content is None:
-        log_event("tool.document_not_found", path=path)
-        return f"Document not found: {path}"
-
-    if len(content) <= _READ_WHOLE_LIMIT:
-        log_event(
-            "tool.document_read",
-            path=path,
-            vault=vault.label,
-            mode="full",
-            chars=len(content),
-        )
-        forward_links = extract_wiki_link_targets(content)
-        links_section = (
-            "\n\n---\nForward links: " + ", ".join(forward_links)
-            if forward_links
-            else ""
-        )
-        return f"# {path} [{vault.label}]\n\n{content}{links_section}"
-
-    outline = await search.document_outline([vault.vault_id], path)
-    log_event(
-        "tool.document_read",
-        path=path,
-        vault=vault.label,
-        mode="outline",
-        chars=len(content),
-        sections=len(outline),
-    )
-    lines = [
-        f"- chunks {s.start}-{s.end}: {s.heading or '(no heading)'}" for s in outline
-    ]
-    return (
-        f"# {path} [{vault.label}]\n\n"
-        "Large document — read a section with expand_context(path, start, end):"
-        "\n\n" + "\n".join(lines)
-    )
-
-
-async def search_content(vault_id: UUID, query: str, search: SearchService) -> str:
-    """Hybrid BM25 + vector search over the unified content index.
-
-    Indexes both raw sources and rendered wiki articles, including each
-    file's frontmatter title/precis/author as a synthetic chunk so
-    curator-supplied summary fields are hit alongside body paragraphs.
-    """
-    results = await search.search([vault_id], query)
-
-    log_event("tool.search_executed", query=query, results_count=len(results))
-
-    if not results:
-        return f"No results found for: {query}"
-
-    parts = []
-    for r in results:
-        heading = f" — {r.heading}" if r.heading else ""
-        parts.append(f"### {r.path} [chunk {r.chunk_index}]{heading}\n{r.snippet}")
-
-    return (
-        f"Found {len(results)} results for '{query}'. Each result shows a "
-        f"document `path` and `chunk_index` — pass those to "
-        f"expand_context(path, start, end) to read the surrounding "
-        f"paragraphs, or read_document(path) for the whole document.\n\n"
-        + "\n\n".join(parts)
-    )
-
-
-async def expand_context(
-    vault: QuerySource, path: str, start: int, end: int, search: SearchService
-) -> str:
-    """Read a range of a document's paragraphs (chunks ``start``..``end``).
-
-    Ranges come from a search hit's chunk_index or a document outline.
-    Bodies are served straight from search_index — no storage round-trip —
-    and the span is capped so one read can't pull in a whole document.
-    """
-    if end < start:
-        start, end = end, start
-    end = min(end, start + _MAX_RANGE_CHUNKS - 1)
-    chunks = await search.fetch_chunk_range([vault.vault_id], path, start, end)
-    if not chunks:
-        log_event("tool.expand_context_empty", path=path, start=start, end=end)
-        return (
-            f"No indexed paragraphs at {path} for chunks {start}-{end}. Check "
-            f"the path and range against a search hit or document outline."
-        )
-    log_event(
-        "tool.expand_context", path=path, start=start, end=end, returned=len(chunks)
-    )
-    return _render_chunk_window(path, vault.label, chunks)
-
-
-async def query_documents(
-    vault_id: UUID, args: dict, source: SourceDocumentService
-) -> str:
-    """Structured metadata query over source documents."""
-    filters = {
-        k: v
-        for k, v in {
-            "tags": args.get("tags"),
-            "author": args.get("author"),
-            "genre": args.get("genre"),
-            "date_gte": args.get("date_gte"),
-            "date_lte": args.get("date_lte"),
-            "limit": args.get("limit", 20),
-        }.items()
-        if v is not None
-    }
-
-    results = await source.query_documents([vault_id], **filters)
-    log_event("tool.query_executed", filters=str(filters), results_count=len(results))
-
-    if not results:
-        return f"No documents match the filters: {json.dumps(filters)}"
-
-    parts = []
-    for doc in results:
-        tags_str = f"  tags: {', '.join(doc.tags)}" if doc.tags else ""
-        meta = f"  [raw] {doc.file_path}"
-        if doc.author:
-            meta += f" by {doc.author}"
-        if doc.published_date:
-            meta += f" ({doc.published_date})"
-        lines = [f"### {doc.title or doc.file_path}", meta]
-        if doc.genre:
-            lines.append(f"  genre: {doc.genre}")
-        if tags_str:
-            lines.append(tags_str)
-        parts.append("\n".join(lines))
-
-    return f"Found {len(results)} documents:\n\n" + "\n\n".join(parts)
-
-
-async def _dispatch_tool(
-    vault: QuerySource,
-    name: str,
-    args: dict,
-    source: SourceDocumentService,
-    search: SearchService,
-) -> str:
-    if name == "read_document":
-        return await read_document(vault, args["path"], search)
-    elif name == "expand_context":
-        return await expand_context(
-            vault, args["path"], int(args["start"]), int(args["end"]), search
-        )
-    elif name == "search_content":
-        return await search_content(vault.vault_id, args["query"], search)
-    elif name == "query_documents":
-        return await query_documents(vault.vault_id, args, source)
-    else:
-        return f"Unknown tool: {name}"
-
-
-# ---------------------------------------------------------------------------
-# Client / prompt / chat
-# ---------------------------------------------------------------------------
-
-
-async def _build_identity_for_source(
-    source: QuerySource,
-    source_svc: SourceDocumentService,
-    wiki_svc: WikiArticleService,
-) -> str:
-    config = await load_vault_config(source.storage)
-    wiki_count = await wiki_svc.count(source.vault_id)
-    raw_count = await source_svc.count(source.vault_id)
-
-    focus = config.thematic_hint.strip() or "(no editorial focus set)"
-    return (
-        f"### {source.label}\n"
-        f"Focus: {focus}\n"
-        f"Coverage: {wiki_count} wiki article"
-        f"{'s' if wiki_count != 1 else ''}, "
-        f"{raw_count} raw source"
-        f"{'s' if raw_count != 1 else ''}."
-    )
 
 
 _RETRIEVAL_CORE = """\
@@ -521,68 +290,24 @@ Knowledge base:
 {identity}"""
 
 
-async def build_system_prompt(
-    vault: "QuerySource",
-    source: SourceDocumentService,
-    wiki: WikiArticleService,
-    *,
-    mode: QueryMode = QueryMode.QUERY,
-    extra_instructions: str | None = None,
-) -> str:
-    identity = await _build_identity_for_source(vault, source, wiki) or "(empty vault)"
-
-    # Layer 1: retrieval discipline (not overridable)
-    prompt = _RETRIEVAL_CORE.format(identity=identity)
-
-    # Layer 2: per-vault default persona
-    prompt += "\n\n" + await load_prompt(vault.storage, "query")
-
-    if mode == QueryMode.BTW:
-        prompt += "\n\n" + await load_prompt(vault.storage, "query_btw")
-
-    # Layer 3: per-request consumer instructions
-    if extra_instructions:
-        prompt += "\n\n" + extra_instructions
-
-    return prompt
+def _render_chunk_window(path: str, label: str, chunks: list[Chunk]) -> str:
+    """Render a contiguous run of indexed chunks as readable text."""
+    sections: list[str] = []
+    for c in chunks:
+        heading = f"{c.heading}\n" if c.heading else ""
+        sections.append(f"[chunk {c.chunk_index}]\n{heading}{c.body}")
+    header = (
+        f"# {path} [{label}] (chunks {chunks[0].chunk_index}–{chunks[-1].chunk_index})"
+    )
+    return f"{header}\n\n" + "\n\n".join(sections)
 
 
-# ---------------------------------------------------------------------------
-# Streaming chat — single conversation path, consumed via SSE by the API and
-# directly by the CLI.
-# ---------------------------------------------------------------------------
-
-
-async def _stream_model_round(
-    client: AsyncOpenAI,
-    model: str,
-    messages: list[dict],
-    tools: list[dict],
-    state: ModelRound,
-) -> AsyncGenerator[dict, None]:
-    async for chunk in api_stream(
-        client,
-        model=model,
-        messages=messages,
-        tools=tools,
-        temperature=0.3,
-        extra_body=_ROUTING_PREFERENCE,
-    ):
-        # Cost is accumulated by ``api_stream`` from the final usage
-        # chunk; we only consume content/tool-call deltas here.
-        if not chunk.choices:
-            continue
-        choice = chunk.choices[0]
-        delta = choice.delta
-
-        if choice.finish_reason:
-            state.finish_reason = choice.finish_reason
-
-        _accumulate_tool_call_deltas(state.tool_calls, delta.tool_calls)
-
-        if delta.content:
-            state.content += delta.content
-            yield {"event": "token", "data": {"text": delta.content}}
+def _parse_tool_args(tool_call: dict) -> dict:
+    try:
+        return json.loads(tool_call["arguments"])
+    except json.JSONDecodeError as exc:
+        name = tool_call["name"]
+        raise MalformedToolArgs(f"Malformed tool args for {name}") from exc
 
 
 def _accumulate_tool_call_deltas(tool_calls: dict[int, dict], deltas) -> None:
@@ -620,245 +345,466 @@ def _assistant_tool_message(state: ModelRound) -> dict:
     }
 
 
-def _parse_tool_args(tool_call: dict) -> dict:
-    try:
-        return json.loads(tool_call["arguments"])
-    except json.JSONDecodeError as exc:
-        name = tool_call["name"]
-        raise MalformedToolArgs(f"Malformed tool args for {name}") from exc
-
-
-async def _source_event_for_tool_call(
-    vault: QuerySource,
-    source: SourceDocumentService,
-    wiki: WikiArticleService,
-    trace: StreamTrace,
-    name: str,
-    args: dict,
-) -> dict | None:
-    classified = _classify_tool_call(name, args)
-    if not classified:
-        return None
-
-    source_type, meta = classified
-    event_data: dict = {"type": source_type, **meta}
-    if source_type in (SourceType.ARTICLE, SourceType.RAW):
-        path = meta["path"]
-        if source_type is SourceType.ARTICLE:
-            event_data["title"] = await wiki.get_title_by_path(vault.vault_id, path)
-            trace.articles_read.append(path)
-        else:
-            event_data["title"] = await source.get_title_by_path(vault.vault_id, path)
-            trace.sources_read.append(path)
-    elif source_type is SourceType.SEARCH:
-        trace.searches.append(meta["query"])
-
-    return {"event": "source", "data": event_data}
-
-
-async def _run_tool_calls(
-    vault: QuerySource,
-    source: SourceDocumentService,
-    wiki: WikiArticleService,
-    search: SearchService,
-    messages: list[dict],
-    trace: StreamTrace,
-    tool_calls: dict[int, dict],
-) -> AsyncGenerator[dict, None]:
-    for tc in tool_calls.values():
-        trace.tool_calls_total += 1
-        args = _parse_tool_args(tc)
-        name = tc["name"]
-
-        source_event = await _source_event_for_tool_call(
-            vault, source, wiki, trace, name, args
-        )
-        if source_event is not None:
-            yield source_event
-
-        result = await _dispatch_tool(vault, name, args, source, search)
-        messages.append(
-            {
-                "role": "tool",
-                "tool_call_id": tc["id"],
-                "content": result,
-            }
-        )
-
-
-async def _emit_done(
-    vault: QuerySource,
-    source: SourceDocumentService,
-    wiki: WikiArticleService,
-    model: str,
-    trace: StreamTrace,
-) -> dict:
-    enrich(
-        model=model,
-        articles_read=trace.articles_read,
-        sources_read=trace.sources_read,
-        searches=trace.searches,
-        llm_rounds=trace.llm_rounds,
-        tool_calls=trace.tool_calls_total,
-    )
-    sources = await _build_sources_consulted(
-        vault, source, wiki, trace.articles_read, trace.sources_read
-    )
-    return {
-        "event": "done",
-        "data": {"sources_consulted": [asdict(s) for s in sources]},
-    }
-
-
-async def stream_chat(
-    vault: QuerySource,
+async def _stream_model_round(
     client: AsyncOpenAI,
     model: str,
     messages: list[dict],
-    source: SourceDocumentService,
-    wiki: WikiArticleService,
-    search: SearchService,
-    *,
-    tools: list[dict] | None = None,
+    tools: list[dict],
+    state: ModelRound,
 ) -> AsyncGenerator[dict, None]:
-    active_tools = tools or _BASE_TOOLS
-    trace = StreamTrace()
-
-    while True:
-        trace.llm_rounds += 1
-        state = ModelRound()
-
-        async for event in _stream_model_round(
-            client, model, messages, active_tools, state
-        ):
-            yield event
-
-        if state.finish_reason == "tool_calls" and state.tool_calls:
-            messages.append(_assistant_tool_message(state))
-            try:
-                async for event in _run_tool_calls(
-                    vault, source, wiki, search, messages, trace, state.tool_calls
-                ):
-                    yield event
-            except MalformedToolArgs as exc:
-                yield {"event": "error", "data": {"message": str(exc)}}
-                return
+    async for chunk in api_stream(
+        client,
+        model=model,
+        messages=messages,
+        tools=tools,
+        temperature=0.3,
+        extra_body=_ROUTING_PREFERENCE,
+    ):
+        # Cost is accumulated by ``api_stream`` from the final usage
+        # chunk; we only consume content/tool-call deltas here.
+        if not chunk.choices:
             continue
+        choice = chunk.choices[0]
+        delta = choice.delta
 
-        if state.content:
-            messages.append({"role": "assistant", "content": state.content})
+        if choice.finish_reason:
+            state.finish_reason = choice.finish_reason
 
-        yield await _emit_done(vault, source, wiki, model, trace)
-        return
+        _accumulate_tool_call_deltas(state.tool_calls, delta.tool_calls)
 
-
-async def _build_origin_messages(
-    vault: QuerySource,
-    origin_path: str,
-    search: SearchService,
-) -> list[dict]:
-    """Build synthetic tool-call messages that pre-load the origin document."""
-    content = await read_document(vault, origin_path, search)
-    tool_call_id = f"origin-{uuid.uuid4().hex[:8]}"
-    return [
-        {
-            "role": "assistant",
-            "content": None,
-            "tool_calls": [
-                {
-                    "id": tool_call_id,
-                    "type": "function",
-                    "function": {
-                        "name": "read_document",
-                        "arguments": json.dumps({"path": origin_path}),
-                    },
-                }
-            ],
-        },
-        {
-            "role": "tool",
-            "tool_call_id": tool_call_id,
-            "content": content,
-        },
-    ]
+        if delta.content:
+            state.content += delta.content
+            yield {"event": "token", "data": {"text": delta.content}}
 
 
 # ---------------------------------------------------------------------------
-# Public entry points
+# Query engine
 # ---------------------------------------------------------------------------
 
 
-async def _load_tools(vault: QuerySource, source: SourceDocumentService) -> list[dict]:
-    tags = await source.get_distinct_tags([vault.vault_id])
-    return build_tools(tags)
+class QueryEngine:
+    """Answers questions over one vault by navigating it with tools.
 
+    Constructed per request with its collaborators — file ``storage``, the
+    DB-backed document/wiki/search services, and the LLM ``client`` — plus
+    the vault's id and display label. Decoupled from the Vault ORM, so the
+    CLI can drive it with a synthetic ``vault_id`` and local storage and no
+    DB row. ``run`` is the only entry point; everything else is internal.
+    """
 
-async def run_query(
-    vault: QuerySource,
-    question: str,
-    source: SourceDocumentService,
-    wiki: WikiArticleService,
-    search: SearchService,
-    *,
-    user_id: UUID | None = None,
-    model: str | None = None,
-    origin_path: str | None = None,
-    history: list[HistoryMessage] | None = None,
-    mode: QueryMode = QueryMode.QUERY,
-    extra_instructions: str | None = None,
-) -> AsyncGenerator[dict, None]:
-    """Stream SSE events for a single question, with model fallback on rate limit."""
-    primary = model or QUERY_MODEL
-    client = get_async_client(max_retries=0)
-    system_prompt = await build_system_prompt(
-        vault, source, wiki, mode=mode, extra_instructions=extra_instructions
-    )
-    tools = await _load_tools(vault, source)
-    base_messages: list[dict] = [
-        {"role": "system", "content": system_prompt},
-    ]
-    if origin_path:
-        base_messages.extend(await _build_origin_messages(vault, origin_path, search))
-    if history:
-        base_messages.extend(m.model_dump() for m in history)
-    base_messages.append({"role": "user", "content": question})
+    def __init__(
+        self,
+        *,
+        storage: Storage,
+        label: str,
+        vault_id: UUID,
+        source: SourceDocumentService,
+        wiki: WikiArticleService,
+        search: SearchService,
+        client: AsyncOpenAI,
+    ) -> None:
+        self.storage = storage
+        self.label = label
+        self.vault_id = vault_id
+        self.source = source
+        self.wiki = wiki
+        self.search = search
+        self.client = client
 
-    query_id = f"q-{uuid.uuid4().hex[:8]}"
-    correlation_id.set(query_id)
-    init_wide_event("query.stream", question=question, vault_id=str(vault.vault_id))
+    async def run(
+        self,
+        question: str,
+        *,
+        user_id: UUID | None = None,
+        model: str | None = None,
+        origin_path: str | None = None,
+        history: list[HistoryMessage] | None = None,
+        mode: QueryMode = QueryMode.QUERY,
+        extra_instructions: str | None = None,
+    ) -> AsyncGenerator[dict, None]:
+        """Stream SSE events for a question, with model fallback on rate limit."""
+        primary = model or QUERY_MODEL
+        system_prompt = await self._build_system_prompt(
+            mode=mode, extra_instructions=extra_instructions
+        )
+        tools = await self._load_tools()
+        base_messages: list[dict] = [{"role": "system", "content": system_prompt}]
+        if origin_path:
+            base_messages.extend(await self._build_origin_messages(origin_path))
+        if history:
+            base_messages.extend(m.model_dump() for m in history)
+        base_messages.append({"role": "user", "content": question})
 
-    try:
-        for m in models_with_fallback(primary):
-            messages = list(base_messages)
-            try:
-                async for event in stream_chat(
-                    vault, client, m, messages, source, wiki, search, tools=tools
-                ):
-                    yield event
-                return
-            except Exception as e:
-                if is_retryable(e):
-                    log_event("query.stream_retryable", model=m, error=str(e))
-                    continue
-                yield {"event": "error", "data": {"message": str(e)}}
-                return
+        query_id = f"q-{uuid.uuid4().hex[:8]}"
+        correlation_id.set(query_id)
+        init_wide_event("query.stream", question=question, vault_id=str(self.vault_id))
 
-        yield {
-            "event": "error",
-            "data": {"message": "all models failed — try again in a minute"},
+        try:
+            for m in models_with_fallback(primary):
+                messages = list(base_messages)
+                try:
+                    async for event in self._stream_chat(m, messages, tools=tools):
+                        yield event
+                    return
+                except Exception as e:
+                    if is_retryable(e):
+                        log_event("query.stream_retryable", model=m, error=str(e))
+                        continue
+                    yield {"event": "error", "data": {"message": str(e)}}
+                    return
+
+            yield {
+                "event": "error",
+                "data": {"message": "all models failed — try again in a minute"},
+            }
+        finally:
+            await self._finalize_wide_event(user_id=user_id)
+
+    # -- tools --------------------------------------------------------------
+
+    async def _read_document(self, path: str) -> str:
+        """Read a whole document, or its outline if it is large.
+
+        A small document is returned in full. A large document returns its
+        heading outline (sections with chunk ranges) instead of a truncated
+        dump; the agent then reads a section with expand_context(path,
+        start, end).
+        """
+        content = await self.storage.read(path, strict=False)
+        if content is None:
+            log_event("tool.document_not_found", path=path)
+            return f"Document not found: {path}"
+
+        if len(content) <= _READ_WHOLE_LIMIT:
+            log_event(
+                "tool.document_read",
+                path=path,
+                vault=self.label,
+                mode="full",
+                chars=len(content),
+            )
+            forward_links = extract_wiki_link_targets(content)
+            links_section = (
+                "\n\n---\nForward links: " + ", ".join(forward_links)
+                if forward_links
+                else ""
+            )
+            return f"# {path} [{self.label}]\n\n{content}{links_section}"
+
+        outline = await self.search.document_outline([self.vault_id], path)
+        log_event(
+            "tool.document_read",
+            path=path,
+            vault=self.label,
+            mode="outline",
+            chars=len(content),
+            sections=len(outline),
+        )
+        lines = [
+            f"- chunks {s.start}-{s.end}: {s.heading or '(no heading)'}"
+            for s in outline
+        ]
+        return (
+            f"# {path} [{self.label}]\n\n"
+            "Large document — read a section with expand_context(path, start, end):"
+            "\n\n" + "\n".join(lines)
+        )
+
+    async def _search_content(self, query: str) -> str:
+        """Hybrid BM25 + vector search over the unified content index.
+
+        Indexes both raw sources and rendered wiki articles, including each
+        file's frontmatter title/precis/author as a synthetic chunk so
+        curator-supplied summary fields are hit alongside body paragraphs.
+        """
+        results = await self.search.search([self.vault_id], query)
+
+        log_event("tool.search_executed", query=query, results_count=len(results))
+
+        if not results:
+            return f"No results found for: {query}"
+
+        parts = []
+        for r in results:
+            heading = f" — {r.heading}" if r.heading else ""
+            parts.append(f"### {r.path} [chunk {r.chunk_index}]{heading}\n{r.snippet}")
+
+        return (
+            f"Found {len(results)} results for '{query}'. Each result shows a "
+            f"document `path` and `chunk_index` — pass those to "
+            f"expand_context(path, start, end) to read the surrounding "
+            f"paragraphs, or read_document(path) for the whole document.\n\n"
+            + "\n\n".join(parts)
+        )
+
+    async def _expand_context(self, path: str, start: int, end: int) -> str:
+        """Read a range of a document's paragraphs (chunks ``start``..``end``).
+
+        Ranges come from a search hit's chunk_index or a document outline.
+        Bodies are served straight from search_index — no storage
+        round-trip — and the span is capped so one read can't pull in a
+        whole document.
+        """
+        if end < start:
+            start, end = end, start
+        end = min(end, start + _MAX_RANGE_CHUNKS - 1)
+        chunks = await self.search.fetch_chunk_range([self.vault_id], path, start, end)
+        if not chunks:
+            log_event("tool.expand_context_empty", path=path, start=start, end=end)
+            return (
+                f"No indexed paragraphs at {path} for chunks {start}-{end}. Check "
+                f"the path and range against a search hit or document outline."
+            )
+        log_event(
+            "tool.expand_context",
+            path=path,
+            start=start,
+            end=end,
+            returned=len(chunks),
+        )
+        return _render_chunk_window(path, self.label, chunks)
+
+    async def _query_documents(self, args: dict) -> str:
+        """Structured metadata query over source documents."""
+        filters = {
+            k: v
+            for k, v in {
+                "tags": args.get("tags"),
+                "author": args.get("author"),
+                "genre": args.get("genre"),
+                "date_gte": args.get("date_gte"),
+                "date_lte": args.get("date_lte"),
+                "limit": args.get("limit", 20),
+            }.items()
+            if v is not None
         }
-    finally:
-        await _finalize_wide_event(source, user_id=user_id, vault_id=vault.vault_id)
 
+        results = await self.source.query_documents([self.vault_id], **filters)
+        log_event(
+            "tool.query_executed", filters=str(filters), results_count=len(results)
+        )
 
-async def _finalize_wide_event(
-    source: SourceDocumentService,
-    *,
-    user_id: UUID | None,
-    vault_id: UUID | None,
-) -> None:
-    await record_wide_event_cost(
-        source.repo.session, user_id=user_id, vault_id=vault_id
-    )
-    await source.repo.session.commit()
-    emit_wide_event()
+        if not results:
+            return f"No documents match the filters: {json.dumps(filters)}"
+
+        parts = []
+        for doc in results:
+            tags_str = f"  tags: {', '.join(doc.tags)}" if doc.tags else ""
+            meta = f"  [raw] {doc.file_path}"
+            if doc.author:
+                meta += f" by {doc.author}"
+            if doc.published_date:
+                meta += f" ({doc.published_date})"
+            lines = [f"### {doc.title or doc.file_path}", meta]
+            if doc.genre:
+                lines.append(f"  genre: {doc.genre}")
+            if tags_str:
+                lines.append(tags_str)
+            parts.append("\n".join(lines))
+
+        return f"Found {len(results)} documents:\n\n" + "\n\n".join(parts)
+
+    async def _dispatch_tool(self, name: str, args: dict) -> str:
+        if name == "read_document":
+            return await self._read_document(args["path"])
+        elif name == "expand_context":
+            return await self._expand_context(
+                args["path"], int(args["start"]), int(args["end"])
+            )
+        elif name == "search_content":
+            return await self._search_content(args["query"])
+        elif name == "query_documents":
+            return await self._query_documents(args)
+        else:
+            return f"Unknown tool: {name}"
+
+    # -- prompt + tool setup ------------------------------------------------
+
+    async def _build_identity(self) -> str:
+        config = await load_vault_config(self.storage)
+        wiki_count = await self.wiki.count(self.vault_id)
+        raw_count = await self.source.count(self.vault_id)
+
+        focus = config.thematic_hint.strip() or "(no editorial focus set)"
+        return (
+            f"### {self.label}\n"
+            f"Focus: {focus}\n"
+            f"Coverage: {wiki_count} wiki article"
+            f"{'s' if wiki_count != 1 else ''}, "
+            f"{raw_count} raw source"
+            f"{'s' if raw_count != 1 else ''}."
+        )
+
+    async def _build_system_prompt(
+        self, *, mode: QueryMode, extra_instructions: str | None
+    ) -> str:
+        identity = await self._build_identity() or "(empty vault)"
+
+        # Layer 1: retrieval discipline (not overridable)
+        prompt = _RETRIEVAL_CORE.format(identity=identity)
+
+        # Layer 2: per-vault default persona
+        prompt += "\n\n" + await load_prompt(self.storage, "query")
+
+        if mode == QueryMode.BTW:
+            prompt += "\n\n" + await load_prompt(self.storage, "query_btw")
+
+        # Layer 3: per-request consumer instructions
+        if extra_instructions:
+            prompt += "\n\n" + extra_instructions
+
+        return prompt
+
+    async def _load_tools(self) -> list[dict]:
+        tags = await self.source.get_distinct_tags([self.vault_id])
+        return build_tools(tags)
+
+    # -- streaming loop -----------------------------------------------------
+
+    async def _stream_chat(
+        self, model: str, messages: list[dict], *, tools: list[dict] | None = None
+    ) -> AsyncGenerator[dict, None]:
+        active_tools = tools or _BASE_TOOLS
+        trace = StreamTrace()
+
+        while True:
+            trace.llm_rounds += 1
+            state = ModelRound()
+
+            async for event in _stream_model_round(
+                self.client, model, messages, active_tools, state
+            ):
+                yield event
+
+            if state.finish_reason == "tool_calls" and state.tool_calls:
+                messages.append(_assistant_tool_message(state))
+                try:
+                    async for event in self._run_tool_calls(
+                        messages, trace, state.tool_calls
+                    ):
+                        yield event
+                except MalformedToolArgs as exc:
+                    yield {"event": "error", "data": {"message": str(exc)}}
+                    return
+                continue
+
+            if state.content:
+                messages.append({"role": "assistant", "content": state.content})
+
+            yield await self._emit_done(model, trace)
+            return
+
+    async def _run_tool_calls(
+        self,
+        messages: list[dict],
+        trace: StreamTrace,
+        tool_calls: dict[int, dict],
+    ) -> AsyncGenerator[dict, None]:
+        for tc in tool_calls.values():
+            trace.tool_calls_total += 1
+            args = _parse_tool_args(tc)
+            name = tc["name"]
+
+            source_event = await self._source_event(trace, name, args)
+            if source_event is not None:
+                yield source_event
+
+            result = await self._dispatch_tool(name, args)
+            messages.append(
+                {
+                    "role": "tool",
+                    "tool_call_id": tc["id"],
+                    "content": result,
+                }
+            )
+
+    async def _source_event(
+        self, trace: StreamTrace, name: str, args: dict
+    ) -> dict | None:
+        classified = _classify_tool_call(name, args)
+        if not classified:
+            return None
+
+        source_type, meta = classified
+        event_data: dict = {"type": source_type, **meta}
+        if source_type in (SourceType.ARTICLE, SourceType.RAW):
+            path = meta["path"]
+            if source_type is SourceType.ARTICLE:
+                event_data["title"] = await self.wiki.get_title_by_path(
+                    self.vault_id, path
+                )
+                trace.articles_read.append(path)
+            else:
+                event_data["title"] = await self.source.get_title_by_path(
+                    self.vault_id, path
+                )
+                trace.sources_read.append(path)
+        elif source_type is SourceType.SEARCH:
+            trace.searches.append(meta["query"])
+
+        return {"event": "source", "data": event_data}
+
+    async def _build_origin_messages(self, origin_path: str) -> list[dict]:
+        """Build synthetic tool-call messages that pre-load the origin document."""
+        content = await self._read_document(origin_path)
+        tool_call_id = f"origin-{uuid.uuid4().hex[:8]}"
+        return [
+            {
+                "role": "assistant",
+                "content": None,
+                "tool_calls": [
+                    {
+                        "id": tool_call_id,
+                        "type": "function",
+                        "function": {
+                            "name": "read_document",
+                            "arguments": json.dumps({"path": origin_path}),
+                        },
+                    }
+                ],
+            },
+            {
+                "role": "tool",
+                "tool_call_id": tool_call_id,
+                "content": content,
+            },
+        ]
+
+    async def _emit_done(self, model: str, trace: StreamTrace) -> dict:
+        enrich(
+            model=model,
+            articles_read=trace.articles_read,
+            sources_read=trace.sources_read,
+            searches=trace.searches,
+            llm_rounds=trace.llm_rounds,
+            tool_calls=trace.tool_calls_total,
+        )
+        sources = await self._sources_consulted(trace.articles_read, trace.sources_read)
+        return {
+            "event": "done",
+            "data": {"sources_consulted": [asdict(s) for s in sources]},
+        }
+
+    async def _sources_consulted(
+        self, articles_read: list[str], sources_read: list[str]
+    ) -> list[SourceConsulted]:
+        seen: set[str] = set()
+        out: list[SourceConsulted] = []
+        for path in articles_read:
+            if path not in seen:
+                seen.add(path)
+                title = await self.wiki.get_title_by_path(self.vault_id, path)
+                out.append(SourceConsulted(kind="wiki", path=path, title=title))
+        for path in sources_read:
+            if path not in seen:
+                seen.add(path)
+                title = await self.source.get_title_by_path(self.vault_id, path)
+                out.append(SourceConsulted(kind="raw", path=path, title=title))
+        return out
+
+    async def _finalize_wide_event(self, *, user_id: UUID | None) -> None:
+        await record_wide_event_cost(
+            self.source.repo.session, user_id=user_id, vault_id=self.vault_id
+        )
+        await self.source.repo.session.commit()
+        emit_wide_event()

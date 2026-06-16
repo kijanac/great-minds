@@ -10,10 +10,10 @@ from great_minds.app.api.dependencies import (
     VaultServiceDep,
     VaultStorageDep,
     CurrentUser,
+    LlmClientDep,
     SearchServiceDep,
     SourceDocumentServiceDep,
     WikiArticleServiceDep,
-    LlmGuard,
 )
 from great_minds.app.api.schemas import query as schemas
 from great_minds.core import querier
@@ -31,7 +31,7 @@ async def query(
     doc_service: SourceDocumentServiceDep,
     wiki_service: WikiArticleServiceDep,
     search_service: SearchServiceDep,
-    _llm: LlmGuard,
+    client: LlmClientDep,
 ) -> StreamingResponse:
     """Stream answer events as SSE.
 
@@ -42,15 +42,19 @@ async def query(
       - ``error``:  unrecoverable error before/during the stream
     """
     vault = await vault_service.get_vault(vault_id)
-    source = querier.QuerySource(storage=storage, label=vault.name, vault_id=vault_id)
+    engine = querier.QueryEngine(
+        storage=storage,
+        label=vault.name,
+        vault_id=vault_id,
+        source=doc_service,
+        wiki=wiki_service,
+        search=search_service,
+        client=client,
+    )
 
     async def event_generator():
-        async for event in querier.run_query(
-            source,
+        async for event in engine.run(
             req.question,
-            doc_service,
-            wiki_service,
-            search_service,
             user_id=user.id,
             model=req.model,
             origin_path=req.origin_path,

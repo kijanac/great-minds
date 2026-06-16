@@ -5,6 +5,7 @@ from uuid import UUID
 
 from absurd_sdk import AsyncAbsurd
 from fastapi import Depends, HTTPException, Query, Request, status
+from openai import AsyncOpenAI
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -22,6 +23,7 @@ from great_minds.core.documents import (
     WikiArticleRepo,
     WikiArticleService,
 )
+from great_minds.core.llm import get_async_client
 from great_minds.core.search import SearchIndexRepository, SearchService
 from great_minds.core.ingest_service import IngestService
 from great_minds.core.jobs import JobService
@@ -334,6 +336,20 @@ def require_llm(settings: SettingsDep) -> None:
 
 
 LlmGuard = Annotated[None, Depends(require_llm)]
+
+
+def get_llm_client(_: LlmGuard) -> AsyncOpenAI:
+    """An OpenRouter client for the query engine.
+
+    Depends on ``require_llm`` so a missing key surfaces as a clean 503
+    before the client is constructed (``get_async_client`` would otherwise
+    raise on the missing key). ``max_retries=0`` — retries are handled in
+    ``llm.client`` / by cross-model fallback in the engine.
+    """
+    return get_async_client(max_retries=0)
+
+
+LlmClientDep = Annotated[AsyncOpenAI, Depends(get_llm_client)]
 
 
 # ---------------------------------------------------------------------------
