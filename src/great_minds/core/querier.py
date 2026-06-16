@@ -9,7 +9,7 @@ import enum
 import json
 import uuid
 from collections.abc import AsyncGenerator
-from dataclasses import asdict, dataclass, field
+from dataclasses import dataclass, field
 from typing import Literal
 from uuid import UUID
 
@@ -72,15 +72,6 @@ class ModelRound:
 
 class MalformedToolArgs(ValueError):
     pass
-
-
-@dataclass
-class SourceConsulted:
-    """A document the query engine read while answering."""
-
-    kind: str
-    path: str
-    title: str | None = None
 
 
 _BASE_TOOLS = [
@@ -845,28 +836,7 @@ class QueryEngine:
             llm_rounds=trace.llm_rounds,
             tool_calls=trace.tool_calls_total,
         )
-        sources = await self._sources_consulted(trace.articles_read, trace.sources_read)
-        return {
-            "event": "done",
-            "data": {"sources_consulted": [asdict(s) for s in sources]},
-        }
-
-    async def _sources_consulted(
-        self, articles_read: list[str], sources_read: list[str]
-    ) -> list[SourceConsulted]:
-        seen: set[str] = set()
-        out: list[SourceConsulted] = []
-        for path in articles_read:
-            if path not in seen:
-                seen.add(path)
-                title = await self.wiki.get_title_by_path(self.vault_id, path)
-                out.append(SourceConsulted(kind="wiki", path=path, title=title))
-        for path in sources_read:
-            if path not in seen:
-                seen.add(path)
-                title = await self.source.get_title_by_path(self.vault_id, path)
-                out.append(SourceConsulted(kind="raw", path=path, title=title))
-        return out
+        return {"event": "done", "data": {}}
 
     async def _finalize_wide_event(self, *, user_id: UUID | None) -> None:
         await record_wide_event_cost(
