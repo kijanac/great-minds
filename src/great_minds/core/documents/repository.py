@@ -14,9 +14,9 @@ from great_minds.core.documents.models import (
     WikiArticleORM,
 )
 from great_minds.core.documents.schemas import (
-    ArticleLink,
     Backlink,
     FileHash,
+    LinkedArticles,
     SourceDocCreate,
     SourceDocument,
     WikiArticle,
@@ -476,9 +476,7 @@ class WikiArticleRepo:
                 insert(BacklinkORM).values([b.model_dump() for b in backlinks])
             )
 
-    async def linked_articles(
-        self, vault_id: UUID, path: str
-    ) -> tuple[list[ArticleLink], list[ArticleLink]] | None:
+    async def linked_articles(self, vault_id: UUID, path: str) -> LinkedArticles | None:
         """Live articles ``path`` links to (outgoing) and that link to it.
 
         Read from the prose-derived ``backlinks`` edge table — outgoing is
@@ -495,27 +493,27 @@ class WikiArticleRepo:
         if article_id is None:
             return None
 
-        outgoing = await self.session.execute(
-            select(WikiArticleORM.file_path, WikiArticleORM.title)
+        outgoing = await self.session.scalars(
+            select(WikiArticleORM)
             .join(BacklinkORM, BacklinkORM.target_article_id == WikiArticleORM.id)
             .where(
                 BacklinkORM.source_article_id == article_id,
                 ~WikiArticleORM.archived,
             )
-            .order_by(WikiArticleORM.title)
+            .order_by(func.lower(WikiArticleORM.title))
         )
-        incoming = await self.session.execute(
-            select(WikiArticleORM.file_path, WikiArticleORM.title)
+        incoming = await self.session.scalars(
+            select(WikiArticleORM)
             .join(BacklinkORM, BacklinkORM.source_article_id == WikiArticleORM.id)
             .where(
                 BacklinkORM.target_article_id == article_id,
                 ~WikiArticleORM.archived,
             )
-            .order_by(WikiArticleORM.title)
+            .order_by(func.lower(WikiArticleORM.title))
         )
-        return (
-            [ArticleLink(path=p, title=t) for p, t in outgoing],
-            [ArticleLink(path=p, title=t) for p, t in incoming],
+        return LinkedArticles(
+            outgoing=[WikiArticleOverview.model_validate(a) for a in outgoing],
+            incoming=[WikiArticleOverview.model_validate(a) for a in incoming],
         )
 
 

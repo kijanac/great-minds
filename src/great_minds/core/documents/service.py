@@ -175,8 +175,4 @@ class WikiArticleService:
 
     async def linked_articles(self, vault_id: UUID, path: str) -> LinkedArticles | None:
         """Articles ``path`` cites and is cited by; ``None`` if not an article."""
-        result = await self.repo.linked_articles(vault_id, path)
-        if result is None:
-            return None
-        outgoing, incoming = result
-        return LinkedArticles(outgoing=outgoing, incoming=incoming)
+        return await self.repo.linked_articles(vault_id, path)

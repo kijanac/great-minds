@@ -19,7 +19,7 @@ from pydantic import BaseModel
 from .vaults.config import load_vault_config
 from .vaults.prompts import load_prompt
 from .search import Chunk, SearchService
-from .documents.schemas import ArticleLink
+from .documents.schemas import WikiArticleOverview
 from .documents.service import SourceDocumentService, WikiArticleService
 from .llm import QUERY_MODEL
 from .llm.client import api_stream, is_retryable, models_with_fallback
@@ -330,9 +330,9 @@ def _render_chunk_window(path: str, label: str, chunks: list[Chunk]) -> str:
     return f"{header}\n\n" + "\n\n".join(sections)
 
 
-def _format_links(links: list[ArticleLink]) -> str:
+def _format_links(links: list[WikiArticleOverview]) -> str:
     """Render a list of article links as markdown bullets, or 'none'."""
-    return "\n".join(f"- [{a.title}]({a.path})" for a in links) or "none"
+    return "\n".join(f"- [{a.title}]({a.file_path})" for a in links) or "none"
 
 
 def _parse_tool_args(tool_call: dict) -> dict:

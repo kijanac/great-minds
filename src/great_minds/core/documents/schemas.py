@@ -305,13 +305,6 @@ class SourceDocumentFacets(BaseModel):
     source_types: list[FacetCount] = Field(default_factory=list)
 
 
-class ArticleLink(BaseModel):
-    """A wiki article referenced by another, for the link-graph tool."""
-
-    path: str
-    title: str
-
-
 class LinkedArticles(BaseModel):
     """An article's neighbours in the prose link graph (from backlinks).
 
@@ -320,5 +313,5 @@ class LinkedArticles(BaseModel):
     topic-level intent.
     """
 
-    outgoing: list[ArticleLink]
-    incoming: list[ArticleLink]
+    outgoing: list[WikiArticleOverview]
+    incoming: list[WikiArticleOverview]
