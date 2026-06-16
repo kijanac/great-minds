@@ -15,6 +15,7 @@ import { ThinkingSection } from "@/components/thinking-section";
 import { useLinkInterceptor } from "@/hooks/use-link-interceptor";
 import { usePopoverDismiss } from "@/hooks/use-popover-dismiss";
 import type { useSession } from "@/hooks/use-session";
+import { cn } from "@/lib/utils";
 
 type Session = ReturnType<typeof useSession>;
 
@@ -25,6 +26,7 @@ interface SessionThreadProps {
 
 export function SessionThread({ session, onFollowUp }: SessionThreadProps) {
   const navigate = useViewNavigate();
+  const [previewedExchangeId, setPreviewedExchangeId] = useState<string | null>(null);
   const [panel, setPanel] = useState<{
     path: string;
     title: string | null;
@@ -81,6 +83,13 @@ export function SessionThread({ session, onFollowUp }: SessionThreadProps) {
     startBtw(popover);
   }, [popover, startBtw]);
 
+  const handlePromotePreviewChange = useCallback((exchangeId: string, previewing: boolean) => {
+    setPreviewedExchangeId((current) => {
+      if (previewing) return exchangeId;
+      return current === exchangeId ? null : current;
+    });
+  }, []);
+
   const [hintDismissed, setHintDismissed] = useState(
     () => localStorage.getItem("onboarding-hint-seen") === "true",
   );
@@ -99,7 +108,14 @@ export function SessionThread({ session, onFollowUp }: SessionThreadProps) {
       <div className="flex-1 min-h-0 overflow-y-auto" onClick={handleLinkClick}>
         <div className="px-4 md:px-10 pt-7 pb-5 max-w-[740px] mx-auto">
           {session.thread.map((ex, ei) => (
-            <div key={ex.id}>
+            <div
+              key={ex.id}
+              className={cn(
+                "relative -mx-3 -my-2 rounded-sm px-3 py-2 outline outline-1 outline-transparent transition-[background-color,outline-color,box-shadow] duration-150",
+                previewedExchangeId === ex.id &&
+                  "bg-gold/5 outline-gold-dim shadow-[0_0_0_4px_color-mix(in_oklab,var(--gold)_10%,transparent)]",
+              )}
+            >
               {ei > 0 && <Separator className="my-8 bg-ink-subtle" />}
 
               <div className="flex items-center justify-between mb-[18px] gap-3">
@@ -107,7 +123,11 @@ export function SessionThread({ session, onFollowUp }: SessionThreadProps) {
                   {`"${ex.query}"`}
                 </span>
                 {session.sessionId && ex.answer && (
-                  <PromoteButton sessionId={session.sessionId} exchangeId={ex.id} />
+                  <PromoteButton
+                    sessionId={session.sessionId}
+                    exchangeId={ex.id}
+                    onPreviewChange={handlePromotePreviewChange}
+                  />
                 )}
               </div>
 

@@ -158,7 +158,7 @@ export async function loadSession(sessionId: string): Promise<SessionResponse> {
 const promoteResponseSchema = z.object({
   mode: z.enum(["ingested", "proposed"]),
   path: z.string(),
-  title: z.string(),
+  title: z.string().nullable(),
   document_id: z.string().nullable().optional(),
   proposal_id: z.string().nullable().optional(),
 });
