@@ -5,6 +5,7 @@ from uuid import UUID
 from great_minds.core.documents.repository import SourceDocumentRepo, WikiArticleRepo
 from great_minds.core.documents.schemas import (
     Backlink,
+    LinkedArticles,
     SourceDocCreate,
     SourceDocument,
     SourceDocumentFacets,
@@ -171,3 +172,11 @@ class WikiArticleService:
     ) -> None:
         await self.repo.update_backlinks(source_ids=source_ids, backlinks=backlinks)
         await self.repo.session.commit()
+
+    async def linked_articles(self, vault_id: UUID, path: str) -> LinkedArticles | None:
+        """Articles ``path`` cites and is cited by; ``None`` if not an article."""
+        result = await self.repo.linked_articles(vault_id, path)
+        if result is None:
+            return None
+        outgoing, incoming = result
+        return LinkedArticles(outgoing=outgoing, incoming=incoming)

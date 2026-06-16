@@ -19,7 +19,6 @@ from pydantic import BaseModel
 from .vaults.config import load_vault_config
 from .vaults.prompts import load_prompt
 from .search import Chunk, SearchService
-from .markdown import extract_wiki_link_targets
 from .documents.service import SourceDocumentService, WikiArticleService
 from .llm import QUERY_MODEL
 from .llm.client import api_stream, is_retryable, models_with_fallback
@@ -146,6 +145,31 @@ _BASE_TOOLS = [
     {
         "type": "function",
         "function": {
+            "name": "linked_articles",
+            "description": (
+                "List the wiki articles a given article links to (outgoing) "
+                "and that link to it (incoming) — follow connections between "
+                "articles without reading their full text. Pass a wiki "
+                "article path, e.g. wiki/imperialism.md."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "path": {
+                        "type": "string",
+                        "description": (
+                            "Wiki article path, e.g. wiki/imperialism.md "
+                            "(from a search hit or another article's links)"
+                        ),
+                    },
+                },
+                "required": ["path"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "search_content",
             "description": (
                 "Hybrid text + semantic search across the entire knowledge "
@@ -256,6 +280,7 @@ def _classify_tool_call(name: str, args: dict) -> tuple[SourceType, dict] | None
 
 _READ_WHOLE_LIMIT = 20_000  # docs at or under this many chars are returned whole
 _MAX_RANGE_CHUNKS = 40  # cap one expand_context read so it can't dump a document
+_MAX_LINKS = 40  # cap linked_articles output per direction (hub articles)
 
 
 _RETRIEVAL_CORE = """\
@@ -277,7 +302,10 @@ document this returns a section outline instead, which you then read \
 section-by-section with `expand_context`. Paths look like \
 `wiki/<slug>.md` for rendered articles or `raw/<content_type>/...` for \
 sources.
-5. To verify a claim or get more depth, follow source citations in a \
+5. Use `linked_articles(path)` to see which wiki articles an article \
+cites and is cited by — follow connections between articles without \
+reading their full text.
+6. To verify a claim or get more depth, follow source citations in a \
 wiki article to read raw primary texts.
 
 Rules:
@@ -483,13 +511,7 @@ class QueryEngine:
                 mode="full",
                 chars=len(content),
             )
-            forward_links = extract_wiki_link_targets(content)
-            links_section = (
-                "\n\n---\nForward links: " + ", ".join(forward_links)
-                if forward_links
-                else ""
-            )
-            return f"# {path} [{self.label}]\n\n{content}{links_section}"
+            return f"# {path} [{self.label}]\n\n{content}"
 
         outline = await self.search.document_outline([self.vault_id], path)
         log_event(
@@ -564,6 +586,43 @@ class QueryEngine:
         )
         return _render_chunk_window(path, self.label, chunks)
 
+    async def _linked_articles(self, path: str) -> str:
+        """List the articles a wiki article links to and is linked from.
+
+        Reads the prose-derived backlink graph (both directions); no
+        topic-level intent. Navigation only — emits no "source consulted"
+        event, since nothing is read here.
+        """
+        if not path.startswith("wiki/"):
+            return (
+                f"{path} is not a wiki article — the link graph only covers "
+                f"wiki articles. Use search_content to find related material."
+            )
+        linked = await self.wiki.linked_articles(self.vault_id, path)
+        if linked is None:
+            log_event("tool.linked_articles_not_found", path=path)
+            return f"Article not found: {path}"
+        log_event(
+            "tool.linked_articles",
+            path=path,
+            outgoing=len(linked.outgoing),
+            incoming=len(linked.incoming),
+        )
+
+        def _fmt(links: list) -> str:
+            shown = "\n".join(f"- [{a.title}]({a.path})" for a in links[:_MAX_LINKS])
+            if not shown:
+                return "none"
+            if len(links) > _MAX_LINKS:
+                shown += f"\n  …and {len(links) - _MAX_LINKS} more"
+            return shown
+
+        return (
+            f"# Links for {path} [{self.label}]\n\n"
+            f"Outgoing (this article cites):\n{_fmt(linked.outgoing)}\n\n"
+            f"Incoming (articles that cite this):\n{_fmt(linked.incoming)}"
+        )
+
     async def _query_documents(self, args: dict) -> str:
         """Structured metadata query over source documents."""
         filters = {
@@ -611,6 +670,8 @@ class QueryEngine:
             return await self._expand_context(
                 args["path"], int(args["start"]), int(args["end"])
             )
+        elif name == "linked_articles":
+            return await self._linked_articles(args["path"])
         elif name == "search_content":
             return await self._search_content(args["query"])
         elif name == "query_documents":

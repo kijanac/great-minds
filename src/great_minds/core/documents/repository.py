@@ -14,6 +14,7 @@ from great_minds.core.documents.models import (
     WikiArticleORM,
 )
 from great_minds.core.documents.schemas import (
+    ArticleLink,
     Backlink,
     FileHash,
     SourceDocCreate,
@@ -474,6 +475,48 @@ class WikiArticleRepo:
             await self.session.execute(
                 insert(BacklinkORM).values([b.model_dump() for b in backlinks])
             )
+
+    async def linked_articles(
+        self, vault_id: UUID, path: str
+    ) -> tuple[list[ArticleLink], list[ArticleLink]] | None:
+        """Live articles ``path`` links to (outgoing) and that link to it.
+
+        Read from the prose-derived ``backlinks`` edge table — outgoing is
+        the source side, incoming the target side of the same directed
+        edges, so no topic-level intent is involved. Returns ``None`` when
+        ``path`` is not a wiki article. Archived articles are excluded.
+        """
+        article_id = await self.session.scalar(
+            select(WikiArticleORM.id).where(
+                WikiArticleORM.vault_id == vault_id,
+                WikiArticleORM.file_path == path,
+            )
+        )
+        if article_id is None:
+            return None
+
+        outgoing = await self.session.execute(
+            select(WikiArticleORM.file_path, WikiArticleORM.title)
+            .join(BacklinkORM, BacklinkORM.target_article_id == WikiArticleORM.id)
+            .where(
+                BacklinkORM.source_article_id == article_id,
+                ~WikiArticleORM.archived,
+            )
+            .order_by(WikiArticleORM.title)
+        )
+        incoming = await self.session.execute(
+            select(WikiArticleORM.file_path, WikiArticleORM.title)
+            .join(BacklinkORM, BacklinkORM.source_article_id == WikiArticleORM.id)
+            .where(
+                BacklinkORM.target_article_id == article_id,
+                ~WikiArticleORM.archived,
+            )
+            .order_by(WikiArticleORM.title)
+        )
+        return (
+            [ArticleLink(path=p, title=t) for p, t in outgoing],
+            [ArticleLink(path=p, title=t) for p, t in incoming],
+        )
 
 
 def _source_document_query(

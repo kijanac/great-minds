@@ -303,3 +303,22 @@ class IngestedDocument(BaseModel):
 
 class SourceDocumentFacets(BaseModel):
     source_types: list[FacetCount] = Field(default_factory=list)
+
+
+class ArticleLink(BaseModel):
+    """A wiki article referenced by another, for the link-graph tool."""
+
+    path: str
+    title: str
+
+
+class LinkedArticles(BaseModel):
+    """An article's neighbours in the prose link graph (from backlinks).
+
+    ``outgoing`` are articles this one cites; ``incoming`` are articles that
+    cite it. Both are real — extracted from rendered prose by verify — not
+    topic-level intent.
+    """
+
+    outgoing: list[ArticleLink]
+    incoming: list[ArticleLink]
