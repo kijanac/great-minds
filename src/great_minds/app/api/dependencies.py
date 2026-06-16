@@ -22,6 +22,7 @@ from great_minds.core.documents import (
     WikiArticleRepo,
     WikiArticleService,
 )
+from great_minds.core.search import SearchIndexRepository, SearchService
 from great_minds.core.ingest_service import IngestService
 from great_minds.core.jobs import JobService
 from great_minds.core.llm_costs import LlmCostEventRepository, LlmCostService
@@ -172,6 +173,13 @@ def get_wiki_article_service(repo: WikiArticleRepoDep) -> WikiArticleService:
 
 
 WikiArticleServiceDep = Annotated[WikiArticleService, Depends(get_wiki_article_service)]
+
+
+def get_search_service(session: SessionDep) -> SearchService:
+    return SearchService(SearchIndexRepository(session))
+
+
+SearchServiceDep = Annotated[SearchService, Depends(get_search_service)]
 
 
 def get_topic_service(repo: TopicRepositoryDep) -> TopicService:

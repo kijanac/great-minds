@@ -18,7 +18,7 @@ from pydantic import BaseModel
 
 from .vaults.config import load_vault_config
 from .vaults.prompts import load_prompt
-from .search import SearchIndexRepository, SearchService
+from .search import Chunk, SearchService
 from .markdown import extract_wiki_link_targets
 from .documents.service import SourceDocumentService, WikiArticleService
 from .llm import QUERY_MODEL, get_async_client
@@ -119,9 +119,12 @@ _BASE_TOOLS = [
         "function": {
             "name": "read_document",
             "description": (
-                "Read a document from the knowledge base by path. "
-                "Works for wiki articles (e.g. wiki/capitalism.md) "
-                "and raw sources (e.g. raw/texts/lenin/works/1893/market/02.md)."
+                "Read a document by path. A small document is returned in "
+                "full; a large document returns its section outline (headings "
+                "with chunk ranges) instead, so you can then read a section "
+                "with expand_context(path, start, end). Works for wiki "
+                "articles (wiki/capitalism.md) and raw sources "
+                "(raw/texts/lenin/works/1893/market/02.md)."
             ),
             "parameters": {
                 "type": "object",
@@ -143,11 +146,10 @@ _BASE_TOOLS = [
         "function": {
             "name": "expand_context",
             "description": (
-                "Read the paragraphs surrounding a specific chunk of a "
-                "document — use it to see a search_content hit in its fuller "
-                "context without loading the whole file. Pass the `path` and "
-                "`chunk_index` from a search result. Returns the matched "
-                "paragraph plus a few before and after."
+                "Read a range of a document's paragraphs without loading the "
+                "whole file — use it to read around a search hit or to read a "
+                "section from a document outline. Pass a `path` and a "
+                "`start`/`end` chunk range."
             ),
             "parameters": {
                 "type": "object",
@@ -155,24 +157,20 @@ _BASE_TOOLS = [
                     "path": {
                         "type": "string",
                         "description": (
-                            "Document path from a search result, e.g. "
-                            "raw/texts/lenin/works/1916/imperialism/03.md"
+                            "Document path from a search result or outline, "
+                            "e.g. raw/texts/lenin/works/1916/imperialism/03.md"
                         ),
                     },
-                    "chunk_index": {
+                    "start": {
                         "type": "integer",
-                        "description": "The chunk index from a search result",
+                        "description": "First chunk index to read (inclusive)",
                     },
-                    "before": {
+                    "end": {
                         "type": "integer",
-                        "description": "Paragraphs before to include (default 2)",
-                    },
-                    "after": {
-                        "type": "integer",
-                        "description": "Paragraphs after to include (default 2)",
+                        "description": "Last chunk index to read (inclusive)",
                     },
                 },
-                "required": ["path", "chunk_index"],
+                "required": ["path", "start", "end"],
             },
         },
     },
@@ -287,42 +285,78 @@ def _classify_tool_call(name: str, args: dict) -> tuple[SourceType, dict] | None
 # ---------------------------------------------------------------------------
 
 
-async def read_document(vault: QuerySource, path: str) -> str:
+_READ_WHOLE_LIMIT = 20_000  # docs at or under this many chars are returned whole
+_MAX_RANGE_CHUNKS = 40  # cap one expand_context read so it can't dump a document
+
+
+def _render_chunk_window(path: str, label: str, chunks: list[Chunk]) -> str:
+    """Render a contiguous run of indexed chunks as readable text."""
+    sections: list[str] = []
+    for c in chunks:
+        heading = f"{c.heading}\n" if c.heading else ""
+        sections.append(f"[chunk {c.chunk_index}]\n{heading}{c.body}")
+    header = (
+        f"# {path} [{label}] (chunks {chunks[0].chunk_index}–{chunks[-1].chunk_index})"
+    )
+    return f"{header}\n\n" + "\n\n".join(sections)
+
+
+async def read_document(vault: QuerySource, path: str, search: SearchService) -> str:
+    """Read a whole document, or its outline if it is large.
+
+    A small document is returned in full. A large document returns its
+    heading outline (sections with chunk ranges) instead of a truncated
+    dump; the agent then reads a section with expand_context(path, start,
+    end).
+    """
     content = await vault.storage.read(path, strict=False)
     if content is None:
         log_event("tool.document_not_found", path=path)
         return f"Document not found: {path}"
-    truncated = len(content) > 20_000
-    if truncated:
-        content = (
-            content[:20_000]
-            + "\n\n[...truncated — ask for a specific section if needed...]"
+
+    if len(content) <= _READ_WHOLE_LIMIT:
+        log_event(
+            "tool.document_read",
+            path=path,
+            vault=vault.label,
+            mode="full",
+            chars=len(content),
         )
+        forward_links = extract_wiki_link_targets(content)
+        links_section = (
+            "\n\n---\nForward links: " + ", ".join(forward_links)
+            if forward_links
+            else ""
+        )
+        return f"# {path} [{vault.label}]\n\n{content}{links_section}"
+
+    outline = await search.document_outline([vault.vault_id], path)
     log_event(
         "tool.document_read",
         path=path,
         vault=vault.label,
+        mode="outline",
         chars=len(content),
-        truncated=truncated,
+        sections=len(outline),
     )
-    forward_links = extract_wiki_link_targets(content)
-    links_section = (
-        "\n\n---\nForward links: " + ", ".join(forward_links) if forward_links else ""
+    lines = [
+        f"- chunks {s.start}-{s.end}: {s.heading or '(no heading)'}" for s in outline
+    ]
+    return (
+        f"# {path} [{vault.label}]\n\n"
+        "Large document — read a section with expand_context(path, start, end):"
+        "\n\n" + "\n".join(lines)
     )
-    return f"# {path} [{vault.label}]\n\n{content}{links_section}"
 
 
-async def search_content(
-    vault: QuerySource, query: str, source: SourceDocumentService
-) -> str:
+async def search_content(vault_id: UUID, query: str, search: SearchService) -> str:
     """Hybrid BM25 + vector search over the unified content index.
 
     Indexes both raw sources and rendered wiki articles, including each
     file's frontmatter title/precis/author as a synthetic chunk so
     curator-supplied summary fields are hit alongside body paragraphs.
     """
-    svc = SearchService(SearchIndexRepository(source.repo.session))
-    results = await svc.search([vault.vault_id], query)
+    results = await search.search([vault_id], query)
 
     log_event("tool.search_executed", query=query, results_count=len(results))
 
@@ -335,65 +369,41 @@ async def search_content(
         parts.append(f"### {r.path} [chunk {r.chunk_index}]{heading}\n{r.snippet}")
 
     return (
-        f"Found {len(results)} results for '{query}'. Each result shows its "
-        f"document `path` and `chunk_index` — pass those to expand_context to "
-        f"read the surrounding paragraphs, or to read_document for the full "
-        f"file.\n\n" + "\n\n".join(parts)
+        f"Found {len(results)} results for '{query}'. Each result shows a "
+        f"document `path` and `chunk_index` — pass those to "
+        f"expand_context(path, start, end) to read the surrounding "
+        f"paragraphs, or read_document(path) for the whole document.\n\n"
+        + "\n\n".join(parts)
     )
-
-
-_EXPAND_MAX_EACH = 6  # cap before/after so expand_context can't become a dump
 
 
 async def expand_context(
-    vault: QuerySource,
-    path: str,
-    chunk_index: int,
-    source: SourceDocumentService,
-    *,
-    before: int = 2,
-    after: int = 2,
+    vault: QuerySource, path: str, start: int, end: int, search: SearchService
 ) -> str:
-    """Read the paragraphs around a search hit's chunk.
+    """Read a range of a document's paragraphs (chunks ``start``..``end``).
 
-    Small-to-big retrieval: a search snippet is deliberately tight, so the
-    agent widens around it here instead of reading the whole file. Bodies
-    are served straight from search_index — no storage round-trip — and
-    ``before``/``after`` are clamped so this can't degrade into a dump.
+    Ranges come from a search hit's chunk_index or a document outline.
+    Bodies are served straight from search_index — no storage round-trip —
+    and the span is capped so one read can't pull in a whole document.
     """
-    before = max(0, min(before, _EXPAND_MAX_EACH))
-    after = max(0, min(after, _EXPAND_MAX_EACH))
-    svc = SearchService(SearchIndexRepository(source.repo.session))
-    chunks = await svc.fetch_context_window(
-        [vault.vault_id], path, chunk_index, before=before, after=after
-    )
+    if end < start:
+        start, end = end, start
+    end = min(end, start + _MAX_RANGE_CHUNKS - 1)
+    chunks = await search.fetch_chunk_range([vault.vault_id], path, start, end)
     if not chunks:
-        log_event("tool.expand_context_empty", path=path, chunk_index=chunk_index)
+        log_event("tool.expand_context_empty", path=path, start=start, end=end)
         return (
-            f"No indexed paragraphs found at {path} around chunk {chunk_index}. "
-            f"Check the path and chunk_index against a search_content result."
+            f"No indexed paragraphs at {path} for chunks {start}-{end}. Check "
+            f"the path and range against a search hit or document outline."
         )
-
     log_event(
-        "tool.expand_context",
-        path=path,
-        chunk_index=chunk_index,
-        returned=len(chunks),
+        "tool.expand_context", path=path, start=start, end=end, returned=len(chunks)
     )
-    sections: list[str] = []
-    for c in chunks:
-        marker = "  ← matched" if c.chunk_index == chunk_index else ""
-        heading = f"{c.heading}\n" if c.heading else ""
-        sections.append(f"[chunk {c.chunk_index}]{marker}\n{heading}{c.body}")
-    header = (
-        f"# {path} [{vault.label}] "
-        f"(chunks {chunks[0].chunk_index}–{chunks[-1].chunk_index})"
-    )
-    return f"{header}\n\n" + "\n\n".join(sections)
+    return _render_chunk_window(path, vault.label, chunks)
 
 
 async def query_documents(
-    vault: QuerySource, args: dict, source: SourceDocumentService
+    vault_id: UUID, args: dict, source: SourceDocumentService
 ) -> str:
     """Structured metadata query over source documents."""
     filters = {
@@ -409,7 +419,7 @@ async def query_documents(
         if v is not None
     }
 
-    results = await source.query_documents([vault.vault_id], **filters)
+    results = await source.query_documents([vault_id], **filters)
     log_event("tool.query_executed", filters=str(filters), results_count=len(results))
 
     if not results:
@@ -438,22 +448,18 @@ async def _dispatch_tool(
     name: str,
     args: dict,
     source: SourceDocumentService,
+    search: SearchService,
 ) -> str:
     if name == "read_document":
-        return await read_document(vault, args["path"])
+        return await read_document(vault, args["path"], search)
     elif name == "expand_context":
         return await expand_context(
-            vault,
-            args["path"],
-            int(args["chunk_index"]),
-            source,
-            before=int(args.get("before", 2)),
-            after=int(args.get("after", 2)),
+            vault, args["path"], int(args["start"]), int(args["end"]), search
         )
     elif name == "search_content":
-        return await search_content(vault, args["query"], source)
+        return await search_content(vault.vault_id, args["query"], search)
     elif name == "query_documents":
-        return await query_documents(vault, args, source)
+        return await query_documents(vault.vault_id, args, source)
     else:
         return f"Unknown tool: {name}"
 
@@ -492,15 +498,16 @@ Approach:
 passages across both rendered wiki articles and raw sources, including \
 each file's title/precis/author. Each hit carries a `path` and \
 `chunk_index`.
-2. Use `expand_context(path, chunk_index)` to read the paragraphs around \
-a search hit when the snippet is too narrow — more focused and cheaper \
-than pulling in the whole document.
+2. Use `expand_context(path, start, end)` to read a range of paragraphs \
+— around a search hit, or a section listed in a document outline.
 3. Use `query_documents` when filtering raw sources by structured \
 attributes (tag, author, date, genre). Wiki articles aren't returned by \
 this tool — they have no structured-filter dimensions.
-4. Read whole documents via `read_document(path)` when you need the full \
-text. Paths look like `wiki/<slug>.md` for rendered articles or \
-`raw/<content_type>/...` for sources.
+4. Use `read_document(path)` to read a whole document; for a large \
+document this returns a section outline instead, which you then read \
+section-by-section with `expand_context`. Paths look like \
+`wiki/<slug>.md` for rendered articles or `raw/<content_type>/...` for \
+sources.
 5. To verify a claim or get more depth, follow source citations in a \
 wiki article to read raw primary texts.
 
@@ -653,6 +660,7 @@ async def _run_tool_calls(
     vault: QuerySource,
     source: SourceDocumentService,
     wiki: WikiArticleService,
+    search: SearchService,
     messages: list[dict],
     trace: StreamTrace,
     tool_calls: dict[int, dict],
@@ -668,7 +676,7 @@ async def _run_tool_calls(
         if source_event is not None:
             yield source_event
 
-        result = await _dispatch_tool(vault, name, args, source)
+        result = await _dispatch_tool(vault, name, args, source, search)
         messages.append(
             {
                 "role": "tool",
@@ -709,6 +717,7 @@ async def stream_chat(
     messages: list[dict],
     source: SourceDocumentService,
     wiki: WikiArticleService,
+    search: SearchService,
     *,
     tools: list[dict] | None = None,
 ) -> AsyncGenerator[dict, None]:
@@ -728,7 +737,7 @@ async def stream_chat(
             messages.append(_assistant_tool_message(state))
             try:
                 async for event in _run_tool_calls(
-                    vault, source, wiki, messages, trace, state.tool_calls
+                    vault, source, wiki, search, messages, trace, state.tool_calls
                 ):
                     yield event
             except MalformedToolArgs as exc:
@@ -746,9 +755,10 @@ async def stream_chat(
 async def _build_origin_messages(
     vault: QuerySource,
     origin_path: str,
+    search: SearchService,
 ) -> list[dict]:
     """Build synthetic tool-call messages that pre-load the origin document."""
-    content = await read_document(vault, origin_path)
+    content = await read_document(vault, origin_path, search)
     tool_call_id = f"origin-{uuid.uuid4().hex[:8]}"
     return [
         {
@@ -788,6 +798,7 @@ async def run_query(
     question: str,
     source: SourceDocumentService,
     wiki: WikiArticleService,
+    search: SearchService,
     *,
     user_id: UUID | None = None,
     model: str | None = None,
@@ -807,7 +818,7 @@ async def run_query(
         {"role": "system", "content": system_prompt},
     ]
     if origin_path:
-        base_messages.extend(await _build_origin_messages(vault, origin_path))
+        base_messages.extend(await _build_origin_messages(vault, origin_path, search))
     if history:
         base_messages.extend(m.model_dump() for m in history)
     base_messages.append({"role": "user", "content": question})
@@ -821,7 +832,7 @@ async def run_query(
             messages = list(base_messages)
             try:
                 async for event in stream_chat(
-                    vault, client, m, messages, source, wiki, tools=tools
+                    vault, client, m, messages, source, wiki, search, tools=tools
                 ):
                     yield event
                 return

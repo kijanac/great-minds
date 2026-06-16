@@ -58,3 +58,17 @@ class ChunkHash(BaseModel):
     path: str
     chunk_index: int
     content_hash: str
+
+
+class OutlineSection(BaseModel):
+    """A run of consecutive chunks sharing one heading.
+
+    Built by ``SearchService.document_outline`` from the heading column of
+    the indexed chunks, so the query agent can see a document's structure
+    (headings → chunk ranges) and read a section by range instead of
+    pulling the whole file.
+    """
+
+    heading: str
+    start: int
+    end: int

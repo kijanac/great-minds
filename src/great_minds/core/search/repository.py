@@ -167,6 +167,26 @@ class SearchIndexRepository:
         )
         return [Chunk.model_validate(row) for row in rows]
 
+    async def list_outline(
+        self, vault_ids: list[UUID], path: str
+    ) -> list[tuple[int, str]]:
+        """Return ``(chunk_index, heading)`` for ``path``'s body chunks.
+
+        Ordered by ``chunk_index``, metadata chunk (``-1``) excluded.
+        Headings-only (no bodies) so building a document outline is a
+        light read even for long documents.
+        """
+        rows = await self.session.execute(
+            select(SearchIndexEntry.chunk_index, SearchIndexEntry.heading)
+            .where(
+                SearchIndexEntry.vault_id.in_(vault_ids),
+                SearchIndexEntry.path == path,
+                SearchIndexEntry.chunk_index >= 0,
+            )
+            .order_by(SearchIndexEntry.chunk_index)
+        )
+        return [(idx, heading) for idx, heading in rows]
+
     # -- Diagnostics -----------------------------------------------------
 
     async def count_by_prefix(self, vault_id: UUID, path_prefix: str) -> int:

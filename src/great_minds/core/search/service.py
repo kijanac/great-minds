@@ -17,7 +17,7 @@ from great_minds.core.markdown import paragraphs, parse_frontmatter
 from great_minds.core.paths import RAW_GLOB, RAW_PREFIX, WIKI_GLOB, WIKI_PREFIX
 from great_minds.core.pipeline_runs import PipelineProgressRunner, build_progress_steps
 from great_minds.core.search.repository import SearchIndexRepository
-from great_minds.core.search.schemas import Chunk, SearchResult
+from great_minds.core.search.schemas import Chunk, OutlineSection, SearchResult
 from great_minds.core.settings import get_settings
 from great_minds.core.storage import Storage
 
@@ -126,26 +126,34 @@ class SearchService:
             )
         return results
 
-    async def fetch_context_window(
-        self,
-        vault_ids: list[UUID],
-        path: str,
-        chunk_index: int,
-        *,
-        before: int,
-        after: int,
+    async def fetch_chunk_range(
+        self, vault_ids: list[UUID], path: str, start: int, end: int
     ) -> list[Chunk]:
-        """Return the paragraphs around ``chunk_index`` in ``path``.
+        """Return ``path``'s body chunks in ``[start, end]``.
 
-        Used by the query agent's ``expand_context`` tool to widen a tight
-        search hit into its surrounding paragraphs without loading the
-        whole file. The window is clamped at the document start; the
-        caller bounds ``before``/``after`` so expansion can't become a
-        full-document dump.
+        Used by the query agent's ``expand_context`` tool to read a range
+        of paragraphs — around a search hit or a section from a document
+        outline — straight from the index, without a storage round-trip.
         """
-        return await self.repo.fetch_window(
-            vault_ids, path, chunk_index - before, chunk_index + after
-        )
+        return await self.repo.fetch_window(vault_ids, path, start, end)
+
+    async def document_outline(
+        self, vault_ids: list[UUID], path: str
+    ) -> list[OutlineSection]:
+        """Group ``path``'s chunks into heading-delimited sections.
+
+        Consecutive chunks sharing a heading collapse into one section with
+        its chunk range, giving the query agent a navigable map of a long
+        document instead of a truncated dump.
+        """
+        sections: list[OutlineSection] = []
+        for idx, heading in await self.repo.list_outline(vault_ids, path):
+            last = sections[-1] if sections else None
+            if last is not None and last.heading == heading and last.end == idx - 1:
+                sections[-1] = last.model_copy(update={"end": idx})
+            else:
+                sections.append(OutlineSection(heading=heading, start=idx, end=idx))
+        return sections
 
     # -- Diagnostics ------------------------------------------------------
 
