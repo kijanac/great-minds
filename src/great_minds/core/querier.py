@@ -19,6 +19,7 @@ from pydantic import BaseModel
 from .vaults.config import load_vault_config
 from .vaults.prompts import load_prompt
 from .search import Chunk, SearchService
+from .documents.schemas import ArticleLink
 from .documents.service import SourceDocumentService, WikiArticleService
 from .llm import QUERY_MODEL
 from .llm.client import api_stream, is_retryable, models_with_fallback
@@ -280,7 +281,6 @@ def _classify_tool_call(name: str, args: dict) -> tuple[SourceType, dict] | None
 
 _READ_WHOLE_LIMIT = 20_000  # docs at or under this many chars are returned whole
 _MAX_RANGE_CHUNKS = 40  # cap one expand_context read so it can't dump a document
-_MAX_LINKS = 40  # cap linked_articles output per direction (hub articles)
 
 
 _RETRIEVAL_CORE = """\
@@ -328,6 +328,11 @@ def _render_chunk_window(path: str, label: str, chunks: list[Chunk]) -> str:
         f"# {path} [{label}] (chunks {chunks[0].chunk_index}–{chunks[-1].chunk_index})"
     )
     return f"{header}\n\n" + "\n\n".join(sections)
+
+
+def _format_links(links: list[ArticleLink]) -> str:
+    """Render a list of article links as markdown bullets, or 'none'."""
+    return "\n".join(f"- [{a.title}]({a.path})" for a in links) or "none"
 
 
 def _parse_tool_args(tool_call: dict) -> dict:
@@ -608,19 +613,10 @@ class QueryEngine:
             outgoing=len(linked.outgoing),
             incoming=len(linked.incoming),
         )
-
-        def _fmt(links: list) -> str:
-            shown = "\n".join(f"- [{a.title}]({a.path})" for a in links[:_MAX_LINKS])
-            if not shown:
-                return "none"
-            if len(links) > _MAX_LINKS:
-                shown += f"\n  …and {len(links) - _MAX_LINKS} more"
-            return shown
-
         return (
             f"# Links for {path} [{self.label}]\n\n"
-            f"Outgoing (this article cites):\n{_fmt(linked.outgoing)}\n\n"
-            f"Incoming (articles that cite this):\n{_fmt(linked.incoming)}"
+            f"Outgoing (this article cites):\n{_format_links(linked.outgoing)}\n\n"
+            f"Incoming (articles that cite this):\n{_format_links(linked.incoming)}"
         )
 
     async def _query_documents(self, args: dict) -> str:
