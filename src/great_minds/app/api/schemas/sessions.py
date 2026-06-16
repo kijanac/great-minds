@@ -29,12 +29,19 @@ class BtwData(BaseModel):
 
 
 class CreateSessionRequest(BaseModel):
-    session_id: str
+    idempotency_key: str
     exchange: ExchangeData
     origin: SessionOrigin | None = None
 
 
 class SessionPathResponse(BaseModel):
+    path: str
+
+
+class CreateSessionResponse(BaseModel):
+    """Response for session creation: the server-minted id and storage path."""
+
+    id: str
     path: str
 
 

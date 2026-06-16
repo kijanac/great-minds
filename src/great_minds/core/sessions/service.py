@@ -1,7 +1,7 @@
 """Session workflow service."""
 
 from collections import defaultdict
-from uuid import UUID
+from uuid import UUID, uuid7
 
 from great_minds.core.documents.builder import build_document
 from great_minds.core.pagination import Page, PageParams, create_page
@@ -33,13 +33,32 @@ class SessionService:
     async def create_session(
         self,
         vault_id: UUID,
-        session_id: str,
         exchange: ExchangeInput,
         *,
         origin: SessionOrigin | None = None,
         user_id: str,
-    ) -> str:
-        """Create a new session with the first exchange."""
+        idempotency_key: str,
+    ) -> tuple[str, str]:
+        """Create a new session with the first exchange.
+
+        The session id is minted server-side. ``idempotency_key`` makes the
+        create safe to retry: if a session was already created with this key
+        (e.g. a prior attempt committed but its response was lost), the
+        existing session is reused instead of writing a duplicate. The retry
+        may carry a later exchange than the one that first committed, so the
+        exchange is appended if it isn't already present — exactly-once per
+        exchange, no silent drop.
+
+        Returns ``(session_id, path)``.
+        """
+        existing = await self.repo.find_by_idempotency_key(vault_id, idempotency_key)
+        if existing is not None:
+            events = await self.repo.load_events(existing)
+            if self.find_exchange(events, exchange.id) is None:
+                await self.append_exchange(vault_id, existing, exchange)
+            return existing, f"sessions/{existing}.jsonl"
+
+        session_id = str(uuid7())
         await self.repo.mkdir()
 
         meta = MetaEvent(
@@ -59,11 +78,13 @@ class SessionService:
             ts=now_iso(),
         )
         await self.repo.append_event(session_id, ex)
-        await self.repo.upsert_overview(vault_id, meta, updated_at=ex.ts)
+        await self.repo.upsert_overview(
+            vault_id, meta, updated_at=ex.ts, idempotency_key=idempotency_key
+        )
         await self.repo.session.commit()
 
         await self._rebuild_md(session_id)
-        return f"sessions/{session_id}.jsonl"
+        return session_id, f"sessions/{session_id}.jsonl"
 
     async def append_exchange(
         self,

@@ -88,19 +88,25 @@ export type SessionEvent = z.infer<typeof sessionEventSchema>;
 export type SessionSummary = z.infer<typeof sessionSummarySchema>;
 export type SessionList = z.infer<typeof sessionListSchema>;
 
+const sessionCreatedSchema = z.object({
+  id: z.string(),
+  path: z.string(),
+});
+
+export type SessionCreated = z.infer<typeof sessionCreatedSchema>;
+
 export async function createSession(
-  sessionId: string,
   exchange: ExchangePayload,
+  idempotencyKey: string,
   origin?: SessionOrigin,
-): Promise<string> {
+): Promise<SessionCreated> {
   const res = await apiFetch(vaultPath(`/sessions`), {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ session_id: sessionId, exchange, origin }),
+    body: JSON.stringify({ idempotency_key: idempotencyKey, exchange, origin }),
   });
   if (!res.ok) throw new Error(`Failed to create session: ${res.status}`);
-  const data = await readJson(res, pathResponseSchema);
-  return data.path;
+  return readJson(res, sessionCreatedSchema);
 }
 
 export async function appendExchange(

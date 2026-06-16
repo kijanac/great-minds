@@ -120,7 +120,6 @@ export function useBtw(originPath?: string) {
       const target = btwsRef.current.find((b) => b.id === btwId);
       if (!target || target.streaming || target.exchanges.length === 0) return;
 
-      const sid = genId("s");
       const origin = {
         doc_path: originPath,
         anchor: target.anchor,
@@ -129,12 +128,12 @@ export function useBtw(originPath?: string) {
       };
 
       try {
-        await createSession(sid, target.exchanges[0], origin);
+        const { id } = await createSession(target.exchanges[0], crypto.randomUUID(), origin);
         for (let i = 1; i < target.exchanges.length; i++) {
-          await appendExchange(sid, target.exchanges[i]);
+          await appendExchange(id, target.exchanges[i]);
         }
         setBtws((prev) => prev.filter((b) => b.id !== btwId));
-        navigate(`/sessions/${sid}`);
+        navigate(`/sessions/${id}`);
       } catch (e) {
         console.error("Failed to spin off BTW:", e);
       }

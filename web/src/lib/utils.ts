@@ -11,9 +11,8 @@ export function isAbortError(error: unknown): error is Error {
   return error instanceof Error && error.name === "AbortError";
 }
 
-let _nextId = 0;
 export function genId(prefix: string) {
-  return `${prefix}-${++_nextId}`;
+  return `${prefix}-${crypto.randomUUID()}`;
 }
 
 export function slugToTitle(slug: string): string {

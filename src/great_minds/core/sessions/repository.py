@@ -93,8 +93,22 @@ class SessionRepository:
                 events.append(event)
         return events
 
+    async def find_by_idempotency_key(self, vault_id: UUID, key: str) -> str | None:
+        """Return the session id previously created with this key, or None."""
+        return await self.session.scalar(
+            select(SessionRecordORM.id).where(
+                SessionRecordORM.vault_id == vault_id,
+                SessionRecordORM.idempotency_key == key,
+            )
+        )
+
     async def upsert_overview(
-        self, vault_id: UUID, meta: MetaEvent, *, updated_at: str
+        self,
+        vault_id: UUID,
+        meta: MetaEvent,
+        *,
+        updated_at: str,
+        idempotency_key: str | None = None,
     ) -> None:
         """Upsert the DB listing index for a session JSONL event log."""
         stmt = (
@@ -105,6 +119,7 @@ class SessionRepository:
                 user_id=UUID(meta.user_id),
                 query=meta.query,
                 origin=meta.origin.model_dump(mode="json") if meta.origin else None,
+                idempotency_key=idempotency_key,
                 created_at=_parse_iso(meta.ts),
                 updated_at=_parse_iso(updated_at),
             )

@@ -1,7 +1,13 @@
 import { useCallback, useEffect, useEffectEvent, useRef, useState } from "react";
 
 import { consumeStream, streamQuery } from "@/api/query";
-import { appendBtw, appendExchange, createSession, type ExchangePayload } from "@/api/sessions";
+import {
+  appendBtw,
+  appendExchange,
+  createSession,
+  type ExchangePayload,
+  type SessionOrigin,
+} from "@/api/sessions";
 import type {
   BtwThread,
   Exchange,
@@ -43,6 +49,10 @@ export function useSession(options?: UseSessionOptions) {
   const [thread, setThread] = useState<Exchange[]>(options?.initialExchanges ?? []);
   const [sessionId, setSessionId] = useState<string | null>(options?.sessionId ?? null);
   const sessionIdRef = useRef<string | null>(options?.sessionId ?? null);
+  // In-flight create promise: lets a rapid follow-up await the same create
+  // instead of starting a second one. Idempotency key dedups create retries.
+  const createRef = useRef<Promise<string> | null>(null);
+  const idempotencyKeyRef = useRef<string | null>(null);
   const threadRef = useRef(thread);
   const [liveThinking, setLiveThinking] = useState<ThinkingBlock[]>([]);
   const [liveText, setLiveText] = useState("");
@@ -73,71 +83,89 @@ export function useSession(options?: UseSessionOptions) {
     onSessionCreatedRef.current = options?.onSessionCreated;
   }, [options?.onSessionCreated]);
 
-  const runExchange = useCallback(async (question: string) => {
-    const exId = genId("ex");
-    setPhase("searching");
-    setLiveThinking([]);
-    setLiveText("");
-
-    abortRef.current?.abort();
-    const controller = new AbortController();
-    abortRef.current = controller;
-
+  // Persist an exchange: create the session on the first one (server mints the
+  // id), append on the rest. Safe to call before a prior create resolves — the
+  // second call awaits the same create promise rather than racing a duplicate.
+  const persistExchange = useCallback(async (payload: ExchangePayload, origin?: SessionOrigin) => {
     try {
-      const originForQuery = isFirstExchange.current ? originPathRef.current : undefined;
-      isFirstExchange.current = false;
-      const history = threadToHistory(threadRef.current);
-      const { answer, sources } = await consumeStream(
-        streamQuery(question, {
-          signal: controller.signal,
-          originPath: originForQuery,
-          history,
-          mode: "query",
-        }),
-        {
-          onSources: (s) => setLiveThinking([{ sources: s }]),
-          onToken: (text) => {
-            setPhase("streaming");
-            setLiveText(text);
+      if (!sessionIdRef.current && !createRef.current) {
+        if (!idempotencyKeyRef.current) idempotencyKeyRef.current = crypto.randomUUID();
+        createRef.current = createSession(payload, idempotencyKeyRef.current, origin).then(
+          ({ id }) => {
+            sessionIdRef.current = id;
+            setSessionId(id);
+            onSessionCreatedRef.current?.(id);
+            return id;
           },
-        },
-      );
-
-      const exchange: Exchange = {
-        id: exId,
-        query: question,
-        thinking: [{ sources }],
-        answer,
-        btws: [],
-      };
-      setThread((prev) => [...prev, exchange]);
-      setLiveThinking([]);
-      setLiveText("");
-      setPhase("done");
-
-      // Auto-persist session
-      const payload = exchangeToPayload(exchange);
-      if (!sessionIdRef.current) {
-        const sid = genId("s");
-        sessionIdRef.current = sid;
-        const origin = originPathRef.current ? { doc_path: originPathRef.current } : undefined;
-        createSession(sid, payload, origin)
-          .then(() => {
-            setSessionId(sid);
-            onSessionCreatedRef.current?.(sid);
-          })
-          .catch((e) => console.error("Failed to save session:", e));
-      } else {
-        appendExchange(sessionIdRef.current, payload).catch((e) =>
-          console.error("Failed to append exchange:", e),
         );
+        await createRef.current;
+        return;
       }
-    } catch (err) {
-      if (isAbortError(err)) return;
-      console.error("Query failed:", err);
-      setPhase("idle");
+      const id = sessionIdRef.current ?? (await createRef.current!);
+      await appendExchange(id, payload);
+    } catch (e) {
+      // Create failed — clear so the next exchange retries; the stable
+      // idempotency key makes a retry that actually committed return the same session.
+      if (!sessionIdRef.current) createRef.current = null;
+      console.error("Failed to persist session:", e);
     }
   }, []);
+
+  const runExchange = useCallback(
+    async (question: string) => {
+      const exId = genId("ex");
+      setPhase("searching");
+      setLiveThinking([]);
+      setLiveText("");
+
+      abortRef.current?.abort();
+      const controller = new AbortController();
+      abortRef.current = controller;
+
+      try {
+        const originForQuery = isFirstExchange.current ? originPathRef.current : undefined;
+        isFirstExchange.current = false;
+        const history = threadToHistory(threadRef.current);
+        const { answer, sources } = await consumeStream(
+          streamQuery(question, {
+            signal: controller.signal,
+            originPath: originForQuery,
+            history,
+            mode: "query",
+          }),
+          {
+            onSources: (s) => setLiveThinking([{ sources: s }]),
+            onToken: (text) => {
+              setPhase("streaming");
+              setLiveText(text);
+            },
+          },
+        );
+
+        const exchange: Exchange = {
+          id: exId,
+          query: question,
+          thinking: [{ sources }],
+          answer,
+          btws: [],
+        };
+        setThread((prev) => [...prev, exchange]);
+        setLiveThinking([]);
+        setLiveText("");
+        setPhase("done");
+
+        // Auto-persist session (fire-and-forget; the answer is already on screen)
+        const payload = exchangeToPayload(exchange);
+        const origin = originPathRef.current ? { doc_path: originPathRef.current } : undefined;
+        void persistExchange(payload, origin);
+      } catch (err) {
+        if (isAbortError(err)) return;
+        console.error("Query failed:", err);
+        setPhase("idle");
+      }
+    },
+    [persistExchange],
+  );
 
   const submitQuery = useCallback(
     (question: string) => {

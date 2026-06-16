@@ -33,10 +33,9 @@ async def create_session(
     session_service: SessionServiceDep,
     user: CurrentUser,
     vault_id: UUID,
-) -> schemas.SessionPathResponse:
-    path = await session_service.create_session(
+) -> schemas.CreateSessionResponse:
+    session_id, path = await session_service.create_session(
         vault_id,
-        req.session_id,
         ExchangeInput(
             id=req.exchange.id,
             query=req.exchange.query,
@@ -45,8 +44,9 @@ async def create_session(
         ),
         origin=req.origin,
         user_id=str(user.id),
+        idempotency_key=req.idempotency_key,
     )
-    return schemas.SessionPathResponse(path=path)
+    return schemas.CreateSessionResponse(id=session_id, path=path)
 
 
 @router.patch("/{session_id}")
