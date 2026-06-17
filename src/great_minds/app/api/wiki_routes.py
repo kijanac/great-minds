@@ -6,6 +6,7 @@ from uuid import UUID
 from fastapi import APIRouter, HTTPException
 
 from great_minds.app.api.dependencies import (
+    SearchServiceDep,
     SourceDocumentServiceDep,
     TopicServiceDep,
     VaultStorageDep,
@@ -14,11 +15,13 @@ from great_minds.app.api.dependencies import (
 )
 from great_minds.app.api.schemas import wiki as schemas
 from great_minds.core.documents import (
+    LinkedArticles,
     SourceDocumentFacets,
     WikiArticleOverview,
     WikiArticleService,
 )
 from great_minds.core.markdown import parse_frontmatter
+from great_minds.core.search import Chunk
 from great_minds.core.pagination import FacetedPage, Page
 from great_minds.core.paths import wiki_path, wiki_slug
 from great_minds.core.storage import Storage
@@ -82,6 +85,37 @@ async def read_article(
     if content is not None:
         return schemas.ArticleResponse(slug=slug, content=content)
     raise HTTPException(status_code=404, detail=f"Article not found: {slug}")
+
+
+_MAX_CHUNK_SPAN = 100  # safety cap on a single chunk-window read
+
+
+@router.get("/chunks")
+async def read_chunks(
+    vault_id: UUID,
+    path: str,
+    start: int,
+    end: int,
+    search: SearchServiceDep,
+) -> list[Chunk]:
+    """Body chunks of ``path`` in ``[start, end]`` — the passages that
+    entered the query agent's context, fetched lazily for the trace panel."""
+    end = min(end, start + _MAX_CHUNK_SPAN - 1)
+    return await search.fetch_chunk_range([vault_id], path, start, end)
+
+
+@router.get("/links")
+async def read_links(
+    vault_id: UUID,
+    path: str,
+    wiki_service: WikiArticleServiceDep,
+) -> LinkedArticles:
+    """Outgoing/incoming links for a wiki article — what a linked_articles
+    call surfaced, fetched lazily for the trace panel."""
+    linked = await wiki_service.linked_articles(vault_id, path)
+    if linked is None:
+        raise HTTPException(status_code=404, detail=f"Not a wiki article: {path}")
+    return linked
 
 
 @router.get("/doc/{path:path}")

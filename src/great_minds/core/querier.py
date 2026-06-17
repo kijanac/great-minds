@@ -258,7 +258,13 @@ def _classify_tool_call(name: str, args: dict) -> tuple[SourceType, dict] | None
     if name in ("read_document", "expand_context"):
         path = args["path"]
         doc_type = SourceType.ARTICLE if path.startswith("wiki/") else SourceType.RAW
-        return doc_type, {"path": path}
+        meta: dict = {"path": path}
+        if name == "expand_context":
+            # Carry the requested range so the UI can show exactly which
+            # paragraphs entered context (read_document has no range → full doc).
+            meta["start"] = int(args["start"])
+            meta["end"] = int(args["end"])
+        return doc_type, meta
     if name == "search_content":
         return SourceType.SEARCH, {"query": args["query"]}
     if name == "query_documents":
