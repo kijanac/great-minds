@@ -1,5 +1,6 @@
 """Source document and wiki article domain schemas."""
 
+from enum import StrEnum
 from typing import Literal
 from uuid import UUID
 from datetime import datetime
@@ -8,6 +9,15 @@ from pydantic import BaseModel, ConfigDict, Field, computed_field
 
 from great_minds.core.pagination import FacetCount
 from great_minds.core.paths import wiki_slug
+
+
+class WikiSort(StrEnum):
+    """Ordering for wiki article listings."""
+
+    CENTRAL = "central"  # most inbound backlinks first (orientation)
+    RECENT = "recent"  # most recently updated first
+    ALPHA = "alpha"  # by title, A–Z
+
 
 # ---------------------------------------------------------------------------
 # Frontmatter ↔ column key mapping

@@ -13,6 +13,7 @@ from great_minds.core.documents.schemas import (
     WikiArticle,
     WikiArticleCreate,
     WikiArticleOverview,
+    WikiSort,
 )
 from great_minds.core.markdown import parse_frontmatter
 from great_minds.core.pagination import FacetedPage, Page, PageParams, create_page
@@ -174,10 +175,31 @@ class WikiArticleService:
             vault_id,
             limit=pagination.limit,
             offset=pagination.offset,
-            recent=recent,
+            sort=WikiSort.RECENT if recent else WikiSort.ALPHA,
             render_run_id=run_id,
         )
         total = await self.repo.count_overview_paths(vault_id, render_run_id=run_id)
+        return create_page(items, pagination, total)
+
+    async def browse_articles(
+        self,
+        vault_id: UUID,
+        *,
+        contains: str | None = None,
+        sort: WikiSort = WikiSort.CENTRAL,
+        pagination: PageParams,
+    ) -> Page[WikiArticleOverview]:
+        """Browse live wiki articles for the query agent: a literal title/precis
+        filter, an ordering, and pagination — the synthesis-layer counterpart to
+        ``query_documents`` over sources."""
+        items = await self.repo.list_overviews(
+            vault_id,
+            query=contains,
+            sort=sort,
+            limit=pagination.limit,
+            offset=pagination.offset,
+        )
+        total = await self.repo.count_overview_paths(vault_id, query=contains)
         return create_page(items, pagination, total)
 
     async def list_orphans(self, vault_id: UUID) -> list[WikiArticleOverview]:

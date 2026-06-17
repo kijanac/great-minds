@@ -23,6 +23,7 @@ from great_minds.core.documents.schemas import (
     WikiArticle,
     WikiArticleCreate,
     WikiArticleOverview,
+    WikiSort,
     frontmatter_to_mirror_fields,
 )
 from great_minds.core.markdown import parse_frontmatter
@@ -412,7 +413,7 @@ class WikiArticleRepo:
         render_run_id: UUID | None = None,
         limit: int = 50,
         offset: int = 0,
-        recent: bool = False,
+        sort: WikiSort = WikiSort.ALPHA,
     ) -> list[WikiArticleOverview]:
         stmt = select(WikiArticleORM).where(
             WikiArticleORM.vault_id == vault_id,
@@ -431,16 +432,27 @@ class WikiArticleRepo:
                     func.lower(WikiArticleORM.precis).like(pattern),
                 )
             )
-        stmt = stmt.order_by(
-            WikiArticleORM.updated_at.desc()
-            if recent
-            else func.lower(WikiArticleORM.title)
-        )
+        if sort is WikiSort.CENTRAL:
+            inbound = (
+                select(func.count())
+                .select_from(BacklinkORM)
+                .where(BacklinkORM.target_article_id == WikiArticleORM.id)
+                .scalar_subquery()
+            )
+            stmt = stmt.order_by(inbound.desc(), func.lower(WikiArticleORM.title))
+        elif sort is WikiSort.RECENT:
+            stmt = stmt.order_by(WikiArticleORM.updated_at.desc())
+        else:
+            stmt = stmt.order_by(func.lower(WikiArticleORM.title))
         rows = (await self.session.scalars(stmt.offset(offset).limit(limit))).all()
         return [WikiArticleOverview.model_validate(orm) for orm in rows]
 
     async def count_overview_paths(
-        self, vault_id: UUID, *, render_run_id: UUID | None = None
+        self,
+        vault_id: UUID,
+        *,
+        render_run_id: UUID | None = None,
+        query: str | None = None,
     ) -> int:
         stmt = select(func.count()).where(
             WikiArticleORM.vault_id == vault_id,
@@ -449,6 +461,14 @@ class WikiArticleRepo:
         )
         if render_run_id is not None:
             stmt = stmt.where(WikiArticleORM.render_run_id == render_run_id)
+        if query:
+            pattern = f"%{query.lower()}%"
+            stmt = stmt.where(
+                or_(
+                    func.lower(WikiArticleORM.title).like(pattern),
+                    func.lower(WikiArticleORM.precis).like(pattern),
+                )
+            )
         return (await self.session.scalar(stmt)) or 0
 
     async def list_orphans(self, vault_id: UUID) -> list[WikiArticleOverview]:

@@ -19,9 +19,10 @@ from pydantic import BaseModel
 from .vaults.config import load_vault_config
 from .vaults.prompts import load_prompt
 from .search import Chunk, SearchService
-from .documents.schemas import WikiArticleOverview
+from .documents.schemas import WikiArticleOverview, WikiSort
 from .documents.service import SourceDocumentService, WikiArticleService
 from .llm import QUERY_MODEL
+from .pagination import PageParams
 from .llm.client import api_stream, is_retryable, models_with_fallback
 from .llm_costs import record_wide_event_cost
 from .storage import Storage
@@ -197,6 +198,47 @@ _BASE_TOOLS = [
             },
         },
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "list_articles",
+            "description": (
+                "Browse the rendered wiki articles — the encyclopedia layer "
+                "synthesized from the sources — as titles + paths, most-linked "
+                "first. Use it to get the lay of the land, or to find the "
+                "article on a known subject and read it by its real path "
+                "instead of guessing. `contains` is a literal title/precis "
+                "filter; for topical or fuzzy discovery use search_content, "
+                "which also searches article bodies and raw sources."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "contains": {
+                        "type": "string",
+                        "description": (
+                            "Literal substring to match in an article's "
+                            "title/precis (not semantic — use search_content "
+                            "for meaning-based discovery)"
+                        ),
+                    },
+                    "sort": {
+                        "type": "string",
+                        "enum": ["central", "recent", "alpha"],
+                        "description": (
+                            "central = most-linked first (best for "
+                            "orientation), recent = newest first, alpha = A–Z. "
+                            "Default central."
+                        ),
+                    },
+                    "page": {
+                        "type": "integer",
+                        "description": "1-based page number (default 1)",
+                    },
+                },
+            },
+        },
+    },
 ]
 
 
@@ -212,7 +254,7 @@ def _build_query_tool(tags: list[str]) -> dict:
                 "(tag, author, genre, date). Use when you have a concrete "
                 "attribute to narrow by — not for text discovery (use "
                 "search_content for that). Wiki articles aren't returned "
-                "by this tool; they have no structured-filter dimensions. "
+                "by this tool — browse those with list_articles. "
                 f"{tags_desc}."
             ),
             "parameters": {
@@ -282,6 +324,11 @@ def _classify_tool_call(name: str, args: dict) -> tuple[SourceType, dict] | None
         return SourceType.SEARCH, {"query": args["query"]}
     if name == "query_documents":
         return SourceType.QUERY, {"filters": {k: v for k, v in args.items() if v}}
+    if name == "list_articles":
+        # Browsing the article index — a structured query, shown as a filter
+        # card (page number is plumbing, not worth surfacing).
+        filters = {k: args[k] for k in ("contains", "sort") if args.get(k)}
+        return SourceType.QUERY, {"filters": filters}
     if name == "linked_articles":
         return SourceType.LINKS, {"path": args["path"]}
     return None
@@ -294,6 +341,7 @@ def _classify_tool_call(name: str, args: dict) -> tuple[SourceType, dict] | None
 
 _READ_WHOLE_LIMIT = 20_000  # docs at or under this many chars are returned whole
 _MAX_RANGE_CHUNKS = 40  # cap one expand_context read so it can't dump a document
+_ARTICLES_PER_PAGE = 25  # wiki articles returned per list_articles page
 
 
 _RETRIEVAL_CORE = """\
@@ -305,20 +353,25 @@ Approach:
 passages across both rendered wiki articles and raw sources, including \
 each file's title/precis/author. Each hit carries a `path` and \
 `chunk_index`.
-2. Use `expand_context(path, start, end)` to read a range of paragraphs \
+2. Use `list_articles` to browse the rendered wiki articles (the \
+synthesized encyclopedia) as titles + paths, most-linked first — for \
+orientation, or to find the article on a known subject and read it by \
+its real path instead of guessing. `contains` filters titles/precis \
+literally; use `search_content` for fuzzy/topical discovery.
+3. Use `expand_context(path, start, end)` to read a range of paragraphs \
 — around a search hit, or a section listed in a document outline.
-3. Use `query_documents` when filtering raw sources by structured \
-attributes (tag, author, date, genre). Wiki articles aren't returned by \
-this tool — they have no structured-filter dimensions.
-4. Use `read_document(path)` to read a whole document; for a large \
+4. Use `query_documents` when filtering raw sources by structured \
+attributes (tag, author, date, genre). For the wiki side, browse with \
+`list_articles` instead.
+5. Use `read_document(path)` to read a whole document; for a large \
 document this returns a section outline instead, which you then read \
 section-by-section with `expand_context`. Paths look like \
 `wiki/<slug>.md` for rendered articles or `raw/<content_type>/...` for \
 sources.
-5. Use `linked_articles(path)` to see which wiki articles an article \
+6. Use `linked_articles(path)` to see which wiki articles an article \
 cites and is cited by — follow connections between articles without \
 reading their full text.
-6. To verify a claim or get more depth, follow source citations in a \
+7. To verify a claim or get more depth, follow source citations in a \
 wiki article to read raw primary texts.
 
 Rules:
@@ -672,6 +725,50 @@ class QueryEngine:
 
         return f"Found {len(results)} documents:\n\n" + "\n\n".join(parts)
 
+    async def _list_articles(self, args: dict) -> str:
+        """Browse rendered wiki articles (titles + paths + precis), paginated.
+
+        The synthesis-layer counterpart to search/query_documents: a literal
+        title/precis filter plus an ordering, so the agent can pick an article
+        and read it by its real path instead of guessing one.
+        """
+        contains = args.get("contains") or None
+        sort = WikiSort(args.get("sort") or WikiSort.CENTRAL)
+        page = max(1, int(args.get("page", 1)))
+        pagination = PageParams(
+            limit=_ARTICLES_PER_PAGE, offset=(page - 1) * _ARTICLES_PER_PAGE
+        )
+        result = await self.wiki.browse_articles(
+            self.vault_id, contains=contains, sort=sort, pagination=pagination
+        )
+        log_event(
+            "tool.list_articles",
+            contains=contains,
+            sort=str(sort),
+            page=page,
+            returned=len(result.items),
+            total=result.total,
+        )
+        if not result.items:
+            if contains:
+                return (
+                    f"No article titles or precis contain '{contains}'. Try "
+                    "search_content for topical matches — it searches article "
+                    "bodies and raw sources too."
+                )
+            return "No wiki articles have been compiled yet."
+
+        lines = [f"- {a.title} — {a.file_path}\n  {a.precis}" for a in result.items]
+        hi = pagination.offset + len(result.items)
+        scope = f" matching '{contains}'" if contains else ""
+        header = f"Articles {pagination.offset + 1}–{hi} of {result.total}{scope} (by {sort}):"
+        more = (
+            f"\n\nMore available — call list_articles(page={page + 1}) to continue."
+            if hi < result.total
+            else ""
+        )
+        return f"{header}\n\n" + "\n".join(lines) + more
+
     async def _dispatch_tool(self, name: str, args: dict) -> str:
         if name == "read_document":
             return await self._read_document(args["path"])
@@ -685,6 +782,8 @@ class QueryEngine:
             return await self._search_content(args["query"])
         elif name == "query_documents":
             return await self._query_documents(args)
+        elif name == "list_articles":
+            return await self._list_articles(args)
         else:
             return f"Unknown tool: {name}"
 
