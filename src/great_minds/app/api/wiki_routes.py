@@ -3,12 +3,16 @@
 from pathlib import PurePosixPath
 from uuid import UUID
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, status
 
 from great_minds.app.api.dependencies import (
+    CurrentUser,
+    ProposalServiceDep,
     SearchServiceDep,
     SourceDocumentServiceDep,
     TopicServiceDep,
+    VaultAccessDep,
+    VaultOwnerGuard,
     VaultStorageDep,
     WikiArticleServiceDep,
     PageParamsQuery,
@@ -24,9 +28,11 @@ from great_minds.core.markdown import parse_frontmatter
 from great_minds.core.search import Chunk
 from great_minds.core.pagination import FacetedPage, Page
 from great_minds.core.paths import wiki_path, wiki_slug
+from great_minds.core.proposals.schemas import Proposal
 from great_minds.core.storage import Storage
 from great_minds.core.topics.schemas import ArticleStatus
 from great_minds.core.topics.service import TopicService
+from great_minds.core.vaults.models import MemberRole
 
 router = APIRouter(tags=["wiki"])
 
@@ -73,6 +79,70 @@ async def list_raw_sources(
         pagination=result.pagination,
         facets=result.facets,
     )
+
+
+@router.delete("/raw/sources/{path:path}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_raw_source(
+    path: str,
+    vault_id: UUID,
+    _auth: VaultOwnerGuard,
+    storage: VaultStorageDep,
+    source_service: SourceDocumentServiceDep,
+) -> None:
+    try:
+        source_path = _safe_raw_source_path(path)
+    except ValueError:
+        raise HTTPException(status_code=400, detail=f"Invalid source path: {path}")
+
+    deleted = await source_service.delete_source(vault_id, source_path, storage=storage)
+    if not deleted:
+        raise HTTPException(status_code=404, detail="Source not found")
+
+
+@router.post(
+    "/raw/sources/{path:path}/deletion-request",
+    status_code=status.HTTP_201_CREATED,
+)
+async def request_raw_source_deletion(
+    path: str,
+    vault_id: UUID,
+    user: CurrentUser,
+    access: VaultAccessDep,
+    source_service: SourceDocumentServiceDep,
+    proposal_service: ProposalServiceDep,
+) -> Proposal:
+    try:
+        source_path = _safe_raw_source_path(path)
+    except ValueError:
+        raise HTTPException(status_code=400, detail=f"Invalid source path: {path}")
+
+    role = await access.get_member_role(vault_id, user.id)
+    if role == MemberRole.VIEWER:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Viewers cannot request source deletion",
+        )
+    if role == MemberRole.OWNER:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Owners should delete sources directly",
+        )
+    if role != MemberRole.EDITOR:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only editors can request source deletion",
+        )
+
+    source = await source_service.get_by_path(vault_id, source_path)
+    if source is None:
+        raise HTTPException(status_code=404, detail="Source not found")
+
+    try:
+        return await proposal_service.create_source_deletion_request(
+            vault_id, user.id, source
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(e))
 
 
 @router.get("/wiki/{slug}")
@@ -213,3 +283,11 @@ def _safe_document_read_path(path: str) -> str:
         return str(rel)
 
     raise ValueError(f"Invalid document path: {path}")
+
+
+def _safe_raw_source_path(path: str) -> str:
+    source_path = _safe_document_read_path(path)
+    rel = PurePosixPath(source_path)
+    if rel.parts[0] != "raw":
+        raise ValueError(f"Invalid source path: {path}")
+    return source_path

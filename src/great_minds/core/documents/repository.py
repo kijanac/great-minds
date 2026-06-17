@@ -13,6 +13,7 @@ from great_minds.core.documents.models import (
     SourceDocumentORM,
     WikiArticleORM,
 )
+from great_minds.core.ideas.models import IdeaORM
 from great_minds.core.documents.schemas import (
     Backlink,
     FileHash,
@@ -27,6 +28,8 @@ from great_minds.core.documents.schemas import (
 from great_minds.core.markdown import parse_frontmatter
 from great_minds.core.pagination import FacetCount
 from great_minds.core.paths import WIKI_INDEX_PATH, wiki_path
+from great_minds.core.search.models import SearchIndexEntry
+from great_minds.core.topics.models import TopicMembershipORM
 
 
 # Columns the ingest path writes. Zone-3 (LLM-derived) columns are
@@ -178,6 +181,35 @@ class SourceDocumentRepo:
             )
         )
         return SourceDocument.model_validate(row) if row is not None else None
+
+    async def delete_source(self, vault_id: UUID, file_path: str) -> bool:
+        document_id = await self.session.scalar(
+            select(SourceDocumentORM.id).where(
+                SourceDocumentORM.vault_id == vault_id,
+                SourceDocumentORM.file_path == file_path,
+            )
+        )
+        if document_id is None:
+            return False
+
+        source_idea_ids = select(IdeaORM.idea_id).where(
+            IdeaORM.document_id == document_id
+        )
+        await self.session.execute(
+            delete(TopicMembershipORM).where(
+                TopicMembershipORM.idea_id.in_(source_idea_ids)
+            )
+        )
+        await self.session.execute(
+            delete(SearchIndexEntry).where(
+                SearchIndexEntry.vault_id == vault_id,
+                SearchIndexEntry.path == file_path,
+            )
+        )
+        await self.session.execute(
+            delete(SourceDocumentORM).where(SourceDocumentORM.id == document_id)
+        )
+        return True
 
     async def get_title_by_path(self, vault_id: UUID, file_path: str) -> str | None:
         return (

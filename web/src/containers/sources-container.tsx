@@ -4,10 +4,14 @@ import { useSearchParams } from "react-router";
 import {
   type SourceTypeFacet,
   type SourceDocumentSummary,
+  deleteSourceDocument,
   fetchSourceDocuments,
+  requestSourceDeletion,
 } from "@/api/sources";
+import { getVaultDetail } from "@/api/vaults";
 import { SourcesPage } from "@/components/sources-page";
 import { useViewNavigate } from "@/hooks/use-view-navigate";
+import { useActiveVaultId } from "@/hooks/use-vault";
 
 const PAGE_SIZE = 50;
 const SEARCH_DEBOUNCE_MS = 300;
@@ -15,6 +19,7 @@ const SEARCH_DEBOUNCE_MS = 300;
 export function SourcesContainer() {
   const navigate = useViewNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
+  const activeVaultId = useActiveVaultId();
 
   const initialType = searchParams.get("type") || null;
 
@@ -25,6 +30,10 @@ export function SourcesContainer() {
   const [loading, setLoading] = useState(true);
   const [hasMore, setHasMore] = useState(false);
   const [offset, setOffset] = useState(0);
+  const [role, setRole] = useState<string | null>(null);
+  const [actionPath, setActionPath] = useState<string | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
+  const [actionNotice, setActionNotice] = useState<string | null>(null);
 
   const debounceRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const searchRef = useRef(search);
@@ -33,6 +42,26 @@ export function SourcesContainer() {
   useEffect(() => {
     return () => clearTimeout(debounceRef.current);
   }, []);
+
+  useEffect(() => {
+    if (!activeVaultId) {
+      setRole(null);
+      return;
+    }
+
+    let active = true;
+    void getVaultDetail(activeVaultId).then(
+      (detail) => {
+        if (active) setRole(detail.role);
+      },
+      () => {
+        if (active) setRole(null);
+      },
+    );
+    return () => {
+      active = false;
+    };
+  }, [activeVaultId]);
 
   const load = useCallback(
     async (params: { source_type?: string; search?: string; offset: number; append: boolean }) => {
@@ -106,6 +135,47 @@ export function SourcesContainer() {
     });
   }
 
+  const handleDeleteSource = useCallback(
+    async (filePath: string) => {
+      setActionPath(filePath);
+      setActionError(null);
+      setActionNotice(null);
+      try {
+        await deleteSourceDocument(filePath);
+        setOffset(0);
+        await load({
+          source_type: activeType ?? undefined,
+          search: searchRef.current,
+          offset: 0,
+          append: false,
+        });
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "Failed to delete source";
+        setActionError(message);
+        throw error;
+      } finally {
+        setActionPath(null);
+      }
+    },
+    [activeType, load],
+  );
+
+  const handleRequestDeletion = useCallback(async (filePath: string) => {
+    setActionPath(filePath);
+    setActionError(null);
+    setActionNotice(null);
+    try {
+      await requestSourceDeletion(filePath);
+      setActionNotice("Deletion request submitted.");
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Failed to request source deletion";
+      setActionError(message);
+      throw error;
+    } finally {
+      setActionPath(null);
+    }
+  }, []);
+
   return (
     <SourcesPage
       items={items}
@@ -114,6 +184,14 @@ export function SourcesContainer() {
       search={search}
       loading={loading}
       hasMore={hasMore}
+      sourceActions={{
+        role,
+        busyPath: actionPath,
+        error: actionError,
+        notice: actionNotice,
+        onDeleteSource: handleDeleteSource,
+        onRequestDeletion: handleRequestDeletion,
+      }}
       onHome={() => navigate("/")}
       onSourceClick={(path) => navigate(`/doc/${path}`)}
       onTypeFilter={handleTypeFilter}
