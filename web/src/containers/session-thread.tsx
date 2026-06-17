@@ -115,7 +115,7 @@ export function SessionThread({ session, onFollowUp }: SessionThreadProps) {
   return (
     <>
       <div className="flex-1 min-h-0 overflow-y-auto" onClick={handleLinkClick}>
-        <div className="px-4 md:px-10 pt-7 pb-5 max-w-[740px] mx-auto">
+        <div id="session-print" className="px-4 md:px-10 pt-7 pb-5 max-w-[740px] mx-auto">
           {session.thread.map((ex, ei) => (
             <div key={ex.id}>
               {ei > 0 && <Separator className="my-8 bg-ink-subtle" />}
@@ -125,16 +125,20 @@ export function SessionThread({ session, onFollowUp }: SessionThreadProps) {
                   {`"${ex.query}"`}
                 </span>
                 {session.sessionId && ex.answer && (
-                  <PromoteButton sessionId={session.sessionId} exchangeId={ex.id} />
+                  <span className="print:hidden">
+                    <PromoteButton sessionId={session.sessionId} exchangeId={ex.id} />
+                  </span>
                 )}
               </div>
 
-              <ThinkingSection
-                blocks={ex.thinking}
-                streaming={false}
-                onCardClick={togglePanel}
-                activeCard={panel?.card.label ?? null}
-              />
+              <div className="print:hidden">
+                <ThinkingSection
+                  blocks={ex.thinking}
+                  streaming={false}
+                  onCardClick={togglePanel}
+                  activeCard={panel?.card.label ?? null}
+                />
+              </div>
 
               <AnswerBlock
                 text={ex.answer}

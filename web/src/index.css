@@ -494,3 +494,72 @@
     transform: translateX(16px);
   }
 }
+
+/* ── Print: session export to PDF ─────────────────────────────────────────
+ * The session download button calls window.print(). We print only the
+ * thread (#session-print), forced into the light palette so a dark-theme
+ * session stays legible on paper, and un-clip the app's nested
+ * overflow:hidden shell so the content flows across pages. */
+@media print {
+  /* Force the light palette regardless of the active theme. */
+  :root,
+  .dark {
+    --background: #ffffff;
+    --foreground: #1a1510;
+    --card: #e0d8c8;
+    --card-foreground: #4a4030;
+    --muted: #c8c0b0;
+    --muted-foreground: #5a5040;
+    --border: #b0a090;
+    --gold: #7a5c10;
+    --gold-hover: #5a4008;
+    --gold-dim: #c8b890;
+    --gold-muted: #9a8450;
+    --warm: #1a1510;
+    --warm-dim: #3a3028;
+    --warm-faint: #5a4e40;
+    --warm-ghost: #6a5e4c;
+    --ink: #ffffff;
+    --ink-raised: #ffffff;
+    --ink-subtle: #c8c0ae;
+    --ink-border: #b0a090;
+    --ink-panel: #ffffff;
+    --btw: #3a6030;
+    --btw-bright: #2a4a20;
+    --btw-bg: #eef2ea;
+    --interactive-dim: #bab0a0;
+    --interactive-ghost: #c8c0b0;
+    --code-bg: #eee8da;
+  }
+
+  html,
+  body {
+    background: #ffffff !important;
+  }
+
+  /* Print only the session thread. */
+  body * {
+    visibility: hidden !important;
+  }
+  #session-print,
+  #session-print * {
+    visibility: visible !important;
+  }
+  #session-print {
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 100%;
+  }
+
+  /* The app shell is a stack of overflow:hidden / h-screen boxes; let the
+   * absolutely-positioned region escape them instead of being clipped. */
+  .print-root,
+  .print-root * {
+    overflow: visible !important;
+  }
+
+  @page {
+    margin: 16mm;
+  }
+}

@@ -1,6 +1,6 @@
 import { useCallback, useState } from "react";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
-import { Home } from "lucide-react";
+import { Download, Home } from "lucide-react";
 import { Navigate } from "react-router";
 
 import { Button } from "@/components/ui/button";
@@ -117,7 +117,7 @@ function HomeContent({ sessionId, initialExchanges, initialQuery, origin }: Home
   };
 
   return (
-    <div className="flex h-screen overflow-hidden relative">
+    <div className="flex h-screen overflow-hidden relative print-root">
       <div className="flex-1 flex flex-col overflow-hidden min-w-0">
         {isActive && (
           <div className="shrink-0 px-4 md:px-10 pt-[22px] pb-[18px] border-b border-ink-subtle">
@@ -138,6 +138,16 @@ function HomeContent({ sessionId, initialExchanges, initialQuery, origin }: Home
               <div className="flex-1 min-w-0">
                 <SearchBar {...searchBarProps} />
               </div>
+              <Button
+                variant="ghost"
+                size="icon-xs"
+                onClick={() => window.print()}
+                aria-label="download as PDF"
+                title="Download as PDF"
+                className="text-muted-foreground hover:text-gold hover:bg-transparent shrink-0"
+              >
+                <Download size={14} />
+              </Button>
             </motion.div>
           </div>
         )}
