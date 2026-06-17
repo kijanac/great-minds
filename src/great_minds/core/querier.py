@@ -54,6 +54,19 @@ class SourceType(enum.StrEnum):
     LINKS = "links"
 
 
+class _ToolMiss(Exception):
+    """A read/navigation tool found nothing at the requested path.
+
+    The ``message`` is still fed back to the model so it can recover (e.g.
+    correct a guessed path), but no ``source`` event is emitted — a miss put
+    nothing into the agent's context, so it should leave no card behind.
+    """
+
+    def __init__(self, message: str) -> None:
+        super().__init__(message)
+        self.message = message
+
+
 @dataclass
 class StreamTrace:
     articles_read: list[str] = field(default_factory=list)
@@ -506,7 +519,7 @@ class QueryEngine:
         content = await self.storage.read(path, strict=False)
         if content is None:
             log_event("tool.document_not_found", path=path)
-            return f"Document not found: {path}"
+            raise _ToolMiss(f"Document not found: {path}")
 
         if len(content) <= _READ_WHOLE_LIMIT:
             log_event(
@@ -578,7 +591,7 @@ class QueryEngine:
         chunks = await self.search.fetch_chunk_range([self.vault_id], path, start, end)
         if not chunks:
             log_event("tool.expand_context_empty", path=path, start=start, end=end)
-            return (
+            raise _ToolMiss(
                 f"No indexed paragraphs at {path} for chunks {start}-{end}. Check "
                 f"the path and range against a search hit or document outline."
             )
@@ -599,14 +612,14 @@ class QueryEngine:
         event, since nothing is read here.
         """
         if not path.startswith("wiki/"):
-            return (
+            raise _ToolMiss(
                 f"{path} is not a wiki article — the link graph only covers "
                 f"wiki articles. Use search_content to find related material."
             )
         linked = await self.wiki.linked_articles(self.vault_id, path)
         if linked is None:
             log_event("tool.linked_articles_not_found", path=path)
-            return f"Article not found: {path}"
+            raise _ToolMiss(f"Article not found: {path}")
         log_event(
             "tool.linked_articles",
             path=path,
@@ -762,11 +775,22 @@ class QueryEngine:
             args = _parse_tool_args(tc)
             name = tc["name"]
 
+            try:
+                result = await self._dispatch_tool(name, args)
+            except _ToolMiss as miss:
+                # The read found nothing — feed the message back so the model
+                # can recover, but emit no source card: nothing entered context.
+                messages.append(
+                    {"role": "tool", "tool_call_id": tc["id"], "content": miss.message}
+                )
+                continue
+
+            # Emit the card only after a successful read, so the trace reflects
+            # what actually entered the agent's context.
             source_event = await self._source_event(trace, name, args)
             if source_event is not None:
                 yield source_event
 
-            result = await self._dispatch_tool(name, args)
             messages.append(
                 {
                     "role": "tool",
@@ -809,7 +833,10 @@ class QueryEngine:
 
     async def _build_origin_messages(self, origin_path: str) -> list[dict]:
         """Build synthetic tool-call messages that pre-load the origin document."""
-        content = await self._read_document(origin_path)
+        try:
+            content = await self._read_document(origin_path)
+        except _ToolMiss as miss:
+            content = miss.message
         tool_call_id = f"origin-{uuid.uuid4().hex[:8]}"
         return [
             {
