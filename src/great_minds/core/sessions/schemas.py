@@ -8,10 +8,22 @@ from uuid import UUID
 from pydantic import BaseModel, ConfigDict
 
 
+class ChunkRange(BaseModel):
+    start: int
+    end: int
+
+
 class ThinkingSource(BaseModel):
     label: str
     type: Literal["article", "raw", "search", "query", "links"]
     thinking: str | None = None
+    # Context-panel provenance for content cards (article/raw): which chunk
+    # ranges the agent expanded with expand_context, and whether it read the
+    # whole document. Empty/False for search/query/links cards, and for
+    # sessions persisted before this field existed (they fall back to the
+    # full document on click).
+    ranges: list[ChunkRange] = []
+    full: bool = False
 
 
 class ThinkingBlock(BaseModel):
