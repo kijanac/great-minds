@@ -16,6 +16,12 @@ export const ListSourcesQuerySchema = z.object({
 
 export type ListSourcesQuery = z.infer<typeof ListSourcesQuerySchema>;
 
+export const DeleteSourceCommandSchema = z.object({
+  filePath: z.string().trim().min(1),
+});
+
+export type DeleteSourceCommand = z.infer<typeof DeleteSourceCommandSchema>;
+
 export const SourceTypeFacetSchema = z.object({
   value: z.string(),
   count: z.number().int().nonnegative(),

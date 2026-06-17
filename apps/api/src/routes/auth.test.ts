@@ -17,6 +17,7 @@ const baseConfig: ApiConfig = {
   auth: baseAuthConfig,
   authCodeDelivery: { kind: "console" },
   openAiProvider: { kind: "disabled" },
+  storage: { kind: "local", dataDir: "/tmp/great-minds-test" },
 };
 
 describe("POST /v1/auth/request-code", () => {
@@ -32,7 +33,8 @@ describe("POST /v1/auth/request-code", () => {
   test("returns 502 when auth code delivery fails", async () => {
     const app = createApp(
       fakeRuntime({
-        deliver: () => Effect.fail(new AuthCodeDeliveryFailed({ message: "Failed to send auth code" })),
+        deliver: () =>
+          Effect.fail(new AuthCodeDeliveryFailed({ message: "Failed to send auth code" })),
       }),
       baseConfig,
     );
@@ -57,7 +59,11 @@ function fakeRuntime({
   deliver = () => Effect.void,
 }: {
   auth?: AuthConfigService;
-  deliver?: (email: string, code: string, expiresInMinutes: number) => Effect.Effect<void, AuthCodeDeliveryFailed>;
+  deliver?: (
+    email: string,
+    code: string,
+    expiresInMinutes: number,
+  ) => Effect.Effect<void, AuthCodeDeliveryFailed>;
 } = {}): ApiRuntime {
   return ManagedRuntime.make(
     createApiLayer({
@@ -65,6 +71,12 @@ function fakeRuntime({
       authConfig: auth,
       authCodeDelivery: { deliver },
       llmClient: { complete: () => Effect.die("unused LLM client") },
+      vaultStorage: {
+        prepareBucketForOwner: () => Effect.succeed(null),
+        writeText: () => Effect.succeed({ etag: null }),
+        deleteText: () => Effect.void,
+        clearVault: () => Effect.void,
+      },
     }),
   );
 }

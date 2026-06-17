@@ -5,7 +5,7 @@ import { describe, expect, it } from "vitest";
 import { createLocalContext } from "../db/client";
 import { vaultMemberships, vaults } from "../db/schema";
 import { ensureWorkspace } from "./bootstrap";
-import { listSources, upsertSourceDocumentMetadata } from "./sources";
+import { deleteSource, listSources, upsertSourceDocumentMetadata } from "./sources";
 import { createVault, getVaultSettings, listVaults, switchVault, updateVault } from "./vaults";
 import { APP_STATE_ID } from "./workspace";
 
@@ -143,5 +143,13 @@ describe("local workspace spine", () => {
 
     const searched = await listSources(ctx, { search: "marx", limit: 50, offset: 0 });
     expect(searched.items.map((item) => item.filePath)).toEqual(["raw/document/capital.md"]);
+
+    const deleted = await deleteSource(ctx, { filePath: "raw/document/capital.md" });
+    expect(deleted).toBe(true);
+
+    const afterDelete = await listSources(ctx, { limit: 50, offset: 0 });
+    expect(afterDelete.pagination.total).toBe(1);
+    expect(afterDelete.items.map((item) => item.filePath)).toEqual(["raw/session/exchange.md"]);
+    expect(afterDelete.facets.sourceTypes).toEqual([{ value: "session", count: 1 }]);
   });
 });

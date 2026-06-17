@@ -1,7 +1,13 @@
 import { z } from "zod";
 
 import { apiFetch, vaultPath, readJson } from "./client";
-import { facetedPaginatedSchema, facetCountSchema, type FacetCount } from "./schemas";
+import {
+  facetedPaginatedSchema,
+  facetCountSchema,
+  proposalSchema,
+  type FacetCount,
+  type Proposal,
+} from "./schemas";
 
 const sourceDocumentSummarySchema = z.object({
   file_path: z.string(),
@@ -48,4 +54,27 @@ export async function fetchSourceDocuments(params?: {
   const res = await apiFetch(path);
   if (!res.ok) throw new Error("Failed to fetch raw sources");
   return readJson(res, sourceDocumentPageSchema);
+}
+
+export async function deleteSourceDocument(filePath: string): Promise<void> {
+  const res = await apiFetch(vaultPath(`/raw/sources/${encodeSourcePath(filePath)}`), {
+    method: "DELETE",
+  });
+  if (!res.ok) throw new Error("Failed to delete source");
+}
+
+export async function requestSourceDeletion(filePath: string): Promise<Proposal> {
+  const res = await apiFetch(
+    vaultPath(`/raw/sources/${encodeSourcePath(filePath)}/deletion-request`),
+    { method: "POST" },
+  );
+  if (!res.ok) throw new Error("Failed to request source deletion");
+  return readJson(res, proposalSchema);
+}
+
+function encodeSourcePath(filePath: string): string {
+  return filePath
+    .split("/")
+    .map((part) => encodeURIComponent(part))
+    .join("/");
 }

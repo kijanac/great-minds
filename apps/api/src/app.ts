@@ -18,13 +18,10 @@ export function createApp(runtime: ApiRuntime, config: ApiConfig) {
   app.route("/v1", createOpenAiRoutes(runtime, config));
   app.route("/v1", createMeRoutes(runtime));
   app.route("/v1/auth", createAuthRoutes(runtime));
-  app.route("/v1/vaults", createVaultRoutes(runtime));
+  app.route("/v1/vaults", createVaultRoutes(runtime, config));
 
   app.notFound((c) =>
-    c.json(
-      { error: { message: "Not found", requestId: c.get("requestId") } },
-      404,
-    ),
+    c.json({ error: { message: "Not found", requestId: c.get("requestId") } }, 404),
   );
 
   app.onError((error, c) => {

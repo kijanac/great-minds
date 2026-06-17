@@ -1,7 +1,7 @@
 import * as Comlink from "comlink";
 import { createLocalContext } from "../db/client";
 import { ensureWorkspace } from "../services/bootstrap";
-import { listSources } from "../services/sources";
+import { deleteSource, listSources } from "../services/sources";
 import {
   createVault,
   getVaultSettings,
@@ -9,7 +9,7 @@ import {
   switchVault,
   updateVault,
 } from "../services/vaults";
-import { ListSourcesQuerySchema } from "../schema/source";
+import { DeleteSourceCommandSchema, ListSourcesQuerySchema } from "../schema/source";
 import { CreateVaultCommandSchema, UpdateVaultCommandSchema } from "../schema/vault";
 import type { LocalApi } from "./api";
 
@@ -36,6 +36,11 @@ const localApi = {
     const parsed = ListSourcesQuerySchema.parse(query);
     const ctx = await ctxPromise;
     return listSources(ctx, parsed);
+  },
+  async deleteSource(command) {
+    const parsed = DeleteSourceCommandSchema.parse(command);
+    const ctx = await ctxPromise;
+    return deleteSource(ctx, parsed);
   },
   async createVault(command) {
     const parsed = CreateVaultCommandSchema.parse(command);

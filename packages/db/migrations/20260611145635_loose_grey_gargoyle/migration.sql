@@ -1,0 +1,1 @@
+ALTER TABLE "vaults" ADD COLUMN "storage_bucket_name" text;

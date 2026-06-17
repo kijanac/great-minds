@@ -1,7 +1,7 @@
 import { and, asc, count, desc, eq, ilike, or, type SQL } from "drizzle-orm";
 import type { LocalContext } from "../db/client";
 import { sourceDocuments } from "../db/schema";
-import type { ListSourcesQuery } from "../schema/source";
+import type { DeleteSourceCommand, ListSourcesQuery } from "../schema/source";
 import {
   SourceDocumentPageSchema,
   SourceDocumentSchema,
@@ -75,6 +75,26 @@ export async function upsertSourceDocumentMetadata(
     if (!document) throw new Error("Failed to upsert source document");
 
     return SourceDocumentSchema.parse(document);
+  });
+}
+
+export async function deleteSource(
+  ctx: LocalContext,
+  command: DeleteSourceCommand,
+): Promise<boolean> {
+  return await ctx.db.transaction(async (tx) => {
+    const workspace = await loadCurrentWorkspace(tx);
+    const rows = await tx
+      .delete(sourceDocuments)
+      .where(
+        and(
+          eq(sourceDocuments.vaultId, workspace.vault.id),
+          eq(sourceDocuments.filePath, command.filePath),
+        ),
+      )
+      .returning({ filePath: sourceDocuments.filePath });
+
+    return rows.length > 0;
   });
 }
 

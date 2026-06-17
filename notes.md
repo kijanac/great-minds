@@ -1089,3 +1089,13 @@ The OpenAI-compatible surface must remain a protocol facade, not the app’s dom
 - Combine authorization and loading when one query can express both. For vault-scoped reads, join through membership and load the vault in the same query instead of doing a separate `assertCanRead` followed by a fetch.
 - Parse arrays as arrays when validating DB output with Zod: `EntitySchema.array().parse(rows)` is usually clearer and gives better error paths than `rows.map(row => EntitySchema.parse(row))`.
 - Use Drizzle object selects like `.select({ vault: vaults })` when joining tables and you want a named nested result shape. It avoids column collisions and makes downstream parsing explicit.
+
+## Additional lessons from the TS Effect/storage refactor
+
+- Avoid creating `Input`/`Response` schema pairs to hide an incorrect domain shape. If a field is internal persistence metadata, make the canonical domain schema product-facing and add a narrowly named internal schema only where persistence/storage code needs it. Example: `Vault` can omit storage metadata while `VaultInternalSchema` includes `storageBucketName`.
+- Provider adapters should be API-local. Core services should depend on provider-agnostic capabilities such as `VaultStorage.prepareBucketForOwner` and `VaultStorage.clearVault`, not on Resend, S3/R2, or provider error types.
+- Prefer convergence/readiness checks over provider error taxonomy. For R2 bucket preparation, the important invariant is “the bucket accepts the required lifecycle configuration,” not whether an earlier `HeadBucket` failed as `404`, `NoSuchBucket`, or something provider-specific.
+- Do not parse provider error shapes unless the branch genuinely needs provider semantics. Helpers like `parseStorageError`, `errorName`, or `s3StatusCode` are often a smell that control flow is compensating for the wrong abstraction.
+- Use Effect at the SDK boundary directly. Wrap provider calls with a small adapter helper returning a typed `Effect`, then compose those effects. Avoid async helper functions with nested `try/catch` that are later wrapped again in `Effect.tryPromise`.
+- Validate values that depend on untrusted/configured input, not values already guaranteed by domain types. For example, validate the derived R2 bucket name because `R2_BUCKET_PREFIX` comes from env; do not revalidate that a branded `UserId` has UUID hex length inside bucket-name derivation.
+- A setup step can be best-effort when a later required operation proves readiness. For R2, `CreateBucket` is not cleanly idempotent across S3/R2 behavior, so a best-effort create followed by required lifecycle application is cleaner than classifying every create/probe failure.

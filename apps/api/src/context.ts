@@ -5,10 +5,21 @@ export type AuthCodeDeliveryConfig =
   | { kind: "console" }
   | { kind: "resend"; apiKey: string; fromEmail: string };
 
+export type StorageConfig =
+  | { kind: "local"; dataDir: string }
+  | {
+      kind: "r2";
+      accountId: string;
+      accessKeyId: string;
+      secretAccessKey: string;
+      bucketPrefix: string;
+    };
+
 export type ApiConfig = {
   auth: AuthConfigService;
   authCodeDelivery: AuthCodeDeliveryConfig;
   openAiProvider: OpenRouterConfig;
+  storage: StorageConfig;
 };
 
 export type AppEnv = {

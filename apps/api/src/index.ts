@@ -1,7 +1,7 @@
 import { serve } from "@hono/node-server";
 import { createApp } from "./app.js";
 import { createApiRuntime } from "./runtime.js";
-import { authCodeDeliveryFromEnv, env, openAiProviderFromEnv } from "./env.js";
+import { authCodeDeliveryFromEnv, env, openAiProviderFromEnv, storageFromEnv } from "./env.js";
 
 const config = {
   auth: {
@@ -13,6 +13,7 @@ const config = {
   },
   authCodeDelivery: authCodeDeliveryFromEnv(),
   openAiProvider: openAiProviderFromEnv(),
+  storage: storageFromEnv(),
 };
 const runtime = await createApiRuntime({ connectionString: env.DATABASE_URL }, config);
 const app = createApp(runtime, config);

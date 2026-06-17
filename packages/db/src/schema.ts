@@ -1,5 +1,15 @@
 import { sql } from "drizzle-orm";
-import { boolean, index, jsonb, pgEnum, pgTable, text, timestamp, unique, uuid } from "drizzle-orm/pg-core";
+import {
+  boolean,
+  index,
+  jsonb,
+  pgEnum,
+  pgTable,
+  text,
+  timestamp,
+  unique,
+  uuid,
+} from "drizzle-orm/pg-core";
 
 export const memberRole = pgEnum("member_role", ["owner", "editor", "viewer"]);
 export const apiKeyScope = pgEnum("api_key_scope", [
@@ -78,6 +88,7 @@ export const vaults = pgTable("vaults", {
     .notNull()
     .references(() => users.id, { onDelete: "cascade" }),
   name: text("name").notNull(),
+  storageBucketName: text("storage_bucket_name"),
   thematicHint: text("thematic_hint").notNull().default(DEFAULT_THEMATIC_HINT),
   kinds: text("kinds")
     .array()

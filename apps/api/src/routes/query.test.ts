@@ -15,11 +15,16 @@ const openRouterProvider = {
   baseUrl: "https://openrouter.test/api/v1",
 } satisfies ApiConfig["openAiProvider"];
 
-const user = { id: userId, email: "test@greatminds.local", createdAt: new Date("2026-01-01T00:00:00Z") };
+const user = {
+  id: userId,
+  email: "test@greatminds.local",
+  createdAt: new Date("2026-01-01T00:00:00Z"),
+};
 const vault = {
   id: vaultId,
   ownerId: userId,
   name: "Test Vault",
+  storageBucketName: null,
   thematicHint: "",
   kinds: ["person", "event", "organization", "concept"],
   createdAt: new Date("2026-01-01T00:00:00Z"),
@@ -34,6 +39,7 @@ const baseConfig: ApiConfig = {
   },
   authCodeDelivery: { kind: "console" },
   openAiProvider: { kind: "disabled" },
+  storage: { kind: "local", dataDir: "/tmp/great-minds-test" },
 };
 
 afterEach(() => {
@@ -55,28 +61,43 @@ describe("POST /v1/vaults/:id/query", () => {
 
     const response = await postQuery(app);
     expect(response.status).toBe(502);
-    expect(await response.json()).toMatchObject({ error: { message: "LLM provider is not configured" } });
+    expect(await response.json()).toMatchObject({
+      error: { message: "LLM provider is not configured" },
+    });
   });
 
   test("returns 502 when the LLM provider is unavailable", async () => {
     vi.useFakeTimers();
-    vi.stubGlobal("fetch", vi.fn(() => Promise.reject(new Error("network down"))));
-    const app = createTestApp({ workspace: { user, vault } }, { ...baseConfig, openAiProvider: openRouterProvider });
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(() => Promise.reject(new Error("network down"))),
+    );
+    const app = createTestApp(
+      { workspace: { user, vault } },
+      { ...baseConfig, openAiProvider: openRouterProvider },
+    );
 
     const responsePromise = postQuery(app);
     await vi.runAllTimersAsync();
     const response = await responsePromise;
 
     expect(response.status).toBe(502);
-    expect(await response.json()).toMatchObject({ error: { message: "LLM provider is unavailable" } });
+    expect(await response.json()).toMatchObject({
+      error: { message: "LLM provider is unavailable" },
+    });
   });
 
   test("returns an answer from the provider chat completion", async () => {
     vi.stubGlobal(
       "fetch",
-      vi.fn(() => Promise.resolve(Response.json({ choices: [{ message: { content: "The answer." } }] }))),
+      vi.fn(() =>
+        Promise.resolve(Response.json({ choices: [{ message: { content: "The answer." } }] })),
+      ),
     );
-    const app = createTestApp({ workspace: { user, vault } }, { ...baseConfig, openAiProvider: openRouterProvider });
+    const app = createTestApp(
+      { workspace: { user, vault } },
+      { ...baseConfig, openAiProvider: openRouterProvider },
+    );
 
     const response = await postQuery(app);
     expect(response.status).toBe(200);
@@ -90,7 +111,10 @@ describe("POST /v1/vaults/:id/query", () => {
       .mockRejectedValueOnce(new Error("network down"))
       .mockResolvedValueOnce(Response.json({ choices: [{ message: { content: "Recovered." } }] }));
     vi.stubGlobal("fetch", fetch);
-    const app = createTestApp({ workspace: { user, vault } }, { ...baseConfig, openAiProvider: openRouterProvider });
+    const app = createTestApp(
+      { workspace: { user, vault } },
+      { ...baseConfig, openAiProvider: openRouterProvider },
+    );
 
     const responsePromise = postQuery(app);
     await vi.runAllTimersAsync();
@@ -105,9 +129,14 @@ describe("POST /v1/vaults/:id/query", () => {
     const fetch = vi
       .fn()
       .mockResolvedValueOnce(new Response(null, { status: 429, headers: { "retry-after": "1" } }))
-      .mockResolvedValueOnce(Response.json({ choices: [{ message: { content: "After retry." } }] }));
+      .mockResolvedValueOnce(
+        Response.json({ choices: [{ message: { content: "After retry." } }] }),
+      );
     vi.stubGlobal("fetch", fetch);
-    const app = createTestApp({ workspace: { user, vault } }, { ...baseConfig, openAiProvider: openRouterProvider });
+    const app = createTestApp(
+      { workspace: { user, vault } },
+      { ...baseConfig, openAiProvider: openRouterProvider },
+    );
 
     const responsePromise = postQuery(app);
     await vi.runAllTimersAsync();
@@ -121,13 +150,18 @@ describe("POST /v1/vaults/:id/query", () => {
   test("does not retry provider request rejections", async () => {
     const fetch = vi.fn(() => Promise.resolve(new Response(null, { status: 400 })));
     vi.stubGlobal("fetch", fetch);
-    const app = createTestApp({ workspace: { user, vault } }, { ...baseConfig, openAiProvider: openRouterProvider });
+    const app = createTestApp(
+      { workspace: { user, vault } },
+      { ...baseConfig, openAiProvider: openRouterProvider },
+    );
 
     const response = await postQuery(app);
 
     expect(fetch).toHaveBeenCalledTimes(1);
     expect(response.status).toBe(502);
-    expect(await response.json()).toMatchObject({ error: { message: "LLM provider rejected the request" } });
+    expect(await response.json()).toMatchObject({
+      error: { message: "LLM provider rejected the request" },
+    });
   });
 
   test("rejects API keys without query scope", async () => {
@@ -135,7 +169,9 @@ describe("POST /v1/vaults/:id/query", () => {
 
     const response = await postQuery(app);
     expect(response.status).toBe(403);
-    expect(await response.json()).toMatchObject({ error: { message: "Insufficient API key scope" } });
+    expect(await response.json()).toMatchObject({
+      error: { message: "Insufficient API key scope" },
+    });
   });
 });
 
@@ -158,13 +194,22 @@ function createTestApp(options: FakeRuntimeOptions = {}, config = baseConfig) {
   return createApp(fakeRuntime({ ...options, openAiProvider: config.openAiProvider }), config);
 }
 
-function fakeRuntime({ openAiProvider = { kind: "disabled" }, ...options }: FakeRuntimeOptions = {}): ApiRuntime {
+function fakeRuntime({
+  openAiProvider = { kind: "disabled" },
+  ...options
+}: FakeRuntimeOptions = {}): ApiRuntime {
   return ManagedRuntime.make(
     createApiLayer({
       dbLayer: Layer.succeed(Db, fakeDb(options)),
       authConfig: baseConfig.auth,
       authCodeDelivery: { deliver: () => Effect.void },
       llmClient: openRouterLlmClient(openAiProvider),
+      vaultStorage: {
+        prepareBucketForOwner: () => Effect.succeed(null),
+        writeText: () => Effect.succeed({ etag: null }),
+        deleteText: () => Effect.void,
+        clearVault: () => Effect.void,
+      },
     }),
   );
 }

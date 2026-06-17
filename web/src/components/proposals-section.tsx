@@ -124,7 +124,7 @@ export function ProposalsSection({
                   {p.title || "(untitled)"}
                 </span>
                 <span className="font-mono text-[length:var(--text-chrome)] tracking-[0.04em] text-warm-ghost truncate w-full text-left">
-                  {p.content_type} · {p.status}
+                  {proposalTypeLabel(p.content_type)} · {p.status}
                 </span>
               </div>
               <div className="flex items-center gap-3 shrink-0 ml-4">
@@ -249,4 +249,8 @@ export function ProposalsSection({
       )}
     </div>
   );
+}
+
+function proposalTypeLabel(contentType: string): string {
+  return contentType === "source_deletion" ? "delete source" : contentType;
 }

@@ -12,33 +12,54 @@ export const SourceDocumentSchema = createSelectSchema(sourceDocuments, {
   derivedExtras: z.record(z.string(), z.unknown()),
 });
 
-export const SourceDocumentUpsertSchema = createInsertSchema(sourceDocuments, {
-  filePath: (schema) => schema.trim().min(1),
-  fileHash: (schema) => schema.trim().min(1),
-  bodyHash: (schema) => schema.trim().min(1),
-  sourceType: (schema) => schema.trim().min(1).default("document"),
-  derivedExtras: z.record(z.string(), z.unknown()).optional(),
-}).pick({
-  filePath: true,
-  fileHash: true,
-  bodyHash: true,
-  clientHash: true,
-  etag: true,
-  sourceType: true,
-  url: true,
-  origin: true,
-  title: true,
-  precis: true,
-  author: true,
-  publishedDate: true,
-  genre: true,
-  tags: true,
-  derivedExtras: true,
+const SafeSourceDestPathSchema = z
+  .string()
+  .trim()
+  .min(1)
+  .refine(
+    (value) =>
+      !value.includes("\\") &&
+      !value.startsWith("/") &&
+      !value.split("/").includes("..") &&
+      value !== ".",
+    "destPath must be a relative path under raw/docs",
+  );
+
+const SafeSourceFilePathSchema = z
+  .string()
+  .trim()
+  .min(1)
+  .refine(
+    (value) => {
+      const parts = value.split("/");
+      return (
+        !value.includes("\\") &&
+        !value.startsWith("/") &&
+        !parts.includes("..") &&
+        parts.length >= 3 &&
+        parts[0] === "raw" &&
+        value.endsWith(".md")
+      );
+    },
+    "filePath must be a relative raw/*.md source path",
+  );
+
+export const SourceDocumentCreateSchema = z.object({
+  destPath: SafeSourceDestPathSchema,
+  content: z.string().min(1),
+  sourceType: z.string().trim().min(1).default("document"),
+  url: z.string().trim().url().optional(),
+  origin: z.string().trim().min(1).optional(),
+  clientHash: z.string().trim().min(1).optional(),
 });
 
 export const SourceListQuerySchema = PaginationSchema.extend({
   sourceType: z.string().trim().min(1).optional(),
   search: z.string().trim().optional(),
+});
+
+export const SourceDocumentDeleteSchema = z.object({
+  filePath: SafeSourceFilePathSchema,
 });
 
 export const SourceTypeFacetSchema = z.object({
@@ -67,7 +88,8 @@ export const SourceDocumentPageSchema = pageSchema(SourceDocumentSummarySchema).
 
 export type SourceDocumentId = z.infer<typeof SourceDocumentIdSchema>;
 export type SourceDocument = z.infer<typeof SourceDocumentSchema>;
-export type SourceDocumentUpsert = z.infer<typeof SourceDocumentUpsertSchema>;
+export type SourceDocumentCreate = z.infer<typeof SourceDocumentCreateSchema>;
+export type SourceDocumentDelete = z.infer<typeof SourceDocumentDeleteSchema>;
 export type SourceListQuery = z.infer<typeof SourceListQuerySchema>;
 export type SourceDocumentSummary = z.infer<typeof SourceDocumentSummarySchema>;
 export type SourceDocumentPage = z.infer<typeof SourceDocumentPageSchema>;
