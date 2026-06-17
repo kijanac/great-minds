@@ -96,3 +96,42 @@ export async function readDocument(path: string, signal?: AbortSignal): Promise<
   if (!res.ok) throw new Error(`Document not found: ${path}`);
   return readJson(res, documentResponseSchema);
 }
+
+// --- Context-panel lazy fetches (what entered the agent's context) ---
+
+const docChunkSchema = z.object({
+  chunk_index: z.number(),
+  heading: z.string(),
+  body: z.string(),
+});
+const chunksResponseSchema = z.array(docChunkSchema);
+export type DocChunk = z.infer<typeof docChunkSchema>;
+
+/** The paragraphs the agent expanded — chunks [start, end] of a document. */
+export async function fetchChunks(
+  path: string,
+  start: number,
+  end: number,
+  signal?: AbortSignal,
+): Promise<DocChunk[]> {
+  const qs = new URLSearchParams({ path, start: String(start), end: String(end) });
+  const res = await apiFetch(vaultPath(`/chunks?${qs.toString()}`), { signal });
+  if (!res.ok) throw new Error(`Chunks not found: ${path}`);
+  return readJson(res, chunksResponseSchema);
+}
+
+const linkItemSchema = z.object({ file_path: z.string(), title: z.string() });
+const linkedArticlesSchema = z.object({
+  outgoing: z.array(linkItemSchema),
+  incoming: z.array(linkItemSchema),
+});
+export type LinkItem = z.infer<typeof linkItemSchema>;
+export type LinkedArticles = z.infer<typeof linkedArticlesSchema>;
+
+/** A wiki article's outgoing/incoming links — what a linked_articles call saw. */
+export async function fetchLinks(path: string, signal?: AbortSignal): Promise<LinkedArticles> {
+  const qs = new URLSearchParams({ path });
+  const res = await apiFetch(vaultPath(`/links?${qs.toString()}`), { signal });
+  if (!res.ok) throw new Error(`Links not found: ${path}`);
+  return readJson(res, linkedArticlesSchema);
+}

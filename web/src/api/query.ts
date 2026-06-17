@@ -17,11 +17,15 @@ const sourceEventDataSchema = z.discriminatedUnion("type", [
     type: z.literal("article"),
     path: z.string(),
     title: z.string().nullable().optional(),
+    start: z.number().optional(),
+    end: z.number().optional(),
   }),
   z.object({
     type: z.literal("raw"),
     path: z.string(),
     title: z.string().nullable().optional(),
+    start: z.number().optional(),
+    end: z.number().optional(),
   }),
   z.object({ type: z.literal("search"), query: z.string() }),
   z.object({ type: z.literal("query"), filters: z.record(z.unknown()).optional() }),
@@ -147,12 +151,32 @@ export async function consumeStream(
       callbacks?.onToken?.(streamText);
     } else if (event.event === "source") {
       if (event.data.type === "article" || event.data.type === "raw") {
-        sources.push({
-          label: event.data.path,
-          type: event.data.type,
-          title: event.data.title ?? null,
-          thinking: streamText || undefined,
-        });
+        // Aggregate per document: read+expand of the same path collapse to one
+        // card, accumulating which chunk ranges entered and whether it was a
+        // full read. (no start/end → full read; with → an expanded range.)
+        const path = event.data.path;
+        const isExpand = event.data.start !== undefined && event.data.end !== undefined;
+        const range = isExpand ? { start: event.data.start!, end: event.data.end! } : null;
+        const i = sources.findIndex(
+          (s) => s.label === path && (s.type === "article" || s.type === "raw"),
+        );
+        if (i >= 0) {
+          const prev = sources[i];
+          sources[i] = {
+            ...prev,
+            ranges: range ? [...(prev.ranges ?? []), range] : prev.ranges,
+            full: prev.full || !isExpand,
+          };
+        } else {
+          sources.push({
+            label: path,
+            type: event.data.type,
+            title: event.data.title ?? null,
+            thinking: streamText || undefined,
+            ranges: range ? [range] : [],
+            full: !isExpand,
+          });
+        }
         callbacks?.onSources?.([...sources]);
         clearOnNextToken = true;
       } else if (event.data.type === "search") {
@@ -164,14 +188,18 @@ export async function consumeStream(
         callbacks?.onSources?.([...sources]);
         clearOnNextToken = true;
       } else if (event.data.type === "links") {
-        sources.push({
-          label: event.data.path,
-          type: "links",
-          title: event.data.title ?? null,
-          thinking: streamText || undefined,
-        });
-        callbacks?.onSources?.([...sources]);
-        clearOnNextToken = true;
+        // One card per article whose links were explored (dedup by path).
+        const path = event.data.path;
+        if (!sources.some((s) => s.type === "links" && s.label === path)) {
+          sources.push({
+            label: path,
+            type: "links",
+            title: event.data.title ?? null,
+            thinking: streamText || undefined,
+          });
+          callbacks?.onSources?.([...sources]);
+          clearOnNextToken = true;
+        }
       } else if (event.data.type === "query") {
         const filters = event.data.filters ?? {};
         const summary =

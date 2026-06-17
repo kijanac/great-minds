@@ -2,12 +2,13 @@ import { useCallback, useState } from "react";
 
 import { useViewNavigate } from "@/hooks/use-view-navigate";
 
-import { readDocument } from "@/api/doc";
+import { fetchChunks, fetchLinks, readDocument } from "@/api/doc";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
 import { AnswerBlock } from "@/components/answer-block";
-import { ArticlePanel } from "@/components/article-panel";
+import { ArticlePanel, type PanelContent } from "@/components/article-panel";
+import type { SourceRef } from "@/lib/types";
 import { FollowUpBar } from "@/components/follow-up-bar";
 import { PromoteButton } from "@/components/promote-button";
 import { SelectionPopover } from "@/components/selection-popover";
@@ -26,47 +27,64 @@ interface SessionThreadProps {
 export function SessionThread({ session, onFollowUp }: SessionThreadProps) {
   const navigate = useViewNavigate();
   const [panel, setPanel] = useState<{
-    path: string;
-    title: string | null;
-    kind: "raw" | "wiki" | null;
-    body: string | null;
+    card: SourceRef;
+    content: PanelContent | null;
     loading: boolean;
   } | null>(null);
 
-  const openPanel = useCallback(async (path: string) => {
-    setPanel({ path, title: null, kind: null, body: null, loading: true });
+  // Open a card showing exactly what entered the agent's context: a full
+  // read → the document; expanded chunks → those passages; a links card →
+  // the article's connections. Lazy-fetched per mode.
+  const openCard = useCallback(async (card: SourceRef) => {
+    setPanel({ card, content: null, loading: true });
     try {
-      const data = await readDocument(path);
+      let content: PanelContent;
+      if (card.type === "links") {
+        content = { mode: "links", links: await fetchLinks(card.label) };
+      } else if (!card.full && card.ranges && card.ranges.length > 0) {
+        const chunks = (
+          await Promise.all(card.ranges.map((r) => fetchChunks(card.label, r.start, r.end)))
+        ).flat();
+        content = { mode: "chunks", chunks };
+      } else {
+        const data = await readDocument(card.label);
+        content = { mode: "doc", body: data.body };
+      }
       setPanel((prev) =>
-        prev?.path === path
-          ? {
-              path,
-              title: data.article.title || null,
-              kind: path.startsWith("wiki/") ? "wiki" : "raw",
-              body: data.body,
-              loading: false,
-            }
-          : prev,
+        prev?.card.label === card.label ? { card, content, loading: false } : prev,
       );
     } catch {
       setPanel((prev) =>
-        prev?.path === path ? { path, title: null, kind: null, body: null, loading: false } : prev,
+        prev?.card.label === card.label ? { card, content: null, loading: false } : prev,
       );
     }
   }, []);
 
+  // Inline prose links open the full document (no chunk context).
+  const openByPath = useCallback(
+    (path: string) => {
+      const card: SourceRef = {
+        label: path,
+        type: path.startsWith("wiki/") ? "article" : "raw",
+        full: true,
+      };
+      void openCard(card);
+    },
+    [openCard],
+  );
+
   const togglePanel = useCallback(
-    async (path: string) => {
-      if (panel?.path === path) {
+    (card: SourceRef) => {
+      if (panel?.card.label === card.label) {
         setPanel(null);
         return;
       }
-      openPanel(path);
+      void openCard(card);
     },
-    [panel?.path, openPanel],
+    [panel?.card.label, openCard],
   );
 
-  const handleLinkClick = useLinkInterceptor(openPanel);
+  const handleLinkClick = useLinkInterceptor(openByPath);
 
   const { popover, addChip, startBtw, clearPopover } = session;
   usePopoverDismiss(clearPopover);
@@ -115,7 +133,7 @@ export function SessionThread({ session, onFollowUp }: SessionThreadProps) {
                 blocks={ex.thinking}
                 streaming={false}
                 onCardClick={togglePanel}
-                activeCard={panel?.path ?? null}
+                activeCard={panel?.card.label ?? null}
               />
 
               <AnswerBlock
@@ -138,7 +156,7 @@ export function SessionThread({ session, onFollowUp }: SessionThreadProps) {
                 blocks={session.liveThinking}
                 streaming={session.phase === "searching"}
                 onCardClick={togglePanel}
-                activeCard={panel?.path ?? null}
+                activeCard={panel?.card.label ?? null}
               />
 
               {session.liveText && (
@@ -200,13 +218,12 @@ export function SessionThread({ session, onFollowUp }: SessionThreadProps) {
         <>
           <div className="fixed inset-0 z-[199]" onClick={() => setPanel(null)} />
           <ArticlePanel
-            path={panel.path}
-            title={panel.title}
-            kind={panel.kind}
-            body={panel.body}
+            card={panel.card}
+            content={panel.content}
             loading={panel.loading}
             onClose={() => setPanel(null)}
-            onFullScreen={() => navigate(`/doc/${panel.path}`)}
+            onFullScreen={() => navigate(`/doc/${panel.card.label}`)}
+            onOpenPath={(p) => navigate(`/doc/${p}`)}
           />
         </>
       )}

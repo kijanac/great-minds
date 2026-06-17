@@ -3,13 +3,13 @@ import { ChevronDown, ChevronRight, ListFilter, Search, Waypoints } from "lucide
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import type { ThinkingBlock } from "@/lib/types";
+import type { SourceRef, ThinkingBlock } from "@/lib/types";
 import { displayTitle } from "@/lib/utils";
 
 interface ThinkingSectionProps {
   blocks: ThinkingBlock[];
   streaming: boolean;
-  onCardClick: (path: string) => void;
+  onCardClick: (src: SourceRef) => void;
   activeCard: string | null;
 }
 
@@ -75,7 +75,7 @@ export function ThinkingSection({
                     title={src.title}
                     thinking={src.thinking}
                     active={activeCard === src.label}
-                    onClick={() => onCardClick(src.label)}
+                    onClick={() => onCardClick(src)}
                     icon={
                       src.type === "links" ? (
                         <Waypoints size={9} className="mr-1.5 opacity-60" />

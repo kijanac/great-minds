@@ -5,6 +5,10 @@ export const sourceRefSchema = z.object({
   type: z.enum(["article", "raw", "search", "query", "links"]),
   title: z.string().nullable().optional(),
   thinking: z.string().optional(),
+  // For content cards (article/raw): which chunk ranges the agent expanded,
+  // and whether it read the whole document. Drive the context panel.
+  ranges: z.array(z.object({ start: z.number(), end: z.number() })).optional(),
+  full: z.boolean().optional(),
 });
 
 export const thinkingBlockSchema = z.object({
