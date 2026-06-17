@@ -92,7 +92,7 @@ export function SourcesPage({
 
       <div className="flex-1 min-h-0 overflow-y-auto">
         <div className="max-w-[740px] mx-auto px-4 md:px-10 pt-8 pb-20">
-          {sourceTypes.length > 0 && (
+          {sourceTypes.length > 1 && (
             <ToggleGroup
               multiple={false}
               value={[activeType ?? ALL_TYPES_VALUE]}
@@ -285,9 +285,11 @@ function SourceActionButton({
           <p className="truncate font-mono text-[length:var(--text-chrome)] tracking-[0.04em] text-gold-muted">
             {title}
           </p>
-          <p className="mt-1 truncate font-mono text-[length:var(--text-chrome)] tracking-[0.04em] text-warm-ghost">
-            {item.file_path}
-          </p>
+          {item.title && (
+            <p className="mt-1 truncate font-mono text-[length:var(--text-chrome)] tracking-[0.04em] text-warm-ghost">
+              {item.file_path}
+            </p>
+          )}
         </div>
         <AlertDialogFooter>
           <AlertDialogCancel
