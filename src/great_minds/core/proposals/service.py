@@ -10,7 +10,6 @@ from uuid import UUID
 
 from great_minds.core.compile_intents.repository import CompileIntentRepository
 from great_minds.core.documents.service import SourceDocumentService
-from great_minds.core.documents.schemas import SourceDocument
 from great_minds.core.pagination import Page, PageParams, create_page
 from great_minds.core.paths import proposal_staging_path
 from great_minds.core.proposals.models import ProposalStatus
@@ -23,8 +22,6 @@ from great_minds.core.proposals.schemas import (
 from great_minds.core.storage import Storage
 
 log = logging.getLogger(__name__)
-
-SOURCE_DELETION_CONTENT_TYPE = "source_deletion"
 
 
 class ProposalService:
@@ -75,38 +72,6 @@ class ProposalService:
         if result is None:
             raise RuntimeError(f"created proposal {proposal.id} not found")
         return result
-
-    async def create_source_deletion_request(
-        self,
-        vault_id: UUID,
-        user_id: UUID,
-        source: SourceDocument,
-    ) -> Proposal:
-        existing = await self.find_pending_for_dest(vault_id, source.file_path)
-        if existing is not None:
-            if existing.content_type == SOURCE_DELETION_CONTENT_TYPE:
-                return existing
-            raise ValueError("A pending proposal already targets this source")
-
-        source_label = source.title or source.file_path
-        rendered = (
-            "---\n"
-            f"source_type: {SOURCE_DELETION_CONTENT_TYPE!r}\n"
-            f"source_doc_path: {source.file_path!r}\n"
-            "---\n"
-            f"Request deletion of `{source.file_path}`.\n"
-        )
-        return await self.create(
-            vault_id=vault_id,
-            user_id=user_id,
-            data=ProposalCreate(
-                content_type=SOURCE_DELETION_CONTENT_TYPE,
-                title=f"Delete source: {source_label}",
-                author=None,
-                dest_path=source.file_path,
-                rendered=rendered,
-            ),
-        )
 
     async def list_for_vault(
         self,
@@ -167,11 +132,8 @@ class ProposalService:
         proposal: Proposal,
         storage: Storage,
     ) -> None:
-        """Apply an approved proposal to the vault corpus."""
-        if proposal.content_type == SOURCE_DELETION_CONTENT_TYPE:
-            await self._approve_source_deletion(proposal, storage)
-            return
-
+        """Write staged content to dest_path, index it, and link the
+        resulting document_id back to the proposal."""
         path = proposal_staging_path(proposal.id)
         rendered = await self.proposals_storage.read(path)
         await storage.write(proposal.dest_path, rendered)
@@ -180,19 +142,6 @@ class ProposalService:
         )
         await self.repo.set_document_id(proposal.id, document_id)
         await self.intent_repo.ensure_pending(proposal.vault_id)
-
-    async def _approve_source_deletion(
-        self,
-        proposal: Proposal,
-        storage: Storage,
-    ) -> None:
-        await self.doc_service.delete_source(
-            proposal.vault_id,
-            proposal.dest_path,
-            storage=storage,
-            missing_ok=True,
-        )
-        await self.proposals_storage.delete(proposal_staging_path(proposal.id))
 
     async def _reject(self, proposal: Proposal) -> None:
         """Clean up staged content for a rejected proposal."""

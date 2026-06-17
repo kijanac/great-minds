@@ -3,8 +3,6 @@ import { useSearchParams } from "react-router";
 
 import { SourcesPage } from "@/components/sources-page";
 import { useViewNavigate } from "@/hooks/use-view-navigate";
-import { useLocalApp } from "@/local/app-provider";
-import type { MemberRole } from "@/local/schema/member-role";
 import type { SourceDocumentSummary, SourceTypeFacet } from "@/local/schema/source";
 import { localApi } from "@/local/worker/client";
 
@@ -14,8 +12,6 @@ const SEARCH_DEBOUNCE_MS = 300;
 export function SourcesContainer() {
   const navigate = useViewNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
-  const { workspace } = useLocalApp();
-
   const initialType = searchParams.get("type") || null;
 
   const [items, setItems] = useState<SourceDocumentSummary[]>([]);
@@ -25,10 +21,6 @@ export function SourcesContainer() {
   const [loading, setLoading] = useState(true);
   const [hasMore, setHasMore] = useState(false);
   const [offset, setOffset] = useState(0);
-  const [role, setRole] = useState<MemberRole | null>(null);
-  const [actionPath, setActionPath] = useState<string | null>(null);
-  const [actionError, setActionError] = useState<string | null>(null);
-
   const debounceRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const searchRef = useRef(search);
   searchRef.current = search;
@@ -36,25 +28,6 @@ export function SourcesContainer() {
   useEffect(() => {
     return () => clearTimeout(debounceRef.current);
   }, []);
-
-  useEffect(() => {
-    let active = true;
-    void localApi.getVaultSettings(workspace.vault.id).then(
-      (settings) => {
-        if (!active) return;
-        const currentMember = settings.members.find(
-          (member) => member.userId === workspace.user.id,
-        );
-        setRole(currentMember?.role ?? null);
-      },
-      () => {
-        if (active) setRole(null);
-      },
-    );
-    return () => {
-      active = false;
-    };
-  }, [workspace.user.id, workspace.vault.id]);
 
   const load = useCallback(
     async (params: { sourceType?: string; search?: string; offset: number; append: boolean }) => {
@@ -128,32 +101,6 @@ export function SourcesContainer() {
     });
   }
 
-  const handleDeleteSource = useCallback(
-    async (filePath: string) => {
-      setActionPath(filePath);
-      setActionError(null);
-      try {
-        const deleted = await localApi.deleteSource({ filePath });
-        if (!deleted) throw new Error("Source not found");
-
-        setOffset(0);
-        await load({
-          sourceType: activeType ?? undefined,
-          search: searchRef.current,
-          offset: 0,
-          append: false,
-        });
-      } catch (error) {
-        const message = error instanceof Error ? error.message : "Failed to delete source";
-        setActionError(message);
-        throw error;
-      } finally {
-        setActionPath(null);
-      }
-    },
-    [activeType, load],
-  );
-
   return (
     <SourcesPage
       items={items}
@@ -162,12 +109,6 @@ export function SourcesContainer() {
       search={search}
       loading={loading}
       hasMore={hasMore}
-      sourceActions={{
-        role,
-        busyPath: actionPath,
-        error: actionError,
-        onDeleteSource: handleDeleteSource,
-      }}
       onHome={() => navigate("/")}
       onSourceClick={(path) => navigate(`/doc/${path}`)}
       onTypeFilter={handleTypeFilter}

@@ -1,6 +1,5 @@
 """Source document and wiki article services."""
 
-from typing import TYPE_CHECKING
 from uuid import UUID
 
 from great_minds.core.documents.repository import SourceDocumentRepo, WikiArticleRepo
@@ -15,9 +14,6 @@ from great_minds.core.documents.schemas import (
 )
 from great_minds.core.markdown import parse_frontmatter
 from great_minds.core.pagination import FacetedPage, Page, PageParams, create_page
-
-if TYPE_CHECKING:
-    from great_minds.core.storage import Storage
 
 
 class SourceDocumentService:
@@ -73,21 +69,6 @@ class SourceDocumentService:
         self, vault_id: UUID, file_path: str
     ) -> SourceDocument | None:
         return await self.repo.get_by_path(vault_id, file_path)
-
-    async def delete_source(
-        self,
-        vault_id: UUID,
-        file_path: str,
-        *,
-        storage: "Storage",
-        missing_ok: bool = False,
-    ) -> bool:
-        deleted = await self.repo.delete_source(vault_id, file_path)
-        if not deleted and not missing_ok:
-            return False
-        await storage.delete(file_path, missing_ok=True)
-        await self._commit()
-        return deleted
 
     async def get_title_by_path(self, vault_id: UUID, file_path: str) -> str | None:
         return await self.repo.get_title_by_path(vault_id, file_path)
