@@ -19,6 +19,7 @@ dogfood-output/
 test_data_old/
 test_data_old_2/
 test_data_old_3/
+marxism_corpus/
 great_minds_product_overview.pdf
 .compile/
 .local-backups/
