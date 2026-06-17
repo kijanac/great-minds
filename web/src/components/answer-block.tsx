@@ -39,8 +39,14 @@ const mdComponents: ComponentProps<typeof Markdown>["components"] = {
       {children}
     </ul>
   ),
-  ol: ({ children }) => (
-    <ol className="list-decimal list-inside text-[length:var(--text-body)] leading-[1.82] text-warm-dim mb-2 ml-2">
+  // Honor `start`: splitBlocks() cuts the answer on blank lines for per-
+  // paragraph anchoring, so a loose ordered list arrives one item per block —
+  // each a standalone <ol start=N>. Without start, every fragment restarts at 1.
+  ol: ({ children, start }) => (
+    <ol
+      start={start}
+      className="list-decimal list-inside text-[length:var(--text-body)] leading-[1.82] text-warm-dim mb-2 ml-2"
+    >
       {children}
     </ol>
   ),
