@@ -204,13 +204,18 @@ class SearchIndexRepository:
     # -- Query path ------------------------------------------------------
 
     async def bm25_search(
-        self, vault_ids: list[UUID], query: str, limit: int
+        self,
+        vault_ids: list[UUID],
+        query: str,
+        limit: int,
+        path: str | None = None,
     ) -> list[ChunkScore]:
         """Return top-N rows by ts_rank against a tokenized BM25 tsquery.
 
         Builds the tsquery internally — callers pass the raw user query
         string and this method tokenizes (strips non-word chars, drops
-        words <=2 chars, OR-joins the rest via plainto_tsquery).
+        words <=2 chars, OR-joins the rest via plainto_tsquery). When
+        ``path`` is given, the search is scoped to that one document.
         """
         words = [w for w in re.sub(r"[^\w\s]", "", query).split() if len(w) > 2]
         if words:
@@ -220,22 +225,21 @@ class SearchIndexRepository:
         else:
             tsquery = func.plainto_tsquery("english", query)
         rank_expr = func.ts_rank(SearchIndexEntry.tsv, tsquery)
-        result = await self.session.execute(
-            select(
-                SearchIndexEntry.vault_id,
-                SearchIndexEntry.path,
-                SearchIndexEntry.chunk_index,
-                SearchIndexEntry.heading,
-                SearchIndexEntry.body,
-                rank_expr.label("score"),
-            )
-            .where(
-                SearchIndexEntry.vault_id.in_(vault_ids),
-                SearchIndexEntry.tsv.bool_op("@@")(tsquery),
-            )
-            .order_by(rank_expr.desc())
-            .limit(limit)
+        stmt = select(
+            SearchIndexEntry.vault_id,
+            SearchIndexEntry.path,
+            SearchIndexEntry.chunk_index,
+            SearchIndexEntry.heading,
+            SearchIndexEntry.body,
+            rank_expr.label("score"),
+        ).where(
+            SearchIndexEntry.vault_id.in_(vault_ids),
+            SearchIndexEntry.tsv.bool_op("@@")(tsquery),
         )
+        if path is not None:
+            stmt = stmt.where(SearchIndexEntry.path == path)
+        stmt = stmt.order_by(rank_expr.desc()).limit(limit)
+        result = await self.session.execute(stmt)
         return [ChunkScore.model_validate(row) for row in result.fetchall()]
 
     async def vector_search(
@@ -243,23 +247,26 @@ class SearchIndexRepository:
         vault_ids: list[UUID],
         query_embedding: list[float],
         limit: int,
+        path: str | None = None,
     ) -> list[ChunkScore]:
-        """Return top-N rows by cosine similarity to ``query_embedding``."""
+        """Return top-N rows by cosine similarity to ``query_embedding``.
+
+        When ``path`` is given, the search is scoped to that one document.
+        """
         dist_expr = SearchIndexEntry.embedding.cosine_distance(query_embedding)
-        result = await self.session.execute(
-            select(
-                SearchIndexEntry.vault_id,
-                SearchIndexEntry.path,
-                SearchIndexEntry.chunk_index,
-                SearchIndexEntry.heading,
-                SearchIndexEntry.body,
-                (1 - dist_expr).label("score"),
-            )
-            .where(
-                SearchIndexEntry.vault_id.in_(vault_ids),
-                SearchIndexEntry.embedding.isnot(None),
-            )
-            .order_by(dist_expr)
-            .limit(limit)
+        stmt = select(
+            SearchIndexEntry.vault_id,
+            SearchIndexEntry.path,
+            SearchIndexEntry.chunk_index,
+            SearchIndexEntry.heading,
+            SearchIndexEntry.body,
+            (1 - dist_expr).label("score"),
+        ).where(
+            SearchIndexEntry.vault_id.in_(vault_ids),
+            SearchIndexEntry.embedding.isnot(None),
         )
+        if path is not None:
+            stmt = stmt.where(SearchIndexEntry.path == path)
+        stmt = stmt.order_by(dist_expr).limit(limit)
+        result = await self.session.execute(stmt)
         return [ChunkScore.model_validate(row) for row in result.fetchall()]

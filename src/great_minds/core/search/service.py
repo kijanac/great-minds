@@ -76,8 +76,12 @@ class SearchService:
         query: str,
         *,
         limit: int = MAX_SEARCH_RESULTS,
+        path: str | None = None,
     ) -> list[SearchResult]:
-        """Hybrid search across vaults using BM25 + vector similarity + RRF."""
+        """Hybrid search across vaults using BM25 + vector similarity + RRF.
+
+        When ``path`` is given, the search is scoped to that one document.
+        """
         if not vault_ids or not query.strip():
             return []
 
@@ -86,9 +90,9 @@ class SearchService:
         query_embeddings = await embed_batch(client, [query])
         query_embedding = query_embeddings[0]
 
-        bm25_rows = await self.repo.bm25_search(vault_ids, query, limit * 2)
+        bm25_rows = await self.repo.bm25_search(vault_ids, query, limit * 2, path)
         vector_rows = await self.repo.vector_search(
-            vault_ids, query_embedding, limit * 2
+            vault_ids, query_embedding, limit * 2, path
         )
 
         scores: dict[tuple[UUID, str, int], float] = {}

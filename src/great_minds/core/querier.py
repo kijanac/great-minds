@@ -239,6 +239,37 @@ _BASE_TOOLS = [
             },
         },
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "search_in_document",
+            "description": (
+                "Search within a single document for the passages most "
+                "relevant to a query — hybrid text + semantic, scoped to one "
+                "`path`. Use it to jump to the right part of a long source or "
+                "article instead of reading its whole outline. Returns "
+                "matching chunks with indexes you can pass to "
+                "expand_context(path, start, end)."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "path": {
+                        "type": "string",
+                        "description": (
+                            "Document path to search within, e.g. "
+                            "raw/texts/lenin/works/1916/imperialism/03.md"
+                        ),
+                    },
+                    "query": {
+                        "type": "string",
+                        "description": "Search term or phrase",
+                    },
+                },
+                "required": ["path", "query"],
+            },
+        },
+    },
 ]
 
 
@@ -322,6 +353,10 @@ def _classify_tool_call(name: str, args: dict) -> tuple[SourceType, dict] | None
         return doc_type, meta
     if name == "search_content":
         return SourceType.SEARCH, {"query": args["query"]}
+    if name == "search_in_document":
+        # A search scoped to one document — surface it as a search card whose
+        # label names both the query and the document it ran against.
+        return SourceType.SEARCH, {"query": f"{args['query']} · in {args['path']}"}
     if name == "query_documents":
         return SourceType.QUERY, {"filters": {k: v for k, v in args.items() if v}}
     if name == "list_articles":
@@ -365,7 +400,9 @@ attributes (tag, author, date, genre). For the wiki side, browse with \
 `list_articles` instead.
 5. Use `read_document(path)` to read a whole document; for a large \
 document this returns a section outline instead, which you then read \
-section-by-section with `expand_context`. Paths look like \
+section-by-section with `expand_context` — or use \
+`search_in_document(path, query)` to jump straight to the passages in \
+that document most relevant to a query. Paths look like \
 `wiki/<slug>.md` for rendered articles or `raw/<content_type>/...` for \
 sources.
 6. Use `linked_articles(path)` to see which wiki articles an article \
@@ -630,6 +667,40 @@ class QueryEngine:
             + "\n\n".join(parts)
         )
 
+    async def _search_in_document(self, path: str, query: str) -> str:
+        """Hybrid search scoped to a single document.
+
+        Lets the agent jump to the passages of a long source or article most
+        relevant to a query, rather than walking its whole outline. Returns
+        matching chunk indexes to widen with expand_context.
+        """
+        results = await self.search.search([self.vault_id], query, path=path)
+
+        log_event(
+            "tool.search_in_document",
+            path=path,
+            query=query,
+            results_count=len(results),
+        )
+
+        if not results:
+            return (
+                f"No passages in {path} match '{query}'. Check the path (from "
+                f"list_articles or a search_content hit), or use search_content "
+                f"to search the whole knowledge base."
+            )
+
+        parts = []
+        for r in results:
+            heading = f" — {r.heading}" if r.heading else ""
+            parts.append(f"[chunk {r.chunk_index}]{heading}\n{r.snippet}")
+
+        return (
+            f"Found {len(results)} matching passages in {path}. Read more "
+            f"around any with expand_context(path, start, end).\n\n"
+            + "\n\n".join(parts)
+        )
+
     async def _expand_context(self, path: str, start: int, end: int) -> str:
         """Read a range of a document's paragraphs (chunks ``start``..``end``).
 
@@ -780,6 +851,8 @@ class QueryEngine:
             return await self._linked_articles(args["path"])
         elif name == "search_content":
             return await self._search_content(args["query"])
+        elif name == "search_in_document":
+            return await self._search_in_document(args["path"], args["query"])
         elif name == "query_documents":
             return await self._query_documents(args)
         elif name == "list_articles":
