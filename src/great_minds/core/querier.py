@@ -1,8 +1,9 @@
 """Query interface for the knowledge base.
 
-Uses Gemma 4 31B via OpenRouter with function calling to navigate the wiki.
-Emits structured telemetry via wide events — every query logs which articles
-and sources were pulled into context, with timing.
+Runs the configured QUERY_MODEL via OpenRouter with function calling to
+navigate the wiki and raw sources. Emits structured telemetry via wide
+events — every query logs which articles and sources were pulled into
+context, with timing.
 """
 
 import enum
@@ -94,12 +95,13 @@ _BASE_TOOLS = [
         "function": {
             "name": "read_document",
             "description": (
-                "Read a document by path. A small document is returned in "
-                "full; a large document returns its section outline (headings "
-                "with chunk ranges) instead, so you can then read a section "
-                "with expand_context(path, start, end). Works for wiki "
-                "articles (wiki/capitalism.md) and raw sources "
-                "(raw/texts/lenin/works/1893/market/02.md)."
+                "Use to read a document you already have the `path` for. A "
+                "small document is returned in full; a LARGE document returns "
+                "only a section OUTLINE, not its text. If you have a query and "
+                "the document is large, do NOT use this to read it — use "
+                "search_in_document(path, query) to jump to the relevant "
+                "passages. Read an outlined section with "
+                "expand_context(path, start, end)."
             ),
             "parameters": {
                 "type": "object",
@@ -121,10 +123,11 @@ _BASE_TOOLS = [
         "function": {
             "name": "expand_context",
             "description": (
-                "Read a range of a document's paragraphs without loading the "
-                "whole file — use it to read around a search hit or to read a "
-                "section from a document outline. Pass a `path` and a "
-                "`start`/`end` chunk range."
+                "Use to fetch a specific `start`-`end` chunk range you ALREADY "
+                "obtained from a search hit or a read_document outline. Do NOT "
+                "use it to explore a document — guessing a range (e.g. chunks "
+                "1-10) wastes turns; run search_in_document(path, query) first "
+                "and expand only the chunks it returns."
             ),
             "parameters": {
                 "type": "object",
@@ -154,10 +157,13 @@ _BASE_TOOLS = [
         "function": {
             "name": "linked_articles",
             "description": (
-                "List the wiki articles a given article links to (outgoing) "
-                "and that link to it (incoming) — follow connections between "
-                "articles without reading their full text. Pass a wiki "
-                "article path, e.g. wiki/imperialism.md."
+                "Use when you have a wiki article `path` and want its "
+                "neighbors in the citation graph — outgoing and incoming links "
+                "— to follow related articles without reading their bodies. "
+                "Returns linked titles + paths only. Do NOT use it to find "
+                "passages or do topical search (use search_content / "
+                "search_in_document). Pass a wiki article path, e.g. "
+                "wiki/imperialism.md."
             ),
             "parameters": {
                 "type": "object",
@@ -179,12 +185,13 @@ _BASE_TOOLS = [
         "function": {
             "name": "search_content",
             "description": (
-                "Hybrid text + semantic search across the entire knowledge "
-                "base — both raw sources and rendered wiki articles. Indexes "
-                "frontmatter title/precis/author alongside body paragraphs, "
-                "so this is the right tool for any text-shaped discovery "
-                "question. Returns ranked excerpts with paths you can pass "
-                "to read_document."
+                "Use FIRST only when you don't yet know which document holds "
+                "the answer — hybrid search across the WHOLE knowledge base "
+                "(all raw sources + all wiki articles), matching title, precis, "
+                "author, and body text. Returns ranked excerpts each with a "
+                "`path` and `chunk_index`. Once you have a specific path, do "
+                "NOT search here again — use search_in_document to search "
+                "inside it, or read_document to read it."
             ),
             "parameters": {
                 "type": "object",
@@ -203,13 +210,13 @@ _BASE_TOOLS = [
         "function": {
             "name": "list_articles",
             "description": (
-                "Browse the rendered wiki articles — the encyclopedia layer "
-                "synthesized from the sources — as titles + paths, most-linked "
-                "first. Use it to get the lay of the land, or to find the "
-                "article on a known subject and read it by its real path "
-                "instead of guessing. `contains` is a literal title/precis "
-                "filter; for topical or fuzzy discovery use search_content, "
-                "which also searches article bodies and raw sources."
+                "Use to BROWSE the wiki article index — the synthesized "
+                "encyclopedia — by title and path, most-linked first "
+                "(sort=central). Reach for it FIRST to orient on a concept, "
+                "person, work, or '-ism', or to find a known article's real "
+                "path before reading it. Returns titles + paths only, no body "
+                "text. `contains` is a literal title/precis substring filter — "
+                "for topical or fuzzy discovery use search_content instead."
             ),
             "parameters": {
                 "type": "object",
@@ -244,11 +251,12 @@ _BASE_TOOLS = [
         "function": {
             "name": "search_in_document",
             "description": (
-                "Search within a single document for the passages most "
-                "relevant to a query — hybrid text + semantic, scoped to one "
-                "`path`. Use it to jump to the right part of a long source or "
-                "article instead of reading its whole outline. Returns "
-                "matching chunks with indexes you can pass to "
+                "Use when you HAVE a document `path` and want the passages of "
+                "THAT document relevant to a query — hybrid search scoped to "
+                "one document. ALWAYS prefer this over read_document + "
+                "expand_context for any document large enough to return an "
+                "outline: it finds the relevant chunks instead of making you "
+                "guess a range. Returns matching chunks with indexes for "
                 "expand_context(path, start, end)."
             ),
             "parameters": {
@@ -281,11 +289,12 @@ def _build_query_tool(tags: list[str]) -> dict:
         "function": {
             "name": "query_documents",
             "description": (
-                "Filter raw source documents by structured metadata "
-                "(tag, author, genre, date). Use when you have a concrete "
-                "attribute to narrow by — not for text discovery (use "
-                "search_content for that). Wiki articles aren't returned "
-                "by this tool — browse those with list_articles. "
+                "Use when the question names a STRUCTURED attribute of raw "
+                "sources — a tag, author, genre, or date/date-range (e.g. "
+                "'sources by X', 'everything tagged Y', 'written after Z'). "
+                "Filters by metadata, not text content. Do NOT use it for "
+                "topical/conceptual questions (use search_content), and do NOT "
+                "use it for wiki articles (use list_articles). "
                 f"{tags_desc}."
             ),
             "parameters": {
@@ -380,42 +389,63 @@ _ARTICLES_PER_PAGE = 25  # wiki articles returned per list_articles page
 
 
 _RETRIEVAL_CORE = """\
-You have access to tools that let you search and read documents in the \
-knowledge base. Use them to answer questions based on the actual texts.
+You answer questions over a knowledge base by researching its documents \
+with tools, then writing a cited answer. Work in four stages — each stage \
+tells you which tool to reach for. Don't jump straight to whole-base search.
 
-Approach:
-1. Use `search_content` for text-shaped discovery — finds matching \
-passages across both rendered wiki articles and raw sources, including \
-each file's title/precis/author. Each hit carries a `path` and \
-`chunk_index`.
-2. Use `list_articles` to browse the rendered wiki articles (the \
-synthesized encyclopedia) as titles + paths, most-linked first — for \
-orientation, or to find the article on a known subject and read it by \
-its real path instead of guessing. `contains` filters titles/precis \
-literally; use `search_content` for fuzzy/topical discovery.
-3. Use `expand_context(path, start, end)` to read a range of paragraphs \
-— around a search hit, or a section listed in a document outline.
-4. Use `query_documents` when filtering raw sources by structured \
-attributes (tag, author, date, genre). For the wiki side, browse with \
-`list_articles` instead.
-5. Use `read_document(path)` to read a whole document; for a large \
-document this returns a section outline instead, which you then read \
-section-by-section with `expand_context` — or use \
-`search_in_document(path, query)` to jump straight to the passages in \
-that document most relevant to a query. Paths look like \
-`wiki/<slug>.md` for rendered articles or `raw/<content_type>/...` for \
-sources.
-6. Use `linked_articles(path)` to see which wiki articles an article \
-cites and is cited by — follow connections between articles without \
-reading their full text.
-7. To verify a claim or get more depth, follow source citations in a \
-wiki article to read raw primary texts.
+STAGE 1 — ORIENT. Get the lay of the land before hunting for passages.
+- list_articles(contains, sort=central|recent|alpha): browse the rendered \
+wiki articles — a synthesized encyclopedia, most-linked first. For any \
+question about a concept, person, work, or term, START here to find the \
+canonical article and its real path instead of guessing one.
+- query_documents(tags, author, genre, date): when the question names a \
+structured attribute of raw sources (an author, tag, genre, or date \
+range), filter by it. Do NOT approximate a metadata filter with \
+search_content.
+If orientation finds nothing on the subject, the base likely doesn't cover \
+it — see GROUNDING.
 
-Rules:
-- Always ground answers in the actual texts via tools — do not rely on \
-your general knowledge.
-- If the knowledge base doesn't cover something, say so rather than \
-making it up.
+STAGE 2 — LOCATE. Find the passages that answer the question.
+- search_content(query): hybrid search across the WHOLE base (raw + wiki). \
+Your default only when you do not yet know which document to look in.
+- search_in_document(path, query): hybrid search scoped to ONE document. \
+The moment you know which document matters (from Stage 1, a citation, or a \
+search hit), use this to jump to the relevant passages. ALWAYS prefer it \
+over reading a long document from the top.
+- linked_articles(path): a wiki article's outgoing/incoming citation links \
+— follow the base's own connections to related articles and sources.
+
+STAGE 3 — READ. Pull the exact text you will cite. Use only paths returned \
+by earlier stages — never a path typed from memory.
+- read_document(path): read a document. A large document returns a heading \
+OUTLINE, not its text. If read_document returns an outline, your NEXT call \
+MUST be search_in_document(path, query) to locate the relevant section — do \
+NOT expand_context from the start of the document.
+- expand_context(path, start, end): expand_context NEVER comes first. It \
+reads a chunk range you have ALREADY located via a search hit or a specific \
+outline section. If you are about to call it without a prior locating call, \
+stop and call search_in_document first.
+
+STAGE 4 — VERIFY & ANSWER. Re-read the strongest passages, then write. \
+Cite the specific path (and chunk range where useful) behind each claim. \
+If sources are thin or conflict, say so.
+
+GROUNDING (non-negotiable):
+- Ground every substantive claim in the retrieved texts and cite them; do \
+not rely on your general knowledge.
+- If the base does not cover the subject (or covers only one side of a \
+comparison), say so plainly. Any outside context must be labeled \
+explicitly as outside the knowledge base and kept minimal.
+
+AVOID THESE HABITS:
+- Reading a long document from the top (outline, then the first chunks) \
+instead of search_in_document(path, query).
+- Guessing or typing a document path — only use paths a tool returned.
+- Defaulting to whole-base search_content when you already know the target \
+document — search_in_document is faster and more precise.
+- Answering an uncovered subject from general knowledge without disclosing it.
+- Stopping at the first hit — orient and follow links before concluding the \
+base is silent.
 
 Knowledge base:
 {identity}"""
@@ -636,8 +666,11 @@ class QueryEngine:
         ]
         return (
             f"# {path} [{self.label}]\n\n"
-            "Large document — read a section with expand_context(path, start, end):"
-            "\n\n" + "\n".join(lines)
+            f"This document is large ({len(content):,} chars) — do NOT read it "
+            f"from the top. To find the passages relevant to your question, call "
+            f"search_in_document(path, query). Use expand_context(path, start, end) "
+            f"only on a range a search hit or a specific section below points to."
+            f"\n\nSection outline (a map, not the text):\n\n" + "\n".join(lines)
         )
 
     async def _search_content(self, query: str) -> str:

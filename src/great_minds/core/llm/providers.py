@@ -11,13 +11,16 @@ from great_minds.core.settings import get_settings
 OPENROUTER_BASE = "https://openrouter.ai/api/v1"
 
 # Model strategy (seven-phase pipeline):
-#   - QUERY_MODEL:   fast tool-calling for interactive queries
+#   - QUERY_MODEL:   tool-calling agent for interactive queries
 #   - EXTRACT_MODEL: per-doc extraction; cheap, volume-heavy
 #   - MAP_MODEL:     per-chunk thematic synthesis; same model as extract
 #   - REDUCE_MODEL:  one call, canonicalizes local themes
 #   - RENDER_MODEL:  per-topic article writing
 #   - EMBEDDING_MODEL: idea + chunk embeddings
-QUERY_MODEL = "deepseek/deepseek-v3.2"
+# QUERY_MODEL: chosen by A/B over the corpus — vs deepseek-v3.2/v4 it grounds
+# harder, discloses gaps, and emits anchored citations; clients can override
+# per request (e.g. anthropic/claude-sonnet-4.6 for high-stakes asks).
+QUERY_MODEL = "z-ai/glm-5.1"
 EXTRACT_MODEL = "deepseek/deepseek-v3.2"
 MAP_MODEL = "deepseek/deepseek-v3.2"
 REDUCE_MODEL = "qwen/qwen3.6-plus"
