@@ -851,7 +851,7 @@ class QueryEngine:
             sort=str(sort),
             page=page,
             returned=len(result.items),
-            total=result.total,
+            total=result.pagination.total,
         )
         if not result.items:
             if contains:
@@ -865,10 +865,10 @@ class QueryEngine:
         lines = [f"- {a.title} — {a.file_path}\n  {a.precis}" for a in result.items]
         hi = pagination.offset + len(result.items)
         scope = f" matching '{contains}'" if contains else ""
-        header = f"Articles {pagination.offset + 1}–{hi} of {result.total}{scope} (by {sort}):"
+        header = f"Articles {pagination.offset + 1}–{hi} of {result.pagination.total}{scope} (by {sort}):"
         more = (
             f"\n\nMore available — call list_articles(page={page + 1}) to continue."
-            if hi < result.total
+            if hi < result.pagination.total
             else ""
         )
         return f"{header}\n\n" + "\n".join(lines) + more
