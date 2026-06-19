@@ -49,9 +49,37 @@ export function ArticleView({
   const rootRef = useRef<HTMLElement>(null);
   const placement = useAnchoredBtws(rootRef, documentId, btws, body);
 
-  // p() is called sequentially during render; `^pN` ids let footnote URLs scroll
-  // to a paragraph. Independent of BTW anchoring, which uses source offsets.
-  let paraCount = 0;
+  // Real chunk index per block, read from the ingest-baked `^pN` markers (one
+  // per non-heading block, in document order). `pos` is where the marker lands
+  // in the stripped display body — its block's end — so a rendered block claims
+  // it by source range. This replaces a `<p>`-only counter that drifted past
+  // lists/blockquotes. Independent of BTW anchoring, which uses source offsets.
+  const chunkMarkers = useMemo(() => {
+    const out: { pos: number; chunk: number }[] = [];
+    let removed = 0;
+    const re = /\s*\^p(\d+)(?=\n|$)/gm;
+    let m: RegExpExecArray | null;
+    while ((m = re.exec(body)) !== null) {
+      out.push({ pos: m.index - removed, chunk: Number(m[1]) });
+      removed += m[0].length;
+    }
+    return out;
+  }, [body]);
+
+  // Claimed in render order (parents render before nested children) so a block
+  // and a nested child — a blockquote and its paragraph — never share an id.
+  const claimed = new Set<number>();
+  const chunkId = (
+    node: { position?: { start?: { offset?: number }; end?: { offset?: number } } } | undefined,
+  ): string | undefined => {
+    const start = node?.position?.start?.offset;
+    const end = node?.position?.end?.offset;
+    if (start == null || end == null) return undefined;
+    const mk = chunkMarkers.find((c) => !claimed.has(c.chunk) && c.pos >= start && c.pos <= end + 1);
+    if (!mk) return undefined;
+    claimed.add(mk.chunk);
+    return `^p${mk.chunk}`;
+  };
 
   const handleSelect = (e: React.MouseEvent<HTMLElement>, offset: number | undefined) => {
     if (offset == null) return;
@@ -100,8 +128,9 @@ export function ArticleView({
       return (
         <>
           <h1
+            id={chunkId(node)}
             {...anchorProps(offset)}
-            className="text-[length:var(--text-heading)] font-bold text-foreground mt-8 mb-4 first:mt-0"
+            className="text-[length:var(--text-heading)] font-bold text-foreground mt-8 mb-4 first:mt-0 scroll-mt-20 target:bg-gold/10 target:border-l-2 target:border-gold target:pl-3"
           >
             {children}
           </h1>
@@ -114,8 +143,9 @@ export function ArticleView({
       return (
         <>
           <h2
+            id={chunkId(node)}
             {...anchorProps(offset)}
-            className="text-[length:var(--text-heading)] font-bold text-foreground mt-8 mb-3"
+            className="text-[length:var(--text-heading)] font-bold text-foreground mt-8 mb-3 scroll-mt-20 target:bg-gold/10 target:border-l-2 target:border-gold target:pl-3"
           >
             {children}
           </h2>
@@ -128,8 +158,9 @@ export function ArticleView({
       return (
         <>
           <h3
+            id={chunkId(node)}
             {...anchorProps(offset)}
-            className="font-mono text-[length:var(--text-caption)] font-medium text-gold mt-6 mb-2 tracking-[0.14em] uppercase"
+            className="font-mono text-[length:var(--text-caption)] font-medium text-gold mt-6 mb-2 tracking-[0.14em] uppercase scroll-mt-20 target:bg-gold/10 target:border-l-2 target:border-gold target:pl-3"
           >
             {children}
           </h3>
@@ -138,12 +169,11 @@ export function ArticleView({
       );
     },
     p: ({ node, children }) => {
-      const pi = paraCount++;
       const offset = offsetOf(node);
       return (
         <>
           <p
-            id={`^p${pi}`}
+            id={chunkId(node)}
             {...anchorProps(offset)}
             className="text-[length:var(--text-body)] leading-[1.85] text-warm-dim mb-4 scroll-mt-20 target:bg-gold/10 target:border-l-2 target:border-gold target:pl-3"
           >
@@ -158,8 +188,9 @@ export function ArticleView({
       return (
         <>
           <ul
+            id={chunkId(node)}
             {...anchorProps(offset)}
-            className="list-disc list-inside text-[length:var(--text-body)] leading-[1.85] text-warm-dim mb-4 ml-2"
+            className="list-disc list-inside text-[length:var(--text-body)] leading-[1.85] text-warm-dim mb-4 ml-2 scroll-mt-20 target:bg-gold/10 target:border-l-2 target:border-gold target:pl-3"
           >
             {children}
           </ul>
@@ -172,8 +203,9 @@ export function ArticleView({
       return (
         <>
           <ol
+            id={chunkId(node)}
             {...anchorProps(offset)}
-            className="list-decimal list-inside text-[length:var(--text-body)] leading-[1.85] text-warm-dim mb-4 ml-2"
+            className="list-decimal list-inside text-[length:var(--text-body)] leading-[1.85] text-warm-dim mb-4 ml-2 scroll-mt-20 target:bg-gold/10 target:border-l-2 target:border-gold target:pl-3"
           >
             {children}
           </ol>
@@ -191,8 +223,9 @@ export function ArticleView({
       return (
         <>
           <blockquote
+            id={chunkId(node)}
             {...anchorProps(offset)}
-            className="border-l-2 border-gold-dim pl-4 text-warm-faint italic my-4"
+            className="border-l-2 border-gold-dim pl-4 text-warm-faint italic my-4 scroll-mt-20 target:bg-gold/10 target:border-gold target:pl-4"
           >
             {children}
           </blockquote>
