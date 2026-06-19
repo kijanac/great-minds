@@ -39,10 +39,12 @@ export function useLinkInterceptor(onDocOpen?: (path: string) => void) {
         return;
       }
 
-      // Raw source links — open panel or navigate to full-screen doc view
+      // Raw source links. A chunk-anchored citation (…#^p47) deep-links into
+      // the full-screen doc view, which scrolls to and highlights that
+      // paragraph; a bare doc link opens the side panel (a quicker peek).
       if (href.startsWith("raw/")) {
         e.preventDefault();
-        if (onDocOpen) {
+        if (onDocOpen && !href.includes("#")) {
           onDocOpen(href);
         } else {
           navigate(`/doc/${href}`);

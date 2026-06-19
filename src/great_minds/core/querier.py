@@ -427,8 +427,9 @@ outline section. If you are about to call it without a prior locating call, \
 stop and call search_in_document first.
 
 STAGE 4 — VERIFY & ANSWER. Re-read the strongest passages, then write. \
-Cite the specific path (and chunk range where useful) behind each claim. \
-If sources are thin or conflict, say so.
+Cite the specific path behind each claim, anchored to the supporting chunk's \
+index where you have one (e.g. raw/docs/abc.md#^p47) so the link opens the \
+document at that passage. If sources are thin or conflict, say so.
 
 GROUNDING (non-negotiable):
 - Ground every substantive claim in the retrieved texts and cite them; do \
