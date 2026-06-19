@@ -94,9 +94,9 @@ class SessionService:
         """Append a BTW thread to an existing session."""
         event = BtwEvent(
             exId=btw.exchangeId,
-            anchor=btw.anchor,
-            paragraph=btw.paragraph,
-            pi=btw.paragraphIndex,
+            quote=btw.quote,
+            blockOffset=btw.blockOffset,
+            context=btw.context,
             exchanges=btw.exchanges,
             ts=now_iso(),
         )
@@ -156,7 +156,7 @@ class SessionService:
             if isinstance(event, ExchangeEvent):
                 exchanges.append(event)
             elif isinstance(event, BtwEvent):
-                key = (event.exId, event.anchor)
+                key = (event.exId, event.quote)
                 existing = latest_btw.get(key)
                 if existing is None or event.ts > existing.ts:
                     latest_btw[key] = event
@@ -179,7 +179,7 @@ class SessionService:
             parts.append(ex.answer + "\n")
 
             for btw in btws_by_ex.get(ex.exId, []):
-                short = btw.anchor[:60] + "..." if len(btw.anchor) > 60 else btw.anchor
+                short = btw.quote[:60] + "..." if len(btw.quote) > 60 else btw.quote
                 parts.append(f'\n> **BTW** re: "{short}"\n>\n')
                 for inner in btw.exchanges:
                     parts.append(f"> *{inner.query}*\n>\n")

@@ -74,7 +74,7 @@ export function ArticleReader({
         body: payload.body,
         intent: payload.intent,
         anchoredTo: wikiSlug,
-        anchoredSection: suggestionTarget?.text ?? "",
+        anchoredSection: suggestionTarget?.quote ?? "",
       });
       setSuggestionSubmitted(true);
       window.setTimeout(() => setSuggestionSubmitted(false), 3000);
@@ -159,7 +159,7 @@ export function ArticleReader({
             if (!open) setSuggestionTarget(null);
           }}
           anchoredTo={wikiSlug}
-          anchoredSection={suggestionTarget.text}
+          anchoredSection={suggestionTarget.quote}
           onSubmit={handleSuggestionSubmit}
         />
       )}

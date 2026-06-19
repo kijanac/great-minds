@@ -79,9 +79,8 @@ async def append_btw_to_session(
         session_id,
         BtwInput(
             exchangeId=btw.exchangeId,
-            anchor=btw.anchor,
-            paragraph=btw.paragraph,
-            paragraphIndex=btw.paragraphIndex,
+            quote=btw.quote,
+            blockOffset=btw.blockOffset,
             exchanges=btw.exchanges,
         ),
     )

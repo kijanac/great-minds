@@ -43,10 +43,12 @@ export function BtwThread({ btw, onReply, onDismiss, onSpinOff }: BtwThreadProps
   const [open, setOpen] = useState(true);
   const inputRef = useRef<HTMLInputElement>(null);
 
-  const shortAnchor = btw.anchor.length > 58 ? btw.anchor.slice(0, 58) + "..." : btw.anchor;
+  const quote = btw.anchor.quote;
+  const shortAnchor = quote.length > 58 ? quote.slice(0, 58) + "..." : quote;
+  const isStreaming = btw.exchanges.some((e) => e.streaming);
 
   // Auto-focus: on first render (new BTW) and when streaming finishes
-  const wasStreaming = useRef(btw.streaming);
+  const wasStreaming = useRef(isStreaming);
   const isFirstRender = useRef(true);
   useEffect(() => {
     if (isFirstRender.current) {
@@ -54,11 +56,11 @@ export function BtwThread({ btw, onReply, onDismiss, onSpinOff }: BtwThreadProps
       inputRef.current?.focus();
       return;
     }
-    if (wasStreaming.current && !btw.streaming) {
+    if (wasStreaming.current && !isStreaming) {
       inputRef.current?.focus();
     }
-    wasStreaming.current = btw.streaming;
-  }, [btw.streaming]);
+    wasStreaming.current = isStreaming;
+  }, [isStreaming]);
 
   return (
     <Collapsible
@@ -86,84 +88,52 @@ export function BtwThread({ btw, onReply, onDismiss, onSpinOff }: BtwThreadProps
       </CollapsibleTrigger>
 
       <CollapsibleContent>
-        {btw.exchanges.map((ex) => (
-          <div key={ex.id}>
-            <div className="text-[length:var(--text-small)] leading-[1.72] mb-[9px] text-warm-ghost italic">
-              <span className="font-mono not-italic text-[length:var(--text-chrome)] tracking-[0.1em] text-interactive-dim mr-0.5">
-                you ·{" "}
-              </span>
-              {ex.query}
-            </div>
-            {ex.thinking.flatMap((block) => block.sources).length > 0 && (
-              <div className="flex flex-wrap gap-x-2 gap-y-0.5 mb-[7px]">
-                {ex.thinking.flatMap((block, bi) =>
-                  block.sources.map((s, si) => (
+        {btw.exchanges.map((ex) => {
+          const sources = ex.thinking.flatMap((block) => block.sources);
+          return (
+            <div key={ex.id}>
+              <div className="text-[length:var(--text-small)] leading-[1.72] mb-[9px] text-warm-ghost italic">
+                <span className="font-mono not-italic text-[length:var(--text-chrome)] tracking-[0.1em] text-interactive-dim mr-0.5">
+                  you ·{" "}
+                </span>
+                {ex.query}
+              </div>
+              {sources.length > 0 && (
+                <div className="flex flex-wrap gap-x-2 gap-y-0.5 mb-[7px]">
+                  {sources.map((s, si) => (
                     <span
-                      key={`${bi}:${si}`}
+                      key={si}
                       className="font-mono text-[length:var(--text-chrome)] tracking-[0.06em] text-interactive-dim"
                       title={s.thinking}
                     >
                       {displayTitle(s.label, s.title)}
                     </span>
-                  )),
-                )}
-              </div>
-            )}
-            <div className="text-[length:var(--text-small)] leading-[1.72] mb-[9px] text-warm-faint">
-              <Markdown
-                remarkPlugins={remarkPlugins}
-                rehypePlugins={rehypePlugins}
-                components={btwMdComponents}
-              >
-                {ex.answer}
-              </Markdown>
+                  ))}
+                </div>
+              )}
+              {ex.streaming && !ex.answer ? (
+                <div className="text-[length:var(--text-small)] leading-[1.72] mb-[9px] text-warm-faint animate-[pulse-fade_1.6s_ease-in-out_infinite]">
+                  {sources.length > 0 ? "reading..." : "thinking..."}
+                </div>
+              ) : (
+                <div className="text-[length:var(--text-small)] leading-[1.72] mb-[9px] text-warm-faint">
+                  <Markdown
+                    remarkPlugins={remarkPlugins}
+                    rehypePlugins={rehypePlugins}
+                    components={btwMdComponents}
+                  >
+                    {ex.answer}
+                  </Markdown>
+                  {ex.streaming && (
+                    <span className="inline-block w-px h-2.5 bg-gold-muted animate-[blink_1s_step-end_infinite] align-middle ml-px" />
+                  )}
+                </div>
+              )}
             </div>
-          </div>
-        ))}
+          );
+        })}
 
-        {btw.streaming && btw.pendingQuery && (
-          <div className="text-[length:var(--text-small)] leading-[1.72] mb-[9px] text-warm-ghost italic">
-            <span className="font-mono not-italic text-[length:var(--text-chrome)] tracking-[0.1em] text-interactive-dim mr-0.5">
-              you ·{" "}
-            </span>
-            {btw.pendingQuery}
-          </div>
-        )}
-
-        {btw.streaming && btw.sources.length > 0 && (
-          <div className="flex flex-wrap gap-x-2 gap-y-0.5 mb-[7px]">
-            {btw.sources.map((s, i) => (
-              <span
-                key={i}
-                className="font-mono text-[length:var(--text-chrome)] tracking-[0.06em] text-interactive-dim"
-                title={s.thinking}
-              >
-                {displayTitle(s.label, s.title)}
-              </span>
-            ))}
-          </div>
-        )}
-
-        {btw.streaming && !btw.streamText && (
-          <div className="text-[length:var(--text-small)] leading-[1.72] mb-[9px] text-warm-faint animate-[pulse-fade_1.6s_ease-in-out_infinite]">
-            {btw.sources.length > 0 ? "reading..." : "thinking..."}
-          </div>
-        )}
-
-        {btw.streaming && btw.streamText && (
-          <div className="text-[length:var(--text-small)] leading-[1.72] mb-[9px] text-warm-faint">
-            <Markdown
-              remarkPlugins={remarkPlugins}
-              rehypePlugins={rehypePlugins}
-              components={btwMdComponents}
-            >
-              {btw.streamText}
-            </Markdown>
-            <span className="inline-block w-px h-2.5 bg-gold-muted animate-[blink_1s_step-end_infinite] align-middle ml-px" />
-          </div>
-        )}
-
-        {onSpinOff && btw.exchanges.length > 0 && !btw.streaming && (
+        {onSpinOff && btw.exchanges.length > 0 && !isStreaming && (
           <div className="text-[length:var(--text-chrome)] tracking-[0.06em] text-interactive-dim italic mb-[6px]">
             ephemeral ·{" "}
             <button
@@ -176,7 +146,7 @@ export function BtwThread({ btw, onReply, onDismiss, onSpinOff }: BtwThreadProps
           </div>
         )}
 
-        {!btw.streaming && (
+        {!isStreaming && (
           <div className="mt-[5px]" onMouseDown={(e) => e.stopPropagation()}>
             <input
               ref={inputRef}

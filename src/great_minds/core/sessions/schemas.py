@@ -73,9 +73,9 @@ class ExchangeEvent(BaseModel):
 class BtwEvent(BaseModel):
     type: EventType = EventType.BTW
     exId: str
-    anchor: str
-    paragraph: str
-    pi: int = -1
+    quote: str
+    blockOffset: int = -1
+    context: str = ""
     exchanges: list[BtwExchange]
     ts: str
 
@@ -92,9 +92,9 @@ class ExchangeInput(BaseModel):
 
 class BtwInput(BaseModel):
     exchangeId: str = ""
-    anchor: str
-    paragraph: str
-    paragraphIndex: int = -1
+    quote: str
+    blockOffset: int = -1
+    context: str = ""
     exchanges: list[BtwExchange]
 
 
