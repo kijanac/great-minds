@@ -52,15 +52,29 @@ let refreshInFlight: Promise<string | null> | null = null;
 
 async function doRefresh(): Promise<string | null> {
   const rt = getRefreshToken();
-  if (!rt) return null;
+  if (!rt) {
+    // No refresh token — the session is over. Clearing dispatches
+    // "auth:changed", flipping AuthProvider to unauthenticated so RequireAuth
+    // redirects to /login instead of leaving a bare 401 on screen.
+    clearTokens();
+    return null;
+  }
 
-  const res = await fetch(`${API_BASE}/auth/refresh`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ refresh_token: rt }),
-  });
+  let res: Response;
+  try {
+    res = await fetch(`${API_BASE}/auth/refresh`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ refresh_token: rt }),
+    });
+  } catch {
+    // Transient network failure — keep the session so the user can retry;
+    // don't log them out over a blip.
+    return null;
+  }
 
   if (!res.ok) {
+    // Server rejected the refresh token (expired/revoked) — session is over.
     clearTokens();
     return null;
   }
