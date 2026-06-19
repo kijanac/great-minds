@@ -28,7 +28,7 @@ const sourceEventDataSchema = z.discriminatedUnion("type", [
     end: z.number().optional(),
   }),
   z.object({ type: z.literal("search"), query: z.string() }),
-  z.object({ type: z.literal("query"), filters: z.record(z.unknown()).optional() }),
+  z.object({ type: z.literal("query"), filters: z.record(z.string(), z.unknown()).optional() }),
   z.object({
     type: z.literal("links"),
     path: z.string(),

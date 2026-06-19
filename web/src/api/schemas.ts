@@ -51,7 +51,7 @@ export function facetedPaginatedSchema<T extends z.ZodTypeAny, F extends z.ZodTy
 }
 
 export const vaultPageSchema = paginatedSchema(vaultSchema).extend({
-  roles: z.record(z.string()),
+  roles: z.record(z.string(), z.string()),
 });
 
 export const vaultDetailSchema = vaultSchema.extend({
