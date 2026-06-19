@@ -104,7 +104,7 @@ export function BtwThread({ btw, onReply, onDismiss, onSpinOff }: BtwThreadProps
                     <span
                       key={si}
                       className="font-mono text-[length:var(--text-chrome)] tracking-[0.06em] text-interactive-dim"
-                      title={s.thinking}
+                      title={s.thinking ?? undefined}
                     >
                       {displayTitle(s.label, s.title)}
                     </span>

@@ -73,7 +73,7 @@ export function ThinkingSection({
                     key={`${src.type}:${i}:${src.label}`}
                     label={src.label}
                     title={src.title}
-                    thinking={src.thinking}
+                    thinking={src.thinking ?? undefined}
                     active={activeCard === src.label}
                     onClick={() => onCardClick(src)}
                     icon={
