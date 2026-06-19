@@ -17,7 +17,21 @@ export function useScrollToHash(contentKey?: unknown): void {
 
   useEffect(() => {
     if (!hash) return;
-    const el = document.getElementById(decodeURIComponent(hash.slice(1)));
-    if (el) requestAnimationFrame(() => el.scrollIntoView({ block: "start" }));
+    const id = decodeURIComponent(hash.slice(1));
+    let raf = 0;
+    let tries = 0;
+    // On a client-side navigation the target block may not be painted in the
+    // first frame (a direct page load is saved by the browser's own hash
+    // scroll; a client nav isn't). Retry for a few frames until it exists.
+    const attempt = () => {
+      const el = document.getElementById(id);
+      if (el) {
+        el.scrollIntoView({ block: "start" });
+      } else if (tries++ < 30) {
+        raf = requestAnimationFrame(attempt);
+      }
+    };
+    raf = requestAnimationFrame(attempt);
+    return () => cancelAnimationFrame(raf);
   }, [hash, contentKey]);
 }
