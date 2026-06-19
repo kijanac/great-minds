@@ -13,29 +13,32 @@ export interface Exchange {
   thinking: ThinkingBlock[];
   answer: string;
   btws: BtwThread[];
+  // In-flight while the answer streams; false once committed/persisted.
+  streaming: boolean;
+}
+
+// Where a BTW is anchored: the source offset of its block (exact, stable,
+// render-independent identity) plus the quoted span within that block.
+// `context` is the full text of the block, carried for the LLM prompt only —
+// never used for placement or resolution.
+export interface TextAnchor {
+  blockOffset: number;
+  quote: string;
+  context: string;
 }
 
 export interface BtwThread {
   id: string;
-  anchor: string;
-  paragraph: string;
-  paragraphIndex: number;
   exchangeId: string;
+  anchor: TextAnchor;
+  // The last turn carries streaming: true while it's in flight.
   exchanges: Exchange[];
-  // In-flight state — set during streaming, cleared when the new exchange lands:
-  pendingQuery: string | null;
-  streaming: boolean;
-  streamText: string;
-  sources: SourceRef[];
 }
 
-export interface SelectionInfo {
-  text: string;
+export interface SelectionInfo extends TextAnchor {
   x: number;
   y: number;
-  paragraphIndex: number;
   exchangeId: string;
-  paragraph: string;
 }
 
 export type Phase = "idle" | "searching" | "streaming" | "done";

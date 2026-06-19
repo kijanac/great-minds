@@ -31,7 +31,7 @@ export function SelectionPopover({ info, onFollowUp, onBtw, onSuggest }: Selecti
         size="sm"
         onMouseDown={(e) => e.preventDefault()}
         onClick={onBtw}
-        className={`rounded-none h-auto text-btw font-mono text-[length:var(--text-chrome)] tracking-[0.1em] py-[9px] px-3.5 hover:text-btw-bright hover:bg-btw-bg ${onFollowUp ? "border-l border-gold-dim" : ""}`}
+        className={`rounded-none h-auto text-btw font-mono text-[length:var(--text-chrome)] tracking-[0.1em] py-[9px] px-3.5 hover:text-btw-bright hover:bg-btw-bg ${onFollowUp ? "border-l border-l-gold-dim" : ""}`}
       >
         btw
       </Button>
@@ -41,7 +41,7 @@ export function SelectionPopover({ info, onFollowUp, onBtw, onSuggest }: Selecti
           size="sm"
           onMouseDown={(e) => e.preventDefault()}
           onClick={onSuggest}
-          className="rounded-none h-auto text-gold-muted font-mono text-[length:var(--text-chrome)] tracking-[0.1em] py-[9px] px-3.5 hover:text-gold hover:bg-interactive-dim border-l border-gold-dim"
+          className="rounded-none h-auto text-gold-muted font-mono text-[length:var(--text-chrome)] tracking-[0.1em] py-[9px] px-3.5 hover:text-gold hover:bg-interactive-dim border-l border-l-gold-dim"
         >
           suggest
         </Button>

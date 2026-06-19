@@ -21,10 +21,10 @@ class ExchangeData(BaseModel):
 
 
 class BtwData(BaseModel):
-    anchor: str
-    paragraph: str
+    quote: str
+    blockOffset: int = -1
+    context: str = ""
     exchangeId: str
-    paragraphIndex: int = -1
     exchanges: list[BtwExchange]
 
 

@@ -91,7 +91,7 @@ export function SessionThread({ session, onFollowUp }: SessionThreadProps) {
 
   const handleAddChip = useCallback(() => {
     if (!popover) return;
-    addChip(popover.text);
+    addChip(popover.quote);
   }, [popover, addChip]);
 
   const handleBtw = useCallback(() => {
@@ -124,7 +124,7 @@ export function SessionThread({ session, onFollowUp }: SessionThreadProps) {
                 <span className="italic text-[length:var(--text-small)] text-muted-foreground">
                   {`"${ex.query}"`}
                 </span>
-                {session.sessionId && ex.answer && (
+                {session.sessionId && ex.answer && !ex.streaming && (
                   <span className="print:hidden">
                     <PromoteButton sessionId={session.sessionId} exchangeId={ex.id} />
                   </span>
@@ -134,47 +134,25 @@ export function SessionThread({ session, onFollowUp }: SessionThreadProps) {
               <div className="print:hidden">
                 <ThinkingSection
                   blocks={ex.thinking}
-                  streaming={false}
+                  streaming={ex.streaming && !ex.answer}
                   onCardClick={togglePanel}
                   activeCard={panel?.card.label ?? null}
                 />
               </div>
 
-              <AnswerBlock
-                text={ex.answer}
-                exchangeId={ex.id}
-                btws={ex.btws}
-                streaming={false}
-                onSelection={session.handleSelection}
-                onBtwReply={session.replyBtw}
-                onBtwDismiss={session.dismissBtw}
-              />
-            </div>
-          ))}
-
-          {(session.phase === "searching" || session.phase === "streaming") && (
-            <div>
-              {session.thread.length > 0 && <Separator className="my-8 bg-ink-subtle" />}
-
-              <ThinkingSection
-                blocks={session.liveThinking}
-                streaming={session.phase === "searching"}
-                onCardClick={togglePanel}
-                activeCard={panel?.card.label ?? null}
-              />
-
-              {session.liveText && (
+              {ex.answer && (
                 <AnswerBlock
-                  text={session.liveText}
-                  exchangeId="live"
-                  btws={[]}
-                  streaming={true}
-                  onSelection={() => {}}
-                  onBtwReply={() => {}}
+                  text={ex.answer}
+                  exchangeId={ex.id}
+                  btws={ex.btws}
+                  streaming={ex.streaming}
+                  onSelection={session.handleSelection}
+                  onBtwReply={session.replyBtw}
+                  onBtwDismiss={session.dismissBtw}
                 />
               )}
             </div>
-          )}
+          ))}
         </div>
       </div>
 
@@ -207,11 +185,7 @@ export function SessionThread({ session, onFollowUp }: SessionThreadProps) {
       )}
 
       {canFollowUp && (
-        <FollowUpBar
-          chips={session.chips}
-          onRemoveChip={session.removeChip}
-          onSubmit={onFollowUp}
-        />
+        <FollowUpBar chips={session.chips} onRemoveChip={session.removeChip} onSubmit={onFollowUp} />
       )}
 
       {session.popover && (

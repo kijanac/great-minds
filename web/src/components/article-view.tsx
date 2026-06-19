@@ -1,9 +1,10 @@
-import { useMemo, type ComponentProps } from "react";
+import { useMemo, useRef, type ComponentProps } from "react";
 import Markdown from "react-markdown";
 
 import type { Article } from "@/api/doc";
 import { BtwThread } from "@/components/btw-thread";
 import { DocHeader } from "@/components/doc-header";
+import { useAnchoredBtws } from "@/hooks/use-anchored-btws";
 import { baseMdComponents, remarkPlugins, rehypePlugins } from "@/lib/markdown";
 import type { BtwThread as BtwThreadType, SelectionInfo } from "@/lib/types";
 
@@ -12,6 +13,11 @@ import type { BtwThread as BtwThreadType, SelectionInfo } from "@/lib/types";
 // sequential <p> counter to reassign them as anchor ids, so footnote URLs
 // like `raw/.../file.md#^p12` scroll to the right paragraph.
 const BLOCK_REF_RE = /\s*\^p\d+(?=\n|$)/gm;
+
+// Stable, unique source offset the markdown parser attaches to each block.
+function offsetOf(node: { position?: { start?: { offset?: number } } } | undefined): number | undefined {
+  return node?.position?.start?.offset;
+}
 
 interface ArticleViewProps {
   document: Article;
@@ -40,53 +46,44 @@ export function ArticleView({
   supersededBy = null,
   onSupersessorClick,
 }: ArticleViewProps) {
-  // Markdown calls p() sequentially during render; reset so indices match BTW paragraphIndex.
+  const rootRef = useRef<HTMLElement>(null);
+  const placement = useAnchoredBtws(rootRef, documentId, btws, body);
+
+  // p() is called sequentially during render; `^pN` ids let footnote URLs scroll
+  // to a paragraph. Independent of BTW anchoring, which uses source offsets.
   let paraCount = 0;
 
-  const mdComponents: ComponentProps<typeof Markdown>["components"] = {
-    ...baseMdComponents,
-    h1: ({ children }) => (
-      <h1 className="text-[length:var(--text-heading)] font-bold text-foreground mt-8 mb-4 first:mt-0">
-        {children}
-      </h1>
-    ),
-    h2: ({ children }) => (
-      <h2 className="text-[length:var(--text-heading)] font-bold text-foreground mt-8 mb-3">
-        {children}
-      </h2>
-    ),
-    h3: ({ children }) => (
-      <h3 className="font-mono text-[length:var(--text-caption)] font-medium text-gold mt-6 mb-2 tracking-[0.14em] uppercase">
-        {children}
-      </h3>
-    ),
-    p: ({ children }) => {
-      const pi = paraCount++;
-      const blockBtws = btws.filter((b) => b.paragraphIndex === pi);
-      return (
-        <>
-          <p
-            id={`^p${pi}`}
-            className="text-[length:var(--text-body)] leading-[1.85] text-warm-dim mb-4 scroll-mt-20 target:bg-gold/10 target:border-l-2 target:border-gold target:pl-3"
-            onMouseUp={(e) => {
-              e.stopPropagation();
-              const sel = window.getSelection();
-              if (!sel || sel.isCollapsed || sel.toString().trim().length < 5) return;
-              const rect = sel.getRangeAt(0).getBoundingClientRect();
-              const paraText = e.currentTarget.textContent ?? "";
-              onSelection({
-                text: sel.toString().trim(),
-                x: rect.left + rect.width / 2,
-                y: rect.top - 6,
-                paragraphIndex: pi,
-                exchangeId: documentId,
-                paragraph: paraText,
-              });
-            }}
-          >
-            {children}
-          </p>
-          {blockBtws.map((btw) => (
+  const handleSelect = (e: React.MouseEvent<HTMLElement>, offset: number | undefined) => {
+    if (offset == null) return;
+    const sel = window.getSelection();
+    if (!sel || sel.isCollapsed || sel.rangeCount === 0) return;
+    const quote = sel.toString().trim();
+    if (quote.length < 5) return;
+    const range = sel.getRangeAt(0);
+    if (!e.currentTarget.contains(range.commonAncestorContainer)) return;
+    e.stopPropagation();
+    const rect = range.getBoundingClientRect();
+    onSelection({
+      blockOffset: offset,
+      quote,
+      context: e.currentTarget.textContent ?? "",
+      x: rect.left + rect.width / 2,
+      y: rect.top - 6,
+      exchangeId: documentId,
+    });
+  };
+
+  const anchorProps = (offset: number | undefined) => ({
+    "data-block-offset": offset,
+    onMouseUp: (e: React.MouseEvent<HTMLElement>) => handleSelect(e, offset),
+  });
+
+  const renderThreads = (offset: number | undefined) =>
+    offset == null
+      ? null
+      : btws
+          .filter((b) => placement.get(b.id) === offset)
+          .map((btw) => (
             <BtwThread
               key={btw.id}
               btw={btw}
@@ -94,30 +91,115 @@ export function ArticleView({
               onDismiss={onBtwDismiss}
               onSpinOff={onBtwSpinOff}
             />
-          ))}
+          ));
+
+  const mdComponents: ComponentProps<typeof Markdown>["components"] = {
+    ...baseMdComponents,
+    h1: ({ node, children }) => {
+      const offset = offsetOf(node);
+      return (
+        <>
+          <h1
+            {...anchorProps(offset)}
+            className="text-[length:var(--text-heading)] font-bold text-foreground mt-8 mb-4 first:mt-0"
+          >
+            {children}
+          </h1>
+          {renderThreads(offset)}
         </>
       );
     },
-    ul: ({ children }) => (
-      <ul className="list-disc list-inside text-[length:var(--text-body)] leading-[1.85] text-warm-dim mb-4 ml-2">
-        {children}
-      </ul>
-    ),
-    ol: ({ children }) => (
-      <ol className="list-decimal list-inside text-[length:var(--text-body)] leading-[1.85] text-warm-dim mb-4 ml-2">
-        {children}
-      </ol>
-    ),
+    h2: ({ node, children }) => {
+      const offset = offsetOf(node);
+      return (
+        <>
+          <h2
+            {...anchorProps(offset)}
+            className="text-[length:var(--text-heading)] font-bold text-foreground mt-8 mb-3"
+          >
+            {children}
+          </h2>
+          {renderThreads(offset)}
+        </>
+      );
+    },
+    h3: ({ node, children }) => {
+      const offset = offsetOf(node);
+      return (
+        <>
+          <h3
+            {...anchorProps(offset)}
+            className="font-mono text-[length:var(--text-caption)] font-medium text-gold mt-6 mb-2 tracking-[0.14em] uppercase"
+          >
+            {children}
+          </h3>
+          {renderThreads(offset)}
+        </>
+      );
+    },
+    p: ({ node, children }) => {
+      const pi = paraCount++;
+      const offset = offsetOf(node);
+      return (
+        <>
+          <p
+            id={`^p${pi}`}
+            {...anchorProps(offset)}
+            className="text-[length:var(--text-body)] leading-[1.85] text-warm-dim mb-4 scroll-mt-20 target:bg-gold/10 target:border-l-2 target:border-gold target:pl-3"
+          >
+            {children}
+          </p>
+          {renderThreads(offset)}
+        </>
+      );
+    },
+    ul: ({ node, children }) => {
+      const offset = offsetOf(node);
+      return (
+        <>
+          <ul
+            {...anchorProps(offset)}
+            className="list-disc list-inside text-[length:var(--text-body)] leading-[1.85] text-warm-dim mb-4 ml-2"
+          >
+            {children}
+          </ul>
+          {renderThreads(offset)}
+        </>
+      );
+    },
+    ol: ({ node, children }) => {
+      const offset = offsetOf(node);
+      return (
+        <>
+          <ol
+            {...anchorProps(offset)}
+            className="list-decimal list-inside text-[length:var(--text-body)] leading-[1.85] text-warm-dim mb-4 ml-2"
+          >
+            {children}
+          </ol>
+          {renderThreads(offset)}
+        </>
+      );
+    },
     li: ({ children, id }) => (
       <li id={id} className="mb-1">
         {children}
       </li>
     ),
-    blockquote: ({ children }) => (
-      <blockquote className="border-l-2 border-gold-dim pl-4 text-warm-faint italic my-4">
-        {children}
-      </blockquote>
-    ),
+    blockquote: ({ node, children }) => {
+      const offset = offsetOf(node);
+      return (
+        <>
+          <blockquote
+            {...anchorProps(offset)}
+            className="border-l-2 border-gold-dim pl-4 text-warm-faint italic my-4"
+          >
+            {children}
+          </blockquote>
+          {renderThreads(offset)}
+        </>
+      );
+    },
     code: ({ children }) => (
       <code className="font-mono text-[length:var(--text-small)] bg-code-bg px-1.5 py-0.5 rounded-sm text-gold">
         {children}
@@ -129,21 +211,32 @@ export function ArticleView({
   // for deep-link fragments, not content.
   const displayBody = useMemo(() => body.replace(BLOCK_REF_RE, ""), [body]);
 
+  // Threads whose anchored block is gone — render below so they're never lost.
+  const orphans = btws.filter((b) => (placement.get(b.id) ?? -1) < 0);
+
   return (
-    <article className="max-w-[740px] mx-auto px-4 md:px-10 pt-6 md:pt-10 pb-20 select-text">
+    <article
+      ref={rootRef}
+      className="max-w-[740px] mx-auto px-4 md:px-10 pt-6 md:pt-10 pb-20 select-text"
+    >
       <DocHeader
         document={document}
         archived={archived}
         supersededBy={supersededBy}
         onSupersessorClick={onSupersessorClick}
       />
-      <Markdown
-        remarkPlugins={remarkPlugins}
-        rehypePlugins={rehypePlugins}
-        components={mdComponents}
-      >
+      <Markdown remarkPlugins={remarkPlugins} rehypePlugins={rehypePlugins} components={mdComponents}>
         {displayBody}
       </Markdown>
+      {orphans.map((btw) => (
+        <BtwThread
+          key={btw.id}
+          btw={btw}
+          onReply={onBtwReply}
+          onDismiss={onBtwDismiss}
+          onSpinOff={onBtwSpinOff}
+        />
+      ))}
     </article>
   );
 }

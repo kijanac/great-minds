@@ -8,14 +8,7 @@ import {
   type ExchangePayload,
   type SessionOrigin,
 } from "@/api/sessions";
-import type {
-  BtwThread,
-  Exchange,
-  HistoryMessage,
-  Phase,
-  SelectionInfo,
-  ThinkingBlock,
-} from "@/lib/types";
+import type { BtwThread, Exchange, HistoryMessage, Phase, SelectionInfo } from "@/lib/types";
 import { buildBtwHistory, buildBtwQuery, genId, isAbortError } from "@/lib/utils";
 
 function threadToHistory(thread: Exchange[]): HistoryMessage[] {
@@ -25,15 +18,6 @@ function threadToHistory(thread: Exchange[]): HistoryMessage[] {
     history.push({ role: "assistant", content: ex.answer });
   }
   return history;
-}
-
-function exchangeToPayload(ex: Exchange): ExchangePayload {
-  return {
-    id: ex.id,
-    query: ex.query,
-    thinking: ex.thinking,
-    answer: ex.answer,
-  };
 }
 
 interface UseSessionOptions {
@@ -54,8 +38,6 @@ export function useSession(options?: UseSessionOptions) {
   const createRef = useRef<Promise<string> | null>(null);
   const idempotencyKeyRef = useRef<string | null>(null);
   const threadRef = useRef(thread);
-  const [liveThinking, setLiveThinking] = useState<ThinkingBlock[]>([]);
-  const [liveText, setLiveText] = useState("");
   const [chips, setChips] = useState<string[]>([]);
   const [popover, setPopover] = useState<SelectionInfo | null>(null);
 
@@ -111,21 +93,30 @@ export function useSession(options?: UseSessionOptions) {
     }
   }, []);
 
+  const updateExchange = useCallback((id: string, patch: Partial<Exchange>) => {
+    setThread((prev) => prev.map((ex) => (ex.id === id ? { ...ex, ...patch } : ex)));
+  }, []);
+
   const runExchange = useCallback(
     async (question: string) => {
       const exId = genId("ex");
       setPhase("searching");
-      setLiveThinking([]);
-      setLiveText("");
+
+      const originForQuery = isFirstExchange.current ? originPathRef.current : undefined;
+      isFirstExchange.current = false;
+      const history = threadToHistory(threadRef.current);
+
+      // Optimistic in-flight exchange — patched in place as the answer streams.
+      setThread((prev) => [
+        ...prev,
+        { id: exId, query: question, thinking: [], answer: "", btws: [], streaming: true },
+      ]);
 
       abortRef.current?.abort();
       const controller = new AbortController();
       abortRef.current = controller;
 
       try {
-        const originForQuery = isFirstExchange.current ? originPathRef.current : undefined;
-        isFirstExchange.current = false;
-        const history = threadToHistory(threadRef.current);
         const { answer, sources } = await consumeStream(
           streamQuery(question, {
             signal: controller.signal,
@@ -134,37 +125,29 @@ export function useSession(options?: UseSessionOptions) {
             mode: "query",
           }),
           {
-            onSources: (s) => setLiveThinking([{ sources: s }]),
+            onSources: (s) => updateExchange(exId, { thinking: [{ sources: s }] }),
             onToken: (text) => {
               setPhase("streaming");
-              setLiveText(text);
+              updateExchange(exId, { answer: text });
             },
           },
         );
 
-        const exchange: Exchange = {
-          id: exId,
-          query: question,
-          thinking: [{ sources }],
-          answer,
-          btws: [],
-        };
-        setThread((prev) => [...prev, exchange]);
-        setLiveThinking([]);
-        setLiveText("");
+        updateExchange(exId, { thinking: [{ sources }], answer, streaming: false });
         setPhase("done");
 
         // Auto-persist session (fire-and-forget; the answer is already on screen)
-        const payload = exchangeToPayload(exchange);
+        const payload: ExchangePayload = { id: exId, query: question, thinking: [{ sources }], answer };
         const origin = originPathRef.current ? { doc_path: originPathRef.current } : undefined;
         void persistExchange(payload, origin);
       } catch (err) {
+        setThread((prev) => prev.filter((ex) => ex.id !== exId));
         if (isAbortError(err)) return;
         console.error("Query failed:", err);
         setPhase("idle");
       }
     },
-    [persistExchange],
+    [persistExchange, updateExchange],
   );
 
   const submitQuery = useCallback(
@@ -200,15 +183,9 @@ export function useSession(options?: UseSessionOptions) {
     const btwId = genId("btw");
     const btw: BtwThread = {
       id: btwId,
-      anchor: info.text,
-      paragraph: info.paragraph,
-      paragraphIndex: info.paragraphIndex,
       exchangeId: info.exchangeId,
+      anchor: { blockOffset: info.blockOffset, quote: info.quote, context: info.context },
       exchanges: [],
-      pendingQuery: null,
-      sources: [],
-      streaming: false,
-      streamText: "",
     };
 
     setThread((prev) =>
@@ -220,33 +197,40 @@ export function useSession(options?: UseSessionOptions) {
 
   const replyBtw = useCallback((btwId: string, userText: string) => {
     const target = threadRef.current.flatMap((ex) => ex.btws).find((b) => b.id === btwId);
-    const anchor = target?.anchor ?? "";
-    const paragraph = target?.paragraph ?? "";
+    const anchor = target?.anchor ?? { blockOffset: -1, quote: "", context: "" };
     const priorExchanges = target?.exchanges ?? [];
     const isFirst = priorExchanges.length === 0;
     const ownerExId = target?.exchangeId ?? "";
+    const turnId = genId("ex");
 
-    const updateBtw = (patch: Partial<BtwThread>) =>
+    const patchBtwExchanges = (mut: (exchanges: Exchange[]) => Exchange[]) =>
       setThread((prev) =>
-        prev.map((ex) => {
-          if (ex.id !== ownerExId) return ex;
-          return { ...ex, btws: ex.btws.map((b) => (b.id === btwId ? { ...b, ...patch } : b)) };
-        }),
+        prev.map((ex) =>
+          ex.id !== ownerExId
+            ? ex
+            : {
+                ...ex,
+                btws: ex.btws.map((b) =>
+                  b.id === btwId ? { ...b, exchanges: mut(b.exchanges) } : b,
+                ),
+              },
+        ),
       );
+    const patchTurn = (patch: Partial<Exchange>) =>
+      patchBtwExchanges((exs) => exs.map((e) => (e.id === turnId ? { ...e, ...patch } : e)));
 
-    updateBtw({
-      streaming: true,
-      streamText: "",
-      pendingQuery: userText,
-      sources: [],
-    });
+    // Optimistic in-flight turn — patched in place as the reply streams.
+    patchBtwExchanges((exs) => [
+      ...exs,
+      { id: turnId, query: userText, thinking: [], answer: "", btws: [], streaming: true },
+    ]);
 
     // First BTW turn: passage prefix on the question itself.
     // Follow-ups: passage prefix lives in turn 1 of priorExchanges (re-attached in buildBtwHistory).
-    const question = isFirst ? buildBtwQuery(paragraph, anchor, userText) : userText;
+    const question = isFirst ? buildBtwQuery(anchor, userText) : userText;
     const history = [
       ...threadToHistory(threadRef.current),
-      ...buildBtwHistory(priorExchanges, paragraph, anchor),
+      ...buildBtwHistory(priorExchanges, anchor),
     ];
 
     const controller = new AbortController();
@@ -257,33 +241,24 @@ export function useSession(options?: UseSessionOptions) {
         const { answer, sources } = await consumeStream(
           streamQuery(question, { history, mode: "btw", signal: controller.signal }),
           {
-            onSources: (s) => updateBtw({ sources: s }),
-            onToken: (text) => updateBtw({ streamText: text }),
+            onSources: (s) => patchTurn({ thinking: [{ sources: s }] }),
+            onToken: (text) => patchTurn({ answer: text }),
           },
         );
 
-        const newExchange: Exchange = {
-          id: genId("ex"),
-          query: userText,
-          thinking: sources.length > 0 ? [{ sources }] : [],
-          answer,
-          btws: [],
-        };
-        const finalExchanges = [...priorExchanges, newExchange];
-        updateBtw({
-          streaming: false,
-          streamText: "",
-          pendingQuery: null,
-          sources: [],
-          exchanges: finalExchanges,
-        });
+        const thinking = sources.length > 0 ? [{ sources }] : [];
+        patchTurn({ thinking, answer, streaming: false });
 
         if (sessionIdRef.current) {
+          const finalExchanges = [
+            ...priorExchanges,
+            { id: turnId, query: userText, thinking, answer, btws: [], streaming: false },
+          ];
           appendBtw(sessionIdRef.current, {
-            anchor,
-            paragraph,
+            quote: anchor.quote,
+            blockOffset: anchor.blockOffset,
+            context: anchor.context,
             exchangeId: ownerExId,
-            paragraphIndex: target?.paragraphIndex ?? -1,
             exchanges: finalExchanges.map((ex) => ({
               query: ex.query,
               thinking: ex.thinking,
@@ -293,6 +268,8 @@ export function useSession(options?: UseSessionOptions) {
         }
       } catch (err) {
         if (isAbortError(err)) return;
+        // Unwind the provisional turn so it doesn't hang in a streaming state.
+        patchBtwExchanges((exs) => exs.filter((e) => e.id !== turnId));
       }
     })();
   }, []);
@@ -301,7 +278,7 @@ export function useSession(options?: UseSessionOptions) {
     setThread((prev) =>
       prev.map((ex) => {
         const target = ex.btws.find((b) => b.id === btwId);
-        if (!target || target.exchanges.length > 0 || target.streaming) return ex;
+        if (!target || target.exchanges.length > 0) return ex;
         return { ...ex, btws: ex.btws.filter((b) => b.id !== btwId) };
       }),
     );
@@ -327,8 +304,6 @@ export function useSession(options?: UseSessionOptions) {
     sessionId,
     phase,
     thread,
-    liveThinking,
-    liveText,
     chips,
     popover,
     submitQuery,

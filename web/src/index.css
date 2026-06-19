@@ -563,3 +563,10 @@
     margin: 16mm;
   }
 }
+
+/* BTW anchor highlights — painted over the highlighted span in answers and
+   articles via the Custom Highlight API (see lib/highlight.ts). */
+::highlight(btw-anchor) {
+  background-color: color-mix(in oklab, var(--btw) 22%, transparent);
+  border-radius: 1px;
+}

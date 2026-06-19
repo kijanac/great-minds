@@ -19,10 +19,10 @@ export interface ExchangePayload {
 }
 
 export interface BtwPayload {
-  anchor: string;
-  paragraph: string;
+  quote: string;
+  blockOffset: number;
+  context: string;
   exchangeId: string;
-  paragraphIndex: number;
   exchanges: BtwExchange[];
 }
 
@@ -60,9 +60,9 @@ const sessionExchangeEventSchema = z.object({
 const sessionBtwEventSchema = z.object({
   type: z.literal("btw"),
   exId: z.string(),
-  anchor: z.string(),
-  paragraph: z.string(),
-  pi: z.number(),
+  quote: z.string(),
+  blockOffset: z.number(),
+  context: z.string(),
   exchanges: z.array(btwExchangeSchema),
   ts: z.string(),
 });

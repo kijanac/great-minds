@@ -1,7 +1,7 @@
 import { clsx, type ClassValue } from "clsx";
 import { twMerge } from "tailwind-merge";
 
-import type { Exchange, HistoryMessage } from "@/lib/types";
+import type { Exchange, HistoryMessage, TextAnchor } from "@/lib/types";
 
 export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
@@ -55,10 +55,10 @@ export function displayTitle(path: string, title?: string | null): string {
   return title || docDisplayName(path);
 }
 
-export function buildBtwQuery(paragraph: string, anchor: string, userText: string): string {
+export function buildBtwQuery(anchor: TextAnchor, userText: string): string {
   const parts: string[] = [];
-  if (paragraph) parts.push(`Passage:\n> ${paragraph}`);
-  if (anchor && anchor !== paragraph) parts.push(`Highlighted: "${anchor}"`);
+  if (anchor.context) parts.push(`Passage:\n> ${anchor.context}`);
+  if (anchor.quote && anchor.quote !== anchor.context) parts.push(`Highlighted: "${anchor.quote}"`);
   parts.push(userText);
   return parts.join("\n\n");
 }
@@ -66,17 +66,13 @@ export function buildBtwQuery(paragraph: string, anchor: string, userText: strin
 // Flatten BTW exchanges into the LLM's alternating role/content history. The
 // first user turn carries the passage prefix so the model has the BTW anchor
 // in conversation history; later turns are raw text since context is established.
-export function buildBtwHistory(
-  priorExchanges: Exchange[],
-  paragraph: string,
-  anchor: string,
-): HistoryMessage[] {
+export function buildBtwHistory(priorExchanges: Exchange[], anchor: TextAnchor): HistoryMessage[] {
   const history: HistoryMessage[] = [];
   for (let i = 0; i < priorExchanges.length; i++) {
     const ex = priorExchanges[i];
     history.push({
       role: "user",
-      content: i === 0 ? buildBtwQuery(paragraph, anchor, ex.query) : ex.query,
+      content: i === 0 ? buildBtwQuery(anchor, ex.query) : ex.query,
     });
     history.push({ role: "assistant", content: ex.answer });
   }

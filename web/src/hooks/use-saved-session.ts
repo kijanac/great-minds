@@ -19,9 +19,10 @@ function replayEvents(events: SessionEvent[]): Exchange[] {
         thinking: event.thinking,
         answer: event.answer,
         btws: [],
+        streaming: false,
       });
     } else if (event.type === "btw") {
-      const key = `${event.exId}\0${event.anchor}`;
+      const key = `${event.exId}\0${event.quote}`;
       const existing = latestBtw.get(key);
       if (!existing || event.ts > existing.ts) {
         latestBtw.set(key, event);
@@ -32,22 +33,17 @@ function replayEvents(events: SessionEvent[]): Exchange[] {
   const btwsByEx = new Map<string, BtwThread[]>();
   for (const event of latestBtw.values()) {
     const btw: BtwThread = {
-      id: `${event.exId}:${event.pi}:${event.anchor}`,
-      anchor: event.anchor,
-      paragraph: event.paragraph,
-      paragraphIndex: event.pi,
+      id: `${event.exId}:${event.blockOffset}:${event.quote}`,
       exchangeId: event.exId,
+      anchor: { blockOffset: event.blockOffset, quote: event.quote, context: event.context },
       exchanges: event.exchanges.map((ex) => ({
-        id: `${event.exId}:${event.pi}:${event.anchor}:${ex.query}`,
+        id: `${event.exId}:${event.blockOffset}:${event.quote}:${ex.query}`,
         query: ex.query,
         thinking: ex.thinking,
         answer: ex.answer,
         btws: [],
+        streaming: false,
       })),
-      pendingQuery: null,
-      sources: [],
-      streaming: false,
-      streamText: "",
     };
     if (!btwsByEx.has(event.exId)) btwsByEx.set(event.exId, []);
     btwsByEx.get(event.exId)!.push(btw);
