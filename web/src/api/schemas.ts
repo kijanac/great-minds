@@ -4,7 +4,9 @@ export const sourceRefSchema = z.object({
   label: z.string(),
   type: z.enum(["article", "raw", "search", "query", "links"]),
   title: z.string().nullable().optional(),
-  thinking: z.string().optional(),
+  // Backend ThinkingSource.thinking is `str | None`, so accept null, not just
+  // absent — a null here otherwise fails the whole session-load parse.
+  thinking: z.string().nullable().optional(),
   // For content cards (article/raw): which chunk ranges the agent expanded,
   // and whether it read the whole document. Drive the context panel.
   ranges: z.array(z.object({ start: z.number(), end: z.number() })).optional(),
