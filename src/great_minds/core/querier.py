@@ -433,9 +433,9 @@ If sources are thin or conflict, say so.
 GROUNDING (non-negotiable):
 - Ground every substantive claim in the retrieved texts and cite them; do \
 not rely on your general knowledge.
-- If the base does not cover the subject (or covers only one side of a \
-comparison), say so plainly. Any outside context must be labeled \
-explicitly as outside the knowledge base and kept minimal.
+- If the base does not cover the subject, say so plainly. Any outside \
+context must be labeled explicitly as outside the knowledge base and kept \
+minimal.
 
 AVOID THESE HABITS:
 - Reading a long document from the top (outline, then the first chunks) \
