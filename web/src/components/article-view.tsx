@@ -1,5 +1,6 @@
-import { useMemo, useRef, type ComponentProps } from "react";
+import { useLayoutEffect, useMemo, useRef, type ComponentProps } from "react";
 import Markdown from "react-markdown";
+import { useLocation } from "react-router";
 
 import type { Article } from "@/api/doc";
 import { BtwThread } from "@/components/btw-thread";
@@ -48,6 +49,18 @@ export function ArticleView({
 }: ArticleViewProps) {
   const rootRef = useRef<HTMLElement>(null);
   const placement = useAnchoredBtws(rootRef, documentId, btws, body);
+  const { hash } = useLocation();
+
+  // Scroll a deep-link anchor (e.g. #^p37 from a citation) into view once the
+  // blocks are committed. Co-located with BTW placement above: both anchor into
+  // the content this component renders, so they resolve here — after its own
+  // render, before paint — rather than being polled for from the route wrapper.
+  useLayoutEffect(() => {
+    if (!hash) return;
+    // `document` the prop (an Article) shadows the global, so reach it via window.
+    const el = window.document.getElementById(decodeURIComponent(hash.slice(1)));
+    if (el) el.scrollIntoView({ block: "start" });
+  }, [hash, body]);
 
   // Real chunk index per block, read from the ingest-baked `^pN` markers (one
   // per non-heading block, in document order). `pos` is where the marker lands
