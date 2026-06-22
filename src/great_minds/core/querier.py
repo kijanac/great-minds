@@ -1025,15 +1025,10 @@ class QueryEngine:
         event_data: dict = {"type": source_type, **meta}
         if source_type in (SourceType.ARTICLE, SourceType.RAW):
             path = meta["path"]
+            event_data["title"] = await self._source_title(path)
             if source_type is SourceType.ARTICLE:
-                event_data["title"] = await self.wiki.get_title_by_path(
-                    self.vault_id, path
-                )
                 trace.articles_read.append(path)
             else:
-                event_data["title"] = await self.source.get_title_by_path(
-                    self.vault_id, path
-                )
                 trace.sources_read.append(path)
         elif source_type is SourceType.SEARCH:
             trace.searches.append(meta["query"])
