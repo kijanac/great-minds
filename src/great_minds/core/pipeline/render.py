@@ -39,6 +39,7 @@ from great_minds.core.documents.schemas import (
     WikiArticleCreate,
 )
 from great_minds.core.documents.schemas import SourceDocument
+from great_minds.core.footnotes import FootnoteSource, resolve_footnotes
 from great_minds.core.ideas.schemas import Anchor, Idea
 from great_minds.core.ideas.service import IdeaService
 from great_minds.core.llm import RENDER_MODEL
@@ -56,7 +57,6 @@ from great_minds.core.topics.service import TopicService
 log = logging.getLogger(__name__)
 
 PHASE = "render"
-_FOOTNOTE_RE = re.compile(r"\[\^(\d+)\]")
 _HEADING_RE = re.compile(r"^# ", re.MULTILINE)
 
 
@@ -659,40 +659,13 @@ def _validate_and_postprocess(
     if not _HEADING_RE.search(body):
         raise ValueError("body missing top-level heading")
 
-    anchor_by_number = {na.number: na for na in numbered_anchors}
-
-    # First-appearance order of valid markers.
-    used_order: list[int] = []
-    for m in _FOOTNOTE_RE.finditer(body):
-        n = int(m.group(1))
-        if n not in anchor_by_number:
-            continue
-        if n not in used_order:
-            used_order.append(n)
-
-    remap = {orig: display for display, orig in enumerate(used_order, start=1)}
-
-    def _replace(m: re.Match) -> str:
-        n = int(m.group(1))
-        if n not in remap:
-            return ""  # orphan — drop
-        return f"[^{remap[n]}]"
-
-    renumbered = _FOOTNOTE_RE.sub(_replace, body)
-    # Collapse double spaces introduced by orphan removal at mid-sentence.
-    renumbered = re.sub(r"  +", " ", renumbered)
-
-    if not used_order:
-        return renumbered.rstrip() + "\n"
-
-    footnotes = ["", "---", ""]
-    for display, orig in enumerate(used_order, start=1):
-        na = anchor_by_number[orig]
-        source_link = _format_source_link(na)
-        quote = na.anchor.quote.strip()
-        footnotes.append(f'[^{display}]: {source_link} — "{quote}"')
-
-    return renumbered.rstrip() + "\n" + "\n".join(footnotes) + "\n"
+    sources = {
+        na.number: FootnoteSource(
+            link=_format_source_link(na), quote=na.anchor.quote.strip()
+        )
+        for na in numbered_anchors
+    }
+    return resolve_footnotes(body, sources)
 
 
 def _format_source_link(na: _NumberedAnchor) -> str:
