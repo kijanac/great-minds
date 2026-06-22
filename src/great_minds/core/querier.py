@@ -19,7 +19,6 @@ from pydantic import BaseModel
 
 from .vaults.config import load_vault_config
 from .vaults.prompts import load_prompt
-from .footnotes import FootnoteSource, resolve_footnotes
 from .search import Chunk, SearchService
 from .documents.schemas import WikiArticleOverview, WikiSort
 from .documents.service import SourceDocumentService, WikiArticleService
@@ -428,9 +427,9 @@ outline section. If you are about to call it without a prior locating call, \
 stop and call search_in_document first.
 
 STAGE 4 — VERIFY & ANSWER. Re-read the strongest passages, then write. \
-Cite the chunk behind each claim with the `[^N]` marker shown next to it; reuse \
-a number wherever you draw on that chunk again. Do not write a footnotes \
-section — the system generates it. If sources are thin or conflict, say so.
+Cite the source behind each claim with an inline markdown link, anchored to \
+the supporting chunk's index where you have one so the link opens the document \
+at that passage. If sources are thin or conflict, say so.
 
 GROUNDING (non-negotiable):
 - Ground every substantive claim in the retrieved texts and cite them; do \
@@ -453,18 +452,12 @@ Knowledge base:
 {identity}"""
 
 
-def _render_chunk_window(
-    path: str, label: str, chunks: list[Chunk], numbers: list[int]
-) -> str:
-    """Render a contiguous run of indexed chunks as readable text.
-
-    Each chunk is prefixed with the ``[^N]`` footnote marker the agent cites
-    when it draws on that chunk.
-    """
+def _render_chunk_window(path: str, label: str, chunks: list[Chunk]) -> str:
+    """Render a contiguous run of indexed chunks as readable text."""
     sections: list[str] = []
-    for c, n in zip(chunks, numbers):
+    for c in chunks:
         heading = f"{c.heading}\n" if c.heading else ""
-        sections.append(f"[^{n}] [chunk {c.chunk_index}]\n{heading}{c.body}")
+        sections.append(f"[chunk {c.chunk_index}]\n{heading}{c.body}")
     header = (
         f"# {path} [{label}] (chunks {chunks[0].chunk_index}–{chunks[-1].chunk_index})"
     )
@@ -584,11 +577,6 @@ class QueryEngine:
         self.wiki = wiki
         self.search = search
         self.client = client
-        # Citation registry, filled as the agent reads chunks: a chunk maps to a
-        # footnote number, and the number to (path, chunk_index, body) for
-        # resolution at finalize. Reset per run.
-        self._cite_num: dict[tuple[str, int], int] = {}
-        self._cite_meta: dict[int, tuple[str, int, str]] = {}
 
     async def run(
         self,
@@ -602,8 +590,6 @@ class QueryEngine:
         extra_instructions: str | None = None,
     ) -> AsyncGenerator[dict, None]:
         """Stream SSE events for a question, with model fallback on rate limit."""
-        self._cite_num = {}
-        self._cite_meta = {}
         primary = model or QUERY_MODEL
         system_prompt = await self._build_system_prompt(
             mode=mode, extra_instructions=extra_instructions
@@ -774,23 +760,7 @@ class QueryEngine:
             end=end,
             returned=len(chunks),
         )
-        numbers = [self._register_citation(path, c) for c in chunks]
-        return _render_chunk_window(path, self.label, chunks, numbers)
-
-    def _register_citation(self, path: str, chunk: Chunk) -> int:
-        """Assign (or reuse) a footnote number for a chunk the agent has read.
-
-        Deduped by (path, chunk_index), so re-reading a chunk reuses its number.
-        The number is what the agent cites as ``[^N]``; the stored meta resolves
-        it to a source link and quote at finalize.
-        """
-        key = (path, chunk.chunk_index)
-        n = self._cite_num.get(key)
-        if n is None:
-            n = len(self._cite_num) + 1
-            self._cite_num[key] = n
-            self._cite_meta[n] = (path, chunk.chunk_index, chunk.body.strip())
-        return n
+        return _render_chunk_window(path, self.label, chunks)
 
     async def _linked_articles(self, path: str) -> str:
         """List the articles a wiki article links to and is linked from.
@@ -997,7 +967,7 @@ class QueryEngine:
             if state.content:
                 messages.append({"role": "assistant", "content": state.content})
 
-            yield await self._emit_done(model, trace, state.content or "")
+            yield await self._emit_done(model, trace)
             return
 
     async def _run_tool_calls(
@@ -1096,7 +1066,7 @@ class QueryEngine:
             },
         ]
 
-    async def _emit_done(self, model: str, trace: StreamTrace, answer: str) -> dict:
+    async def _emit_done(self, model: str, trace: StreamTrace) -> dict:
         enrich(
             model=model,
             articles_read=trace.articles_read,
@@ -1105,33 +1075,7 @@ class QueryEngine:
             llm_rounds=trace.llm_rounds,
             tool_calls=trace.tool_calls_total,
         )
-        return {"event": "done", "data": {"answer": await self._resolve_footnotes(answer)}}
-
-    async def _resolve_footnotes(self, answer: str) -> str:
-        """Turn the agent's ``[^N]`` markers into a resolved footnote section.
-
-        Builds a source map from the citation registry — each read chunk's link
-        and quote — and delegates to the shared resolver, which renumbers by
-        first appearance, drops markers for chunks that weren't read, and appends
-        the section. Titles are fetched once per distinct document.
-        """
-        if not answer or not self._cite_meta:
-            return answer
-        titles: dict[str, str | None] = {}
-        sources: dict[int, FootnoteSource] = {}
-        for n, (path, chunk_index, body) in self._cite_meta.items():
-            if path not in titles:
-                titles[path] = await self._source_title(path)
-            label = titles[path] or path
-            sources[n] = FootnoteSource(
-                link=f"[{label}]({path}#^p{chunk_index})", quote=body
-            )
-        return resolve_footnotes(answer, sources)
-
-    async def _source_title(self, path: str) -> str | None:
-        if path.startswith("wiki/"):
-            return await self.wiki.get_title_by_path(self.vault_id, path)
-        return await self.source.get_title_by_path(self.vault_id, path)
+        return {"event": "done", "data": {}}
 
     async def _finalize_wide_event(self, *, user_id: UUID | None) -> None:
         await record_wide_event_cost(
