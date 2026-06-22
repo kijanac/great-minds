@@ -110,7 +110,7 @@ export const rehypePlugins: ComponentProps<typeof Markdown>["rehypePlugins"] = [
 
 /** Leaf markdown overrides shared across all contexts (answer-block, article-view, btw-thread). */
 export const baseMdComponents: ComponentProps<typeof Markdown>["components"] = {
-  a: ({ node: _node, children, href, ...rest }) => {
+  a: ({ node, children, href, ...rest }) => {
     const isExternal = href?.startsWith("http");
     // Spread the remaining props so remark-gfm's footnote attributes
     // (data-footnote-ref / data-footnote-backref, aria-describedby) survive —
@@ -125,10 +125,10 @@ export const baseMdComponents: ComponentProps<typeof Markdown>["components"] = {
         {children}
       </a>
     );
-    // A footnote reference (tagged by rehypeFootnoteContent): preview its
-    // source/quote on hover via the shared Tooltip. Renders the bare link if
-    // it's not a footnote ref — or, gracefully, if the tooltip can't mount.
-    const footnote = (rest as Record<string, unknown>)["data-footnote-content"];
+    // A footnote reference carries its resolved text on the hast node (set by
+    // rehypeFootnoteContent): preview source/quote on hover via the shared
+    // Tooltip. Renders the bare link otherwise — or if the tooltip can't mount.
+    const footnote = node?.properties?.dataFootnoteContent;
     if (typeof footnote !== "string") return link;
     return (
       <Tooltip>
