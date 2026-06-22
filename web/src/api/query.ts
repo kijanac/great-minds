@@ -50,7 +50,7 @@ export type StreamEvent =
   | { event: "source"; data: z.infer<typeof sourceEventDataSchema> }
   | z.infer<typeof tokenEventSchema>
   | z.infer<typeof errorEventSchema>
-  | { event: "done"; data: Record<string, never> };
+  | { event: "done"; data: { answer?: string } };
 
 function parseStreamEvent(eventType: string, dataStr: string): StreamEvent {
   const data: unknown = JSON.parse(dataStr);
@@ -62,7 +62,7 @@ function parseStreamEvent(eventType: string, dataStr: string): StreamEvent {
     return tokenEventSchema.parse({ event: "token", data });
   }
   if (eventType === "done") {
-    return { event: "done", data: {} };
+    return { event: "done", data: z.object({ answer: z.string().optional() }).parse(data) };
   }
   if (eventType === "error") {
     return errorEventSchema.parse({ event: "error", data });
@@ -139,6 +139,7 @@ export async function consumeStream(
 ): Promise<{ answer: string; sources: SourceRef[] }> {
   const sources: SourceRef[] = [];
   let streamText = "";
+  let finalAnswer: string | undefined;
   let clearOnNextToken = false;
 
   for await (const event of stream) {
@@ -215,6 +216,9 @@ export async function consumeStream(
         clearOnNextToken = true;
       }
     } else if (event.event === "done") {
+      // The backend resolves citations into a footnote section after the stream;
+      // prefer that finalized answer over the raw streamed tokens.
+      if (event.data.answer) finalAnswer = event.data.answer;
       break;
     } else if (event.event === "error") {
       console.error("Stream error:", event.data.message);
@@ -222,5 +226,5 @@ export async function consumeStream(
     }
   }
 
-  return { answer: streamText, sources };
+  return { answer: finalAnswer ?? streamText, sources };
 }
