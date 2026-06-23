@@ -997,8 +997,17 @@ class QueryEngine:
         key = get_settings().parallel_api_key
         if not key:
             return "Web search is unavailable: no provider key is configured."
+        # The agent's `query` drives the actual search; the `objective` is a
+        # natural-language goal Parallel uses to compress each result to its
+        # most relevant excerpts. Point it at the user's question, framed for
+        # facts, so the excerpts come back fact-dense for what we actually want.
+        objective = (
+            "Find concrete facts — events, dates, figures, named people and "
+            "organizations, and what people concretely said or did — relevant "
+            f"to this question: {self._question or query}"
+        )
         payload = {
-            "objective": query,
+            "objective": objective,
             "search_queries": [query],
             "max_results": 5,
             "max_chars_per_result": 1500,
