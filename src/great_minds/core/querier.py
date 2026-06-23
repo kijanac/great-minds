@@ -1004,7 +1004,7 @@ class QueryEngine:
         objective = (
             "Find concrete facts — events, dates, figures, named people and "
             "organizations, and what people concretely said or did — relevant "
-            f"to this question: {self._question or query}"
+            f"to this question: {self._question}"
         )
         payload = {
             "objective": objective,
