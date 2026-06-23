@@ -23,9 +23,9 @@ from .vaults.prompts import load_prompt
 from .search import Chunk, SearchService
 from .documents.schemas import WikiArticleOverview, WikiSort
 from .documents.service import SourceDocumentService, WikiArticleService
-from .llm import QUERY_MODEL
+from .llm import EXTRACT_MODEL, QUERY_MODEL
 from .pagination import PageParams
-from .llm.client import api_stream, is_retryable, models_with_fallback
+from .llm.client import api_stream, is_retryable, json_llm_call, models_with_fallback
 from .llm_costs import record_wide_event_cost
 from .settings import get_settings
 from .storage import Storage
@@ -368,6 +368,43 @@ _WEB_SEARCH_GUIDANCE = (
 )
 
 
+class _WebResultFacts(BaseModel):
+    """Facts extracted from one web result, keyed to its 1-based input index."""
+
+    index: int
+    facts: list[str]
+
+
+class _WebFacts(BaseModel):
+    results: list[_WebResultFacts]
+
+
+_WEB_FACT_EXTRACTION_PROMPT = (
+    "You extract FACTS from web search results for a research assistant whose "
+    "analysis comes only from its own knowledge base, never from the web. You are "
+    "given the user's question and a numbered list of web results. For each "
+    "result, return the empirical facts it states — and only facts.\n\n"
+    "KEEP (facts): concrete events, dates, counts, named people and "
+    "organizations, official acts and labels, and direct accounts of what someone "
+    "concretely said or did. Preserve the source's own wording — do not soften, "
+    "neutralize, or editorialize it. Extract only what the result actually "
+    "states; never infer, generalize, or add.\n\n"
+    "DROP (analysis): the source's evaluation, interpretation, strategy, "
+    "predictions, lessons, or conclusions. Anything about what an event MEANS or "
+    "what SHOULD be done is not a fact.\n\n"
+    "DISCOURSE FACTS — statements of who-published-or-argued-what (e.g. 'Group X "
+    "released a statement calling for Y', 'Outlet Z called the event a turning "
+    "point'): include these ONLY when the user's question is about the discourse "
+    "itself — how groups or sources framed, analyzed, or responded to the event. "
+    "When the question asks you to analyze the event, omit them entirely.\n\n"
+    "If a result states no usable facts — pure commentary, or only discourse "
+    "facts for a non-discourse question — return an empty list for it.\n\n"
+    'Return JSON of the form {"results": [{"index": <the result\'s number>, '
+    '"facts": ["fact", ...]}]}. Include an entry for every result; use an empty '
+    "facts list when there is nothing to extract."
+)
+
+
 def build_tools(tags: list[str], *, web_search: bool = False) -> list[dict]:
     """Build the full tool list with vocabulary injected into query_documents.
 
@@ -625,6 +662,10 @@ class QueryEngine:
         self.wiki = wiki
         self.search = search
         self.client = client
+        # The current run()'s user question, so tool helpers (web-fact
+        # extraction) can gate on it. Set at the top of run(); the engine is
+        # constructed per request, so this is request-scoped.
+        self._question: str | None = None
 
     async def run(
         self,
@@ -638,6 +679,7 @@ class QueryEngine:
         extra_instructions: str | None = None,
     ) -> AsyncGenerator[dict, None]:
         """Stream SSE events for a question, with model fallback on rate limit."""
+        self._question = question
         primary = model or QUERY_MODEL
         vault_cfg = await load_vault_config(self.storage)
         web_search = vault_cfg.web_search and bool(get_settings().parallel_api_key)
@@ -985,18 +1027,65 @@ class QueryEngine:
         if not results:
             return f"No web results for '{query}'."
         log_event("query.web_search", query=query, results_count=len(results))
+        extracted = await self._extract_web_facts(self._question or query, results)
+        if extracted is None:
+            return (
+                f"Web results for '{query}' could not be distilled to facts this "
+                "call; rely on the knowledge base."
+            )
         blocks: list[str] = []
-        for r in results:
+        for i, r in enumerate(results, start=1):
+            url = r.get("url", "")
+            title = r.get("title") or url
+            facts = extracted.get(i) or []
+            body = (
+                "\n".join(f"- {f}" for f in facts)
+                if facts
+                else "(no extractable facts)"
+            )
+            blocks.append(f"### {title}\n{url}\n{body}")
+        return (
+            f"Web FACTS for '{query}' — EXTERNAL, not from the knowledge base. "
+            "These are facts only; the analysis is yours, from the knowledge base. "
+            "Cite a fact's source as [title](url):\n\n" + "\n\n".join(blocks)
+        )
+
+    async def _extract_web_facts(
+        self, question: str, results: list[dict]
+    ) -> dict[int, list[str]] | None:
+        """Distill each web result to its facts, gated on the user's question.
+
+        Runs a cheap extraction model that keeps empirical facts and drops the
+        source's analysis (and who-said-what discourse facts, unless the
+        question is about the discourse). Returns a map of 1-based result index
+        to facts, or None if extraction failed — in which case the caller
+        reports no usable facts rather than leaking the raw, analysis-laden
+        excerpts.
+        """
+        numbered: list[str] = []
+        for i, r in enumerate(results, start=1):
             url = r.get("url", "")
             title = r.get("title") or url
             excerpts = r.get("excerpts") or []
-            snippet = " ".join(excerpts) if isinstance(excerpts, list) else str(excerpts)
-            blocks.append(f"### {title}\n{url}\n{snippet}".strip())
-        return (
-            f"Web results for '{query}' — EXTERNAL, not from the knowledge base. "
-            "Cite as [title](url) and say it is from the web:\n\n"
-            + "\n\n".join(blocks)
-        )
+            content = (
+                " ".join(excerpts) if isinstance(excerpts, list) else str(excerpts)
+            )
+            numbered.append(f"[{i}] {title}\n{url}\n{content}")
+        user = f"USER QUESTION: {question}\n\nWEB RESULTS:\n\n" + "\n\n".join(numbered)
+        try:
+            raw = await json_llm_call(
+                self.client,
+                model=EXTRACT_MODEL,
+                messages=[
+                    {"role": "system", "content": _WEB_FACT_EXTRACTION_PROMPT},
+                    {"role": "user", "content": user},
+                ],
+            )
+            parsed = _WebFacts.model_validate(raw)
+        except Exception as exc:
+            log_event("query.web_extract_failed", query=question, error=str(exc))
+            return None
+        return {r.index: r.facts for r in parsed.results}
 
     # -- prompt + tool setup ------------------------------------------------
 
