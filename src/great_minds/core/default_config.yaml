@@ -13,6 +13,11 @@ kinds:
 # biographical framings"). Empty string disables the steer.
 thematic_hint: ""
 
+# Answer-time policy: may query answers draw on the open web for facts the
+# knowledge base doesn't contain? Web results are cited as external links,
+# never blended into the knowledge base's own voice. (Requires PARALLEL_API_KEY.)
+web_search: false
+
 # Vault-configured enriched metadata fields. Each entry declares a field
 # the extract LLM should look for in every document. The LLM's value
 # lands in source_documents.derived_extras (JSONB) and gets surfaced in

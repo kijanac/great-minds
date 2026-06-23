@@ -14,6 +14,7 @@ from dataclasses import dataclass, field
 from typing import Literal
 from uuid import UUID
 
+import httpx
 from openai import AsyncOpenAI
 from pydantic import BaseModel
 
@@ -26,6 +27,7 @@ from .llm import QUERY_MODEL
 from .pagination import PageParams
 from .llm.client import api_stream, is_retryable, models_with_fallback
 from .llm_costs import record_wide_event_cost
+from .settings import get_settings
 from .storage import Storage
 from .telemetry import (
     correlation_id,
@@ -331,9 +333,48 @@ def _build_query_tool(tags: list[str]) -> dict:
     }
 
 
-def build_tools(tags: list[str]) -> list[dict]:
-    """Build the full tool list with vocabulary injected into query_documents."""
-    return _BASE_TOOLS + [_build_query_tool(tags)]
+_WEB_SEARCH_TOOL = {
+    "type": "function",
+    "function": {
+        "name": "web_search",
+        "description": (
+            "Search the open web for facts the knowledge base does not contain — "
+            "recent events, dates, figures, names. Use ONLY after the knowledge "
+            "base has come up empty on a factual point; the knowledge base remains "
+            "the source for analysis and interpretation. Results are EXTERNAL: "
+            "cite them as [title](url) and make clear they are from the web, not "
+            "the knowledge base."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "query": {"type": "string", "description": "Web search query"},
+            },
+            "required": ["query"],
+        },
+    },
+}
+
+
+_WEB_SEARCH_GUIDANCE = (
+    "WEB SEARCH: You may call web_search for factual gaps the knowledge base does "
+    "not cover — recent events, dates, figures. Exhaust the knowledge base first; "
+    "it remains the authority for analysis and stance. Treat web results as raw "
+    "facts to interpret through this knowledge base's lens, never as a voice to "
+    "adopt. Cite web sources as [title](url) and make explicit they are external, "
+    "not from the knowledge base."
+)
+
+
+def build_tools(tags: list[str], *, web_search: bool = False) -> list[dict]:
+    """Build the full tool list with vocabulary injected into query_documents.
+
+    When ``web_search`` is set, the external web_search tool is appended.
+    """
+    tools = _BASE_TOOLS + [_build_query_tool(tags)]
+    if web_search:
+        tools = tools + [_WEB_SEARCH_TOOL]
+    return tools
 
 
 # OpenRouter routing preferences for the agent's chat calls. Tells the
@@ -362,6 +403,10 @@ def _classify_tool_call(name: str, args: dict) -> tuple[SourceType, dict] | None
         return doc_type, meta
     if name == "search_content":
         return SourceType.SEARCH, {"query": args["query"]}
+    if name == "web_search":
+        # External web search — a SEARCH card labeled "web:" so the trace shows
+        # it consulted the open web, not the corpus.
+        return SourceType.SEARCH, {"query": f"web: {args['query']}"}
     if name == "search_in_document":
         # A search scoped to one document — surface it as a search card whose
         # label names both the query and the document it ran against.
@@ -592,10 +637,12 @@ class QueryEngine:
     ) -> AsyncGenerator[dict, None]:
         """Stream SSE events for a question, with model fallback on rate limit."""
         primary = model or QUERY_MODEL
+        vault_cfg = await load_vault_config(self.storage)
+        web_search = vault_cfg.web_search and bool(get_settings().parallel_api_key)
         system_prompt = await self._build_system_prompt(
-            mode=mode, extra_instructions=extra_instructions
+            mode=mode, extra_instructions=extra_instructions, web_search=web_search
         )
-        tools = await self._load_tools()
+        tools = await self._load_tools(web_search=web_search)
         base_messages: list[dict] = [{"role": "system", "content": system_prompt}]
         if origin_path:
             base_messages.extend(await self._build_origin_messages(origin_path))
@@ -886,6 +933,8 @@ class QueryEngine:
             return await self._linked_articles(args["path"])
         elif name == "search_content":
             return await self._search_content(args["query"])
+        elif name == "web_search":
+            return await self._web_search(args["query"])
         elif name == "search_in_document":
             return await self._search_in_document(args["path"], args["query"])
         elif name == "query_documents":
@@ -894,6 +943,58 @@ class QueryEngine:
             return await self._list_articles(args)
         else:
             return f"Unknown tool: {name}"
+
+    async def _web_search(self, query: str) -> str:
+        """Search the open web via Parallel; return excerpts as tool context.
+
+        The external-source channel: results are framed as not-from-the-KB so
+        the model cites them as external links and never adopts their voice.
+        """
+        key = get_settings().parallel_api_key
+        if not key:
+            return "Web search is unavailable: no provider key is configured."
+        payload = {
+            "objective": query,
+            "search_queries": [query],
+            "max_results": 5,
+            "max_chars_per_result": 1500,
+        }
+        headers = {
+            "x-api-key": key,
+            "parallel-beta": "search-extract-2025-10-10",
+            "Content-Type": "application/json",
+        }
+        try:
+            async with httpx.AsyncClient(timeout=20.0) as client:
+                resp = await client.post(
+                    "https://api.parallel.ai/v1beta/search",
+                    json=payload,
+                    headers=headers,
+                )
+                resp.raise_for_status()
+                data = resp.json()
+        except (httpx.HTTPError, ValueError) as exc:
+            log_event("query.web_search_failed", query=query, error=str(exc))
+            return (
+                f"Web search failed for '{query}'. Rely on the knowledge base or "
+                "rephrase."
+            )
+        results = data.get("results") or []
+        if not results:
+            return f"No web results for '{query}'."
+        log_event("query.web_search", query=query, results_count=len(results))
+        blocks: list[str] = []
+        for r in results:
+            url = r.get("url", "")
+            title = r.get("title") or url
+            excerpts = r.get("excerpts") or []
+            snippet = " ".join(excerpts) if isinstance(excerpts, list) else str(excerpts)
+            blocks.append(f"### {title}\n{url}\n{snippet}".strip())
+        return (
+            f"Web results for '{query}' — EXTERNAL, not from the knowledge base. "
+            "Cite as [title](url) and say it is from the web:\n\n"
+            + "\n\n".join(blocks)
+        )
 
     # -- prompt + tool setup ------------------------------------------------
 
@@ -913,7 +1014,11 @@ class QueryEngine:
         )
 
     async def _build_system_prompt(
-        self, *, mode: QueryMode, extra_instructions: str | None
+        self,
+        *,
+        mode: QueryMode,
+        extra_instructions: str | None,
+        web_search: bool = False,
     ) -> str:
         identity = await self._build_identity() or "(empty vault)"
 
@@ -922,6 +1027,10 @@ class QueryEngine:
 
         # Layer 2: per-vault default persona
         prompt += "\n\n" + await load_prompt(self.storage, "query")
+
+        # Web search policy — only when the vault enables it
+        if web_search:
+            prompt += "\n\n" + _WEB_SEARCH_GUIDANCE
 
         if mode == QueryMode.BTW:
             prompt += "\n\n" + await load_prompt(self.storage, "query_btw")
@@ -932,9 +1041,9 @@ class QueryEngine:
 
         return prompt
 
-    async def _load_tools(self) -> list[dict]:
+    async def _load_tools(self, *, web_search: bool = False) -> list[dict]:
         tags = await self.source.get_distinct_tags([self.vault_id])
-        return build_tools(tags)
+        return build_tools(tags, web_search=web_search)
 
     # -- streaming loop -----------------------------------------------------
 

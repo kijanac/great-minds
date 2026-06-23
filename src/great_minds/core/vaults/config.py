@@ -115,6 +115,10 @@ class VaultConfig:
     kinds: tuple[str, ...] = DEFAULT_KINDS
     thematic_hint: str = DEFAULT_THEMATIC_HINT
     enriched_fields: tuple[EnrichedFieldSpec, ...] = ()
+    # Answer-time policy: may query answers draw on the open web for facts the
+    # knowledge base doesn't contain? A bool is enough while it's vault-wide;
+    # becomes an off/allowed/on enum if a per-query override is ever added.
+    web_search: bool = False
     raw: dict = field(default_factory=dict)
 
 
@@ -126,11 +130,13 @@ async def load_vault_config(storage: Storage) -> VaultConfig:
     kinds_raw = data.get("kinds")
     kinds = tuple(kinds_raw) if kinds_raw else DEFAULT_KINDS
     thematic_hint = data.get("thematic_hint") or DEFAULT_THEMATIC_HINT
+    web_search = data["web_search"]
     enriched_fields = tuple(load_enriched_field_specs(dict(data)))
     return VaultConfig(
         kinds=kinds,
         thematic_hint=thematic_hint,
         enriched_fields=enriched_fields,
+        web_search=web_search,
         raw=dict(data),
     )
 
