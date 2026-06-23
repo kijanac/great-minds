@@ -357,12 +357,14 @@ _WEB_SEARCH_TOOL = {
 
 
 _WEB_SEARCH_GUIDANCE = (
-    "WEB SEARCH: You may call web_search for factual gaps the knowledge base does "
-    "not cover — recent events, dates, figures. Exhaust the knowledge base first; "
-    "it remains the authority for analysis and stance. Treat web results as raw "
-    "facts to interpret through this knowledge base's lens, never as a voice to "
-    "adopt. Cite web sources as [title](url) and make explicit they are external, "
-    "not from the knowledge base."
+    "WEB SEARCH: Use web_search only for facts about reality the knowledge base "
+    "lacks — what happened, when, who, how many. The analysis is always yours, "
+    "drawn from this knowledge base's framework applied to those facts; never take "
+    "your interpretation, lessons, or strategic conclusions from a web source — not "
+    "even with attribution. You may report what an outside source claims only when "
+    "the question is itself about those claims (e.g. \"how did different groups read "
+    "this event\"); otherwise do not repeat or lean on another author's analysis. "
+    "Exhaust the knowledge base first. Cite web facts as [title](url)."
 )
 
 
