@@ -8,7 +8,6 @@ context, with timing.
 
 import enum
 import json
-import re
 import uuid
 from collections.abc import AsyncGenerator
 from dataclasses import dataclass, field
@@ -20,7 +19,6 @@ from pydantic import BaseModel
 
 from .vaults.config import load_vault_config
 from .vaults.prompts import load_prompt
-from .footnotes import FootnoteSource, format_source_link, resolve_footnotes
 from .search import Chunk, SearchService
 from .documents.schemas import WikiArticleOverview, WikiSort
 from .documents.service import SourceDocumentService, WikiArticleService
@@ -89,12 +87,6 @@ class ModelRound:
 
 class MalformedToolArgs(ValueError):
     pass
-
-
-# A footnote definition line the agent writes, e.g. `[^3]: raw/docs/x.md#15`.
-_FOOTNOTE_DEF_RE = re.compile(r"^\[\^(\d+)\]:[ \t]*(.+?)[ \t]*$", re.MULTILINE)
-# The source spec inside it: a .md path with an optional chunk index.
-_DEF_SPEC_RE = re.compile(r"(\S+\.md)(?:#\^?p?(\d+))?")
 
 
 _BASE_TOOLS = [
@@ -435,10 +427,10 @@ outline section. If you are about to call it without a prior locating call, \
 stop and call search_in_document first.
 
 STAGE 4 — VERIFY & ANSWER. Re-read the strongest passages, then write. Open \
-with the answer itself — no preamble about your process. Cite each claim with a \
-`[^N]` marker, and list every marker at the end as `[^N]: <path>#<chunk>` (the \
-document path and chunk number from a tool). If sources are thin or conflict, \
-say so.
+with the answer itself — no preamble about your process. Cite the source behind \
+each claim with an inline markdown link, anchored to the supporting chunk's \
+index where you have one so the link opens the document at that passage. If \
+sources are thin or conflict, say so.
 
 GROUNDING (non-negotiable):
 - Ground every substantive claim in the retrieved texts and cite them; do \
@@ -976,7 +968,7 @@ class QueryEngine:
             if state.content:
                 messages.append({"role": "assistant", "content": state.content})
 
-            yield await self._emit_done(model, trace, state.content or "")
+            yield await self._emit_done(model, trace)
             return
 
     async def _run_tool_calls(
@@ -1025,10 +1017,15 @@ class QueryEngine:
         event_data: dict = {"type": source_type, **meta}
         if source_type in (SourceType.ARTICLE, SourceType.RAW):
             path = meta["path"]
-            event_data["title"] = await self._source_title(path)
             if source_type is SourceType.ARTICLE:
+                event_data["title"] = await self.wiki.get_title_by_path(
+                    self.vault_id, path
+                )
                 trace.articles_read.append(path)
             else:
+                event_data["title"] = await self.source.get_title_by_path(
+                    self.vault_id, path
+                )
                 trace.sources_read.append(path)
         elif source_type is SourceType.SEARCH:
             trace.searches.append(meta["query"])
@@ -1070,7 +1067,7 @@ class QueryEngine:
             },
         ]
 
-    async def _emit_done(self, model: str, trace: StreamTrace, answer: str) -> dict:
+    async def _emit_done(self, model: str, trace: StreamTrace) -> dict:
         enrich(
             model=model,
             articles_read=trace.articles_read,
@@ -1079,64 +1076,7 @@ class QueryEngine:
             llm_rounds=trace.llm_rounds,
             tool_calls=trace.tool_calls_total,
         )
-        return {"event": "done", "data": {"answer": await self._resolve_footnotes(answer)}}
-
-    async def _resolve_footnotes(self, answer: str) -> str:
-        """Enrich the agent's ``[^N]: path#chunk`` definitions into real footnotes.
-
-        The agent writes ``[^N]`` markers in the prose and one definition line per
-        marker giving the source path + chunk index. We parse those, strip them,
-        and rebuild the section via the shared resolver — fixing the anchor to
-        ``#^pN``, adding the document title, and attaching the cited chunk as the
-        quote. The agent's own numbering carries the claim→chunk mapping, so
-        there's no separate registry to keep in sync.
-        """
-        sources: dict[int, FootnoteSource] = {}
-        titles: dict[str, str | None] = {}
-        for m in _FOOTNOTE_DEF_RE.finditer(answer):
-            spec = _DEF_SPEC_RE.search(m.group(2))
-            if spec is None:
-                continue
-            path = spec.group(1)
-            chunk_index = int(spec.group(2)) if spec.group(2) else None
-            if path not in titles:
-                titles[path] = await self._source_title(path)
-            sources[int(m.group(1))] = FootnoteSource(
-                link=format_source_link(titles[path] or path, path, chunk_index),
-                quote=await self._chunk_quote(path, chunk_index),
-            )
-        if not sources:
-            return answer
-        # Drop the agent's raw definitions (and any trailing rule/heading it
-        # added); the resolver re-emits clean ones.
-        stripped = _FOOTNOTE_DEF_RE.sub("", answer)
-        for _ in range(3):
-            stripped = re.sub(r"\s*-{3,}\s*$", "", stripped)
-            stripped = re.sub(
-                r"\s*(?:#{1,6}\s*)?\**\s*(?:Footnotes?|Sources?)\s*\**\s*$",
-                "",
-                stripped,
-                flags=re.IGNORECASE,
-            )
-        return resolve_footnotes(stripped.rstrip(), sources)
-
-    async def _chunk_quote(self, path: str, chunk_index: int | None) -> str:
-        """The cited chunk's text, collapsed to one line and capped — the full
-        passage lives behind the deep-link."""
-        if chunk_index is None:
-            return ""
-        chunks = await self.search.fetch_chunk_range(
-            [self.vault_id], path, chunk_index, chunk_index
-        )
-        if not chunks:
-            return ""
-        body = " ".join(chunks[0].body.split())
-        return f"{body[:240]}…" if len(body) > 240 else body
-
-    async def _source_title(self, path: str) -> str | None:
-        if path.startswith("wiki/"):
-            return await self.wiki.get_title_by_path(self.vault_id, path)
-        return await self.source.get_title_by_path(self.vault_id, path)
+        return {"event": "done", "data": {}}
 
     async def _finalize_wide_event(self, *, user_id: UUID | None) -> None:
         await record_wide_event_cost(

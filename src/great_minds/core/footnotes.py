@@ -21,16 +21,6 @@ class FootnoteSource:
     quote: str
 
 
-def format_source_link(label: str, path: str, chunk_index: int | None) -> str:
-    """Markdown link to a source, deep-linking to the paragraph when known.
-
-    The ``^pN`` block-ref anchor is what the doc reader scrolls to. Shared by the
-    wiki render pipeline and the query answer path so citations format alike.
-    """
-    target = f"{path}#^p{chunk_index}" if chunk_index is not None else path
-    return f"[{label}]({target})"
-
-
 def resolve_footnotes(body: str, sources: dict[int, FootnoteSource]) -> str:
     """Renumber ``[^N]`` markers by first appearance, drop orphans, append the
     footnote section.
@@ -62,8 +52,5 @@ def resolve_footnotes(body: str, sources: dict[int, FootnoteSource]) -> str:
     lines = ["", "---", ""]
     for display, orig in enumerate(used_order, start=1):
         src = sources[orig]
-        if src.quote:
-            lines.append(f'[^{display}]: {src.link} — "{src.quote}"')
-        else:
-            lines.append(f"[^{display}]: {src.link}")
+        lines.append(f'[^{display}]: {src.link} — "{src.quote}"')
     return renumbered.rstrip() + "\n" + "\n".join(lines) + "\n"

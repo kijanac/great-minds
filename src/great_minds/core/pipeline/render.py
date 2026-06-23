@@ -39,7 +39,7 @@ from great_minds.core.documents.schemas import (
     WikiArticleCreate,
 )
 from great_minds.core.documents.schemas import SourceDocument
-from great_minds.core.footnotes import FootnoteSource, format_source_link, resolve_footnotes
+from great_minds.core.footnotes import FootnoteSource, resolve_footnotes
 from great_minds.core.ideas.schemas import Anchor, Idea
 from great_minds.core.ideas.service import IdeaService
 from great_minds.core.llm import RENDER_MODEL
@@ -671,7 +671,15 @@ def _validate_and_postprocess(
 def _format_source_link(na: _NumberedAnchor) -> str:
     if na.doc is None:
         return "unknown source"
-    return format_source_link(_source_label(na.doc), na.doc.file_path, na.anchor.chunk_index)
+    label = _source_label(na.doc)
+    # Deep-link to the paragraph via Obsidian-style block ref when the
+    # extract phase localized the quote. Works natively in Obsidian;
+    # the web viewer's markdown renderer converts `^pN` tokens to
+    # HTML anchors so browser fragment-scroll hits the same target.
+    path = na.doc.file_path
+    if na.anchor.chunk_index is not None:
+        path = f"{path}#^p{na.anchor.chunk_index}"
+    return f"[{label}]({path})"
 
 
 # ---------------------------------------------------------------------------
