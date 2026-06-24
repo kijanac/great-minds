@@ -18,9 +18,12 @@ OPENROUTER_BASE = "https://openrouter.ai/api/v1"
 #   - RENDER_MODEL:  per-topic article writing
 #   - EMBEDDING_MODEL: idea + chunk embeddings
 # QUERY_MODEL: chosen by A/B over the corpus — vs deepseek-v3.2/v4 it grounds
-# harder, discloses gaps, and emits anchored citations; clients can override
-# per request (e.g. anthropic/claude-sonnet-4.6 for high-stakes asks).
-QUERY_MODEL = "z-ai/glm-5.1"
+# harder, discloses gaps, and emits anchored citations. glm-5.2 keeps that
+# discipline at ~the same price but adds a 1M context window (vs 5.1's ~203k),
+# which removes the over-retrieval context-overflow failure mode. Clients can
+# override per request (e.g. anthropic/claude-sonnet-4.6 for high-stakes asks,
+# ~5x the per-query cost).
+QUERY_MODEL = "z-ai/glm-5.2"
 EXTRACT_MODEL = "deepseek/deepseek-v3.2"
 MAP_MODEL = "deepseek/deepseek-v3.2"
 REDUCE_MODEL = "qwen/qwen3.6-plus"
