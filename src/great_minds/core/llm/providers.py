@@ -26,7 +26,13 @@ OPENROUTER_BASE = "https://openrouter.ai/api/v1"
 QUERY_MODEL = "z-ai/glm-5.2"
 EXTRACT_MODEL = "deepseek/deepseek-v3.2"
 MAP_MODEL = "deepseek/deepseek-v3.2"
-REDUCE_MODEL = "qwen/qwen3.6-plus"
+# REDUCE_MODEL: the one-shot canonical carve over hundreds of local themes is the
+# pipeline's hardest single generation — a weaker model over-merges (collapses the
+# table of contents to a few mega-articles) and draws a different partition each
+# run, which churns the wiki. A strong model carves a stable, properly-grained
+# article set. The extra cost lands only on this phase (one registry call + the
+# assign batches per compile).
+REDUCE_MODEL = "anthropic/claude-sonnet-4.6"
 RENDER_MODEL = "qwen/qwen3.6-plus"
 EMBEDDING_MODEL = "qwen/qwen3-embedding-8b"
 EMBEDDING_DIMENSIONS = 1024  # MRL truncation from native 4096

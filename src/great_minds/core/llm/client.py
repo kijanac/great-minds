@@ -266,6 +266,17 @@ async def json_llm_call(
     total_attempts = max_parse_retries + 1
     for attempt in range(1, total_attempts + 1):
         response = await api_call(client, model=model, messages=messages, **kwargs)
+        if response.choices and response.choices[0].finish_reason == "length":
+            # Output hit the token limit and was cut off mid-JSON. Retrying the
+            # same request would truncate again, so fail loudly with the real
+            # cause rather than letting it surface as a confusing parse error.
+            log_event(
+                "json_llm_truncated", level=logging.ERROR, model=model, attempt=attempt
+            )
+            raise RuntimeError(
+                f"{model} output hit the token limit (finish_reason=length) and was "
+                "truncated — the request is too large for a single completion"
+            )
         raw = extract_content(response) or ""
         try:
             return json.loads(_strip_json_fencing(raw))

@@ -57,6 +57,70 @@ PHASE_ASSIGN = "canonicalize_assign"
 _ASSIGN_BATCH_SIZE = 30
 _SLUG_RE = re.compile(r"[^a-z0-9]+")
 
+# Strict structured-output schemas, so the registry / assign JSON shape is
+# enforced at the API (extract already does this for its output). Without this
+# the calls only request `json_object` — valid JSON of any shape — so each model
+# returns its own structure and the parsers, which assume one shape, break.
+# Slugs are intentionally absent from the registry schema: they are derived
+# code-side in `_parse_registry`, not echoed by the model.
+_REGISTRY_SCHEMA = {
+    "type": "json_schema",
+    "json_schema": {
+        "name": "registry",
+        "strict": True,
+        "schema": {
+            "type": "object",
+            "additionalProperties": False,
+            "properties": {
+                "topics": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "additionalProperties": False,
+                        "properties": {
+                            "title": {"type": "string"},
+                            "description": {"type": "string"},
+                            "link_targets": {
+                                "type": "array",
+                                "items": {"type": "string"},
+                            },
+                        },
+                        "required": ["title", "description", "link_targets"],
+                    },
+                }
+            },
+            "required": ["topics"],
+        },
+    },
+}
+
+_ASSIGN_SCHEMA = {
+    "type": "json_schema",
+    "json_schema": {
+        "name": "assignments",
+        "strict": True,
+        "schema": {
+            "type": "object",
+            "additionalProperties": False,
+            "properties": {
+                "assignments": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "additionalProperties": False,
+                        "properties": {
+                            "n": {"type": "integer"},
+                            "slug": {"type": "string"},
+                        },
+                        "required": ["n", "slug"],
+                    },
+                }
+            },
+            "required": ["assignments"],
+        },
+    },
+}
+
 
 class _RegistryTopic(BaseModel):
     """A registry topic after code-side slug derivation.
@@ -186,6 +250,7 @@ class CanonicalizePhase:
             model=REDUCE_MODEL,
             messages=[{"role": "user", "content": prompt}],
             temperature=0.2,
+            response_format=_REGISTRY_SCHEMA,
         )
         registry = _parse_registry(data)
         await self.compile_cache.put(
@@ -253,6 +318,8 @@ class CanonicalizePhase:
                     model=REDUCE_MODEL,
                     messages=[{"role": "user", "content": content}],
                     temperature=0.1,
+                    response_format=_ASSIGN_SCHEMA,
+                    max_parse_retries=2,
                 )
             out = _parse_assignments(data, batch, slugset)
             await self.compile_cache.put(
