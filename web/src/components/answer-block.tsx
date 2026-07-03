@@ -18,7 +18,9 @@ interface AnswerBlockProps {
 
 // The source offset the markdown parser attaches to each block node — a stable,
 // unique, render-independent identity for that block.
-function offsetOf(node: { position?: { start?: { offset?: number } } } | undefined): number | undefined {
+function offsetOf(
+  node: { position?: { start?: { offset?: number } } } | undefined,
+): number | undefined {
   return node?.position?.start?.offset;
 }
 

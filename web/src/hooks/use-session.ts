@@ -137,7 +137,12 @@ export function useSession(options?: UseSessionOptions) {
         setPhase("done");
 
         // Auto-persist session (fire-and-forget; the answer is already on screen)
-        const payload: ExchangePayload = { id: exId, query: question, thinking: [{ sources }], answer };
+        const payload: ExchangePayload = {
+          id: exId,
+          query: question,
+          thinking: [{ sources }],
+          answer,
+        };
         const origin = originPathRef.current ? { doc_path: originPathRef.current } : undefined;
         void persistExchange(payload, origin);
       } catch (err) {

@@ -75,7 +75,11 @@ export function useBtw(originPath?: string) {
             },
           );
 
-          patchTurn({ thinking: sources.length > 0 ? [{ sources }] : [], answer, streaming: false });
+          patchTurn({
+            thinking: sources.length > 0 ? [{ sources }] : [],
+            answer,
+            streaming: false,
+          });
         } catch (err) {
           if (isAbortError(err)) return;
           // Unwind the provisional turn so it doesn't hang in a streaming state.

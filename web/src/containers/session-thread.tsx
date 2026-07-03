@@ -185,7 +185,11 @@ export function SessionThread({ session, onFollowUp }: SessionThreadProps) {
       )}
 
       {canFollowUp && (
-        <FollowUpBar chips={session.chips} onRemoveChip={session.removeChip} onSubmit={onFollowUp} />
+        <FollowUpBar
+          chips={session.chips}
+          onRemoveChip={session.removeChip}
+          onSubmit={onFollowUp}
+        />
       )}
 
       {session.popover && (

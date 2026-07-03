@@ -362,7 +362,7 @@ _WEB_SEARCH_GUIDANCE = (
     "drawn from this knowledge base's framework applied to those facts; never take "
     "your interpretation, lessons, or strategic conclusions from a web source — not "
     "even with attribution. You may report what an outside source claims only when "
-    "the question is itself about those claims (e.g. \"how did different groups read "
+    'the question is itself about those claims (e.g. "how did different groups read '
     "this event\"); otherwise do not repeat or lean on another author's analysis. "
     "Exhaust the knowledge base first. Cite web facts as [title](url)."
 )

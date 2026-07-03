@@ -16,7 +16,9 @@ import type { BtwThread as BtwThreadType, SelectionInfo } from "@/lib/types";
 const BLOCK_REF_RE = /\s*\^p\d+(?=\n|$)/gm;
 
 // Stable, unique source offset the markdown parser attaches to each block.
-function offsetOf(node: { position?: { start?: { offset?: number } } } | undefined): number | undefined {
+function offsetOf(
+  node: { position?: { start?: { offset?: number } } } | undefined,
+): number | undefined {
   return node?.position?.start?.offset;
 }
 
@@ -88,7 +90,9 @@ export function ArticleView({
     const start = node?.position?.start?.offset;
     const end = node?.position?.end?.offset;
     if (start == null || end == null) return undefined;
-    const mk = chunkMarkers.find((c) => !claimed.has(c.chunk) && c.pos >= start && c.pos <= end + 1);
+    const mk = chunkMarkers.find(
+      (c) => !claimed.has(c.chunk) && c.pos >= start && c.pos <= end + 1,
+    );
     if (!mk) return undefined;
     claimed.add(mk.chunk);
     return `^p${mk.chunk}`;
@@ -271,7 +275,11 @@ export function ArticleView({
         supersededBy={supersededBy}
         onSupersessorClick={onSupersessorClick}
       />
-      <Markdown remarkPlugins={remarkPlugins} rehypePlugins={rehypePlugins} components={mdComponents}>
+      <Markdown
+        remarkPlugins={remarkPlugins}
+        rehypePlugins={rehypePlugins}
+        components={mdComponents}
+      >
         {displayBody}
       </Markdown>
       {orphans.map((btw) => (
