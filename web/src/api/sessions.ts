@@ -161,6 +161,12 @@ export async function loadSession(sessionId: string): Promise<SessionResponse> {
   return readJson(res, sessionResponseSchema);
 }
 
+export async function loadSessionMarkdown(sessionId: string): Promise<string> {
+  const res = await apiFetch(vaultPath(`/sessions/${sessionId}/markdown`));
+  if (!res.ok) throw new Error(`Session markdown not found: ${res.status}`);
+  return res.text();
+}
+
 const promoteResponseSchema = z.object({
   mode: z.enum(["ingested", "proposed"]),
   path: z.string(),

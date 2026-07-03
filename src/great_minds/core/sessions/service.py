@@ -130,6 +130,9 @@ class SessionService:
     async def load_events(self, session_id: str) -> list[SessionEvent]:
         return await self.repo.load_events(session_id)
 
+    async def load_markdown(self, session_id: str) -> str | None:
+        return await self.repo.read_markdown(session_id)
+
     async def list_sessions(
         self,
         vault_id: UUID,

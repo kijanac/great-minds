@@ -3,6 +3,7 @@
 from uuid import UUID
 
 from fastapi import APIRouter, HTTPException
+from fastapi.responses import PlainTextResponse
 
 from great_minds.app.api.dependencies import (
     VaultAccessDep,
@@ -111,6 +112,17 @@ async def read_session(
     except FileNotFoundError:
         raise HTTPException(status_code=404, detail="Session not found")
     return schemas.SessionResponse(id=session_id, events=events)
+
+
+@router.get("/{session_id}/markdown")
+async def read_session_markdown(
+    session_id: str,
+    session_service: SessionServiceDep,
+) -> PlainTextResponse:
+    markdown = await session_service.load_markdown(session_id)
+    if markdown is None:
+        raise HTTPException(status_code=404, detail="Session markdown not found")
+    return PlainTextResponse(markdown, media_type="text/markdown")
 
 
 @router.post(

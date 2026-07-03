@@ -71,6 +71,9 @@ class SessionRepository:
     async def write_markdown(self, session_id: str, markdown: str) -> None:
         await self.storage.write(f"sessions/{session_id}.md", markdown)
 
+    async def read_markdown(self, session_id: str) -> str | None:
+        return await self.storage.read(f"sessions/{session_id}.md")
+
     async def load_events(self, session_id: str) -> list[SessionEvent]:
         """Load all events from a session's JSONL file.
 

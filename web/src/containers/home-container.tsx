@@ -1,9 +1,15 @@
 import { useCallback, useState } from "react";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
-import { Download, Home } from "lucide-react";
+import { Download, FileText, Home, Printer } from "lucide-react";
 import { Navigate } from "react-router";
 
 import { Button } from "@/components/ui/button";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { ErrorState, LoadingState } from "@/components/ui/feedback";
 import { IngestionFlow } from "@/components/ingestion-flow";
 import { useActiveJob } from "@/hooks/use-active-job";
@@ -16,6 +22,8 @@ import { useSavedSession } from "@/hooks/use-saved-session";
 import { useSession } from "@/hooks/use-session";
 import { useSessions } from "@/hooks/use-sessions";
 import { useViewNavigate } from "@/hooks/use-view-navigate";
+import { MENU_ITEM_CLASS, POPOVER_SURFACE_CLASS } from "@/lib/control-styles";
+import { downloadSessionMarkdown } from "@/lib/session-markdown";
 import { useAuth } from "@/lib/use-auth";
 import type { Exchange } from "@/lib/types";
 
@@ -138,16 +146,43 @@ function HomeContent({ sessionId, initialExchanges, initialQuery, origin }: Home
               <div className="flex-1 min-w-0">
                 <SearchBar {...searchBarProps} />
               </div>
-              <Button
-                variant="ghost"
-                size="icon-xs"
-                onClick={() => window.print()}
-                aria-label="download as PDF"
-                title="Download as PDF"
-                className="text-muted-foreground hover:text-gold hover:bg-transparent shrink-0"
-              >
-                <Download size={14} />
-              </Button>
+              <DropdownMenu>
+                <DropdownMenuTrigger
+                  render={
+                    <Button
+                      variant="ghost"
+                      size="icon-xs"
+                      aria-label="download session"
+                      title="Download session"
+                      className="text-muted-foreground hover:text-gold hover:bg-transparent shrink-0"
+                    />
+                  }
+                >
+                  <Download size={14} />
+                </DropdownMenuTrigger>
+                <DropdownMenuContent
+                  side="bottom"
+                  align="end"
+                  sideOffset={8}
+                  className={`w-auto min-w-0 p-1 ${POPOVER_SURFACE_CLASS}`}
+                >
+                  <DropdownMenuItem
+                    onClick={() => window.print()}
+                    className={`${MENU_ITEM_CLASS} gap-2 cursor-pointer`}
+                  >
+                    <Printer className="size-3.5" />
+                    download as PDF
+                  </DropdownMenuItem>
+                  <DropdownMenuItem
+                    disabled={session.sessionId === null}
+                    onClick={() => void downloadSessionMarkdown(session.sessionId!, session.thread)}
+                    className={`${MENU_ITEM_CLASS} gap-2 cursor-pointer`}
+                  >
+                    <FileText className="size-3.5" />
+                    export as markdown
+                  </DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
             </motion.div>
           </div>
         )}
