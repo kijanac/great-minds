@@ -2,8 +2,9 @@ import type { ServerResponse } from "node:http";
 
 import { OpenRouterClient } from "@effect/ai-openrouter";
 import type { Generated } from "@effect/ai-openrouter";
-import { Effect, Redacted, Stream } from "effect";
+import { Effect, Redacted, Schedule, Schema, Stream } from "effect";
 import * as FetchHttpClient from "effect/unstable/http/FetchHttpClient";
+import * as HttpClient from "effect/unstable/http/HttpClient";
 
 import { requireEnv } from "./env.ts";
 import type { SseEvent } from "./api.ts";
@@ -20,7 +21,47 @@ type RunState = {
     arguments: string;
   }>;
   usage?: TokenUsage;
+  generationId?: string;
 };
+
+/**
+ * OpenRouter's usage-accounting extension (`usage: {include: true}`) makes the
+ * final stream chunk carry `usage.cost`. The typed `ChatGenerationTokenUsage`
+ * schema has no `cost` field, so probe the decoded object structurally to see
+ * whether the value survives schema decode.
+ */
+const costFromUsage = (usage: TokenUsage | undefined): number | null => {
+  if (!usage) {
+    return null;
+  }
+  const value = (usage as Record<string, unknown>)["cost"];
+  return typeof value === "number" ? value : null;
+};
+
+/**
+ * Fallback: OpenRouter's generation endpoint carries `data.total_cost`.
+ *
+ * The typed `client.client.getGeneration` accessor exists but its generated
+ * `GetGeneration200` schema fails to decode real responses (many fields the
+ * live API returns as null are typed non-nullable), so this uses a raw request
+ * with a minimal local schema. The generation record is indexed asynchronously
+ * (observed 2s to tens of seconds after the stream finishes), so retry.
+ */
+const GenerationCostResponse = Schema.Struct({
+  data: Schema.Struct({ total_cost: Schema.Number })
+});
+
+const generationCost = (apiKey: string, generationId: string) =>
+  Effect.gen(function* () {
+    const http = HttpClient.filterStatusOk(yield* HttpClient.HttpClient);
+    const response = yield* http.get("https://openrouter.ai/api/v1/generation", {
+      urlParams: { id: generationId },
+      headers: { authorization: `Bearer ${apiKey}` }
+    });
+    const body = yield* response.json;
+    const decoded = yield* Schema.decodeUnknownEffect(GenerationCostResponse)(body);
+    return decoded.data.total_cost;
+  }).pipe(Effect.retry({ schedule: Schedule.spaced("2 seconds"), times: 14 }));
 
 const model = () => process.env.SPIKE_OPENROUTER_MODEL ?? "openai/gpt-4o-mini";
 
@@ -98,6 +139,9 @@ const streamCompletion = (
         if (chunk.usage) {
           state.usage = chunk.usage;
         }
+        if (chunk.id) {
+          state.generationId = chunk.id;
+        }
         for (const choice of chunk.choices) {
           const content = choice.delta.content;
           if (emitText && content) {
@@ -142,7 +186,8 @@ export const runOpenRouterSse = (response: ServerResponse) =>
         tool_choice: "required",
         parallel_tool_calls: false,
         max_tokens: 80,
-        temperature: 0
+        temperature: 0,
+        usage: { include: true }
       },
       response,
       false
@@ -179,18 +224,34 @@ export const runOpenRouterSse = (response: ServerResponse) =>
           ...toolMessages
         ],
         max_tokens: 80,
-        temperature: 0
+        temperature: 0,
+        usage: { include: true }
       },
       response,
       true
     );
 
     const usage = second.usage ?? first.usage;
+    console.log(`[loop] decoded final usage object: ${JSON.stringify(usage)}`);
+    let costUsd = costFromUsage(usage);
+    console.log(`[loop] cost from decoded stream usage: ${costUsd}`);
+    if (costUsd === null && second.generationId) {
+      console.log(`[loop] falling back to generation endpoint id=${second.generationId}`);
+      costUsd = yield* generationCost(apiKey, second.generationId).pipe(
+        Effect.catchCause((cause) =>
+          Effect.sync(() => {
+            console.log(`[loop] generation cost lookup failed: ${cause}`);
+            return null;
+          })
+        )
+      );
+      console.log(`[loop] generation endpoint total_cost: ${costUsd}`);
+    }
     writeSse(response, {
       type: "finish",
       promptTokens: usage?.prompt_tokens,
       completionTokens: usage?.completion_tokens,
       totalTokens: usage?.total_tokens,
-      costUsd: null
+      costUsd
     });
   }).pipe(Effect.provide(FetchHttpClient.layer));

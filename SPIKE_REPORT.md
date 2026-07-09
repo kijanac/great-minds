@@ -6,7 +6,7 @@ Branch note: the requested `spike/effect-v4-stack` branch could not be created i
 
 ## Verdict
 
-**Recommendation: fall back to posture B.**
+**Round 1 recommendation (superseded by Round 2, below): fall back to posture B.**
 
 Posture A is not viable yet as the production migration posture. The Drizzle v1 RC + `drizzle-orm/effect-postgres` + pgvector path works, but the full modern stack does not satisfy Spike Zero: the requested coordinated `@effect/ai` v4 beta package is not published, the official v4 workflow/cluster packages are not published as package-level integrations, OpenRouter streaming could not complete with the repo key, and pnpm's release-age policy fights the exact fresh beta pins needed for posture A.
 
@@ -210,3 +210,120 @@ I would not build the production port on posture A today. I would keep the scaff
 - Auth route shape and JWT smoke-test harness.
 - SSE client abort/timing harness, even if the server implementation becomes a posture-B hand-rolled SSE seam.
 - Workflow kill/restart evidence pattern, even though the implementation should switch to posture-B workflow/cluster packages or Absurd fallback.
+
+## Round 2
+
+Date: 2026-07-09 (same day, second pass). Round 1's central wrong assumption is corrected: on the Effect v4 line there are no separate `@effect/workflow@4.x` / `@effect/cluster@4.x` / `@effect/ai@4.x` packages. Those modules ship INSIDE `effect@4.0.0-beta.94` as `effect/unstable/workflow`, `effect/unstable/cluster`, and `effect/unstable/ai` (verified present in the installed package). `@effect/ai-openrouter@4.0.0-beta.94` is the provider layer for `effect/unstable/ai`. Round 1's "missing coordinated packages" friction rows were a packaging misread, not a gap in the v4 line.
+
+### Round 2 verdicts
+
+| Criterion | Verdict | Evidence |
+|---|---:|---|
+| Workflow resumes from checkpoint after process kill, single-node topology, official APIs, no infra beyond Postgres | **PASS** | `packages/server/src/workflow-official.ts` uses `Workflow.make` + `Activity.make` (`effect/unstable/workflow`) executed by `ClusterWorkflowEngine.layer` + `SingleRunner.layer` (`effect/unstable/cluster`) over `@effect/sql-pg`. One process, SIGKILLed mid-second-activity, restarted: the first activity did NOT re-execute, its persisted result flowed into the final output. Logs below. |
+| SSE streams a real OpenRouter tool-calling loop: ≥1 tool round-trip, incremental token deltas client-side, completion; client disconnect interrupts the server fiber | **PASS** | Real key worked this round. Client observed `tool-call` + `tool-result` events at 891ms, then 19 incremental `delta` chunks from 2218ms to 2671ms with distinct arrival times (10–140ms gaps — genuine incremental delivery, no buffering), then `finish` with token usage. `--abort` run: server logged `client closed connection; interrupting server fiber` then `server fiber interrupted after client disconnect`. |
+| OpenRouter `cost` lands as a typed field | **FAIL (typed) / reachable at runtime via a one-module raw seam** | No typed path exists at beta.94, and the one candidate typed accessor is broken against the live API. Cost IS on the wire and IS retrievable; details below. The spike loop now emits a real `costUsd` (`0.00002565`) in the SSE `finish` event via the raw generation-endpoint fallback. |
+
+### Workflow durability evidence (official stack)
+
+Topology: ShardManager-equivalent + Runner colocated in ONE process. `SingleRunner.layer` wires `Sharding`, no-op runner comms/health, and SQL-backed `MessageStorage` for a single-process cluster — the API does NOT force two processes. `runnerStorage: "memory"` was chosen so a SIGKILLed run leaves no stale SQL shard lock (default expiration 35s); durable workflow state stays in SQL message storage. `ShardingConfig` defaults worked zero-config.
+
+Run 1 (`SPIKE_KILL_AFTER_CHECKPOINT=1`, DB `gm_spike` on port 55433):
+
+```text
+[official] requesting execution runId=spike-zero-report-r2 killDuringFinish=true
+[official] workflow body start runId=spike-zero-report-r2 executionId=4adf88bb350f335395a3b4efbb78f20c
+[official] activity=prepare executing (must only appear on the first run)
+[official] activity=prepare complete; engine persists its result
+[official] activity=finish executing
+[official] SIGKILL now: prepare is checkpointed, finish is incomplete
+```
+
+Run 2 (restart, same `SPIKE_WORKFLOW_ID`):
+
+```text
+[official] requesting execution runId=spike-zero-report-r2 killDuringFinish=false
+[official] workflow body start runId=spike-zero-report-r2 executionId=4adf88bb350f335395a3b4efbb78f20c
+[official] activity=finish executing
+[official] activity=finish complete
+[official] workflow completed runId=spike-zero-report-r2 result=prepared+finished
+```
+
+Same deterministic `executionId` (derived from the workflow tag + `idempotencyKey`), no `activity=prepare executing` line on restart, and the final result `prepared+finished` contains the value produced only by the first run's `prepare` — i.e. replayed from Postgres, not recomputed. Resume latency after restart was a couple of seconds (`entityReplyPollInterval` 200ms defaults).
+
+Storage footprint — the engine created exactly three tables in the scratch Postgres, nothing else:
+
+```text
+ public | cluster_messages   | table | great_minds
+ public | cluster_replies    | table | great_minds
+ public | cluster_migrations | table | great_minds
+```
+
+Caveat: this round ran against a freshly created `gm_spike` volume without the alembic schema applied (round 1's ANN evidence used the alembic-created schema); coexistence of `cluster_*` tables with the production schema is unexercised but they are plain prefixed tables.
+
+### SSE / tool-loop evidence
+
+Full stream through `/query/stream` (`sse-client.ts` harness, `openai/gpt-4o-mini`, ~110 total tokens):
+
+```text
+[client] chunk=1 at=44ms bytes=13      : connected
+[client] chunk=2 at=891ms   event: tool-call   {"type":"tool-call","name":"lookup_spike_context"}
+[client] chunk=5 at=892ms   event: tool-result {"type":"tool-result","name":"lookup_spike_context",...}
+[client] chunk=7 at=2218ms  {"type":"delta","text":"The"}
+[client] chunk=11 at=2231ms {"type":"delta","text":" verified"}
+[client] chunk=19 at=2315ms {"type":"delta","text":" emphasizes"}
+[client] chunk=31 at=2580ms {"type":"delta","text":" brief"}
+[client] chunk=43 at=2671ms {"type":"delta","text":"."}
+[client] chunk=45           {"type":"finish","promptTokens":91,"completionTokens":20,"totalTokens":111,"costUsd":0.00002565}
+[client] complete chunks=45
+```
+
+Client abort mid-stream:
+
+```text
+[client] aborting stream
+[client] complete chunks=1
+[sse] client closed connection; interrupting server fiber
+[sse] server fiber interrupted after client disconnect
+```
+
+Round 1's 401 was a key problem, not a stack problem: with a valid `OPENROUTER_API_KEY` the official `@effect/ai-openrouter` beta.94 streaming client completed the two-turn tool loop unchanged. Note: the loop uses the raw `OpenRouterClient.createChatCompletionStream` seam through the spike's hand-rolled SSE route; the `HttpApiSchema.StreamSse` endpoint schema is defined but full HttpApi handler wiring remains unexercised.
+
+### Cost extraction findings (precise)
+
+Where per-call cost lives in `@effect/ai-openrouter@4.0.0-beta.94`, established by reading the installed source and runtime probes:
+
+1. **Typed streaming usage has no cost field.** `Generated.ChatGenerationTokenUsage` = `{completion_tokens, prompt_tokens, total_tokens, completion_tokens_details?, prompt_tokens_details?}`. No `cost`, no `cost_details`.
+2. **The raw wire DOES carry cost** when the request includes OpenRouter's usage-accounting extension `usage: {include: true}`. Raw curl of `/chat/completions` (stream) final chunk: `"usage":{...,"cost":0.00000435,"cost_details":{"upstream_inference_cost":...}}`. The client always sets `stream_options.include_usage: true` (hardcoded in `createChatCompletionStream`) — that alone yields token counts only; `usage: {include: true}` must additionally be passed in the payload for cost. It passes through because the request body is sent via `HttpBody.jsonUnsafe` with no request-side schema validation.
+3. **The typed client strips cost at decode.** Stream chunks are schema-decoded (`Schema.fromJsonString(Generated.ChatStreamingResponseChunk.fields.data)`), and v4 Schema struct decoding drops excess keys. Verified at runtime: with `usage: {include: true}` sent, the decoded final usage object logged by the server contains only the typed token fields — no `cost`. So cost is NOT an untyped passthrough reachable at runtime through the typed streaming client.
+4. **The high-level `OpenRouterLanguageModel` doesn't help**: its finish part's `metadata.openrouter.usage` forwards the same already-decoded (stripped) usage object.
+5. **A typed follow-up accessor exists but is broken.** `client.client.getGeneration` returns `GetGeneration200` with typed `data.total_cost: Schema.Number` — but decoding FAILS with `SchemaError` against real responses: the live API returns null for 16 fields the generated schema types as non-nullable (`app_id`, `cache_discount`, `external_user`, `moderation_latency`, `native_tokens_completion_images`, `router`, ...). Verified with a direct probe against an existing generation record.
+6. **Working path (implemented in the spike loop):** raw `GET /v1/generation?id=<chunk.id>` through `effect/unstable/http` with a minimal local schema (`{data: {total_cost: number}}`), retried — the generation record is indexed asynchronously with variable latency (observed 2s to >5s; one run needed ~8s). The loop's `finish` SSE event then carried `costUsd: 0.00002565`, matching stream-side accounting.
+
+```text
+[loop] decoded final usage object: {"completion_tokens":20,"prompt_tokens":91,"total_tokens":111,...}   <- no cost after schema decode
+[loop] cost from decoded stream usage: null
+[loop] falling back to generation endpoint id=gen-1783599917-scMUI9uOLpPuRxsoREgf
+[loop] generation endpoint total_cost: 0.00002565
+```
+
+Net: the "cost lands as a typed field" criterion fails at beta.94 on upstream schema drift (two OpenAPI-generated schemas out of sync with OpenRouter's live API). It is a small, well-understood seam — either a ~25-line raw request module (as implemented) or an upstream fix to `ChatGenerationTokenUsage`/`GetGeneration200`. Nothing suggests the stable 0.x provider line (posture B's `@effect/ai-openrouter@0.11`) is generated from a fresher OpenAPI spec, so this gap is provider-schema drift, not a posture-A-specific weakness.
+
+### Revised recommendation (both rounds)
+
+**Posture A is viable. Adopt it.**
+
+What is now proven, cumulatively:
+
+- **DB layer (Round 1):** Drizzle v1 RC + `drizzle-orm/effect-postgres` + `drizzle-orm/effect-schema` + pgvector ANN against alembic-created tables; reviewable DDL.
+- **Durable workflows (Round 2):** the official `effect/unstable/workflow` + `effect/unstable/cluster` stack passes the exact Spike Zero topology test — checkpointed activities, SIGKILL/restart resume, single process, Postgres only. The Absurd fallback trigger ("if Effect workflow/cluster fails the topology test") does NOT fire.
+- **LLM streaming (Round 2):** real OpenRouter tool-calling loop with typed streaming parts, incremental client-side delivery, and fiber interruption on disconnect, on the official beta.94 provider client.
+- **Toolchain (Round 1+2):** the pinned beta set installs and typechecks under tsgo across all three packages.
+
+What is still assumed rather than proven:
+
+- Full `HttpApi` + `StreamSse` handler wiring (transport mechanics proven on a raw Node route; the HttpApi endpoint schema typechecks but is not served).
+- Node 24 LTS compliance (local runtime is Node 26.3.0; `--experimental-strip-types` used).
+- Workflow engine breadth: retries, `DurableClock`, concurrent workflows, and coexistence of `cluster_*` tables with the production schema.
+- Typed cost: requires the raw generation seam (or upstream schema fix) until `@effect/ai-openrouter` regenerates against OpenRouter's current API.
+
+Round 1's fall-back-to-B verdict rested on three legs: "no coordinated v4 AI/workflow/cluster packages" (false — they live inside `effect` core), "OpenRouter 401" (key problem, since resolved), and "no typed cost" (real, but small, seam-sized, and posture-agnostic). With the first two legs gone, posture B's remaining advantage is API-line stability alone, against which posture A eliminates all three of posture B's hand-maintained seam modules and the scheduled v4 migration. Known risks that stand: the coupled Drizzle-RC↔Effect-beta cadence (mitigate with exact pins and batch upgrades), the `unstable/*` namespace churn on the workflow/cluster surface, and pnpm's `minimumReleaseAge` friction on fresh betas.

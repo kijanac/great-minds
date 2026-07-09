@@ -13,7 +13,8 @@
     "typecheck": "tsgo -p tsconfig.json --noEmit",
     "start": "node --experimental-strip-types src/main.ts",
     "sse-client": "node --experimental-strip-types src/sse-client.ts",
-    "workflow": "node --experimental-strip-types src/workflow-runner.ts"
+    "workflow": "node --experimental-strip-types src/workflow-runner.ts",
+    "workflow:official": "node --experimental-strip-types src/workflow-official.ts"
   },
   "dependencies": {
     "@effect/ai-openai-compat": "4.0.0-beta.94",
