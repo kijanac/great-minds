@@ -66,7 +66,7 @@ One thin vertical slice through every risky layer, on posture A pins, time-boxed
 
 ## After the spike
 
-1. **M1 — skeleton + auth + read paths:** vaults, wiki, sources, sessions read APIs behind the existing HTTP contract; React app pointable at either backend via env
+1. **M1 — skeleton + auth + read paths** (detailed brief: `docs/ts-migration-m1.md`): vaults, wiki, sources, sessions read APIs behind the existing HTTP contract; React app pointable at either backend via env
 2. **M2 — characterization harness:** golden-compile fixtures, artifact comparators, wired into `just ci`
 3. **M3 — ingest + query/session write paths** (querier port: agentic loop over `@effect/ai`)
 4. **M4 — compile pipeline** phase-by-phase against the harness; durable workflows replace Absurd tasks
