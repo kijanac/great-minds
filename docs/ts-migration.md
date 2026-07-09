@@ -22,7 +22,7 @@
 
 ## Target stack
 
-Two candidate postures. **Spike Zero (below) is the arbiter** — analysis is exhausted; symmetric evidence, different risk temperaments.
+Two candidate postures were evaluated. **Spike Zero arbitrated: posture A adopted (2026-07-09).** Evidence: `SPIKE_REPORT.md` on `spike/effect-v4-stack` (Rounds 1+2) — DB layer, StreamSse transport, live tool-calling loop, and single-process Postgres-only workflow durability (`ClusterWorkflowEngine.layer` + `SingleRunner.layer`) all passed on the pinned beta set. Known seam: v4 exposes no typed OpenRouter `cost` (Schema strips the wire field); per-call cost comes from a raw `GET /v1/generation?id=` lookup with retry (~25 lines, posture-agnostic). Posture B remains documented below as the fallback if the beta line degrades before GA.
 
 | Layer | Posture A — full modern (spike this first) | Posture B — stable fallback |
 |---|---|---|
