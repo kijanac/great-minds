@@ -356,3 +356,12 @@ One line each, per the parent doc's scope table + explicit exclusions:
 
 - **Whether unhandled exceptions produce a specific JSON error shape** — no custom FastAPI exception handler was found registered in `server.py`; default Starlette/FastAPI behavior for uncaught exceptions (bare `500`, generic body, no `detail` key) is assumed but not exhaustively traced through every service-layer exception type.
 - **`VaultConfig.web_search`** (`core/vaults/config.py::load_vault_config`) does `data["web_search"]` — a **non-defaulted dict subscript**, meaning if `config.yaml` lacks a `web_search` key entirely, `load_vault_config` raises `KeyError` rather than falling back like `kinds`/`thematic_hint` do. Confirmed `web_search: false` is present in the package-bundled `default_config.yaml` (line 19), so every vault created via the normal `_init_vault_storage` path has it. Residual risk is only for a vault whose `config.yaml` predates this field or was hand-edited without it — low-probability in a fresh fixture set, but the TS port should decide deliberately whether to reproduce this strictness (raise) or harden it, per the "no fallbacks on things that must exist" house rule cutting both ways here. Moot for M1 anyway since `web_search` isn't in the exposed `VaultConfig` API schema.
+
+## Decisions (2026-07-09)
+
+Human decisions on the contract oddities that affect M1 implementation:
+
+1. **Session markdown export, missing sidecar** → TS implements the intended `404` (`detail: "Session markdown not found"`). The Python 500 is a bug, not contract.
+2. **`GET /sessions/{id}` authz** → keep vault-member access (current semantics). Whether session reads should be owner-scoped is a product question, deliberately not decided during the port.
+3. **`GET /vaults/{id}` existence leak** → TS collapses to `403` for non-members regardless of vault existence, matching the `/config`/`/members` guard pattern.
+4. **`GET /wiki/{slug}`** → not ported. Zero callers; article reads are path-addressed via `GET /doc/{path}`. Recorded as deliberate surface reduction, not an omission.
