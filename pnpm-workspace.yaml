@@ -1,9 +1,12 @@
 packages:
+  - packages/*
   - web
 
 # msw is a dev/test dep; its post-install service-worker copy isn't
 # needed for build or runtime.
 allowBuilds:
+  esbuild: true
+  msgpackr-extract: true
   msw: false
 
 # Hold new releases for 3 days before allowing them into a local install,

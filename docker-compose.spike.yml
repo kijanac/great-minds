@@ -1,0 +1,20 @@
+services:
+  db:
+    image: pgvector/pgvector:pg18
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: great_minds
+      POSTGRES_PASSWORD: great_minds
+      POSTGRES_DB: gm_spike
+    ports:
+      - "55433:5432"
+    volumes:
+      - gm_spike_pgdata:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U great_minds -d gm_spike"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+volumes:
+  gm_spike_pgdata:

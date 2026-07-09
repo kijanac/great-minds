@@ -1,5 +1,18 @@
 {
-	"devDependencies": {
-		"oxfmt": "^0.44.0"
-	}
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "typecheck": "tsgo -p packages/domain/tsconfig.json --noEmit && tsgo -p packages/database/tsconfig.json --noEmit && tsgo -p packages/server/tsconfig.json --noEmit",
+    "typecheck:recursive": "pnpm -r --if-present typecheck",
+    "spike:server": "pnpm --filter @great-minds/server start",
+    "spike:db:ann": "pnpm --filter @great-minds/database ann",
+    "spike:workflow": "pnpm --filter @great-minds/server workflow"
+  },
+  "devDependencies": {
+    "@effect/tsgo": "0.16.3",
+    "@types/node": "26.1.1",
+    "@typescript/native-preview": "7.0.0-dev.20260707.2",
+    "drizzle-kit": "1.0.0-rc.4",
+    "oxfmt": "^0.44.0"
+  }
 }
