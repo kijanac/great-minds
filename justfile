@@ -8,6 +8,7 @@
 #   -fix suffix = mutates files (lint-fix, format-fix)
 #   Backend: uv run (ruff, ty, pytest)
 #   Frontend: pnpm --prefix web (tsgo, oxlint, oxfmt)
+#   TypeScript packages: pnpm (tsgo, oxlint)
 
 set dotenv-load := false
 
@@ -31,6 +32,10 @@ lint:
 lint-web:
     pnpm --prefix web exec oxlint src
 
+# Lint TypeScript packages with oxlint
+lint-packages:
+    pnpm exec oxlint packages/domain/src packages/database/src packages/server/src
+
 # Check Python formatting (read-only)
 format:
     uv run ruff format --check .
@@ -47,6 +52,10 @@ types:
 types-web:
     pnpm --prefix web exec tsgo -b
 
+# Type-check TypeScript packages with tsgo
+types-packages:
+    pnpm run typecheck
+
 # Run tests
 test *args='':
     uv run pytest {{ args }}
@@ -60,7 +69,7 @@ test-fast:
 # ---------------------------------------------------------------------------
 
 # Run all CI checks (same gates as GitHub Actions)
-ci: lint format types lint-web format-web types-web
+ci: lint format types lint-web format-web types-web lint-packages types-packages
 
 # Pre-push review: CI gate
 review: ci
