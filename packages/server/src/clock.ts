@@ -1,6 +1,6 @@
 import { Context, Effect, Layer } from "effect";
 
-export type ClockServiceShape = {
+type ClockServiceShape = {
   readonly now: Effect.Effect<Date>;
 };
 

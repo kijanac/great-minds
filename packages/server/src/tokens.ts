@@ -9,7 +9,7 @@ import { AppConfig } from "./config.ts";
 
 const encoder = new TextEncoder();
 
-export type TokenServiceShape = {
+type TokenServiceShape = {
   readonly issueAccessToken: (userId: Uuid, now: Date) => Effect.Effect<string>;
   readonly verifyAccessToken: (token: string) => Effect.Effect<Uuid, Unauthorized>;
 };

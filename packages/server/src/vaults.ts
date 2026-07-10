@@ -16,6 +16,7 @@ import { and, asc, desc, eq, sql } from "drizzle-orm";
 import { Context, Effect, Layer, Schema } from "effect";
 import { parse as parseYaml } from "yaml";
 
+import { dieDatabase } from "./db-defects.ts";
 import { pageEnvelope, oneTotal } from "./pagination.ts";
 import { VaultStorage } from "./storage.ts";
 
@@ -31,7 +32,7 @@ type VaultScope = {
   readonly role: MemberRole;
 };
 
-export type VaultAccessServiceShape = {
+type VaultAccessServiceShape = {
   readonly requireMember: (
     userId: Uuid,
     vaultId: Uuid,
@@ -40,7 +41,7 @@ export type VaultAccessServiceShape = {
   readonly requireOwner: (userId: Uuid, vaultId: Uuid) => Effect.Effect<VaultScope, Forbidden>;
 };
 
-export type VaultsServiceShape = {
+type VaultsServiceShape = {
   readonly ensureDefaultForUser: (userId: Uuid, email: Email) => Effect.Effect<void>;
   readonly deleteOwnedVaults: (userId: Uuid) => Effect.Effect<void>;
   readonly listVaults: (userId: Uuid, params: PageParams) => Effect.Effect<VaultPage>;
@@ -145,7 +146,7 @@ export const VaultAccessServiceLive = Layer.effect(
           .from(vaultMemberships)
           .where(and(eq(vaultMemberships.userId, userId), eq(vaultMemberships.vaultId, vaultId)))
           .limit(1)
-          .pipe(Effect.orDie);
+          .pipe(dieDatabase);
         const row = rows[0];
         if (row === undefined) {
           return yield* new Forbidden({ detail });
@@ -210,16 +211,16 @@ export const VaultsServiceLive = Layer.effect(
               });
             }),
           )
-          .pipe(Effect.orDie),
+          .pipe(dieDatabase),
       deleteOwnedVaults: (userId) =>
-        db.delete(vaults).where(eq(vaults.ownerId, userId)).pipe(Effect.orDie),
+        db.delete(vaults).where(eq(vaults.ownerId, userId)).pipe(dieDatabase),
       listVaults: (userId, params) =>
         Effect.gen(function* () {
           const countRows = yield* db
             .select({ total: sql<number>`count(*)::int` })
             .from(vaultMemberships)
             .where(eq(vaultMemberships.userId, userId))
-            .pipe(Effect.orDie);
+            .pipe(dieDatabase);
           const rows = yield* db
             .select({
               id: vaults.id,
@@ -235,7 +236,7 @@ export const VaultsServiceLive = Layer.effect(
             .orderBy(desc(vaults.createdAt))
             .limit(params.limit)
             .offset(params.offset)
-            .pipe(Effect.orDie);
+            .pipe(dieDatabase);
 
           return {
             ...pageEnvelope(
@@ -254,7 +255,7 @@ export const VaultsServiceLive = Layer.effect(
             .from(vaults)
             .where(eq(vaults.id, vaultId))
             .limit(1)
-            .pipe(Effect.orDie);
+            .pipe(dieDatabase);
           const vault = rows[0];
           if (vault === undefined) {
             return yield* new Forbidden({ detail: "Not a member of this vault" });
@@ -263,12 +264,12 @@ export const VaultsServiceLive = Layer.effect(
             .select({ total: sql<number>`count(*)::int` })
             .from(vaultMemberships)
             .where(eq(vaultMemberships.vaultId, vaultId))
-            .pipe(Effect.orDie);
+            .pipe(dieDatabase);
           const articleCounts = yield* db
             .select({ total: sql<number>`count(*)::int` })
             .from(wikiArticles)
             .where(eq(wikiArticles.vaultId, vaultId))
-            .pipe(Effect.orDie);
+            .pipe(dieDatabase);
           return {
             ...vaultResponse(vault),
             role: scope.role,
@@ -292,7 +293,7 @@ export const VaultsServiceLive = Layer.effect(
             .select({ total: sql<number>`count(*)::int` })
             .from(vaultMemberships)
             .where(eq(vaultMemberships.vaultId, vaultId))
-            .pipe(Effect.orDie);
+            .pipe(dieDatabase);
           const rows = yield* db
             .select({
               userId: vaultMemberships.userId,
@@ -305,7 +306,7 @@ export const VaultsServiceLive = Layer.effect(
             .orderBy(asc(users.email))
             .limit(params.limit)
             .offset(params.offset)
-            .pipe(Effect.orDie);
+            .pipe(dieDatabase);
           return pageEnvelope(
             rows.map((row) => ({
               user_id: asUuid(row.userId),

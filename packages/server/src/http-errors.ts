@@ -1,6 +1,6 @@
 import type { DomainError } from "@great-minds/domain";
 
-export type HttpErrorResponse = {
+type HttpErrorResponse = {
   readonly status: 400 | 401 | 403 | 404 | 422;
   readonly body: {
     readonly detail: string;

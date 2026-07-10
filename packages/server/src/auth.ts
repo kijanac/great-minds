@@ -32,7 +32,7 @@ import { VaultsService } from "./vaults.ts";
 type UserRow = typeof users.$inferSelect;
 type ApiKeyRow = typeof apiKeys.$inferSelect;
 
-export type AuthServiceShape = {
+type AuthServiceShape = {
   readonly requestCode: (email: Email) => Effect.Effect<void>;
   readonly verifyCode: (email: Email, code: string) => Effect.Effect<TokenPair, Unauthorized>;
   readonly refresh: (refreshToken: string) => Effect.Effect<TokenPair, Unauthorized>;

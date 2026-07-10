@@ -2,7 +2,7 @@ import { Context, Effect, Layer } from "effect";
 
 type LogFields = Record<string, string | number | boolean | null | undefined>;
 
-export type LoggerShape = {
+type LoggerShape = {
   readonly info: (event: string, fields: LogFields) => Effect.Effect<void>;
   readonly warn: (event: string, fields: LogFields) => Effect.Effect<void>;
   readonly error: (event: string, fields: LogFields) => Effect.Effect<void>;

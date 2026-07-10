@@ -2,18 +2,18 @@ import * as PgClient from "@effect/sql-pg/PgClient";
 import { createSelectSchema } from "drizzle-orm/effect-schema";
 import * as PgDrizzle from "drizzle-orm/effect-postgres";
 import { eq, sql } from "drizzle-orm";
-import { Effect, Redacted, Schema } from "effect";
+import { Config, Effect, Layer, Redacted, Schema } from "effect";
 
 import { searchIndex, users, vaults } from "./schema.ts";
 
 const SearchIndexRow = createSelectSchema(searchIndex);
 
-const safeLocalDatabaseUrl = () => {
-  const databaseUrl = process.env.DATABASE_URL;
-  if (!databaseUrl) {
+const safeLocalDatabaseUrl = (databaseUrl: Redacted.Redacted<string>) => {
+  const value = Redacted.value(databaseUrl);
+  if (!value) {
     throw new Error("DATABASE_URL is required for the pgvector ANN check");
   }
-  const parsed = new URL(databaseUrl);
+  const parsed = new URL(value);
   if (!["localhost", "127.0.0.1", "::1"].includes(parsed.hostname)) {
     throw new Error(`Refusing to run ANN check against non-local host ${parsed.hostname}`);
   }
@@ -22,6 +22,12 @@ const safeLocalDatabaseUrl = () => {
   }
   return databaseUrl;
 };
+
+const PgClientLive = Layer.unwrap(
+  Effect.map(Config.redacted("DATABASE_URL"), (url) =>
+    PgClient.layer({ url: safeLocalDatabaseUrl(url) })
+  )
+);
 
 const vector1024 = (head: readonly number[]) => [
   ...head,
@@ -89,7 +95,7 @@ const program = Effect.gen(function* () {
 
 await Effect.runPromise(
   program.pipe(
-    Effect.provide(PgClient.layer({ url: Redacted.make(safeLocalDatabaseUrl()) })),
+    Effect.provide(PgClientLive),
     Effect.scoped
   )
 );

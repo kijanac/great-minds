@@ -1,3 +1,4 @@
+// Spike proofs, deleted in M4.
 import * as PgClient from "@effect/sql-pg/PgClient";
 import { Effect, Redacted } from "effect";
 

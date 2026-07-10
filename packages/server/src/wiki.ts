@@ -10,10 +10,11 @@ import {
 import { and, asc, desc, eq, ne, sql, type SQL } from "drizzle-orm";
 import { Context, Effect, Layer } from "effect";
 
+import { dieDatabase } from "./db-defects.ts";
 import { pageEnvelope, oneTotal } from "./pagination.ts";
 import { VaultAccessService } from "./vaults.ts";
 
-export type WikiServiceShape = {
+type WikiServiceShape = {
   readonly listArticles: (
     userId: Uuid,
     vaultId: Uuid,
@@ -72,7 +73,7 @@ export const WikiServiceLive = Layer.effect(
           .select({ total: sql<number>`count(*)::int` })
           .from(wikiArticles)
           .where(where)
-          .pipe(Effect.orDie);
+          .pipe(dieDatabase);
         const rows = yield* db
           .select()
           .from(wikiArticles)
@@ -80,7 +81,7 @@ export const WikiServiceLive = Layer.effect(
           .orderBy(orderBy)
           .limit(params.limit)
           .offset(params.offset)
-          .pipe(Effect.orDie);
+          .pipe(dieDatabase);
         return pageEnvelope(rows.map(articleOverview), params, oneTotal(countRows));
       });
 

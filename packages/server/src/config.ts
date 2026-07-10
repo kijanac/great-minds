@@ -36,10 +36,10 @@ const validateRedacted = (value: Redacted.Redacted<string>) =>
     Effect.mapError((error) => new Config.ConfigError(error)),
   );
 
-export const redactedNonEmpty = (name: string) =>
+const redactedNonEmpty = (name: string) =>
   Config.redacted(name).pipe(Config.mapOrFail(validateRedacted));
 
-export const appConfig = Config.all({
+const appConfig = Config.all({
   databaseUrl: redactedNonEmpty("DATABASE_URL"),
   jwtSecret: redactedNonEmpty("JWT_SECRET"),
   jwtAccessExpiryMinutes: positiveInt("JWT_ACCESS_EXPIRY_MINUTES").pipe(Config.withDefault(30)),

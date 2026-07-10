@@ -1090,6 +1090,10 @@ describe("read-only HTTP integration", () => {
     expect(asPage(zero.body).pagination).toEqual({ limit: 0, offset: 0, total: 3 });
     expect(asPage(zero.body).items).toEqual([]);
 
+    const cap = await api("GET", `/vaults/${id.vaultAlpha}/wiki?limit=200`, aliceToken);
+    expect(cap.status).toBe(200);
+    expect(asPage(cap.body).pagination.limit).toBe(200);
+
     const pastEnd = await api("GET", `/vaults/${id.vaultAlpha}/wiki?offset=99`, aliceToken);
     expect(pastEnd.status).toBe(200);
     expect(asPage(pastEnd.body).items).toEqual([]);
@@ -1124,6 +1128,17 @@ describe("read-only HTTP integration", () => {
     const cap = await api("GET", `/vaults/${id.vaultAlpha}/wiki/recent?limit=200`, aliceToken);
     expect(cap.status).toBe(200);
     expect(asPage(cap.body).pagination.limit).toBe(200);
+
+    const pastEnd = await api(
+      "GET",
+      `/vaults/${id.vaultAlpha}/wiki/recent?offset=99`,
+      aliceToken,
+    );
+    expect(pastEnd.status).toBe(200);
+    expect(asPage(pastEnd.body)).toEqual({
+      items: [],
+      pagination: { limit: 50, offset: 99, total: 3 },
+    });
 
     const overCap = await api("GET", `/vaults/${id.vaultAlpha}/wiki/recent?limit=201`, aliceToken);
     expect(overCap.status).toBe(422);
@@ -1656,13 +1671,14 @@ describe("read-only HTTP integration", () => {
       tags: [],
       derived_extras: {},
     });
-    expect(asRecord(listed.body).facets).toEqual({
-      source_types: expect.arrayContaining([
-        { value: "book", count: 2 },
-        { value: "article", count: 1 },
-        { value: "speech", count: 1 },
-      ]),
-    });
+    const facets = asRecord(listed.body).facets as {
+      source_types: ReadonlyArray<{ value: string; count: number }>;
+    };
+    expect([...facets.source_types].sort((a, b) => a.value.localeCompare(b.value))).toEqual([
+      { value: "article", count: 1 },
+      { value: "book", count: 2 },
+      { value: "speech", count: 1 },
+    ]);
 
     const searched = await api(
       "GET",
@@ -1702,6 +1718,7 @@ describe("read-only HTTP integration", () => {
     expect(itemRecords(asPage(filtered.body)).map((source) => source.source_type)).toEqual([
       "article",
     ]);
+    expect(asPage(filtered.body).pagination.total).toBe(1);
 
     const zero = await api("GET", `/vaults/${id.vaultAlpha}/raw/sources?limit=0`, aliceToken);
     expect(zero.status).toBe(200);

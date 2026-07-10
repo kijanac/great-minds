@@ -9,10 +9,11 @@ import {
 import { and, desc, eq, ilike, or, sql, type SQL } from "drizzle-orm";
 import { Context, Effect, Layer, Schema } from "effect";
 
+import { dieDatabase } from "./db-defects.ts";
 import { pageEnvelope, oneTotal } from "./pagination.ts";
 import { VaultAccessService } from "./vaults.ts";
 
-export type SourcesServiceShape = {
+type SourcesServiceShape = {
   readonly listSources: (
     userId: Uuid,
     vaultId: Uuid,
@@ -77,7 +78,7 @@ export const SourcesServiceLive = Layer.effect(
             .select({ total: sql<number>`count(*)::int` })
             .from(sourceDocuments)
             .where(where)
-            .pipe(Effect.orDie);
+            .pipe(dieDatabase);
           const rows = yield* db
             .select()
             .from(sourceDocuments)
@@ -85,7 +86,7 @@ export const SourcesServiceLive = Layer.effect(
             .orderBy(desc(sourceDocuments.updatedAt))
             .limit(query.limit)
             .offset(query.offset)
-            .pipe(Effect.orDie);
+            .pipe(dieDatabase);
           const facetRows = yield* db
             .select({
               value: sourceDocuments.sourceType,
@@ -95,7 +96,7 @@ export const SourcesServiceLive = Layer.effect(
             .where(eq(sourceDocuments.vaultId, vaultId))
             .groupBy(sourceDocuments.sourceType)
             .orderBy(desc(sql`count(*)`))
-            .pipe(Effect.orDie);
+            .pipe(dieDatabase);
 
           return {
             ...pageEnvelope(rows.map(sourceSummary), query, oneTotal(countRows)),

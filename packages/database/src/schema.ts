@@ -245,6 +245,7 @@ export const topics = pgTable(
     slug: text("slug").notNull(),
     title: text("title").notNull(),
     description: text("description").notNull(),
+    // ck_topics_article_status CHECK exists in DB from Alembic 0005 but is deliberately not modeled; Alembic owns DDL and Drizzle mirrors reads.
     articleStatus: text("article_status").default("no_article").notNull(),
     compiledFromHash: text("compiled_from_hash"),
     renderedFromHash: text("rendered_from_hash"),

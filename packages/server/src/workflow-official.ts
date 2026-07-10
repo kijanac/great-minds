@@ -1,3 +1,4 @@
+// Spike proofs, deleted in M4.
 /**
  * Spike Zero Round 2: durability through the OFFICIAL Effect v4 workflow stack.
  *

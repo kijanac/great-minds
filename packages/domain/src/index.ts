@@ -427,13 +427,39 @@ export class BadRequest extends Schema.TaggedErrorClass<BadRequest>()("BadReques
 
 export type DomainError = Unauthorized | Forbidden | NotFound | Validation | BadRequest;
 
+const ErrorDetail = Schema.Struct({
+  detail: Schema.String,
+});
+
+const BadRequestResponse = ErrorDetail.pipe(HttpApiSchema.status(400));
+const UnauthorizedResponse = ErrorDetail.pipe(HttpApiSchema.status(401));
+const ForbiddenResponse = ErrorDetail.pipe(HttpApiSchema.status(403));
+const NotFoundResponse = ErrorDetail.pipe(HttpApiSchema.status(404));
+const ValidationResponse = ErrorDetail.pipe(HttpApiSchema.status(422));
+
+const ValidationErrors = [ValidationResponse] as const;
+const UnauthorizedValidationErrors = [UnauthorizedResponse, ValidationResponse] as const;
+const NotFoundValidationErrors = [NotFoundResponse, ValidationResponse] as const;
+const ForbiddenValidationErrors = [ForbiddenResponse, ValidationResponse] as const;
+const ForbiddenNotFoundValidationErrors = [
+  ForbiddenResponse,
+  NotFoundResponse,
+  ValidationResponse,
+] as const;
+const DocumentErrors = [
+  BadRequestResponse,
+  ForbiddenResponse,
+  NotFoundResponse,
+  ValidationResponse,
+] as const;
+
 export class AuthMiddleware extends HttpApiMiddleware.Service<
   AuthMiddleware,
   {
     provides: CurrentAuth;
   }
 >()("@great-minds/domain/AuthMiddleware", {
-  error: Unauthorized,
+  error: UnauthorizedResponse,
   security: {
     bearer: HttpApiSecurity.bearer,
   },
@@ -446,18 +472,22 @@ export const AuthApiGroup = HttpApiGroup.make("auth").add(
   HttpApiEndpoint.post("requestCode", "/auth/request-code", {
     payload: RequestCodeInput,
     success: HttpApiSchema.NoContent,
+    error: ValidationErrors,
   }),
   HttpApiEndpoint.post("verifyCode", "/auth/verify-code", {
     payload: VerifyCodeInput,
     success: TokenPair,
+    error: UnauthorizedValidationErrors,
   }),
   HttpApiEndpoint.post("refresh", "/auth/refresh", {
     payload: RefreshInput,
     success: TokenPair,
+    error: UnauthorizedValidationErrors,
   }),
   HttpApiEndpoint.post("createApiKey", "/auth/api-keys", {
     payload: ApiKeyCreate,
     success: CreatedApiKeyWithSecret,
+    error: ValidationErrors,
   }).middleware(AuthMiddleware),
   HttpApiEndpoint.get("listApiKeys", "/auth/api-keys", {
     success: ApiKeys,
@@ -467,10 +497,12 @@ export const AuthApiGroup = HttpApiGroup.make("auth").add(
       key_id: Uuid,
     },
     success: HttpApiSchema.NoContent,
+    error: NotFoundValidationErrors,
   }).middleware(AuthMiddleware),
   HttpApiEndpoint.delete("deleteMe", "/auth/me", {
     payload: AccountDeleteRequest,
     success: HttpApiSchema.NoContent,
+    error: NotFoundValidationErrors,
   }).middleware(AuthMiddleware),
 );
 
@@ -484,18 +516,21 @@ export const VaultsApiGroup = HttpApiGroup.make("vaults").add(
   HttpApiEndpoint.get("listVaults", "/vaults", {
     query: PageParamsQuery,
     success: VaultPage,
+    error: ValidationErrors,
   }).middleware(AuthMiddleware),
   HttpApiEndpoint.get("getVault", "/vaults/:vault_id", {
     params: {
       vault_id: Uuid,
     },
     success: VaultDetail,
+    error: ForbiddenValidationErrors,
   }).middleware(AuthMiddleware),
   HttpApiEndpoint.get("getVaultConfig", "/vaults/:vault_id/config", {
     params: {
       vault_id: Uuid,
     },
     success: VaultConfig,
+    error: ForbiddenValidationErrors,
   }).middleware(AuthMiddleware),
   HttpApiEndpoint.get("listVaultMembers", "/vaults/:vault_id/members", {
     params: {
@@ -503,6 +538,7 @@ export const VaultsApiGroup = HttpApiGroup.make("vaults").add(
     },
     query: PageParamsQuery,
     success: MemberPage,
+    error: ForbiddenValidationErrors,
   }).middleware(AuthMiddleware),
 );
 
@@ -513,6 +549,7 @@ export const WikiApiGroup = HttpApiGroup.make("wiki").add(
     },
     query: WikiListQuery,
     success: WikiArticlePage,
+    error: ForbiddenValidationErrors,
   }).middleware(AuthMiddleware),
   HttpApiEndpoint.get("listRecentWikiArticles", "/vaults/:vault_id/wiki/recent", {
     params: {
@@ -520,6 +557,7 @@ export const WikiApiGroup = HttpApiGroup.make("wiki").add(
     },
     query: PageParamsQuery,
     success: WikiArticlePage,
+    error: ForbiddenValidationErrors,
   }).middleware(AuthMiddleware),
 );
 
@@ -530,6 +568,7 @@ export const SourcesApiGroup = HttpApiGroup.make("sources").add(
     },
     query: SourceListQuery,
     success: SourceDocumentPage,
+    error: ForbiddenValidationErrors,
   }).middleware(AuthMiddleware),
 );
 
@@ -537,6 +576,7 @@ export const DocumentsApiGroup = HttpApiGroup.make("documents").add(
   HttpApiEndpoint.get("readDocument", "/vaults/:vault_id/doc/*", {
     params: DocPathParams,
     success: DocResponse,
+    error: DocumentErrors,
   }).middleware(AuthMiddleware),
   HttpApiEndpoint.get("readChunks", "/vaults/:vault_id/chunks", {
     params: {
@@ -544,6 +584,7 @@ export const DocumentsApiGroup = HttpApiGroup.make("documents").add(
     },
     query: ChunkRangeQuery,
     success: Schema.Array(Chunk),
+    error: ForbiddenValidationErrors,
   }).middleware(AuthMiddleware),
   HttpApiEndpoint.get("readLinks", "/vaults/:vault_id/links", {
     params: {
@@ -551,6 +592,7 @@ export const DocumentsApiGroup = HttpApiGroup.make("documents").add(
     },
     query: LinkQuery,
     success: LinkedArticles,
+    error: ForbiddenNotFoundValidationErrors,
   }).middleware(AuthMiddleware),
 );
 
@@ -561,6 +603,7 @@ export const SessionsApiGroup = HttpApiGroup.make("sessions").add(
     },
     query: PageParamsQuery,
     success: SessionPage,
+    error: ForbiddenValidationErrors,
   }).middleware(AuthMiddleware),
   HttpApiEndpoint.get("readSession", "/vaults/:vault_id/sessions/:session_id", {
     params: {
@@ -568,6 +611,7 @@ export const SessionsApiGroup = HttpApiGroup.make("sessions").add(
       session_id: SessionId,
     },
     success: SessionResponse,
+    error: ForbiddenNotFoundValidationErrors,
   }).middleware(AuthMiddleware),
   HttpApiEndpoint.get("readSessionMarkdown", "/vaults/:vault_id/sessions/:session_id/markdown", {
     params: {
@@ -575,6 +619,7 @@ export const SessionsApiGroup = HttpApiGroup.make("sessions").add(
       session_id: SessionId,
     },
     success: SessionMarkdown,
+    error: ForbiddenNotFoundValidationErrors,
   }).middleware(AuthMiddleware),
 );
 

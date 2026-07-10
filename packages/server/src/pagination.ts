@@ -1,11 +1,11 @@
 import type { PageInfo, PageParams } from "@great-minds/domain";
 
-export type PageEnvelope<A> = {
+type PageEnvelope<A> = {
   readonly items: readonly A[];
   readonly pagination: PageInfo;
 };
 
-export type CountRow = {
+type CountRow = {
   readonly total: number;
 };
 

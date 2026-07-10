@@ -26,6 +26,7 @@ import { alias } from "drizzle-orm/pg-core";
 import { and, asc, eq, gte, lte, sql } from "drizzle-orm";
 import { Context, Effect, Layer, Schema } from "effect";
 
+import { dieDatabase } from "./db-defects.ts";
 import { VaultStorage } from "./storage.ts";
 import { VaultAccessService } from "./vaults.ts";
 
@@ -41,7 +42,7 @@ export class DocumentRegistryMismatch extends Error {
   }
 }
 
-export type DocumentsServiceShape = {
+type DocumentsServiceShape = {
   readonly readDocument: (
     userId: Uuid,
     vaultId: Uuid,
@@ -174,7 +175,7 @@ export const DocumentsServiceLive = Layer.effect(
           .from(wikiArticles)
           .where(and(eq(wikiArticles.vaultId, vaultId), eq(wikiArticles.filePath, filePath)))
           .limit(1)
-          .pipe(Effect.orDie);
+          .pipe(dieDatabase);
         const row = first(rows);
         return row === undefined ? undefined : wikiArticle(row);
       });
@@ -186,7 +187,7 @@ export const DocumentsServiceLive = Layer.effect(
           .from(wikiArticles)
           .where(and(eq(wikiArticles.vaultId, vaultId), eq(wikiArticles.topicId, topicId)))
           .limit(1)
-          .pipe(Effect.orDie);
+          .pipe(dieDatabase);
         const row = first(rows);
         return row === undefined ? undefined : wikiArticle(row);
       });
@@ -198,7 +199,7 @@ export const DocumentsServiceLive = Layer.effect(
           .from(sourceDocuments)
           .where(and(eq(sourceDocuments.vaultId, vaultId), eq(sourceDocuments.filePath, filePath)))
           .limit(1)
-          .pipe(Effect.orDie);
+          .pipe(dieDatabase);
         const row = first(rows);
         return row === undefined ? undefined : sourceDocument(row);
       });
@@ -211,7 +212,7 @@ export const DocumentsServiceLive = Layer.effect(
           .from(topics)
           .where(and(eq(topics.vaultId, vaultId), eq(topics.slug, slug)))
           .limit(1)
-          .pipe(Effect.orDie);
+          .pipe(dieDatabase);
         const topic = first(topicRows);
         if (topic === undefined || topic.articleStatus !== "archived") {
           return undefined;
@@ -231,7 +232,7 @@ export const DocumentsServiceLive = Layer.effect(
             .from(topics)
             .where(eq(topics.topicId, topic.supersededBy))
             .limit(1)
-            .pipe(Effect.orDie);
+            .pipe(dieDatabase);
           successorSlug = first(successorRows)?.slug ?? null;
         }
         return {
@@ -309,7 +310,7 @@ export const DocumentsServiceLive = Layer.effect(
             ),
           )
           .orderBy(asc(searchIndex.chunkIndex))
-          .pipe(Effect.orDie);
+          .pipe(dieDatabase);
         return rows.map((row) => ({
           path: row.path,
           chunk_index: row.chunkIndex,
@@ -333,7 +334,7 @@ export const DocumentsServiceLive = Layer.effect(
             ),
           )
           .limit(1)
-          .pipe(Effect.orDie);
+          .pipe(dieDatabase);
         const source = first(sourceArticle);
         if (source === undefined) {
           return yield* new NotFound({ detail: `Not a wiki article: ${query.path}` });
@@ -358,7 +359,7 @@ export const DocumentsServiceLive = Layer.effect(
             ),
           )
           .orderBy(asc(sql`lower(${outgoingArticle.title})`))
-          .pipe(Effect.orDie);
+          .pipe(dieDatabase);
         const incoming = yield* db
           .select({
             filePath: incomingArticle.filePath,
@@ -376,7 +377,7 @@ export const DocumentsServiceLive = Layer.effect(
             ),
           )
           .orderBy(asc(sql`lower(${incomingArticle.title})`))
-          .pipe(Effect.orDie);
+          .pipe(dieDatabase);
 
         return {
           outgoing: outgoing.map(wikiOverview),

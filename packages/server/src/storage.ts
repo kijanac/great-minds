@@ -19,7 +19,7 @@ export class StorageFileMissing extends Schema.TaggedErrorClass<StorageFileMissi
   },
 ) {}
 
-export type VaultStorageShape = {
+type VaultStorageShape = {
   readonly readText: (vaultId: Uuid, path: string) => Effect.Effect<string, StorageFileMissing>;
 };
 

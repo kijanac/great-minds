@@ -25,12 +25,13 @@ import {
 import { and, desc, eq, sql } from "drizzle-orm";
 import { Context, Effect, Layer, Schema } from "effect";
 
+import { dieDatabase } from "./db-defects.ts";
 import { StructuredLogger } from "./logging.ts";
 import { pageEnvelope, oneTotal } from "./pagination.ts";
 import { VaultStorage } from "./storage.ts";
 import { VaultAccessService } from "./vaults.ts";
 
-export type SessionsServiceShape = {
+type SessionsServiceShape = {
   readonly listSessions: (
     userId: Uuid,
     vaultId: Uuid,
@@ -258,7 +259,7 @@ export const SessionsServiceLive = Layer.effect(
             .select({ total: sql<number>`count(*)::int` })
             .from(sessions)
             .where(where)
-            .pipe(Effect.orDie);
+            .pipe(dieDatabase);
           const rows = yield* db
             .select()
             .from(sessions)
@@ -266,7 +267,7 @@ export const SessionsServiceLive = Layer.effect(
             .orderBy(desc(sessions.updatedAt))
             .limit(params.limit)
             .offset(params.offset)
-            .pipe(Effect.orDie);
+            .pipe(dieDatabase);
           return pageEnvelope(rows.map(sessionOverview), params, oneTotal(countRows));
         }),
       readSession: (userId, vaultId, sessionId) =>

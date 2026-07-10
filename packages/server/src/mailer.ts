@@ -2,13 +2,13 @@ import { Context, Effect, Layer, Redacted } from "effect";
 
 import { AppConfig } from "./config.ts";
 
-export type EmailMessage = {
+type EmailMessage = {
   readonly to: string;
   readonly subject: string;
   readonly body: string;
 };
 
-export type MailerShape = {
+type MailerShape = {
   readonly send: (message: EmailMessage) => Effect.Effect<void>;
 };
 

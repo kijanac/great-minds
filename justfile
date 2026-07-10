@@ -78,11 +78,14 @@ test-packages:
 # Compound checks
 # ---------------------------------------------------------------------------
 
-# Run all CI checks (same gates as GitHub Actions)
+# Run static CI checks
 ci: lint format types lint-web format-web types-web lint-packages types-packages
 
-# Pre-push review: CI gate
-review: ci
+# Run full CI checks, including hermetic TypeScript package integration
+ci-full: ci test-packages
+
+# Pre-push review: full CI gate
+review: ci-full
     @echo ""
     @echo "Review: PASSED"
 

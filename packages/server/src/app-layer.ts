@@ -70,7 +70,6 @@ export const makeAppLayer = (overrides: AppLayerOverrides = {}) => {
   const ServiceDepsLive = Layer.mergeAll(
     overrides.mailer ?? MailerLive,
     TokenServiceLive,
-    VaultAccessLive,
     StorageLive,
     ReadServicesLive,
   ).pipe(Layer.provideMerge(BaseLive));
