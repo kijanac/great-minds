@@ -5,6 +5,7 @@ import {
   index,
   integer,
   jsonb,
+  pgEnum,
   pgTable,
   text,
   timestamp,
@@ -23,6 +24,21 @@ export const tsvector = customType<{ data: string; driverData: string }>({
   }
 });
 
+export const memberRole = pgEnum("member_role", ["OWNER", "EDITOR", "VIEWER"]);
+
+export const authCodes = pgTable(
+  "auth_codes",
+  {
+    id: uuid("id").primaryKey(),
+    email: varchar("email", { length: 320 }).notNull(),
+    codeHash: varchar("code_hash", { length: 64 }).notNull(),
+    expiresAt: timestamptz("expires_at").notNull(),
+    used: boolean("used").notNull(),
+    createdAt: timestamptz("created_at").defaultNow().notNull()
+  },
+  (table) => [index("ix_auth_codes_email").on(table.email)]
+);
+
 export const users = pgTable(
   "users",
   {
@@ -32,6 +48,36 @@ export const users = pgTable(
     r2BucketName: text("r2_bucket_name")
   },
   (table) => [uniqueIndex("ix_users_email").on(table.email)]
+);
+
+export const apiKeys = pgTable(
+  "api_keys",
+  {
+    id: uuid("id").primaryKey(),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    keyHash: varchar("key_hash", { length: 64 }).notNull(),
+    label: text("label").notNull(),
+    revoked: boolean("revoked").notNull(),
+    createdAt: timestamptz("created_at").defaultNow().notNull()
+  },
+  (table) => [uniqueIndex("ix_api_keys_key_hash").on(table.keyHash)]
+);
+
+export const refreshTokens = pgTable(
+  "refresh_tokens",
+  {
+    id: uuid("id").primaryKey(),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    tokenHash: varchar("token_hash", { length: 64 }).notNull(),
+    expiresAt: timestamptz("expires_at").notNull(),
+    revoked: boolean("revoked").notNull(),
+    createdAt: timestamptz("created_at").defaultNow().notNull()
+  },
+  (table) => [uniqueIndex("ix_refresh_tokens_token_hash").on(table.tokenHash)]
 );
 
 export const vaults = pgTable(
@@ -45,6 +91,22 @@ export const vaults = pgTable(
     createdAt: timestamptz("created_at").defaultNow().notNull(),
     r2BucketName: text("r2_bucket_name")
   }
+);
+
+export const vaultMemberships = pgTable(
+  "vault_memberships",
+  {
+    id: uuid("id").primaryKey(),
+    vaultId: uuid("vault_id")
+      .notNull()
+      .references(() => vaults.id, { onDelete: "cascade" }),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    role: memberRole("role").notNull(),
+    createdAt: timestamptz("created_at").defaultNow().notNull()
+  },
+  (table) => [unique("vault_memberships_vault_id_user_id_key").on(table.vaultId, table.userId)]
 );
 
 export const pipelineRuns = pgTable(
@@ -160,8 +222,12 @@ export const wikiArticles = pgTable(
 );
 
 export const schema = {
+  authCodes,
+  apiKeys,
+  refreshTokens,
   users,
   vaults,
+  vaultMemberships,
   pipelineRuns,
   searchIndex,
   topics,

@@ -11,6 +11,7 @@
 #   TypeScript packages: pnpm (tsgo, oxlint)
 
 set dotenv-load := false
+export UV_CACHE_DIR := "/tmp/gm-uv-cache"
 
 # ---------------------------------------------------------------------------
 # Discovery
@@ -34,7 +35,7 @@ lint-web:
 
 # Lint TypeScript packages with oxlint
 lint-packages:
-    pnpm exec oxlint packages/domain/src packages/database/src packages/server/src
+    pnpm exec oxlint packages/domain/src packages/database/src packages/server/src packages/server/test
 
 # Check Python formatting (read-only)
 format:
@@ -63,6 +64,15 @@ test *args='':
 # Run tests, stop on first failure
 test-fast:
     uv run pytest -x -q
+
+# Run TypeScript package integration tests against scratch Postgres
+test-packages:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    trap 'docker compose -f docker-compose.packages-test.yml down -v' EXIT
+    docker compose -f docker-compose.packages-test.yml up -d --wait db
+    DATABASE_URL=postgresql://great_minds:great_minds@localhost:55434/gm_packages_test JWT_SECRET=packages-test-jwt-secret UV_CACHE_DIR=/tmp/gm-uv-cache uv run alembic upgrade head
+    DATABASE_URL=postgresql://great_minds:great_minds@localhost:55434/gm_packages_test pnpm --filter @great-minds/server test:integration
 
 # ---------------------------------------------------------------------------
 # Compound checks

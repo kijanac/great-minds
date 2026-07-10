@@ -22,5 +22,5 @@
       "@great-minds/domain": ["../domain/src/index.ts"]
     }
   },
-  "include": ["src"]
+  "include": ["src", "test"]
 }

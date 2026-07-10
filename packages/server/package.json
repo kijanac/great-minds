@@ -11,8 +11,8 @@
   },
   "scripts": {
     "typecheck": "tsgo -p tsconfig.json --noEmit",
+    "test:integration": "vitest run test",
     "start": "node --experimental-strip-types src/main.ts",
-    "sse-client": "node --experimental-strip-types src/sse-client.ts",
     "workflow": "node --experimental-strip-types src/workflow-runner.ts",
     "workflow:official": "node --experimental-strip-types src/workflow-official.ts"
   },
@@ -23,6 +23,8 @@
     "@effect/sql-pg": "4.0.0-beta.94",
     "@great-minds/database": "workspace:*",
     "@great-minds/domain": "workspace:*",
-    "effect": "4.0.0-beta.94"
+    "drizzle-orm": "1.0.0-rc.4",
+    "effect": "4.0.0-beta.94",
+    "jose": "6.2.3"
   }
 }

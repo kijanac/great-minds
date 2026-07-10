@@ -365,3 +365,6 @@ Human decisions on the contract oddities that affect M1 implementation:
 2. **`GET /sessions/{id}` authz** → keep vault-member access (current semantics). Whether session reads should be owner-scoped is a product question, deliberately not decided during the port.
 3. **`GET /vaults/{id}` existence leak** → TS collapses to `403` for non-members regardless of vault existence, matching the `/config`/`/members` guard pattern.
 4. **`GET /wiki/{slug}`** → not ported. Zero callers; article reads are path-addressed via `GET /doc/{path}`. Recorded as deliberate surface reduction, not an omission.
+5. `suppress_auth` is ported as a first-class config flag (default false), matching Python's dev/test escape hatch.
+6. 422 validation bodies are a flat `{"detail": string}` in TS (not FastAPI's structured array) — deliberate divergence; frontend only checks `res.ok` on error paths.
+7. Vault storage side effects (config.yaml seed, R2 bucket provisioning/deletion) are deferred to the documents/storage task of M1 — `ensureDefaultForUser`/`deleteOwnedVaults` currently cover DB rows only; storage coverage must land before cutover.
