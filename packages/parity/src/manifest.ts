@@ -73,8 +73,10 @@ export const requiredContractEndpoints = [
   "DELETE /auth/api-keys/{key_id}",
   "DELETE /auth/me",
   "POST /vaults",
+  "POST /vaults/draft-hint",
   "GET /vaults",
   "GET /vaults/{vault_id}",
+  "POST /vaults/{vault_id}/query",
   "GET /vaults/{vault_id}/config",
   "PATCH /vaults/{vault_id}/config",
   "GET /vaults/{vault_id}/members",
@@ -113,6 +115,8 @@ export const requiredContractEndpoints = [
 ] as const;
 
 export const endpointExclusions: readonly string[] = [
+  "POST /vaults/{vault_id}/query -- M3.3b nondeterministic streaming LLM endpoint; covered by stubbed TS integration tests",
+  "POST /vaults/draft-hint -- M3.3b nondeterministic LLM drafting endpoint; covered by stubbed TS integration tests",
   "POST /vaults/{vault_id}/proposals -- M3 decision 1: TS-only endpoint; Python has no route",
   "POST /vaults/{vault_id}/raw/sources/{path}/deletion-request -- M3.1 Python bug: source_deletion is documented but rejected by ProposalContentType response/create schemas",
   "POST /vaults/{vault_id}/ingest/upload -- multipart/form-data parity is not supported by the JSON mutation harness; deterministic text upload is covered by integration tests",

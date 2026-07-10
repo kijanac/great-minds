@@ -17,6 +17,14 @@ export type AppConfigShape = {
   readonly r2AccessKeyId: Option.Option<Redacted.Redacted<string>>;
   readonly r2SecretAccessKey: Option.Option<Redacted.Redacted<string>>;
   readonly r2BucketPrefix: string;
+  readonly openRouterApiKey: Option.Option<Redacted.Redacted<string>>;
+  readonly openRouterApiUrl: string;
+  readonly parallelApiKey: Option.Option<Redacted.Redacted<string>>;
+  readonly parallelSearchUrl: string;
+  readonly queryModel: string;
+  readonly queryFallbackModels: readonly string[];
+  readonly extractModel: string;
+  readonly embeddingModel: string;
   readonly corsOrigins: readonly string[];
   readonly suppressAuth: boolean;
   readonly serverHost: string;
@@ -56,6 +64,28 @@ const appConfig = Config.all({
   r2AccessKeyId: Config.option(redactedNonEmpty("R2_ACCESS_KEY_ID")),
   r2SecretAccessKey: Config.option(redactedNonEmpty("R2_SECRET_ACCESS_KEY")),
   r2BucketPrefix: nonEmptyString("R2_BUCKET_PREFIX").pipe(Config.withDefault("gm")),
+  openRouterApiKey: Config.option(redactedNonEmpty("OPENROUTER_API_KEY")),
+  openRouterApiUrl: nonEmptyString("OPENROUTER_API_URL").pipe(
+    Config.withDefault("https://openrouter.ai/api/v1"),
+  ),
+  parallelApiKey: Config.option(redactedNonEmpty("PARALLEL_API_KEY")),
+  parallelSearchUrl: nonEmptyString("PARALLEL_SEARCH_URL").pipe(
+    Config.withDefault("https://api.parallel.ai/v1beta/search"),
+  ),
+  queryModel: nonEmptyString("QUERY_MODEL").pipe(Config.withDefault("z-ai/glm-5.2")),
+  queryFallbackModels: nonEmptyString("QUERY_FALLBACK_MODELS").pipe(
+    Config.withDefault("deepseek/deepseek-v3.2"),
+    Config.map((raw) =>
+      raw
+        .split(",")
+        .map((model) => model.trim())
+        .filter((model) => model.length > 0),
+    ),
+  ),
+  extractModel: nonEmptyString("EXTRACT_MODEL").pipe(Config.withDefault("deepseek/deepseek-v3.2")),
+  embeddingModel: nonEmptyString("EMBEDDING_MODEL").pipe(
+    Config.withDefault("qwen/qwen3-embedding-8b"),
+  ),
   corsOrigins: nonEmptyString("CORS_ORIGINS").pipe(
     Config.withDefault("http://localhost:5173"),
     Config.map((raw) =>

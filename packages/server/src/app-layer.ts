@@ -7,10 +7,15 @@ import { AppConfigLive } from "./config.ts";
 import type { AppConfig } from "./config.ts";
 import { DrizzleLive } from "./db.ts";
 import { DocumentsService, DocumentsServiceLive } from "./documents.ts";
+import { EmbeddingsLive, EmbeddingsService } from "./embeddings.ts";
 import { IngestService, IngestServiceLive } from "./ingest.ts";
+import { CostLookupLive, CostLookupService } from "./llm-costs.ts";
+import { LanguageModel, LanguageModelLive } from "./llm.ts";
 import { StructuredLogger, StructuredLoggerLive } from "./logging.ts";
 import { Mailer, MailerLive } from "./mailer.ts";
+import { ParallelSearchLive, ParallelSearchService } from "./parallel.ts";
 import { ProposalsService, ProposalsServiceLive } from "./proposals.ts";
+import { QueryService, QueryServiceLive } from "./query.ts";
 import { SessionsService, SessionsServiceLive } from "./sessions.ts";
 import { SourceDocumentsService, SourceDocumentsServiceLive } from "./source-documents.ts";
 import { SourcesService, SourcesServiceLive } from "./sources.ts";
@@ -41,6 +46,11 @@ export type AppLayerServices =
   | IngestService
   | DocumentsService
   | SessionsService
+  | LanguageModel
+  | EmbeddingsService
+  | CostLookupService
+  | ParallelSearchService
+  | QueryService
   | VaultStorage
   | ProposalStorage
   | RandomBytesService
@@ -54,6 +64,10 @@ export type AppLayerOverrides = {
   readonly storage?: Layer.Layer<VaultStorage>;
   readonly proposalStorage?: Layer.Layer<ProposalStorage>;
   readonly randomBytes?: Layer.Layer<RandomBytesService>;
+  readonly languageModel?: Layer.Layer<LanguageModel>;
+  readonly embeddings?: Layer.Layer<EmbeddingsService>;
+  readonly costLookup?: Layer.Layer<CostLookupService>;
+  readonly parallelSearch?: Layer.Layer<ParallelSearchService>;
 };
 
 export const makeAppLayer = (overrides: AppLayerOverrides = {}) => {
@@ -68,6 +82,18 @@ export const makeAppLayer = (overrides: AppLayerOverrides = {}) => {
   const VaultAccessLive = VaultAccessServiceLive.pipe(Layer.provideMerge(BaseLive));
   const StorageLive = (overrides.storage ?? VaultStorageLive).pipe(Layer.provideMerge(BaseLive));
   const ProposalStorageLiveLayer = (overrides.proposalStorage ?? ProposalStorageLive).pipe(
+    Layer.provideMerge(BaseLive),
+  );
+  const LanguageModelLiveLayer = (overrides.languageModel ?? LanguageModelLive).pipe(
+    Layer.provideMerge(BaseLive),
+  );
+  const EmbeddingsLiveLayer = (overrides.embeddings ?? EmbeddingsLive).pipe(
+    Layer.provideMerge(BaseLive),
+  );
+  const CostLookupLiveLayer = (overrides.costLookup ?? CostLookupLive).pipe(
+    Layer.provideMerge(BaseLive),
+  );
+  const ParallelSearchLiveLayer = (overrides.parallelSearch ?? ParallelSearchLive).pipe(
     Layer.provideMerge(BaseLive),
   );
   const MailerLiveLayer = (overrides.mailer ?? MailerLive).pipe(Layer.provideMerge(BaseLive));
@@ -119,6 +145,15 @@ export const makeAppLayer = (overrides: AppLayerOverrides = {}) => {
       Layer.provideMerge(SourceDocumentsLive),
       Layer.provideMerge(BaseLive),
     ),
+    QueryServiceLive.pipe(
+      Layer.provideMerge(LanguageModelLiveLayer),
+      Layer.provideMerge(EmbeddingsLiveLayer),
+      Layer.provideMerge(CostLookupLiveLayer),
+      Layer.provideMerge(ParallelSearchLiveLayer),
+      Layer.provideMerge(VaultAccessLive),
+      Layer.provideMerge(StorageLive),
+      Layer.provideMerge(BaseLive),
+    ),
     SourceDocumentsLive,
     ProposalsLive,
     ProposalStorageLiveLayer,
@@ -128,6 +163,10 @@ export const makeAppLayer = (overrides: AppLayerOverrides = {}) => {
     MailerLiveLayer,
     TokenServiceLive,
     StorageLive,
+    LanguageModelLiveLayer,
+    EmbeddingsLiveLayer,
+    CostLookupLiveLayer,
+    ParallelSearchLiveLayer,
     ReadServicesLive,
   ).pipe(Layer.provideMerge(BaseLive));
 

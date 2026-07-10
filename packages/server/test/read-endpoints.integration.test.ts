@@ -137,6 +137,14 @@ const testConfig = (url: string, dataDir: string): AppConfigShape => ({
   r2AccessKeyId: Option.none(),
   r2SecretAccessKey: Option.none(),
   r2BucketPrefix: "gm-test",
+  openRouterApiKey: Option.none(),
+  openRouterApiUrl: "https://openrouter.ai/api/v1",
+  parallelApiKey: Option.none(),
+  parallelSearchUrl: "https://api.parallel.ai/v1beta/search",
+  queryModel: "z-ai/glm-5.2",
+  queryFallbackModels: ["deepseek/deepseek-v3.2"],
+  extractModel: "deepseek/deepseek-v3.2",
+  embeddingModel: "qwen/qwen3-embedding-8b",
   corsOrigins: ["http://localhost:5173"],
   suppressAuth: false,
   serverHost: "127.0.0.1",
@@ -1130,11 +1138,7 @@ describe("read-only HTTP integration", () => {
     expect(cap.status).toBe(200);
     expect(asPage(cap.body).pagination.limit).toBe(200);
 
-    const pastEnd = await api(
-      "GET",
-      `/vaults/${id.vaultAlpha}/wiki/recent?offset=99`,
-      aliceToken,
-    );
+    const pastEnd = await api("GET", `/vaults/${id.vaultAlpha}/wiki/recent?offset=99`, aliceToken);
     expect(pastEnd.status).toBe(200);
     expect(asPage(pastEnd.body)).toEqual({
       items: [],

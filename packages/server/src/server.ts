@@ -1,16 +1,20 @@
 import { createServer, type Server } from "node:http";
 
 import { NodeHttpServer } from "@effect/platform-node";
+import { Database, vaults } from "@great-minds/database";
 import {
   AuthMiddleware,
   BadRequest,
   CurrentAuth,
   GreatMindsApi,
+  NotFound,
+  ServiceUnavailable,
   Unauthorized,
   type DomainError,
   type Uuid,
 } from "@great-minds/domain";
-import { Cause, Effect, Layer, ManagedRuntime, Redacted, Stream } from "effect";
+import { eq } from "drizzle-orm";
+import { Cause, Effect, Layer, ManagedRuntime, Option, Redacted, Stream } from "effect";
 import {
   HttpRouter,
   HttpServer,
@@ -25,14 +29,16 @@ import { HttpApiSchemaError } from "effect/unstable/httpapi/HttpApiError";
 import { AppLayerLive, type AppLayerServices } from "./app-layer.ts";
 import { AuthService } from "./auth.ts";
 import { AppConfig } from "./config.ts";
+import { dieDatabase } from "./db-defects.ts";
 import { DocumentRegistryMismatch, DocumentsService } from "./documents.ts";
 import { domainErrorResponse } from "./http-errors.ts";
 import { IngestService } from "./ingest.ts";
 import { StructuredLogger } from "./logging.ts";
 import { ProposalsService } from "./proposals.ts";
+import { QueryService } from "./query.ts";
 import { SessionsService } from "./sessions.ts";
 import { SourcesService } from "./sources.ts";
-import { VaultsService } from "./vaults.ts";
+import { VaultAccessService, VaultsService } from "./vaults.ts";
 import { WikiService } from "./wiki.ts";
 
 type RuntimeServices = AppLayerServices | HttpServer.HttpServer;
@@ -96,6 +102,7 @@ const withDomainErrors = <A, E extends DomainError, R>(effect: Effect.Effect<A, 
       Validation: domainErrorJsonResponse,
       BadRequest: domainErrorJsonResponse,
       Conflict: domainErrorJsonResponse,
+      ServiceUnavailable: domainErrorJsonResponse,
     }),
   );
 
@@ -281,6 +288,15 @@ const VaultHandlersLive = HttpApiBuilder.group(MountedGreatMindsApi, "vaults", (
           const vaultsService = yield* VaultsService;
           const current = yield* CurrentAuth;
           return yield* vaultsService.createVault(current.user_id, payload);
+        }),
+      ),
+    )
+    .handle("draftVaultHint", ({ payload }) =>
+      withDomainErrors(
+        Effect.gen(function* () {
+          const query = yield* QueryService;
+          const current = yield* CurrentAuth;
+          return yield* query.draftHint(current.user_id, payload.description);
         }),
       ),
     )
@@ -672,6 +688,64 @@ const SessionsHandlersLive = HttpApiBuilder.group(MountedGreatMindsApi, "session
     ),
 );
 
+const QueryHandlersLive = HttpApiBuilder.group(MountedGreatMindsApi, "query", (handlers) =>
+  handlers.handle("streamQuery", ({ params, payload }) =>
+    withDomainErrors(
+      Effect.gen(function* () {
+        const current = yield* CurrentAuth;
+        const db = yield* Database;
+        const vaultRows = yield* db
+          .select({ name: vaults.name })
+          .from(vaults)
+          .where(eq(vaults.id, params.vault_id))
+          .limit(1)
+          .pipe(dieDatabase);
+        const vault = vaultRows[0];
+        if (vault === undefined) {
+          return yield* new NotFound({ detail: "Vault not found" });
+        }
+
+        const access = yield* VaultAccessService;
+        yield* access.requireMember(current.user_id, params.vault_id);
+
+        const config = yield* AppConfig;
+        if (Option.isNone(config.openRouterApiKey)) {
+          return yield* new ServiceUnavailable({
+            detail: "LLM service not configured (OPENROUTER_API_KEY missing)",
+          });
+        }
+
+        const query = yield* QueryService;
+        return query.streamQuery(current.user_id, params.vault_id, payload, {
+          vaultLabel: vault.name,
+        });
+      }),
+    ),
+  ),
+);
+
+const QueryStreamHeadersLive = HttpRouter.middleware(
+  (effect) =>
+    Effect.gen(function* () {
+      const request = yield* HttpServerRequest.HttpServerRequest;
+      const response = yield* effect;
+      const pathname = new URL(request.url, "http://localhost").pathname;
+      if (
+        request.method === "POST" &&
+        response.status === 200 &&
+        pathname.startsWith("/v1/vaults/") &&
+        pathname.endsWith("/query")
+      ) {
+        return HttpServerResponse.setHeaders(response, {
+          "Cache-Control": "no-cache",
+          "X-Accel-Buffering": "no",
+        });
+      }
+      return response;
+    }),
+  { global: true },
+);
+
 const bearerFromRequest = (request: HttpServerRequest.HttpServerRequest) => {
   const header = request.headers.authorization;
   if (header === undefined || !header.startsWith("Bearer ")) {
@@ -756,11 +830,13 @@ const ApiGroupsLive = Layer.mergeAll(
   JobsHandlersLive,
   DocumentsHandlersLive,
   SessionsHandlersLive,
+  QueryHandlersLive,
 ).pipe(Layer.provideMerge(AuthMiddlewareLive));
 
 const ApiLive = HttpApiBuilder.layer(MountedGreatMindsApi).pipe(Layer.provide(ApiGroupsLive));
 
 const AppRoutesLive = Layer.mergeAll(
+  QueryStreamHeadersLive,
   HttpRouter.add("GET", "/health", healthResponse),
   HttpRouter.add("GET", "/", healthResponse),
   UploadRouteLive,

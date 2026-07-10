@@ -1,0 +1,93 @@
+import { Context, Effect, Layer, Option, Redacted } from "effect";
+
+import { AppConfig } from "./config.ts";
+import { ModelProviderError } from "./llm.ts";
+
+const embeddingDimensions = 1024;
+const embeddingTimeoutMs = 300_000;
+const maxEmbeddingRetries = 3;
+
+type EmbeddingsShape = {
+  readonly embed: (texts: readonly string[]) => Promise<readonly (readonly number[])[]>;
+};
+
+export class EmbeddingsService extends Context.Service<EmbeddingsService, EmbeddingsShape>()(
+  "@great-minds/server/EmbeddingsService",
+) {}
+
+const optionalRedactedValue = (value: Option.Option<Redacted.Redacted<string>>) =>
+  Option.match(value, {
+    onNone: () => undefined,
+    onSome: Redacted.value,
+  });
+
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+const truncateAndNormalize = (embedding: readonly number[]) => {
+  const truncated = embedding.slice(0, embeddingDimensions);
+  const norm = Math.hypot(...truncated);
+  return norm === 0 ? truncated : truncated.map((value) => value / norm);
+};
+
+const parseEmbeddingResponse = (
+  value: unknown,
+  expectedCount: number,
+): readonly (readonly number[])[] => {
+  if (typeof value !== "object" || value === null) {
+    throw new ModelProviderError("embedding provider returned a non-object response");
+  }
+  const data = (value as Record<string, unknown>).data;
+  if (!Array.isArray(data) || data.length !== expectedCount) {
+    throw new ModelProviderError("embedding provider returned an unexpected data shape");
+  }
+  return data.map((item) => {
+    if (typeof item !== "object" || item === null) {
+      throw new ModelProviderError("embedding provider returned an invalid item");
+    }
+    const embedding = (item as Record<string, unknown>).embedding;
+    if (!Array.isArray(embedding) || embedding.some((value) => typeof value !== "number")) {
+      throw new ModelProviderError("embedding provider returned an invalid vector");
+    }
+    return truncateAndNormalize(embedding as readonly number[]);
+  });
+};
+
+export const EmbeddingsLive = Layer.effect(
+  EmbeddingsService,
+  Effect.map(AppConfig, (config) => {
+    const apiKey = optionalRedactedValue(config.openRouterApiKey);
+    return {
+      embed: async (texts) => {
+        if (apiKey === undefined) {
+          throw new ModelProviderError("OpenRouter API key is not configured");
+        }
+        for (let attempt = 1; attempt <= maxEmbeddingRetries; attempt += 1) {
+          try {
+            const response = await fetch(`${config.openRouterApiUrl.replace(/\/$/, "")}/embeddings`, {
+              method: "POST",
+              headers: {
+                authorization: `Bearer ${apiKey}`,
+                "content-type": "application/json",
+              },
+              body: JSON.stringify({
+                model: config.embeddingModel,
+                input: [...texts],
+              }),
+              signal: AbortSignal.timeout(embeddingTimeoutMs),
+            });
+            if (!response.ok) {
+              throw new ModelProviderError(`embedding provider returned ${response.status}`);
+            }
+            return parseEmbeddingResponse(await response.json(), texts.length);
+          } catch (error) {
+            if (attempt === maxEmbeddingRetries) {
+              throw error;
+            }
+            await sleep(2 ** attempt * 1000);
+          }
+        }
+        throw new Error("embedding retry loop exited without resolution");
+      },
+    } satisfies EmbeddingsShape;
+  }),
+);

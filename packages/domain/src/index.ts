@@ -5,6 +5,7 @@ import * as HttpApiGroup from "effect/unstable/httpapi/HttpApiGroup";
 import * as HttpApiMiddleware from "effect/unstable/httpapi/HttpApiMiddleware";
 import * as HttpApiSchema from "effect/unstable/httpapi/HttpApiSchema";
 import * as HttpApiSecurity from "effect/unstable/httpapi/HttpApiSecurity";
+import * as Sse from "effect/unstable/encoding/Sse";
 
 export const Email = Schema.String.pipe(
   Schema.check(Schema.isMaxLength(320)),
@@ -629,6 +630,85 @@ export const LinkedArticles = Schema.Struct({
 });
 export type LinkedArticles = typeof LinkedArticles.Type;
 
+export const HistoryMessage = Schema.Struct({
+  role: Schema.Literals(["user", "assistant"] as const),
+  content: Schema.String,
+});
+export type HistoryMessage = typeof HistoryMessage.Type;
+
+export const QueryMode = Schema.Literals(["query", "btw"] as const);
+export type QueryMode = typeof QueryMode.Type;
+
+export const QueryRequest = Schema.Struct({
+  question: Schema.String,
+  model: Schema.optionalKey(Schema.NullOr(Schema.String)),
+  mode: QueryMode.pipe(Schema.withDecodingDefaultTypeKey(Effect.succeed("query" as const))),
+  origin_path: Schema.optionalKey(Schema.NullOr(Schema.String)),
+  history: Schema.Array(HistoryMessage).pipe(Schema.withDecodingDefaultTypeKey(Effect.succeed([]))),
+  extra_instructions: Schema.optionalKey(Schema.NullOr(Schema.String)),
+});
+export type QueryRequest = typeof QueryRequest.Type;
+
+export const QuerySourceArticle = Schema.Struct({
+  type: Schema.Literals(["article", "raw"] as const),
+  path: Schema.String,
+  title: Schema.NullOr(Schema.String),
+  start: Schema.optionalKey(Schema.Number),
+  end: Schema.optionalKey(Schema.Number),
+});
+export type QuerySourceArticle = typeof QuerySourceArticle.Type;
+
+export const QuerySourceSearch = Schema.Struct({
+  type: Schema.Literal("search"),
+  query: Schema.String,
+});
+export type QuerySourceSearch = typeof QuerySourceSearch.Type;
+
+export const QuerySourceQuery = Schema.Struct({
+  type: Schema.Literal("query"),
+  filters: Schema.Record(Schema.String, Schema.Unknown),
+});
+export type QuerySourceQuery = typeof QuerySourceQuery.Type;
+
+export const QuerySourceLinks = Schema.Struct({
+  type: Schema.Literal("links"),
+  path: Schema.String,
+  title: Schema.NullOr(Schema.String),
+});
+export type QuerySourceLinks = typeof QuerySourceLinks.Type;
+
+export const QuerySourceData = Schema.Union([
+  QuerySourceArticle,
+  QuerySourceSearch,
+  QuerySourceQuery,
+  QuerySourceLinks,
+]);
+export type QuerySourceData = typeof QuerySourceData.Type;
+
+export const QueryStreamPayload = Schema.Union([
+  Schema.Struct({ event: Schema.Literal("token"), data: Schema.Struct({ text: Schema.String }) }),
+  Schema.Struct({ event: Schema.Literal("source"), data: QuerySourceData }),
+  Schema.Struct({ event: Schema.Literal("done"), data: Schema.Struct({}) }),
+  Schema.Struct({
+    event: Schema.Literal("error"),
+    data: Schema.Struct({ message: Schema.String }),
+  }),
+]);
+export type QueryStreamPayload = typeof QueryStreamPayload.Type;
+
+export const QuerySseEvent = Sse.EventEncoded;
+export type QuerySseEvent = typeof QuerySseEvent.Type;
+
+export const DraftHintRequest = Schema.Struct({
+  description: Schema.String,
+});
+export type DraftHintRequest = typeof DraftHintRequest.Type;
+
+export const DraftHintResponse = Schema.Struct({
+  thematic_hint: Schema.String,
+});
+export type DraftHintResponse = typeof DraftHintResponse.Type;
+
 export class CurrentAuth extends Context.Service<CurrentAuth, AuthContext>()(
   "@great-minds/domain/CurrentAuth",
 ) {}
@@ -657,7 +737,21 @@ export class Conflict extends Schema.TaggedErrorClass<Conflict>()("Conflict", {
   detail: Schema.String,
 }) {}
 
-export type DomainError = Unauthorized | Forbidden | NotFound | Validation | BadRequest | Conflict;
+export class ServiceUnavailable extends Schema.TaggedErrorClass<ServiceUnavailable>()(
+  "ServiceUnavailable",
+  {
+    detail: Schema.String,
+  },
+) {}
+
+export type DomainError =
+  | Unauthorized
+  | Forbidden
+  | NotFound
+  | Validation
+  | BadRequest
+  | Conflict
+  | ServiceUnavailable;
 
 const ErrorDetail = Schema.Struct({
   detail: Schema.String,
@@ -669,6 +763,7 @@ const ConflictResponse = ErrorDetail.pipe(HttpApiSchema.status(409));
 const ForbiddenResponse = ErrorDetail.pipe(HttpApiSchema.status(403));
 const NotFoundResponse = ErrorDetail.pipe(HttpApiSchema.status(404));
 const ValidationResponse = ErrorDetail.pipe(HttpApiSchema.status(422));
+const ServiceUnavailableResponse = ErrorDetail.pipe(HttpApiSchema.status(503));
 
 const ValidationErrors = [ValidationResponse] as const;
 const UnauthorizedValidationErrors = [UnauthorizedResponse, ValidationResponse] as const;
@@ -689,6 +784,12 @@ const DocumentErrors = [
   BadRequestResponse,
   ForbiddenResponse,
   NotFoundResponse,
+  ValidationResponse,
+] as const;
+const QueryStreamErrors = [
+  ForbiddenResponse,
+  NotFoundResponse,
+  ServiceUnavailableResponse,
   ValidationResponse,
 ] as const;
 
@@ -713,6 +814,7 @@ const CreatedIngestedDocument = IngestedDocument.pipe(HttpApiSchema.status("Crea
 const CreatedJobResponse = JobResponse.pipe(HttpApiSchema.status("Created"));
 const CreatedSessionResponse = CreateSessionResponse.pipe(HttpApiSchema.status("Created"));
 const CreatedPromoteExchangeResponse = PromoteExchangeResponse.pipe(HttpApiSchema.status("Created"));
+const QueryStream = HttpApiSchema.StreamSse({ events: QuerySseEvent });
 
 export const AuthApiGroup = HttpApiGroup.make("auth").add(
   HttpApiEndpoint.post("requestCode", "/auth/request-code", {
@@ -768,6 +870,11 @@ export const VaultsApiGroup = HttpApiGroup.make("vaults").add(
     payload: VaultCreate,
     success: CreatedVault,
     error: ValidationErrors,
+  }).middleware(AuthMiddleware),
+  HttpApiEndpoint.post("draftVaultHint", "/vaults/draft-hint", {
+    payload: DraftHintRequest,
+    success: DraftHintResponse,
+    error: [BadRequestResponse, ServiceUnavailableResponse, ValidationResponse] as const,
   }).middleware(AuthMiddleware),
   HttpApiEndpoint.get("getVault", "/vaults/:vault_id", {
     params: {
@@ -1076,6 +1183,17 @@ export const SessionsApiGroup = HttpApiGroup.make("sessions").add(
   }).middleware(AuthMiddleware),
 );
 
+export const QueryApiGroup = HttpApiGroup.make("query").add(
+  HttpApiEndpoint.post("streamQuery", "/vaults/:vault_id/query", {
+    params: {
+      vault_id: Uuid,
+    },
+    payload: QueryRequest,
+    success: QueryStream,
+    error: QueryStreamErrors,
+  }).middleware(AuthMiddleware),
+);
+
 export const GreatMindsApi = HttpApi.make("great-minds").add(
   MetaApiGroup,
   AuthApiGroup,
@@ -1087,4 +1205,5 @@ export const GreatMindsApi = HttpApi.make("great-minds").add(
   JobsApiGroup,
   DocumentsApiGroup,
   SessionsApiGroup,
+  QueryApiGroup,
 );
