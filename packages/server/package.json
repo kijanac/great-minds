@@ -11,7 +11,7 @@
   },
   "scripts": {
     "typecheck": "tsgo -p tsconfig.json --noEmit",
-    "test:integration": "vitest run test",
+    "test:integration": "vitest run test --no-file-parallelism",
     "start": "node --experimental-strip-types src/main.ts",
     "workflow": "node --experimental-strip-types src/workflow-runner.ts",
     "workflow:official": "node --experimental-strip-types src/workflow-official.ts"

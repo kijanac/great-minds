@@ -165,6 +165,49 @@ export const searchIndex = pgTable(
   ]
 );
 
+export const sourceDocuments = pgTable(
+  "source_documents",
+  {
+    id: uuid("id").primaryKey(),
+    vaultId: uuid("vault_id")
+      .notNull()
+      .references(() => vaults.id, { onDelete: "cascade" }),
+    filePath: text("file_path").notNull(),
+    fileHash: text("file_hash").notNull(),
+    bodyHash: text("body_hash").notNull(),
+    clientHash: text("client_hash"),
+    etag: text("etag"),
+    sourceType: text("source_type").notNull(),
+    url: text("url"),
+    origin: text("origin"),
+    provenanceSessionId: uuid("provenance_session_id"),
+    provenanceExchangeId: text("provenance_exchange_id"),
+    provenanceSessionQuery: text("provenance_session_query"),
+    provenanceSourceDocPath: text("provenance_source_doc_path"),
+    provenanceSourceAnchor: text("provenance_source_anchor"),
+    provenanceSourceParagraphIndex: integer("provenance_source_paragraph_index"),
+    provenanceAnchoredTo: text("provenance_anchored_to"),
+    provenanceAnchoredSection: text("provenance_anchored_section"),
+    provenanceIntent: text("provenance_intent"),
+    title: text("title"),
+    precis: text("precis"),
+    author: text("author"),
+    publishedDate: text("published_date"),
+    genre: text("genre"),
+    tags: text("tags").array().default(sql`ARRAY[]::text[]`).notNull(),
+    derivedExtras: jsonb("derived_extras").default(sql`'{}'::jsonb`).notNull(),
+    createdAt: timestamptz("created_at").defaultNow().notNull(),
+    updatedAt: timestamptz("updated_at").defaultNow().notNull()
+  },
+  (table) => [
+    unique("source_documents_vault_id_file_path_key").on(table.vaultId, table.filePath),
+    index("ix_source_documents_vault_client_hash")
+      .on(table.vaultId, table.clientHash)
+      .where(sql`${table.clientHash} IS NOT NULL`),
+    index("ix_source_documents_vault_id").on(table.vaultId)
+  ]
+);
+
 export const topics = pgTable(
   "topics",
   {
@@ -230,6 +273,7 @@ export const schema = {
   vaultMemberships,
   pipelineRuns,
   searchIndex,
+  sourceDocuments,
   topics,
   wikiArticles
 };

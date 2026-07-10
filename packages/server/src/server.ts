@@ -18,6 +18,9 @@ import { AuthService } from "./auth.ts";
 import { AppConfig } from "./config.ts";
 import { domainErrorResponse } from "./http-errors.ts";
 import { StructuredLogger } from "./logging.ts";
+import { SourcesService } from "./sources.ts";
+import { VaultsService } from "./vaults.ts";
+import { WikiService } from "./wiki.ts";
 
 type RuntimeServices = AppLayerServices | HttpServer.HttpServer;
 
@@ -213,9 +216,87 @@ const AuthHandlersLive = HttpApiBuilder.group(MountedGreatMindsApi, "auth", (han
     )
 );
 
-const ApiGroupsLive = Layer.mergeAll(MetaHandlersLive, AuthHandlersLive).pipe(
-  Layer.provideMerge(AuthMiddlewareLive)
+const VaultHandlersLive = HttpApiBuilder.group(MountedGreatMindsApi, "vaults", (handlers) =>
+  handlers
+    .handle("listVaults", ({ query }) =>
+      withDomainErrors(
+        Effect.gen(function* () {
+          const vaultsService = yield* VaultsService;
+          const current = yield* CurrentAuth;
+          return yield* vaultsService.listVaults(current.user_id, query);
+        })
+      )
+    )
+    .handle("getVault", ({ params }) =>
+      withDomainErrors(
+        Effect.gen(function* () {
+          const vaultsService = yield* VaultsService;
+          const current = yield* CurrentAuth;
+          return yield* vaultsService.getVaultDetail(current.user_id, params.vault_id);
+        })
+      )
+    )
+    .handle("getVaultConfig", ({ params }) =>
+      withDomainErrors(
+        Effect.gen(function* () {
+          const vaultsService = yield* VaultsService;
+          const current = yield* CurrentAuth;
+          return yield* vaultsService.getVaultConfig(current.user_id, params.vault_id);
+        })
+      )
+    )
+    .handle("listVaultMembers", ({ params, query }) =>
+      withDomainErrors(
+        Effect.gen(function* () {
+          const vaultsService = yield* VaultsService;
+          const current = yield* CurrentAuth;
+          return yield* vaultsService.listMembers(current.user_id, params.vault_id, query);
+        })
+      )
+    )
 );
+
+const WikiHandlersLive = HttpApiBuilder.group(MountedGreatMindsApi, "wiki", (handlers) =>
+  handlers
+    .handle("listWikiArticles", ({ params, query }) =>
+      withDomainErrors(
+        Effect.gen(function* () {
+          const wiki = yield* WikiService;
+          const current = yield* CurrentAuth;
+          return yield* wiki.listArticles(current.user_id, params.vault_id, query);
+        })
+      )
+    )
+    .handle("listRecentWikiArticles", ({ params, query }) =>
+      withDomainErrors(
+        Effect.gen(function* () {
+          const wiki = yield* WikiService;
+          const current = yield* CurrentAuth;
+          return yield* wiki.listRecent(current.user_id, params.vault_id, query);
+        })
+      )
+    )
+);
+
+const SourcesHandlersLive = HttpApiBuilder.group(MountedGreatMindsApi, "sources", (handlers) =>
+  handlers.handle("listSources", ({ params, query }) =>
+    withDomainErrors(
+      Effect.gen(function* () {
+        const sources = yield* SourcesService;
+        const current = yield* CurrentAuth;
+        return yield* sources.listSources(current.user_id, params.vault_id, query);
+      })
+    )
+  )
+);
+
+const ApiGroupsLive = Layer.mergeAll(
+  MetaHandlersLive,
+  AuthHandlersLive,
+  VaultHandlersLive,
+  WikiHandlersLive,
+  SourcesHandlersLive
+).pipe(Layer.provideMerge(AuthMiddlewareLive));
 
 const ApiLive = HttpApiBuilder.layer(MountedGreatMindsApi).pipe(Layer.provide(ApiGroupsLive));
 

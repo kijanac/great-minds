@@ -8,8 +8,15 @@ import type { AppConfig } from "./config.ts";
 import { DrizzleLive } from "./db.ts";
 import { StructuredLogger, StructuredLoggerLive } from "./logging.ts";
 import { Mailer, MailerLive } from "./mailer.ts";
+import { SourcesService, SourcesServiceLive } from "./sources.ts";
 import { TokenService, TokenServiceLive } from "./tokens.ts";
-import { VaultsService, VaultsServiceLive } from "./vaults.ts";
+import {
+  VaultAccessService,
+  VaultAccessServiceLive,
+  VaultsService,
+  VaultsServiceLive
+} from "./vaults.ts";
+import { WikiService, WikiServiceLive } from "./wiki.ts";
 
 export type AppLayerServices =
   | AppConfig
@@ -18,7 +25,10 @@ export type AppLayerServices =
   | StructuredLogger
   | Mailer
   | TokenService
+  | VaultAccessService
   | VaultsService
+  | WikiService
+  | SourcesService
   | AuthService;
 
 export type AppLayerOverrides = {
@@ -36,10 +46,18 @@ export const makeAppLayer = (overrides: AppLayerOverrides = {}) => {
     overrides.logger ?? StructuredLoggerLive
   );
 
+  const VaultAccessLive = VaultAccessServiceLive.pipe(Layer.provideMerge(BaseLive));
+  const ReadServicesLive = Layer.mergeAll(
+    VaultsServiceLive,
+    WikiServiceLive,
+    SourcesServiceLive
+  ).pipe(Layer.provideMerge(VaultAccessLive), Layer.provideMerge(BaseLive));
+
   const ServiceDepsLive = Layer.mergeAll(
     overrides.mailer ?? MailerLive,
     TokenServiceLive,
-    VaultsServiceLive
+    VaultAccessLive,
+    ReadServicesLive
   ).pipe(Layer.provideMerge(BaseLive));
 
   return AuthServiceLive.pipe(Layer.provideMerge(ServiceDepsLive));

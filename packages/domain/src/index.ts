@@ -1,4 +1,4 @@
-import { Context, Schema } from "effect";
+import { Context, Effect, Schema } from "effect";
 import * as HttpApi from "effect/unstable/httpapi/HttpApi";
 import * as HttpApiEndpoint from "effect/unstable/httpapi/HttpApiEndpoint";
 import * as HttpApiGroup from "effect/unstable/httpapi/HttpApiGroup";
@@ -83,6 +83,141 @@ export const AuthContext = Schema.Struct({
 });
 export type AuthContext = typeof AuthContext.Type;
 
+const PageLimit = Schema.NumberFromString.pipe(
+  Schema.check(
+    Schema.isInt(),
+    Schema.isGreaterThanOrEqualTo(0),
+    Schema.isLessThanOrEqualTo(200)
+  ),
+  Schema.withDecodingDefaultTypeKey(Effect.succeed(50))
+);
+
+const PageOffset = Schema.NumberFromString.pipe(
+  Schema.check(Schema.isInt(), Schema.isGreaterThanOrEqualTo(0)),
+  Schema.withDecodingDefaultTypeKey(Effect.succeed(0))
+);
+
+export const PageParamsQuery = Schema.Struct({
+  limit: PageLimit,
+  offset: PageOffset
+});
+export type PageParams = typeof PageParamsQuery.Type;
+
+export const PageInfo = Schema.Struct({
+  limit: Schema.Number,
+  offset: Schema.Number,
+  total: Schema.Number
+});
+export type PageInfo = typeof PageInfo.Type;
+
+const pageOf = <A extends Schema.Top>(item: A) =>
+  Schema.Struct({
+    items: Schema.Array(item),
+    pagination: PageInfo
+  });
+
+export const MemberRole = Schema.Literals(["owner", "editor", "viewer"] as const);
+export type MemberRole = typeof MemberRole.Type;
+
+export const Vault = Schema.Struct({
+  id: Uuid,
+  name: Schema.String,
+  owner_id: Uuid,
+  created_at: IsoDateTime,
+  r2_bucket_name: Schema.NullOr(Schema.String)
+});
+export type Vault = typeof Vault.Type;
+
+export const VaultPage = Schema.Struct({
+  items: Schema.Array(Vault),
+  pagination: PageInfo,
+  roles: Schema.Record(Schema.String, MemberRole)
+});
+export type VaultPage = typeof VaultPage.Type;
+
+export const VaultDetail = Schema.Struct({
+  ...Vault.fields,
+  role: MemberRole,
+  member_count: Schema.Number,
+  article_count: Schema.Number
+});
+export type VaultDetail = typeof VaultDetail.Type;
+
+export const VaultConfig = Schema.Struct({
+  thematic_hint: Schema.String,
+  kinds: Schema.Array(Schema.String)
+});
+export type VaultConfig = typeof VaultConfig.Type;
+
+export const MemberWithEmail = Schema.Struct({
+  user_id: Uuid,
+  email: Email,
+  role: MemberRole
+});
+export type MemberWithEmail = typeof MemberWithEmail.Type;
+
+export const MemberPage = pageOf(MemberWithEmail);
+export type MemberPage = typeof MemberPage.Type;
+
+export const WikiArticleOverview = Schema.Struct({
+  file_path: Schema.String,
+  title: Schema.String,
+  precis: Schema.String,
+  updated_at: Schema.NullOr(IsoDateTime),
+  slug: Schema.String
+});
+export type WikiArticleOverview = typeof WikiArticleOverview.Type;
+
+export const WikiArticlePage = pageOf(WikiArticleOverview);
+export type WikiArticlePage = typeof WikiArticlePage.Type;
+
+export const WikiListQuery = Schema.Struct({
+  ...PageParamsQuery.fields,
+  run: Schema.optionalKey(Uuid)
+});
+export type WikiListQuery = typeof WikiListQuery.Type;
+
+export const FacetCount = Schema.Struct({
+  value: Schema.String,
+  count: Schema.Number
+});
+export type FacetCount = typeof FacetCount.Type;
+
+export const SourceDocumentSummary = Schema.Struct({
+  file_path: Schema.String,
+  source_type: Schema.String,
+  title: Schema.NullOr(Schema.String),
+  author: Schema.NullOr(Schema.String),
+  published_date: Schema.NullOr(Schema.String),
+  url: Schema.NullOr(Schema.String),
+  origin: Schema.NullOr(Schema.String),
+  genre: Schema.NullOr(Schema.String),
+  precis: Schema.NullOr(Schema.String),
+  tags: Schema.Array(Schema.String),
+  derived_extras: Schema.Record(Schema.String, Schema.Unknown),
+  updated_at: Schema.NullOr(IsoDateTime)
+});
+export type SourceDocumentSummary = typeof SourceDocumentSummary.Type;
+
+export const SourceDocumentFacets = Schema.Struct({
+  source_types: Schema.Array(FacetCount)
+});
+export type SourceDocumentFacets = typeof SourceDocumentFacets.Type;
+
+export const SourceDocumentPage = Schema.Struct({
+  items: Schema.Array(SourceDocumentSummary),
+  pagination: PageInfo,
+  facets: SourceDocumentFacets
+});
+export type SourceDocumentPage = typeof SourceDocumentPage.Type;
+
+export const SourceListQuery = Schema.Struct({
+  ...PageParamsQuery.fields,
+  source_type: Schema.optionalKey(Schema.String),
+  search: Schema.optionalKey(Schema.String)
+});
+export type SourceListQuery = typeof SourceListQuery.Type;
+
 export class CurrentAuth extends Context.Service<CurrentAuth, AuthContext>()(
   "@great-minds/domain/CurrentAuth"
 ) {}
@@ -155,4 +290,63 @@ export const MetaApiGroup = HttpApiGroup.make("meta").add(
   })
 );
 
-export const GreatMindsApi = HttpApi.make("great-minds").add(MetaApiGroup, AuthApiGroup);
+export const VaultsApiGroup = HttpApiGroup.make("vaults").add(
+  HttpApiEndpoint.get("listVaults", "/vaults", {
+    query: PageParamsQuery,
+    success: VaultPage
+  }).middleware(AuthMiddleware),
+  HttpApiEndpoint.get("getVault", "/vaults/:vault_id", {
+    params: {
+      vault_id: Uuid
+    },
+    success: VaultDetail
+  }).middleware(AuthMiddleware),
+  HttpApiEndpoint.get("getVaultConfig", "/vaults/:vault_id/config", {
+    params: {
+      vault_id: Uuid
+    },
+    success: VaultConfig
+  }).middleware(AuthMiddleware),
+  HttpApiEndpoint.get("listVaultMembers", "/vaults/:vault_id/members", {
+    params: {
+      vault_id: Uuid
+    },
+    query: PageParamsQuery,
+    success: MemberPage
+  }).middleware(AuthMiddleware)
+);
+
+export const WikiApiGroup = HttpApiGroup.make("wiki").add(
+  HttpApiEndpoint.get("listWikiArticles", "/vaults/:vault_id/wiki", {
+    params: {
+      vault_id: Uuid
+    },
+    query: WikiListQuery,
+    success: WikiArticlePage
+  }).middleware(AuthMiddleware),
+  HttpApiEndpoint.get("listRecentWikiArticles", "/vaults/:vault_id/wiki/recent", {
+    params: {
+      vault_id: Uuid
+    },
+    query: PageParamsQuery,
+    success: WikiArticlePage
+  }).middleware(AuthMiddleware)
+);
+
+export const SourcesApiGroup = HttpApiGroup.make("sources").add(
+  HttpApiEndpoint.get("listSources", "/vaults/:vault_id/raw/sources", {
+    params: {
+      vault_id: Uuid
+    },
+    query: SourceListQuery,
+    success: SourceDocumentPage
+  }).middleware(AuthMiddleware)
+);
+
+export const GreatMindsApi = HttpApi.make("great-minds").add(
+  MetaApiGroup,
+  AuthApiGroup,
+  VaultsApiGroup,
+  WikiApiGroup,
+  SourcesApiGroup
+);

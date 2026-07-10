@@ -368,3 +368,4 @@ Human decisions on the contract oddities that affect M1 implementation:
 5. `suppress_auth` is ported as a first-class config flag (default false), matching Python's dev/test escape hatch.
 6. 422 validation bodies are a flat `{"detail": string}` in TS (not FastAPI's structured array) — deliberate divergence; frontend only checks `res.ok` on error paths.
 7. Vault storage side effects (config.yaml seed, R2 bucket provisioning/deletion) are deferred to the documents/storage task of M1 — `ensureDefaultForUser`/`deleteOwnedVaults` currently cover DB rows only; storage coverage must land before cutover.
+8. `GET /vaults/{id}/config` in TS currently returns the documented defaults only — the storage-backed `config.yaml` merge lands with the documents/storage task (same tracking as decision 7). Until then customized vaults get defaults from the TS backend; must be resolved before cutover.

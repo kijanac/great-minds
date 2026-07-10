@@ -24,6 +24,7 @@ import {
   generateRefreshToken,
   sha256Hex
 } from "./crypto.ts";
+import { dieDatabase } from "./db-defects.ts";
 import { Mailer } from "./mailer.ts";
 import { TokenService } from "./tokens.ts";
 import { VaultsService } from "./vaults.ts";
@@ -79,25 +80,6 @@ const firstUser = (rows: readonly UserRow[]) => {
   }
   return row;
 };
-
-type DatabaseDefect =
-  | { readonly _tag: "SqlError" }
-  | { readonly _tag: "EffectDrizzleQueryError" };
-
-const isDatabaseDefect = (error: unknown): error is DatabaseDefect =>
-  typeof error === "object" &&
-  error !== null &&
-  "_tag" in error &&
-  (error._tag === "SqlError" || error._tag === "EffectDrizzleQueryError");
-
-const dieDatabase = <A, E, R>(
-  effect: Effect.Effect<A, E, R>
-): Effect.Effect<A, Exclude<E, DatabaseDefect>, R> =>
-  effect.pipe(Effect.catchIf(isDatabaseDefect, (error) => Effect.die(error))) as Effect.Effect<
-    A,
-    Exclude<E, DatabaseDefect>,
-    R
-  >;
 
 export const AuthServiceLive = Layer.effect(
   AuthService,
