@@ -31,6 +31,7 @@ const formatUuid = (bytes: Uint8Array) => {
 const MAX_UUID7_TIMESTAMP = 2 ** 48 - 1;
 
 export const formatUuid7 = (timestampMillis: number, random: Uint8Array) => {
+  // Intra-millisecond monotonicity is a non-goal: IDs are opaque; updated_at defines ordering.
   if (random.length < 16) {
     throw new Error("uuid7 requires at least 16 random bytes");
   }

@@ -379,7 +379,11 @@ export const SessionsServiceLive = Layer.effect(
         const events = yield* loadAllEvents(vaultId, sessionId).pipe(
           Effect.catchTag("NotFound", (error) => Effect.die(error)),
         );
-        yield* storage.writeText(vaultId, sessionPath(sessionId, "md"), renderSessionMarkdown(events));
+        yield* storage.writeText(
+          vaultId,
+          sessionPath(sessionId, "md"),
+          renderSessionMarkdown(events),
+        );
       });
 
     const findExchange = (events: readonly SessionEvent[], exchangeId: string) =>
@@ -456,7 +460,22 @@ export const SessionsServiceLive = Layer.effect(
           const existing = existingRows[0]?.id;
           if (existing !== undefined) {
             const events = yield* loadAllEvents(vaultId, existing as SessionId).pipe(
-              Effect.catchTag("NotFound", () => Effect.succeed<SessionEvent[]>([])),
+              Effect.catchTag("NotFound", () =>
+                logger
+                  .error("session_create_replay_missing_jsonl", {
+                    user_id: userId,
+                    vault_id: vaultId,
+                    session_id: existing,
+                    idempotency_key: input.idempotency_key,
+                  })
+                  .pipe(
+                    Effect.andThen(
+                      Effect.die(
+                        new Error(`Session ${existing} has a database row but no JSONL file`),
+                      ),
+                    ),
+                  ),
+              ),
             );
             if (findExchange(events, input.exchange.id) === undefined) {
               yield* appendExchangeEvent(vaultId, existing, input.exchange);
@@ -525,7 +544,8 @@ export const SessionsServiceLive = Layer.effect(
               return {
                 mode: "ingested" as const,
                 path: dest,
-                title: existing.title !== null && existing.title !== "" ? existing.title : exchangeId,
+                title:
+                  existing.title !== null && existing.title !== "" ? existing.title : exchangeId,
                 document_id: existing.id as Uuid,
                 proposal_id: null,
               };
@@ -536,7 +556,8 @@ export const SessionsServiceLive = Layer.effect(
               return {
                 mode: "proposed" as const,
                 path: dest,
-                title: existing.title !== null && existing.title !== "" ? existing.title : exchangeId,
+                title:
+                  existing.title !== null && existing.title !== "" ? existing.title : exchangeId,
                 document_id: null,
                 proposal_id: existing.id,
               };

@@ -313,7 +313,9 @@ const evaluateDecision = (
         ],
       };
       const accepted =
-        python.status === 500 && typescript.status === 200 && exactBody(typescript.body, tsExpected);
+        python.status === 500 &&
+        typescript.status === 200 &&
+        exactBody(typescript.body, tsExpected);
       return accepted
         ? {
             accepted: true,
@@ -324,7 +326,7 @@ const evaluateDecision = (
             accepted: false,
             note: "D11 non-object expected Python 500 and exact TS skipped-line replay.",
             diffs: [],
-        };
+          };
     }
     case "M3_D2_TITLE_NULL": {
       const diffs = genericDiffs(python, typescript);
@@ -349,19 +351,20 @@ const evaluateDecision = (
           };
     }
     case "M3_D3_BTW_CONTEXT": {
+      const diffs = genericDiffs(python, typescript);
       const pythonEvents = isObject(python.body) ? python.body.events : undefined;
       const tsEvents = isObject(typescript.body) ? typescript.body.events : undefined;
       const pythonBtw =
         Array.isArray(pythonEvents) && isObject(pythonEvents[2]) ? pythonEvents[2] : undefined;
-      const tsBtw =
-        Array.isArray(tsEvents) && isObject(tsEvents[2]) ? tsEvents[2] : undefined;
+      const tsBtw = Array.isArray(tsEvents) && isObject(tsEvents[2]) ? tsEvents[2] : undefined;
       const accepted =
+        diffs.length === 0 &&
         python.status === 200 &&
         typescript.status === 200 &&
         pythonBtw?.type === "btw" &&
-        pythonBtw.context === "" &&
+        pythonBtw.context === "<masked:btw_context>" &&
         tsBtw?.type === "btw" &&
-        tsBtw.context === "Parity context passage";
+        tsBtw.context === "<masked:btw_context>";
       return accepted
         ? {
             accepted: true,
@@ -370,8 +373,8 @@ const evaluateDecision = (
           }
         : {
             accepted: false,
-            note: "D3 expected Python replay context '' and TS replay context 'Parity context passage'.",
-            diffs: [],
+            note: "D3 expected only the backend-specific BTW context difference after normalization.",
+            diffs,
           };
     }
     case "M3_D5_PROMOTE_MISSING_SESSION": {

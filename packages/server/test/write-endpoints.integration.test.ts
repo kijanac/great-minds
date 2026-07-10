@@ -1414,6 +1414,23 @@ describe("M3.1 write endpoint integration", () => {
       path: "sessions/019f4be6-1e00-7607-8809-0a0b0c0d0e0f.jsonl",
     });
     expect(String(asRecord(created.body).id)[14]).toBe("7");
+    const createdRows = await runDb(
+      Effect.gen(function* () {
+        const db = yield* Database;
+        return yield* db
+          .select()
+          .from(sessions)
+          .where(eq(sessions.id, String(asRecord(created.body).id)))
+          .pipe(Effect.orDie);
+      }),
+    );
+    expect(createdRows).toHaveLength(1);
+    expect(createdRows[0]).toMatchObject({
+      query: firstExchange.query,
+      origin: null,
+      idempotencyKey: "stable-create-key",
+      createdAt: initialTime,
+    });
 
     const replay = await api("POST", `/vaults/${id.vault}/sessions`, aliceToken, {
       idempotency_key: "stable-create-key",
@@ -1438,6 +1455,22 @@ describe("M3.1 write endpoint integration", () => {
     expect(asRecord(replayWithLaterExchange.body).id).toBe(asRecord(created.body).id);
     const replayEvents = await readSessionEvents(String(asRecord(created.body).id));
     expect(replayEvents.map((event) => event.type)).toEqual(["meta", "exchange", "exchange"]);
+
+    await rm(
+      join(currentState().storageRoot, "vaults", id.vault, String(asRecord(created.body).path)),
+    );
+    const corruptReplay = await api("POST", `/vaults/${id.vault}/sessions`, aliceToken, {
+      idempotency_key: "stable-create-key",
+      exchange: {
+        id: "ex-corrupt-replay",
+        query: "Can a missing event log be recreated?",
+        thinking: [],
+        answer: "No; the database/file invariant is corrupt.",
+      },
+      origin: null,
+    });
+    expect(corruptReplay.status).toBe(500);
+    expect(await vaultFileExists(id.vault, String(asRecord(created.body).path))).toBe(false);
 
     const spinOff = await api("POST", `/vaults/${id.vault}/sessions`, aliceToken, {
       idempotency_key: "fresh-spin-off-key",
@@ -1491,7 +1524,7 @@ describe("M3.1 write endpoint integration", () => {
   });
 
   it("appends exchanges and BTW context, and rebuilds Python-parity markdown sidecars", async () => {
-    const { aliceToken, bobToken, carolToken } = currentFixture();
+    const { aliceToken, bobToken, carolToken, malloryToken } = currentFixture();
     const created = await api("POST", `/vaults/${id.vault}/sessions`, aliceToken, {
       idempotency_key: "sidecar-key",
       exchange: {
@@ -1522,6 +1555,19 @@ describe("M3.1 write endpoint integration", () => {
       ],
     });
     expect(firstBtw.status).toBe(200);
+    const updatedAt = async () =>
+      runDb(
+        Effect.gen(function* () {
+          const db = yield* Database;
+          const rows = yield* db
+            .select({ updatedAt: sessions.updatedAt })
+            .from(sessions)
+            .where(and(eq(sessions.vaultId, id.vault), eq(sessions.id, sessionId)))
+            .pipe(Effect.orDie);
+          return rows[0]?.updatedAt;
+        }),
+      );
+    expect(await updatedAt()).toEqual(new Date("2026-07-10T12:01:00.000Z"));
 
     currentState().clock.set(new Date("2026-07-10T12:02:00.000Z"));
     const secondBtw = await api(
@@ -1548,6 +1594,7 @@ describe("M3.1 write endpoint integration", () => {
       },
     );
     expect(secondBtw.status).toBe(200);
+    expect(await updatedAt()).toEqual(new Date("2026-07-10T12:02:00.000Z"));
 
     currentState().clock.set(new Date("2026-07-10T12:03:00.000Z"));
     const appended = await api("PATCH", `/vaults/${id.vault}/sessions/${sessionId}`, carolToken, {
@@ -1558,6 +1605,35 @@ describe("M3.1 write endpoint integration", () => {
     });
     expect(appended.status).toBe(200);
     expect(appended.body).toEqual({ path: `sessions/${sessionId}.jsonl` });
+    expect(await updatedAt()).toEqual(new Date("2026-07-10T12:03:00.000Z"));
+
+    for (const [suffix, token, status] of [
+      ["", malloryToken, 403],
+      ["", undefined, 401],
+      ["/btw", malloryToken, 403],
+      ["/btw", undefined, 401],
+    ] as const) {
+      const denied = await api(
+        "PATCH",
+        `/vaults/${id.vault}/sessions/${sessionId}${suffix}`,
+        token,
+        suffix === "/btw"
+          ? {
+              quote: "blocked",
+              blockOffset: 0,
+              context: "blocked",
+              exchangeId: "ex-sidecar",
+              exchanges: [],
+            }
+          : {
+              id: "ex-blocked",
+              query: "Blocked?",
+              thinking: [],
+              answer: "Yes.",
+            },
+      );
+      expect(denied.status).toBe(status);
+    }
 
     const events = await readSessionEvents(sessionId);
     expect(events).toHaveLength(5);

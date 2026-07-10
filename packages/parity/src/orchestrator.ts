@@ -66,13 +66,7 @@ const currentFile = fileURLToPath(import.meta.url);
 const packageRoot = resolve(dirname(currentFile), "..");
 const defaultRepoRoot = resolve(packageRoot, "../..");
 
-const dockerArgs = [
-  "compose",
-  "-p",
-  "gm_parity_m2",
-  "-f",
-  "docker-compose.parity.yml",
-] as const;
+const dockerArgs = ["compose", "-p", "gm_parity_m2", "-f", "docker-compose.parity.yml"] as const;
 
 const baseEnv = (config: RunnerConfig) => ({
   ...process.env,
@@ -393,10 +387,7 @@ const executeMutation = async (
       "POST /auth/verify-code",
       {
         body: { email: "mutation@example.com", code: "000000" },
-        normalize: [
-          mask("access_token", "access_token"),
-          mask("refresh_token", "refresh_token"),
-        ],
+        normalize: [mask("access_token", "access_token"), mask("refresh_token", "refresh_token")],
       },
     ),
   );
@@ -404,10 +395,17 @@ const executeMutation = async (
   await seedDeletionCompanionVault(databaseUrl, "mutation@example.com");
 
   const refreshResponse = await send(
-    mutationEntry("mutation-refresh", "refresh rotates token", "POST", "/v1/auth/refresh", "POST /auth/refresh", {
-      body: { refresh_token: firstPair.refresh_token },
-      normalize: [mask("access_token", "access_token"), mask("refresh_token", "refresh_token")],
-    }),
+    mutationEntry(
+      "mutation-refresh",
+      "refresh rotates token",
+      "POST",
+      "/v1/auth/refresh",
+      "POST /auth/refresh",
+      {
+        body: { refresh_token: firstPair.refresh_token },
+        normalize: [mask("access_token", "access_token"), mask("refresh_token", "refresh_token")],
+      },
+    ),
   );
   const rotatedPair = parseTokenPair(refreshResponse.body);
   await send(
@@ -444,9 +442,16 @@ const executeMutation = async (
   const createdRawKey = asString(createdKey.raw_key, "raw api key");
 
   await send(
-    mutationEntry("mutation-api-key-list", "list API keys", "GET", "/v1/auth/api-keys", "GET /auth/api-keys", {
-      normalize: [mask("*.id", "api_key_id"), mask("*.created_at", "created_at")],
-    }),
+    mutationEntry(
+      "mutation-api-key-list",
+      "list API keys",
+      "GET",
+      "/v1/auth/api-keys",
+      "GET /auth/api-keys",
+      {
+        normalize: [mask("*.id", "api_key_id"), mask("*.created_at", "created_at")],
+      },
+    ),
     rotatedPair.access_token,
   );
   await send(
@@ -721,7 +726,9 @@ const executeMutation = async (
         pathTemplate: "/v1/vaults/{created_vault_id}/ingest/staged-files/process",
         body: {
           job_id: ids.m32StagedRun,
-          files: [{ name: "parity.md", size: 12, hash: "parity-staged-hash", mimetype: "text/markdown" }],
+          files: [
+            { name: "parity.md", size: 12, hash: "parity-staged-hash", mimetype: "text/markdown" },
+          ],
         },
         normalize: [
           mask("vault_id", "vault_id"),
@@ -873,6 +880,18 @@ const executeMutation = async (
           mask("events.*.id", "session_id"),
           mask("events.*.user_id", "user_id"),
           mask("events.*.ts", "event_ts"),
+          {
+            kind: "mask",
+            path: "events.*.context",
+            label: "btw_context",
+            backend: "python",
+          },
+          {
+            kind: "mask",
+            path: "events.*.context",
+            label: "btw_context",
+            backend: "typescript",
+          },
         ],
         decision: "M3_D3_BTW_CONTEXT",
       },
@@ -1136,17 +1155,31 @@ const executeMutation = async (
   );
 
   await send(
-    mutationEntry("mutation-delete-me-invalid", "delete me invalid confirm", "DELETE", "/v1/auth/me", "DELETE /auth/me", {
-      body: { confirm: "delete" },
-      decision: "D6",
-    }),
+    mutationEntry(
+      "mutation-delete-me-invalid",
+      "delete me invalid confirm",
+      "DELETE",
+      "/v1/auth/me",
+      "DELETE /auth/me",
+      {
+        body: { confirm: "delete" },
+        decision: "D6",
+      },
+    ),
     rotatedPair.access_token,
   );
   await send(
-    mutationEntry("mutation-delete-me", "delete me cascade", "DELETE", "/v1/auth/me", "DELETE /auth/me", {
-      body: { confirm: "DELETE" },
-      ignoreContentType: true,
-    }),
+    mutationEntry(
+      "mutation-delete-me",
+      "delete me cascade",
+      "DELETE",
+      "/v1/auth/me",
+      "DELETE /auth/me",
+      {
+        body: { confirm: "DELETE" },
+        ignoreContentType: true,
+      },
+    ),
     rotatedPair.access_token,
   );
   return captures;
@@ -1196,7 +1229,10 @@ const compareReadMatrix = async (
   return reports;
 };
 
-const validateCoverage = (requests: readonly RequestReport[], decisionHits: ReadonlyMap<DecisionId, number>) => {
+const validateCoverage = (
+  requests: readonly RequestReport[],
+  decisionHits: ReadonlyMap<DecisionId, number>,
+) => {
   const covered = new Set(requests.map((request) => request.entry.coverage));
   const excluded = new Set(endpointExclusions.map((item) => item.split(" -- ", 1)[0]));
   const missing = requiredContractEndpoints.filter(
@@ -1205,7 +1241,9 @@ const validateCoverage = (requests: readonly RequestReport[], decisionHits: Read
   if (missing.length > 0) {
     throw new Error(`missing manifest coverage: ${missing.join(", ")}`);
   }
-  const missingDecisions = decisionIds.filter((decision) => (decisionHits.get(decision) ?? 0) === 0);
+  const missingDecisions = decisionIds.filter(
+    (decision) => (decisionHits.get(decision) ?? 0) === 0,
+  );
   if (missingDecisions.length > 0) {
     throw new Error(`missing decision-rule hits: ${missingDecisions.join(", ")}`);
   }
