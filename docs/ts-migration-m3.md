@@ -32,3 +32,11 @@
 - LLM calls in tests: stub layers only; the live path is exercised once per task at most, behind an explicit env flag, cheap model, never in CI.
 - Every new endpoint lands with either parity manifest coverage or a written exclusion reason in the manifest.
 - New secrets (Parallel API key) follow the Config/Redacted pattern; web_search stays vault-config-gated exactly like Python (no UI work — that gap is a product decision for later, unchanged by the port).
+
+## M3.4 closeout punch list (accumulated from reviews)
+
+- Session create-replay with DB row but missing JSONL: TS silently recreates meta-less file (Python 500s) — die or record alongside D5
+- Parity D3 rule: add backend-scoped `events.*.context` normalization + require empty generic diffs (currently only checks the BTW event)
+- Tests: assert created `sessions` row fields + `updated_at` bump on append/BTW; add 401/403 matrix to append/BTW routes
+- uuid7 intra-ms monotonicity documented as non-goal
+- From M3.2: upload-route 400/422 alignment done; recheck any remaining parity masks for over-breadth
