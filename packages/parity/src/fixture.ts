@@ -8,12 +8,15 @@ import {
   authCodes,
   backlinks,
   Database,
+  ideas,
   DatabaseLive,
   pipelineRuns,
   refreshTokens,
   searchIndex,
   sessions,
   sourceDocuments,
+  sourceProposals,
+  topicMembership,
   topics,
   users,
   vaultMemberships,
@@ -70,6 +73,10 @@ export const ids = {
   sessionMalformed: "s-malformed",
   sessionMultiMeta: "s-multi-meta",
   sessionNonObject: "s-non-object",
+  m31Proposal: "00000000-0000-4000-8000-000000001201",
+  m31SourceDeleteB: "00000000-0000-4000-8000-000000001212",
+  m31TopicDeleteB: "00000000-0000-4000-8000-000000001222",
+  m31IdeaDeleteB: "00000000-0000-4000-8000-000000001232",
 } as const;
 
 export const rawKeys = {
@@ -178,6 +185,12 @@ export const seedDeletionCompanionVault = async (databaseUrl: string, deletingUs
 
 const writeVaultFile = async (dataDir: string, vaultId: string, path: string, content: string) => {
   const fullPath = join(dataDir, "vaults", vaultId, path);
+  await mkdir(dirname(fullPath), { recursive: true });
+  await writeFile(fullPath, content, "utf8");
+};
+
+const writeProposalFile = async (dataDir: string, proposalId: string, content: string) => {
+  const fullPath = join(dataDir, "proposals", `${proposalId}.md`);
   await mkdir(dirname(fullPath), { recursive: true });
   await writeFile(fullPath, content, "utf8");
 };
@@ -810,6 +823,118 @@ export const seedReadFixture = async (databaseUrl: string, dataDir: string) => {
     "---\ntitle: Beta Source\n---\n# Beta Source\n\nBeta source body.",
   );
   await writeSessionFiles(dataDir);
+};
+
+export const seedNormalProposal = async (
+  databaseUrl: string,
+  dataDir: string,
+  vaultId: string,
+  userId: string,
+) => {
+  const rendered = "---\nsource_type: user_suggestion\n---\nParity proposed source.\n";
+  await writeProposalFile(dataDir, ids.m31Proposal, rendered);
+  const runtime = databaseRuntime(databaseUrl);
+  try {
+    await runDb(
+      runtime,
+      Effect.gen(function* () {
+        const db = yield* Database;
+        yield* db
+          .insert(sourceProposals)
+          .values({
+            id: ids.m31Proposal,
+            vaultId,
+            userId,
+            status: "PENDING",
+            contentType: "user_suggestion",
+            title: "Parity Proposal",
+            author: "Parity Editor",
+            destPath: "raw/user_suggestions/parity-proposal.md",
+          })
+          .pipe(Effect.orDie);
+      }),
+    );
+  } finally {
+    await runtime.dispose();
+  }
+  return ids.m31Proposal;
+};
+
+export const seedSourceDeletionFixture = async (
+  databaseUrl: string,
+  dataDir: string,
+  vaultId: string,
+) => {
+  const filePath = "raw/books/parity-delete-b.md";
+  await writeVaultFile(
+    dataDir,
+    vaultId,
+    filePath,
+    "---\nsource_type: book\ntitle: Parity Delete\n---\nDelete body.\n",
+  );
+  const runtime = databaseRuntime(databaseUrl);
+  try {
+    await runDb(
+      runtime,
+      Effect.gen(function* () {
+        const db = yield* Database;
+        yield* db
+          .insert(sourceDocuments)
+          .values({
+            id: ids.m31SourceDeleteB,
+            vaultId,
+            filePath,
+            fileHash: "file-B",
+            bodyHash: "body-B",
+            sourceType: "book",
+            title: "Parity Delete B",
+            tags: [],
+            derivedExtras: {},
+          })
+          .pipe(Effect.orDie);
+        yield* db
+          .insert(topics)
+          .values({
+            topicId: ids.m31TopicDeleteB,
+            vaultId,
+            slug: "parity-delete-b",
+            title: "Parity Delete B",
+            description: "Delete fixture",
+          })
+          .pipe(Effect.orDie);
+        yield* db
+          .insert(ideas)
+          .values({
+            ideaId: ids.m31IdeaDeleteB,
+            vaultId,
+            documentId: ids.m31SourceDeleteB,
+            kind: "concept",
+            label: "delete-B",
+            description: "Delete fixture idea",
+          })
+          .pipe(Effect.orDie);
+        yield* db
+          .insert(topicMembership)
+          .values({ topicId: ids.m31TopicDeleteB, ideaId: ids.m31IdeaDeleteB })
+          .pipe(Effect.orDie);
+        yield* db
+          .insert(searchIndex)
+          .values({
+            vaultId,
+            path: filePath,
+            chunkIndex: 0,
+            heading: "Delete",
+            body: "Delete body",
+            contentHash: "chunk-B",
+            tsv: sql`to_tsvector('english', 'Delete body')`,
+          })
+          .pipe(Effect.orDie);
+      }),
+    );
+  } finally {
+    await runtime.dispose();
+  }
+  return filePath;
 };
 
 const writeSessionFiles = async (dataDir: string) => {

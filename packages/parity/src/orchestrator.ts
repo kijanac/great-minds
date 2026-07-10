@@ -6,7 +6,15 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { compareResponses } from "./diff.ts";
-import { rawKeys, resetDatabase, resetStorage, seedDeletionCompanionVault, seedReadFixture } from "./fixture.ts";
+import {
+  rawKeys,
+  resetDatabase,
+  resetStorage,
+  seedDeletionCompanionVault,
+  seedNormalProposal,
+  seedReadFixture,
+  seedSourceDeletionFixture,
+} from "./fixture.ts";
 import type { Backend, CapturedResponse, RequestSpec } from "./http.ts";
 import { requestBackend } from "./http.ts";
 import {
@@ -70,8 +78,6 @@ const baseEnv = (config: RunnerConfig) => ({
   SUPPRESS_AUTH: "true",
   STORAGE_BACKEND: "local",
   DATA_DIR: config.dataDir,
-  RESEND_API_KEY: "parity-resend-key",
-  RESEND_FROM_EMAIL: "login@example.test",
   UV_CACHE_DIR: process.env.UV_CACHE_DIR ?? "/tmp/gm-uv-cache",
   PYTHONPATH: join(config.repoRoot, "src"),
 });
@@ -192,6 +198,12 @@ const asString = (value: unknown, label: string) => {
   return value;
 };
 
+const encodePath = (path: string) =>
+  path
+    .split("/")
+    .map((part) => encodeURIComponent(part))
+    .join("/");
+
 const parseTokenPair = (body: unknown): TokenPair => {
   const record = asRecord(body);
   const tokenType = record.token_type;
@@ -203,6 +215,14 @@ const parseTokenPair = (body: unknown): TokenPair => {
     refresh_token: asString(record.refresh_token, "refresh_token"),
     token_type: "bearer",
   };
+};
+
+const parseCreatedId = (body: unknown, label: string) => {
+  const id = asRecord(body).id;
+  if (typeof id !== "string") {
+    throw new Error(`expected ${label} to be a string; body=${JSON.stringify(body)}`);
+  }
+  return id;
 };
 
 const acquireTokens = async (backend: Backend): Promise<CredentialSet> => {
@@ -304,6 +324,19 @@ const executeMutation = async (
     const response = await requestBackend(backend, request);
     captures.push({ entry, response });
     return response;
+  };
+  const acquireToken = async (email: string) => {
+    const response = await requestBackend(backend, {
+      id: `mutation-token-${email}`,
+      label: `mutation token ${email}`,
+      method: "POST",
+      path: "/v1/auth/verify-code",
+      body: { email, code: "000000" },
+    });
+    if (response.status !== 200) {
+      throw new Error(`${backend.name} token acquisition failed for ${email}: ${response.text}`);
+    }
+    return parseTokenPair(response.body).access_token;
   };
 
   await send(
@@ -434,6 +467,271 @@ const executeMutation = async (
     ),
     createdRawKey,
   );
+
+  const vaultCreateResponse = await send(
+    mutationEntry(
+      "mutation-vault-create",
+      "create vault with config seed",
+      "POST",
+      "/v1/vaults",
+      "POST /vaults",
+      {
+        body: {
+          name: "Mutation Project",
+          thematic_hint: "Prefer concrete debates.",
+          kinds: ["movement", "debate"],
+        },
+        normalize: [
+          mask("id", "vault_id"),
+          mask("owner_id", "owner_id"),
+          mask("created_at", "created_at"),
+        ],
+      },
+    ),
+    rotatedPair.access_token,
+  );
+  const vaultId = parseCreatedId(vaultCreateResponse.body, "vault id");
+
+  await send(
+    mutationEntry(
+      "mutation-vault-config-update",
+      "update vault config",
+      "PATCH",
+      `/v1/vaults/${vaultId}/config`,
+      "PATCH /vaults/{vault_id}/config",
+      {
+        pathTemplate: "/v1/vaults/{created_vault_id}/config",
+        body: { thematic_hint: "Updated parity steer" },
+      },
+    ),
+    rotatedPair.access_token,
+  );
+
+  const editorInvite = await send(
+    mutationEntry(
+      "mutation-member-invite-editor",
+      "invite editor",
+      "POST",
+      `/v1/vaults/${vaultId}/members`,
+      "POST /vaults/{vault_id}/members",
+      {
+        pathTemplate: "/v1/vaults/{created_vault_id}/members",
+        body: { email: "parity-editor@example.com", role: "editor" },
+        normalize: [mask("user_id", "user_id")],
+      },
+    ),
+    rotatedPair.access_token,
+  );
+  const editorUserId = asString(asRecord(editorInvite.body).user_id, "editor user id");
+  const editorToken = await acquireToken("parity-editor@example.com");
+
+  const memberInvite = await send(
+    mutationEntry(
+      "mutation-member-invite-viewer",
+      "invite viewer",
+      "POST",
+      `/v1/vaults/${vaultId}/members`,
+      "POST /vaults/{vault_id}/members",
+      {
+        pathTemplate: "/v1/vaults/{created_vault_id}/members",
+        body: { email: "parity-member@example.com", role: "viewer" },
+        normalize: [mask("user_id", "user_id")],
+      },
+    ),
+    rotatedPair.access_token,
+  );
+  const memberUserId = asString(asRecord(memberInvite.body).user_id, "member user id");
+
+  await send(
+    mutationEntry(
+      "mutation-member-update",
+      "change member role",
+      "PUT",
+      `/v1/vaults/${vaultId}/members/${memberUserId}`,
+      "PUT /vaults/{vault_id}/members/{user_id}",
+      {
+        pathTemplate: "/v1/vaults/{created_vault_id}/members/{member_user_id}",
+        body: { role: "editor" },
+        normalize: [mask("user_id", "user_id")],
+      },
+    ),
+    rotatedPair.access_token,
+  );
+
+  await send(
+    mutationEntry(
+      "mutation-member-remove",
+      "remove member",
+      "DELETE",
+      `/v1/vaults/${vaultId}/members/${memberUserId}`,
+      "DELETE /vaults/{vault_id}/members/{user_id}",
+      {
+        pathTemplate: "/v1/vaults/{created_vault_id}/members/{member_user_id}",
+        ignoreContentType: true,
+      },
+    ),
+    rotatedPair.access_token,
+  );
+
+  const proposalId = await seedNormalProposal(databaseUrl, dataDir, vaultId, editorUserId);
+  await send(
+    mutationEntry(
+      "mutation-proposals-list",
+      "list pending proposals",
+      "GET",
+      `/v1/vaults/${vaultId}/proposals?status=pending`,
+      "GET /vaults/{vault_id}/proposals",
+      {
+        pathTemplate: "/v1/vaults/{created_vault_id}/proposals?status=pending",
+        normalize: [
+          mask("items.*.id", "proposal_id"),
+          mask("items.*.vault_id", "vault_id"),
+          mask("items.*.created_at", "created_at"),
+        ],
+      },
+    ),
+    editorToken,
+  );
+  await send(
+    mutationEntry(
+      "mutation-proposals-get",
+      "get proposal",
+      "GET",
+      `/v1/vaults/${vaultId}/proposals/${proposalId}`,
+      "GET /vaults/{vault_id}/proposals/{proposal_id}",
+      {
+        pathTemplate: "/v1/vaults/{created_vault_id}/proposals/{proposal_id}",
+        normalize: [
+          mask("id", "proposal_id"),
+          mask("vault_id", "vault_id"),
+          mask("user_id", "user_id"),
+          mask("created_at", "created_at"),
+          mask("document_id", "document_id"),
+        ],
+      },
+    ),
+    editorToken,
+  );
+  await send(
+    mutationEntry(
+      "mutation-proposals-review-approve",
+      "approve normal proposal",
+      "PATCH",
+      `/v1/vaults/${vaultId}/proposals/${proposalId}`,
+      "PATCH /vaults/{vault_id}/proposals/{proposal_id}",
+      {
+        pathTemplate: "/v1/vaults/{created_vault_id}/proposals/{proposal_id}",
+        body: { status: "approved" },
+        normalize: [
+          mask("id", "proposal_id"),
+          mask("vault_id", "vault_id"),
+          mask("user_id", "user_id"),
+          mask("created_at", "created_at"),
+          mask("document_id", "document_id"),
+        ],
+      },
+    ),
+    rotatedPair.access_token,
+  );
+
+  const deletePathB = await seedSourceDeletionFixture(databaseUrl, dataDir, vaultId);
+  await send(
+    mutationEntry(
+      "mutation-source-delete-direct",
+      "owner direct source delete",
+      "DELETE",
+      `/v1/vaults/${vaultId}/raw/sources/${encodePath(deletePathB)}`,
+      "DELETE /vaults/{vault_id}/raw/sources/{path}",
+      {
+        pathTemplate: "/v1/vaults/{created_vault_id}/raw/sources/{source_path}",
+        ignoreContentType: true,
+      },
+    ),
+    rotatedPair.access_token,
+  );
+
+  const transferVaultResponse = await send(
+    mutationEntry(
+      "mutation-vault-create-for-transfer",
+      "create transfer vault",
+      "POST",
+      "/v1/vaults",
+      "POST /vaults",
+      {
+        body: { name: "Transfer Project" },
+        normalize: [
+          mask("id", "vault_id"),
+          mask("owner_id", "owner_id"),
+          mask("created_at", "created_at"),
+        ],
+      },
+    ),
+    rotatedPair.access_token,
+  );
+  const transferVaultId = parseCreatedId(transferVaultResponse.body, "transfer vault id");
+  const transferInvite = await send(
+    mutationEntry(
+      "mutation-member-invite-transfer-target",
+      "invite transfer target",
+      "POST",
+      `/v1/vaults/${transferVaultId}/members`,
+      "POST /vaults/{vault_id}/members",
+      {
+        pathTemplate: "/v1/vaults/{transfer_vault_id}/members",
+        body: { email: "parity-transfer@example.com", role: "editor" },
+        normalize: [mask("user_id", "user_id")],
+      },
+    ),
+    rotatedPair.access_token,
+  );
+  const transferUserId = asString(asRecord(transferInvite.body).user_id, "transfer user id");
+  await send(
+    mutationEntry(
+      "mutation-vault-transfer-ownership",
+      "transfer vault ownership",
+      "POST",
+      `/v1/vaults/${transferVaultId}/transfer-ownership`,
+      "POST /vaults/{vault_id}/transfer-ownership",
+      {
+        pathTemplate: "/v1/vaults/{transfer_vault_id}/transfer-ownership",
+        body: { new_owner_user_id: transferUserId },
+        ignoreContentType: true,
+      },
+    ),
+    rotatedPair.access_token,
+  );
+
+  const deleteVaultResponse = await send(
+    mutationEntry(
+      "mutation-vault-create-for-delete",
+      "create delete vault",
+      "POST",
+      "/v1/vaults",
+      "POST /vaults",
+      {
+        body: { name: "Delete Project" },
+        normalize: [
+          mask("id", "vault_id"),
+          mask("owner_id", "owner_id"),
+          mask("created_at", "created_at"),
+        ],
+      },
+    ),
+    rotatedPair.access_token,
+  );
+  const deleteVaultId = parseCreatedId(deleteVaultResponse.body, "delete vault id");
+  await send(
+    mutationEntry(
+      "mutation-vault-delete",
+      "delete vault",
+      "DELETE",
+      `/v1/vaults/${deleteVaultId}`,
+      "DELETE /vaults/{vault_id}",
+      { pathTemplate: "/v1/vaults/{delete_vault_id}", ignoreContentType: true },
+    ),
+    rotatedPair.access_token,
+  );
+
   await send(
     mutationEntry("mutation-delete-me-invalid", "delete me invalid confirm", "DELETE", "/v1/auth/me", "DELETE /auth/me", {
       body: { confirm: "delete" },

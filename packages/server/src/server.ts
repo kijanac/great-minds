@@ -1,7 +1,13 @@
 import { createServer, type Server } from "node:http";
 
 import { NodeHttpServer } from "@effect/platform-node";
-import { AuthMiddleware, CurrentAuth, GreatMindsApi, type DomainError } from "@great-minds/domain";
+import {
+  AuthMiddleware,
+  BadRequest,
+  CurrentAuth,
+  GreatMindsApi,
+  type DomainError,
+} from "@great-minds/domain";
 import { Cause, Effect, Layer, ManagedRuntime, Redacted } from "effect";
 import {
   HttpRouter,
@@ -19,6 +25,7 @@ import { AppConfig } from "./config.ts";
 import { DocumentRegistryMismatch, DocumentsService } from "./documents.ts";
 import { domainErrorResponse } from "./http-errors.ts";
 import { StructuredLogger } from "./logging.ts";
+import { ProposalsService } from "./proposals.ts";
 import { SessionsService } from "./sessions.ts";
 import { SourcesService } from "./sources.ts";
 import { VaultsService } from "./vaults.ts";
@@ -78,6 +85,7 @@ const withDomainErrors = <A, E extends DomainError, R>(effect: Effect.Effect<A, 
       NotFound: domainErrorJsonResponse,
       Validation: domainErrorJsonResponse,
       BadRequest: domainErrorJsonResponse,
+      Conflict: domainErrorJsonResponse,
     }),
   );
 
@@ -245,6 +253,15 @@ const VaultHandlersLive = HttpApiBuilder.group(MountedGreatMindsApi, "vaults", (
         }),
       ),
     )
+    .handle("createVault", ({ payload }) =>
+      withDomainErrors(
+        Effect.gen(function* () {
+          const vaultsService = yield* VaultsService;
+          const current = yield* CurrentAuth;
+          return yield* vaultsService.createVault(current.user_id, payload);
+        }),
+      ),
+    )
     .handle("getVault", ({ params }) =>
       withDomainErrors(
         Effect.gen(function* () {
@@ -263,12 +280,71 @@ const VaultHandlersLive = HttpApiBuilder.group(MountedGreatMindsApi, "vaults", (
         }),
       ),
     )
+    .handle("updateVaultConfig", ({ params, payload }) =>
+      withDomainErrors(
+        Effect.gen(function* () {
+          const vaultsService = yield* VaultsService;
+          const current = yield* CurrentAuth;
+          return yield* vaultsService.updateVaultConfig(current.user_id, params.vault_id, payload);
+        }),
+      ),
+    )
     .handle("listVaultMembers", ({ params, query }) =>
       withDomainErrors(
         Effect.gen(function* () {
           const vaultsService = yield* VaultsService;
           const current = yield* CurrentAuth;
           return yield* vaultsService.listMembers(current.user_id, params.vault_id, query);
+        }),
+      ),
+    )
+    .handle("inviteVaultMember", ({ params, payload }) =>
+      withDomainErrors(
+        Effect.gen(function* () {
+          const vaultsService = yield* VaultsService;
+          const current = yield* CurrentAuth;
+          return yield* vaultsService.inviteMember(current.user_id, params.vault_id, payload);
+        }),
+      ),
+    )
+    .handle("updateVaultMember", ({ params, payload }) =>
+      withDomainErrors(
+        Effect.gen(function* () {
+          const vaultsService = yield* VaultsService;
+          const current = yield* CurrentAuth;
+          return yield* vaultsService.updateMemberRole(
+            current.user_id,
+            params.vault_id,
+            params.member_user_id,
+            payload.role,
+          );
+        }),
+      ),
+    )
+    .handle("removeVaultMember", ({ params }) =>
+      withDomainErrors(
+        Effect.gen(function* () {
+          const vaultsService = yield* VaultsService;
+          const current = yield* CurrentAuth;
+          yield* vaultsService.removeMember(current.user_id, params.vault_id, params.member_user_id);
+        }),
+      ),
+    )
+    .handle("transferVaultOwnership", ({ params, payload }) =>
+      withDomainErrors(
+        Effect.gen(function* () {
+          const vaultsService = yield* VaultsService;
+          const current = yield* CurrentAuth;
+          yield* vaultsService.transferOwnership(current.user_id, params.vault_id, payload);
+        }),
+      ),
+    )
+    .handle("deleteVault", ({ params }) =>
+      withDomainErrors(
+        Effect.gen(function* () {
+          const vaultsService = yield* VaultsService;
+          const current = yield* CurrentAuth;
+          yield* vaultsService.deleteVault(current.user_id, params.vault_id);
         }),
       ),
     ),
@@ -297,15 +373,88 @@ const WikiHandlersLive = HttpApiBuilder.group(MountedGreatMindsApi, "wiki", (han
 );
 
 const SourcesHandlersLive = HttpApiBuilder.group(MountedGreatMindsApi, "sources", (handlers) =>
-  handlers.handle("listSources", ({ params, query }) =>
-    withDomainErrors(
-      Effect.gen(function* () {
-        const sources = yield* SourcesService;
-        const current = yield* CurrentAuth;
-        return yield* sources.listSources(current.user_id, params.vault_id, query);
-      }),
+  handlers
+    .handle("listSources", ({ params, query }) =>
+      withDomainErrors(
+        Effect.gen(function* () {
+          const sources = yield* SourcesService;
+          const current = yield* CurrentAuth;
+          return yield* sources.listSources(current.user_id, params.vault_id, query);
+        }),
+      ),
+    )
+    .handle("deleteSource", ({ params }) =>
+      withDomainErrors(
+        Effect.gen(function* () {
+          const sources = yield* SourcesService;
+          const current = yield* CurrentAuth;
+          yield* sources.deleteSource(current.user_id, params.vault_id, params["*"]);
+        }),
+      ),
+    )
+    .handle("requestSourceDeletion", ({ params }) =>
+      withDomainErrors(
+        Effect.gen(function* () {
+          const sources = yield* SourcesService;
+          const current = yield* CurrentAuth;
+          const suffix = "/deletion-request";
+          const rawPath = params["*"];
+          if (!rawPath.endsWith(suffix)) {
+            return yield* new BadRequest({ detail: `Invalid source path: ${rawPath}` });
+          }
+          return yield* sources.requestSourceDeletion(
+            current.user_id,
+            params.vault_id,
+            rawPath.slice(0, -suffix.length),
+          );
+        }),
+      ),
     ),
-  ),
+);
+
+const ProposalsHandlersLive = HttpApiBuilder.group(MountedGreatMindsApi, "proposals", (handlers) =>
+  handlers
+    .handle("listProposals", ({ params, query }) =>
+      withDomainErrors(
+        Effect.gen(function* () {
+          const proposals = yield* ProposalsService;
+          const current = yield* CurrentAuth;
+          return yield* proposals.list(current.user_id, params.vault_id, query);
+        }),
+      ),
+    )
+    .handle("createProposal", ({ params, payload }) =>
+      withDomainErrors(
+        Effect.gen(function* () {
+          const proposals = yield* ProposalsService;
+          const current = yield* CurrentAuth;
+          return yield* proposals.create(current.user_id, params.vault_id, payload);
+        }),
+      ),
+    )
+    .handle("getProposal", ({ params }) =>
+      withDomainErrors(
+        Effect.gen(function* () {
+          const proposals = yield* ProposalsService;
+          const current = yield* CurrentAuth;
+          return yield* proposals.get(current.user_id, params.vault_id, params.proposal_id);
+        }),
+      ),
+    )
+    .handle("reviewProposal", ({ params, payload }) =>
+      withDomainErrors(
+        Effect.gen(function* () {
+          const proposals = yield* ProposalsService;
+          const current = yield* CurrentAuth;
+          return yield* proposals.review(
+            current.user_id,
+            params.vault_id,
+            params.proposal_id,
+            payload,
+          );
+        }),
+      ),
+    ),
 );
 
 const DocumentsHandlersLive = HttpApiBuilder.group(MountedGreatMindsApi, "documents", (handlers) =>
@@ -376,6 +525,7 @@ const ApiGroupsLive = Layer.mergeAll(
   VaultHandlersLive,
   WikiHandlersLive,
   SourcesHandlersLive,
+  ProposalsHandlersLive,
   DocumentsHandlersLive,
   SessionsHandlersLive,
 ).pipe(Layer.provideMerge(AuthMiddlewareLive));

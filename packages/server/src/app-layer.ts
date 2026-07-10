@@ -9,9 +9,11 @@ import { DrizzleLive } from "./db.ts";
 import { DocumentsService, DocumentsServiceLive } from "./documents.ts";
 import { StructuredLogger, StructuredLoggerLive } from "./logging.ts";
 import { Mailer, MailerLive } from "./mailer.ts";
+import { ProposalsService, ProposalsServiceLive } from "./proposals.ts";
 import { SessionsService, SessionsServiceLive } from "./sessions.ts";
+import { SourceDocumentsService, SourceDocumentsServiceLive } from "./source-documents.ts";
 import { SourcesService, SourcesServiceLive } from "./sources.ts";
-import { VaultStorage, VaultStorageLive } from "./storage.ts";
+import { ProposalStorage, ProposalStorageLive, VaultStorage, VaultStorageLive } from "./storage.ts";
 import { TokenService, TokenServiceLive } from "./tokens.ts";
 import {
   VaultAccessService,
@@ -32,9 +34,12 @@ export type AppLayerServices =
   | VaultsService
   | WikiService
   | SourcesService
+  | SourceDocumentsService
+  | ProposalsService
   | DocumentsService
   | SessionsService
   | VaultStorage
+  | ProposalStorage
   | AuthService;
 
 export type AppLayerOverrides = {
@@ -43,6 +48,7 @@ export type AppLayerOverrides = {
   readonly mailer?: Layer.Layer<Mailer>;
   readonly logger?: Layer.Layer<StructuredLogger>;
   readonly storage?: Layer.Layer<VaultStorage>;
+  readonly proposalStorage?: Layer.Layer<ProposalStorage>;
 };
 
 export const makeAppLayer = (overrides: AppLayerOverrides = {}) => {
@@ -55,20 +61,54 @@ export const makeAppLayer = (overrides: AppLayerOverrides = {}) => {
 
   const VaultAccessLive = VaultAccessServiceLive.pipe(Layer.provideMerge(BaseLive));
   const StorageLive = (overrides.storage ?? VaultStorageLive).pipe(Layer.provideMerge(BaseLive));
-  const ReadServicesLive = Layer.mergeAll(
-    VaultsServiceLive,
-    WikiServiceLive,
-    SourcesServiceLive,
-    DocumentsServiceLive,
-    SessionsServiceLive,
-  ).pipe(
+  const ProposalStorageLiveLayer = (overrides.proposalStorage ?? ProposalStorageLive).pipe(
+    Layer.provideMerge(BaseLive),
+  );
+  const MailerLiveLayer = (overrides.mailer ?? MailerLive).pipe(Layer.provideMerge(BaseLive));
+  const SourceDocumentsLive = SourceDocumentsServiceLive.pipe(
+    Layer.provideMerge(StorageLive),
+    Layer.provideMerge(BaseLive),
+  );
+  const ProposalsLive = ProposalsServiceLive.pipe(
+    Layer.provideMerge(SourceDocumentsLive),
+    Layer.provideMerge(ProposalStorageLiveLayer),
+    Layer.provideMerge(StorageLive),
+    Layer.provideMerge(VaultAccessLive),
+    Layer.provideMerge(BaseLive),
+  );
+  const SourcesLive = SourcesServiceLive.pipe(
+    Layer.provideMerge(ProposalsLive),
+    Layer.provideMerge(SourceDocumentsLive),
+    Layer.provideMerge(VaultAccessLive),
+    Layer.provideMerge(BaseLive),
+  );
+  const VaultsLive = VaultsServiceLive.pipe(
+    Layer.provideMerge(MailerLiveLayer),
     Layer.provideMerge(VaultAccessLive),
     Layer.provideMerge(StorageLive),
     Layer.provideMerge(BaseLive),
   );
+  const ReadServicesLive = Layer.mergeAll(
+    VaultsLive,
+    WikiServiceLive.pipe(Layer.provideMerge(VaultAccessLive), Layer.provideMerge(BaseLive)),
+    SourcesLive,
+    DocumentsServiceLive.pipe(
+      Layer.provideMerge(VaultAccessLive),
+      Layer.provideMerge(StorageLive),
+      Layer.provideMerge(BaseLive),
+    ),
+    SessionsServiceLive.pipe(
+      Layer.provideMerge(VaultAccessLive),
+      Layer.provideMerge(StorageLive),
+      Layer.provideMerge(BaseLive),
+    ),
+    SourceDocumentsLive,
+    ProposalsLive,
+    ProposalStorageLiveLayer,
+  );
 
   const ServiceDepsLive = Layer.mergeAll(
-    overrides.mailer ?? MailerLive,
+    MailerLiveLayer,
     TokenServiceLive,
     StorageLive,
     ReadServicesLive,

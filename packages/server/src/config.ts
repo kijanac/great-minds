@@ -9,14 +9,15 @@ export type AppConfigShape = {
   readonly jwtAccessExpiryMinutes: number;
   readonly jwtRefreshExpiryDays: number;
   readonly authCodeExpiryMinutes: number;
-  readonly resendApiKey: Redacted.Redacted<string>;
-  readonly resendFromEmail: string;
+  readonly resendApiKey: Option.Option<Redacted.Redacted<string>>;
+  readonly resendFromEmail: Option.Option<string>;
   readonly dataDir: string;
   readonly storageBackend: StorageBackend;
   readonly r2AccountId: Option.Option<string>;
   readonly r2AccessKeyId: Option.Option<Redacted.Redacted<string>>;
   readonly r2SecretAccessKey: Option.Option<Redacted.Redacted<string>>;
   readonly r2BucketPrefix: string;
+  readonly corsOrigins: readonly string[];
   readonly suppressAuth: boolean;
   readonly serverHost: string;
   readonly serverPort: number;
@@ -45,8 +46,8 @@ const appConfig = Config.all({
   jwtAccessExpiryMinutes: positiveInt("JWT_ACCESS_EXPIRY_MINUTES").pipe(Config.withDefault(30)),
   jwtRefreshExpiryDays: positiveInt("JWT_REFRESH_EXPIRY_DAYS").pipe(Config.withDefault(7)),
   authCodeExpiryMinutes: positiveInt("AUTH_CODE_EXPIRY_MINUTES").pipe(Config.withDefault(10)),
-  resendApiKey: redactedNonEmpty("RESEND_API_KEY"),
-  resendFromEmail: nonEmptyString("RESEND_FROM_EMAIL"),
+  resendApiKey: Config.option(redactedNonEmpty("RESEND_API_KEY")),
+  resendFromEmail: Config.option(nonEmptyString("RESEND_FROM_EMAIL")),
   dataDir: nonEmptyString("DATA_DIR").pipe(Config.withDefault("/data")),
   storageBackend: Config.literals(["local", "r2"] as const, "STORAGE_BACKEND").pipe(
     Config.withDefault("local" as const),
@@ -55,6 +56,15 @@ const appConfig = Config.all({
   r2AccessKeyId: Config.option(redactedNonEmpty("R2_ACCESS_KEY_ID")),
   r2SecretAccessKey: Config.option(redactedNonEmpty("R2_SECRET_ACCESS_KEY")),
   r2BucketPrefix: nonEmptyString("R2_BUCKET_PREFIX").pipe(Config.withDefault("gm")),
+  corsOrigins: nonEmptyString("CORS_ORIGINS").pipe(
+    Config.withDefault("http://localhost:5173"),
+    Config.map((raw) =>
+      raw
+        .split(",")
+        .map((origin) => origin.trim())
+        .filter((origin) => origin.length > 0),
+    ),
+  ),
   suppressAuth: Config.boolean("SUPPRESS_AUTH").pipe(Config.withDefault(false)),
   serverHost: nonEmptyString("HOST").pipe(Config.withDefault("0.0.0.0")),
   serverPort: Config.port("PORT").pipe(Config.withDefault(8787)),

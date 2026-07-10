@@ -2,21 +2,30 @@ import { randomUUID } from "node:crypto";
 
 import { Database, users, vaultMemberships, vaults, wikiArticles } from "@great-minds/database";
 import {
+  BadRequest,
   Email,
   Forbidden,
+  type InvitedMemberRole,
   type MemberPage,
   type MemberRole,
+  type MemberWithEmail,
+  NotFound,
+  type OwnershipTransfer,
   type PageParams,
   type Uuid,
+  type Vault,
   type VaultConfig,
+  type VaultConfigUpdate,
   type VaultDetail,
   type VaultPage,
 } from "@great-minds/domain";
 import { and, asc, desc, eq, sql } from "drizzle-orm";
-import { Context, Effect, Layer, Schema } from "effect";
-import { parse as parseYaml } from "yaml";
+import { Cause, Context, Effect, Layer, Schema } from "effect";
+import { parse as parseYaml, parseDocument } from "yaml";
 
 import { dieDatabase } from "./db-defects.ts";
+import { StructuredLogger } from "./logging.ts";
+import { Mailer } from "./mailer.ts";
 import { pageEnvelope, oneTotal } from "./pagination.ts";
 import { VaultStorage } from "./storage.ts";
 
@@ -38,20 +47,52 @@ type VaultAccessServiceShape = {
     vaultId: Uuid,
     detail?: string,
   ) => Effect.Effect<VaultScope, Forbidden>;
+  readonly requireEditor: (userId: Uuid, vaultId: Uuid) => Effect.Effect<VaultScope, Forbidden>;
   readonly requireOwner: (userId: Uuid, vaultId: Uuid) => Effect.Effect<VaultScope, Forbidden>;
 };
 
 type VaultsServiceShape = {
   readonly ensureDefaultForUser: (userId: Uuid, email: Email) => Effect.Effect<void>;
   readonly deleteOwnedVaults: (userId: Uuid) => Effect.Effect<void>;
+  readonly createVault: (
+    userId: Uuid,
+    input: { readonly name: string; readonly thematic_hint?: string | null; readonly kinds?: readonly string[] | null },
+  ) => Effect.Effect<Vault>;
   readonly listVaults: (userId: Uuid, params: PageParams) => Effect.Effect<VaultPage>;
   readonly getVaultDetail: (userId: Uuid, vaultId: Uuid) => Effect.Effect<VaultDetail, Forbidden>;
   readonly getVaultConfig: (userId: Uuid, vaultId: Uuid) => Effect.Effect<VaultConfig, Forbidden>;
+  readonly updateVaultConfig: (
+    userId: Uuid,
+    vaultId: Uuid,
+    input: VaultConfigUpdate,
+  ) => Effect.Effect<VaultConfig, Forbidden>;
   readonly listMembers: (
     userId: Uuid,
     vaultId: Uuid,
     params: PageParams,
   ) => Effect.Effect<MemberPage, Forbidden>;
+  readonly inviteMember: (
+    userId: Uuid,
+    vaultId: Uuid,
+    input: { readonly email: Email; readonly role?: InvitedMemberRole },
+  ) => Effect.Effect<MemberWithEmail, Forbidden>;
+  readonly updateMemberRole: (
+    userId: Uuid,
+    vaultId: Uuid,
+    memberUserId: Uuid,
+    role: MemberRole,
+  ) => Effect.Effect<MemberWithEmail, Forbidden | NotFound>;
+  readonly removeMember: (
+    userId: Uuid,
+    vaultId: Uuid,
+    memberUserId: Uuid,
+  ) => Effect.Effect<void, Forbidden | NotFound>;
+  readonly transferOwnership: (
+    userId: Uuid,
+    vaultId: Uuid,
+    input: OwnershipTransfer,
+  ) => Effect.Effect<void, BadRequest | Forbidden>;
+  readonly deleteVault: (userId: Uuid, vaultId: Uuid) => Effect.Effect<void, Forbidden | NotFound>;
 };
 
 export class VaultAccessService extends Context.Service<
@@ -69,6 +110,49 @@ const defaultVaultConfig = {
 } satisfies VaultConfig;
 
 const CONFIG_PATH = "config.yaml";
+
+export const defaultVaultConfigText = `name: "Personal Vault"
+
+# Idea-level kind taxonomy. Constrains what the extract LLM can classify
+# ideas as; "other" is always accepted as fallback.
+kinds:
+  - person
+  - event
+  - organization
+  - concept
+
+# Optional free-text steer prepended to reduce's prompt. Shapes how the
+# reducer frames canonical topics (e.g. "prefer events and debates over
+# biographical framings"). Empty string disables the steer.
+thematic_hint: ""
+
+# Answer-time policy: may query answers draw on the open web for facts the
+# knowledge base doesn't contain? Web results are cited as external links,
+# never blended into the knowledge base's own voice. (Requires PARALLEL_API_KEY.)
+web_search: false
+
+# Vault-configured enriched metadata fields. Each entry declares a field
+# the extract LLM should look for in every document. The LLM's value
+# lands in source_documents.derived_extras (JSONB) and gets surfaced in
+# compile's editorial context (partition / synthesize per-doc context)
+# automatically.
+#
+# Curator never fills these — extract owns them end-to-end. A vault with
+# no \`metadata:\` block gets no extra enriched fields; the universal
+# title/precis/genre/tags/author/published_date set is always populated.
+metadata:
+  tradition:
+    type: string
+    description: >-
+      the intellectual or political tradition this text belongs to
+      (e.g. "marxist-leninist", "anarchist", "liberal"). Use a short
+      lowercase label. Empty string if unclear.
+  interlocutors:
+    type: list
+    description: >-
+      names of thinkers, writers, or figures this text is responding to,
+      arguing against, or in direct dialogue with. Empty list if none.
+`;
 
 const VaultConfigYaml = Schema.Struct({
   thematic_hint: Schema.optionalKey(Schema.NullOr(Schema.String)),
@@ -97,6 +181,8 @@ const asUuid = (value: string): Uuid => value as Uuid;
 
 const asEmail = (value: string): Email => value as Email;
 
+const normalizeEmail = (email: Email) => asEmail(email.trim().toLowerCase());
+
 const roleFromDb = (role: DbMemberRole): MemberRole => {
   switch (role) {
     case "OWNER":
@@ -105,6 +191,17 @@ const roleFromDb = (role: DbMemberRole): MemberRole => {
       return "editor";
     case "VIEWER":
       return "viewer";
+  }
+};
+
+const roleToDb = (role: MemberRole | InvitedMemberRole): DbMemberRole => {
+  switch (role) {
+    case "owner":
+      return "OWNER";
+    case "editor":
+      return "EDITOR";
+    case "viewer":
+      return "VIEWER";
   }
 };
 
@@ -120,6 +217,16 @@ const vaultResponse = (row: {
   owner_id: asUuid(row.ownerId),
   created_at: row.createdAt.toISOString(),
   r2_bucket_name: row.r2BucketName,
+});
+
+const memberResponse = (row: {
+  readonly userId: string;
+  readonly email: string;
+  readonly role: DbMemberRole;
+}): MemberWithEmail => ({
+  user_id: asUuid(row.userId),
+  email: asEmail(row.email),
+  role: roleFromDb(row.role),
 });
 
 const oneCount = (rows: readonly CountRow[]) => {
@@ -174,6 +281,20 @@ export const VaultAccessServiceLive = Layer.effect(
           }
           return scope;
         }),
+      requireEditor: (userId, vaultId) =>
+        Effect.gen(function* () {
+          const scope = yield* requireMember(
+            userId,
+            vaultId,
+            "Only vault editors or owners can perform this action",
+          );
+          if (scope.role === "viewer") {
+            return yield* new Forbidden({
+              detail: "Only vault editors or owners can perform this action",
+            });
+          }
+          return scope;
+        }),
     } satisfies VaultAccessServiceShape;
   }),
 );
@@ -184,36 +305,159 @@ export const VaultsServiceLive = Layer.effect(
     const db = yield* Database;
     const access = yield* VaultAccessService;
     const storage = yield* VaultStorage;
-    return {
-      ensureDefaultForUser: (userId, email) =>
-        db
+    const mailer = yield* Mailer;
+    const logger = yield* StructuredLogger;
+
+    const getVaultRow = (vaultId: Uuid) =>
+      Effect.gen(function* () {
+        const rows = yield* db
+          .select()
+          .from(vaults)
+          .where(eq(vaults.id, vaultId))
+          .limit(1)
+          .pipe(dieDatabase);
+        return rows[0];
+      });
+
+    const ensureConfig = (vaultId: Uuid, bucketName?: string | null) =>
+      Effect.gen(function* () {
+        const exists = yield* storage.exists(vaultId, CONFIG_PATH, bucketName);
+        if (!exists) {
+          yield* storage.writeText(vaultId, CONFIG_PATH, defaultVaultConfigText, bucketName);
+        }
+      });
+
+    const applyConfigUpdate = (vaultId: Uuid, input: VaultConfigUpdate, bucketName?: string | null) =>
+      Effect.gen(function* () {
+        const existing = yield* Effect.result(storage.readText(vaultId, CONFIG_PATH, bucketName));
+        const doc = parseDocument(
+          existing._tag === "Success" ? existing.success : defaultVaultConfigText,
+        );
+        if (input.thematic_hint !== undefined && input.thematic_hint !== null) {
+          doc.set("thematic_hint", input.thematic_hint);
+        }
+        if (input.kinds !== undefined && input.kinds !== null) {
+          doc.set("kinds", [...input.kinds]);
+        }
+        yield* storage.writeText(vaultId, CONFIG_PATH, String(doc), bucketName);
+      });
+
+    const readConfig = (vaultId: Uuid) =>
+      Effect.gen(function* () {
+        const content = yield* Effect.result(storage.readText(vaultId, CONFIG_PATH));
+        if (content._tag === "Failure") {
+          return defaultVaultConfig;
+        }
+        return yield* parseVaultConfig(content.success);
+      });
+
+    const ensureUser = (emailInput: Email) =>
+      Effect.gen(function* () {
+        const email = normalizeEmail(emailInput);
+        const inserted = yield* db
+          .insert(users)
+          .values({ id: randomUUID(), email })
+          .onConflictDoNothing({ target: users.email })
+          .returning()
+          .pipe(dieDatabase);
+        const row =
+          inserted[0] ??
+          (yield* db.select().from(users).where(eq(users.email, email)).limit(1).pipe(dieDatabase))[0];
+        if (row === undefined) {
+          throw new Error(`user ${email} was not created or found`);
+        }
+        return row;
+      });
+
+    const createVault = (
+      userId: Uuid,
+      input: {
+        readonly name: string;
+        readonly thematic_hint?: string | null;
+        readonly kinds?: readonly string[] | null;
+      },
+    ) =>
+      Effect.gen(function* () {
+        const bucketName = yield* storage.prepareBucketForOwner(userId);
+        const vaultId = asUuid(randomUUID());
+        yield* ensureConfig(vaultId, bucketName);
+        if (input.thematic_hint !== undefined || input.kinds !== undefined) {
+          const update: VaultConfigUpdate =
+            input.kinds === undefined
+              ? { thematic_hint: input.thematic_hint }
+              : {
+                  thematic_hint: input.thematic_hint,
+                  kinds: input.kinds === null ? null : [...input.kinds],
+                };
+          yield* applyConfigUpdate(vaultId, update, bucketName);
+        }
+        const created = yield* db
           .transaction((tx) =>
             Effect.gen(function* () {
-              const membershipCounts = yield* tx
-                .select({ count: sql<number>`count(*)::int` })
-                .from(vaultMemberships)
-                .where(eq(vaultMemberships.userId, userId));
-              if (oneCount(membershipCounts) > 0) {
-                return;
-              }
-
-              const vaultId = randomUUID();
-              yield* tx.insert(vaults).values({
-                id: vaultId,
-                name: `${email}'s vault`,
-                ownerId: userId,
-              });
+              const rows = yield* tx
+                .insert(vaults)
+                .values({
+                  id: vaultId,
+                  name: input.name,
+                  ownerId: userId,
+                  r2BucketName: bucketName,
+                })
+                .returning();
               yield* tx.insert(vaultMemberships).values({
                 id: randomUUID(),
                 vaultId,
                 userId,
                 role: "OWNER",
               });
+              const row = rows[0];
+              if (row === undefined) {
+                throw new Error("vault insert returned no row");
+              }
+              return row;
             }),
           )
-          .pipe(dieDatabase),
+          .pipe(
+            Effect.catchCause((cause) =>
+              logger
+                .error("vault_create_db_failed_after_storage_seed", {
+                  vault_id: vaultId,
+                  bucket: bucketName,
+                  error: "Cause",
+                  error_message: Cause.pretty(cause),
+                })
+                .pipe(Effect.andThen(Effect.failCause(cause))),
+            ),
+            dieDatabase,
+          );
+        return vaultResponse(created);
+      });
+
+    return {
+      ensureDefaultForUser: (userId, email) =>
+        Effect.gen(function* () {
+          const membershipCounts = yield* db
+            .select({ count: sql<number>`count(*)::int` })
+            .from(vaultMemberships)
+            .where(eq(vaultMemberships.userId, userId))
+            .pipe(dieDatabase);
+          if (oneCount(membershipCounts) > 0) {
+            return;
+          }
+          yield* createVault(userId, { name: `${email}'s vault` });
+        }),
       deleteOwnedVaults: (userId) =>
-        db.delete(vaults).where(eq(vaults.ownerId, userId)).pipe(dieDatabase),
+        Effect.gen(function* () {
+          const owned = yield* db
+            .select({ id: vaults.id, r2BucketName: vaults.r2BucketName })
+            .from(vaults)
+            .where(eq(vaults.ownerId, userId))
+            .pipe(dieDatabase);
+          yield* db.delete(vaults).where(eq(vaults.ownerId, userId)).pipe(dieDatabase);
+          for (const vault of owned) {
+            yield* storage.clearVault(asUuid(vault.id), vault.r2BucketName);
+          }
+        }),
+      createVault,
       listVaults: (userId, params) =>
         Effect.gen(function* () {
           const countRows = yield* db
@@ -280,11 +524,13 @@ export const VaultsServiceLive = Layer.effect(
       getVaultConfig: (userId, vaultId) =>
         Effect.gen(function* () {
           yield* access.requireMember(userId, vaultId);
-          const content = yield* Effect.result(storage.readText(vaultId, CONFIG_PATH));
-          if (content._tag === "Failure") {
-            return defaultVaultConfig;
-          }
-          return yield* parseVaultConfig(content.success);
+          return yield* readConfig(vaultId);
+        }),
+      updateVaultConfig: (userId, vaultId, input) =>
+        Effect.gen(function* () {
+          yield* access.requireOwner(userId, vaultId);
+          yield* applyConfigUpdate(vaultId, input);
+          return yield* readConfig(vaultId);
         }),
       listMembers: (userId, vaultId, params) =>
         Effect.gen(function* () {
@@ -307,15 +553,164 @@ export const VaultsServiceLive = Layer.effect(
             .limit(params.limit)
             .offset(params.offset)
             .pipe(dieDatabase);
-          return pageEnvelope(
-            rows.map((row) => ({
-              user_id: asUuid(row.userId),
-              email: asEmail(row.email),
-              role: roleFromDb(row.role),
-            })),
-            params,
-            oneTotal(countRows),
-          );
+          return pageEnvelope(rows.map(memberResponse), params, oneTotal(countRows));
+        }),
+      inviteMember: (userId, vaultId, input) =>
+        Effect.gen(function* () {
+          yield* access.requireOwner(userId, vaultId);
+          const vault = yield* getVaultRow(vaultId);
+          if (vault === undefined) {
+            return yield* new Forbidden({ detail: "Only vault owners can perform this action" });
+          }
+          const inviterRows = yield* db
+            .select({ email: users.email })
+            .from(users)
+            .where(eq(users.id, userId))
+            .limit(1)
+            .pipe(dieDatabase);
+          const inviterEmail = inviterRows[0]?.email ?? "";
+          const role = input.role ?? "editor";
+          const target = yield* ensureUser(input.email);
+          yield* db
+            .insert(vaultMemberships)
+            .values({
+              id: randomUUID(),
+              vaultId,
+              userId: target.id,
+              role: roleToDb(role),
+            })
+            .onConflictDoNothing({
+              target: [vaultMemberships.vaultId, vaultMemberships.userId],
+            })
+            .pipe(dieDatabase);
+          yield* mailer
+            .send({
+              to: target.email,
+              subject: `You've been invited to ${vault.name}`,
+              body:
+                `${inviterEmail} invited you to the project "${vault.name}" ` +
+                `on Great Minds as ${role}.\n\n` +
+                "Sign in at https://greatmind.dev to access it.",
+            })
+            .pipe(
+              Effect.catchCause((cause) =>
+                logger
+                  .error("vault_member_invite_email_failed", {
+                    vault_id: vaultId,
+                    email: target.email,
+                    role,
+                    error_message: Cause.pretty(cause),
+                  })
+                  .pipe(Effect.andThen(Effect.failCause(cause))),
+              ),
+            );
+          return {
+            user_id: asUuid(target.id),
+            email: asEmail(target.email),
+            role,
+          };
+        }),
+      updateMemberRole: (userId, vaultId, memberUserId, role) =>
+        Effect.gen(function* () {
+          yield* access.requireOwner(userId, vaultId);
+          const userRows = yield* db
+            .select({ id: users.id, email: users.email })
+            .from(users)
+            .where(eq(users.id, memberUserId))
+            .limit(1)
+            .pipe(dieDatabase);
+          const target = userRows[0];
+          if (target === undefined) {
+            return yield* new NotFound({ detail: "User not found" });
+          }
+          const updated = yield* db
+            .update(vaultMemberships)
+            .set({ role: roleToDb(role) })
+            .where(
+              and(
+                eq(vaultMemberships.vaultId, vaultId),
+                eq(vaultMemberships.userId, memberUserId),
+              ),
+            )
+            .returning({ role: vaultMemberships.role })
+            .pipe(dieDatabase);
+          const row = updated[0];
+          if (row === undefined) {
+            return yield* new NotFound({ detail: "User is not a member of this vault" });
+          }
+          return {
+            user_id: asUuid(target.id),
+            email: asEmail(target.email),
+            role: roleFromDb(row.role),
+          };
+        }),
+      removeMember: (userId, vaultId, memberUserId) =>
+        Effect.gen(function* () {
+          yield* access.requireOwner(userId, vaultId);
+          const deleted = yield* db
+            .delete(vaultMemberships)
+            .where(
+              and(
+                eq(vaultMemberships.vaultId, vaultId),
+                eq(vaultMemberships.userId, memberUserId),
+              ),
+            )
+            .returning({ id: vaultMemberships.id })
+            .pipe(dieDatabase);
+          if (deleted[0] === undefined) {
+            return yield* new NotFound({ detail: "Membership not found" });
+          }
+        }),
+      transferOwnership: (userId, vaultId, input) =>
+        Effect.gen(function* () {
+          yield* access.requireOwner(userId, vaultId);
+          if (input.new_owner_user_id === userId) {
+            return yield* new BadRequest({ detail: "Cannot transfer ownership to the current owner" });
+          }
+          const result = yield* db
+            .transaction((tx) =>
+              Effect.gen(function* () {
+                const newOwner = yield* tx
+                  .update(vaultMemberships)
+                  .set({ role: "OWNER" })
+                  .where(
+                    and(
+                      eq(vaultMemberships.vaultId, vaultId),
+                      eq(vaultMemberships.userId, input.new_owner_user_id),
+                    ),
+                  )
+                  .returning({ id: vaultMemberships.id });
+                if (newOwner[0] === undefined) {
+                  return false;
+                }
+                yield* tx
+                  .update(vaultMemberships)
+                  .set({ role: "EDITOR" })
+                  .where(
+                    and(eq(vaultMemberships.vaultId, vaultId), eq(vaultMemberships.userId, userId)),
+                  );
+                yield* tx.update(vaults).set({ ownerId: input.new_owner_user_id }).where(eq(vaults.id, vaultId));
+                return true;
+              }),
+            )
+            .pipe(dieDatabase);
+          if (!result) {
+            return yield* new BadRequest({
+              detail: `User ${input.new_owner_user_id} is not a member of vault ${vaultId}`,
+            });
+          }
+        }),
+      deleteVault: (userId, vaultId) =>
+        Effect.gen(function* () {
+          const vault = yield* getVaultRow(vaultId);
+          if (vault === undefined) {
+            return yield* new NotFound({ detail: "Vault not found" });
+          }
+          if (vault.ownerId !== userId) {
+            return yield* new Forbidden({ detail: "Only vault owners can perform this action" });
+          }
+          yield* db.delete(vaults).where(eq(vaults.id, vaultId)).pipe(dieDatabase);
+          yield* storage.clearVault(vaultId, vault.r2BucketName);
         }),
     } satisfies VaultsServiceShape;
   }),

@@ -26,6 +26,7 @@ import {
 } from "./crypto.ts";
 import { dieDatabase } from "./db-defects.ts";
 import { Mailer } from "./mailer.ts";
+import { VaultStorage } from "./storage.ts";
 import { TokenService } from "./tokens.ts";
 import { VaultsService } from "./vaults.ts";
 
@@ -88,6 +89,7 @@ export const AuthServiceLive = Layer.effect(
     const config = yield* AppConfig;
     const clock = yield* ClockService;
     const mailer = yield* Mailer;
+    const storage = yield* VaultStorage;
     const tokens = yield* TokenService;
     const vaultsService = yield* VaultsService;
 
@@ -320,11 +322,13 @@ export const AuthServiceLive = Layer.effect(
           const rows = yield* db
             .delete(users)
             .where(eq(users.id, userId))
-            .returning({ id: users.id })
+            .returning({ id: users.id, r2BucketName: users.r2BucketName })
             .pipe(Effect.orDie);
-          if (rows[0] === undefined) {
+          const deleted = rows[0];
+          if (deleted === undefined) {
             return yield* new NotFound({ detail: "User not found" });
           }
+          yield* storage.deleteOwnerBucket(deleted.r2BucketName);
         })
     } satisfies AuthServiceShape;
   })

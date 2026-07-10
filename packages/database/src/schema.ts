@@ -2,9 +2,11 @@ import { sql } from "drizzle-orm";
 import {
   boolean,
   customType,
+  doublePrecision,
   index,
   integer,
   jsonb,
+  numeric,
   pgEnum,
   pgTable,
   primaryKey,
@@ -26,6 +28,7 @@ export const tsvector = customType<{ data: string; driverData: string }>({
 });
 
 export const memberRole = pgEnum("member_role", ["OWNER", "EDITOR", "VIEWER"]);
+export const proposalStatus = pgEnum("proposal_status", ["PENDING", "APPROVED", "REJECTED"]);
 
 export const authCodes = pgTable(
   "auth_codes",
@@ -91,6 +94,38 @@ export const vaults = pgTable("vaults", {
   r2BucketName: text("r2_bucket_name"),
 });
 
+export const compileCacheEntries = pgTable(
+  "compile_cache_entries",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    vaultId: uuid("vault_id")
+      .notNull()
+      .references(() => vaults.id, { onDelete: "cascade" }),
+    phase: text("phase").notNull(),
+    cacheKey: text("cache_key").notNull(),
+    value: jsonb("value").notNull(),
+    createdAt: timestamptz("created_at").defaultNow().notNull(),
+  },
+  (table) => [
+    unique("compile_cache_entries_vault_id_phase_cache_key_key").on(
+      table.vaultId,
+      table.phase,
+      table.cacheKey,
+    ),
+    index("ix_compile_cache_entries_vault_id").on(table.vaultId),
+  ],
+);
+
+export const llmCostEvents = pgTable("llm_cost_events", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  createdAt: timestamptz("created_at").defaultNow().notNull(),
+  userId: uuid("user_id").references(() => users.id, { onDelete: "set null" }),
+  vaultId: uuid("vault_id").references(() => vaults.id, { onDelete: "cascade" }),
+  eventType: text("event_type").notNull(),
+  costUsd: numeric("cost_usd", { precision: 12, scale: 6 }).notNull(),
+  correlationId: text("correlation_id"),
+});
+
 export const vaultMemberships = pgTable(
   "vault_memberships",
   {
@@ -132,6 +167,52 @@ export const pipelineRuns = pgTable(
     completedAt: timestamptz("completed_at"),
   },
   (table) => [index("ix_pipeline_runs_vault_id").on(table.vaultId)],
+);
+
+export const compileIntents = pgTable(
+  "compile_intents",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    vaultId: uuid("vault_id")
+      .notNull()
+      .references(() => vaults.id, { onDelete: "cascade" }),
+    pipelineRunId: uuid("pipeline_run_id").references(() => pipelineRuns.id, {
+      onDelete: "set null",
+    }),
+    createdAt: timestamptz("created_at").defaultNow().notNull(),
+    dispatchedAt: timestamptz("dispatched_at"),
+    dispatchedTaskId: uuid("dispatched_task_id"),
+    satisfiedAt: timestamptz("satisfied_at"),
+  },
+  (table) => [
+    uniqueIndex("ix_compile_intents_one_pending")
+      .on(table.vaultId)
+      .where(sql`${table.dispatchedAt} IS NULL`),
+    index("ix_compile_intents_pending")
+      .on(table.createdAt)
+      .where(sql`${table.dispatchedAt} IS NULL`),
+    index("ix_compile_intents_pipeline_run_id").on(table.pipelineRunId),
+  ],
+);
+
+export const tasks = pgTable(
+  "tasks",
+  {
+    id: uuid("id").primaryKey(),
+    vaultId: uuid("vault_id")
+      .notNull()
+      .references(() => vaults.id, { onDelete: "cascade" }),
+    type: text("type").notNull(),
+    params: jsonb("params").notNull(),
+    pipelineRunId: uuid("pipeline_run_id").references(() => pipelineRuns.id, {
+      onDelete: "set null",
+    }),
+    createdAt: timestamptz("created_at").defaultNow().notNull(),
+  },
+  (table) => [
+    index("ix_tasks_vault_id").on(table.vaultId),
+    index("ix_tasks_pipeline_run_id").on(table.pipelineRunId),
+  ],
 );
 
 export const searchIndex = pgTable(
@@ -235,6 +316,68 @@ export const sourceDocuments = pgTable(
   ],
 );
 
+export const sourceProposals = pgTable(
+  "source_proposals",
+  {
+    id: uuid("id").primaryKey(),
+    vaultId: uuid("vault_id")
+      .notNull()
+      .references(() => vaults.id, { onDelete: "cascade" }),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    status: proposalStatus("status").notNull(),
+    contentType: varchar("content_type", { length: 50 }).notNull(),
+    title: text("title"),
+    author: text("author"),
+    destPath: text("dest_path").default("").notNull(),
+    documentId: uuid("document_id").references(() => sourceDocuments.id, {
+      onDelete: "set null",
+    }),
+    createdAt: timestamptz("created_at").defaultNow().notNull(),
+  },
+  (table) => [
+    index("ix_source_proposals_document_id").on(table.documentId),
+    index("ix_source_proposals_vault_id").on(table.vaultId),
+  ],
+);
+
+export const ideas = pgTable(
+  "ideas",
+  {
+    ideaId: uuid("idea_id").primaryKey(),
+    vaultId: uuid("vault_id")
+      .notNull()
+      .references(() => vaults.id, { onDelete: "cascade" }),
+    documentId: uuid("document_id")
+      .notNull()
+      .references(() => sourceDocuments.id, { onDelete: "cascade" }),
+    kind: text("kind").notNull(),
+    label: text("label").notNull(),
+    description: text("description").notNull(),
+    embedding: vector("embedding", { dimensions: 1024 }),
+    createdAt: timestamptz("created_at").defaultNow().notNull(),
+  },
+  (table) => [
+    index("ix_ideas_vault_id").on(table.vaultId),
+    index("ix_ideas_document_id").on(table.documentId),
+  ],
+);
+
+export const anchors = pgTable(
+  "anchors",
+  {
+    ideaId: uuid("idea_id")
+      .notNull()
+      .references(() => ideas.ideaId, { onDelete: "cascade" }),
+    position: integer("position").notNull(),
+    claim: text("claim").notNull(),
+    quote: text("quote").notNull(),
+    chunkIndex: integer("chunk_index"),
+  },
+  (table) => [primaryKey({ columns: [table.ideaId, table.position] })],
+);
+
 export const topics = pgTable(
   "topics",
   {
@@ -258,6 +401,45 @@ export const topics = pgTable(
     index("ix_topics_vault_id").on(table.vaultId),
     unique("topics_vault_id_slug_key").on(table.vaultId, table.slug),
   ],
+);
+
+export const topicMembership = pgTable(
+  "topic_membership",
+  {
+    topicId: uuid("topic_id")
+      .notNull()
+      .references(() => topics.topicId, { onDelete: "cascade" }),
+    ideaId: uuid("idea_id").notNull(),
+  },
+  (table) => [primaryKey({ columns: [table.topicId, table.ideaId] })],
+);
+
+export const topicLinks = pgTable(
+  "topic_links",
+  {
+    sourceTopicId: uuid("source_topic_id")
+      .notNull()
+      .references(() => topics.topicId, { onDelete: "cascade" }),
+    targetTopicId: uuid("target_topic_id")
+      .notNull()
+      .references(() => topics.topicId, { onDelete: "cascade" }),
+  },
+  (table) => [primaryKey({ columns: [table.sourceTopicId, table.targetTopicId] })],
+);
+
+export const topicRelated = pgTable(
+  "topic_related",
+  {
+    topicId: uuid("topic_id")
+      .notNull()
+      .references(() => topics.topicId, { onDelete: "cascade" }),
+    relatedTopicId: uuid("related_topic_id")
+      .notNull()
+      .references(() => topics.topicId, { onDelete: "cascade" }),
+    sharedIdeas: integer("shared_ideas").notNull(),
+    jaccard: doublePrecision("jaccard").notNull(),
+  },
+  (table) => [primaryKey({ columns: [table.topicId, table.relatedTopicId] })],
 );
 
 export const wikiArticles = pgTable(
@@ -314,12 +496,22 @@ export const schema = {
   refreshTokens,
   users,
   vaults,
+  compileCacheEntries,
+  llmCostEvents,
   vaultMemberships,
   pipelineRuns,
+  compileIntents,
+  tasks,
   searchIndex,
   sessions,
   sourceDocuments,
+  sourceProposals,
+  ideas,
+  anchors,
   topics,
+  topicMembership,
+  topicLinks,
+  topicRelated,
   wikiArticles,
   backlinks,
 };

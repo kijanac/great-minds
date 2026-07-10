@@ -1,6 +1,10 @@
 import { Database, sourceDocuments } from "@great-minds/database";
 import {
+  BadRequest,
+  Conflict,
   Forbidden,
+  NotFound,
+  type Proposal,
   type SourceDocumentPage,
   type SourceDocumentSummary,
   type SourceListQuery,
@@ -11,6 +15,8 @@ import { Context, Effect, Layer, Schema } from "effect";
 
 import { dieDatabase } from "./db-defects.ts";
 import { pageEnvelope, oneTotal } from "./pagination.ts";
+import { ProposalsService } from "./proposals.ts";
+import { safeRawSourcePath, SourceDocumentsService } from "./source-documents.ts";
 import { VaultAccessService } from "./vaults.ts";
 
 type SourcesServiceShape = {
@@ -19,6 +25,16 @@ type SourcesServiceShape = {
     vaultId: Uuid,
     query: SourceListQuery
   ) => Effect.Effect<SourceDocumentPage, Forbidden>;
+  readonly deleteSource: (
+    userId: Uuid,
+    vaultId: Uuid,
+    path: string
+  ) => Effect.Effect<void, BadRequest | Forbidden | NotFound>;
+  readonly requestSourceDeletion: (
+    userId: Uuid,
+    vaultId: Uuid,
+    path: string
+  ) => Effect.Effect<Proposal, BadRequest | Conflict | Forbidden | NotFound>;
 };
 
 export class SourcesService extends Context.Service<SourcesService, SourcesServiceShape>()(
@@ -68,6 +84,8 @@ export const SourcesServiceLive = Layer.effect(
   Effect.gen(function* () {
     const db = yield* Database;
     const access = yield* VaultAccessService;
+    const sourceDocumentsWrite = yield* SourceDocumentsService;
+    const proposals = yield* ProposalsService;
 
     return {
       listSources: (userId, vaultId, query) =>
@@ -104,6 +122,43 @@ export const SourcesServiceLive = Layer.effect(
               source_types: facetRows
             }
           };
+        }),
+      deleteSource: (userId, vaultId, path) =>
+        Effect.gen(function* () {
+          const sourcePath = safeRawSourcePath(path);
+          if (sourcePath === undefined) {
+            return yield* new BadRequest({ detail: `Invalid source path: ${path}` });
+          }
+          yield* access.requireOwner(userId, vaultId);
+          const deleted = yield* sourceDocumentsWrite.deleteSource(vaultId, sourcePath);
+          if (!deleted) {
+            return yield* new NotFound({ detail: "Source not found" });
+          }
+        }),
+      requestSourceDeletion: (userId, vaultId, path) =>
+        Effect.gen(function* () {
+          const sourcePath = safeRawSourcePath(path);
+          if (sourcePath === undefined) {
+            return yield* new BadRequest({ detail: `Invalid source path: ${path}` });
+          }
+          const scope = yield* access.requireMember(userId, vaultId);
+          if (scope.role === "viewer") {
+            return yield* new Forbidden({ detail: "Viewers cannot request source deletion" });
+          }
+          if (scope.role === "owner") {
+            return yield* new BadRequest({ detail: "Owners should delete sources directly" });
+          }
+          if (scope.role !== "editor") {
+            return yield* new Forbidden({ detail: "Only editors can request source deletion" });
+          }
+          const source = yield* sourceDocumentsWrite.getByPath(vaultId, sourcePath);
+          if (source === undefined) {
+            return yield* new NotFound({ detail: "Source not found" });
+          }
+          return yield* proposals.createSourceDeletionRequest(vaultId, userId, {
+            filePath: source.filePath,
+            title: source.title
+          });
         })
     } satisfies SourcesServiceShape;
   })

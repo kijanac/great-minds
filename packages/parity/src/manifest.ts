@@ -59,13 +59,26 @@ export const requiredContractEndpoints = [
   "GET /auth/api-keys",
   "DELETE /auth/api-keys/{key_id}",
   "DELETE /auth/me",
+  "POST /vaults",
   "GET /vaults",
   "GET /vaults/{vault_id}",
   "GET /vaults/{vault_id}/config",
+  "PATCH /vaults/{vault_id}/config",
   "GET /vaults/{vault_id}/members",
+  "POST /vaults/{vault_id}/members",
+  "PUT /vaults/{vault_id}/members/{user_id}",
+  "DELETE /vaults/{vault_id}/members/{user_id}",
+  "POST /vaults/{vault_id}/transfer-ownership",
+  "DELETE /vaults/{vault_id}",
   "GET /vaults/{vault_id}/wiki",
   "GET /vaults/{vault_id}/wiki/recent",
   "GET /vaults/{vault_id}/raw/sources",
+  "DELETE /vaults/{vault_id}/raw/sources/{path}",
+  "POST /vaults/{vault_id}/raw/sources/{path}/deletion-request",
+  "GET /vaults/{vault_id}/proposals",
+  "POST /vaults/{vault_id}/proposals",
+  "GET /vaults/{vault_id}/proposals/{proposal_id}",
+  "PATCH /vaults/{vault_id}/proposals/{proposal_id}",
   "GET /vaults/{vault_id}/wiki/{slug}",
   "GET /vaults/{vault_id}/doc/{path}",
   "GET /vaults/{vault_id}/chunks",
@@ -75,7 +88,10 @@ export const requiredContractEndpoints = [
   "GET /vaults/{vault_id}/sessions/{session_id}/markdown",
 ] as const;
 
-export const endpointExclusions: readonly string[] = [];
+export const endpointExclusions: readonly string[] = [
+  "POST /vaults/{vault_id}/proposals -- M3 decision 1: TS-only endpoint; Python has no route",
+  "POST /vaults/{vault_id}/raw/sources/{path}/deletion-request -- M3.1 Python bug: source_deletion is documented but rejected by ProposalContentType response/create schemas",
+];
 
 const iso = (path: string): Normalization => ({ kind: "isoDate", path });
 
@@ -704,6 +720,17 @@ export const mutationEndpointCoverage = [
   "GET /auth/api-keys",
   "DELETE /auth/api-keys/{key_id}",
   "DELETE /auth/me",
+  "POST /vaults",
+  "PATCH /vaults/{vault_id}/config",
+  "POST /vaults/{vault_id}/members",
+  "PUT /vaults/{vault_id}/members/{user_id}",
+  "DELETE /vaults/{vault_id}/members/{user_id}",
+  "POST /vaults/{vault_id}/transfer-ownership",
+  "DELETE /vaults/{vault_id}",
+  "DELETE /vaults/{vault_id}/raw/sources/{path}",
+  "GET /vaults/{vault_id}/proposals",
+  "GET /vaults/{vault_id}/proposals/{proposal_id}",
+  "PATCH /vaults/{vault_id}/proposals/{proposal_id}",
 ] as const;
 
 export const seededApiKey = rawKeys.aliceActive;

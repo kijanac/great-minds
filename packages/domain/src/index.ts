@@ -119,6 +119,16 @@ const pageOf = <A extends Schema.Top>(item: A) =>
 export const MemberRole = Schema.Literals(["owner", "editor", "viewer"] as const);
 export type MemberRole = typeof MemberRole.Type;
 
+export const InvitedMemberRole = Schema.Literals(["editor", "viewer"] as const);
+export type InvitedMemberRole = typeof InvitedMemberRole.Type;
+
+export const VaultCreate = Schema.Struct({
+  name: Schema.String,
+  thematic_hint: Schema.optionalKey(Schema.NullOr(Schema.String)),
+  kinds: Schema.optionalKey(Schema.NullOr(Schema.Array(Schema.String))),
+});
+export type VaultCreate = typeof VaultCreate.Type;
+
 export const Vault = Schema.Struct({
   id: Uuid,
   name: Schema.String,
@@ -149,6 +159,12 @@ export const VaultConfig = Schema.Struct({
 });
 export type VaultConfig = typeof VaultConfig.Type;
 
+export const VaultConfigUpdate = Schema.Struct({
+  thematic_hint: Schema.optionalKey(Schema.NullOr(Schema.String)),
+  kinds: Schema.optionalKey(Schema.NullOr(Schema.Array(Schema.String))),
+});
+export type VaultConfigUpdate = typeof VaultConfigUpdate.Type;
+
 export const MemberWithEmail = Schema.Struct({
   user_id: Uuid,
   email: Email,
@@ -158,6 +174,66 @@ export type MemberWithEmail = typeof MemberWithEmail.Type;
 
 export const MemberPage = pageOf(MemberWithEmail);
 export type MemberPage = typeof MemberPage.Type;
+
+export const MembershipInvite = Schema.Struct({
+  email: Email,
+  role: Schema.optionalKey(InvitedMemberRole),
+});
+export type MembershipInvite = typeof MembershipInvite.Type;
+
+export const MembershipUpdate = Schema.Struct({
+  role: MemberRole,
+});
+export type MembershipUpdate = typeof MembershipUpdate.Type;
+
+export const OwnershipTransfer = Schema.Struct({
+  new_owner_user_id: Uuid,
+});
+export type OwnershipTransfer = typeof OwnershipTransfer.Type;
+
+export const ProposalStatus = Schema.Literals(["pending", "approved", "rejected"] as const);
+export type ProposalStatus = typeof ProposalStatus.Type;
+
+export const ProposalOverview = Schema.Struct({
+  id: Uuid,
+  vault_id: Uuid,
+  status: ProposalStatus,
+  title: Schema.NullOr(Schema.String),
+  content_type: Schema.String,
+  created_at: IsoDateTime,
+});
+export type ProposalOverview = typeof ProposalOverview.Type;
+
+export const Proposal = Schema.Struct({
+  ...ProposalOverview.fields,
+  user_id: Uuid,
+  author: Schema.NullOr(Schema.String),
+  dest_path: Schema.String,
+  document_id: Schema.NullOr(Uuid),
+});
+export type Proposal = typeof Proposal.Type;
+
+export const ProposalPage = pageOf(ProposalOverview);
+export type ProposalPage = typeof ProposalPage.Type;
+
+export const ProposalListQuery = Schema.Struct({
+  ...PageParamsQuery.fields,
+  status: Schema.optionalKey(ProposalStatus),
+});
+export type ProposalListQuery = typeof ProposalListQuery.Type;
+
+export const ProposalCreate = Schema.Struct({
+  content: Schema.String,
+  content_type: Schema.optionalKey(Schema.String),
+  title: Schema.optionalKey(Schema.String),
+  author: Schema.optionalKey(Schema.String),
+});
+export type ProposalCreate = typeof ProposalCreate.Type;
+
+export const ProposalUpdate = Schema.Struct({
+  status: Schema.Literals(["approved", "rejected"] as const),
+});
+export type ProposalUpdate = typeof ProposalUpdate.Type;
 
 export const WikiArticleOverview = Schema.Struct({
   file_path: Schema.String,
@@ -372,6 +448,12 @@ export const DocPathParams = Schema.Struct({
 });
 export type DocPathParams = typeof DocPathParams.Type;
 
+export const SourcePathParams = Schema.Struct({
+  vault_id: Uuid,
+  "*": Schema.String,
+});
+export type SourcePathParams = typeof SourcePathParams.Type;
+
 const ChunkBoundary = Schema.NumberFromString.pipe(Schema.check(Schema.isInt()));
 
 export const ChunkRangeQuery = Schema.Struct({
@@ -425,7 +507,11 @@ export class BadRequest extends Schema.TaggedErrorClass<BadRequest>()("BadReques
   detail: Schema.String,
 }) {}
 
-export type DomainError = Unauthorized | Forbidden | NotFound | Validation | BadRequest;
+export class Conflict extends Schema.TaggedErrorClass<Conflict>()("Conflict", {
+  detail: Schema.String,
+}) {}
+
+export type DomainError = Unauthorized | Forbidden | NotFound | Validation | BadRequest | Conflict;
 
 const ErrorDetail = Schema.Struct({
   detail: Schema.String,
@@ -433,6 +519,7 @@ const ErrorDetail = Schema.Struct({
 
 const BadRequestResponse = ErrorDetail.pipe(HttpApiSchema.status(400));
 const UnauthorizedResponse = ErrorDetail.pipe(HttpApiSchema.status(401));
+const ConflictResponse = ErrorDetail.pipe(HttpApiSchema.status(409));
 const ForbiddenResponse = ErrorDetail.pipe(HttpApiSchema.status(403));
 const NotFoundResponse = ErrorDetail.pipe(HttpApiSchema.status(404));
 const ValidationResponse = ErrorDetail.pipe(HttpApiSchema.status(422));
@@ -444,6 +531,12 @@ const ForbiddenValidationErrors = [ForbiddenResponse, ValidationResponse] as con
 const ForbiddenNotFoundValidationErrors = [
   ForbiddenResponse,
   NotFoundResponse,
+  ValidationResponse,
+] as const;
+const ForbiddenNotFoundConflictValidationErrors = [
+  ForbiddenResponse,
+  NotFoundResponse,
+  ConflictResponse,
   ValidationResponse,
 ] as const;
 const DocumentErrors = [
@@ -467,6 +560,9 @@ export class AuthMiddleware extends HttpApiMiddleware.Service<
 
 const CreatedApiKeyWithSecret = ApiKeyWithSecret.pipe(HttpApiSchema.status("Created"));
 const ApiKeys = Schema.Array(ApiKey);
+const CreatedVault = Vault.pipe(HttpApiSchema.status("Created"));
+const CreatedMember = MemberWithEmail.pipe(HttpApiSchema.status("Created"));
+const CreatedProposal = Proposal.pipe(HttpApiSchema.status("Created"));
 
 export const AuthApiGroup = HttpApiGroup.make("auth").add(
   HttpApiEndpoint.post("requestCode", "/auth/request-code", {
@@ -518,6 +614,11 @@ export const VaultsApiGroup = HttpApiGroup.make("vaults").add(
     success: VaultPage,
     error: ValidationErrors,
   }).middleware(AuthMiddleware),
+  HttpApiEndpoint.post("createVault", "/vaults", {
+    payload: VaultCreate,
+    success: CreatedVault,
+    error: ValidationErrors,
+  }).middleware(AuthMiddleware),
   HttpApiEndpoint.get("getVault", "/vaults/:vault_id", {
     params: {
       vault_id: Uuid,
@@ -532,6 +633,14 @@ export const VaultsApiGroup = HttpApiGroup.make("vaults").add(
     success: VaultConfig,
     error: ForbiddenValidationErrors,
   }).middleware(AuthMiddleware),
+  HttpApiEndpoint.patch("updateVaultConfig", "/vaults/:vault_id/config", {
+    params: {
+      vault_id: Uuid,
+    },
+    payload: VaultConfigUpdate,
+    success: VaultConfig,
+    error: ForbiddenValidationErrors,
+  }).middleware(AuthMiddleware),
   HttpApiEndpoint.get("listVaultMembers", "/vaults/:vault_id/members", {
     params: {
       vault_id: Uuid,
@@ -539,6 +648,46 @@ export const VaultsApiGroup = HttpApiGroup.make("vaults").add(
     query: PageParamsQuery,
     success: MemberPage,
     error: ForbiddenValidationErrors,
+  }).middleware(AuthMiddleware),
+  HttpApiEndpoint.post("inviteVaultMember", "/vaults/:vault_id/members", {
+    params: {
+      vault_id: Uuid,
+    },
+    payload: MembershipInvite,
+    success: CreatedMember,
+    error: ForbiddenValidationErrors,
+  }).middleware(AuthMiddleware),
+  HttpApiEndpoint.put("updateVaultMember", "/vaults/:vault_id/members/:member_user_id", {
+    params: {
+      vault_id: Uuid,
+      member_user_id: Uuid,
+    },
+    payload: MembershipUpdate,
+    success: MemberWithEmail,
+    error: ForbiddenNotFoundValidationErrors,
+  }).middleware(AuthMiddleware),
+  HttpApiEndpoint.delete("removeVaultMember", "/vaults/:vault_id/members/:member_user_id", {
+    params: {
+      vault_id: Uuid,
+      member_user_id: Uuid,
+    },
+    success: HttpApiSchema.NoContent,
+    error: ForbiddenNotFoundValidationErrors,
+  }).middleware(AuthMiddleware),
+  HttpApiEndpoint.post("transferVaultOwnership", "/vaults/:vault_id/transfer-ownership", {
+    params: {
+      vault_id: Uuid,
+    },
+    payload: OwnershipTransfer,
+    success: HttpApiSchema.NoContent,
+    error: [BadRequestResponse, ForbiddenResponse, ValidationResponse] as const,
+  }).middleware(AuthMiddleware),
+  HttpApiEndpoint.delete("deleteVault", "/vaults/:vault_id", {
+    params: {
+      vault_id: Uuid,
+    },
+    success: HttpApiSchema.NoContent,
+    error: ForbiddenNotFoundValidationErrors,
   }).middleware(AuthMiddleware),
 );
 
@@ -569,6 +718,62 @@ export const SourcesApiGroup = HttpApiGroup.make("sources").add(
     query: SourceListQuery,
     success: SourceDocumentPage,
     error: ForbiddenValidationErrors,
+  }).middleware(AuthMiddleware),
+  HttpApiEndpoint.delete("deleteSource", "/vaults/:vault_id/raw/sources/*", {
+    params: SourcePathParams,
+    success: HttpApiSchema.NoContent,
+    error: DocumentErrors,
+  }).middleware(AuthMiddleware),
+  HttpApiEndpoint.post(
+    "requestSourceDeletion",
+    "/vaults/:vault_id/raw/sources/*",
+    {
+      params: SourcePathParams,
+      success: CreatedProposal,
+      error: [
+        BadRequestResponse,
+        ForbiddenResponse,
+        NotFoundResponse,
+        ConflictResponse,
+        ValidationResponse,
+      ] as const,
+    },
+  ).middleware(AuthMiddleware),
+);
+
+export const ProposalsApiGroup = HttpApiGroup.make("proposals").add(
+  HttpApiEndpoint.get("listProposals", "/vaults/:vault_id/proposals", {
+    params: {
+      vault_id: Uuid,
+    },
+    query: ProposalListQuery,
+    success: ProposalPage,
+    error: ForbiddenValidationErrors,
+  }).middleware(AuthMiddleware),
+  HttpApiEndpoint.post("createProposal", "/vaults/:vault_id/proposals", {
+    params: {
+      vault_id: Uuid,
+    },
+    payload: ProposalCreate,
+    success: CreatedProposal,
+    error: [BadRequestResponse, ForbiddenResponse, ValidationResponse] as const,
+  }).middleware(AuthMiddleware),
+  HttpApiEndpoint.get("getProposal", "/vaults/:vault_id/proposals/:proposal_id", {
+    params: {
+      vault_id: Uuid,
+      proposal_id: Uuid,
+    },
+    success: Proposal,
+    error: ForbiddenNotFoundValidationErrors,
+  }).middleware(AuthMiddleware),
+  HttpApiEndpoint.patch("reviewProposal", "/vaults/:vault_id/proposals/:proposal_id", {
+    params: {
+      vault_id: Uuid,
+      proposal_id: Uuid,
+    },
+    payload: ProposalUpdate,
+    success: Proposal,
+    error: ForbiddenNotFoundConflictValidationErrors,
   }).middleware(AuthMiddleware),
 );
 
@@ -629,6 +834,7 @@ export const GreatMindsApi = HttpApi.make("great-minds").add(
   VaultsApiGroup,
   WikiApiGroup,
   SourcesApiGroup,
+  ProposalsApiGroup,
   DocumentsApiGroup,
   SessionsApiGroup,
 );
