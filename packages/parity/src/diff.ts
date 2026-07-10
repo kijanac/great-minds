@@ -324,6 +324,71 @@ const evaluateDecision = (
             accepted: false,
             note: "D11 non-object expected Python 500 and exact TS skipped-line replay.",
             diffs: [],
+        };
+    }
+    case "M3_D2_TITLE_NULL": {
+      const diffs = genericDiffs(python, typescript);
+      const accepted =
+        diffs.length === 0 &&
+        python.status === 201 &&
+        isObject(python.body) &&
+        python.body.title === null &&
+        typescript.status === 201 &&
+        isObject(typescript.body) &&
+        typescript.body.title === null;
+      return accepted
+        ? {
+            accepted: true,
+            decisions: ["D2"],
+            note: "D2 promote fresh title stays null in both backends; frontend nullable-title fix is separate.",
+          }
+        : {
+            accepted: false,
+            note: "D2 expected both fresh promote responses to carry title: null.",
+            diffs,
+          };
+    }
+    case "M3_D3_BTW_CONTEXT": {
+      const pythonEvents = isObject(python.body) ? python.body.events : undefined;
+      const tsEvents = isObject(typescript.body) ? typescript.body.events : undefined;
+      const pythonBtw =
+        Array.isArray(pythonEvents) && isObject(pythonEvents[2]) ? pythonEvents[2] : undefined;
+      const tsBtw =
+        Array.isArray(tsEvents) && isObject(tsEvents[2]) ? tsEvents[2] : undefined;
+      const accepted =
+        python.status === 200 &&
+        typescript.status === 200 &&
+        pythonBtw?.type === "btw" &&
+        pythonBtw.context === "" &&
+        tsBtw?.type === "btw" &&
+        tsBtw.context === "Parity context passage";
+      return accepted
+        ? {
+            accepted: true,
+            decisions: ["D3"],
+            note: "D3 BTW context: Python drops context on write; TS persists the frontend-sent context.",
+          }
+        : {
+            accepted: false,
+            note: "D3 expected Python replay context '' and TS replay context 'Parity context passage'.",
+            diffs: [],
+          };
+    }
+    case "M3_D5_PROMOTE_MISSING_SESSION": {
+      const accepted =
+        python.status === 500 &&
+        typescript.status === 404 &&
+        detailString(typescript.body) === "Session not found";
+      return accepted
+        ? {
+            accepted: true,
+            decisions: ["D5"],
+            note: "D5 promote missing session: Python 500, TS intended 404.",
+          }
+        : {
+            accepted: false,
+            note: "D5 expected Python 500 and TS 404 for nonexistent session promote.",
+            diffs: [],
           };
     }
   }

@@ -1,6 +1,16 @@
 import { ids, rawKeys } from "./fixture.ts";
 
-export type DecisionId = "D1" | "D3" | "D4" | "D6" | "D8" | "D9" | "D10" | "D11";
+export type DecisionId =
+  | "D1"
+  | "D2"
+  | "D3"
+  | "D4"
+  | "D5"
+  | "D6"
+  | "D8"
+  | "D9"
+  | "D10"
+  | "D11";
 
 export type DecisionRule =
   | "D1"
@@ -11,7 +21,10 @@ export type DecisionRule =
   | "D10"
   | "D11_MULTI_META"
   | "D11_INVALID_ID"
-  | "D11_NON_OBJECT";
+  | "D11_NON_OBJECT"
+  | "M3_D2_TITLE_NULL"
+  | "M3_D3_BTW_CONTEXT"
+  | "M3_D5_PROMOTE_MISSING_SESSION";
 
 export type Normalization =
   | {
@@ -46,7 +59,7 @@ export type ManifestEntry = {
   readonly decision?: DecisionRule;
 };
 
-export const decisionIds = ["D1", "D3", "D4", "D6", "D8", "D9", "D10", "D11"] as const;
+export const decisionIds = ["D1", "D2", "D3", "D4", "D5", "D6", "D8", "D9", "D10", "D11"] as const;
 
 export const requiredContractEndpoints = [
   "GET /health",
@@ -77,6 +90,10 @@ export const requiredContractEndpoints = [
   "POST /vaults/{vault_id}/ingest/staged-files/sign",
   "POST /vaults/{vault_id}/ingest/staged-files/process",
   "POST /vaults/{vault_id}/jobs/url",
+  "POST /vaults/{vault_id}/sessions",
+  "PATCH /vaults/{vault_id}/sessions/{session_id}",
+  "PATCH /vaults/{vault_id}/sessions/{session_id}/btw",
+  "POST /vaults/{vault_id}/sessions/{session_id}/exchanges/{exchange_id}/promote",
   "GET /vaults/{vault_id}/wiki",
   "GET /vaults/{vault_id}/wiki/recent",
   "GET /vaults/{vault_id}/raw/sources",
@@ -745,6 +762,10 @@ export const mutationEndpointCoverage = [
   "POST /vaults/{vault_id}/ingest/staged-files/check-dupes",
   "POST /vaults/{vault_id}/ingest/staged-files/process",
   "POST /vaults/{vault_id}/jobs/url",
+  "POST /vaults/{vault_id}/sessions",
+  "PATCH /vaults/{vault_id}/sessions/{session_id}",
+  "PATCH /vaults/{vault_id}/sessions/{session_id}/btw",
+  "POST /vaults/{vault_id}/sessions/{session_id}/exchanges/{exchange_id}/promote",
   "DELETE /vaults/{vault_id}/raw/sources/{path}",
   "GET /vaults/{vault_id}/proposals",
   "GET /vaults/{vault_id}/proposals/{proposal_id}",

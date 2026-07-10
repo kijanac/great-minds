@@ -1,7 +1,13 @@
 import { Database, sessions } from "@great-minds/database";
 import {
+  BadRequest,
+  type BtwData,
   Forbidden,
   NotFound,
+  type CreateSessionRequest,
+  type CreateSessionResponse,
+  type ExchangeData,
+  type PromoteExchangeResponse,
   SessionBtwEvent as SessionBtwEventSchema,
   SessionExchangeEvent as SessionExchangeEventSchema,
   type BtwExchange,
@@ -17,6 +23,7 @@ import {
   SessionOrigin as SessionOriginSchema,
   type SessionOverview,
   type SessionPage,
+  type SessionPathResponse,
   type SessionResponse,
   type ThinkingBlock,
   type ThinkingSource,
@@ -26,12 +33,41 @@ import { and, desc, eq, sql } from "drizzle-orm";
 import { Context, Effect, Layer, Schema } from "effect";
 
 import { dieDatabase } from "./db-defects.ts";
+import { IngestService } from "./ingest.ts";
 import { StructuredLogger } from "./logging.ts";
+import { buildSessionExchangeDocument, sessionExchangePath } from "./markdown.ts";
 import { pageEnvelope, oneTotal } from "./pagination.ts";
+import { ProposalsService } from "./proposals.ts";
+import { RandomBytesService, formatUuid7 } from "./random.ts";
+import { SourceDocumentsService } from "./source-documents.ts";
 import { VaultStorage } from "./storage.ts";
 import { VaultAccessService } from "./vaults.ts";
+import { ClockService } from "./clock.ts";
 
 type SessionsServiceShape = {
+  readonly createSession: (
+    userId: Uuid,
+    vaultId: Uuid,
+    input: CreateSessionRequest,
+  ) => Effect.Effect<CreateSessionResponse, Forbidden>;
+  readonly appendExchange: (
+    userId: Uuid,
+    vaultId: Uuid,
+    sessionId: SessionId,
+    input: ExchangeData,
+  ) => Effect.Effect<SessionPathResponse, Forbidden>;
+  readonly appendBtw: (
+    userId: Uuid,
+    vaultId: Uuid,
+    sessionId: SessionId,
+    input: BtwData,
+  ) => Effect.Effect<SessionPathResponse, Forbidden>;
+  readonly promoteExchange: (
+    userId: Uuid,
+    vaultId: Uuid,
+    sessionId: SessionId,
+    exchangeId: string,
+  ) => Effect.Effect<PromoteExchangeResponse, BadRequest | Forbidden | NotFound>;
   readonly listSessions: (
     userId: Uuid,
     vaultId: Uuid,
@@ -157,6 +193,59 @@ const sessionOverview = (row: typeof sessions.$inferSelect): SessionOverview => 
   origin: normalizeOrigin(decodeSessionOrigin(row.origin)),
 });
 
+// Byte-for-byte port of src/great_minds/core/sessions/service.py::_render_markdown.
+export const renderSessionMarkdown = (events: readonly SessionEvent[]) => {
+  const exchanges: SessionExchangeEvent[] = [];
+  const latestBtw = new Map<string, SessionBtwEvent>();
+
+  for (const event of events) {
+    if (event.type === "exchange") {
+      exchanges.push(event);
+    } else if (event.type === "btw") {
+      const key = `${event.exId}\0${event.quote}`;
+      const existing = latestBtw.get(key);
+      if (existing === undefined || event.ts > existing.ts) {
+        latestBtw.set(key, event);
+      }
+    }
+  }
+
+  const btwsByExchange = new Map<string, SessionBtwEvent[]>();
+  for (const btw of latestBtw.values()) {
+    const existing = btwsByExchange.get(btw.exId) ?? [];
+    existing.push(btw);
+    btwsByExchange.set(btw.exId, existing);
+  }
+
+  const parts: string[] = [];
+  for (const [index, exchange] of exchanges.entries()) {
+    if (index > 0) {
+      parts.push("\n---\n\n");
+    }
+    parts.push(`# ${exchange.query}\n\n`);
+
+    for (const block of exchange.thinking ?? []) {
+      for (const source of block.sources ?? []) {
+        parts.push(`> \`${source.label}\`\n`);
+      }
+      parts.push(">\n");
+    }
+
+    parts.push(`${exchange.answer ?? ""}\n`);
+
+    for (const btw of btwsByExchange.get(exchange.exId) ?? []) {
+      const short = btw.quote.length > 60 ? `${btw.quote.slice(0, 60)}...` : btw.quote;
+      parts.push(`\n> **BTW** re: "${short}"\n>\n`);
+      for (const inner of btw.exchanges) {
+        parts.push(`> *${inner.query}*\n>\n`);
+        parts.push(`> ${inner.answer ?? ""}\n>\n`);
+      }
+    }
+  }
+
+  return `${parts.join("").replace(/\s+$/u, "")}\n`;
+};
+
 export const SessionsServiceLive = Layer.effect(
   SessionsService,
   Effect.gen(function* () {
@@ -164,6 +253,11 @@ export const SessionsServiceLive = Layer.effect(
     const access = yield* VaultAccessService;
     const storage = yield* VaultStorage;
     const logger = yield* StructuredLogger;
+    const clock = yield* ClockService;
+    const randomBytes = yield* RandomBytesService;
+    const sourceDocuments = yield* SourceDocumentsService;
+    const proposals = yield* ProposalsService;
+    const ingest = yield* IngestService;
 
     const decodeEventLine = (sessionId: string, lineNumber: number, data: unknown) =>
       Effect.gen(function* () {
@@ -199,7 +293,11 @@ export const SessionsServiceLive = Layer.effect(
         return normalizeSessionEvent(decoded.success);
       });
 
-    const parseEvents = (sessionId: string, content: string) =>
+    const parseEvents = (
+      sessionId: string,
+      content: string,
+      options: { readonly isolateLatestMeta: boolean },
+    ) =>
       Effect.gen(function* () {
         const events: SessionEvent[] = [];
         const lines = content.trim().split("\n");
@@ -223,6 +321,9 @@ export const SessionsServiceLive = Layer.effect(
           if (event !== undefined) {
             events.push(event);
           }
+        }
+        if (!options.isolateLatestMeta) {
+          return events;
         }
         const isolated = latestMetaSuffix(events);
         if (isolated.length !== events.length) {
@@ -250,7 +351,242 @@ export const SessionsServiceLive = Layer.effect(
         return result.success;
       });
 
+    const sessionFilePath = (sessionId: string) => `sessions/${sessionId}.jsonl`;
+
+    const newSessionId = () =>
+      Effect.gen(function* () {
+        const now = yield* clock.now;
+        const bytes = yield* randomBytes.bytes(16);
+        return formatUuid7(now.getTime(), bytes);
+      });
+
+    const nowIso = () => Effect.map(clock.now, (now) => now.toISOString());
+
+    const appendEvent = (vaultId: Uuid, sessionId: string, event: SessionEvent) =>
+      storage.appendText(vaultId, sessionFilePath(sessionId), `${JSON.stringify(event)}\n`);
+
+    const loadAllEvents = (vaultId: Uuid, sessionId: string) =>
+      Effect.gen(function* () {
+        const result = yield* Effect.result(storage.readText(vaultId, sessionFilePath(sessionId)));
+        if (result._tag === "Failure") {
+          return yield* new NotFound({ detail: "Session not found" });
+        }
+        return yield* parseEvents(sessionId, result.success, { isolateLatestMeta: false });
+      });
+
+    const rebuildMarkdown = (vaultId: Uuid, sessionId: string) =>
+      Effect.gen(function* () {
+        const events = yield* loadAllEvents(vaultId, sessionId).pipe(
+          Effect.catchTag("NotFound", (error) => Effect.die(error)),
+        );
+        yield* storage.writeText(vaultId, sessionPath(sessionId, "md"), renderSessionMarkdown(events));
+      });
+
+    const findExchange = (events: readonly SessionEvent[], exchangeId: string) =>
+      events.find(
+        (event): event is SessionExchangeEvent =>
+          event.type === "exchange" && event.exId === exchangeId,
+      );
+
+    const findMeta = (events: readonly SessionEvent[]) =>
+      events.find((event): event is SessionMetaEvent => event.type === "meta");
+
+    const exchangeEvent = (input: ExchangeData, ts: string): SessionExchangeEvent => ({
+      type: "exchange",
+      exId: input.id,
+      query: input.query,
+      thinking: (input.thinking ?? []).map(normalizeThinkingBlock),
+      answer: input.answer,
+      ts,
+    });
+
+    const btwEvent = (input: BtwData, ts: string): SessionBtwEvent => ({
+      type: "btw",
+      exId: input.exchangeId,
+      quote: input.quote,
+      blockOffset: input.blockOffset,
+      context: input.context,
+      exchanges: input.exchanges.map(normalizeBtwExchange),
+      ts,
+    });
+
+    const appendExchangeEvent = (vaultId: Uuid, sessionId: string, input: ExchangeData) =>
+      Effect.gen(function* () {
+        const ts = yield* nowIso();
+        const event = exchangeEvent(input, ts);
+        yield* appendEvent(vaultId, sessionId, event);
+        yield* db
+          .update(sessions)
+          .set({ updatedAt: new Date(ts) })
+          .where(and(eq(sessions.vaultId, vaultId), eq(sessions.id, sessionId)))
+          .pipe(dieDatabase);
+        yield* rebuildMarkdown(vaultId, sessionId);
+        return { path: sessionFilePath(sessionId) } satisfies SessionPathResponse;
+      });
+
+    const appendBtwEvent = (vaultId: Uuid, sessionId: string, input: BtwData) =>
+      Effect.gen(function* () {
+        const ts = yield* nowIso();
+        const event = btwEvent(input, ts);
+        yield* appendEvent(vaultId, sessionId, event);
+        yield* db
+          .update(sessions)
+          .set({ updatedAt: new Date(ts) })
+          .where(and(eq(sessions.vaultId, vaultId), eq(sessions.id, sessionId)))
+          .pipe(dieDatabase);
+        yield* rebuildMarkdown(vaultId, sessionId);
+        return { path: sessionFilePath(sessionId) } satisfies SessionPathResponse;
+      });
+
     return {
+      createSession: (userId, vaultId, input) =>
+        Effect.gen(function* () {
+          yield* access.requireMember(userId, vaultId);
+          const existingRows = yield* db
+            .select({ id: sessions.id })
+            .from(sessions)
+            .where(
+              and(
+                eq(sessions.vaultId, vaultId),
+                eq(sessions.idempotencyKey, input.idempotency_key),
+              ),
+            )
+            .limit(1)
+            .pipe(dieDatabase);
+          const existing = existingRows[0]?.id;
+          if (existing !== undefined) {
+            const events = yield* loadAllEvents(vaultId, existing as SessionId).pipe(
+              Effect.catchTag("NotFound", () => Effect.succeed<SessionEvent[]>([])),
+            );
+            if (findExchange(events, input.exchange.id) === undefined) {
+              yield* appendExchangeEvent(vaultId, existing, input.exchange);
+            }
+            return { id: existing, path: sessionFilePath(existing) };
+          }
+
+          const sessionId = yield* newSessionId();
+          const metaTs = yield* nowIso();
+          const exchangeTs = yield* nowIso();
+          const origin = normalizeOrigin(input.origin);
+          const meta: SessionMetaEvent = {
+            type: "meta",
+            id: sessionId,
+            query: input.exchange.query,
+            ts: metaTs,
+            user_id: userId,
+            origin,
+          };
+          const exchange = exchangeEvent(input.exchange, exchangeTs);
+          yield* appendEvent(vaultId, sessionId, meta);
+          yield* appendEvent(vaultId, sessionId, exchange);
+          yield* db
+            .insert(sessions)
+            .values({
+              id: sessionId,
+              vaultId,
+              userId,
+              query: meta.query,
+              origin,
+              createdAt: new Date(metaTs),
+              updatedAt: new Date(exchangeTs),
+              idempotencyKey: input.idempotency_key,
+            })
+            .onConflictDoUpdate({
+              target: [sessions.id, sessions.vaultId],
+              set: {
+                userId,
+                query: meta.query,
+                origin,
+                createdAt: new Date(metaTs),
+                updatedAt: new Date(exchangeTs),
+              },
+            })
+            .pipe(dieDatabase);
+          yield* rebuildMarkdown(vaultId, sessionId);
+          return { id: sessionId, path: sessionFilePath(sessionId) };
+        }),
+      appendExchange: (userId, vaultId, sessionId, input) =>
+        Effect.gen(function* () {
+          yield* access.requireMember(userId, vaultId);
+          return yield* appendExchangeEvent(vaultId, sessionId, input);
+        }),
+      appendBtw: (userId, vaultId, sessionId, input) =>
+        Effect.gen(function* () {
+          yield* access.requireMember(userId, vaultId);
+          return yield* appendBtwEvent(vaultId, sessionId, input);
+        }),
+      promoteExchange: (userId, vaultId, sessionId, exchangeId) =>
+        Effect.gen(function* () {
+          const scope = yield* access.requireEditor(userId, vaultId);
+          const dest = sessionExchangePath(exchangeId);
+          if (scope.role === "owner") {
+            const existing = yield* sourceDocuments.getByPath(vaultId, dest);
+            if (existing !== undefined) {
+              return {
+                mode: "ingested" as const,
+                path: dest,
+                title: existing.title !== null && existing.title !== "" ? existing.title : exchangeId,
+                document_id: existing.id as Uuid,
+                proposal_id: null,
+              };
+            }
+          } else {
+            const existing = yield* proposals.findPendingForDest(vaultId, dest);
+            if (existing !== undefined) {
+              return {
+                mode: "proposed" as const,
+                path: dest,
+                title: existing.title !== null && existing.title !== "" ? existing.title : exchangeId,
+                document_id: null,
+                proposal_id: existing.id,
+              };
+            }
+          }
+
+          const events = yield* loadAllEvents(vaultId, sessionId);
+          if (events.length === 0) {
+            return yield* new NotFound({ detail: "Session not found" });
+          }
+          const exchange = findExchange(events, exchangeId);
+          if (exchange === undefined) {
+            return yield* new NotFound({ detail: "Exchange not found in session" });
+          }
+          if ((exchange.answer ?? "").trim().length === 0) {
+            return yield* new BadRequest({ detail: "Exchange has no answer yet" });
+          }
+          const sessionOrigin = normalizeOrigin(findMeta(events)?.origin);
+
+          if (scope.role === "owner") {
+            const result = yield* ingest.ingestSessionExchange(
+              vaultId,
+              sessionId,
+              exchange,
+              sessionOrigin,
+            );
+            return {
+              mode: "ingested" as const,
+              path: result.file_path,
+              title: null,
+              document_id: null,
+              proposal_id: null,
+            };
+          }
+
+          const proposal = yield* proposals.createRendered(vaultId, userId, {
+            contentType: "session",
+            title: null,
+            author: null,
+            destPath: dest,
+            rendered: buildSessionExchangeDocument(sessionId, exchange, sessionOrigin),
+          });
+          return {
+            mode: "proposed" as const,
+            path: dest,
+            title: null,
+            document_id: null,
+            proposal_id: proposal.id,
+          };
+        }),
       listSessions: (userId, vaultId, params) =>
         Effect.gen(function* () {
           yield* access.requireMember(userId, vaultId);
@@ -274,7 +610,7 @@ export const SessionsServiceLive = Layer.effect(
         Effect.gen(function* () {
           yield* access.requireMember(userId, vaultId);
           const content = yield* readText(vaultId, sessionId, "jsonl", "Session not found");
-          const events = yield* parseEvents(sessionId, content);
+          const events = yield* parseEvents(sessionId, content, { isolateLatestMeta: true });
           return {
             id: sessionId,
             events,

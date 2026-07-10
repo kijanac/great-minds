@@ -1,5 +1,7 @@
 import { stringify as stringifyYaml } from "yaml";
 
+import type { SessionExchangeEvent, SessionOrigin } from "@great-minds/domain";
+
 const PARA_SPLIT_RE = /\n\s*\n/;
 const HEADING_LINE_RE = /^(#{1,6})\s+(.+)$/;
 const ANCHOR_MARKER_RE = /\s*\^p\d+\s*$/gm;
@@ -83,3 +85,31 @@ export const buildDocument = (content: string, input: BuildDocumentInput = {}) =
   };
   return buildFrontmatter(known) + injectAnchors(content);
 };
+
+export const sessionExchangePath = (exchangeId: string) => `raw/sessions/${exchangeId}.md`;
+
+export const sessionExchangeDocumentInput = (
+  sessionId: string,
+  exchange: SessionExchangeEvent,
+  sessionOrigin: SessionOrigin | null,
+): BuildDocumentInput => ({
+  sourceType: "session",
+  origin: "session-exchange",
+  sessionId,
+  exchangeId: exchange.exId,
+  sessionQuery: exchange.query,
+  sourceDocPath: sessionOrigin?.doc_path ?? null,
+  sourceAnchor:
+    sessionOrigin?.anchor !== undefined &&
+    sessionOrigin.anchor !== null &&
+    sessionOrigin.anchor.length > 0
+      ? sessionOrigin.anchor
+      : null,
+  sourceParagraphIndex: sessionOrigin?.paragraph_index ?? null,
+});
+
+export const buildSessionExchangeDocument = (
+  sessionId: string,
+  exchange: SessionExchangeEvent,
+  sessionOrigin: SessionOrigin | null,
+) => buildDocument(exchange.answer ?? "", sessionExchangeDocumentInput(sessionId, exchange, sessionOrigin));

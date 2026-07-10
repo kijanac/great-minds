@@ -7,6 +7,8 @@ import {
   type IngestedDocument,
   type JobResponse,
   type RawSource,
+  type SessionExchangeEvent,
+  type SessionOrigin,
   type StagedFileInput,
   type StagedFileSignedUpload,
   type UserSuggestion,
@@ -18,7 +20,11 @@ import { Cause, Context, Effect, Layer } from "effect";
 
 import { htmlToMarkdown } from "./conversion.ts";
 import { dieDatabase } from "./db-defects.ts";
-import { buildDocument } from "./markdown.ts";
+import {
+  buildDocument,
+  sessionExchangeDocumentInput,
+  sessionExchangePath,
+} from "./markdown.ts";
 import { ProposalsService } from "./proposals.ts";
 import { SourceDocumentsService } from "./source-documents.ts";
 import { VaultStorage } from "./storage.ts";
@@ -84,6 +90,12 @@ type IngestServiceShape = {
     vaultId: Uuid,
     input: { readonly job_id: Uuid; readonly url: string; readonly origin?: string | null },
   ) => Effect.Effect<JobResponse, BadRequest | Forbidden>;
+  readonly ingestSessionExchange: (
+    vaultId: Uuid,
+    sessionId: string,
+    exchange: SessionExchangeEvent,
+    sessionOrigin: SessionOrigin | null,
+  ) => Effect.Effect<IngestedDocument>;
 };
 
 export class IngestService extends Context.Service<IngestService, IngestServiceShape>()(
@@ -646,6 +658,13 @@ export const IngestServiceLive = Layer.effect(
           const refreshed = yield* getPipelineRun(run.id as Uuid, vaultId);
           return jobResponse(refreshed);
         }),
+      ingestSessionExchange: (vaultId, sessionId, exchange, sessionOrigin) =>
+        writeAndIndex(
+          vaultId,
+          exchange.answer ?? "",
+          sessionExchangePath(exchange.exId),
+          sessionExchangeDocumentInput(sessionId, exchange, sessionOrigin),
+        ),
     } satisfies IngestServiceShape;
   }),
 );

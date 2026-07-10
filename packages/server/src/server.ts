@@ -59,7 +59,8 @@ const healthResponse = jsonResponse(200, { status: "ok" });
 
 const clean500Response = jsonResponse(500, { detail: "Internal Server Error" });
 
-const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+// Keep the version nibble in lockstep with the domain Uuid schema (accepts v1-v8).
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 const parseUuidPathParam = (value: string | undefined) =>
   value !== undefined && UUID_PATTERN.test(value) ? (value as Uuid) : undefined;
@@ -591,6 +592,57 @@ const DocumentsHandlersLive = HttpApiBuilder.group(MountedGreatMindsApi, "docume
 
 const SessionsHandlersLive = HttpApiBuilder.group(MountedGreatMindsApi, "sessions", (handlers) =>
   handlers
+    .handle("createSession", ({ params, payload }) =>
+      withDomainErrors(
+        Effect.gen(function* () {
+          const sessions = yield* SessionsService;
+          const current = yield* CurrentAuth;
+          return yield* sessions.createSession(current.user_id, params.vault_id, payload);
+        }),
+      ),
+    )
+    .handle("appendSessionExchange", ({ params, payload }) =>
+      withDomainErrors(
+        Effect.gen(function* () {
+          const sessions = yield* SessionsService;
+          const current = yield* CurrentAuth;
+          return yield* sessions.appendExchange(
+            current.user_id,
+            params.vault_id,
+            params.session_id,
+            payload,
+          );
+        }),
+      ),
+    )
+    .handle("appendSessionBtw", ({ params, payload }) =>
+      withDomainErrors(
+        Effect.gen(function* () {
+          const sessions = yield* SessionsService;
+          const current = yield* CurrentAuth;
+          return yield* sessions.appendBtw(
+            current.user_id,
+            params.vault_id,
+            params.session_id,
+            payload,
+          );
+        }),
+      ),
+    )
+    .handle("promoteSessionExchange", ({ params }) =>
+      withDomainErrors(
+        Effect.gen(function* () {
+          const sessions = yield* SessionsService;
+          const current = yield* CurrentAuth;
+          return yield* sessions.promoteExchange(
+            current.user_id,
+            params.vault_id,
+            params.session_id,
+            params.exchange_id,
+          );
+        }),
+      ),
+    )
     .handle("listSessions", ({ params, query }) =>
       withDomainErrors(
         Effect.gen(function* () {

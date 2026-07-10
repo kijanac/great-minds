@@ -15,6 +15,7 @@ import { SessionsService, SessionsServiceLive } from "./sessions.ts";
 import { SourceDocumentsService, SourceDocumentsServiceLive } from "./source-documents.ts";
 import { SourcesService, SourcesServiceLive } from "./sources.ts";
 import { ProposalStorage, ProposalStorageLive, VaultStorage, VaultStorageLive } from "./storage.ts";
+import { RandomBytesLive, RandomBytesService } from "./random.ts";
 import { TokenService, TokenServiceLive } from "./tokens.ts";
 import {
   VaultAccessService,
@@ -42,6 +43,7 @@ export type AppLayerServices =
   | SessionsService
   | VaultStorage
   | ProposalStorage
+  | RandomBytesService
   | AuthService;
 
 export type AppLayerOverrides = {
@@ -51,6 +53,7 @@ export type AppLayerOverrides = {
   readonly logger?: Layer.Layer<StructuredLogger>;
   readonly storage?: Layer.Layer<VaultStorage>;
   readonly proposalStorage?: Layer.Layer<ProposalStorage>;
+  readonly randomBytes?: Layer.Layer<RandomBytesService>;
 };
 
 export const makeAppLayer = (overrides: AppLayerOverrides = {}) => {
@@ -58,6 +61,7 @@ export const makeAppLayer = (overrides: AppLayerOverrides = {}) => {
   const BaseLive = Layer.mergeAll(
     DrizzleLive.pipe(Layer.provideMerge(ConfigLive)),
     overrides.clock ?? ClockLive,
+    overrides.randomBytes ?? RandomBytesLive,
     overrides.logger ?? StructuredLoggerLive,
   );
 
@@ -110,6 +114,9 @@ export const makeAppLayer = (overrides: AppLayerOverrides = {}) => {
     SessionsServiceLive.pipe(
       Layer.provideMerge(VaultAccessLive),
       Layer.provideMerge(StorageLive),
+      Layer.provideMerge(IngestLive),
+      Layer.provideMerge(ProposalsLive),
+      Layer.provideMerge(SourceDocumentsLive),
       Layer.provideMerge(BaseLive),
     ),
     SourceDocumentsLive,

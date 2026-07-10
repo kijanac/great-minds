@@ -15,7 +15,7 @@ export type Email = typeof Email.Type;
 
 export const Uuid = Schema.String.pipe(
   Schema.check(
-    Schema.isPattern(/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i),
+    Schema.isPattern(/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i),
   ),
   Schema.brand("Uuid"),
 );
@@ -488,6 +488,51 @@ export const SessionMarkdown = Schema.String.pipe(
 );
 export type SessionMarkdown = typeof SessionMarkdown.Type;
 
+export const ExchangeData = Schema.Struct({
+  id: Schema.String,
+  query: Schema.String,
+  thinking: Schema.Array(ThinkingBlock).pipe(Schema.withDecodingDefaultTypeKey(Effect.succeed([]))),
+  answer: Schema.String,
+  btws: Schema.optionalKey(Schema.Array(Schema.Record(Schema.String, Schema.Unknown))),
+});
+export type ExchangeData = typeof ExchangeData.Type;
+
+export const BtwData = Schema.Struct({
+  quote: Schema.String,
+  blockOffset: Schema.Number.pipe(Schema.withDecodingDefaultTypeKey(Effect.succeed(-1))),
+  context: Schema.String.pipe(Schema.withDecodingDefaultTypeKey(Effect.succeed(""))),
+  exchangeId: Schema.String,
+  exchanges: Schema.Array(BtwExchange),
+});
+export type BtwData = typeof BtwData.Type;
+
+export const CreateSessionRequest = Schema.Struct({
+  idempotency_key: Schema.String,
+  exchange: ExchangeData,
+  origin: Schema.optionalKey(Schema.NullOr(SessionOrigin)),
+});
+export type CreateSessionRequest = typeof CreateSessionRequest.Type;
+
+export const SessionPathResponse = Schema.Struct({
+  path: Schema.String,
+});
+export type SessionPathResponse = typeof SessionPathResponse.Type;
+
+export const CreateSessionResponse = Schema.Struct({
+  id: Schema.String,
+  path: Schema.String,
+});
+export type CreateSessionResponse = typeof CreateSessionResponse.Type;
+
+export const PromoteExchangeResponse = Schema.Struct({
+  mode: Schema.Literals(["ingested", "proposed"] as const),
+  path: Schema.String,
+  title: Schema.NullOr(Schema.String),
+  document_id: Schema.optionalKey(Schema.NullOr(Uuid)),
+  proposal_id: Schema.optionalKey(Schema.NullOr(Uuid)),
+});
+export type PromoteExchangeResponse = typeof PromoteExchangeResponse.Type;
+
 export const SourceDocument = Schema.Struct({
   kind: Schema.Literal("source"),
   id: Uuid,
@@ -666,6 +711,8 @@ const CreatedMember = MemberWithEmail.pipe(HttpApiSchema.status("Created"));
 const CreatedProposal = Proposal.pipe(HttpApiSchema.status("Created"));
 const CreatedIngestedDocument = IngestedDocument.pipe(HttpApiSchema.status("Created"));
 const CreatedJobResponse = JobResponse.pipe(HttpApiSchema.status("Created"));
+const CreatedSessionResponse = CreateSessionResponse.pipe(HttpApiSchema.status("Created"));
+const CreatedPromoteExchangeResponse = PromoteExchangeResponse.pipe(HttpApiSchema.status("Created"));
 
 export const AuthApiGroup = HttpApiGroup.make("auth").add(
   HttpApiEndpoint.post("requestCode", "/auth/request-code", {
@@ -959,6 +1006,50 @@ export const DocumentsApiGroup = HttpApiGroup.make("documents").add(
 );
 
 export const SessionsApiGroup = HttpApiGroup.make("sessions").add(
+  HttpApiEndpoint.post("createSession", "/vaults/:vault_id/sessions", {
+    params: {
+      vault_id: Uuid,
+    },
+    payload: CreateSessionRequest,
+    success: CreatedSessionResponse,
+    error: ForbiddenValidationErrors,
+  }).middleware(AuthMiddleware),
+  HttpApiEndpoint.patch("appendSessionExchange", "/vaults/:vault_id/sessions/:session_id", {
+    params: {
+      vault_id: Uuid,
+      session_id: SessionId,
+    },
+    payload: ExchangeData,
+    success: SessionPathResponse,
+    error: ForbiddenValidationErrors,
+  }).middleware(AuthMiddleware),
+  HttpApiEndpoint.patch("appendSessionBtw", "/vaults/:vault_id/sessions/:session_id/btw", {
+    params: {
+      vault_id: Uuid,
+      session_id: SessionId,
+    },
+    payload: BtwData,
+    success: SessionPathResponse,
+    error: ForbiddenValidationErrors,
+  }).middleware(AuthMiddleware),
+  HttpApiEndpoint.post(
+    "promoteSessionExchange",
+    "/vaults/:vault_id/sessions/:session_id/exchanges/:exchange_id/promote",
+    {
+      params: {
+        vault_id: Uuid,
+        session_id: SessionId,
+        exchange_id: Schema.String,
+      },
+      success: CreatedPromoteExchangeResponse,
+      error: [
+        BadRequestResponse,
+        ForbiddenResponse,
+        NotFoundResponse,
+        ValidationResponse,
+      ] as const,
+    },
+  ).middleware(AuthMiddleware),
   HttpApiEndpoint.get("listSessions", "/vaults/:vault_id/sessions", {
     params: {
       vault_id: Uuid,

@@ -51,6 +51,10 @@ type ProposalsServiceShape = {
     vaultId: Uuid,
     input: ProposalCreate,
   ) => Effect.Effect<Proposal, BadRequest | Forbidden>;
+  readonly findPendingForDest: (
+    vaultId: Uuid,
+    destPath: string,
+  ) => Effect.Effect<Proposal | undefined>;
   readonly createSourceDeletionRequest: (
     vaultId: Uuid,
     userId: Uuid,
@@ -234,6 +238,23 @@ export const ProposalsServiceLive = Layer.effect(
             destPath: `raw/${safeSegment(contentType)}/${proposalId}.md`,
             rendered: buildDocument(content, contentType),
           });
+        }),
+      findPendingForDest: (vaultId, destPath) =>
+        Effect.gen(function* () {
+          const rows = yield* db
+            .select()
+            .from(sourceProposals)
+            .where(
+              and(
+                eq(sourceProposals.vaultId, vaultId),
+                eq(sourceProposals.destPath, destPath),
+                eq(sourceProposals.status, "PENDING"),
+              ),
+            )
+            .limit(1)
+            .pipe(dieDatabase);
+          const row = rows[0];
+          return row === undefined ? undefined : proposalResponse(row);
         }),
       createSourceDeletionRequest: (vaultId, userId, source) =>
         Effect.gen(function* () {

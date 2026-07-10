@@ -1,4 +1,4 @@
-import { mkdir, readFile, rm, unlink, writeFile } from "node:fs/promises";
+import { appendFile, mkdir, readFile, rm, unlink, writeFile } from "node:fs/promises";
 import { isAbsolute, relative, resolve } from "node:path";
 
 import {
@@ -48,6 +48,12 @@ type VaultStorageShape = {
     bucketName?: string | null,
   ) => Effect.Effect<string, StorageFileMissing>;
   readonly writeText: (
+    vaultId: Uuid,
+    path: string,
+    content: string,
+    bucketName?: string | null,
+  ) => Effect.Effect<void>;
+  readonly appendText: (
     vaultId: Uuid,
     path: string,
     content: string,
@@ -129,6 +135,15 @@ const writeLocalText = (root: string, path: string, content: string) =>
     yield* Effect.tryPromise(() => writeFile(fullPath, content, "utf8")).pipe(Effect.orDie);
   });
 
+const appendLocalText = (root: string, path: string, content: string) =>
+  Effect.gen(function* () {
+    const fullPath = resolveChild(root, path);
+    yield* Effect.tryPromise(() => mkdir(resolve(fullPath, ".."), { recursive: true })).pipe(
+      Effect.orDie,
+    );
+    yield* Effect.tryPromise(() => appendFile(fullPath, content, "utf8")).pipe(Effect.orDie);
+  });
+
 const localExists = (root: string, path: string) =>
   Effect.gen(function* () {
     const result = yield* Effect.result(readLocalText(root, path));
@@ -159,6 +174,8 @@ export const LocalStorageLive = Layer.effect(
     return {
       readText: (vaultId, path) => readLocalText(localRoot(dataRoot, vaultId), path),
       writeText: (vaultId, path, content) => writeLocalText(localRoot(dataRoot, vaultId), path, content),
+      appendText: (vaultId, path, content) =>
+        appendLocalText(localRoot(dataRoot, vaultId), path, content),
       exists: (vaultId, path) => localExists(localRoot(dataRoot, vaultId), path),
       deletePath: (vaultId, path) => deleteLocalPath(localRoot(dataRoot, vaultId), path),
       clearVault: (vaultId, bucketName) =>
@@ -429,53 +446,68 @@ export const R2StorageLive = Layer.effect(
         catch: (error) => error,
       }).pipe(Effect.timeout(R2_ADMIN_TIMEOUT));
 
+    const readR2Text = (vaultId: Uuid, path: string, bucketName?: string | null) =>
+      Effect.gen(function* () {
+        const bucket = yield* vaultBucket(vaultId, bucketName);
+        const key = objectKey(vaultId, path);
+        const responseResult = yield* Effect.result(
+          Effect.tryPromise({
+            try: (signal) =>
+              client.send(
+                new GetObjectCommand({
+                  Bucket: bucket,
+                  Key: key,
+                }),
+                { abortSignal: signal },
+              ),
+            catch: (error) => error,
+          }).pipe(Effect.timeout(R2_READ_TIMEOUT)),
+        );
+        if (responseResult._tag === "Failure") {
+          if (isR2Missing(responseResult.failure)) {
+            return yield* fileMissing(path);
+          }
+          throw responseResult.failure;
+        }
+        const response = responseResult.success;
+        if (response.Body === undefined) {
+          throw new Error(`R2 object ${key} returned no body`);
+        }
+        return yield* Effect.tryPromise(() => response.Body!.transformToString("utf-8")).pipe(
+          Effect.timeout(R2_READ_TIMEOUT),
+          Effect.orDie,
+        );
+      });
+
+    const writeR2Text = (
+      vaultId: Uuid,
+      path: string,
+      content: string,
+      bucketName?: string | null,
+    ) =>
+      Effect.gen(function* () {
+        const bucket = yield* vaultBucket(vaultId, bucketName);
+        yield* Effect.tryPromise((signal) =>
+          client.send(
+            new PutObjectCommand({
+              Bucket: bucket,
+              Key: objectKey(vaultId, path),
+              Body: content,
+              ContentType: path.endsWith(".md") ? "text/markdown" : "text/plain",
+            }),
+            { abortSignal: signal },
+          ),
+        ).pipe(Effect.timeout(R2_WRITE_TIMEOUT), Effect.orDie);
+      });
+
     return {
-      readText: (vaultId, path, bucketName) =>
+      readText: readR2Text,
+      writeText: writeR2Text,
+      appendText: (vaultId, path, content, bucketName) =>
         Effect.gen(function* () {
-          const bucket = yield* vaultBucket(vaultId, bucketName);
-          const key = objectKey(vaultId, path);
-          const responseResult = yield* Effect.result(
-            Effect.tryPromise({
-              try: (signal) =>
-                client.send(
-                  new GetObjectCommand({
-                    Bucket: bucket,
-                    Key: key,
-                  }),
-                  { abortSignal: signal },
-                ),
-              catch: (error) => error,
-            }).pipe(Effect.timeout(R2_READ_TIMEOUT)),
-          );
-          if (responseResult._tag === "Failure") {
-            if (isR2Missing(responseResult.failure)) {
-              return yield* fileMissing(path);
-            }
-            throw responseResult.failure;
-          }
-          const response = responseResult.success;
-          if (response.Body === undefined) {
-            throw new Error(`R2 object ${key} returned no body`);
-          }
-          return yield* Effect.tryPromise(() => response.Body!.transformToString("utf-8")).pipe(
-            Effect.timeout(R2_READ_TIMEOUT),
-            Effect.orDie,
-          );
-        }),
-      writeText: (vaultId, path, content, bucketName) =>
-        Effect.gen(function* () {
-          const bucket = yield* vaultBucket(vaultId, bucketName);
-          yield* Effect.tryPromise((signal) =>
-            client.send(
-              new PutObjectCommand({
-                Bucket: bucket,
-                Key: objectKey(vaultId, path),
-                Body: content,
-                ContentType: path.endsWith(".md") ? "text/markdown" : "text/plain",
-              }),
-              { abortSignal: signal },
-            ),
-          ).pipe(Effect.timeout(R2_WRITE_TIMEOUT), Effect.orDie);
+          const existing = yield* Effect.result(readR2Text(vaultId, path, bucketName));
+          const prefix = existing._tag === "Success" ? existing.success : "";
+          yield* writeR2Text(vaultId, path, `${prefix}${content}`, bucketName);
         }),
       exists: (vaultId, path, bucketName) =>
         Effect.gen(function* () {

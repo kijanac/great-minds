@@ -81,6 +81,7 @@ const baseEnv = (config: RunnerConfig) => ({
   SUPPRESS_AUTH: "true",
   STORAGE_BACKEND: "local",
   DATA_DIR: config.dataDir,
+  OPENROUTER_API_KEY: "parity-openrouter-key",
   UV_CACHE_DIR: process.env.UV_CACHE_DIR ?? "/tmp/gm-uv-cache",
   PYTHONPATH: join(config.repoRoot, "src"),
 });
@@ -780,6 +781,168 @@ const executeMutation = async (
         rotatedPair.access_token,
       );
     },
+  );
+
+  const sessionCreateResponse = await send(
+    mutationEntry(
+      "mutation-session-create",
+      "create session with idempotency key",
+      "POST",
+      `/v1/vaults/${vaultId}/sessions`,
+      "POST /vaults/{vault_id}/sessions",
+      {
+        pathTemplate: "/v1/vaults/{created_vault_id}/sessions",
+        body: {
+          idempotency_key: "parity-session-key",
+          exchange: {
+            id: "ex-parity-session",
+            query: "Parity session question",
+            thinking: [],
+            answer: "Parity session answer.",
+          },
+          origin: null,
+        },
+        normalize: [mask("id", "session_id"), mask("path", "session_path")],
+      },
+    ),
+    rotatedPair.access_token,
+  );
+  const sessionId = parseCreatedId(sessionCreateResponse.body, "session id");
+  await send(
+    mutationEntry(
+      "mutation-session-create-replay",
+      "idempotent session create replay",
+      "POST",
+      `/v1/vaults/${vaultId}/sessions`,
+      "POST /vaults/{vault_id}/sessions",
+      {
+        pathTemplate: "/v1/vaults/{created_vault_id}/sessions",
+        body: {
+          idempotency_key: "parity-session-key",
+          exchange: {
+            id: "ex-parity-session",
+            query: "Parity session question",
+            thinking: [],
+            answer: "Parity session answer.",
+          },
+          origin: null,
+        },
+        normalize: [mask("id", "session_id"), mask("path", "session_path")],
+      },
+    ),
+    rotatedPair.access_token,
+  );
+  await send(
+    mutationEntry(
+      "mutation-session-btw",
+      "append BTW with context",
+      "PATCH",
+      `/v1/vaults/${vaultId}/sessions/${sessionId}/btw`,
+      "PATCH /vaults/{vault_id}/sessions/{session_id}/btw",
+      {
+        pathTemplate: "/v1/vaults/{created_vault_id}/sessions/{session_id}/btw",
+        body: {
+          quote: "Parity quote",
+          blockOffset: 1,
+          context: "Parity context passage",
+          exchangeId: "ex-parity-session",
+          exchanges: [
+            {
+              query: "Why this quote?",
+              thinking: [],
+              answer: "Because it is specific.",
+            },
+          ],
+        },
+        normalize: [mask("path", "session_path")],
+      },
+    ),
+    editorToken,
+  );
+  await send(
+    mutationEntry(
+      "mutation-session-read-after-btw",
+      "read BTW context replay",
+      "GET",
+      `/v1/vaults/${vaultId}/sessions/${sessionId}`,
+      "GET /vaults/{vault_id}/sessions/{session_id}",
+      {
+        pathTemplate: "/v1/vaults/{created_vault_id}/sessions/{session_id}",
+        normalize: [
+          mask("id", "session_id"),
+          mask("events.*.id", "session_id"),
+          mask("events.*.user_id", "user_id"),
+          mask("events.*.ts", "event_ts"),
+        ],
+        decision: "M3_D3_BTW_CONTEXT",
+      },
+    ),
+    editorToken,
+  );
+  await send(
+    mutationEntry(
+      "mutation-session-append-exchange",
+      "append follow-up exchange",
+      "PATCH",
+      `/v1/vaults/${vaultId}/sessions/${sessionId}`,
+      "PATCH /vaults/{vault_id}/sessions/{session_id}",
+      {
+        pathTemplate: "/v1/vaults/{created_vault_id}/sessions/{session_id}",
+        body: {
+          id: "ex-parity-follow",
+          query: "Parity follow-up question",
+          thinking: [],
+          answer: "Parity follow-up answer.",
+        },
+        normalize: [mask("path", "session_path")],
+      },
+    ),
+    memberToken,
+  );
+  await send(
+    mutationEntry(
+      "mutation-session-promote-owner",
+      "promote exchange as owner",
+      "POST",
+      `/v1/vaults/${vaultId}/sessions/${sessionId}/exchanges/ex-parity-session/promote`,
+      "POST /vaults/{vault_id}/sessions/{session_id}/exchanges/{exchange_id}/promote",
+      {
+        pathTemplate:
+          "/v1/vaults/{created_vault_id}/sessions/{session_id}/exchanges/{exchange_id}/promote",
+        decision: "M3_D2_TITLE_NULL",
+      },
+    ),
+    rotatedPair.access_token,
+  );
+  await send(
+    mutationEntry(
+      "mutation-session-promote-editor",
+      "promote exchange as editor proposal",
+      "POST",
+      `/v1/vaults/${vaultId}/sessions/${sessionId}/exchanges/ex-parity-follow/promote`,
+      "POST /vaults/{vault_id}/sessions/{session_id}/exchanges/{exchange_id}/promote",
+      {
+        pathTemplate:
+          "/v1/vaults/{created_vault_id}/sessions/{session_id}/exchanges/{exchange_id}/promote",
+        normalize: [mask("proposal_id", "proposal_id")],
+      },
+    ),
+    editorToken,
+  );
+  await send(
+    mutationEntry(
+      "mutation-session-promote-missing-session",
+      "promote missing session",
+      "POST",
+      `/v1/vaults/${vaultId}/sessions/s-missing/exchanges/ex-no-session/promote`,
+      "POST /vaults/{vault_id}/sessions/{session_id}/exchanges/{exchange_id}/promote",
+      {
+        pathTemplate:
+          "/v1/vaults/{created_vault_id}/sessions/{missing_session_id}/exchanges/{exchange_id}/promote",
+        decision: "M3_D5_PROMOTE_MISSING_SESSION",
+      },
+    ),
+    rotatedPair.access_token,
   );
 
   await send(
