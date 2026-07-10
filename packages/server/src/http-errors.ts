@@ -1,7 +1,7 @@
 import type { DomainError } from "@great-minds/domain";
 
 export type HttpErrorResponse = {
-  readonly status: 401 | 403 | 404 | 422;
+  readonly status: 400 | 401 | 403 | 404 | 422;
   readonly body: {
     readonly detail: string;
   };
@@ -17,5 +17,7 @@ export const domainErrorResponse = (error: DomainError): HttpErrorResponse => {
       return { status: 404, body: { detail: error.detail } };
     case "Validation":
       return { status: 422, body: { detail: error.detail } };
+    case "BadRequest":
+      return { status: 400, body: { detail: error.detail } };
   }
 };

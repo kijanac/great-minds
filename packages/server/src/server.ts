@@ -1,14 +1,14 @@
 import { createServer, type Server } from "node:http";
 
 import { NodeHttpServer } from "@effect/platform-node";
-import {
-  AuthMiddleware,
-  CurrentAuth,
-  GreatMindsApi,
-  type DomainError
-} from "@great-minds/domain";
+import { AuthMiddleware, CurrentAuth, GreatMindsApi, type DomainError } from "@great-minds/domain";
 import { Cause, Effect, Layer, ManagedRuntime, Redacted } from "effect";
-import { HttpRouter, HttpServer, HttpServerRequest, HttpServerResponse } from "effect/unstable/http";
+import {
+  HttpRouter,
+  HttpServer,
+  HttpServerRequest,
+  HttpServerResponse,
+} from "effect/unstable/http";
 import * as HttpServerError from "effect/unstable/http/HttpServerError";
 import { HttpApiBuilder } from "effect/unstable/httpapi";
 import { HttpApiSchemaError } from "effect/unstable/httpapi/HttpApiError";
@@ -16,6 +16,7 @@ import { HttpApiSchemaError } from "effect/unstable/httpapi/HttpApiError";
 import { AppLayerLive, type AppLayerServices } from "./app-layer.ts";
 import { AuthService } from "./auth.ts";
 import { AppConfig } from "./config.ts";
+import { DocumentRegistryMismatch, DocumentsService } from "./documents.ts";
 import { domainErrorResponse } from "./http-errors.ts";
 import { StructuredLogger } from "./logging.ts";
 import { SourcesService } from "./sources.ts";
@@ -74,8 +75,9 @@ const withDomainErrors = <A, E extends DomainError, R>(effect: Effect.Effect<A, 
       Unauthorized: domainErrorJsonResponse,
       Forbidden: domainErrorJsonResponse,
       NotFound: domainErrorJsonResponse,
-      Validation: domainErrorJsonResponse
-    })
+      Validation: domainErrorJsonResponse,
+      BadRequest: domainErrorJsonResponse,
+    }),
   );
 
 const schemaErrorFromCause = (cause: Cause.Cause<unknown>) => {
@@ -90,23 +92,25 @@ const schemaErrorFromCause = (cause: Cause.Cause<unknown>) => {
   return undefined;
 };
 
+const firstDefect = (cause: Cause.Cause<unknown>) => cause.reasons.find(Cause.isDieReason)?.defect;
+
 const defectFields = (cause: Cause.Cause<unknown>) => {
-  const defect = cause.reasons.find(Cause.isDieReason)?.defect;
+  const defect = firstDefect(cause);
   if (defect instanceof Error) {
     return {
       error_message: defect.message,
-      stack: defect.stack
+      stack: defect.stack,
     };
   }
   if (defect !== undefined) {
     return {
       error_message: String(defect),
-      stack: undefined
+      stack: undefined,
     };
   }
   return {
     error_message: Cause.pretty(cause),
-    stack: undefined
+    stack: undefined,
   };
 };
 
@@ -115,6 +119,19 @@ const handleHttpCause = (cause: Cause.Cause<unknown>) =>
     const schemaError = schemaErrorFromCause(cause);
     if (schemaError !== undefined) {
       return yield* schemaErrorResponse(schemaError);
+    }
+
+    const defect = firstDefect(cause);
+    if (defect instanceof DocumentRegistryMismatch) {
+      const request = yield* HttpServerRequest.HttpServerRequest;
+      const logger = yield* StructuredLogger;
+      yield* logger.error("document_registry_mismatch", {
+        method: request.method,
+        path: request.url,
+        document_path: defect.path,
+        status: 500,
+      });
+      return yield* jsonResponse(500, { detail: defect.message });
     }
 
     const [response] = yield* HttpServerError.causeResponse(cause);
@@ -128,7 +145,7 @@ const handleHttpCause = (cause: Cause.Cause<unknown>) =>
       method: request.method,
       path: request.url,
       status: 500,
-      ...defectFields(cause)
+      ...defectFields(cause),
     });
     return yield* clean500Response;
   });
@@ -144,12 +161,12 @@ const AuthMiddlewareLive = Layer.effect(
           return yield* domainErrorJsonResponse(current.failure);
         }
         return yield* Effect.provideService(httpEffect, CurrentAuth, current.success);
-      })
-  }))
+      }),
+  })),
 );
 
 const MetaHandlersLive = HttpApiBuilder.group(MountedGreatMindsApi, "meta", (handlers) =>
-  handlers.handle("health", () => Effect.succeed({ status: "ok" as const }))
+  handlers.handle("health", () => Effect.succeed({ status: "ok" as const })),
 );
 
 const AuthHandlersLive = HttpApiBuilder.group(MountedGreatMindsApi, "auth", (handlers) =>
@@ -159,24 +176,24 @@ const AuthHandlersLive = HttpApiBuilder.group(MountedGreatMindsApi, "auth", (han
         Effect.gen(function* () {
           const auth = yield* AuthService;
           yield* auth.requestCode(payload.email);
-        })
-      )
+        }),
+      ),
     )
     .handle("verifyCode", ({ payload }) =>
       withDomainErrors(
         Effect.gen(function* () {
           const auth = yield* AuthService;
           return yield* auth.verifyCode(payload.email, payload.code);
-        })
-      )
+        }),
+      ),
     )
     .handle("refresh", ({ payload }) =>
       withDomainErrors(
         Effect.gen(function* () {
           const auth = yield* AuthService;
           return yield* auth.refresh(payload.refresh_token);
-        })
-      )
+        }),
+      ),
     )
     .handle("createApiKey", ({ payload }) =>
       withDomainErrors(
@@ -184,8 +201,8 @@ const AuthHandlersLive = HttpApiBuilder.group(MountedGreatMindsApi, "auth", (han
           const auth = yield* AuthService;
           const current = yield* CurrentAuth;
           return yield* auth.createApiKey(current.user_id, payload.label);
-        })
-      )
+        }),
+      ),
     )
     .handle("listApiKeys", () =>
       withDomainErrors(
@@ -193,8 +210,8 @@ const AuthHandlersLive = HttpApiBuilder.group(MountedGreatMindsApi, "auth", (han
           const auth = yield* AuthService;
           const current = yield* CurrentAuth;
           return yield* auth.listApiKeys(current.user_id);
-        })
-      )
+        }),
+      ),
     )
     .handle("deleteApiKey", ({ params }) =>
       withDomainErrors(
@@ -202,8 +219,8 @@ const AuthHandlersLive = HttpApiBuilder.group(MountedGreatMindsApi, "auth", (han
           const auth = yield* AuthService;
           const current = yield* CurrentAuth;
           yield* auth.revokeApiKey(current.user_id, params.key_id);
-        })
-      )
+        }),
+      ),
     )
     .handle("deleteMe", () =>
       withDomainErrors(
@@ -211,9 +228,9 @@ const AuthHandlersLive = HttpApiBuilder.group(MountedGreatMindsApi, "auth", (han
           const auth = yield* AuthService;
           const current = yield* CurrentAuth;
           yield* auth.deleteSelf(current.user_id);
-        })
-      )
-    )
+        }),
+      ),
+    ),
 );
 
 const VaultHandlersLive = HttpApiBuilder.group(MountedGreatMindsApi, "vaults", (handlers) =>
@@ -224,8 +241,8 @@ const VaultHandlersLive = HttpApiBuilder.group(MountedGreatMindsApi, "vaults", (
           const vaultsService = yield* VaultsService;
           const current = yield* CurrentAuth;
           return yield* vaultsService.listVaults(current.user_id, query);
-        })
-      )
+        }),
+      ),
     )
     .handle("getVault", ({ params }) =>
       withDomainErrors(
@@ -233,8 +250,8 @@ const VaultHandlersLive = HttpApiBuilder.group(MountedGreatMindsApi, "vaults", (
           const vaultsService = yield* VaultsService;
           const current = yield* CurrentAuth;
           return yield* vaultsService.getVaultDetail(current.user_id, params.vault_id);
-        })
-      )
+        }),
+      ),
     )
     .handle("getVaultConfig", ({ params }) =>
       withDomainErrors(
@@ -242,8 +259,8 @@ const VaultHandlersLive = HttpApiBuilder.group(MountedGreatMindsApi, "vaults", (
           const vaultsService = yield* VaultsService;
           const current = yield* CurrentAuth;
           return yield* vaultsService.getVaultConfig(current.user_id, params.vault_id);
-        })
-      )
+        }),
+      ),
     )
     .handle("listVaultMembers", ({ params, query }) =>
       withDomainErrors(
@@ -251,9 +268,9 @@ const VaultHandlersLive = HttpApiBuilder.group(MountedGreatMindsApi, "vaults", (
           const vaultsService = yield* VaultsService;
           const current = yield* CurrentAuth;
           return yield* vaultsService.listMembers(current.user_id, params.vault_id, query);
-        })
-      )
-    )
+        }),
+      ),
+    ),
 );
 
 const WikiHandlersLive = HttpApiBuilder.group(MountedGreatMindsApi, "wiki", (handlers) =>
@@ -264,8 +281,8 @@ const WikiHandlersLive = HttpApiBuilder.group(MountedGreatMindsApi, "wiki", (han
           const wiki = yield* WikiService;
           const current = yield* CurrentAuth;
           return yield* wiki.listArticles(current.user_id, params.vault_id, query);
-        })
-      )
+        }),
+      ),
     )
     .handle("listRecentWikiArticles", ({ params, query }) =>
       withDomainErrors(
@@ -273,9 +290,9 @@ const WikiHandlersLive = HttpApiBuilder.group(MountedGreatMindsApi, "wiki", (han
           const wiki = yield* WikiService;
           const current = yield* CurrentAuth;
           return yield* wiki.listRecent(current.user_id, params.vault_id, query);
-        })
-      )
-    )
+        }),
+      ),
+    ),
 );
 
 const SourcesHandlersLive = HttpApiBuilder.group(MountedGreatMindsApi, "sources", (handlers) =>
@@ -285,9 +302,40 @@ const SourcesHandlersLive = HttpApiBuilder.group(MountedGreatMindsApi, "sources"
         const sources = yield* SourcesService;
         const current = yield* CurrentAuth;
         return yield* sources.listSources(current.user_id, params.vault_id, query);
-      })
+      }),
+    ),
+  ),
+);
+
+const DocumentsHandlersLive = HttpApiBuilder.group(MountedGreatMindsApi, "documents", (handlers) =>
+  handlers
+    .handle("readDocument", ({ params }) =>
+      withDomainErrors(
+        Effect.gen(function* () {
+          const documents = yield* DocumentsService;
+          const current = yield* CurrentAuth;
+          return yield* documents.readDocument(current.user_id, params.vault_id, params["*"]);
+        }),
+      ),
     )
-  )
+    .handle("readChunks", ({ params, query }) =>
+      withDomainErrors(
+        Effect.gen(function* () {
+          const documents = yield* DocumentsService;
+          const current = yield* CurrentAuth;
+          return yield* documents.readChunks(current.user_id, params.vault_id, query);
+        }),
+      ),
+    )
+    .handle("readLinks", ({ params, query }) =>
+      withDomainErrors(
+        Effect.gen(function* () {
+          const documents = yield* DocumentsService;
+          const current = yield* CurrentAuth;
+          return yield* documents.readLinks(current.user_id, params.vault_id, query);
+        }),
+      ),
+    ),
 );
 
 const ApiGroupsLive = Layer.mergeAll(
@@ -295,7 +343,8 @@ const ApiGroupsLive = Layer.mergeAll(
   AuthHandlersLive,
   VaultHandlersLive,
   WikiHandlersLive,
-  SourcesHandlersLive
+  SourcesHandlersLive,
+  DocumentsHandlersLive,
 ).pipe(Layer.provideMerge(AuthMiddlewareLive));
 
 const ApiLive = HttpApiBuilder.layer(MountedGreatMindsApi).pipe(Layer.provide(ApiGroupsLive));
@@ -303,7 +352,7 @@ const ApiLive = HttpApiBuilder.layer(MountedGreatMindsApi).pipe(Layer.provide(Ap
 const AppRoutesLive = Layer.mergeAll(
   HttpRouter.add("GET", "/health", healthResponse),
   HttpRouter.add("GET", "/", healthResponse),
-  ApiLive
+  ApiLive,
 );
 
 const ServerLive = (nodeServer: Server, options: StartServerOptions) => {
@@ -312,9 +361,9 @@ const ServerLive = (nodeServer: Server, options: StartServerOptions) => {
     Effect.map(AppConfig, (config) =>
       NodeHttpServer.layer(() => nodeServer, {
         host: options.host ?? config.serverHost,
-        port: options.port ?? config.serverPort
-      })
-    )
+        port: options.port ?? config.serverPort,
+      }),
+    ),
   );
   const serveLayer = Layer.unwrap(
     HttpRouter.toHttpEffect(AppRoutesLive).pipe(
@@ -322,16 +371,16 @@ const ServerLive = (nodeServer: Server, options: StartServerOptions) => {
         HttpServer.serve()(
           Effect.matchCauseEffect(httpEffect, {
             onFailure: handleHttpCause,
-            onSuccess: Effect.succeed
-          })
-        )
-      )
-    )
+            onSuccess: Effect.succeed,
+          }),
+        ),
+      ),
+    ),
   );
 
   return serveLayer.pipe(
     Layer.provideMerge(nodeLayer),
-    Layer.provideMerge(appLayer)
+    Layer.provideMerge(appLayer),
   ) as Layer.Layer<RuntimeServices, unknown, never>;
 };
 
@@ -339,7 +388,8 @@ const formatUrl = (address: HttpServer.Address) => {
   if (address._tag === "UnixAddress") {
     return `unix://${address.path}`;
   }
-  const host = address.hostname === "0.0.0.0" || address.hostname === "::" ? "127.0.0.1" : address.hostname;
+  const host =
+    address.hostname === "0.0.0.0" || address.hostname === "::" ? "127.0.0.1" : address.hostname;
   return `http://${host}:${address.port}`;
 };
 
@@ -353,6 +403,6 @@ export const startServer = async (options: StartServerOptions = {}): Promise<Sta
     url: formatUrl(httpServer.address),
     close: async () => {
       await runtime.dispose();
-    }
+    },
   };
 };

@@ -7,13 +7,14 @@ import {
   jsonb,
   pgEnum,
   pgTable,
+  primaryKey,
   text,
   timestamp,
   unique,
   uniqueIndex,
   uuid,
   varchar,
-  vector
+  vector,
 } from "drizzle-orm/pg-core";
 
 const timestamptz = (name: string) => timestamp(name, { withTimezone: true });
@@ -21,7 +22,7 @@ const timestamptz = (name: string) => timestamp(name, { withTimezone: true });
 export const tsvector = customType<{ data: string; driverData: string }>({
   dataType() {
     return "tsvector";
-  }
+  },
 });
 
 export const memberRole = pgEnum("member_role", ["OWNER", "EDITOR", "VIEWER"]);
@@ -34,9 +35,9 @@ export const authCodes = pgTable(
     codeHash: varchar("code_hash", { length: 64 }).notNull(),
     expiresAt: timestamptz("expires_at").notNull(),
     used: boolean("used").notNull(),
-    createdAt: timestamptz("created_at").defaultNow().notNull()
+    createdAt: timestamptz("created_at").defaultNow().notNull(),
   },
-  (table) => [index("ix_auth_codes_email").on(table.email)]
+  (table) => [index("ix_auth_codes_email").on(table.email)],
 );
 
 export const users = pgTable(
@@ -45,9 +46,9 @@ export const users = pgTable(
     id: uuid("id").primaryKey(),
     email: varchar("email", { length: 320 }).notNull(),
     createdAt: timestamptz("created_at").defaultNow().notNull(),
-    r2BucketName: text("r2_bucket_name")
+    r2BucketName: text("r2_bucket_name"),
   },
-  (table) => [uniqueIndex("ix_users_email").on(table.email)]
+  (table) => [uniqueIndex("ix_users_email").on(table.email)],
 );
 
 export const apiKeys = pgTable(
@@ -60,9 +61,9 @@ export const apiKeys = pgTable(
     keyHash: varchar("key_hash", { length: 64 }).notNull(),
     label: text("label").notNull(),
     revoked: boolean("revoked").notNull(),
-    createdAt: timestamptz("created_at").defaultNow().notNull()
+    createdAt: timestamptz("created_at").defaultNow().notNull(),
   },
-  (table) => [uniqueIndex("ix_api_keys_key_hash").on(table.keyHash)]
+  (table) => [uniqueIndex("ix_api_keys_key_hash").on(table.keyHash)],
 );
 
 export const refreshTokens = pgTable(
@@ -75,23 +76,20 @@ export const refreshTokens = pgTable(
     tokenHash: varchar("token_hash", { length: 64 }).notNull(),
     expiresAt: timestamptz("expires_at").notNull(),
     revoked: boolean("revoked").notNull(),
-    createdAt: timestamptz("created_at").defaultNow().notNull()
+    createdAt: timestamptz("created_at").defaultNow().notNull(),
   },
-  (table) => [uniqueIndex("ix_refresh_tokens_token_hash").on(table.tokenHash)]
+  (table) => [uniqueIndex("ix_refresh_tokens_token_hash").on(table.tokenHash)],
 );
 
-export const vaults = pgTable(
-  "vaults",
-  {
-    id: uuid("id").primaryKey(),
-    name: varchar("name", { length: 255 }).notNull(),
-    ownerId: uuid("owner_id")
-      .notNull()
-      .references(() => users.id, { onDelete: "cascade" }),
-    createdAt: timestamptz("created_at").defaultNow().notNull(),
-    r2BucketName: text("r2_bucket_name")
-  }
-);
+export const vaults = pgTable("vaults", {
+  id: uuid("id").primaryKey(),
+  name: varchar("name", { length: 255 }).notNull(),
+  ownerId: uuid("owner_id")
+    .notNull()
+    .references(() => users.id, { onDelete: "cascade" }),
+  createdAt: timestamptz("created_at").defaultNow().notNull(),
+  r2BucketName: text("r2_bucket_name"),
+});
 
 export const vaultMemberships = pgTable(
   "vault_memberships",
@@ -104,9 +102,9 @@ export const vaultMemberships = pgTable(
       .notNull()
       .references(() => users.id, { onDelete: "cascade" }),
     role: memberRole("role").notNull(),
-    createdAt: timestamptz("created_at").defaultNow().notNull()
+    createdAt: timestamptz("created_at").defaultNow().notNull(),
   },
-  (table) => [unique("vault_memberships_vault_id_user_id_key").on(table.vaultId, table.userId)]
+  (table) => [unique("vault_memberships_vault_id_user_id_key").on(table.vaultId, table.userId)],
 );
 
 export const pipelineRuns = pgTable(
@@ -120,7 +118,9 @@ export const pipelineRuns = pgTable(
     status: text("status").notNull(),
     currentPhase: text("current_phase").notNull(),
     phaseStatus: text("phase_status").notNull(),
-    progressSteps: jsonb("progress_steps").default(sql`'[]'::jsonb`).notNull(),
+    progressSteps: jsonb("progress_steps")
+      .default(sql`'[]'::jsonb`)
+      .notNull(),
     error: text("error"),
     ingestTaskId: uuid("ingest_task_id"),
     compileIntentId: uuid("compile_intent_id"),
@@ -129,9 +129,9 @@ export const pipelineRuns = pgTable(
     activeTaskType: text("active_task_type"),
     createdAt: timestamptz("created_at").defaultNow().notNull(),
     updatedAt: timestamptz("updated_at").defaultNow().notNull(),
-    completedAt: timestamptz("completed_at")
+    completedAt: timestamptz("completed_at"),
   },
-  (table) => [index("ix_pipeline_runs_vault_id").on(table.vaultId)]
+  (table) => [index("ix_pipeline_runs_vault_id").on(table.vaultId)],
 );
 
 export const searchIndex = pgTable(
@@ -148,21 +148,18 @@ export const searchIndex = pgTable(
     contentHash: text("content_hash").notNull(),
     tsv: tsvector("tsv").notNull(),
     embedding: vector("embedding", { dimensions: 1024 }),
-    updatedAt: timestamptz("updated_at").defaultNow().notNull()
+    updatedAt: timestamptz("updated_at").defaultNow().notNull(),
   },
   (table) => [
     unique("search_index_vault_id_path_chunk_index_key").on(
       table.vaultId,
       table.path,
-      table.chunkIndex
+      table.chunkIndex,
     ),
     index("ix_search_index_vault_id").on(table.vaultId),
     index("ix_search_index_tsv").using("gin", table.tsv),
-    index("ix_search_index_embedding").using(
-      "hnsw",
-      table.embedding.op("vector_cosine_ops")
-    )
-  ]
+    index("ix_search_index_embedding").using("hnsw", table.embedding.op("vector_cosine_ops")),
+  ],
 );
 
 export const sourceDocuments = pgTable(
@@ -194,18 +191,23 @@ export const sourceDocuments = pgTable(
     author: text("author"),
     publishedDate: text("published_date"),
     genre: text("genre"),
-    tags: text("tags").array().default(sql`ARRAY[]::text[]`).notNull(),
-    derivedExtras: jsonb("derived_extras").default(sql`'{}'::jsonb`).notNull(),
+    tags: text("tags")
+      .array()
+      .default(sql`ARRAY[]::text[]`)
+      .notNull(),
+    derivedExtras: jsonb("derived_extras")
+      .default(sql`'{}'::jsonb`)
+      .notNull(),
     createdAt: timestamptz("created_at").defaultNow().notNull(),
-    updatedAt: timestamptz("updated_at").defaultNow().notNull()
+    updatedAt: timestamptz("updated_at").defaultNow().notNull(),
   },
   (table) => [
     unique("source_documents_vault_id_file_path_key").on(table.vaultId, table.filePath),
     index("ix_source_documents_vault_client_hash")
       .on(table.vaultId, table.clientHash)
       .where(sql`${table.clientHash} IS NOT NULL`),
-    index("ix_source_documents_vault_id").on(table.vaultId)
-  ]
+    index("ix_source_documents_vault_id").on(table.vaultId),
+  ],
 );
 
 export const topics = pgTable(
@@ -224,12 +226,12 @@ export const topics = pgTable(
     supersedes: uuid("supersedes"),
     supersededBy: uuid("superseded_by"),
     createdAt: timestamptz("created_at").defaultNow().notNull(),
-    updatedAt: timestamptz("updated_at").defaultNow().notNull()
+    updatedAt: timestamptz("updated_at").defaultNow().notNull(),
   },
   (table) => [
     index("ix_topics_vault_id").on(table.vaultId),
-    unique("topics_vault_id_slug_key").on(table.vaultId, table.slug)
-  ]
+    unique("topics_vault_id_slug_key").on(table.vaultId, table.slug),
+  ],
 );
 
 export const wikiArticles = pgTable(
@@ -250,18 +252,34 @@ export const wikiArticles = pgTable(
     createdAt: timestamptz("created_at").defaultNow().notNull(),
     updatedAt: timestamptz("updated_at").defaultNow().notNull(),
     renderRunId: uuid("render_run_id").references(() => pipelineRuns.id, {
-      onDelete: "set null"
+      onDelete: "set null",
     }),
     archived: boolean("archived").default(false).notNull(),
-    tags: text("tags").array().default(sql`ARRAY[]::text[]`).notNull()
+    tags: text("tags")
+      .array()
+      .default(sql`ARRAY[]::text[]`)
+      .notNull(),
   },
   (table) => [
     unique("wiki_articles_topic_id_key").on(table.topicId),
     index("ix_wiki_articles_vault_id").on(table.vaultId),
     index("ix_wiki_articles_render_run_id")
       .on(table.renderRunId)
-      .where(sql`${table.renderRunId} IS NOT NULL`)
-  ]
+      .where(sql`${table.renderRunId} IS NOT NULL`),
+  ],
+);
+
+export const backlinks = pgTable(
+  "backlinks",
+  {
+    sourceArticleId: uuid("source_article_id")
+      .notNull()
+      .references(() => wikiArticles.id, { onDelete: "cascade" }),
+    targetArticleId: uuid("target_article_id")
+      .notNull()
+      .references(() => wikiArticles.id, { onDelete: "cascade" }),
+  },
+  (table) => [primaryKey({ columns: [table.sourceArticleId, table.targetArticleId] })],
 );
 
 export const schema = {
@@ -275,5 +293,6 @@ export const schema = {
   searchIndex,
   sourceDocuments,
   topics,
-  wikiArticles
+  wikiArticles,
+  backlinks,
 };

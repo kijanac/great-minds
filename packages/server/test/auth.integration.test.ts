@@ -7,7 +7,7 @@ import {
   refreshTokens,
   users,
   vaultMemberships,
-  vaults
+  vaults,
 } from "@great-minds/database";
 import type { TokenPair } from "@great-minds/domain";
 import { and, desc, eq, ne } from "drizzle-orm";
@@ -62,6 +62,7 @@ const testConfig = (url: string): AppConfigShape => ({
   authCodeExpiryMinutes: 10,
   resendApiKey: Redacted.make("integration-test-resend-key"),
   resendFromEmail: "login@example.test",
+  dataDir: "/tmp/great-minds-auth-storage",
   storageBackend: "local",
   r2AccountId: Option.none(),
   r2AccessKeyId: Option.none(),
@@ -69,7 +70,7 @@ const testConfig = (url: string): AppConfigShape => ({
   r2BucketPrefix: "gm-test",
   suppressAuth: false,
   serverHost: "127.0.0.1",
-  serverPort: 0
+  serverPort: 0,
 });
 
 const buildTestState = async () => {
@@ -80,7 +81,7 @@ const buildTestState = async () => {
     config: configLayer,
     clock: clock.layer,
     mailer: mailer.layer,
-    logger: StructuredLoggerLive
+    logger: StructuredLoggerLive,
   });
   const started = await startServer({ layer: appLayer, host: "127.0.0.1", port: 0 });
   return { started, clock, mailer } satisfies TestState;
@@ -95,14 +96,14 @@ const resetDatabase = () =>
       const db = yield* Database;
       yield* db.delete(authCodes).pipe(Effect.orDie);
       yield* db.delete(users).pipe(Effect.orDie);
-    })
+    }),
   );
 
 const api = async (
   method: string,
   path: string,
   body?: unknown,
-  bearer?: string
+  bearer?: string,
 ): Promise<ApiResponse> => {
   const headers = new Headers();
   if (body !== undefined) {
@@ -114,7 +115,7 @@ const api = async (
   const response = await fetch(`${currentState().started.url}/v1${path}`, {
     method,
     headers,
-    body: body === undefined ? undefined : JSON.stringify(body)
+    body: body === undefined ? undefined : JSON.stringify(body),
   });
   const text = await response.text();
   const parsed = text === "" ? undefined : (JSON.parse(text) as unknown);
@@ -129,7 +130,7 @@ const rawApi = async (method: string, path: string, body?: unknown): Promise<Api
   const response = await fetch(`${currentState().started.url}${path}`, {
     method,
     headers,
-    body: body === undefined ? undefined : JSON.stringify(body)
+    body: body === undefined ? undefined : JSON.stringify(body),
   });
   const text = await response.text();
   const parsed = text === "" ? undefined : (JSON.parse(text) as unknown);
@@ -165,7 +166,7 @@ const tokenPairFrom = (body: unknown): TokenPair => {
   return {
     access_token: accessToken,
     refresh_token: refreshToken,
-    token_type: "bearer"
+    token_type: "bearer",
   };
 };
 
@@ -200,7 +201,7 @@ const signIn = async (email: string) => {
   expect(request.text).toBe("");
   const verify = await api("POST", "/auth/verify-code", {
     email,
-    code: latestCode()
+    code: latestCode(),
   });
   expect(verify.status).toBe(200);
   return tokenPairFrom(verify.body);
@@ -217,19 +218,15 @@ const userByEmail = (email: string) =>
         .limit(1)
         .pipe(Effect.orDie);
       return firstRow(rows, `user ${email}`);
-    })
+    }),
   );
 
 const ownedVaults = (userId: string) =>
   runDb(
     Effect.gen(function* () {
       const db = yield* Database;
-      return yield* db
-        .select()
-        .from(vaults)
-        .where(eq(vaults.ownerId, userId))
-        .pipe(Effect.orDie);
-    })
+      return yield* db.select().from(vaults).where(eq(vaults.ownerId, userId)).pipe(Effect.orDie);
+    }),
   );
 
 describe("auth HTTP integration", () => {
@@ -280,7 +277,7 @@ describe("auth HTTP integration", () => {
           .where(eq(authCodes.email, "person@example.com"))
           .orderBy(desc(authCodes.createdAt))
           .pipe(Effect.orDie);
-      })
+      }),
     );
     expect(rows).toHaveLength(2);
     const newest = firstRow(rows, "newest auth code");
@@ -308,7 +305,7 @@ describe("auth HTTP integration", () => {
     expect(health.body).toEqual({ status: "ok" });
 
     const unprefixed = await rawApi("POST", "/auth/request-code", {
-      email: "mount@example.com"
+      email: "mount@example.com",
     });
     expect(unprefixed.status).toBe(404);
 
@@ -322,14 +319,14 @@ describe("auth HTTP integration", () => {
     const wrongCode = code === "000000" ? "999999" : "000000";
     const wrong = await api("POST", "/auth/verify-code", {
       email: "login@example.com",
-      code: wrongCode
+      code: wrongCode,
     });
     expect(wrong.status).toBe(401);
     expect(wrong.body).toEqual({ detail: "Invalid or expired code" });
 
     const verify = await api("POST", "/auth/verify-code", {
       email: "LOGIN@example.com",
-      code
+      code,
     });
     expect(verify.status).toBe(200);
     const pair = tokenPairFrom(verify.body);
@@ -338,7 +335,7 @@ describe("auth HTTP integration", () => {
 
     const reuse = await api("POST", "/auth/verify-code", {
       email: "login@example.com",
-      code
+      code,
     });
     expect(reuse.status).toBe(401);
     expect(reuse.body).toEqual({ detail: "Invalid or expired code" });
@@ -353,7 +350,7 @@ describe("auth HTTP integration", () => {
     currentState().clock.set(new Date(initialTime.getTime() + 11 * 60 * 1000));
     const expired = await api("POST", "/auth/verify-code", {
       email: "expired@example.com",
-      code: expiredCode
+      code: expiredCode,
     });
     expect(expired.status).toBe(401);
     expect(expired.body).toEqual({ detail: "Invalid or expired code" });
@@ -363,7 +360,7 @@ describe("auth HTTP integration", () => {
     const pair = await signIn("refresh@example.com");
 
     const refresh = await api("POST", "/auth/refresh", {
-      refresh_token: pair.refresh_token
+      refresh_token: pair.refresh_token,
     });
     expect(refresh.status).toBe(200);
     const rotated = tokenPairFrom(refresh.body);
@@ -373,13 +370,13 @@ describe("auth HTTP integration", () => {
       "GET",
       "/auth/api-keys",
       undefined,
-      rotated.access_token
+      rotated.access_token,
     );
     expect(withRotatedAccessToken.status).toBe(200);
     expect(withRotatedAccessToken.body).toEqual([]);
 
     const reused = await api("POST", "/auth/refresh", {
-      refresh_token: pair.refresh_token
+      refresh_token: pair.refresh_token,
     });
     expect(reused.status).toBe(401);
     expect(reused.body).toEqual({ detail: "Invalid or expired refresh token" });
@@ -388,14 +385,14 @@ describe("auth HTTP integration", () => {
       Effect.gen(function* () {
         const db = yield* Database;
         return yield* db.select().from(refreshTokens).pipe(Effect.orDie);
-      })
+      }),
     );
     expect(rows.filter((row) => row.revoked)).toHaveLength(1);
 
     const expiredPair = await signIn("refresh-expired@example.com");
     currentState().clock.set(new Date(initialTime.getTime() + 8 * 24 * 60 * 60 * 1000));
     const expired = await api("POST", "/auth/refresh", {
-      refresh_token: expiredPair.refresh_token
+      refresh_token: expiredPair.refresh_token,
     });
     expect(expired.status).toBe(401);
     expect(expired.body).toEqual({ detail: "Invalid or expired refresh token" });
@@ -408,12 +405,7 @@ describe("auth HTTP integration", () => {
     expect(missing.status).toBe(401);
     expect(missing.body).toEqual({ detail: "Invalid credentials" });
 
-    const create = await api(
-      "POST",
-      "/auth/api-keys",
-      { label: "automation" },
-      pair.access_token
-    );
+    const create = await api("POST", "/auth/api-keys", { label: "automation" }, pair.access_token);
     expect(create.status).toBe(201);
     const created = asRecord(create.body);
     const rawKey = asString(created.raw_key, "raw_key");
@@ -428,7 +420,7 @@ describe("auth HTTP integration", () => {
       "DELETE",
       `/auth/api-keys/${asString(created.id, "api key id")}`,
       undefined,
-      pair.access_token
+      pair.access_token,
     );
     expect(deleted.status).toBe(204);
 
@@ -444,7 +436,7 @@ describe("auth HTTP integration", () => {
 
   it("rejects malformed verify-code and refresh bodies", async () => {
     const malformedVerify = await api("POST", "/auth/verify-code", {
-      email: "malformed@example.com"
+      email: "malformed@example.com",
     });
     expect(malformedVerify.status).toBe(422);
     expect(malformedVerify.body).toEqual({ detail: "Invalid request body" });
@@ -462,7 +454,7 @@ describe("auth HTTP integration", () => {
       "POST",
       "/auth/api-keys",
       { label: "first" },
-      ownerPair.access_token
+      ownerPair.access_token,
     );
     expect(firstCreate.status).toBe(201);
     const firstKey = asRecord(firstCreate.body);
@@ -473,7 +465,7 @@ describe("auth HTTP integration", () => {
       "POST",
       "/auth/api-keys",
       { label: "second" },
-      ownerPair.access_token
+      ownerPair.access_token,
     );
     expect(secondCreate.status).toBe(201);
     const secondKey = asRecord(secondCreate.body);
@@ -483,7 +475,7 @@ describe("auth HTTP integration", () => {
       "POST",
       "/auth/api-keys",
       { label: "other" },
-      otherPair.access_token
+      otherPair.access_token,
     );
     expect(otherCreate.status).toBe(201);
     const otherKeyId = asString(asRecord(otherCreate.body).id, "other id");
@@ -492,7 +484,7 @@ describe("auth HTTP integration", () => {
       "DELETE",
       `/auth/api-keys/${otherKeyId}`,
       undefined,
-      ownerPair.access_token
+      ownerPair.access_token,
     );
     expect(notOwned.status).toBe(404);
     expect(notOwned.body).toEqual({ detail: "API key not found" });
@@ -501,7 +493,7 @@ describe("auth HTTP integration", () => {
       "DELETE",
       "/auth/api-keys/not-a-uuid",
       undefined,
-      ownerPair.access_token
+      ownerPair.access_token,
     );
     expect(malformed.status).toBe(422);
     expect(malformed.body).toEqual({ detail: "Invalid path parameter" });
@@ -510,7 +502,7 @@ describe("auth HTTP integration", () => {
       "DELETE",
       `/auth/api-keys/${firstKeyId}`,
       undefined,
-      ownerPair.access_token
+      ownerPair.access_token,
     );
     expect(deleted.status).toBe(204);
 
@@ -536,9 +528,14 @@ describe("auth HTTP integration", () => {
         return yield* db
           .select()
           .from(apiKeys)
-          .where(and(eq(apiKeys.id, firstKeyId), ne(apiKeys.keyHash, asString(firstKey.raw_key, "raw key"))))
+          .where(
+            and(
+              eq(apiKeys.id, firstKeyId),
+              ne(apiKeys.keyHash, asString(firstKey.raw_key, "raw key")),
+            ),
+          )
           .pipe(Effect.orDie);
-      })
+      }),
     );
     expect(keyRows).toHaveLength(1);
   });
@@ -561,27 +558,22 @@ describe("auth HTTP integration", () => {
             id: randomUUID(),
             vaultId: survivorVault.id,
             userId: deleteUser.id,
-            role: "VIEWER"
+            role: "VIEWER",
           })
           .pipe(Effect.orDie);
-      })
+      }),
     );
 
     const invalidConfirm = await api(
       "DELETE",
       "/auth/me",
       { confirm: "delete" },
-      ownerPair.access_token
+      ownerPair.access_token,
     );
     expect(invalidConfirm.status).toBe(422);
     expect(invalidConfirm.body).toEqual({ detail: "Invalid request body" });
 
-    const deleted = await api(
-      "DELETE",
-      "/auth/me",
-      { confirm: "DELETE" },
-      ownerPair.access_token
-    );
+    const deleted = await api("DELETE", "/auth/me", { confirm: "DELETE" }, ownerPair.access_token);
     expect(deleted.status).toBe(204);
 
     const remaining = await runDb(
@@ -611,9 +603,9 @@ describe("auth HTTP integration", () => {
           deletedUsers,
           deletedVaults,
           survivorVaults,
-          deletedMemberships
+          deletedMemberships,
         };
-      })
+      }),
     );
 
     expect(remaining.deletedUsers).toHaveLength(0);

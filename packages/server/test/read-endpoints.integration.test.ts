@@ -1,16 +1,23 @@
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { dirname, join } from "node:path";
+
 import {
   apiKeys,
   authCodes,
+  backlinks,
   Database,
   pipelineRuns,
+  searchIndex,
   sourceDocuments,
   topics,
   users,
   vaultMemberships,
   vaults,
-  wikiArticles
+  wikiArticles,
 } from "@great-minds/database";
 import type { Uuid } from "@great-minds/domain";
+import { sql } from "drizzle-orm";
 import { Effect, Layer, Option, Redacted } from "effect";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 
@@ -49,7 +56,8 @@ const id = {
   sourceArticle: "00000000-0000-4000-8000-000000000502",
   sourceSpeech: "00000000-0000-4000-8000-000000000503",
   sourceOtherVault: "00000000-0000-4000-8000-000000000504",
-  apiKeyAlice: "00000000-0000-4000-8000-000000000601"
+  sourceEncoded: "00000000-0000-4000-8000-000000000505",
+  apiKeyAlice: "00000000-0000-4000-8000-000000000601",
 } as const;
 
 const aliceApiKey = "gm_alice_read_key";
@@ -59,6 +67,7 @@ type TestServices = AppConfig | Database | ClockService | StructuredLogger | Tok
 type TestState = {
   readonly started: Awaited<ReturnType<typeof startServer>>;
   readonly clock: ReturnType<typeof makeTestClock>;
+  readonly storageRoot: string;
 };
 
 type Fixture = {
@@ -108,7 +117,7 @@ const databaseUrl = () => {
   return value;
 };
 
-const testConfig = (url: string): AppConfigShape => ({
+const testConfig = (url: string, dataDir: string): AppConfigShape => ({
   databaseUrl: Redacted.make(url),
   jwtSecret: Redacted.make("integration-test-jwt-secret"),
   jwtAccessExpiryMinutes: 30,
@@ -116,6 +125,7 @@ const testConfig = (url: string): AppConfigShape => ({
   authCodeExpiryMinutes: 10,
   resendApiKey: Redacted.make("integration-test-resend-key"),
   resendFromEmail: "login@example.test",
+  dataDir,
   storageBackend: "local",
   r2AccountId: Option.none(),
   r2AccessKeyId: Option.none(),
@@ -123,20 +133,21 @@ const testConfig = (url: string): AppConfigShape => ({
   r2BucketPrefix: "gm-test",
   suppressAuth: false,
   serverHost: "127.0.0.1",
-  serverPort: 0
+  serverPort: 0,
 });
 
 const buildTestState = async () => {
   const clock = makeTestClock(initialTime);
-  const configLayer = Layer.succeed(AppConfig, testConfig(databaseUrl()));
+  const storageRoot = await mkdtemp(join(tmpdir(), "great-minds-read-storage-"));
+  const configLayer = Layer.succeed(AppConfig, testConfig(databaseUrl(), storageRoot));
   const appLayer = makeAppLayer({
     config: configLayer,
     clock: clock.layer,
     mailer: makeTestMailer().layer,
-    logger: StructuredLoggerLive
+    logger: StructuredLoggerLive,
   });
   const started = await startServer({ layer: appLayer, host: "127.0.0.1", port: 0 });
-  return { started, clock } satisfies TestState;
+  return { started, clock, storageRoot } satisfies TestState;
 };
 
 const runDb = <A>(effect: Effect.Effect<A, unknown, TestServices>) =>
@@ -148,15 +159,27 @@ const resetDatabase = () =>
       const db = yield* Database;
       yield* db.delete(authCodes).pipe(Effect.orDie);
       yield* db.delete(users).pipe(Effect.orDie);
-    })
+    }),
   );
+
+const resetStorage = async () => {
+  const root = currentState().storageRoot;
+  await rm(root, { recursive: true, force: true });
+  await mkdir(root, { recursive: true });
+};
+
+const writeVaultFile = async (vaultId: string, path: string, content: string) => {
+  const fullPath = join(currentState().storageRoot, "vaults", vaultId, path);
+  await mkdir(dirname(fullPath), { recursive: true });
+  await writeFile(fullPath, content, "utf8");
+};
 
 const issueToken = (userId: string) =>
   runDb(
     Effect.gen(function* () {
       const tokens = yield* TokenService;
       return yield* tokens.issueAccessToken(userId as Uuid, initialTime);
-    })
+    }),
   );
 
 const seedFixtures = async (): Promise<Fixture> => {
@@ -166,13 +189,17 @@ const seedFixtures = async (): Promise<Fixture> => {
       yield* db
         .insert(users)
         .values([
-          { id: id.alice, email: "alice@example.com", createdAt: new Date("2026-07-01T00:00:00.000Z") },
+          {
+            id: id.alice,
+            email: "alice@example.com",
+            createdAt: new Date("2026-07-01T00:00:00.000Z"),
+          },
           { id: id.bob, email: "bob@example.com", createdAt: new Date("2026-07-01T00:01:00.000Z") },
           {
             id: id.mallory,
             email: "mallory@example.com",
-            createdAt: new Date("2026-07-01T00:02:00.000Z")
-          }
+            createdAt: new Date("2026-07-01T00:02:00.000Z"),
+          },
         ])
         .pipe(Effect.orDie);
       yield* db
@@ -182,15 +209,15 @@ const seedFixtures = async (): Promise<Fixture> => {
             id: id.vaultAlpha,
             name: "Alpha Vault",
             ownerId: id.alice,
-            createdAt: new Date("2026-07-02T00:00:00.000Z")
+            createdAt: new Date("2026-07-02T00:00:00.000Z"),
           },
           {
             id: id.vaultBeta,
             name: "Beta Vault",
             ownerId: id.bob,
             createdAt: new Date("2026-07-03T00:00:00.000Z"),
-            r2BucketName: "beta-bucket"
-          }
+            r2BucketName: "beta-bucket",
+          },
         ])
         .pipe(Effect.orDie);
       yield* db
@@ -200,26 +227,26 @@ const seedFixtures = async (): Promise<Fixture> => {
             id: "00000000-0000-4000-8000-000000000701",
             vaultId: id.vaultAlpha,
             userId: id.alice,
-            role: "OWNER"
+            role: "OWNER",
           },
           {
             id: "00000000-0000-4000-8000-000000000702",
             vaultId: id.vaultAlpha,
             userId: id.bob,
-            role: "EDITOR"
+            role: "EDITOR",
           },
           {
             id: "00000000-0000-4000-8000-000000000703",
             vaultId: id.vaultBeta,
             userId: id.bob,
-            role: "OWNER"
+            role: "OWNER",
           },
           {
             id: "00000000-0000-4000-8000-000000000704",
             vaultId: id.vaultBeta,
             userId: id.alice,
-            role: "VIEWER"
-          }
+            role: "VIEWER",
+          },
         ])
         .pipe(Effect.orDie);
       yield* db
@@ -230,7 +257,7 @@ const seedFixtures = async (): Promise<Fixture> => {
           keyHash: sha256Hex(aliceApiKey),
           label: "read automation",
           revoked: false,
-          createdAt: new Date("2026-07-04T00:00:00.000Z")
+          createdAt: new Date("2026-07-04T00:00:00.000Z"),
         })
         .pipe(Effect.orDie);
       yield* db
@@ -244,7 +271,7 @@ const seedFixtures = async (): Promise<Fixture> => {
           phaseStatus: "completed",
           progressSteps: [],
           createdAt: new Date("2026-07-05T00:00:00.000Z"),
-          updatedAt: new Date("2026-07-05T01:00:00.000Z")
+          updatedAt: new Date("2026-07-05T01:00:00.000Z"),
         })
         .pipe(Effect.orDie);
       yield* db
@@ -255,28 +282,28 @@ const seedFixtures = async (): Promise<Fixture> => {
             vaultId: id.vaultAlpha,
             slug: "alpha-practice",
             title: "alpha Practice",
-            description: "Alpha"
+            description: "Alpha",
           },
           {
             topicId: id.topicBeta,
             vaultId: id.vaultAlpha,
             slug: "beta-theory",
             title: "Beta Theory",
-            description: "Beta"
+            description: "Beta",
           },
           {
             topicId: id.topicGamma,
             vaultId: id.vaultAlpha,
             slug: "gamma-lines",
             title: "gamma Lines",
-            description: "Gamma"
+            description: "Gamma",
           },
           {
             topicId: id.topicIndex,
             vaultId: id.vaultAlpha,
             slug: "_index",
             title: "Index",
-            description: "Index"
+            description: "Index",
           },
           {
             topicId: id.topicArchived,
@@ -284,15 +311,16 @@ const seedFixtures = async (): Promise<Fixture> => {
             slug: "archived-essay",
             title: "Archived Essay",
             description: "Archived",
-            articleStatus: "archived"
+            articleStatus: "archived",
+            supersededBy: id.topicBeta,
           },
           {
             topicId: id.topicOtherVault,
             vaultId: id.vaultBeta,
             slug: "other-vault",
             title: "Other Vault",
-            description: "Other"
-          }
+            description: "Other",
+          },
         ])
         .pipe(Effect.orDie);
       yield* db
@@ -309,7 +337,7 @@ const seedFixtures = async (): Promise<Fixture> => {
             precis: "Alpha precis",
             updatedAt: new Date("2026-07-09T10:00:00.000Z"),
             renderRunId: id.runAlpha,
-            tags: ["practice"]
+            tags: ["practice"],
           },
           {
             id: id.articleBeta,
@@ -321,7 +349,7 @@ const seedFixtures = async (): Promise<Fixture> => {
             title: "Beta Theory",
             precis: "Beta precis",
             updatedAt: new Date("2026-07-09T12:00:00.000Z"),
-            tags: ["theory"]
+            tags: ["theory"],
           },
           {
             id: id.articleGamma,
@@ -334,7 +362,7 @@ const seedFixtures = async (): Promise<Fixture> => {
             precis: "Gamma precis",
             updatedAt: new Date("2026-07-08T12:00:00.000Z"),
             renderRunId: id.runAlpha,
-            tags: ["lines"]
+            tags: ["lines"],
           },
           {
             id: id.articleIndex,
@@ -346,7 +374,7 @@ const seedFixtures = async (): Promise<Fixture> => {
             title: "Index",
             precis: "Index precis",
             updatedAt: new Date("2026-07-10T12:00:00.000Z"),
-            tags: []
+            tags: [],
           },
           {
             id: id.articleArchived,
@@ -359,7 +387,7 @@ const seedFixtures = async (): Promise<Fixture> => {
             precis: "Archived precis",
             updatedAt: new Date("2026-07-11T12:00:00.000Z"),
             archived: true,
-            tags: ["archive"]
+            tags: ["archive"],
           },
           {
             id: id.articleOtherVault,
@@ -371,8 +399,8 @@ const seedFixtures = async (): Promise<Fixture> => {
             title: "Other Vault",
             precis: "Other precis",
             updatedAt: new Date("2026-07-09T13:00:00.000Z"),
-            tags: []
-          }
+            tags: [],
+          },
         ])
         .pipe(Effect.orDie);
       yield* db
@@ -394,7 +422,7 @@ const seedFixtures = async (): Promise<Fixture> => {
             precis: "A critique of political economy",
             tags: ["economics"],
             derivedExtras: { tradition: "marxist" },
-            updatedAt: new Date("2026-07-09T11:00:00.000Z")
+            updatedAt: new Date("2026-07-09T11:00:00.000Z"),
           },
           {
             id: id.sourceArticle,
@@ -408,7 +436,7 @@ const seedFixtures = async (): Promise<Fixture> => {
             genre: "essay",
             tags: ["party"],
             derivedExtras: {},
-            updatedAt: new Date("2026-07-09T09:00:00.000Z")
+            updatedAt: new Date("2026-07-09T09:00:00.000Z"),
           },
           {
             id: id.sourceSpeech,
@@ -421,7 +449,20 @@ const seedFixtures = async (): Promise<Fixture> => {
             author: "Rosa Luxemburg",
             tags: [],
             derivedExtras: {},
-            updatedAt: new Date("2026-07-09T08:00:00.000Z")
+            updatedAt: new Date("2026-07-09T08:00:00.000Z"),
+          },
+          {
+            id: id.sourceEncoded,
+            vaultId: id.vaultAlpha,
+            filePath: "raw/books/encoded title.md",
+            fileHash: "source-hash-encoded",
+            bodyHash: "source-body-encoded",
+            sourceType: "book",
+            title: "Encoded Title",
+            author: "Path Writer",
+            tags: [],
+            derivedExtras: {},
+            updatedAt: new Date("2026-07-09T06:00:00.000Z"),
           },
           {
             id: id.sourceOtherVault,
@@ -434,18 +475,87 @@ const seedFixtures = async (): Promise<Fixture> => {
             author: "Other Author",
             tags: [],
             derivedExtras: {},
-            updatedAt: new Date("2026-07-09T07:00:00.000Z")
-          }
+            updatedAt: new Date("2026-07-09T07:00:00.000Z"),
+          },
         ])
         .pipe(Effect.orDie);
-    })
+      yield* db
+        .insert(backlinks)
+        .values([
+          {
+            sourceArticleId: id.articleAlpha,
+            targetArticleId: id.articleBeta,
+          },
+          {
+            sourceArticleId: id.articleGamma,
+            targetArticleId: id.articleAlpha,
+          },
+          {
+            sourceArticleId: id.articleAlpha,
+            targetArticleId: id.articleArchived,
+          },
+          {
+            sourceArticleId: id.articleArchived,
+            targetArticleId: id.articleAlpha,
+          },
+        ])
+        .pipe(Effect.orDie);
+      yield* db
+        .insert(searchIndex)
+        .values(
+          Array.from({ length: 106 }, (_, offset) => {
+            const index = offset - 1;
+            return {
+              vaultId: id.vaultAlpha,
+              path: "raw/books/capital.md",
+              chunkIndex: index,
+              heading: index === -1 ? "Metadata" : index < 2 ? "Opening" : "Later",
+              body: index === -1 ? "Synthetic metadata row" : `Capital chunk ${index}`,
+              contentHash: `chunk-hash-${index}`,
+              tsv: sql`to_tsvector('english', ${index === -1 ? "Synthetic metadata row" : `Capital chunk ${index}`})`,
+            };
+          }),
+        )
+        .pipe(Effect.orDie);
+    }),
+  );
+
+  await writeVaultFile(
+    id.vaultAlpha,
+    "wiki/alpha-practice.md",
+    "---\ntitle: alpha Practice\n---\n# Alpha Practice\n\nAlpha body.",
+  );
+  await writeVaultFile(
+    id.vaultAlpha,
+    "wiki/beta-theory.md",
+    "---\ntitle: Beta Theory\n---\n# Beta Theory\n\nBeta body.",
+  );
+  await writeVaultFile(
+    id.vaultAlpha,
+    "archive/archived-essay.md",
+    "---\ntitle: Archived Essay\n---\n# Archived Essay\n\nArchived body.",
+  );
+  await writeVaultFile(
+    id.vaultAlpha,
+    "wiki/orphan-on-disk.md",
+    "---\ntitle: Orphan\n---\n# Orphan\n\nNo registry row.",
+  );
+  await writeVaultFile(
+    id.vaultAlpha,
+    "raw/books/capital.md",
+    "---\ntitle: Capital Volume\n---\n# Capital\n\nCapital body.",
+  );
+  await writeVaultFile(
+    id.vaultAlpha,
+    "raw/books/encoded title.md",
+    "---\ntitle: Encoded Title\n---\nEncoded path body.",
   );
 
   return {
     aliceToken: await issueToken(id.alice),
     bobToken: await issueToken(id.bob),
     malloryToken: await issueToken(id.mallory),
-    aliceApiKey
+    aliceApiKey,
   };
 };
 
@@ -456,7 +566,7 @@ const api = async (method: string, path: string, bearer?: string): Promise<ApiRe
   }
   const response = await fetch(`${currentState().started.url}/v1${path}`, {
     method,
-    headers
+    headers,
   });
   const text = await response.text();
   const parsed = text === "" ? undefined : (JSON.parse(text) as unknown);
@@ -482,12 +592,19 @@ const asPage = (value: unknown): PageBody => {
     pagination: {
       limit: Number(pagination.limit),
       offset: Number(pagination.offset),
-      total: Number(pagination.total)
-    }
+      total: Number(pagination.total),
+    },
   };
 };
 
 const itemRecords = (page: PageBody) => page.items.map(asRecord);
+
+const asArray = (value: unknown) => {
+  if (!Array.isArray(value)) {
+    throw new Error("expected array response");
+  }
+  return value;
+};
 
 describe("read-only HTTP integration", () => {
   beforeAll(async () => {
@@ -497,6 +614,7 @@ describe("read-only HTTP integration", () => {
   beforeEach(async () => {
     currentState().clock.set(initialTime);
     await resetDatabase();
+    await resetStorage();
     fixture = await seedFixtures();
   });
 
@@ -506,6 +624,7 @@ describe("read-only HTTP integration", () => {
     fixture = undefined;
     if (current !== undefined) {
       await current.started.close();
+      await rm(current.storageRoot, { recursive: true, force: true });
     }
   });
 
@@ -521,7 +640,7 @@ describe("read-only HTTP integration", () => {
     expect(vaultItems[1]?.r2_bucket_name).toBeNull();
     expect(asRecord(listed.body).roles).toEqual({
       [id.vaultAlpha]: "owner",
-      [id.vaultBeta]: "viewer"
+      [id.vaultBeta]: "viewer",
     });
 
     const withApiKey = await api("GET", "/vaults?limit=1", rawKey);
@@ -532,7 +651,7 @@ describe("read-only HTTP integration", () => {
     expect(zero.status).toBe(200);
     expect(asPage(zero.body)).toEqual({
       items: [],
-      pagination: { limit: 0, offset: 0, total: 2 }
+      pagination: { limit: 0, offset: 0, total: 2 },
     });
 
     const cap = await api("GET", "/vaults?limit=200", aliceToken);
@@ -543,7 +662,7 @@ describe("read-only HTTP integration", () => {
     expect(pastEnd.status).toBe(200);
     expect(asPage(pastEnd.body)).toEqual({
       items: [],
-      pagination: { limit: 50, offset: 99, total: 2 }
+      pagination: { limit: 50, offset: 99, total: 2 },
     });
 
     const overCap = await api("GET", "/vaults?limit=201", aliceToken);
@@ -564,7 +683,7 @@ describe("read-only HTTP integration", () => {
       name: "Alpha Vault",
       role: "owner",
       member_count: 2,
-      article_count: 5
+      article_count: 5,
     });
 
     const viewerDetail = await api("GET", `/vaults/${id.vaultBeta}`, aliceToken);
@@ -589,13 +708,49 @@ describe("read-only HTTP integration", () => {
     expect(config.status).toBe(200);
     expect(config.body).toEqual({
       thematic_hint: "",
-      kinds: ["person", "event", "organization", "concept"]
+      kinds: ["person", "event", "organization", "concept"],
+    });
+
+    await writeVaultFile(
+      id.vaultAlpha,
+      "config.yaml",
+      "thematic_hint: Prefer movement-level topics.\nkinds:\n  - movement\n  - debate\nweb_search: false\n",
+    );
+    const customConfig = await api("GET", `/vaults/${id.vaultAlpha}/config`, bobToken);
+    expect(customConfig.status).toBe(200);
+    expect(customConfig.body).toEqual({
+      thematic_hint: "Prefer movement-level topics.",
+      kinds: ["movement", "debate"],
+    });
+
+    await writeVaultFile(id.vaultAlpha, "config.yaml", "thematic_hint: ''\nkinds: []\n");
+    const emptyConfig = await api("GET", `/vaults/${id.vaultAlpha}/config`, bobToken);
+    expect(emptyConfig.status).toBe(200);
+    expect(emptyConfig.body).toEqual({
+      thematic_hint: "",
+      kinds: ["person", "event", "organization", "concept"],
+    });
+
+    await writeVaultFile(id.vaultAlpha, "config.yaml", "thematic_hint:\nkinds:\n");
+    const nullConfig = await api("GET", `/vaults/${id.vaultAlpha}/config`, bobToken);
+    expect(nullConfig.status).toBe(200);
+    expect(nullConfig.body).toEqual({
+      thematic_hint: "",
+      kinds: ["person", "event", "organization", "concept"],
+    });
+
+    await writeVaultFile(id.vaultAlpha, "config.yaml", "kinds:\n  - movement\n");
+    const partialConfig = await api("GET", `/vaults/${id.vaultAlpha}/config`, bobToken);
+    expect(partialConfig.status).toBe(200);
+    expect(partialConfig.body).toEqual({
+      thematic_hint: "",
+      kinds: ["movement"],
     });
 
     const nonMember = await api("GET", `/vaults/${id.vaultAlpha}/config`, malloryToken);
     expect(nonMember.status).toBe(403);
     expect(nonMember.body).toEqual({
-      detail: "Only vault members can perform this action"
+      detail: "Only vault members can perform this action",
     });
 
     const unauthenticated = await api("GET", `/vaults/${id.vaultAlpha}/config`);
@@ -610,7 +765,7 @@ describe("read-only HTTP integration", () => {
     expect(page.pagination).toEqual({ limit: 50, offset: 0, total: 2 });
     expect(itemRecords(page)).toEqual([
       { user_id: id.alice, email: "alice@example.com", role: "owner" },
-      { user_id: id.bob, email: "bob@example.com", role: "editor" }
+      { user_id: id.bob, email: "bob@example.com", role: "editor" },
     ]);
 
     const zero = await api("GET", `/vaults/${id.vaultAlpha}/members?limit=0`, aliceToken);
@@ -632,7 +787,7 @@ describe("read-only HTTP integration", () => {
     const editorDenied = await api("GET", `/vaults/${id.vaultAlpha}/members`, bobToken);
     expect(editorDenied.status).toBe(403);
     expect(editorDenied.body).toEqual({
-      detail: "Only vault owners can perform this action"
+      detail: "Only vault owners can perform this action",
     });
 
     const unauthenticated = await api("GET", `/vaults/${id.vaultAlpha}/members`);
@@ -649,7 +804,7 @@ describe("read-only HTTP integration", () => {
     expect(articles.map((article) => article.slug)).toEqual([
       "alpha-practice",
       "beta-theory",
-      "gamma-lines"
+      "gamma-lines",
     ]);
     expect(articles.map((article) => article.file_path)).not.toContain("wiki/_index.md");
     expect(articles.map((article) => article.title)).not.toContain("Archived Essay");
@@ -658,7 +813,7 @@ describe("read-only HTTP integration", () => {
     expect(byRun.status).toBe(200);
     expect(itemRecords(asPage(byRun.body)).map((article) => article.slug)).toEqual([
       "alpha-practice",
-      "gamma-lines"
+      "gamma-lines",
     ]);
 
     const withApiKey = await api("GET", `/vaults/${id.vaultAlpha}/wiki?limit=1`, rawKey);
@@ -691,14 +846,14 @@ describe("read-only HTTP integration", () => {
     expect(itemRecords(asPage(recent.body)).map((article) => article.slug)).toEqual([
       "beta-theory",
       "alpha-practice",
-      "gamma-lines"
+      "gamma-lines",
     ]);
 
     const zero = await api("GET", `/vaults/${id.vaultAlpha}/wiki/recent?limit=0`, aliceToken);
     expect(zero.status).toBe(200);
     expect(asPage(zero.body)).toEqual({
       items: [],
-      pagination: { limit: 0, offset: 0, total: 3 }
+      pagination: { limit: 0, offset: 0, total: 3 },
     });
 
     const cap = await api("GET", `/vaults/${id.vaultAlpha}/wiki/recent?limit=200`, aliceToken);
@@ -715,92 +870,360 @@ describe("read-only HTTP integration", () => {
     expect(unauthenticated.status).toBe(401);
   });
 
+  it("reads document bodies from storage with registry lookup, archived fallback, encoding, and authz", async () => {
+    const { aliceToken, malloryToken } = currentFixture();
+    const wikiDoc = await api(
+      "GET",
+      `/vaults/${id.vaultAlpha}/doc/wiki/alpha-practice.md`,
+      aliceToken,
+    );
+    expect(wikiDoc.status).toBe(200);
+    expect(wikiDoc.body).toMatchObject({
+      body: "# Alpha Practice\n\nAlpha body.",
+      archived: false,
+      superseded_by: null,
+      article: {
+        kind: "wiki",
+        id: id.articleAlpha,
+        file_path: "wiki/alpha-practice.md",
+        slug: "alpha-practice",
+        tags: ["practice"],
+      },
+    });
+
+    const encodedSlash = await api(
+      "GET",
+      `/vaults/${id.vaultAlpha}/doc/wiki%2Falpha-practice.md`,
+      aliceToken,
+    );
+    expect(encodedSlash.status).toBe(200);
+    expect(asRecord(asRecord(encodedSlash.body).article).file_path).toBe("wiki/alpha-practice.md");
+
+    const rawDoc = await api(
+      "GET",
+      `/vaults/${id.vaultAlpha}/doc/raw/books/capital.md`,
+      aliceToken,
+    );
+    expect(rawDoc.status).toBe(200);
+    expect(rawDoc.body).toMatchObject({
+      body: "# Capital\n\nCapital body.",
+      article: {
+        kind: "source",
+        id: id.sourceBook,
+        file_path: "raw/books/capital.md",
+        title: "Capital Volume",
+        derived_extras: { tradition: "marxist" },
+      },
+    });
+
+    const encodedSpace = await api(
+      "GET",
+      `/vaults/${id.vaultAlpha}/doc/raw/books/encoded%20title.md`,
+      aliceToken,
+    );
+    expect(encodedSpace.status).toBe(200);
+    expect(encodedSpace.body).toMatchObject({
+      body: "Encoded path body.",
+      article: {
+        kind: "source",
+        file_path: "raw/books/encoded title.md",
+      },
+    });
+
+    const archived = await api(
+      "GET",
+      `/vaults/${id.vaultAlpha}/doc/wiki/archived-essay.md`,
+      aliceToken,
+    );
+    expect(archived.status).toBe(200);
+    expect(archived.body).toMatchObject({
+      body: "# Archived Essay\n\nArchived body.",
+      archived: true,
+      superseded_by: "beta-theory",
+      article: {
+        kind: "wiki",
+        id: id.articleArchived,
+        file_path: "archive/archived-essay.md",
+        slug: "archive/archived-essay",
+      },
+    });
+
+    const dbRowWithoutFile = await api(
+      "GET",
+      `/vaults/${id.vaultAlpha}/doc/raw/articles/organization.md`,
+      aliceToken,
+    );
+    expect(dbRowWithoutFile.status).toBe(404);
+    expect(dbRowWithoutFile.body).toEqual({
+      detail: "Document not found: raw/articles/organization.md",
+    });
+
+    const fileWithoutRow = await api(
+      "GET",
+      `/vaults/${id.vaultAlpha}/doc/wiki/orphan-on-disk.md`,
+      aliceToken,
+    );
+    expect(fileWithoutRow.status).toBe(500);
+    expect(fileWithoutRow.body).toEqual({
+      detail: "Document on disk lacks a registry row: wiki/orphan-on-disk.md",
+    });
+
+    const invalid = await api("GET", `/vaults/${id.vaultAlpha}/doc/wiki/%5Cbad.md`, aliceToken);
+    expect(invalid.status).toBe(400);
+
+    const nonMember = await api(
+      "GET",
+      `/vaults/${id.vaultAlpha}/doc/wiki/alpha-practice.md`,
+      malloryToken,
+    );
+    expect(nonMember.status).toBe(403);
+
+    const unauthenticated = await api("GET", `/vaults/${id.vaultAlpha}/doc/wiki/alpha-practice.md`);
+    expect(unauthenticated.status).toBe(401);
+  });
+
+  it("reads chunk ranges with inclusive slicing, the 100 chunk cap, and authz", async () => {
+    const { aliceToken, malloryToken } = currentFixture();
+    const cappedQuery = new URLSearchParams({
+      path: "raw/books/capital.md",
+      start: "0",
+      end: "200",
+    });
+    const capped = await api(
+      "GET",
+      `/vaults/${id.vaultAlpha}/chunks?${cappedQuery.toString()}`,
+      aliceToken,
+    );
+    expect(capped.status).toBe(200);
+    const cappedChunks = asArray(capped.body).map(asRecord);
+    expect(cappedChunks).toHaveLength(100);
+    expect(cappedChunks[0]).toMatchObject({
+      path: "raw/books/capital.md",
+      chunk_index: 0,
+      heading: "Opening",
+      body: "Capital chunk 0",
+      content_hash: "chunk-hash-0",
+    });
+    expect(cappedChunks.at(-1)).toMatchObject({ chunk_index: 99 });
+
+    const tailQuery = new URLSearchParams({
+      path: "raw/books/capital.md",
+      start: "100",
+      end: "200",
+    });
+    const tail = await api(
+      "GET",
+      `/vaults/${id.vaultAlpha}/chunks?${tailQuery.toString()}`,
+      aliceToken,
+    );
+    expect(tail.status).toBe(200);
+    expect(asArray(tail.body).map((chunk) => asRecord(chunk).chunk_index)).toEqual([
+      100, 101, 102, 103, 104,
+    ]);
+
+    const inverted = await api(
+      "GET",
+      `/vaults/${id.vaultAlpha}/chunks?path=raw%2Fbooks%2Fcapital.md&start=7&end=3`,
+      aliceToken,
+    );
+    expect(inverted.status).toBe(200);
+    expect(inverted.body).toEqual([]);
+
+    const missingPath = await api(
+      "GET",
+      `/vaults/${id.vaultAlpha}/chunks?path=raw%2Fbooks%2Fmissing.md&start=0&end=3`,
+      aliceToken,
+    );
+    expect(missingPath.status).toBe(200);
+    expect(missingPath.body).toEqual([]);
+
+    const negativeStart = await api(
+      "GET",
+      `/vaults/${id.vaultAlpha}/chunks?path=raw%2Fbooks%2Fcapital.md&start=-1&end=1`,
+      aliceToken,
+    );
+    expect(negativeStart.status).toBe(200);
+    expect(
+      (negativeStart.body as ReadonlyArray<{ chunk_index: number }>).map(
+        (chunk) => chunk.chunk_index,
+      ),
+    ).toEqual([0, 1]);
+
+    const invalidQuery = await api(
+      "GET",
+      `/vaults/${id.vaultAlpha}/chunks?path=raw%2Fbooks%2Fcapital.md&start=0`,
+      aliceToken,
+    );
+    expect(invalidQuery.status).toBe(422);
+
+    const nonMember = await api(
+      "GET",
+      `/vaults/${id.vaultAlpha}/chunks?${cappedQuery.toString()}`,
+      malloryToken,
+    );
+    expect(nonMember.status).toBe(403);
+
+    const unauthenticated = await api(
+      "GET",
+      `/vaults/${id.vaultAlpha}/chunks?${cappedQuery.toString()}`,
+    );
+    expect(unauthenticated.status).toBe(401);
+  });
+
+  it("reads live wiki links with archived exclusions, 404s non-wiki paths, and enforces authz", async () => {
+    const { aliceToken, malloryToken } = currentFixture();
+    const alphaQuery = new URLSearchParams({ path: "wiki/alpha-practice.md" });
+    const alphaLinks = await api(
+      "GET",
+      `/vaults/${id.vaultAlpha}/links?${alphaQuery.toString()}`,
+      aliceToken,
+    );
+    expect(alphaLinks.status).toBe(200);
+    expect(alphaLinks.body).toEqual({
+      outgoing: [
+        {
+          file_path: "wiki/beta-theory.md",
+          title: "Beta Theory",
+          precis: "Beta precis",
+          updated_at: "2026-07-09T12:00:00.000Z",
+          slug: "beta-theory",
+        },
+      ],
+      incoming: [
+        {
+          file_path: "wiki/gamma-lines.md",
+          title: "gamma Lines",
+          precis: "Gamma precis",
+          updated_at: "2026-07-08T12:00:00.000Z",
+          slug: "gamma-lines",
+        },
+      ],
+    });
+
+    const betaQuery = new URLSearchParams({ path: "wiki/beta-theory.md" });
+    const betaLinks = await api(
+      "GET",
+      `/vaults/${id.vaultAlpha}/links?${betaQuery.toString()}`,
+      aliceToken,
+    );
+    expect(betaLinks.status).toBe(200);
+    expect(betaLinks.body).toMatchObject({
+      outgoing: [],
+      incoming: [{ file_path: "wiki/alpha-practice.md" }],
+    });
+
+    const rawQuery = new URLSearchParams({ path: "raw/books/capital.md" });
+    const rawLinks = await api(
+      "GET",
+      `/vaults/${id.vaultAlpha}/links?${rawQuery.toString()}`,
+      aliceToken,
+    );
+    expect(rawLinks.status).toBe(404);
+    expect(rawLinks.body).toEqual({ detail: "Not a wiki article: raw/books/capital.md" });
+
+    const archivedQuery = new URLSearchParams({ path: "archive/archived-essay.md" });
+    const archivedLinks = await api(
+      "GET",
+      `/vaults/${id.vaultAlpha}/links?${archivedQuery.toString()}`,
+      aliceToken,
+    );
+    expect(archivedLinks.status).toBe(404);
+
+    const nonMember = await api(
+      "GET",
+      `/vaults/${id.vaultAlpha}/links?${alphaQuery.toString()}`,
+      malloryToken,
+    );
+    expect(nonMember.status).toBe(403);
+
+    const unauthenticated = await api(
+      "GET",
+      `/vaults/${id.vaultAlpha}/links?${alphaQuery.toString()}`,
+    );
+    expect(unauthenticated.status).toBe(401);
+  });
+
   it("lists raw sources with search, source-type facets, nullability, and authz", async () => {
     const { aliceToken, malloryToken } = currentFixture();
     const listed = await api("GET", `/vaults/${id.vaultAlpha}/raw/sources`, aliceToken);
     expect(listed.status).toBe(200);
     const page = asPage(listed.body);
     const sources = itemRecords(page);
-    expect(page.pagination).toEqual({ limit: 50, offset: 0, total: 3 });
+    expect(page.pagination).toEqual({ limit: 50, offset: 0, total: 4 });
     expect(sources.map((source) => source.file_path)).toEqual([
       "raw/books/capital.md",
       "raw/articles/organization.md",
-      "raw/speeches/mass-strike.md"
+      "raw/speeches/mass-strike.md",
+      "raw/books/encoded title.md",
     ]);
-    const speech = sources.find(
-      (source) => source.file_path === "raw/speeches/mass-strike.md"
-    );
+    const speech = sources.find((source) => source.file_path === "raw/speeches/mass-strike.md");
     expect(speech).toMatchObject({
       title: null,
       url: null,
       origin: null,
       genre: null,
       tags: [],
-      derived_extras: {}
+      derived_extras: {},
     });
     expect(asRecord(listed.body).facets).toEqual({
       source_types: expect.arrayContaining([
-        { value: "book", count: 1 },
+        { value: "book", count: 2 },
         { value: "article", count: 1 },
-        { value: "speech", count: 1 }
-      ])
+        { value: "speech", count: 1 },
+      ]),
     });
 
     const searched = await api(
       "GET",
       `/vaults/${id.vaultAlpha}/raw/sources?search=Marx`,
-      aliceToken
+      aliceToken,
     );
     expect(searched.status).toBe(200);
     expect(itemRecords(asPage(searched.body)).map((source) => source.file_path)).toEqual([
-      "raw/books/capital.md"
+      "raw/books/capital.md",
     ]);
     expect(asPage(searched.body).pagination.total).toBe(1);
     const searchedFacets = asRecord(searched.body).facets as {
       source_types: ReadonlyArray<{ value: string; count: number }>;
     };
-    expect(
-      [...searchedFacets.source_types].sort((a, b) => a.value.localeCompare(b.value))
-    ).toEqual([
-      { value: "article", count: 1 },
-      { value: "book", count: 1 },
-      { value: "speech", count: 1 }
-    ]);
+    expect([...searchedFacets.source_types].sort((a, b) => a.value.localeCompare(b.value))).toEqual(
+      [
+        { value: "article", count: 1 },
+        { value: "book", count: 2 },
+        { value: "speech", count: 1 },
+      ],
+    );
 
     const emptyParams = await api(
       "GET",
       `/vaults/${id.vaultAlpha}/raw/sources?search=&source_type=`,
-      aliceToken
+      aliceToken,
     );
     expect(emptyParams.status).toBe(200);
-    expect(asPage(emptyParams.body).pagination.total).toBe(3);
+    expect(asPage(emptyParams.body).pagination.total).toBe(4);
 
     const filtered = await api(
       "GET",
       `/vaults/${id.vaultAlpha}/raw/sources?source_type=article`,
-      aliceToken
+      aliceToken,
     );
     expect(filtered.status).toBe(200);
     expect(itemRecords(asPage(filtered.body)).map((source) => source.source_type)).toEqual([
-      "article"
+      "article",
     ]);
 
     const zero = await api("GET", `/vaults/${id.vaultAlpha}/raw/sources?limit=0`, aliceToken);
     expect(zero.status).toBe(200);
     expect(asPage(zero.body)).toEqual({
       items: [],
-      pagination: { limit: 0, offset: 0, total: 3 }
+      pagination: { limit: 0, offset: 0, total: 4 },
     });
 
     const cap = await api("GET", `/vaults/${id.vaultAlpha}/raw/sources?limit=200`, aliceToken);
     expect(cap.status).toBe(200);
     expect(asPage(cap.body).pagination.limit).toBe(200);
 
-    const pastEnd = await api(
-      "GET",
-      `/vaults/${id.vaultAlpha}/raw/sources?offset=99`,
-      aliceToken
-    );
+    const pastEnd = await api("GET", `/vaults/${id.vaultAlpha}/raw/sources?offset=99`, aliceToken);
     expect(pastEnd.status).toBe(200);
     expect(asPage(pastEnd.body).items).toEqual([]);
 
