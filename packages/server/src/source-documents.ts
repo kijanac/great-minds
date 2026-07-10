@@ -21,6 +21,10 @@ type SourceDocumentRow = typeof sourceDocuments.$inferSelect;
 
 type SourceDocumentsServiceShape = {
   readonly index: (vaultId: Uuid, filePath: string, content: string) => Effect.Effect<Uuid>;
+  readonly existingClientHashes: (
+    vaultId: Uuid,
+    clientHashes: readonly string[],
+  ) => Effect.Effect<readonly string[]>;
   readonly getByPath: (
     vaultId: Uuid,
     filePath: string,
@@ -159,6 +163,25 @@ export const SourceDocumentsServiceLive = Layer.effect(
             throw new Error("source document upsert returned no row");
           }
           return row.id as Uuid;
+        }),
+      existingClientHashes: (vaultId, clientHashes) =>
+        Effect.gen(function* () {
+          if (clientHashes.length === 0) {
+            return [];
+          }
+          const rows = yield* db
+            .select({ clientHash: sourceDocuments.clientHash })
+            .from(sourceDocuments)
+            .where(
+              and(
+                eq(sourceDocuments.vaultId, vaultId),
+                inArray(sourceDocuments.clientHash, [...clientHashes]),
+              ),
+            )
+            .pipe(dieDatabase);
+          return rows
+            .map((row) => row.clientHash)
+            .filter((hash): hash is string => hash !== null);
         }),
       getByPath: (vaultId, filePath) =>
         Effect.gen(function* () {

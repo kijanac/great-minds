@@ -7,6 +7,7 @@ import { AppConfigLive } from "./config.ts";
 import type { AppConfig } from "./config.ts";
 import { DrizzleLive } from "./db.ts";
 import { DocumentsService, DocumentsServiceLive } from "./documents.ts";
+import { IngestService, IngestServiceLive } from "./ingest.ts";
 import { StructuredLogger, StructuredLoggerLive } from "./logging.ts";
 import { Mailer, MailerLive } from "./mailer.ts";
 import { ProposalsService, ProposalsServiceLive } from "./proposals.ts";
@@ -36,6 +37,7 @@ export type AppLayerServices =
   | SourcesService
   | SourceDocumentsService
   | ProposalsService
+  | IngestService
   | DocumentsService
   | SessionsService
   | VaultStorage
@@ -82,6 +84,13 @@ export const makeAppLayer = (overrides: AppLayerOverrides = {}) => {
     Layer.provideMerge(VaultAccessLive),
     Layer.provideMerge(BaseLive),
   );
+  const IngestLive = IngestServiceLive.pipe(
+    Layer.provideMerge(ProposalsLive),
+    Layer.provideMerge(SourceDocumentsLive),
+    Layer.provideMerge(StorageLive),
+    Layer.provideMerge(VaultAccessLive),
+    Layer.provideMerge(BaseLive),
+  );
   const VaultsLive = VaultsServiceLive.pipe(
     Layer.provideMerge(MailerLiveLayer),
     Layer.provideMerge(VaultAccessLive),
@@ -92,6 +101,7 @@ export const makeAppLayer = (overrides: AppLayerOverrides = {}) => {
     VaultsLive,
     WikiServiceLive.pipe(Layer.provideMerge(VaultAccessLive), Layer.provideMerge(BaseLive)),
     SourcesLive,
+    IngestLive,
     DocumentsServiceLive.pipe(
       Layer.provideMerge(VaultAccessLive),
       Layer.provideMerge(StorageLive),

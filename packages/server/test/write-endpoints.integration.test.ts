@@ -1,4 +1,5 @@
 import { access, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { createServer, type RequestListener, type Server as NodeServer } from "node:http";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 
@@ -30,6 +31,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { makeAppLayer } from "../src/app-layer.ts";
 import { ClockService, makeTestClock } from "../src/clock.ts";
 import { AppConfig, type AppConfigShape } from "../src/config.ts";
+import { bodyContentHash, fileContentHash } from "../src/crypto.ts";
 import { StructuredLogger, StructuredLoggerLive } from "../src/logging.ts";
 import { makeTestMailer } from "../src/mailer.ts";
 import { startServer } from "../src/server.ts";
@@ -52,6 +54,12 @@ const id = {
   task: "00000000-0000-4000-8000-000000010901",
   cache: "00000000-0000-4000-8000-000000011001",
   cost: "00000000-0000-4000-8000-000000011101",
+  m32SourceA: "00000000-0000-4000-8000-000000013001",
+  m32SourceB: "00000000-0000-4000-8000-000000013002",
+  m32StagedRun: "00000000-0000-4000-8000-000000013101",
+  m32UrlRun: "00000000-0000-4000-8000-000000013102",
+  m32UrlFailRun: "00000000-0000-4000-8000-000000013103",
+  m32UrlPdfRun: "00000000-0000-4000-8000-000000013104",
 } as const;
 
 type TestServices = AppConfig | Database | ClockService | StructuredLogger | TokenService;
@@ -143,6 +151,8 @@ const resetDatabase = () =>
   runDb(
     Effect.gen(function* () {
       const db = yield* Database;
+      yield* db.execute(sql`delete from absurd.r_default`).pipe(Effect.orDie);
+      yield* db.execute(sql`delete from absurd.t_default`).pipe(Effect.orDie);
       yield* db.delete(authCodes).pipe(Effect.orDie);
       yield* db.delete(users).pipe(Effect.orDie);
     }),
@@ -211,9 +221,24 @@ const seedBase = async (): Promise<Fixture> => {
       yield* db
         .insert(vaultMemberships)
         .values([
-          { id: "00000000-0000-4000-8000-000000012001", vaultId: id.vault, userId: id.alice, role: "OWNER" },
-          { id: "00000000-0000-4000-8000-000000012002", vaultId: id.vault, userId: id.bob, role: "EDITOR" },
-          { id: "00000000-0000-4000-8000-000000012003", vaultId: id.vault, userId: id.carol, role: "VIEWER" },
+          {
+            id: "00000000-0000-4000-8000-000000012001",
+            vaultId: id.vault,
+            userId: id.alice,
+            role: "OWNER",
+          },
+          {
+            id: "00000000-0000-4000-8000-000000012002",
+            vaultId: id.vault,
+            userId: id.bob,
+            role: "EDITOR",
+          },
+          {
+            id: "00000000-0000-4000-8000-000000012003",
+            vaultId: id.vault,
+            userId: id.carol,
+            role: "VIEWER",
+          },
         ])
         .pipe(Effect.orDie);
     }),
@@ -309,6 +334,16 @@ const api = async (
   bearer?: string,
   body?: unknown,
 ): Promise<ApiResponse> => {
+  return apiAt(currentState().started.url, method, `/v1${path}`, bearer, body);
+};
+
+const apiAt = async (
+  baseUrl: string,
+  method: string,
+  path: string,
+  bearer?: string,
+  body?: unknown,
+): Promise<ApiResponse> => {
   const headers = new Headers();
   if (bearer !== undefined) {
     headers.set("authorization", `Bearer ${bearer}`);
@@ -316,7 +351,7 @@ const api = async (
   if (body !== undefined) {
     headers.set("content-type", "application/json");
   }
-  const response = await fetch(`${currentState().started.url}/v1${path}`, {
+  const response = await fetch(`${baseUrl}${path}`, {
     method,
     headers,
     body: body === undefined ? undefined : JSON.stringify(body),
@@ -327,6 +362,49 @@ const api = async (
     body: text === "" ? undefined : (JSON.parse(text) as unknown),
     text,
   };
+};
+
+const uploadApi = async (
+  path: string,
+  bearer: string | undefined,
+  form: FormData,
+): Promise<ApiResponse> => {
+  const headers = new Headers();
+  if (bearer !== undefined) {
+    headers.set("authorization", `Bearer ${bearer}`);
+  }
+  const response = await fetch(`${currentState().started.url}/v1${path}`, {
+    method: "POST",
+    headers,
+    body: form,
+  });
+  const text = await response.text();
+  return {
+    status: response.status,
+    body: text === "" ? undefined : (JSON.parse(text) as unknown),
+    text,
+  };
+};
+
+const withLocalHttpServer = async <A>(
+  handler: RequestListener,
+  use: (baseUrl: string) => Promise<A>,
+) => {
+  const server: NodeServer = createServer(handler);
+  await new Promise<void>((resolve) => {
+    server.listen(0, "127.0.0.1", resolve);
+  });
+  try {
+    const address = server.address();
+    if (address === null || typeof address === "string") {
+      throw new Error("local HTTP test server did not bind to a TCP port");
+    }
+    return await use(`http://127.0.0.1:${address.port}`);
+  } finally {
+    await new Promise<void>((resolve, reject) => {
+      server.close((error) => (error === undefined ? resolve() : reject(error)));
+    });
+  }
 };
 
 const asRecord = (value: unknown): Record<string, unknown> => {
@@ -586,12 +664,9 @@ describe("M3.1 write endpoint integration", () => {
     );
     expect(editorReview.status).toBe(403);
 
-    const approved = await api(
-      "PATCH",
-      `/vaults/${id.vault}/proposals/${proposalId}`,
-      aliceToken,
-      { status: "approved" },
-    );
+    const approved = await api("PATCH", `/vaults/${id.vault}/proposals/${proposalId}`, aliceToken, {
+      status: "approved",
+    });
     expect(approved.status).toBe(200);
     expect(asRecord(approved.body).status).toBe("approved");
     const destPath = String(asRecord(approved.body).dest_path);
@@ -644,12 +719,9 @@ describe("M3.1 write endpoint integration", () => {
       content_type: "texts",
     });
     const rejectId = String(asRecord(rejectCreate.body).id);
-    const rejected = await api(
-      "PATCH",
-      `/vaults/${id.vault}/proposals/${rejectId}`,
-      aliceToken,
-      { status: "rejected" },
-    );
+    const rejected = await api("PATCH", `/vaults/${id.vault}/proposals/${rejectId}`, aliceToken, {
+      status: "rejected",
+    });
     expect(rejected.status).toBe(200);
     expect(await proposalFileExists(rejectId)).toBe(false);
   });
@@ -764,6 +836,539 @@ describe("M3.1 write endpoint integration", () => {
     expect(missing.status).toBe(404);
   });
 
+  it("ingests raw markdown and direct text uploads with owner guards, frontmatter, hashes, and compile intents", async () => {
+    const { aliceToken, bobToken, carolToken } = currentFixture();
+    const raw = await api("POST", `/vaults/${id.vault}/ingest`, aliceToken, {
+      content: "# Raw Title\n\nRaw body paragraph.",
+      dest: "raw/docs/raw-direct.md",
+      origin: "fixture",
+    });
+    expect(raw.status).toBe(201);
+    expect(raw.body).toEqual({ file_path: "raw/docs/raw-direct.md" });
+    const rawText = await readVaultFile(id.vault, "raw/docs/raw-direct.md");
+    expect(rawText).toBe(
+      "---\nsource_type: document\norigin: fixture\n---\n# Raw Title\n\nRaw body paragraph. ^p0\n",
+    );
+
+    const rawRows = await runDb(
+      Effect.gen(function* () {
+        const db = yield* Database;
+        return yield* db
+          .select()
+          .from(sourceDocuments)
+          .where(
+            and(
+              eq(sourceDocuments.vaultId, id.vault),
+              eq(sourceDocuments.filePath, "raw/docs/raw-direct.md"),
+            ),
+          )
+          .pipe(Effect.orDie);
+      }),
+    );
+    expect(rawRows).toHaveLength(1);
+    expect(rawRows[0]).toMatchObject({
+      sourceType: "document",
+      origin: "fixture",
+      fileHash: fileContentHash(rawText),
+      bodyHash: bodyContentHash("# Raw Title\n\nRaw body paragraph. ^p0\n"),
+    });
+    expect(await countTable(compileIntents)).toBe(1);
+
+    const editorDenied = await api("POST", `/vaults/${id.vault}/ingest`, bobToken, {
+      content: "Denied",
+      dest: "raw/docs/denied.md",
+    });
+    expect(editorDenied.status).toBe(403);
+
+    const viewerDeniedUpload = new FormData();
+    viewerDeniedUpload.append("file", new Blob(["viewer"], { type: "text/plain" }), "viewer.txt");
+    const viewerUpload = await uploadApi(
+      `/vaults/${id.vault}/ingest/upload`,
+      carolToken,
+      viewerDeniedUpload,
+    );
+    expect(viewerUpload.status).toBe(403);
+
+    const invalidVaultUpload = new FormData();
+    invalidVaultUpload.append(
+      "file",
+      new Blob(["bad vault"], { type: "text/plain" }),
+      "bad-vault.txt",
+    );
+    const invalidVault = await uploadApi(
+      "/vaults/not-a-uuid/ingest/upload",
+      aliceToken,
+      invalidVaultUpload,
+    );
+    expect(invalidVault.status).toBe(422);
+    expect(invalidVault.body).toEqual({ detail: "Invalid path parameter" });
+
+    const missingFile = await uploadApi(
+      `/vaults/${id.vault}/ingest/upload`,
+      aliceToken,
+      new FormData(),
+    );
+    expect(missingFile.status).toBe(400);
+    expect(missingFile.body).toEqual({ detail: "Uploaded file must have a filename" });
+
+    const form = new FormData();
+    form.append(
+      "file",
+      new Blob(["# Uploaded\n\nUploaded paragraph."], { type: "text/plain" }),
+      "uploaded.txt",
+    );
+    const uploaded = await uploadApi(
+      `/vaults/${id.vault}/ingest/upload?dest_path=uploads/custom-name.txt&origin=manual`,
+      aliceToken,
+      form,
+    );
+    expect(uploaded.status).toBe(201);
+    expect(uploaded.body).toEqual({ file_path: "raw/docs/uploads/custom-name.md" });
+    const uploadedText = await readVaultFile(id.vault, "raw/docs/uploads/custom-name.md");
+    expect(uploadedText).toContain("origin: manual");
+    expect(uploadedText).toContain("Uploaded paragraph. ^p0");
+
+    const htmlForm = new FormData();
+    htmlForm.append(
+      "file",
+      new Blob(
+        [
+          "<html><head><title>HTML Upload</title></head><body><main><h1>HTML Upload</h1><p>Converted upload paragraph.</p></main></body></html>",
+        ],
+        { type: "text/html" },
+      ),
+      "html-upload.html",
+    );
+    const htmlUpload = await uploadApi(
+      `/vaults/${id.vault}/ingest/upload?origin=html-fixture`,
+      aliceToken,
+      htmlForm,
+    );
+    expect(htmlUpload.status).toBe(201);
+    expect(htmlUpload.body).toEqual({ file_path: "raw/docs/html-upload.md" });
+    const htmlText = await readVaultFile(id.vault, "raw/docs/html-upload.md");
+    expect(htmlText).toBe(
+      "---\nsource_type: document\norigin: html-fixture\n---\n# HTML Upload\n\nConverted upload paragraph. ^p0\n",
+    );
+    const htmlRows = await runDb(
+      Effect.gen(function* () {
+        const db = yield* Database;
+        return yield* db
+          .select()
+          .from(sourceDocuments)
+          .where(
+            and(
+              eq(sourceDocuments.vaultId, id.vault),
+              eq(sourceDocuments.filePath, "raw/docs/html-upload.md"),
+            ),
+          )
+          .pipe(Effect.orDie);
+      }),
+    );
+    expect(htmlRows[0]).toMatchObject({
+      fileHash: fileContentHash(htmlText),
+      bodyHash: bodyContentHash("# HTML Upload\n\nConverted upload paragraph. ^p0\n"),
+    });
+
+    const badDest = new FormData();
+    badDest.append("file", new Blob(["bad"], { type: "text/plain" }), "bad.txt");
+    const badUpload = await uploadApi(
+      `/vaults/${id.vault}/ingest/upload?dest_path=../bad.md`,
+      aliceToken,
+      badDest,
+    );
+    expect(badUpload.status).toBe(400);
+    expect(badUpload.body).toEqual({ detail: "Invalid dest_path: ../bad.md" });
+  });
+
+  it("branches all user suggestion intents between owner direct ingest and editor proposals", async () => {
+    const { aliceToken, bobToken, carolToken } = currentFixture();
+    const intents = ["disagree", "correct", "add_context", "restructure"] as const;
+
+    for (const [index, intent] of intents.entries()) {
+      currentState().clock.set(new Date(initialTime.getTime() + index * 1000));
+      const owner = await api("POST", `/vaults/${id.vault}/ingest/user-suggestion`, aliceToken, {
+        body: `Owner ${intent} suggestion.`,
+        intent,
+        anchored_to: `Owner Anchor ${intent}`,
+        anchored_section: "section-one",
+      });
+      expect(owner.status).toBe(201);
+      const ownerPath = String(asRecord(owner.body).file_path);
+      const ownerText = await readVaultFile(id.vault, ownerPath);
+      expect(ownerText).toContain("source_type: user");
+      expect(ownerText).toContain("origin: user-suggestion");
+      expect(ownerText).toContain(`intent: ${intent}`);
+      expect(ownerText).toContain(`anchored_to: Owner Anchor ${intent}`);
+
+      currentState().clock.set(new Date(initialTime.getTime() + (index + 10) * 1000));
+      const editor = await api("POST", `/vaults/${id.vault}/ingest/user-suggestion`, bobToken, {
+        body: `Editor ${intent} suggestion.`,
+        intent,
+        anchored_to: `Editor Anchor ${intent}`,
+        anchored_section: "section-two",
+      });
+      expect(editor.status).toBe(201);
+      const editorPath = String(asRecord(editor.body).file_path);
+      const proposalRows = await runDb(
+        Effect.gen(function* () {
+          const db = yield* Database;
+          return yield* db
+            .select()
+            .from(sourceProposals)
+            .where(
+              and(eq(sourceProposals.vaultId, id.vault), eq(sourceProposals.destPath, editorPath)),
+            )
+            .pipe(Effect.orDie);
+        }),
+      );
+      expect(proposalRows).toHaveLength(1);
+      expect(proposalRows[0]).toMatchObject({
+        status: "PENDING",
+        contentType: "user_suggestion",
+        documentId: null,
+      });
+      const staged = await readFile(
+        join(currentState().storageRoot, "proposals", `${proposalRows[0]!.id}.md`),
+        "utf8",
+      );
+      expect(staged).toContain(`intent: ${intent}`);
+      expect(staged).toContain(`anchored_to: Editor Anchor ${intent}`);
+    }
+
+    expect(await countTable(sourceDocuments)).toBe(4);
+    expect(await countTable(sourceProposals)).toBe(4);
+    expect(await countTable(compileIntents)).toBe(1);
+
+    const blank = await api("POST", `/vaults/${id.vault}/ingest/user-suggestion`, aliceToken, {
+      body: "   ",
+      intent: "correct",
+    });
+    expect(blank.status).toBe(400);
+    expect(blank.body).toEqual({ detail: "body is empty" });
+
+    const viewer = await api("POST", `/vaults/${id.vault}/ingest/user-suggestion`, carolToken, {
+      body: "Viewer suggestion",
+      intent: "correct",
+    });
+    expect(viewer.status).toBe(403);
+  });
+
+  it("handles staged-file dedupe, local signing errors, process enqueue, and zero route-level compile intents", async () => {
+    const { aliceToken, bobToken } = currentFixture();
+    await runDb(
+      Effect.gen(function* () {
+        const db = yield* Database;
+        yield* db
+          .insert(sourceDocuments)
+          .values([
+            {
+              id: id.m32SourceA,
+              vaultId: id.vault,
+              filePath: "raw/docs/a.md",
+              fileHash: "file-a",
+              bodyHash: "body-a",
+              clientHash: "hash-a",
+              sourceType: "document",
+              tags: [],
+              derivedExtras: {},
+            },
+            {
+              id: id.m32SourceB,
+              vaultId: id.vault,
+              filePath: "raw/docs/b.md",
+              fileHash: "file-b",
+              bodyHash: "body-b",
+              clientHash: "hash-a",
+              sourceType: "document",
+              tags: [],
+              derivedExtras: {},
+            },
+          ])
+          .pipe(Effect.orDie);
+      }),
+    );
+
+    const dupes = await api(
+      "POST",
+      `/vaults/${id.vault}/ingest/staged-files/check-dupes`,
+      aliceToken,
+      {
+        client_hashes: ["hash-a", "hash-b"],
+      },
+    );
+    expect(dupes.status).toBe(200);
+    expect(asRecord(dupes.body).existing).toEqual(["hash-a", "hash-a"]);
+
+    const editorDupes = await api(
+      "POST",
+      `/vaults/${id.vault}/ingest/staged-files/check-dupes`,
+      bobToken,
+      {
+        client_hashes: ["hash-a"],
+      },
+    );
+    expect(editorDupes.status).toBe(403);
+
+    const localSign = await api(
+      "POST",
+      `/vaults/${id.vault}/ingest/staged-files/sign`,
+      aliceToken,
+      {
+        files: [{ name: "a.md", size: 10, hash: "hash-a", mimetype: "text/markdown" }],
+      },
+    );
+    expect(localSign.status).toBe(400);
+    expect(localSign.body).toEqual({ detail: "vault has no r2 bucket; cannot sign uploads" });
+
+    const emptyProcess = await api(
+      "POST",
+      `/vaults/${id.vault}/ingest/staged-files/process`,
+      aliceToken,
+      {
+        job_id: id.m32StagedRun,
+        files: [],
+      },
+    );
+    expect(emptyProcess.status).toBe(400);
+    expect(emptyProcess.body).toEqual({ detail: "no files provided" });
+
+    await runDb(
+      Effect.gen(function* () {
+        const db = yield* Database;
+        yield* db.delete(sourceDocuments).pipe(Effect.orDie);
+      }),
+    );
+    const processed = await api(
+      "POST",
+      `/vaults/${id.vault}/ingest/staged-files/process`,
+      aliceToken,
+      {
+        job_id: id.m32StagedRun,
+        files: [{ name: "a.md", size: 10, hash: "hash-a", mimetype: "text/markdown" }],
+      },
+    );
+    expect(processed.status).toBe(200);
+    const processedBody = asRecord(processed.body);
+    expect(processedBody).toMatchObject({
+      id: id.m32StagedRun,
+      vault_id: id.vault,
+      trigger: "staged_files",
+      stream_url: `/jobs/${id.m32StagedRun}/stream`,
+    });
+
+    const rows = await runDb(
+      Effect.gen(function* () {
+        const db = yield* Database;
+        const appTasks = yield* db
+          .select()
+          .from(tasks)
+          .where(eq(tasks.pipelineRunId, id.m32StagedRun))
+          .pipe(Effect.orDie);
+        const runs = yield* db
+          .select()
+          .from(pipelineRuns)
+          .where(eq(pipelineRuns.id, id.m32StagedRun))
+          .pipe(Effect.orDie);
+        const absurdTasks = yield* db
+          .execute(sql<{ task_name: string; params: unknown; idempotency_key: string }>`
+            select task_name, params, idempotency_key
+            from absurd.t_default
+            where idempotency_key = ${id.m32StagedRun}
+          `)
+          .pipe(Effect.orDie);
+        return {
+          appTasks,
+          runs,
+          absurdTasks: (
+            absurdTasks as unknown as {
+              readonly rows: readonly {
+                readonly task_name: string;
+                readonly params: unknown;
+                readonly idempotency_key: string;
+              }[];
+            }
+          ).rows,
+        };
+      }),
+    );
+    expect(rows.appTasks).toHaveLength(1);
+    expect(rows.appTasks[0]).toMatchObject({
+      type: "staged_file_ingest",
+      vaultId: id.vault,
+      pipelineRunId: id.m32StagedRun,
+    });
+    expect(rows.runs[0]).toMatchObject({
+      ingestTaskId: rows.appTasks[0]!.id,
+      activeTaskId: rows.appTasks[0]!.id,
+      activeTaskType: "staged_file_ingest",
+    });
+    expect(rows.absurdTasks).toHaveLength(1);
+    expect(rows.absurdTasks[0]).toMatchObject({
+      task_name: "staged_file_ingest",
+      idempotency_key: id.m32StagedRun,
+    });
+    expect(rows.absurdTasks[0]?.params).toEqual({
+      vault_id: id.vault,
+      files: [{ name: "a.md", size: 10, hash: "hash-a", mimetype: "text/markdown" }],
+      pipeline_run_id: id.m32StagedRun,
+    });
+    expect(await countTable(compileIntents)).toBe(0);
+  });
+
+  it("runs jobs/url synchronously with member guard, clean markdown conversion, attached compile intent, and persisted failures", async () => {
+    const { aliceToken, carolToken, malloryToken } = currentFixture();
+    await withLocalHttpServer(
+      (request, response) => {
+        if (request.url === "/ok") {
+          response.writeHead(200, { "content-type": "text/html" });
+          response.end(
+            "<html><head><title>Local Article</title></head><body><main><h1>Local Article</h1><p>Converted paragraph.</p></main></body></html>",
+          );
+          return;
+        }
+        if (request.url === "/pdf") {
+          response.writeHead(200, { "content-type": "application/pdf" });
+          response.end(Buffer.from("%PDF-1.7\nnot indexed\n"));
+          return;
+        }
+        response.writeHead(500, { "content-type": "text/plain" });
+        response.end("failed");
+      },
+      async (origin) => {
+        const viewerSuccess = await api("POST", `/vaults/${id.vault}/jobs/url`, carolToken, {
+          job_id: id.m32UrlRun,
+          url: `${origin}/ok`,
+        });
+        expect(viewerSuccess.status).toBe(201);
+        expect(asRecord(viewerSuccess.body)).toMatchObject({
+          id: id.m32UrlRun,
+          trigger: "url",
+          current_phase: "source_ingest",
+          phase_status: "completed",
+          stream_url: `/jobs/${id.m32UrlRun}/stream`,
+        });
+
+        const markdown = await readVaultFile(id.vault, "raw/docs/ok.md");
+        expect(markdown).toContain("source_type: document");
+        expect(markdown).toContain(`url: ${origin}/ok`);
+        expect(markdown).toContain("origin: 127.0.0.1:");
+        expect(markdown).toContain("# Local Article");
+        expect(markdown).toContain("Converted paragraph. ^p0");
+
+        const successRows = await runDb(
+          Effect.gen(function* () {
+            const db = yield* Database;
+            const sourceRows = yield* db
+              .select()
+              .from(sourceDocuments)
+              .where(
+                and(
+                  eq(sourceDocuments.vaultId, id.vault),
+                  eq(sourceDocuments.filePath, "raw/docs/ok.md"),
+                ),
+              )
+              .pipe(Effect.orDie);
+            const intentRows = yield* db
+              .select()
+              .from(compileIntents)
+              .where(eq(compileIntents.pipelineRunId, id.m32UrlRun))
+              .pipe(Effect.orDie);
+            const runRows = yield* db
+              .select()
+              .from(pipelineRuns)
+              .where(eq(pipelineRuns.id, id.m32UrlRun))
+              .pipe(Effect.orDie);
+            return { sourceRows, intentRows, runRows };
+          }),
+        );
+        expect(successRows.sourceRows).toHaveLength(1);
+        expect(successRows.sourceRows[0]).toMatchObject({
+          sourceType: "document",
+          url: `${origin}/ok`,
+        });
+        expect(successRows.intentRows).toHaveLength(1);
+        expect(successRows.runRows[0]?.compileIntentId).toBe(successRows.intentRows[0]?.id);
+
+        const failed = await api("POST", `/vaults/${id.vault}/jobs/url`, aliceToken, {
+          job_id: id.m32UrlFailRun,
+          url: `${origin}/fail`,
+        });
+        expect(failed.status).toBe(400);
+        expect(String(asRecord(failed.body).detail)).toContain("Failed to fetch URL: HTTP 500");
+        const failedRuns = await runDb(
+          Effect.gen(function* () {
+            const db = yield* Database;
+            return yield* db
+              .select()
+              .from(pipelineRuns)
+              .where(eq(pipelineRuns.id, id.m32UrlFailRun))
+              .pipe(Effect.orDie);
+          }),
+        );
+        expect(failedRuns).toHaveLength(1);
+        expect(failedRuns[0]).toMatchObject({
+          status: "failed",
+          currentPhase: "source_ingest",
+          phaseStatus: "failed",
+        });
+        expect(failedRuns[0]?.error).toContain("Failed to fetch URL: HTTP 500");
+
+        const pdfFailed = await api("POST", `/vaults/${id.vault}/jobs/url`, aliceToken, {
+          job_id: id.m32UrlPdfRun,
+          url: `${origin}/pdf`,
+        });
+        expect(pdfFailed.status).toBe(400);
+        expect(String(asRecord(pdfFailed.body).detail)).toContain(
+          "Unsupported URL content-type: application/pdf",
+        );
+        const pdfRows = await runDb(
+          Effect.gen(function* () {
+            const db = yield* Database;
+            const runRows = yield* db
+              .select()
+              .from(pipelineRuns)
+              .where(eq(pipelineRuns.id, id.m32UrlPdfRun))
+              .pipe(Effect.orDie);
+            const sourceRows = yield* db
+              .select()
+              .from(sourceDocuments)
+              .where(
+                and(
+                  eq(sourceDocuments.vaultId, id.vault),
+                  eq(sourceDocuments.filePath, "raw/docs/pdf.md"),
+                ),
+              )
+              .pipe(Effect.orDie);
+            const intentRows = yield* db
+              .select()
+              .from(compileIntents)
+              .where(eq(compileIntents.pipelineRunId, id.m32UrlPdfRun))
+              .pipe(Effect.orDie);
+            return { runRows, sourceRows, intentRows };
+          }),
+        );
+        expect(pdfRows.runRows).toHaveLength(1);
+        expect(pdfRows.runRows[0]).toMatchObject({
+          status: "failed",
+          currentPhase: "source_ingest",
+          phaseStatus: "failed",
+        });
+        expect(pdfRows.runRows[0]?.error).toContain(
+          "Unsupported URL content-type: application/pdf",
+        );
+        expect(pdfRows.sourceRows).toHaveLength(0);
+        expect(pdfRows.intentRows).toHaveLength(0);
+
+        const denied = await api("POST", `/vaults/${id.vault}/jobs/url`, malloryToken, {
+          job_id: "00000000-0000-4000-8000-000000013199",
+          url: `${origin}/ok`,
+        });
+        expect(denied.status).toBe(403);
+      },
+    );
+  });
+
   it("deletes vault DB cascades and local storage, including auth-owned vault cleanup", async () => {
     const { aliceToken } = currentFixture();
     await seedSourceGraph();
@@ -785,7 +1390,13 @@ describe("M3.1 write endpoint integration", () => {
           .pipe(Effect.orDie);
         yield* db
           .insert(tasks)
-          .values({ id: id.task, vaultId: id.vault, type: "compile", params: {}, pipelineRunId: id.run })
+          .values({
+            id: id.task,
+            vaultId: id.vault,
+            type: "compile",
+            params: {},
+            pipelineRunId: id.run,
+          })
           .pipe(Effect.orDie);
         yield* db
           .insert(compileIntents)

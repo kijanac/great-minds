@@ -235,6 +235,107 @@ export const ProposalUpdate = Schema.Struct({
 });
 export type ProposalUpdate = typeof ProposalUpdate.Type;
 
+export const IngestedDocument = Schema.Struct({
+  file_path: Schema.String,
+});
+export type IngestedDocument = typeof IngestedDocument.Type;
+
+export const RawSource = Schema.Struct({
+  content: Schema.String,
+  dest: Schema.String,
+  origin: Schema.optionalKey(Schema.NullOr(Schema.String)),
+});
+export type RawSource = typeof RawSource.Type;
+
+export const UserSuggestionIntent = Schema.Literals([
+  "disagree",
+  "correct",
+  "add_context",
+  "restructure",
+] as const);
+export type UserSuggestionIntent = typeof UserSuggestionIntent.Type;
+
+export const UserSuggestion = Schema.Struct({
+  body: Schema.String,
+  intent: UserSuggestionIntent,
+  anchored_to: Schema.String.pipe(Schema.withDecodingDefaultTypeKey(Effect.succeed(""))),
+  anchored_section: Schema.String.pipe(Schema.withDecodingDefaultTypeKey(Effect.succeed(""))),
+});
+export type UserSuggestion = typeof UserSuggestion.Type;
+
+export const StagedFileInput = Schema.Struct({
+  name: Schema.String,
+  size: Schema.Number,
+  hash: Schema.String,
+  mimetype: Schema.optionalKey(Schema.String),
+});
+export type StagedFileInput = typeof StagedFileInput.Type;
+
+export const CheckDupesRequest = Schema.Struct({
+  client_hashes: Schema.Array(Schema.String),
+});
+export type CheckDupesRequest = typeof CheckDupesRequest.Type;
+
+export const CheckDupesResponse = Schema.Struct({
+  existing: Schema.Array(Schema.String),
+});
+export type CheckDupesResponse = typeof CheckDupesResponse.Type;
+
+export const StagedFileSignRequest = Schema.Struct({
+  files: Schema.Array(StagedFileInput),
+});
+export type StagedFileSignRequest = typeof StagedFileSignRequest.Type;
+
+export const StagedFileSignedUpload = Schema.Struct({
+  hash: Schema.String,
+  url: Schema.String,
+});
+export type StagedFileSignedUpload = typeof StagedFileSignedUpload.Type;
+
+export const StagedFileSignResponse = Schema.Struct({
+  files: Schema.Array(StagedFileSignedUpload),
+});
+export type StagedFileSignResponse = typeof StagedFileSignResponse.Type;
+
+export const StagedFileProcessRequest = Schema.Struct({
+  job_id: Uuid,
+  files: Schema.Array(StagedFileInput),
+});
+export type StagedFileProcessRequest = typeof StagedFileProcessRequest.Type;
+
+export const URLSource = Schema.Struct({
+  job_id: Uuid,
+  url: Schema.String,
+  origin: Schema.optionalKey(Schema.NullOr(Schema.String)),
+});
+export type URLSource = typeof URLSource.Type;
+
+export const PipelineProgressStep = Schema.Struct({
+  key: Schema.String,
+  label: Schema.String,
+  status: Schema.Literals(["pending", "running", "completed", "failed"] as const),
+  done: Schema.optionalKey(Schema.NullOr(Schema.Number)),
+  total: Schema.optionalKey(Schema.NullOr(Schema.Number)),
+  detail: Schema.String,
+});
+export type PipelineProgressStep = typeof PipelineProgressStep.Type;
+
+export const JobResponse = Schema.Struct({
+  id: Uuid,
+  vault_id: Uuid,
+  trigger: Schema.Literals(["staged_files", "url", "manual"] as const),
+  status: Schema.Literals(["pending", "running", "completed", "failed", "cancelled"] as const),
+  current_phase: Schema.String,
+  phase_status: Schema.String,
+  progress_steps: Schema.Array(PipelineProgressStep),
+  error: Schema.NullOr(Schema.String),
+  created_at: IsoDateTime,
+  updated_at: IsoDateTime,
+  completed_at: Schema.NullOr(IsoDateTime),
+  stream_url: Schema.String,
+});
+export type JobResponse = typeof JobResponse.Type;
+
 export const WikiArticleOverview = Schema.Struct({
   file_path: Schema.String,
   title: Schema.String,
@@ -563,6 +664,8 @@ const ApiKeys = Schema.Array(ApiKey);
 const CreatedVault = Vault.pipe(HttpApiSchema.status("Created"));
 const CreatedMember = MemberWithEmail.pipe(HttpApiSchema.status("Created"));
 const CreatedProposal = Proposal.pipe(HttpApiSchema.status("Created"));
+const CreatedIngestedDocument = IngestedDocument.pipe(HttpApiSchema.status("Created"));
+const CreatedJobResponse = JobResponse.pipe(HttpApiSchema.status("Created"));
 
 export const AuthApiGroup = HttpApiGroup.make("auth").add(
   HttpApiEndpoint.post("requestCode", "/auth/request-code", {
@@ -777,6 +880,60 @@ export const ProposalsApiGroup = HttpApiGroup.make("proposals").add(
   }).middleware(AuthMiddleware),
 );
 
+export const IngestApiGroup = HttpApiGroup.make("ingest").add(
+  HttpApiEndpoint.post("ingestRaw", "/vaults/:vault_id/ingest", {
+    params: {
+      vault_id: Uuid,
+    },
+    payload: RawSource,
+    success: CreatedIngestedDocument,
+    error: [ForbiddenResponse, ValidationResponse] as const,
+  }).middleware(AuthMiddleware),
+  HttpApiEndpoint.post("ingestUserSuggestion", "/vaults/:vault_id/ingest/user-suggestion", {
+    params: {
+      vault_id: Uuid,
+    },
+    payload: UserSuggestion,
+    success: CreatedIngestedDocument,
+    error: [BadRequestResponse, ForbiddenResponse, ValidationResponse] as const,
+  }).middleware(AuthMiddleware),
+  HttpApiEndpoint.post("checkStagedFileDupes", "/vaults/:vault_id/ingest/staged-files/check-dupes", {
+    params: {
+      vault_id: Uuid,
+    },
+    payload: CheckDupesRequest,
+    success: CheckDupesResponse,
+    error: ForbiddenValidationErrors,
+  }).middleware(AuthMiddleware),
+  HttpApiEndpoint.post("signStagedFiles", "/vaults/:vault_id/ingest/staged-files/sign", {
+    params: {
+      vault_id: Uuid,
+    },
+    payload: StagedFileSignRequest,
+    success: StagedFileSignResponse,
+    error: [BadRequestResponse, ForbiddenResponse, ValidationResponse] as const,
+  }).middleware(AuthMiddleware),
+  HttpApiEndpoint.post("processStagedFiles", "/vaults/:vault_id/ingest/staged-files/process", {
+    params: {
+      vault_id: Uuid,
+    },
+    payload: StagedFileProcessRequest,
+    success: JobResponse,
+    error: [BadRequestResponse, ForbiddenResponse, ValidationResponse] as const,
+  }).middleware(AuthMiddleware),
+);
+
+export const JobsApiGroup = HttpApiGroup.make("jobs").add(
+  HttpApiEndpoint.post("startUrlJob", "/vaults/:vault_id/jobs/url", {
+    params: {
+      vault_id: Uuid,
+    },
+    payload: URLSource,
+    success: CreatedJobResponse,
+    error: [BadRequestResponse, ForbiddenResponse, ValidationResponse] as const,
+  }).middleware(AuthMiddleware),
+);
+
 export const DocumentsApiGroup = HttpApiGroup.make("documents").add(
   HttpApiEndpoint.get("readDocument", "/vaults/:vault_id/doc/*", {
     params: DocPathParams,
@@ -835,6 +992,8 @@ export const GreatMindsApi = HttpApi.make("great-minds").add(
   WikiApiGroup,
   SourcesApiGroup,
   ProposalsApiGroup,
+  IngestApiGroup,
+  JobsApiGroup,
   DocumentsApiGroup,
   SessionsApiGroup,
 );

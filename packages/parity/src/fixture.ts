@@ -77,6 +77,12 @@ export const ids = {
   m31SourceDeleteB: "00000000-0000-4000-8000-000000001212",
   m31TopicDeleteB: "00000000-0000-4000-8000-000000001222",
   m31IdeaDeleteB: "00000000-0000-4000-8000-000000001232",
+  m32ClientHashA: "00000000-0000-4000-8000-000000001301",
+  m32ClientHashB: "00000000-0000-4000-8000-000000001302",
+  m32StagedRun: "00000000-0000-4000-8000-000000001311",
+  m32StagedEmptyRun: "00000000-0000-4000-8000-000000001312",
+  m32UrlRun: "00000000-0000-4000-8000-000000001313",
+  m32UrlFailRun: "00000000-0000-4000-8000-000000001314",
 } as const;
 
 export const rawKeys = {
@@ -109,8 +115,57 @@ export const resetDatabase = async (databaseUrl: string) => {
       runtime,
       Effect.gen(function* () {
         const db = yield* Database;
+        yield* db.execute(sql`delete from absurd.r_default`).pipe(Effect.orDie);
+        yield* db.execute(sql`delete from absurd.t_default`).pipe(Effect.orDie);
         yield* db.delete(authCodes).pipe(Effect.orDie);
         yield* db.delete(users).pipe(Effect.orDie);
+      }),
+    );
+  } finally {
+    await runtime.dispose();
+  }
+};
+
+export const seedDuplicateClientHashSources = async (
+  databaseUrl: string,
+  vaultId: string,
+  clientHash: string,
+) => {
+  const runtime = databaseRuntime(databaseUrl);
+  try {
+    await runDb(
+      runtime,
+      Effect.gen(function* () {
+        const db = yield* Database;
+        yield* db
+          .insert(sourceDocuments)
+          .values([
+            {
+              id: ids.m32ClientHashA,
+              vaultId,
+              filePath: "raw/docs/parity-dupe-a.md",
+              fileHash: "parity-dupe-file-a",
+              bodyHash: "parity-dupe-body-a",
+              clientHash,
+              sourceType: "document",
+              tags: [],
+              derivedExtras: {},
+              updatedAt: new Date("2026-07-08T00:00:00.000Z"),
+            },
+            {
+              id: ids.m32ClientHashB,
+              vaultId,
+              filePath: "raw/docs/parity-dupe-b.md",
+              fileHash: "parity-dupe-file-b",
+              bodyHash: "parity-dupe-body-b",
+              clientHash,
+              sourceType: "document",
+              tags: [],
+              derivedExtras: {},
+              updatedAt: new Date("2026-07-08T00:01:00.000Z"),
+            },
+          ])
+          .pipe(Effect.orDie);
       }),
     );
   } finally {

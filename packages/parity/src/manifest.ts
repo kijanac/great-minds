@@ -70,6 +70,13 @@ export const requiredContractEndpoints = [
   "DELETE /vaults/{vault_id}/members/{user_id}",
   "POST /vaults/{vault_id}/transfer-ownership",
   "DELETE /vaults/{vault_id}",
+  "POST /vaults/{vault_id}/ingest",
+  "POST /vaults/{vault_id}/ingest/upload",
+  "POST /vaults/{vault_id}/ingest/user-suggestion",
+  "POST /vaults/{vault_id}/ingest/staged-files/check-dupes",
+  "POST /vaults/{vault_id}/ingest/staged-files/sign",
+  "POST /vaults/{vault_id}/ingest/staged-files/process",
+  "POST /vaults/{vault_id}/jobs/url",
   "GET /vaults/{vault_id}/wiki",
   "GET /vaults/{vault_id}/wiki/recent",
   "GET /vaults/{vault_id}/raw/sources",
@@ -91,7 +98,13 @@ export const requiredContractEndpoints = [
 export const endpointExclusions: readonly string[] = [
   "POST /vaults/{vault_id}/proposals -- M3 decision 1: TS-only endpoint; Python has no route",
   "POST /vaults/{vault_id}/raw/sources/{path}/deletion-request -- M3.1 Python bug: source_deletion is documented but rejected by ProposalContentType response/create schemas",
+  "POST /vaults/{vault_id}/ingest/upload -- multipart/form-data parity is not supported by the JSON mutation harness; deterministic text upload is covered by integration tests",
+  "POST /vaults/{vault_id}/ingest/staged-files/sign -- R2-only presign output is credential/signature-derived; local hard-400 behavior is covered by integration tests",
 ];
+
+// `POST /vaults/{vault_id}/jobs/url` stays covered. Converted markdown bytes can differ
+// between Python MarkItDown and TS Readability/Turndown, but the parity harness compares
+// only the shared response/error envelopes for that endpoint.
 
 const iso = (path: string): Normalization => ({ kind: "isoDate", path });
 
@@ -727,6 +740,11 @@ export const mutationEndpointCoverage = [
   "DELETE /vaults/{vault_id}/members/{user_id}",
   "POST /vaults/{vault_id}/transfer-ownership",
   "DELETE /vaults/{vault_id}",
+  "POST /vaults/{vault_id}/ingest",
+  "POST /vaults/{vault_id}/ingest/user-suggestion",
+  "POST /vaults/{vault_id}/ingest/staged-files/check-dupes",
+  "POST /vaults/{vault_id}/ingest/staged-files/process",
+  "POST /vaults/{vault_id}/jobs/url",
   "DELETE /vaults/{vault_id}/raw/sources/{path}",
   "GET /vaults/{vault_id}/proposals",
   "GET /vaults/{vault_id}/proposals/{proposal_id}",

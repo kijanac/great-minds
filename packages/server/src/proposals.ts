@@ -35,6 +35,17 @@ type SourceForDeletion = {
 };
 
 type ProposalsServiceShape = {
+  readonly createRendered: (
+    vaultId: Uuid,
+    userId: Uuid,
+    data: {
+      readonly contentType: string;
+      readonly title: string | null;
+      readonly author: string | null;
+      readonly destPath: string;
+      readonly rendered: string;
+    },
+  ) => Effect.Effect<Proposal>;
   readonly create: (
     userId: Uuid,
     vaultId: Uuid,
@@ -198,6 +209,14 @@ export const ProposalsServiceLive = Layer.effect(
         .pipe(dieDatabase);
 
     return {
+      createRendered: (vaultId, userId, data) =>
+        insertProposal(vaultId, userId, {
+          contentType: data.contentType,
+          title: data.title,
+          author: data.author,
+          destPath: data.destPath,
+          rendered: data.rendered,
+        }),
       create: (userId, vaultId, input) =>
         Effect.gen(function* () {
           yield* access.requireEditor(userId, vaultId);

@@ -1,16 +1,19 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import { createWriteStream, type WriteStream } from "node:fs";
 import { mkdir, mkdtemp, rm } from "node:fs/promises";
+import { createServer, type RequestListener, type Server as NodeServer } from "node:http";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { compareResponses } from "./diff.ts";
 import {
+  ids,
   rawKeys,
   resetDatabase,
   resetStorage,
   seedDeletionCompanionVault,
+  seedDuplicateClientHashSources,
   seedNormalProposal,
   seedReadFixture,
   seedSourceDeletionFixture,
@@ -163,6 +166,27 @@ const startChild = async (
 };
 
 const sleep = (ms: number) => new Promise((resolvePromise) => setTimeout(resolvePromise, ms));
+
+const withLocalHttpServer = async <A>(
+  handler: RequestListener,
+  use: (baseUrl: string) => Promise<A>,
+) => {
+  const server: NodeServer = createServer(handler);
+  await new Promise<void>((resolvePromise) => {
+    server.listen(0, "127.0.0.1", resolvePromise);
+  });
+  try {
+    const address = server.address();
+    if (address === null || typeof address === "string") {
+      throw new Error("local HTTP parity server did not bind to a TCP port");
+    }
+    return await use(`http://127.0.0.1:${address.port}`);
+  } finally {
+    await new Promise<void>((resolvePromise, reject) => {
+      server.close((error) => (error === undefined ? resolvePromise() : reject(error)));
+    });
+  }
+};
 
 const waitForHealth = async (child: ManagedChild, url: string) => {
   const started = Date.now();
@@ -541,6 +565,222 @@ const executeMutation = async (
     rotatedPair.access_token,
   );
   const memberUserId = asString(asRecord(memberInvite.body).user_id, "member user id");
+  const memberToken = await acquireToken("parity-member@example.com");
+
+  await seedDuplicateClientHashSources(databaseUrl, vaultId, "parity-client-hash");
+  await send(
+    mutationEntry(
+      "mutation-ingest-raw",
+      "raw markdown ingest",
+      "POST",
+      `/v1/vaults/${vaultId}/ingest`,
+      "POST /vaults/{vault_id}/ingest",
+      {
+        pathTemplate: "/v1/vaults/{created_vault_id}/ingest",
+        body: {
+          content: "# Parity Raw\n\nA deterministic raw paragraph.",
+          dest: "raw/docs/parity-raw.md",
+          origin: "parity-fixture",
+        },
+      },
+    ),
+    rotatedPair.access_token,
+  );
+  await send(
+    mutationEntry(
+      "mutation-ingest-raw-readback",
+      "raw ingest source readback",
+      "GET",
+      `/v1/vaults/${vaultId}/raw/sources?source_type=document&limit=10`,
+      "GET /vaults/{vault_id}/raw/sources",
+      {
+        pathTemplate: "/v1/vaults/{created_vault_id}/raw/sources?source_type=document&limit=10",
+        normalize: [mask("items.*.updated_at", "source_updated_at")],
+      },
+    ),
+    rotatedPair.access_token,
+  );
+
+  const suggestionIntents = ["disagree", "correct", "add_context", "restructure"] as const;
+  for (const intent of suggestionIntents) {
+    await send(
+      mutationEntry(
+        `mutation-ingest-suggestion-owner-${intent}`,
+        `owner suggestion ${intent}`,
+        "POST",
+        `/v1/vaults/${vaultId}/ingest/user-suggestion`,
+        "POST /vaults/{vault_id}/ingest/user-suggestion",
+        {
+          pathTemplate: "/v1/vaults/{created_vault_id}/ingest/user-suggestion",
+          body: {
+            body: `Owner ${intent} parity suggestion.`,
+            intent,
+            anchored_to: `Owner Anchor ${intent}`,
+            anchored_section: "owner-section",
+          },
+          normalize: [mask("file_path", "suggestion_path")],
+        },
+      ),
+      rotatedPair.access_token,
+    );
+    await send(
+      mutationEntry(
+        `mutation-ingest-suggestion-editor-${intent}`,
+        `editor suggestion ${intent}`,
+        "POST",
+        `/v1/vaults/${vaultId}/ingest/user-suggestion`,
+        "POST /vaults/{vault_id}/ingest/user-suggestion",
+        {
+          pathTemplate: "/v1/vaults/{created_vault_id}/ingest/user-suggestion",
+          body: {
+            body: `Editor ${intent} parity suggestion.`,
+            intent,
+            anchored_to: `Editor Anchor ${intent}`,
+            anchored_section: "editor-section",
+          },
+          normalize: [mask("file_path", "suggestion_path")],
+        },
+      ),
+      editorToken,
+    );
+  }
+  await send(
+    mutationEntry(
+      "mutation-ingest-suggestion-source-readback",
+      "owner suggestion source readback",
+      "GET",
+      `/v1/vaults/${vaultId}/raw/sources?source_type=user&limit=10`,
+      "GET /vaults/{vault_id}/raw/sources",
+      {
+        pathTemplate: "/v1/vaults/{created_vault_id}/raw/sources?source_type=user&limit=10",
+        normalize: [
+          mask("items.*.file_path", "suggestion_path"),
+          mask("items.*.updated_at", "source_updated_at"),
+        ],
+      },
+    ),
+    rotatedPair.access_token,
+  );
+  await send(
+    mutationEntry(
+      "mutation-ingest-suggestion-proposal-readback",
+      "editor suggestion proposal readback",
+      "GET",
+      `/v1/vaults/${vaultId}/proposals?status=pending&limit=10`,
+      "GET /vaults/{vault_id}/proposals",
+      {
+        pathTemplate: "/v1/vaults/{created_vault_id}/proposals?status=pending&limit=10",
+        normalize: [
+          mask("items.*.id", "proposal_id"),
+          mask("items.*.vault_id", "vault_id"),
+          mask("items.*.created_at", "created_at"),
+        ],
+      },
+    ),
+    editorToken,
+  );
+
+  await send(
+    mutationEntry(
+      "mutation-ingest-check-dupes",
+      "staged file duplicate hash check",
+      "POST",
+      `/v1/vaults/${vaultId}/ingest/staged-files/check-dupes`,
+      "POST /vaults/{vault_id}/ingest/staged-files/check-dupes",
+      {
+        pathTemplate: "/v1/vaults/{created_vault_id}/ingest/staged-files/check-dupes",
+        body: { client_hashes: ["parity-client-hash", "new-client-hash"] },
+      },
+    ),
+    rotatedPair.access_token,
+  );
+
+  await send(
+    mutationEntry(
+      "mutation-ingest-staged-process-empty",
+      "staged file process rejects empty files",
+      "POST",
+      `/v1/vaults/${vaultId}/ingest/staged-files/process`,
+      "POST /vaults/{vault_id}/ingest/staged-files/process",
+      {
+        pathTemplate: "/v1/vaults/{created_vault_id}/ingest/staged-files/process",
+        body: { job_id: ids.m32StagedEmptyRun, files: [] },
+      },
+    ),
+    rotatedPair.access_token,
+  );
+  await send(
+    mutationEntry(
+      "mutation-ingest-staged-process",
+      "staged file process spawns Absurd task",
+      "POST",
+      `/v1/vaults/${vaultId}/ingest/staged-files/process`,
+      "POST /vaults/{vault_id}/ingest/staged-files/process",
+      {
+        pathTemplate: "/v1/vaults/{created_vault_id}/ingest/staged-files/process",
+        body: {
+          job_id: ids.m32StagedRun,
+          files: [{ name: "parity.md", size: 12, hash: "parity-staged-hash", mimetype: "text/markdown" }],
+        },
+        normalize: [
+          mask("vault_id", "vault_id"),
+          mask("created_at", "created_at"),
+          mask("updated_at", "updated_at"),
+        ],
+      },
+    ),
+    rotatedPair.access_token,
+  );
+
+  await withLocalHttpServer(
+    (request, response) => {
+      if (request.url === "/ok") {
+        response.writeHead(200, { "content-type": "text/html" });
+        response.end(
+          "<html><head><title>Parity Article</title></head><body><main><h1>Parity Article</h1><p>Readable URL content.</p></main></body></html>",
+        );
+        return;
+      }
+      response.writeHead(500, { "content-type": "text/plain" });
+      response.end("failed");
+    },
+    async (origin) => {
+      await send(
+        mutationEntry(
+          "mutation-jobs-url-success",
+          "URL job success response envelope",
+          "POST",
+          `/v1/vaults/${vaultId}/jobs/url`,
+          "POST /vaults/{vault_id}/jobs/url",
+          {
+            pathTemplate: "/v1/vaults/{created_vault_id}/jobs/url",
+            body: { job_id: ids.m32UrlRun, url: `${origin}/ok` },
+            normalize: [
+              mask("vault_id", "vault_id"),
+              mask("created_at", "created_at"),
+              mask("updated_at", "updated_at"),
+            ],
+          },
+        ),
+        memberToken,
+      );
+      await send(
+        mutationEntry(
+          "mutation-jobs-url-failure",
+          "URL job failed fetch response envelope",
+          "POST",
+          `/v1/vaults/${vaultId}/jobs/url`,
+          "POST /vaults/{vault_id}/jobs/url",
+          {
+            pathTemplate: "/v1/vaults/{created_vault_id}/jobs/url",
+            body: { job_id: ids.m32UrlFailRun, url: `${origin}/fail` },
+            normalize: [mask("detail", "url_error_detail")],
+          },
+        ),
+        rotatedPair.access_token,
+      );
+    },
+  );
 
   await send(
     mutationEntry(

@@ -1,0 +1,651 @@
+import { posix } from "node:path";
+
+import { compileIntents, Database, pipelineRuns, tasks, vaults } from "@great-minds/database";
+import {
+  BadRequest,
+  Forbidden,
+  type IngestedDocument,
+  type JobResponse,
+  type RawSource,
+  type StagedFileInput,
+  type StagedFileSignedUpload,
+  type UserSuggestion,
+  type UserSuggestionIntent,
+  type Uuid,
+} from "@great-minds/domain";
+import { and, eq, sql } from "drizzle-orm";
+import { Cause, Context, Effect, Layer } from "effect";
+
+import { htmlToMarkdown } from "./conversion.ts";
+import { dieDatabase } from "./db-defects.ts";
+import { buildDocument } from "./markdown.ts";
+import { ProposalsService } from "./proposals.ts";
+import { SourceDocumentsService } from "./source-documents.ts";
+import { VaultStorage } from "./storage.ts";
+import { VaultAccessService } from "./vaults.ts";
+import { ClockService } from "./clock.ts";
+
+type UploadInput = {
+  readonly rawBytes: Uint8Array;
+  readonly filename: string;
+  readonly mimetype: string;
+  readonly destPath?: string | null;
+  readonly origin?: string | null;
+};
+
+type PipelineProgressStep = {
+  readonly key: string;
+  readonly label: string;
+  readonly status: "pending" | "running" | "completed" | "failed";
+  readonly done?: number | null;
+  readonly total?: number | null;
+  readonly detail: string;
+};
+
+type SpawnedTask = {
+  readonly taskId: Uuid;
+  readonly created: boolean;
+};
+
+type IngestServiceShape = {
+  readonly ingestRaw: (
+    userId: Uuid,
+    vaultId: Uuid,
+    input: RawSource,
+  ) => Effect.Effect<IngestedDocument, Forbidden>;
+  readonly ingestUpload: (
+    userId: Uuid,
+    vaultId: Uuid,
+    input: UploadInput,
+  ) => Effect.Effect<IngestedDocument, BadRequest | Forbidden>;
+  readonly ingestUserSuggestion: (
+    userId: Uuid,
+    vaultId: Uuid,
+    input: UserSuggestion,
+  ) => Effect.Effect<IngestedDocument, BadRequest | Forbidden>;
+  readonly checkStagedDupes: (
+    userId: Uuid,
+    vaultId: Uuid,
+    clientHashes: readonly string[],
+  ) => Effect.Effect<readonly string[], Forbidden>;
+  readonly signStagedFiles: (
+    userId: Uuid,
+    vaultId: Uuid,
+    files: readonly StagedFileInput[],
+  ) => Effect.Effect<readonly StagedFileSignedUpload[], BadRequest | Forbidden>;
+  readonly processStagedFiles: (
+    userId: Uuid,
+    vaultId: Uuid,
+    jobId: Uuid,
+    files: readonly StagedFileInput[],
+  ) => Effect.Effect<JobResponse, BadRequest | Forbidden>;
+  readonly startUrlJob: (
+    userId: Uuid,
+    vaultId: Uuid,
+    input: { readonly job_id: Uuid; readonly url: string; readonly origin?: string | null },
+  ) => Effect.Effect<JobResponse, BadRequest | Forbidden>;
+};
+
+export class IngestService extends Context.Service<IngestService, IngestServiceShape>()(
+  "@great-minds/server/IngestService",
+) {}
+
+const USER_AGENT =
+  "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) " +
+  "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36";
+
+const URL_INGEST_STEP_LABELS = {
+  fetch_url: "Fetching source URL",
+  convert_document: "Converting source document",
+  index_document: "Indexing source document",
+} as const;
+
+const STAGED_TASK_TYPE = "staged_file_ingest";
+
+const asUuid = (value: string): Uuid => value as Uuid;
+
+const slugify = (text: string, maxLen = 80) =>
+  text
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, maxLen);
+
+const normalizeUrl = (url: string) =>
+  url.startsWith("http://") || url.startsWith("https://") ? url : `https://${url}`;
+
+const urlResponseContentType = (response: Response) =>
+  response.headers.get("content-type")?.split(";", 1)[0]?.trim().toLowerCase() ?? "text/html";
+
+const isSupportedUrlContentType = (contentType: string) =>
+  contentType === "text/html" || contentType === "text/plain";
+
+const utcTimestamp = (date: Date) =>
+  date
+    .toISOString()
+    .replaceAll("-", "")
+    .replaceAll(":", "")
+    .replace(/\.\d{3}Z$/, "Z");
+
+const userSuggestionDest = (now: Date, intent: UserSuggestionIntent, anchoredTo: string) => {
+  const anchorSlug = anchoredTo.length > 0 ? slugify(anchoredTo) || "general" : "general";
+  return `raw/user/${utcTimestamp(now)}-${anchorSlug}-${intent}.md`;
+};
+
+const safeDocDest = (destPath: string) => {
+  if (destPath.includes("\\") || destPath.startsWith("/")) {
+    return undefined;
+  }
+  const normalized = posix.normalize(destPath);
+  const parts = normalized.split("/");
+  if (normalized === "." || parts.length === 0 || parts.includes("..")) {
+    return undefined;
+  }
+  const parsed = posix.parse(normalized);
+  const withMarkdownSuffix = posix.join(parsed.dir, `${parsed.name}.md`);
+  return `raw/docs/${withMarkdownSuffix}`;
+};
+
+const isTextExtension = (filename: string) => {
+  const ext = posix.extname(filename).toLowerCase();
+  return ext === ".md" || ext === ".txt" || ext === ".text" || ext === ".markdown";
+};
+
+const isHtmlUpload = (filename: string, mimetype: string) => {
+  const ext = posix.extname(filename).toLowerCase();
+  return ext === ".html" || ext === ".htm" || mimetype.toLowerCase().includes("text/html");
+};
+
+const decodeUtf8 = (rawBytes: Uint8Array, filename: string) =>
+  Effect.try({
+    try: () => new TextDecoder("utf-8", { fatal: true }).decode(rawBytes),
+    catch: () => new BadRequest({ detail: `File is not valid UTF-8: ${filename}` }),
+  });
+
+const uploadToMarkdown = (input: UploadInput) =>
+  Effect.gen(function* () {
+    if (input.filename.length === 0) {
+      return yield* new BadRequest({ detail: "Uploaded file must have a filename" });
+    }
+    const text = yield* decodeUtf8(input.rawBytes, input.filename);
+    if (isTextExtension(input.filename)) {
+      return text;
+    }
+    if (isHtmlUpload(input.filename, input.mimetype)) {
+      return htmlToMarkdown(text, "https://uploaded.local/");
+    }
+    return yield* new BadRequest({
+      detail: `Unsupported upload conversion extension: ${posix.extname(input.filename) || "(none)"}`,
+    });
+  });
+
+const uploadedDest = (input: UploadInput) => {
+  if (input.destPath !== undefined && input.destPath !== null && input.destPath.length > 0) {
+    return safeDocDest(input.destPath);
+  }
+  const base = input.filename.includes(".")
+    ? input.filename.slice(0, input.filename.lastIndexOf("."))
+    : input.filename;
+  return safeDocDest(`${slugify(base) || "doc"}.md`);
+};
+
+const progressSteps = (
+  labels: Record<string, string>,
+  active: string,
+  options: {
+    readonly completed?: ReadonlySet<string>;
+    readonly failed?: ReadonlySet<string>;
+    readonly counts?: Readonly<Record<string, readonly [number | null, number | null]>>;
+    readonly details?: Readonly<Record<string, string>>;
+  } = {},
+): readonly PipelineProgressStep[] =>
+  Object.entries(labels).map(([key, label]) => {
+    const [done, total] = options.counts?.[key] ?? [null, null];
+    return {
+      key,
+      label,
+      status: options.failed?.has(key)
+        ? "failed"
+        : options.completed?.has(key)
+          ? "completed"
+          : key === active
+            ? "running"
+            : "pending",
+      done,
+      total,
+      detail: options.details?.[key] ?? "",
+    };
+  });
+
+const jobResponse = (row: typeof pipelineRuns.$inferSelect): JobResponse => ({
+  id: row.id as Uuid,
+  vault_id: row.vaultId as Uuid,
+  trigger: row.trigger as JobResponse["trigger"],
+  status: row.status as JobResponse["status"],
+  current_phase: row.currentPhase,
+  phase_status: row.phaseStatus,
+  progress_steps: row.progressSteps as JobResponse["progress_steps"],
+  error: row.error,
+  created_at: row.createdAt.toISOString(),
+  updated_at: row.updatedAt.toISOString(),
+  completed_at: row.completedAt?.toISOString() ?? null,
+  stream_url: `/jobs/${row.id}/stream`,
+});
+
+const firstFailure = (cause: Cause.Cause<unknown>) => cause.reasons.find(Cause.isFailReason)?.error;
+
+const causeMessage = (cause: Cause.Cause<unknown>) => {
+  const failure = firstFailure(cause);
+  if (failure instanceof BadRequest) {
+    return failure.detail;
+  }
+  const defect = cause.reasons.find(Cause.isDieReason)?.defect;
+  if (defect instanceof Error) {
+    return defect.message;
+  }
+  return Cause.pretty(cause);
+};
+
+export const IngestServiceLive = Layer.effect(
+  IngestService,
+  Effect.gen(function* () {
+    const db = yield* Database;
+    const access = yield* VaultAccessService;
+    const storage = yield* VaultStorage;
+    const sourceDocumentsWrite = yield* SourceDocumentsService;
+    const proposals = yield* ProposalsService;
+    const clock = yield* ClockService;
+
+    const ensureCompileIntent = (vaultId: Uuid, pipelineRunId?: Uuid | null) =>
+      Effect.gen(function* () {
+        const rows = yield* db
+          .insert(compileIntents)
+          .values({ vaultId, pipelineRunId: pipelineRunId ?? undefined })
+          .onConflictDoUpdate({
+            target: compileIntents.vaultId,
+            targetWhere: sql`${compileIntents.dispatchedAt} IS NULL`,
+            set: { vaultId: sql`compile_intents.vault_id` },
+          })
+          .returning({ id: compileIntents.id, pipelineRunId: compileIntents.pipelineRunId })
+          .pipe(dieDatabase);
+        const intent = rows[0];
+        if (intent === undefined) {
+          throw new Error("compile intent upsert returned no row");
+        }
+        if (pipelineRunId !== undefined && pipelineRunId !== null) {
+          if (intent.pipelineRunId === null) {
+            yield* db
+              .update(compileIntents)
+              .set({ pipelineRunId })
+              .where(eq(compileIntents.id, intent.id))
+              .pipe(dieDatabase);
+          }
+          yield* db
+            .update(pipelineRuns)
+            .set({ compileIntentId: intent.id, updatedAt: sql`now()` })
+            .where(eq(pipelineRuns.id, pipelineRunId))
+            .pipe(dieDatabase);
+        }
+        return intent.id as Uuid;
+      });
+
+    const writeAndIndex = (
+      vaultId: Uuid,
+      content: string,
+      dest: string,
+      frontmatter: Parameters<typeof buildDocument>[1],
+      pipelineRunId?: Uuid | null,
+    ) =>
+      Effect.gen(function* () {
+        const rendered = buildDocument(content, frontmatter);
+        yield* storage.writeText(vaultId, dest, rendered);
+        yield* sourceDocumentsWrite.index(vaultId, dest, rendered);
+        yield* ensureCompileIntent(vaultId, pipelineRunId);
+        return { file_path: dest } satisfies IngestedDocument;
+      });
+
+    const fetchUrlMarkdown = (rawUrl: string) =>
+      Effect.gen(function* () {
+        const url = normalizeUrl(rawUrl);
+        const response = yield* Effect.tryPromise({
+          try: (signal) =>
+            fetch(url, {
+              redirect: "follow",
+              signal: AbortSignal.any([signal, AbortSignal.timeout(30_000)]),
+              headers: { "User-Agent": USER_AGENT },
+            }),
+          catch: (error) =>
+            new BadRequest({
+              detail: `Failed to fetch URL: ${error instanceof Error ? error.message : String(error)}`,
+            }),
+        });
+        if (!response.ok) {
+          return yield* new BadRequest({
+            detail: `Failed to fetch URL: HTTP ${response.status} ${response.statusText}`,
+          });
+        }
+        const contentType = urlResponseContentType(response);
+        if (!isSupportedUrlContentType(contentType)) {
+          return yield* new BadRequest({
+            detail: `Unsupported URL content-type: ${contentType}`,
+          });
+        }
+        const body = yield* Effect.tryPromise({
+          try: () => response.text(),
+          catch: (error) =>
+            new BadRequest({
+              detail: `Failed to fetch URL: ${error instanceof Error ? error.message : String(error)}`,
+            }),
+        });
+        return {
+          url,
+          markdown: contentType === "text/plain" ? body : htmlToMarkdown(body, url),
+        };
+      });
+
+    const ingestUrl = (
+      vaultId: Uuid,
+      rawUrl: string,
+      origin?: string | null,
+      pipelineRunId?: Uuid,
+    ) =>
+      Effect.gen(function* () {
+        const fetched = yield* fetchUrlMarkdown(rawUrl);
+        const parsed = new URL(fetched.url);
+        const stem = posix.parse(parsed.pathname).name || "doc";
+        const dest = `raw/docs/${slugify(stem) || "doc"}.md`;
+        return yield* writeAndIndex(
+          vaultId,
+          fetched.markdown,
+          dest,
+          {
+            sourceType: "document",
+            url: fetched.url,
+            origin: origin ?? parsed.host,
+          },
+          pipelineRunId,
+        );
+      });
+
+    const getVaultBucket = (vaultId: Uuid) =>
+      Effect.gen(function* () {
+        const rows = yield* db
+          .select({ bucket: vaults.r2BucketName })
+          .from(vaults)
+          .where(eq(vaults.id, vaultId))
+          .limit(1)
+          .pipe(dieDatabase);
+        return rows[0]?.bucket ?? null;
+      });
+
+    const createPipelineRun = (jobId: Uuid, vaultId: Uuid, trigger: "staged_files" | "url") =>
+      Effect.gen(function* () {
+        const inserted = yield* db
+          .insert(pipelineRuns)
+          .values({
+            id: jobId,
+            vaultId,
+            trigger,
+            status: "pending",
+            currentPhase: "",
+            phaseStatus: "",
+            progressSteps: [],
+          })
+          .onConflictDoNothing({ target: pipelineRuns.id })
+          .returning()
+          .pipe(dieDatabase);
+        const row =
+          inserted[0] ??
+          (yield* db
+            .select()
+            .from(pipelineRuns)
+            .where(and(eq(pipelineRuns.id, jobId), eq(pipelineRuns.vaultId, vaultId)))
+            .limit(1)
+            .pipe(dieDatabase))[0];
+        if (row === undefined) {
+          throw new Error(`Pipeline run missing after create: ${jobId}`);
+        }
+        return row;
+      });
+
+    const getPipelineRun = (jobId: Uuid, vaultId: Uuid) =>
+      Effect.gen(function* () {
+        const rows = yield* db
+          .select()
+          .from(pipelineRuns)
+          .where(and(eq(pipelineRuns.id, jobId), eq(pipelineRuns.vaultId, vaultId)))
+          .limit(1)
+          .pipe(dieDatabase);
+        const row = rows[0];
+        if (row === undefined) {
+          throw new Error(`Pipeline run not found after creation: ${jobId}`);
+        }
+        return row;
+      });
+
+    const updateProgress = (
+      jobId: Uuid,
+      phase: string,
+      phaseStatus: string,
+      steps: readonly PipelineProgressStep[],
+      error?: string,
+    ) =>
+      db
+        .update(pipelineRuns)
+        .set({
+          currentPhase: phase,
+          phaseStatus,
+          progressSteps: [...steps],
+          status: phaseStatus === "failed" ? "failed" : "running",
+          error,
+          completedAt: phaseStatus === "failed" ? sql`now()` : undefined,
+          updatedAt: sql`now()`,
+        })
+        .where(eq(pipelineRuns.id, jobId))
+        .pipe(dieDatabase);
+
+    const spawnStagedTask = (
+      vaultId: Uuid,
+      files: readonly StagedFileInput[],
+      pipelineRunId: Uuid,
+    ): Effect.Effect<SpawnedTask> =>
+      Effect.gen(function* () {
+        const params = {
+          vault_id: vaultId,
+          files: files.map((file) => ({
+            name: file.name,
+            size: file.size,
+            hash: file.hash,
+            mimetype: file.mimetype ?? "",
+          })),
+          pipeline_run_id: pipelineRunId,
+        };
+        const options = {
+          max_attempts: 2,
+          idempotency_key: pipelineRunId,
+        };
+        const spawned = yield* db
+          .execute(
+            sql<{
+              task_id: string;
+              created: boolean;
+            }>`select task_id, created from absurd.spawn_task(
+              'default',
+              ${STAGED_TASK_TYPE},
+              ${JSON.stringify(params)}::jsonb,
+              ${JSON.stringify(options)}::jsonb
+            )`,
+          )
+          .pipe(dieDatabase);
+        const spawnRows = (
+          spawned as unknown as {
+            readonly rows: readonly { readonly task_id: string; readonly created: boolean }[];
+          }
+        ).rows;
+        const row = spawnRows[0];
+        if (row === undefined) {
+          throw new Error("Absurd spawn_task returned no row");
+        }
+        const taskId = asUuid(row.task_id);
+        yield* db
+          .insert(tasks)
+          .values({
+            id: taskId,
+            vaultId,
+            type: STAGED_TASK_TYPE,
+            params,
+            pipelineRunId,
+          })
+          .onConflictDoNothing({ target: tasks.id })
+          .pipe(dieDatabase);
+        return { taskId, created: row.created };
+      });
+
+    return {
+      ingestRaw: (userId, vaultId, input) =>
+        Effect.gen(function* () {
+          yield* access.requireOwner(userId, vaultId);
+          return yield* writeAndIndex(vaultId, input.content, input.dest, {
+            sourceType: "document",
+            origin: input.origin ?? null,
+          });
+        }),
+      ingestUpload: (userId, vaultId, input) =>
+        Effect.gen(function* () {
+          yield* access.requireOwner(userId, vaultId);
+          const dest = uploadedDest(input);
+          if (dest === undefined) {
+            return yield* new BadRequest({ detail: `Invalid dest_path: ${input.destPath}` });
+          }
+          const content = yield* uploadToMarkdown(input);
+          return yield* writeAndIndex(vaultId, content, dest, {
+            sourceType: "document",
+            origin: input.origin ?? null,
+          });
+        }),
+      ingestUserSuggestion: (userId, vaultId, input) =>
+        Effect.gen(function* () {
+          const scope = yield* access.requireEditor(userId, vaultId);
+          if (input.body.trim().length === 0) {
+            return yield* new BadRequest({ detail: "body is empty" });
+          }
+          const now = yield* clock.now;
+          const dest = userSuggestionDest(now, input.intent, input.anchored_to);
+          const frontmatter = {
+            sourceType: "user",
+            origin: "user-suggestion",
+            anchoredTo: input.anchored_to,
+            anchoredSection: input.anchored_section,
+            intent: input.intent,
+          };
+          if (scope.role === "owner") {
+            return yield* writeAndIndex(vaultId, input.body, dest, frontmatter);
+          }
+          const rendered = buildDocument(input.body, frontmatter);
+          yield* proposals.createRendered(vaultId, userId, {
+            contentType: "user_suggestion",
+            title: null,
+            author: null,
+            destPath: dest,
+            rendered,
+          });
+          return { file_path: dest } satisfies IngestedDocument;
+        }),
+      checkStagedDupes: (userId, vaultId, clientHashes) =>
+        Effect.gen(function* () {
+          yield* access.requireOwner(userId, vaultId);
+          return yield* sourceDocumentsWrite.existingClientHashes(vaultId, clientHashes);
+        }),
+      signStagedFiles: (userId, vaultId, files) =>
+        Effect.gen(function* () {
+          yield* access.requireOwner(userId, vaultId);
+          const bucket = yield* getVaultBucket(vaultId);
+          if (bucket === null || bucket.length === 0) {
+            return yield* new BadRequest({ detail: "vault has no r2 bucket; cannot sign uploads" });
+          }
+          const signed: StagedFileSignedUpload[] = [];
+          for (const file of files) {
+            const url = yield* storage.presignStagedPut(
+              vaultId,
+              bucket,
+              file.hash,
+              file.mimetype ?? "application/octet-stream",
+              file.size,
+            );
+            signed.push({ hash: file.hash, url });
+          }
+          return signed;
+        }),
+      processStagedFiles: (userId, vaultId, jobId, files) =>
+        Effect.gen(function* () {
+          yield* access.requireOwner(userId, vaultId);
+          if (files.length === 0) {
+            return yield* new BadRequest({ detail: "no files provided" });
+          }
+          const run = yield* createPipelineRun(jobId, vaultId, "staged_files");
+          const spawned = yield* spawnStagedTask(vaultId, files, run.id as Uuid);
+          yield* db
+            .update(pipelineRuns)
+            .set({
+              ingestTaskId: spawned.taskId,
+              activeTaskId: spawned.taskId,
+              activeTaskType: STAGED_TASK_TYPE,
+              updatedAt: sql`now()`,
+            })
+            .where(eq(pipelineRuns.id, run.id))
+            .pipe(dieDatabase);
+          const refreshed = yield* getPipelineRun(run.id as Uuid, vaultId);
+          return jobResponse(refreshed);
+        }),
+      startUrlJob: (userId, vaultId, input) =>
+        Effect.gen(function* () {
+          yield* access.requireMember(userId, vaultId);
+          const run = yield* createPipelineRun(input.job_id, vaultId, "url");
+          yield* updateProgress(
+            run.id as Uuid,
+            "source_ingest",
+            "started",
+            progressSteps(URL_INGEST_STEP_LABELS, "fetch_url", {
+              counts: { fetch_url: [0, 1] },
+            }),
+          );
+          yield* Effect.matchCauseEffect(
+            ingestUrl(vaultId, input.url, input.origin ?? null, run.id as Uuid),
+            {
+              onSuccess: Effect.succeed,
+              onFailure: (cause) =>
+                Effect.gen(function* () {
+                  const message = causeMessage(cause);
+                  yield* updateProgress(
+                    run.id as Uuid,
+                    "source_ingest",
+                    "failed",
+                    progressSteps(URL_INGEST_STEP_LABELS, "fetch_url", {
+                      failed: new Set(["fetch_url"]),
+                      details: { fetch_url: message },
+                    }),
+                    message,
+                  );
+                  const failure = firstFailure(cause);
+                  if (failure instanceof BadRequest) {
+                    return yield* failure;
+                  }
+                  return yield* Effect.failCause(cause);
+                }),
+            },
+          );
+          yield* updateProgress(
+            run.id as Uuid,
+            "source_ingest",
+            "completed",
+            progressSteps(URL_INGEST_STEP_LABELS, "index_document", {
+              completed: new Set(Object.keys(URL_INGEST_STEP_LABELS)),
+              counts: { fetch_url: [1, 1] },
+            }),
+          );
+          const refreshed = yield* getPipelineRun(run.id as Uuid, vaultId);
+          return jobResponse(refreshed);
+        }),
+    } satisfies IngestServiceShape;
+  }),
+);

@@ -17,6 +17,7 @@ import {
   S3Client,
   S3ServiceException,
 } from "@aws-sdk/client-s3";
+import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import { Database, users, vaults } from "@great-minds/database";
 import type { Uuid } from "@great-minds/domain";
 import { eq } from "drizzle-orm";
@@ -31,6 +32,7 @@ const R2_READ_TIMEOUT = "30 seconds";
 const R2_WRITE_TIMEOUT = "120 seconds";
 const R2_ADMIN_TIMEOUT = "120 seconds";
 const R2_MAX_BUCKET_NAME_LEN = 63;
+const R2_STAGED_UPLOAD_EXPIRES_SECONDS = 3600;
 
 export class StorageFileMissing extends Schema.TaggedErrorClass<StorageFileMissing>()(
   "StorageFileMissing",
@@ -56,6 +58,13 @@ type VaultStorageShape = {
   readonly clearVault: (vaultId: Uuid, bucketName: string | null) => Effect.Effect<void>;
   readonly prepareBucketForOwner: (ownerId: Uuid) => Effect.Effect<string | null>;
   readonly deleteOwnerBucket: (bucketName: string | null) => Effect.Effect<void>;
+  readonly presignStagedPut: (
+    vaultId: Uuid,
+    bucketName: string,
+    hash: string,
+    contentType: string,
+    contentLength: number,
+  ) => Effect.Effect<string>;
 };
 
 export class VaultStorage extends Context.Service<VaultStorage, VaultStorageShape>()(
@@ -176,6 +185,8 @@ export const LocalStorageLive = Layer.effect(
           storage_backend: "local",
           reason: "local_storage",
         }),
+      presignStagedPut: (vaultId) =>
+        Effect.die(new Error(`Vault ${vaultId} has no R2 bucket name`)),
     } satisfies VaultStorageShape;
   }),
 );
@@ -278,6 +289,8 @@ export const R2StorageLive = Layer.effect(
     const objectKey = (vaultId: Uuid, path: string) => `${VAULTS_DIR}/${vaultId}/${path}`;
 
     const objectPrefix = (vaultId: Uuid) => `${VAULTS_DIR}/${vaultId}/`;
+
+    const stagedObjectKey = (vaultId: Uuid, hash: string) => `staging/${vaultId}/${hash}`;
 
     const sendAdmin = <A>(effect: Effect.Effect<A, unknown>) => effect.pipe(Effect.timeout(R2_ADMIN_TIMEOUT));
 
@@ -602,6 +615,21 @@ export const R2StorageLive = Layer.effect(
             latency_ms: Date.now() - startedAt,
           });
         }),
+      presignStagedPut: (vaultId, bucketName, hash, contentType, contentLength) =>
+        Effect.tryPromise(() =>
+          getSignedUrl(
+            client,
+            new PutObjectCommand({
+              Bucket: bucketName,
+              Key: stagedObjectKey(vaultId, hash),
+              ContentType: contentType,
+              ContentLength: contentLength,
+            }),
+            {
+              expiresIn: R2_STAGED_UPLOAD_EXPIRES_SECONDS,
+            },
+          ),
+        ).pipe(Effect.orDie),
     } satisfies VaultStorageShape;
   }),
 );

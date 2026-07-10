@@ -6,15 +6,18 @@ import {
   BadRequest,
   CurrentAuth,
   GreatMindsApi,
+  Unauthorized,
   type DomainError,
+  type Uuid,
 } from "@great-minds/domain";
-import { Cause, Effect, Layer, ManagedRuntime, Redacted } from "effect";
+import { Cause, Effect, Layer, ManagedRuntime, Redacted, Stream } from "effect";
 import {
   HttpRouter,
   HttpServer,
   HttpServerRequest,
   HttpServerResponse,
 } from "effect/unstable/http";
+import * as Multipart from "effect/unstable/http/Multipart";
 import * as HttpServerError from "effect/unstable/http/HttpServerError";
 import { HttpApiBuilder } from "effect/unstable/httpapi";
 import { HttpApiSchemaError } from "effect/unstable/httpapi/HttpApiError";
@@ -24,6 +27,7 @@ import { AuthService } from "./auth.ts";
 import { AppConfig } from "./config.ts";
 import { DocumentRegistryMismatch, DocumentsService } from "./documents.ts";
 import { domainErrorResponse } from "./http-errors.ts";
+import { IngestService } from "./ingest.ts";
 import { StructuredLogger } from "./logging.ts";
 import { ProposalsService } from "./proposals.ts";
 import { SessionsService } from "./sessions.ts";
@@ -54,6 +58,11 @@ const jsonResponse = (status: number, body: unknown) =>
 const healthResponse = jsonResponse(200, { status: "ok" });
 
 const clean500Response = jsonResponse(500, { detail: "Internal Server Error" });
+
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+const parseUuidPathParam = (value: string | undefined) =>
+  value !== undefined && UUID_PATTERN.test(value) ? (value as Uuid) : undefined;
 
 const validationDetail = (error: HttpApiSchemaError) => {
   switch (error.kind) {
@@ -87,6 +96,18 @@ const withDomainErrors = <A, E extends DomainError, R>(effect: Effect.Effect<A, 
       BadRequest: domainErrorJsonResponse,
       Conflict: domainErrorJsonResponse,
     }),
+  );
+
+const withDomainJson = <A, E extends DomainError, R>(
+  effect: Effect.Effect<A, E, R>,
+  status: number,
+) =>
+  withDomainErrors(effect).pipe(
+    Effect.flatMap((value) =>
+      HttpServerResponse.isHttpServerResponse(value)
+        ? Effect.succeed(value)
+        : jsonResponse(status, value),
+    ),
   );
 
 const schemaErrorFromCause = (cause: Cause.Cause<unknown>) => {
@@ -326,7 +347,11 @@ const VaultHandlersLive = HttpApiBuilder.group(MountedGreatMindsApi, "vaults", (
         Effect.gen(function* () {
           const vaultsService = yield* VaultsService;
           const current = yield* CurrentAuth;
-          yield* vaultsService.removeMember(current.user_id, params.vault_id, params.member_user_id);
+          yield* vaultsService.removeMember(
+            current.user_id,
+            params.vault_id,
+            params.member_user_id,
+          );
         }),
       ),
     )
@@ -457,6 +482,82 @@ const ProposalsHandlersLive = HttpApiBuilder.group(MountedGreatMindsApi, "propos
     ),
 );
 
+const IngestHandlersLive = HttpApiBuilder.group(MountedGreatMindsApi, "ingest", (handlers) =>
+  handlers
+    .handle("ingestRaw", ({ params, payload }) =>
+      withDomainErrors(
+        Effect.gen(function* () {
+          const ingest = yield* IngestService;
+          const current = yield* CurrentAuth;
+          return yield* ingest.ingestRaw(current.user_id, params.vault_id, payload);
+        }),
+      ),
+    )
+    .handle("ingestUserSuggestion", ({ params, payload }) =>
+      withDomainErrors(
+        Effect.gen(function* () {
+          const ingest = yield* IngestService;
+          const current = yield* CurrentAuth;
+          return yield* ingest.ingestUserSuggestion(current.user_id, params.vault_id, payload);
+        }),
+      ),
+    )
+    .handle("checkStagedFileDupes", ({ params, payload }) =>
+      withDomainErrors(
+        Effect.gen(function* () {
+          const ingest = yield* IngestService;
+          const current = yield* CurrentAuth;
+          const existing = yield* ingest.checkStagedDupes(
+            current.user_id,
+            params.vault_id,
+            payload.client_hashes,
+          );
+          return { existing: [...existing] };
+        }),
+      ),
+    )
+    .handle("signStagedFiles", ({ params, payload }) =>
+      withDomainErrors(
+        Effect.gen(function* () {
+          const ingest = yield* IngestService;
+          const current = yield* CurrentAuth;
+          const signed = yield* ingest.signStagedFiles(
+            current.user_id,
+            params.vault_id,
+            payload.files,
+          );
+          return { files: [...signed] };
+        }),
+      ),
+    )
+    .handle("processStagedFiles", ({ params, payload }) =>
+      withDomainErrors(
+        Effect.gen(function* () {
+          const ingest = yield* IngestService;
+          const current = yield* CurrentAuth;
+          return yield* ingest.processStagedFiles(
+            current.user_id,
+            params.vault_id,
+            payload.job_id,
+            payload.files,
+          );
+        }),
+      ),
+    ),
+);
+
+const JobsHandlersLive = HttpApiBuilder.group(MountedGreatMindsApi, "jobs", (handlers) =>
+  handlers.handle("startUrlJob", ({ params, payload }) =>
+    withDomainErrors(
+      Effect.gen(function* () {
+        const ingest = yield* IngestService;
+        const current = yield* CurrentAuth;
+        return yield* ingest.startUrlJob(current.user_id, params.vault_id, payload);
+      }),
+    ),
+  ),
+);
+
 const DocumentsHandlersLive = HttpApiBuilder.group(MountedGreatMindsApi, "documents", (handlers) =>
   handlers
     .handle("readDocument", ({ params }) =>
@@ -519,6 +620,79 @@ const SessionsHandlersLive = HttpApiBuilder.group(MountedGreatMindsApi, "session
     ),
 );
 
+const bearerFromRequest = (request: HttpServerRequest.HttpServerRequest) => {
+  const header = request.headers.authorization;
+  if (header === undefined || !header.startsWith("Bearer ")) {
+    return undefined;
+  }
+  return header.slice("Bearer ".length);
+};
+
+const currentAuthFromRequest = (request: HttpServerRequest.HttpServerRequest) =>
+  Effect.gen(function* () {
+    const token = bearerFromRequest(request);
+    if (token === undefined || token.length === 0) {
+      return yield* domainErrorJsonResponse(new Unauthorized({ detail: "Missing bearer token" }));
+    }
+    const auth = yield* AuthService;
+    const current = yield* Effect.result(auth.authenticateBearer(token));
+    if (current._tag === "Failure") {
+      return yield* domainErrorJsonResponse(current.failure);
+    }
+    return current.success;
+  });
+
+const parseUpload = (request: HttpServerRequest.HttpServerRequest) =>
+  Effect.gen(function* () {
+    const parts = Array.from(
+      yield* Stream.runCollect(request.multipartStream).pipe(
+        Effect.mapError(() => new BadRequest({ detail: "Invalid multipart upload" })),
+      ),
+    );
+    const file = parts.find((part) => Multipart.isFile(part) && part.key === "file");
+    if (file === undefined || !Multipart.isFile(file)) {
+      return yield* new BadRequest({ detail: "Uploaded file must have a filename" });
+    }
+    if (file.name.length === 0) {
+      return yield* new BadRequest({ detail: "Uploaded file must have a filename" });
+    }
+    const rawBytes = yield* file.contentEffect.pipe(
+      Effect.mapError(() => new BadRequest({ detail: "Invalid multipart upload" })),
+    );
+    const url = new URL(request.url, "http://localhost");
+    return {
+      rawBytes,
+      filename: file.name,
+      mimetype: file.contentType,
+      origin: url.searchParams.get("origin"),
+      destPath: url.searchParams.get("dest_path"),
+    };
+  });
+
+const UploadRouteLive = HttpRouter.add("POST", "/v1/vaults/:vault_id/ingest/upload", (request) =>
+  Effect.gen(function* () {
+    const params = yield* HttpRouter.params;
+    const vaultId = parseUuidPathParam(params.vault_id);
+    if (vaultId === undefined) {
+      return yield* jsonResponse(422, { detail: "Invalid path parameter" });
+    }
+    const current = yield* currentAuthFromRequest(request);
+    if (HttpServerResponse.isHttpServerResponse(current)) {
+      return current;
+    }
+    const upload = yield* parseUpload(request).pipe(
+      Effect.catchTags({
+        BadRequest: domainErrorJsonResponse,
+      }),
+    );
+    if (HttpServerResponse.isHttpServerResponse(upload)) {
+      return upload;
+    }
+    const ingest = yield* IngestService;
+    return yield* withDomainJson(ingest.ingestUpload(current.user_id, vaultId, upload), 201);
+  }),
+);
+
 const ApiGroupsLive = Layer.mergeAll(
   MetaHandlersLive,
   AuthHandlersLive,
@@ -526,6 +700,8 @@ const ApiGroupsLive = Layer.mergeAll(
   WikiHandlersLive,
   SourcesHandlersLive,
   ProposalsHandlersLive,
+  IngestHandlersLive,
+  JobsHandlersLive,
   DocumentsHandlersLive,
   SessionsHandlersLive,
 ).pipe(Layer.provideMerge(AuthMiddlewareLive));
@@ -535,6 +711,7 @@ const ApiLive = HttpApiBuilder.layer(MountedGreatMindsApi).pipe(Layer.provide(Ap
 const AppRoutesLive = Layer.mergeAll(
   HttpRouter.add("GET", "/health", healthResponse),
   HttpRouter.add("GET", "/", healthResponse),
+  UploadRouteLive,
   ApiLive,
 );
 
