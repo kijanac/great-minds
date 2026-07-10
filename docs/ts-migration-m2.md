@@ -37,3 +37,15 @@ House rules from `docs/ts-migration-m1.md` apply to harness code (it's still cod
 1. `just parity` green from a clean checkout (given docker + uv + pnpm), wall-clock under ~2 minutes
 2. Every manifest entry exercised; every decision rule hit ≥1; zero unlicensed diffs
 3. Deliberately breaking a TS response (e.g. rename one field locally) makes the run fail with a readable report naming the endpoint and diff — demonstrate this in the final report, then revert
+
+## How to read a parity failure
+
+Run `just parity`, then open `packages/parity/reports/latest.md`. The console summary is intentionally short; the markdown report is the source of detail.
+
+Each failed request lists the method, path template, variant label, status/content-type/body diffs, and the Python and TypeScript values side by side. A request that matches a recorded decision is marked `PASS (D*)`; if that decision stops matching its exact expected Python/TS shapes, it becomes a failure rather than being silently normalized.
+
+Fix unlicensed failures in the TS backend or fixture/manifest only after deciding which is wrong. Add a normalization only when the value is legitimately run-variant and the manifest can name the exact JSON path. Add or change a decision rule only when `docs/api-contract-m1.md` records the product decision behind the divergence.
+
+## Initial green run
+
+`just parity` completed green in 6.275s runner time. The run covered 24 contract endpoints with 75 requests: 13 mutation-flow requests and 62 read-matrix requests. Decision-rule hits: D1=1, D3=1, D4=1, D6=8, D8=2, D9=2, D10=1, D11=3. Endpoint exclusions: none.

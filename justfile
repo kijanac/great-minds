@@ -35,7 +35,7 @@ lint-web:
 
 # Lint TypeScript packages with oxlint
 lint-packages:
-    pnpm exec oxlint packages/domain/src packages/database/src packages/server/src packages/server/test
+    pnpm exec oxlint packages/domain/src packages/database/src packages/server/src packages/server/test packages/parity/src
 
 # Check Python formatting (read-only)
 format:
@@ -74,6 +74,10 @@ test-packages:
     DATABASE_URL=postgresql://great_minds:great_minds@localhost:55434/gm_packages_test JWT_SECRET=packages-test-jwt-secret UV_CACHE_DIR=/tmp/gm-uv-cache uv run alembic upgrade head
     DATABASE_URL=postgresql://great_minds:great_minds@localhost:55434/gm_packages_test pnpm --filter @great-minds/server test:integration
 
+# Run Python/TypeScript API parity harness against a scratch Postgres
+parity:
+    pnpm --filter @great-minds/parity parity
+
 # ---------------------------------------------------------------------------
 # Compound checks
 # ---------------------------------------------------------------------------
@@ -84,8 +88,8 @@ ci: lint format types lint-web format-web types-web lint-packages types-packages
 # Run full CI checks, including hermetic TypeScript package integration
 ci-full: ci test-packages
 
-# Pre-push review: full CI gate
-review: ci-full
+# Pre-push review: full CI gate plus API parity
+review: ci-full parity
     @echo ""
     @echo "Review: PASSED"
 

@@ -1,0 +1,709 @@
+import { ids, rawKeys } from "./fixture.ts";
+
+export type DecisionId = "D1" | "D3" | "D4" | "D6" | "D8" | "D9" | "D10" | "D11";
+
+export type DecisionRule =
+  | "D1"
+  | "D3"
+  | "D4"
+  | "D6"
+  | "D8D9"
+  | "D10"
+  | "D11_MULTI_META"
+  | "D11_INVALID_ID"
+  | "D11_NON_OBJECT";
+
+export type Normalization =
+  | {
+      readonly kind: "mask";
+      readonly path: string;
+      readonly label: string;
+      readonly backend?: "python" | "typescript";
+    }
+  | {
+      readonly kind: "isoDate";
+      readonly path: string;
+      readonly backend?: "python" | "typescript";
+    };
+
+export type CredentialName = "aliceJwt" | "bobJwt" | "carolJwt" | "malloryJwt" | "aliceApiKey";
+
+export type CredentialSet = Record<CredentialName, string>;
+
+export type ManifestEntry = {
+  readonly id: string;
+  readonly phase: "mutation" | "read";
+  readonly label: string;
+  readonly method: string;
+  readonly path: string;
+  readonly pathTemplate: string;
+  readonly coverage: string;
+  readonly auth?: CredentialName;
+  readonly body?: unknown;
+  readonly literalBearer?: string;
+  readonly ignoreContentType?: boolean;
+  readonly normalize?: readonly Normalization[];
+  readonly decision?: DecisionRule;
+};
+
+export const decisionIds = ["D1", "D3", "D4", "D6", "D8", "D9", "D10", "D11"] as const;
+
+export const requiredContractEndpoints = [
+  "GET /health",
+  "GET /",
+  "HEAD /",
+  "POST /auth/request-code",
+  "POST /auth/verify-code",
+  "POST /auth/refresh",
+  "POST /auth/api-keys",
+  "GET /auth/api-keys",
+  "DELETE /auth/api-keys/{key_id}",
+  "DELETE /auth/me",
+  "GET /vaults",
+  "GET /vaults/{vault_id}",
+  "GET /vaults/{vault_id}/config",
+  "GET /vaults/{vault_id}/members",
+  "GET /vaults/{vault_id}/wiki",
+  "GET /vaults/{vault_id}/wiki/recent",
+  "GET /vaults/{vault_id}/raw/sources",
+  "GET /vaults/{vault_id}/wiki/{slug}",
+  "GET /vaults/{vault_id}/doc/{path}",
+  "GET /vaults/{vault_id}/chunks",
+  "GET /vaults/{vault_id}/links",
+  "GET /vaults/{vault_id}/sessions",
+  "GET /vaults/{vault_id}/sessions/{session_id}",
+  "GET /vaults/{vault_id}/sessions/{session_id}/markdown",
+] as const;
+
+export const endpointExclusions: readonly string[] = [];
+
+const iso = (path: string): Normalization => ({ kind: "isoDate", path });
+
+const pageDates = [iso("items.*.created_at"), iso("items.*.updated_at")] as const;
+
+const wikiOverviewDates = [iso("items.*.updated_at")] as const;
+
+const sourceSummaryDates = [iso("items.*.updated_at")] as const;
+
+const docDates = [iso("article.created_at"), iso("article.updated_at")] as const;
+
+const linkDates = [iso("outgoing.*.updated_at"), iso("incoming.*.updated_at")] as const;
+
+const sessionListDates = [iso("items.*.created_at"), iso("items.*.updated_at")] as const;
+
+const apiKeyDates = [iso("*.created_at")] as const;
+
+const entry = (input: Omit<ManifestEntry, "phase">): ManifestEntry => ({
+  phase: "read",
+  ...input,
+});
+
+export const buildReadManifest = (_credentials: CredentialSet): readonly ManifestEntry[] => [
+  entry({
+    id: "meta-health",
+    label: "health probe",
+    method: "GET",
+    path: "/health",
+    pathTemplate: "/health",
+    coverage: "GET /health",
+  }),
+  entry({
+    id: "meta-root-get",
+    label: "root GET probe",
+    method: "GET",
+    path: "/",
+    pathTemplate: "/",
+    coverage: "GET /",
+  }),
+  entry({
+    id: "meta-root-head",
+    label: "root HEAD probe",
+    method: "HEAD",
+    path: "/",
+    pathTemplate: "/",
+    coverage: "HEAD /",
+  }),
+  entry({
+    id: "auth-api-keys-list-jwt",
+    label: "list API keys with JWT",
+    method: "GET",
+    path: "/v1/auth/api-keys",
+    pathTemplate: "/v1/auth/api-keys",
+    coverage: "GET /auth/api-keys",
+    auth: "aliceJwt",
+    normalize: apiKeyDates,
+  }),
+  entry({
+    id: "auth-api-keys-list-api-key",
+    label: "list API keys with API key",
+    method: "GET",
+    path: "/v1/auth/api-keys",
+    pathTemplate: "/v1/auth/api-keys",
+    coverage: "GET /auth/api-keys",
+    auth: "aliceApiKey",
+    normalize: apiKeyDates,
+  }),
+  entry({
+    id: "auth-api-keys-unauthenticated",
+    label: "list API keys with invalid bearer",
+    method: "GET",
+    path: "/v1/auth/api-keys",
+    pathTemplate: "/v1/auth/api-keys",
+    coverage: "GET /auth/api-keys",
+    literalBearer: "not-a-valid-token",
+  }),
+  entry({
+    id: "vaults-list-default",
+    label: "list vaults default page",
+    method: "GET",
+    path: "/v1/vaults",
+    pathTemplate: "/v1/vaults",
+    coverage: "GET /vaults",
+    auth: "aliceJwt",
+    normalize: pageDates,
+  }),
+  entry({
+    id: "vaults-list-api-key",
+    label: "list vaults with API key",
+    method: "GET",
+    path: "/v1/vaults?limit=1",
+    pathTemplate: "/v1/vaults?limit=1",
+    coverage: "GET /vaults",
+    auth: "aliceApiKey",
+    normalize: pageDates,
+  }),
+  entry({
+    id: "vaults-list-limit-zero",
+    label: "list vaults limit zero",
+    method: "GET",
+    path: "/v1/vaults?limit=0",
+    pathTemplate: "/v1/vaults?limit=0",
+    coverage: "GET /vaults",
+    auth: "aliceJwt",
+    normalize: pageDates,
+  }),
+  entry({
+    id: "vaults-list-offset-past-total",
+    label: "list vaults offset past total",
+    method: "GET",
+    path: "/v1/vaults?offset=99",
+    pathTemplate: "/v1/vaults?offset=99",
+    coverage: "GET /vaults",
+    auth: "aliceJwt",
+    normalize: pageDates,
+  }),
+  entry({
+    id: "vaults-list-over-cap",
+    label: "list vaults limit over cap",
+    method: "GET",
+    path: "/v1/vaults?limit=201",
+    pathTemplate: "/v1/vaults?limit=201",
+    coverage: "GET /vaults",
+    auth: "aliceJwt",
+    decision: "D6",
+  }),
+  entry({
+    id: "vault-detail-owner",
+    label: "vault detail as owner",
+    method: "GET",
+    path: `/v1/vaults/${ids.vaultAlpha}`,
+    pathTemplate: "/v1/vaults/{vault_id}",
+    coverage: "GET /vaults/{vault_id}",
+    auth: "aliceJwt",
+    normalize: [iso("created_at")],
+  }),
+  entry({
+    id: "vault-detail-viewer",
+    label: "vault detail as viewer",
+    method: "GET",
+    path: `/v1/vaults/${ids.vaultBeta}`,
+    pathTemplate: "/v1/vaults/{vault_id}",
+    coverage: "GET /vaults/{vault_id}",
+    auth: "aliceJwt",
+    normalize: [iso("created_at")],
+  }),
+  entry({
+    id: "vault-detail-non-member",
+    label: "vault detail existing non-member",
+    method: "GET",
+    path: `/v1/vaults/${ids.vaultAlpha}`,
+    pathTemplate: "/v1/vaults/{vault_id}",
+    coverage: "GET /vaults/{vault_id}",
+    auth: "malloryJwt",
+  }),
+  entry({
+    id: "vault-detail-unknown",
+    label: "vault detail unknown vault",
+    method: "GET",
+    path: `/v1/vaults/${ids.unknownVault}`,
+    pathTemplate: "/v1/vaults/{unknown_vault_id}",
+    coverage: "GET /vaults/{vault_id}",
+    auth: "malloryJwt",
+    decision: "D3",
+  }),
+  entry({
+    id: "vault-config-custom",
+    label: "vault config custom file",
+    method: "GET",
+    path: `/v1/vaults/${ids.vaultAlpha}/config`,
+    pathTemplate: "/v1/vaults/{vault_id}/config",
+    coverage: "GET /vaults/{vault_id}/config",
+    auth: "bobJwt",
+    decision: "D8D9",
+  }),
+  entry({
+    id: "vault-config-default",
+    label: "vault config missing file defaults",
+    method: "GET",
+    path: `/v1/vaults/${ids.vaultBeta}/config`,
+    pathTemplate: "/v1/vaults/{vault_id}/config",
+    coverage: "GET /vaults/{vault_id}/config",
+    auth: "bobJwt",
+    decision: "D8D9",
+  }),
+  entry({
+    id: "vault-config-non-member",
+    label: "vault config non-member",
+    method: "GET",
+    path: `/v1/vaults/${ids.vaultAlpha}/config`,
+    pathTemplate: "/v1/vaults/{vault_id}/config",
+    coverage: "GET /vaults/{vault_id}/config",
+    auth: "malloryJwt",
+  }),
+  entry({
+    id: "vault-members-owner",
+    label: "list members as owner",
+    method: "GET",
+    path: `/v1/vaults/${ids.vaultAlpha}/members`,
+    pathTemplate: "/v1/vaults/{vault_id}/members",
+    coverage: "GET /vaults/{vault_id}/members",
+    auth: "aliceJwt",
+  }),
+  entry({
+    id: "vault-members-limit-zero",
+    label: "list members limit zero",
+    method: "GET",
+    path: `/v1/vaults/${ids.vaultAlpha}/members?limit=0`,
+    pathTemplate: "/v1/vaults/{vault_id}/members?limit=0",
+    coverage: "GET /vaults/{vault_id}/members",
+    auth: "aliceJwt",
+  }),
+  entry({
+    id: "vault-members-over-cap",
+    label: "list members limit over cap",
+    method: "GET",
+    path: `/v1/vaults/${ids.vaultAlpha}/members?limit=201`,
+    pathTemplate: "/v1/vaults/{vault_id}/members?limit=201",
+    coverage: "GET /vaults/{vault_id}/members",
+    auth: "aliceJwt",
+    decision: "D6",
+  }),
+  entry({
+    id: "vault-members-editor-denied",
+    label: "list members as editor",
+    method: "GET",
+    path: `/v1/vaults/${ids.vaultAlpha}/members`,
+    pathTemplate: "/v1/vaults/{vault_id}/members",
+    coverage: "GET /vaults/{vault_id}/members",
+    auth: "bobJwt",
+  }),
+  entry({
+    id: "wiki-list-alpha",
+    label: "wiki list alpha sort",
+    method: "GET",
+    path: `/v1/vaults/${ids.vaultAlpha}/wiki`,
+    pathTemplate: "/v1/vaults/{vault_id}/wiki",
+    coverage: "GET /vaults/{vault_id}/wiki",
+    auth: "aliceJwt",
+    normalize: wikiOverviewDates,
+  }),
+  entry({
+    id: "wiki-list-run-filter",
+    label: "wiki list render run filter",
+    method: "GET",
+    path: `/v1/vaults/${ids.vaultAlpha}/wiki?run=${ids.runAlpha}`,
+    pathTemplate: "/v1/vaults/{vault_id}/wiki?run={run_id}",
+    coverage: "GET /vaults/{vault_id}/wiki",
+    auth: "aliceJwt",
+    normalize: wikiOverviewDates,
+  }),
+  entry({
+    id: "wiki-list-limit-zero",
+    label: "wiki list limit zero",
+    method: "GET",
+    path: `/v1/vaults/${ids.vaultAlpha}/wiki?limit=0`,
+    pathTemplate: "/v1/vaults/{vault_id}/wiki?limit=0",
+    coverage: "GET /vaults/{vault_id}/wiki",
+    auth: "aliceJwt",
+    normalize: wikiOverviewDates,
+  }),
+  entry({
+    id: "wiki-list-over-cap",
+    label: "wiki list limit over cap",
+    method: "GET",
+    path: `/v1/vaults/${ids.vaultAlpha}/wiki?limit=201`,
+    pathTemplate: "/v1/vaults/{vault_id}/wiki?limit=201",
+    coverage: "GET /vaults/{vault_id}/wiki",
+    auth: "aliceJwt",
+    decision: "D6",
+  }),
+  entry({
+    id: "wiki-recent",
+    label: "wiki recent sort",
+    method: "GET",
+    path: `/v1/vaults/${ids.vaultAlpha}/wiki/recent`,
+    pathTemplate: "/v1/vaults/{vault_id}/wiki/recent",
+    coverage: "GET /vaults/{vault_id}/wiki/recent",
+    auth: "aliceJwt",
+    normalize: wikiOverviewDates,
+  }),
+  entry({
+    id: "wiki-slug-legacy",
+    label: "legacy wiki slug route",
+    method: "GET",
+    path: `/v1/vaults/${ids.vaultAlpha}/wiki/alpha-practice`,
+    pathTemplate: "/v1/vaults/{vault_id}/wiki/{slug}",
+    coverage: "GET /vaults/{vault_id}/wiki/{slug}",
+    auth: "aliceJwt",
+    decision: "D4",
+  }),
+  entry({
+    id: "sources-list",
+    label: "source list with facets",
+    method: "GET",
+    path: `/v1/vaults/${ids.vaultAlpha}/raw/sources`,
+    pathTemplate: "/v1/vaults/{vault_id}/raw/sources",
+    coverage: "GET /vaults/{vault_id}/raw/sources",
+    auth: "aliceJwt",
+    normalize: sourceSummaryDates,
+  }),
+  entry({
+    id: "sources-search",
+    label: "source search title author",
+    method: "GET",
+    path: `/v1/vaults/${ids.vaultAlpha}/raw/sources?search=Marx`,
+    pathTemplate: "/v1/vaults/{vault_id}/raw/sources?search=Marx",
+    coverage: "GET /vaults/{vault_id}/raw/sources",
+    auth: "aliceJwt",
+    normalize: sourceSummaryDates,
+  }),
+  entry({
+    id: "sources-filter",
+    label: "source type filter",
+    method: "GET",
+    path: `/v1/vaults/${ids.vaultAlpha}/raw/sources?source_type=article`,
+    pathTemplate: "/v1/vaults/{vault_id}/raw/sources?source_type=article",
+    coverage: "GET /vaults/{vault_id}/raw/sources",
+    auth: "aliceJwt",
+    normalize: sourceSummaryDates,
+  }),
+  entry({
+    id: "sources-empty-query-values",
+    label: "source empty query values",
+    method: "GET",
+    path: `/v1/vaults/${ids.vaultAlpha}/raw/sources?search=&source_type=`,
+    pathTemplate: "/v1/vaults/{vault_id}/raw/sources?search=&source_type=",
+    coverage: "GET /vaults/{vault_id}/raw/sources",
+    auth: "aliceJwt",
+    normalize: sourceSummaryDates,
+  }),
+  entry({
+    id: "sources-over-cap",
+    label: "source list limit over cap",
+    method: "GET",
+    path: `/v1/vaults/${ids.vaultAlpha}/raw/sources?limit=201`,
+    pathTemplate: "/v1/vaults/{vault_id}/raw/sources?limit=201",
+    coverage: "GET /vaults/{vault_id}/raw/sources",
+    auth: "aliceJwt",
+    decision: "D6",
+  }),
+  entry({
+    id: "doc-wiki-live",
+    label: "read live wiki document",
+    method: "GET",
+    path: `/v1/vaults/${ids.vaultAlpha}/doc/wiki/alpha-practice.md`,
+    pathTemplate: "/v1/vaults/{vault_id}/doc/wiki/alpha-practice.md",
+    coverage: "GET /vaults/{vault_id}/doc/{path}",
+    auth: "aliceJwt",
+    normalize: docDates,
+  }),
+  entry({
+    id: "doc-raw-live",
+    label: "read raw source document",
+    method: "GET",
+    path: `/v1/vaults/${ids.vaultAlpha}/doc/raw/books/capital.md`,
+    pathTemplate: "/v1/vaults/{vault_id}/doc/raw/books/capital.md",
+    coverage: "GET /vaults/{vault_id}/doc/{path}",
+    auth: "aliceJwt",
+    normalize: docDates,
+  }),
+  entry({
+    id: "doc-raw-encoded-space",
+    label: "read encoded raw source document",
+    method: "GET",
+    path: `/v1/vaults/${ids.vaultAlpha}/doc/raw/books/encoded%20title.md`,
+    pathTemplate: "/v1/vaults/{vault_id}/doc/raw/books/encoded%20title.md",
+    coverage: "GET /vaults/{vault_id}/doc/{path}",
+    auth: "aliceJwt",
+    normalize: docDates,
+  }),
+  entry({
+    id: "doc-wiki-archived-successor",
+    label: "archived wiki fallback with successor",
+    method: "GET",
+    path: `/v1/vaults/${ids.vaultAlpha}/doc/wiki/archived-essay.md`,
+    pathTemplate: "/v1/vaults/{vault_id}/doc/wiki/archived-essay.md",
+    coverage: "GET /vaults/{vault_id}/doc/{path}",
+    auth: "aliceJwt",
+    normalize: docDates,
+  }),
+  entry({
+    id: "doc-wiki-archived-no-successor",
+    label: "archived wiki fallback without successor",
+    method: "GET",
+    path: `/v1/vaults/${ids.vaultAlpha}/doc/wiki/archived-lone.md`,
+    pathTemplate: "/v1/vaults/{vault_id}/doc/wiki/archived-lone.md",
+    coverage: "GET /vaults/{vault_id}/doc/{path}",
+    auth: "aliceJwt",
+    normalize: docDates,
+  }),
+  entry({
+    id: "doc-missing-file",
+    label: "registry row without file",
+    method: "GET",
+    path: `/v1/vaults/${ids.vaultAlpha}/doc/raw/articles/organization.md`,
+    pathTemplate: "/v1/vaults/{vault_id}/doc/raw/articles/organization.md",
+    coverage: "GET /vaults/{vault_id}/doc/{path}",
+    auth: "aliceJwt",
+  }),
+  entry({
+    id: "doc-registry-mismatch",
+    label: "file on disk without registry row",
+    method: "GET",
+    path: `/v1/vaults/${ids.vaultAlpha}/doc/wiki/orphan-on-disk.md`,
+    pathTemplate: "/v1/vaults/{vault_id}/doc/wiki/orphan-on-disk.md",
+    coverage: "GET /vaults/{vault_id}/doc/{path}",
+    auth: "aliceJwt",
+  }),
+  entry({
+    id: "doc-invalid-path",
+    label: "invalid document path",
+    method: "GET",
+    path: `/v1/vaults/${ids.vaultAlpha}/doc/wiki/%5Cbad.md`,
+    pathTemplate: "/v1/vaults/{vault_id}/doc/wiki/%5Cbad.md",
+    coverage: "GET /vaults/{vault_id}/doc/{path}",
+    auth: "aliceJwt",
+  }),
+  entry({
+    id: "chunks-capped",
+    label: "chunk range capped at 100",
+    method: "GET",
+    path: `/v1/vaults/${ids.vaultAlpha}/chunks?path=raw%2Fbooks%2Fcapital.md&start=0&end=200`,
+    pathTemplate: "/v1/vaults/{vault_id}/chunks?path=raw/books/capital.md&start=0&end=200",
+    coverage: "GET /vaults/{vault_id}/chunks",
+    auth: "aliceJwt",
+  }),
+  entry({
+    id: "chunks-tail",
+    label: "chunk tail range",
+    method: "GET",
+    path: `/v1/vaults/${ids.vaultAlpha}/chunks?path=raw%2Fbooks%2Fcapital.md&start=100&end=200`,
+    pathTemplate: "/v1/vaults/{vault_id}/chunks?path=raw/books/capital.md&start=100&end=200",
+    coverage: "GET /vaults/{vault_id}/chunks",
+    auth: "aliceJwt",
+  }),
+  entry({
+    id: "chunks-missing-path",
+    label: "chunk missing path",
+    method: "GET",
+    path: `/v1/vaults/${ids.vaultAlpha}/chunks?path=raw%2Fbooks%2Fmissing.md&start=0&end=3`,
+    pathTemplate: "/v1/vaults/{vault_id}/chunks?path=missing&start=0&end=3",
+    coverage: "GET /vaults/{vault_id}/chunks",
+    auth: "aliceJwt",
+  }),
+  entry({
+    id: "chunks-missing-end",
+    label: "chunk missing end parameter",
+    method: "GET",
+    path: `/v1/vaults/${ids.vaultAlpha}/chunks?path=raw%2Fbooks%2Fcapital.md&start=0`,
+    pathTemplate: "/v1/vaults/{vault_id}/chunks?path=capital&start=0",
+    coverage: "GET /vaults/{vault_id}/chunks",
+    auth: "aliceJwt",
+    decision: "D6",
+  }),
+  entry({
+    id: "links-alpha",
+    label: "links for live wiki article",
+    method: "GET",
+    path: `/v1/vaults/${ids.vaultAlpha}/links?path=wiki%2Falpha-practice.md`,
+    pathTemplate: "/v1/vaults/{vault_id}/links?path=wiki/alpha-practice.md",
+    coverage: "GET /vaults/{vault_id}/links",
+    auth: "aliceJwt",
+    normalize: linkDates,
+  }),
+  entry({
+    id: "links-raw",
+    label: "links for raw path",
+    method: "GET",
+    path: `/v1/vaults/${ids.vaultAlpha}/links?path=raw%2Fbooks%2Fcapital.md`,
+    pathTemplate: "/v1/vaults/{vault_id}/links?path=raw/books/capital.md",
+    coverage: "GET /vaults/{vault_id}/links",
+    auth: "aliceJwt",
+  }),
+  entry({
+    id: "links-archive",
+    label: "links for archived wiki path",
+    method: "GET",
+    path: `/v1/vaults/${ids.vaultAlpha}/links?path=archive%2Farchived-essay.md`,
+    pathTemplate: "/v1/vaults/{vault_id}/links?path=archive/archived-essay.md",
+    coverage: "GET /vaults/{vault_id}/links",
+    auth: "aliceJwt",
+    decision: "D10",
+  }),
+  entry({
+    id: "sessions-list-alice",
+    label: "session list self-scoped",
+    method: "GET",
+    path: `/v1/vaults/${ids.vaultAlpha}/sessions`,
+    pathTemplate: "/v1/vaults/{vault_id}/sessions",
+    coverage: "GET /vaults/{vault_id}/sessions",
+    auth: "aliceJwt",
+    normalize: sessionListDates,
+  }),
+  entry({
+    id: "sessions-list-bob",
+    label: "session list for editor",
+    method: "GET",
+    path: `/v1/vaults/${ids.vaultAlpha}/sessions`,
+    pathTemplate: "/v1/vaults/{vault_id}/sessions",
+    coverage: "GET /vaults/{vault_id}/sessions",
+    auth: "bobJwt",
+    normalize: sessionListDates,
+  }),
+  entry({
+    id: "sessions-list-limit-zero",
+    label: "session list limit zero",
+    method: "GET",
+    path: `/v1/vaults/${ids.vaultAlpha}/sessions?limit=0`,
+    pathTemplate: "/v1/vaults/{vault_id}/sessions?limit=0",
+    coverage: "GET /vaults/{vault_id}/sessions",
+    auth: "aliceJwt",
+    normalize: sessionListDates,
+  }),
+  entry({
+    id: "sessions-list-over-cap",
+    label: "session list limit over cap",
+    method: "GET",
+    path: `/v1/vaults/${ids.vaultAlpha}/sessions?limit=201`,
+    pathTemplate: "/v1/vaults/{vault_id}/sessions?limit=201",
+    coverage: "GET /vaults/{vault_id}/sessions",
+    auth: "aliceJwt",
+    decision: "D6",
+  }),
+  entry({
+    id: "session-read-main-by-member",
+    label: "read another member session by id",
+    method: "GET",
+    path: `/v1/vaults/${ids.vaultAlpha}/sessions/${ids.sessionAliceMain}`,
+    pathTemplate: "/v1/vaults/{vault_id}/sessions/{session_id}",
+    coverage: "GET /vaults/{vault_id}/sessions/{session_id}",
+    auth: "bobJwt",
+  }),
+  entry({
+    id: "session-read-bob-by-owner",
+    label: "owner reads member session by id",
+    method: "GET",
+    path: `/v1/vaults/${ids.vaultAlpha}/sessions/${ids.sessionBob}`,
+    pathTemplate: "/v1/vaults/{vault_id}/sessions/{session_id}",
+    coverage: "GET /vaults/{vault_id}/sessions/{session_id}",
+    auth: "aliceJwt",
+  }),
+  entry({
+    id: "session-read-malformed",
+    label: "skip invalid typed events and truncate malformed JSON",
+    method: "GET",
+    path: `/v1/vaults/${ids.vaultAlpha}/sessions/${ids.sessionMalformed}`,
+    pathTemplate: "/v1/vaults/{vault_id}/sessions/s-malformed",
+    coverage: "GET /vaults/{vault_id}/sessions/{session_id}",
+    auth: "aliceJwt",
+  }),
+  entry({
+    id: "session-read-cross-vault-duplicate",
+    label: "cross-vault duplicate session id",
+    method: "GET",
+    path: `/v1/vaults/${ids.vaultBeta}/sessions/${ids.sessionAliceMain}`,
+    pathTemplate: "/v1/vaults/{vault_id}/sessions/{session_id}",
+    coverage: "GET /vaults/{vault_id}/sessions/{session_id}",
+    auth: "bobJwt",
+  }),
+  entry({
+    id: "session-read-missing",
+    label: "missing session file",
+    method: "GET",
+    path: `/v1/vaults/${ids.vaultAlpha}/sessions/s-missing`,
+    pathTemplate: "/v1/vaults/{vault_id}/sessions/s-missing",
+    coverage: "GET /vaults/{vault_id}/sessions/{session_id}",
+    auth: "aliceJwt",
+  }),
+  entry({
+    id: "session-read-invalid-id",
+    label: "invalid session id path",
+    method: "GET",
+    path: `/v1/vaults/${ids.vaultAlpha}/sessions/${encodeURIComponent("s-2\\..")}`,
+    pathTemplate: "/v1/vaults/{vault_id}/sessions/{invalid_session_id}",
+    coverage: "GET /vaults/{vault_id}/sessions/{session_id}",
+    auth: "aliceJwt",
+    decision: "D11_INVALID_ID",
+  }),
+  entry({
+    id: "session-read-multi-meta",
+    label: "multi-meta stale prefix isolation",
+    method: "GET",
+    path: `/v1/vaults/${ids.vaultAlpha}/sessions/${ids.sessionMultiMeta}`,
+    pathTemplate: "/v1/vaults/{vault_id}/sessions/s-multi-meta",
+    coverage: "GET /vaults/{vault_id}/sessions/{session_id}",
+    auth: "aliceJwt",
+    decision: "D11_MULTI_META",
+  }),
+  entry({
+    id: "session-read-non-object",
+    label: "JSON-valid non-object event line",
+    method: "GET",
+    path: `/v1/vaults/${ids.vaultAlpha}/sessions/${ids.sessionNonObject}`,
+    pathTemplate: "/v1/vaults/{vault_id}/sessions/s-non-object",
+    coverage: "GET /vaults/{vault_id}/sessions/{session_id}",
+    auth: "aliceJwt",
+    decision: "D11_NON_OBJECT",
+  }),
+  entry({
+    id: "session-markdown-main",
+    label: "session markdown sidecar",
+    method: "GET",
+    path: `/v1/vaults/${ids.vaultAlpha}/sessions/${ids.sessionAliceMain}/markdown`,
+    pathTemplate: "/v1/vaults/{vault_id}/sessions/{session_id}/markdown",
+    coverage: "GET /vaults/{vault_id}/sessions/{session_id}/markdown",
+    auth: "aliceJwt",
+  }),
+  entry({
+    id: "session-markdown-missing-sidecar",
+    label: "session markdown missing sidecar",
+    method: "GET",
+    path: `/v1/vaults/${ids.vaultAlpha}/sessions/${ids.sessionNoMarkdown}/markdown`,
+    pathTemplate: "/v1/vaults/{vault_id}/sessions/s-no-md/markdown",
+    coverage: "GET /vaults/{vault_id}/sessions/{session_id}/markdown",
+    auth: "aliceJwt",
+    decision: "D1",
+  }),
+];
+
+export const mutationEndpointCoverage = [
+  "POST /auth/request-code",
+  "POST /auth/verify-code",
+  "POST /auth/refresh",
+  "POST /auth/api-keys",
+  "GET /auth/api-keys",
+  "DELETE /auth/api-keys/{key_id}",
+  "DELETE /auth/me",
+] as const;
+
+export const seededApiKey = rawKeys.aliceActive;

@@ -67,7 +67,7 @@ One thin vertical slice through every risky layer, on posture A pins, time-boxed
 ## After the spike
 
 1. **M1 — skeleton + auth + read paths** (detailed brief: `docs/ts-migration-m1.md`): vaults, wiki, sources, sessions read APIs behind the existing HTTP contract; React app pointable at either backend via env
-2. **M2 — characterization harness** (separate workstream; gates cutover, not M1 merges): API-level parity diffing of both backends against one seeded DB, plus golden-compile fixtures and artifact comparators, wired into `just ci`
+2. **M2 — API parity harness** (brief: `docs/ts-migration-m2.md`; gates cutover, not M1 merges): `packages/parity` runs the Python and TS APIs against one seeded DB/storage root, diffs every M1 auth/read endpoint with decision-licensed divergences, and is wired as `just parity` in the `review` chain. Golden compile/artifact comparators land later with M4.
 3. **M3 — ingest + query/session write paths** (querier port: agentic loop over `@effect/ai`)
 4. **M4 — compile pipeline** phase-by-phase against the harness; durable workflows replace Absurd tasks
 5. **M5 — staging parity, cutover, Python removal**
