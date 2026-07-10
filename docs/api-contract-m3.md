@@ -1,0 +1,560 @@
+# M3 API contract inventory — write paths + query engine
+
+Built the same way as `docs/api-contract-m1.md`: Zod schemas/fetch calls in `web/src/api/*.ts` (+ hooks) cross-checked against FastAPI routers/schemas and the core domain services they call. Python is the requirements source, not the design source. Continues M1's endpoint-table format; does not repeat anything M1 already covered (all vault/session *reads*, wiki/doc reads, auth).
+
+## Mount reality (delta from M1)
+
+Nothing changes about mounting. Recap: `v1_router` (prefix `/v1`) mounts `vault_routes` (prefix `/vaults`, own guards per route — not vault-scoped) and, under `vault_scoped = APIRouter(prefix="/vaults/{vault_id}", dependencies=[Depends(require_vault_member)])`: `ingest_routes`, `query_routes`, `session_routes`, `wiki_routes`, `proposal_routes`, plus out-of-scope `compile_routes`, `lint_routes`, `job_routes`, vault-scoped `cost_routes` (`src/great_minds/app/api/v1/__init__.py:19-42`). So **every** route documented below that lives under one of those five routers already has vault-membership enforced before its own body/guard runs — a route with no additional `_auth: VaultXGuard` param is member-gated only.
+
+Router base paths relevant here:
+- `vault_routes.py`: `/vaults` (`src/great_minds/app/api/vault_routes.py:40`), not vault-scoped — each route does its own auth.
+- `proposal_routes.py`: `/proposals`, vault-scoped → full path `/v1/vaults/{vault_id}/proposals...`.
+- `ingest_routes.py`: `/ingest`, vault-scoped → `/v1/vaults/{vault_id}/ingest...`.
+- `query_routes.py`: `/query`, vault-scoped → `/v1/vaults/{vault_id}/query`. **Note the M3 planning doc calls this "`/query/stream`" — that name does not exist in the code.** The actual route is `POST /query` (`query_routes.py:24`, decorated `@router.post("")` on a router with `prefix="/query"`). There is exactly one query endpoint; `mode: "query" | "btw"` in the request body selects BTW behavior on the same endpoint — there is no separate `/query/btw` or `/btw` route.
+- `session_routes.py`: `/sessions`, vault-scoped → `/v1/vaults/{vault_id}/sessions...`.
+- `wiki_routes.py`: no own prefix, vault-scoped → the deletion routes below are `/v1/vaults/{vault_id}/raw/sources/{path}` and `.../deletion-request`.
+
+---
+
+## THE CRITICAL SECTION — `/query` SSE wire protocol
+
+Endpoint: **`POST /v1/vaults/{vault_id}/query`** (`query_routes.py:24-73`). Auth: vault member (any role — no `VaultEditorGuard`/`VaultOwnerGuard`, just the router-level `require_vault_member`), plus — via the `LlmClientDep` dependency chain (`client: LlmClientDep` → `get_llm_client(_: LlmGuard)` → `require_llm`, `dependencies.py:329-352`; the route does not declare `LlmGuard` directly) — a **plain (non-SSE) `503`** `{"detail": "LLM service not configured (OPENROUTER_API_KEY missing)"}` **before the stream starts** if `OPENROUTER_API_KEY` is unset. Dependency resolution happens before the route body, so this is a normal JSON error response, never a stream.
+
+### Request body — `QueryRequest` (`app/api/schemas/query.py:8-14`)
+
+```
+{ question: string,
+  model?: string | null,
+  origin_path?: string | null,
+  history: HistoryMessage[] = [],
+  mode: "query" | "btw" = "query",
+  extra_instructions?: string | null }
+HistoryMessage = { role: "user" | "assistant", content: string }   (querier.py:46-50)
+```
+
+Frontend `streamQuery` (`web/src/api/query.ts:74-89`) POSTs `{ question, model, origin_path, history, mode }` **only** — `extra_instructions` is never sent by the web app; it exists purely as a server-side/API capability (e.g. for a future non-web caller). `model` is declared in `StreamQueryOptions` but **none of the three current callers in `web/src` ever passes it** (`use-session.ts::runExchange` for the main flow, `use-session.ts::replyBtw` for session BTWs, `use-btw.ts::replyBtw` for document-reader BTWs — see "The three `streamQuery` callers" below; none sets `model`) — the "override model per request, e.g. Claude Sonnet for high-stakes asks" capability described in `llm/providers.py:20-25` is wired into the API but **dead in the current UI**. A TS port can ship the parameter without a UI, matching current reality.
+
+**Session id / idempotency key do NOT flow through this endpoint at all.** The stream is completely stateless with respect to session persistence: the frontend buffers the full streamed answer + accumulated sources client-side via `consumeStream` (`web/src/api/query.ts:133-226`), and only *after* the stream ends does it call the separate `POST /sessions` (session create, with a client-minted `idempotency_key` — see Session writes below) or `PATCH /sessions/{id}` (append) endpoints with the finished exchange. If the browser tab closes mid-stream, nothing is persisted — there is no server-side session write anywhere in the query/stream code path itself (`querier.py` never imports or calls anything in `core/sessions`).
+
+### Response framing
+
+`StreamingResponse` (`query_routes.py:69-73`): `media_type="text/event-stream"`, headers `Cache-Control: no-cache`, `X-Accel-Buffering: no` (disables nginx/proxy buffering so tokens flush immediately). Body is built by `event_generator()` (`query_routes.py:55-67`):
+
+```python
+async for event in engine.run(...):
+    etype = event["event"]
+    data = json.dumps(event["data"])
+    yield f"event: {etype}\ndata: {data}\n\n"
+```
+
+Wire format is exactly two SSE lines + a blank separator per event — **no `id:` field, no `retry:` field**, `data:` is always a single JSON-encoded line (never multi-line SSE `data:` continuation). This is the entire framing contract; a TS port must reproduce exactly `event: {name}\ndata: {json}\n\n` with a trailing blank line, nothing else.
+
+Frontend parser (`web/src/api/query.ts::streamQuery`, lines 98-125): reads the response body via `getReader()`/`TextDecoder`, splits accumulated buffer on `\n`, keeps the last (possibly partial) line in the buffer across reads (`stream: true` decode option), and on each **blank line** (`line === ""`) emits one parsed event from whatever `event:`/`data:` pair it has accumulated since the last blank line — i.e. it is a strict "one event per `\n\n`-terminated block" parser, matching the Python emitter exactly. **If a required prefix (`event: ` or `data: `) is missing when the blank line hits, the accumulated event is silently dropped** (`if (eventType && dataStr)` guard) — no error surfaced.
+
+### Event types (exhaustive — these are the only four the engine ever emits)
+
+Declared in the docstring at `query_routes.py:36-43` and enumerated in `querier.py`'s `SourceType` enum (`querier.py:53-58`) plus the loop driver (`querier.py:1150-1288`):
+
+**1. `token`** — a content delta. Emitted from `_stream_model_round` (`querier.py:600-629`) every time `delta.content` is non-empty on a streamed chat-completion chunk:
+```json
+{"event": "token", "data": {"text": "<delta string>"}}
+```
+Zod: `tokenEventSchema` (`query.ts:39-42`) — `{event: "token", data: {text: string}}`. Exact match.
+
+**2. `source`** — one article/raw-doc/search/query/links card the agent consulted, emitted **after** a tool call completes successfully (`_run_tool_calls`, `querier.py:1183-1216`; classification in `_classify_tool_call`, `querier.py:431-462`, and `_source_event`, `querier.py:1218-1248`). Discriminated by `data.type`:
+
+| `type` | emitted for tool(s) | payload beyond `type` |
+|---|---|---|
+| `article` | `read_document`/`expand_context` where `path` starts with `wiki/` | `path`, `title` (via `wiki.get_title_by_path`, may be `null`), and for `expand_context` only: `start`, `end` (ints — the requested chunk range). `read_document` (full-doc read) carries no `start`/`end`. |
+| `raw` | same two tools, `path` **not** starting `wiki/` | same shape as `article` but `title` via `source.get_title_by_path` |
+| `search` | `search_content` (`{query}`), `web_search` (`{query: "web: " + query}` — prefixed so the UI can visually distinguish external search), `search_in_document` (`{query: "<query> · in <path>"}` — **note: `search_in_document`'s scoping document is folded into the composite `query` string; there is no separate `path` field on this event type**, unlike article/raw events) | `query` only |
+| `query` | `query_documents` (`{filters: {tags?, author?, genre?, date_gte?, date_lte?, limit?} }`, only truthy keys kept), `list_articles` (`{filters: {contains?, sort?}}`, page number deliberately excluded as "plumbing, not worth surfacing") | `filters: Record<string, unknown>` |
+| `links` | `linked_articles` | `path`, `title` (via `wiki.get_title_by_path`) — **navigation only: does not append to `trace.articles_read`/`sources_read`**, i.e. it's excluded from the `articles_read`/`sources_read` wide-event telemetry even though it does emit a source card |
+
+Zod: `sourceEventDataSchema` (`query.ts:15-37`) is a `z.discriminatedUnion("type", [...])` matching this table field-for-field (article/raw optional `start`/`end`; search `{query}`; query `{filters}`; links `{path, title}`). **Exact match, including the folded `search_in_document` query string** — this is validated behavior, not an oddity for the frontend, but a real information loss vs. what the engine actually knows (it has `path` in scope, just doesn't emit it).
+
+Tool **misses** (`_ToolMiss`, e.g. document not found, no indexed chunks in a range, path not a wiki article for `linked_articles`) emit **no `source` event at all** — the miss message is fed back to the model as the tool result so it can recover, but nothing entered context, so no card is shown (`querier.py:1194-1202`, and `_ToolMiss` docstring `querier.py:61-71`).
+
+**3. `done`** — terminal success marker, always `{}`:
+```json
+{"event": "done", "data": {}}
+```
+Emitted exactly once, when a model round does **not** satisfy the tool-continuation guard — which is precisely `state.finish_reason == "tool_calls" and state.tool_calls` (`querier.py:1165`). Note both conjuncts: a round that reports `finish_reason == "tool_calls"` but accumulated an **empty** tool-calls dict, or one whose `finish_reason` is `None`/anything else, falls through to `done` — not an error. `_stream_chat` (`querier.py:1150-1181`) → `_emit_done` (`querier.py:1279-1288`), which also folds `model`, `articles_read`, `sources_read`, `searches`, `llm_rounds`, `tool_calls_total` into the wide event (`enrich(...)`) but **does not** put any of that into the SSE payload — the client gets an empty object. (The route docstring at `query_routes.py:41` — "`done`: final marker with sources_consulted summary" — is **stale**: no summary has ever been in the payload; `{}` is the contract.) Zod: `{event: "done", data: {}}` — matches (frontend hardcodes `{event: "done", data: {}}` without even parsing the body, `query.ts:64-66`).
+
+**4. `error`** — unrecoverable, `{"message": string}`. Three distinct emission sites, all terminal (no `done` follows an `error` in the same stream):
+   - `run()`'s per-model loop (`querier.py:701-718`): if `_stream_chat` raises and `is_retryable(e)` is `False` (i.e. **not** `RateLimitError`/`StreamStalled`), the exception's `str(e)` is put verbatim into `data.message` — **this leaks raw Python exception text to the client**, unsanitized (no generic-message substitution). This includes plain bugs (AttributeError, DB errors, etc.), not just LLM-provider errors.
+   - `run()`'s post-loop fallback (`querier.py:715-718`): if every model in `models_with_fallback(primary)` (primary + `FALLBACK_MODELS`, currently just `["deepseek/deepseek-v3.2"]`, `llm/providers.py:40-42`) is exhausted via retryable errors, emits the fixed message `"all models failed — try again in a minute"`.
+   - `_stream_chat` (`querier.py:1172-1174`): a `MalformedToolArgs` (tool-call `arguments` field failed `json.loads`, `querier.py:557-562`) — message is `f"Malformed tool args for {name}"` — ends the generator immediately (`return`), so **no further tool calls in that batch execute** and no `done` follows.
+   Zod: `errorEventSchema` (`query.ts:44-47`) `{event: "error", data: {message: string}}` — matches. Frontend behavior on `error`: `consumeStream` logs to console and `break`s out of the consumption loop (`query.ts:219-221`) — the UI has no dedicated error-state rendering distinct from a normal early stream end; `useSession.runExchange`'s `catch` only fires on a *thrown* exception from `consumeStream`/`streamQuery` (e.g. non-2xx HTTP or a schema-parse failure), not on an in-band `error` SSE event, which resolves the stream promise normally with whatever partial `answer`/`sources` were accumulated.
+
+### Ordering guarantees
+
+Within one model round (`_stream_chat`'s `while True` loop, one iteration = one `trace.llm_rounds` increment):
+1. Zero or more `token` events stream as `delta.content` arrives (interleaved with tool-call argument deltas accumulating silently in `state.tool_calls` — those never surface as events themselves, only their eventual dispatch does).
+2. If the round satisfies `finish_reason == "tool_calls"` **and** the accumulated tool-calls dict is non-empty (both required — `querier.py:1165`): the assistant tool-call message is appended to `messages`, then tool calls run **sequentially in insertion order** (`_run_tool_calls`, `querier.py:1189`, iterating `tool_calls.values()` — a `dict[int, dict]` keyed by the delta's `index`, so order matches the order the model announced them in the stream). For each: on success, exactly one `source` event (or none, if unclassified — currently unreachable, all 8 tools are classified) fires *after* the tool result is computed and *before* the tool message is appended; on `_ToolMiss`, nothing fires. The loop then continues to a fresh round (back to step 1) with the tool results appended as `role: "tool"` messages.
+3. Otherwise (content-only completion, `finish_reason` of any other value or `None`, or a `tool_calls` finish with an empty tool-calls dict): the assistant's final content (if any) is appended to `messages`, then exactly one `done` event fires and the generator returns.
+
+So the overall shape for a typical multi-tool-round answer is: `token* (source token*)* done` — i.e., thinking/token text can appear both *before* the first tool call (rare — models usually go straight to tool calls) and *between* tool rounds (the model narrating or drafting), with `source` cards appearing in between token bursts, and exactly one `token`-then-`done`-ending final round with the cited answer. **There is no dedicated "thinking" event type** — the M3 spec sheet's phrase "thinking blocks vs token deltas" refers to how the *frontend* buckets tokens into UI "thinking" segments (see below), not a distinct wire event.
+
+**Frontend accumulation semantics** (`consumeStream`, `query.ts:133-226`) — this is the client's own state machine layered on top of the four raw event types, worth reproducing exactly since it's the acceptance oracle per the M3 rules:
+- Maintains `streamText` (buffer of `token` text since the last `source` event) and a `clearOnNextToken` flag.
+- On `token`: if `clearOnNextToken` is set, `streamText` is reset to `""` first (this is how a "thinking" burst that happened *before* a source card is prevented from bleeding into the *next* segment's — typically the final answer's — text); then the delta is appended and `onToken(streamText)` fires (this is what the UI renders as the live streaming answer — meaning **the visible "answer so far" text is actually reset to empty every time a new source card appears**, then rebuilt from the next round's tokens; only the *final* round's accumulated `streamText` at `done` time is treated as the real answer).
+- On `source`: builds/updates a `SourceRef` list with dedup rules — `article`/`raw` events match an existing card by `s.label === path && (s.type === "article" || s.type === "raw")` (`query.ts:160-162`) — i.e. **path alone within the article∪raw pool, NOT `(path, type)`**: an `article` event whose path already exists as a `raw` card merges into that card (and vice versa) rather than creating a second one — merging `ranges` arrays and OR-ing the `full` flag (a document that was both outlined then partially expanded shows one card, `full` only true if a `read_document` full-read happened at least once); `search` events always push a new card; `links` events dedup by `path` only; `query` events always push a new card with a human-readable `filters` summary joined as `"k: v, k: v"`. Each new/updated source card's `thinking` field is set to whatever `streamText` had accumulated *before* this source event (the text-so-far becomes that card's "thinking" blurb), then `clearOnNextToken` is set `true` so the next `token` burst starts fresh.
+- On `done`: breaks the loop; final `answer` = whatever `streamText` holds at that moment; final `sources` = the accumulated list.
+- On `error`: logs and breaks (see above — treated as a soft stop, not surfaced distinctly to the caller).
+
+### Termination semantics
+
+Success: `done` event, then the underlying HTTP chunked response ends (Python generator returns → `StreamingResponse` closes the connection). Failure: `error` event then the generator returns (connection closes) — **there is no case where both `done` and `error` are emitted in the same stream**.
+
+**Edge case — the "always ends with `done` or `error`" invariant only holds once the model loop is entered.** `run()`'s error handling (`try` at `querier.py:701`) covers only the per-model streaming loop; the **setup code before it** (`querier.py:682-699`) runs unprotected: `load_vault_config` — whose strict `data["web_search"]` subscript raises `KeyError` on a pre-`web_search` hand-edited `config.yaml`, per M1's resolved-questions note — `_build_system_prompt` (prompt load), `_load_tools` (tag query), and `_build_origin_messages` (origin preload). An exception in any of those escapes the generator with **no SSE frame at all** — the client sees the stream open then die with zero events — **and also skips `_finalize_wide_event`** (the `finally` belongs to the same `try`, so setup failures record no cost row and emit no wide event). A TS port must decide whether to reproduce this frameless-death window or pull setup inside the guarded region. Additionally, `_finalize_wide_event` itself raising inside the `finally` would propagate as a raw ASGI exception (truncated/reset connection, no clean SSE frame) — an unhandled edge, flagged.
+
+**Model-fallback mid-stream is invisible to the client and can produce garbled output.** `run()`'s `for m in models_with_fallback(primary)` loop (`querier.py:702-713`) rebuilds `messages = list(base_messages)` fresh for each model attempt, but **`token` events already yielded to the client for a failed attempt are not retracted or marked** — if model A streams several tokens of a partial answer, then stalls (`StreamStalled`, no chunk within 30s per `chunk_timeout` in `api_stream`, `llm/client.py:174-177`) or hits a `RateLimitError`, the loop silently moves to model B and starts an entirely new generation from scratch. The client sees model A's partial `token` text immediately followed by model B's unrelated fresh `token` text with no signal a restart happened — flagged as a contract oddity (below), since it directly affects what "ordering guarantee" a TS port needs to either reproduce or fix.
+
+**Client disconnect**: per the M3 planning doc, "client disconnect interrupts the loop (spike-proven pattern)" — not independently re-verified in this pass beyond confirming the generator is a plain Python `async def ... yield` under `StreamingResponse`, which Starlette does stop iterating (raising `GeneratorExit` into the generator) when the client connection drops; `QueryEngine.run`'s `finally: await self._finalize_wide_event(...)` (`querier.py:719-720`) will still execute on that path, meaning cost recording and the wide event still get written/committed even for a client-abandoned stream — confirms cost isn't silently lost on disconnect, but also means an abandoned-but-still-computing stream keeps billing until the current in-flight LLM call/tool call naturally returns (no explicit cancellation of the in-flight `httpx`/OpenAI call is visible in this code).
+
+### The three `streamQuery` callers — normal query, session BTW, document BTW
+
+Everything goes through the *same* `POST /query` endpoint; `mode` is the only request-level switch. There are exactly **three** frontend call sites, and they build the request differently — a TS port's stubbed-model tests must cover all three `messages`-array shapes:
+
+**Server-side `mode: "btw"` effect** (common to both BTW flows): `_build_system_prompt` (`querier.py:1116-1142`) appends `query_btw.md` (`core/default_prompts/query_btw.md`, 1 line: *"This is a BTW (by the way) — a quick side question the user is asking while reading. Answer concisely in 2-3 short paragraphs. Cite the most relevant sources. Be direct."*) after the persona prompt (`query.md`) and web-search guidance, **only when `mode == QueryMode.BTW`**. Layering order: retrieval-core → persona (`query.md`) → web-search guidance (if enabled) → BTW addendum (if BTW) → `extra_instructions` (if any, never sent by web app).
+
+**Caller 1 — normal query** (`use-session.ts::runExchange`, lines 100-156): `mode: "query"`. `originPath` is sent **only on the first exchange of a session** (`isFirstExchange` ref, `use-session.ts:105-106`) — so the origin-document preload (`_build_origin_messages`, `querier.py:1250-1277`, which synthesizes a fake `assistant` tool-call + `tool` response pair pre-loading the document at `origin_path` via `_read_document`) fires once per session at most. `question` = raw user text; `history` = `threadToHistory(threadRef.current)` — every prior top-level exchange flattened to `{role: "user", content: query}, {role: "assistant", content: answer}` pairs (BTW sub-threads are **not** included — only top-level exchanges). Persistence: `POST /sessions` (first exchange, stable idempotency key per hook instance) / `PATCH /sessions/{id}` after the stream completes.
+
+**Caller 2 — session BTW** (`use-session.ts::replyBtw`, lines 203-280) — a BTW anchored to a passage of an *answer* inside an open session: `mode: "btw"`, **no `originPath` on any turn** (`streamQuery(question, { history, mode: "btw", signal })`).
+- First BTW turn: `question` = `buildBtwQuery(anchor, userText)` (`lib/utils.ts:58-64`) — parts `"Passage:\n> {anchor.context}"` (only if `anchor.context` truthy) + `"Highlighted: \"{quote}\""` (only if `anchor.quote` truthy **and** `quote !== context`) + the user's text, joined with `"\n\n"` (double newline, not single).
+- Follow-up turns: `question` = raw `userText` (the passage prefix is re-attached inside history instead).
+- `history` for any session-BTW turn = `threadToHistory(threadRef.current)` (parent session's top-level exchanges) **concatenated with** `buildBtwHistory(priorExchanges, anchor)` (`lib/utils.ts:69-80`) — every prior turn of this BTW thread as alternating user/assistant messages, with the **first** BTW-thread turn's `content` rebuilt via `buildBtwQuery` (so the passage prefix appears exactly once, on that thread's first user turn, in every subsequent turn's history replay).
+- Persistence: `PATCH /sessions/{id}/btw` after the stream completes (only if a session id exists); a dismissed/never-replied thread (`dismissBtw`) is never persisted.
+
+**Caller 3 — document-reader BTW** (`use-btw.ts::replyBtw`, `web/src/hooks/use-btw.ts:39-92`, `streamQuery` call at line 71) — a BTW anchored to a passage of a *document* being read, outside any session. Differs from caller 2 on every axis:
+- `mode: "btw"`, but **`originPath` is passed on EVERY turn** (`streamQuery(question, { originPath, history, mode: "btw", signal })`, `use-btw.ts:71`) — so `_build_origin_messages` fires on **every document-BTW turn**, re-preloading the origin document into the synthetic tool-call preamble each time (the served content is fresh per turn: full text or outline per `_read_document`'s size rule).
+- `history` = `buildBtwHistory(priorExchanges, anchor)` **only** — there is **no parent session** and no parent-thread history; the model sees origin-doc preload → BTW-thread history → new question.
+- `question` construction is identical to caller 2 (first turn `buildBtwQuery`-prefixed, follow-ups raw).
+- **Persistence is deferred and optional — the "spin-off" flow** (`use-btw.ts::spinOff`, lines 94-116): nothing is written during the BTW conversation itself. If the user chooses to spin the thread off into a session, the hook calls `createSession(target.exchanges[0], crypto.randomUUID(), { doc_path: originPath, anchor: target.anchor.quote })` — first BTW exchange becomes the session's first exchange, with a `SessionOrigin` carrying `doc_path` + the quote as `anchor` (no `paragraph`/`paragraph_index`) — then **sequentially** `appendExchange(id, ...)` for each remaining turn, then navigates to `/sessions/{id}`. **The idempotency key is a fresh `crypto.randomUUID()` minted inline per spin-off invocation — retried/double-clicked spin-offs are NOT idempotent** (each attempt creates a distinct session), unlike caller 1's create path which holds one stable key in a ref across retries. Also note: a failure partway through the `appendExchange` loop leaves a partially-persisted session (created + some turns), with only a console error — no rollback, no retry.
+- The BTW `PATCH /sessions/{id}/btw` endpoint is **never** used by this flow — document BTWs persist as ordinary session exchanges via spin-off, or not at all.
+
+Common to all three: multi-turn history is **fully client-reconstructed and resent every single turn** — no server-side conversation state at all (`QueryEngine` is stateless per call; `messages` is built fresh from `history` + the new question on every `run()` invocation).
+
+---
+
+## Querier tool surface (`core/querier.py`)
+
+Eight tools total, built by `build_tools(tags, web_search=...)` (`querier.py:408-416`) = 7 base tools (`_BASE_TOOLS`, `querier.py:94-283`, plus `query_documents` built per-request via `_build_query_tool(tags)` injecting the vault's distinct raw-source tags into its description, `querier.py:286-333`) + `web_search` appended only when gated on (see below).
+
+| tool | args (JSON schema) | what it returns to the model | DB/storage source |
+|---|---|---|---|
+| `list_articles` | `{contains?: string, sort?: "central"\|"recent"\|"alpha", page?: int}` | Paginated (`_ARTICLES_PER_PAGE=25`/page) markdown bullet list `title — file_path` + precis, with a "more available" hint if truncated | `wiki.browse_articles` (`WikiArticleService`) — default sort `central` = most-inbound-backlinks-first |
+| `search_content` | `{query: string}` (required) | Ranked excerpts across the whole vault (raw + wiki), each `### path [chunk N] — heading\nsnippet` | `search.search([vault_id], query)` — hybrid BM25+vector over the unified index |
+| `search_in_document` | `{path, query}` (both required) | Same shape, scoped to one document's chunks | `search.search([vault_id], query, path=path)` |
+| `read_document` | `{path}` (required) | Full content if `len(content) <= 20_000` chars (`_READ_WHOLE_LIMIT`); else a heading **outline** only (`- chunks {start}-{end}: {heading}`) with an explicit instruction to use `search_in_document` next, never a truncated dump | `storage.read(path, strict=False)`; outline via `search.document_outline([vault_id], path)` |
+| `expand_context` | `{path, start, end}` (all required) | A contiguous chunk-range render (`# path [label] (chunks a–b)` + each chunk's heading/body), span silently clamped to at most 40 chunks (`_MAX_RANGE_CHUNKS`) and `start`/`end` swapped if given backwards | `search.fetch_chunk_range` — served straight from the search index, no storage round-trip |
+| `linked_articles` | `{path}` (required, must start `wiki/` or raises `_ToolMiss`) | Outgoing + incoming backlink titles/paths as markdown bullets (no body text) | `wiki.linked_articles(vault_id, path)` |
+| `query_documents` | `{tags?, author?, genre?, date_gte?, date_lte?, limit?=20}` (all optional) | Structured metadata match list (`### title`, `[raw] path by author (date)`, genre, tags) | `source.query_documents([vault_id], **filters)` |
+| `web_search` (gated) | `{query: string}` (required) | Fact-extracted web excerpts, explicitly framed as external (see below) | Parallel API + `EXTRACT_MODEL` distillation |
+
+Every tool call that resolves successfully is classified into exactly one SSE `source` event via `_classify_tool_call` (table above); a miss (`_ToolMiss`) never is.
+
+### Retrieval-protocol prompt structure
+
+`_build_system_prompt` (`querier.py:1116-1142`) layers, in order:
+1. **`_RETRIEVAL_CORE`** (`querier.py:475-537`, a hardcoded Python string constant — not vault-overridable) — the four-stage retrieval discipline (ORIENT → LOCATE → READ → VERIFY & ANSWER), a non-negotiable GROUNDING clause, and an "avoid these habits" list, with `{identity}` interpolated (see `_build_identity`, `querier.py:1101-1114`: `"### {label}\nFocus: {thematic_hint or '(no editorial focus set)'}\nCoverage: N wiki articles, M raw sources."`).
+2. **Vault persona** — `load_prompt(storage, "query")` (`vaults/prompts.py`): vault-storage override at `prompts/query.md` first, else package default `core/default_prompts/query.md` (the "think with this method, not recite doctrine" persona — full text quoted above under Session writes' neighboring section... see file for full text, 9 paragraphs on citation format, no-hedging stance, and inline-markdown-link citation rules including chunk-anchored links like `[label](raw/texts/.../file.md#^p47)`).
+3. **Web-search guidance** (`_WEB_SEARCH_GUIDANCE`, `querier.py:359-368`) — only appended if `web_search` gate is on (see below).
+4. **`query_btw.md`** addendum — only if `mode == BTW` (one line, quoted above).
+5. **`extra_instructions`** — only if the request supplied it (never true for the current web app).
+
+`load_prompt` resolution is identical for both `query` and `query_btw` prompt names — same override-then-default chain (`vaults/prompts.py:7-24`), raising `FileNotFoundError` only if *neither* the vault override nor the packaged default exists (should never happen for the two names shipped in `core/default_prompts/`).
+
+### `web_search` gating
+
+Gate = `vault_cfg.web_search and bool(get_settings().parallel_api_key)` (`querier.py:685`) — **both** conditions required: the per-vault `VaultConfig.web_search` boolean (read via `load_vault_config(storage)`, **not exposed by the `GET /vaults/{id}/config` API** per M1's resolved-questions note — there is no UI to toggle it; it's a config.yaml-only, currently-unreachable-from-the-web-app flag) **and** a server-wide `PARALLEL_API_KEY` env var being set. If either is false/missing, the `web_search` tool is not added to the tool list and no web-search guidance text is appended to the system prompt — the model has no way to know web search exists at all in that case (not just "declined to use it").
+
+When enabled, `_web_search` (`querier.py:991-1060`) calls Parallel's `POST https://api.parallel.ai/v1beta/search` (`x-api-key` header, `parallel-beta: search-extract-2025-10-10`), with:
+```json
+{"objective": "Find concrete facts — events, dates, figures, named people and organizations, and what people concretely said or did — relevant to this question: {the user's ORIGINAL question, not the current tool-call query}",
+ "search_queries": ["<tool call's query arg>"],
+ "max_results": 5,
+ "max_chars_per_result": 1500}
+```
+20s httpx timeout; on any `HTTPError`/`ValueError` (bad JSON), returns a plain-text failure message to the model (not an exception, not an SSE `error` event — the tool call still "succeeds" and gets a `source` event, just with an unhelpful result body) and logs `query.web_search_failed`. Empty `results` → `"No web results for '{query}'."` (still classified as a normal search source event, not a miss).
+
+**Facts-only extraction** (`_extract_web_facts`, `querier.py:1062-1097`): each Parallel result's excerpts are numbered and sent to `EXTRACT_MODEL` (`deepseek/deepseek-v3.2`) via `json_llm_call` with `_WEB_FACT_EXTRACTION_PROMPT` (`querier.py:382-405`) — a system prompt instructing the model to keep only concrete empirical facts (events, dates, counts, named entities, direct quotes verbatim) and drop analysis/interpretation/strategy, with a special "discourse facts" carve-out (who-said-what statements) kept **only** when the user's original question is itself about discourse/framing, dropped otherwise. Output schema: `_WebFacts = {results: [{index: int, facts: string[]}]}` (Pydantic-validated). On any extraction failure (parse error, model error), returns `None` and the tool result becomes `"Web results for '{query}' could not be distilled to facts this call; rely on the knowledge base."` — raw web excerpts are **never** passed to the query model directly; they only ever reach it after this extraction pass succeeds. On success, each result is rendered as `### title\nurl\n- fact\n- fact` (or `"(no extractable facts)"`) under a header explicitly stating these are "EXTERNAL, not from the knowledge base" and must be cited as `[title](url)`.
+
+### Model selection / fallback
+
+- `QUERY_MODEL = "z-ai/glm-5.2"` (`llm/providers.py:26`) — a module-level constant, **not** a `Settings` field; there is no `QUERY_MODEL` env var. The M3 planning doc's phrasing ("`QUERY_MODEL` ... through `Config`") should be read as "the constant a TS port's config module ships," not as an existing Python env-driven setting — confirm this framing before implementation; recommend the TS port make it configurable via `Config` even though Python doesn't, per the planning doc's intent, but there is no existing env var name to match.
+- Request-level `model` override (`QueryRequest.model`) replaces the primary model only; currently dead from the web UI (see above).
+- **Fallback list** = `FALLBACK_MODELS = ["deepseek/deepseek-v3.2"]` (`llm/providers.py:40-42`), also a hardcoded constant, not env-configurable. `models_with_fallback(primary)` = `[primary] + [m for m in FALLBACK_MODELS if m != primary]` (`llm/client.py:152-154`).
+- Fallback triggers **only** on `is_retryable(exc)` = `isinstance(exc, (RateLimitError, StreamStalled))` (`llm/client.py:142-149`) — `StreamStalled` fires when `api_stream`'s per-chunk timeout (`chunk_timeout=30.0`, `llm/client.py:174-177`) elapses with no new chunk. Any other exception type is treated as non-retryable and terminates the stream with an `error` event (see Termination semantics above) — there is no cross-model fallback on generic errors, only on rate-limit/stall.
+- `api_stream` itself has **no same-model retry** (streaming responses can't be cleanly retried mid-emit per its docstring, `llm/client.py:14-16`); `api_call` (non-streaming, used for `json_llm_call`/web-fact-extraction) does have same-model retry with real backoff (`RATE_LIMIT_RETRIES=6` honoring `Retry-After`, `GENERIC_RETRIES=2` with jittered exponential backoff) — this retry logic applies to the extraction sub-call, not the main streamed answer.
+
+### Cost recording
+
+`_finalize_wide_event` (`querier.py:1290-1295`), called in `run()`'s `finally` block — unconditional **once the model loop's `try` (`querier.py:701`) is reached**, but skipped entirely if setup code before it raises (the frameless-death edge documented under Termination semantics — those requests record no cost row and emit no wide event): calls `record_wide_event_cost(session, user_id=..., vault_id=self.vault_id)` (`llm_costs/service.py:33-62`), then `session.commit()`, then `emit_wide_event()` (structured log line).
+
+`record_wide_event_cost` reads `cost_usd` off the *current* wide-event contextvar (accumulated across **every** `api_call`/`api_stream` invocation during the request via `accumulate_cost()`, `telemetry.py:170-181` — this includes both the main streamed answer call(s), across every model-fallback attempt, **and** any `EXTRACT_MODEL` web-fact-extraction calls, all summed into one number) and, **only if nonzero**, inserts one row into `llm_cost_events`:
+
+```
+LlmCostEventORM (llm_costs/models.py):
+  id            uuid, server default gen_random_uuid()
+  created_at    timestamptz, server default now()
+  user_id       uuid | null, FK users.id ON DELETE SET NULL
+  vault_id      uuid | null, FK vaults.id ON DELETE CASCADE
+  event_type    text            -- from wide_event ctx.get("event_type", "unknown");
+                                 -- init_wide_event("query.stream", ...) at querier.py:699, so
+                                 -- this is literally the string "query.stream" for every query-engine row
+  cost_usd      numeric(12,6)
+  correlation_id text | null    -- the query's correlation id, "q-{8 hex chars}" (querier.py:697-698)
+```
+**One row per request**, not one row per LLM call — multiple model-fallback attempts and the web-search extraction call all roll up into a single summed `cost_usd`. Zero-cost requests (e.g. every model attempt failed before any billable token) write **no row at all** (`if not raw_cost: return`, `llm_costs/service.py:52-53`) — cost observability is opt-in-by-nonzero, not "always one row per query."
+
+Wide event itself (separate from the DB row — a structured log line, `emit_wide_event`, `telemetry.py:201-215`) additionally carries (via `enrich()` at `_emit_done`, `querier.py:1279-1288`, but **only reached on the success path** — a stream that ends in `error` never calls `_emit_done` and so never enriches these fields, though the wide event is still emitted with whatever was set so far): `model`, `articles_read: string[]`, `sources_read: string[]`, `searches: string[]`, `llm_rounds: int`, `tool_calls: int`, plus the base `question`, `vault_id`, `ts_start`/`total_duration_ms`, `correlation_id`.
+
+---
+
+## Session writes (`session_routes.py`)
+
+All under `/v1/vaults/{vault_id}/sessions`, vault-member-gated at minimum (router-level guard); two routes layer additional guards.
+
+### POST `/sessions` — create
+
+| | |
+|---|---|
+| Auth | vault member |
+| Body | `CreateSessionRequest` (`app/api/schemas/sessions.py:31-34`): `{idempotency_key: string, exchange: ExchangeData, origin?: SessionOrigin \| null}`. `ExchangeData` (`sessions.py:15-20`): `{id, query, thinking: ThinkingBlock[] = [], answer, btws: dict[] = []}` — **`btws` is accepted by the Pydantic model but never read anywhere** (`session_routes.py:38-49` builds `ExchangeInput(id=, query=, thinking=, answer=)` — `btws` is dropped on the floor; the frontend's `ExchangePayload` type, `web/src/api/sessions.ts:14-19`, doesn't even include a `btws` field, so this is dead on both sides — vestigial). |
+| Response | `201`, `CreateSessionResponse = {id: string, path: string}` (server-minted uuid7 id; `path` = `"sessions/{id}.jsonl"`) |
+| Side effects | `SessionService.create_session` (`sessions/service.py:33-87`): if a session already exists for this `(vault_id, idempotency_key)` (`repo.find_by_idempotency_key`), **reuses it** — appends the given exchange only if an exchange with that `id` isn't already present in the existing session's events (idempotent retry, not a duplicate-create error). Otherwise: mints `uuid7()`, writes a `MetaEvent` line then an `ExchangeEvent` line to `sessions/{id}.jsonl` (append-only, two lines), **upserts** a `session_records` DB row (Postgres `INSERT ... ON CONFLICT (id, vault_id) DO UPDATE`, `repository.py:108-142` — the conflict target is a compound `(id, vault_id)` index) carrying the listing-index fields (`user_id`, `query`, `origin`, `idempotency_key`, `created_at`, `updated_at`), commits, then rebuilds `sessions/{id}.md` from scratch by re-reading all events (`_rebuild_md`, `service.py:153-155` — a full read-render-write, not an incremental append, even for a brand-new 2-line session). |
+| Errors | None explicit in the route; a malformed body 422s at the Pydantic boundary. |
+
+### PATCH `/sessions/{session_id}` — append exchange
+
+| | |
+|---|---|
+| Auth | vault member (no ownership check — **any** vault member can append to **any** session id, matching M1's documented `GET /sessions/{id}` no-ownership-check asymmetry) |
+| Body | `ExchangeData` directly (not wrapped) — same shape as create's `exchange` field, `btws` again accepted-and-dropped |
+| Response | `200`, `SessionPathResponse = {path: string}` |
+| Side effects | `SessionService.append_exchange` (`service.py:89-107`): appends one `ExchangeEvent` JSONL line, `touch_updated` (bumps `session_records.updated_at` only — no other overview fields change on append), commits, full `_rebuild_md`. **No check that `session_id` actually exists** before appending — `storage.append` on a nonexistent path silently creates the file on **both** backends (confirmed: `LocalStorage` mkdirs the parent then opens in append mode; the R2 backend reads with `strict=False` — `None` on missing — and writes the concatenation), meaning a PATCH to a bogus/never-created session id silently creates a new orphan JSONL file with no `MetaEvent` — never surfaced as a 404. Flagged as an oddity below. |
+| Errors | None explicit (see oddity above — no 404 path for a missing session). |
+
+### PATCH `/sessions/{session_id}/btw` — append BTW turn
+
+| | |
+|---|---|
+| Auth | vault member (same no-ownership-check pattern) |
+| Body | `BtwData` (`sessions.py:23-28`): `{quote: string, blockOffset: int = -1, context: string = "", exchangeId: string, exchanges: BtwExchange[]}` |
+| Response | `200`, `SessionPathResponse = {path}` |
+| **BUG — `context` is silently dropped on write.** `session_routes.py:80-89` builds `BtwInput(exchangeId=btw.exchangeId, quote=btw.quote, blockOffset=btw.blockOffset, exchanges=btw.exchanges)` — **`context=btw.context` is never passed.** `BtwInput.context` (`sessions/schemas.py:105-110`) defaults to `""`, so every persisted `BtwEvent.context` field is `""` regardless of what the frontend sends. The frontend (`web/src/api/sessions.ts::appendBtw`, `web/src/hooks/use-session.ts:262-273`) **does** send a real `context` value (`anchor.context`, the passage text surrounding the highlighted quote) in the request body — it is accepted by `BtwData` (which has no default-stripping) and then thrown away in the route handler before it ever reaches the service/schema layer. This means `SessionEvent.type === "btw"` events read back via `GET /sessions/{id}` **always** have `context: ""` in production today, even though the wire format and both schemas fully support a populated value. Flagged as the top contract oddity requiring a human decision (see below) — **do not silently "fix" this by wiring `context` through in the TS port without a decision**, since existing session data was written with the bug and a TS port that starts populating it changes observable behavior for new sessions vs. old ones read back. |
+| Side effects | `SessionService.append_btw` (`service.py:109-128`): appends one `BtwEvent` JSONL line (**with `context` always `""` per the bug above**), `touch_updated`, commit, full `_rebuild_md`. As documented in M1, `_render_markdown`'s BTW-dedup key is `(exId, quote)` — **not** `(exId, quote, context)** — so the bug is at least self-consistent with the render-dedup key (context never distinguishes threads either way). |
+| Errors | None explicit — same no-existence-check pattern as plain append. |
+
+### GET `/sessions` and `GET /sessions/{id}` and `/markdown`
+
+Unchanged from M1 — already documented there (read-only, in scope for M1). Not re-documented here.
+
+### POST `/sessions/{session_id}/exchanges/{exchange_id}/promote` — promote to raw corpus
+
+| | |
+|---|---|
+| Auth | `VaultEditorGuard` (editor or owner — **not** viewer) **and** `LlmGuard` (503 if `OPENROUTER_API_KEY` unset, even though promote itself makes no LLM call directly — `_llm: LlmGuard` is declared but unused in the handler body; almost certainly guarding against the eventual compile pipeline needing an LLM key once the promoted doc is compiled, applied defensively/eagerly at promote time) |
+| Response | `201`, `PromoteExchangeResponse` (`sessions.py:53-65`): `{mode: "ingested" \| "proposed", path: string, title: string \| null, document_id?: string \| null, proposal_id?: string \| null}`. **WIRE CONTRADICTION (oddity #22)**: Python's `title` is `str \| None` and **both fresh branches return `title=None`** (`session_routes.py:195-199` owner, `217-221` editor), but the frontend's `promoteResponseSchema.title` is `z.string()` — non-nullable — parsed strictly via `readJson` (`web/src/api/sessions.ts:170-178`, `client.ts:13-15`), so **every fresh promote succeeds server-side and then throws a Zod parse error client-side**. Only the idempotent-replay branches (which return `existing.title or exchange_id`, never null) parse cleanly. Human decision required on what the TS port returns. |
+| **Role branch — this is the "owner→direct-ingest vs editor→proposal" split named in the M3 task description.** `session_routes.py:132-222`: `role = await access.get_member_role(vault_id, user.id)`; `is_owner = role == MemberRole.OWNER`. Note this is a **fresh** role lookup, independent of the `VaultEditorGuard` that already ran — the guard only proved "at least editor," the handler then re-resolves the *exact* role to decide which branch. An editor (non-owner) always takes the proposal branch; an owner always takes direct ingest; a viewer never reaches the handler (blocked by the guard). |
+| Destination path | `dest = session_exchange_path(exchange_id)` (`paths.py`) — **content-addressed on `exchange_id`**, not on session id or a fresh UUID, so re-promoting the same exchange (from the same or even a different session, in principle, if `exchange_id`s ever collided — they're client-generated `genId("ex")` values, effectively unique per exchange) always resolves to the same destination. |
+| Idempotency — owner path | Checks `doc_service.get_by_path(vault_id, dest)` **first, before even loading session events** — if a `source_documents` row already exists at `dest`, short-circuits to `{mode: "ingested", path: dest, title: existing.title or exchange_id, document_id: str(existing.id)}` with **no re-ingest, no re-read of the session**. |
+| Idempotency — editor path | Checks `proposal_service.find_pending_for_dest(vault_id, dest)` first — if a **pending** proposal already targets `dest`, short-circuits to `{mode: "proposed", path: dest, title: existing.title or exchange_id, proposal_id: str(existing.id)}`. Confirmed against the repository SQL: `find_pending_for_dest` filters `status == PENDING`, backed by a **partial unique index on `(vault_id, dest_path) WHERE status = 'PENDING'`** — at most one pending proposal per destination, and a previously **rejected** proposal at the same `dest` does **not** block a fresh proposal attempt. |
+| Not-yet-promoted path (both roles) | Loads `session_service.load_events(session_id)` (`session_routes.py:175`). **A NONEXISTENT session id produces a `500`, not a `404` — live bug (oddity #21).** `SessionRepository.load_events` reads the JSONL with the default `strict=True`, so a missing file raises `FileNotFoundError`; `GET /sessions/{id}` (`session_routes.py:110-113`) explicitly catches that and maps it to 404, but promote does **not** — the exception escapes as an uncaught 500. Promote's `if not events: raise HTTPException(404, "Session not found")` (`session_routes.py:176-177`) only fires for a session whose JSONL file *exists* but parses to zero events (empty/all-malformed file). Then: `session_service.find_meta(events)` for `origin`; `session_service.find_exchange(events, exchange_id)` — `404 "Exchange not found in session"` if absent; `400 "Exchange has no answer yet"` if `exchange.answer.strip()` is empty (i.e. a still-streaming/optimistic exchange that was somehow persisted before its answer arrived — normally can't happen since the frontend only calls create/append *after* the stream's `done`, but the API doesn't prevent an empty-answer append). |
+| **Owner branch — direct ingest** | `ingest_service.ingest_session_exchange(vault_id, session_service.storage, session_id=, exchange=, session_origin=)` (`ingest_service.py:286-314`) — builds args via `SessionService.session_exchange_build_args` (`sessions/service.py:214-240`: `content=exchange.answer, source_type="session", origin="session-exchange", session_id, exchange_id, session_query=exchange.query`, plus `source_doc_path`/`source_anchor`/`source_paragraph_index` if `session_origin` is set), then `_write_and_index(vault_id, storage, dest=dest, **args)` — the shared ingest write path (writes the markdown file + `source_documents` row + emits a `compile_intents` row via `_emit_compile_intent`; exact DB/task mechanics documented in the ingest-surface section of this doc). Response: `{mode: "ingested", path: result.file_path, title: null}` — **`title` is explicitly `null` on a fresh ingest** (extraction hasn't run yet; title is populated later by the compile pipeline, not at ingest time) even though the idempotent-replay branch above returns a real title when one has since been derived — an intentional but easy-to-miss asymmetry between "just promoted" and "already promoted, now re-promoted" responses. |
+| **Editor branch — proposal** | `SessionService.render_session_exchange_source(...)` (`sessions/service.py:242-257`) builds full markdown (frontmatter + body) via `build_document` (`documents/builder.py`) using the same args as the owner path, then `proposal_service.create(vault_id, user_id, ProposalCreate(content_type=ProposalContentType.SESSION, title=None, author=None, dest_path=dest, rendered=rendered_markdown))` — writes a `proposals` DB row (status `PENDING`) + a staged file under the proposals storage root (`proposal_staging_path(proposal.id)`, **not** vault storage — proposals live in a separate `LocalStorage` rooted at `{data_dir}/proposals`, `dependencies.py:261-265`, so no vault storage file exists yet, and **no `compile_intents` row is created until an owner later approves** — approval's exact mechanics are in the proposal-routes section of this doc). Response: `{mode: "proposed", path: dest, title: null, proposal_id: str(proposal.id)}`. |
+
+---
+
+## Vault writes, proposals, source deletion, ingest surface
+
+### Vaults (`app/api/vault_routes.py`) — writes
+
+Base path `/vaults` (mounted directly under `/v1`, own per-route auth — not vault-scoped).
+
+#### POST `/vaults` — create
+
+| | |
+|---|---|
+| Auth | any authenticated user (`CurrentUser`); no vault membership required (there's nothing to be a member of yet) |
+| Body | `VaultCreate = {name: string, thematic_hint?: string\|null, kinds?: string[]\|null}` — frontend `CreateVaultInput` (`web/src/api/client.ts:150`) matches exactly |
+| Response | `201`, `Vault = {id, name, owner_id, created_at, r2_bucket_name}` |
+| Side effects (all synchronous in-request, `vaults/service.py:96-117`) | 1) `_ensure_owner_bucket`: only if `settings.storage_backend == "r2"` **and** the owner has no `r2_bucket_name` on their **user** row yet — derives a deterministic name and calls `R2Admin.ensure_bucket` (`asyncio.to_thread`), persists on the user row. **Bucket is per-owner, not per-vault** — a user's second and later vaults reuse the same bucket. Local backend: no-op, `bucket_name=None`. 2) `repo.create_vault` — inserts `vaults` row + an OWNER `vault_memberships` row. 3) seeds the default `config.yaml` — **conditionally**: only if `not storage.exists(CONFIG_PATH)` (a pre-existing config.yaml at that storage path is left untouched, relevant for R2 where a prior vault at the same key prefix could have left one). 4) If `thematic_hint`/`kinds` were supplied, applies them via `apply_vault_config_overrides` (round-trip edit of whatever config now exists). 5) single commit. |
+| Errors | none explicit beyond 422 on a malformed body |
+| Notes | No `compile_intents` row, no Absurd task — nothing to compile yet. Frontend caller is `web/src/api/client.ts::createVault` (not `vaults.ts`) — file-organization detail only, not a contract issue. |
+
+#### POST `/vaults/draft-hint`
+
+| | |
+|---|---|
+| Auth | any authenticated user + `LlmGuard` (503 if `OPENROUTER_API_KEY` unset) |
+| Body | `{description: string}` → `400 "description required"` if blank after strip |
+| Response | `200 {thematic_hint: string}` |
+| Behavior | `draft_thematic_hint` (`vaults/config.py:170`) — one non-streaming `QUERY_MODEL` call (`temperature=0.4`, fixed system prompt `_DRAFT_HINT_SYSTEM`, quoted above), returns the raw completion text verbatim as `thematic_hint`. No length/format validation — an empty completion silently returns `""`. |
+| Frontend | `draftThematicHint`, `web/src/api/vaults.ts:96` |
+
+#### PATCH `/vaults/{id}/config`
+
+| | |
+|---|---|
+| Auth | `VaultOwnerGuard` (editors/viewers 403 `"Only vault owners can perform this action"`) |
+| Body | `VaultConfigUpdate = {thematic_hint?: string\|null, kinds?: string[]\|null}` — absent/`null` means "leave unchanged," not "clear." Frontend sends `Partial<VaultConfig>` (`vaults.ts:83-94`), matching. |
+| Response | `200`, same `VaultConfig` shape as `GET .../config` |
+| Behavior | `apply_vault_config_overrides` (`vaults/config.py:144-167`): reads existing config.yaml (or the packaged default if missing), sets only the provided keys, writes back via a ruamel round-trip — **preserves comments/formatting of untouched keys, not a byte-for-byte overwrite.** Only `thematic_hint`/`kinds` are ever touched by this endpoint; `web_search` and `metadata` (enriched fields) remain unreachable via any HTTP route in M1+M3 — hand-edit-only. |
+| Side effects | None beyond the config file — no `compile_intents` row (a thematic-hint change doesn't retroactively touch existing content). |
+
+#### GET `/vaults/{id}/members`, POST `/vaults/{id}/members`, PUT .../members/{user_id}, DELETE .../members/{user_id}, POST .../transfer-ownership, DELETE /vaults/{id}
+
+| endpoint | auth | body | response | notes |
+|---|---|---|---|---|
+| `POST /vaults/{id}/members` (invite) | `VaultOwnerGuard` | `MembershipInvite = {email, role?: MemberRole = "editor"}` | `201 MemberWithEmail = {user_id, role, email}` | `user_service.ensure_user(email)` **creates the user row if it doesn't exist** — same signup-as-side-effect pattern as `verify-code`, here triggered by an owner inviting a stranger. `vault_service.add_member` uses `ON CONFLICT (vault_id, user_id) DO NOTHING`. Sends an invite email via `Mailer` **after** the membership commit — a mail-send failure surfaces as a 500 to the client even though the membership row is already persisted. |
+| `PUT /vaults/{id}/members/{member_user_id}` (role change) | `VaultOwnerGuard` | `{role: MemberRole}` | `200 MemberWithEmail` | `404 "User not found"` if the target user id doesn't exist at all; `404 "User is not a member of this vault"` if they exist but have no membership row (confirmed: `VaultRepository.set_member_role` raises `ValueError` when its `UPDATE ... RETURNING` matches no row; this route maps it to 404, while `transfer-ownership` maps the same `ValueError` to `400`). No guard against an owner demoting themselves through this generic route (only `transfer-ownership` has an explicit ownership-handoff dance). |
+| `DELETE /vaults/{id}/members/{member_user_id}` | `VaultOwnerGuard` | — | `204`; `404 "Membership not found"` | No cascade beyond the membership row — sessions/proposals created by that user remain (ownership is by `user_id`, not membership), consistent with M1's finding that session reads aren't ownership-scoped. Same self-removal gap as PUT — an owner can delete their own membership without transferring ownership first. |
+| `POST /vaults/{id}/transfer-ownership` | `VaultOwnerGuard` | `{new_owner_user_id: uuid}` | `204` | `400` (`ValueError`) if `new_owner_user_id == current_owner_id`. One transaction: target → OWNER, caller → EDITOR (demoted, not removed), `vaults.owner_id` moved. **R2 bucket is NOT migrated** — `vault.r2_bucket_name` was set at vault-creation time (keyed to the original owner) and isn't re-derived, so storage physically stays in the original owner's bucket after transfer. |
+| `DELETE /vaults/{id}` | `VaultOwnerGuard` | — | `204`; `404` if vault doesn't exist | Order matters (`service.py:132-147`): 1) fetch vault row, 2) delete DB row — **every table with a `vault_id` FK carries `ondelete=CASCADE`** (confirmed by model sweep: `vault_memberships`, `source_documents`, `wiki_articles`, `ideas`, `topics`, `session_records`, `proposals`, `compile_intents`, `pipeline_runs`, `tasks`, `search_index`, `compile_cache_entries`, `llm_cost_events` — the last also has `user_id ON DELETE SET NULL` for *user* deletion, cost history survives account removal), 3) **commit**, 4) *then* `storage.clear()` wipes the file backend — **not in the same transaction as the DB delete.** A storage-clear failure after the DB commit leaves orphaned files with no automatic compensating cleanup. Does **not** delete the R2 bucket itself (bucket is owner-scoped and may be shared across the owner's other vaults) — only clears this vault's key prefix within it. |
+
+### Proposals (`app/api/proposal_routes.py`)
+
+Base `/vaults/{vault_id}/proposals`, vault-scoped. List/get reachable by any member (including viewer); review is owner-only.
+
+| endpoint | auth | body/query | response | notes |
+|---|---|---|---|---|
+| `GET ""` (list) | any vault member | `status?: ProposalStatus`, pagination | `200 Page<ProposalOverview>` | |
+| `GET /{proposal_id}` | any vault member | — | `200 Proposal`; `404 "Proposal not found"` if missing or in a different vault | scoped via `get_for_vault` |
+| `PATCH /{proposal_id}` (review) | `VaultOwnerGuard` | `ProposalUpdate = {status: "approved"\|"rejected"}` | `200 Proposal`; `404 "Proposal not found"`; `409 "Proposal already reviewed"` if not `PENDING` | see approve/reject behavior below |
+
+**Approve, normal content** (`proposals/service.py:169-186`): reads the staged markdown from `proposals_storage` — a **separate**, local-only storage root (`{data_dir}/proposals`, not vault storage/R2, even for R2-backend vaults) — writes it into vault storage at `proposal.dest_path`, calls `doc_service.index(...)` (upserts `source_documents` from the frontmatter), sets `proposal.document_id`, then **`intent_repo.ensure_pending(vault.id)`** — writes/coalesces a `compile_intents` row with **no** `pipeline_run_id` (a bare intent; the out-of-scope lifespan reconciler later dispatches it to an Absurd `"compile"` task — no Absurd call happens synchronously in this request).
+
+**Approve, source-deletion proposal** (`content_type == "source_deletion"`): calls `doc_service.delete_source(..., missing_ok=True, commit=False)` — the same delete path as the owner-direct `DELETE /raw/sources/{path}` below — then deletes the staged file. **Does not call `ensure_pending`** — approving a deletion does not queue a recompile (same asymmetry as the direct-delete endpoint).
+
+**Reject**: only deletes the staged proposal file; no other side effect.
+
+**ODDITY — `POST /vaults/{id}/proposals` (create) does not exist in Python, but the frontend has a live, reachable call to it.** `web/src/api/proposals.ts::createProposal` POSTs `/vaults/{id}/proposals`; it's wired through `web/src/hooks/use-proposals.ts::useCreateProposal` into `web/src/containers/proposals-section-container.tsx` (`handleCreate`/`onCreate`, passed into the rendered `ProposalsSection`) — a real UI affordance, not dead code by inspection. `proposal_routes.py` only defines `GET ""`, `GET /{id}`, `PATCH /{id}` — **no `POST`**. This call 404s against the real backend today. `ProposalService.create()`'s own docstring even anticipates it ("For normal (typed-in) proposals the caller uses `build_document`... For session promotions the caller uses `render_session_exchange_source`") but no HTTP route ever calls it directly — `create()` is only invoked internally by `create_source_deletion_request` and the session-promote editor branch. **This is the one write path in the whole M3 surface with zero Python HTTP implementation to port from** — needs an explicit human design decision (build a new endpoint with no Python reference, or treat the UI affordance as dead/to-be-removed) before implementation, not just a "port it" task.
+
+### Source deletion (`app/api/wiki_routes.py`)
+
+#### DELETE `/raw/sources/{path:path}` (owner-direct)
+
+| | |
+|---|---|
+| Auth | `VaultOwnerGuard` |
+| Path | validated by `_safe_raw_source_path` → `_safe_document_read_path` (rejects backslashes, `..`, non-`.md`, wrong segment depth) plus requires the first segment to be `raw`; `400 "Invalid source path: {path}"` on failure |
+| Response | `204`; `404 "Source not found"` if no row at that path |
+| Side effects — one transaction (`documents/repository.py:186-213`) | 1) look up `source_documents.id` by `(vault_id, file_path)`. 2) explicit `DELETE FROM topic_memberships WHERE idea_id IN (SELECT idea_id FROM ideas WHERE document_id = :id)` — **this is exactly the "memberships of its ideas" cleanup** named in the M3 task description. 3) explicit `DELETE FROM search_index WHERE vault_id=:v AND path=:file_path`. 4) `DELETE FROM source_documents WHERE id=:id` (cascades `ideas` via FK `ON DELETE CASCADE`, which would in turn cascade `topic_memberships` — step 2 is belt-and-suspenders within the same transaction, not strictly load-bearing given the FK, but reproduce it anyway to match Python exactly). 5) outside the repo call, `storage.delete(file_path, missing_ok=True)` removes the physical file. |
+| **ODDITY — no `compile_intents` row is queued on delete.** | Unlike ingest and proposal-approval, deleting a source does **not** call `intent_repo.ensure_pending`. Wiki articles/topics synthesized from the deleted source are left untouched until someone manually triggers a compile — the wiki can keep citing a source that no longer physically exists until the next compile run. This matches the M3 task text precisely ("source delete: rows + storage + search_index + memberships of its ideas **per Python**") — Python genuinely does not auto-recompile on delete; port bug-for-bug unless a human decides otherwise. |
+
+#### POST `/raw/sources/{path:path}/deletion-request` (editor path)
+
+| | |
+|---|---|
+| Auth | manual role check (not a `Depends` guard), via `access.get_member_role`: `VIEWER` → `403 "Viewers cannot request source deletion"`; `OWNER` → `400 "Owners should delete sources directly"` (owners are explicitly redirected to the DELETE endpoint, not allowed to file a deletion-request proposal against themselves); any other non-`EDITOR` role → `403 "Only editors can request source deletion"` (presently unreachable given `MemberRole` only has owner/editor/viewer — defensive against a future role) |
+| Response | `201 Proposal`; `404 "Source not found"` if `source_service.get_by_path` misses; `400` on an invalid path (same validator as delete) |
+| Behavior | `proposal_service.create_source_deletion_request` (`proposals/service.py:81-111`): checks for an existing **pending** proposal targeting the same `dest_path` — if one exists and is **itself** a `source_deletion` proposal, returns it idempotently. **ODDITY — status-code mismatch on the idempotent-reuse branch**: the route is declared `status_code=201` unconditionally, so re-requesting deletion of the same source still returns `201` even though nothing new was created. If a *different* content-type proposal already targets that path, raises `ValueError` → `409`. Builds a synthetic frontmatter-only markdown body (`source_type: 'source_deletion'`, `source_doc_path: '<path>'`) as the staged content — never meant to be indexed as real content, only consumed by the approve-path's `_approve_source_deletion` branch. |
+
+**Owner-direct vs. editor deletion-request**: owner-direct is synchronous and immediate — rows + storage gone in one request, no approval step. The editor path only ever *stages* a proposal; nothing is deleted until an owner later `PATCH`es it to `approved`, at which point it runs through the identical `doc_service.delete_source` call (with `missing_ok=True`, since the source may have moved or been re-ingested since the request was filed).
+
+---
+
+## Ingest surface (`app/api/ingest_routes.py`)
+
+Base `/vaults/{vault_id}/ingest`, vault-scoped (member-gated at minimum; every route below layers `VaultOwnerGuard` except `user-suggestion`, which is `VaultEditorGuard` + an internal role branch).
+
+**Scope-defining finding — markitdown conversion is NOT uniformly worker-side.** Two independent ingest mechanisms exist:
+1. **Legacy/direct path** (`POST /ingest`, `/ingest/upload`, `/ingest/url`, `/ingest/user-suggestion`) — owner-only (or editor for user-suggestion), **synchronous**: `_convert_to_markdown` (MarkItDown) runs **inline in the FastAPI request handler**, in-process (`asyncio.to_thread`-wrapped, but still request-scoped and part of the response's critical path). This is squarely **in** M3 scope — the TS port must implement markitdown-equivalent conversion synchronously for this path.
+2. **Staged/bulk direct-to-R2 path** (`/staged-files/{sign,check-dupes,process}`) — conversion happens **only** inside the Absurd worker (`workers.py::staged_file_ingest_task` → `_fetch_and_convert`, reusing the same `_convert_to_markdown` helper), which stays Python and is genuinely out of scope per the M3 rules.
+
+So the M3 task doc's "conversion is worker-side → M4, not here" is only true for path 2. Path 1's conversion needs to be ported now, in M3. **Flag for human decision before implementation** — this changes the M3.2 task's actual footprint (a real markitdown-equivalent dependency in the TS stack, not just queue-row writing).
+
+#### POST `/ingest` (raw/direct ingest)
+
+| | |
+|---|---|
+| Auth | `VaultOwnerGuard` |
+| Body | `RawSource = {content: string, dest: string, origin?: string}` |
+| Response | `201 IngestedDocument {file_path}` |
+| Behavior | `ingest_service.ingest_text` → `_write_and_index`: `write_document` (storage write) → `doc_service.index` (upsert `source_documents`, `source_type="document"`) → `_emit_compile_intent` (outbox, below). |
+| Notes | **No caller found anywhere in `web/src/api/ingest.ts`** — appears dead/unused by the current web app, candidate for the same "legacy/unused" treatment M1 gave `GET /wiki/{slug}`. Flag for human confirmation before deciding whether to port. |
+
+#### POST `/ingest/user-suggestion`
+
+| | |
+|---|---|
+| Auth | `VaultEditorGuard`, then an internal role re-check (owner vs. non-owner editor) |
+| Body | `UserSuggestion = {body: string, intent: UserSuggestionIntent, anchored_to: string = "", anchored_section: string = ""}` — `400` if `body.strip()` is empty |
+| `UserSuggestionIntent` (StrEnum, `ingest_service.py:49-53`) | exactly four values: `disagree`, `correct`, `add_context`, `restructure`. Frontend mirrors as a matching literal union (`ingest.ts:278`). |
+| Owner branch | `ingest_service.ingest_user_suggestion` — direct write, `source_type="user"`, `dest = raw/user/{timestamp}-{anchor_slug}-{intent}.md` |
+| Non-owner editor branch | builds rendered markdown via `render_user_suggestion_source`, creates a `ProposalCreate(content_type=USER_SUGGESTION)` row — no `compile_intents` row, no `source_documents` row until approved |
+| **ODDITY** | The response is `IngestedDocument(file_path=dest)` on **both** branches — the same shape whether content was actually ingested (owner) or merely proposed (editor). Unlike `PromoteExchangeResponse`'s `mode` discriminator on the session-promote path, **this endpoint's response gives the client no way to tell "it's live" from "it's pending approval."** Recommend the TS port add a discriminator; flag as a design decision since it's a deliberate-looking gap in the existing contract, not an accident of one code path. |
+
+#### POST `/ingest/upload`
+
+| | |
+|---|---|
+| Auth | `VaultOwnerGuard` |
+| Body | multipart `UploadFile` + query params `origin?: string`, `dest_path?: string` |
+| Response | `201 IngestedDocument` |
+| Errors | `400` on missing filename, non-UTF-8 text-suffix file (`.md`/`.txt`/`.text`/`.markdown` are decoded as UTF-8 directly, no markitdown pass), or `ValueError` from `_safe_doc_dest` (path traversal/backslash/absolute-path guard) |
+| Behavior | Non-text extensions go through `MarkItDown().convert_stream`. `dest_path`, if supplied, is sanitized via `_safe_doc_dest` (must resolve under `raw/docs/`, no `..`, no absolute path, `.md` suffix forced). |
+| **ODDITY** | Frontend `uploadFile` (`ingest.ts`) sends `FormData` with `file` + optional `dest_path` but **never sends `origin`**, even though the backend accepts it as a query param — dead parameter from the frontend's perspective (server-only capability today). |
+
+#### POST `/ingest/url`
+
+| | |
+|---|---|
+| Auth | `VaultOwnerGuard` |
+| Body | `URLSource = {job_id: uuid, url: string, origin?: string}` |
+| **ODDITY — dead from the UI; `job_id` unused here.** | The handler (`ingest_routes.py:145-160`) only destructures `source.url`/`source.origin` — `job_id` is required by the shared `URLSource` schema but never read on this route (it exists for `POST /jobs/url`, which reuses the same schema — see below). **`/ingest/url` has zero frontend callers**: `web/src/api/ingest.ts::ingestUrl` exists but nothing in `web/src` calls it (repo-wide grep), and it doesn't send `job_id`, so a hypothetical call would 422 anyway. **The only URL-ingest path the UI actually uses is `POST /jobs/url`** (next entry). Human decision: port `/ingest/url` as legacy/dead surface, or drop it (same treatment question as `GET /wiki/{slug}` in M1). |
+| Behavior | Fetches with a spoofed desktop-Chrome `User-Agent`, `follow_redirects=True`, 30s timeout; `httpx.HTTPError` → `400`. Converts via MarkItDown with `extension=".html"`. Dest = `raw/docs/{slugify(url path tail)}.md`. `origin` defaults to the URL's netloc if not supplied. |
+
+#### POST `/jobs/url` — the URL-ingest path the UI actually calls (reclassified INTO M3 scope)
+
+Lives in `job_routes.py:28-50` (router prefix `/jobs`, vault-scoped → `/v1/vaults/{vault_id}/jobs/url`), but functionally belongs to the ingest surface: it is a **synchronous in-request ingest**, not a queued job.
+
+| | |
+|---|---|
+| Auth | **vault member only** (router-level `require_vault_member` via `VaultStorageDep` — **no `VaultOwnerGuard`/`VaultEditorGuard`**). ODDITY: `/ingest/url` is owner-only while this route — the one the UI calls, with the identical effect — is reachable by any member **including viewers**. Looks accidental; flag for a human decision on the TS port's guard level. |
+| Body | `URLSource = {job_id: uuid, url: string, origin?: string}` — **`job_id` is load-bearing here**: it becomes the `pipeline_runs` row's primary key (client-supplied idempotency-style id, same pattern as `/staged-files/process`). Frontend `startUrlJob` (`web/src/api/jobs.ts:51-59`) sends `{job_id: crypto.randomUUID(), url}` — never `origin`. Called from `pipeline-container.tsx:96`. |
+| Response | `201 JobResponse` (`app/api/schemas/jobs.py`): `{id, vault_id, trigger, status, current_phase, phase_status, progress_steps, error, created_at, updated_at, completed_at, stream_url (computed "/jobs/{id}/stream")}` — frontend parses with `jobSchema`. |
+| Behavior — synchronous (`JobService.start_url_job`, `core/jobs/service.py:44-119`) | 1) creates a `pipeline_runs` row (`id=job_id`, `trigger=URL`); 2) marks phase `source_ingest`/`started` with `fetch_url` progress steps; 3) **runs `ingest_service.ingest_url(...)` inline in the request** — the same synchronous httpx fetch + MarkItDown conversion + storage write + `source_documents` upsert as `/ingest/url`, but with `pipeline_run_id=run.id`, so the resulting `compile_intents` row (via `_emit_compile_intent`) is **attached to this pipeline run** (unlike `/ingest/url`'s bare intent); 4) on success, marks `source_ingest`/`completed`. The response arrives only after the URL has been fetched, converted, written, and indexed — the "job" framing is progress-reporting theater over a synchronous operation. |
+| Errors | `httpx.HTTPError` → run marked `failed` with `error="Failed to fetch URL: ..."`, committed, then `UrlJobSourceError` → **`400`** with that message; any other exception → run marked failed, committed, exception re-raised → `500`. `JobNotFoundError` (run can't be reloaded after creation) → `500 "Job could not be reloaded after creation"`. Note the failed `pipeline_runs` row **persists** (committed before the HTTP error is raised) — a failed URL ingest is visible in the jobs list. |
+| Scope note | Only this one route from `job_routes.py` is pulled into M3; `GET /jobs`, `GET /jobs/{id}`, `GET /jobs/{id}/stream` remain out of scope (M4). |
+
+#### POST `/ingest/staged-files/check-dupes`
+
+| | |
+|---|---|
+| Auth | `VaultOwnerGuard` |
+| Body | `{client_hashes: string[]}` |
+| Response | `200 {existing: string[]}` — the subset already present in `source_documents.client_hash` for this vault, via a partial index `ix_source_documents_vault_client_hash` (`WHERE client_hash IS NOT NULL`) |
+| Behavior | Pure read, no side effects. Frontend soft-fails on any non-OK response (treats as "no known dupes") — this check is advisory, not a hard gate anywhere in the flow. |
+
+#### POST `/ingest/staged-files/sign`
+
+| | |
+|---|---|
+| Auth | `VaultOwnerGuard` |
+| Body | `{files: StagedFileInput[]}`, each `{name, size, hash, mimetype}` |
+| **Local-storage vaults cannot use this endpoint at all.** | Raises `ValueError("vault has no r2 bucket; cannot sign uploads")` → `400` whenever `vault.r2_bucket_name` is unset — i.e. every `local`-backend vault. **There is no local-storage equivalent implemented anywhere in the codebase.** The M3 task doc's phrase "presigned PUT (R2) or local equivalent" does not correspond to an existing Python code path — it is aspirational, not something to port. **Flag for human decision**: does the TS port need to invent a local-equivalent staged-upload flow from scratch (no Python reference behavior), or reproduce the current R2-only 400 gate bug-for-bug and leave local-backend bulk upload unimplemented, matching Python? |
+| Behavior (R2 vaults) | For each file: `R2Admin.presign_put(bucket, "staging/{vault_id}/{hash}", content_type, content_length)` — boto3 `generate_presigned_url("put_object", ...)`, purely local/sync computation, no network call. Expiry is `presign_put`'s own **parameter default** `expires_in=3600` (1 hour) — the call site doesn't pass it explicitly, so a TS port should treat 3600 as the effective contract while noting it's a default, not a named constant at the call site. Returns `{files: [{hash, url}]}`. No DB rows written — presigning is stateless. |
+
+#### POST `/ingest/staged-files/process`
+
+| | |
+|---|---|
+| Auth | `VaultOwnerGuard` |
+| Body | `{job_id: uuid, files: StagedFileInput[]}` |
+| Errors | `400` (`ValueError`) on empty `files`; `500` (`RuntimeError`) if the pipeline run can't be reloaded after creation |
+| Response status | **`200`, not `201`** — the route declares no `status_code=` override, unlike the other four ingest POST routes which all explicitly set `status_code=201`. Easy to port wrong by pattern-matching the sibling routes; confirm deliberately. |
+| Behavior | `pipeline_service.start_staged_file_ingest`: 1) `pipeline_runs.create(PipelineRunCreate(id=job_id, vault_id, trigger=STAGED_FILES))` — **the pipeline-run row's primary key is the client-supplied `job_id`**, not a server-minted id (unusual relative to every other id-minting pattern documented so far — a deliberate client-idempotency-key pattern, not an oversight; port it as such). 2) `task_service.spawn_staged_file_ingest(vault_id, files=[...], pipeline_run_id=run.id)` → `absurd.spawn("staged_file_ingest", params, max_attempts=2, idempotency_key=str(pipeline_run_id))`. **Absurd task kind: `"staged_file_ingest"`** (registered `workers.py:595`, `app.register_task("staged_file_ingest", default_max_attempts=2)`), plus a `tasks` DB row (`repo.create(task_id, vault_id, "staged_file_ingest", params, pipeline_run_id)`). 3) `pipeline_service.attach_ingest_task` links the pipeline_run row to the task. |
+| Response body | `JobResponse.model_validate(run)`, including a computed `stream_url = f"/jobs/{id}/stream"` (relative) — consumed by `use-job-sse.ts`, the **out-of-scope compile/job SSE surface**, not the query SSE surface documented in the critical section above. Frontend `ingestStagedFiles` (`ingest.ts`) expects `{id, stream_url}` matching this shape. |
+
+### Compile-intents outbox (shared by every writing path above)
+
+`_emit_compile_intent(vault_id, pipeline_run_id)` (`ingest_service.py:84-94`), called by every `_write_and_index` invocation — i.e. `POST /ingest`, `/ingest/upload`, `/ingest/url`, `/ingest/user-suggestion`'s owner branch, proposal approval (normal content), and `ingest_session_exchange` from the promote-exchange owner path:
+- `intent_repo.ensure_pending(vault_id, pipeline_run_id)` — a single atomic `INSERT ... ON CONFLICT DO UPDATE` against a partial unique index `ix_compile_intents_one_pending` (`WHERE dispatched_at IS NULL`) — coalesces any number of concurrent writes into **one pending intent per vault**; the `RETURNING` clause always yields a row (either the pre-existing pending one, or a freshly-inserted one).
+- If a `pipeline_run_id` was supplied and the returned intent doesn't have one yet, `attach_pipeline_run` sets it, then `pipeline_run_repo.attach_compile_intent` links back — this is how a staged-file ingest's pipeline_run ends up wired to the same `compile_intents` row that a plain ingest call would have created.
+- The out-of-scope lifespan reconciler later dispatches pending intents to an Absurd task of kind **`"compile"`** via `task_service.spawn_compile_for_intent` — not itself part of M3's write surface, but the row shape M3 writes is exactly what that reconciler expects to find.
+- **Staged-flow intent accounting (confirmed against `workers.py`)**: the `/staged-files/process` route itself writes **no** `compile_intents` row, and the worker's per-document indexing step (`_index_fetched_results`) writes none either — the worker emits **exactly one** intent per staged run, at the end, via `ensure_pending` (`workers.py:497-502`). So a full staged-upload flow produces exactly one `compile_intents` row regardless of file count — the fixture assertion for the staged flow is "one row, attached to the run," matching the coalescing semantics of the direct-ingest paths.
+
+### Client-hash dedupe semantics
+
+Not enforced as a hard constraint anywhere in this surface — `check-dupes` is purely advisory (frontend soft-fails on error). No endpoint rejects an ingest because of a duplicate `client_hash`; `source_documents.client_hash` is backed by the partial index `ix_source_documents_vault_client_hash` (`WHERE client_hash IS NOT NULL`), **confirmed non-unique** — a lookup accelerator for `check-dupes`, not a constraint. Duplicates are idempotently `ON CONFLICT`-upserted via content-addressable dest paths, never hard-rejected. A TS port must treat re-ingesting an identical `client_hash` as an upsert; adding a uniqueness constraint would be a behavior change, not parity.
+
+---
+
+## Pagination / shared types
+
+Unchanged from M1 — `Page<T>`, `FacetedPage<T,F>`, `PageParams`/`PageInfo` all reused as-is by every list endpoint documented above (`GET /proposals`, `GET /ingest/...` if paginated). No new envelope types introduced in M3.
+
+---
+
+## Contract oddities
+
+Recorded for human decision, continuing M1's numbering context but independently numbered for this doc:
+
+1. **BTW `context` is silently dropped on write (live bug).** `session_routes.py::append_btw_to_session` builds `BtwInput` without passing `context=btw.context`, even though `BtwData.context` carries a real value from the frontend (the passage text around the highlighted quote) and `BtwInput`/`BtwEvent` both have a `context` field ready to receive it. Every persisted `BtwEvent.context` is `""` today. A TS port needs an explicit decision: reproduce the bug (context always empty) or fix it (thread `context` through) — fixing it changes what new sessions look like vs. sessions written by the Python backend, and the M1-documented markdown-render BTW dedup key `(exId, quote)` doesn't use `context` either way, so fixing this has no visible effect on `/markdown` export, only on `GET /sessions/{id}` JSON replay's `context` field.
+2. **Model-fallback mid-stream is invisible to the client and can interleave two different models' partial answers with no signal.** `QueryEngine.run`'s per-model retry loop yields `token` events from a failed model attempt, then (on `RateLimitError`/`StreamStalled`) silently restarts generation with the fallback model, still appending to the same live SSE stream — the client has no event marking "generation restarted," so a user could see a truncated partial sentence immediately followed by an unrelated fresh answer opening. Needs a decision: does the TS port emit a new event type (e.g. `retry`/`model_switch`) before restarting, buffer and discard the failed attempt's tokens client-side-invisibly (requires a protocol change — currently `token` events are unbuffered pass-through), or reproduce the bug?
+3. **Unsanitized exception messages leak into `error` SSE events.** Any non-retryable exception during the tool loop (DB errors, storage errors, a bug) has its raw `str(e)` sent verbatim as `data.message` to the client — no generic "something went wrong" substitution, unlike typical API error-response hygiene. Needs a decision on whether the TS port sanitizes (losing debug info) or reproduces (matches current behavior, already shipped to users).
+4. **`extra_instructions` and per-request `model` override are live API surface with zero UI callers.** Both are fully implemented server- and schema-side but never exercised by `web/src` — dead capability, not a bug, but worth flagging so the TS port's fixtures/tests don't skip them as "unused" when they're actually part of the documented contract (and per the M3 task list, "high-stakes model override" is a real intended feature, just not wired to a UI control yet).
+5. **`search_in_document`'s SSE `source` event folds its scoping document into the `query` string** (`"{query} · in {path}"`) instead of carrying a separate `path` field like `article`/`raw`/`links` events do — the engine has the path in scope when emitting the event but doesn't surface it structurally. Not necessarily a bug (frontend Zod schema matches this shape exactly, so it's validated-intentional), but flagged since a TS port authored fresh against "what would be useful" might reasonably add a `path` field here, which would be a silent protocol enhancement, not parity.
+6. **`ExchangeData.btws: list[dict] = []` and the frontend's lack of a `btws` field on `ExchangePayload` are both vestigial** — accepted by the wire schema, read by neither side. Candidate for dropping in the TS port's request schema (tightening, not a behavior change, since it's already a no-op).
+7. **`PATCH /sessions/{id}` and `PATCH /sessions/{id}/btw` have no existence check on `session_id`** — appending to a session id that was never created via `POST /sessions` silently creates an orphan JSONL with no `MetaEvent`, rather than 404ing. Combined with M1's documented `find_meta` returning `None` gracefully elsewhere, an orphan session would likely still "work" in most read paths (empty/degraded `SessionOverview`-less session, no listing entry since `session_records` was never upserted) but is unreachable via `GET /sessions` (list) since there's no DB row — only reachable by knowing the exact id. Needs a decision on whether the TS port adds a 404 guard (behavior change/tightening) or reproduces the current silent-create.
+8. **`web_search` vault gate remains fully server/config-only** (M1 already noted it's not exposed via `GET /vaults/{id}/config`) — M3 confirms there is still no write path either (`PATCH /vaults/{id}/config`, documented below, does not expose it — see that section). The only way to enable it today is a hand-edited `config.yaml`. Product-level gap, not a TS-port bug, but worth reconfirming it stays out of scope per the M3 rules ("no UI work — that gap is a product decision for later, unchanged by the port").
+9. **Promote-exchange's `title` field is `null` on fresh ingest but populated on idempotent re-promotion of an already-compiled doc** — an intentional asymmetry (extraction hasn't run yet at ingest time) but easy to miss when writing fixtures/tests: a "promote twice" test needs a compile to have run *between* the two promotes to actually exercise the differing-title branch; promoting twice back-to-back with no compile in between will get `title: null` both times via two different code paths (fresh-ingest first call, then... actually the second call *does* find the existing doc and returns its title, which would still be `null` if no compile ran — so back-to-back promotes return `null` both times, and the "populated title" branch only exercises post-compile, which is out of M3's LLM-stubbed test scope per the M3 task list's stub-layer constraint. Flag for fixture design: this branch may need the live-smoke test, not the stubbed integration suite.)
+10. **`LlmGuard` on `POST /sessions/{id}/exchanges/{id}/promote` is declared but unused in the handler body** — promote itself never calls the LLM client; the guard is presumably defensive (promoted content will eventually be compiled, which needs an LLM key) but as written it makes promote fail with a misleading 503 ("LLM service not configured") on an operation that doesn't itself need one, if `OPENROUTER_API_KEY` is unset. Confirm intentional before porting; a TS port could reasonably drop this guard from promote without changing any *currently exercised* behavior (compile is gated separately, out of M3 scope), but that would be a deliberate divergence, not literal parity.
+11. **`POST /vaults/{id}/proposals` (create) has zero Python HTTP implementation, but the frontend has a live, reachable call to it** (`web/src/api/proposals.ts::createProposal` → `use-proposals.ts::useCreateProposal` → `proposals-section-container.tsx`'s `handleCreate`). `proposal_routes.py` only defines `GET ""`, `GET /{id}`, `PATCH /{id}` — this call 404s today against the real backend. `ProposalService.create()` exists and is documented for exactly this "normal typed-in proposal" case, but no route ever calls it that way (only `create_source_deletion_request` and the session-promote editor branch invoke it internally). **The single most consequential oddity in the whole M3 surface** — there is no Python reference behavior to port for this write path; it needs a human design decision (build a new endpoint from scratch, or treat the UI affordance as dead/to-be-removed) before M3.1 implementation, not just a "port it" task.
+12. **Vault member invite (`POST /vaults/{id}/members`) can lie about the persisted role, and can partially fail after commit.** `add_member` is `ON CONFLICT (vault_id, user_id) DO NOTHING` — re-inviting an existing member is a silent no-op on role, but the route still returns `201` with a `MemberWithEmail` carrying the **requested** role, not the actual one, if the invitee was already a member with a different role. Separately, the membership row is committed *before* the invite email is sent — a `Mailer` failure surfaces as a 500 to the client with the membership already durably persisted (no compensating rollback), so a client seeing a 500 here cannot assume the invite didn't happen.
+13. **No self-demotion/self-removal guard on `PUT`/`DELETE /vaults/{id}/members/{member_user_id}`.** Both are `VaultOwnerGuard`-gated (role checked at request time only), so an owner can PUT their own membership to `viewer` or DELETE it outright without an ownership handoff — only `POST .../transfer-ownership` performs the atomic swap. A vault could end up with no owner at all through this path. Needs a decision on whether the TS port adds a guard Python lacks.
+14. **`POST /raw/sources/{path}/deletion-request`'s idempotent-reuse branch returns `201` even when nothing new was created** — if a pending `source_deletion` proposal already exists for the same path, the same proposal is returned, but the route is unconditionally declared `status_code=201`. A TS port should decide whether the idempotent-hit case should be `200` instead (a real semantic distinction, not just cosmetic, since some HTTP clients treat 201 as "a new resource was created here").
+15. **Deleting a source (`DELETE /raw/sources/{path}`) never queues a `compile_intents` row**, unlike every ingest/approval write path — wiki articles/topics synthesized from the deleted source are left stale (citing content that no longer exists in raw storage) until someone manually triggers a full compile. This is explicit, intentional-looking Python behavior (matches the M3 task text verbatim: "source delete: rows + storage + search_index + memberships of its ideas **per Python**" — no mention of a recompile trigger) — port bug-for-bug unless a human decides a TS port should auto-queue a recompile on delete.
+16. **`POST /ingest/user-suggestion`'s response doesn't distinguish "ingested" from "proposed."** Both the owner-direct branch and the non-owner-editor proposal branch return the identical `IngestedDocument{file_path}` shape — unlike `PromoteExchangeResponse`'s explicit `mode: "ingested" | "proposed"` discriminator on the structurally similar session-promote endpoint. A client cannot tell from the response alone whether content is now live or awaiting approval. Recommend the TS port add a `mode` field for parity with the promote endpoint's better-designed contract, but flag it as a deliberate improvement, not literal parity.
+17. **`POST /ingest/url` is dead from the UI; `URLSource.job_id` is load-bearing only for `POST /jobs/url`.** Resolved by repo-wide grep: `web/src/api/ingest.ts::ingestUrl` has zero callers anywhere in `web/src`, and it doesn't send the schema-required `job_id`, so a real call would 422 — the endpoint is unreachable from the live UI. The URL-ingest path the UI actually uses is `POST /jobs/url` (`startUrlJob`, `jobs.ts:51` via `pipeline-container.tsx:96`), which shares the same `URLSource` schema and *does* use `job_id` (as the `pipeline_runs` PK). Two decisions needed: (a) port `/ingest/url` as legacy surface or drop it (M1's `GET /wiki/{slug}` precedent); (b) reconcile the guard-level inconsistency — `/ingest/url` is owner-only while the functionally identical `/jobs/url` is plain-member-reachable (viewers included), which looks accidental.
+18. **`POST /ingest/staged-files/sign` has no local-storage-backend implementation at all** (`400 "vault has no r2 bucket; cannot sign uploads"` for every `local`-backend vault) — despite the M3 planning doc's phrasing implying a "local equivalent" exists to port. It does not. This needs a design decision, not a code-reading exercise: either the TS port must design a local-storage staged-upload flow from first principles (no Python behavior to copy), or bulk/staged upload stays R2-only in both implementations, matching Python's actual (if under-documented) constraint.
+19. **`POST /ingest/upload`'s `origin` query parameter is accepted by the backend but never sent by the frontend** — a dead parameter today, same pattern as the query engine's dead `extra_instructions`/`model` fields (oddity #4). Not a bug, but worth flagging so fixtures don't skip it as unused-therefore-unimportant; it's real, documented API surface.
+20. **`POST /ingest/staged-files/check-dupes` and the general dedupe story are advisory-only** — no endpoint anywhere hard-rejects a duplicate `client_hash`; the partial index `ix_source_documents_vault_client_hash` is confirmed **non-unique** (advisory lookup index only). A TS port that adds strict uniqueness where Python has only an index would be a behavior change, not parity — re-ingesting an identical `client_hash` is an upsert (content-addressable dest paths), never a conflict.
+21. **LIVE BUG — promote of a nonexistent session returns `500`, not `404`.** `promote_exchange` (`session_routes.py:175`) calls `load_events` without catching the `FileNotFoundError` that a missing JSONL raises under the repo's default `strict=True` read; its `if not events: 404` branch only covers an existing-but-empty/all-malformed file. `GET /sessions/{id}` catches the same exception and maps it to 404 — the intended contract here is clearly the same `404 "Session not found"`. Same decision shape as M1 oddity #15 (dead-404-branch on `/markdown`): reproduce the 500 bug-for-bug or implement the evident intent.
+22. **Promote response `title`: the two sides of the wire contradict each other.** Python declares `title: str | None` and **both fresh-promotion branches return `None`** (`session_routes.py:195-199` and `217-221`), but the frontend's `promoteResponseSchema.title` is a non-nullable `z.string()` parsed strictly (`web/src/api/sessions.ts:170-178` via `readJson`, `client.ts:13-15`) — so every fresh promote **succeeds server-side then throws client-side** at the Zod boundary; only idempotent re-promotions (which return `existing.title or exchange_id`) parse cleanly. One side must change; a human decides whether the TS port returns a non-null title on fresh promotes (e.g. the `exchange_id` fallback, matching the replay branches), keeps `null` and the frontend Zod is fixed later, or something else — this cannot be resolved by "match Python" because matching Python preserves a client-visible crash.
+
+---
+
+## Fixture requirements
+
+Building on M1's fixture set (reused as the base — same users/vaults/memberships), M3 adds:
+
+- **Idempotent session create**: a fixture request that replays the same `idempotency_key` twice with (a) an identical exchange (should return the same session id, no new JSONL lines) and (b) a *different* exchange `id` under the same key (should append the second exchange to the same session — exercises the "retry carried a later exchange" branch in `create_session`).
+- **BTW context bug/fix fixture**: at least one `PATCH /sessions/{id}/btw` request with a non-empty `context` in the body, asserted against whatever the human decision (oddity #1) lands on — either `context: ""` (bug-for-bug) or the real value (fixed) in the subsequent `GET /sessions/{id}` replay.
+- **Promote — owner branch**: a session with an exchange whose answer is non-empty, promoted by an owner; assert `source_documents` row + vault-storage file at `session_exchange_path(exchange_id)` + a `compile_intents` row exists afterward (cross-reference the ingest-surface fixture requirements for the exact `_write_and_index`/`_emit_compile_intent` shape). Re-promote the same exchange immediately after — assert the idempotent short-circuit (`mode: "ingested"`, same `document_id`, no duplicate row/file write). The `title` assertion on both calls is **blocked pending the oddity #22 decision** (fresh promote returns `null`, which the current frontend Zod cannot parse — the fixture must encode whichever side of the contradiction the TS port resolves to).
+- **Promote — editor branch**: same session, promoted by an editor (non-owner) — assert a `proposals` row (status `PENDING`) + staged file under the *proposals* storage root (not vault storage) + **no** `compile_intents` row yet. Re-promote before approval — assert the pending-proposal short-circuit. A **viewer** attempting promote must 403 before any session/exchange lookup happens (guard-level rejection).
+- **Promote — not-yet-answered exchange**: an exchange with `answer: ""` (or whitespace-only) seeded directly into a session's JSONL (bypassing the normal create/append API, which the real frontend never does but the API doesn't prevent) — assert `400 "Exchange has no answer yet"`.
+- **Promote — missing session / missing exchange**: a **nonexistent** `session_id` → currently a `500` (uncaught `FileNotFoundError`, oddity #21 — the fixture's expected status depends on the human decision there: reproduce the 500 or implement the evidently intended `404 "Session not found"`); a session whose JSONL **exists but is empty/all-malformed** → `404 "Session not found"` (the only way the 404 branch actually fires — seed as raw file content); a real session with a wrong `exchange_id` → `404 "Exchange not found in session"`.
+- **Orphan session (oddity #7)**: a `PATCH /sessions/{id}` to a `session_id` that was never created via `POST /sessions` — capture whatever the TS port decides (silent creation vs. 404) as the fixture's expected outcome.
+- **Query stream — stubbed LanguageModel layer** (per the M3 task list's testing rule — no live LLM in CI): scripted tool-call sequences covering (a) a ≥2-tool-round answer exercising the full `token* (source token*)* done` ordering, one instance of each of the five `source.type` values including at least one `expand_context` call (to hit the `start`/`end` fields) and one `search_in_document` call (to hit the folded `query`-string shape); (b) a scripted rate-limit/stall on the primary model forcing the fallback path, to pin down whatever the TS port decides for oddity #2; (c) a scripted malformed tool-call-arguments case to hit the `MalformedToolArgs` → `error`-with-no-`done` termination; (d) a scripted non-retryable exception mid-loop to hit the raw-message-leak `error` case (oddity #3); (e) BTW-mode runs covering **both** BTW callers' `messages` shapes: a session-BTW turn (parent-session history + BTW-thread history, no origin preload) and a document-BTW turn (origin preload present on a *follow-up* turn — proving the per-turn `_build_origin_messages` firing — plus `buildBtwHistory`-only history with the `"\n\n"`-joined `buildBtwQuery` prefix on turn 1); (f) a document-BTW **spin-off** flow — `createSession` with the first BTW exchange + sequential `appendExchange` for the rest — including a double-invocation case pinning the **non-idempotent** fresh-`crypto.randomUUID()`-per-call behavior (two spin-offs of the same thread = two distinct sessions, per Python/frontend parity) and a mid-loop `appendExchange` failure leaving a partially-persisted session.
+- **`web_search` gate off/on**: two vault fixtures, one with `config.yaml`'s `web_search: false` (or absent — exercises `load_vault_config`'s no-key-fallback vs. M1's noted `KeyError`-on-absent-key risk, if that vault predates the field) and `PARALLEL_API_KEY` unset; one with both `web_search: true` and a (stubbed) Parallel key — assert the `web_search` tool is present/absent in the stubbed model's visible tool list and that guidance text is/isn't in the system prompt sent to the stub.
+- **Cost row**: a stubbed query run with a nonzero fabricated `usage.cost` on the mock completion chunk — assert exactly one `llm_cost_events` row with `event_type = "query.stream"`, correct `cost_usd`, and a `correlation_id` matching the `q-XXXXXXXX` shape. A second run where the mock never reports cost — assert **no** row is written (oddity-adjacent: zero-cost = no row, not a zero row).
+- **Vault create — R2 bucket reuse**: a user's *second* `POST /vaults` call, on an `r2` storage-backend fixture — assert the same `r2_bucket_name` as their first vault (bucket is owner-scoped, not vault-scoped), and that a `local`-backend fixture always returns `r2_bucket_name: null`.
+- **Vault config update — round-trip preservation**: a vault whose `config.yaml` has been hand-seeded with comments/a `metadata`/`web_search` block, then a `PATCH .../config` touching only `thematic_hint` — assert the untouched keys (including `web_search`, `metadata`) survive byte-for-byte-equivalent (structurally, not necessarily literal bytes if the TS port doesn't use a comment-preserving YAML lib — flag as a possible divergence point requiring a decision, see oddity list).
+- **Member invite idempotency + role-lie**: invite an existing member with a *different* role than they currently hold — assert the DB role is unchanged (`ON CONFLICT DO NOTHING`) while deciding, per oddity #12, whether the TS port's response echoes the request (bug-for-bug) or the real persisted role (fixed).
+- **Self-demotion/self-removal** (oddity #13): an owner PUTting their own membership to `viewer`, and an owner DELETEing their own membership — capture whatever the TS port decides (block vs. allow) as the fixture's expected outcome; if allowed (Python parity), assert the vault now has zero owners and is unreachable via any `VaultOwnerGuard` route.
+- **Ownership transfer — R2 bucket non-migration**: on an `r2`-backend vault, transfer ownership, then assert `vault.r2_bucket_name` is unchanged (still the original owner's bucket) and that the new owner's *other* vaults (if any) use their own, different bucket — proves the bucket is genuinely not re-derived post-transfer.
+- **Vault delete — partial-failure ordering**: not easily fixturable as a real R2 failure, but at minimum assert the documented ordering (DB rows gone, then storage cleared) via a spy/mock on the storage layer, to pin the "not in the same transaction" behavior before the TS port either reproduces or fixes it.
+- **Source deletion — idea/membership cascade**: a source with 2+ derived `ideas`, each with `topic_memberships` rows, deleted via the owner-direct path — assert `topic_memberships`, `ideas`, `source_documents`, and `search_index` rows are all gone, the physical file is gone, and (per oddity #15) **no** `compile_intents` row was created.
+- **Source deletion-request — idempotent reuse status code**: file the same deletion-request twice — assert whatever status code the TS port lands on for the second call (200 vs. Python's current 201, oddity #14).
+- **Proposal approve — source_deletion content-type branch**: a pending `source_deletion` proposal, approved — assert the underlying source is deleted (rows+storage) via the shared delete path, the staged proposal file is removed, and (matching oddity #15's sibling behavior) **no** `compile_intents` row is created for this approval either.
+- **Proposal approve — normal content**: assert exactly one `compile_intents` row exists afterward with `pipeline_run_id IS NULL` (bare intent, not yet claimed by a pipeline run) — distinguishing it from the promote-owner-path fixture above, which does carry effects through `_write_and_index` the same way ingest does.
+- **`POST /vaults/{id}/proposals` (create)**: **blocked pending the human decision in oddity #11** — no fixture can be written until it's decided whether this endpoint exists in the TS port at all.
+- **Ingest — legacy synchronous conversion**: at least one non-text file (e.g. `.docx`, `.pdf` — whatever MarkItDown supports) through `POST /ingest/upload`, asserting the conversion happens synchronously within the request/response cycle (no job/task row, no polling) — this is the fixture that pins down oddity/scope-clarification about markitdown *not* being uniformly worker-side.
+- **Ingest — staged-files, R2-only gate**: a `local`-backend vault calling `POST /ingest/staged-files/sign` — assert the `400` (or whatever the TS port decides per oddity #18). An `r2`-backend vault doing the full `check-dupes → sign → process` sequence — assert the pipeline_run row's id equals the client-supplied `job_id` (not server-minted), the `tasks` row with kind `"staged_file_ingest"`, the response's `200` status (not `201`, per the process route's documented status-code deviation), and that the `/process` route itself wrote **zero** `compile_intents` rows (the single intent per staged run is emitted by the Python worker at run end, `workers.py:497-502` — out of TS scope, but the route-level zero-count is a TS assertion).
+- **URL ingest via `POST /jobs/url`** (the in-scope job route): a member (and, per the guard-inconsistency decision in oddity #17b, possibly a **viewer**) POSTing `{job_id, url}` — assert synchronous completion (response only after storage write + `source_documents` upsert), a `pipeline_runs` row with `id == job_id` and `trigger = "url"` marked `source_ingest`/`completed`, and a `compile_intents` row **attached to that pipeline run** (unlike `/ingest`'s bare intent). A failing URL (stubbed fetch error) — assert `400` with `"Failed to fetch URL: ..."` **and** that the failed `pipeline_runs` row persists (committed before the error is raised).
+- **Ingest — user-suggestion both branches**: an owner and a non-owner editor each submitting a suggestion with the same `intent` — assert the owner's is immediately in `source_documents` with a `compile_intents` row, the editor's is a `PENDING` proposal with neither; both currently return the identical response shape (oddity #16) — capture whichever shape the TS port lands on.
+- **Ingest — url endpoint's dead `job_id`**: send a request with and without `job_id` — capture whichever behavior the human decision on oddity #17 lands on (required-and-enforced vs. dropped from the schema).
+
+---
+
+## Explicitly out of M3 scope
+
+- **Compile / jobs / SSE progress** (`compile_routes.py`: `POST /compile` → 202, `POST /compile/{run_id}/cancel` → 204; `job_routes.py`: `GET /jobs`, `GET /jobs/{job_id}`, `GET /jobs/{job_id}/stream` — the *other* SSE stream in this codebase, consumed by `web/src/hooks/use-job-sse.ts`; unrelated to the query engine's SSE — it streams compile-pipeline phase progress (`source_ingest`/`extract`/`abstract`/`derive`/`render`/`verify`/`publish`), not query tokens) — all deferred to M4. **Exception: `POST /jobs/url` is reclassified INTO M3 scope** (see the ingest section) — despite living in `job_routes.py`, it runs the entire URL ingest synchronously in-request and is the only URL-ingest path the UI calls; only the job *read/stream* routes stay in M4. **Correction to the M3 planning doc**: `use-job-sse.ts` was named there as a possible consumer to check for the query SSE protocol; it is not — it's exclusively the compile-progress stream and shares no event types or code paths with `/query`. Confirmed by reading both the hook and `job_routes.py`.
+- **Lint / explore** (`lint_routes.py`: `GET /lint`) — orphan/lint checks over the vault graph. Out of scope.
+- **Cost routes** (`cost_routes.py`: `GET /cost` top-level and vault-scoped `GET /vaults/{id}/cost`) — LLM cost *observability/reporting* endpoints (aggregation reads over `llm_cost_events`, via `LlmCostService.aggregate`). Out of scope — M3 only needs the *write* side (the `record_wide_event_cost` row-insert documented above), not these read/report endpoints.
+- **Worker-side conversion** (markitdown etc.) and any Absurd task *execution* — M3 writes the same queue/`compile_intents` rows Python would; the worker that consumes them stays Python and unmodified, per the M3 rules ("the worker stays Python and is out of scope").
+- **Any DDL / schema migration** — unchanged from M1's rule; Alembic remains sole schema owner.
+- **`app/api/schemas/jobs.py`, `tasks.py`** — schema modules backing the excluded compile/job routers; not inventoried here (`ingest.py`, `query.py`, `sessions.py` schema modules **are** now in scope, inventoried above, superseding M1's blanket exclusion of all four).
+
+## Notes on what could not be fully determined from the code
+
+(Previous drafts listed seven open questions here; all have since been resolved by direct code verification and folded into the sections above as documented facts — `find_pending_for_dest`'s PENDING filter + partial unique index, `storage.append` auto-create on both backends, `set_member_role`'s `ValueError`→404/400 mapping, the complete vault-delete FK-cascade table list, the staged worker's exactly-one-intent-per-run accounting, `/ingest/url`'s zero-frontend-callers status, and `client_hash`'s non-unique index. What remains:)
+
+- Full trace of what happens if `QueryEngine.run`'s `finally` block (`_finalize_wide_event`) itself raises after a client disconnect (`GeneratorExit` already in flight) — not verified against Starlette's exact ASGI-level exception handling in this environment.
+- No Absurd `spawn` calls were found synchronously in any vault/proposal/deletion route or service in this pass — compile dispatch for those paths is entirely deferred to the out-of-scope reconciler via `compile_intents` rows, consistent with the existing `project_compile_intents_outbox` architecture. The only *directly*-spawned Absurd task found anywhere in this inventory is `"staged_file_ingest"` from `POST /ingest/staged-files/process`.
+
+## Decisions (2026-07-10)
+
+1. **`POST /vaults/{id}/proposals` (phantom route)** → TS implements it from scratch; the frontend's request/response Zod (`web/src/api/proposals.ts`) is the spec. It is a real product flow currently 404ing in prod.
+2. **Promote response `title`** → TS replicates Python's `null` (bit-faithful). The known frontend Zod throw on fresh promotes is designated a *frontend* fix (accept nullable title), out of port scope.
+3. **BTW `context`** → TS persists it (pure bug fix; the field is one of the three anchor legs `{quote, blockOffset, context}` and the frontend already sends it; replay normalization already tolerates both shapes).
+4. **SSE error frames** → TS sanitizes: generic client-safe message in the frame, full detail to structured server logs.
+5. **Promote of nonexistent session** → TS returns the intended `404` (Python's uncaught-FileNotFoundError 500 is a live bug; same shape as M1 decision 1).
+6. **Mid-stream model fallback invisibility** → replicated as-is (product question deferred, same conservatism as M1 decision 2).
+7. **`POST /jobs/url`** → in M3.2 scope as the live URL-ingest path (synchronous in-request conversion); `/ingest/url` is dead from the UI — TS does not port it (surface reduction, like M1 decision 4). Guard inconsistency (member vs owner) → TS uses the `/jobs/url` member guard, recorded here.
+8. **Stream-setup frameless death** (pre-loop failures emit no SSE frame and skip wide-event finalization) → TS closes this: setup failures emit a sanitized `error` frame and finalize telemetry.
