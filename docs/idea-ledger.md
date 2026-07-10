@@ -96,3 +96,9 @@ Checked and ruled out — fully implemented on main, fully captured in current d
 - Concept→Article strict 1:1 model, old 9-phase compiler, scope_note→description rename, mixed UUID5/UUID7 for ideas/anchors — all superseded by the many-to-many topics model; correctly moot.
 
 **From `great_minds_product_overview.pdf`:** `search_wiki` (now `search_content`), `read_document`, backlinks-on-read, `query_documents` (minus topic filter), 20KB truncation threshold, role-based access + proposals, orphan detection, PDF/docx upload via markitdown, URL ingestion, graph-aware retrieval framing, sessions-as-artifacts, team-vault framing — all implemented or present in the current one-pager.
+
+---
+
+## Post-archival additions
+
+**Task-level model distillation for pipeline phases (LoRA/fine-tune)** — discussion 2026-07-09, not from archived material — Distill a cheap specialized model for a high-volume compile phase (extract is the natural candidate; compile cache already accumulates input→output pairs as free training data, `llm_costs` provides the per-phase spend signal). Explicitly rejected everywhere else in GM: per-vault knowledge/stance adapters (no provenance, retrain-per-change, per-vault ops), and retrieval-embedding tuning (past retrieval failures were corpus-quality, not encoder). Decision trigger, both required: (1) post-canonicalize-redesign, one pipeline phase dominates `llm_costs` spend; (2) a quality eval exists for that phase. Until then, frontier-model-via-OpenRouter keeps raising the buy-vs-train bar for free. `[never-built, deliberate]`
