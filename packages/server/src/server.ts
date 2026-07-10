@@ -19,6 +19,7 @@ import { AppConfig } from "./config.ts";
 import { DocumentRegistryMismatch, DocumentsService } from "./documents.ts";
 import { domainErrorResponse } from "./http-errors.ts";
 import { StructuredLogger } from "./logging.ts";
+import { SessionsService } from "./sessions.ts";
 import { SourcesService } from "./sources.ts";
 import { VaultsService } from "./vaults.ts";
 import { WikiService } from "./wiki.ts";
@@ -338,6 +339,37 @@ const DocumentsHandlersLive = HttpApiBuilder.group(MountedGreatMindsApi, "docume
     ),
 );
 
+const SessionsHandlersLive = HttpApiBuilder.group(MountedGreatMindsApi, "sessions", (handlers) =>
+  handlers
+    .handle("listSessions", ({ params, query }) =>
+      withDomainErrors(
+        Effect.gen(function* () {
+          const sessions = yield* SessionsService;
+          const current = yield* CurrentAuth;
+          return yield* sessions.listSessions(current.user_id, params.vault_id, query);
+        }),
+      ),
+    )
+    .handle("readSession", ({ params }) =>
+      withDomainErrors(
+        Effect.gen(function* () {
+          const sessions = yield* SessionsService;
+          const current = yield* CurrentAuth;
+          return yield* sessions.readSession(current.user_id, params.vault_id, params.session_id);
+        }),
+      ),
+    )
+    .handle("readSessionMarkdown", ({ params }) =>
+      withDomainErrors(
+        Effect.gen(function* () {
+          const sessions = yield* SessionsService;
+          const current = yield* CurrentAuth;
+          return yield* sessions.readMarkdown(current.user_id, params.vault_id, params.session_id);
+        }),
+      ),
+    ),
+);
+
 const ApiGroupsLive = Layer.mergeAll(
   MetaHandlersLive,
   AuthHandlersLive,
@@ -345,6 +377,7 @@ const ApiGroupsLive = Layer.mergeAll(
   WikiHandlersLive,
   SourcesHandlersLive,
   DocumentsHandlersLive,
+  SessionsHandlersLive,
 ).pipe(Layer.provideMerge(AuthMiddlewareLive));
 
 const ApiLive = HttpApiBuilder.layer(MountedGreatMindsApi).pipe(Layer.provide(ApiGroupsLive));

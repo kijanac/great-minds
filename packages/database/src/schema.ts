@@ -162,6 +162,31 @@ export const searchIndex = pgTable(
   ],
 );
 
+export const sessions = pgTable(
+  "sessions",
+  {
+    id: text("id").notNull(),
+    vaultId: uuid("vault_id")
+      .notNull()
+      .references(() => vaults.id, { onDelete: "cascade" }),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    query: text("query").notNull(),
+    origin: jsonb("origin"),
+    createdAt: timestamptz("created_at").notNull(),
+    updatedAt: timestamptz("updated_at").notNull(),
+    idempotencyKey: text("idempotency_key"),
+  },
+  (table) => [
+    primaryKey({ columns: [table.id, table.vaultId] }),
+    unique("uq_sessions_vault_idempotency").on(table.vaultId, table.idempotencyKey),
+    index("ix_sessions_updated_at").on(table.updatedAt),
+    index("ix_sessions_user_id").on(table.userId),
+    index("ix_sessions_vault_id").on(table.vaultId),
+  ],
+);
+
 export const sourceDocuments = pgTable(
   "source_documents",
   {
@@ -291,6 +316,7 @@ export const schema = {
   vaultMemberships,
   pipelineRuns,
   searchIndex,
+  sessions,
   sourceDocuments,
   topics,
   wikiArticles,

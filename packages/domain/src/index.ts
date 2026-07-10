@@ -21,6 +21,12 @@ export const Uuid = Schema.String.pipe(
 );
 export type Uuid = typeof Uuid.Type;
 
+export const SessionId = Schema.String.pipe(
+  Schema.check(Schema.isPattern(/^[A-Za-z0-9][A-Za-z0-9._-]*$/)),
+  Schema.brand("SessionId"),
+);
+export type SessionId = typeof SessionId.Type;
+
 export const IsoDateTime = Schema.String;
 export type IsoDateTime = typeof IsoDateTime.Type;
 
@@ -211,6 +217,99 @@ export const SourceListQuery = Schema.Struct({
   search: Schema.optionalKey(Schema.String),
 });
 export type SourceListQuery = typeof SourceListQuery.Type;
+
+export const SessionOrigin = Schema.Struct({
+  doc_path: Schema.String,
+  anchor: Schema.optionalKey(Schema.NullOr(Schema.String)),
+  paragraph: Schema.optionalKey(Schema.NullOr(Schema.String)),
+  paragraph_index: Schema.optionalKey(Schema.NullOr(Schema.Number)),
+});
+export type SessionOrigin = typeof SessionOrigin.Type;
+
+export const ChunkRange = Schema.Struct({
+  start: Schema.Number,
+  end: Schema.Number,
+});
+export type ChunkRange = typeof ChunkRange.Type;
+
+export const ThinkingSource = Schema.Struct({
+  label: Schema.String,
+  type: Schema.Literals(["article", "raw", "search", "query", "links"] as const),
+  thinking: Schema.optionalKey(Schema.NullOr(Schema.String)),
+  ranges: Schema.optionalKey(Schema.Array(ChunkRange)),
+  full: Schema.optionalKey(Schema.Boolean),
+});
+export type ThinkingSource = typeof ThinkingSource.Type;
+
+export const ThinkingBlock = Schema.Struct({
+  sources: Schema.optionalKey(Schema.Array(ThinkingSource)),
+});
+export type ThinkingBlock = typeof ThinkingBlock.Type;
+
+export const BtwExchange = Schema.Struct({
+  query: Schema.String,
+  thinking: Schema.optionalKey(Schema.Array(ThinkingBlock)),
+  answer: Schema.optionalKey(Schema.String),
+});
+export type BtwExchange = typeof BtwExchange.Type;
+
+export const SessionMetaEvent = Schema.Struct({
+  type: Schema.Literal("meta"),
+  id: Schema.String,
+  query: Schema.String,
+  ts: IsoDateTime,
+  user_id: Schema.String,
+  origin: Schema.optionalKey(Schema.NullOr(SessionOrigin)),
+});
+export type SessionMetaEvent = typeof SessionMetaEvent.Type;
+
+export const SessionExchangeEvent = Schema.Struct({
+  type: Schema.Literal("exchange"),
+  exId: Schema.String,
+  query: Schema.String,
+  thinking: Schema.optionalKey(Schema.Array(ThinkingBlock)),
+  answer: Schema.optionalKey(Schema.String),
+  ts: IsoDateTime,
+});
+export type SessionExchangeEvent = typeof SessionExchangeEvent.Type;
+
+export const SessionBtwEvent = Schema.Struct({
+  type: Schema.Literal("btw"),
+  exId: Schema.String,
+  quote: Schema.String,
+  blockOffset: Schema.optionalKey(Schema.Number),
+  context: Schema.optionalKey(Schema.String),
+  exchanges: Schema.Array(BtwExchange),
+  ts: IsoDateTime,
+});
+export type SessionBtwEvent = typeof SessionBtwEvent.Type;
+
+export const SessionEvent = Schema.Union([SessionMetaEvent, SessionExchangeEvent, SessionBtwEvent]);
+export type SessionEvent = typeof SessionEvent.Type;
+
+export const SessionOverview = Schema.Struct({
+  id: Schema.String,
+  query: Schema.String,
+  created_at: IsoDateTime,
+  updated_at: IsoDateTime,
+  user_id: Uuid,
+  origin: Schema.NullOr(SessionOrigin),
+});
+export type SessionOverview = typeof SessionOverview.Type;
+
+export const SessionPage = pageOf(SessionOverview);
+export type SessionPage = typeof SessionPage.Type;
+
+export const SessionResponse = Schema.Struct({
+  id: Schema.String,
+  events: Schema.Array(SessionEvent),
+});
+export type SessionResponse = typeof SessionResponse.Type;
+
+export const SessionMarkdown = Schema.String.pipe(
+  HttpApiSchema.asText({ contentType: "text/markdown" }),
+);
+export type SessionMarkdown = typeof SessionMarkdown.Type;
 
 export const SourceDocument = Schema.Struct({
   kind: Schema.Literal("source"),
@@ -455,6 +554,30 @@ export const DocumentsApiGroup = HttpApiGroup.make("documents").add(
   }).middleware(AuthMiddleware),
 );
 
+export const SessionsApiGroup = HttpApiGroup.make("sessions").add(
+  HttpApiEndpoint.get("listSessions", "/vaults/:vault_id/sessions", {
+    params: {
+      vault_id: Uuid,
+    },
+    query: PageParamsQuery,
+    success: SessionPage,
+  }).middleware(AuthMiddleware),
+  HttpApiEndpoint.get("readSession", "/vaults/:vault_id/sessions/:session_id", {
+    params: {
+      vault_id: Uuid,
+      session_id: SessionId,
+    },
+    success: SessionResponse,
+  }).middleware(AuthMiddleware),
+  HttpApiEndpoint.get("readSessionMarkdown", "/vaults/:vault_id/sessions/:session_id/markdown", {
+    params: {
+      vault_id: Uuid,
+      session_id: SessionId,
+    },
+    success: SessionMarkdown,
+  }).middleware(AuthMiddleware),
+);
+
 export const GreatMindsApi = HttpApi.make("great-minds").add(
   MetaApiGroup,
   AuthApiGroup,
@@ -462,4 +585,5 @@ export const GreatMindsApi = HttpApi.make("great-minds").add(
   WikiApiGroup,
   SourcesApiGroup,
   DocumentsApiGroup,
+  SessionsApiGroup,
 );

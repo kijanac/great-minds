@@ -9,6 +9,7 @@ import {
   Database,
   pipelineRuns,
   searchIndex,
+  sessions,
   sourceDocuments,
   topics,
   users,
@@ -58,6 +59,11 @@ const id = {
   sourceOtherVault: "00000000-0000-4000-8000-000000000504",
   sourceEncoded: "00000000-0000-4000-8000-000000000505",
   apiKeyAlice: "00000000-0000-4000-8000-000000000601",
+  sessionAliceOlder: "s-1",
+  sessionAliceMain: "s-2",
+  sessionBob: "s-bob",
+  sessionNoMarkdown: "s-no-md",
+  sessionMalformed: "s-malformed",
 } as const;
 
 const aliceApiKey = "gm_alice_read_key";
@@ -173,6 +179,9 @@ const writeVaultFile = async (vaultId: string, path: string, content: string) =>
   await mkdir(dirname(fullPath), { recursive: true });
   await writeFile(fullPath, content, "utf8");
 };
+
+const jsonl = (events: readonly unknown[]) =>
+  events.map((event) => JSON.stringify(event)).join("\n");
 
 const issueToken = (userId: string) =>
   runDb(
@@ -517,6 +526,45 @@ const seedFixtures = async (): Promise<Fixture> => {
           }),
         )
         .pipe(Effect.orDie);
+      yield* db
+        .insert(sessions)
+        .values([
+          {
+            id: id.sessionAliceOlder,
+            vaultId: id.vaultAlpha,
+            userId: id.alice,
+            query: "Earlier organizing question",
+            origin: null,
+            createdAt: new Date("2026-07-06T08:00:00.000Z"),
+            updatedAt: new Date("2026-07-06T08:05:00.000Z"),
+          },
+          {
+            id: id.sessionAliceMain,
+            vaultId: id.vaultAlpha,
+            userId: id.alice,
+            query: "How should study circles use source material?",
+            origin: {
+              doc_path: "wiki/alpha-practice.md",
+              anchor: "alpha-anchor",
+              paragraph: "Alpha paragraph",
+              paragraph_index: 2,
+            },
+            createdAt: new Date("2026-07-07T09:00:00.000Z"),
+            updatedAt: new Date("2026-07-07T09:45:00.000Z"),
+            idempotencyKey: "alice-main-key",
+          },
+          {
+            id: id.sessionBob,
+            vaultId: id.vaultAlpha,
+            userId: id.bob,
+            query: "What should editors review first?",
+            origin: { doc_path: "raw/books/capital.md" },
+            createdAt: new Date("2026-07-08T10:00:00.000Z"),
+            updatedAt: new Date("2026-07-08T10:15:00.000Z"),
+            idempotencyKey: "bob-main-key",
+          },
+        ])
+        .pipe(Effect.orDie);
     }),
   );
 
@@ -550,6 +598,219 @@ const seedFixtures = async (): Promise<Fixture> => {
     "raw/books/encoded title.md",
     "---\ntitle: Encoded Title\n---\nEncoded path body.",
   );
+  await writeVaultFile(
+    id.vaultAlpha,
+    `sessions/${id.sessionAliceOlder}.jsonl`,
+    jsonl([
+      {
+        type: "meta",
+        id: id.sessionAliceOlder,
+        query: "Earlier organizing question",
+        ts: "2026-07-06T08:00:00.000Z",
+        user_id: id.alice,
+        origin: null,
+      },
+      {
+        type: "exchange",
+        exId: "ex-old",
+        query: "Earlier organizing question",
+        thinking: [],
+        answer: "Earlier answer.",
+        ts: "2026-07-06T08:05:00.000Z",
+      },
+    ]),
+  );
+  await writeVaultFile(
+    id.vaultAlpha,
+    `sessions/${id.sessionAliceMain}.jsonl`,
+    jsonl([
+      {
+        type: "meta",
+        id: id.sessionAliceMain,
+        query: "Stale pre-reload question",
+        ts: "2026-07-01T08:00:00.000Z",
+        user_id: id.alice,
+        origin: null,
+      },
+      {
+        type: "exchange",
+        exId: "ex-stale",
+        query: "Stale pre-reload question",
+        thinking: [],
+        answer: "This belongs to an older client-reused id.",
+        ts: "2026-07-01T08:01:00.000Z",
+      },
+      {
+        type: "meta",
+        id: id.sessionAliceMain,
+        query: "How should study circles use source material?",
+        ts: "2026-07-07T09:00:00.000Z",
+        user_id: id.alice,
+        origin: {
+          doc_path: "wiki/alpha-practice.md",
+          anchor: "alpha-anchor",
+          paragraph: "Alpha paragraph",
+          paragraph_index: 2,
+        },
+      },
+      {
+        type: "exchange",
+        exId: "ex-1",
+        query: "How should study circles use source material?",
+        thinking: [
+          {
+            sources: [
+              {
+                label: "Alpha Practice",
+                type: "article",
+                thinking: "Use the article as a shared reference point.",
+                ranges: [{ start: 0, end: 2 }],
+                full: false,
+              },
+              {
+                label: "Capital Volume",
+                type: "raw",
+                thinking: "Raw source grounds the discussion.",
+                ranges: [{ start: 3, end: 4 }],
+                full: true,
+              },
+              {
+                label: "Search: pedagogy",
+                type: "search",
+                thinking: null,
+              },
+              {
+                label: "Prior query",
+                type: "query",
+                thinking: "Compare against previous framing.",
+              },
+              {
+                label: "Linked articles",
+                type: "links",
+                thinking: "Trace adjacent topics.",
+              },
+            ],
+          },
+        ],
+        answer: "Start with a concrete passage, then ask what claim it supports.",
+        ts: "2026-07-07T09:10:00.000Z",
+      },
+      {
+        type: "btw",
+        exId: "ex-1",
+        quote: "concrete passage",
+        blockOffset: 0,
+        context: "Start with a concrete passage",
+        exchanges: [
+          {
+            query: "Why this passage?",
+            thinking: [{ sources: [{ label: "Linked articles", type: "links", thinking: null }] }],
+            answer: "It gives the group something specific to test.",
+          },
+          {
+            query: "How do we avoid over-reading it?",
+            thinking: [],
+            answer: "Keep claims proportional to the evidence.",
+          },
+        ],
+        ts: "2026-07-07T09:20:00.000Z",
+      },
+      {
+        type: "exchange",
+        exId: "ex-2",
+        query: "What should the facilitator write down?",
+        thinking: [],
+        answer: "Record the passage, the claim, and unresolved questions.",
+        ts: "2026-07-07T09:45:00.000Z",
+      },
+    ]),
+  );
+  await writeVaultFile(
+    id.vaultAlpha,
+    `sessions/${id.sessionAliceMain}.md`,
+    "# Stored Session Markdown\n\nThis came from the sidecar.\n",
+  );
+  await writeVaultFile(
+    id.vaultAlpha,
+    `sessions/${id.sessionBob}.jsonl`,
+    jsonl([
+      {
+        type: "meta",
+        id: id.sessionBob,
+        query: "What should editors review first?",
+        ts: "2026-07-08T10:00:00.000Z",
+        user_id: id.bob,
+        origin: { doc_path: "raw/books/capital.md" },
+      },
+      {
+        type: "exchange",
+        exId: "ex-bob",
+        query: "What should editors review first?",
+        thinking: [],
+        answer: "Start with sources that already have provenance.",
+        ts: "2026-07-08T10:15:00.000Z",
+      },
+    ]),
+  );
+  await writeVaultFile(
+    id.vaultAlpha,
+    `sessions/${id.sessionNoMarkdown}.jsonl`,
+    jsonl([
+      {
+        type: "meta",
+        id: id.sessionNoMarkdown,
+        query: "Missing markdown sidecar",
+        ts: "2026-07-09T10:00:00.000Z",
+        user_id: id.alice,
+        origin: null,
+      },
+    ]),
+  );
+  await writeVaultFile(
+    id.vaultAlpha,
+    `sessions/${id.sessionMalformed}.jsonl`,
+    `${jsonl([
+      {
+        type: "meta",
+        id: id.sessionMalformed,
+        query: "Malformed event handling",
+        ts: "2026-07-09T11:00:00.000Z",
+        user_id: id.alice,
+        origin: null,
+      },
+      {
+        type: "exchange",
+        exId: "ex-good",
+        query: "Malformed event handling",
+        thinking: [],
+        answer: "The first event is valid.",
+        ts: "2026-07-09T11:01:00.000Z",
+      },
+      { type: "unknown", ts: "2026-07-09T11:02:00.000Z" },
+      {
+        type: "exchange",
+        query: "Missing exId should be skipped.",
+        thinking: [],
+        answer: "This event is invalid.",
+        ts: "2026-07-09T11:03:00.000Z",
+      },
+      {
+        type: "exchange",
+        exId: "ex-after-invalid",
+        query: "Does parsing continue after invalid typed events?",
+        thinking: [],
+        answer: "Yes, invalid typed events are skipped.",
+        ts: "2026-07-09T11:04:00.000Z",
+      },
+    ])}\n{not valid json}\n${JSON.stringify({
+      type: "exchange",
+      exId: "ex-after-bad-json",
+      query: "This tail is truncated.",
+      thinking: [],
+      answer: "This must not appear.",
+      ts: "2026-07-09T11:05:00.000Z",
+    })}\n`,
+  );
 
   return {
     aliceToken: await issueToken(id.alice),
@@ -559,15 +820,19 @@ const seedFixtures = async (): Promise<Fixture> => {
   };
 };
 
-const api = async (method: string, path: string, bearer?: string): Promise<ApiResponse> => {
+const rawApi = async (method: string, path: string, bearer?: string) => {
   const headers = new Headers();
   if (bearer !== undefined) {
     headers.set("authorization", `Bearer ${bearer}`);
   }
-  const response = await fetch(`${currentState().started.url}/v1${path}`, {
+  return fetch(`${currentState().started.url}/v1${path}`, {
     method,
     headers,
   });
+};
+
+const api = async (method: string, path: string, bearer?: string): Promise<ApiResponse> => {
+  const response = await rawApi(method, path, bearer);
   const text = await response.text();
   const parsed = text === "" ? undefined : (JSON.parse(text) as unknown);
   return { status: response.status, body: parsed, text };
@@ -1139,6 +1404,232 @@ describe("read-only HTTP integration", () => {
     const unauthenticated = await api(
       "GET",
       `/vaults/${id.vaultAlpha}/links?${alphaQuery.toString()}`,
+    );
+    expect(unauthenticated.status).toBe(401);
+  });
+
+  it("lists sessions self-scoped to the caller with pagination and authz", async () => {
+    const { aliceToken, bobToken, malloryToken } = currentFixture();
+    const listed = await api("GET", `/vaults/${id.vaultAlpha}/sessions`, aliceToken);
+    expect(listed.status).toBe(200);
+    const page = asPage(listed.body);
+    const sessions = itemRecords(page);
+    expect(page.pagination).toEqual({ limit: 50, offset: 0, total: 2 });
+    expect(sessions.map((session) => session.id)).toEqual([
+      id.sessionAliceMain,
+      id.sessionAliceOlder,
+    ]);
+    expect(sessions[0]).toMatchObject({
+      id: id.sessionAliceMain,
+      query: "How should study circles use source material?",
+      user_id: id.alice,
+      created_at: "2026-07-07T09:00:00.000Z",
+      updated_at: "2026-07-07T09:45:00.000Z",
+      origin: {
+        doc_path: "wiki/alpha-practice.md",
+        anchor: "alpha-anchor",
+        paragraph: "Alpha paragraph",
+        paragraph_index: 2,
+      },
+    });
+
+    const secondPage = await api(
+      "GET",
+      `/vaults/${id.vaultAlpha}/sessions?limit=1&offset=1`,
+      aliceToken,
+    );
+    expect(secondPage.status).toBe(200);
+    expect(itemRecords(asPage(secondPage.body)).map((session) => session.id)).toEqual([
+      id.sessionAliceOlder,
+    ]);
+
+    const zero = await api("GET", `/vaults/${id.vaultAlpha}/sessions?limit=0`, aliceToken);
+    expect(zero.status).toBe(200);
+    expect(asPage(zero.body)).toEqual({
+      items: [],
+      pagination: { limit: 0, offset: 0, total: 2 },
+    });
+
+    const bobList = await api("GET", `/vaults/${id.vaultAlpha}/sessions`, bobToken);
+    expect(bobList.status).toBe(200);
+    expect(asPage(bobList.body).pagination).toEqual({ limit: 50, offset: 0, total: 1 });
+    expect(itemRecords(asPage(bobList.body)).map((session) => session.id)).toEqual([id.sessionBob]);
+
+    const pastEnd = await api("GET", `/vaults/${id.vaultAlpha}/sessions?offset=99`, aliceToken);
+    expect(pastEnd.status).toBe(200);
+    expect(asPage(pastEnd.body)).toEqual({
+      items: [],
+      pagination: { limit: 50, offset: 99, total: 2 },
+    });
+
+    const overCap = await api("GET", `/vaults/${id.vaultAlpha}/sessions?limit=201`, aliceToken);
+    expect(overCap.status).toBe(422);
+
+    const nonMember = await api("GET", `/vaults/${id.vaultAlpha}/sessions`, malloryToken);
+    expect(nonMember.status).toBe(403);
+
+    const unauthenticated = await api("GET", `/vaults/${id.vaultAlpha}/sessions`);
+    expect(unauthenticated.status).toBe(401);
+
+    const bobVaultList = await api("GET", `/vaults/${id.vaultBeta}/sessions`, bobToken);
+    expect(bobVaultList.status).toBe(200);
+    expect(asPage(bobVaultList.body)).toEqual({
+      items: [],
+      pagination: { limit: 50, offset: 0, total: 0 },
+    });
+  });
+
+  it("replays sessions from JSONL with member-only access and path-safe ids", async () => {
+    const { aliceToken, bobToken, malloryToken } = currentFixture();
+    const replay = await api(
+      "GET",
+      `/vaults/${id.vaultAlpha}/sessions/${id.sessionAliceMain}`,
+      bobToken,
+    );
+    expect(replay.status).toBe(200);
+    const body = asRecord(replay.body);
+    expect(body.id).toBe(id.sessionAliceMain);
+    const events = asArray(body.events).map(asRecord);
+    expect(events.map((event) => event.type)).toEqual(["meta", "exchange", "btw", "exchange"]);
+    expect(events.map((event) => event.exId).filter(Boolean)).not.toContain("ex-stale");
+    expect(events[0]).toMatchObject({
+      type: "meta",
+      query: "How should study circles use source material?",
+      user_id: id.alice,
+      origin: {
+        doc_path: "wiki/alpha-practice.md",
+        anchor: "alpha-anchor",
+        paragraph: "Alpha paragraph",
+        paragraph_index: 2,
+      },
+    });
+    const firstExchange = events[1] ?? {};
+    const thinking = asArray(firstExchange.thinking).map(asRecord);
+    const sources = asArray(thinking[0]?.sources).map(asRecord);
+    expect(sources.map((source) => source.type)).toEqual([
+      "article",
+      "raw",
+      "search",
+      "query",
+      "links",
+    ]);
+    expect(sources[2]).toMatchObject({
+      label: "Search: pedagogy",
+      thinking: null,
+      ranges: [],
+      full: false,
+    });
+    const btw = events[2] ?? {};
+    expect(btw).toMatchObject({
+      type: "btw",
+      exId: "ex-1",
+      quote: "concrete passage",
+      blockOffset: 0,
+      context: "Start with a concrete passage",
+    });
+    expect(asArray(btw.exchanges)).toHaveLength(2);
+
+    const ownerReadsMemberSession = await api(
+      "GET",
+      `/vaults/${id.vaultAlpha}/sessions/${id.sessionBob}`,
+      aliceToken,
+    );
+    expect(ownerReadsMemberSession.status).toBe(200);
+    expect(asRecord(asArray(asRecord(ownerReadsMemberSession.body).events)[0]).user_id).toBe(
+      id.bob,
+    );
+
+    const nonMember = await api(
+      "GET",
+      `/vaults/${id.vaultAlpha}/sessions/${id.sessionAliceMain}`,
+      malloryToken,
+    );
+    expect(nonMember.status).toBe(403);
+
+    const missingEvents = await api(
+      "GET",
+      `/vaults/${id.vaultAlpha}/sessions/s-missing`,
+      aliceToken,
+    );
+    expect(missingEvents.status).toBe(404);
+    expect(missingEvents.body).toEqual({ detail: "Session not found" });
+
+    const traversal = await api(
+      "GET",
+      `/vaults/${id.vaultAlpha}/sessions/${encodeURIComponent("s-2\\..")}`,
+      aliceToken,
+    );
+    expect(traversal.status).toBe(422);
+    expect(traversal.body).toEqual({ detail: "Invalid path parameter" });
+
+    const unauthenticated = await api(
+      "GET",
+      `/vaults/${id.vaultAlpha}/sessions/${id.sessionAliceMain}`,
+    );
+    expect(unauthenticated.status).toBe(401);
+  });
+
+  it("skips invalid typed session events and truncates at malformed JSON", async () => {
+    const { aliceToken } = currentFixture();
+    const replay = await api(
+      "GET",
+      `/vaults/${id.vaultAlpha}/sessions/${id.sessionMalformed}`,
+      aliceToken,
+    );
+    expect(replay.status).toBe(200);
+    const events = asArray(asRecord(replay.body).events).map(asRecord);
+    expect(events.map((event) => event.type)).toEqual(["meta", "exchange", "exchange"]);
+    expect(events.map((event) => event.exId).filter(Boolean)).toEqual([
+      "ex-good",
+      "ex-after-invalid",
+    ]);
+    expect(events.map((event) => event.exId).filter(Boolean)).not.toContain("ex-after-bad-json");
+
+    await writeVaultFile(id.vaultAlpha, "sessions/s-empty.jsonl", "");
+    const emptyReplay = await api("GET", `/vaults/${id.vaultAlpha}/sessions/s-empty`, aliceToken);
+    expect(emptyReplay.status).toBe(200);
+    expect(emptyReplay.body).toEqual({ id: "s-empty", events: [] });
+
+    const crossVault = await api(
+      "GET",
+      `/vaults/${id.vaultBeta}/sessions/${id.sessionAliceMain}`,
+      currentFixture().bobToken,
+    );
+    expect(crossVault.status).toBe(404);
+    expect(crossVault.body).toEqual({ detail: "Session not found" });
+  });
+
+  it("serves pre-rendered session markdown with decided 404 for missing sidecars", async () => {
+    const { aliceToken, malloryToken } = currentFixture();
+    const response = await rawApi(
+      "GET",
+      `/vaults/${id.vaultAlpha}/sessions/${id.sessionAliceMain}/markdown`,
+      aliceToken,
+    );
+    expect(response.status).toBe(200);
+    expect(response.headers.get("content-type")).toContain("text/markdown");
+    expect(await response.text()).toBe(
+      "# Stored Session Markdown\n\nThis came from the sidecar.\n",
+    );
+
+    const missingSidecar = await api(
+      "GET",
+      `/vaults/${id.vaultAlpha}/sessions/${id.sessionNoMarkdown}/markdown`,
+      aliceToken,
+    );
+    expect(missingSidecar.status).toBe(404);
+    expect(missingSidecar.body).toEqual({ detail: "Session markdown not found" });
+
+    const nonMember = await api(
+      "GET",
+      `/vaults/${id.vaultAlpha}/sessions/${id.sessionAliceMain}/markdown`,
+      malloryToken,
+    );
+    expect(nonMember.status).toBe(403);
+
+    const unauthenticated = await api(
+      "GET",
+      `/vaults/${id.vaultAlpha}/sessions/${id.sessionAliceMain}/markdown`,
     );
     expect(unauthenticated.status).toBe(401);
   });

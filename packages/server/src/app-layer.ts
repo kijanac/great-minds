@@ -9,6 +9,7 @@ import { DrizzleLive } from "./db.ts";
 import { DocumentsService, DocumentsServiceLive } from "./documents.ts";
 import { StructuredLogger, StructuredLoggerLive } from "./logging.ts";
 import { Mailer, MailerLive } from "./mailer.ts";
+import { SessionsService, SessionsServiceLive } from "./sessions.ts";
 import { SourcesService, SourcesServiceLive } from "./sources.ts";
 import { VaultStorage, VaultStorageLive } from "./storage.ts";
 import { TokenService, TokenServiceLive } from "./tokens.ts";
@@ -32,6 +33,7 @@ export type AppLayerServices =
   | WikiService
   | SourcesService
   | DocumentsService
+  | SessionsService
   | VaultStorage
   | AuthService;
 
@@ -58,6 +60,7 @@ export const makeAppLayer = (overrides: AppLayerOverrides = {}) => {
     WikiServiceLive,
     SourcesServiceLive,
     DocumentsServiceLive,
+    SessionsServiceLive,
   ).pipe(
     Layer.provideMerge(VaultAccessLive),
     Layer.provideMerge(StorageLive),
