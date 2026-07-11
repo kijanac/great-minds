@@ -23,6 +23,7 @@ class Settings(BaseSettings):
     jwt_refresh_expiry_days: int = 7
     auth_code_expiry_minutes: int = 10
     openrouter_api_key: str | None = None
+    openrouter_api_base: str = "https://openrouter.ai/api/v1"
     parallel_api_key: str | None = None
     resend_api_key: str | None = None
     resend_from_email: str | None = None

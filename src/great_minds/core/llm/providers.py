@@ -8,7 +8,6 @@ from openai import AsyncOpenAI, OpenAI
 
 from great_minds.core.settings import get_settings
 
-OPENROUTER_BASE = "https://openrouter.ai/api/v1"
 
 # Model strategy (seven-phase pipeline):
 #   - QUERY_MODEL:   tool-calling agent for interactive queries
@@ -51,7 +50,7 @@ def _api_key() -> str:
 
 def get_async_client(*, max_retries: int = 2, timeout: float = 120.0) -> AsyncOpenAI:
     return AsyncOpenAI(
-        base_url=OPENROUTER_BASE,
+        base_url=get_settings().openrouter_api_base,
         api_key=_api_key(),
         max_retries=max_retries,
         timeout=timeout,
@@ -59,4 +58,4 @@ def get_async_client(*, max_retries: int = 2, timeout: float = 120.0) -> AsyncOp
 
 
 def get_sync_client() -> OpenAI:
-    return OpenAI(base_url=OPENROUTER_BASE, api_key=_api_key())
+    return OpenAI(base_url=get_settings().openrouter_api_base, api_key=_api_key())

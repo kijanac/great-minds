@@ -763,3 +763,7 @@ What a golden-compile corpus (M4.1 characterization harness) needs to exercise e
 
 - `PipelineProgressRunner.emit`/`.fail` behavior when the target run row was deleted mid-flight — designed silent no-op (rollback-and-return) confirmed from code (`pipeline_runs/service.py:163-186`), but no deletion path for `pipeline_runs` rows was found, so the race may be unreachable.
 - Python `struct.pack("I", ...)` native-mode byte order on the deployment targets is little-endian in practice, but the hashing contract's endianness is inherited, not pinned — the TS port should pin little-endian and the M4.1 harness should assert cross-implementation hash equality on a fixture corpus before anything else.
+
+## Decisions (2026-07-11)
+
+1. **Zero-Python-changes exception (behavior-preserving)**: `settings.openrouter_api_base` added (default `https://openrouter.ai/api/v1`, env `OPENROUTER_API_BASE`) and both client constructors read it, so the M4.1 golden harness can point the unmodified pipeline at a recording/replay proxy. Prod behavior is unchanged unless the env var is set; only the harness sets it. This is the only Python change permitted during the port.
