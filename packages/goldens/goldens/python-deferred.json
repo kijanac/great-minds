@@ -1,4 +1,5 @@
 {
+  "recordingId": "4c7cc562-fcf7-45af-93c3-a0106f7151d7",
   "sseProgress": {
     "first": {
       "protocol": {
@@ -256,7 +257,8 @@
     "afterCancelledTaskHandler": {
       "jobStatus": "failed",
       "phaseStatus": "failed",
-      "error": ""
+      "error": "",
+      "clobberedBy": "python"
     },
     "sse": {
       "protocol": {

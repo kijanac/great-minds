@@ -20,12 +20,22 @@ const fixture = (ideaId: string, topicId: string, articleId: string): Record<str
   return {
     schemaVersion: 2,
     hashContract: {},
+    cacheKeyContract: {
+      partition: { targetTokens: 400 },
+      synthesize: { promptHash: "unused", model: "unused" },
+      canonicalizeRegistry: { promptHash: "unused", thematicHint: "", premergeJaccardThreshold: 0.8, model: "unused" },
+      canonicalizeAssign: { promptHash: "unused", model: "unused" },
+      render: { promptHash: "unused", model: "unused" },
+    },
     compileCache: [{ sort_key: "partition", phase: "partition", cache_key: contentHash(ideaId, "target=400"), value: { chunks: [[ideaId]] } }],
     sources: [],
-    ideas: [{ sort_key: "idea", idea_id: ideaId, document_id: "10000000-0000-4000-8000-000000000010", kind: "claim", label: "Label", description: "Description", anchors: [{ position: 0, claim: "Claim", quote: "Quote", chunk_index: 0 }], embedding_hash: "same" }],
+    ideas: [{ sort_key: "idea", idea_id: ideaId, document_id: "10000000-0000-4000-8000-000000000010", kind: "claim", label: "Label", description: "Description", embedding_hash: "same" }],
+    ideaAnchors: [{ sort_key: "anchor", idea_id: ideaId, position: 0, claim: "Claim", quote: "Quote", chunk_index: 0 }],
     partitionAssignments: [],
     topics: [{ sort_key: "topic", topic_id: topicId, slug: "topic", title: "Topic", description: "Description", article_status: "rendered", compiled_from_hash: compiled, rendered_from_hash: compiled, supersedes: null, superseded_by: null }],
     memberships: [{ sort_key: "membership", topic_id: topicId, idea_id: ideaId }],
+    topicLinks: [],
+    topicRelated: [],
     articles: [{ sort_key: "wiki/topic.md", id: articleId, topic_id: topicId, file_path: "wiki/topic.md", file_hash: fileContentHash(content), body_hash: "same-body", title: "Topic", precis: "Description", archived: false, tags: [] }],
     backlinks: [{ sort_key: "self", source_article_id: articleId, target_article_id: articleId }],
     searchIndex: [],
@@ -46,7 +56,15 @@ test("duplicate identity-free keys fail instead of collapsing into a many-to-one
   const golden = fixture(goldenIdea, goldenTopic, goldenArticle);
   const replay = fixture(replayIdea, replayTopic, replayArticle);
   (replay.ideas as Json[]).push(structuredClone((replay.ideas as Json[])[0]!));
+  ((replay.compileCache as Json[])[0] as Record<string, Json>).cache_key = contentHash(replayIdea, replayIdea, "target=400");
   assert.throws(() => compareSnapshots(golden, replay), /stable key is not unique/);
+});
+
+test("a mis-constructed cache key fails before cache-key pairing", () => {
+  const golden = fixture(goldenIdea, goldenTopic, goldenArticle);
+  const replay = fixture(replayIdea, replayTopic, replayArticle);
+  ((replay.compileCache as Json[])[0] as Record<string, Json>).cache_key = contentHash(replayIdea, "target=401");
+  assert.throws(() => compareSnapshots(golden, replay), /partition cache-key construction differs/);
 });
 
 test("UUID alpha-equivalence is reflexive, symmetric, and transitive", () => {

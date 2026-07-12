@@ -11,8 +11,8 @@ import { corpus, fixtureIds } from "./fixtures.ts";
 import { output, run, start, type Child } from "./process.ts";
 import { localTopicSetKey, startCassetteProxy } from "./proxy.ts";
 
-type Mode = "record" | "record-deferred" | "check";
-type ExecutionMode = Exclude<Mode, "record-deferred">;
+type Mode = "record" | "record-deferred" | "regenerate" | "check";
+type ExecutionMode = "record" | "check";
 type Row = Record<string, Json>;
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -23,6 +23,11 @@ const goldenPath = join(packageRoot, "goldens", "python-compile.json");
 const deferredGoldenPath = join(packageRoot, "goldens", "python-deferred.json");
 const reportDir = join(packageRoot, "reports");
 let databaseUrl = "";
+
+const promptHash = async (name: string) => contentHash(
+  "prompt",
+  (await readFile(join(repoRoot, "src", "great_minds", "core", "default_prompts", `${name}.md`), "utf8")).trim(),
+);
 
 const sleep = (ms: number) => new Promise((resolvePromise) => setTimeout(resolvePromise, ms));
 const availablePort = () => new Promise<number>((resolvePromise, reject) => {
@@ -259,8 +264,11 @@ const snapshot = async (dataDir: string, env: NodeJS.ProcessEnv, progress: Json[
   const compileCache = await queryJson(env, `select phase||cache_key as sort_key, phase, cache_key, value from compile_cache_entries where vault_id=${vault}`);
   const sources = await queryJson(env, `select file_path as sort_key, file_path,file_hash,body_hash,title,precis,author,published_date,genre,tags,derived_extras from source_documents where vault_id=${vault}`);
   const ideas = await queryJson(env, `select i.document_id::text||i.kind||i.label||i.description as sort_key,i.idea_id,i.document_id,i.kind,i.label,i.description,encode(digest(coalesce(i.embedding::text,''),'sha256'),'hex') embedding_hash from ideas i where i.vault_id=${vault}`);
+  const ideaAnchors = await queryJson(env, `select i.document_id::text||i.kind||i.label||i.description||lpad(a.position::text,8,'0') as sort_key,a.idea_id,a.position,a.claim,a.quote,a.chunk_index from anchors a join ideas i on i.idea_id=a.idea_id where i.vault_id=${vault}`);
   const topics = await queryJson(env, `select slug as sort_key,topic_id,slug,title,description,article_status,compiled_from_hash,rendered_from_hash,supersedes,superseded_by from topics where vault_id=${vault}`);
   const memberships = await queryJson(env, `select t.slug||i.document_id::text||i.kind||i.label||i.description as sort_key,m.topic_id,m.idea_id from topic_membership m join topics t on t.topic_id=m.topic_id join ideas i on i.idea_id=m.idea_id where t.vault_id=${vault}`);
+  const topicLinks = await queryJson(env, `select s.slug||t.slug as sort_key,l.source_topic_id,l.target_topic_id from topic_links l join topics s on s.topic_id=l.source_topic_id join topics t on t.topic_id=l.target_topic_id where s.vault_id=${vault}`);
+  const topicRelated = await queryJson(env, `select t.slug||r.slug as sort_key,tr.topic_id,tr.related_topic_id,tr.shared_ideas,tr.jaccard from topic_related tr join topics t on t.topic_id=tr.topic_id join topics r on r.topic_id=tr.related_topic_id where t.vault_id=${vault}`);
   const articles = await queryJson(env, `select file_path as sort_key,id,topic_id,file_path,file_hash,body_hash,title,precis,archived,tags from wiki_articles where vault_id=${vault}`);
   const backlinks = await queryJson(env, `select sa.file_path||ta.file_path as sort_key,b.source_article_id,b.target_article_id from backlinks b join wiki_articles sa on sa.id=b.source_article_id join wiki_articles ta on ta.id=b.target_article_id where sa.vault_id=${vault}`);
   const search = await queryJson(env, `select path||lpad(chunk_index::text,8,'0') as sort_key,path,chunk_index,heading,body,content_hash,encode(digest(coalesce(embedding::text,''),'sha256'),'hex') embedding_hash from search_index where vault_id=${vault}`);
@@ -270,14 +278,24 @@ const snapshot = async (dataDir: string, env: NodeJS.ProcessEnv, progress: Json[
   const perTopic = topicRows.map((topic) => membershipRows.filter((row) => row.topic_id === topic.topic_id).length).sort((a, b) => a - b);
   const storage = await storageArtifacts(join(dataDir, "vaults", fixtureIds.vault));
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
     hashContract: { empty: contentHash(), unicode: contentHash("naïve", "東京", "🧠") },
+    cacheKeyContract: {
+      partition: { targetTokens: 400 },
+      synthesize: { promptHash: await promptHash("synthesize"), model: "deepseek/deepseek-v3.2" },
+      canonicalizeRegistry: { promptHash: await promptHash("canonicalize_registry"), thematicHint: "", premergeJaccardThreshold: 0.8, model: "anthropic/claude-sonnet-4.6" },
+      canonicalizeAssign: { promptHash: await promptHash("canonicalize_assign"), model: "anthropic/claude-sonnet-4.6", batchSize: 30 },
+      render: { promptHash: await promptHash("render"), model: "qwen/qwen3.6-plus" },
+    },
     compileCache,
     sources,
     ideas,
+    ideaAnchors,
     partitionAssignments: partition,
     topics,
     memberships,
+    topicLinks,
+    topicRelated,
     articles,
     backlinks,
     searchIndex: search,
@@ -322,18 +340,17 @@ const cancelScenario = async (
   await Promise.race([
     proxy.waitForPaused(),
     new Promise<never>((_, reject) => {
-      const timeout = setTimeout(() => reject(new Error("cancel fixture did not reach a cassette-backed LLM call")), 30_000);
+      const timeout = setTimeout(() => reject(new Error("cancel fixture did not reach a cassette-backed LLM call")), 120_000);
       timeout.unref();
     }),
   ]);
   await request(baseUrl, `/v1/vaults/${fixtureIds.vault}/compile/${fixtureIds.cancelRun}/cancel`, bearer, { method: "POST" });
+  const observed = await waitForJob(baseUrl, bearer, fixtureIds.cancelRun, ["cancelled"]);
   proxy.releasePaused();
-  await sleep(500);
-  await output("psql", [databaseUrl, "-v", "ON_ERROR_STOP=1", "-c", `update pipeline_runs set status='failed',phase_status='failed',error='CancelledTask()',completed_at=now(),updated_at=now() where id=${sqlString(fixtureIds.cancelRun)} and status='cancelled'`], { cwd: repoRoot, env });
   const final = await waitForJob(baseUrl, bearer, fixtureIds.cancelRun, ["failed"]);
   return {
-    observedBeforeTaskStop: { jobStatus: "cancelled", phaseStatus: "failed" },
-    afterCancelledTaskHandler: { jobStatus: final.status, phaseStatus: final.phase_status, error: final.error },
+    observedBeforeTaskStop: { jobStatus: observed.status, phaseStatus: observed.phase_status },
+    afterCancelledTaskHandler: { jobStatus: final.status, phaseStatus: final.phase_status, error: final.error, clobberedBy: "python" },
     sse: await sse,
   } satisfies Row;
 };
@@ -373,7 +390,7 @@ const lintAndCostScenarios = async (baseUrl: string, bearer: string, env: NodeJS
   } satisfies Row;
 };
 
-export const executeHarness = async (options: { readonly mode: ExecutionMode; readonly replayCassettePath: string; readonly identityFixture?: Row; readonly renderFixtures?: readonly Row[] }) => {
+export const executeHarness = async (options: { readonly mode: ExecutionMode; readonly replayCassettePath: string; readonly identityFixture?: Row; readonly renderFixtures?: readonly Row[]; readonly repairRenderHeading?: string }) => {
   const invocationId = randomUUID().replaceAll("-", "").slice(0, 12);
   const docker = ["compose", "-p", `gm_goldens_${invocationId}`, "-f", join(packageRoot, "docker-compose.yml")] as const;
   const databasePort = await availablePort();
@@ -409,7 +426,7 @@ export const executeHarness = async (options: { readonly mode: ExecutionMode; re
     proxy = await startCassetteProxy({
       cassettePath: options.replayCassettePath,
       record: options.mode === "record",
-      liveApiKey: process.env.OPENROUTER_API_KEY,
+      liveApiKey: options.mode === "record" ? process.env.OPENROUTER_API_KEY : undefined,
       // GOLDENS DIAGNOSTIC ONLY: side files never include request headers.
       diagnosticMissPath: process.env.GOLDENS_DIAGNOSTIC_MISS_LOG,
       diagnosticRequestPath: process.env.GOLDENS_DIAGNOSTIC_REQUEST_LOG,
@@ -440,13 +457,18 @@ export const executeHarness = async (options: { readonly mode: ExecutionMode; re
     const recordedRenderRow = options.identityFixture === undefined ? undefined : (options.identityFixture.compileCache as Row[])
       .filter((row) => row.phase === "render")
       .sort((left, right) => String(left.cache_key).localeCompare(String(right.cache_key)))[0];
-    const recordedHeading = typeof (recordedRenderRow?.value as Row | undefined)?.body === "string"
+    const recordedHeading = options.repairRenderHeading ?? (typeof (recordedRenderRow?.value as Row | undefined)?.body === "string"
       ? String((recordedRenderRow!.value as Row).body).split("\n", 1)[0]
-      : undefined;
-    const cacheTarget = recordedHeading === undefined
-      ? `select id from compile_cache_entries where vault_id=${sqlString(fixtureIds.vault)} and phase='render' order by cache_key limit 1`
-      : `select id from compile_cache_entries where vault_id=${sqlString(fixtureIds.vault)} and phase='render' and split_part(value->>'body',E'\\n',1)=${sqlString(recordedHeading)} limit 1`;
-    await output("psql", [databaseUrl, "-v", "ON_ERROR_STOP=1", "-c", `update compile_cache_entries set value='{"legacy":true}'::jsonb where id=(${cacheTarget})`], { cwd: repoRoot, env });
+      : undefined);
+    const firstRenderRow = (first.compileCache as Row[]).filter((row) => row.phase === "render")
+      .sort((left, right) => String(left.cache_key).localeCompare(String(right.cache_key)))[0];
+    const firstRenderBody = (firstRenderRow?.value as Row | undefined)?.body;
+    if (recordedHeading === undefined && typeof firstRenderBody !== "string") throw new Error("render repair fixture requires a render cache row with a body");
+    const repairRenderHeading = recordedHeading ?? String(firstRenderBody).split("\n", 1)[0]!;
+    if (repairRenderHeading.length === 0) throw new Error("render repair fixture has no target heading");
+    const cacheTarget = `select id from compile_cache_entries where vault_id=${sqlString(fixtureIds.vault)} and phase='render' and split_part(value->>'body',E'\\n',1)=${sqlString(repairRenderHeading)} limit 1`;
+    const corrupted = (await output("psql", [databaseUrl, "-At", "-v", "ON_ERROR_STOP=1", "-c", `update compile_cache_entries set value='{"legacy":true}'::jsonb where id=(${cacheTarget}) returning id`], { cwd: repoRoot, env })).trim();
+    if (corrupted.length === 0) throw new Error(`render repair fixture matched no cache row for heading ${JSON.stringify(repairRenderHeading)}`);
     await seedArchiveCandidates(dataDir, env);
     bearer = await token(baseUrl);
     proxy.setCompileGeneration(1);
@@ -475,7 +497,7 @@ export const executeHarness = async (options: { readonly mode: ExecutionMode; re
       ...await lintAndCostScenarios(baseUrl, bearer, env),
     };
     const artifacts: Json = { first, second };
-    return { artifacts, scenarios, cassetteJson: proxy.cassetteJson(), proxyStats: proxy.stats() };
+    return { artifacts, scenarios, steeringFixtures: { repairRenderHeading }, cassetteJson: proxy.cassetteJson(), proxyStats: proxy.stats() };
   } finally {
     for (const child of [...children].reverse()) await child.close();
     if (proxy !== undefined) await proxy.close();
@@ -512,33 +534,110 @@ export const installPair = async (candidateCassette: string, candidateGolden: st
 };
 
 const replayBanked = async (expected: Json) => {
+  const expectedRow = expected as Row;
   const replay = await executeHarness({
     mode: "check",
     replayCassettePath: cassettePath,
-    identityFixture: (expected as Row).first as Row,
-    renderFixtures: [(expected as Row).first as Row, (expected as Row).second as Row],
+    identityFixture: expectedRow.first as Row,
+    renderFixtures: [expectedRow.first as Row, expectedRow.second as Row],
+    repairRenderHeading: (expectedRow.steeringFixtures as Row | undefined)?.repairRenderHeading as string | undefined,
   });
   if (replay.proxyStats.misses !== 0) throw new Error(`banked golden had ${replay.proxyStats.misses} cassette miss(es)`);
+  const baseline = (expected as Row).proxyStats as Row;
+  if (typeof baseline?.alphaFallbacks !== "number") throw new Error("banked golden is missing proxyStats.alphaFallbacks baseline");
+  if (replay.proxyStats.alphaFallbacks > baseline.alphaFallbacks) {
+    throw new Error(`banked golden exceeded alpha-fallback baseline: ${replay.proxyStats.alphaFallbacks} > ${baseline.alphaFallbacks}`);
+  }
   const diff = compareArtifacts(expected, replay.artifacts);
   if (diff !== undefined) throw new Error(`banked golden failed alpha-exact comparison:\n${diff}`);
   return { ...replay, acceptance: "alpha-exact" as const };
 };
 
+const readBankedPair = async () => {
+  const expected = JSON.parse(await readFile(goldenPath, "utf8")) as Row;
+  const cassette = JSON.parse(await readFile(cassettePath, "utf8")) as Row;
+  if (expected.recordingId !== cassette.recordingId) {
+    throw new Error(`golden/cassette recordingId mismatch: golden=${String(expected.recordingId)} cassette=${String(cassette.recordingId)}`);
+  }
+  return { expected, cassette };
+};
+
+const installRegenerated = async (goldenJson: string, deferredJson: string, recordingId: string) => {
+  const goldenTemporary = `${goldenPath}.${recordingId}.tmp`;
+  const deferredTemporary = `${deferredGoldenPath}.${recordingId}.tmp`;
+  const previousGolden = await readFile(goldenPath);
+  const previousDeferred = await readFile(deferredGoldenPath);
+  await writeFile(goldenTemporary, goldenJson, "utf8");
+  await writeFile(deferredTemporary, deferredJson, "utf8");
+  let deferredInstalled = false;
+  try {
+    await rename(deferredTemporary, deferredGoldenPath);
+    deferredInstalled = true;
+    await rename(goldenTemporary, goldenPath);
+  } catch (error) {
+    if (deferredInstalled) await writeFile(deferredGoldenPath, previousDeferred);
+    await writeFile(goldenPath, previousGolden);
+    throw error;
+  } finally {
+    await unlink(goldenTemporary).catch(() => undefined);
+    await unlink(deferredTemporary).catch(() => undefined);
+  }
+};
+
 export const runGoldens = async (mode: Mode) => {
   if (mode === "record" && process.env.GOLDENS_RECORD !== "1") throw new Error("recording requires GOLDENS_RECORD=1");
   if (mode === "record-deferred") {
-    const expected = JSON.parse(await readFile(goldenPath, "utf8")) as Json;
+    const { expected, cassette } = await readBankedPair();
     const replay = await replayBanked(expected);
-    await writeFile(deferredGoldenPath, `${JSON.stringify(replay.scenarios, null, 2)}\n`, "utf8");
-    return { result: "deferred-recorded-from-replay", goldenPath: deferredGoldenPath, cassettePath };
+    await writeFile(deferredGoldenPath, `${JSON.stringify({ recordingId: cassette.recordingId, ...replay.scenarios }, null, 2)}\n`, "utf8");
+    return { result: "deferred-recorded-from-replay", goldenPath: deferredGoldenPath, cassettePath, proxyStats: replay.proxyStats };
+  }
+  if (mode === "regenerate") {
+    const { expected, cassette } = await readBankedPair();
+    const replay = await executeHarness({
+      mode: "check",
+      replayCassettePath: cassettePath,
+      identityFixture: expected.first as Row,
+      renderFixtures: [expected.first as Row, expected.second as Row],
+      repairRenderHeading: (expected.steeringFixtures as Row | undefined)?.repairRenderHeading as string | undefined,
+    });
+    if (replay.proxyStats.misses !== 0) throw new Error(`regeneration had ${replay.proxyStats.misses} cassette miss(es)`);
+    const priorBaseline = (expected.proxyStats as Row | undefined)?.alphaFallbacks;
+    if (typeof priorBaseline !== "number") throw new Error("banked golden is missing proxyStats.alphaFallbacks baseline");
+    if (replay.proxyStats.alphaFallbacks > priorBaseline) {
+      throw new Error(`regeneration exceeded alpha-fallback baseline: ${replay.proxyStats.alphaFallbacks} > ${priorBaseline}`);
+    }
+    const coherence = await executeHarness({
+      mode: "check",
+      replayCassettePath: cassettePath,
+      identityFixture: (replay.artifacts as Row).first as Row,
+      renderFixtures: [(replay.artifacts as Row).first as Row, (replay.artifacts as Row).second as Row],
+      repairRenderHeading: replay.steeringFixtures.repairRenderHeading,
+    });
+    if (coherence.proxyStats.misses !== 0) throw new Error(`regeneration coherence check failed: ${coherence.proxyStats.misses} cassette miss(es)`);
+    if (coherence.proxyStats.alphaFallbacks > priorBaseline) {
+      throw new Error(`regeneration coherence exceeded alpha-fallback baseline: ${coherence.proxyStats.alphaFallbacks} > ${priorBaseline}`);
+    }
+    const coherenceDiff = compareArtifacts(replay.artifacts, coherence.artifacts);
+    if (coherenceDiff !== undefined) throw new Error(`regeneration coherence check failed: ${coherenceDiff}`);
+    const scenarioDiff = compareJson(replay.scenarios, coherence.scenarios);
+    if (scenarioDiff !== undefined) throw new Error(`regeneration coherence check failed on scenarios: ${scenarioDiff}`);
+    const recordingId = String(cassette.recordingId);
+    const goldenJson = `${JSON.stringify({ recordingId, proxyStats: coherence.proxyStats, steeringFixtures: replay.steeringFixtures, ...replay.artifacts as Record<string, Json> }, null, 2)}\n`;
+    const deferredJson = `${JSON.stringify({ recordingId, ...replay.scenarios }, null, 2)}\n`;
+    await installRegenerated(goldenJson, deferredJson, recordingId);
+    return { result: "regenerated-from-replay", goldenPath, cassettePath, proxyStats: coherence.proxyStats };
   }
   if (mode === "check") {
-    const expected = JSON.parse(await readFile(goldenPath, "utf8")) as Json;
-    const expectedDeferred = JSON.parse(await readFile(deferredGoldenPath, "utf8")) as Json;
+    const { expected, cassette } = await readBankedPair();
+    const expectedDeferred = JSON.parse(await readFile(deferredGoldenPath, "utf8")) as Row;
+    if (expectedDeferred.recordingId !== cassette.recordingId) {
+      throw new Error(`deferred golden recordingId mismatch: deferred=${String(expectedDeferred.recordingId)} pair=${String(cassette.recordingId)}`);
+    }
     const replay = await replayBanked(expected);
-    const deferredDiff = compareJson(expectedDeferred, replay.scenarios);
+    const deferredDiff = compareJson(expectedDeferred, { recordingId: cassette.recordingId, ...replay.scenarios });
     if (deferredDiff !== undefined) throw new Error(`deferred golden mismatch:\n${deferredDiff}`);
-    return { result: replay.acceptance, goldenPath, cassettePath };
+    return { result: replay.acceptance, goldenPath, cassettePath, proxyStats: replay.proxyStats };
   }
 
   const recordingId = randomUUID();
@@ -550,13 +649,13 @@ export const runGoldens = async (mode: Mode) => {
     cassette.recordingId = recordingId;
     const golden = { recordingId, ...recording.artifacts as Record<string, Json> };
     const cassetteJson = `${JSON.stringify(cassette, null, 2)}\n`;
-    const goldenJson = `${JSON.stringify(golden, null, 2)}\n`;
     await writeFile(candidateCassettePath, cassetteJson, "utf8");
     const replay = await executeHarness({
       mode: "check",
       replayCassettePath: candidateCassettePath,
       identityFixture: (recording.artifacts as Row).first as Row,
       renderFixtures: [(recording.artifacts as Row).first as Row, (recording.artifacts as Row).second as Row],
+      repairRenderHeading: recording.steeringFixtures.repairRenderHeading,
     });
     if (replay.proxyStats.misses !== 0) throw new Error(`recording coherence check failed: ${replay.proxyStats.misses} cassette miss(es)`);
     let diff: string | undefined;
@@ -569,8 +668,9 @@ export const runGoldens = async (mode: Mode) => {
       throw error;
     }
     if (diff !== undefined) throw new Error(`recording coherence check failed: ${diff}`);
-    await installPair(cassetteJson, goldenJson, recordingId);
-    return { result: `recorded-and-replayed entries=${replay.proxyStats.entries} misses=0`, goldenPath, cassettePath };
+    const coherentGoldenJson = `${JSON.stringify({ ...golden, proxyStats: replay.proxyStats, steeringFixtures: recording.steeringFixtures }, null, 2)}\n`;
+    await installPair(cassetteJson, coherentGoldenJson, recordingId);
+    return { result: "recorded-and-replayed", goldenPath, cassettePath, proxyStats: replay.proxyStats };
   } finally {
     if (process.env.GOLDENS_KEEP_RUN_DIR !== "1") await rm(stageDir, { recursive: true, force: true });
   }

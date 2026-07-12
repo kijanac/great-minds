@@ -386,7 +386,7 @@ export const startCassetteProxy = async (options: {
   const ordinallyUsed = new Set<CassetteEntry>();
   let nextSequence = 0;
   let writeChain = Promise.resolve();
-  let hits = 0;
+  let rawHits = 0;
   let misses = 0;
   let alphaFallbacks = 0;
   let pauseArmed = false;
@@ -510,8 +510,10 @@ export const startCassetteProxy = async (options: {
           : best, undefined);
         alphaFallback = existing !== undefined;
       }
+      if (!options.record && existing !== undefined) alphaFallback = existing !== rawExisting;
       if (existing !== undefined) ordinallyUsed.add(existing);
       if (alphaFallback) alphaFallbacks += 1;
+      else if (!options.record && existing !== undefined) rawHits += 1;
       // GOLDENS DIAGNOSTIC ONLY: request hashes/statuses identify which recorded
       // variants replayed without duplicating successful bodies or any headers.
       if (options.diagnosticRequestPath !== undefined) {
@@ -543,7 +545,6 @@ export const startCassetteProxy = async (options: {
           response.end(JSON.stringify({ error: { message: `cassette miss: ${hash}`, type: "golden_cassette_miss" } }));
           return;
         }
-        hits += 1;
         if (pauseArmed) {
           pauseArmed = false;
           pausedResolve?.();
@@ -629,7 +630,12 @@ export const startCassetteProxy = async (options: {
   return {
     baseUrl: `http://127.0.0.1:${address.port}/api/v1`,
     cassetteJson: () => `${JSON.stringify({ version: 1, entries: (options.record ? recordedEntries : [...entries.values()]).sort((left, right) => (left.sequence ?? 0) - (right.sequence ?? 0)) }, null, 2)}\n`,
-    stats: () => ({ hits, misses, alphaFallbacks, entries: options.record ? recordedEntries.length : cassette.entries.length }),
+    stats: () => ({
+      entries: options.record ? recordedEntries.length : cassette.entries.length,
+      rawHits,
+      alphaFallbacks,
+      misses,
+    }),
     pauseNextResponse: () => {
       pauseArmed = true;
       paused = new Promise<void>((resolve) => { pausedResolve = resolve; });

@@ -7,7 +7,6 @@ export type Json = null | boolean | number | string | Json[] | { [key: string]: 
 type Row = Record<string, Json>;
 type Mapping = Map<string, string>;
 
-const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const stable = (value: unknown) => JSON.stringify(value, Object.keys(value as object).sort());
 
 const rows = (snapshot: Row, field: string) => snapshot[field] as Row[];
@@ -35,15 +34,16 @@ const indexUnique = (items: readonly Row[], key: (row: Row) => string, label: st
 const pairRows = (
   expected: readonly Row[],
   actual: readonly Row[],
-  key: (row: Row) => string,
+  expectedKey: (row: Row) => string,
+  actualKey: (row: Row) => string,
   expectedId: (row: Row) => string,
   actualId: (row: Row) => string,
   mapping: Mapping,
   reverse: Mapping,
   label: string,
 ) => {
-  const expectedIndex = indexUnique(expected, key, `golden ${label}`);
-  const actualIndex = indexUnique(actual, key, `replay ${label}`);
+  const expectedIndex = indexUnique(expected, expectedKey, `golden ${label}`);
+  const actualIndex = indexUnique(actual, actualKey, `replay ${label}`);
   if (expectedIndex.size !== actualIndex.size) throw new Error(`${label} cardinality differs: ${expectedIndex.size} != ${actualIndex.size}`);
   for (const [stableKey, actualRow] of actualIndex) {
     const expectedRow = expectedIndex.get(stableKey);
@@ -65,18 +65,75 @@ const replace = (value: Json, mapping: Mapping): Json => {
   return value;
 };
 
-const ideaKey = (row: Row) => contentHash(
+const ideaKey = (snapshot: Row, row: Row) => contentHash(
   String(row.document_id),
   String(row.kind),
   String(row.label),
   String(row.description),
-  JSON.stringify(row.anchors ?? []),
+  JSON.stringify(rows(snapshot, "ideaAnchors")
+    .filter((anchor) => anchor.idea_id === row.idea_id)
+    .map(({ sort_key: _sortKey, idea_id: _ideaId, ...anchor }) => anchor)
+    .sort((left, right) => Number(left.chunk_index) - Number(right.chunk_index) || Number(left.position) - Number(right.position))),
 );
 
 const localTopics = (snapshot: Row, mapping: Mapping) => rows(snapshot, "compileCache")
   .filter((row) => row.phase === "synthesize")
   .flatMap((row) => ((row.value as Row).local_topics as Row[]))
   .map((row) => replace(row, mapping) as Row);
+
+const premergedLocalTopics = (snapshot: Row) => {
+  const contract = contractPart(snapshot, "canonicalizeRegistry");
+  const threshold = Number(contract.premergeJaccardThreshold);
+  const ordered = localTopics(snapshot, new Map()).sort((left, right) => Number(left.chunk_idx) - Number(right.chunk_idx)
+    || String(left.local_topic_id).localeCompare(String(right.local_topic_id)));
+  const parent = ordered.map((_, index) => index);
+  const find = (index: number): number => {
+    let root = index;
+    while (parent[root] !== root) root = parent[root]!;
+    while (parent[index] !== index) {
+      const next = parent[index]!;
+      parent[index] = root;
+      index = next;
+    }
+    return root;
+  };
+  const union = (left: number, right: number) => {
+    const leftRoot = find(left);
+    const rightRoot = find(right);
+    if (leftRoot === rightRoot) return;
+    parent[Math.max(leftRoot, rightRoot)] = Math.min(leftRoot, rightRoot);
+  };
+  const groupBy = (key: (topic: Row) => string) => {
+    const groups = new Map<string, number[]>();
+    ordered.forEach((topic, index) => {
+      const value = key(topic);
+      if (value.length > 0) groups.set(value, [...groups.get(value) ?? [], index]);
+    });
+    for (const indices of groups.values()) for (const index of indices.slice(1)) union(indices[0]!, index);
+  };
+  groupBy((topic) => String(topic.slug ?? ""));
+  groupBy((topic) => String(topic.title).trim().toLowerCase());
+  const ideaSets = ordered.map((topic) => new Set((topic.subsumed_idea_ids as Json[]).map(String)));
+  for (let left = 0; left < ordered.length; left++) {
+    for (let right = left + 1; right < ordered.length; right++) {
+      if (find(left) === find(right)) continue;
+      const leftIdeas = ideaSets[left]!;
+      const rightIdeas = ideaSets[right]!;
+      const unionSize = new Set([...leftIdeas, ...rightIdeas]).size;
+      if (unionSize > 0 && [...leftIdeas].filter((idea) => rightIdeas.has(idea)).length / unionSize > threshold) union(left, right);
+    }
+  }
+  const groups = new Map<number, number[]>();
+  ordered.forEach((_, index) => {
+    const root = find(index);
+    groups.set(root, [...groups.get(root) ?? [], index]);
+  });
+  return [...groups.values()].map((indices) => {
+    const representative = ordered[indices[0]!]!;
+    const ideas = [...new Set(indices.flatMap((index) => (ordered[index]!.subsumed_idea_ids as Json[]).map(String)))].sort();
+    return { ...representative, subsumed_idea_ids: ideas } as Row;
+  }).sort((left, right) => String(left.slug).localeCompare(String(right.slug)));
+};
 
 const localTopicKey = (row: Row) => contentHash(
   String(row.title),
@@ -88,11 +145,113 @@ const localTopicKey = (row: Row) => contentHash(
 const buildIdentityMapping = (expected: Row, actual: Row) => {
   const mapping: Mapping = new Map();
   const reverse: Mapping = new Map();
-  pairRows(rows(expected, "ideas"), rows(actual, "ideas"), ideaKey, (row) => String(row.idea_id), (row) => String(row.idea_id), mapping, reverse, "idea identity");
-  pairRows(rows(expected, "topics"), rows(actual, "topics"), (row) => String(row.slug), (row) => String(row.topic_id), (row) => String(row.topic_id), mapping, reverse, "topic identity");
-  pairRows(rows(expected, "articles"), rows(actual, "articles"), (row) => `${String(row.file_path)}\0${String(row.body_hash)}`, (row) => String(row.id), (row) => String(row.id), mapping, reverse, "article identity");
-  pairRows(localTopics(expected, new Map()), localTopics(actual, mapping), localTopicKey, (row) => String(row.local_topic_id), (row) => String(row.local_topic_id), mapping, reverse, "local-topic identity");
+  pairRows(rows(expected, "ideas"), rows(actual, "ideas"), (row) => ideaKey(expected, row), (row) => ideaKey(actual, row), (row) => String(row.idea_id), (row) => String(row.idea_id), mapping, reverse, "idea identity");
+  pairRows(rows(expected, "topics"), rows(actual, "topics"), (row) => String(row.slug), (row) => String(row.slug), (row) => String(row.topic_id), (row) => String(row.topic_id), mapping, reverse, "topic identity");
+  pairRows(rows(expected, "articles"), rows(actual, "articles"), (row) => `${String(row.file_path)}\0${String(row.body_hash)}`, (row) => `${String(row.file_path)}\0${String(row.body_hash)}`, (row) => String(row.id), (row) => String(row.id), mapping, reverse, "article identity");
+  pairRows(localTopics(expected, new Map()), localTopics(actual, mapping), localTopicKey, localTopicKey, (row) => String(row.local_topic_id), (row) => String(row.local_topic_id), mapping, reverse, "local-topic identity");
   return mapping;
+};
+
+const phaseRows = (snapshot: Row, phase: string) => rows(snapshot, "compileCache").filter((row) => row.phase === phase);
+
+const contractPart = (snapshot: Row, name: string) => {
+  const contract = snapshot.cacheKeyContract as Row;
+  const part = contract[name];
+  if (part === null || Array.isArray(part) || typeof part !== "object") throw new Error(`missing cache-key contract inputs for ${name}`);
+  return part as Row;
+};
+
+const requireKeyMultiset = (label: string, cacheRows: readonly Row[], expectedKeys: readonly string[]) => {
+  const actualKeys = cacheRows.map((row) => String(row.cache_key)).sort();
+  const sortedExpected = [...expectedKeys].sort();
+  const diff = firstDiff(sortedExpected, actualKeys, `$.compileCache.${label}.constructedKeys`);
+  if (diff !== undefined) throw new Error(`${label} cache-key construction differs: ${diff}`);
+};
+
+const VERIFIED_CACHE_PHASES = new Set(["extract", "partition", "synthesize", "canonicalize_registry", "canonicalize_assign", "render"]);
+
+export const verifyCacheKeyConstruction = (snapshot: Row) => {
+  if (snapshot.schemaVersion !== 2) throw new Error(`unsupported snapshot schemaVersion for cache verification: ${String(snapshot.schemaVersion)}`);
+  const unknownPhase = rows(snapshot, "compileCache").find((row) => !VERIFIED_CACHE_PHASES.has(String(row.phase)));
+  if (unknownPhase !== undefined) throw new Error(`compile-cache phase ${String(unknownPhase.phase)} has no cache-key construction recipe`);
+
+  const partitionRows = phaseRows(snapshot, "partition");
+  if (partitionRows.length > 0) {
+    const { targetTokens } = contractPart(snapshot, "partition");
+    requireKeyMultiset("partition", partitionRows, [contentHash(
+      ...rows(snapshot, "ideas").map((idea) => String(idea.idea_id)).sort(),
+      `target=${String(targetTokens)}`,
+    )]);
+  }
+
+  const synthesizeRows = phaseRows(snapshot, "synthesize");
+  if (synthesizeRows.length > 0) {
+    const contract = contractPart(snapshot, "synthesize");
+    const partition = partitionRows[0]?.value as Row | undefined;
+    const chunks = partition?.chunks as Json[][] | undefined;
+    if (chunks === undefined) throw new Error("synthesize cache verification requires partition chunks");
+    requireKeyMultiset("synthesize", synthesizeRows, chunks.map((chunk) => contentHash(
+      ...chunk.map(String).sort(),
+      `prompt=${String(contract.promptHash)}`,
+      `model=${String(contract.model)}`,
+    )));
+  }
+
+  const localTopicRows = premergedLocalTopics(snapshot).sort((left, right) => String(left.local_topic_id).localeCompare(String(right.local_topic_id)));
+  const registryRows = phaseRows(snapshot, "canonicalize_registry");
+  if (registryRows.length > 0) {
+    const contract = contractPart(snapshot, "canonicalizeRegistry");
+    const localSignatures = localTopicRows.map((topic) => contentHash(
+      String(topic.title),
+      String(topic.description),
+      String((topic.subsumed_idea_ids as Json[]).length),
+    ));
+    requireKeyMultiset("canonicalize_registry", registryRows, [contentHash(
+      ...localSignatures,
+      `prompt=${String(contract.promptHash)}`,
+      `hint=${contentHash(String(contract.thematicHint))}`,
+      `model=${String(contract.model)}`,
+    )]);
+  }
+
+  const assignRows = phaseRows(snapshot, "canonicalize_assign");
+  if (assignRows.length > 0) {
+    const contract = contractPart(snapshot, "canonicalizeAssign");
+    const registryTopics = ((registryRows[0]?.value as Row | undefined)?.topics ?? []) as Row[];
+    const registrySignature = contentHash(...registryTopics.map((topic) => `${String(topic.slug)}|${String(topic.title)}|${String(topic.description)}`));
+    const batchSize = Number(contract.batchSize);
+    if (!Number.isInteger(batchSize) || batchSize <= 0) throw new Error("canonicalizeAssign cache-key contract is missing batchSize");
+    const batches = Array.from({ length: Math.ceil(localTopicRows.length / batchSize) }, (_, index) => localTopicRows.slice(index * batchSize, (index + 1) * batchSize));
+    requireKeyMultiset("canonicalize_assign", assignRows, batches.map((batch) => contentHash(
+      `registry=${registrySignature}`,
+      ...batch.map((topic) => `${String(topic.local_topic_id)}:${contentHash(String(topic.title), String(topic.description))}`),
+      `prompt=${String(contract.promptHash)}`,
+      `model=${String(contract.model)}`,
+    )));
+  }
+
+  const renderRows = phaseRows(snapshot, "render");
+  if (renderRows.length > 0) {
+    const contract = contractPart(snapshot, "render");
+    const memberships = rows(snapshot, "memberships");
+    const links = rows(snapshot, "topicLinks");
+    const topicsById = new Map(rows(snapshot, "topics").map((topic) => [String(topic.topic_id), topic]));
+    const renderable = rows(snapshot, "topics").filter((topic) => topic.article_status !== "archived");
+    requireKeyMultiset("render", renderRows, renderable.map((topic) => {
+      const topicId = String(topic.topic_id);
+      const ideaIds = memberships.filter((membership) => membership.topic_id === topic.topic_id).map((membership) => String(membership.idea_id)).sort();
+      const linkTargets = links.filter((link) => link.source_topic_id === topic.topic_id)
+        .map((link) => String(topicsById.get(String(link.target_topic_id))?.slug))
+        .sort();
+      return contentHash(
+        topicId,
+        contentHash(String(topic.title), String(topic.description), ...ideaIds),
+        ...linkTargets,
+        `prompt=${String(contract.promptHash)}`,
+        `model=${String(contract.model)}`,
+      );
+    }));
+  }
 };
 
 const normalizeDerivedTopicHashes = (expected: Row, actual: Row, mapping: Mapping) => {
@@ -188,13 +347,27 @@ const normalizeCacheKeys = (expected: Row, actual: Row, mapping: Mapping) => {
   const reverse = new Map<string, string>();
   for (const [stableKey, actualRow] of actualIndex) {
     const expectedRow = expectedIndex.get(stableKey);
-    if (expectedRow === undefined) throw new Error(`compile-cache row has no golden partner: ${String(actualRow.phase)}`);
+    if (expectedRow === undefined) {
+      const body = (actualRow.value as Row).body;
+      const heading = typeof body === "string" ? body.split("\n", 1)[0] : undefined;
+      const expectedWithHeading = actualRow.phase === "render" && heading !== undefined
+        ? rows(expected, "compileCache").find((row) => row.phase === "render" && (row.value as Row).body !== undefined
+          && String((row.value as Row).body).split("\n", 1)[0] === heading)
+        : undefined;
+      const detail = actualRow.phase === "render" && typeof body === "string"
+        ? ` heading=${JSON.stringify(heading)} actualBodyHash=${createHash("sha256").update(body).digest("hex")} expectedBodyHash=${expectedWithHeading === undefined ? "missing" : createHash("sha256").update(String((expectedWithHeading.value as Row).body)).digest("hex")}`
+        : "";
+      throw new Error(`compile-cache row has no golden partner: ${String(actualRow.phase)}${detail}`);
+    }
+    if (actualRow.phase === "extract" && actualRow.cache_key !== expectedRow.cache_key) {
+      throw new Error(`extract cache key differs verbatim for document ${String(((actualRow.value as Row).source_card as Row).document_id)}`);
+    }
     addPair(mapping, reverse, String(actualRow.cache_key), String(expectedRow.cache_key), "compile-cache key");
   }
 };
 
 const sortNormalized = (value: Row) => {
-  for (const field of ["compileCache", "ideas", "memberships", "backlinks"] as const) {
+  for (const field of ["compileCache", "ideas", "ideaAnchors", "memberships", "topicLinks", "topicRelated", "backlinks"] as const) {
     const list = value[field];
     if (Array.isArray(list)) list.sort((left, right) => stable(left).localeCompare(stable(right)));
   }
@@ -202,6 +375,8 @@ const sortNormalized = (value: Row) => {
 };
 
 const normalizeSnapshot = (expected: Row, actual: Row) => {
+  verifyCacheKeyConstruction(expected);
+  verifyCacheKeyConstruction(actual);
   const mapping = buildIdentityMapping(expected, actual);
   normalizeDerivedTopicHashes(expected, actual, mapping);
   normalizeFileHashes(expected, actual, mapping);
@@ -251,5 +426,3 @@ export const compareArtifacts = (expected: Json, actual: Json) => {
   }
   return undefined;
 };
-
-export const isUuid = (value: string) => uuid.test(value);
