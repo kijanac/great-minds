@@ -21,6 +21,8 @@ export const fileContentHash = (content: string) => contentHash("file", content)
 
 export const bodyContentHash = (body: string) => contentHash("body", body);
 
+export const promptContentHash = (template: string) => contentHash("prompt", template);
+
 export const generateAuthCode = Effect.sync(() =>
   randomInt(0, 1_000_000).toString().padStart(6, "0")
 );

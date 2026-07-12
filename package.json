@@ -2,7 +2,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "typecheck": "tsgo -p packages/domain/tsconfig.json --noEmit && tsgo -p packages/database/tsconfig.json --noEmit && tsgo -p packages/server/tsconfig.json --noEmit && tsgo -p packages/parity/tsconfig.json --noEmit",
+    "typecheck": "tsgo -p packages/domain/tsconfig.json --noEmit && tsgo -p packages/database/tsconfig.json --noEmit && tsgo -p packages/server/tsconfig.json --noEmit && tsgo -p packages/parity/tsconfig.json --noEmit && tsgo -p packages/goldens/tsconfig.json --noEmit",
     "typecheck:recursive": "pnpm -r --if-present typecheck",
     "spike:server": "pnpm --filter @great-minds/server start",
     "spike:db:ann": "pnpm --filter @great-minds/database ann",

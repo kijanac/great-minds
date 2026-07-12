@@ -1,0 +1,376 @@
+{
+  "sseProgress": {
+    "first": {
+      "protocol": {
+        "firstEvent": "connected",
+        "lastEvent": "done",
+        "connectedCount": 1,
+        "doneCount": 1
+      },
+      "phasesSeen": [
+        "ingest",
+        "extract",
+        "abstract",
+        "derive",
+        "render",
+        "verify",
+        "publish"
+      ],
+      "stepsByPhase": {
+        "ingest": [
+          {
+            "key": "index_sources",
+            "label": "Indexing for search"
+          }
+        ],
+        "extract": [
+          {
+            "key": "extract_cards",
+            "label": "Extracting source cards"
+          },
+          {
+            "key": "embed_ideas",
+            "label": "Embedding ideas"
+          }
+        ],
+        "abstract": [
+          {
+            "key": "group_ideas",
+            "label": "Grouping ideas"
+          },
+          {
+            "key": "synthesize_topics",
+            "label": "Synthesizing topics"
+          },
+          {
+            "key": "merge_candidates",
+            "label": "Merging similar topics"
+          },
+          {
+            "key": "canonicalize_registry",
+            "label": "Organizing topics"
+          },
+          {
+            "key": "validate_registry",
+            "label": "Finalizing topics"
+          }
+        ],
+        "derive": [
+          {
+            "key": "find_related",
+            "label": "Connecting related topics"
+          }
+        ],
+        "render": [
+          {
+            "key": "plan_articles",
+            "label": "Planning articles"
+          },
+          {
+            "key": "write_articles",
+            "label": "Writing articles"
+          },
+          {
+            "key": "index_articles",
+            "label": "Indexing articles"
+          }
+        ],
+        "verify": [
+          {
+            "key": "check_links",
+            "label": "Checking references"
+          }
+        ],
+        "publish": [
+          {
+            "key": "publish_wiki",
+            "label": "Publishing wiki"
+          },
+          {
+            "key": "finalize_compile",
+            "label": "Finalizing"
+          }
+        ]
+      },
+      "terminal": {
+        "phase": "publish",
+        "phaseStatus": "completed",
+        "jobStatus": "completed"
+      }
+    },
+    "second": {
+      "protocol": {
+        "firstEvent": "connected",
+        "lastEvent": "done",
+        "connectedCount": 1,
+        "doneCount": 1
+      },
+      "phasesSeen": [
+        "ingest",
+        "extract",
+        "abstract",
+        "derive",
+        "render",
+        "verify",
+        "publish"
+      ],
+      "stepsByPhase": {
+        "ingest": [
+          {
+            "key": "index_sources",
+            "label": "Indexing for search"
+          }
+        ],
+        "extract": [
+          {
+            "key": "extract_cards",
+            "label": "Extracting source cards"
+          },
+          {
+            "key": "embed_ideas",
+            "label": "Embedding ideas"
+          }
+        ],
+        "abstract": [
+          {
+            "key": "group_ideas",
+            "label": "Grouping ideas"
+          },
+          {
+            "key": "synthesize_topics",
+            "label": "Synthesizing topics"
+          },
+          {
+            "key": "merge_candidates",
+            "label": "Merging similar topics"
+          },
+          {
+            "key": "canonicalize_registry",
+            "label": "Organizing topics"
+          },
+          {
+            "key": "validate_registry",
+            "label": "Finalizing topics"
+          }
+        ],
+        "derive": [
+          {
+            "key": "find_related",
+            "label": "Connecting related topics"
+          }
+        ],
+        "render": [
+          {
+            "key": "plan_articles",
+            "label": "Planning articles"
+          },
+          {
+            "key": "write_articles",
+            "label": "Writing articles"
+          },
+          {
+            "key": "index_articles",
+            "label": "Indexing articles"
+          }
+        ],
+        "verify": [
+          {
+            "key": "check_links",
+            "label": "Checking references"
+          }
+        ],
+        "publish": [
+          {
+            "key": "publish_wiki",
+            "label": "Publishing wiki"
+          },
+          {
+            "key": "finalize_compile",
+            "label": "Finalizing"
+          }
+        ]
+      },
+      "terminal": {
+        "phase": "publish",
+        "phaseStatus": "completed",
+        "jobStatus": "completed"
+      }
+    }
+  },
+  "archiveSupersede": {
+    "archivedTopics": [
+      {
+        "slug": "legacy-mutual-aid",
+        "hasSuccessor": true
+      },
+      {
+        "slug": "obsolete-unrendered-placeholder",
+        "hasSuccessor": false
+      }
+    ],
+    "archivedArticlePaths": [
+      "archive/10000000-0000-4000-8003-000000000001/legacy-mutual-aid.md"
+    ],
+    "archiveFilePaths": [
+      "archive/10000000-0000-4000-8003-000000000001/legacy-mutual-aid.md"
+    ]
+  },
+  "stagedWorker": {
+    "trigger": "staged_files",
+    "status": "failed",
+    "phase": "source_ingest",
+    "phaseStatus": "failed",
+    "steps": [
+      {
+        "key": "prepare_sources",
+        "label": "Preparing uploaded sources",
+        "status": "failed",
+        "done": null,
+        "total": null,
+        "detail": "staged_file_ingest requires r2 storage backend"
+      },
+      {
+        "key": "read_files",
+        "label": "Reading uploaded files",
+        "status": "pending",
+        "done": null,
+        "total": null,
+        "detail": ""
+      },
+      {
+        "key": "index_documents",
+        "label": "Indexing documents",
+        "status": "pending",
+        "done": null,
+        "total": null,
+        "detail": ""
+      }
+    ],
+    "error": "staged_file_ingest requires r2 storage backend"
+  },
+  "cancelOddity22": {
+    "observedBeforeTaskStop": {
+      "jobStatus": "cancelled",
+      "phaseStatus": "failed"
+    },
+    "afterCancelledTaskHandler": {
+      "jobStatus": "failed",
+      "phaseStatus": "failed",
+      "error": ""
+    },
+    "sse": {
+      "protocol": {
+        "firstEvent": "connected",
+        "lastEvent": "done",
+        "connectedCount": 1,
+        "doneCount": 1
+      },
+      "phasesSeen": [
+        "ingest",
+        "extract",
+        "abstract"
+      ],
+      "stepsByPhase": {
+        "ingest": [
+          {
+            "key": "index_sources",
+            "label": "Indexing for search"
+          }
+        ],
+        "extract": [
+          {
+            "key": "extract_cards",
+            "label": "Extracting source cards"
+          },
+          {
+            "key": "embed_ideas",
+            "label": "Embedding ideas"
+          }
+        ],
+        "abstract": [
+          {
+            "key": "group_ideas",
+            "label": "Grouping ideas"
+          },
+          {
+            "key": "synthesize_topics",
+            "label": "Synthesizing topics"
+          },
+          {
+            "key": "merge_candidates",
+            "label": "Merging similar topics"
+          },
+          {
+            "key": "canonicalize_registry",
+            "label": "Organizing topics"
+          },
+          {
+            "key": "validate_registry",
+            "label": "Finalizing topics"
+          }
+        ]
+      },
+      "terminal": {
+        "phase": "abstract",
+        "phaseStatus": "failed",
+        "jobStatus": "cancelled"
+      }
+    }
+  },
+  "lint": {
+    "hasOrphans": true,
+    "dirtyTopicCount": 1,
+    "hasUnmentionedLinks": true
+  },
+  "userCosts": {
+    "total_usd": "3.000000",
+    "event_count": 2,
+    "by_vault": [
+      {
+        "key": "10000000-0000-4000-8005-000000000002",
+        "total_usd": "2.000000",
+        "event_count": 1
+      },
+      {
+        "key": "10000000-0000-4000-8000-000000000101",
+        "total_usd": "1.000000",
+        "event_count": 1
+      }
+    ],
+    "by_event_type": [
+      {
+        "key": "query",
+        "total_usd": "2.000000",
+        "event_count": 1
+      },
+      {
+        "key": "compile",
+        "total_usd": "1.000000",
+        "event_count": 1
+      }
+    ]
+  },
+  "vaultCosts": {
+    "total_usd": "4.000000",
+    "event_count": 2,
+    "by_vault": [
+      {
+        "key": "10000000-0000-4000-8000-000000000101",
+        "total_usd": "4.000000",
+        "event_count": 2
+      }
+    ],
+    "by_event_type": [
+      {
+        "key": "render",
+        "total_usd": "3.000000",
+        "event_count": 1
+      },
+      {
+        "key": "compile",
+        "total_usd": "1.000000",
+        "event_count": 1
+      }
+    ]
+  }
+}

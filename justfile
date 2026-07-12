@@ -35,7 +35,7 @@ lint-web:
 
 # Lint TypeScript packages with oxlint
 lint-packages:
-    pnpm exec oxlint packages/domain/src packages/database/src packages/server/src packages/server/test packages/parity/src
+    pnpm exec oxlint packages/domain/src packages/database/src packages/server/src packages/server/test packages/parity/src packages/goldens/src packages/goldens/test
 
 # Check Python formatting (read-only)
 format:
@@ -78,6 +78,14 @@ test-packages:
 parity:
     pnpm --filter @great-minds/parity parity
 
+# Record Python compile goldens through live OpenRouter (explicitly opt-in)
+goldens-record:
+    GOLDENS_RECORD=1 pnpm --filter @great-minds/goldens record
+
+# Replay Python compile goldens from checked-in cassettes
+goldens-check:
+    pnpm --filter @great-minds/goldens test && pnpm --filter @great-minds/goldens check
+
 # ---------------------------------------------------------------------------
 # Compound checks
 # ---------------------------------------------------------------------------
@@ -89,7 +97,7 @@ ci: lint format types lint-web format-web types-web lint-packages types-packages
 ci-full: ci test-packages
 
 # Pre-push review: full CI gate plus API parity
-review: ci-full parity
+review: ci-full parity goldens-check
     @echo ""
     @echo "Review: PASSED"
 

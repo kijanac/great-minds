@@ -1,0 +1,13 @@
+{
+  "name": "@great-minds/goldens",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "typecheck": "tsgo -p tsconfig.json --noEmit",
+    "record": "node --experimental-strip-types src/main.ts record",
+    "record:deferred": "node --experimental-strip-types src/main.ts record-deferred",
+    "check": "node --experimental-strip-types src/main.ts check",
+    "test": "node --experimental-strip-types --test test/*.test.ts"
+  }
+}

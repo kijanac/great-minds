@@ -1,0 +1,20 @@
+services:
+  db:
+    image: pgvector/pgvector:pg18
+    restart: "no"
+    environment:
+      POSTGRES_USER: great_minds
+      POSTGRES_PASSWORD: great_minds
+      POSTGRES_DB: gm_goldens
+    ports:
+      - "${GOLDENS_DB_PORT}:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U great_minds -d gm_goldens"]
+      interval: 2s
+      timeout: 3s
+      retries: 20
+
+volumes:
+  pgdata:
