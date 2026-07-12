@@ -41,6 +41,16 @@ export class StorageFileMissing extends Schema.TaggedErrorClass<StorageFileMissi
   },
 ) {}
 
+export class StagedStorageError extends Schema.TaggedErrorClass<StagedStorageError>()(
+  "StagedStorageError",
+  {
+    operation: Schema.Literals(["read", "delete"]),
+    path: Schema.String,
+    errorType: Schema.String,
+    message: Schema.String,
+  },
+) {}
+
 type VaultStorageShape = {
   readonly readText: (
     vaultId: Uuid,
@@ -59,7 +69,11 @@ type VaultStorageShape = {
     content: string,
     bucketName?: string | null,
   ) => Effect.Effect<void>;
-  readonly exists: (vaultId: Uuid, path: string, bucketName?: string | null) => Effect.Effect<boolean>;
+  readonly exists: (
+    vaultId: Uuid,
+    path: string,
+    bucketName?: string | null,
+  ) => Effect.Effect<boolean>;
   readonly deletePath: (vaultId: Uuid, path: string) => Effect.Effect<void>;
   readonly clearVault: (vaultId: Uuid, bucketName: string | null) => Effect.Effect<void>;
   readonly prepareBucketForOwner: (ownerId: Uuid) => Effect.Effect<string | null>;
@@ -71,6 +85,16 @@ type VaultStorageShape = {
     contentType: string,
     contentLength: number,
   ) => Effect.Effect<string>;
+  readonly readStagedBytes: (
+    vaultId: Uuid,
+    bucketName: string,
+    hash: string,
+  ) => Effect.Effect<Uint8Array, StorageFileMissing | StagedStorageError>;
+  readonly deleteStaged: (
+    vaultId: Uuid,
+    bucketName: string,
+    hash: string,
+  ) => Effect.Effect<void, StagedStorageError>;
 };
 
 export class VaultStorage extends Context.Service<VaultStorage, VaultStorageShape>()(
@@ -173,7 +197,8 @@ export const LocalStorageLive = Layer.effect(
 
     return {
       readText: (vaultId, path) => readLocalText(localRoot(dataRoot, vaultId), path),
-      writeText: (vaultId, path, content) => writeLocalText(localRoot(dataRoot, vaultId), path, content),
+      writeText: (vaultId, path, content) =>
+        writeLocalText(localRoot(dataRoot, vaultId), path, content),
       appendText: (vaultId, path, content) =>
         appendLocalText(localRoot(dataRoot, vaultId), path, content),
       exists: (vaultId, path) => localExists(localRoot(dataRoot, vaultId), path),
@@ -204,6 +229,22 @@ export const LocalStorageLive = Layer.effect(
         }),
       presignStagedPut: (vaultId) =>
         Effect.die(new Error(`Vault ${vaultId} has no R2 bucket name`)),
+      readStagedBytes: (vaultId) =>
+        Effect.fail(
+          stagedStorageError(
+            "read",
+            `staging/${vaultId}`,
+            new Error(`Vault ${vaultId} has no R2 bucket name`),
+          ),
+        ),
+      deleteStaged: (vaultId) =>
+        Effect.fail(
+          stagedStorageError(
+            "delete",
+            `staging/${vaultId}`,
+            new Error(`Vault ${vaultId} has no R2 bucket name`),
+          ),
+        ),
     } satisfies VaultStorageShape;
   }),
 );
@@ -253,6 +294,14 @@ const isR2AlreadyOwned = (error: unknown) =>
 const errorName = (error: unknown) => (error instanceof Error ? error.name : typeof error);
 
 const errorMessage = (error: unknown) => (error instanceof Error ? error.message : String(error));
+
+const stagedStorageError = (operation: "read" | "delete", path: string, error: unknown) =>
+  new StagedStorageError({
+    operation,
+    path,
+    errorType: errorName(error),
+    message: errorMessage(error),
+  });
 
 const deriveUserBucketName = (prefix: string, userId: Uuid) => {
   const name = `${prefix}-${userId.replaceAll("-", "")}`;
@@ -309,7 +358,8 @@ export const R2StorageLive = Layer.effect(
 
     const stagedObjectKey = (vaultId: Uuid, hash: string) => `staging/${vaultId}/${hash}`;
 
-    const sendAdmin = <A>(effect: Effect.Effect<A, unknown>) => effect.pipe(Effect.timeout(R2_ADMIN_TIMEOUT));
+    const sendAdmin = <A>(effect: Effect.Effect<A, unknown>) =>
+      effect.pipe(Effect.timeout(R2_ADMIN_TIMEOUT));
 
     const ensureBucket = (bucket: string) => {
       const startedAt = Date.now();
@@ -317,7 +367,8 @@ export const R2StorageLive = Layer.effect(
       return Effect.gen(function* () {
         const head = yield* Effect.result(
           Effect.tryPromise({
-            try: (signal) => client.send(new HeadBucketCommand({ Bucket: bucket }), { abortSignal: signal }),
+            try: (signal) =>
+              client.send(new HeadBucketCommand({ Bucket: bucket }), { abortSignal: signal }),
             catch: (error) => error,
           }).pipe(Effect.timeout(R2_ADMIN_TIMEOUT)),
         );
@@ -662,6 +713,50 @@ export const R2StorageLive = Layer.effect(
             },
           ),
         ).pipe(Effect.orDie),
+      readStagedBytes: (vaultId, bucketName, hash) =>
+        Effect.gen(function* () {
+          const key = stagedObjectKey(vaultId, hash);
+          const response = yield* Effect.tryPromise({
+            try: (signal) =>
+              client.send(new GetObjectCommand({ Bucket: bucketName, Key: key }), {
+                abortSignal: signal,
+              }),
+            catch: (error) => error,
+          }).pipe(
+            Effect.timeout(R2_READ_TIMEOUT),
+            Effect.mapError((error) =>
+              isR2Missing(error) ? fileMissing(key) : stagedStorageError("read", key, error),
+            ),
+          );
+          if (response.Body === undefined) {
+            return yield* stagedStorageError(
+              "read",
+              key,
+              new Error(`R2 object ${key} returned no body`),
+            );
+          }
+          return yield* Effect.tryPromise({
+            try: () => response.Body!.transformToByteArray(),
+            catch: (error) => error,
+          }).pipe(
+            Effect.timeout(R2_READ_TIMEOUT),
+            Effect.mapError((error) => stagedStorageError("read", key, error)),
+          );
+        }),
+      deleteStaged: (vaultId, bucketName, hash) => {
+        const key = stagedObjectKey(vaultId, hash);
+        return Effect.tryPromise({
+          try: (signal) =>
+            client.send(new DeleteObjectCommand({ Bucket: bucketName, Key: key }), {
+              abortSignal: signal,
+            }),
+          catch: (error) => error,
+        }).pipe(
+          Effect.timeout(R2_WRITE_TIMEOUT),
+          Effect.mapError((error) => stagedStorageError("delete", key, error)),
+          Effect.asVoid,
+        );
+      },
     } satisfies VaultStorageShape;
   }),
 );

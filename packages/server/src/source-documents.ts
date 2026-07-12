@@ -21,6 +21,14 @@ type SourceDocumentRow = typeof sourceDocuments.$inferSelect;
 
 type SourceDocumentsServiceShape = {
   readonly index: (vaultId: Uuid, filePath: string, content: string) => Effect.Effect<Uuid>;
+  readonly batchIndex: (
+    vaultId: Uuid,
+    documents: readonly {
+      readonly filePath: string;
+      readonly content: string;
+      readonly clientHash: string;
+    }[],
+  ) => Effect.Effect<void>;
   readonly existingClientHashes: (
     vaultId: Uuid,
     clientHashes: readonly string[],
@@ -75,7 +83,7 @@ const numberField = (frontmatter: Record<string, unknown>, key: string) => {
   return null;
 };
 
-const sourceRow = (vaultId: Uuid, filePath: string, content: string) => {
+const sourceRow = (vaultId: Uuid, filePath: string, content: string, clientHash?: string) => {
   const parsed = parseFrontmatter(content);
   return {
     id: randomUUID(),
@@ -83,6 +91,7 @@ const sourceRow = (vaultId: Uuid, filePath: string, content: string) => {
     filePath,
     fileHash: fileContentHash(content),
     bodyHash: bodyContentHash(parsed.body),
+    clientHash,
     sourceType: stringField(parsed.frontmatter, "source_type") ?? "document",
     url: stringField(parsed.frontmatter, "url"),
     origin: stringField(parsed.frontmatter, "origin"),
@@ -163,6 +172,24 @@ export const SourceDocumentsServiceLive = Layer.effect(
             throw new Error("source document upsert returned no row");
           }
           return row.id as Uuid;
+        }),
+      batchIndex: (vaultId, documents) =>
+        Effect.gen(function* () {
+          if (documents.length === 0) {
+            return;
+          }
+          yield* db
+            .insert(sourceDocuments)
+            .values(
+              documents.map((document) =>
+                sourceRow(vaultId, document.filePath, document.content, document.clientHash),
+              ),
+            )
+            .onConflictDoUpdate({
+              target: [sourceDocuments.vaultId, sourceDocuments.filePath],
+              set: ingestSet,
+            })
+            .pipe(dieDatabase);
         }),
       existingClientHashes: (vaultId, clientHashes) =>
         Effect.gen(function* () {

@@ -17,16 +17,14 @@ import {
 } from "@great-minds/domain";
 import { and, eq, sql } from "drizzle-orm";
 import { Cause, Context, Effect, Layer } from "effect";
+import * as WorkflowEngine from "effect/unstable/workflow/WorkflowEngine";
 
 import { htmlToMarkdown } from "./conversion.ts";
 import { dieDatabase } from "./db-defects.ts";
-import {
-  buildDocument,
-  sessionExchangeDocumentInput,
-  sessionExchangePath,
-} from "./markdown.ts";
+import { buildDocument, sessionExchangeDocumentInput, sessionExchangePath } from "./markdown.ts";
 import { ProposalsService } from "./proposals.ts";
 import { SourceDocumentsService } from "./source-documents.ts";
+import { StagedFileIngestWorkflow } from "./staged-file-ingest-workflow.ts";
 import { VaultStorage } from "./storage.ts";
 import { VaultAccessService } from "./vaults.ts";
 import { ClockService } from "./clock.ts";
@@ -46,11 +44,6 @@ type PipelineProgressStep = {
   readonly done?: number | null;
   readonly total?: number | null;
   readonly detail: string;
-};
-
-type SpawnedTask = {
-  readonly taskId: Uuid;
-  readonly created: boolean;
 };
 
 type IngestServiceShape = {
@@ -113,8 +106,6 @@ const URL_INGEST_STEP_LABELS = {
 } as const;
 
 const STAGED_TASK_TYPE = "staged_file_ingest";
-
-const asUuid = (value: string): Uuid => value as Uuid;
 
 const slugify = (text: string, maxLen = 80) =>
   text
@@ -267,6 +258,7 @@ export const IngestServiceLive = Layer.effect(
     const sourceDocumentsWrite = yield* SourceDocumentsService;
     const proposals = yield* ProposalsService;
     const clock = yield* ClockService;
+    const workflowEngine = yield* WorkflowEngine.WorkflowEngine;
 
     const ensureCompileIntent = (vaultId: Uuid, pipelineRunId?: Uuid | null) =>
       Effect.gen(function* () {
@@ -456,63 +448,6 @@ export const IngestServiceLive = Layer.effect(
         .where(eq(pipelineRuns.id, jobId))
         .pipe(dieDatabase);
 
-    const spawnStagedTask = (
-      vaultId: Uuid,
-      files: readonly StagedFileInput[],
-      pipelineRunId: Uuid,
-    ): Effect.Effect<SpawnedTask> =>
-      Effect.gen(function* () {
-        const params = {
-          vault_id: vaultId,
-          files: files.map((file) => ({
-            name: file.name,
-            size: file.size,
-            hash: file.hash,
-            mimetype: file.mimetype ?? "",
-          })),
-          pipeline_run_id: pipelineRunId,
-        };
-        const options = {
-          max_attempts: 2,
-          idempotency_key: pipelineRunId,
-        };
-        const spawned = yield* db
-          .execute(
-            sql<{
-              task_id: string;
-              created: boolean;
-            }>`select task_id, created from absurd.spawn_task(
-              'default',
-              ${STAGED_TASK_TYPE},
-              ${JSON.stringify(params)}::jsonb,
-              ${JSON.stringify(options)}::jsonb
-            )`,
-          )
-          .pipe(dieDatabase);
-        const spawnRows = (
-          spawned as unknown as {
-            readonly rows: readonly { readonly task_id: string; readonly created: boolean }[];
-          }
-        ).rows;
-        const row = spawnRows[0];
-        if (row === undefined) {
-          throw new Error("Absurd spawn_task returned no row");
-        }
-        const taskId = asUuid(row.task_id);
-        yield* db
-          .insert(tasks)
-          .values({
-            id: taskId,
-            vaultId,
-            type: STAGED_TASK_TYPE,
-            params,
-            pipelineRunId,
-          })
-          .onConflictDoNothing({ target: tasks.id })
-          .pipe(dieDatabase);
-        return { taskId, created: row.created };
-      });
-
     return {
       ingestRaw: (userId, vaultId, input) =>
         Effect.gen(function* () {
@@ -595,19 +530,47 @@ export const IngestServiceLive = Layer.effect(
             return yield* new BadRequest({ detail: "no files provided" });
           }
           const run = yield* createPipelineRun(jobId, vaultId, "staged_files");
-          const spawned = yield* spawnStagedTask(vaultId, files, run.id as Uuid);
+          const taskId = run.id as Uuid;
+          const workflowFiles = files.map((file) => ({
+            name: file.name,
+            size: file.size,
+            hash: file.hash,
+            mimetype: file.mimetype ?? "",
+          }));
+          yield* db
+            .insert(tasks)
+            .values({
+              id: taskId,
+              vaultId,
+              type: STAGED_TASK_TYPE,
+              params: {
+                vault_id: vaultId,
+                files: workflowFiles,
+                pipeline_run_id: run.id,
+              },
+              pipelineRunId: run.id,
+            })
+            .onConflictDoNothing({ target: tasks.id })
+            .pipe(dieDatabase);
           yield* db
             .update(pipelineRuns)
             .set({
-              ingestTaskId: spawned.taskId,
-              activeTaskId: spawned.taskId,
+              ingestTaskId: taskId,
+              activeTaskId: taskId,
               activeTaskType: STAGED_TASK_TYPE,
               updatedAt: sql`now()`,
             })
             .where(eq(pipelineRuns.id, run.id))
             .pipe(dieDatabase);
-          const refreshed = yield* getPipelineRun(run.id as Uuid, vaultId);
-          return jobResponse(refreshed);
+          yield* StagedFileIngestWorkflow.execute(
+            {
+              vaultId,
+              pipelineRunId: run.id,
+              files: workflowFiles,
+            },
+            { discard: true },
+          ).pipe(Effect.provideService(WorkflowEngine.WorkflowEngine, workflowEngine));
+          return jobResponse(run);
         }),
       startUrlJob: (userId, vaultId, input) =>
         Effect.gen(function* () {

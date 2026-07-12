@@ -12,9 +12,7 @@
   "scripts": {
     "typecheck": "tsgo -p tsconfig.json --noEmit",
     "test:integration": "vitest run test --no-file-parallelism",
-    "start": "node --experimental-strip-types src/main.ts",
-    "workflow": "node --experimental-strip-types src/workflow-runner.ts",
-    "workflow:official": "node --experimental-strip-types src/workflow-official.ts"
+    "start": "node --experimental-strip-types src/main.ts"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "3.1080.0",
@@ -30,6 +28,7 @@
     "effect": "4.0.0-beta.94",
     "jose": "6.2.3",
     "jsdom": "29.1.1",
+    "officeparser": "5.2.2",
     "turndown": "7.2.4",
     "yaml": "2.9.0"
   },

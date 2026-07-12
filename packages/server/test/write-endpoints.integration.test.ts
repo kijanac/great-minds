@@ -1079,7 +1079,7 @@ describe("M3.1 write endpoint integration", () => {
     expect(viewer.status).toBe(403);
   });
 
-  it("handles staged-file dedupe, local signing errors, process enqueue, and zero route-level compile intents", async () => {
+  it("handles staged-file dedupe, local signing errors, and Effect-only process enqueue", async () => {
     const { aliceToken, bobToken } = currentFixture();
     await runDb(
       Effect.gen(function* () {
@@ -1228,16 +1228,7 @@ describe("M3.1 write endpoint integration", () => {
       activeTaskId: rows.appTasks[0]!.id,
       activeTaskType: "staged_file_ingest",
     });
-    expect(rows.absurdTasks).toHaveLength(1);
-    expect(rows.absurdTasks[0]).toMatchObject({
-      task_name: "staged_file_ingest",
-      idempotency_key: id.m32StagedRun,
-    });
-    expect(rows.absurdTasks[0]?.params).toEqual({
-      vault_id: id.vault,
-      files: [{ name: "a.md", size: 10, hash: "hash-a", mimetype: "text/markdown" }],
-      pipeline_run_id: id.m32StagedRun,
-    });
+    expect(rows.absurdTasks).toHaveLength(0);
     expect(await countTable(compileIntents)).toBe(0);
   });
 

@@ -8,6 +8,7 @@ import { fileURLToPath } from "node:url";
 
 import { compareResponses } from "./diff.ts";
 import {
+  assertNoTypescriptReconciliation,
   ids,
   rawKeys,
   resetDatabase,
@@ -1322,7 +1323,7 @@ export const runParity = async () => {
       config,
       "typescript",
       "node",
-      ["--experimental-strip-types", "packages/server/src/main.ts"],
+      ["--experimental-strip-types", "packages/parity/src/typescript-server.ts"],
       {
         ...env,
         HOST: "127.0.0.1",
@@ -1351,6 +1352,7 @@ export const runParity = async () => {
       config.databaseUrl,
       config.dataDir,
     );
+    await assertNoTypescriptReconciliation(config.databaseUrl);
     const mutationReports = compareMutationFlows(pythonMutation, typescriptMutation);
 
     await resetDatabase(config.databaseUrl);
@@ -1366,6 +1368,7 @@ export const runParity = async () => {
       pythonCredentials,
       typescriptCredentials,
     );
+    await assertNoTypescriptReconciliation(config.databaseUrl);
 
     const requests = [...mutationReports, ...readReports];
     const decisionHits = countDecisionHits(requests);

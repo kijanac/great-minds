@@ -7,6 +7,7 @@ import {
   apiKeys,
   authCodes,
   backlinks,
+  compileIntents,
   Database,
   ideas,
   DatabaseLive,
@@ -126,6 +127,45 @@ export const resetDatabase = async (databaseUrl: string) => {
   }
 };
 
+export const assertNoTypescriptReconciliation = async (databaseUrl: string) => {
+  const runtime = databaseRuntime(databaseUrl);
+  try {
+    await runDb(
+      runtime,
+      Effect.gen(function* () {
+        const db = yield* Database;
+        const dispatched = yield* db
+          .select({ id: compileIntents.id })
+          .from(compileIntents)
+          .where(eq(compileIntents.dispatchedTaskId, compileIntents.id))
+          .pipe(Effect.orDie);
+        const placeholders = yield* db
+          .select({ id: pipelineRuns.id })
+          .from(pipelineRuns)
+          .where(sql`${pipelineRuns.progressSteps} @> '[{"key":"compile_placeholder"}]'::jsonb`)
+          .pipe(Effect.orDie);
+        const journal = yield* db
+          .execute(sql<{ count: number }>`
+            SELECT count(*)::int AS count
+            FROM cluster_messages
+            WHERE entity_type = 'Workflow/CompilePlaceholder'
+          `)
+          .pipe(Effect.orDie);
+        const journalCount =
+          (journal as unknown as { readonly rows: readonly { readonly count: number }[] }).rows[0]
+            ?.count ?? 0;
+        if (dispatched.length > 0 || placeholders.length > 0 || journalCount > 0) {
+          throw new Error(
+            `TypeScript reconciliation touched parity state: dispatched=${dispatched.length}, placeholders=${placeholders.length}, journal=${journalCount}`,
+          );
+        }
+      }),
+    );
+  } finally {
+    await runtime.dispose();
+  }
+};
+
 export const seedDuplicateClientHashSources = async (
   databaseUrl: string,
   vaultId: string,
@@ -178,7 +218,10 @@ export const resetStorage = async (dataDir: string) => {
   await mkdir(dataDir, { recursive: true });
 };
 
-export const seedDeletionCompanionVault = async (databaseUrl: string, deletingUserEmail: string) => {
+export const seedDeletionCompanionVault = async (
+  databaseUrl: string,
+  deletingUserEmail: string,
+) => {
   const runtime = databaseRuntime(databaseUrl);
   try {
     await runDb(
@@ -250,10 +293,10 @@ const writeProposalFile = async (dataDir: string, proposalId: string, content: s
   await writeFile(fullPath, content, "utf8");
 };
 
-const jsonl = (events: readonly unknown[]) => events.map((event) => JSON.stringify(event)).join("\n");
+const jsonl = (events: readonly unknown[]) =>
+  events.map((event) => JSON.stringify(event)).join("\n");
 
-const chunkId = (index: number) =>
-  `00000000-0000-4000-8001-${String(index + 1).padStart(12, "0")}`;
+const chunkId = (index: number) => `00000000-0000-4000-8001-${String(index + 1).padStart(12, "0")}`;
 
 export const seedReadFixture = async (databaseUrl: string, dataDir: string) => {
   const runtime = databaseRuntime(databaseUrl);

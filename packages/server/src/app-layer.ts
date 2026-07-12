@@ -2,6 +2,11 @@ import { Database } from "@great-minds/database";
 import { Layer } from "effect";
 
 import { AuthService, AuthServiceLive } from "./auth.ts";
+import {
+  CompileIntentReconcilerLive,
+  CompileIntentReconcilerLoopLive,
+  CompileWorkflowLive,
+} from "./compile-intents.ts";
 import { ClockLive, ClockService } from "./clock.ts";
 import { AppConfigLive } from "./config.ts";
 import type { AppConfig } from "./config.ts";
@@ -14,10 +19,12 @@ import { LanguageModel, LanguageModelLive } from "./llm.ts";
 import { StructuredLogger, StructuredLoggerLive } from "./logging.ts";
 import { Mailer, MailerLive } from "./mailer.ts";
 import { ParallelSearchLive, ParallelSearchService } from "./parallel.ts";
+import { PipelineRunsServiceLive } from "./pipeline-runs.ts";
 import { ProposalsService, ProposalsServiceLive } from "./proposals.ts";
 import { QueryService, QueryServiceLive } from "./query.ts";
 import { SessionsService, SessionsServiceLive } from "./sessions.ts";
 import { SourceDocumentsService, SourceDocumentsServiceLive } from "./source-documents.ts";
+import { StagedFileIngestWorkflowLive } from "./staged-file-ingest-workflow.ts";
 import { SourcesService, SourcesServiceLive } from "./sources.ts";
 import { ProposalStorage, ProposalStorageLive, VaultStorage, VaultStorageLive } from "./storage.ts";
 import { RandomBytesLive, RandomBytesService } from "./random.ts";
@@ -29,6 +36,7 @@ import {
   VaultsServiceLive,
 } from "./vaults.ts";
 import { WikiService, WikiServiceLive } from "./wiki.ts";
+import { WorkflowEngineLive } from "./workflow-engine.ts";
 
 export type AppLayerServices =
   | AppConfig
@@ -70,7 +78,7 @@ export type AppLayerOverrides = {
   readonly parallelSearch?: Layer.Layer<ParallelSearchService>;
 };
 
-export const makeAppLayer = (overrides: AppLayerOverrides = {}) => {
+export const makeAppLayers = (overrides: AppLayerOverrides = {}) => {
   const ConfigLive = overrides.config ?? AppConfigLive;
   const BaseLive = Layer.mergeAll(
     DrizzleLive.pipe(Layer.provideMerge(ConfigLive)),
@@ -101,6 +109,19 @@ export const makeAppLayer = (overrides: AppLayerOverrides = {}) => {
     Layer.provideMerge(StorageLive),
     Layer.provideMerge(BaseLive),
   );
+  const PipelineRunsLive = PipelineRunsServiceLive.pipe(Layer.provideMerge(BaseLive));
+  const WorkflowEngineBaseLive = WorkflowEngineLive.pipe(Layer.provideMerge(BaseLive));
+  const WorkflowHandlersLive = Layer.mergeAll(
+    StagedFileIngestWorkflowLive,
+    CompileWorkflowLive,
+  ).pipe(
+    Layer.provideMerge(SourceDocumentsLive),
+    Layer.provideMerge(PipelineRunsLive),
+    Layer.provideMerge(StorageLive),
+    Layer.provideMerge(WorkflowEngineBaseLive),
+    Layer.provideMerge(BaseLive),
+  );
+  const WorkflowsLive = WorkflowHandlersLive.pipe(Layer.provideMerge(WorkflowEngineBaseLive));
   const ProposalsLive = ProposalsServiceLive.pipe(
     Layer.provideMerge(SourceDocumentsLive),
     Layer.provideMerge(ProposalStorageLiveLayer),
@@ -119,6 +140,7 @@ export const makeAppLayer = (overrides: AppLayerOverrides = {}) => {
     Layer.provideMerge(SourceDocumentsLive),
     Layer.provideMerge(StorageLive),
     Layer.provideMerge(VaultAccessLive),
+    Layer.provideMerge(WorkflowsLive),
     Layer.provideMerge(BaseLive),
   );
   const VaultsLive = VaultsServiceLive.pipe(
@@ -170,7 +192,25 @@ export const makeAppLayer = (overrides: AppLayerOverrides = {}) => {
     ReadServicesLive,
   ).pipe(Layer.provideMerge(BaseLive));
 
-  return AuthServiceLive.pipe(Layer.provideMerge(ServiceDepsLive));
+  const ApiLive = AuthServiceLive.pipe(Layer.provideMerge(ServiceDepsLive));
+  const AppLive = ApiLive.pipe(
+    Layer.provideMerge(WorkflowsLive),
+    Layer.provideMerge(PipelineRunsLive),
+    Layer.provideMerge(BaseLive),
+  );
+  const ReconcilerLive = CompileIntentReconcilerLive.pipe(
+    Layer.provideMerge(PipelineRunsLive),
+    Layer.provideMerge(WorkflowsLive),
+    Layer.provideMerge(BaseLive),
+  );
+  const ReconcilerLoopLive = CompileIntentReconcilerLoopLive.pipe(
+    Layer.provideMerge(ReconcilerLive),
+    Layer.provideMerge(WorkflowsLive),
+    Layer.provideMerge(BaseLive),
+  );
+  return { app: AppLive, reconcilerLoop: ReconcilerLoopLive } as const;
 };
+
+export const makeAppLayer = (overrides: AppLayerOverrides = {}) => makeAppLayers(overrides).app;
 
 export const AppLayerLive = makeAppLayer();
