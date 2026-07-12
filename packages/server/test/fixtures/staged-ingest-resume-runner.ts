@@ -55,6 +55,7 @@ const config: AppConfigShape = {
   queryModel: "test",
   queryFallbackModels: ["test"],
   extractModel: "test",
+  compileDeriveRelatedLimit: 20,
   embeddingModel: "test",
   corsOrigins: [],
   suppressAuth: false,
@@ -69,6 +70,7 @@ const LoggerLive = Layer.succeed(StructuredLogger, {
   error: () => Effect.void,
 });
 const StorageLive = Layer.succeed(VaultStorage, {
+  listMarkdown: () => Effect.succeed([]),
   readText: () => Effect.die("unused"),
   writeText: () => Effect.void,
   appendText: () => Effect.die("unused"),

@@ -4,13 +4,22 @@ import { and, asc, eq, inArray, isNotNull, isNull, sql } from "drizzle-orm";
 import { Cause, Context, Effect, Layer, Schema } from "effect";
 import * as Activity from "effect/unstable/workflow/Activity";
 import * as Workflow from "effect/unstable/workflow/Workflow";
-import type * as WorkflowEngine from "effect/unstable/workflow/WorkflowEngine";
+import * as WorkflowEngine from "effect/unstable/workflow/WorkflowEngine";
 
 import { dieDatabase } from "./db-defects.ts";
+import {
+  CompilePhases,
+  CompilePhaseFailed,
+  CompilePhaseNotPorted,
+  CompileWorkflowError,
+  phaseFailure,
+  ValidatedTopic,
+  type CompilePhase,
+} from "./compile-phases.ts";
 import { StructuredLogger } from "./logging.ts";
 import { PipelineRunsService } from "./pipeline-runs.ts";
 
-export const CompileWorkflow = Workflow.make("CompilePlaceholder", {
+export const CompileWorkflow = Workflow.make("CompileTask", {
   payload: {
     intentId: Schema.String,
     vaultId: Schema.String,
@@ -18,26 +27,105 @@ export const CompileWorkflow = Workflow.make("CompilePlaceholder", {
   },
   idempotencyKey: ({ intentId }) => intentId,
   success: Schema.Void,
+  error: CompileWorkflowError,
 });
 
-export const CompileWorkflowLive = CompileWorkflow.toLayer((payload) =>
-  Activity.make({
-    name: "compile-placeholder",
-    execute: Effect.gen(function* () {
-      const pipeline = yield* PipelineRunsService;
-      yield* pipeline.updateProgress(payload.pipelineRunId as Uuid, "publish", "completed", [
-        {
-          key: "compile_placeholder",
-          label: "Compile workflow seam ready",
-          status: "completed",
-          done: 1,
-          total: 1,
-          detail: "M4.3 replaces this activity with the seven-phase compile workflow",
-        },
-      ]);
-    }),
-  }),
-);
+const causeFailure = (
+  phase: CompilePhase,
+  cause: Cause.Cause<unknown>,
+): CompilePhaseNotPorted | CompilePhaseFailed => {
+  const reason = cause.reasons[0];
+  if (reason !== undefined && Cause.isFailReason(reason)) {
+    const error = reason.error;
+    if (error instanceof CompilePhaseNotPorted || error instanceof CompilePhaseFailed) return error;
+    return phaseFailure(phase, error);
+  }
+  if (reason !== undefined && Cause.isDieReason(reason)) {
+    return phaseFailure(phase, reason.defect);
+  }
+  return phaseFailure(phase, Cause.pretty(cause));
+};
+
+export const CompileWorkflowLive = CompileWorkflow.toLayer((payload) => {
+  const runPhase = <Success extends Schema.Top, R>(
+    phase: CompilePhase,
+    success: Success,
+    execute: Effect.Effect<Success["Type"], unknown, R>,
+  ) =>
+    Activity.make({
+      name: `compile-phase-${phase}`,
+      success,
+      error: CompileWorkflowError,
+      execute: execute.pipe(
+        Effect.catchCause((cause) => {
+          if (cause.reasons.length > 0 && cause.reasons.every(Cause.isInterruptReason)) {
+            return Effect.interrupt;
+          }
+          const failure = causeFailure(phase, cause);
+          return Effect.gen(function* () {
+            if (failure instanceof CompilePhaseNotPorted) return yield* Effect.fail(failure);
+            const pipeline = yield* PipelineRunsService;
+            yield* pipeline.failPreservingProgress(
+              payload.pipelineRunId as Uuid,
+              failure.message,
+            );
+            return yield* Effect.fail(failure);
+          });
+        }),
+      ),
+    });
+
+  const phases = Effect.gen(function* () {
+    const service = yield* CompilePhases;
+    const vaultId = payload.vaultId as Uuid;
+    const runId = payload.pipelineRunId as Uuid;
+    yield* runPhase("ingest", Schema.Void, service.ingest(vaultId, runId));
+    yield* runPhase("extract", Schema.Void, service.extract(vaultId, runId));
+    const validated = yield* runPhase(
+      "abstract",
+      Schema.Array(ValidatedTopic),
+      service.abstract(vaultId, runId),
+    );
+    if (validated.length === 0) {
+      yield* runPhase(
+        "publish",
+        Schema.Void,
+        Effect.gen(function* () {
+          const pipeline = yield* PipelineRunsService;
+          yield* pipeline.updateProgress(runId, "publish", "completed", [
+            {
+              key: "phase",
+              label: "compile completed early: no validated topics",
+              status: "completed",
+              done: 1,
+              total: 1,
+              detail: "",
+            },
+          ]);
+        }),
+      );
+      return;
+    }
+    yield* runPhase("derive", Schema.Void, service.derive(vaultId, runId, validated));
+    yield* runPhase("render", Schema.Void, service.render(vaultId, runId, validated));
+    yield* runPhase("verify", Schema.Void, service.verify(vaultId, runId));
+    const publishedAt = yield* Activity.make({
+      name: "compile-publish-timestamp",
+      success: Schema.String,
+      execute: Effect.sync(() => new Date().toISOString().replace(/\.\d{3}Z$/, "+00:00")),
+    });
+    yield* runPhase("publish", Schema.Void, service.publish(vaultId, runId, publishedAt));
+  });
+  return phases;
+});
+
+export const cancelCompileWorkflow = (runId: Uuid, executionId: string) =>
+  Effect.gen(function* () {
+    const pipeline = yield* PipelineRunsService;
+    const engine = yield* WorkflowEngine.WorkflowEngine;
+    yield* pipeline.cancel(runId);
+    yield* engine.interruptUnsafe(CompileWorkflow, executionId);
+  });
 
 type CompileIntentReconcilerShape = {
   readonly reconcileOnce: () => Effect.Effect<
@@ -80,7 +168,7 @@ export const CompileIntentReconcilerLive = Layer.effect(
               FROM cluster_messages message
               -- 'Workflow/' + the CompileWorkflow tag; a tag rename must update this,
               -- pipeline-runs zombie recovery, and the parity reconciliation guard
-              WHERE message.entity_type = 'Workflow/CompilePlaceholder'
+              WHERE message.entity_type = 'Workflow/CompileTask'
                 AND message.payload::jsonb ->> 'intentId' = ${compileIntents.id}::text
             )`,
           ),

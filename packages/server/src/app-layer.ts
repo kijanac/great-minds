@@ -8,6 +8,7 @@ import {
   CompileWorkflowLive,
 } from "./compile-intents.ts";
 import { ClockLive, ClockService } from "./clock.ts";
+import { CompilePhasesLive } from "./compile-phases.ts";
 import { AppConfigLive } from "./config.ts";
 import type { AppConfig } from "./config.ts";
 import { DrizzleLive } from "./db.ts";
@@ -110,12 +111,19 @@ export const makeAppLayers = (overrides: AppLayerOverrides = {}) => {
     Layer.provideMerge(BaseLive),
   );
   const PipelineRunsLive = PipelineRunsServiceLive.pipe(Layer.provideMerge(BaseLive));
+  const CompilePhasesLiveLayer = CompilePhasesLive.pipe(
+    Layer.provideMerge(EmbeddingsLiveLayer),
+    Layer.provideMerge(PipelineRunsLive),
+    Layer.provideMerge(StorageLive),
+    Layer.provideMerge(BaseLive),
+  );
   const WorkflowEngineBaseLive = WorkflowEngineLive.pipe(Layer.provideMerge(BaseLive));
   const WorkflowHandlersLive = Layer.mergeAll(
     StagedFileIngestWorkflowLive,
     CompileWorkflowLive,
   ).pipe(
     Layer.provideMerge(SourceDocumentsLive),
+    Layer.provideMerge(CompilePhasesLiveLayer),
     Layer.provideMerge(PipelineRunsLive),
     Layer.provideMerge(StorageLive),
     Layer.provideMerge(WorkflowEngineBaseLive),

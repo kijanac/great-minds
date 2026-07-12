@@ -1,4 +1,4 @@
-import { appendFile, mkdir, readFile, rm, unlink, writeFile } from "node:fs/promises";
+import { appendFile, mkdir, readFile, readdir, rm, unlink, writeFile } from "node:fs/promises";
 import { isAbsolute, relative, resolve } from "node:path";
 
 import {
@@ -52,6 +52,11 @@ export class StagedStorageError extends Schema.TaggedErrorClass<StagedStorageErr
 ) {}
 
 type VaultStorageShape = {
+  readonly listMarkdown: (
+    vaultId: Uuid,
+    scope: "raw" | "wiki",
+    bucketName?: string | null,
+  ) => Effect.Effect<readonly { readonly path: string; readonly etag: string | null }[]>;
   readonly readText: (
     vaultId: Uuid,
     path: string,
@@ -196,6 +201,24 @@ export const LocalStorageLive = Layer.effect(
     const dataRoot = resolve(config.dataDir);
 
     return {
+      listMarkdown: (vaultId, scope) =>
+        Effect.gen(function* () {
+          const scopeRoot = resolve(localRoot(dataRoot, vaultId), scope);
+          const entries = yield* Effect.result(
+            Effect.tryPromise({
+              try: () => readdir(scopeRoot, { recursive: scope === "raw" }),
+              catch: (error) => error,
+            }),
+          );
+          if (entries._tag === "Failure") {
+            if (isNodeMissing(entries.failure)) return [];
+            throw entries.failure;
+          }
+          return entries.success
+            .filter((entry) => entry.endsWith(".md"))
+            .map((entry) => ({ path: `${scope}/${entry}`, etag: null }))
+            .sort((left, right) => (left.path < right.path ? -1 : left.path > right.path ? 1 : 0));
+        }),
       readText: (vaultId, path) => readLocalText(localRoot(dataRoot, vaultId), path),
       writeText: (vaultId, path, content) =>
         writeLocalText(localRoot(dataRoot, vaultId), path, content),
@@ -552,6 +575,35 @@ export const R2StorageLive = Layer.effect(
       });
 
     return {
+      listMarkdown: (vaultId, scope, bucketName) =>
+        Effect.gen(function* () {
+          const bucket = yield* vaultBucket(vaultId, bucketName);
+          const prefix = objectKey(vaultId, `${scope}/`);
+          const files: { path: string; etag: string | null }[] = [];
+          let continuationToken: string | undefined;
+          do {
+            const page = yield* Effect.tryPromise((signal) =>
+              client.send(
+                new ListObjectsV2Command({
+                  Bucket: bucket,
+                  Prefix: prefix,
+                  ContinuationToken: continuationToken,
+                  ...(scope === "wiki" ? { Delimiter: "/" } : {}),
+                }),
+                { abortSignal: signal },
+              ),
+            ).pipe(Effect.timeout(R2_ADMIN_TIMEOUT), Effect.orDie);
+            for (const object of page.Contents ?? []) {
+              if (object.Key === undefined || !object.Key.endsWith(".md")) continue;
+              const path = object.Key.slice(objectPrefix(vaultId).length);
+              files.push({ path, etag: object.ETag?.replaceAll('"', "") ?? null });
+            }
+            continuationToken = page.IsTruncated === true ? page.NextContinuationToken : undefined;
+          } while (continuationToken !== undefined);
+          return files.sort((left, right) =>
+            left.path < right.path ? -1 : left.path > right.path ? 1 : 0,
+          );
+        }),
       readText: readR2Text,
       writeText: writeR2Text,
       appendText: (vaultId, path, content, bucketName) =>

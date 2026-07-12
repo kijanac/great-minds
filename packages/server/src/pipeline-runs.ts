@@ -15,6 +15,7 @@ export type PipelineProgressStep = {
 };
 
 type PipelineRunsServiceShape = {
+  readonly cancel: (runId: Uuid) => Effect.Effect<void>;
   readonly updateProgress: (
     runId: Uuid,
     phase: string,
@@ -22,6 +23,7 @@ type PipelineRunsServiceShape = {
     steps: readonly PipelineProgressStep[],
     error?: string,
   ) => Effect.Effect<void>;
+  readonly failPreservingProgress: (runId: Uuid, error: string) => Effect.Effect<void>;
   readonly fail: (runId: Uuid, error: string) => Effect.Effect<void>;
   readonly recoverZombies: (olderThan: Date) => Effect.Effect<number>;
 };
@@ -95,7 +97,34 @@ export const PipelineRunsServiceLive = Layer.effect(
         .pipe(dieDatabase, Effect.asVoid);
 
     return {
+      cancel: (runId) =>
+        db
+          .update(pipelineRuns)
+          .set({
+            status: "cancelled",
+            phaseStatus: "failed",
+            completedAt: sql`now()`,
+            updatedAt: sql`now()`,
+          })
+          .where(
+            and(eq(pipelineRuns.id, runId), inArray(pipelineRuns.status, ["pending", "running"])),
+          )
+          .pipe(dieDatabase, Effect.asVoid),
       updateProgress,
+      failPreservingProgress: (runId, error) =>
+        db
+          .update(pipelineRuns)
+          .set({
+            status: "failed",
+            phaseStatus: "failed",
+            error,
+            completedAt: sql`now()`,
+            updatedAt: sql`now()`,
+          })
+          .where(
+            and(eq(pipelineRuns.id, runId), inArray(pipelineRuns.status, ["pending", "running"])),
+          )
+          .pipe(dieDatabase, Effect.asVoid),
       fail: (runId, error) => updateProgress(runId, "source_ingest", "failed", [], error),
       recoverZombies: (olderThan) =>
         Effect.gen(function* () {
@@ -132,7 +161,7 @@ export const PipelineRunsServiceLive = Layer.effect(
                       -- workflow tag must update this list or zombie recovery goes blind
                       WHERE message.entity_type IN (
                         'Workflow/StagedFileIngest',
-                        'Workflow/CompilePlaceholder'
+                        'Workflow/CompileTask'
                       )
                         AND (
                           message.payload::jsonb ->> 'pipelineRunId' = ${pipelineRuns.id}::text

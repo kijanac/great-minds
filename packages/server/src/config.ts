@@ -24,6 +24,7 @@ export type AppConfigShape = {
   readonly queryModel: string;
   readonly queryFallbackModels: readonly string[];
   readonly extractModel: string;
+  readonly compileDeriveRelatedLimit: number;
   readonly embeddingModel: string;
   readonly corsOrigins: readonly string[];
   readonly suppressAuth: boolean;
@@ -83,6 +84,9 @@ const appConfig = Config.all({
     ),
   ),
   extractModel: nonEmptyString("EXTRACT_MODEL").pipe(Config.withDefault("deepseek/deepseek-v3.2")),
+  compileDeriveRelatedLimit: positiveInt("COMPILE_DERIVE_RELATED_LIMIT").pipe(
+    Config.withDefault(20),
+  ),
   embeddingModel: nonEmptyString("EMBEDDING_MODEL").pipe(
     Config.withDefault("qwen/qwen3-embedding-8b"),
   ),

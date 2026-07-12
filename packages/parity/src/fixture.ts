@@ -139,24 +139,19 @@ export const assertNoTypescriptReconciliation = async (databaseUrl: string) => {
           .from(compileIntents)
           .where(eq(compileIntents.dispatchedTaskId, compileIntents.id))
           .pipe(Effect.orDie);
-        const placeholders = yield* db
-          .select({ id: pipelineRuns.id })
-          .from(pipelineRuns)
-          .where(sql`${pipelineRuns.progressSteps} @> '[{"key":"compile_placeholder"}]'::jsonb`)
-          .pipe(Effect.orDie);
         const journal = yield* db
           .execute(sql<{ count: number }>`
             SELECT count(*)::int AS count
             FROM cluster_messages
-            WHERE entity_type = 'Workflow/CompilePlaceholder'
+            WHERE entity_type = 'Workflow/CompileTask'
           `)
           .pipe(Effect.orDie);
         const journalCount =
           (journal as unknown as { readonly rows: readonly { readonly count: number }[] }).rows[0]
             ?.count ?? 0;
-        if (dispatched.length > 0 || placeholders.length > 0 || journalCount > 0) {
+        if (dispatched.length > 0 || journalCount > 0) {
           throw new Error(
-            `TypeScript reconciliation touched parity state: dispatched=${dispatched.length}, placeholders=${placeholders.length}, journal=${journalCount}`,
+            `TypeScript reconciliation touched parity state: dispatched=${dispatched.length}, journal=${journalCount}`,
           );
         }
       }),

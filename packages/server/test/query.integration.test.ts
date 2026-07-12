@@ -116,6 +116,7 @@ const testConfig = (
   queryModel: overrides.queryModel ?? "primary/test-model",
   queryFallbackModels: overrides.queryFallbackModels ?? ["fallback/test-model"],
   extractModel: "extract/test-model",
+  compileDeriveRelatedLimit: 20,
   embeddingModel: "embedding/test-model",
   corsOrigins: ["http://localhost:5173"],
   suppressAuth: false,

@@ -75,6 +75,7 @@ const testConfig = (url: string): AppConfigShape => ({
   queryModel: "z-ai/glm-5.2",
   queryFallbackModels: ["deepseek/deepseek-v3.2"],
   extractModel: "deepseek/deepseek-v3.2",
+  compileDeriveRelatedLimit: 20,
   embeddingModel: "qwen/qwen3-embedding-8b",
   corsOrigins: ["http://localhost:5173"],
   suppressAuth: false,

@@ -23,11 +23,21 @@ import {
   CompileWorkflow,
   CompileWorkflowLive,
 } from "../src/compile-intents.ts";
+import {
+  CompilePhases,
+  CompilePhasesLive,
+  RENDER_STEP_LABELS,
+} from "../src/compile-phases.ts";
 import { AppConfig, type AppConfigShape } from "../src/config.ts";
 import { stagedFileToMarkdown } from "../src/conversion.ts";
 import { DrizzleLive } from "../src/db.ts";
+import { EmbeddingsService } from "../src/embeddings.ts";
 import { StructuredLogger } from "../src/logging.ts";
-import { PipelineRunsService, PipelineRunsServiceLive } from "../src/pipeline-runs.ts";
+import {
+  PipelineRunsService,
+  PipelineRunsServiceLive,
+  progressSteps,
+} from "../src/pipeline-runs.ts";
 import { SourceDocumentsServiceLive } from "../src/source-documents.ts";
 import {
   StagedFileIngestWorkflow,
@@ -49,6 +59,8 @@ const id = {
   terminalIntent: "10000000-0000-4000-8000-000000000010" as Uuid,
   zombieRun: "10000000-0000-4000-8000-000000000011" as Uuid,
   resumeRun: "10000000-0000-4000-8000-000000000012" as Uuid,
+  renderFailureIntent: "10000000-0000-4000-8000-000000000013" as Uuid,
+  renderFailureRun: "10000000-0000-4000-8000-000000000014" as Uuid,
 } as const;
 
 const resumeRunnerPath = fileURLToPath(
@@ -97,6 +109,7 @@ const config: AppConfigShape = {
   queryModel: "test",
   queryFallbackModels: ["test"],
   extractModel: "test",
+  compileDeriveRelatedLimit: 20,
   embeddingModel: "test",
   corsOrigins: [],
   suppressAuth: false,
@@ -118,6 +131,7 @@ const TestLoggerLive = Layer.succeed(StructuredLogger, {
 });
 
 const StorageLive = Layer.succeed(VaultStorage, {
+  listMarkdown: () => Effect.succeed([]),
   readText: () => Effect.die("unused"),
   writeText: (_vaultId, path, content) =>
     Effect.sync(() => written.set(path, content)).pipe(Effect.asVoid),
@@ -152,6 +166,13 @@ const StorageLive = Layer.succeed(VaultStorage, {
 const ConfigLive = Layer.succeed(AppConfig, config);
 const BaseLive = Layer.mergeAll(DrizzleLive.pipe(Layer.provideMerge(ConfigLive)), TestLoggerLive);
 const PipelineLive = PipelineRunsServiceLive.pipe(Layer.provideMerge(BaseLive));
+const EmbeddingsLive = Layer.succeed(EmbeddingsService, { embed: async () => [] });
+const CompilePhasesLiveLayer = CompilePhasesLive.pipe(
+  Layer.provideMerge(EmbeddingsLive),
+  Layer.provideMerge(PipelineLive),
+  Layer.provideMerge(StorageLive),
+  Layer.provideMerge(BaseLive),
+);
 const SourceDocumentsLive = SourceDocumentsServiceLive.pipe(
   Layer.provideMerge(StorageLive),
   Layer.provideMerge(BaseLive),
@@ -159,6 +180,7 @@ const SourceDocumentsLive = SourceDocumentsServiceLive.pipe(
 const EngineLive = WorkflowEngineLive.pipe(Layer.provideMerge(BaseLive));
 const WorkflowHandlersLive = Layer.mergeAll(StagedFileIngestWorkflowLive, CompileWorkflowLive).pipe(
   Layer.provideMerge(SourceDocumentsLive),
+  Layer.provideMerge(CompilePhasesLiveLayer),
   Layer.provideMerge(PipelineLive),
   Layer.provideMerge(StorageLive),
   Layer.provideMerge(EngineLive),
@@ -176,6 +198,56 @@ const TestLive = ReconcilerLive.pipe(
   Layer.provideMerge(SourceDocumentsLive),
   Layer.provideMerge(StorageLive),
   Layer.provideMerge(BaseLive),
+);
+
+const RenderFailurePhasesLive = Layer.effect(
+  CompilePhases,
+  Effect.gen(function* () {
+    const pipeline = yield* PipelineRunsService;
+    return {
+      archiveTransitions: () => Effect.void,
+      ingest: () => Effect.void,
+      extract: () => Effect.void,
+      abstract: () =>
+        Effect.succeed([
+          {
+            topicId: "10000000-0000-4000-8000-000000000015",
+            slug: "render-failure",
+            title: "Render failure",
+            description: "Pins the last emitted render progress snapshot.",
+            subsumedIdeaIds: [],
+            linkTargets: [],
+          },
+        ]),
+      derive: () => Effect.void,
+      render: (_vaultId, runId) =>
+        Effect.gen(function* () {
+          yield* pipeline.updateProgress(
+            runId,
+            "render",
+            "progress",
+            progressSteps(RENDER_STEP_LABELS, "write_articles", {
+              completed: new Set(["plan_articles"]),
+              counts: { plan_articles: [1, 1], write_articles: [0, 1] },
+            }),
+          );
+          return yield* Effect.die(new Error("forced render seam"));
+        }),
+      verify: () => Effect.die("verify unexpectedly reached"),
+      publish: () => Effect.die("publish unexpectedly reached"),
+    };
+  }),
+);
+const RenderFailureHandlersLive = CompileWorkflowLive.pipe(
+  Layer.provideMerge(RenderFailurePhasesLive),
+  Layer.provideMerge(PipelineLive),
+  Layer.provideMerge(EngineLive),
+  Layer.provideMerge(BaseLive),
+);
+const RenderFailureLive = Layer.mergeAll(
+  RenderFailureHandlersLive.pipe(Layer.provideMerge(EngineLive)),
+  PipelineLive,
+  BaseLive,
 );
 
 const run = <A>(
@@ -566,7 +638,7 @@ describe("M4.2 durable workers", () => {
     expect(rows.intents).toHaveLength(1);
   }, 60_000);
 
-  it("reconciles a bare compile intent through the placeholder seam and marks it satisfied", async () => {
+  it("dispatches the compile workflow in order and fails loudly at the first M4.4 seam", async () => {
     await run(
       Effect.gen(function* () {
         const db = yield* Database;
@@ -603,8 +675,113 @@ describe("M4.2 durable workers", () => {
       }),
     );
     expect(rows.intent[0]?.satisfiedAt).not.toBeNull();
-    expect(rows.pipeline[0]).toMatchObject({ status: "completed", currentPhase: "publish" });
+    expect(rows.pipeline[0]).toMatchObject({
+      status: "failed",
+      currentPhase: "extract",
+      phaseStatus: "failed",
+      error: "Compile phase 'extract' is not ported; M4.4 owns this phase seam",
+    });
+    expect(rows.pipeline[0]?.progressSteps).toEqual([
+      {
+        key: "extract_cards",
+        label: "Extracting source cards",
+        status: "failed",
+        done: null,
+        total: null,
+        detail: "Compile phase 'extract' is not ported; M4.4 owns this phase seam",
+      },
+      {
+        key: "embed_ideas",
+        label: "Embedding ideas",
+        status: "pending",
+        done: null,
+        total: null,
+        detail: "",
+      },
+    ]);
     expect(rows.task[0]).toMatchObject({ type: "compile" });
+  }, 30_000);
+
+  it("preserves the last render progress snapshot when a later phase seam fails", async () => {
+    await run(
+      Effect.gen(function* () {
+        const db = yield* Database;
+        yield* db
+          .insert(pipelineRuns)
+          .values({
+            id: id.renderFailureRun,
+            vaultId: id.vault,
+            trigger: "manual",
+            status: "pending",
+            currentPhase: "",
+            phaseStatus: "",
+            progressSteps: [],
+          })
+          .pipe(Effect.orDie);
+      }),
+    );
+
+    const result = await Effect.runPromise(
+      Effect.result(
+        CompileWorkflow.execute({
+          intentId: id.renderFailureIntent,
+          vaultId: id.vault,
+          pipelineRunId: id.renderFailureRun,
+        }),
+      ).pipe(Effect.provide(RenderFailureLive)),
+    );
+    expect(result).toMatchObject({
+      _tag: "Failure",
+      failure: {
+        _tag: "CompilePhaseFailed",
+        phase: "render",
+        errorType: "Error",
+        message: "forced render seam",
+      },
+    });
+
+    const rows = await run(
+      Effect.gen(function* () {
+        const db = yield* Database;
+        return yield* db
+          .select()
+          .from(pipelineRuns)
+          .where(eq(pipelineRuns.id, id.renderFailureRun))
+          .pipe(Effect.orDie);
+      }),
+    );
+    expect(rows[0]).toMatchObject({
+      status: "failed",
+      currentPhase: "render",
+      phaseStatus: "failed",
+      error: "forced render seam",
+    });
+    expect(rows[0]?.progressSteps).toEqual([
+      {
+        key: "plan_articles",
+        label: "Planning articles",
+        status: "completed",
+        done: 1,
+        total: 1,
+        detail: "",
+      },
+      {
+        key: "write_articles",
+        label: "Writing articles",
+        status: "running",
+        done: 0,
+        total: 1,
+        detail: "",
+      },
+      {
+        key: "index_articles",
+        label: "Indexing articles",
+        status: "pending",
+        done: null,
+        total: null,
+        detail: "",
+      },
+    ]);
   }, 30_000);
 
   it("keeps queued compile-intent runs out of zombie recovery", async () => {
@@ -707,7 +884,7 @@ describe("M4.2 durable workers", () => {
     expect(satisfied).toBe(0);
   });
 
-  it("keeps compile placeholder terminal states stable", async () => {
+  it("keeps compile workflow terminal states stable", async () => {
     await run(
       Effect.gen(function* () {
         const db = yield* Database;
@@ -724,11 +901,13 @@ describe("M4.2 durable workers", () => {
             completedAt: new Date(),
           })
           .pipe(Effect.orDie);
-        yield* CompileWorkflow.execute({
-          intentId: id.terminalIntent,
-          vaultId: id.vault,
-          pipelineRunId: id.terminalRun,
-        });
+        yield* Effect.result(
+          CompileWorkflow.execute({
+            intentId: id.terminalIntent,
+            vaultId: id.vault,
+            pipelineRunId: id.terminalRun,
+          }),
+        );
       }),
     );
 

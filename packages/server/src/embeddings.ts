@@ -40,15 +40,30 @@ const parseEmbeddingResponse = (
   if (!Array.isArray(data) || data.length !== expectedCount) {
     throw new ModelProviderError("embedding provider returned an unexpected data shape");
   }
-  return data.map((item) => {
+  const indexed = data.map((item) => {
     if (typeof item !== "object" || item === null) {
       throw new ModelProviderError("embedding provider returned an invalid item");
     }
     const embedding = (item as Record<string, unknown>).embedding;
+    const index = (item as Record<string, unknown>).index;
+    if (!Number.isInteger(index) || (index as number) < 0 || (index as number) >= expectedCount) {
+      throw new ModelProviderError("embedding provider returned an invalid index");
+    }
     if (!Array.isArray(embedding) || embedding.some((value) => typeof value !== "number")) {
       throw new ModelProviderError("embedding provider returned an invalid vector");
     }
-    return truncateAndNormalize(embedding as readonly number[]);
+    return { index: index as number, embedding: truncateAndNormalize(embedding as readonly number[]) };
+  });
+  const byIndex = new Map(indexed.map((item) => [item.index, item.embedding]));
+  if (byIndex.size !== expectedCount) {
+    throw new ModelProviderError("embedding provider returned duplicate indices");
+  }
+  return Array.from({ length: expectedCount }, (_, index) => {
+    const embedding = byIndex.get(index);
+    if (embedding === undefined) {
+      throw new ModelProviderError("embedding provider omitted an index");
+    }
+    return embedding;
   });
 };
 
