@@ -54,11 +54,20 @@ export const makeTestRandomBytes = (seed = 0) => {
     layer: Layer.succeed(RandomBytesService, {
       bytes: (size) =>
         Effect.sync(() => {
+          const start = counter;
           const bytes = new Uint8Array(size);
           for (let index = 0; index < size; index += 1) {
             bytes[index] = (counter + index) & 0xff;
           }
           counter += size;
+          const cycle = Math.floor(start / 256);
+          if (cycle > 0 && size >= 6) {
+            let value = cycle;
+            for (let index = size - 1; index >= size - 6; index -= 1) {
+              bytes[index] = value & 0xff;
+              value = Math.floor(value / 256);
+            }
+          }
           return bytes;
         }),
     }),

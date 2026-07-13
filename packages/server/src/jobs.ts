@@ -10,10 +10,11 @@ import {
   type Uuid,
 } from "@great-minds/domain";
 import { and, count, desc, eq, inArray, sql, type SQL } from "drizzle-orm";
-import { Context, Effect, Layer, Stream } from "effect";
+import { Context, Effect, Layer, Option, Stream } from "effect";
 import * as WorkflowEngine from "effect/unstable/workflow/WorkflowEngine";
 
 import { cancelCompileWorkflow } from "./compile-intents.ts";
+import { AppConfig } from "./config.ts";
 import { dieDatabase } from "./db-defects.ts";
 import { pageEnvelope, oneTotal } from "./pagination.ts";
 import { PipelineRunsService } from "./pipeline-runs.ts";
@@ -97,9 +98,11 @@ export const JobsServiceLive = Layer.effect(
   JobsService,
   Effect.gen(function* () {
     const db = yield* Database;
+    const config = yield* AppConfig;
     const access = yield* VaultAccessService;
     const pipeline = yield* PipelineRunsService;
     const workflowEngine = yield* WorkflowEngine.WorkflowEngine;
+    const pollIntervalMs = Option.isSome(config.goldensClock) ? 1 : 100;
 
     const readRun = (vaultId: Uuid, jobId: Uuid) =>
       db
@@ -275,7 +278,7 @@ export const JobsServiceLive = Layer.effect(
                 yield sse("message", "");
                 heartbeatAt = Date.now() + 30_000;
               }
-              await new Promise((resolve) => setTimeout(resolve, 100));
+              await new Promise((resolve) => setTimeout(resolve, pollIntervalMs));
             }
           }
 

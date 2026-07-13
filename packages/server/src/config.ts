@@ -24,6 +24,15 @@ export type AppConfigShape = {
   readonly queryModel: string;
   readonly queryFallbackModels: readonly string[];
   readonly extractModel: string;
+  readonly mapModel: string;
+  readonly reduceModel: string;
+  readonly renderModel: string;
+  readonly compileEnrichConcurrency: number;
+  readonly compileWriteConcurrency: number;
+  readonly compilePartitionTargetTokens: number;
+  readonly compilePartitionMinFactor: number;
+  readonly compilePartitionMaxFactor: number;
+  readonly compilePremergeJaccardThreshold: number;
   readonly compileDeriveRelatedLimit: number;
   readonly pipelineConcurrency: number;
   readonly goldensRandomSeed: Option.Option<number>;
@@ -42,6 +51,8 @@ export class AppConfig extends Context.Service<AppConfig, AppConfigShape>()(
 const nonEmptyString = (name: string) => Config.schema(Schema.NonEmptyString, name);
 const positiveInt = (name: string) =>
   Config.schema(Schema.Int.pipe(Schema.check(Schema.isGreaterThan(0))), name);
+const positiveNumber = (name: string) =>
+  Config.schema(Schema.Number.pipe(Schema.check(Schema.isGreaterThan(0))), name);
 
 const validateRedacted = (value: Redacted.Redacted<string>) =>
   Schema.decodeUnknownEffect(Schema.NonEmptyString)(Redacted.value(value)).pipe(
@@ -87,6 +98,29 @@ const appConfig = Config.all({
     ),
   ),
   extractModel: nonEmptyString("EXTRACT_MODEL").pipe(Config.withDefault("deepseek/deepseek-v3.2")),
+  mapModel: nonEmptyString("MAP_MODEL").pipe(Config.withDefault("deepseek/deepseek-v3.2")),
+  reduceModel: nonEmptyString("REDUCE_MODEL").pipe(
+    Config.withDefault("anthropic/claude-sonnet-4.6"),
+  ),
+  renderModel: nonEmptyString("RENDER_MODEL").pipe(Config.withDefault("qwen/qwen3.6-plus")),
+  compileEnrichConcurrency: positiveInt("COMPILE_ENRICH_CONCURRENCY").pipe(
+    Config.withDefault(20),
+  ),
+  compileWriteConcurrency: positiveInt("COMPILE_WRITE_CONCURRENCY").pipe(
+    Config.withDefault(3),
+  ),
+  compilePartitionTargetTokens: positiveInt("COMPILE_PARTITION_TARGET_TOKENS").pipe(
+    Config.withDefault(100_000),
+  ),
+  compilePartitionMinFactor: positiveNumber("COMPILE_PARTITION_MIN_FACTOR").pipe(
+    Config.withDefault(0.3),
+  ),
+  compilePartitionMaxFactor: positiveNumber("COMPILE_PARTITION_MAX_FACTOR").pipe(
+    Config.withDefault(1.5),
+  ),
+  compilePremergeJaccardThreshold: positiveNumber("COMPILE_PREMERGE_JACCARD_THRESHOLD").pipe(
+    Config.withDefault(0.8),
+  ),
   compileDeriveRelatedLimit: positiveInt("COMPILE_DERIVE_RELATED_LIMIT").pipe(
     Config.withDefault(20),
   ),

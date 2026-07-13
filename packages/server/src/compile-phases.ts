@@ -3,7 +3,6 @@ import { resolve } from "node:path";
 
 import {
   backlinks,
-  compileCacheEntries,
   Database,
   searchIndex,
   sourceDocuments,
@@ -17,22 +16,22 @@ import type { Uuid } from "@great-minds/domain";
 import { and, asc, eq, inArray, like, notInArray, sql } from "drizzle-orm";
 import { Context, Effect, Exit, Layer, Schema } from "effect";
 
+import { ClockService } from "./clock.ts";
+import { makeCompileLlmCore } from "./compile-llm-core.ts";
 import { AppConfig } from "./config.ts";
-import { bodyContentHash, contentHash, fileContentHash, promptContentHash } from "./crypto.ts";
+import { bodyContentHash, contentHash, fileContentHash } from "./crypto.ts";
 import { dieDatabase } from "./db-defects.ts";
 import { EmbeddingsService } from "./embeddings.ts";
+import { LanguageModel } from "./llm.ts";
 import {
   extractWikiLinkTargets,
   markdownParagraphs,
   parseFrontmatter,
   serializeFrontmatter,
 } from "./markdown.ts";
-import {
-  PipelineRunsService,
-  type PipelineProgressStep,
-  progressSteps,
-} from "./pipeline-runs.ts";
+import { PipelineRunsService, progressSteps } from "./pipeline-runs.ts";
 import { VaultStorage } from "./storage.ts";
+import { RandomBytesService } from "./random.ts";
 
 export const INGEST_STEP_LABELS = { index_sources: "Indexing for search" } as const;
 export const EXTRACT_STEP_LABELS = {
@@ -228,25 +227,6 @@ const chunkDocument = (path: string, content: string): readonly SearchChunk[] =>
   return result;
 };
 
-const parseCachedRender = (value: unknown) => {
-  if (typeof value !== "object" || value === null) return undefined;
-  const body = (value as Record<string, unknown>).body;
-  const rawTags = (value as Record<string, unknown>).tags;
-  if (typeof body !== "string" || !Array.isArray(rawTags)) return undefined;
-  const tags: string[] = [];
-  const seen = new Set<string>();
-  for (const raw of rawTags) {
-    if (typeof raw !== "string") return undefined;
-    const tag = raw.trim().toLowerCase().replaceAll(" ", "-");
-    if (tag.length === 0) return undefined;
-    if (!seen.has(tag)) {
-      seen.add(tag);
-      tags.push(tag);
-    }
-  }
-  return { body, tags } as const;
-};
-
 const errorDetails = (cause: unknown) => {
   if (typeof cause === "object" && cause !== null) {
     if ("_tag" in cause) {
@@ -259,18 +239,6 @@ const errorDetails = (cause: unknown) => {
   }
   return { errorType: typeof cause, message: String(cause) };
 };
-
-const loadRenderPrompt = (vaultId: Uuid, storage: VaultStorage["Service"]) =>
-  Effect.gen(function* () {
-    const override = yield* Effect.result(storage.readText(vaultId, "prompts/render.md"));
-    if (override._tag === "Success") return override.success.trim();
-    return yield* Effect.tryPromise(() =>
-      readFile(new URL("./default_prompts/render.md", import.meta.url), "utf8"),
-    ).pipe(
-      Effect.orDie,
-      Effect.map((value) => value.trim()),
-    );
-  });
 
 type CompilePhasesShape = {
   readonly archiveTransitions: (
@@ -311,18 +279,11 @@ export const CompilePhasesLive = Layer.effect(
     const config = yield* AppConfig;
     const db = yield* Database;
     const embeddings = yield* EmbeddingsService;
+    const languageModel = yield* LanguageModel;
     const pipeline = yield* PipelineRunsService;
+    const randomBytes = yield* RandomBytesService;
+    const clock = yield* ClockService;
     const storage = yield* VaultStorage;
-
-    const failNotPorted = (
-      runId: Uuid,
-      phase: CompilePhase,
-      message: string,
-      steps: readonly PipelineProgressStep[],
-    ) =>
-      pipeline
-        .updateProgress(runId, phase, "failed", steps, message)
-        .pipe(Effect.andThen(Effect.fail(new CompilePhaseNotPorted({ phase, message }))));
 
     const rebuildSearchScope = (vaultId: Uuid, runId: Uuid, scope: "raw" | "wiki") =>
       Effect.gen(function* () {
@@ -570,6 +531,66 @@ export const CompilePhasesLive = Layer.effect(
           .pipe(dieDatabase);
       });
 
+    const applyArchiveTransitions = (
+      vaultId: Uuid,
+      transitions: readonly ArchiveTransition[],
+    ) =>
+      Effect.gen(function* () {
+        for (const transition of transitions) {
+          yield* db
+            .update(topics)
+            .set({
+              articleStatus: "archived",
+              supersededBy: transition.supersededBy,
+              updatedAt: sql`now()`,
+            })
+            .where(eq(topics.topicId, transition.topicId))
+            .pipe(dieDatabase);
+          const wikiPath = `wiki/${transition.slug}.md`;
+          const content = yield* Effect.result(storage.readText(vaultId, wikiPath));
+          if (content._tag === "Failure") continue;
+          const parsed = parseFrontmatter(content.success);
+          const frontmatter: Record<string, unknown> = {
+            ...parsed.frontmatter,
+            archived: true,
+          };
+          if (transition.supersededBy !== null) {
+            frontmatter.superseded_by = transition.supersededBy;
+          }
+          const archivePath = `archive/${transition.topicId}/${transition.slug}.md`;
+          yield* storage.writeText(
+            vaultId,
+            archivePath,
+            serializeFrontmatter(frontmatter, parsed.body),
+          );
+          yield* storage.deletePath(vaultId, wikiPath);
+          yield* db
+            .update(wikiArticles)
+            .set({ filePath: archivePath, archived: true, updatedAt: sql`now()` })
+            .where(
+              and(
+                eq(wikiArticles.vaultId, vaultId),
+                eq(wikiArticles.topicId, transition.topicId),
+              ),
+            )
+            .pipe(dieDatabase);
+        }
+      });
+
+    const llmCore = makeCompileLlmCore({
+      config,
+      db,
+      embeddings,
+      languageModel,
+      pipeline,
+      storage,
+      randomBytes,
+      clock,
+      archiveTransitions: applyArchiveTransitions,
+      materializeArticle: materializeCachedArticle,
+      rebuildWiki: (vaultId, runId) => rebuildSearchScope(vaultId, runId, "wiki"),
+    });
+
     return {
       archiveTransitions: (vaultId, transitions) =>
         Effect.gen(function* () {
@@ -631,30 +652,8 @@ export const CompilePhasesLive = Layer.effect(
             }),
           );
         }),
-      extract: (_vaultId, runId) =>
-        failNotPorted(
-          runId,
-          "extract",
-          "Compile phase 'extract' is not ported; M4.4 owns this phase seam",
-          progressSteps(EXTRACT_STEP_LABELS, "extract_cards", {
-            failed: new Set(["extract_cards"]),
-            details: {
-              extract_cards: "Compile phase 'extract' is not ported; M4.4 owns this phase seam",
-            },
-          }),
-        ),
-      abstract: (_vaultId, runId) =>
-        failNotPorted(
-          runId,
-          "abstract",
-          "Compile phase 'abstract' is not ported; M4.4 owns this phase seam",
-          progressSteps(ABSTRACT_STEP_LABELS, "group_ideas", {
-            failed: new Set(["group_ideas"]),
-            details: {
-              group_ideas: "Compile phase 'abstract' is not ported; M4.4 owns this phase seam",
-            },
-          }),
-        ),
+      extract: llmCore.extract,
+      abstract: llmCore.abstract,
       derive: (vaultId, runId, validated) =>
         Effect.gen(function* () {
           if (validated.length === 0) {
@@ -767,96 +766,7 @@ export const CompilePhasesLive = Layer.effect(
             }),
           );
         }),
-      render: (vaultId, runId, validated) =>
-        Effect.gen(function* () {
-          if (validated.length === 0) return;
-          yield* pipeline.updateProgress(
-            runId,
-            "render",
-            "progress",
-            progressSteps(RENDER_STEP_LABELS, "plan_articles", {
-              counts: { plan_articles: [0, validated.length] },
-            }),
-          );
-          const prompt = yield* loadRenderPrompt(vaultId, storage);
-          const promptHash = promptContentHash(prompt);
-          const existingWiki = new Set(
-            (yield* storage.listMarkdown(vaultId, "wiki")).map((file) => file.path),
-          );
-          const toRender: ValidatedTopic[] = [];
-          let materialized = 0;
-          for (const [index, topic] of validated.entries()) {
-            const key = renderCacheKey({ topic, promptHash, model: RENDER_MODEL });
-            const cachedRows = yield* db
-              .select({ value: compileCacheEntries.value })
-              .from(compileCacheEntries)
-              .where(
-                and(
-                  eq(compileCacheEntries.vaultId, vaultId),
-                  eq(compileCacheEntries.phase, "render"),
-                  eq(compileCacheEntries.cacheKey, key),
-                ),
-              )
-              .limit(1)
-              .pipe(dieDatabase);
-            yield* pipeline.updateProgress(
-              runId,
-              "render",
-              "progress",
-              progressSteps(RENDER_STEP_LABELS, "plan_articles", {
-                counts: { plan_articles: [index + 1, validated.length] },
-              }),
-            );
-            const output = parseCachedRender(cachedRows[0]?.value);
-            if (output === undefined) {
-              toRender.push(topic);
-              continue;
-            }
-            const path = `wiki/${topic.slug}.md`;
-            if (!existingWiki.has(path)) {
-              yield* materializeCachedArticle(vaultId, runId, topic, output);
-              materialized += 1;
-            }
-          }
-          if (toRender.length > 0) {
-            const message = `Compile phase 'render' needs ${toRender.length} LLM render(s); M4.4 owns this phase seam`;
-            return yield* failNotPorted(
-              runId,
-              "render",
-              message,
-              progressSteps(RENDER_STEP_LABELS, "write_articles", {
-                completed: new Set(["plan_articles"]),
-                failed: new Set(["write_articles"]),
-                counts: {
-                  plan_articles: [validated.length, validated.length],
-                  write_articles: [0, toRender.length],
-                },
-                details: { write_articles: message },
-              }),
-            );
-          }
-          if (materialized > 0) {
-            yield* pipeline.updateProgress(
-              runId,
-              "render",
-              "progress",
-              progressSteps(RENDER_STEP_LABELS, "index_articles", {
-                completed: new Set(["plan_articles"]),
-                counts: { plan_articles: [validated.length, validated.length] },
-              }),
-            );
-            yield* rebuildSearchScope(vaultId, runId, "wiki");
-          }
-          yield* pipeline.updateProgress(
-            runId,
-            "render",
-            "completed",
-            progressSteps(RENDER_STEP_LABELS, "index_articles", {
-              completed: new Set(Object.keys(RENDER_STEP_LABELS)),
-              counts: { plan_articles: [validated.length, validated.length] },
-            }),
-          );
-        }),
+      render: llmCore.render,
       verify: (vaultId, runId) =>
         Effect.gen(function* () {
           yield* pipeline.updateProgress(

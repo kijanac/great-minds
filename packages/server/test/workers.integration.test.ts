@@ -31,18 +31,20 @@ import { stagedFileToMarkdown } from "../src/conversion.ts";
 import { DrizzleLive } from "../src/db.ts";
 import { EmbeddingsService } from "../src/embeddings.ts";
 import { JobsService, JobsServiceLive } from "../src/jobs.ts";
+import { LanguageModel } from "../src/llm.ts";
 import { StructuredLogger } from "../src/logging.ts";
 import {
   PipelineRunsService,
   PipelineRunsServiceLive,
   progressSteps,
 } from "../src/pipeline-runs.ts";
+import { RandomBytesLive } from "../src/random.ts";
 import { SourceDocumentsServiceLive } from "../src/source-documents.ts";
 import {
   StagedFileIngestWorkflow,
   StagedFileIngestWorkflowLive,
 } from "../src/staged-file-ingest-workflow.ts";
-import { VaultStorage } from "../src/storage.ts";
+import { StorageFileMissing, VaultStorage } from "../src/storage.ts";
 import { VaultAccessServiceLive } from "../src/vaults.ts";
 import { WorkflowEngineLive } from "../src/workflow-engine.ts";
 
@@ -110,6 +112,15 @@ const config: AppConfigShape = {
   queryModel: "test",
   queryFallbackModels: ["test"],
   extractModel: "test",
+  mapModel: "test",
+  reduceModel: "test",
+  renderModel: "test",
+  compileEnrichConcurrency: 1,
+  compileWriteConcurrency: 1,
+  compilePartitionTargetTokens: 100_000,
+  compilePartitionMinFactor: 0.3,
+  compilePartitionMaxFactor: 1.5,
+  compilePremergeJaccardThreshold: 0.8,
   compileDeriveRelatedLimit: 20,
   pipelineConcurrency: 1,
   goldensRandomSeed: Option.none(),
@@ -163,7 +174,12 @@ const TestLoggerLive = Layer.succeed(StructuredLogger, {
 
 const StorageLive = Layer.succeed(VaultStorage, {
   listMarkdown: () => Effect.succeed([]),
-  readText: () => Effect.die("unused"),
+  readText: (_vaultId, path) => {
+    const content = written.get(path);
+    return content === undefined
+      ? Effect.fail(new StorageFileMissing({ path }))
+      : Effect.succeed(content);
+  },
   writeText: (_vaultId, path, content) =>
     Effect.sync(() => written.set(path, content)).pipe(Effect.asVoid),
   appendText: () => Effect.die("unused"),
@@ -209,11 +225,20 @@ const BaseLive = Layer.mergeAll(
   DrizzleLive.pipe(Layer.provideMerge(ConfigLive)),
   TestLoggerLive,
   ClockLive,
+  RandomBytesLive,
 );
 const PipelineLive = PipelineRunsServiceLive.pipe(Layer.provideMerge(BaseLive));
 const VaultAccessLive = VaultAccessServiceLive.pipe(Layer.provideMerge(BaseLive));
 const EmbeddingsLive = Layer.succeed(EmbeddingsService, { embed: async () => [] });
+const LanguageModelLive = Layer.succeed(LanguageModel, {
+  hasApiKey: true,
+  streamChat: async function* () {},
+  complete: async () => {
+    throw new Error("unexpected compile LLM call");
+  },
+});
 const CompilePhasesLiveLayer = CompilePhasesLive.pipe(
+  Layer.provideMerge(LanguageModelLive),
   Layer.provideMerge(EmbeddingsLive),
   Layer.provideMerge(PipelineLive),
   Layer.provideMerge(StorageLive),
@@ -759,7 +784,7 @@ describe("M4.2 durable workers", () => {
     expect(rows.intents).toHaveLength(1);
   }, 60_000);
 
-  it("dispatches the compile workflow in order and fails loudly at the first M4.4 seam", async () => {
+  it("dispatches the compile workflow through the no-topics publish happy path", async () => {
     await run(
       Effect.gen(function* () {
         const db = yield* Database;
@@ -797,26 +822,18 @@ describe("M4.2 durable workers", () => {
     );
     expect(rows.intent[0]?.satisfiedAt).not.toBeNull();
     expect(rows.pipeline[0]).toMatchObject({
-      status: "failed",
-      currentPhase: "extract",
-      phaseStatus: "failed",
-      error: "Compile phase 'extract' is not ported; M4.4 owns this phase seam",
+      status: "completed",
+      currentPhase: "publish",
+      phaseStatus: "completed",
+      error: null,
     });
     expect(rows.pipeline[0]?.progressSteps).toEqual([
       {
-        key: "extract_cards",
-        label: "Extracting source cards",
-        status: "failed",
-        done: null,
-        total: null,
-        detail: "Compile phase 'extract' is not ported; M4.4 owns this phase seam",
-      },
-      {
-        key: "embed_ideas",
-        label: "Embedding ideas",
-        status: "pending",
-        done: null,
-        total: null,
+        key: "phase",
+        label: "compile completed early: no validated topics",
+        status: "completed",
+        done: 1,
+        total: 1,
         detail: "",
       },
     ]);

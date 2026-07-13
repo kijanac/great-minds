@@ -35,10 +35,13 @@ import { RENDER_MODEL,
   type ValidatedTopic,
 } from "../src/compile-phases.ts";
 import { AppConfig, type AppConfigShape } from "../src/config.ts";
+import { ClockLive } from "../src/clock.ts";
 import { contentHash, promptContentHash } from "../src/crypto.ts";
 import { DrizzleLive } from "../src/db.ts";
 import { EmbeddingsService } from "../src/embeddings.ts";
+import { LanguageModel } from "../src/llm.ts";
 import { PipelineRunsServiceLive } from "../src/pipeline-runs.ts";
+import { RandomBytesLive } from "../src/random.ts";
 import { StorageFileMissing, VaultStorage } from "../src/storage.ts";
 
 const id = {
@@ -84,6 +87,15 @@ const config: AppConfigShape = {
   queryModel: "test",
   queryFallbackModels: ["test"],
   extractModel: "deepseek/deepseek-v3.2",
+  mapModel: "deepseek/deepseek-v3.2",
+  reduceModel: "anthropic/claude-sonnet-4.6",
+  renderModel: "qwen/qwen3.6-plus",
+  compileEnrichConcurrency: 1,
+  compileWriteConcurrency: 1,
+  compilePartitionTargetTokens: 100_000,
+  compilePartitionMinFactor: 0.3,
+  compilePartitionMaxFactor: 1.5,
+  compilePremergeJaccardThreshold: 0.8,
   compileDeriveRelatedLimit: 20,
   pipelineConcurrency: 1,
   goldensRandomSeed: Option.none(),
@@ -128,7 +140,11 @@ const StorageLive = Layer.succeed(VaultStorage, {
 });
 
 const ConfigLive = Layer.succeed(AppConfig, config);
-const BaseLive = DrizzleLive.pipe(Layer.provideMerge(ConfigLive));
+const BaseLive = Layer.mergeAll(
+  DrizzleLive.pipe(Layer.provideMerge(ConfigLive)),
+  ClockLive,
+  RandomBytesLive,
+);
 const PipelineLive = PipelineRunsServiceLive.pipe(Layer.provideMerge(BaseLive));
 const EmbeddingsLive = Layer.succeed(EmbeddingsService, {
   embed: async (texts) => {
@@ -136,7 +152,15 @@ const EmbeddingsLive = Layer.succeed(EmbeddingsService, {
     return texts.map(() => [1, ...Array.from({ length: 1023 }, () => 0)]);
   },
 });
+const LanguageModelLive = Layer.succeed(LanguageModel, {
+  hasApiKey: true,
+  streamChat: async function* () {},
+  complete: async () => {
+    throw new Error("unexpected compile LLM call");
+  },
+});
 const PhasesLive = CompilePhasesLive.pipe(
+  Layer.provideMerge(LanguageModelLive),
   Layer.provideMerge(EmbeddingsLive),
   Layer.provideMerge(PipelineLive),
   Layer.provideMerge(StorageLive),
@@ -394,7 +418,7 @@ describe("M4.3a deterministic compile phases", () => {
     ]);
   });
 
-  it("render repairs a missing file from cache, reuses it, and rejects an invalid-cache fallthrough", async () => {
+  it("render repairs a missing file from cache, reuses it, and isolates an invalid-cache fallthrough", async () => {
     await seedSourceAndIdeas();
     const prompt = (
       await readFile(new URL("../src/default_prompts/render.md", import.meta.url), "utf8")
@@ -457,9 +481,8 @@ describe("M4.3a deterministic compile phases", () => {
           .pipe(Effect.orDie);
       }),
     );
-    await expect(
-      run(Effect.flatMap(CompilePhases, (phases) => phases.render(id.vault, id.run, [invalid]))),
-    ).rejects.toMatchObject({ _tag: "CompilePhaseNotPorted", phase: "render" });
+    await run(Effect.flatMap(CompilePhases, (phases) => phases.render(id.vault, id.run, [invalid])));
+    expect(files.has("wiki/invalid.md")).toBe(false);
   });
 
   it("archives rendered and unrendered topics with terminal supersession pointers", async () => {

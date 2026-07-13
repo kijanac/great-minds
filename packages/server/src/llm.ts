@@ -2,9 +2,15 @@ import { Context, Effect, Layer, Option, Redacted } from "effect";
 
 import { AppConfig } from "./config.ts";
 
+export type LlmTextContentPart = {
+  readonly type: "text";
+  readonly text: string;
+  readonly cache_control?: { readonly type: "ephemeral" };
+};
+
 export type LlmTextMessage = {
   readonly role: "system" | "user" | "assistant";
-  readonly content: string | null;
+  readonly content: string | null | readonly LlmTextContentPart[];
   readonly tool_calls?: readonly LlmAssistantToolCall[];
 };
 
@@ -75,11 +81,13 @@ export type CompleteInput = {
   readonly model: string;
   readonly messages: readonly LlmMessage[];
   readonly temperature: number;
-  readonly responseFormat?: "json_object";
+  readonly responseFormat?: "json_object" | Record<string, unknown>;
+  readonly requestProfile?: "default" | "compile";
 };
 
 export type ModelCompletion = {
   readonly text: string;
+  readonly finishReason?: string | null;
   readonly generationId?: string;
   readonly usage?: LlmUsage;
 };
@@ -225,6 +233,34 @@ const postChatWithRateLimitRetry = async (apiUrl: string, apiKey: string, body: 
   }
 };
 
+export const completionRequestBody = (input: CompleteInput) => {
+  const responseFormat =
+    typeof input.responseFormat === "string"
+      ? { type: input.responseFormat }
+      : input.responseFormat;
+  const common = {
+    model: input.model,
+    messages: input.messages,
+    temperature: input.temperature,
+    response_format: responseFormat,
+  };
+  if (input.requestProfile === "compile") {
+    return {
+      ...common,
+      usage: { include: true },
+    };
+  }
+  return {
+    ...common,
+    stream: false,
+    usage: { include: true },
+    provider: {
+      allow_fallbacks: true,
+      sort: "throughput",
+    },
+  };
+};
+
 const parseDataLines = (block: string) =>
   block
     .split(/\r?\n/)
@@ -354,19 +390,11 @@ export const LanguageModelLive = Layer.effect(
       },
       complete: async (input) => {
         const key = requireApiKey();
-        const response = await postChatWithRateLimitRetry(config.openRouterApiUrl, key, {
-          model: input.model,
-          messages: input.messages,
-          temperature: input.temperature,
-          response_format:
-            input.responseFormat === undefined ? undefined : { type: input.responseFormat },
-          stream: false,
-          usage: { include: true },
-          provider: {
-            allow_fallbacks: true,
-            sort: "throughput",
-          },
-        });
+        const response = await postChatWithRateLimitRetry(
+          config.openRouterApiUrl,
+          key,
+          completionRequestBody(input),
+        );
         const json = (await response.json()) as Record<string, unknown>;
         const choices = json.choices;
         const first =
@@ -380,6 +408,10 @@ export const LanguageModelLive = Layer.effect(
         const text = typeof message?.content === "string" ? message.content : "";
         return {
           text,
+          finishReason:
+            typeof first?.finish_reason === "string" || first?.finish_reason === null
+              ? (first.finish_reason as string | null)
+              : null,
           generationId: typeof json.id === "string" ? json.id : undefined,
           usage: usageFrom(json.usage),
         };

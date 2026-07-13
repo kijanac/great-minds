@@ -175,43 +175,6 @@ const compile = async (baseUrl: string, bearer: string, runId: string, env: Node
   throw new Error(`compile timeout: ${runId}`);
 };
 
-const typescriptSeam = async (baseUrl: string, bearer: string, env: NodeJS.ProcessEnv) => {
-  const runId = fixtureIds.firstRun;
-  const submitted = await request(baseUrl, `/v1/vaults/${fixtureIds.vault}/compile`, bearer, {
-    method: "POST",
-    body: JSON.stringify({ job_id: runId }),
-  }) as Row;
-  const deadline = Date.now() + 30_000;
-  while (Date.now() < deadline) {
-    const row = await output("psql", [databaseUrl, "-At", "-v", "ON_ERROR_STOP=1", "-c", `select jsonb_build_object('status',status,'current_phase',current_phase,'phase_status',phase_status,'error',error) from pipeline_runs where id=${sqlString(runId)}`], { cwd: repoRoot, env });
-    const job = JSON.parse(row.trim()) as Row;
-    if (["completed", "failed", "cancelled"].includes(String(job.status))) {
-      const expectedError = "Compile phase 'extract' is not ported; M4.4 owns this phase seam";
-      if (job.status !== "failed" || job.current_phase !== "extract" || job.phase_status !== "failed" || job.error !== expectedError) {
-        throw new Error(`TypeScript seam ended unexpectedly: ${JSON.stringify(job)}`);
-      }
-      const readback = await request(baseUrl, `/v1/vaults/${fixtureIds.vault}/jobs/${runId}`, bearer) as Row;
-      const sourceCount = Number((await output("psql", [databaseUrl, "-At", "-v", "ON_ERROR_STOP=1", "-c", `select count(*) from source_documents where vault_id=${sqlString(fixtureIds.vault)}`], { cwd: repoRoot, env })).trim());
-      if (sourceCount !== corpus.length) throw new Error(`TypeScript fixture seed mismatch: ${sourceCount} != ${corpus.length}`);
-      const searchIndexCount = Number((await output("psql", [databaseUrl, "-At", "-v", "ON_ERROR_STOP=1", "-c", `select count(*) from search_index where vault_id=${sqlString(fixtureIds.vault)}`], { cwd: repoRoot, env })).trim());
-      if (searchIndexCount <= 0) throw new Error("TypeScript ingest reached the extract seam without indexing any searchable chunks");
-      return {
-        backend: "typescript",
-        health: "ok",
-        auth: "ok",
-        fixtureSources: sourceCount,
-        searchIndexRows: searchIndexCount,
-        submittedRunId: submitted.id,
-        terminal: job,
-        readbackStatus: readback.status,
-        acceptance: "M4.4-pending typed extract seam failure",
-      } satisfies Row;
-    }
-    await sleep(100);
-  }
-  throw new Error("TypeScript golden lane hung before reaching the extract seam");
-};
-
 const seedArchiveCandidates = async (dataDir: string, env: NodeJS.ProcessEnv) => {
   const body = "# Legacy Mutual Aid\n\nThis rendered article is intentionally retired by the next canonical registry.\n";
   const content = `---\ntitle: Legacy Mutual Aid\nprecis: Retired fixture\ntopic_id: ${fixtureIds.archiveTopic}\narchived: false\n---\n${body}`;
@@ -367,6 +330,7 @@ const cancelScenario = async (
   bearer: string,
   env: NodeJS.ProcessEnv,
   proxy: Awaited<ReturnType<typeof startCassetteProxy>>,
+  backend: BackendKind,
 ) => {
   await output("psql", [databaseUrl, "-v", "ON_ERROR_STOP=1", "-c", `update compile_intents set satisfied_at=now() where vault_id=${sqlString(fixtureIds.vault)} and satisfied_at is null`], { cwd: repoRoot, env });
   await output("psql", [databaseUrl, "-v", "ON_ERROR_STOP=1", "-c", `delete from compile_cache_entries where id=(select id from compile_cache_entries where vault_id=${sqlString(fixtureIds.vault)} and phase='canonicalize_registry' order by cache_key limit 1)`], { cwd: repoRoot, env });
@@ -385,10 +349,20 @@ const cancelScenario = async (
   await request(baseUrl, `/v1/vaults/${fixtureIds.vault}/compile/${fixtureIds.cancelRun}/cancel`, bearer, { method: "POST" });
   const observed = await waitForJob(baseUrl, bearer, fixtureIds.cancelRun, ["cancelled"]);
   proxy.releasePaused();
-  const final = await waitForJob(baseUrl, bearer, fixtureIds.cancelRun, ["failed"]);
+  const final = await waitForJob(
+    baseUrl,
+    bearer,
+    fixtureIds.cancelRun,
+    backend === "python" ? ["failed"] : ["cancelled"],
+  );
   return {
     observedBeforeTaskStop: { jobStatus: observed.status, phaseStatus: observed.phase_status },
-    afterCancelledTaskHandler: { jobStatus: final.status, phaseStatus: final.phase_status, error: final.error, clobberedBy: "python" },
+    afterCancelledTaskHandler: {
+      jobStatus: final.status,
+      phaseStatus: final.phase_status,
+      error: final.error,
+      clobberedBy: backend,
+    },
     sse: await sse,
   } satisfies Row;
 };
@@ -452,7 +426,7 @@ export const executeHarness = async (options: { readonly mode: ExecutionMode; re
     OPENROUTER_API_KEY: options.mode === "record" ? process.env.OPENROUTER_API_KEY : "cassette-replay-key",
     UV_CACHE_DIR: process.env.UV_CACHE_DIR ?? "/tmp/gm-uv-cache",
     PYTHONPATH: join(repoRoot, "src"),
-    COMPILE_ENRICH_CONCURRENCY: "4",
+    COMPILE_ENRICH_CONCURRENCY: backend === "typescript" ? "50" : "4",
     COMPILE_WRITE_CONCURRENCY: "3",
     COMPILE_PARTITION_TARGET_TOKENS: "400",
     PIPELINE_CONCURRENCY: "1",
@@ -480,6 +454,7 @@ export const executeHarness = async (options: { readonly mode: ExecutionMode; re
       preferredSynthesisKeys: options.identityFixture === undefined ? undefined : (options.identityFixture.compileCache as Row[])
         .filter((row) => row.phase === "synthesize")
         .map((row) => localTopicSetKey(((row.value as Row).local_topics as Json[]) ?? [])),
+      gateSynthesisCompletion: backend === "typescript",
     });
     env.OPENROUTER_API_BASE = proxy.baseUrl;
     env.OPENROUTER_API_URL = proxy.baseUrl;
@@ -497,16 +472,6 @@ export const executeHarness = async (options: { readonly mode: ExecutionMode; re
     }
     await waitForHealth(api, `${baseUrl}/health`);
     let bearer = await token(baseUrl);
-    if (backend === "typescript") {
-      const scenario = await typescriptSeam(baseUrl, bearer, env);
-      return {
-        artifacts: {},
-        scenarios: { typescriptSeam: scenario },
-        steeringFixtures: { repairRenderHeading: "" },
-        cassetteJson: proxy.cassetteJson(),
-        proxyStats: proxy.stats(),
-      };
-    }
     proxy.setCompileGeneration(0);
     const firstRun = await compile(baseUrl, bearer, fixtureIds.firstRun, env);
     const first = await snapshot(dataDir, env, progressFromSse(firstRun.sse));
@@ -552,7 +517,7 @@ export const executeHarness = async (options: { readonly mode: ExecutionMode; re
         archiveFilePaths: (second.renderedFiles as Row[]).filter((row) => String(row.path).startsWith("archive/")).map((row) => row.path),
       },
       stagedWorker: await stagedWorkerScenario(baseUrl, bearer),
-      cancelOddity22: await cancelScenario(baseUrl, bearer, env, proxy),
+      cancelOddity22: await cancelScenario(baseUrl, bearer, env, proxy, backend),
       ...await lintAndCostScenarios(baseUrl, bearer, env),
     };
     const artifacts: Json = { first, second };
@@ -648,12 +613,32 @@ export const runGoldens = async (mode: Mode) => {
   if (backend !== "python" && backend !== "typescript") throw new Error("GOLDENS_BACKEND must be python or typescript");
   if (backend === "typescript") {
     if (mode !== "check") throw new Error("the TypeScript M4.3 lane supports check only");
-    const seam = await executeHarness({ mode: "check", backend, replayCassettePath: cassettePath });
-    if (seam.proxyStats.rawHits < 1) throw new Error("TypeScript golden lane reached no raw-tier cassette hits");
-    if (seam.proxyStats.alphaFallbacks !== 0 || seam.proxyStats.misses !== 0) {
-      throw new Error(`TypeScript golden lane requires raw-only replay: ${JSON.stringify(seam.proxyStats)}`);
+    const { expected } = await readBankedPair();
+    const expectedRow = expected as Row;
+    const replay = await executeHarness({
+      mode: "check",
+      backend,
+      replayCassettePath: cassettePath,
+      identityFixture: expectedRow.first as Row,
+      renderFixtures: [expectedRow.first as Row, expectedRow.second as Row],
+      repairRenderHeading: (expectedRow.steeringFixtures as Row | undefined)
+        ?.repairRenderHeading as string | undefined,
+    });
+    const diagnosticActualPath = process.env.GOLDENS_DIAGNOSTIC_ACTUAL;
+    if (diagnosticActualPath !== undefined) {
+      await writeFile(diagnosticActualPath, `${JSON.stringify(replay.artifacts, null, 2)}\n`, "utf8");
     }
-    return { result: "typescript-seam-m4.4-pending", goldenPath, cassettePath, proxyStats: seam.proxyStats };
+    const diff = compareArtifacts(expected, replay.artifacts);
+    if (diff !== undefined) {
+      throw new Error(
+        `TypeScript golden lane failed alpha-exact comparison (${JSON.stringify(replay.proxyStats)}):\n${diff}`,
+      );
+    }
+    if (replay.proxyStats.rawHits < 1) throw new Error("TypeScript golden lane reached no raw-tier cassette hits");
+    if (replay.proxyStats.alphaFallbacks !== 0 || replay.proxyStats.misses !== 0) {
+      throw new Error(`TypeScript golden lane requires raw-only replay: ${JSON.stringify(replay.proxyStats)}`);
+    }
+    return { result: "alpha-exact", goldenPath, cassettePath, proxyStats: replay.proxyStats };
   }
   if (mode === "record" && process.env.GOLDENS_RECORD !== "1") throw new Error("recording requires GOLDENS_RECORD=1");
   if (mode === "record-deferred") {

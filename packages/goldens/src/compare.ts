@@ -44,7 +44,13 @@ const pairRows = (
 ) => {
   const expectedIndex = indexUnique(expected, expectedKey, `golden ${label}`);
   const actualIndex = indexUnique(actual, actualKey, `replay ${label}`);
-  if (expectedIndex.size !== actualIndex.size) throw new Error(`${label} cardinality differs: ${expectedIndex.size} != ${actualIndex.size}`);
+  if (expectedIndex.size !== actualIndex.size) {
+    const missing = [...expectedIndex.keys()].filter((key) => !actualIndex.has(key));
+    const extra = [...actualIndex.keys()].filter((key) => !expectedIndex.has(key));
+    throw new Error(
+      `${label} cardinality differs: ${expectedIndex.size} != ${actualIndex.size}; missing=${JSON.stringify(missing)} extra=${JSON.stringify(extra)}`,
+    );
+  }
   for (const [stableKey, actualRow] of actualIndex) {
     const expectedRow = expectedIndex.get(stableKey);
     if (expectedRow === undefined) throw new Error(`${label} has no golden partner for stable key: ${stableKey}`);

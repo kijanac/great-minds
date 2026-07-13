@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { readdir, readFile } from "node:fs/promises";
+import { readFile } from "node:fs/promises";
 import { promisify } from "node:util";
 
 import { describe, expect, it } from "vitest";
@@ -69,19 +69,24 @@ describe("hardcoded query prompts", () => {
 });
 
 describe("default prompts", () => {
-  it("stay byte-equal to the Python default prompts", async () => {
+  const names = [
+    "canonicalize_assign.md",
+    "canonicalize_registry.md",
+    "cleanup.md",
+    "extract.md",
+    "query.md",
+    "query_btw.md",
+    "render.md",
+    "synthesize.md",
+  ] as const;
+
+  it.each(names)("%s stays byte-equal to the Python default prompt", async (name) => {
     const pythonDir = new URL("../../../src/great_minds/core/default_prompts/", import.meta.url);
     const tsDir = new URL("../src/default_prompts/", import.meta.url);
-    const names = (await readdir(pythonDir)).filter((name) => name.endsWith(".md")).sort();
-
-    await Promise.all(
-      names.map(async (name) => {
-        const [pythonPrompt, tsPrompt] = await Promise.all([
-          readFile(new URL(name, pythonDir), "utf8"),
-          readFile(new URL(name, tsDir), "utf8"),
-        ]);
-        expect(tsPrompt).toBe(pythonPrompt);
-      }),
-    );
+    const [pythonPrompt, tsPrompt] = await Promise.all([
+      readFile(new URL(name, pythonDir), "utf8"),
+      readFile(new URL(name, tsDir), "utf8"),
+    ]);
+    expect(tsPrompt).toBe(pythonPrompt);
   });
 });

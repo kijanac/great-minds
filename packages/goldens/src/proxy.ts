@@ -247,7 +247,27 @@ const responseLocalTopicSetKey = (entry: CassetteEntry) => {
   if (typeof content !== "string") return "[]";
   try {
     const parsed = JSON.parse(content) as { topics?: unknown };
-    return Array.isArray(parsed.topics) ? localTopicSetKey(parsed.topics) : "[]";
+    if (!Array.isArray(parsed.topics)) return "[]";
+    const requestTags = new Set(
+      [...requestText(entry.requestBody).matchAll(/^- (idea_\d+) /gm)].map((match) => match[1]),
+    );
+    const effective = parsed.topics.filter((topic) => {
+      if (topic === null || typeof topic !== "object") return false;
+      const row = topic as {
+        readonly slug?: unknown;
+        readonly title?: unknown;
+        readonly subsumed_idea_ids?: unknown;
+      };
+      if (typeof row.slug !== "string" || row.slug.trim().length === 0) return false;
+      if (typeof row.title !== "string" || row.title.trim().length === 0) return false;
+      return (
+        Array.isArray(row.subsumed_idea_ids) &&
+        row.subsumed_idea_ids.some(
+          (tag) => typeof tag === "string" && requestTags.has(tag),
+        )
+      );
+    });
+    return localTopicSetKey(effective);
   } catch {
     return "[]";
   }
@@ -354,6 +374,7 @@ export const startCassetteProxy = async (options: {
   readonly preferredTopicTitles?: readonly string[];
   readonly preferredRenderContents?: readonly string[];
   readonly preferredSynthesisKeys?: readonly string[];
+  readonly gateSynthesisCompletion?: boolean;
 }) => {
   if (options.record && !options.liveApiKey) throw new Error("record mode requires OPENROUTER_API_KEY");
   // A recording is one effective run. Never mix responses from an older
@@ -373,8 +394,17 @@ export const startCassetteProxy = async (options: {
   const extractionRanks = new Map(extractionEntries.map((entry, rank) => [entry, rank]));
   const extractionOrder = createReplayOrderGate();
   const preferredSynthesisKeySet = new Set(options.preferredSynthesisKeys ?? []);
-  const synthesisEntries = orderedEntries.filter((entry) => preferredSynthesisKeySet.has(responseLocalTopicSetKey(entry)));
-  const preferredSynthesisEntries = new Map(synthesisEntries.map((entry) => [ideaContentKey(entry.requestBody), entry]));
+  const preferredSynthesisEntries = new Map(
+    orderedEntries
+      .filter((entry) => preferredSynthesisKeySet.has(responseLocalTopicSetKey(entry)))
+      .map((entry) => [ideaContentKey(entry.requestBody), entry]),
+  );
+  const selectedSynthesisEntries = new Set(preferredSynthesisEntries.values());
+  const synthesisEntries = options.gateSynthesisCompletion === true
+    ? orderedEntries.filter((entry) => selectedSynthesisEntries.has(entry))
+    : [];
+  const synthesisRanks = new Map(synthesisEntries.map((entry, rank) => [entry, rank]));
+  const synthesisOrder = createReplayOrderGate();
   const duplicateHashEntries = new Map<string, CassetteEntry[]>();
   for (const entry of orderedEntries) duplicateHashEntries.set(entry.requestHash, [...duplicateHashEntries.get(entry.requestHash) ?? [], entry]);
   const duplicateRanks = new Map<CassetteEntry, { gate: ReturnType<typeof createReplayOrderGate>; rank: number }>();
@@ -412,7 +442,7 @@ export const startCassetteProxy = async (options: {
       const parsedRequestBody = rawBody.length === 0 ? null : JSON.parse(rawBody.toString("utf8")) as unknown;
       const hash = requestBodyHash(rawBody);
       const rawCandidates = rawEntries.get(parsedBodyHash(parsedRequestBody)) ?? [];
-      const rawExisting = rawCandidates.find((entry) => !ordinallyUsed.has(entry)) ?? rawCandidates[0];
+      let rawExisting = rawCandidates.find((entry) => !ordinallyUsed.has(entry)) ?? rawCandidates[0];
       const hashCandidates = hashEntries.get(hash) ?? [];
       const hashExisting = hashCandidates.find((entry) => !ordinallyUsed.has(entry)) ?? hashCandidates[0];
       let existing: CassetteEntry | undefined = rawExisting ?? hashExisting ?? entries.get(hash);
@@ -481,6 +511,7 @@ export const startCassetteProxy = async (options: {
           && requestModel(entry.requestBody) === requestModel(parsedRequestBody)
           && renderRequestKey(entry.requestBody) === currentRenderKey));
         if (renderCandidate !== undefined) {
+          if (rawCandidates.includes(renderCandidate)) rawExisting = renderCandidate;
           existing = renderCandidate;
           alphaFallback = rawExisting !== renderCandidate;
         }
@@ -534,8 +565,13 @@ export const startCassetteProxy = async (options: {
           method: request.method ?? "POST",
           path: request.url ?? "",
           cassetteHit: existing !== undefined,
+          cassetteSequence: existing?.sequence,
+          rawSequence: rawExisting?.sequence,
+          extractionRank: existing === undefined ? undefined : extractionRanks.get(existing),
+          synthesisRank: existing === undefined ? undefined : synthesisRanks.get(existing),
           rawHit: rawExisting !== undefined,
           alphaFallback,
+          requestBody: alphaFallback ? parsedRequestBody : undefined,
         })}\n`, "utf8"));
         await writeChain;
       }
@@ -567,10 +603,16 @@ export const startCassetteProxy = async (options: {
         const ideaRewritten = rewriteIdeaTags(existing.requestBody, parsedRequestBody, assignmentRewritten);
         const extractionRank = extractionRanks.get(existing);
         if (extractionRank !== undefined) await extractionOrder.wait(extractionRank);
+        const synthesisRank = synthesisRanks.get(existing);
+        if (synthesisRank !== undefined) await synthesisOrder.wait(synthesisRank);
         const duplicate = currentRenderKey === "" ? duplicateRanks.get(existing) : undefined;
         if (duplicate !== undefined) await duplicate.gate.wait(duplicate.rank);
         response.end(JSON.stringify(rewriteEmbeddingOrder(existing.requestBody, parsedRequestBody, ideaRewritten)));
         if (extractionRank !== undefined) extractionOrder.release(extractionRank);
+        if (synthesisRank !== undefined) {
+          await new Promise((resolve) => setTimeout(resolve, 250));
+          synthesisOrder.release(synthesisRank);
+        }
         if (duplicate !== undefined) {
           await new Promise((resolve) => setTimeout(resolve, 3_000));
           duplicate.gate.release(duplicate.rank);
