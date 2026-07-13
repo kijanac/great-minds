@@ -20,6 +20,8 @@
 **M4.4 — Pipeline phases: LLM core.** extract, abstract (partition/premerge/canonicalize/synthesize/validate), render — faithful ports of prompts (drift guards), structured-output schemas, cache-key construction (exact), truncation/failure handling per the hardened Python behavior. Characterization: exact on cache keys/deterministic substeps, statistical on LLM outputs via M4.1 envelopes with recorded-cassette determinism in CI.
 **M4.5 — Closeout**: full-pipeline golden run green both backends; browser smoke driving a real compile from ingest to published wiki on scratch data (live LLM, small corpus); punch list; docs.
 
+**Status (2026-07-13):** M4.1 (`9a44c0a`, `688e723`), M4.2 (`2dc80a0`), M4.3 (`84b077b`, `feeeea9`), M4.4 (`4c192c5`, `34d8086`) complete. The M4.5 golden bar is met: Python lane alpha-exact (62 raw / 4 alpha / 0 miss), TypeScript lane alpha-exact with raw-tier hits only (67 / 0 / 0), each verified twice consecutively. Remaining for M4.5: the live-LLM browser smoke (needs `OPENROUTER_API_KEY` exported in the shell that boots the TS server) and the closing punch list.
+
 ## Rules (delta)
 
 - Zero changes to `src/great_minds/`, `web/src/`, DDL (alembic still owns schema; the Effect cluster tables are created by the engine's own migrations — document where they land and confirm no collision with alembic's tables).
