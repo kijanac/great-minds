@@ -4,9 +4,11 @@ import { join } from "node:path";
 
 import {
   backlinks,
+  anchors,
   compileCacheEntries,
   Database,
   ideas,
+  llmCostEvents,
   pipelineRuns,
   searchIndex,
   sourceDocuments,
@@ -23,7 +25,7 @@ import { eq } from "drizzle-orm";
 import { Effect, Layer, Option, Redacted } from "effect";
 import { afterAll, beforeEach, describe, expect, it } from "vitest";
 
-import { RENDER_MODEL,
+import {
   canonicalizeAssignCacheKey,
   canonicalizeRegistryCacheKey,
   CompilePhases,
@@ -35,11 +37,13 @@ import { RENDER_MODEL,
   type ValidatedTopic,
 } from "../src/compile-phases.ts";
 import { AppConfig, type AppConfigShape } from "../src/config.ts";
+import { DEFAULT_RENDER_MODEL } from "../src/config.ts";
 import { ClockLive } from "../src/clock.ts";
 import { contentHash, promptContentHash } from "../src/crypto.ts";
 import { DrizzleLive } from "../src/db.ts";
 import { EmbeddingsService } from "../src/embeddings.ts";
-import { LanguageModel } from "../src/llm.ts";
+import { LanguageModel, type CompleteInput, type ModelCompletion } from "../src/llm.ts";
+import { StructuredLogger } from "../src/logging.ts";
 import { PipelineRunsServiceLive } from "../src/pipeline-runs.ts";
 import { RandomBytesLive } from "../src/random.ts";
 import { StorageFileMissing, VaultStorage } from "../src/storage.ts";
@@ -49,6 +53,7 @@ const id = {
   vault: "20000000-0000-4000-8000-000000000002" as Uuid,
   run: "20000000-0000-4000-8000-000000000003" as Uuid,
   source: "20000000-0000-4000-8000-000000000004" as Uuid,
+  sourceB: "20000000-0000-4000-8000-000000000013" as Uuid,
   ideaA: "20000000-0000-4000-8000-000000000005" as Uuid,
   ideaB: "20000000-0000-4000-8000-000000000006" as Uuid,
   ideaC: "20000000-0000-4000-8000-000000000007" as Uuid,
@@ -89,7 +94,7 @@ const config: AppConfigShape = {
   extractModel: "deepseek/deepseek-v3.2",
   mapModel: "deepseek/deepseek-v3.2",
   reduceModel: "anthropic/claude-sonnet-4.6",
-  renderModel: "qwen/qwen3.6-plus",
+  renderModel: DEFAULT_RENDER_MODEL,
   compileEnrichConcurrency: 1,
   compileWriteConcurrency: 1,
   compilePartitionTargetTokens: 100_000,
@@ -110,6 +115,16 @@ const config: AppConfigShape = {
 const files = new Map<string, string>();
 const etags = new Map<string, string>();
 const embeddingRequests: string[][] = [];
+const logEvents: { readonly event: string; readonly fields: Record<string, unknown> }[] = [];
+
+const defaultEmbed = async (texts: readonly string[]) => {
+  embeddingRequests.push([...texts]);
+  return texts.map(() => [1, ...Array.from({ length: 1023 }, () => 0)]);
+};
+let embed = defaultEmbed;
+let complete = async (_input: CompleteInput): Promise<ModelCompletion> => {
+  throw new Error("unexpected compile LLM call");
+};
 
 const StorageLive = Layer.succeed(VaultStorage, {
   listMarkdown: (_vaultId, scope) =>
@@ -147,23 +162,24 @@ const BaseLive = Layer.mergeAll(
 );
 const PipelineLive = PipelineRunsServiceLive.pipe(Layer.provideMerge(BaseLive));
 const EmbeddingsLive = Layer.succeed(EmbeddingsService, {
-  embed: async (texts) => {
-    embeddingRequests.push([...texts]);
-    return texts.map(() => [1, ...Array.from({ length: 1023 }, () => 0)]);
-  },
+  embed: (texts) => embed(texts),
 });
 const LanguageModelLive = Layer.succeed(LanguageModel, {
   hasApiKey: true,
   streamChat: async function* () {},
-  complete: async () => {
-    throw new Error("unexpected compile LLM call");
-  },
+  complete: (input) => complete(input),
+});
+const LoggerLive = Layer.succeed(StructuredLogger, {
+  info: (event, fields) => Effect.sync(() => logEvents.push({ event, fields })),
+  warn: (event, fields) => Effect.sync(() => logEvents.push({ event, fields })),
+  error: (event, fields) => Effect.sync(() => logEvents.push({ event, fields })),
 });
 const PhasesLive = CompilePhasesLive.pipe(
   Layer.provideMerge(LanguageModelLive),
   Layer.provideMerge(EmbeddingsLive),
   Layer.provideMerge(PipelineLive),
   Layer.provideMerge(StorageLive),
+  Layer.provideMerge(LoggerLive),
   Layer.provideMerge(BaseLive),
 );
 const TestLive = PhasesLive.pipe(
@@ -234,6 +250,144 @@ const seedSourceAndIdeas = () =>
     }),
   );
 
+const insertSource = (documentId: Uuid, filePath: string, bodyHash: string) =>
+  run(
+    Effect.gen(function* () {
+      const db = yield* Database;
+      yield* db
+        .insert(sourceDocuments)
+        .values({
+          id: documentId,
+          vaultId: id.vault,
+          filePath,
+          fileHash: `file-${bodyHash}`,
+          bodyHash,
+          sourceType: "document",
+        })
+        .pipe(Effect.orDie);
+    }),
+  );
+
+const defaultPrompt = async (name: string) =>
+  (await readFile(new URL(`../src/default_prompts/${name}.md`, import.meta.url), "utf8")).trim();
+
+const seedCanonicalPath = async (options: {
+  readonly registryValue?: unknown;
+  readonly assignmentValue?: unknown;
+}) => {
+  files.set("raw/docs/source.md", "# Source\n\nBody\n");
+  await run(
+    Effect.gen(function* () {
+      const db = yield* Database;
+      yield* db
+        .insert(sourceDocuments)
+        .values({
+          id: id.source,
+          vaultId: id.vault,
+          filePath: "raw/docs/source.md",
+          fileHash: "file",
+          bodyHash: "body",
+          sourceType: "document",
+          title: "Source",
+          precis: "Precis",
+        })
+        .pipe(Effect.orDie);
+      yield* db
+        .insert(ideas)
+        .values({
+          ideaId: id.ideaA,
+          vaultId: id.vault,
+          documentId: id.source,
+          kind: "concept",
+          label: "Idea",
+          description: "Description",
+          embedding: [1, ...Array.from({ length: 1023 }, () => 0)],
+        })
+        .pipe(Effect.orDie);
+    }),
+  );
+  const localTopic = {
+    localTopicId: id.topicA,
+    chunkIdx: 0,
+    slug: "local-topic",
+    title: "Canonical Topic",
+    description: "Canonical description",
+    subsumedIdeaIds: [id.ideaA],
+  } as const;
+  const synthPromptHash = promptContentHash(await defaultPrompt("synthesize"));
+  const registryPromptHash = promptContentHash(await defaultPrompt("canonicalize_registry"));
+  const assignPromptHash = promptContentHash(await defaultPrompt("canonicalize_assign"));
+  const registryTopic = {
+    slug: "canonical-topic",
+    title: "Canonical Topic",
+    description: "Canonical description",
+    link_target_titles: [],
+  } as const;
+  const registrySignature = contentHash(
+    `${registryTopic.slug}|${registryTopic.title}|${registryTopic.description}`,
+  );
+  const rows: (typeof compileCacheEntries.$inferInsert)[] = [
+    {
+      vaultId: id.vault,
+      phase: "partition",
+      cacheKey: partitionCacheKey([id.ideaA], config.compilePartitionTargetTokens),
+      value: { chunks: [[id.ideaA]], k_initial: 1, total_tokens: 1 },
+    },
+    {
+      vaultId: id.vault,
+      phase: "synthesize",
+      cacheKey: synthesizeCacheKey({
+        ideaIds: [id.ideaA],
+        promptHash: synthPromptHash,
+        model: config.mapModel,
+      }),
+      value: {
+        local_topics: [
+          {
+            local_topic_id: localTopic.localTopicId,
+            chunk_idx: localTopic.chunkIdx,
+            slug: localTopic.slug,
+            title: localTopic.title,
+            description: localTopic.description,
+            subsumed_idea_ids: [...localTopic.subsumedIdeaIds],
+          },
+        ],
+      },
+    },
+    {
+      vaultId: id.vault,
+      phase: "canonicalize_registry",
+      cacheKey: canonicalizeRegistryCacheKey({
+        orderedTopics: [localTopic],
+        promptHash: registryPromptHash,
+        thematicHint: "",
+        model: config.reduceModel,
+      }),
+      value: options.registryValue ?? { topics: [registryTopic] },
+    },
+  ];
+  if (options.assignmentValue !== undefined) {
+    rows.push({
+      vaultId: id.vault,
+      phase: "canonicalize_assign",
+      cacheKey: canonicalizeAssignCacheKey({
+        batch: [localTopic],
+        registrySignature,
+        promptHash: assignPromptHash,
+        model: config.reduceModel,
+      }),
+      value: options.assignmentValue,
+    });
+  }
+  await run(
+    Effect.gen(function* () {
+      const db = yield* Database;
+      yield* db.insert(compileCacheEntries).values(rows).pipe(Effect.orDie);
+    }),
+  );
+  return { localTopic, registryTopic } as const;
+};
+
 const validated: readonly ValidatedTopic[] = [
   {
     topicId: id.topicA,
@@ -262,6 +416,11 @@ describe("M4.3a deterministic compile phases", () => {
     files.clear();
     etags.clear();
     embeddingRequests.length = 0;
+    logEvents.length = 0;
+    embed = defaultEmbed;
+    complete = async () => {
+      throw new Error("unexpected compile LLM call");
+    };
     await seedBase();
   });
 
@@ -306,6 +465,267 @@ describe("M4.3a deterministic compile phases", () => {
         "model=m",
       ),
     );
+  });
+
+  it("isolates malformed extract output per document and coerces Python-defaulted fields", async () => {
+    files.set("raw/docs/bad.md", "# Bad\n\nMALFORMED\n");
+    files.set("raw/docs/good.md", "# Good\n\nGOOD\u0085BODY\n");
+    await insertSource(id.source, "raw/docs/bad.md", "bad-body");
+    await insertSource(id.sourceB, "raw/docs/good.md", "good-body");
+    complete = async (input) => {
+      const content = input.messages[0]?.content;
+      const prompt = typeof content === "string" ? content : "";
+      return {
+        text: prompt.includes("MALFORMED")
+          ? JSON.stringify({ ideas: [null] })
+          : JSON.stringify({ ideas: [{ anchors: [{ claim: null, quote: "GOOD BODY" }] }] }),
+        finishReason: "stop",
+      };
+    };
+
+    await run(Effect.flatMap(CompilePhases, (phases) => phases.extract(id.vault, id.run)));
+
+    const extracted = await run(
+      Effect.gen(function* () {
+        const db = yield* Database;
+        return {
+          ideas: yield* db.select().from(ideas).pipe(Effect.orDie),
+          anchors: yield* db.select().from(anchors).pipe(Effect.orDie),
+          docs: yield* db.select().from(sourceDocuments).pipe(Effect.orDie),
+        };
+      }),
+    );
+    expect(extracted.ideas).toHaveLength(1);
+    expect(extracted.ideas[0]).toMatchObject({
+      documentId: id.sourceB,
+      kind: "other",
+      label: "",
+      description: "",
+    });
+    expect(extracted.anchors).toEqual([
+      expect.objectContaining({ claim: "", quote: "GOOD BODY", chunkIndex: 0 }),
+    ]);
+    expect(extracted.docs.find((doc) => doc.id === id.sourceB)).toMatchObject({
+      title: "",
+      precis: "",
+      tags: [],
+      derivedExtras: {},
+    });
+    expect(logEvents).toContainEqual({
+      event: "doc_failed",
+      fields: expect.objectContaining({
+        document_id: id.source,
+        error_type: "MalformedLlmOutput",
+      }),
+    });
+  });
+
+  it("marks a malformed extract cache row failed without refetching the LLM", async () => {
+    files.set("raw/docs/source.md", "# Source\n\nBody\n");
+    await insertSource(id.source, "raw/docs/source.md", "cached-body");
+    const template = (await defaultPrompt("extract"))
+      .replace("{kinds}", "person, event, organization, concept")
+      .replace("{vault_enriched_fields}", "");
+    await run(
+      Effect.gen(function* () {
+        const db = yield* Database;
+        yield* db
+          .insert(compileCacheEntries)
+          .values({
+            vaultId: id.vault,
+            phase: "extract",
+            cacheKey: extractCacheKey({
+              documentId: id.source,
+              bodyHash: "cached-body",
+              promptHash: promptContentHash(template),
+              model: config.extractModel,
+            }),
+            value: { source_card: { title: "drifted" } },
+          })
+          .pipe(Effect.orDie);
+      }),
+    );
+    let calls = 0;
+    complete = async () => {
+      calls += 1;
+      return { text: JSON.stringify({ ideas: [] }), finishReason: "stop" };
+    };
+
+    await run(Effect.flatMap(CompilePhases, (phases) => phases.extract(id.vault, id.run)));
+
+    expect(calls).toBe(0);
+    expect(logEvents).toContainEqual({
+      event: "doc_failed",
+      fields: expect.objectContaining({ error_type: "MalformedCompileCache" }),
+    });
+  });
+
+  it("fails extract loudly on a non-timeout embedding error", async () => {
+    files.set("raw/docs/source.md", "# Source\n\nBody\n");
+    await insertSource(id.source, "raw/docs/source.md", "embedding-body");
+    complete = async () => ({
+      text: JSON.stringify({
+        ideas: [{ kind: "concept", label: "Idea", description: "Description", anchors: [] }],
+      }),
+      finishReason: "stop",
+    });
+    embed = async () => {
+      throw new Error("revoked credential");
+    };
+
+    await expect(
+      run(Effect.flatMap(CompilePhases, (phases) => phases.extract(id.vault, id.run))),
+    ).rejects.toThrow("revoked credential");
+  });
+
+  it("skips only a timed-out embedding batch and logs its real error type", async () => {
+    files.set("raw/docs/source.md", "# Source\n\nBody\n");
+    await insertSource(id.source, "raw/docs/source.md", "timeout-body");
+    complete = async () => ({
+      text: JSON.stringify({
+        ideas: [{ kind: "concept", label: "Idea", description: "Description", anchors: [] }],
+      }),
+      finishReason: "stop",
+    });
+    embed = async () => {
+      throw new DOMException("embedding timed out", "TimeoutError");
+    };
+
+    await run(Effect.flatMap(CompilePhases, (phases) => phases.extract(id.vault, id.run)));
+
+    const rows = await run(Effect.flatMap(Database, (db) => db.select().from(ideas).pipe(Effect.orDie)));
+    expect(rows).toEqual([]);
+    expect(logEvents).toContainEqual({
+      event: "embed_batch.timeout",
+      fields: expect.objectContaining({
+        batch_size: 1,
+        error_type: "TimeoutError",
+      }),
+    });
+  });
+
+  it("drops an omitted embedding tail instead of inserting an empty vector", async () => {
+    files.set("raw/docs/source.md", "# Source\n\nBody\n");
+    await insertSource(id.source, "raw/docs/source.md", "short-embedding-body");
+    complete = async () => ({
+      text: JSON.stringify({
+        ideas: [{ kind: "concept", label: "Idea", description: "Description", anchors: [] }],
+      }),
+      finishReason: "stop",
+    });
+    embed = async () => [];
+
+    await run(Effect.flatMap(CompilePhases, (phases) => phases.extract(id.vault, id.run)));
+
+    const rows = await run(Effect.flatMap(Database, (db) => db.select().from(ideas).pipe(Effect.orDie)));
+    expect(rows).toEqual([]);
+  });
+
+  it("warns on a JSON parse retry without logging the malformed response", async () => {
+    files.set("raw/docs/source.md", "# Source\n\nBody\n");
+    await insertSource(id.source, "raw/docs/source.md", "retry-body");
+    let attempt = 0;
+    complete = async () => {
+      attempt += 1;
+      return {
+        text: attempt === 1 ? "{malformed-secret-shaped-output}" : JSON.stringify({ ideas: [] }),
+        finishReason: "stop",
+      };
+    };
+
+    await run(Effect.flatMap(CompilePhases, (phases) => phases.extract(id.vault, id.run)));
+
+    const retry = logEvents.find((entry) => entry.event === "json_llm_parse_retry");
+    expect(retry?.fields).toMatchObject({
+      document_id: id.source,
+      attempt: 1,
+      max_attempts: 2,
+      error_type: "SyntaxError",
+    });
+    expect(JSON.stringify(retry)).not.toContain("malformed-secret-shaped-output");
+  });
+
+  it("fails loudly on a malformed canonical registry cache row", async () => {
+    await seedCanonicalPath({ registryValue: { topics: "drifted" } });
+    await expect(
+      run(Effect.flatMap(CompilePhases, (phases) => phases.abstract(id.vault, id.run))),
+    ).rejects.toThrow("canonicalize_registry cache row");
+  });
+
+  it("fails loudly on a malformed canonical assignment cache row", async () => {
+    await seedCanonicalPath({ assignmentValue: { assign: [] } });
+    await expect(
+      run(Effect.flatMap(CompilePhases, (phases) => phases.abstract(id.vault, id.run))),
+    ).rejects.toThrow("canonicalize_assign cache row");
+  });
+
+  it("fails loudly when the assignment prompt omits its unique subtopics placeholder", async () => {
+    await seedCanonicalPath({});
+    files.set("prompts/canonicalize_assign.md", "Registry:\n{registry_block}\nNo batch marker");
+    await expect(
+      run(Effect.flatMap(CompilePhases, (phases) => phases.abstract(id.vault, id.run))),
+    ).rejects.toThrow("must contain exactly one {subtopics_block} placeholder");
+  });
+
+  it("rejects a tag suffix unless every character is a decimal digit", async () => {
+    const fixture = await seedCanonicalPath({
+      assignmentValue: { assign: { [id.topicA]: "canonical-topic" } },
+    });
+    await run(
+      Effect.gen(function* () {
+        const db = yield* Database;
+        yield* db
+          .insert(topics)
+          .values({
+            topicId: id.topicB,
+            vaultId: id.vault,
+            slug: "old-topic",
+            title: "Old Topic",
+            description: "Old description",
+          })
+          .pipe(Effect.orDie);
+      }),
+    );
+    complete = async () => ({
+      text: JSON.stringify({
+        slug_renames: [{ canonical_tag: "c_1x", new_slug: "mutilated" }],
+        supersessions: [],
+      }),
+      finishReason: "stop",
+    });
+
+    const result = await run(
+      Effect.flatMap(CompilePhases, (phases) => phases.abstract(id.vault, id.run)),
+    );
+    expect(result).toHaveLength(1);
+    expect(result[0]?.slug).toBe(fixture.registryTopic.slug);
+  });
+
+  it("fails loudly on a malformed cleanup entry", async () => {
+    await seedCanonicalPath({ assignmentValue: { assign: { [id.topicA]: "canonical-topic" } } });
+    await run(
+      Effect.gen(function* () {
+        const db = yield* Database;
+        yield* db
+          .insert(topics)
+          .values({
+            topicId: id.topicB,
+            vaultId: id.vault,
+            slug: "old-topic",
+            title: "Old Topic",
+            description: "Old description",
+          })
+          .pipe(Effect.orDie);
+      }),
+    );
+    complete = async () => ({
+      text: JSON.stringify({ slug_renames: [null], supersessions: [] }),
+      finishReason: "stop",
+    });
+
+    await expect(
+      run(Effect.flatMap(CompilePhases, (phases) => phases.abstract(id.vault, id.run))),
+    ).rejects.toThrow("cleanup slug rename is not an object");
   });
 
   it("ingest indexes path-sorted metadata/body chunks and skips an unchanged ETag replay", async () => {
@@ -443,7 +863,11 @@ describe("M4.3a deterministic compile phases", () => {
           .values({
             vaultId: id.vault,
             phase: "render",
-            cacheKey: renderCacheKey({ topic, promptHash: promptContentHash(prompt), model: RENDER_MODEL }),
+            cacheKey: renderCacheKey({
+              topic,
+              promptHash: promptContentHash(prompt),
+              model: DEFAULT_RENDER_MODEL,
+            }),
             value: { body: "# Alpha\n\nCached body.", tags: ["Cached Tag", "cached-tag"] },
           })
           .pipe(Effect.orDie);
@@ -475,7 +899,11 @@ describe("M4.3a deterministic compile phases", () => {
           .values({
             vaultId: id.vault,
             phase: "render",
-            cacheKey: renderCacheKey({ topic: invalid, promptHash: promptContentHash(prompt), model: RENDER_MODEL }),
+            cacheKey: renderCacheKey({
+              topic: invalid,
+              promptHash: promptContentHash(prompt),
+              model: DEFAULT_RENDER_MODEL,
+            }),
             value: { body: 42, tags: [] },
           })
           .pipe(Effect.orDie);
@@ -483,6 +911,49 @@ describe("M4.3a deterministic compile phases", () => {
     );
     await run(Effect.flatMap(CompilePhases, (phases) => phases.render(id.vault, id.run, [invalid])));
     expect(files.has("wiki/invalid.md")).toBe(false);
+    expect(logEvents).toContainEqual({
+      event: "topic_failed",
+      fields: expect.objectContaining({
+        topic_id: id.topicC,
+        topic_slug: "invalid",
+        error_type: "Error",
+      }),
+    });
+  });
+
+  it("flushes compile LLM cost only after publish completes", async () => {
+    await seedSourceAndIdeas();
+    const topic = validated[0]!;
+    complete = async () => ({
+      text: JSON.stringify({ body: "# Alpha\n\nRendered body.", tags: ["alpha"] }),
+      finishReason: "stop",
+      usage: { cost: 0.125 },
+    });
+    const counts = await run(
+      Effect.gen(function* () {
+        const db = yield* Database;
+        yield* db
+          .insert(topics)
+          .values({
+            topicId: topic.topicId as Uuid,
+            vaultId: id.vault,
+            slug: topic.slug,
+            title: topic.title,
+            description: topic.description,
+            compiledFromHash: "compiled",
+          })
+          .pipe(Effect.orDie);
+        const phases = yield* CompilePhases;
+        yield* phases.render(id.vault, id.run, [topic]);
+        const beforePublish = yield* db.select().from(llmCostEvents).pipe(Effect.orDie);
+        yield* phases.publish(id.vault, id.run, "2026-07-13T12:00:00+00:00");
+        const afterPublish = yield* db.select().from(llmCostEvents).pipe(Effect.orDie);
+        return { beforePublish, afterPublish };
+      }),
+    );
+    expect(counts.beforePublish).toEqual([]);
+    expect(counts.afterPublish).toHaveLength(1);
+    expect(counts.afterPublish[0]?.costUsd).toBe("0.125000");
   });
 
   it("archives rendered and unrendered topics with terminal supersession pointers", async () => {

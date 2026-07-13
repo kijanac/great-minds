@@ -47,7 +47,8 @@ const PhasesLive = Layer.effect(
   Effect.gen(function* () {
     const pipeline = yield* PipelineRunsService;
     return {
-      archiveTransitions: () => Effect.void,
+    archiveTransitions: () => Effect.void,
+    flushLlmCost: () => Effect.void,
       ingest: () =>
         marker("ingest", { flag: "wx" }).pipe(
           Effect.tap(() => Effect.sync(() => console.log("COMPILE ingest executed"))),

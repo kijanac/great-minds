@@ -107,6 +107,7 @@ export const CompileWorkflowLive = Layer.unwrap(
               detail: "",
             },
           ]);
+          yield* service.flushLlmCost(vaultId, runId);
         }),
       );
       return;

@@ -23,6 +23,7 @@ import { bodyContentHash, contentHash, fileContentHash } from "./crypto.ts";
 import { dieDatabase } from "./db-defects.ts";
 import { EmbeddingsService } from "./embeddings.ts";
 import { LanguageModel } from "./llm.ts";
+import { StructuredLogger } from "./logging.ts";
 import {
   extractWikiLinkTargets,
   markdownParagraphs,
@@ -164,8 +165,6 @@ export const canonicalizeAssignCacheKey = (input: {
 export const topicContentHash = (topic: ValidatedTopic) =>
   contentHash(topic.title, topic.description, ...topic.subsumedIdeaIds.toSorted());
 
-export const RENDER_MODEL = "qwen/qwen3.6-plus";
-
 export const renderCacheKey = (input: {
   readonly topic: ValidatedTopic;
   readonly promptHash: string;
@@ -267,6 +266,7 @@ type CompilePhasesShape = {
     runId: Uuid,
     publishedAt: string,
   ) => Effect.Effect<void, unknown>;
+  readonly flushLlmCost: (vaultId: Uuid, runId: Uuid) => Effect.Effect<void, unknown>;
 };
 
 export class CompilePhases extends Context.Service<CompilePhases, CompilePhasesShape>()(
@@ -280,6 +280,7 @@ export const CompilePhasesLive = Layer.effect(
     const db = yield* Database;
     const embeddings = yield* EmbeddingsService;
     const languageModel = yield* LanguageModel;
+    const logger = yield* StructuredLogger;
     const pipeline = yield* PipelineRunsService;
     const randomBytes = yield* RandomBytesService;
     const clock = yield* ClockService;
@@ -582,6 +583,7 @@ export const CompilePhasesLive = Layer.effect(
       db,
       embeddings,
       languageModel,
+      logger,
       pipeline,
       storage,
       randomBytes,
@@ -592,48 +594,7 @@ export const CompilePhasesLive = Layer.effect(
     });
 
     return {
-      archiveTransitions: (vaultId, transitions) =>
-        Effect.gen(function* () {
-          for (const transition of transitions) {
-            yield* db
-              .update(topics)
-              .set({
-                articleStatus: "archived",
-                supersededBy: transition.supersededBy,
-                updatedAt: sql`now()`,
-              })
-              .where(eq(topics.topicId, transition.topicId))
-              .pipe(dieDatabase);
-            const wikiPath = `wiki/${transition.slug}.md`;
-            const content = yield* Effect.result(storage.readText(vaultId, wikiPath));
-            if (content._tag === "Failure") continue;
-            const parsed = parseFrontmatter(content.success);
-            const frontmatter: Record<string, unknown> = {
-              ...parsed.frontmatter,
-              archived: true,
-            };
-            if (transition.supersededBy !== null) {
-              frontmatter.superseded_by = transition.supersededBy;
-            }
-            const archivePath = `archive/${transition.topicId}/${transition.slug}.md`;
-            yield* storage.writeText(
-              vaultId,
-              archivePath,
-              serializeFrontmatter(frontmatter, parsed.body),
-            );
-            yield* storage.deletePath(vaultId, wikiPath);
-            yield* db
-              .update(wikiArticles)
-              .set({ filePath: archivePath, archived: true, updatedAt: sql`now()` })
-              .where(
-                and(
-                  eq(wikiArticles.vaultId, vaultId),
-                  eq(wikiArticles.topicId, transition.topicId),
-                ),
-              )
-              .pipe(dieDatabase);
-          }
-        }),
+      archiveTransitions: applyArchiveTransitions,
       ingest: (vaultId, runId) =>
         Effect.gen(function* () {
           yield* pipeline.updateProgress(
@@ -652,6 +613,7 @@ export const CompilePhasesLive = Layer.effect(
             }),
           );
         }),
+      flushLlmCost: llmCore.flushCost,
       extract: llmCore.extract,
       abstract: llmCore.abstract,
       derive: (vaultId, runId, validated) =>
@@ -996,6 +958,7 @@ export const CompilePhasesLive = Layer.effect(
               counts: { publish_wiki: [2, 2] },
             }),
           );
+          yield* llmCore.flushCost(vaultId, runId);
         }),
     } satisfies CompilePhasesShape;
   }),

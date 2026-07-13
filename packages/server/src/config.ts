@@ -44,6 +44,8 @@ export type AppConfigShape = {
   readonly serverPort: number;
 };
 
+export const DEFAULT_RENDER_MODEL = "qwen/qwen3.6-plus";
+
 export class AppConfig extends Context.Service<AppConfig, AppConfigShape>()(
   "@great-minds/server/AppConfig",
 ) {}
@@ -102,7 +104,7 @@ const appConfig = Config.all({
   reduceModel: nonEmptyString("REDUCE_MODEL").pipe(
     Config.withDefault("anthropic/claude-sonnet-4.6"),
   ),
-  renderModel: nonEmptyString("RENDER_MODEL").pipe(Config.withDefault("qwen/qwen3.6-plus")),
+  renderModel: nonEmptyString("RENDER_MODEL").pipe(Config.withDefault(DEFAULT_RENDER_MODEL)),
   compileEnrichConcurrency: positiveInt("COMPILE_ENRICH_CONCURRENCY").pipe(
     Config.withDefault(20),
   ),

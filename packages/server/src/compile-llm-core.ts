@@ -30,6 +30,7 @@ import { contentHash, promptContentHash } from "./crypto.ts";
 import { dieDatabase } from "./db-defects.ts";
 import type { EmbeddingsService } from "./embeddings.ts";
 import type { LanguageModel, LlmMessage, ModelCompletion } from "./llm.ts";
+import type { StructuredLogger } from "./logging.ts";
 import { markdownParagraphs, parseFrontmatter, serializeFrontmatter } from "./markdown.ts";
 import type { PipelineRunsService } from "./pipeline-runs.ts";
 import { progressSteps } from "./pipeline-runs.ts";
@@ -44,6 +45,65 @@ type ModelService = LanguageModel["Service"];
 type EmbeddingService = EmbeddingsService["Service"];
 type RandomService = RandomBytesService["Service"];
 type Clock = ClockService["Service"];
+type Logger = StructuredLogger["Service"];
+
+class MalformedLlmOutput extends Error {
+  readonly _tag = "MalformedLlmOutput";
+
+  constructor(message: string) {
+    super(message);
+    this.name = this._tag;
+  }
+}
+
+class MalformedCompileCache extends Error {
+  readonly _tag = "MalformedCompileCache";
+
+  constructor(message: string) {
+    super(message);
+    this.name = this._tag;
+  }
+}
+
+class MalformedPromptTemplate extends Error {
+  readonly _tag = "MalformedPromptTemplate";
+
+  constructor(message: string) {
+    super(message);
+    this.name = this._tag;
+  }
+}
+
+class EmbeddingBatchFailed extends Error {
+  readonly _tag = "EmbeddingBatchFailed";
+  readonly cause: unknown;
+
+  constructor(cause: unknown) {
+    super(cause instanceof Error ? cause.message : String(cause));
+    this.name = this._tag;
+    this.cause = cause;
+  }
+}
+
+const errorDetails = (error: unknown): { readonly errorType: string; readonly message: string } => {
+  if (typeof error === "object" && error !== null) {
+    if ("cause" in error && error.cause !== error) return errorDetails(error.cause);
+    if (error instanceof Error) return { errorType: error.name, message: error.message };
+    if ("_tag" in error) {
+      return {
+        errorType: String(error._tag),
+        message: "message" in error ? String(error.message) : String(error),
+      };
+    }
+  }
+  return { errorType: typeof error, message: String(error) };
+};
+
+const isTimeoutError = (error: unknown): boolean => {
+  if (typeof error !== "object" || error === null) return false;
+  if ("cause" in error && error.cause !== error) return isTimeoutError(error.cause);
+  return "name" in error && error.name === "TimeoutError";
+};
 
 type EnrichedField = {
   readonly name: string;
@@ -129,6 +189,7 @@ const nullableString = (value: unknown) =>
 
 const compareText = (left: string, right: string) => (left < right ? -1 : left > right ? 1 : 0);
 const vectorLiteral = (embedding: readonly number[]) => `[${embedding.join(",")}]`;
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 export const extractResponseFormat = (config: CompileVaultConfig) => {
   const extrasProperties = Object.fromEntries(
@@ -318,25 +379,51 @@ const parseSourceCard = (value: unknown): SourceCard | undefined => {
   const source = asRecord(value);
   if (source === undefined) return undefined;
   const rawIdeas = Array.isArray(source.ideas) ? source.ideas : undefined;
-  if (typeof source.document_id !== "string" || rawIdeas === undefined) return undefined;
+  const rawTags = source.tags === undefined ? [] : source.tags;
+  const rawExtras = source.derived_extras === undefined ? {} : source.derived_extras;
+  if (
+    typeof source.document_id !== "string" ||
+    !UUID_PATTERN.test(source.document_id) ||
+    typeof source.title !== "string" ||
+    typeof source.precis !== "string" ||
+    rawIdeas === undefined ||
+    !Array.isArray(rawTags) ||
+    strings(rawTags).length !== rawTags.length ||
+    asRecord(rawExtras) === undefined ||
+    ![source.author, source.published_date, source.genre].every(
+      (field) => field === undefined || field === null || typeof field === "string",
+    )
+  ) {
+    return undefined;
+  }
   const parsedIdeas: Idea[] = [];
   for (const raw of rawIdeas) {
     const idea = asRecord(raw);
+    const rawAnchors = idea?.anchors === undefined ? [] : idea.anchors;
     if (
       idea === undefined ||
       typeof idea.idea_id !== "string" ||
+      !UUID_PATTERN.test(idea.idea_id) ||
       typeof idea.document_id !== "string" ||
+      !UUID_PATTERN.test(idea.document_id) ||
       typeof idea.kind !== "string" ||
       typeof idea.label !== "string" ||
       typeof idea.description !== "string" ||
-      !Array.isArray(idea.anchors)
+      !Array.isArray(rawAnchors)
     ) {
       return undefined;
     }
     const parsedAnchors: Anchor[] = [];
-    for (const rawAnchor of idea.anchors) {
+    for (const rawAnchor of rawAnchors) {
       const anchor = asRecord(rawAnchor);
-      if (anchor === undefined || typeof anchor.claim !== "string" || typeof anchor.quote !== "string") {
+      if (
+        anchor === undefined ||
+        typeof anchor.claim !== "string" ||
+        typeof anchor.quote !== "string" ||
+        (anchor.chunk_index !== undefined &&
+          anchor.chunk_index !== null &&
+          !Number.isInteger(anchor.chunk_index))
+      ) {
         return undefined;
       }
       parsedAnchors.push({
@@ -356,13 +443,13 @@ const parseSourceCard = (value: unknown): SourceCard | undefined => {
   }
   return {
     documentId: source.document_id,
-    title: typeof source.title === "string" ? source.title : "",
-    precis: typeof source.precis === "string" ? source.precis : "",
+    title: source.title as string,
+    precis: source.precis as string,
     author: nullableString(source.author),
     publishedDate: nullableString(source.published_date),
     genre: nullableString(source.genre),
-    tags: strings(source.tags),
-    derivedExtras: asRecord(source.derived_extras) ?? {},
+    tags: strings(rawTags),
+    derivedExtras: asRecord(rawExtras) as Record<string, unknown>,
     ideas: parsedIdeas,
   };
 };
@@ -439,6 +526,7 @@ type CompileLlmCoreOptions = {
   readonly storage: StorageService;
   readonly randomBytes: RandomService;
   readonly clock: Clock;
+  readonly logger: Logger;
   readonly archiveTransitions: (
     vaultId: Uuid,
     transitions: readonly ArchiveTransition[],
@@ -453,7 +541,7 @@ type CompileLlmCoreOptions = {
 };
 
 export const makeCompileLlmCore = (options: CompileLlmCoreOptions) => {
-  const { config, db, embeddings, languageModel, pipeline, storage, randomBytes, clock } = options;
+  const { config, db, embeddings, languageModel, pipeline, storage, randomBytes, clock, logger } = options;
   const costs = new Map<string, number>();
   let lastMintTimestamp = -1;
 
@@ -491,30 +579,51 @@ export const makeCompileLlmCore = (options: CompileLlmCoreOptions) => {
     readonly temperature: number;
     readonly responseFormat: Record<string, unknown>;
     readonly maxParseRetries?: number;
+    readonly logFields?: Record<string, string | number>;
   }) =>
-    Effect.tryPromise(async () => {
+    Effect.gen(function* () {
       const totalAttempts = (input.maxParseRetries ?? 1) + 1;
       let lastError: unknown;
       for (let attempt = 1; attempt <= totalAttempts; attempt += 1) {
-        const completion = await languageModel.complete({
-          model: input.model,
-          messages: input.messages,
-          temperature: input.temperature,
-          responseFormat: input.responseFormat,
-          requestProfile: "compile",
+        const completion = yield* Effect.tryPromise({
+          try: () =>
+            languageModel.complete({
+              model: input.model,
+              messages: input.messages,
+              temperature: input.temperature,
+              responseFormat: input.responseFormat,
+              requestProfile: "compile",
+            }),
+          catch: (error) => error,
         });
         addCost(input.runId, completion.usage?.cost);
         if (completion.finishReason === "length") {
-          return decodeCompileJsonCompletion(input.model, completion);
+          return yield* Effect.try({
+            try: () => decodeCompileJsonCompletion(input.model, completion),
+            catch: (error) => error,
+          });
         }
-        try {
-          return decodeCompileJsonCompletion(input.model, completion);
-        } catch (error) {
-          lastError = error;
-          if (attempt === totalAttempts) throw error;
-        }
+        const decoded = yield* Effect.result(
+          Effect.try({
+            try: () => decodeCompileJsonCompletion(input.model, completion),
+            catch: (error) => error,
+          }),
+        );
+        if (decoded._tag === "Success") return decoded.success;
+        lastError = decoded.failure;
+        if (attempt === totalAttempts) return yield* Effect.fail(decoded.failure);
+        const details = errorDetails(decoded.failure);
+        yield* logger.warn("json_llm_parse_retry", {
+          run_id: input.runId,
+          model: input.model,
+          attempt,
+          max_attempts: totalAttempts,
+          error_type: details.errorType,
+          error: details.message.slice(0, 300),
+          ...input.logFields,
+        });
       }
-      throw lastError;
+      return yield* Effect.fail(lastError);
     });
 
   const putCache = (vaultId: Uuid, phase: string, cacheKey: string, value: unknown) =>
@@ -583,55 +692,69 @@ export const makeCompileLlmCore = (options: CompileLlmCoreOptions) => {
       for (const document of documents) {
         extractFibers.push(
           yield* Effect.gen(function* () {
-            const cacheKey = contentHash(
-              `doc=${document.id}`,
-              document.bodyHash,
-              `prompt=${promptHash}`,
-              `model=${config.extractModel}`,
-            );
-            const cached = asRecord(yield* getCache(vaultId, "extract", cacheKey));
-            const cachedCard = parseSourceCard(cached?.source_card);
-            if (cachedCard !== undefined) {
-              return {
-                kind: "cached",
-                documentId: document.id as Uuid,
-                card: cachedCard,
-              } as const;
-            }
-            const content = yield* Effect.result(storage.readText(vaultId, document.filePath));
-            if (content._tag === "Failure") return { kind: "failed" } as const;
-            const body = parseFrontmatter(content.success).body;
             const result = yield* Effect.result(
-              extractSemaphore.withPermit(
-                jsonCall({
-                  runId,
-                  model: config.extractModel,
-                  messages: [
-                    { role: "user", content: renderedTemplate.replace("{doc_content}", body) },
-                  ],
-                  temperature: 0.2,
-                  responseFormat,
-                }).pipe(
-                  Effect.flatMap((data) =>
-                    validateExtractOutput(
-                      data,
-                      document.id,
-                      vaultConfig.kinds,
-                      body,
-                      mintUuid7,
-                    ),
-                  ),
-                ),
-              ),
-            );
-            return result._tag === "Failure"
-              ? ({ kind: "failed" } as const)
-              : ({
+              Effect.gen(function* () {
+                const cacheKey = contentHash(
+                  `doc=${document.id}`,
+                  document.bodyHash,
+                  `prompt=${promptHash}`,
+                  `model=${config.extractModel}`,
+                );
+                const cachedValue = yield* getCache(vaultId, "extract", cacheKey);
+                if (cachedValue !== undefined) {
+                  const cached = asRecord(cachedValue);
+                  const cachedCard = parseSourceCard(cached?.source_card);
+                  if (cachedCard === undefined) {
+                    return yield* Effect.fail(
+                      new MalformedCompileCache(`extract cache row ${cacheKey} is malformed`),
+                    );
+                  }
+                  return {
+                    kind: "cached",
+                    documentId: document.id as Uuid,
+                    card: cachedCard,
+                  } as const;
+                }
+                const content = yield* storage.readText(vaultId, document.filePath);
+                const body = parseFrontmatter(content).body;
+                const data = yield* extractSemaphore.withPermit(
+                  jsonCall({
+                    runId,
+                    model: config.extractModel,
+                    messages: [
+                      { role: "user", content: renderedTemplate.replace("{doc_content}", body) },
+                    ],
+                    temperature: 0.2,
+                    responseFormat,
+                    logFields: { document_id: document.id, path: document.filePath },
+                  }),
+                );
+                const card = yield* validateExtractOutput(
+                  data,
+                  document.id,
+                  vaultConfig.kinds,
+                  body,
+                  mintUuid7,
+                );
+                return {
                   kind: "fresh",
                   documentId: document.id as Uuid,
-                  card: result.success,
+                  card,
                   cacheKey,
-                } as const);
+                } as const;
+              }),
+            );
+            if (result._tag === "Success") return result.success;
+            const details = errorDetails(result.failure);
+            yield* logger.warn("doc_failed", {
+              vault_id: vaultId,
+              run_id: runId,
+              document_id: document.id,
+              path: document.filePath,
+              error_type: details.errorType,
+              error: details.message.slice(0, 300),
+            });
+            return { kind: "failed" } as const;
           }).pipe(
             Effect.tap((outcome) =>
               Effect.gen(function* () {
@@ -701,23 +824,42 @@ export const makeCompileLlmCore = (options: CompileLlmCoreOptions) => {
       let embeddedCount = 0;
       for (let offset = 0; offset < embeddingInputs.length; offset += 50) {
         const batch = embeddingInputs.slice(offset, offset + 50);
-        const embedded = yield* Effect.exit(
-          Effect.tryPromise(() =>
-            embeddings.embed(
-              batch.map(({ idea }) => `${idea.label}. ${idea.description}`.trim()),
-            ),
-          ),
+        const embedded = yield* Effect.result(
+          Effect.tryPromise({
+            try: () =>
+              embeddings.embed(
+                batch.map(({ idea }) => `${idea.label}. ${idea.description}`.trim()),
+              ),
+            catch: (error) => new EmbeddingBatchFailed(error),
+          }),
         );
-        if (embedded._tag === "Failure") continue;
-        const ideaRows = batch.map(({ documentId, idea }, index) => ({
+        if (embedded._tag === "Failure") {
+          if (!isTimeoutError(embedded.failure)) return yield* Effect.fail(embedded.failure);
+          const details = errorDetails(embedded.failure);
+          yield* logger.warn("embed_batch.timeout", {
+            vault_id: vaultId,
+            run_id: runId,
+            batch_offset: offset,
+            batch_size: batch.length,
+            error_type: details.errorType,
+            error: details.message.slice(0, 300),
+          });
+          continue;
+        }
+        const paired = batch.flatMap((input, index) => {
+          const embedding = embedded.success[index];
+          return embedding === undefined || embedding.length === 0 ? [] : [{ input, embedding }];
+        });
+        const ideaRows = paired.map(({ input: { documentId, idea }, embedding }) => ({
           ideaId: idea.ideaId as Uuid,
           vaultId,
           documentId,
           kind: idea.kind,
           label: idea.label,
           description: idea.description,
-          embedding: sql`${vectorLiteral(embedded.value[index] ?? [])}::vector`,
+          embedding: sql`${vectorLiteral(embedding)}::vector`,
         }));
+        if (ideaRows.length === 0) continue;
         yield* db
           .insert(ideas)
           .values(ideaRows)
@@ -741,7 +883,7 @@ export const makeCompileLlmCore = (options: CompileLlmCoreOptions) => {
           .delete(anchors)
           .where(inArray(anchors.ideaId, ideaRows.map((row) => row.ideaId)))
           .pipe(dieDatabase);
-        const anchorRows = batch.flatMap(({ idea }) =>
+        const anchorRows = paired.flatMap(({ input: { idea } }) =>
           idea.anchors.map((anchor, position) => ({
             ideaId: idea.ideaId as Uuid,
             position,
@@ -751,7 +893,7 @@ export const makeCompileLlmCore = (options: CompileLlmCoreOptions) => {
           })),
         );
         if (anchorRows.length > 0) yield* db.insert(anchors).values(anchorRows).pipe(dieDatabase);
-        embeddedCount += batch.length;
+        embeddedCount += paired.length;
         yield* pipeline.updateProgress(
           runId,
           "extract",
@@ -841,12 +983,12 @@ export const makeCompileLlmCore = (options: CompileLlmCoreOptions) => {
       db,
       storage,
       pipeline,
+      logger,
       jsonCall,
       getCache,
       putCache,
       mintUuid7,
       archiveTransitions: options.archiveTransitions,
-      flushCost,
     });
 
   const render = (vaultId: Uuid, runId: Uuid, validated: readonly ValidatedTopic[]) =>
@@ -858,16 +1000,47 @@ export const makeCompileLlmCore = (options: CompileLlmCoreOptions) => {
       db,
       storage,
       pipeline,
+      logger,
       jsonCall,
       getCache,
       putCache,
       materializeArticle: options.materializeArticle,
       rebuildWiki: options.rebuildWiki,
-      flushCost,
     });
 
-  return { extract, abstract, render } as const;
+  return { extract, abstract, render, flushCost } as const;
 };
+
+const pythonTruthy = (value: unknown) => {
+  if (value === null || value === undefined || value === false || value === 0 || value === "") {
+    return false;
+  }
+  if (Array.isArray(value)) return value.length > 0;
+  if (typeof value === "object") return Object.keys(value).length > 0;
+  return true;
+};
+
+const coercedString = (value: unknown, field: string) => {
+  if (!pythonTruthy(value)) return Effect.succeed("");
+  return typeof value === "string"
+    ? Effect.succeed(value)
+    : Effect.fail(new MalformedLlmOutput(`invalid source card ${field}`));
+};
+
+const coercedNullableString = (value: unknown, field: string) => {
+  if (!pythonTruthy(value)) return Effect.succeed(null);
+  return typeof value === "string"
+    ? Effect.succeed(value)
+    : Effect.fail(new MalformedLlmOutput(`invalid source card ${field}`));
+};
+
+const PYTHON_WHITESPACE = new RegExp(
+  String.raw`[\t\n\v\f\r\u001c-\u001f \u0085\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000]+`,
+  "g",
+);
+
+export const normalizePythonWhitespace = (value: string) =>
+  value.replace(PYTHON_WHITESPACE, " ").replace(/^ | $/g, "");
 
 const validateExtractOutput = (
   data: unknown,
@@ -878,61 +1051,84 @@ const validateExtractOutput = (
 ) =>
   Effect.gen(function* () {
     const record = asRecord(data);
-    if (record === undefined || !Array.isArray(record.ideas)) throw new Error("invalid source card");
-    for (const field of ["title", "precis"] as const) {
-      if (typeof record[field] !== "string") throw new Error(`invalid source card ${field}`);
+    if (record === undefined) return yield* Effect.fail(new MalformedLlmOutput("invalid source card"));
+    const ideasValue = pythonTruthy(record.ideas) ? record.ideas : [];
+    if (!Array.isArray(ideasValue)) {
+      return yield* Effect.fail(new MalformedLlmOutput("invalid source card ideas"));
     }
-    if (!Array.isArray(record.tags) || strings(record.tags).length !== record.tags.length) {
-      throw new Error("invalid source card tags");
+    const title = yield* coercedString(record.title, "title");
+    const precis = yield* coercedString(record.precis, "precis");
+    const author = yield* coercedNullableString(record.author, "author");
+    const publishedDate = yield* coercedNullableString(record.published_date, "published_date");
+    const genre = yield* coercedNullableString(record.genre, "genre");
+    const tagsValue = pythonTruthy(record.tags) ? record.tags : [];
+    if (!Array.isArray(tagsValue) || strings(tagsValue).length !== tagsValue.length) {
+      return yield* Effect.fail(new MalformedLlmOutput("invalid source card tags"));
+    }
+    const extrasValue = pythonTruthy(record.derived_extras) ? record.derived_extras : {};
+    const derivedExtras = asRecord(extrasValue);
+    if (derivedExtras === undefined) {
+      return yield* Effect.fail(new MalformedLlmOutput("invalid source card derived_extras"));
     }
     const paragraphBodies = markdownParagraphs(body).map((paragraph) => ({
       index: paragraph.index,
-      body: paragraph.body.trim().replace(/\s+/g, " "),
+      body: normalizePythonWhitespace(paragraph.body),
     }));
     const parsedIdeas: Idea[] = [];
-    for (const raw of record.ideas) {
+    for (const raw of ideasValue) {
       const idea = asRecord(raw);
-      if (idea === undefined || !Array.isArray(idea.anchors)) throw new Error("invalid idea");
-      if (
-        typeof idea.kind !== "string" ||
-        typeof idea.label !== "string" ||
-        typeof idea.description !== "string"
-      ) {
-        throw new Error("invalid idea fields");
+      if (idea === undefined) return yield* Effect.fail(new MalformedLlmOutput("invalid idea"));
+      const anchorsValue = pythonTruthy(idea.anchors) ? idea.anchors : [];
+      if (!Array.isArray(anchorsValue)) {
+        return yield* Effect.fail(new MalformedLlmOutput("invalid idea anchors"));
       }
-      const parsedAnchors: Anchor[] = idea.anchors.map((rawAnchor) => {
+      const rawKind = pythonTruthy(idea.kind) ? idea.kind : "other";
+      if (typeof rawKind === "object") {
+        return yield* Effect.fail(new MalformedLlmOutput("invalid idea kind"));
+      }
+      const kind =
+        typeof rawKind === "string" && (allowedKinds.includes(rawKind) || rawKind === "other")
+          ? rawKind
+          : "other";
+      const label = yield* coercedString(idea.label, "idea label");
+      const description = yield* coercedString(idea.description, "idea description");
+      const parsedAnchors: Anchor[] = [];
+      for (const rawAnchor of anchorsValue) {
         const anchor = asRecord(rawAnchor);
-        if (anchor === undefined || typeof anchor.claim !== "string" || typeof anchor.quote !== "string") {
-          throw new Error("invalid anchor");
+        if (anchor === undefined) {
+          return yield* Effect.fail(new MalformedLlmOutput("invalid anchor"));
         }
-        const quote = anchor.quote.trim().replace(/\s+/g, " ");
-        return {
-          claim: anchor.claim,
-          quote: anchor.quote,
+        const claim = yield* coercedString(anchor.claim, "anchor claim");
+        const quote = yield* coercedString(anchor.quote, "anchor quote");
+        const normalizedQuote = normalizePythonWhitespace(quote);
+        parsedAnchors.push({
+          claim,
+          quote,
           chunkIndex:
-            quote.length === 0
+            normalizedQuote.length === 0
               ? null
-              : (paragraphBodies.find((paragraph) => paragraph.body.includes(quote))?.index ?? null),
-        };
-      });
+              : (paragraphBodies.find((paragraph) => paragraph.body.includes(normalizedQuote))?.index ??
+                null),
+        });
+      }
       parsedIdeas.push({
         ideaId: yield* mintUuid7,
         documentId,
-        kind: allowedKinds.includes(idea.kind) || idea.kind === "other" ? idea.kind : "other",
-        label: idea.label,
-        description: idea.description,
+        kind,
+        label,
+        description,
         anchors: parsedAnchors,
       });
     }
     return {
       documentId,
-      title: record.title as string,
-      precis: record.precis as string,
-      author: nullableString(record.author),
-      publishedDate: nullableString(record.published_date),
-      genre: nullableString(record.genre),
-      tags: strings(record.tags),
-      derivedExtras: asRecord(record.derived_extras) ?? {},
+      title,
+      precis,
+      author,
+      publishedDate,
+      genre,
+      tags: strings(tagsValue),
+      derivedExtras,
       ideas: parsedIdeas,
     } satisfies SourceCard;
   });
@@ -944,6 +1140,7 @@ type JsonCall = (input: {
   readonly temperature: number;
   readonly responseFormat: Record<string, unknown>;
   readonly maxParseRetries?: number;
+  readonly logFields?: Record<string, string | number>;
 }) => Effect.Effect<unknown, unknown>;
 
 type CacheGetter = (vaultId: Uuid, phase: string, cacheKey: string) => Effect.Effect<unknown, unknown>;
@@ -961,6 +1158,7 @@ type AbstractOptions = {
   readonly db: DatabaseService;
   readonly storage: StorageService;
   readonly pipeline: PipelineService;
+  readonly logger: Logger;
   readonly jsonCall: JsonCall;
   readonly getCache: CacheGetter;
   readonly putCache: CachePutter;
@@ -969,7 +1167,6 @@ type AbstractOptions = {
     vaultId: Uuid,
     transitions: readonly ArchiveTransition[],
   ) => Effect.Effect<void, unknown>;
-  readonly flushCost: (vaultId: Uuid, runId: Uuid) => Effect.Effect<void, unknown>;
 };
 
 type IdeaContext = {
@@ -1055,7 +1252,6 @@ const runAbstract = (options: AbstractOptions) =>
           { completed: new Set(["group_ideas"]) },
         ),
       );
-      yield* options.flushCost(vaultId, runId);
       return [];
     }
 
@@ -1162,9 +1358,10 @@ const runAbstract = (options: AbstractOptions) =>
         },
       ),
     );
-    if (validated.length === 0) yield* options.flushCost(vaultId, runId);
     return validated;
   });
+
+export const codePointLength = (value: string) => [...value].length;
 
 const estimateTokens = (idea: IdeaContext) => {
   const ideaLine = `[${idea.kind}] ${idea.label}: ${idea.description}`;
@@ -1172,7 +1369,12 @@ const estimateTokens = (idea: IdeaContext) => {
   if (idea.document.genre) titlePart += ` (${idea.document.genre})`;
   const docHeader = `${titlePart}; tags: ${idea.document.tags.join(",")}`;
   const precisLine = `precis: ${idea.document.precis ?? ""}`;
-  return Math.max(1, Math.floor((ideaLine.length + docHeader.length + precisLine.length) / 4));
+  return Math.max(
+    1,
+    Math.floor(
+      (codePointLength(ideaLine) + codePointLength(docHeader) + codePointLength(precisLine)) / 4,
+    ),
+  );
 };
 
 const partitionIdeas = (options: AbstractOptions, contexts: readonly IdeaContext[]) =>
@@ -1598,12 +1800,23 @@ const synthesizeTopics = (
                 runId: options.runId,
                 model: options.config.mapModel,
                 messages: [{ role: "user", content: promptTemplate.replace("{idea_block}", block) }],
-                temperature: 0.3,
-                responseFormat: jsonObjectResponseFormat,
-              }),
-            ),
-          );
-          if (result._tag === "Failure") return [];
+                  temperature: 0.3,
+                  responseFormat: jsonObjectResponseFormat,
+                  logFields: { chunk_idx: chunkIdx },
+                }),
+              ),
+            );
+          if (result._tag === "Failure") {
+            const details = errorDetails(result.failure);
+            yield* options.logger.warn("chunk_failed", {
+              vault_id: options.vaultId,
+              run_id: options.runId,
+              chunk_idx: chunkIdx,
+              error_type: details.errorType,
+              error: details.message.slice(0, 300),
+            });
+            return [];
+          }
           const parsed = yield* parseSynthesisResponse(
             result.success,
             chunkIdx,
@@ -1801,7 +2014,8 @@ const parseRegistryTopics = (value: unknown): readonly RegistryTopic[] | undefin
       typeof topic.slug !== "string" ||
       typeof topic.title !== "string" ||
       typeof topic.description !== "string" ||
-      !Array.isArray(topic.link_target_titles)
+      !Array.isArray(topic.link_target_titles) ||
+      strings(topic.link_target_titles).length !== topic.link_target_titles.length
     ) {
       return undefined;
     }
@@ -1852,11 +2066,24 @@ const canonicalizeTopics = (
       thematicHint,
       model: options.config.reduceModel,
     });
-    const cachedRegistry = asRecord(
-      yield* options.getCache(options.vaultId, "canonicalize_registry", registryCacheKey),
+    const cachedRegistryValue = yield* options.getCache(
+      options.vaultId,
+      "canonicalize_registry",
+      registryCacheKey,
     );
-    let registry = parseRegistryTopics(cachedRegistry?.topics);
-    if (registry === undefined) {
+    let registry: readonly RegistryTopic[];
+    if (cachedRegistryValue !== undefined) {
+      const cachedRegistry = asRecord(cachedRegistryValue);
+      const parsed = parseRegistryTopics(cachedRegistry?.topics);
+      if (parsed === undefined) {
+        return yield* Effect.fail(
+          new MalformedCompileCache(
+            `canonicalize_registry cache row ${registryCacheKey} is malformed`,
+          ),
+        );
+      }
+      registry = parsed;
+    } else {
       const hintBlock = thematicHint.trim()
         ? `The wiki's editorial lens for this vault:\n\n${thematicHint.trim()}\n\n`
         : "";
@@ -1877,6 +2104,7 @@ const canonicalizeTopics = (
         ],
         temperature: 0.2,
         responseFormat: registryResponseFormat,
+        logFields: { vault_id: options.vaultId, phase: "canonicalize_registry" },
       });
       const seen = new Set<string>();
       const dataRecord = asRecord(data);
@@ -1909,8 +2137,21 @@ const canonicalizeTopics = (
       ...registry.map((topic) => `${topic.slug}|${topic.title}|${topic.description}`),
     );
     const slugs = new Set(registry.map((topic) => topic.slug));
-    const [head, tail = ""] = assignTemplate.split("{subtopics_block}", 2);
-    const prefix = (head ?? "").replace("{registry_block}", registryBlock);
+    const marker = "{subtopics_block}";
+    const splitTemplate = assignTemplate.split(marker);
+    if (splitTemplate.length !== 2) {
+      return yield* Effect.fail(
+        new MalformedPromptTemplate(
+          `canonicalize_assign prompt must contain exactly one ${marker} placeholder`,
+        ),
+      );
+    }
+    const head = splitTemplate[0];
+    const tail = splitTemplate[1];
+    if (head === undefined || tail === undefined) {
+      return yield* Effect.fail(new MalformedPromptTemplate("canonicalize_assign prompt split failed"));
+    }
+    const prefix = head.replace("{registry_block}", registryBlock);
     const assignment = new Map<string, string>();
     for (let offset = 0; offset < ordered.length; offset += 30) {
       const batch = ordered.slice(offset, offset + 30);
@@ -1920,13 +2161,26 @@ const canonicalizeTopics = (
         promptHash: assignPromptHash,
         model: options.config.reduceModel,
       });
-      const cached = asRecord(
-        yield* options.getCache(options.vaultId, "canonicalize_assign", cacheKey),
+      const cachedValue = yield* options.getCache(
+        options.vaultId,
+        "canonicalize_assign",
+        cacheKey,
       );
-      const cachedAssign = asRecord(cached?.assign);
-      if (cachedAssign !== undefined) {
+      if (cachedValue !== undefined) {
+        const cached = asRecord(cachedValue);
+        const cachedAssign = asRecord(cached?.assign);
+        if (
+          cachedAssign === undefined ||
+          Object.entries(cachedAssign).some(
+            ([localId, slug]) => !UUID_PATTERN.test(localId) || typeof slug !== "string",
+          )
+        ) {
+          return yield* Effect.fail(
+            new MalformedCompileCache(`canonicalize_assign cache row ${cacheKey} is malformed`),
+          );
+        }
         for (const [localId, slug] of Object.entries(cachedAssign)) {
-          if (typeof slug === "string") assignment.set(localId, slug);
+          assignment.set(localId, slug as string);
         }
         continue;
       }
@@ -1948,6 +2202,11 @@ const canonicalizeTopics = (
         temperature: 0.1,
         responseFormat: assignmentsResponseFormat,
         maxParseRetries: 2,
+        logFields: {
+          vault_id: options.vaultId,
+          phase: "canonicalize_assign",
+          batch_offset: offset,
+        },
       });
       const batchAssign: Record<string, string> = {};
       const rawAssignments = Array.isArray(asRecord(data)?.assignments)
@@ -2007,7 +2266,9 @@ const canonicalizeTopics = (
 
 const tagToIndex = (tag: unknown, prefix: string, upperBound: number) => {
   if (typeof tag !== "string" || !tag.startsWith(prefix)) return undefined;
-  const parsed = Number.parseInt(tag.slice(prefix.length), 10) - 1;
+  const suffix = tag.slice(prefix.length);
+  if (!/^\d+$/.test(suffix)) return undefined;
+  const parsed = Number(suffix) - 1;
   return Number.isInteger(parsed) && parsed >= 0 && parsed < upperBound ? parsed : undefined;
 };
 
@@ -2096,11 +2357,28 @@ const validateTopics = (
         ],
         temperature: 0.1,
         responseFormat: jsonObjectResponseFormat,
+        logFields: { vault_id: options.vaultId, phase: "validate_cleanup" },
       });
       const record = asRecord(data);
-      const rawRenames = Array.isArray(record?.slug_renames) ? record.slug_renames : [];
+      if (record === undefined) {
+        return yield* Effect.fail(new MalformedLlmOutput("cleanup response is not an object"));
+      }
+      const renamesValue = pythonTruthy(record.slug_renames) ? record.slug_renames : [];
+      if (!Array.isArray(renamesValue)) {
+        return yield* Effect.fail(new MalformedLlmOutput("cleanup slug_renames is not an array"));
+      }
+      const rawRenames = renamesValue;
       for (const raw of rawRenames) {
         const rename = asRecord(raw);
+        if (rename === undefined) {
+          return yield* Effect.fail(new MalformedLlmOutput("cleanup slug rename is not an object"));
+        }
+        if (pythonTruthy(rename.canonical_tag) && typeof rename.canonical_tag !== "string") {
+          return yield* Effect.fail(new MalformedLlmOutput("cleanup canonical_tag is not a string"));
+        }
+        if (pythonTruthy(rename.new_slug) && typeof rename.new_slug !== "string") {
+          return yield* Effect.fail(new MalformedLlmOutput("cleanup new_slug is not a string"));
+        }
         const index = tagToIndex(rename?.canonical_tag, "c_", canonicals.length);
         const newSlug = typeof rename?.new_slug === "string" ? rename.new_slug.trim().toLowerCase() : "";
         if (index !== undefined && newSlug.length > 0) renames.set(index, newSlug);
@@ -2108,9 +2386,22 @@ const validateTopics = (
       const archivedByTag = new Map(
         archiveCandidates.map((topic, index) => [`a_${index + 1}`, topic.topicId]),
       );
-      const rawSupersessions = Array.isArray(record?.supersessions) ? record.supersessions : [];
+      const supersessionsValue = pythonTruthy(record.supersessions) ? record.supersessions : [];
+      if (!Array.isArray(supersessionsValue)) {
+        return yield* Effect.fail(new MalformedLlmOutput("cleanup supersessions is not an array"));
+      }
+      const rawSupersessions = supersessionsValue;
       for (const raw of rawSupersessions) {
         const entry = asRecord(raw);
+        if (entry === undefined) {
+          return yield* Effect.fail(new MalformedLlmOutput("cleanup supersession is not an object"));
+        }
+        if (pythonTruthy(entry.archived_tag) && typeof entry.archived_tag !== "string") {
+          return yield* Effect.fail(new MalformedLlmOutput("cleanup archived_tag is not a string"));
+        }
+        if (pythonTruthy(entry.successor_tag) && typeof entry.successor_tag !== "string") {
+          return yield* Effect.fail(new MalformedLlmOutput("cleanup successor_tag is not a string"));
+        }
         const archivedId = archivedByTag.get(
           typeof entry?.archived_tag === "string" ? entry.archived_tag : "",
         );
@@ -2132,8 +2423,10 @@ const validateTopics = (
       seen.add(canonical.slug);
     }
     if (duplicates.length > 0) {
-      throw new Error(
-        `validate: cleanup LLM did not resolve all slug collisions: [${duplicates.map((slug) => `'${slug}'`).join(", ")}]`,
+      return yield* Effect.fail(
+        new MalformedLlmOutput(
+          `validate: cleanup LLM did not resolve all slug collisions: [${duplicates.map((slug) => `'${slug}'`).join(", ")}]`,
+        ),
       );
     }
     const localById = new Map(localTopics.map((topic) => [topic.localTopicId, topic]));
@@ -2212,6 +2505,7 @@ type RenderOptions = {
   readonly db: DatabaseService;
   readonly storage: StorageService;
   readonly pipeline: PipelineService;
+  readonly logger: Logger;
   readonly jsonCall: JsonCall;
   readonly getCache: CacheGetter;
   readonly putCache: CachePutter;
@@ -2222,7 +2516,6 @@ type RenderOptions = {
     output: { readonly body: string; readonly tags: readonly string[] },
   ) => Effect.Effect<void, unknown>;
   readonly rebuildWiki: (vaultId: Uuid, runId: Uuid) => Effect.Effect<number, unknown>;
-  readonly flushCost: (vaultId: Uuid, runId: Uuid) => Effect.Effect<void, unknown>;
 };
 
 type RenderIdea = {
@@ -2372,15 +2665,48 @@ const runRender = (options: RenderOptions) =>
                   messages: [{ role: "user", content: prompt }],
                   temperature: 0.3,
                   responseFormat: jsonObjectResponseFormat,
+                  logFields: { topic_id: topic.topicId, topic_slug: topic.slug },
                 }),
               ),
             );
-            if (result._tag === "Failure") return false;
-            const output = parseRenderOutput(result.success);
-            if (output === undefined) return false;
-            const body = postprocessBody(output.body, numbered);
-            if (body === undefined) return false;
-            const finalOutput = { body, tags: output.tags };
+            if (result._tag === "Failure") {
+              const details = errorDetails(result.failure);
+              yield* options.logger.warn("topic_failed", {
+                vault_id: options.vaultId,
+                run_id: options.runId,
+                topic_id: topic.topicId,
+                topic_slug: topic.slug,
+                error_type: details.errorType,
+                error: details.message.slice(0, 300),
+              });
+              return false;
+            }
+            const processed = yield* Effect.result(
+              Effect.gen(function* () {
+                const output = parseRenderOutput(result.success);
+                if (output === undefined) {
+                  return yield* Effect.fail(new MalformedLlmOutput("invalid render output"));
+                }
+                const body = postprocessBody(output.body, numbered);
+                if (body === undefined) {
+                  return yield* Effect.fail(new MalformedLlmOutput("invalid render body"));
+                }
+                return { body, tags: output.tags } as const;
+              }),
+            );
+            if (processed._tag === "Failure") {
+              const details = errorDetails(processed.failure);
+              yield* options.logger.warn("body_invalid", {
+                vault_id: options.vaultId,
+                run_id: options.runId,
+                topic_id: topic.topicId,
+                topic_slug: topic.slug,
+                error_type: details.errorType,
+                error: details.message.slice(0, 300),
+              });
+              return false;
+            }
+            const finalOutput = processed.success;
             yield* options.materializeArticle(
               options.vaultId,
               options.runId,
@@ -2435,7 +2761,6 @@ const runRender = (options: RenderOptions) =>
             },
           }),
         );
-        yield* options.flushCost(options.vaultId, options.runId);
         return;
       }
     }
@@ -2466,7 +2791,6 @@ const runRender = (options: RenderOptions) =>
         },
       }),
     );
-    yield* options.flushCost(options.vaultId, options.runId);
   });
 
 const parseRenderOutput = (value: unknown) => {

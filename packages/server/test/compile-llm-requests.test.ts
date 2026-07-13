@@ -5,8 +5,10 @@ import { describe, expect, it } from "vitest";
 
 import {
   assignmentsResponseFormat,
+  codePointLength,
   decodeCompileJsonCompletion,
   extractResponseFormat,
+  normalizePythonWhitespace,
   registryResponseFormat,
 } from "../src/compile-llm-core.ts";
 import { completionRequestBody, type LlmMessage } from "../src/llm.ts";
@@ -152,5 +154,18 @@ describe("compile structured-output decoding", () => {
     ).toThrow(
       "fixture-model output hit the token limit (finish_reason=length) and was truncated",
     );
+  });
+});
+
+describe("Python text-kernel alignment", () => {
+  it("normalizes Python Unicode whitespace without treating BOM as whitespace", () => {
+    expect(normalizePythonWhitespace(" alpha\u0085\u001cbeta\u3000gamma ")).toBe(
+      "alpha beta gamma",
+    );
+    expect(normalizePythonWhitespace("alpha\ufeffbeta")).toBe("alpha\ufeffbeta");
+  });
+
+  it("counts Unicode code points rather than UTF-16 code units", () => {
+    expect(codePointLength("a😀b")).toBe(3);
   });
 });
