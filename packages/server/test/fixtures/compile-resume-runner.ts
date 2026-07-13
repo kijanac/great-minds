@@ -5,6 +5,7 @@ import type { Uuid } from "@great-minds/domain";
 import { Effect, Layer } from "effect";
 
 import { AppConfigLive } from "../../src/config.ts";
+import { ClockLive } from "../../src/clock.ts";
 import {
   cancelCompileWorkflow,
   CompileWorkflow,
@@ -85,7 +86,7 @@ const PhasesLive = Layer.effect(
   }),
 );
 
-const BaseLive = DrizzleLive.pipe(Layer.provideMerge(AppConfigLive));
+const BaseLive = Layer.mergeAll(DrizzleLive.pipe(Layer.provideMerge(AppConfigLive)), ClockLive);
 const PipelineLive = PipelineRunsServiceLive.pipe(Layer.provideMerge(BaseLive));
 const PhasesProvidedLive = PhasesLive.pipe(Layer.provideMerge(PipelineLive));
 const EngineLive = WorkflowEngineLive.pipe(Layer.provideMerge(BaseLive));

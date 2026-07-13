@@ -1,3 +1,5 @@
+import { Buffer } from "node:buffer";
+
 import { Context, Effect, Layer, Option, Redacted } from "effect";
 
 import { AppConfig } from "./config.ts";
@@ -29,7 +31,44 @@ const truncateAndNormalize = (embedding: readonly number[]) => {
   return norm === 0 ? truncated : truncated.map((value) => value / norm);
 };
 
-const parseEmbeddingResponse = (
+const decodeBase64Float32Le = (embedding: string): readonly number[] => {
+  if (
+    embedding.length === 0 ||
+    embedding.length % 4 !== 0 ||
+    !/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(embedding)
+  ) {
+    throw new ModelProviderError("embedding provider returned invalid base64 vector data");
+  }
+  const bytes = Buffer.from(embedding, "base64");
+  if (bytes.length === 0 || bytes.length % Float32Array.BYTES_PER_ELEMENT !== 0) {
+    throw new ModelProviderError("embedding provider returned invalid float32 vector bytes");
+  }
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  const decoded = Array.from(
+    { length: bytes.length / Float32Array.BYTES_PER_ELEMENT },
+    (_, index) => view.getFloat32(index * Float32Array.BYTES_PER_ELEMENT, true),
+  );
+  if (decoded.some((value) => !Number.isFinite(value))) {
+    throw new ModelProviderError("embedding provider returned non-finite float32 vector data");
+  }
+  return decoded;
+};
+
+const decodeEmbedding = (embedding: unknown): readonly number[] => {
+  if (typeof embedding === "string") {
+    return decodeBase64Float32Le(embedding);
+  }
+  if (
+    Array.isArray(embedding) &&
+    embedding.length > 0 &&
+    embedding.every((value) => typeof value === "number" && Number.isFinite(value))
+  ) {
+    return embedding;
+  }
+  throw new ModelProviderError("embedding provider returned an invalid vector");
+};
+
+export const parseEmbeddingResponse = (
   value: unknown,
   expectedCount: number,
 ): readonly (readonly number[])[] => {
@@ -49,10 +88,7 @@ const parseEmbeddingResponse = (
     if (!Number.isInteger(index) || (index as number) < 0 || (index as number) >= expectedCount) {
       throw new ModelProviderError("embedding provider returned an invalid index");
     }
-    if (!Array.isArray(embedding) || embedding.some((value) => typeof value !== "number")) {
-      throw new ModelProviderError("embedding provider returned an invalid vector");
-    }
-    return { index: index as number, embedding: truncateAndNormalize(embedding as readonly number[]) };
+    return { index: index as number, embedding: truncateAndNormalize(decodeEmbedding(embedding)) };
   });
   const byIndex = new Map(indexed.map((item) => [item.index, item.embedding]));
   if (byIndex.size !== expectedCount) {
@@ -66,6 +102,12 @@ const parseEmbeddingResponse = (
     return embedding;
   });
 };
+
+export const embeddingRequestBody = (texts: readonly string[], model: string) => ({
+  input: [...texts],
+  model,
+  encoding_format: "base64" as const,
+});
 
 export const EmbeddingsLive = Layer.effect(
   EmbeddingsService,
@@ -84,10 +126,7 @@ export const EmbeddingsLive = Layer.effect(
                 authorization: `Bearer ${apiKey}`,
                 "content-type": "application/json",
               },
-              body: JSON.stringify({
-                model: config.embeddingModel,
-                input: [...texts],
-              }),
+              body: JSON.stringify(embeddingRequestBody(texts, config.embeddingModel)),
               signal: AbortSignal.timeout(embeddingTimeoutMs),
             });
             if (!response.ok) {

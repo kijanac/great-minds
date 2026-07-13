@@ -159,6 +159,27 @@ const detailArray = (value: unknown) =>
 
 const exactBody = (actual: unknown, expected: unknown) => isDeepStrictEqual(actual, expected);
 
+const terminalProbeBody = (
+  id: string,
+  status: string,
+  phase: string,
+  phaseStatus: string,
+  error: string,
+) => ({
+  id,
+  vault_id: "<masked:vault_id>",
+  trigger: "manual",
+  status,
+  current_phase: phase,
+  phase_status: phaseStatus,
+  progress_steps: [],
+  error,
+  created_at: "<masked:created_at>",
+  updated_at: "<masked:updated_at>",
+  completed_at: "<masked:completed_at>",
+  stream_url: `/jobs/${id}/stream`,
+});
+
 const evaluateDecision = (
   entry: ManifestEntry,
   python: ComparedResponse,
@@ -326,6 +347,81 @@ const evaluateDecision = (
             accepted: false,
             note: "D11 non-object expected Python 500 and exact TS skipped-line replay.",
             diffs: [],
+          };
+    }
+    case "M4_D12_FAILED_RESURRECTION": {
+      const id = "00000000-0000-4000-8000-000000001403";
+      const accepted =
+        python.status === 200 &&
+        typescript.status === 200 &&
+        exactBody(
+          python.body,
+          terminalProbeBody(id, "running", "ingest", "progress", "first attempt failed"),
+        ) &&
+        exactBody(
+          typescript.body,
+          terminalProbeBody(id, "failed", "extract", "failed", "first attempt failed"),
+        );
+      return accepted
+        ? {
+            accepted: true,
+            decisions: ["D12"],
+            note: "D12 / M4 oddity 1: Python late progress resurrects failed; TS decision 6 keeps failed terminal-stable.",
+          }
+        : {
+            accepted: false,
+            note: "D12 expected Python running/ingest/progress and TS failed/extract/failed.",
+            diffs: genericDiffs(python, typescript),
+          };
+    }
+    case "M4_D13_CANCELLED_RESURRECTION": {
+      const id = "00000000-0000-4000-8000-000000001404";
+      const accepted =
+        python.status === 200 &&
+        typescript.status === 200 &&
+        exactBody(
+          python.body,
+          terminalProbeBody(id, "running", "ingest", "progress", "Cancelled by user"),
+        ) &&
+        exactBody(
+          typescript.body,
+          terminalProbeBody(id, "cancelled", "abstract", "failed", "Cancelled by user"),
+        );
+      return accepted
+        ? {
+            accepted: true,
+            decisions: ["D13"],
+            note: "D13 / M4 oddity 2: Python late progress resurrects cancelled; TS decision 6 keeps cancelled terminal-stable.",
+          }
+        : {
+            accepted: false,
+            note: "D13 expected Python running/ingest/progress and TS cancelled/abstract/failed.",
+            diffs: genericDiffs(python, typescript),
+          };
+    }
+    case "M4_D14_CANCELLED_CLOBBER": {
+      const id = "00000000-0000-4000-8000-000000001405";
+      const accepted =
+        python.status === 200 &&
+        typescript.status === 200 &&
+        exactBody(
+          python.body,
+          terminalProbeBody(id, "failed", "render", "failed", "late failure"),
+        ) &&
+        exactBody(
+          typescript.body,
+          terminalProbeBody(id, "cancelled", "render", "failed", "Cancelled by user"),
+        );
+      return accepted
+        ? {
+            accepted: true,
+            decisions: ["D14"],
+            note: "D14 / M4 oddity 22: Python late failure clobbers cancelled; TS decision 6 preserves cancellation.",
+          }
+        : {
+            accepted: false,
+            note: "D14 expected Python failed/late failure and TS cancelled/original cancellation.",
+            diffs: genericDiffs(python, typescript),
           };
     }
     case "M3_D2_TITLE_NULL": {

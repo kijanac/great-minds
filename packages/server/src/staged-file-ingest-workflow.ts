@@ -163,10 +163,15 @@ export const StagedFileIngestWorkflowLive = StagedFileIngestWorkflow.toLayer((pa
       const cleanup: string[] = [];
       let batch: { filePath: string; content: string; clientHash: string }[] = [];
 
+      const requireActive = Effect.fn(function* () {
+        if (!(yield* pipeline.isActive(runId))) return yield* Effect.interrupt;
+      });
+
       const flush = Effect.fn(function* () {
         if (batch.length === 0) {
           return;
         }
+        yield* requireActive();
         yield* sourceDocumentsService.batchIndex(vaultId, batch);
         batch = [];
         yield* pipeline.updateProgress(
@@ -205,6 +210,7 @@ export const StagedFileIngestWorkflowLive = StagedFileIngestWorkflow.toLayer((pa
           skipped += 1;
           continue;
         }
+        yield* requireActive();
         yield* storage.writeText(vaultId, dest, content, bucket);
         seen.add(dest);
         batch.push({ filePath: dest, content, clientHash: file.hash });

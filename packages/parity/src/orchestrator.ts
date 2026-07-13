@@ -15,9 +15,11 @@ import {
   resetStorage,
   seedDeletionCompanionVault,
   seedDuplicateClientHashSources,
+  seedCompileHttpFixture,
   seedNormalProposal,
   seedReadFixture,
   seedSourceDeletionFixture,
+  seedTerminalStabilityFixture,
 } from "./fixture.ts";
 import type { Backend, CapturedResponse, RequestSpec } from "./http.ts";
 import { requestBackend } from "./http.ts";
@@ -326,9 +328,9 @@ const mutationEntry = (
 
 const executeMutation = async (
   backend: Backend,
-  databaseUrl: string,
-  dataDir: string,
+  config: RunnerConfig,
 ): Promise<readonly MutationCapture[]> => {
+  const { databaseUrl, dataDir } = config;
   await resetDatabase(databaseUrl);
   await resetStorage(dataDir);
   const captures: MutationCapture[] = [];
@@ -522,6 +524,115 @@ const executeMutation = async (
     rotatedPair.access_token,
   );
   const vaultId = parseCreatedId(vaultCreateResponse.body, "vault id");
+
+  await seedCompileHttpFixture(databaseUrl, vaultId);
+  await send(
+    mutationEntry(
+      "mutation-compile-submit",
+      "manual compile submission",
+      "POST",
+      `/v1/vaults/${vaultId}/compile`,
+      "POST /vaults/{vault_id}/compile",
+      {
+        pathTemplate: "/v1/vaults/{created_vault_id}/compile",
+        body: { job_id: ids.m43CompileRun },
+        normalize: [
+          mask("vault_id", "vault_id"),
+          mask("created_at", "created_at"),
+          mask("updated_at", "updated_at"),
+        ],
+      },
+    ),
+    rotatedPair.access_token,
+  );
+  await send(
+    mutationEntry(
+      "mutation-compile-coalesce",
+      "manual compile submission coalesces",
+      "POST",
+      `/v1/vaults/${vaultId}/compile`,
+      "POST /vaults/{vault_id}/compile",
+      {
+        pathTemplate: "/v1/vaults/{created_vault_id}/compile",
+        body: { job_id: ids.m43DiscardedRun },
+        normalize: [
+          mask("vault_id", "vault_id"),
+          mask("created_at", "created_at"),
+          mask("updated_at", "updated_at"),
+        ],
+      },
+    ),
+    rotatedPair.access_token,
+  );
+  await send(
+    mutationEntry(
+      "mutation-compile-cancel",
+      "manual compile cancellation",
+      "POST",
+      `/v1/vaults/${vaultId}/compile/${ids.m43CompileRun}/cancel`,
+      "POST /vaults/{vault_id}/compile/{run_id}/cancel",
+      {
+        pathTemplate: "/v1/vaults/{created_vault_id}/compile/{run_id}/cancel",
+        ignoreContentType: true,
+      },
+    ),
+    rotatedPair.access_token,
+  );
+
+  await seedTerminalStabilityFixture(databaseUrl, vaultId);
+  if (backend.name === "python") {
+    await runCommand(config, "uv", [
+      "run",
+      "python",
+      "packages/parity/src/terminal_stability_probe.py",
+    ]);
+  } else {
+    await runCommand(config, "node", [
+      "--experimental-strip-types",
+      "packages/parity/src/terminal-stability-probe.ts",
+    ]);
+  }
+  for (const probe of [
+    {
+      id: "terminal-stability-failed-progress",
+      label: "late progress after failed terminal",
+      runId: ids.m43FailedResurrectionRun,
+      decision: "M4_D12_FAILED_RESURRECTION" as const,
+    },
+    {
+      id: "terminal-stability-cancelled-progress",
+      label: "late progress after cancelled terminal",
+      runId: ids.m43CancelledResurrectionRun,
+      decision: "M4_D13_CANCELLED_RESURRECTION" as const,
+    },
+    {
+      id: "terminal-stability-cancelled-failure",
+      label: "late failure after cancelled terminal",
+      runId: ids.m43CancelledClobberRun,
+      decision: "M4_D14_CANCELLED_CLOBBER" as const,
+    },
+  ]) {
+    await send(
+      mutationEntry(
+        probe.id,
+        probe.label,
+        "GET",
+        `/v1/vaults/${vaultId}/jobs/${probe.runId}`,
+        "GET /vaults/{vault_id}/jobs/{job_id}",
+        {
+          pathTemplate: "/v1/vaults/{created_vault_id}/jobs/{terminal_probe_id}",
+          normalize: [
+            mask("vault_id", "vault_id"),
+            mask("created_at", "created_at"),
+            mask("updated_at", "updated_at"),
+            mask("completed_at", "completed_at"),
+          ],
+          decision: probe.decision,
+        },
+      ),
+      rotatedPair.access_token,
+    );
+  }
 
   await send(
     mutationEntry(
@@ -1346,12 +1457,8 @@ export const runParity = async () => {
       waitForHealth(typescript, `${typescriptBackend.baseUrl}/health`),
     ]);
 
-    const pythonMutation = await executeMutation(pythonBackend, config.databaseUrl, config.dataDir);
-    const typescriptMutation = await executeMutation(
-      typescriptBackend,
-      config.databaseUrl,
-      config.dataDir,
-    );
+    const pythonMutation = await executeMutation(pythonBackend, config);
+    const typescriptMutation = await executeMutation(typescriptBackend, config);
     await assertNoTypescriptReconciliation(config.databaseUrl);
     const mutationReports = compareMutationFlows(pythonMutation, typescriptMutation);
 

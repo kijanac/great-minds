@@ -21,6 +21,7 @@ import {
   HttpServerRequest,
   HttpServerResponse,
 } from "effect/unstable/http";
+import * as HttpBody from "effect/unstable/http/HttpBody";
 import * as Multipart from "effect/unstable/http/Multipart";
 import * as HttpServerError from "effect/unstable/http/HttpServerError";
 import { HttpApiBuilder } from "effect/unstable/httpapi";
@@ -29,10 +30,13 @@ import { HttpApiSchemaError } from "effect/unstable/httpapi/HttpApiError";
 import { AppLayerLive, type AppLayerServices } from "./app-layer.ts";
 import { AuthService } from "./auth.ts";
 import { AppConfig } from "./config.ts";
+import { CostsService } from "./costs.ts";
 import { dieDatabase } from "./db-defects.ts";
 import { DocumentRegistryMismatch, DocumentsService } from "./documents.ts";
 import { domainErrorResponse } from "./http-errors.ts";
 import { IngestService } from "./ingest.ts";
+import { JobsService } from "./jobs.ts";
+import { LintService } from "./lint.ts";
 import { StructuredLogger } from "./logging.ts";
 import { ProposalsService } from "./proposals.ts";
 import { QueryService } from "./query.ts";
@@ -62,6 +66,10 @@ const jsonResponse = (status: number, body: unknown) =>
   HttpServerResponse.json(body, { status }).pipe(Effect.orDie);
 
 const healthResponse = jsonResponse(200, { status: "ok" });
+const heartbeatBytes = new TextEncoder().encode(": heartbeat\n\n");
+
+export const jobSseHeartbeatChunk = (chunk: Uint8Array) =>
+  chunk.length === 1 && chunk[0] === 10 ? heartbeatBytes : chunk;
 
 const clean500Response = jsonResponse(500, { detail: "Internal Server Error" });
 
@@ -564,15 +572,105 @@ const IngestHandlersLive = HttpApiBuilder.group(MountedGreatMindsApi, "ingest", 
 );
 
 const JobsHandlersLive = HttpApiBuilder.group(MountedGreatMindsApi, "jobs", (handlers) =>
-  handlers.handle("startUrlJob", ({ params, payload }) =>
+  handlers
+    .handle("startUrlJob", ({ params, payload }) =>
+      withDomainErrors(
+        Effect.gen(function* () {
+          const ingest = yield* IngestService;
+        const current = yield* CurrentAuth;
+          return yield* ingest.startUrlJob(current.user_id, params.vault_id, payload);
+        }),
+      ),
+    )
+    .handle("listJobs", ({ params, query }) =>
+      withDomainErrors(
+        Effect.gen(function* () {
+          const jobs = yield* JobsService;
+          const current = yield* CurrentAuth;
+          return yield* jobs.list(current.user_id, params.vault_id, query);
+        }),
+      ),
+    )
+    .handle("getJob", ({ params }) =>
+      withDomainErrors(
+        Effect.gen(function* () {
+          const jobs = yield* JobsService;
+          const current = yield* CurrentAuth;
+          return yield* jobs.get(current.user_id, params.vault_id, params.job_id);
+        }),
+      ),
+    )
+    .handle("streamJob", ({ params }) =>
+      withDomainErrors(
+        Effect.gen(function* () {
+          const jobs = yield* JobsService;
+          const current = yield* CurrentAuth;
+          return yield* jobs.stream(current.user_id, params.vault_id, params.job_id);
+        }),
+      ),
+    ),
+);
+
+const CompileHandlersLive = HttpApiBuilder.group(MountedGreatMindsApi, "compile", (handlers) =>
+  handlers
+    .handle("requestCompile", ({ params, payload }) =>
+      withDomainErrors(
+        Effect.gen(function* () {
+          const current = yield* CurrentAuth;
+          const access = yield* VaultAccessService;
+          yield* access.requireMember(current.user_id, params.vault_id);
+          const config = yield* AppConfig;
+          if (Option.isNone(config.openRouterApiKey)) {
+            return yield* new ServiceUnavailable({
+              detail: "LLM service not configured (OPENROUTER_API_KEY missing)",
+            });
+          }
+          const jobs = yield* JobsService;
+          return yield* jobs.requestCompile(current.user_id, params.vault_id, payload.job_id);
+        }),
+      ),
+    )
+    .handle("cancelCompile", ({ params }) =>
+      withDomainErrors(
+        Effect.gen(function* () {
+          const jobs = yield* JobsService;
+          const current = yield* CurrentAuth;
+          yield* jobs.cancelCompile(current.user_id, params.vault_id, params.run_id);
+        }),
+      ),
+    ),
+);
+
+const LintHandlersLive = HttpApiBuilder.group(MountedGreatMindsApi, "lint", (handlers) =>
+  handlers.handle("getLint", ({ params }) =>
     withDomainErrors(
       Effect.gen(function* () {
-        const ingest = yield* IngestService;
+        const lint = yield* LintService;
         const current = yield* CurrentAuth;
-        return yield* ingest.startUrlJob(current.user_id, params.vault_id, payload);
+        return yield* lint.report(current.user_id, params.vault_id);
       }),
     ),
   ),
+);
+
+const CostsHandlersLive = HttpApiBuilder.group(MountedGreatMindsApi, "costs", (handlers) =>
+  handlers
+    .handle("getUserCosts", ({ query }) =>
+      Effect.gen(function* () {
+        const costs = yield* CostsService;
+        const current = yield* CurrentAuth;
+        return yield* costs.forUser(current.user_id, query);
+      }),
+    )
+    .handle("getVaultCosts", ({ params, query }) =>
+      withDomainErrors(
+        Effect.gen(function* () {
+          const costs = yield* CostsService;
+          const current = yield* CurrentAuth;
+          return yield* costs.forVault(current.user_id, params.vault_id, query);
+        }),
+      ),
+    ),
 );
 
 const DocumentsHandlersLive = HttpApiBuilder.group(MountedGreatMindsApi, "documents", (handlers) =>
@@ -724,22 +822,33 @@ const QueryHandlersLive = HttpApiBuilder.group(MountedGreatMindsApi, "query", (h
   ),
 );
 
-const QueryStreamHeadersLive = HttpRouter.middleware(
+const StreamHeadersLive = HttpRouter.middleware(
   (effect) =>
     Effect.gen(function* () {
       const request = yield* HttpServerRequest.HttpServerRequest;
       const response = yield* effect;
       const pathname = new URL(request.url, "http://localhost").pathname;
       if (
-        request.method === "POST" &&
         response.status === 200 &&
         pathname.startsWith("/v1/vaults/") &&
-        pathname.endsWith("/query")
+        ((request.method === "POST" && pathname.endsWith("/query")) ||
+          (request.method === "GET" && pathname.endsWith("/stream")))
       ) {
-        return HttpServerResponse.setHeaders(response, {
+        const withHeaders = HttpServerResponse.setHeaders(response, {
           "Cache-Control": "no-cache",
+          ...(request.method === "GET" ? { Connection: "keep-alive" } : {}),
           "X-Accel-Buffering": "no",
         });
+        if (request.method === "GET" && response.body._tag === "Stream") {
+          return HttpServerResponse.setBody(
+            withHeaders,
+            HttpBody.stream(
+              response.body.stream.pipe(Stream.map(jobSseHeartbeatChunk)),
+              "text/event-stream",
+            ),
+          );
+        }
+        return withHeaders;
       }
       return response;
     }),
@@ -828,6 +937,9 @@ const ApiGroupsLive = Layer.mergeAll(
   ProposalsHandlersLive,
   IngestHandlersLive,
   JobsHandlersLive,
+  CompileHandlersLive,
+  LintHandlersLive,
+  CostsHandlersLive,
   DocumentsHandlersLive,
   SessionsHandlersLive,
   QueryHandlersLive,
@@ -836,7 +948,7 @@ const ApiGroupsLive = Layer.mergeAll(
 const ApiLive = HttpApiBuilder.layer(MountedGreatMindsApi).pipe(Layer.provide(ApiGroupsLive));
 
 const AppRoutesLive = Layer.mergeAll(
-  QueryStreamHeadersLive,
+  StreamHeadersLive,
   HttpRouter.add("GET", "/health", healthResponse),
   HttpRouter.add("GET", "/", healthResponse),
   UploadRouteLive,

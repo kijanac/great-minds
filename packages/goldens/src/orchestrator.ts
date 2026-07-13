@@ -13,6 +13,7 @@ import { localTopicSetKey, startCassetteProxy } from "./proxy.ts";
 
 type Mode = "record" | "record-deferred" | "regenerate" | "check";
 type ExecutionMode = "record" | "check";
+type BackendKind = "python" | "typescript";
 type Row = Record<string, Json>;
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -172,6 +173,43 @@ const compile = async (baseUrl: string, bearer: string, runId: string, env: Node
     await sleep(100);
   }
   throw new Error(`compile timeout: ${runId}`);
+};
+
+const typescriptSeam = async (baseUrl: string, bearer: string, env: NodeJS.ProcessEnv) => {
+  const runId = fixtureIds.firstRun;
+  const submitted = await request(baseUrl, `/v1/vaults/${fixtureIds.vault}/compile`, bearer, {
+    method: "POST",
+    body: JSON.stringify({ job_id: runId }),
+  }) as Row;
+  const deadline = Date.now() + 30_000;
+  while (Date.now() < deadline) {
+    const row = await output("psql", [databaseUrl, "-At", "-v", "ON_ERROR_STOP=1", "-c", `select jsonb_build_object('status',status,'current_phase',current_phase,'phase_status',phase_status,'error',error) from pipeline_runs where id=${sqlString(runId)}`], { cwd: repoRoot, env });
+    const job = JSON.parse(row.trim()) as Row;
+    if (["completed", "failed", "cancelled"].includes(String(job.status))) {
+      const expectedError = "Compile phase 'extract' is not ported; M4.4 owns this phase seam";
+      if (job.status !== "failed" || job.current_phase !== "extract" || job.phase_status !== "failed" || job.error !== expectedError) {
+        throw new Error(`TypeScript seam ended unexpectedly: ${JSON.stringify(job)}`);
+      }
+      const readback = await request(baseUrl, `/v1/vaults/${fixtureIds.vault}/jobs/${runId}`, bearer) as Row;
+      const sourceCount = Number((await output("psql", [databaseUrl, "-At", "-v", "ON_ERROR_STOP=1", "-c", `select count(*) from source_documents where vault_id=${sqlString(fixtureIds.vault)}`], { cwd: repoRoot, env })).trim());
+      if (sourceCount !== corpus.length) throw new Error(`TypeScript fixture seed mismatch: ${sourceCount} != ${corpus.length}`);
+      const searchIndexCount = Number((await output("psql", [databaseUrl, "-At", "-v", "ON_ERROR_STOP=1", "-c", `select count(*) from search_index where vault_id=${sqlString(fixtureIds.vault)}`], { cwd: repoRoot, env })).trim());
+      if (searchIndexCount <= 0) throw new Error("TypeScript ingest reached the extract seam without indexing any searchable chunks");
+      return {
+        backend: "typescript",
+        health: "ok",
+        auth: "ok",
+        fixtureSources: sourceCount,
+        searchIndexRows: searchIndexCount,
+        submittedRunId: submitted.id,
+        terminal: job,
+        readbackStatus: readback.status,
+        acceptance: "M4.4-pending typed extract seam failure",
+      } satisfies Row;
+    }
+    await sleep(100);
+  }
+  throw new Error("TypeScript golden lane hung before reaching the extract seam");
 };
 
 const seedArchiveCandidates = async (dataDir: string, env: NodeJS.ProcessEnv) => {
@@ -390,7 +428,8 @@ const lintAndCostScenarios = async (baseUrl: string, bearer: string, env: NodeJS
   } satisfies Row;
 };
 
-export const executeHarness = async (options: { readonly mode: ExecutionMode; readonly replayCassettePath: string; readonly identityFixture?: Row; readonly renderFixtures?: readonly Row[]; readonly repairRenderHeading?: string }) => {
+export const executeHarness = async (options: { readonly mode: ExecutionMode; readonly replayCassettePath: string; readonly backend?: BackendKind; readonly identityFixture?: Row; readonly renderFixtures?: readonly Row[]; readonly repairRenderHeading?: string }) => {
+  const backend = options.backend ?? "python";
   const invocationId = randomUUID().replaceAll("-", "").slice(0, 12);
   const docker = ["compose", "-p", `gm_goldens_${invocationId}`, "-f", join(packageRoot, "docker-compose.yml")] as const;
   const databasePort = await availablePort();
@@ -416,6 +455,7 @@ export const executeHarness = async (options: { readonly mode: ExecutionMode; re
     COMPILE_ENRICH_CONCURRENCY: "4",
     COMPILE_WRITE_CONCURRENCY: "3",
     COMPILE_PARTITION_TARGET_TOKENS: "400",
+    PIPELINE_CONCURRENCY: "1",
     GOLDENS_DB_PORT: String(databasePort),
   };
   try {
@@ -442,12 +482,31 @@ export const executeHarness = async (options: { readonly mode: ExecutionMode; re
         .map((row) => localTopicSetKey(((row.value as Row).local_topics as Json[]) ?? [])),
     });
     env.OPENROUTER_API_BASE = proxy.baseUrl;
-    const api = start("python-api", "uv", ["run", "uvicorn", "great_minds.app.api.server:create_app", "--factory", "--host", "127.0.0.1", "--port", String(apiPort), "--log-level", "warning"], { cwd: repoRoot, env, logDir });
+    env.OPENROUTER_API_URL = proxy.baseUrl;
+    if (backend === "typescript") {
+      env.GOLDENS_RANDOM_SEED = "0";
+      env.GOLDENS_CLOCK = "2026-07-12T12:00:00.000Z";
+    }
+    const api = backend === "python"
+      ? start("python-api", "uv", ["run", "uvicorn", "great_minds.app.api.server:create_app", "--factory", "--host", "127.0.0.1", "--port", String(apiPort), "--log-level", "warning"], { cwd: repoRoot, env, logDir })
+      : start("typescript-api", "node", ["--experimental-strip-types", "packages/server/src/main.ts"], { cwd: repoRoot, env: { ...env, HOST: "127.0.0.1", PORT: String(apiPort) }, logDir });
     children.push(api);
-    const worker = start("python-worker", "uv", ["run", "great-minds", "worker", "--concurrency", "1", "--poll-interval", "0.1"], { cwd: repoRoot, env, logDir });
-    children.push(worker);
+    if (backend === "python") {
+      const worker = start("python-worker", "uv", ["run", "great-minds", "worker", "--concurrency", "1", "--poll-interval", "0.1"], { cwd: repoRoot, env, logDir });
+      children.push(worker);
+    }
     await waitForHealth(api, `${baseUrl}/health`);
     let bearer = await token(baseUrl);
+    if (backend === "typescript") {
+      const scenario = await typescriptSeam(baseUrl, bearer, env);
+      return {
+        artifacts: {},
+        scenarios: { typescriptSeam: scenario },
+        steeringFixtures: { repairRenderHeading: "" },
+        cassetteJson: proxy.cassetteJson(),
+        proxyStats: proxy.stats(),
+      };
+    }
     proxy.setCompileGeneration(0);
     const firstRun = await compile(baseUrl, bearer, fixtureIds.firstRun, env);
     const first = await snapshot(dataDir, env, progressFromSse(firstRun.sse));
@@ -585,6 +644,17 @@ const installRegenerated = async (goldenJson: string, deferredJson: string, reco
 };
 
 export const runGoldens = async (mode: Mode) => {
+  const backend = process.env.GOLDENS_BACKEND ?? "python";
+  if (backend !== "python" && backend !== "typescript") throw new Error("GOLDENS_BACKEND must be python or typescript");
+  if (backend === "typescript") {
+    if (mode !== "check") throw new Error("the TypeScript M4.3 lane supports check only");
+    const seam = await executeHarness({ mode: "check", backend, replayCassettePath: cassettePath });
+    if (seam.proxyStats.rawHits < 1) throw new Error("TypeScript golden lane reached no raw-tier cassette hits");
+    if (seam.proxyStats.alphaFallbacks !== 0 || seam.proxyStats.misses !== 0) {
+      throw new Error(`TypeScript golden lane requires raw-only replay: ${JSON.stringify(seam.proxyStats)}`);
+    }
+    return { result: "typescript-seam-m4.4-pending", goldenPath, cassettePath, proxyStats: seam.proxyStats };
+  }
   if (mode === "record" && process.env.GOLDENS_RECORD !== "1") throw new Error("recording requires GOLDENS_RECORD=1");
   if (mode === "record-deferred") {
     const { expected, cassette } = await readBankedPair();

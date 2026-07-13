@@ -337,6 +337,68 @@ export const JobResponse = Schema.Struct({
 });
 export type JobResponse = typeof JobResponse.Type;
 
+export const CompileRequest = Schema.Struct({
+  job_id: Uuid,
+});
+export type CompileRequest = typeof CompileRequest.Type;
+
+export const PipelineRunFilter = Schema.Literals([
+  "active",
+  "pending",
+  "running",
+  "completed",
+  "failed",
+  "cancelled",
+] as const);
+export type PipelineRunFilter = typeof PipelineRunFilter.Type;
+
+export const JobListQuery = Schema.Struct({
+  ...PageParamsQuery.fields,
+  status: Schema.optionalKey(PipelineRunFilter),
+});
+export type JobListQuery = typeof JobListQuery.Type;
+
+export const JobPage = pageOf(JobResponse);
+export type JobPage = typeof JobPage.Type;
+
+export const JobProgressSnapshot = Schema.Struct({
+  id: Uuid,
+  vault_id: Uuid,
+  trigger: Schema.Literals(["staged_files", "url", "manual"] as const),
+  job_status: Schema.Literals(["pending", "running", "completed", "failed", "cancelled"] as const),
+  phase: Schema.String,
+  phase_status: Schema.String,
+  steps: Schema.Array(PipelineProgressStep),
+  error: Schema.optionalKey(Schema.String),
+  updated_at: Schema.NullOr(IsoDateTime),
+  completed_at: Schema.NullOr(IsoDateTime),
+});
+export type JobProgressSnapshot = typeof JobProgressSnapshot.Type;
+
+export const JobSseEvent = Sse.EventEncoded;
+export type JobSseEvent = typeof JobSseEvent.Type;
+
+export const CostBreakdown = Schema.Struct({
+  key: Schema.String,
+  total_usd: Schema.String,
+  event_count: Schema.Number,
+});
+export type CostBreakdown = typeof CostBreakdown.Type;
+
+export const CostAggregate = Schema.Struct({
+  total_usd: Schema.String,
+  event_count: Schema.Number,
+  by_vault: Schema.Array(CostBreakdown),
+  by_event_type: Schema.Array(CostBreakdown),
+});
+export type CostAggregate = typeof CostAggregate.Type;
+
+export const CostQuery = Schema.Struct({
+  since: Schema.optionalKey(Schema.DateFromString),
+  until: Schema.optionalKey(Schema.DateFromString),
+});
+export type CostQuery = typeof CostQuery.Type;
+
 export const WikiArticleOverview = Schema.Struct({
   file_path: Schema.String,
   title: Schema.String,
@@ -345,6 +407,21 @@ export const WikiArticleOverview = Schema.Struct({
   slug: Schema.String,
 });
 export type WikiArticleOverview = typeof WikiArticleOverview.Type;
+
+export const UnmentionedLink = Schema.Struct({
+  source_slug: Schema.String,
+  source_title: Schema.String,
+  target_slug: Schema.String,
+  target_title: Schema.String,
+});
+export type UnmentionedLink = typeof UnmentionedLink.Type;
+
+export const LintReport = Schema.Struct({
+  orphans: Schema.Array(WikiArticleOverview),
+  dirty_topics: Schema.Array(Uuid),
+  unmentioned_links: Schema.Array(UnmentionedLink),
+});
+export type LintReport = typeof LintReport.Type;
 
 export const WikiArticlePage = pageOf(WikiArticleOverview);
 export type WikiArticlePage = typeof WikiArticlePage.Type;
@@ -815,6 +892,8 @@ const CreatedJobResponse = JobResponse.pipe(HttpApiSchema.status("Created"));
 const CreatedSessionResponse = CreateSessionResponse.pipe(HttpApiSchema.status("Created"));
 const CreatedPromoteExchangeResponse = PromoteExchangeResponse.pipe(HttpApiSchema.status("Created"));
 const QueryStream = HttpApiSchema.StreamSse({ events: QuerySseEvent });
+const AcceptedJobResponse = JobResponse.pipe(HttpApiSchema.status(202));
+const JobStream = HttpApiSchema.StreamSse({ events: JobSseEvent });
 
 export const AuthApiGroup = HttpApiGroup.make("auth").add(
   HttpApiEndpoint.post("requestCode", "/auth/request-code", {
@@ -1086,7 +1165,65 @@ export const JobsApiGroup = HttpApiGroup.make("jobs").add(
     success: CreatedJobResponse,
     error: [BadRequestResponse, ForbiddenResponse, ValidationResponse] as const,
   }).middleware(AuthMiddleware),
+  HttpApiEndpoint.get("listJobs", "/vaults/:vault_id/jobs", {
+    params: { vault_id: Uuid },
+    query: JobListQuery,
+    success: JobPage,
+    error: ForbiddenValidationErrors,
+  }).middleware(AuthMiddleware),
+  HttpApiEndpoint.get("getJob", "/vaults/:vault_id/jobs/:job_id", {
+    params: { vault_id: Uuid, job_id: Uuid },
+    success: JobResponse,
+    error: ForbiddenNotFoundValidationErrors,
+  }).middleware(AuthMiddleware),
+  HttpApiEndpoint.get("streamJob", "/vaults/:vault_id/jobs/:job_id/stream", {
+    params: { vault_id: Uuid, job_id: Uuid },
+    success: JobStream,
+    error: ForbiddenNotFoundValidationErrors,
+  }).middleware(AuthMiddleware),
 );
+
+export const CompileApiGroup = HttpApiGroup.make("compile")
+  .add(
+    HttpApiEndpoint.post("requestCompile", "/vaults/:vault_id/compile", {
+      params: { vault_id: Uuid },
+      payload: CompileRequest,
+      success: AcceptedJobResponse,
+      error: [ForbiddenResponse, ServiceUnavailableResponse, ValidationResponse] as const,
+    }).middleware(AuthMiddleware),
+  )
+  .add(
+    HttpApiEndpoint.post("cancelCompile", "/vaults/:vault_id/compile/:run_id/cancel", {
+      params: { vault_id: Uuid, run_id: Uuid },
+      success: HttpApiSchema.NoContent,
+      error: ForbiddenValidationErrors,
+    }).middleware(AuthMiddleware),
+  );
+
+export const LintApiGroup = HttpApiGroup.make("lint").add(
+  HttpApiEndpoint.get("getLint", "/vaults/:vault_id/lint", {
+    params: { vault_id: Uuid },
+    success: LintReport,
+    error: ForbiddenValidationErrors,
+  }).middleware(AuthMiddleware),
+);
+
+export const CostsApiGroup = HttpApiGroup.make("costs")
+  .add(
+    HttpApiEndpoint.get("getUserCosts", "/costs", {
+      query: CostQuery,
+      success: CostAggregate,
+      error: ValidationErrors,
+    }).middleware(AuthMiddleware),
+  )
+  .add(
+    HttpApiEndpoint.get("getVaultCosts", "/vaults/:vault_id/costs", {
+      params: { vault_id: Uuid },
+      query: CostQuery,
+      success: CostAggregate,
+      error: ForbiddenValidationErrors,
+    }).middleware(AuthMiddleware),
+  );
 
 export const DocumentsApiGroup = HttpApiGroup.make("documents").add(
   HttpApiEndpoint.get("readDocument", "/vaults/:vault_id/doc/*", {
@@ -1203,6 +1340,9 @@ export const GreatMindsApi = HttpApi.make("great-minds").add(
   ProposalsApiGroup,
   IngestApiGroup,
   JobsApiGroup,
+  CompileApiGroup,
+  LintApiGroup,
+  CostsApiGroup,
   DocumentsApiGroup,
   SessionsApiGroup,
   QueryApiGroup,

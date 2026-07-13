@@ -10,7 +10,10 @@ export type DecisionId =
   | "D8"
   | "D9"
   | "D10"
-  | "D11";
+  | "D11"
+  | "D12"
+  | "D13"
+  | "D14";
 
 export type DecisionRule =
   | "D1"
@@ -24,7 +27,10 @@ export type DecisionRule =
   | "D11_NON_OBJECT"
   | "M3_D2_TITLE_NULL"
   | "M3_D3_BTW_CONTEXT"
-  | "M3_D5_PROMOTE_MISSING_SESSION";
+  | "M3_D5_PROMOTE_MISSING_SESSION"
+  | "M4_D12_FAILED_RESURRECTION"
+  | "M4_D13_CANCELLED_RESURRECTION"
+  | "M4_D14_CANCELLED_CLOBBER";
 
 export type Normalization =
   | {
@@ -59,7 +65,21 @@ export type ManifestEntry = {
   readonly decision?: DecisionRule;
 };
 
-export const decisionIds = ["D1", "D2", "D3", "D4", "D5", "D6", "D8", "D9", "D10", "D11"] as const;
+export const decisionIds = [
+  "D1",
+  "D2",
+  "D3",
+  "D4",
+  "D5",
+  "D6",
+  "D8",
+  "D9",
+  "D10",
+  "D11",
+  "D12",
+  "D13",
+  "D14",
+] as const;
 
 export const requiredContractEndpoints = [
   "GET /health",
@@ -92,6 +112,14 @@ export const requiredContractEndpoints = [
   "POST /vaults/{vault_id}/ingest/staged-files/sign",
   "POST /vaults/{vault_id}/ingest/staged-files/process",
   "POST /vaults/{vault_id}/jobs/url",
+  "POST /vaults/{vault_id}/compile",
+  "POST /vaults/{vault_id}/compile/{run_id}/cancel",
+  "GET /vaults/{vault_id}/jobs",
+  "GET /vaults/{vault_id}/jobs/{job_id}",
+  "GET /vaults/{vault_id}/jobs/{job_id}/stream",
+  "GET /vaults/{vault_id}/lint",
+  "GET /costs",
+  "GET /vaults/{vault_id}/costs",
   "POST /vaults/{vault_id}/sessions",
   "PATCH /vaults/{vault_id}/sessions/{session_id}",
   "PATCH /vaults/{vault_id}/sessions/{session_id}/btw",
@@ -121,6 +149,7 @@ export const endpointExclusions: readonly string[] = [
   "POST /vaults/{vault_id}/raw/sources/{path}/deletion-request -- M3.1 Python bug: source_deletion is documented but rejected by ProposalContentType response/create schemas",
   "POST /vaults/{vault_id}/ingest/upload -- multipart/form-data parity is not supported by the JSON mutation harness; deterministic text upload is covered by integration tests",
   "POST /vaults/{vault_id}/ingest/staged-files/sign -- R2-only presign output is credential/signature-derived; local hard-400 behavior is covered by integration tests",
+  "GET /vaults/{vault_id}/jobs/{job_id}/stream -- streaming endpoint follows M3.3b query-stream treatment; covered by hermetic TS integration tests",
 ];
 
 // `POST /vaults/{vault_id}/jobs/url` stays covered. Converted markdown bytes can differ
@@ -735,6 +764,54 @@ export const buildReadManifest = (_credentials: CredentialSet): readonly Manifes
     auth: "aliceJwt",
   }),
   entry({
+    id: "jobs-list-completed",
+    label: "list completed jobs",
+    method: "GET",
+    path: `/v1/vaults/${ids.vaultAlpha}/jobs?status=completed`,
+    pathTemplate: "/v1/vaults/{vault_id}/jobs?status=completed",
+    coverage: "GET /vaults/{vault_id}/jobs",
+    auth: "aliceJwt",
+    normalize: [iso("items.*.created_at"), iso("items.*.updated_at")],
+  }),
+  entry({
+    id: "jobs-get-completed",
+    label: "get completed job",
+    method: "GET",
+    path: `/v1/vaults/${ids.vaultAlpha}/jobs/${ids.runAlpha}`,
+    pathTemplate: "/v1/vaults/{vault_id}/jobs/{job_id}",
+    coverage: "GET /vaults/{vault_id}/jobs/{job_id}",
+    auth: "aliceJwt",
+    normalize: [iso("created_at"), iso("updated_at")],
+  }),
+  entry({
+    id: "lint-report",
+    label: "lint report",
+    method: "GET",
+    path: `/v1/vaults/${ids.vaultAlpha}/lint`,
+    pathTemplate: "/v1/vaults/{vault_id}/lint",
+    coverage: "GET /vaults/{vault_id}/lint",
+    auth: "aliceJwt",
+    normalize: [iso("orphans.*.updated_at")],
+  }),
+  entry({
+    id: "costs-user",
+    label: "user cost aggregate",
+    method: "GET",
+    path: "/v1/costs",
+    pathTemplate: "/v1/costs",
+    coverage: "GET /costs",
+    auth: "aliceJwt",
+  }),
+  entry({
+    id: "costs-vault",
+    label: "vault cost aggregate",
+    method: "GET",
+    path: `/v1/vaults/${ids.vaultAlpha}/costs`,
+    pathTemplate: "/v1/vaults/{vault_id}/costs",
+    coverage: "GET /vaults/{vault_id}/costs",
+    auth: "aliceJwt",
+  }),
+  entry({
     id: "session-markdown-missing-sidecar",
     label: "session markdown missing sidecar",
     method: "GET",
@@ -766,6 +843,8 @@ export const mutationEndpointCoverage = [
   "POST /vaults/{vault_id}/ingest/staged-files/check-dupes",
   "POST /vaults/{vault_id}/ingest/staged-files/process",
   "POST /vaults/{vault_id}/jobs/url",
+  "POST /vaults/{vault_id}/compile",
+  "POST /vaults/{vault_id}/compile/{run_id}/cancel",
   "POST /vaults/{vault_id}/sessions",
   "PATCH /vaults/{vault_id}/sessions/{session_id}",
   "PATCH /vaults/{vault_id}/sessions/{session_id}/btw",

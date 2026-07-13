@@ -11,6 +11,7 @@ import {
   Database,
   ideas,
   DatabaseLive,
+  llmCostEvents,
   pipelineRuns,
   refreshTokens,
   searchIndex,
@@ -18,6 +19,7 @@ import {
   sourceDocuments,
   sourceProposals,
   topicMembership,
+  topicLinks,
   topics,
   users,
   vaultMemberships,
@@ -84,6 +86,11 @@ export const ids = {
   m32StagedEmptyRun: "00000000-0000-4000-8000-000000001312",
   m32UrlRun: "00000000-0000-4000-8000-000000001313",
   m32UrlFailRun: "00000000-0000-4000-8000-000000001314",
+  m43CompileRun: "00000000-0000-4000-8000-000000001401",
+  m43DiscardedRun: "00000000-0000-4000-8000-000000001402",
+  m43FailedResurrectionRun: "00000000-0000-4000-8000-000000001403",
+  m43CancelledResurrectionRun: "00000000-0000-4000-8000-000000001404",
+  m43CancelledClobberRun: "00000000-0000-4000-8000-000000001405",
 } as const;
 
 export const rawKeys = {
@@ -202,6 +209,84 @@ export const seedDuplicateClientHashSources = async (
           ])
           .pipe(Effect.orDie);
       }),
+    );
+  } finally {
+    await runtime.dispose();
+  }
+};
+
+export const seedCompileHttpFixture = async (databaseUrl: string, vaultId: string) => {
+  const runtime = databaseRuntime(databaseUrl);
+  try {
+    await runDb(
+      runtime,
+      Effect.flatMap(Database, (db) =>
+        db
+          .insert(pipelineRuns)
+          .values({
+            id: ids.m43CompileRun,
+            vaultId,
+            trigger: "manual",
+            status: "pending",
+            currentPhase: "",
+            phaseStatus: "",
+            progressSteps: [],
+            createdAt: new Date("2026-07-12T12:00:00.000Z"),
+            updatedAt: new Date("2026-07-12T12:00:00.000Z"),
+          })
+          .pipe(Effect.orDie),
+      ),
+    );
+  } finally {
+    await runtime.dispose();
+  }
+};
+
+export const seedTerminalStabilityFixture = async (databaseUrl: string, vaultId: string) => {
+  const runtime = databaseRuntime(databaseUrl);
+  try {
+    await runDb(
+      runtime,
+      Effect.flatMap(Database, (db) =>
+        db
+          .insert(pipelineRuns)
+          .values([
+            {
+              id: ids.m43FailedResurrectionRun,
+              vaultId,
+              trigger: "manual",
+              status: "failed",
+              currentPhase: "extract",
+              phaseStatus: "failed",
+              progressSteps: [],
+              error: "first attempt failed",
+              completedAt: new Date("2026-07-12T12:10:00.000Z"),
+            },
+            {
+              id: ids.m43CancelledResurrectionRun,
+              vaultId,
+              trigger: "manual",
+              status: "cancelled",
+              currentPhase: "abstract",
+              phaseStatus: "failed",
+              progressSteps: [],
+              error: "Cancelled by user",
+              completedAt: new Date("2026-07-12T12:11:00.000Z"),
+            },
+            {
+              id: ids.m43CancelledClobberRun,
+              vaultId,
+              trigger: "manual",
+              status: "cancelled",
+              currentPhase: "render",
+              phaseStatus: "failed",
+              progressSteps: [],
+              error: "Cancelled by user",
+              completedAt: new Date("2026-07-12T12:12:00.000Z"),
+            },
+          ])
+          .pipe(Effect.orDie),
+      ),
     );
   } finally {
     await runtime.dispose();
@@ -479,7 +564,7 @@ export const seedReadFixture = async (databaseUrl: string, dataDir: string) => {
           .values({
             id: ids.runAlpha,
             vaultId: ids.vaultAlpha,
-            trigger: "parity",
+            trigger: "manual",
             status: "completed",
             currentPhase: "render",
             phaseStatus: "completed",
@@ -498,6 +583,8 @@ export const seedReadFixture = async (databaseUrl: string, dataDir: string) => {
               title: "alpha Practice",
               description: "Alpha",
               articleStatus: "rendered",
+              compiledFromHash: "alpha-current",
+              renderedFromHash: "alpha-stale",
             },
             {
               topicId: ids.topicBeta,
@@ -506,6 +593,8 @@ export const seedReadFixture = async (databaseUrl: string, dataDir: string) => {
               title: "Beta Theory",
               description: "Beta",
               articleStatus: "rendered",
+              compiledFromHash: "beta-current",
+              renderedFromHash: "beta-current",
             },
             {
               topicId: ids.topicGamma,
@@ -737,6 +826,36 @@ export const seedReadFixture = async (databaseUrl: string, dataDir: string) => {
             {
               sourceArticleId: ids.articleArchived,
               targetArticleId: ids.articleAlpha,
+            },
+          ])
+          .pipe(Effect.orDie);
+        yield* db
+          .insert(topicLinks)
+          .values({ sourceTopicId: ids.topicBeta, targetTopicId: ids.topicGamma })
+          .pipe(Effect.orDie);
+        yield* db
+          .insert(llmCostEvents)
+          .values([
+            {
+              userId: ids.alice,
+              vaultId: ids.vaultAlpha,
+              eventType: "compile",
+              costUsd: "1.000000",
+              createdAt: new Date("2026-07-08T12:00:00.000Z"),
+            },
+            {
+              userId: ids.alice,
+              vaultId: ids.vaultBeta,
+              eventType: "query",
+              costUsd: "2.000000",
+              createdAt: new Date("2026-07-09T12:00:00.000Z"),
+            },
+            {
+              userId: ids.bob,
+              vaultId: ids.vaultAlpha,
+              eventType: "render",
+              costUsd: "3.000000",
+              createdAt: new Date("2026-07-10T12:00:00.000Z"),
             },
           ])
           .pipe(Effect.orDie);

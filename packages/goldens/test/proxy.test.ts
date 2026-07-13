@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { assignmentRequestKey, cassetteAssignmentTable, createReplayOrderGate, renderRequestKey, requestBodyHash, rewriteAssignmentNumbers, rewriteAssignmentsFromTable, rewriteEmbeddingOrder } from "../src/proxy.ts";
+import { assignmentRequestKey, cassetteAssignmentTable, createReplayOrderGate, parsedBodyHash, renderRequestKey, requestBodyHash, rewriteAssignmentNumbers, rewriteAssignmentsFromTable, rewriteEmbeddingOrder } from "../src/proxy.ts";
 
 test("cassette request keys erase UUID identity while artifact comparison owns bijection validation", () => {
   const first = Buffer.from(JSON.stringify({ ids: ["01900000-0000-7000-8000-000000000001", "01900000-0000-7000-8000-000000000002", "01900000-0000-7000-8000-000000000001"] }));
@@ -12,6 +12,14 @@ test("cassette request keys erase UUID identity while artifact comparison owns b
   assert.equal(requestBodyHash(first), requestBodyHash(renamed));
   assert.equal(requestBodyHash(first), requestBodyHash(collapsed));
   assert.equal(requestBodyHash(derived), requestBodyHash(renamedDerived));
+});
+
+test("raw-tier body hashes recursively sort object keys while preserving arrays and values", () => {
+  const recorded = { input: ["alpha", "beta"], model: "embedding/test", nested: { z: 1, a: true } };
+  const reordered = { nested: { a: true, z: 1 }, model: "embedding/test", input: ["alpha", "beta"] };
+  assert.equal(parsedBodyHash(recorded), parsedBodyHash(reordered));
+  assert.notEqual(parsedBodyHash(recorded), parsedBodyHash({ ...reordered, input: ["beta", "alpha"] }));
+  assert.notEqual(parsedBodyHash(recorded), parsedBodyHash({ ...reordered, nested: { a: true, z: 2 } }));
 });
 
 test("embedding replay follows provider indices when response rows are out of order", () => {

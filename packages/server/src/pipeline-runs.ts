@@ -16,6 +16,7 @@ export type PipelineProgressStep = {
 
 type PipelineRunsServiceShape = {
   readonly cancel: (runId: Uuid) => Effect.Effect<void>;
+  readonly isActive: (runId: Uuid) => Effect.Effect<boolean>;
   readonly updateProgress: (
     runId: Uuid,
     phase: string,
@@ -97,12 +98,25 @@ export const PipelineRunsServiceLive = Layer.effect(
         .pipe(dieDatabase, Effect.asVoid);
 
     return {
+      isActive: (runId) =>
+        db
+          .select({ id: pipelineRuns.id })
+          .from(pipelineRuns)
+          .where(
+            and(eq(pipelineRuns.id, runId), inArray(pipelineRuns.status, ["pending", "running"])),
+          )
+          .limit(1)
+          .pipe(
+            dieDatabase,
+            Effect.map((rows) => rows.length === 1),
+          ),
       cancel: (runId) =>
         db
           .update(pipelineRuns)
           .set({
             status: "cancelled",
             phaseStatus: "failed",
+            error: "Update cancelled",
             completedAt: sql`now()`,
             updatedAt: sql`now()`,
           })

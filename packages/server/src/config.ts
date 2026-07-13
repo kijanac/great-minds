@@ -25,6 +25,9 @@ export type AppConfigShape = {
   readonly queryFallbackModels: readonly string[];
   readonly extractModel: string;
   readonly compileDeriveRelatedLimit: number;
+  readonly pipelineConcurrency: number;
+  readonly goldensRandomSeed: Option.Option<number>;
+  readonly goldensClock: Option.Option<Date>;
   readonly embeddingModel: string;
   readonly corsOrigins: readonly string[];
   readonly suppressAuth: boolean;
@@ -87,6 +90,9 @@ const appConfig = Config.all({
   compileDeriveRelatedLimit: positiveInt("COMPILE_DERIVE_RELATED_LIMIT").pipe(
     Config.withDefault(20),
   ),
+  pipelineConcurrency: positiveInt("PIPELINE_CONCURRENCY").pipe(Config.withDefault(1)),
+  goldensRandomSeed: Config.option(Config.schema(Schema.Int, "GOLDENS_RANDOM_SEED")),
+  goldensClock: Config.option(Config.schema(Schema.DateFromString, "GOLDENS_CLOCK")),
   embeddingModel: nonEmptyString("EMBEDDING_MODEL").pipe(
     Config.withDefault("qwen/qwen3-embedding-8b"),
   ),

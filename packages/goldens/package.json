@@ -9,6 +9,7 @@
     "record:deferred": "node --experimental-strip-types src/main.ts record-deferred",
     "regenerate": "node --experimental-strip-types src/main.ts regenerate",
     "check": "node --experimental-strip-types src/main.ts check",
+    "check:typescript": "GOLDENS_BACKEND=typescript node --experimental-strip-types src/main.ts check",
     "test": "node --experimental-strip-types --test test/*.test.ts"
   }
 }

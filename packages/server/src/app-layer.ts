@@ -11,10 +11,13 @@ import { ClockLive, ClockService } from "./clock.ts";
 import { CompilePhasesLive } from "./compile-phases.ts";
 import { AppConfigLive } from "./config.ts";
 import type { AppConfig } from "./config.ts";
+import { CostsService, CostsServiceLive } from "./costs.ts";
 import { DrizzleLive } from "./db.ts";
 import { DocumentsService, DocumentsServiceLive } from "./documents.ts";
 import { EmbeddingsLive, EmbeddingsService } from "./embeddings.ts";
 import { IngestService, IngestServiceLive } from "./ingest.ts";
+import { JobsService, JobsServiceLive } from "./jobs.ts";
+import { LintService, LintServiceLive } from "./lint.ts";
 import { CostLookupLive, CostLookupService } from "./llm-costs.ts";
 import { LanguageModel, LanguageModelLive } from "./llm.ts";
 import { StructuredLogger, StructuredLoggerLive } from "./logging.ts";
@@ -53,6 +56,9 @@ export type AppLayerServices =
   | SourceDocumentsService
   | ProposalsService
   | IngestService
+  | JobsService
+  | LintService
+  | CostsService
   | DocumentsService
   | SessionsService
   | LanguageModel
@@ -151,6 +157,20 @@ export const makeAppLayers = (overrides: AppLayerOverrides = {}) => {
     Layer.provideMerge(WorkflowsLive),
     Layer.provideMerge(BaseLive),
   );
+  const JobsLive = JobsServiceLive.pipe(
+    Layer.provideMerge(PipelineRunsLive),
+    Layer.provideMerge(WorkflowsLive),
+    Layer.provideMerge(VaultAccessLive),
+    Layer.provideMerge(BaseLive),
+  );
+  const LintLive = LintServiceLive.pipe(
+    Layer.provideMerge(VaultAccessLive),
+    Layer.provideMerge(BaseLive),
+  );
+  const CostsLive = CostsServiceLive.pipe(
+    Layer.provideMerge(VaultAccessLive),
+    Layer.provideMerge(BaseLive),
+  );
   const VaultsLive = VaultsServiceLive.pipe(
     Layer.provideMerge(MailerLiveLayer),
     Layer.provideMerge(VaultAccessLive),
@@ -162,6 +182,9 @@ export const makeAppLayers = (overrides: AppLayerOverrides = {}) => {
     WikiServiceLive.pipe(Layer.provideMerge(VaultAccessLive), Layer.provideMerge(BaseLive)),
     SourcesLive,
     IngestLive,
+    JobsLive,
+    LintLive,
+    CostsLive,
     DocumentsServiceLive.pipe(
       Layer.provideMerge(VaultAccessLive),
       Layer.provideMerge(StorageLive),

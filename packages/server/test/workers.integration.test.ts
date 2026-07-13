@@ -5,6 +5,7 @@ import {
   sourceDocuments,
   tasks,
   users,
+  vaultMemberships,
   vaults,
 } from "@great-minds/database";
 import { spawn } from "node:child_process";
@@ -23,15 +24,13 @@ import {
   CompileWorkflow,
   CompileWorkflowLive,
 } from "../src/compile-intents.ts";
-import {
-  CompilePhases,
-  CompilePhasesLive,
-  RENDER_STEP_LABELS,
-} from "../src/compile-phases.ts";
+import { CompilePhases, CompilePhasesLive, RENDER_STEP_LABELS } from "../src/compile-phases.ts";
 import { AppConfig, type AppConfigShape } from "../src/config.ts";
+import { ClockLive } from "../src/clock.ts";
 import { stagedFileToMarkdown } from "../src/conversion.ts";
 import { DrizzleLive } from "../src/db.ts";
 import { EmbeddingsService } from "../src/embeddings.ts";
+import { JobsService, JobsServiceLive } from "../src/jobs.ts";
 import { StructuredLogger } from "../src/logging.ts";
 import {
   PipelineRunsService,
@@ -44,6 +43,7 @@ import {
   StagedFileIngestWorkflowLive,
 } from "../src/staged-file-ingest-workflow.ts";
 import { VaultStorage } from "../src/storage.ts";
+import { VaultAccessServiceLive } from "../src/vaults.ts";
 import { WorkflowEngineLive } from "../src/workflow-engine.ts";
 
 const id = {
@@ -61,6 +61,7 @@ const id = {
   resumeRun: "10000000-0000-4000-8000-000000000012" as Uuid,
   renderFailureIntent: "10000000-0000-4000-8000-000000000013" as Uuid,
   renderFailureRun: "10000000-0000-4000-8000-000000000014" as Uuid,
+  cancelIngestRun: "10000000-0000-4000-8000-000000000016" as Uuid,
 } as const;
 
 const resumeRunnerPath = fileURLToPath(
@@ -110,6 +111,9 @@ const config: AppConfigShape = {
   queryFallbackModels: ["test"],
   extractModel: "test",
   compileDeriveRelatedLimit: 20,
+  pipelineConcurrency: 1,
+  goldensRandomSeed: Option.none(),
+  goldensClock: Option.none(),
   embeddingModel: "test",
   corsOrigins: [],
   suppressAuth: false,
@@ -123,6 +127,33 @@ const deleted: string[] = [];
 const readDefects = new Set<string>();
 const deleteDefects = new Set<string>();
 const logEvents: { readonly event: string; readonly fields: Record<string, unknown> }[] = [];
+let readPause:
+  | {
+      readonly hash: string;
+      readonly started: Promise<void>;
+      readonly signalStarted: () => void;
+      readonly released: Promise<void>;
+      readonly release: () => void;
+    }
+  | undefined;
+
+const pauseStagedRead = (hash: string) => {
+  let signalStarted = () => {};
+  let release = () => {};
+  const pause = {
+    hash,
+    started: new Promise<void>((resolve) => {
+      signalStarted = resolve;
+    }),
+    signalStarted: () => signalStarted(),
+    released: new Promise<void>((resolve) => {
+      release = resolve;
+    }),
+    release: () => release(),
+  };
+  readPause = pause;
+  return pause;
+};
 
 const TestLoggerLive = Layer.succeed(StructuredLogger, {
   info: (event, fields) => Effect.sync(() => logEvents.push({ event, fields })),
@@ -143,6 +174,16 @@ const StorageLive = Layer.succeed(VaultStorage, {
   deleteOwnerBucket: () => Effect.void,
   presignStagedPut: () => Effect.succeed("https://example.invalid"),
   readStagedBytes: (_vaultId, _bucket, hash) => {
+    if (readPause?.hash === hash) {
+      const pause = readPause;
+      pause.signalStarted();
+      return Effect.promise(async () => {
+        await pause.released;
+        const bytes = staged.get(hash);
+        if (bytes === undefined) throw new Error(`missing staged object ${hash}`);
+        return bytes;
+      });
+    }
     if (readDefects.has(hash)) {
       const error = new Error(`read exploded for ${hash}`);
       error.name = "ReadStorageDefect";
@@ -164,8 +205,13 @@ const StorageLive = Layer.succeed(VaultStorage, {
 });
 
 const ConfigLive = Layer.succeed(AppConfig, config);
-const BaseLive = Layer.mergeAll(DrizzleLive.pipe(Layer.provideMerge(ConfigLive)), TestLoggerLive);
+const BaseLive = Layer.mergeAll(
+  DrizzleLive.pipe(Layer.provideMerge(ConfigLive)),
+  TestLoggerLive,
+  ClockLive,
+);
 const PipelineLive = PipelineRunsServiceLive.pipe(Layer.provideMerge(BaseLive));
+const VaultAccessLive = VaultAccessServiceLive.pipe(Layer.provideMerge(BaseLive));
 const EmbeddingsLive = Layer.succeed(EmbeddingsService, { embed: async () => [] });
 const CompilePhasesLiveLayer = CompilePhasesLive.pipe(
   Layer.provideMerge(EmbeddingsLive),
@@ -192,7 +238,12 @@ const ReconcilerLive = CompileIntentReconcilerLive.pipe(
   Layer.provideMerge(WorkflowsLive),
   Layer.provideMerge(BaseLive),
 );
-const TestLive = ReconcilerLive.pipe(
+const JobsLive = JobsServiceLive.pipe(
+  Layer.provideMerge(PipelineLive),
+  Layer.provideMerge(VaultAccessLive),
+  Layer.provideMerge(BaseLive),
+);
+const TestLive = Layer.mergeAll(ReconcilerLive, JobsLive).pipe(
   Layer.provideMerge(WorkflowsLive),
   Layer.provideMerge(PipelineLive),
   Layer.provideMerge(SourceDocumentsLive),
@@ -254,7 +305,11 @@ const run = <A>(
   effect: Effect.Effect<
     A,
     unknown,
-    Database | CompileIntentReconciler | PipelineRunsService | WorkflowEngine.WorkflowEngine
+    | Database
+    | CompileIntentReconciler
+    | JobsService
+    | PipelineRunsService
+    | WorkflowEngine.WorkflowEngine
   >,
 ) => Effect.runPromise(effect.pipe(Effect.provide(TestLive)));
 
@@ -349,6 +404,15 @@ const seed = () =>
         })
         .pipe(Effect.orDie);
       yield* db
+        .insert(vaultMemberships)
+        .values({
+          id: "10000000-0000-4000-8000-000000000017",
+          vaultId: id.vault,
+          userId: id.user,
+          role: "OWNER",
+        })
+        .pipe(Effect.orDie);
+      yield* db
         .insert(pipelineRuns)
         .values({
           id: id.ingestRun,
@@ -371,6 +435,7 @@ describe("M4.2 durable workers", () => {
     deleted.length = 0;
     readDefects.clear();
     deleteDefects.clear();
+    readPause = undefined;
     logEvents.length = 0;
     await seed();
   });
@@ -386,6 +451,62 @@ describe("M4.2 durable workers", () => {
       stagedFileToMarkdown(Buffer.from("<alpha>1</alpha>"), "data.xml", "application/xml"),
     ).resolves.toBe("<alpha>1</alpha>");
   });
+
+  it("cancels a mid-flight staged ingest workflow before it can write documents", async () => {
+    const hash = "abababababababababababababababababababababababababababababababab";
+    staged.set(hash, Buffer.from("# Must not persist\n\nCancellation wins."));
+    const pause = pauseStagedRead(hash);
+
+    const state = await run(
+      Effect.gen(function* () {
+        const db = yield* Database;
+        yield* db
+          .insert(pipelineRuns)
+          .values({
+            id: id.cancelIngestRun,
+            vaultId: id.vault,
+            trigger: "staged_files",
+            status: "running",
+            currentPhase: "source_ingest",
+            phaseStatus: "started",
+            progressSteps: [],
+            activeTaskId: id.cancelIngestRun,
+            activeTaskType: "staged_file_ingest",
+          })
+          .pipe(Effect.orDie);
+        yield* StagedFileIngestWorkflow.execute(
+          {
+            vaultId: id.vault,
+            pipelineRunId: id.cancelIngestRun,
+            files: [{ name: "cancel.md", size: staged.get(hash)!.length, hash, mimetype: "text/markdown" }],
+          },
+          { discard: true },
+        );
+        yield* Effect.promise(() => pause.started);
+        const jobs = yield* JobsService;
+        yield* jobs.cancelCompile(id.user, id.vault, id.cancelIngestRun);
+        yield* Effect.sleep("250 millis");
+        yield* Effect.sync(pause.release);
+        yield* Effect.sleep("100 millis");
+        return {
+          run: (yield* db
+            .select()
+            .from(pipelineRuns)
+            .where(eq(pipelineRuns.id, id.cancelIngestRun))
+            .pipe(Effect.orDie))[0],
+          documents: yield* db
+            .select()
+            .from(sourceDocuments)
+            .where(eq(sourceDocuments.vaultId, id.vault))
+            .pipe(Effect.orDie),
+        };
+      }),
+    );
+
+    expect(state.run).toMatchObject({ status: "cancelled", phaseStatus: "failed" });
+    expect(state.documents).toHaveLength(0);
+    expect(written.size).toBe(0);
+  }, 30_000);
 
   it("converts binary/text files, isolates failures, batches indexes, cleans staging, and emits one intent", async () => {
     const docxHash = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";

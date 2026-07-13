@@ -38,7 +38,19 @@ export const requestBodyHash = (body: Buffer) => {
   const normalized = body.toString("utf8").replace(uuidPattern, "<uuid>").replace(sha256Pattern, "<sha256>");
   return createHash("sha256").update(normalized).digest("hex");
 };
-const parsedBodyHash = (body: unknown) => createHash("sha256").update(JSON.stringify(body)).digest("hex");
+const canonicalJsonValue = (value: unknown): unknown => {
+  if (Array.isArray(value)) return value.map(canonicalJsonValue);
+  if (value !== null && typeof value === "object") {
+    return Object.fromEntries(
+      Object.entries(value)
+        .sort(([left], [right]) => left.localeCompare(right))
+        .map(([key, item]) => [key, canonicalJsonValue(item)]),
+    );
+  }
+  return value;
+};
+export const parsedBodyHash = (body: unknown) =>
+  createHash("sha256").update(JSON.stringify(canonicalJsonValue(body))).digest("hex");
 
 const normalizeChatContent = (path: string, body: unknown) => {
   if (!path.includes("/chat/completions") || body === null || typeof body !== "object") return true;

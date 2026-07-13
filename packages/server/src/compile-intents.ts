@@ -6,7 +6,9 @@ import * as Activity from "effect/unstable/workflow/Activity";
 import * as Workflow from "effect/unstable/workflow/Workflow";
 import * as WorkflowEngine from "effect/unstable/workflow/WorkflowEngine";
 
+import { ClockService } from "./clock.ts";
 import { dieDatabase } from "./db-defects.ts";
+import { AppConfig } from "./config.ts";
 import {
   CompilePhases,
   CompilePhaseFailed,
@@ -18,6 +20,7 @@ import {
 } from "./compile-phases.ts";
 import { StructuredLogger } from "./logging.ts";
 import { PipelineRunsService } from "./pipeline-runs.ts";
+import { workflowExecutionId } from "./workflow-engine.ts";
 
 export const CompileWorkflow = Workflow.make("CompileTask", {
   payload: {
@@ -46,7 +49,9 @@ const causeFailure = (
   return phaseFailure(phase, Cause.pretty(cause));
 };
 
-export const CompileWorkflowLive = CompileWorkflow.toLayer((payload) => {
+export const CompileWorkflowLive = Layer.unwrap(
+  Effect.map(ClockService, (clock) =>
+    CompileWorkflow.toLayer((payload) => {
   const runPhase = <Success extends Schema.Top, R>(
     phase: CompilePhase,
     success: Success,
@@ -112,19 +117,26 @@ export const CompileWorkflowLive = CompileWorkflow.toLayer((payload) => {
     const publishedAt = yield* Activity.make({
       name: "compile-publish-timestamp",
       success: Schema.String,
-      execute: Effect.sync(() => new Date().toISOString().replace(/\.\d{3}Z$/, "+00:00")),
+      execute: Effect.map(clock.now, (now) =>
+        now.toISOString().replace(/\.\d{3}Z$/, "+00:00"),
+      ),
     });
     yield* runPhase("publish", Schema.Void, service.publish(vaultId, runId, publishedAt));
   });
   return phases;
-});
+    }),
+  ),
+);
 
-export const cancelCompileWorkflow = (runId: Uuid, executionId: string) =>
+export const cancelCompileWorkflow = (runId: Uuid, intentId: string) =>
   Effect.gen(function* () {
     const pipeline = yield* PipelineRunsService;
     const engine = yield* WorkflowEngine.WorkflowEngine;
     yield* pipeline.cancel(runId);
-    yield* engine.interruptUnsafe(CompileWorkflow, executionId);
+    yield* engine.interruptUnsafe(
+      CompileWorkflow,
+      workflowExecutionId(CompileWorkflow._tag, intentId),
+    );
   });
 
 type CompileIntentReconcilerShape = {
@@ -151,6 +163,8 @@ export const CompileIntentReconcilerLive = Layer.effect(
   Effect.gen(function* () {
     const db = yield* Database;
     const pipeline = yield* PipelineRunsService;
+    const config = yield* AppConfig;
+    const clock = yield* ClockService;
 
     const markSatisfied = Effect.gen(function* () {
       const terminal = yield* db
@@ -298,8 +312,9 @@ export const CompileIntentReconcilerLive = Layer.effect(
         Effect.gen(function* () {
           const satisfied = yield* markSatisfied;
           const dispatches = yield* pendingDispatches;
-          yield* Effect.forEach(dispatches, dispatch, { concurrency: 1 });
-          const cutoff = new Date(Date.now() - 120_000);
+          yield* Effect.forEach(dispatches, dispatch, { concurrency: config.pipelineConcurrency });
+          const now = yield* clock.now;
+          const cutoff = new Date(now.getTime() - 120_000);
           yield* pipeline.recoverZombies(cutoff);
           return { satisfied, dispatched: dispatches.length };
         }),
