@@ -32,6 +32,7 @@ import { StagedFileIngestWorkflowLive } from "./staged-file-ingest-workflow.ts";
 import { SourcesService, SourcesServiceLive } from "./sources.ts";
 import { ProposalStorage, ProposalStorageLive, VaultStorage, VaultStorageLive } from "./storage.ts";
 import { RandomBytesLive, RandomBytesService } from "./random.ts";
+import { SchemaHeadLive } from "./schema-head.ts";
 import { TokenService, TokenServiceLive } from "./tokens.ts";
 import {
   VaultAccessService,
@@ -87,8 +88,10 @@ export type AppLayerOverrides = {
 
 export const makeAppLayers = (overrides: AppLayerOverrides = {}) => {
   const ConfigLive = overrides.config ?? AppConfigLive;
+  const DatabaseLive = DrizzleLive.pipe(Layer.provideMerge(ConfigLive));
+  const DatabaseAtExpectedHeadLive = SchemaHeadLive.pipe(Layer.provideMerge(DatabaseLive));
   const BaseLive = Layer.mergeAll(
-    DrizzleLive.pipe(Layer.provideMerge(ConfigLive)),
+    DatabaseAtExpectedHeadLive,
     overrides.clock ?? ClockLive,
     overrides.randomBytes ?? RandomBytesLive,
     overrides.logger ?? StructuredLoggerLive,

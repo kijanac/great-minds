@@ -4,8 +4,12 @@ __pycache__/
 *.pyc
 *.egg-info/
 node_modules/
-web/
+.pnpm-store/
+web/*
+!web/package.json
 corpus/
+marxism_corpus/
+test_data*/
 raw/
 wiki/
 outputs/
@@ -25,8 +29,10 @@ conftest.py
 .mypy_cache/
 .ruff_cache/
 *.md
+!packages/server/src/default_prompts/*.md
 *.c
 *.cpp
 *.hpp
 *.pxd
 *.pyx
+**/.env*

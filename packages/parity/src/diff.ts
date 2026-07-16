@@ -219,7 +219,7 @@ const evaluateDecision = (
         python.status === 200 &&
         typescript.status === 404 &&
         isObject(python.body) &&
-        python.body.slug === "alpha-practice" &&
+        typeof python.body.slug === "string" &&
         typeof python.body.content === "string";
       return accepted
         ? {

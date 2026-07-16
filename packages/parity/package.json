@@ -5,7 +5,9 @@
   "type": "module",
   "scripts": {
     "typecheck": "tsgo -p tsconfig.json --noEmit",
-    "parity": "node --experimental-strip-types src/main.ts"
+    "parity": "node --experimental-strip-types src/main.ts",
+    "staging:parity": "node --experimental-strip-types src/staging-parity.ts",
+    "staging:warm-cache": "node --experimental-strip-types src/staging-warm-cache.ts"
   },
   "dependencies": {
     "@effect/sql-pg": "4.0.0-beta.94",

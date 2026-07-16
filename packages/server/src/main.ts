@@ -4,6 +4,7 @@ import { makeAppLayers } from "./app-layer.ts";
 import { makeTestClock } from "./clock.ts";
 import { AppConfig, AppConfigLive } from "./config.ts";
 import { makeTestRandomBytes } from "./random.ts";
+import { EXPECTED_ALEMBIC_REVISION } from "./schema-head.ts";
 import { startServer } from "./server.ts";
 
 const MainLive = Layer.unwrap(
@@ -34,4 +35,7 @@ const MainLive = Layer.unwrap(
 const started = await startServer({
   layer: MainLive,
 });
+console.log(
+  JSON.stringify({ event: "schema_head_verified", revision: EXPECTED_ALEMBIC_REVISION }),
+);
 console.log(JSON.stringify({ event: "server_listening", url: started.url }));
