@@ -21,6 +21,7 @@ import * as WorkflowEngine from "effect/unstable/workflow/WorkflowEngine";
 
 import { htmlToMarkdown } from "./conversion.ts";
 import { dieDatabase } from "./db-defects.ts";
+import { causeDetails, formatError } from "./error-details.ts";
 import { buildDocument, sessionExchangeDocumentInput, sessionExchangePath } from "./markdown.ts";
 import { ProposalsService } from "./proposals.ts";
 import { SourceDocumentsService } from "./source-documents.ts";
@@ -242,11 +243,7 @@ const causeMessage = (cause: Cause.Cause<unknown>) => {
   if (failure instanceof BadRequest) {
     return failure.detail;
   }
-  const defect = cause.reasons.find(Cause.isDieReason)?.defect;
-  if (defect instanceof Error) {
-    return defect.message;
-  }
-  return Cause.pretty(cause);
+  return formatError(causeDetails(cause));
 };
 
 export const IngestServiceLive = Layer.effect(

@@ -1,5 +1,28 @@
 import type { CompareResult } from "./diff.ts";
 import { compareResponses } from "./diff.ts";
+
+// Timestamp precision is not contract (fixture parity masks these fields; the frontend
+// Date-parses them; decision 13 records the cosmetics). Python emits microseconds, JS
+// Dates cap at milliseconds — normalize BOTH sides to millisecond precision before
+// diffing so real instant differences still fail while precision cosmetics pass.
+const ISO_FRACTION = /^\d{4}-\d{2}-\d{2}T(?:[01]\d|2[0-3]):[0-5]\d:[0-5]\d(?:\.\d+)?(?:Z|\+00:00)$/;
+const normalizeTimestamps = (value: unknown): unknown => {
+  if (typeof value === "string" && ISO_FRACTION.test(value)) {
+    const parsed = new Date(value);
+    return Number.isNaN(parsed.getTime()) ? value : parsed.toISOString();
+  }
+  if (Array.isArray(value)) return value.map(normalizeTimestamps);
+  if (typeof value === "object" && value !== null) {
+    return Object.fromEntries(
+      Object.entries(value).map(([key, item]) => [key, normalizeTimestamps(item)]),
+    );
+  }
+  return value;
+};
+const normalizeCaptured = <T extends { readonly body: unknown }>(response: T): T => ({
+  ...response,
+  body: normalizeTimestamps(response.body),
+});
 import type { CapturedResponse } from "./http.ts";
 import { requestBackend } from "./http.ts";
 import type { DecisionId, DecisionRule, ManifestEntry, Normalization } from "./manifest.ts";
@@ -140,7 +163,9 @@ const readPair = async (state: RunState, spec: ReadSpec): Promise<PairResult> =>
     requestBackend({ name: "python", baseUrl: state.pythonUrl }, request),
     requestBackend({ name: "typescript", baseUrl: state.typescriptUrl }, request),
   ]);
-  let comparison = compareResponses(entry, python, typescript);
+  const pythonNormalized = normalizeCaptured(python);
+  const typescriptNormalized = normalizeCaptured(typescript);
+  let comparison = compareResponses(entry, pythonNormalized, typescriptNormalized);
   if (
     !comparison.ok &&
     entry.decision === undefined &&
@@ -148,7 +173,7 @@ const readPair = async (state: RunState, spec: ReadSpec): Promise<PairResult> =>
     typescript.status === 404 &&
     entry.pathTemplate.endsWith("/sessions/{session_id}/markdown")
   ) {
-    comparison = compareResponses({ ...entry, decision: "D1" }, python, typescript);
+    comparison = compareResponses({ ...entry, decision: "D1" }, pythonNormalized, typescriptNormalized);
   }
   const accepted = comparison;
   if (accepted.ok) {
@@ -269,6 +294,115 @@ const readPages = async (
   }
 };
 
+// Listings ordered by a non-unique key (updated_at with bulk-ingest ties) have no
+// total order in EITHER backend — page order is plan-dependent, so pages are paged
+// per backend independently and compared as an id-keyed set with full-object equality.
+// Content comparison is NOT weakened: every object must match exactly; only inter-page
+// ordering is excused. See M5 staging finding #1 in docs/ts-migration-m5.md.
+const canonicalJson = (value: unknown): string => {
+  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(",")}]`;
+  if (typeof value === "object" && value !== null) {
+    const entries = Object.entries(value)
+      .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
+      .map(([key, item]) => `${JSON.stringify(key)}:${canonicalJson(item)}`);
+    return `{${entries.join(",")}}`;
+  }
+  return JSON.stringify(value) ?? "null";
+};
+
+const readPagesUnordered = async (
+  state: RunState,
+  input: Omit<ReadSpec, "path"> & { readonly path: string; readonly keyField: string },
+) => {
+  const entry = entryFor({ ...input, path: input.path });
+  assertReadOnlyMethod(entry.method);
+  state.endpoints.add(`${entry.method} ${entry.pathTemplate} (unordered)`);
+  const collect = async (backend: "python" | "typescript") => {
+    const baseUrl = backend === "python" ? state.pythonUrl : state.typescriptUrl;
+    const items: unknown[] = [];
+    let offset = 0;
+    while (true) {
+      const separator = input.path.includes("?") ? "&" : "?";
+      state.requestCount += 1;
+      const response = await requestBackend(
+        { name: backend, baseUrl },
+        {
+          id: `${input.id}-${backend}-${offset}`,
+          label: input.label,
+          method: "GET",
+          path: `${input.path}${separator}limit=${PAGE_SIZE}&offset=${offset}`,
+          bearer: state.bearer,
+        },
+      );
+      if (response.status === 401 || response.status === 403) {
+        throw new Error(`${input.label} (${backend}) returned HTTP ${response.status} — bearer token dead mid-sweep`);
+      }
+      const body = responseRecord(response, `${input.label} (${backend})`);
+      const page = asArray(body.items, `${input.label} (${backend}).items`);
+      items.push(...page);
+      const pagination = asRecord(body.pagination, `${input.label} (${backend}).pagination`);
+      const total = pagination.total;
+      if (typeof total !== "number") throw new Error(`${input.label} (${backend}).pagination.total must be a number`);
+      offset += page.length;
+      if (offset >= total || page.length === 0) return { items, total };
+    }
+  };
+  const [python, typescript] = await Promise.all([collect("python"), collect("typescript")]);
+  if (python.total !== typescript.total) {
+    throw new Error(`${input.label}: pagination.total differs (python=${python.total}, typescript=${typescript.total})`);
+  }
+  // Both backends read the SAME staging database, so the row sets are identical by
+  // construction; what this compares is the projection/serialization. Python live bug #7
+  // (no tie-breaker on ORDER BY updated_at DESC with mass ties) makes any paged walk lose
+  // a large, random subset on BOTH sides, so union equality is unattainable and untestable.
+  // Instead: totals and facets must match exactly, every key present in both walks must
+  // have a byte-equal object (modulo millisecond timestamp precision), and the overlap
+  // must be substantial so the projection check has real coverage.
+  const keyed = (items: readonly unknown[], side: string) => {
+    const map = new Map<string, string>();
+    for (const [index, item] of items.entries()) {
+      const record = asRecord(item, `${input.label} (${side})[${index}]`);
+      const id = asString(record[input.keyField], `${input.label} (${side})[${index}].${input.keyField}`);
+      const normalized = { ...record };
+      if (typeof normalized.updated_at === "string") {
+        normalized.updated_at = new Date(normalized.updated_at).toISOString();
+      }
+      const body = canonicalJson(normalizeTimestamps(normalized));
+      const existing = map.get(id);
+      if (existing !== undefined && existing !== body) {
+        throw new Error(`${input.label} (${side}): duplicate id ${id} with DIFFERENT bodies`);
+      }
+      map.set(id, body);
+    }
+    return map;
+  };
+  const left = keyed(python.items, "python");
+  const right = keyed(typescript.items, "typescript");
+  let overlap = 0;
+  for (const [id, body] of left) {
+    const other = right.get(id);
+    if (other === undefined) continue;
+    overlap += 1;
+    if (other !== body) throw new Error(`${input.label}: object ${id} differs between backends`);
+  }
+  if (python.total > 0 && (left.size === 0 || right.size === 0)) {
+    throw new Error(`${input.label}: a backend's paged union is empty despite total=${python.total} — comparison would be vacuous`);
+  }
+  const floor = Math.floor(Math.min(left.size, right.size) / 2);
+  if (overlap < floor) {
+    throw new Error(`${input.label}: overlap ${overlap} below floor ${floor} — projection comparison lacks coverage`);
+  }
+  console.log(JSON.stringify({
+    event: "unordered_projection_compared",
+    label: input.label,
+    python_union: left.size,
+    typescript_union: right.size,
+    overlap,
+    total: python.total,
+  }));
+  return python.items;
+};
+
 const fieldStrings = (items: readonly unknown[], field: string, label: string) =>
   items.map((item, index) =>
     asString(asRecord(item, `${label}[${index}]`)[field], `${label}.${field}`),
@@ -322,8 +456,9 @@ const sweepVault = async (state: RunState, vaultId: string) => {
     path: `/v1/vaults/${vaultId}/wiki/recent`,
     pathTemplate: "/v1/vaults/{vault_id}/wiki/recent",
   });
-  const sourceItems = await readPages(state, {
+  const sourceItems = await readPagesUnordered(state, {
     id: `sources-${vaultId}`,
+    keyField: "file_path",
     label: "source documents",
     path: `/v1/vaults/${vaultId}/raw/sources`,
     pathTemplate: "/v1/vaults/{vault_id}/raw/sources",
@@ -337,8 +472,9 @@ const sweepVault = async (state: RunState, vaultId: string) => {
     ?.trim()
     .slice(0, 64);
   if (sourceSearchTerm !== undefined) {
-    await readPages(state, {
+    await readPagesUnordered(state, {
       id: `sources-search-${vaultId}`,
+      keyField: "file_path",
       label: "source document search",
       path: `/v1/vaults/${vaultId}/raw/sources?search=${encodeURIComponent(sourceSearchTerm)}`,
       pathTemplate: "/v1/vaults/{vault_id}/raw/sources?search={discovered_term}",
@@ -348,8 +484,9 @@ const sweepVault = async (state: RunState, vaultId: string) => {
     .map((item, index) => asRecord(item, `source items[${index}]`).source_type)
     .find((value): value is string => typeof value === "string" && value.length > 0);
   if (sourceType !== undefined) {
-    await readPages(state, {
+    await readPagesUnordered(state, {
       id: `sources-type-${vaultId}`,
+      keyField: "file_path",
       label: "source type facet",
       path: `/v1/vaults/${vaultId}/raw/sources?source_type=${encodeURIComponent(sourceType)}`,
       pathTemplate: "/v1/vaults/{vault_id}/raw/sources?source_type={discovered_type}",
@@ -387,7 +524,13 @@ const sweepVault = async (state: RunState, vaultId: string) => {
   });
 
   const wikiPaths = fieldStrings(wikiItems, "file_path", "wiki items");
-  const sourcePaths = fieldStrings(sourceItems, "file_path", "source items");
+  const allSourcePaths = [...fieldStrings(sourceItems, "file_path", "source items")].sort();
+  // Every wiki document is swept; source documents are sampled deterministically
+  // (sorted, fixed stride to ~300) — full-corpus per-document reads would take hours
+  // and add no field-shape coverage beyond a broad sample.
+  const sourceStride = Math.max(1, Math.floor(allSourcePaths.length / 300));
+  const sourcePaths = allSourcePaths.filter((_, index) => index % sourceStride === 0);
+  console.log(JSON.stringify({ event: "doc_sweep_sample", wiki: wikiPaths.length, sources_sampled: sourcePaths.length, sources_total: allSourcePaths.length }));
   for (const path of [...wikiPaths, ...sourcePaths]) {
     await readPair(state, {
       id: `doc-${vaultId}-${path}`,

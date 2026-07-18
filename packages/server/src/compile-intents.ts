@@ -9,6 +9,7 @@ import * as WorkflowEngine from "effect/unstable/workflow/WorkflowEngine";
 import { ClockService } from "./clock.ts";
 import { dieDatabase } from "./db-defects.ts";
 import { AppConfig } from "./config.ts";
+import { formatError } from "./error-details.ts";
 import {
   CompilePhases,
   CompilePhaseFailed,
@@ -70,9 +71,19 @@ export const CompileWorkflowLive = Layer.unwrap(
           return Effect.gen(function* () {
             if (failure instanceof CompilePhaseNotPorted) return yield* Effect.fail(failure);
             const pipeline = yield* PipelineRunsService;
+            const logger = yield* StructuredLogger;
+            const formatted = formatError(failure);
+            yield* logger.error("compile_workflow.phase_failed", {
+              vault_id: payload.vaultId,
+              pipeline_run_id: payload.pipelineRunId,
+              intent_id: payload.intentId,
+              step: phase,
+              error_type: failure.errorType,
+              error_message: failure.message,
+            });
             yield* pipeline.failPreservingProgress(
               payload.pipelineRunId as Uuid,
-              failure.message,
+              formatted,
             );
             return yield* Effect.fail(failure);
           });

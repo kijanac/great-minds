@@ -17,6 +17,7 @@ import {
   EXTRACT_STEP_LABELS,
 } from "../../src/compile-phases.ts";
 import { DrizzleLive } from "../../src/db.ts";
+import { StructuredLoggerLive } from "../../src/logging.ts";
 import {
   PipelineRunsService,
   PipelineRunsServiceLive,
@@ -87,7 +88,11 @@ const PhasesLive = Layer.effect(
   }),
 );
 
-const BaseLive = Layer.mergeAll(DrizzleLive.pipe(Layer.provideMerge(AppConfigLive)), ClockLive);
+const BaseLive = Layer.mergeAll(
+  DrizzleLive.pipe(Layer.provideMerge(AppConfigLive)),
+  ClockLive,
+  StructuredLoggerLive,
+);
 const PipelineLive = PipelineRunsServiceLive.pipe(Layer.provideMerge(BaseLive));
 const PhasesProvidedLive = PhasesLive.pipe(Layer.provideMerge(PipelineLive));
 const EngineLive = WorkflowEngineLive.pipe(Layer.provideMerge(BaseLive));

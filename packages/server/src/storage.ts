@@ -24,6 +24,7 @@ import { eq } from "drizzle-orm";
 import { Cause, Context, Effect, Layer, Option, Redacted, Schema } from "effect";
 
 import { AppConfig } from "./config.ts";
+import { errorDetails } from "./error-details.ts";
 import { StructuredLogger } from "./logging.ts";
 
 const VAULTS_DIR = "vaults";
@@ -314,9 +315,9 @@ const isR2Missing = (error: unknown) => {
 const isR2AlreadyOwned = (error: unknown) =>
   error instanceof S3ServiceException && error.name === "BucketAlreadyOwnedByYou";
 
-const errorName = (error: unknown) => (error instanceof Error ? error.name : typeof error);
+const errorName = (error: unknown) => errorDetails(error).errorType;
 
-const errorMessage = (error: unknown) => (error instanceof Error ? error.message : String(error));
+const errorMessage = (error: unknown) => errorDetails(error).message;
 
 const stagedStorageError = (operation: "read" | "delete", path: string, error: unknown) =>
   new StagedStorageError({

@@ -22,6 +22,7 @@ import { AppConfig } from "./config.ts";
 import { bodyContentHash, contentHash, fileContentHash } from "./crypto.ts";
 import { dieDatabase } from "./db-defects.ts";
 import { EmbeddingsService } from "./embeddings.ts";
+import { errorDetails } from "./error-details.ts";
 import { LanguageModel } from "./llm.ts";
 import { StructuredLogger } from "./logging.ts";
 import {
@@ -224,19 +225,6 @@ const chunkDocument = (path: string, content: string): readonly SearchChunk[] =>
     });
   }
   return result;
-};
-
-const errorDetails = (cause: unknown) => {
-  if (typeof cause === "object" && cause !== null) {
-    if ("_tag" in cause) {
-      return {
-        errorType: String(cause._tag),
-        message: "message" in cause ? String(cause.message) : String(cause),
-      };
-    }
-    if (cause instanceof Error) return { errorType: cause.name, message: cause.message };
-  }
-  return { errorType: typeof cause, message: String(cause) };
 };
 
 type CompilePhasesShape = {

@@ -24,7 +24,12 @@ import {
   CompileWorkflow,
   CompileWorkflowLive,
 } from "../src/compile-intents.ts";
-import { CompilePhases, CompilePhasesLive, RENDER_STEP_LABELS } from "../src/compile-phases.ts";
+import {
+  CompilePhases,
+  CompilePhasesLive,
+  phaseFailure,
+  RENDER_STEP_LABELS,
+} from "../src/compile-phases.ts";
 import { AppConfig, type AppConfigShape } from "../src/config.ts";
 import { ClockLive } from "../src/clock.ts";
 import { stagedFileToMarkdown } from "../src/conversion.ts";
@@ -64,6 +69,7 @@ const id = {
   renderFailureIntent: "10000000-0000-4000-8000-000000000013" as Uuid,
   renderFailureRun: "10000000-0000-4000-8000-000000000014" as Uuid,
   cancelIngestRun: "10000000-0000-4000-8000-000000000016" as Uuid,
+  stagedFailureRun: "10000000-0000-4000-8000-000000000018" as Uuid,
 } as const;
 
 const resumeRunnerPath = fileURLToPath(
@@ -137,6 +143,7 @@ const written = new Map<string, string>();
 const deleted: string[] = [];
 const readDefects = new Set<string>();
 const deleteDefects = new Set<string>();
+const writeDefects = new Set<string>();
 const logEvents: { readonly event: string; readonly fields: Record<string, unknown> }[] = [];
 let readPause:
   | {
@@ -181,7 +188,9 @@ const StorageLive = Layer.succeed(VaultStorage, {
       : Effect.succeed(content);
   },
   writeText: (_vaultId, path, content) =>
-    Effect.sync(() => written.set(path, content)).pipe(Effect.asVoid),
+    writeDefects.has(path)
+      ? Effect.die({ _tag: "R2WriteDefect", detail: `write rejected for ${path}` })
+      : Effect.sync(() => written.set(path, content)).pipe(Effect.asVoid),
   appendText: () => Effect.die("unused"),
   exists: () => Effect.succeed(false),
   deletePath: () => Effect.void,
@@ -461,6 +470,7 @@ describe("M4.2 durable workers", () => {
     deleted.length = 0;
     readDefects.clear();
     deleteDefects.clear();
+    writeDefects.clear();
     readPause = undefined;
     logEvents.length = 0;
     await seed();
@@ -476,6 +486,29 @@ describe("M4.2 durable workers", () => {
     await expect(
       stagedFileToMarkdown(Buffer.from("<alpha>1</alpha>"), "data.xml", "application/xml"),
     ).resolves.toBe("<alpha>1</alpha>");
+  });
+
+  it("maps timeout and non-Error defects to descriptive compile failures", async () => {
+    const timeout = await Effect.runPromise(
+      Effect.result(Effect.never.pipe(Effect.timeout("1 millis"))),
+    );
+    expect(timeout._tag).toBe("Failure");
+    if (timeout._tag === "Failure") {
+      expect(phaseFailure("ingest", timeout.failure)).toMatchObject({
+        errorType: "TimeoutError",
+        message: "Operation timed out",
+      });
+    }
+    expect(
+      phaseFailure("ingest", {
+        _tag: "R2ListDefect",
+        message: undefined,
+        detail: "list request stalled",
+      }),
+    ).toMatchObject({
+      errorType: "R2ListDefect",
+      message: "list request stalled",
+    });
   });
 
   it("cancels a mid-flight staged ingest workflow before it can write documents", async () => {
@@ -646,7 +679,7 @@ describe("M4.2 durable workers", () => {
     expect(dedupeState.run[0]).toMatchObject({ status: "completed", currentPhase: "publish" });
   }, 30_000);
 
-  it("isolates per-file storage defects and counts non-fatal cleanup failures", async () => {
+  it("finalizes with one intent after per-file and cleanup storage defects", async () => {
     const readFailureHash = "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd";
     const cleanupFailureHash = "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee";
     staged.set(cleanupFailureHash, Buffer.from("# Cleanup survives\n\nPersist this source."));
@@ -705,14 +738,100 @@ describe("M4.2 durable workers", () => {
     const state = await run(
       Effect.gen(function* () {
         const db = yield* Database;
+        return {
+          documents: yield* db
+            .select()
+            .from(sourceDocuments)
+            .where(eq(sourceDocuments.vaultId, id.vault))
+            .pipe(Effect.orDie),
+          intents: yield* db
+            .select()
+            .from(compileIntents)
+            .where(eq(compileIntents.pipelineRunId, id.isolationRun))
+            .pipe(Effect.orDie),
+          run: yield* db
+            .select()
+            .from(pipelineRuns)
+            .where(eq(pipelineRuns.id, id.isolationRun))
+            .pipe(Effect.orDie),
+        };
+      }),
+    );
+    expect(state.documents).toHaveLength(1);
+    expect(state.intents).toHaveLength(1);
+    expect(state.run[0]).toMatchObject({
+      status: "running",
+      phaseStatus: "completed",
+      error: null,
+      compileIntentId: state.intents[0]?.id,
+    });
+  }, 30_000);
+
+  it("logs and persists a descriptive staged terminal failure for a non-Error defect", async () => {
+    const hash = "1212121212121212121212121212121212121212121212121212121212121212";
+    const path = `raw/docs/${hash.slice(0, 12)}.md`;
+    staged.set(hash, Buffer.from("# Defective write\n\nThe failure must stay observable."));
+    writeDefects.add(path);
+
+    const result = await run(
+      Effect.gen(function* () {
+        const db = yield* Database;
+        yield* db
+          .insert(pipelineRuns)
+          .values({
+            id: id.stagedFailureRun,
+            vaultId: id.vault,
+            trigger: "staged_files",
+            status: "pending",
+            currentPhase: "",
+            phaseStatus: "",
+            progressSteps: [],
+          })
+          .pipe(Effect.orDie);
+        return yield* Effect.exit(
+          StagedFileIngestWorkflow.execute({
+            vaultId: id.vault,
+            pipelineRunId: id.stagedFailureRun,
+            files: [
+              {
+                name: "defect.md",
+                size: staged.get(hash)!.length,
+                hash,
+                mimetype: "text/markdown",
+              },
+            ],
+          }),
+        );
+      }),
+    );
+    expect(result._tag).toBe("Failure");
+    expect(logEvents).toContainEqual({
+      event: "staged_file_ingest.failed",
+      fields: expect.objectContaining({
+        pipeline_run_id: id.stagedFailureRun,
+        step: "persist",
+        error_type: "R2WriteDefect",
+        error_message: `write rejected for ${path}`,
+      }),
+    });
+
+    const state = await run(
+      Effect.gen(function* () {
+        const db = yield* Database;
         return yield* db
           .select()
           .from(pipelineRuns)
-          .where(eq(pipelineRuns.id, id.isolationRun))
+          .where(eq(pipelineRuns.id, id.stagedFailureRun))
           .pipe(Effect.orDie);
       }),
     );
-    expect(state[0]).toMatchObject({ status: "running", phaseStatus: "completed" });
+    expect(state[0]).toMatchObject({
+      status: "failed",
+      currentPhase: "source_ingest",
+      phaseStatus: "failed",
+      error: `R2WriteDefect: write rejected for ${path}`,
+    });
+    expect(state[0]?.error).not.toBe("undefined");
   }, 30_000);
 
   it("resume-after-persist preserves the journaled ingest decision and creates the intent", async () => {
@@ -893,7 +1012,16 @@ describe("M4.2 durable workers", () => {
       status: "failed",
       currentPhase: "render",
       phaseStatus: "failed",
-      error: "forced render seam",
+      error: "Error: forced render seam",
+    });
+    expect(logEvents).toContainEqual({
+      event: "compile_workflow.phase_failed",
+      fields: expect.objectContaining({
+        pipeline_run_id: id.renderFailureRun,
+        step: "render",
+        error_type: "Error",
+        error_message: "forced render seam",
+      }),
     });
     expect(rows[0]?.progressSteps).toEqual([
       {

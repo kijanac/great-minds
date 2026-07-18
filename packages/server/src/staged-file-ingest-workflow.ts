@@ -15,6 +15,7 @@ import { AppConfig } from "./config.ts";
 import { stagedFileToMarkdown } from "./conversion.ts";
 import { fileContentHash } from "./crypto.ts";
 import { dieDatabase } from "./db-defects.ts";
+import { causeDetails, formatError } from "./error-details.ts";
 import { buildDocument } from "./markdown.ts";
 import { StructuredLogger } from "./logging.ts";
 import { PipelineRunsService, progressSteps } from "./pipeline-runs.ts";
@@ -56,32 +57,6 @@ export const StagedFileIngestPersistResult = Schema.Struct({
   failed: Schema.Number,
   cleanupHashes: Schema.Array(Schema.String),
 });
-
-const causeError = (cause: Cause.Cause<unknown>) => {
-  const reason = cause.reasons[0];
-  const error =
-    reason !== undefined && Cause.isFailReason(reason)
-      ? reason.error
-      : reason !== undefined && Cause.isDieReason(reason)
-        ? reason.defect
-        : cause;
-  if (typeof error === "object" && error !== null && "errorType" in error) {
-    return {
-      type: String(error.errorType),
-      message: "message" in error ? String(error.message) : String(error),
-    };
-  }
-  if (typeof error === "object" && error !== null && "_tag" in error) {
-    return {
-      type: String(error._tag),
-      message: "message" in error ? String(error.message) : String(error),
-    };
-  }
-  return {
-    type: error instanceof Error ? error.name : typeof error,
-    message: error instanceof Error ? error.message : String(error),
-  };
-};
 
 export const StagedFileIngestWorkflowLive = StagedFileIngestWorkflow.toLayer((payload) => {
   const persist = Activity.make({
@@ -192,12 +167,12 @@ export const StagedFileIngestWorkflowLive = StagedFileIngestWorkflow.toLayer((pa
           if (file === undefined) {
             throw new Error(`Converted staged file ${index} has no input entry`);
           }
-          const error = causeError(result.cause);
+          const error = causeDetails(result.cause);
           yield* logger.warn("staged_file_ingest.fetch_failed", {
             vault_id: vaultId,
             pipeline_run_id: runId,
             file_name: file.name,
-            error: error.type,
+            error: error.errorType,
             error_message: error.message,
           });
           continue;
@@ -356,31 +331,47 @@ export const StagedFileIngestWorkflowLive = StagedFileIngestWorkflow.toLayer((pa
       }),
     });
 
-  const workflow = Effect.gen(function* () {
+  const failRun = <E>(step: "persist" | "finalize", cause: Cause.Cause<E>) =>
+    Effect.gen(function* () {
+      const pipeline = yield* PipelineRunsService;
+      const logger = yield* StructuredLogger;
+      const error = causeDetails(cause);
+      const formatted = formatError(error);
+      yield* logger.error("staged_file_ingest.failed", {
+        vault_id: payload.vaultId,
+        pipeline_run_id: payload.pipelineRunId,
+        step,
+        error_type: error.errorType,
+        error_message: error.message,
+      });
+      yield* pipeline.updateProgress(
+        payload.pipelineRunId as Uuid,
+        "source_ingest",
+        "failed",
+        progressSteps(STAGED_FILE_INGEST_STEP_LABELS, "prepare_sources", {
+          failed: new Set(["prepare_sources"]),
+          details: { prepare_sources: formatted },
+        }),
+        formatted,
+      );
+      return yield* Effect.failCause(cause);
+    });
+
+  const recoverTerminal = <E>(step: "persist" | "finalize", cause: Cause.Cause<E>) => {
+    if (cause.reasons.length > 0 && cause.reasons.every(Cause.isInterruptReason)) {
+      return Effect.failCause(cause);
+    }
+    return failRun(step, cause);
+  };
+
+  return Effect.gen(function* () {
     const persisted = yield* Activity.retry(Effect.sandbox(persist), { times: 1 }).pipe(
       Effect.catch((cause) => Effect.failCause(cause)),
+      Effect.catchCause((cause) => recoverTerminal("persist", cause)),
     );
     return yield* Activity.retry(Effect.sandbox(finalize(persisted)), { times: 1 }).pipe(
       Effect.catch((cause) => Effect.failCause(cause)),
+      Effect.catchCause((cause) => recoverTerminal("finalize", cause)),
     );
   });
-
-  return workflow.pipe(
-    Effect.catchCause((cause) =>
-      Effect.gen(function* () {
-        const pipeline = yield* PipelineRunsService;
-        yield* pipeline.updateProgress(
-          payload.pipelineRunId as Uuid,
-          "source_ingest",
-          "failed",
-          progressSteps(STAGED_FILE_INGEST_STEP_LABELS, "prepare_sources", {
-            failed: new Set(["prepare_sources"]),
-            details: { prepare_sources: String(cause) },
-          }),
-          String(cause),
-        );
-        return yield* Effect.failCause(cause);
-      }),
-    ),
-  );
 });

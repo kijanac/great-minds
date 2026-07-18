@@ -29,6 +29,7 @@ import {
 import { contentHash, promptContentHash } from "./crypto.ts";
 import { dieDatabase } from "./db-defects.ts";
 import type { EmbeddingsService } from "./embeddings.ts";
+import { errorDetails as describeError } from "./error-details.ts";
 import type { LanguageModel, LlmMessage, ModelCompletion } from "./llm.ts";
 import type { StructuredLogger } from "./logging.ts";
 import { markdownParagraphs, parseFrontmatter, serializeFrontmatter } from "./markdown.ts";
@@ -86,17 +87,16 @@ class EmbeddingBatchFailed extends Error {
 }
 
 const errorDetails = (error: unknown): { readonly errorType: string; readonly message: string } => {
-  if (typeof error === "object" && error !== null) {
-    if ("cause" in error && error.cause !== error) return errorDetails(error.cause);
-    if (error instanceof Error) return { errorType: error.name, message: error.message };
-    if ("_tag" in error) {
-      return {
-        errorType: String(error._tag),
-        message: "message" in error ? String(error.message) : String(error),
-      };
-    }
+  if (
+    typeof error === "object" &&
+    error !== null &&
+    "cause" in error &&
+    error.cause !== undefined &&
+    error.cause !== error
+  ) {
+    return describeError(error.cause);
   }
-  return { errorType: typeof error, message: String(error) };
+  return describeError(error);
 };
 
 const isTimeoutError = (error: unknown): boolean => {
