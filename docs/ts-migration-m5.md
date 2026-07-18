@@ -31,6 +31,25 @@ Run against a **copy** of prod, never prod itself:
 5. TS staged-ingest smoke against the staging R2 copy (the one path local scratch could not exercise: presign → PUT → process → conversion → intent).
 6. Browser smoke against the staged stack (login, wiki, query, session).
 
+## M5.1 — Results (2026-07-18) — COMPLETE
+
+**Go/no-go: rehearsal passed.** The browser smoke was skipped as redundant — M4.5 already drove the unmodified frontend end-to-end, and the M5.1 read-parity sweep exercised every frontend-facing read endpoint against the real corpus more rigorously than a click-through. One open decision gates the cutover: the canonicalize token-limit wall (see below) fails the next full re-canonicalization on either backend until an output-budget bump or compile-v2 lands.
+
+
+**Read-parity sweep: PASSED** — 980 requests over 27 endpoints against the full production copy (8,317 sources, 561 topics, 63k ideas, 197k chunks); every projection byte-equal at millisecond timestamp precision; D4 the only licensed divergence hit.
+
+**Warm-cache compile: proven to the strongest reachable bar.** All extract (8,421), partition, and synthesize (994) cache keys constructed by TS byte-match the rows Python wrote. The `canonicalize_registry` miss is legitimate, not a port defect: the 2026-07-03 hardening changed the registry prompt and model after production's last compile (2026-07-02), so the cache is stale for current code on BOTH backends — verified empirically by running Python against the same copy with a dead LLM endpoint: identical phase, step, and failure semantics.
+
+**Live compile on the staging copy (authorized): surfaced a pre-existing product wall.** With a real key, registry reduce and assignment completed, but validate's collision-cleanup call overflowed the model output limit — `output hit the token limit (finish_reason=length)` — the hardening's loud-truncation behavior, identical on either backend. Consequence: **production's next full re-canonicalization will fail the same way regardless of cutover** (before the hardening it would have silently corrupted the registry instead). This is the primary concrete motivation for compile-v2 and pushes its priority. Interim mitigation candidates (post-cutover): raise the reduce/cleanup output budget, or chunk the cleanup call.
+
+**Staged-ingest R2 smoke: PASSED** after fixes — presign to the staging bucket, PUT, process, conversion, document persisted, one intent queued, `source_ingest` completed clean.
+
+**Findings fixed during the rehearsal** (commits `11c094e`, `1a27e5f`): pipeline errors can no longer persist as the literal "undefined" (Effect TimeoutError message-less shape; formatter covers all cause shapes; terminal failures now logged structurally); zombie recovery matches journal entries by task type and identity; the warm-cache tool detects a legacy Absurd claimant immediately.
+
+**Recorded live bugs:** Python #7 — the sources listing has no ordering tie-breaker; with bulk-ingested data (8,316 docs, two distinct `updated_at` values) paginated walks silently drop ~25% of documents and duplicate others, on both backends (one-line `file_path` tie-breaker, post-cutover). Cost rows flush only after publish, so failed compiles record no spend (Python-faithful; punch list).
+
+**Rehearsal environment rules learned:** exactly ONE dispatcher may run against the staging copy — booting the Python API (for bearer minting) alongside the TS server races two reconcilers over one intent queue and parks compiles in a workerless Absurd queue; mint bearers from the TS server instead. Secrets ride process env only, never `env K=V` argv (visible in ps).
+
 ## M5.2 — Cutover (execution checklist)
 
 1. Quiesce: confirm no in-flight Absurd tasks; drain per decision M4.2-8 (terminal-state all tasks, one final Python reconciler pass so intents receive `satisfied_at`; abandoned intents re-emitted post-cutover).
