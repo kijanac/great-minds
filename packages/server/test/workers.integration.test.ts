@@ -13,7 +13,7 @@ import { fileURLToPath } from "node:url";
 
 import * as PgClient from "@effect/sql-pg/PgClient";
 import type { Uuid } from "@great-minds/domain";
-import { eq } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import { Effect, Layer, Option, Redacted } from "effect";
 import type * as WorkflowEngine from "effect/unstable/workflow/WorkflowEngine";
 import { beforeEach, describe, expect, it } from "vitest";
@@ -70,6 +70,8 @@ const id = {
   renderFailureRun: "10000000-0000-4000-8000-000000000014" as Uuid,
   cancelIngestRun: "10000000-0000-4000-8000-000000000016" as Uuid,
   stagedFailureRun: "10000000-0000-4000-8000-000000000018" as Uuid,
+  maskedCompileRun: "10000000-0000-4000-8000-000000000019" as Uuid,
+  maskedCompileIntent: "10000000-0000-4000-8000-000000000020" as Uuid,
 } as const;
 
 const resumeRunnerPath = fileURLToPath(
@@ -1115,6 +1117,84 @@ describe("M4.2 durable workers", () => {
       }),
     );
     expect(recovered).toBe(1);
+  });
+
+  it("does not let a completed ingest journal mask a missing active compile request", async () => {
+    const recovered = await run(
+      Effect.gen(function* () {
+        const db = yield* Database;
+        yield* db
+          .insert(pipelineRuns)
+          .values({
+            id: id.maskedCompileRun,
+            vaultId: id.vault,
+            trigger: "staged_files",
+            status: "running",
+            currentPhase: "source_ingest",
+            phaseStatus: "completed",
+            progressSteps: [],
+            compileIntentId: id.maskedCompileIntent,
+            activeTaskId: id.maskedCompileIntent,
+            activeTaskType: "compile",
+            updatedAt: new Date(0),
+          })
+          .pipe(Effect.orDie);
+        yield* db
+          .insert(compileIntents)
+          .values({
+            id: id.maskedCompileIntent,
+            vaultId: id.vault,
+            pipelineRunId: id.maskedCompileRun,
+            dispatchedAt: new Date(0),
+            dispatchedTaskId: id.maskedCompileIntent,
+          })
+          .pipe(Effect.orDie);
+        yield* db.execute(sql`
+          INSERT INTO cluster_messages (
+            id,
+            message_id,
+            shard_id,
+            entity_type,
+            entity_id,
+            kind,
+            tag,
+            payload,
+            processed,
+            request_id
+          ) VALUES (
+            900000000000000001,
+            'Workflow/StagedFileIngest/old-ingest/run/',
+            'default:1',
+            'Workflow/StagedFileIngest',
+            'old-ingest',
+            0,
+            'run',
+            ${JSON.stringify({ pipelineRunId: id.maskedCompileRun })},
+            true,
+            900000000000000001
+          )
+        `).pipe(Effect.orDie);
+        const pipeline = yield* PipelineRunsService;
+        return yield* pipeline.recoverZombies(new Date(Date.now() - 120_000));
+      }),
+    );
+    expect(recovered).toBe(1);
+
+    const rows = await run(
+      Effect.gen(function* () {
+        const db = yield* Database;
+        return yield* db
+          .select()
+          .from(pipelineRuns)
+          .where(eq(pipelineRuns.id, id.maskedCompileRun))
+          .pipe(Effect.orDie);
+      }),
+    );
+    expect(rows[0]).toMatchObject({
+      status: "failed",
+      phaseStatus: "failed",
+      error: "Pipeline interrupted — server may have restarted during processing.",
+    });
   });
 
   it("does not satisfy a terminal run without a compile workflow journal entry", async () => {

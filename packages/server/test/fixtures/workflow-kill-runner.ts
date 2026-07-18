@@ -38,7 +38,7 @@ const WorkflowLayer = KernelAcceptanceWorkflow.toLayer((payload, executionId) =>
     name: "kernel-finish",
     success: Schema.String,
     execute: Effect.gen(function* () {
-      console.log("KERNEL finish activity started");
+      console.log(`KERNEL finish activity started run=${payload.runId}`);
       if (pauseBeforeFinishCommit) {
         yield* Effect.sleep("60 seconds");
       }

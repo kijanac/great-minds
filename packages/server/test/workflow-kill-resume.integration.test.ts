@@ -133,4 +133,54 @@ describe("Effect workflow kernel", () => {
       "cluster_replies",
     ]);
   }, 60_000);
+
+  it("restart backlog: a fresh workflow runs after repeated SIGKILL accumulation", async () => {
+    await runSql(
+      Effect.gen(function* () {
+        const sql = yield* PgClient.PgClient;
+        yield* sql`DROP TABLE IF EXISTS cluster_messages, cluster_replies, cluster_migrations CASCADE`;
+      }),
+    );
+    const sideEffectDir = await mkdtemp(join(tmpdir(), "gm-workflow-backlog-"));
+    const interruptedRunIds = Array.from(
+      { length: 5 },
+      (_, index) => `backlog-${index}-${crypto.randomUUID()}`,
+    );
+    const freshRunId = `fresh-${crypto.randomUUID()}`;
+    try {
+      for (const runId of interruptedRunIds) {
+        const runner = startRunner(runId, "pause", sideEffectDir);
+        await waitForOutput(runner, `KERNEL finish activity started run=${runId}`);
+        runner.kill("SIGKILL");
+        await new Promise<void>((resolve) => runner.once("exit", () => resolve()));
+      }
+
+      const fresh = startRunner(freshRunId, "complete", sideEffectDir);
+      const completed = await waitForExit(fresh);
+      expect(completed.code).toBe(0);
+      expect(completed.output).toContain(`KERNEL finish activity started run=${freshRunId}`);
+      expect(completed.output).toContain("KERNEL completed result=prepared+finished");
+
+      const files = (await readdir(sideEffectDir)).sort();
+      const expected = [...interruptedRunIds, freshRunId]
+        .flatMap((runId) => [`${runId}-finish`, `${runId}-prepare`])
+        .sort();
+      expect(files).toEqual(expected);
+
+      const journal = await runSql(
+        Effect.gen(function* () {
+          const sql = yield* PgClient.PgClient;
+          return yield* sql<{ processed: boolean; count: number }>`
+            SELECT processed, count(*)::int AS count
+            FROM cluster_messages
+            GROUP BY processed
+            ORDER BY processed
+          `;
+        }),
+      );
+      expect(journal).toEqual([{ processed: true, count: 18 }]);
+    } finally {
+      await rm(sideEffectDir, { recursive: true, force: true });
+    }
+  }, 120_000);
 });

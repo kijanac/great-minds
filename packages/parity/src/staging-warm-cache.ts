@@ -57,6 +57,53 @@ const cacheCount = () =>
     }),
   );
 
+type DispatchOwnership = {
+  readonly intent_id: string | null;
+  readonly dispatched_task_id: string | null;
+  readonly effect_message: boolean;
+};
+
+const dispatchOwnership = (jobId: string) =>
+  runDb(
+    Effect.gen(function* () {
+      const db = yield* Database;
+      const rows = yield* db.execute(sql<DispatchOwnership>`
+        SELECT intent.id::text AS intent_id,
+               intent.dispatched_task_id::text AS dispatched_task_id,
+               EXISTS (
+                 SELECT 1
+                 FROM cluster_messages message
+                 WHERE message.entity_type = 'Workflow/CompileTask'
+                   AND message.payload::jsonb ->> 'intentId' = intent.id::text
+               ) AS effect_message
+        FROM pipeline_runs run
+        LEFT JOIN compile_intents intent ON intent.id = run.compile_intent_id
+        WHERE run.id = ${jobId}::uuid
+      `).pipe(Effect.orDie);
+      return rows[0];
+    }),
+  );
+
+const waitForEffectDispatch = async (jobId: string) => {
+  const deadline = Date.now() + 15_000;
+  while (Date.now() < deadline) {
+    const ownership = await dispatchOwnership(jobId);
+    if (
+      ownership?.intent_id !== null &&
+      ownership?.intent_id !== undefined &&
+      ownership.dispatched_task_id !== null &&
+      ownership.dispatched_task_id !== ownership.intent_id
+    ) {
+      throw new Error(
+        `compile intent ${ownership.intent_id} was claimed by legacy task ${ownership.dispatched_task_id}; stop the Python lane, resolve the stranded Absurd task, restore/reset the staging copy, and retry`,
+      );
+    }
+    if (ownership?.effect_message === true) return;
+    await sleep(100);
+  }
+  throw new Error(`compile ${jobId} did not create a Workflow/CompileTask journal request`);
+};
+
 const read = (path: string) =>
   requestBackend(
     { name: "typescript", baseUrl: tsUrl },
@@ -146,6 +193,7 @@ if (submitted.status !== 202) {
 }
 const submittedJob = responseRecord(submitted, "compile submission");
 const jobId = asString(submittedJob.id, "compile submission id");
+await waitForEffectDispatch(jobId);
 
 let terminal: Record<string, unknown> | undefined;
 while (Date.now() - startedAt < timeoutMs) {

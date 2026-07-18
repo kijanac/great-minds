@@ -163,6 +163,10 @@ the compile, polls the returned job to terminal, then checks the artifacts and c
 DATABASE_URL="$STAGING_DATABASE_URL" STAGING_TS_BASE_URL=http://127.0.0.1:8912 STAGING_BEARER_TOKEN="$STAGING_BEARER_TOKEN" STAGING_VAULT_ID="$STAGING_VAULT_ID" pnpm --filter @great-minds/parity staging:warm-cache
 ```
 
+The runner verifies that the new intent is owned by an Effect `Workflow/CompileTask` journal
+request before waiting for phase progress. If the Python reconciler is still alive and claims it as
+an Absurd task, the rehearsal fails immediately with the legacy task id instead of timing out.
+
 ### M5.0 Docker smoke commands
 
 The smoke uses the package-test Postgres as a disposable database. Seed one user/vault/membership
