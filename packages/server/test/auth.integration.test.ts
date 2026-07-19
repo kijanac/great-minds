@@ -468,6 +468,44 @@ describe("auth HTTP integration", () => {
     expect(malformedRefresh.body).toEqual({ detail: "Invalid request body" });
   });
 
+  it("answers CORS preflight and echoes an allowed origin, rejecting others", async () => {
+    const base = currentState().started.url;
+    const allowed = "http://localhost:5173";
+
+    const preflight = await fetch(`${base}/v1/auth/request-code`, {
+      method: "OPTIONS",
+      headers: {
+        origin: allowed,
+        "access-control-request-method": "POST",
+        "access-control-request-headers": "content-type,authorization",
+      },
+    });
+    expect(preflight.status).toBe(204);
+    expect(preflight.headers.get("access-control-allow-origin")).toBe(allowed);
+    expect(preflight.headers.get("access-control-allow-headers")?.toLowerCase()).toContain(
+      "authorization",
+    );
+
+    const actual = await fetch(`${base}/v1/auth/request-code`, {
+      method: "POST",
+      headers: { origin: allowed, "content-type": "application/json" },
+      body: JSON.stringify({ email: "cors@example.com" }),
+    });
+    expect(actual.headers.get("access-control-allow-origin")).toBe(allowed);
+
+    // A disallowed origin must never be echoed back as allowed. With a single
+    // configured origin the middleware emits that origin statically, so the
+    // browser-enforced boundary is "the response never grants the evil origin
+    // itself" rather than "no header at all".
+    const rejected = await fetch(`${base}/v1/auth/request-code`, {
+      method: "OPTIONS",
+      headers: { origin: "https://evil.example.com", "access-control-request-method": "POST" },
+    });
+    expect(rejected.headers.get("access-control-allow-origin")).not.toBe(
+      "https://evil.example.com",
+    );
+  });
+
   it("creates, lists, and revokes API keys with ownership checks", async () => {
     const ownerPair = await signIn("keys@example.com");
     const otherPair = await signIn("other-keys@example.com");

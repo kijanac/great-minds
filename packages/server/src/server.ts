@@ -16,6 +16,7 @@ import {
 import { eq } from "drizzle-orm";
 import { Cause, Effect, Layer, ManagedRuntime, Option, Redacted, Stream } from "effect";
 import {
+  HttpMiddleware,
   HttpRouter,
   HttpServer,
   HttpServerRequest,
@@ -966,16 +967,28 @@ const ServerLive = (nodeServer: Server, options: StartServerOptions) => {
     ),
   );
   const serveLayer = Layer.unwrap(
-    HttpRouter.toHttpEffect(AppRoutesLive).pipe(
-      Effect.map((httpEffect) =>
-        HttpServer.serve()(
+    Effect.gen(function* () {
+      const config = yield* AppConfig;
+      const httpEffect = yield* HttpRouter.toHttpEffect(AppRoutesLive);
+      // The browser talks to this API cross-origin from the static frontend, so it
+      // needs CORS preflight handling and Allow-Origin headers. Mirrors the Python
+      // config: credentialed, all methods, the headers the client actually sends.
+      const cors = HttpMiddleware.cors({
+        allowedOrigins: config.corsOrigins,
+        allowedMethods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+        allowedHeaders: ["Content-Type", "Authorization"],
+        credentials: true,
+        maxAge: 86_400,
+      });
+      return HttpServer.serve()(
+        cors(
           Effect.matchCauseEffect(httpEffect, {
             onFailure: handleHttpCause,
             onSuccess: Effect.succeed,
           }),
         ),
-      ),
-    ),
+      );
+    }),
   );
 
   return serveLayer.pipe(
