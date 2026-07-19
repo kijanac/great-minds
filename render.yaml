@@ -1,3 +1,4 @@
+# M5.2 applies this over render.yaml; see ts-migration-m5.md
 projects:
   - name: great-minds
     environments:
@@ -9,7 +10,9 @@ projects:
             runtime: docker
             plan: standard
             region: virginia
+            dockerfilePath: ./Dockerfile.ts
             healthCheckPath: /health
+            # TS still persists proposal bodies and compile logs under DATA_DIR.
             disk:
               name: data
               mountPath: /data
@@ -24,9 +27,11 @@ projects:
               - key: DATA_DIR
                 value: /data
               - key: CORS_ORIGINS
-                value: '["https://great-minds-web.onrender.com","https://greatmind.dev","https://www.greatmind.dev"]'
+                value: https://great-minds-web.onrender.com,https://greatmind.dev,https://www.greatmind.dev
               - key: OPENROUTER_API_KEY
                 sync: false
+              - key: OPENROUTER_API_URL
+                value: https://openrouter.ai/api/v1
               - key: STORAGE_BACKEND
                 value: r2
               - key: R2_ACCOUNT_ID
@@ -41,49 +46,12 @@ projects:
                 sync: false
               - key: RESEND_FROM_EMAIL
                 sync: false
-              - key: LOG_JSON
-                value: "true"
+              - key: HOST
+                value: 0.0.0.0
+              - key: PORT
+                value: "8787"
 
-          # ── Background worker (Docker) ────────────────────────────
-          - name: great-minds-worker
-            type: worker
-            runtime: docker
-            plan: standard
-            region: virginia
-            dockerCommand: great-minds worker --concurrency 1
-            disk:
-              name: data
-              mountPath: /data
-              sizeGB: 1
-            envVars:
-              - key: DATABASE_URL
-                fromDatabase:
-                  name: great-minds-db
-                  property: connectionString
-              - key: JWT_SECRET
-                generateValue: true
-              - key: DATA_DIR
-                value: /data
-              - key: CORS_ORIGINS
-                value: '["https://great-minds-web.onrender.com","https://greatmind.dev","https://www.greatmind.dev"]'
-              - key: OPENROUTER_API_KEY
-                sync: false
-              - key: STORAGE_BACKEND
-                value: r2
-              - key: R2_ACCOUNT_ID
-                sync: false
-              - key: R2_ACCESS_KEY_ID
-                sync: false
-              - key: R2_SECRET_ACCESS_KEY
-                sync: false
-              - key: R2_BUCKET_PREFIX
-                value: gm-prod
-              - key: RESEND_API_KEY
-                sync: false
-              - key: RESEND_FROM_EMAIL
-                sync: false
-              - key: LOG_JSON
-                value: "true"
+          # great-minds-worker is suspended in the Render dashboard before this file lands.
 
           # ── Frontend (Static) ─────────────────────────────────────
           - name: great-minds-web
