@@ -126,7 +126,7 @@ function HomeContent({ sessionId, initialExchanges, initialQuery, origin }: Home
 
   return (
     <div className="flex h-screen overflow-hidden relative print-root">
-      <div className="flex-1 flex flex-col overflow-hidden min-w-0">
+      <div className="flex-1 flex flex-col overflow-hidden min-w-0 relative">
         {isActive && (
           <div className="shrink-0 px-4 md:px-10 pt-[22px] pb-[18px] border-b border-ink-subtle">
             <motion.div
@@ -187,8 +187,11 @@ function HomeContent({ sessionId, initialExchanges, initialQuery, origin }: Home
           </div>
         )}
 
-        <AnimatePresence initial={false}>
-          {!isActive && (
+        {/* popLayout pops the exiting view out of the layout flow immediately,
+            so the incoming session thread takes full height from its first
+            frame instead of being pushed below the fading home content. */}
+        <AnimatePresence initial={false} mode="popLayout">
+          {!isActive ? (
             <motion.div
               key="home-content"
               className="flex-1 flex flex-col items-center justify-center px-4 md:px-10 pb-12"
@@ -238,11 +241,7 @@ function HomeContent({ sessionId, initialExchanges, initialQuery, origin }: Home
                 </div>
               )}
             </motion.div>
-          )}
-        </AnimatePresence>
-
-        <AnimatePresence initial={false}>
-          {isActive && (
+          ) : (
             <motion.div
               key="session-thread"
               className="flex-1 min-h-0 overflow-hidden flex flex-col"

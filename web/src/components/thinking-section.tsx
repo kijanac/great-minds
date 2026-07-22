@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { ChevronDown, ChevronRight, ListFilter, Search, Waypoints } from "lucide-react";
+import { ChevronDown, ChevronRight, Globe, ListFilter, Search, Waypoints } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -26,14 +26,17 @@ export function ThinkingSection({
   if (blocks.length === 0 && !streaming) return null;
 
   const allSources = blocks.flatMap((b) => b.sources);
-  const articles = allSources.filter((s) => s.type === "article").length;
-  const raw = allSources.filter((s) => s.type === "raw").length;
-  const searches = allSources.filter((s) => s.type === "search").length;
-  const queries = allSources.filter((s) => s.type === "query").length;
-  const links = allSources.filter((s) => s.type === "links").length;
+  const settledSources = allSources.filter((source) => source.pending !== true);
+  const articles = settledSources.filter((s) => s.type === "article").length;
+  const raw = settledSources.filter((s) => s.type === "raw").length;
+  const webSearches = settledSources.filter((s) => s.type === "search" && s.scope === "web").length;
+  const searches = settledSources.filter((s) => s.type === "search").length - webSearches;
+  const queries = settledSources.filter((s) => s.type === "query").length;
+  const links = settledSources.filter((s) => s.type === "links").length;
 
   const summaryParts: string[] = [];
   if (searches) summaryParts.push(`${searches} search${searches !== 1 ? "es" : ""}`);
+  if (webSearches) summaryParts.push(`${webSearches} web search${webSearches !== 1 ? "es" : ""}`);
   if (queries) summaryParts.push(`${queries} filter${queries !== 1 ? "s" : ""}`);
   if (articles) summaryParts.push(`${articles} article${articles !== 1 ? "s" : ""} read`);
   if (raw) summaryParts.push(`${raw} source${raw !== 1 ? "s" : ""} read`);
@@ -65,9 +68,15 @@ export function ThinkingSection({
               .flatMap((b) => b.sources)
               .map((src, i) => {
                 if (src.type === "search")
-                  return <SearchBadge key={`search:${i}:${src.label}`} query={src.label} />;
+                  return <SearchBadge key={`search:${i}:${src.label}`} source={src} />;
                 if (src.type === "query")
-                  return <FilterBadge key={`query:${i}:${src.label}`} summary={src.label} />;
+                  return (
+                    <FilterBadge
+                      key={`query:${i}:${src.label}`}
+                      summary={src.label}
+                      pending={src.pending === true}
+                    />
+                  );
                 return (
                   <ArticleBadge
                     key={`${src.type}:${i}:${src.label}`}
@@ -75,7 +84,8 @@ export function ThinkingSection({
                     title={src.title}
                     thinking={src.thinking ?? undefined}
                     active={activeCard === src.label}
-                    onClick={() => onCardClick(src)}
+                    pending={src.pending === true}
+                    onClick={src.pending ? undefined : () => onCardClick(src)}
                     icon={
                       src.type === "links" ? (
                         <Waypoints size={9} className="mr-1.5 opacity-60" />
@@ -91,23 +101,35 @@ export function ThinkingSection({
   );
 }
 
-function SearchBadge({ query }: { query: string }) {
+export function SearchBadge({ source }: { source: SourceRef }) {
+  const web = source.scope === "web";
+  const doc = source.path ? displayTitle(source.path, source.title) : null;
   return (
     <Badge
       variant="outline"
-      className="cursor-default rounded-sm h-auto px-[9px] py-[3px] font-mono text-[length:var(--text-chrome)] tracking-[0.06em] whitespace-nowrap bg-ink-raised border-ink-border text-warm-ghost italic"
+      title={web ? "web search" : "knowledge base search"}
+      className={`cursor-default rounded-sm h-auto px-[9px] py-[3px] font-mono text-[length:var(--text-chrome)] tracking-[0.06em] whitespace-nowrap bg-ink-raised border-ink-border text-warm-ghost italic ${
+        source.pending ? "animate-[pulse-fade_1.6s_ease-in-out_infinite]" : ""
+      }`}
     >
-      <Search size={9} className="mr-1.5 opacity-60" />
-      {query}
+      {web ? (
+        <Globe size={9} className="mr-1.5 text-gold-muted" />
+      ) : (
+        <Search size={9} className="mr-1.5 opacity-60" />
+      )}
+      {source.label}
+      {doc && <span className="opacity-60">{` · in ${doc}`}</span>}
     </Badge>
   );
 }
 
-function FilterBadge({ summary }: { summary: string }) {
+export function FilterBadge({ summary, pending }: { summary: string; pending?: boolean }) {
   return (
     <Badge
       variant="outline"
-      className="cursor-default rounded-sm h-auto px-[9px] py-[3px] font-mono text-[length:var(--text-chrome)] tracking-[0.06em] whitespace-nowrap bg-ink-raised border-ink-border text-warm-ghost italic"
+      className={`cursor-default rounded-sm h-auto px-[9px] py-[3px] font-mono text-[length:var(--text-chrome)] tracking-[0.06em] whitespace-nowrap bg-ink-raised border-ink-border text-warm-ghost italic ${
+        pending ? "animate-[pulse-fade_1.6s_ease-in-out_infinite]" : ""
+      }`}
     >
       <ListFilter size={9} className="mr-1.5 opacity-60" />
       {summary}
@@ -115,11 +137,12 @@ function FilterBadge({ summary }: { summary: string }) {
   );
 }
 
-function ArticleBadge({
+export function ArticleBadge({
   label,
   title,
   thinking,
   active,
+  pending,
   onClick,
   icon,
 }: {
@@ -127,6 +150,7 @@ function ArticleBadge({
   title?: string | null;
   thinking?: string;
   active: boolean;
+  pending?: boolean;
   onClick?: () => void;
   icon?: React.ReactNode;
 }) {
@@ -141,7 +165,7 @@ function ArticleBadge({
         active
           ? "border-gold-dim text-gold bg-interactive-dim"
           : "bg-ink-raised border-ink-border text-card-foreground hover:border-gold-dim hover:text-gold"
-      }`}
+      } ${pending ? "animate-[pulse-fade_1.6s_ease-in-out_infinite]" : ""}`}
       role={onClick ? "button" : undefined}
       tabIndex={onClick ? 0 : undefined}
       onKeyDown={

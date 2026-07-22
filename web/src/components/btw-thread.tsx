@@ -1,10 +1,10 @@
-import { useEffect, useRef, useState } from "react";
+import { memo, useEffect, useRef, useState } from "react";
 import Markdown from "react-markdown";
-import { ChevronDown, ChevronRight } from "lucide-react";
-import { displayTitle } from "@/lib/utils";
+import { ChevronDown, ChevronRight, Waypoints } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
+import { ArticleBadge, FilterBadge, SearchBadge } from "@/components/thinking-section";
 import { baseMdComponents, remarkPlugins, rehypePlugins } from "@/lib/markdown";
 import type { BtwThread as BtwThreadType } from "@/lib/types";
 
@@ -19,7 +19,7 @@ interface BtwThreadProps {
 
 const btwMdComponents = {
   ...baseMdComponents,
-  p: ({ children }: { children?: React.ReactNode }) => <p className="mb-0.5">{children}</p>,
+  p: ({ children }: { children?: React.ReactNode }) => <p className="mb-2 last:mb-0">{children}</p>,
   ul: ({ children }: { children?: React.ReactNode }) => (
     <ul className="list-disc list-inside mb-1 ml-2">{children}</ul>
   ),
@@ -38,7 +38,12 @@ const btwMdComponents = {
   ),
 };
 
-export function BtwThread({ btw, onReply, onDismiss, onSpinOff }: BtwThreadProps) {
+export const BtwThread = memo(function BtwThread({
+  btw,
+  onReply,
+  onDismiss,
+  onSpinOff,
+}: BtwThreadProps) {
   const [input, setInput] = useState("");
   const [open, setOpen] = useState(true);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -47,20 +52,30 @@ export function BtwThread({ btw, onReply, onDismiss, onSpinOff }: BtwThreadProps
   const shortAnchor = quote.length > 58 ? quote.slice(0, 58) + "..." : quote;
   const isStreaming = btw.exchanges.some((e) => e.streaming);
 
-  // Auto-focus: on first render (new BTW) and when streaming finishes
+  // Auto-focus: on mount of a brand-new (empty) BTW, and when this thread's
+  // streaming finishes — but never steal focus from something the user is
+  // typing in, and never scroll-jump the page to reach the input.
   const wasStreaming = useRef(isStreaming);
   const isFirstRender = useRef(true);
   useEffect(() => {
+    const idleFocus = () => {
+      const active = document.activeElement;
+      if (active === null || active === document.body) {
+        inputRef.current?.focus({ preventScroll: true });
+      }
+    };
     if (isFirstRender.current) {
       isFirstRender.current = false;
-      inputRef.current?.focus();
+      if (btw.exchanges.length === 0) {
+        inputRef.current?.focus({ preventScroll: true });
+      }
       return;
     }
     if (wasStreaming.current && !isStreaming) {
-      inputRef.current?.focus();
+      idleFocus();
     }
     wasStreaming.current = isStreaming;
-  }, [isStreaming]);
+  }, [isStreaming, btw.exchanges.length]);
 
   return (
     <Collapsible
@@ -99,16 +114,25 @@ export function BtwThread({ btw, onReply, onDismiss, onSpinOff }: BtwThreadProps
                 {ex.query}
               </div>
               {sources.length > 0 && (
-                <div className="flex flex-wrap gap-x-2 gap-y-0.5 mb-[7px]">
-                  {sources.map((s, si) => (
-                    <span
-                      key={si}
-                      className="font-mono text-[length:var(--text-chrome)] tracking-[0.06em] text-interactive-dim"
-                      title={s.thinking ?? undefined}
-                    >
-                      {displayTitle(s.label, s.title)}
-                    </span>
-                  ))}
+                <div className="flex flex-wrap gap-[5px] mb-[9px]">
+                  {sources.map((s, si) => {
+                    if (s.type === "search") return <SearchBadge key={si} source={s} />;
+                    if (s.type === "query") return <FilterBadge key={si} summary={s.label} />;
+                    return (
+                      <ArticleBadge
+                        key={si}
+                        label={s.label}
+                        title={s.title}
+                        thinking={s.thinking ?? undefined}
+                        active={false}
+                        icon={
+                          s.type === "links" ? (
+                            <Waypoints size={9} className="mr-1.5 opacity-60" />
+                          ) : undefined
+                        }
+                      />
+                    );
+                  })}
                 </div>
               )}
               {ex.streaming && !ex.answer ? (
@@ -171,4 +195,4 @@ export function BtwThread({ btw, onReply, onDismiss, onSpinOff }: BtwThreadProps
       </CollapsibleContent>
     </Collapsible>
   );
-}
+});

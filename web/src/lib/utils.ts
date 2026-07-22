@@ -45,6 +45,9 @@ export function docDisplayName(path: string): string {
   const parts = path.split("/").filter(Boolean);
   if (parts.length === 0) return path;
   const last = parts[parts.length - 1].replace(/\.md$/, "");
+  if (parts[0] === "wiki") {
+    return slugToTitle(last);
+  }
   if (parts.length >= 3) {
     return `${parts[parts.length - 2]}/${last}`;
   }
