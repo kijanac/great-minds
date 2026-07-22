@@ -35,7 +35,7 @@ lint-web:
 
 # Lint TypeScript packages with oxlint
 lint-packages:
-    pnpm exec oxlint packages/domain/src packages/database/src packages/server/src packages/server/test packages/parity/src packages/goldens/src packages/goldens/test
+    pnpm exec oxlint packages/domain/src packages/database/src packages/server/src packages/server/test packages/goldens/src packages/goldens/test
 
 # Check Python formatting (read-only)
 format:
@@ -74,10 +74,6 @@ test-packages:
     DATABASE_URL=postgresql://great_minds:great_minds@localhost:55434/gm_packages_test JWT_SECRET=packages-test-jwt-secret UV_CACHE_DIR=/tmp/gm-uv-cache uv run alembic upgrade head
     DATABASE_URL=postgresql://great_minds:great_minds@localhost:55434/gm_packages_test pnpm --filter @great-minds/server test:integration
 
-# Run Python/TypeScript API parity harness against a scratch Postgres
-parity:
-    pnpm --filter @great-minds/parity parity
-
 # Record Python compile goldens through live OpenRouter (explicitly opt-in)
 goldens-record:
     GOLDENS_RECORD=1 pnpm --filter @great-minds/goldens record
@@ -96,8 +92,8 @@ ci: lint format types lint-web format-web types-web lint-packages types-packages
 # Run full CI checks, including hermetic TypeScript package integration
 ci-full: ci test-packages
 
-# Pre-push review: full CI gate plus API parity
-review: ci-full parity goldens-check
+# Pre-push review: full CI gate plus goldens replay
+review: ci-full goldens-check
     @echo ""
     @echo "Review: PASSED"
 

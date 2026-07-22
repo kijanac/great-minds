@@ -12,7 +12,6 @@ COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
 COPY packages/database/package.json packages/database/package.json
 COPY packages/domain/package.json packages/domain/package.json
 COPY packages/goldens/package.json packages/goldens/package.json
-COPY packages/parity/package.json packages/parity/package.json
 COPY packages/server/package.json packages/server/package.json
 COPY web/package.json web/package.json
 
@@ -26,7 +25,7 @@ COPY packages/server/ packages/server/
 
 FROM workspace AS deploy
 
-RUN rm -rf packages/parity packages/goldens packages/server/test web
+RUN rm -rf packages/goldens packages/server/test web
 RUN rm -rf packages/server/node_modules/@types
 RUN rm -f package.json pnpm-lock.yaml pnpm-workspace.yaml packages/*/tsconfig.json
 
