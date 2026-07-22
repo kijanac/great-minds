@@ -27,7 +27,13 @@ const sourceEventDataSchema = z.discriminatedUnion("type", [
     start: z.number().optional(),
     end: z.number().optional(),
   }),
-  z.object({ type: z.literal("search"), query: z.string() }),
+  z.object({
+    type: z.literal("search"),
+    query: z.string(),
+    scope: z.enum(["kb", "web"]).optional(),
+    path: z.string().optional(),
+    title: z.string().nullable().optional(),
+  }),
   z.object({ type: z.literal("query"), filters: z.record(z.string(), z.unknown()).optional() }),
   z.object({
     type: z.literal("links"),
@@ -46,17 +52,38 @@ const errorEventSchema = z.object({
   data: z.object({ message: z.string() }),
 });
 
+const sourcePendingEventSchema = z.object({
+  event: z.literal("source_pending"),
+  data: z.object({
+    call_id: z.string(),
+    source: sourceEventDataSchema,
+  }),
+});
+
+const sourceSettledEventSchema = z.object({
+  event: z.literal("source_settled"),
+  data: z.object({ call_id: z.string() }),
+});
+
 export type StreamEvent =
   | { event: "source"; data: z.infer<typeof sourceEventDataSchema> }
+  | z.infer<typeof sourcePendingEventSchema>
+  | z.infer<typeof sourceSettledEventSchema>
   | z.infer<typeof tokenEventSchema>
   | z.infer<typeof errorEventSchema>
   | { event: "done"; data: Record<string, never> };
 
-function parseStreamEvent(eventType: string, dataStr: string): StreamEvent {
+function parseStreamEvent(eventType: string, dataStr: string): StreamEvent | null {
   const data: unknown = JSON.parse(dataStr);
 
   if (eventType === "source") {
     return { event: "source", data: sourceEventDataSchema.parse(data) };
+  }
+  if (eventType === "source_pending") {
+    return sourcePendingEventSchema.parse({ event: "source_pending", data });
+  }
+  if (eventType === "source_settled") {
+    return sourceSettledEventSchema.parse({ event: "source_settled", data });
   }
   if (eventType === "token") {
     return tokenEventSchema.parse({ event: "token", data });
@@ -68,7 +95,7 @@ function parseStreamEvent(eventType: string, dataStr: string): StreamEvent {
     return errorEventSchema.parse({ event: "error", data });
   }
 
-  throw new Error(`Unknown stream event type: ${eventType}`);
+  return null;
 }
 
 export async function* streamQuery(
@@ -116,7 +143,10 @@ export async function* streamQuery(
         dataStr = line.slice(6);
       } else if (line === "") {
         if (eventType && dataStr) {
-          yield parseStreamEvent(eventType, dataStr);
+          const event = parseStreamEvent(eventType, dataStr);
+          if (event !== null) {
+            yield event;
+          }
         }
         eventType = "";
         dataStr = "";
@@ -138,10 +168,131 @@ export async function consumeStream(
   },
 ): Promise<{ answer: string; sources: SourceRef[] }> {
   const sources: SourceRef[] = [];
+  const pendingCallIndexes = new Map<string, number | null>();
   let streamText = "";
   let clearOnNextToken = false;
+  let replacementSlot: number | undefined;
+
+  const notifySources = () => callbacks?.onSources?.([...sources]);
+
+  const removeSource = (index: number) => {
+    sources.splice(index, 1);
+    for (const [callId, pendingIndex] of pendingCallIndexes) {
+      if (pendingIndex !== null && pendingIndex > index) {
+        pendingCallIndexes.set(callId, pendingIndex - 1);
+      }
+    }
+    notifySources();
+  };
+
+  const sourceRef = (data: z.infer<typeof sourceEventDataSchema>, pending = false): SourceRef => {
+    if (data.type === "article" || data.type === "raw") {
+      const isExpand = data.start !== undefined && data.end !== undefined;
+      return {
+        label: data.path,
+        type: data.type,
+        title: data.title ?? null,
+        thinking: streamText || undefined,
+        ranges: isExpand ? [{ start: data.start!, end: data.end! }] : [],
+        full: !isExpand,
+        pending: pending || undefined,
+      };
+    }
+    if (data.type === "search") {
+      return {
+        label: data.query,
+        type: "search",
+        scope: data.scope,
+        path: data.path,
+        title: data.title ?? null,
+        thinking: streamText || undefined,
+        pending: pending || undefined,
+      };
+    }
+    if (data.type === "links") {
+      return {
+        label: data.path,
+        type: "links",
+        title: data.title ?? null,
+        thinking: streamText || undefined,
+        pending: pending || undefined,
+      };
+    }
+    const filters = data.filters ?? {};
+    const summary =
+      Object.entries(filters)
+        .map(([key, value]) => `${key}: ${String(value)}`)
+        .join(", ") || "filtered sources";
+    return {
+      label: summary,
+      type: "query",
+      thinking: streamText || undefined,
+      pending: pending || undefined,
+    };
+  };
+
+  const addResolvedSource = (
+    data: z.infer<typeof sourceEventDataSchema>,
+    pendingIndex?: number,
+  ) => {
+    if (data.type === "article" || data.type === "raw") {
+      if (pendingIndex !== undefined) {
+        removeSource(pendingIndex);
+      }
+      // Aggregate per document: read+expand of the same path collapse to one
+      // card, accumulating which chunk ranges entered and whether it was a
+      // full read. (no start/end → full read; with → an expanded range.)
+      const path = data.path;
+      const isExpand = data.start !== undefined && data.end !== undefined;
+      const range = isExpand ? { start: data.start!, end: data.end! } : null;
+      const index = sources.findIndex(
+        (source) => source.label === path && (source.type === "article" || source.type === "raw"),
+      );
+      if (index >= 0) {
+        const previous = sources[index];
+        sources[index] = {
+          ...previous,
+          ranges: range ? [...(previous.ranges ?? []), range] : previous.ranges,
+          full: previous.full || !isExpand,
+        };
+      } else {
+        sources.push(sourceRef(data));
+      }
+      notifySources();
+      clearOnNextToken = true;
+      return;
+    }
+
+    if (data.type === "links") {
+      const existingIndex = sources.findIndex(
+        (source, index) =>
+          index !== pendingIndex && source.type === "links" && source.label === data.path,
+      );
+      if (existingIndex >= 0) {
+        if (pendingIndex !== undefined) {
+          removeSource(pendingIndex);
+        }
+        return;
+      }
+    }
+
+    const resolved = sourceRef(data);
+    if (pendingIndex === undefined) {
+      sources.push(resolved);
+    } else {
+      sources.splice(pendingIndex, 1, resolved);
+    }
+    notifySources();
+    clearOnNextToken = true;
+  };
 
   for await (const event of stream) {
+    if (replacementSlot !== undefined && event.event !== "source") {
+      const pendingIndex = replacementSlot;
+      replacementSlot = undefined;
+      removeSource(pendingIndex);
+    }
+
     if (event.event === "token") {
       if (clearOnNextToken) {
         streamText = "";
@@ -149,77 +300,44 @@ export async function consumeStream(
       }
       streamText += event.data.text;
       callbacks?.onToken?.(streamText);
-    } else if (event.event === "source") {
-      if (event.data.type === "article" || event.data.type === "raw") {
-        // Aggregate per document: read+expand of the same path collapse to one
-        // card, accumulating which chunk ranges entered and whether it was a
-        // full read. (no start/end → full read; with → an expanded range.)
-        const path = event.data.path;
-        const isExpand = event.data.start !== undefined && event.data.end !== undefined;
-        const range = isExpand ? { start: event.data.start!, end: event.data.end! } : null;
-        const i = sources.findIndex(
-          (s) => s.label === path && (s.type === "article" || s.type === "raw"),
-        );
-        if (i >= 0) {
-          const prev = sources[i];
-          sources[i] = {
-            ...prev,
-            ranges: range ? [...(prev.ranges ?? []), range] : prev.ranges,
-            full: prev.full || !isExpand,
-          };
-        } else {
-          sources.push({
-            label: path,
-            type: event.data.type,
-            title: event.data.title ?? null,
-            thinking: streamText || undefined,
-            ranges: range ? [range] : [],
-            full: !isExpand,
-          });
-        }
-        callbacks?.onSources?.([...sources]);
-        clearOnNextToken = true;
-      } else if (event.data.type === "search") {
-        sources.push({
-          label: event.data.query,
-          type: "search",
-          thinking: streamText || undefined,
-        });
-        callbacks?.onSources?.([...sources]);
-        clearOnNextToken = true;
-      } else if (event.data.type === "links") {
-        // One card per article whose links were explored (dedup by path).
-        const path = event.data.path;
-        if (!sources.some((s) => s.type === "links" && s.label === path)) {
-          sources.push({
-            label: path,
-            type: "links",
-            title: event.data.title ?? null,
-            thinking: streamText || undefined,
-          });
-          callbacks?.onSources?.([...sources]);
-          clearOnNextToken = true;
-        }
-      } else if (event.data.type === "query") {
-        const filters = event.data.filters ?? {};
-        const summary =
-          Object.entries(filters)
-            .map(([k, v]) => `${k}: ${String(v)}`)
-            .join(", ") || "filtered sources";
-        sources.push({
-          label: summary,
-          type: "query",
-          thinking: streamText || undefined,
-        });
-        callbacks?.onSources?.([...sources]);
-        clearOnNextToken = true;
+    } else if (event.event === "source_pending") {
+      const data = event.data.source;
+      if (
+        (data.type === "article" || data.type === "raw") &&
+        sources.some(
+          (source) =>
+            source.label === data.path && (source.type === "article" || source.type === "raw"),
+        )
+      ) {
+        pendingCallIndexes.set(event.data.call_id, null);
+        continue;
       }
+      pendingCallIndexes.set(event.data.call_id, sources.length);
+      sources.push(sourceRef(data, true));
+      notifySources();
+      clearOnNextToken = true;
+    } else if (event.event === "source_settled") {
+      const pendingIndex = pendingCallIndexes.get(event.data.call_id);
+      pendingCallIndexes.delete(event.data.call_id);
+      if (pendingIndex !== undefined && pendingIndex !== null) {
+        replacementSlot = pendingIndex;
+      }
+    } else if (event.event === "source") {
+      const pendingIndex = replacementSlot;
+      replacementSlot = undefined;
+      addResolvedSource(event.data, pendingIndex);
     } else if (event.event === "done") {
       break;
     } else if (event.event === "error") {
       console.error("Stream error:", event.data.message);
       break;
     }
+  }
+
+  const settledSources = sources.filter((source) => source.pending !== true);
+  if (settledSources.length !== sources.length) {
+    sources.splice(0, sources.length, ...settledSources);
+    notifySources();
   }
 
   return { answer: streamText, sources };

@@ -515,12 +515,69 @@ describe("query stream", () => {
     expect(response.headers.get("cache-control")).toBe("no-cache");
     expect(response.headers.get("x-accel-buffering")).toBe("no");
     expect(text).toBe(
-      sseBlock("source", { type: "query", filters: { contains: "Alpha", sort: "central" } }) +
+      sseBlock("source_pending", {
+        call_id: "tc-list",
+        source: { type: "query", filters: { contains: "Alpha", sort: "central" } },
+      }) +
+        sseBlock("source_pending", {
+          call_id: "tc-query",
+          source: { type: "query", filters: { tags: ["theory"], author: "Lenin" } },
+        }) +
+        sseBlock("source_pending", {
+          call_id: "tc-search",
+          source: { type: "search", query: "capital", scope: "kb" },
+        }) +
+        sseBlock("source_pending", {
+          call_id: "tc-search-doc",
+          source: {
+            type: "search",
+            query: "value",
+            scope: "kb",
+            path: "raw/texts/source.md",
+            title: null,
+          },
+        }) +
+        sseBlock("source_settled", { call_id: "tc-list" }) +
+        sseBlock("source", { type: "query", filters: { contains: "Alpha", sort: "central" } }) +
+        sseBlock("source_settled", { call_id: "tc-query" }) +
         sseBlock("source", { type: "query", filters: { tags: ["theory"], author: "Lenin" } }) +
-        sseBlock("source", { type: "search", query: "capital" }) +
-        sseBlock("source", { type: "search", query: "value · in raw/texts/source.md" }) +
+        sseBlock("source_settled", { call_id: "tc-search" }) +
+        sseBlock("source", { type: "search", query: "capital", scope: "kb" }) +
+        sseBlock("source_settled", { call_id: "tc-search-doc" }) +
+        sseBlock("source", {
+          type: "search",
+          query: "value",
+          scope: "kb",
+          path: "raw/texts/source.md",
+          title: "Raw Source",
+        }) +
+        sseBlock("source_pending", {
+          call_id: "tc-read-wiki",
+          source: { type: "article", path: "wiki/alpha.md", title: null },
+        }) +
+        sseBlock("source_pending", {
+          call_id: "tc-read-raw",
+          source: { type: "raw", path: "raw/texts/source.md", title: null },
+        }) +
+        sseBlock("source_pending", {
+          call_id: "tc-expand",
+          source: {
+            type: "raw",
+            path: "raw/texts/source.md",
+            title: null,
+            start: 0,
+            end: 1,
+          },
+        }) +
+        sseBlock("source_pending", {
+          call_id: "tc-links",
+          source: { type: "links", path: "wiki/alpha.md", title: null },
+        }) +
+        sseBlock("source_settled", { call_id: "tc-read-wiki" }) +
         sseBlock("source", { type: "article", path: "wiki/alpha.md", title: "Alpha" }) +
+        sseBlock("source_settled", { call_id: "tc-read-raw" }) +
         sseBlock("source", { type: "raw", path: "raw/texts/source.md", title: "Raw Source" }) +
+        sseBlock("source_settled", { call_id: "tc-expand" }) +
         sseBlock("source", {
           type: "raw",
           path: "raw/texts/source.md",
@@ -528,6 +585,7 @@ describe("query stream", () => {
           start: 0,
           end: 1,
         }) +
+        sseBlock("source_settled", { call_id: "tc-links" }) +
         sseBlock("source", { type: "links", path: "wiki/alpha.md", title: "Alpha" }) +
         sseBlock("token", { text: "Answer." }) +
         sseBlock("done", {}),
@@ -682,7 +740,7 @@ describe("query stream", () => {
 
     const { text } = await api(queryPath, { question: "Find dual power" });
 
-    expect(text).toContain(sseBlock("source", { type: "search", query: "dual power" }));
+    expect(text).toContain(sseBlock("source", { type: "search", query: "dual power", scope: "kb" }));
     expect(embeddings.calls).toEqual([["dual power"]]);
     const toolMessage = language.streamCalls[1].messages.find(
       (message) => message.role === "tool" && message.tool_call_id === "tc-search",
@@ -781,7 +839,7 @@ describe("query stream", () => {
     ]);
     expect(onLanguage.completeCalls[0].model).toBe("extract/test-model");
     expect(text).toContain(
-      sseBlock("source", { type: "search", query: "web: recent factual query" }),
+      sseBlock("source", { type: "search", query: "recent factual query", scope: "web" }),
     );
     expect(text.endsWith(sseBlock("done", {}))).toBe(true);
   });
@@ -815,7 +873,12 @@ describe("query stream", () => {
     await startHarness({ language: loopLanguage });
     const loop = await api(queryPath, { question: "break loop" });
     expect(loop.text).toBe(
-      sseBlock("source", { type: "query", filters: { contains: "Alpha" } }) +
+      sseBlock("source_pending", {
+        call_id: "tc-list",
+        source: { type: "query", filters: { contains: "Alpha" } },
+      }) +
+        sseBlock("source_settled", { call_id: "tc-list" }) +
+        sseBlock("source", { type: "query", filters: { contains: "Alpha" } }) +
         sseBlock("error", {
           message: "Something went wrong while answering. Try again in a minute.",
         }),
@@ -848,6 +911,35 @@ describe("query stream", () => {
     expect(malformed.text).not.toContain("Alpha");
   });
 
+  it("settles a pending source when a tool misses without emitting a source", async () => {
+    const language = makeScriptedLanguageModel({
+      streams: [
+        {
+          kind: "parts",
+          parts: [
+            toolCallPart(0, "tc-missing", "read_document", { path: "wiki/missing.md" }),
+            finishPart("tool_calls", "missing-round"),
+          ],
+        },
+        { kind: "parts", parts: [tokenPart("Recovered"), finishPart("stop", "missing-final")] },
+      ],
+    });
+    await startHarness({ language });
+
+    const result = await api(queryPath, { question: "missing source" });
+
+    expect(result.text).toBe(
+      sseBlock("source_pending", {
+        call_id: "tc-missing",
+        source: { type: "article", path: "wiki/missing.md", title: null },
+      }) +
+        sseBlock("source_settled", { call_id: "tc-missing" }) +
+        sseBlock("token", { text: "Recovered" }) +
+        sseBlock("done", {}),
+    );
+    expect(result.text).not.toContain("event: source\n");
+  });
+
   it("surfaces invalid list_articles sort instead of silently defaulting", async () => {
     const language = makeScriptedLanguageModel({
       streams: [
@@ -865,9 +957,14 @@ describe("query stream", () => {
     const result = await api(queryPath, { question: "bad sort" });
 
     expect(result.text).toBe(
-      sseBlock("error", {
-        message: "Something went wrong while answering. Try again in a minute.",
-      }),
+      sseBlock("source_pending", {
+        call_id: "tc-list",
+        source: { type: "query", filters: { contains: "Alpha", sort: "bogus" } },
+      }) +
+        sseBlock("source_settled", { call_id: "tc-list" }) +
+        sseBlock("error", {
+          message: "Something went wrong while answering. Try again in a minute.",
+        }),
     );
     expect(result.text).not.toContain("event: done");
   });

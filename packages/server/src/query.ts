@@ -519,26 +519,28 @@ export const QueryServiceLive = Layer.effect(
     };
 
     const buildIdentity = async (vaultId: Uuid, label: string, vaultConfig: QueryVaultConfig) => {
-      const wikiCountRows = await run(
-        db
-          .select({ count: sql<number>`count(*)::int` })
-          .from(wikiArticles)
-          .where(
-            and(
-              eq(wikiArticles.vaultId, vaultId),
-              eq(wikiArticles.archived, false),
-              ne(wikiArticles.filePath, "wiki/_index.md"),
-            ),
-          )
-          .pipe(dieDatabase),
-      );
-      const rawCountRows = await run(
-        db
-          .select({ count: sql<number>`count(*)::int` })
-          .from(sourceDocuments)
-          .where(eq(sourceDocuments.vaultId, vaultId))
-          .pipe(dieDatabase),
-      );
+      const [wikiCountRows, rawCountRows] = await Promise.all([
+        run(
+          db
+            .select({ count: sql<number>`count(*)::int` })
+            .from(wikiArticles)
+            .where(
+              and(
+                eq(wikiArticles.vaultId, vaultId),
+                eq(wikiArticles.archived, false),
+                ne(wikiArticles.filePath, "wiki/_index.md"),
+              ),
+            )
+            .pipe(dieDatabase),
+        ),
+        run(
+          db
+            .select({ count: sql<number>`count(*)::int` })
+            .from(sourceDocuments)
+            .where(eq(sourceDocuments.vaultId, vaultId))
+            .pipe(dieDatabase),
+        ),
+      ]);
       const wikiCount = first(wikiCountRows)?.count ?? 0;
       const rawCount = first(rawCountRows)?.count ?? 0;
       const focus = vaultConfig.thematicHint.trim() || "(no editorial focus set)";
@@ -573,14 +575,18 @@ export const QueryServiceLive = Layer.effect(
       input: QueryRequest,
       webSearchEnabled: boolean,
     ) => {
-      const identity = await buildIdentity(vaultId, label, vaultConfig);
+      const [identity, queryPrompt, btwPrompt] = await Promise.all([
+        buildIdentity(vaultId, label, vaultConfig),
+        loadPrompt(vaultId, "query"),
+        input.mode === "btw" ? loadPrompt(vaultId, "query_btw") : Promise.resolve(null),
+      ]);
       let prompt = retrievalCore.replace("{identity}", identity);
-      prompt += "\n\n" + (await loadPrompt(vaultId, "query"));
+      prompt += "\n\n" + queryPrompt;
       if (webSearchEnabled) {
         prompt += "\n\n" + webSearchGuidance;
       }
-      if (input.mode === "btw") {
-        prompt += "\n\n" + (await loadPrompt(vaultId, "query_btw"));
+      if (btwPrompt !== null) {
+        prompt += "\n\n" + btwPrompt;
       }
       if (input.extra_instructions !== undefined && input.extra_instructions !== null) {
         prompt += "\n\n" + input.extra_instructions;
@@ -616,17 +622,24 @@ export const QueryServiceLive = Layer.effect(
       if (name === "search_content") {
         const query = asStringArg(args, "query");
         context.trace.searches.push(query);
-        return { type: "search", query };
+        return { type: "search", query, scope: "kb" };
       }
       if (name === "web_search") {
-        const query = `web: ${asStringArg(args, "query")}`;
-        context.trace.searches.push(query);
-        return { type: "search", query };
+        const query = asStringArg(args, "query");
+        context.trace.searches.push(`web: ${query}`);
+        return { type: "search", query, scope: "web" };
       }
       if (name === "search_in_document") {
-        const query = `${asStringArg(args, "query")} · in ${asStringArg(args, "path")}`;
-        context.trace.searches.push(query);
-        return { type: "search", query };
+        const query = asStringArg(args, "query");
+        const path = asStringArg(args, "path");
+        context.trace.searches.push(`${query} · in ${path}`);
+        return {
+          type: "search",
+          query,
+          scope: "kb",
+          path,
+          title: await titleForPath(context.vaultId, path),
+        };
       }
       if (name === "query_documents") {
         const filters = Object.fromEntries(truthyEntries(args));
@@ -644,6 +657,61 @@ export const QueryServiceLive = Layer.effect(
       if (name === "linked_articles") {
         const path = asStringArg(args, "path");
         return { type: "links", path, title: await titleForPath(context.vaultId, path) };
+      }
+      return undefined;
+    };
+
+    const pendingSourceEvent = (
+      name: string,
+      args: Record<string, unknown>,
+    ): QuerySourceData | undefined => {
+      if (name === "read_document" || name === "expand_context") {
+        const path = asStringArg(args, "path");
+        const type = path.startsWith("wiki/") ? "article" : "raw";
+        if (name === "expand_context") {
+          return {
+            type,
+            path,
+            title: null,
+            start: asIntArg(args, "start"),
+            end: asIntArg(args, "end"),
+          };
+        }
+        return { type, path, title: null };
+      }
+      if (name === "search_content") {
+        return { type: "search", query: asStringArg(args, "query"), scope: "kb" };
+      }
+      if (name === "web_search") {
+        return { type: "search", query: asStringArg(args, "query"), scope: "web" };
+      }
+      if (name === "search_in_document") {
+        return {
+          type: "search",
+          query: asStringArg(args, "query"),
+          scope: "kb",
+          path: asStringArg(args, "path"),
+          title: null,
+        };
+      }
+      if (name === "query_documents") {
+        return { type: "query", filters: Object.fromEntries(truthyEntries(args)) };
+      }
+      if (name === "list_articles") {
+        const filters = Object.fromEntries(
+          ["contains", "sort"].flatMap((key) => {
+            const value = args[key];
+            return value ? [[key, value]] : [];
+          }),
+        );
+        return { type: "query", filters };
+      }
+      if (name === "linked_articles") {
+        return {
+          type: "links",
+          path: asStringArg(args, "path"),
+          title: null,
+        };
       }
       return undefined;
     };
@@ -784,12 +852,8 @@ export const QueryServiceLive = Layer.effect(
       const metadata = new Map<SearchKey, SearchRow>();
       const vectorRanks = new Map<SearchKey, number>();
       const bm25Ranks = new Map<SearchKey, number>();
-      const keyFor = (row: SearchRow): SearchKey =>
-        `${row.vaultId}:${row.path}:${row.chunkIndex}`;
-      const addRows = (
-        rows: readonly SearchRow[],
-        ranks: Map<SearchKey, number>,
-      ) => {
+      const keyFor = (row: SearchRow): SearchKey => `${row.vaultId}:${row.path}:${row.chunkIndex}`;
+      const addRows = (rows: readonly SearchRow[], ranks: Map<SearchKey, number>) => {
         rows.forEach((row, rankIndex) => {
           const key = keyFor(row);
           if (!scores.has(key)) {
@@ -1078,7 +1142,8 @@ export const QueryServiceLive = Layer.effect(
       if (sort !== "recent" && sort !== "alpha" && sort !== "central") {
         throw new Error(`Invalid list_articles sort: ${String(sort)}`);
       }
-      const page = args.page === undefined || args.page === null ? 1 : Math.max(1, asIntArg(args, "page"));
+      const page =
+        args.page === undefined || args.page === null ? 1 : Math.max(1, asIntArg(args, "page"));
       const conditions: SQL[] = [
         eq(wikiArticles.vaultId, context.vaultId),
         eq(wikiArticles.archived, false),
@@ -1143,10 +1208,7 @@ export const QueryServiceLive = Layer.effect(
       };
     };
 
-    const addUsageCost = (
-      context: QueryContext,
-      usage: { readonly cost?: number } | undefined,
-    ) => {
+    const addUsageCost = (context: QueryContext, usage: { readonly cost?: number } | undefined) => {
       if (usage?.cost === undefined) {
         return false;
       }
@@ -1195,7 +1257,10 @@ export const QueryServiceLive = Layer.effect(
       }
     };
 
-    const addCompletionCost = (context: QueryContext, usage: { readonly cost?: number } | undefined) => {
+    const addCompletionCost = (
+      context: QueryContext,
+      usage: { readonly cost?: number } | undefined,
+    ) => {
       addUsageCost(context, usage);
     };
 
@@ -1402,6 +1467,24 @@ export const QueryServiceLive = Layer.effect(
           const toolCalls = [...state.toolCalls.entries()]
             .sort(([left], [right]) => left - right)
             .map(([, toolCall]) => toolCall);
+          const validatedToolCalls: Array<{
+            toolCall: (typeof toolCalls)[number];
+            args: Record<string, unknown>;
+          }> = [];
+          for (const toolCall of toolCalls) {
+            try {
+              validatedToolCalls.push({
+                toolCall,
+                args: asObjectArgs(toolCall.arguments, toolCall.name),
+              });
+            } catch (error) {
+              if (error instanceof MalformedToolArgs) {
+                yield sse({ event: "error", data: { message: error.message } });
+                return;
+              }
+              throw error;
+            }
+          }
           messages.push({
             role: "assistant",
             content: state.content.length === 0 ? null : state.content,
@@ -1411,32 +1494,39 @@ export const QueryServiceLive = Layer.effect(
               function: { name: toolCall.name, arguments: toolCall.arguments },
             })),
           });
-          for (const toolCall of toolCalls) {
-            context.trace.toolCalls += 1;
-            let args: Record<string, unknown>;
-            try {
-              args = asObjectArgs(toolCall.arguments, toolCall.name);
-            } catch (error) {
-              if (error instanceof MalformedToolArgs) {
-                yield sse({ event: "error", data: { message: error.message } });
-                return;
-              }
-              throw error;
+          const pendingCallIndexes = new Set<number>();
+          for (const [index, { toolCall, args }] of validatedToolCalls.entries()) {
+            const source = pendingSourceEvent(toolCall.name, args);
+            if (source !== undefined) {
+              pendingCallIndexes.add(index);
+              yield sse({
+                event: "source_pending",
+                data: { call_id: toolCall.id, source },
+              });
             }
-            let result: ToolResult;
-            try {
-              result = await dispatchTool(context, toolCall.name, args);
-            } catch (error) {
-              if (error instanceof ToolMiss) {
-                messages.push({
-                  role: "tool",
-                  tool_call_id: toolCall.id,
-                  content: error.toolMessage,
-                });
-                continue;
+          }
+          const toolResults = await Promise.allSettled(
+            validatedToolCalls.map(async ({ toolCall, args }) => {
+              context.trace.toolCalls += 1;
+              try {
+                return await dispatchTool(context, toolCall.name, args);
+              } catch (error) {
+                if (error instanceof ToolMiss) {
+                  return { content: error.toolMessage } satisfies ToolResult;
+                }
+                throw error;
               }
-              throw error;
+            }),
+          );
+          for (const [index, outcome] of toolResults.entries()) {
+            const toolCall = validatedToolCalls[index].toolCall;
+            if (pendingCallIndexes.has(index)) {
+              yield sse({ event: "source_settled", data: { call_id: toolCall.id } });
             }
+            if (outcome.status === "rejected") {
+              throw outcome.reason;
+            }
+            const result = outcome.value;
             if (result.source !== undefined) {
               yield sse({ event: "source", data: result.source });
             }
@@ -1499,9 +1589,11 @@ export const QueryServiceLive = Layer.effect(
       prechecked: QueryPrecheckedContext,
     ) => {
       const vaultLabel = prechecked.vaultLabel;
-      const vaultConfig = await loadVaultConfig(vaultId);
+      const [vaultConfig, tags] = await Promise.all([
+        loadVaultConfig(vaultId),
+        distinctTags(vaultId),
+      ]);
       const webSearchEnabled = vaultConfig.webSearch && parallel.hasApiKey;
-      const tags = await distinctTags(vaultId);
       const tools = [
         ...baseTools,
         queryDocumentsTool(tags),

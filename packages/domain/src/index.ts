@@ -487,9 +487,15 @@ export const ChunkRange = Schema.Struct({
 });
 export type ChunkRange = typeof ChunkRange.Type;
 
+export const SearchScope = Schema.Literals(["kb", "web"] as const);
+export type SearchScope = typeof SearchScope.Type;
+
 export const ThinkingSource = Schema.Struct({
   label: Schema.String,
   type: Schema.Literals(["article", "raw", "search", "query", "links"] as const),
+  title: Schema.optionalKey(Schema.NullOr(Schema.String)),
+  scope: Schema.optionalKey(Schema.NullOr(SearchScope)),
+  path: Schema.optionalKey(Schema.NullOr(Schema.String)),
   thinking: Schema.optionalKey(Schema.NullOr(Schema.String)),
   ranges: Schema.optionalKey(Schema.Array(ChunkRange)),
   full: Schema.optionalKey(Schema.Boolean),
@@ -738,6 +744,10 @@ export type QuerySourceArticle = typeof QuerySourceArticle.Type;
 export const QuerySourceSearch = Schema.Struct({
   type: Schema.Literal("search"),
   query: Schema.String,
+  scope: SearchScope,
+  // Set when the search was scoped to a single document.
+  path: Schema.optionalKey(Schema.String),
+  title: Schema.optionalKey(Schema.NullOr(Schema.String)),
 });
 export type QuerySourceSearch = typeof QuerySourceSearch.Type;
 
@@ -764,6 +774,14 @@ export type QuerySourceData = typeof QuerySourceData.Type;
 
 export const QueryStreamPayload = Schema.Union([
   Schema.Struct({ event: Schema.Literal("token"), data: Schema.Struct({ text: Schema.String }) }),
+  Schema.Struct({
+    event: Schema.Literal("source_pending"),
+    data: Schema.Struct({ call_id: Schema.String, source: QuerySourceData }),
+  }),
+  Schema.Struct({
+    event: Schema.Literal("source_settled"),
+    data: Schema.Struct({ call_id: Schema.String }),
+  }),
   Schema.Struct({ event: Schema.Literal("source"), data: QuerySourceData }),
   Schema.Struct({ event: Schema.Literal("done"), data: Schema.Struct({}) }),
   Schema.Struct({

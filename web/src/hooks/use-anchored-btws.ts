@@ -1,4 +1,4 @@
-import { useLayoutEffect, useState, type RefObject } from "react";
+import { useLayoutEffect, useRef, useState, type RefObject } from "react";
 
 import { findQuoteRange } from "@/lib/anchor";
 import { clearAnchorHighlights, setAnchorHighlights } from "@/lib/highlight";
@@ -17,11 +17,22 @@ export function useAnchoredBtws(
   text: string,
 ): Map<string, number> {
   const [placement, setPlacement] = useState<Map<string, number>>(new Map());
+  const hadAnchorsRef = useRef(false);
 
   useLayoutEffect(() => {
+    if (btws.length === 0) {
+      if (hadAnchorsRef.current) {
+        clearAnchorHighlights(key);
+        setPlacement((prev) => (prev.size === 0 ? prev : new Map()));
+        hadAnchorsRef.current = false;
+      }
+      return;
+    }
+
     const root = rootRef.current;
     if (!root) return;
 
+    hadAnchorsRef.current = true;
     const ranges: Range[] = [];
     const next = new Map<string, number>();
     for (const btw of btws) {
@@ -36,7 +47,15 @@ export function useAnchoredBtws(
     }
 
     setAnchorHighlights(key, ranges);
-    setPlacement(next);
+    setPlacement((prev) => {
+      if (
+        prev.size === next.size &&
+        [...next].every(([threadId, blockOffset]) => prev.get(threadId) === blockOffset)
+      ) {
+        return prev;
+      }
+      return next;
+    });
 
     return () => clearAnchorHighlights(key);
     // `text` is a dep so placement/highlights recompute when the answer changes.

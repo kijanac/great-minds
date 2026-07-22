@@ -120,6 +120,9 @@ const normalizeRange = (range: ChunkRange): ChunkRange => ({
 const normalizeThinkingSource = (source: ThinkingSource): ThinkingSource => ({
   label: source.label,
   type: source.type,
+  title: source.title ?? null,
+  scope: source.scope ?? null,
+  path: source.path ?? null,
   thinking: source.thinking ?? null,
   ranges: (source.ranges ?? []).map(normalizeRange),
   full: source.full ?? false,

@@ -1,8 +1,17 @@
-import { memo, useRef, type ComponentProps } from "react";
+import {
+  createContext,
+  memo,
+  useContext,
+  useMemo,
+  useRef,
+  type ComponentProps,
+  type RefObject,
+} from "react";
 import Markdown from "react-markdown";
 
 import { useAnchoredBtws } from "@/hooks/use-anchored-btws";
 import { baseMdComponents, remarkPlugins, rehypePlugins } from "@/lib/markdown";
+import { splitStreamingMarkdown } from "@/lib/streaming-markdown";
 import type { BtwThread as BtwThreadType, SelectionInfo } from "@/lib/types";
 import { BtwThread } from "./btw-thread";
 
@@ -15,6 +24,55 @@ interface AnswerBlockProps {
   onBtwReply: (btwId: string, text: string) => void;
   onBtwDismiss?: (btwId: string) => void;
 }
+
+// Everything the markdown components read at render time. Kept in a ref so the
+// component functions themselves stay referentially stable across renders —
+// inline closures would change identity every render, making React remount the
+// whole rendered tree (and every mounted BtwThread with it) on each streaming
+// token.
+interface BlockState {
+  exchangeId: string;
+  streaming: boolean;
+  onSelection: (info: SelectionInfo) => void;
+}
+
+interface BtwRenderState {
+  btws: BtwThreadType[];
+  placement: Map<string, number>;
+  onReply: (btwId: string, text: string) => void;
+  onDismiss?: (btwId: string) => void;
+}
+
+const BtwRenderContext = createContext<BtwRenderState>({
+  btws: [],
+  placement: new Map(),
+  onReply: () => undefined,
+});
+
+function AnchoredThreads({ offset }: { offset: number | undefined }) {
+  const state = useContext(BtwRenderContext);
+  if (offset == null) return null;
+
+  return state.btws
+    .filter((btw) => state.placement.get(btw.id) === offset)
+    .map((btw) => (
+      <BtwThread key={btw.id} btw={btw} onReply={state.onReply} onDismiss={state.onDismiss} />
+    ));
+}
+
+const MemoMarkdown = memo(function MemoMarkdown({
+  text,
+  components,
+}: {
+  text: string;
+  components: ComponentProps<typeof Markdown>["components"];
+}) {
+  return (
+    <Markdown remarkPlugins={remarkPlugins} rehypePlugins={rehypePlugins} components={components}>
+      {text}
+    </Markdown>
+  );
+});
 
 // The source offset the markdown parser attaches to each block node — a stable,
 // unique, render-independent identity for that block.
@@ -34,20 +92,12 @@ const leafComponents: ComponentProps<typeof Markdown>["components"] = {
   ),
 };
 
-export const AnswerBlock = memo(function AnswerBlock({
-  text,
-  exchangeId,
-  btws,
-  streaming,
-  onSelection,
-  onBtwReply,
-  onBtwDismiss,
-}: AnswerBlockProps) {
-  const rootRef = useRef<HTMLDivElement>(null);
-  const placement = useAnchoredBtws(rootRef, exchangeId, btws, text);
-
+function buildComponents(
+  stateRef: RefObject<BlockState>,
+): ComponentProps<typeof Markdown>["components"] {
   const handleSelect = (e: React.MouseEvent<HTMLElement>, offset: number | undefined) => {
-    if (streaming || offset == null) return;
+    const state = stateRef.current;
+    if (state.streaming || offset == null) return;
     const sel = window.getSelection();
     if (!sel || sel.isCollapsed || sel.rangeCount === 0) return;
     const quote = sel.toString().trim();
@@ -56,24 +106,15 @@ export const AnswerBlock = memo(function AnswerBlock({
     if (!e.currentTarget.contains(range.commonAncestorContainer)) return;
     e.stopPropagation();
     const rect = range.getBoundingClientRect();
-    onSelection({
+    state.onSelection({
       blockOffset: offset,
       quote,
       context: e.currentTarget.textContent ?? "",
       x: rect.left + rect.width / 2,
       y: rect.top - 6,
-      exchangeId,
+      exchangeId: state.exchangeId,
     });
   };
-
-  const renderThreads = (offset: number | undefined) =>
-    offset == null
-      ? null
-      : btws
-          .filter((b) => placement.get(b.id) === offset)
-          .map((btw) => (
-            <BtwThread key={btw.id} btw={btw} onReply={onBtwReply} onDismiss={onBtwDismiss} />
-          ));
 
   // Tags the block with its source offset and a selection handler.
   const anchorProps = (offset: number | undefined) => ({
@@ -81,7 +122,7 @@ export const AnswerBlock = memo(function AnswerBlock({
     onMouseUp: (e: React.MouseEvent<HTMLElement>) => handleSelect(e, offset),
   });
 
-  const components: ComponentProps<typeof Markdown>["components"] = {
+  return {
     ...leafComponents,
     h2: ({ node, children }) => {
       const offset = offsetOf(node);
@@ -93,7 +134,7 @@ export const AnswerBlock = memo(function AnswerBlock({
           >
             {children}
           </h2>
-          {renderThreads(offset)}
+          <AnchoredThreads offset={offset} />
         </>
       );
     },
@@ -107,7 +148,7 @@ export const AnswerBlock = memo(function AnswerBlock({
           >
             {children}
           </h3>
-          {renderThreads(offset)}
+          <AnchoredThreads offset={offset} />
         </>
       );
     },
@@ -121,7 +162,7 @@ export const AnswerBlock = memo(function AnswerBlock({
           >
             {children}
           </p>
-          {renderThreads(offset)}
+          <AnchoredThreads offset={offset} />
         </>
       );
     },
@@ -135,7 +176,7 @@ export const AnswerBlock = memo(function AnswerBlock({
           >
             {children}
           </ul>
-          {renderThreads(offset)}
+          <AnchoredThreads offset={offset} />
         </>
       );
     },
@@ -149,7 +190,7 @@ export const AnswerBlock = memo(function AnswerBlock({
           >
             {children}
           </ol>
-          {renderThreads(offset)}
+          <AnchoredThreads offset={offset} />
         </>
       );
     },
@@ -163,20 +204,59 @@ export const AnswerBlock = memo(function AnswerBlock({
           >
             {children}
           </blockquote>
-          {renderThreads(offset)}
+          <AnchoredThreads offset={offset} />
         </>
       );
     },
   };
+}
+
+export const AnswerBlock = memo(function AnswerBlock({
+  text,
+  exchangeId,
+  btws,
+  streaming,
+  onSelection,
+  onBtwReply,
+  onBtwDismiss,
+}: AnswerBlockProps) {
+  const rootRef = useRef<HTMLDivElement>(null);
+  const placement = useAnchoredBtws(rootRef, exchangeId, btws, text);
+
+  const stateRef = useRef<BlockState>(null!);
+  stateRef.current = {
+    exchangeId,
+    streaming,
+    onSelection,
+  };
+  const components = useMemo(() => buildComponents(stateRef), []);
+  const btwRenderState = useMemo(
+    () => ({ btws, placement, onReply: onBtwReply, onDismiss: onBtwDismiss }),
+    [btws, placement, onBtwReply, onBtwDismiss],
+  );
+  const split = useMemo(() => (streaming ? splitStreamingMarkdown(text) : null), [text, streaming]);
 
   // Threads whose anchored block is gone — render below so they're never lost.
   const orphans = btws.filter((b) => (placement.get(b.id) ?? -1) < 0);
 
   return (
     <div ref={rootRef} className="select-text">
-      <Markdown remarkPlugins={remarkPlugins} rehypePlugins={rehypePlugins} components={components}>
-        {text}
-      </Markdown>
+      <BtwRenderContext.Provider value={btwRenderState}>
+        {streaming && split ? (
+          <>
+            {split.stable ? <MemoMarkdown text={split.stable} components={components} /> : null}
+            <Markdown
+              remarkPlugins={remarkPlugins}
+              rehypePlugins={rehypePlugins}
+              components={components}
+            >
+              {split.tail}
+            </Markdown>
+          </>
+        ) : (
+          <MemoMarkdown text={text} components={components} />
+        )}
+      </BtwRenderContext.Provider>
       {streaming && (
         <span className="inline-block w-0.5 h-[13px] bg-gold animate-[blink_1s_step-end_infinite] align-middle ml-px" />
       )}
