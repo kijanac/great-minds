@@ -57,8 +57,6 @@ projects:
               - key: PORT
                 value: "8787"
 
-          # great-minds-worker is suspended in the Render dashboard before this file lands.
-
           # ── Frontend (Static) ─────────────────────────────────────
           - name: great-minds-web
             type: web

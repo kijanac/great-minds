@@ -1,17 +1,10 @@
 # Harness-standard justfile.
 #
-# Standard targets every project must have:
-#   lint, format, types, test, ci, review
-#
 # Naming conventions:
-#   Plain name = read-only check (lint, format, types, test)
-#   -fix suffix = mutates files (lint-fix, format-fix)
-#   Backend: uv run (ruff, ty, pytest)
 #   Frontend: pnpm --prefix web (tsgo, oxlint, oxfmt)
 #   TypeScript packages: pnpm (tsgo, oxlint)
 
 set dotenv-load := false
-export UV_CACHE_DIR := "/tmp/gm-uv-cache"
 
 # ---------------------------------------------------------------------------
 # Discovery
@@ -25,10 +18,6 @@ default:
 # Quality — individual checks (all read-only)
 # ---------------------------------------------------------------------------
 
-# Lint Python with ruff
-lint:
-    uv run ruff check .
-
 # Lint frontend with oxlint
 lint-web:
     pnpm --prefix web exec oxlint src
@@ -37,18 +26,10 @@ lint-web:
 lint-packages:
     pnpm exec oxlint packages/domain/src packages/database/src packages/server/src packages/server/test packages/goldens/src packages/goldens/test
 
-# Check Python formatting (read-only)
-format:
-    uv run ruff format --check .
-
 # Check frontend formatting (read-only): oxfmt for .ts, prettier for .svelte
 format-web:
     pnpm --prefix web exec oxfmt --check src
     pnpm --prefix web exec prettier --check "src/**/*.svelte" --log-level warn
-
-# Type-check Python with ty
-types:
-    uv run ty check
 
 # Type-check frontend with svelte-check
 types-web:
@@ -58,37 +39,31 @@ types-web:
 types-packages:
     pnpm run typecheck
 
-# Run tests
-test *args='':
-    uv run pytest {{ args }}
-
-# Run tests, stop on first failure
-test-fast:
-    uv run pytest -x -q
-
 # Run TypeScript package integration tests against scratch Postgres
 test-packages:
     #!/usr/bin/env bash
     set -euo pipefail
     trap 'docker compose -f docker-compose.packages-test.yml down -v' EXIT
+    docker compose -f docker-compose.packages-test.yml down -v
     docker compose -f docker-compose.packages-test.yml up -d --wait db
-    DATABASE_URL=postgresql://great_minds:great_minds@localhost:55434/gm_packages_test JWT_SECRET=packages-test-jwt-secret UV_CACHE_DIR=/tmp/gm-uv-cache uv run alembic upgrade head
+    DATABASE_URL=postgresql://great_minds:great_minds@localhost:55434/gm_packages_test pnpm --filter @great-minds/database migrate
     DATABASE_URL=postgresql://great_minds:great_minds@localhost:55434/gm_packages_test pnpm --filter @great-minds/server test:integration
 
-# Record Python compile goldens through live OpenRouter (explicitly opt-in)
+# Record compile goldens through live OpenRouter (explicitly opt-in)
 goldens-record:
     GOLDENS_RECORD=1 pnpm --filter @great-minds/goldens record
 
-# Replay Python compile goldens from checked-in cassettes
+# Replay compile goldens through the TypeScript backend
 goldens-check:
-    pnpm --filter @great-minds/goldens test && pnpm --filter @great-minds/goldens check
+    pnpm --filter @great-minds/goldens test
+    pnpm --filter @great-minds/goldens check
 
 # ---------------------------------------------------------------------------
 # Compound checks
 # ---------------------------------------------------------------------------
 
 # Run static CI checks
-ci: lint format types lint-web format-web types-web lint-packages types-packages
+ci: lint-web format-web types-web lint-packages types-packages
 
 # Run full CI checks, including hermetic TypeScript package integration
 ci-full: ci test-packages
@@ -102,23 +77,15 @@ review: ci-full goldens-check
 # Fix — mutates files
 # ---------------------------------------------------------------------------
 
-# Auto-fix Python lint issues
-lint-fix:
-    uv run ruff check --fix .
-
-# Auto-format Python
-format-fix:
-    uv run ruff format .
-
 # Auto-format frontend
 format-web-fix:
     pnpm --prefix web exec oxfmt --write src
 
-# Fix everything auto-fixable (lint + format, Python + web)
-fix: lint-fix format-fix format-web-fix
+# Fix everything auto-fixable
+fix: format-web-fix
 
 # Fix, verify types, show what changed
-fix-check: fix types types-web
+fix-check: fix types-web types-packages
     git diff --stat
 
 # ---------------------------------------------------------------------------
@@ -127,7 +94,7 @@ fix-check: fix types types-web
 
 # Run API server locally
 run *args='':
-    uv run uvicorn src.great_minds.app.main:app --reload {{ args }}
+    node --experimental-strip-types packages/server/src/main.ts {{ args }}
 
 # Run frontend dev server
 dev:

@@ -656,6 +656,7 @@ describe("auth HTTP integration", () => {
     expect(first.body).toEqual({
       detail: "Passkey registration could not be verified",
     });
+    expect(JSON.stringify(first.body)).not.toContain(challenge);
 
     const second = await api("POST", "/auth/passkeys/register", response, pair.access_token);
     expect(second.status).toBe(422);
@@ -684,6 +685,7 @@ describe("auth HTTP integration", () => {
     const first = await api("POST", "/auth/passkeys/verify", response);
     expect(first.status).toBe(401);
     expect(first.body).toEqual({ detail: "Passkey authentication failed" });
+    expect(JSON.stringify(first.body)).not.toContain(challenge);
 
     const second = await api("POST", "/auth/passkeys/verify", response);
     expect(second.status).toBe(401);

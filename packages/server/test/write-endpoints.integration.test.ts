@@ -179,8 +179,6 @@ const resetDatabase = () =>
   runDb(
     Effect.gen(function* () {
       const db = yield* Database;
-      yield* db.execute(sql`delete from absurd.r_default`).pipe(Effect.orDie);
-      yield* db.execute(sql`delete from absurd.t_default`).pipe(Effect.orDie);
       yield* db.delete(authCodes).pipe(Effect.orDie);
       yield* db.delete(users).pipe(Effect.orDie);
     }),
@@ -1211,26 +1209,7 @@ describe("M3.1 write endpoint integration", () => {
           .from(pipelineRuns)
           .where(eq(pipelineRuns.id, id.m32StagedRun))
           .pipe(Effect.orDie);
-        const absurdTasks = yield* db
-          .execute(sql<{ task_name: string; params: unknown; idempotency_key: string }>`
-            select task_name, params, idempotency_key
-            from absurd.t_default
-            where idempotency_key = ${id.m32StagedRun}
-          `)
-          .pipe(Effect.orDie);
-        return {
-          appTasks,
-          runs,
-          absurdTasks: (
-            absurdTasks as unknown as {
-              readonly rows: readonly {
-                readonly task_name: string;
-                readonly params: unknown;
-                readonly idempotency_key: string;
-              }[];
-            }
-          ).rows,
-        };
+        return { appTasks, runs };
       }),
     );
     expect(rows.appTasks).toHaveLength(1);
@@ -1244,7 +1223,6 @@ describe("M3.1 write endpoint integration", () => {
       activeTaskId: rows.appTasks[0]!.id,
       activeTaskType: "staged_file_ingest",
     });
-    expect(rows.absurdTasks).toHaveLength(0);
     expect(await countTable(compileIntents)).toBe(0);
   });
 

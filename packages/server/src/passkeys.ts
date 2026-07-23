@@ -38,6 +38,7 @@ import { AuthService } from "./auth.ts";
 import { ClockService } from "./clock.ts";
 import { AppConfig } from "./config.ts";
 import { dieDatabase } from "./db-defects.ts";
+import { StructuredLogger } from "./logging.ts";
 
 type CredentialRow = typeof webauthnCredentials.$inferSelect;
 type ChallengeKind = "registration" | "authentication";
@@ -102,6 +103,7 @@ const authenticationResponse = (response: PasskeyAuthentication): Authentication
 
 const registrationFailure = () => new Validation({ detail: REGISTRATION_FAILURE });
 const authenticationFailure = () => new Unauthorized({ detail: AUTHENTICATION_FAILURE });
+const errorMessage = (error: unknown) => (error instanceof Error ? error.message : String(error));
 
 export const PasskeysServiceLive = Layer.effect(
   PasskeysService,
@@ -110,6 +112,23 @@ export const PasskeysServiceLive = Layer.effect(
     const clock = yield* ClockService;
     const config = yield* AppConfig;
     const db = yield* Database;
+    const logger = yield* StructuredLogger;
+
+    const failRegistration = (message: string, userId: Uuid) =>
+      logger
+        .warn("passkey_registration_failed", {
+          error_message: message,
+          user_id: userId,
+        })
+        .pipe(Effect.andThen(Effect.fail(registrationFailure())));
+
+    const failAuthentication = (message: string, userId?: string) =>
+      logger
+        .warn("passkey_authentication_failed", {
+          error_message: message,
+          user_id: userId,
+        })
+        .pipe(Effect.andThen(Effect.fail(authenticationFailure())));
 
     const deleteExpiredChallenges = (now: Date) =>
       db.delete(webauthnChallenges).where(lte(webauthnChallenges.expiresAt, now)).pipe(dieDatabase);
@@ -135,13 +154,13 @@ export const PasskeysServiceLive = Layer.effect(
       kind: ChallengeKind,
       userId: Uuid | null,
       now: Date,
-      onFailure: () => E,
+      onFailure: (message: string) => Effect.Effect<never, E>,
     ) =>
       Effect.gen(function* () {
         const challenge = yield* Effect.try({
           try: () => decodeClientDataJSON(clientDataJSON as Base64URLString).challenge,
-          catch: onFailure,
-        });
+          catch: (error) => error,
+        }).pipe(Effect.catch((error) => onFailure(errorMessage(error))));
         const rows = yield* db
           .delete(webauthnChallenges)
           .where(
@@ -157,7 +176,7 @@ export const PasskeysServiceLive = Layer.effect(
           .pipe(dieDatabase);
         const consumed = rows[0];
         if (consumed === undefined || consumed.expiresAt <= now) {
-          return yield* Effect.fail(onFailure());
+          return yield* onFailure("Challenge is missing, expired, or already used");
         }
         return consumed.challenge;
       });
@@ -207,7 +226,7 @@ export const PasskeysServiceLive = Layer.effect(
             "registration",
             userId,
             now,
-            registrationFailure,
+            (message) => failRegistration(message, userId),
           );
           const verification = yield* Effect.tryPromise({
             try: () =>
@@ -217,10 +236,10 @@ export const PasskeysServiceLive = Layer.effect(
                 expectedOrigin: [...config.webauthnOrigins],
                 expectedRPID: config.webauthnRpId,
               }),
-            catch: registrationFailure,
-          });
+            catch: (error) => error,
+          }).pipe(Effect.catch((error) => failRegistration(errorMessage(error), userId)));
           if (!verification.verified) {
-            return yield* registrationFailure();
+            return yield* failRegistration("Verification returned false", userId);
           }
           const credential = verification.registrationInfo.credential;
           const rows = yield* db
@@ -265,7 +284,7 @@ export const PasskeysServiceLive = Layer.effect(
             "authentication",
             null,
             now,
-            authenticationFailure,
+            failAuthentication,
           );
           const rows = yield* db
             .select()
@@ -275,7 +294,7 @@ export const PasskeysServiceLive = Layer.effect(
             .pipe(dieDatabase);
           const credential = rows[0];
           if (credential === undefined) {
-            return yield* authenticationFailure();
+            return yield* failAuthentication("Credential is unknown");
           }
           const verification = yield* Effect.tryPromise({
             try: () =>
@@ -293,10 +312,12 @@ export const PasskeysServiceLive = Layer.effect(
                   ) as AuthenticatorTransportFuture[],
                 },
               }),
-            catch: authenticationFailure,
-          });
+            catch: (error) => error,
+          }).pipe(
+            Effect.catch((error) => failAuthentication(errorMessage(error), credential.userId)),
+          );
           if (!verification.verified) {
-            return yield* authenticationFailure();
+            return yield* failAuthentication("Verification returned false", credential.userId);
           }
           yield* db
             .update(webauthnCredentials)

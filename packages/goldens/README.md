@@ -1,6 +1,6 @@
 # Golden compile characterization
 
-This package is separate from `@great-minds/parity`: parity compares HTTP contracts between two running backends, while goldens characterize the Python compile pipeline's database rows, rendered storage, cache inventory, progress taxonomy, and deferred route/state scenarios. The harness uses an isolated Compose Postgres, Alembic head, managed API/worker processes, scratch local storage, and unconditional service teardown.
+Goldens characterize the TypeScript compile pipeline's database rows, rendered storage, cache inventory, progress taxonomy, and deferred route/state scenarios. The harness uses an isolated Compose Postgres, Drizzle migrations, the production server/workflow runner, scratch local storage, and unconditional service teardown.
 
 ## Recording and coherence
 
@@ -8,22 +8,22 @@ This package is separate from `@great-minds/parity`: parity compares HTTP contra
 
 1. Create an empty in-memory cassette. Record every completed provider call append-only, including duplicate normalized request hashes, in completion order. Never reuse an older cassette response in record mode.
 2. Capture the cassette and golden from that same live harness execution, give both the same `recordingId`, and write them only to a private staging directory.
-3. Boot a fresh database/storage/API/worker stack and replay the staged cassette immediately. Replay must report zero misses and the artifacts must pass the alpha-exact relation below.
+3. Boot a fresh database/storage/server stack and replay the staged cassette immediately. Replay must report zero misses and the artifacts must pass the alpha-exact relation below.
 4. Install both files with temporary names and atomic renames. If either rename or any earlier check fails, restore the previous pair; neither candidate is accepted alone.
 
 `just goldens-check` cannot contact OpenRouter. An unknown request returns `golden_cassette_miss`; there is no statistical-envelope fallback.
 
-The backend launch is selected with `GOLDENS_BACKEND=python|typescript` (default `python`). The Python lane is unchanged: it boots uvicorn plus the one-concurrency Python worker and remains the full golden acceptance gate. `pnpm --filter @great-minds/goldens check:typescript` boots `packages/server/src/main.ts`, so the production reconciler loop and workflow runner are included. That lane pins `RandomBytesService` with seed `0`, `ClockService` at `2026-07-12T12:00:00.000Z`, and `PIPELINE_CONCURRENCY=1` through validated server config. Its M4.3 acceptance is intentionally narrower until M4.4: health, auth, fixture seeding, compile dispatch, and an exact terminal failure at the typed `extract` seam. A timeout, fabricated success, or any other terminal shape fails the lane. Full TS artifact replay remains M4.4-pending.
+The harness always boots `packages/server/src/main.ts`, including migrate-on-boot, the production reconciler loop, and the workflow runner. It pins `RandomBytesService` with seed `0`, `ClockService` at `2026-07-12T12:00:00.000Z`, and `PIPELINE_CONCURRENCY=1`. Check requires alpha-exact artifacts, at least one raw cassette hit, zero alpha fallbacks, and zero misses.
 
 `pnpm --filter @great-minds/goldens regenerate` is also cassette-only. It boots the same fresh isolated stack as check, replays the immutable banked cassette steered by the previous golden (identity fixtures and the pinned `repairRenderHeading` carry forward, so the corruption target stays stable across regenerations), captures a fresh snapshot from that replay, then validates the candidate with a second coherence replay (alpha-exact comparison, zero misses, alpha fallbacks bounded by the previous banked baseline) before stamping the cassette's existing `recordingId` and atomically installing the regenerated golden. It never enables record mode or contacts OpenRouter; replay modes are not handed the live API key at all.
 
 The proxy preserves identity-free request semantics that UUID substitution alone cannot express at the HTTP boundary: embedding rows are associated by the provider's explicit `index`; idea and canonical-assignment positions are translated by stable content; extract responses preserve recorded completion order; duplicate live calls remain distinct; and duplicate render winners are selected for the explicitly marked first/second compile generation. These rules reproduce the response actually consumed by the recorded pipeline rather than an ordinally adjacent response.
 
-Every final result reports `proxyStats`: cassette entries, raw request-body hits, alpha/content-routing fallbacks, and misses. The content-routing tiers are Python-replay concessions for composing fresh UUID identities only. M4.4 TS-backend acceptance requires `misses === 0` and `alphaFallbacks === 0`: raw-hit tier only. Check also fails when Python replay exceeds the banked non-raw baseline.
+Every final result reports `proxyStats`: cassette entries, raw request-body hits, alpha/content-routing fallbacks, and misses. The permanent TypeScript gate requires `misses === 0` and `alphaFallbacks === 0`: raw-hit tier only.
 
 Raw-tier identity hashes parsed request bodies after recursively sorting object keys. It is therefore whitespace- and key-order-insensitive but value-exact (including array order); hashes are recomputed from the cassette's stored raw bodies at load, so this decision does not require re-recording the banked cassette or golden.
 
-`normalizeArchiveFixture` pins the fixed archive fixture's two cleanup decisions at the proxy seam: the rendered legacy topic receives a current canonical successor and the no-file topic receives `null`. This normalization makes both archive branches stable while leaving Python responsible for archive detection, persistence, and file movement; it is fixture normalization, not a claim that cleanup-model choice is deterministic.
+`normalizeArchiveFixture` pins the fixed archive fixture's two cleanup decisions at the proxy seam: the rendered legacy topic receives a current canonical successor and the no-file topic receives `null`. This makes both archive branches stable while leaving the server responsible for archive detection, persistence, and file movement.
 
 Diagnostic instrumentation is opt-in and retained:
 
@@ -35,7 +35,7 @@ Never commit diagnostic reports or retained temporary run directories.
 
 ## Acceptance equivalence relation
 
-This is the M4.3/M4.4 TS-port acceptance contract. Let `G` be the recorded golden and `R` a fresh replay. `G ≈ R` iff a single replay→golden UUID renaming exists and all artifacts are exactly equal after applying it and recomputing UUID-derived hashes. The M4.4 TS goldens mode will pin the identity stream through an injectable `RandomBytesService`, use a deterministic clock, and run pipeline concurrency at `1`; those controls make each TS run internally deterministic and alpha-exact against the golden. The selectable backend seam that replaces the harness's current hard-coded Python API/worker launch is an M4.3 deliverable. No artifact class is expected to require non-exact TS checking.
+Let `G` be the recorded golden and `R` a fresh replay. `G ≈ R` iff a single replay→golden UUID renaming exists and all artifacts are exactly equal after applying it and recomputing UUID-derived hashes. The pinned identity stream, deterministic clock, and pipeline concurrency make each run internally deterministic and alpha-exact.
 
 The renaming is constructed from identity-free keys:
 
@@ -56,12 +56,12 @@ The current coherent corpus has eight anchored Markdown sources. Its first compi
 
 - First full compile and second incremental compile, including cache reuse, a stable pinned render-cache corruption, and missing-file materialization repair.
 - Archive/supersede transition: rendered legacy topic with a pinned successor, no-file topic with a null successor, archived database/article rows, and archive storage move.
-- Cancel mid-compile: a cassette-backed LLM response is paused, cancellation is observed from the job state, and oddity 22's Python `CancelledTask` handler clobber is pinned explicitly with `clobberedBy: "python"`.
+- Cancel mid-compile: a cassette-backed LLM response is paused and cancellation remains terminal through workflow shutdown.
 - Staged-worker ingest route through the real worker: local-storage rejection, failed step taxonomy, and terminal error are goldenized. A successful R2 conversion batch is outside this local-storage harness and is not simulated.
 - SSE capture for both compiles: connected/message/done protocol, ordered phases, exact step key/label taxonomy, and terminal state.
 - Lint routes: orphan presence, dirty-topic count, and unmentioned-link presence.
 - Cost routes: fixed-window user and vault aggregates across two users, two vaults, and three event types.
 
-This is not the complete fixture matrix. Alongside successful R2 conversion, the following are explicit M4.3/M4.4-time additions: slug collision; zero-topics vault; empty vault; per-item failure isolation set; Absurd retry succeed-on-second; terminal-cancel 204; double `POST /compile`; zombie reconciler; SSE reconnect, heartbeat, and terminal variants; spoofed publish; embed-timeout-skip; and body-validation rejection.
+This is not the complete fixture matrix. Alongside successful R2 conversion, future additions include: slug collision; zero-topics vault; empty vault; per-item failure isolation; workflow retry succeed-on-second; terminal-cancel 204; double `POST /compile`; zombie reconciler; SSE reconnect, heartbeat, and terminal variants; spoofed publish; embed-timeout-skip; and body-validation rejection.
 
-`pnpm --filter @great-minds/goldens record:deferred` regenerates `goldens/python-deferred.json` only from the immutable cassette and stamps the coherent pair's `recordingId`. Check requires that provenance to match the cassette/golden pair. The command cannot contact OpenRouter and does not alter the banked cassette/golden pair.
+`pnpm --filter @great-minds/goldens record:deferred` regenerates `goldens/deferred.json` only from the immutable cassette and stamps the coherent pair's `recordingId`. The command cannot contact OpenRouter and does not alter the banked cassette/golden pair.

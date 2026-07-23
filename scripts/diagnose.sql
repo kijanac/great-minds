@@ -13,16 +13,12 @@ SELECT id, vault_id, status, current_phase, phase_status,
 FROM pipeline_runs
 WHERE id = 'd676ed40-74db-4410-9cfc-d4171845a59f';
 
--- 2. Absurd compile task(s) for this pipeline
-SELECT '--- ABSURD TASK ---' AS section;
-SELECT t.task_id, t.state AS task_state, t.attempts, t.max_attempts,
-       r.run_id, r.state AS run_state, r.claimed_by,
-       r.claim_expires_at, r.started_at, r.completed_at, r.failed_at,
-       r.failure_reason
-FROM absurd.t_default t
-JOIN absurd.r_default r ON r.task_id = t.task_id
-WHERE t.params->>'pipeline_run_id' = 'd676ed40-74db-4410-9cfc-d4171845a59f'
-ORDER BY r.created_at DESC;
+-- 2. Durable workflow messages for this pipeline
+SELECT '--- WORKFLOW MESSAGES ---' AS section;
+SELECT id, message_id, entity_type, entity_id, tag, processed, payload
+FROM cluster_messages
+WHERE payload::jsonb->>'pipelineRunId' = 'd676ed40-74db-4410-9cfc-d4171845a59f'
+ORDER BY id DESC;
 
 -- 3. Advisory locks held on the vault
 --    (vault_id comes from query #1 — fill in below after running)
@@ -52,7 +48,3 @@ ORDER BY pid, objid;
 --     completed_at = now(),
 --     updated_at = now()
 -- WHERE id = 'd676ed40-74db-4410-9cfc-d4171845a59f';
-
--- Step D: Cancel any still-active Absurd compile tasks.
---         Replace <TASK_ID> with the task_id from query #2 (one per active task).
--- SELECT absurd.cancel_task('default', '<TASK_ID>');

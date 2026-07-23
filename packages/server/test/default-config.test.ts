@@ -1,6 +1,5 @@
-import { execFile } from "node:child_process";
+import { createHash } from "node:crypto";
 import { readFile, readdir } from "node:fs/promises";
-import { promisify } from "node:util";
 
 import { ConfigProvider, Effect } from "effect";
 import { describe, expect, it } from "vitest";
@@ -14,7 +13,7 @@ import {
 } from "../src/query.ts";
 import { defaultVaultConfigText } from "../src/vaults.ts";
 
-const execFileAsync = promisify(execFile);
+const sha256 = (value: string) => createHash("sha256").update(value).digest("hex");
 
 describe("server config defaults", () => {
   it("uses a 60-day refresh window and local WebAuthn defaults", async () => {
@@ -37,65 +36,50 @@ describe("server config defaults", () => {
   });
 });
 
-const pythonConstant = async (file: URL, constantName: string) => {
-  const { stdout } = await execFileAsync("python3", [
-    "-c",
-    [
-      "import ast, pathlib, sys",
-      "path = pathlib.Path(sys.argv[1])",
-      "name = sys.argv[2]",
-      "module = ast.parse(path.read_text(encoding='utf-8'))",
-      "for node in module.body:",
-      "    if isinstance(node, ast.Assign):",
-      "        if any(isinstance(t, ast.Name) and t.id == name for t in node.targets):",
-      "            value = ast.literal_eval(node.value)",
-      "            sys.stdout.write(value)",
-      "            raise SystemExit(0)",
-      "raise SystemExit(f'constant not found: {name}')",
-    ].join("\n"),
-    file.pathname,
-    constantName,
-  ]);
-  return stdout;
-};
-
 describe("default vault config", () => {
-  it("stays byte-equal to the Python default config", async () => {
-    const pythonDefault = await readFile(
-      new URL("../../../src/great_minds/core/default_config.yaml", import.meta.url),
-      "utf8",
+  it("stays byte-exact", () => {
+    expect(sha256(defaultVaultConfigText)).toBe(
+      "fffd8a7c1c946d201a756a99bcff12bf8a803c824c3c2937153a7cf1ba95f7e6",
     );
-
-    expect(defaultVaultConfigText).toBe(pythonDefault);
   });
 });
 
 describe("hardcoded query prompts", () => {
-  it("stay byte-equal to Python source constants", async () => {
-    const querier = new URL("../../../src/great_minds/core/querier.py", import.meta.url);
-    const vaultConfig = new URL("../../../src/great_minds/core/vaults/config.py", import.meta.url);
-
-    await expect(pythonConstant(querier, "_RETRIEVAL_CORE")).resolves.toBe(retrievalCore);
-    await expect(pythonConstant(querier, "_WEB_SEARCH_GUIDANCE")).resolves.toBe(webSearchGuidance);
-    await expect(pythonConstant(querier, "_WEB_FACT_EXTRACTION_PROMPT")).resolves.toBe(
-      webFactExtractionPrompt,
+  it("stay byte-exact", () => {
+    expect(sha256(retrievalCore)).toBe(
+      "85ed51c9129912390fcb093fa3bfa3d44252b8b9f80f9a9f4277f7b500d44d76",
     );
-    await expect(pythonConstant(vaultConfig, "_DRAFT_HINT_SYSTEM")).resolves.toBe(draftHintSystem);
+    expect(sha256(webSearchGuidance)).toBe(
+      "bf27e028c94049d58ec0add50236bb09db24d52114001156eb07c2295885d0a9",
+    );
+    expect(sha256(webFactExtractionPrompt)).toBe(
+      "7a4a78454df8c1ceafa937c3a5e3976b4683dae3ba66727e2128efdc01e4f9e9",
+    );
+    expect(sha256(draftHintSystem)).toBe(
+      "d849c1c4ec5eff3b7e7fe42539effc3e6e104232c80bc3e4a52ee775cc3b15d4",
+    );
   });
 });
 
 describe("default prompts", () => {
-  it("keeps every Python default prompt byte-equal in TypeScript", async () => {
-    const pythonDir = new URL("../../../src/great_minds/core/default_prompts/", import.meta.url);
-    const tsDir = new URL("../src/default_prompts/", import.meta.url);
-    const names = (await readdir(pythonDir)).filter((name) => name.endsWith(".md")).sort();
-    expect(names.length).toBeGreaterThan(0);
+  it("keeps every prompt byte-exact", async () => {
+    const directory = new URL("../src/default_prompts/", import.meta.url);
+    const expected = {
+      "canonicalize_assign.md": "49d8130d26be11d16b146fa7f1e193e6a220640da3a71b7654a23fc85bc09d6a",
+      "canonicalize_registry.md":
+        "12cf15426368b0ad68f5dbc2e6c1b01e22a4deb95831cc8a07d302968333aafc",
+      "cleanup.md": "3bc29dd1ab747ec40dbf19d317b193955819714823a0074399a1f01f2c7d48ca",
+      "extract.md": "0d589c31e7c6413e4aaaea6f70b36d9c36a8a81aa2bfc024477779e4f3c62dda",
+      "query.md": "d02c29eb9d1367ef61e230741aee22feb3a2dea6564956ff2a433a34c876afee",
+      "query_btw.md": "1415f3050b8c6b36867f2f0390281c775a3103991a6ad5a3e296fd7d42cdc138",
+      "render.md": "3d0db999681198d4d7f1a6c02adc91a9e4d8ef58e91fc8929981d3792aebd0bf",
+      "synthesize.md": "bfc990e63d9ad3912ea4c119587e6706a647cdb4ad1b783e3b64c3de13ce3e00",
+    } as const;
+    const names = (await readdir(directory)).filter((name) => name.endsWith(".md")).sort();
+    expect(names).toEqual(Object.keys(expected));
     for (const name of names) {
-      const [pythonPrompt, tsPrompt] = await Promise.all([
-        readFile(new URL(name, pythonDir), "utf8"),
-        readFile(new URL(name, tsDir), "utf8"),
-      ]);
-      expect(tsPrompt, name).toBe(pythonPrompt);
+      const prompt = await readFile(new URL(name, directory), "utf8");
+      expect(sha256(prompt), name).toBe(expected[name as keyof typeof expected]);
     }
   });
 });

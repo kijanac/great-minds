@@ -11,9 +11,7 @@ type Golden = {
   readonly second: { readonly renderedFiles: readonly RenderedFile[] };
 };
 
-const goldenPath = fileURLToPath(
-  new URL("../../goldens/goldens/python-compile.json", import.meta.url),
-);
+const goldenPath = fileURLToPath(new URL("../../goldens/goldens/compile.json", import.meta.url));
 
 describe("markdown frontmatter", () => {
   it("round-trips every Python golden frontmatter block byte-exact", async () => {

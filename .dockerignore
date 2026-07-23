@@ -1,8 +1,5 @@
 .venv/
 .git/
-__pycache__/
-*.pyc
-*.egg-info/
 node_modules/
 .pnpm-store/
 web/*
@@ -22,17 +19,9 @@ ingest/
 # Never needed in the image
 tests/
 test/
-**/test_*.py
-**/*_test.py
-conftest.py
-.pytest_cache/
-.mypy_cache/
-.ruff_cache/
 *.md
 !packages/server/src/default_prompts/*.md
 *.c
 *.cpp
 *.hpp
-*.pxd
-*.pyx
 **/.env*

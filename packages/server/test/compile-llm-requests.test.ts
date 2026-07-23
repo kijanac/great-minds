@@ -21,10 +21,7 @@ type CassetteEntry = {
 };
 
 const cassette = JSON.parse(
-  await readFile(
-    new URL("../../goldens/cassettes/python-compile.json", import.meta.url),
-    "utf8",
-  ),
+  await readFile(new URL("../../goldens/cassettes/compile.json", import.meta.url), "utf8"),
 ) as { readonly entries: readonly CassetteEntry[] };
 
 const entry = (sequence: number) => {
@@ -46,7 +43,9 @@ const canonical = (value: unknown): unknown => {
 };
 
 const sortedKeyHash = (value: unknown) =>
-  createHash("sha256").update(JSON.stringify(canonical(value))).digest("hex");
+  createHash("sha256")
+    .update(JSON.stringify(canonical(value)))
+    .digest("hex");
 
 const expectCassetteRequest = (
   sequence: number,
@@ -130,7 +129,7 @@ describe("compile structured-output decoding", () => {
   it("accepts the JSON fencing tolerated by Python", () => {
     expect(
       decodeCompileJsonCompletion("fixture-model", {
-        text: "```json\n{\"topics\":[]}\n```",
+        text: '```json\n{"topics":[]}\n```',
         finishReason: "stop",
       }),
     ).toEqual({ topics: [] });
@@ -148,12 +147,10 @@ describe("compile structured-output decoding", () => {
   it("keeps token-limit truncation loud before parsing", () => {
     expect(() =>
       decodeCompileJsonCompletion("fixture-model", {
-        text: "{\"topics\":[]}",
+        text: '{"topics":[]}',
         finishReason: "length",
       }),
-    ).toThrow(
-      "fixture-model output hit the token limit (finish_reason=length) and was truncated",
-    );
+    ).toThrow("fixture-model output hit the token limit (finish_reason=length) and was truncated");
   });
 });
 

@@ -15,7 +15,8 @@
   },
   "scripts": {
     "typecheck": "tsgo -p tsconfig.json --noEmit",
-    "generate": "drizzle-kit generate",
+    "generate": "drizzle-kit generate --config ../../drizzle.config.ts",
+    "migrate": "node --experimental-strip-types src/migrate-cli.ts",
     "ann": "node --experimental-strip-types src/ann-check.ts"
   },
   "dependencies": {
