@@ -41,17 +41,18 @@ lint-packages:
 format:
     uv run ruff format --check .
 
-# Check frontend formatting (read-only)
+# Check frontend formatting (read-only): oxfmt for .ts, prettier for .svelte
 format-web:
     pnpm --prefix web exec oxfmt --check src
+    pnpm --prefix web exec prettier --check "src/**/*.svelte" --log-level warn
 
 # Type-check Python with ty
 types:
     uv run ty check
 
-# Type-check frontend with tsgo (project build mode)
+# Type-check frontend with svelte-check
 types-web:
-    pnpm --prefix web exec tsgo -b
+    pnpm --prefix web exec svelte-check
 
 # Type-check TypeScript packages with tsgo
 types-packages:
