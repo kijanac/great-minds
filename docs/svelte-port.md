@@ -112,6 +112,39 @@ main (single merge commit), deploy, prod browser smoke (login → query → BTW 
 upload), watch logs.
 Rollback: revert the merge commit — backend untouched throughout.
 
+## Deliberate divergences from the React oracle
+
+The React app is the behavioral oracle for the port EXCEPT the following
+user-approved design changes (2026-07-23), which are built directly in their
+intended form rather than ported-then-reworked:
+
+- **P0 follow-up — login polish**: `autocomplete="email"` + autofocus on the
+  email field; `autocomplete="one-time-code"` + `inputmode="numeric"` on the
+  code field (Safari/iOS autofill from Mail), auto-submit on the final digit,
+  paste-tolerant. Separately (backend, post-port): raise
+  `JWT_REFRESH_EXPIRY_DAYS` for long sliding sessions; passkeys are on the
+  architectural backlog.
+- **P2 — library consolidation**: sources and wiki merge into one library
+  page — single search box, one chip row where `articles` is a facet
+  alongside source types, one row anatomy, count in header, side panel on
+  row click for peeking (full `/doc` navigation as the deliberate second
+  step). Explore is restructured as discovery + health: recent articles
+  first; the lint sections each gain their action (compile trigger for
+  drift; missing-connection rows open the source article); the
+  navigation-disguised-as-filters chip row is removed. The side panel
+  reflows the content column beside it at ≥1200px instead of overlapping;
+  below that, a subtle scrim.
+- **P3 — citations open the side panel**: the article reader wires the link
+  interceptor's `onDocOpen` (designed but unwired in React). Bare raw-source
+  citations open the panel in doc mode; chunk-anchored citations (`#^pN`)
+  open it in chunks mode showing the cited paragraph; Maximize remains the
+  full-document escape.
+- **P4 — footnote margin notes**: at wide viewports, footnote content (already
+  resolved onto each ref as `data-footnote-content`) renders as right-margin
+  notes aligned to the reference block, quiet until ref hover; at narrow
+  widths and on touch, click/tap opens a popover anchored to the ref. The
+  bottom footnote section remains for print/export.
+
 ## Risks / watchpoints
 
 - Bits UI behavior differences vs Base UI on collapsible/dropdown/tooltip —
