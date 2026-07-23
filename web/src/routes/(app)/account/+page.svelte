@@ -2,6 +2,7 @@
   import { goto } from "$app/navigation";
   import Home from "@lucide/svelte/icons/home";
 
+  import ApiKeysSection from "$lib/components/api-keys-section.svelte";
   import PasskeysSection from "$lib/components/passkeys-section.svelte";
   import { Button } from "$lib/components/ui/button";
 </script>
@@ -33,6 +34,7 @@
   <div class="min-h-0 flex-1 overflow-y-auto">
     <div class="mx-auto max-w-[740px] px-4 pt-8 pb-20 md:px-10">
       <PasskeysSection />
+      <ApiKeysSection />
     </div>
   </div>
 </div>
