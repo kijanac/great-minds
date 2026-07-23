@@ -1107,6 +1107,27 @@ describe("read-only HTTP integration", () => {
     expect(withApiKey.status).toBe(200);
     expect(asPage(withApiKey.body).items).toHaveLength(1);
 
+    const byTitle = await api("GET", `/vaults/${id.vaultAlpha}/wiki?contains=BETA`, aliceToken);
+    expect(byTitle.status).toBe(200);
+    expect(itemRecords(asPage(byTitle.body)).map((article) => article.slug)).toEqual([
+      "beta-theory",
+    ]);
+    expect(asPage(byTitle.body).pagination.total).toBe(1);
+
+    const byPrecis = await api(
+      "GET",
+      `/vaults/${id.vaultAlpha}/wiki?contains=gamma%20precis`,
+      aliceToken,
+    );
+    expect(byPrecis.status).toBe(200);
+    expect(itemRecords(asPage(byPrecis.body)).map((article) => article.slug)).toEqual([
+      "gamma-lines",
+    ]);
+
+    const noMatch = await api("GET", `/vaults/${id.vaultAlpha}/wiki?contains=nonexistent`, aliceToken);
+    expect(noMatch.status).toBe(200);
+    expect(asPage(noMatch.body).items).toEqual([]);
+
     const zero = await api("GET", `/vaults/${id.vaultAlpha}/wiki?limit=0`, aliceToken);
     expect(zero.status).toBe(200);
     expect(asPage(zero.body).pagination).toEqual({ limit: 0, offset: 0, total: 3 });

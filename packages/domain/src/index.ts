@@ -429,6 +429,7 @@ export type WikiArticlePage = typeof WikiArticlePage.Type;
 export const WikiListQuery = Schema.Struct({
   ...PageParamsQuery.fields,
   run: Schema.optionalKey(Uuid),
+  contains: Schema.optionalKey(Schema.String),
 });
 export type WikiListQuery = typeof WikiListQuery.Type;
 

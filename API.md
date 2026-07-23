@@ -448,10 +448,30 @@ Read wiki articles and browse raw sources. These are read-only endpoints for acc
 GET /v1/vaults/{vault_id}/wiki
 ```
 
-**Response:** Array of article slugs.
+**Query parameters:**
+
+| Parameter  | Type   | Required | Default | Description                                             |
+| ---------- | ------ | -------- | ------- | ------------------------------------------------------- |
+| `limit`    | int    | no       | 50      | Page size (max 200)                                     |
+| `offset`   | int    | no       | 0       | Page offset                                             |
+| `run`      | uuid   | no       |         | Only articles rendered by this compile run              |
+| `contains` | string | no       |         | Case-insensitive match against article title and precis |
+
+**Response:** Paginated article overviews, sorted alphabetically by title.
 
 ```json
-["imperialism", "primitive-accumulation", "surplus-value"]
+{
+  "items": [
+    {
+      "file_path": "wiki/imperialism.md",
+      "slug": "imperialism",
+      "title": "Imperialism",
+      "precis": "The monopoly stage of capitalism...",
+      "updated_at": "2026-07-20T12:00:00Z"
+    }
+  ],
+  "pagination": { "limit": 50, "offset": 0, "total": 87 }
+}
 ```
 
 ### Get recent articles
