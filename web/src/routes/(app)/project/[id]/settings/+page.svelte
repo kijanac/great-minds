@@ -18,7 +18,6 @@
   import { auth } from "$lib/auth.svelte";
   import ApiKeysSection from "$lib/components/api-keys-section.svelte";
   import MemberRow from "$lib/components/member-row.svelte";
-  import PasskeysSection from "$lib/components/passkeys-section.svelte";
   import ProposalsSection from "$lib/components/proposals-section.svelte";
   import { Alert, AlertDescription } from "$lib/components/ui/alert";
   import * as AlertDialog from "$lib/components/ui/alert-dialog";
@@ -267,8 +266,6 @@
 
         <ProposalsSection {vaultId} {isOwner} />
         <ApiKeysSection />
-        <PasskeysSection />
-
         {#if isOwner}
           <section class="mt-16 border-t border-ink-border pt-8">
             <h2

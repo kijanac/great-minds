@@ -32,6 +32,8 @@
     },
   }));
 
+  let naming = $state(false);
+  let name = $state("");
   let adding = $state(false);
   let addError = $state<string | null>(null);
   let deleteOpen = $state(false);
@@ -62,20 +64,25 @@
     return `${browser} on ${os}`;
   }
 
-  async function addPasskey(): Promise<void> {
-    if (adding) return;
-    const name = window
-      .prompt("Name this passkey", defaultPasskeyName())
-      ?.trim();
-    if (!name) return;
+  function startNaming(): void {
+    naming = true;
+    name = defaultPasskeyName();
+    addError = null;
+  }
 
+  // credentials.create() must run inside the click's transient activation
+  // (Safari): no modal or unbounded pause between gesture and ceremony.
+  async function addPasskey(): Promise<void> {
+    const trimmed = name.trim();
+    if (adding || !trimmed) return;
     adding = true;
     addError = null;
     try {
       const optionsJSON = await getPasskeyRegistrationOptions();
       const response = await startRegistration({ optionsJSON });
-      await registerPasskey(name, response);
+      await registerPasskey(trimmed, response);
       await queryClient.invalidateQueries({ queryKey: ["passkeys"] });
+      naming = false;
     } catch (error) {
       addError =
         error instanceof Error
@@ -106,15 +113,49 @@
     >
       passkeys
     </h2>
-    <Button
-      variant="ghost"
-      onclick={() => void addPasskey()}
-      disabled={adding}
-      class="h-auto rounded-sm px-3 py-1.5 font-mono text-[length:var(--text-chrome)] tracking-[0.06em] text-warm-faint hover:bg-ink-raised hover:text-gold"
-    >
-      {adding ? "waiting…" : "add a passkey"}
-    </Button>
+    {#if !naming}
+      <Button
+        variant="ghost"
+        onclick={startNaming}
+        class="h-auto rounded-sm px-3 py-1.5 font-mono text-[length:var(--text-chrome)] tracking-[0.06em] text-warm-faint hover:bg-ink-raised hover:text-gold"
+      >
+        add a passkey
+      </Button>
+    {/if}
   </div>
+
+  {#if naming}
+    <div class="mb-4 flex items-center gap-2">
+      <input
+        class="flex-1 max-w-[320px] border-0 border-b border-b-gold-dim bg-transparent py-[3px] font-serif text-[length:var(--text-small)] text-warm-dim caret-gold outline-none transition-colors placeholder:text-interactive-dim focus:border-b-gold"
+        placeholder="name this passkey"
+        bind:value={name}
+        disabled={adding}
+        onkeydown={(e) => {
+          if (e.key === "Enter") void addPasskey();
+          if (e.key === "Escape") naming = false;
+        }}
+      />
+      <Button
+        variant="outline"
+        size="sm"
+        onclick={() => void addPasskey()}
+        disabled={adding || !name.trim()}
+        class="h-auto rounded-sm border-ink-border px-3 py-1.5 font-mono text-[length:var(--text-chrome)] tracking-[0.08em] text-muted-foreground hover:border-gold-dim hover:text-gold disabled:opacity-25"
+      >
+        {adding ? "waiting…" : "create"}
+      </Button>
+      <Button
+        variant="ghost"
+        size="sm"
+        onclick={() => (naming = false)}
+        disabled={adding}
+        class="h-auto px-2 py-1.5 font-mono text-[length:var(--text-chrome)] tracking-[0.06em] text-warm-ghost hover:bg-transparent hover:text-warm-faint"
+      >
+        cancel
+      </Button>
+    </div>
+  {/if}
 
   {#if addError}
     <Alert

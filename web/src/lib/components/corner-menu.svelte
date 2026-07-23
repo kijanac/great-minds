@@ -3,7 +3,9 @@
   import Moon from "@lucide/svelte/icons/moon";
   import Settings from "@lucide/svelte/icons/settings";
   import Sun from "@lucide/svelte/icons/sun";
+  import User from "@lucide/svelte/icons/user";
 
+  import { goto } from "$app/navigation";
   import { auth } from "$lib/auth.svelte";
   import { Button } from "$lib/components/ui/button";
   import * as DropdownMenu from "$lib/components/ui/dropdown-menu";
@@ -43,6 +45,13 @@
           <Moon class="size-3.5" />
           dark mode
         {/if}
+      </DropdownMenu.Item>
+      <DropdownMenu.Item
+        onclick={() => void goto("/account")}
+        class={`${MENU_ITEM_CLASS} cursor-pointer gap-2`}
+      >
+        <User class="size-3.5" />
+        account
       </DropdownMenu.Item>
       <DropdownMenu.Item
         onclick={() => auth.logout()}
