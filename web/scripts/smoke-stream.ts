@@ -2,6 +2,19 @@ import assert from "node:assert/strict";
 
 import { createServer } from "vite";
 
+interface SmokeHastNode {
+  tagName?: string;
+  properties?: Record<string, unknown>;
+  children?: SmokeHastNode[];
+}
+
+function someHastNode(
+  node: SmokeHastNode,
+  predicate: (candidate: SmokeHastNode) => boolean,
+): boolean {
+  return predicate(node) || (node.children ?? []).some((child) => someHastNode(child, predicate));
+}
+
 const events = [
   ["token", { text: "Plan → " }],
   [
@@ -300,6 +313,47 @@ try {
   };
 
   localStorage.setItem("vault_id", "smoke-vault");
+
+  const markdownModule = (await server.ssrLoadModule("/src/lib/markdown.ts")) as {
+    parseMarkdown: (source: string) => SmokeHastNode;
+  };
+  const footnoteModule = (await server.ssrLoadModule("/src/lib/footnote-notes.ts")) as {
+    buildFootnotePresentation: (
+      roots: readonly SmokeHastNode[],
+      idPrefix: string,
+    ) => { notes: { content: SmokeHastNode }[] };
+  };
+  const unresolvedTree = markdownModule.parseMarkdown(
+    "A streaming reference[^later] without its definition yet.",
+  );
+  const unresolvedFootnotes = footnoteModule.buildFootnotePresentation(
+    [unresolvedTree],
+    "stream-smoke",
+  );
+  assert.equal(unresolvedFootnotes.notes.length, 0);
+
+  const resolvedTree = markdownModule.parseMarkdown(
+    "A resolved reference[^ready].\n\n[^ready]: A [live link](/docs/guide.md).",
+  );
+  const resolvedFootnotes = footnoteModule.buildFootnotePresentation(
+    [resolvedTree],
+    "stream-smoke",
+  );
+  assert.equal(resolvedFootnotes.notes.length, 1);
+  assert.equal(
+    someHastNode(
+      resolvedFootnotes.notes[0].content,
+      (node) => node.properties?.dataFootnoteBackref != null,
+    ),
+    false,
+  );
+  assert.equal(
+    someHastNode(
+      resolvedFootnotes.notes[0].content,
+      (node) => node.properties?.href === "/docs/guide.md",
+    ),
+    true,
+  );
 
   const queryModule = (await server.ssrLoadModule("/src/lib/api/query.ts")) as {
     streamQuery: (question: string, options: { mode: "query" | "btw" }) => AsyncGenerator<unknown>;

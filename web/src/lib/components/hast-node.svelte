@@ -1,5 +1,6 @@
 <script lang="ts">
   import * as Popover from "$lib/components/ui/popover";
+  import type { FootnoteDefinitions } from "$lib/footnote-notes";
   import type { HastNode } from "$lib/markdown-plugins";
   import { cn } from "$lib/utils";
   import HastNodeView from "./hast-node.svelte";
@@ -15,7 +16,10 @@
     topLevel = false,
     footnoteMode = "popover",
     activeFootnote = null,
+    pinnedFootnotes = [],
+    footnoteDefinitions,
     onFootnoteHover,
+    onFootnoteToggle,
   }: {
     node: HastNode;
     variant: Variant;
@@ -25,7 +29,10 @@
     topLevel?: boolean;
     footnoteMode?: "margin" | "popover";
     activeFootnote?: string | null;
+    pinnedFootnotes?: string[];
+    footnoteDefinitions?: FootnoteDefinitions;
     onFootnoteHover?: (id: string | null) => void;
+    onFootnoteToggle?: (id: string) => void;
   } = $props();
 
   const CLASSES: Record<Variant, Record<string, string>> = {
@@ -145,11 +152,6 @@
   const className = $derived(
     cn(CLASSES[variant][tag], propertyClass(node.properties)),
   );
-  const footnote = $derived(
-    typeof node.properties?.dataFootnoteContent === "string"
-      ? node.properties.dataFootnoteContent
-      : null,
-  );
   const footnoteId = $derived(
     typeof node.properties?.dataMarginNoteId === "string"
       ? node.properties.dataMarginNoteId
@@ -164,6 +166,12 @@
     typeof node.properties?.id === "string" ? node.properties.id : null,
   );
   const external = $derived(href?.startsWith("http") ?? false);
+  const footnoteContent = $derived(
+    footnoteId ? (footnoteDefinitions?.[footnoteId] ?? null) : null,
+  );
+  const pinnedFootnote = $derived(
+    footnoteId ? pinnedFootnotes.includes(footnoteId) : false,
+  );
 </script>
 
 {#if node.type === "root"}
@@ -175,13 +183,16 @@
       topLevel
       {footnoteMode}
       {activeFootnote}
+      {pinnedFootnotes}
+      {footnoteDefinitions}
       {onFootnoteHover}
+      {onFootnoteToggle}
     />
   {/each}
 {:else if node.type === "text"}
   {node.value ?? ""}
 {:else if node.type === "element" && tag === "a"}
-  {#if footnote && footnoteMode === "popover"}
+  {#if footnoteContent && footnoteMode === "popover"}
     {#if elementId}
       <span id={elementId} class="sr-only" aria-hidden="true"></span>
     {/if}
@@ -210,17 +221,28 @@
                 {onLinkClick}
                 {footnoteMode}
                 {activeFootnote}
+                {pinnedFootnotes}
+                {footnoteDefinitions}
                 {onFootnoteHover}
+                {onFootnoteToggle}
               />
             {/each}
           </a>
         {/snippet}
       </Popover.Trigger>
       <Popover.Content
+        data-footnote-popover
         side="top"
         class="w-[min(22rem,calc(100vw-2rem))] border border-gold-dim bg-popover p-3 text-left font-serif text-[length:var(--text-caption)] leading-[1.65] text-warm-faint shadow-[0_8px_28px_rgba(0,0,0,0.35)]"
-        >{footnote}</Popover.Content
       >
+        <HastNodeView
+          node={{ type: "root", children: footnoteContent }}
+          variant="panel"
+          {onLinkClick}
+          footnoteMode="popover"
+          {footnoteDefinitions}
+        />
+      </Popover.Content>
     </Popover.Root>
   {:else}
     <a
@@ -228,16 +250,24 @@
       {href}
       target={external ? "_blank" : undefined}
       rel={external ? "noopener noreferrer" : undefined}
-      onclick={onLinkClick}
+      onclick={(event) => {
+        if (footnoteId && onFootnoteToggle) {
+          event.preventDefault();
+          onFootnoteToggle(footnoteId);
+          return;
+        }
+        onLinkClick?.(event);
+      }}
       onmouseenter={() => footnoteId && onFootnoteHover?.(footnoteId)}
       onmouseleave={() => footnoteId && onFootnoteHover?.(null)}
       class={cn(
         "text-gold underline decoration-gold/30 underline-offset-2 transition-colors hover:decoration-gold/60",
         footnoteId &&
-          activeFootnote === footnoteId &&
+          (activeFootnote === footnoteId || pinnedFootnote) &&
           "text-warm-dim decoration-gold/60",
         className,
       )}
+      aria-expanded={footnoteId ? pinnedFootnote : undefined}
     >
       {#each node.children ?? [] as child, index (`${index}-${child.position?.start?.offset ?? ""}`)}
         <HastNodeView
@@ -246,7 +276,10 @@
           {onLinkClick}
           {footnoteMode}
           {activeFootnote}
+          {pinnedFootnotes}
+          {footnoteDefinitions}
           {onFootnoteHover}
+          {onFootnoteToggle}
         />
       {/each}
     </a>
@@ -269,7 +302,10 @@
         {onLinkClick}
         {footnoteMode}
         {activeFootnote}
+        {pinnedFootnotes}
+        {footnoteDefinitions}
         {onFootnoteHover}
+        {onFootnoteToggle}
       />
     {/each}
   </svelte:element>

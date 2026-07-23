@@ -1,9 +1,9 @@
 <script lang="ts">
-  import { browser } from "$app/environment";
   import { tick } from "svelte";
 
   import { findQuoteRange } from "$lib/anchor";
   import BtwThread from "$lib/components/btw-thread.svelte";
+  import FootnoteNotes from "$lib/components/footnote-notes.svelte";
   import HastNodeView from "$lib/components/hast-node.svelte";
   import { clearAnchorHighlights, setAnchorHighlights } from "$lib/highlight";
   import { parseMarkdown } from "$lib/markdown";
@@ -44,10 +44,6 @@
   } = $props();
 
   let root: HTMLDivElement | null = $state(null);
-  let viewportWide = $state(false);
-  let coarsePointer = $state(false);
-  let activeFootnote = $state<string | null>(null);
-  let notePositions = $state<Record<string, number>>({});
 
   const BLOCK_REF_RE = /\s*\^p\d+(?=\n|$)/gm;
   const displayText = $derived(
@@ -62,13 +58,13 @@
   // `stableTree` only depends on the stable prefix string. During token
   // streaming Svelte does not invalidate it until a complete block lands.
   const stableTree = $derived.by(() =>
-    stableSource ? parseAnswer(stableSource, "stable") : emptyRoot(),
+    stableSource ? parseAnswer(stableSource) : emptyRoot(),
   );
   const tailTree = $derived.by(() =>
-    streaming && tailSource ? parseAnswer(tailSource, "tail") : emptyRoot(),
+    streaming && tailSource ? parseAnswer(tailSource) : emptyRoot(),
   );
   const fullTree = $derived.by(() =>
-    streaming ? emptyRoot() : parseAnswer(displayText, "full"),
+    streaming ? emptyRoot() : parseAnswer(displayText),
   );
   const renderedOffsets = $derived.by(() => {
     const tree = streaming ? null : fullTree;
@@ -81,30 +77,9 @@
   const orphanedBtws = $derived(
     btws.filter((btw) => !renderedOffsets.has(btw.anchor.blockOffset)),
   );
-  const notes = $derived.by(() => {
-    const trees = streaming ? [stableTree, tailTree] : [fullTree];
-    return trees.flatMap(collectMarginNotes);
-  });
-  const marginEnabled = $derived(
-    marginFootnotes && viewportWide && !coarsePointer && !panelDocked,
+  const footnoteRoots = $derived(
+    streaming ? [stableTree, tailTree] : [fullTree],
   );
-
-  $effect(() => {
-    if (!browser) return;
-    const wide = window.matchMedia("(min-width: 1200px)");
-    const coarse = window.matchMedia("(any-pointer: coarse)");
-    const update = () => {
-      viewportWide = wide.matches;
-      coarsePointer = coarse.matches;
-    };
-    update();
-    wide.addEventListener("change", update);
-    coarse.addEventListener("change", update);
-    return () => {
-      wide.removeEventListener("change", update);
-      coarse.removeEventListener("change", update);
-    };
-  });
 
   $effect(() => {
     const currentRoot = root;
@@ -133,71 +108,12 @@
     };
   });
 
-  $effect(() => {
-    const currentRoot = root;
-    const currentNotes = notes;
-    const enabled = marginEnabled;
-    if (!currentRoot || !enabled || currentNotes.length === 0) {
-      notePositions = {};
-      return;
-    }
-
-    let frame = 0;
-    const measure = async () => {
-      await tick();
-      frame = requestAnimationFrame(() => {
-        const rootRect = currentRoot.getBoundingClientRect();
-        const next: Record<string, number> = {};
-        let cursor = 0;
-        for (const note of currentNotes) {
-          const reference = currentRoot.querySelector<HTMLElement>(
-            `[data-margin-note-id="${CSS.escape(note.id)}"]`,
-          );
-          const block =
-            reference?.closest<HTMLElement>("[data-footnote-block]") ??
-            reference;
-          const noteElement = currentRoot.querySelector<HTMLElement>(
-            `[data-margin-note="${CSS.escape(note.id)}"]`,
-          );
-          if (!block || !noteElement) continue;
-          const desired = block.getBoundingClientRect().top - rootRect.top;
-          const top = Math.max(desired, cursor);
-          next[note.id] = top;
-          cursor = top + noteElement.getBoundingClientRect().height + 8;
-        }
-        notePositions = next;
-      });
-    };
-
-    void measure();
-    const observer = new ResizeObserver(() => void measure());
-    observer.observe(currentRoot);
-    window.addEventListener("resize", measure);
-    return () => {
-      cancelAnimationFrame(frame);
-      observer.disconnect();
-      window.removeEventListener("resize", measure);
-    };
-  });
-
   function emptyRoot(): HastNode {
     return { type: "root", children: [] };
   }
 
-  function parseAnswer(source: string, prefix: string): HastNode {
+  function parseAnswer(source: string): HastNode {
     const tree = parseMarkdown(source);
-    let index = 0;
-    const walk = (node: HastNode): void => {
-      if (
-        node.tagName === "a" &&
-        node.properties?.dataFootnoteRef === true &&
-        typeof node.properties.dataFootnoteContent === "string"
-      ) {
-        node.properties.dataMarginNoteId = `${exchangeId}-${prefix}-fn-${index++}`;
-      }
-      node.children?.forEach(walk);
-    };
-    walk(tree);
     if (stripBlockRefs && resolveBlockRefs) {
       assignBlockRefIds(tree, text);
     }
@@ -256,22 +172,6 @@
     walk(tree);
   }
 
-  function collectMarginNotes(
-    tree: HastNode,
-  ): { id: string; content: string }[] {
-    const found: { id: string; content: string }[] = [];
-    const walk = (node: HastNode): void => {
-      const id = node.properties?.dataMarginNoteId;
-      const content = node.properties?.dataFootnoteContent;
-      if (typeof id === "string" && typeof content === "string") {
-        found.push({ id, content });
-      }
-      node.children?.forEach(walk);
-    };
-    walk(tree);
-    return found;
-  }
-
   function handleSelect(event: MouseEvent, offset: number): void {
     if (streaming) return;
     const selection = window.getSelection();
@@ -295,93 +195,102 @@
   }
 </script>
 
-<div bind:this={root} class="relative select-text">
-  {#if streaming}
-    {#each stableTree.children ?? [] as node, index (node.position?.start?.offset == null ? `fallback:${index}` : `offset:${node.position.start.offset}`)}
-      {@const offset = node.position?.start?.offset}
-      <HastNodeView
-        {node}
-        {variant}
-        blockOffset={offset}
-        topLevel
-        onBlockMouseUp={handleSelect}
-        {onLinkClick}
-        footnoteMode={marginEnabled ? "margin" : "popover"}
-        {activeFootnote}
-        onFootnoteHover={(id) => (activeFootnote = id)}
-      />
-    {/each}
-    {#each tailTree.children ?? [] as node, index (node.position?.start?.offset == null ? `fallback:${index}` : `offset:${node.position.start.offset}`)}
-      {@const offset = node.position?.start?.offset}
-      <HastNodeView
-        {node}
-        {variant}
-        blockOffset={offset}
-        topLevel
-        onBlockMouseUp={handleSelect}
-        {onLinkClick}
-        footnoteMode={marginEnabled ? "margin" : "popover"}
-        {activeFootnote}
-        onFootnoteHover={(id) => (activeFootnote = id)}
-      />
-    {/each}
-  {:else}
-    {#each fullTree.children ?? [] as node, index (node.position?.start?.offset == null ? `fallback:${index}` : `offset:${node.position.start.offset}`)}
-      {@const offset = node.position?.start?.offset}
-      <HastNodeView
-        {node}
-        {variant}
-        blockOffset={offset}
-        topLevel
-        onBlockMouseUp={handleSelect}
-        {onLinkClick}
-        footnoteMode={marginEnabled ? "margin" : "popover"}
-        {activeFootnote}
-        onFootnoteHover={(id) => (activeFootnote = id)}
-      />
-      {#if offset != null}
-        {#each btws.filter((btw) => btw.anchor.blockOffset === offset) as btw (btw.id)}
-          <BtwThread
-            {btw}
-            onReply={onBtwReply}
-            onDismiss={onBtwDismiss}
-            onSpinOff={onBtwSpinOff}
-          />
-        {/each}
-      {/if}
-    {/each}
-  {/if}
-
-  {#if streaming}
-    <span
-      class="ml-px inline-block h-[13px] w-0.5 animate-[blink_1s_step-end_infinite] bg-gold align-middle"
-    ></span>
-  {/if}
-
-  {#each orphanedBtws as btw (btw.id)}
-    <BtwThread
-      {btw}
-      onReply={onBtwReply}
-      onDismiss={onBtwDismiss}
-      onSpinOff={onBtwSpinOff}
-    />
-  {/each}
-
-  {#if marginEnabled}
-    <div class="pointer-events-none absolute inset-0 print:hidden">
-      {#each notes as note (note.id)}
-        <aside
-          data-margin-note={note.id}
-          class={`pointer-events-auto absolute left-[calc(100%+2rem)] w-[clamp(150px,calc((100vw-740px)/2-3rem),260px)] font-serif text-[length:var(--text-caption)] leading-[1.6] transition-colors ${
-            activeFootnote === note.id ? "text-warm-dim" : "text-warm-ghost"
-          } ${note.id in notePositions ? "opacity-100" : "opacity-0"}`}
-          style:top={`${notePositions[note.id] ?? 0}px`}
-          onmouseenter={() => (activeFootnote = note.id)}
-          onmouseleave={() => (activeFootnote = null)}
-        >
-          {note.content}
-        </aside>
+<FootnoteNotes
+  bind:root
+  roots={footnoteRoots}
+  idPrefix={`${exchangeId}-fn`}
+  {marginFootnotes}
+  {panelDocked}
+  resetKey={`${streaming}:${displayText}`}
+  {onLinkClick}
+  class="select-text"
+>
+  {#snippet children({
+    footnoteMode,
+    footnoteDefinitions,
+    activeFootnote,
+    pinnedFootnotes,
+    onFootnoteHover,
+    onFootnoteToggle,
+  })}
+    {#if streaming}
+      {#each stableTree.children ?? [] as node, index (node.position?.start?.offset == null ? `fallback:${index}` : `offset:${node.position.start.offset}`)}
+        {@const offset = node.position?.start?.offset}
+        <HastNodeView
+          {node}
+          {variant}
+          blockOffset={offset}
+          topLevel
+          onBlockMouseUp={handleSelect}
+          {onLinkClick}
+          {footnoteMode}
+          {footnoteDefinitions}
+          {activeFootnote}
+          {pinnedFootnotes}
+          {onFootnoteHover}
+          {onFootnoteToggle}
+        />
       {/each}
-    </div>
-  {/if}
-</div>
+      {#each tailTree.children ?? [] as node, index (node.position?.start?.offset == null ? `fallback:${index}` : `offset:${node.position.start.offset}`)}
+        {@const offset = node.position?.start?.offset}
+        <HastNodeView
+          {node}
+          {variant}
+          blockOffset={offset}
+          topLevel
+          onBlockMouseUp={handleSelect}
+          {onLinkClick}
+          {footnoteMode}
+          {footnoteDefinitions}
+          {activeFootnote}
+          {pinnedFootnotes}
+          {onFootnoteHover}
+          {onFootnoteToggle}
+        />
+      {/each}
+    {:else}
+      {#each fullTree.children ?? [] as node, index (node.position?.start?.offset == null ? `fallback:${index}` : `offset:${node.position.start.offset}`)}
+        {@const offset = node.position?.start?.offset}
+        <HastNodeView
+          {node}
+          {variant}
+          blockOffset={offset}
+          topLevel
+          onBlockMouseUp={handleSelect}
+          {onLinkClick}
+          {footnoteMode}
+          {footnoteDefinitions}
+          {activeFootnote}
+          {pinnedFootnotes}
+          {onFootnoteHover}
+          {onFootnoteToggle}
+        />
+        {#if offset != null}
+          {#each btws.filter((btw) => btw.anchor.blockOffset === offset) as btw (btw.id)}
+            <BtwThread
+              {btw}
+              onReply={onBtwReply}
+              onDismiss={onBtwDismiss}
+              onSpinOff={onBtwSpinOff}
+            />
+          {/each}
+        {/if}
+      {/each}
+    {/if}
+
+    {#if streaming}
+      <span
+        class="ml-px inline-block h-[13px] w-0.5 animate-[blink_1s_step-end_infinite] bg-gold align-middle"
+      ></span>
+    {/if}
+
+    {#each orphanedBtws as btw (btw.id)}
+      <BtwThread
+        {btw}
+        onReply={onBtwReply}
+        onDismiss={onBtwDismiss}
+        onSpinOff={onBtwSpinOff}
+      />
+    {/each}
+  {/snippet}
+</FootnoteNotes>

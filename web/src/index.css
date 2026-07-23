@@ -350,7 +350,16 @@
     @apply text-gold text-[11px];
   }
   [data-footnotes] {
-    @apply border-t border-ink-border mt-8 pt-4;
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    clip-path: inset(50%);
+    white-space: nowrap;
+    border: 0;
   }
   [data-footnotes] ol {
     @apply list-decimal list-inside text-[12px] leading-[1.7] text-warm-faint space-y-2;
@@ -550,6 +559,26 @@
     left: 0;
     top: 0;
     width: 100%;
+  }
+
+  /* Restore standard paper footnotes; gutter/popover affordances are screen-only. */
+  [data-footnotes] {
+    position: static !important;
+    width: auto !important;
+    height: auto !important;
+    padding: 1rem 0 0 !important;
+    margin: 2rem 0 0 !important;
+    overflow: visible !important;
+    clip: auto !important;
+    clip-path: none !important;
+    white-space: normal !important;
+    border: 0 !important;
+    border-top: 1px solid var(--ink-border) !important;
+  }
+  [data-footnote-backref],
+  [data-margin-notes],
+  [data-footnote-popover] {
+    display: none !important;
   }
 
   /* The app shell is a stack of overflow:hidden / h-screen boxes; let the
