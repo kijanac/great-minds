@@ -1,5 +1,5 @@
-import { loadSessionMarkdown } from "@/api/sessions";
-import type { Exchange } from "@/lib/types";
+import { loadSessionMarkdown } from "$lib/api/sessions";
+import type { Exchange } from "$lib/types";
 
 function slugify(text: string): string {
   return text

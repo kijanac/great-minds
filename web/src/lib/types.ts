@@ -1,4 +1,4 @@
-import type { SourceRef, ThinkingBlock } from "@/api/schemas";
+import type { SourceRef, ThinkingBlock } from "$lib/api/schemas";
 
 export type { SourceRef, ThinkingBlock };
 

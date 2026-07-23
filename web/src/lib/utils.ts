@@ -1,7 +1,7 @@
 import { clsx, type ClassValue } from "clsx";
 import { twMerge } from "tailwind-merge";
 
-import type { Exchange, HistoryMessage, TextAnchor } from "@/lib/types";
+import type { Exchange, HistoryMessage, TextAnchor } from "$lib/types";
 
 export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));

@@ -1,15 +1,9 @@
-import path from "path"
-import { defineConfig } from "vite"
-import react from "@vitejs/plugin-react"
-import tailwindcss from "@tailwindcss/vite"
+import tailwindcss from "@tailwindcss/vite";
+import { sveltekit } from "@sveltejs/kit/vite";
+import { defineConfig } from "vite";
 
 export default defineConfig({
-  plugins: [react(), tailwindcss()],
-  resolve: {
-    alias: {
-      "@": path.resolve(__dirname, "./src"),
-    },
-  },
+  plugins: [tailwindcss(), sveltekit()],
   server: {
     proxy: {
       // Match vault-scoped SSE endpoint: /api/vaults/{id}/query/stream
@@ -19,9 +13,9 @@ export default defineConfig({
         configure: (proxy) => {
           proxy.on("proxyRes", (proxyRes) => {
             // Disable buffering for SSE
-            proxyRes.headers["cache-control"] = "no-cache"
-            proxyRes.headers["x-accel-buffering"] = "no"
-          })
+            proxyRes.headers["cache-control"] = "no-cache";
+            proxyRes.headers["x-accel-buffering"] = "no";
+          });
         },
       },
       "/api": {
@@ -30,4 +24,4 @@ export default defineConfig({
       },
     },
   },
-})
+});

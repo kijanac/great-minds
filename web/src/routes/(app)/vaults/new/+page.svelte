@@ -1,0 +1,1 @@
+<p>/vaults/new</p>
