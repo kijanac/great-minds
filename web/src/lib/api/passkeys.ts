@@ -79,7 +79,17 @@ export async function registerPasskey(
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ ...response, name }),
   });
-  if (!res.ok) throw new Error("Failed to register passkey");
+  if (!res.ok) {
+    const detail = await res
+      .json()
+      .then((body: unknown) =>
+        typeof body === "object" && body !== null && "detail" in body
+          ? String((body as { detail: unknown }).detail)
+          : null,
+      )
+      .catch(() => null);
+    throw new Error(detail ?? `Failed to register passkey (${res.status})`);
+  }
   return readJson(res, passkeySchema);
 }
 
