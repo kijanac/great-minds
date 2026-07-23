@@ -137,6 +137,12 @@
           >
             {sources.length > 0 ? "reading..." : "thinking..."}
           </div>
+        {:else if !exchange.streaming && !exchange.answer}
+          <div
+            class="mb-[9px] font-mono text-[length:var(--text-chrome)] tracking-[0.06em] text-warm-ghost italic"
+          >
+            reply interrupted — ask again below
+          </div>
         {:else}
           <div
             class="mb-[9px] text-[length:var(--text-small)] leading-[1.72] text-warm-faint"

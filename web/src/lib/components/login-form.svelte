@@ -47,10 +47,19 @@
     await goto("/");
   }
 
+  // Safari wedges its WebAuthn state when a conditional request is aborted
+  // by SPA navigation, hanging later ceremonies until a full reload.
+  const isSafari = (() => {
+    const agent = navigator.userAgent;
+    return (
+      agent.includes("Safari/") && !/Chrome\/|CriOS\/|Edg\/|Android/.test(agent)
+    );
+  })();
+
   onMount(() => {
     let active = true;
     passkeysSupported = browserSupportsWebAuthn();
-    if (passkeysSupported) {
+    if (passkeysSupported && !isSafari) {
       void browserSupportsWebAuthnAutofill()
         .then((supported) => {
           if (!supported || !active) return;

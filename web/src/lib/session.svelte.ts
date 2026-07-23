@@ -256,6 +256,24 @@ export class Session {
     const controller = new AbortController();
     this.#btwControllers.add(controller);
 
+    // Replies stream for up to ~90s; persist the user turn now so a reload
+    // mid-stream keeps the thread (completion re-appends and supersedes).
+    if (this.sessionId) {
+      appendBtw(this.sessionId, {
+        quote: anchor.quote,
+        blockOffset: anchor.blockOffset,
+        context: anchor.context,
+        exchangeId: ownerExchangeId,
+        exchanges: [...priorExchanges, { query: userText, thinking: [], answer: "" }].map(
+          (exchange) => ({
+            query: exchange.query,
+            thinking: exchange.thinking,
+            answer: exchange.answer,
+          }),
+        ),
+      }).catch((error) => console.warn("Failed to persist pending btw:", error));
+    }
+
     void (async () => {
       try {
         const { answer, sources } = await consumeStream(
