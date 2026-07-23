@@ -3,6 +3,13 @@ import { twMerge } from "tailwind-merge";
 
 import type { Exchange, HistoryMessage, TextAnchor } from "$lib/types";
 
+export type {
+  WithElementRef,
+  WithoutChild,
+  WithoutChildren,
+  WithoutChildrenOrChild,
+} from "$lib/components/ui/types";
+
 export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
 }

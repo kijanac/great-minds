@@ -19,10 +19,12 @@ export type WikiArticleList = z.infer<typeof wikiArticleListSchema>;
 export async function fetchWikiArticles(params?: {
   limit?: number;
   offset?: number;
+  contains?: string;
 }): Promise<WikiArticleList> {
   const query = new URLSearchParams();
   if (params?.limit !== undefined) query.set("limit", String(params.limit));
   if (params?.offset !== undefined) query.set("offset", String(params.offset));
+  if (params?.contains) query.set("contains", params.contains);
   const qs = query.toString();
   const path = vaultPath(`/wiki${qs ? `?${qs}` : ""}`);
   const res = await apiFetch(path);

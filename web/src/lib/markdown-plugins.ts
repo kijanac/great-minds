@@ -10,6 +10,10 @@ export interface HastNode {
   value?: string;
   properties?: Record<string, unknown>;
   children?: HastNode[];
+  position?: {
+    start?: { line?: number; column?: number; offset?: number };
+    end?: { line?: number; column?: number; offset?: number };
+  };
 }
 
 function isFootnoteRefSup(node: HastNode): boolean {
