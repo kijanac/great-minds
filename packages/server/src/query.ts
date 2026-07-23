@@ -599,66 +599,28 @@ export const QueryServiceLive = Layer.effect(
       name: string,
       args: Record<string, unknown>,
     ): Promise<QuerySourceData | undefined> => {
+      const source = pendingSourceEvent(name, args);
+      if (source === undefined) return undefined;
       if (name === "read_document" || name === "expand_context") {
         const path = asStringArg(args, "path");
-        const type = path.startsWith("wiki/") ? "article" : "raw";
-        const title = await titleForPath(context.vaultId, path);
-        if (type === "article") {
+        if (path.startsWith("wiki/")) {
           context.trace.articlesRead.push(path);
         } else {
           context.trace.sourcesRead.push(path);
         }
-        if (name === "expand_context") {
-          return {
-            type,
-            path,
-            title,
-            start: asIntArg(args, "start"),
-            end: asIntArg(args, "end"),
-          };
-        }
-        return { type, path, title };
-      }
-      if (name === "search_content") {
-        const query = asStringArg(args, "query");
-        context.trace.searches.push(query);
-        return { type: "search", query, scope: "kb" };
-      }
-      if (name === "web_search") {
-        const query = asStringArg(args, "query");
-        context.trace.searches.push(`web: ${query}`);
-        return { type: "search", query, scope: "web" };
-      }
-      if (name === "search_in_document") {
+      } else if (name === "search_content") {
+        context.trace.searches.push(asStringArg(args, "query"));
+      } else if (name === "web_search") {
+        context.trace.searches.push(`web: ${asStringArg(args, "query")}`);
+      } else if (name === "search_in_document") {
         const query = asStringArg(args, "query");
         const path = asStringArg(args, "path");
         context.trace.searches.push(`${query} · in ${path}`);
-        return {
-          type: "search",
-          query,
-          scope: "kb",
-          path,
-          title: await titleForPath(context.vaultId, path),
-        };
       }
-      if (name === "query_documents") {
-        const filters = Object.fromEntries(truthyEntries(args));
-        return { type: "query", filters };
+      if ("title" in source && source.path !== undefined) {
+        return { ...source, title: await titleForPath(context.vaultId, source.path) };
       }
-      if (name === "list_articles") {
-        const filters = Object.fromEntries(
-          ["contains", "sort"].flatMap((key) => {
-            const value = args[key];
-            return value ? [[key, value]] : [];
-          }),
-        );
-        return { type: "query", filters };
-      }
-      if (name === "linked_articles") {
-        const path = asStringArg(args, "path");
-        return { type: "links", path, title: await titleForPath(context.vaultId, path) };
-      }
-      return undefined;
+      return source;
     };
 
     const pendingSourceEvent = (

@@ -15,7 +15,7 @@ import {
   type UserSuggestionIntent,
   type Uuid,
 } from "@great-minds/domain";
-import { and, eq, sql } from "drizzle-orm";
+import { and, eq, inArray, sql } from "drizzle-orm";
 import { Cause, Context, Effect, Layer } from "effect";
 import * as WorkflowEngine from "effect/unstable/workflow/WorkflowEngine";
 
@@ -392,7 +392,10 @@ export const IngestServiceLive = Layer.effect(
           completedAt: phaseStatus === "failed" ? sql`now()` : undefined,
           updatedAt: sql`now()`,
         })
-        .where(eq(pipelineRuns.id, jobId))
+        // Terminal states, including cancelled, are never overwritten by progress.
+        .where(
+          and(eq(pipelineRuns.id, jobId), inArray(pipelineRuns.status, ["pending", "running"])),
+        )
         .pipe(dieDatabase);
 
     return {
