@@ -1,6 +1,9 @@
 <script lang="ts">
   import X from "@lucide/svelte/icons/x";
-  import { startRegistration } from "@simplewebauthn/browser";
+  import {
+    startRegistration,
+    WebAuthnAbortService,
+  } from "@simplewebauthn/browser";
   import {
     createMutation,
     createQuery,
@@ -35,6 +38,7 @@
   let naming = $state(false);
   let name = $state("");
   let adding = $state(false);
+  let cancelled = false;
   let addError = $state<string | null>(null);
   let deleteOpen = $state(false);
   let selected = $state<Passkey | null>(null);
@@ -76,6 +80,7 @@
     const trimmed = name.trim();
     if (adding || !trimmed) return;
     adding = true;
+    cancelled = false;
     addError = null;
     try {
       const optionsJSON = await getPasskeyRegistrationOptions();
@@ -84,13 +89,24 @@
       await queryClient.invalidateQueries({ queryKey: ["passkeys"] });
       naming = false;
     } catch (error) {
-      addError =
-        error instanceof Error
-          ? error.message
-          : "We couldn't add this passkey. Please try again.";
+      if (!cancelled) {
+        addError =
+          error instanceof Error
+            ? error.message
+            : "We couldn't add this passkey. Please try again.";
+      }
     } finally {
       adding = false;
     }
+  }
+
+  function cancelAdd(): void {
+    if (adding) {
+      cancelled = true;
+      WebAuthnAbortService.cancelCeremony();
+      return;
+    }
+    naming = false;
   }
 
   function askToDelete(passkey: Passkey): void {
@@ -148,8 +164,7 @@
       <Button
         variant="ghost"
         size="sm"
-        onclick={() => (naming = false)}
-        disabled={adding}
+        onclick={cancelAdd}
         class="h-auto px-2 py-1.5 font-mono text-[length:var(--text-chrome)] tracking-[0.06em] text-warm-ghost hover:bg-transparent hover:text-warm-faint"
       >
         cancel
