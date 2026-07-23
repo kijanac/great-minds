@@ -47,8 +47,7 @@
     await goto("/");
   }
 
-  // Safari wedges its WebAuthn state when a conditional request is aborted
-  // by SPA navigation, hanging later ceremonies until a full reload.
+  // Aborted conditional requests wedge Safari's WebAuthn state until reload.
   const isSafari = (() => {
     const agent = navigator.userAgent;
     return (

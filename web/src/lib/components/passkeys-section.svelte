@@ -74,8 +74,7 @@
     addError = null;
   }
 
-  // credentials.create() must run inside the click's transient activation
-  // (Safari): no modal or unbounded pause between gesture and ceremony.
+  // Safari: no modal or pause between the gesture and credentials.create().
   async function addPasskey(): Promise<void> {
     const trimmed = name.trim();
     if (adding || !trimmed) return;

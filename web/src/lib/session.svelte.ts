@@ -216,8 +216,7 @@ export class Session {
     const ownerExchangeId = target?.exchangeId ?? "";
     const turnId = genId("ex");
 
-    // React's queued state update meant history saw the pre-optimistic thread.
-    // Capture it explicitly before the immediate Svelte mutation.
+    // History must exclude the optimistic turn added below.
     const baseHistory = threadToHistory(this.thread);
 
     const patchBtwExchanges = (mutate: (exchanges: Exchange[]) => Exchange[]): void => {
@@ -256,8 +255,7 @@ export class Session {
     const controller = new AbortController();
     this.#btwControllers.add(controller);
 
-    // Replies stream for up to ~90s; persist the user turn now so a reload
-    // mid-stream keeps the thread (completion re-appends and supersedes).
+    // Reload mid-stream must not lose the turn; completion append supersedes.
     if (this.sessionId) {
       appendBtw(this.sessionId, {
         quote: anchor.quote,
