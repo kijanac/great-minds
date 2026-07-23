@@ -5,7 +5,7 @@ import { Cause, Effect, Layer } from "effect";
 import { dieDatabase } from "./db-defects.ts";
 
 // Frozen Alembic head; update only as part of docs/ts-migration-m5.md M5.4.
-export const EXPECTED_ALEMBIC_REVISION = "0006";
+export const EXPECTED_ALEMBIC_REVISION = "0007";
 
 export const schemaHeadMismatchMessage = (actual: string | null) =>
   `Database schema revision mismatch: expected alembic head ${EXPECTED_ALEMBIC_REVISION}, found ${actual ?? "<missing>"}`;

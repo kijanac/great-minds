@@ -54,6 +54,143 @@ export const TokenPair = Schema.Struct({
 });
 export type TokenPair = typeof TokenPair.Type;
 
+export const Base64Url = Schema.String.pipe(Schema.check(Schema.isPattern(/^[A-Za-z0-9_-]+$/)));
+export type Base64Url = typeof Base64Url.Type;
+
+export const AuthenticatorTransport = Schema.Literals([
+  "ble",
+  "cable",
+  "hybrid",
+  "internal",
+  "nfc",
+  "smart-card",
+  "usb",
+] as const);
+export type AuthenticatorTransport = typeof AuthenticatorTransport.Type;
+
+const PublicKeyCredentialDescriptor = Schema.Struct({
+  id: Base64Url,
+  type: Schema.Literal("public-key"),
+  transports: Schema.optionalKey(Schema.Array(AuthenticatorTransport)),
+});
+
+const ClientExtensionResults = Schema.Record(Schema.String, Schema.Unknown);
+
+const AuthenticatorAttachment = Schema.Literals(["cross-platform", "platform"] as const);
+
+const RegistrationResponse = Schema.Struct({
+  id: Base64Url,
+  rawId: Base64Url,
+  response: Schema.Struct({
+    clientDataJSON: Base64Url,
+    attestationObject: Base64Url,
+    authenticatorData: Schema.optionalKey(Base64Url),
+    transports: Schema.optionalKey(Schema.Array(AuthenticatorTransport)),
+    publicKeyAlgorithm: Schema.optionalKey(Schema.Number),
+    publicKey: Schema.optionalKey(Base64Url),
+  }),
+  authenticatorAttachment: Schema.optionalKey(AuthenticatorAttachment),
+  clientExtensionResults: ClientExtensionResults,
+  type: Schema.Literal("public-key"),
+});
+
+export const PasskeyRegistration = Schema.Struct({
+  ...RegistrationResponse.fields,
+  name: Schema.NonEmptyString.pipe(Schema.check(Schema.isPattern(/\S/))),
+});
+export type PasskeyRegistration = typeof PasskeyRegistration.Type;
+
+export const PasskeyAuthentication = Schema.Struct({
+  id: Base64Url,
+  rawId: Base64Url,
+  response: Schema.Struct({
+    clientDataJSON: Base64Url,
+    authenticatorData: Base64Url,
+    signature: Base64Url,
+    userHandle: Schema.optionalKey(Base64Url),
+  }),
+  authenticatorAttachment: Schema.optionalKey(AuthenticatorAttachment),
+  clientExtensionResults: ClientExtensionResults,
+  type: Schema.Literal("public-key"),
+});
+export type PasskeyAuthentication = typeof PasskeyAuthentication.Type;
+
+export const PasskeyRegistrationOptions = Schema.Struct({
+  rp: Schema.Struct({
+    id: Schema.optionalKey(Schema.String),
+    name: Schema.String,
+  }),
+  user: Schema.Struct({
+    id: Base64Url,
+    name: Schema.String,
+    displayName: Schema.String,
+  }),
+  challenge: Base64Url,
+  pubKeyCredParams: Schema.Array(
+    Schema.Struct({
+      alg: Schema.Number,
+      type: Schema.Literal("public-key"),
+    }),
+  ),
+  timeout: Schema.optionalKey(Schema.Number),
+  excludeCredentials: Schema.optionalKey(Schema.Array(PublicKeyCredentialDescriptor)),
+  authenticatorSelection: Schema.optionalKey(
+    Schema.Struct({
+      authenticatorAttachment: Schema.optionalKey(AuthenticatorAttachment),
+      residentKey: Schema.optionalKey(
+        Schema.Literals(["discouraged", "preferred", "required"] as const),
+      ),
+      requireResidentKey: Schema.optionalKey(Schema.Boolean),
+      userVerification: Schema.optionalKey(
+        Schema.Literals(["discouraged", "preferred", "required"] as const),
+      ),
+    }),
+  ),
+  hints: Schema.optionalKey(
+    Schema.Array(Schema.Literals(["hybrid", "security-key", "client-device"] as const)),
+  ),
+  attestation: Schema.optionalKey(Schema.Literals(["direct", "enterprise", "none"] as const)),
+  attestationFormats: Schema.optionalKey(
+    Schema.Array(
+      Schema.Literals([
+        "fido-u2f",
+        "packed",
+        "android-safetynet",
+        "android-key",
+        "tpm",
+        "apple",
+        "none",
+      ] as const),
+    ),
+  ),
+  extensions: Schema.optionalKey(Schema.Record(Schema.String, Schema.Unknown)),
+});
+export type PasskeyRegistrationOptions = typeof PasskeyRegistrationOptions.Type;
+
+export const PasskeyAuthenticationOptions = Schema.Struct({
+  challenge: Base64Url,
+  timeout: Schema.optionalKey(Schema.Number),
+  rpId: Schema.optionalKey(Schema.String),
+  allowCredentials: Schema.optionalKey(Schema.Array(PublicKeyCredentialDescriptor)),
+  userVerification: Schema.optionalKey(
+    Schema.Literals(["discouraged", "preferred", "required"] as const),
+  ),
+  hints: Schema.optionalKey(
+    Schema.Array(Schema.Literals(["hybrid", "security-key", "client-device"] as const)),
+  ),
+  extensions: Schema.optionalKey(Schema.Record(Schema.String, Schema.Unknown)),
+});
+export type PasskeyAuthenticationOptions = typeof PasskeyAuthenticationOptions.Type;
+
+export const Passkey = Schema.Struct({
+  id: Uuid,
+  name: Schema.String,
+  created_at: IsoDateTime,
+  last_used_at: Schema.NullOr(IsoDateTime),
+  transports: Schema.Array(AuthenticatorTransport),
+});
+export type Passkey = typeof Passkey.Type;
+
 export const ApiKeyCreate = Schema.Struct({
   label: Schema.String,
 });
@@ -903,13 +1040,17 @@ export class AuthMiddleware extends HttpApiMiddleware.Service<
 
 const CreatedApiKeyWithSecret = ApiKeyWithSecret.pipe(HttpApiSchema.status("Created"));
 const ApiKeys = Schema.Array(ApiKey);
+const CreatedPasskey = Passkey.pipe(HttpApiSchema.status("Created"));
+const Passkeys = Schema.Array(Passkey);
 const CreatedVault = Vault.pipe(HttpApiSchema.status("Created"));
 const CreatedMember = MemberWithEmail.pipe(HttpApiSchema.status("Created"));
 const CreatedProposal = Proposal.pipe(HttpApiSchema.status("Created"));
 const CreatedIngestedDocument = IngestedDocument.pipe(HttpApiSchema.status("Created"));
 const CreatedJobResponse = JobResponse.pipe(HttpApiSchema.status("Created"));
 const CreatedSessionResponse = CreateSessionResponse.pipe(HttpApiSchema.status("Created"));
-const CreatedPromoteExchangeResponse = PromoteExchangeResponse.pipe(HttpApiSchema.status("Created"));
+const CreatedPromoteExchangeResponse = PromoteExchangeResponse.pipe(
+  HttpApiSchema.status("Created"),
+);
 const QueryStream = HttpApiSchema.StreamSse({ events: QuerySseEvent });
 const AcceptedJobResponse = JobResponse.pipe(HttpApiSchema.status(202));
 const JobStream = HttpApiSchema.StreamSse({ events: JobSseEvent });
@@ -930,6 +1071,32 @@ export const AuthApiGroup = HttpApiGroup.make("auth").add(
     success: TokenPair,
     error: UnauthorizedValidationErrors,
   }),
+  HttpApiEndpoint.post("passkeyRegisterOptions", "/auth/passkeys/register-options", {
+    success: PasskeyRegistrationOptions,
+  }).middleware(AuthMiddleware),
+  HttpApiEndpoint.post("registerPasskey", "/auth/passkeys/register", {
+    payload: PasskeyRegistration,
+    success: CreatedPasskey,
+    error: ValidationErrors,
+  }).middleware(AuthMiddleware),
+  HttpApiEndpoint.post("passkeyAuthenticationOptions", "/auth/passkeys/options", {
+    success: PasskeyAuthenticationOptions,
+  }),
+  HttpApiEndpoint.post("verifyPasskey", "/auth/passkeys/verify", {
+    payload: PasskeyAuthentication,
+    success: TokenPair,
+    error: UnauthorizedValidationErrors,
+  }),
+  HttpApiEndpoint.get("listPasskeys", "/auth/passkeys", {
+    success: Passkeys,
+  }).middleware(AuthMiddleware),
+  HttpApiEndpoint.delete("deletePasskey", "/auth/passkeys/:id", {
+    params: {
+      id: Uuid,
+    },
+    success: HttpApiSchema.NoContent,
+    error: NotFoundValidationErrors,
+  }).middleware(AuthMiddleware),
   HttpApiEndpoint.post("createApiKey", "/auth/api-keys", {
     payload: ApiKeyCreate,
     success: CreatedApiKeyWithSecret,
@@ -1079,21 +1246,17 @@ export const SourcesApiGroup = HttpApiGroup.make("sources").add(
     success: HttpApiSchema.NoContent,
     error: DocumentErrors,
   }).middleware(AuthMiddleware),
-  HttpApiEndpoint.post(
-    "requestSourceDeletion",
-    "/vaults/:vault_id/raw/sources/*",
-    {
-      params: SourcePathParams,
-      success: CreatedProposal,
-      error: [
-        BadRequestResponse,
-        ForbiddenResponse,
-        NotFoundResponse,
-        ConflictResponse,
-        ValidationResponse,
-      ] as const,
-    },
-  ).middleware(AuthMiddleware),
+  HttpApiEndpoint.post("requestSourceDeletion", "/vaults/:vault_id/raw/sources/*", {
+    params: SourcePathParams,
+    success: CreatedProposal,
+    error: [
+      BadRequestResponse,
+      ForbiddenResponse,
+      NotFoundResponse,
+      ConflictResponse,
+      ValidationResponse,
+    ] as const,
+  }).middleware(AuthMiddleware),
 );
 
 export const ProposalsApiGroup = HttpApiGroup.make("proposals").add(
@@ -1149,14 +1312,18 @@ export const IngestApiGroup = HttpApiGroup.make("ingest").add(
     success: CreatedIngestedDocument,
     error: [BadRequestResponse, ForbiddenResponse, ValidationResponse] as const,
   }).middleware(AuthMiddleware),
-  HttpApiEndpoint.post("checkStagedFileDupes", "/vaults/:vault_id/ingest/staged-files/check-dupes", {
-    params: {
-      vault_id: Uuid,
+  HttpApiEndpoint.post(
+    "checkStagedFileDupes",
+    "/vaults/:vault_id/ingest/staged-files/check-dupes",
+    {
+      params: {
+        vault_id: Uuid,
+      },
+      payload: CheckDupesRequest,
+      success: CheckDupesResponse,
+      error: ForbiddenValidationErrors,
     },
-    payload: CheckDupesRequest,
-    success: CheckDupesResponse,
-    error: ForbiddenValidationErrors,
-  }).middleware(AuthMiddleware),
+  ).middleware(AuthMiddleware),
   HttpApiEndpoint.post("signStagedFiles", "/vaults/:vault_id/ingest/staged-files/sign", {
     params: {
       vault_id: Uuid,
@@ -1305,12 +1472,7 @@ export const SessionsApiGroup = HttpApiGroup.make("sessions").add(
         exchange_id: Schema.String,
       },
       success: CreatedPromoteExchangeResponse,
-      error: [
-        BadRequestResponse,
-        ForbiddenResponse,
-        NotFoundResponse,
-        ValidationResponse,
-      ] as const,
+      error: [BadRequestResponse, ForbiddenResponse, NotFoundResponse, ValidationResponse] as const,
     },
   ).middleware(AuthMiddleware),
   HttpApiEndpoint.get("listSessions", "/vaults/:vault_id/sessions", {

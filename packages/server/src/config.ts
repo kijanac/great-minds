@@ -9,6 +9,9 @@ export type AppConfigShape = {
   readonly jwtAccessExpiryMinutes: number;
   readonly jwtRefreshExpiryDays: number;
   readonly authCodeExpiryMinutes: number;
+  readonly webauthnRpId: string;
+  readonly webauthnOrigins: readonly string[];
+  readonly webauthnRpName: string;
   readonly resendApiKey: Option.Option<Redacted.Redacted<string>>;
   readonly resendFromEmail: Option.Option<string>;
   readonly dataDir: string;
@@ -69,8 +72,19 @@ const appConfig = Config.all({
   databaseUrl: redactedNonEmpty("DATABASE_URL"),
   jwtSecret: redactedNonEmpty("JWT_SECRET"),
   jwtAccessExpiryMinutes: positiveInt("JWT_ACCESS_EXPIRY_MINUTES").pipe(Config.withDefault(30)),
-  jwtRefreshExpiryDays: positiveInt("JWT_REFRESH_EXPIRY_DAYS").pipe(Config.withDefault(7)),
+  jwtRefreshExpiryDays: positiveInt("JWT_REFRESH_EXPIRY_DAYS").pipe(Config.withDefault(60)),
   authCodeExpiryMinutes: positiveInt("AUTH_CODE_EXPIRY_MINUTES").pipe(Config.withDefault(10)),
+  webauthnRpId: nonEmptyString("WEBAUTHN_RP_ID").pipe(Config.withDefault("localhost")),
+  webauthnOrigins: nonEmptyString("WEBAUTHN_ORIGINS").pipe(
+    Config.withDefault("http://localhost:5173"),
+    Config.map((raw) =>
+      raw
+        .split(",")
+        .map((origin) => origin.trim())
+        .filter((origin) => origin.length > 0),
+    ),
+  ),
+  webauthnRpName: nonEmptyString("WEBAUTHN_RP_NAME").pipe(Config.withDefault("Great Minds")),
   resendApiKey: Config.option(redactedNonEmpty("RESEND_API_KEY")),
   resendFromEmail: Config.option(nonEmptyString("RESEND_FROM_EMAIL")),
   dataDir: nonEmptyString("DATA_DIR").pipe(Config.withDefault("/data")),
@@ -105,12 +119,8 @@ const appConfig = Config.all({
     Config.withDefault("anthropic/claude-sonnet-4.6"),
   ),
   renderModel: nonEmptyString("RENDER_MODEL").pipe(Config.withDefault(DEFAULT_RENDER_MODEL)),
-  compileEnrichConcurrency: positiveInt("COMPILE_ENRICH_CONCURRENCY").pipe(
-    Config.withDefault(20),
-  ),
-  compileWriteConcurrency: positiveInt("COMPILE_WRITE_CONCURRENCY").pipe(
-    Config.withDefault(3),
-  ),
+  compileEnrichConcurrency: positiveInt("COMPILE_ENRICH_CONCURRENCY").pipe(Config.withDefault(20)),
+  compileWriteConcurrency: positiveInt("COMPILE_WRITE_CONCURRENCY").pipe(Config.withDefault(3)),
   compilePartitionTargetTokens: positiveInt("COMPILE_PARTITION_TARGET_TOKENS").pipe(
     Config.withDefault(100_000),
   ),
@@ -146,6 +156,17 @@ const appConfig = Config.all({
   serverPort: Config.port("PORT").pipe(Config.withDefault(8787)),
 }).pipe(
   Config.mapOrFail((config) => {
+    if (config.webauthnOrigins.length === 0) {
+      return Effect.fail(
+        new Config.ConfigError(
+          new Schema.SchemaError(
+            new SchemaIssue.InvalidValue(Option.some(config.webauthnOrigins), {
+              message: "WEBAUTHN_ORIGINS must contain at least one origin",
+            }),
+          ),
+        ),
+      );
+    }
     if (config.storageBackend === "local") {
       return Effect.succeed(config);
     }

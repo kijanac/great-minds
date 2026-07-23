@@ -129,6 +129,9 @@ const testConfig = (url: string, dataDir: string): AppConfigShape => ({
   jwtAccessExpiryMinutes: 30,
   jwtRefreshExpiryDays: 7,
   authCodeExpiryMinutes: 10,
+  webauthnRpId: "localhost",
+  webauthnOrigins: ["http://localhost:5173"],
+  webauthnRpName: "Great Minds",
   resendApiKey: Option.none(),
   resendFromEmail: Option.none(),
   dataDir,
@@ -1124,7 +1127,11 @@ describe("read-only HTTP integration", () => {
       "gamma-lines",
     ]);
 
-    const noMatch = await api("GET", `/vaults/${id.vaultAlpha}/wiki?contains=nonexistent`, aliceToken);
+    const noMatch = await api(
+      "GET",
+      `/vaults/${id.vaultAlpha}/wiki?contains=nonexistent`,
+      aliceToken,
+    );
     expect(noMatch.status).toBe(200);
     expect(asPage(noMatch.body).items).toEqual([]);
 

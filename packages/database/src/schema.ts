@@ -1,6 +1,8 @@
 import { sql } from "drizzle-orm";
 import {
+  bigint,
   boolean,
+  check,
   customType,
   doublePrecision,
   index,
@@ -82,6 +84,40 @@ export const refreshTokens = pgTable(
     createdAt: timestamptz("created_at").defaultNow().notNull(),
   },
   (table) => [uniqueIndex("ix_refresh_tokens_token_hash").on(table.tokenHash)],
+);
+
+export const webauthnCredentials = pgTable(
+  "webauthn_credentials",
+  {
+    id: uuid("id").primaryKey(),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    credentialId: text("credential_id").notNull(),
+    publicKey: text("public_key").notNull(),
+    signCount: bigint("sign_count", { mode: "number" }).default(0).notNull(),
+    transports: text("transports")
+      .array()
+      .default(sql`'{}'::text[]`)
+      .notNull(),
+    name: text("name").notNull(),
+    createdAt: timestamptz("created_at").defaultNow().notNull(),
+    lastUsedAt: timestamptz("last_used_at"),
+  },
+  (table) => [unique("uq_webauthn_credentials_credential_id").on(table.credentialId)],
+);
+
+export const webauthnChallenges = pgTable(
+  "webauthn_challenges",
+  {
+    challenge: text("challenge").primaryKey(),
+    kind: text("kind").notNull(),
+    userId: uuid("user_id").references(() => users.id, { onDelete: "cascade" }),
+    expiresAt: timestamptz("expires_at").notNull(),
+  },
+  (table) => [
+    check("ck_webauthn_challenges_kind", sql`${table.kind} in ('registration', 'authentication')`),
+  ],
 );
 
 export const vaults = pgTable("vaults", {

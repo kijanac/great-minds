@@ -1,7 +1,22 @@
 <script lang="ts">
   import { goto } from "$app/navigation";
+  import {
+    browserSupportsWebAuthn,
+    browserSupportsWebAuthnAutofill,
+    startAuthentication,
+    WebAuthnAbortService,
+  } from "@simplewebauthn/browser";
+  import { onMount } from "svelte";
 
-  import { loginWithCode, requestCode } from "$lib/api/client";
+  import {
+    loginWithCode,
+    loginWithTokenPair,
+    requestCode,
+  } from "$lib/api/client";
+  import {
+    getPasskeyAuthenticationOptions,
+    verifyPasskey,
+  } from "$lib/api/passkeys";
   import { auth } from "$lib/auth.svelte";
   import { Alert, AlertDescription } from "$lib/components/ui/alert";
   import { Label } from "$lib/components/ui/label";
@@ -13,6 +28,47 @@
   let code = $state("");
   let error = $state("");
   let loading = $state(false);
+  let passkeyLoading = $state(false);
+  let passkeysSupported = $state(false);
+
+  async function authenticateWithPasskey(
+    useBrowserAutofill: boolean,
+    shouldContinue: () => boolean = () => true,
+  ): Promise<void> {
+    const optionsJSON = await getPasskeyAuthenticationOptions();
+    if (!shouldContinue()) return;
+    const response = await startAuthentication({
+      optionsJSON,
+      useBrowserAutofill,
+    });
+    const tokens = await verifyPasskey(response);
+    await loginWithTokenPair(tokens);
+    auth.login();
+    await goto("/");
+  }
+
+  onMount(() => {
+    let active = true;
+    passkeysSupported = browserSupportsWebAuthn();
+    if (passkeysSupported) {
+      void browserSupportsWebAuthnAutofill()
+        .then((supported) => {
+          if (!supported || !active) return;
+          void authenticateWithPasskey(true, () => active).catch(
+            (reason: unknown) => {
+              console.warn("Conditional passkey sign-in ended", reason);
+            },
+          );
+        })
+        .catch((reason: unknown) => {
+          console.warn("Conditional passkey sign-in ended", reason);
+        });
+    }
+    return () => {
+      active = false;
+      WebAuthnAbortService.cancelCeremony();
+    };
+  });
 
   async function handleRequestCode(event: SubmitEvent): Promise<void> {
     event.preventDefault();
@@ -54,6 +110,18 @@
     code = "";
     error = "";
   }
+
+  async function handlePasskeySignIn(): Promise<void> {
+    if (passkeyLoading) return;
+    passkeyLoading = true;
+    try {
+      await authenticateWithPasskey(false);
+    } catch (reason) {
+      console.warn("Passkey sign-in ended", reason);
+    } finally {
+      passkeyLoading = false;
+    }
+  }
 </script>
 
 <div class="flex h-screen items-center justify-center bg-ink">
@@ -89,6 +157,7 @@
           placeholder="you@example.com"
           required
           autofocus
+          autocomplete="username webauthn"
           class="w-full rounded-sm border border-ink-border bg-ink-raised px-4 py-3 font-mono text-small text-warm placeholder:text-warm-ghost outline-none focus:border-gold-dim"
         />
         <button
@@ -99,6 +168,16 @@
           {loading ? "Sending..." : "Send code"}
         </button>
       </form>
+      {#if passkeysSupported}
+        <button
+          type="button"
+          onclick={() => void handlePasskeySignIn()}
+          disabled={passkeyLoading}
+          class="mt-4 w-full py-2 text-center font-mono text-caption tracking-[0.04em] text-warm-faint transition-colors hover:text-warm focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-gold disabled:opacity-50"
+        >
+          {passkeyLoading ? "waiting for passkey…" : "sign in with a passkey"}
+        </button>
+      {/if}
     {:else}
       <form onsubmit={handleVerifyCode} class="space-y-4">
         <Label for="login-code" class="sr-only">Verification code</Label>

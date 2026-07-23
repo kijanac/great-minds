@@ -64,6 +64,120 @@ POST /v1/auth/refresh
 
 Returns a new `TokenPair` (same shape as verify-code).
 
+### Start passkey registration
+
+```
+POST /v1/auth/passkeys/register-options
+```
+
+Requires authentication. Returns WebAuthn
+`PublicKeyCredentialCreationOptionsJSON` for the current user. The credential is
+configured as discoverable (`residentKey: "required"`) and existing credential
+IDs are excluded.
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| Request body | — | no | This endpoint has no request body |
+
+### Complete passkey registration
+
+```
+POST /v1/auth/passkeys/register
+```
+
+Requires authentication. Send the
+`RegistrationResponseJSON` returned by the browser, plus a human-readable
+`name`.
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `id` | string | yes | Base64url credential ID |
+| `rawId` | string | yes | Base64url raw credential ID |
+| `response` | object | yes | Browser authenticator attestation response |
+| `clientExtensionResults` | object | yes | Browser WebAuthn extension results |
+| `type` | string | yes | Must be `"public-key"` |
+| `authenticatorAttachment` | string | no | `"platform"` or `"cross-platform"` |
+| `name` | string | yes | A label such as `"Safari on macOS"` |
+
+Returns the created passkey metadata with `201 Created`. Verification failures
+return `422` with a sanitized message.
+
+### Start passkey authentication
+
+```
+POST /v1/auth/passkeys/options
+```
+
+Unauthenticated. Returns WebAuthn `PublicKeyCredentialRequestOptionsJSON` with
+an empty `allowCredentials` list for discoverable, usernameless sign-in.
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| Request body | — | no | This endpoint has no request body |
+
+### Verify a passkey and get tokens
+
+```
+POST /v1/auth/passkeys/verify
+```
+
+Unauthenticated. Send the `AuthenticationResponseJSON` returned by the browser.
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `id` | string | yes | Base64url credential ID |
+| `rawId` | string | yes | Base64url raw credential ID |
+| `response` | object | yes | Browser authenticator assertion response |
+| `clientExtensionResults` | object | yes | Browser WebAuthn extension results |
+| `type` | string | yes | Must be `"public-key"` |
+| `authenticatorAttachment` | string | no | `"platform"` or `"cross-platform"` |
+
+Returns a `TokenPair` (the same shape as verify-code). Invalid, expired, reused,
+and unknown credentials all return the same sanitized `401` response.
+
+### List passkeys
+
+```
+GET /v1/auth/passkeys
+```
+
+Requires authentication.
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| Request body | — | no | This endpoint has no request body |
+
+Returns the current user's passkeys:
+
+```json
+[
+  {
+    "id": "uuid",
+    "name": "Safari on macOS",
+    "created_at": "2026-07-23T12:00:00Z",
+    "last_used_at": null,
+    "transports": ["internal", "hybrid"]
+  }
+]
+```
+
+Credential public keys and signature counters are never returned.
+
+### Delete a passkey
+
+```
+DELETE /v1/auth/passkeys/{id}
+```
+
+Requires authentication.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `id` | UUID | yes | Passkey record ID |
+
+Returns `204 No Content`. A passkey that does not belong to the current user is
+reported as `404`.
+
 ### Create an API key
 
 ```

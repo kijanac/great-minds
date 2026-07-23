@@ -97,6 +97,14 @@ export const apiKeyCreatedSchema = apiKeySchema.extend({
   raw_key: z.string(),
 });
 
+export const passkeySchema = z.object({
+  id: z.string(),
+  name: z.string(),
+  created_at: z.string(),
+  last_used_at: z.string().nullable(),
+  transports: z.array(z.enum(["ble", "cable", "hybrid", "internal", "nfc", "smart-card", "usb"])),
+});
+
 export const proposalStatusSchema = z.enum(["pending", "approved", "rejected"]);
 
 export const proposalOverviewSchema = z.object({
@@ -129,6 +137,7 @@ export type MembershipList = z.infer<typeof membershipListSchema>;
 export type VaultConfig = z.infer<typeof vaultConfigSchema>;
 export type ApiKey = z.infer<typeof apiKeySchema>;
 export type ApiKeyCreated = z.infer<typeof apiKeyCreatedSchema>;
+export type Passkey = z.infer<typeof passkeySchema>;
 export type ProposalStatus = z.infer<typeof proposalStatusSchema>;
 export type ProposalOverview = z.infer<typeof proposalOverviewSchema>;
 export type Proposal = z.infer<typeof proposalSchema>;

@@ -39,6 +39,7 @@ import { IngestService } from "./ingest.ts";
 import { JobsService } from "./jobs.ts";
 import { LintService } from "./lint.ts";
 import { StructuredLogger } from "./logging.ts";
+import { PasskeysService } from "./passkeys.ts";
 import { ProposalsService } from "./proposals.ts";
 import { QueryService } from "./query.ts";
 import { SessionsService } from "./sessions.ts";
@@ -239,6 +240,58 @@ const AuthHandlersLive = HttpApiBuilder.group(MountedGreatMindsApi, "auth", (han
         Effect.gen(function* () {
           const auth = yield* AuthService;
           return yield* auth.refresh(payload.refresh_token);
+        }),
+      ),
+    )
+    .handle("passkeyRegisterOptions", () =>
+      withDomainErrors(
+        Effect.gen(function* () {
+          const passkeys = yield* PasskeysService;
+          const current = yield* CurrentAuth;
+          return yield* passkeys.registrationOptions(current.user_id, current.email);
+        }),
+      ),
+    )
+    .handle("registerPasskey", ({ payload }) =>
+      withDomainErrors(
+        Effect.gen(function* () {
+          const passkeys = yield* PasskeysService;
+          const current = yield* CurrentAuth;
+          return yield* passkeys.register(current.user_id, payload);
+        }),
+      ),
+    )
+    .handle("passkeyAuthenticationOptions", () =>
+      withDomainErrors(
+        Effect.gen(function* () {
+          const passkeys = yield* PasskeysService;
+          return yield* passkeys.authenticationOptions();
+        }),
+      ),
+    )
+    .handle("verifyPasskey", ({ payload }) =>
+      withDomainErrors(
+        Effect.gen(function* () {
+          const passkeys = yield* PasskeysService;
+          return yield* passkeys.verify(payload);
+        }),
+      ),
+    )
+    .handle("listPasskeys", () =>
+      withDomainErrors(
+        Effect.gen(function* () {
+          const passkeys = yield* PasskeysService;
+          const current = yield* CurrentAuth;
+          return yield* passkeys.list(current.user_id);
+        }),
+      ),
+    )
+    .handle("deletePasskey", ({ params }) =>
+      withDomainErrors(
+        Effect.gen(function* () {
+          const passkeys = yield* PasskeysService;
+          const current = yield* CurrentAuth;
+          yield* passkeys.delete(current.user_id, params.id);
         }),
       ),
     )
@@ -578,7 +631,7 @@ const JobsHandlersLive = HttpApiBuilder.group(MountedGreatMindsApi, "jobs", (han
       withDomainErrors(
         Effect.gen(function* () {
           const ingest = yield* IngestService;
-        const current = yield* CurrentAuth;
+          const current = yield* CurrentAuth;
           return yield* ingest.startUrlJob(current.user_id, params.vault_id, payload);
         }),
       ),

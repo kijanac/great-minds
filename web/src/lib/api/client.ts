@@ -14,10 +14,12 @@ export async function readJson<T>(res: Response, schema: z.ZodType<T>): Promise<
   return schema.parse(await res.json());
 }
 
-const authTokensSchema = z.object({
+export const authTokensSchema = z.object({
   access_token: z.string(),
   refresh_token: z.string(),
+  token_type: z.literal("bearer"),
 });
+export type AuthTokens = z.infer<typeof authTokensSchema>;
 
 function getAccessToken(): string | null {
   return localStorage.getItem("access_token");
@@ -34,6 +36,10 @@ export function getVaultId(): string | null {
 function storeTokens(accessToken: string, refreshToken: string) {
   localStorage.setItem("access_token", accessToken);
   localStorage.setItem("refresh_token", refreshToken);
+}
+
+export function publicApiFetch(path: string, init?: RequestInit): Promise<Response> {
+  return fetch(new URL(`${API_BASE}${path}`, location.origin), init);
 }
 
 export function storeVaultId(vaultId: string) {
@@ -123,7 +129,7 @@ export async function ensureVaultId(): Promise<void> {
 }
 
 export async function loginWithCode(email: string, code: string): Promise<void> {
-  const res = await fetch(`${API_BASE}/auth/verify-code`, {
+  const res = await publicApiFetch("/auth/verify-code", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ email, code }),
@@ -131,8 +137,11 @@ export async function loginWithCode(email: string, code: string): Promise<void> 
   if (!res.ok) throw new Error("Invalid or expired code");
 
   const data = await readJson(res, authTokensSchema);
-  storeTokens(data.access_token, data.refresh_token);
+  await loginWithTokenPair(data);
+}
 
+export async function loginWithTokenPair(data: AuthTokens): Promise<void> {
+  storeTokens(data.access_token, data.refresh_token);
   try {
     const vaultId = await resolveDefaultVault();
     storeVaultId(vaultId);

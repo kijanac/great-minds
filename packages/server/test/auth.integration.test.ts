@@ -8,6 +8,8 @@ import {
   users,
   vaultMemberships,
   vaults,
+  webauthnChallenges,
+  webauthnCredentials,
 } from "@great-minds/database";
 import type { TokenPair } from "@great-minds/domain";
 import { and, desc, eq, ne } from "drizzle-orm";
@@ -60,6 +62,9 @@ const testConfig = (url: string): AppConfigShape => ({
   jwtAccessExpiryMinutes: 30,
   jwtRefreshExpiryDays: 7,
   authCodeExpiryMinutes: 10,
+  webauthnRpId: "localhost",
+  webauthnOrigins: ["http://localhost:5173"],
+  webauthnRpName: "Great Minds",
   resendApiKey: Option.none(),
   resendFromEmail: Option.none(),
   dataDir: "/tmp/great-minds-auth-storage",
@@ -117,6 +122,8 @@ const resetDatabase = () =>
     Effect.gen(function* () {
       const db = yield* Database;
       yield* db.delete(authCodes).pipe(Effect.orDie);
+      yield* db.delete(webauthnChallenges).pipe(Effect.orDie);
+      yield* db.delete(webauthnCredentials).pipe(Effect.orDie);
       yield* db.delete(users).pipe(Effect.orDie);
     }),
   );
@@ -228,6 +235,42 @@ const signIn = async (email: string) => {
   expect(verify.status).toBe(200);
   return tokenPairFrom(verify.body);
 };
+
+const encodedClientData = (challenge: string, type: "webauthn.create" | "webauthn.get") =>
+  Buffer.from(
+    JSON.stringify({
+      type,
+      challenge,
+      origin: "http://localhost:5173",
+    }),
+  ).toString("base64url");
+
+const failedRegistration = (challenge: string) => ({
+  id: "ZmFrZS1jcmVkZW50aWFs",
+  rawId: "ZmFrZS1jcmVkZW50aWFs",
+  response: {
+    clientDataJSON: encodedClientData(challenge, "webauthn.create"),
+    attestationObject: "AA",
+    transports: ["internal"],
+  },
+  authenticatorAttachment: "platform",
+  clientExtensionResults: {},
+  type: "public-key",
+  name: "Test device",
+});
+
+const failedAuthentication = (challenge: string) => ({
+  id: "dW5rbm93bi1jcmVkZW50aWFs",
+  rawId: "dW5rbm93bi1jcmVkZW50aWFs",
+  response: {
+    clientDataJSON: encodedClientData(challenge, "webauthn.get"),
+    authenticatorData: "AA",
+    signature: "AA",
+  },
+  authenticatorAttachment: "platform",
+  clientExtensionResults: {},
+  type: "public-key",
+});
 
 const userByEmail = (email: string) =>
   runDb(
@@ -504,6 +547,227 @@ describe("auth HTTP integration", () => {
     expect(rejected.headers.get("access-control-allow-origin")).not.toBe(
       "https://evil.example.com",
     );
+  });
+
+  it("creates discoverable passkey options, persists two-minute single-use challenges, and enforces auth", async () => {
+    const unauthenticatedRegistration = await api("POST", "/auth/passkeys/register-options");
+    expect(unauthenticatedRegistration.status).toBe(401);
+
+    const pair = await signIn("passkey-options@example.com");
+    const user = await userByEmail("passkey-options@example.com");
+    await runDb(
+      Effect.gen(function* () {
+        const db = yield* Database;
+        yield* db
+          .insert(webauthnChallenges)
+          .values({
+            challenge: "expired-challenge",
+            kind: "authentication",
+            userId: null,
+            expiresAt: new Date(initialTime.getTime() - 1),
+          })
+          .pipe(Effect.orDie);
+      }),
+    );
+
+    const authentication = await api("POST", "/auth/passkeys/options");
+    expect(authentication.status).toBe(200);
+    const authenticationOptions = asRecord(authentication.body);
+    const authenticationChallenge = asString(
+      authenticationOptions.challenge,
+      "authentication challenge",
+    );
+    expect(authenticationOptions.rpId).toBe("localhost");
+    expect(authenticationOptions.allowCredentials).toEqual([]);
+    expect(authenticationOptions.userVerification).toBe("preferred");
+
+    const registration = await api(
+      "POST",
+      "/auth/passkeys/register-options",
+      undefined,
+      pair.access_token,
+    );
+    expect(registration.status).toBe(200);
+    const registrationOptions = asRecord(registration.body);
+    const registrationChallenge = asString(registrationOptions.challenge, "registration challenge");
+    expect(asRecord(registrationOptions.rp)).toEqual({
+      id: "localhost",
+      name: "Great Minds",
+    });
+    expect(asRecord(registrationOptions.user).name).toBe("passkey-options@example.com");
+    expect(registrationOptions.excludeCredentials).toEqual([]);
+    expect(asRecord(registrationOptions.authenticatorSelection)).toMatchObject({
+      residentKey: "required",
+      userVerification: "preferred",
+    });
+    const unauthenticatedRegister = await api(
+      "POST",
+      "/auth/passkeys/register",
+      failedRegistration(registrationChallenge),
+    );
+    expect(unauthenticatedRegister.status).toBe(401);
+
+    const challenges = await runDb(
+      Effect.gen(function* () {
+        const db = yield* Database;
+        return yield* db.select().from(webauthnChallenges).pipe(Effect.orDie);
+      }),
+    );
+    expect(challenges).toHaveLength(2);
+    expect(challenges).not.toContainEqual(
+      expect.objectContaining({ challenge: "expired-challenge" }),
+    );
+    expect(challenges).toContainEqual(
+      expect.objectContaining({
+        challenge: authenticationChallenge,
+        kind: "authentication",
+        userId: null,
+        expiresAt: new Date(initialTime.getTime() + 2 * 60 * 1000),
+      }),
+    );
+    expect(challenges).toContainEqual(
+      expect.objectContaining({
+        challenge: registrationChallenge,
+        kind: "registration",
+        userId: user.id,
+        expiresAt: new Date(initialTime.getTime() + 2 * 60 * 1000),
+      }),
+    );
+
+    const unauthenticatedList = await api("GET", "/auth/passkeys");
+    expect(unauthenticatedList.status).toBe(401);
+    const unauthenticatedDelete = await api("DELETE", `/auth/passkeys/${randomUUID()}`);
+    expect(unauthenticatedDelete.status).toBe(401);
+  });
+
+  it("consumes registration challenges once even when cryptographic verification fails", async () => {
+    const pair = await signIn("passkey-register-failure@example.com");
+    const options = await api(
+      "POST",
+      "/auth/passkeys/register-options",
+      undefined,
+      pair.access_token,
+    );
+    const challenge = asString(asRecord(options.body).challenge, "registration challenge");
+    const response = failedRegistration(challenge);
+
+    const first = await api("POST", "/auth/passkeys/register", response, pair.access_token);
+    expect(first.status).toBe(422);
+    expect(first.body).toEqual({
+      detail: "Passkey registration could not be verified",
+    });
+
+    const second = await api("POST", "/auth/passkeys/register", response, pair.access_token);
+    expect(second.status).toBe(422);
+    expect(second.body).toEqual({
+      detail: "Passkey registration could not be verified",
+    });
+
+    const remaining = await runDb(
+      Effect.gen(function* () {
+        const db = yield* Database;
+        return yield* db
+          .select()
+          .from(webauthnChallenges)
+          .where(eq(webauthnChallenges.challenge, challenge))
+          .pipe(Effect.orDie);
+      }),
+    );
+    expect(remaining).toEqual([]);
+  });
+
+  it("returns the same sanitized 401 for unknown passkeys and reused authentication challenges", async () => {
+    const options = await api("POST", "/auth/passkeys/options");
+    const challenge = asString(asRecord(options.body).challenge, "authentication challenge");
+    const response = failedAuthentication(challenge);
+
+    const first = await api("POST", "/auth/passkeys/verify", response);
+    expect(first.status).toBe(401);
+    expect(first.body).toEqual({ detail: "Passkey authentication failed" });
+
+    const second = await api("POST", "/auth/passkeys/verify", response);
+    expect(second.status).toBe(401);
+    expect(second.body).toEqual({ detail: "Passkey authentication failed" });
+  });
+
+  it("lists only safe passkey metadata and restricts deletion to the owner", async () => {
+    const ownerPair = await signIn("passkey-owner@example.com");
+    const otherPair = await signIn("passkey-other@example.com");
+    const owner = await userByEmail("passkey-owner@example.com");
+    const other = await userByEmail("passkey-other@example.com");
+    const ownerCredentialId = randomUUID();
+    const otherCredentialId = randomUUID();
+    await runDb(
+      Effect.gen(function* () {
+        const db = yield* Database;
+        yield* db
+          .insert(webauthnCredentials)
+          .values([
+            {
+              id: ownerCredentialId,
+              userId: owner.id,
+              credentialId: "b3duZXItY3JlZGVudGlhbA",
+              publicKey: "AQID",
+              signCount: 3,
+              transports: ["internal", "hybrid"],
+              name: "Owner laptop",
+              createdAt: new Date("2026-07-01T09:00:00.000Z"),
+              lastUsedAt: new Date("2026-07-08T10:00:00.000Z"),
+            },
+            {
+              id: otherCredentialId,
+              userId: other.id,
+              credentialId: "b3RoZXItY3JlZGVudGlhbA",
+              publicKey: "BAUG",
+              signCount: 0,
+              transports: ["usb"],
+              name: "Other key",
+              createdAt: new Date("2026-07-02T09:00:00.000Z"),
+              lastUsedAt: null,
+            },
+          ])
+          .pipe(Effect.orDie);
+      }),
+    );
+
+    const listed = await api("GET", "/auth/passkeys", undefined, ownerPair.access_token);
+    expect(listed.status).toBe(200);
+    expect(listed.body).toEqual([
+      {
+        id: ownerCredentialId,
+        name: "Owner laptop",
+        created_at: "2026-07-01T09:00:00.000Z",
+        last_used_at: "2026-07-08T10:00:00.000Z",
+        transports: ["internal", "hybrid"],
+      },
+    ]);
+    expect(JSON.stringify(listed.body)).not.toContain("public");
+    expect(JSON.stringify(listed.body)).not.toContain("credential_id");
+    expect(JSON.stringify(listed.body)).not.toContain("sign_count");
+
+    const deleteOther = await api(
+      "DELETE",
+      `/auth/passkeys/${otherCredentialId}`,
+      undefined,
+      ownerPair.access_token,
+    );
+    expect(deleteOther.status).toBe(404);
+    expect(deleteOther.body).toEqual({ detail: "Passkey not found" });
+
+    const otherStillListed = await api("GET", "/auth/passkeys", undefined, otherPair.access_token);
+    expect(asArray(otherStillListed.body)).toHaveLength(1);
+
+    const deleteOwn = await api(
+      "DELETE",
+      `/auth/passkeys/${ownerCredentialId}`,
+      undefined,
+      ownerPair.access_token,
+    );
+    expect(deleteOwn.status).toBe(204);
+    expect(deleteOwn.text).toBe("");
+
+    const afterDelete = await api("GET", "/auth/passkeys", undefined, ownerPair.access_token);
+    expect(afterDelete.body).toEqual([]);
   });
 
   it("creates, lists, and revokes API keys with ownership checks", async () => {

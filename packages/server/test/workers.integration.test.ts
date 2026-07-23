@@ -105,6 +105,9 @@ const config: AppConfigShape = {
   jwtAccessExpiryMinutes: 30,
   jwtRefreshExpiryDays: 7,
   authCodeExpiryMinutes: 10,
+  webauthnRpId: "localhost",
+  webauthnOrigins: ["http://localhost:5173"],
+  webauthnRpName: "Great Minds",
   resendApiKey: Option.none(),
   resendFromEmail: Option.none(),
   dataDir: "/tmp/gm-worker-test",
@@ -292,8 +295,8 @@ const RenderFailurePhasesLive = Layer.effect(
   Effect.gen(function* () {
     const pipeline = yield* PipelineRunsService;
     return {
-    archiveTransitions: () => Effect.void,
-    flushLlmCost: () => Effect.void,
+      archiveTransitions: () => Effect.void,
+      flushLlmCost: () => Effect.void,
       ingest: () => Effect.void,
       extract: () => Effect.void,
       abstract: () =>
@@ -539,7 +542,14 @@ describe("M4.2 durable workers", () => {
           {
             vaultId: id.vault,
             pipelineRunId: id.cancelIngestRun,
-            files: [{ name: "cancel.md", size: staged.get(hash)!.length, hash, mimetype: "text/markdown" }],
+            files: [
+              {
+                name: "cancel.md",
+                size: staged.get(hash)!.length,
+                hash,
+                mimetype: "text/markdown",
+              },
+            ],
           },
           { discard: true },
         );
@@ -1149,7 +1159,8 @@ describe("M4.2 durable workers", () => {
             dispatchedTaskId: id.maskedCompileIntent,
           })
           .pipe(Effect.orDie);
-        yield* db.execute(sql`
+        yield* db
+          .execute(sql`
           INSERT INTO cluster_messages (
             id,
             message_id,
@@ -1173,7 +1184,8 @@ describe("M4.2 durable workers", () => {
             true,
             900000000000000001
           )
-        `).pipe(Effect.orDie);
+        `)
+          .pipe(Effect.orDie);
         const pipeline = yield* PipelineRunsService;
         return yield* pipeline.recoverZombies(new Date(Date.now() - 120_000));
       }),

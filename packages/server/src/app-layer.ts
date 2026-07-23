@@ -23,6 +23,7 @@ import { LanguageModel, LanguageModelLive } from "./llm.ts";
 import { StructuredLogger, StructuredLoggerLive } from "./logging.ts";
 import { Mailer, MailerLive } from "./mailer.ts";
 import { ParallelSearchLive, ParallelSearchService } from "./parallel.ts";
+import { PasskeysService, PasskeysServiceLive } from "./passkeys.ts";
 import { PipelineRunsServiceLive } from "./pipeline-runs.ts";
 import { ProposalsService, ProposalsServiceLive } from "./proposals.ts";
 import { QueryService, QueryServiceLive } from "./query.ts";
@@ -70,7 +71,8 @@ export type AppLayerServices =
   | VaultStorage
   | ProposalStorage
   | RandomBytesService
-  | AuthService;
+  | AuthService
+  | PasskeysService;
 
 export type AppLayerOverrides = {
   readonly config?: Layer.Layer<AppConfig>;
@@ -227,7 +229,11 @@ export const makeAppLayers = (overrides: AppLayerOverrides = {}) => {
     ReadServicesLive,
   ).pipe(Layer.provideMerge(BaseLive));
 
-  const ApiLive = AuthServiceLive.pipe(Layer.provideMerge(ServiceDepsLive));
+  const AuthLive = AuthServiceLive.pipe(Layer.provideMerge(ServiceDepsLive));
+  const ApiLive = PasskeysServiceLive.pipe(
+    Layer.provideMerge(AuthLive),
+    Layer.provideMerge(BaseLive),
+  );
   const AppLive = ApiLive.pipe(
     Layer.provideMerge(WorkflowsLive),
     Layer.provideMerge(PipelineRunsLive),

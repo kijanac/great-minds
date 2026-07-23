@@ -101,6 +101,9 @@ const testConfig = (
   jwtAccessExpiryMinutes: 30,
   jwtRefreshExpiryDays: 7,
   authCodeExpiryMinutes: 10,
+  webauthnRpId: "localhost",
+  webauthnOrigins: ["http://localhost:5173"],
+  webauthnRpName: "Great Minds",
   resendApiKey: Option.none(),
   resendFromEmail: Option.none(),
   dataDir,
@@ -429,17 +432,15 @@ describe("query stream", () => {
       bobToken,
     );
     expect(nonMember.response.status).toBe(403);
-    expect(nonMember.response.headers.get("content-type") ?? "").not.toContain(
-      "text/event-stream",
-    );
+    expect(nonMember.response.headers.get("content-type") ?? "").not.toContain("text/event-stream");
     expect(JSON.parse(nonMember.text)).toEqual({
       detail: "Only vault members can perform this action",
     });
 
-    const unknown = await api(
-      "/vaults/00000000-0000-4000-8000-000000029999/query",
-      { question: "Missing", history: [] },
-    );
+    const unknown = await api("/vaults/00000000-0000-4000-8000-000000029999/query", {
+      question: "Missing",
+      history: [],
+    });
     expect(unknown.response.status).toBe(404);
     expect(unknown.response.headers.get("content-type") ?? "").not.toContain("text/event-stream");
     expect(JSON.parse(unknown.text)).toEqual({ detail: "Vault not found" });
@@ -668,7 +669,9 @@ describe("query stream", () => {
 
   it("preloads origin documents with raw frontmatter intact", async () => {
     const language = makeScriptedLanguageModel({
-      streams: [{ kind: "parts", parts: [tokenPart("A"), finishPart("stop", "origin-frontmatter")] }],
+      streams: [
+        { kind: "parts", parts: [tokenPart("A"), finishPart("stop", "origin-frontmatter")] },
+      ],
     });
     await startHarness({ language });
 
@@ -740,7 +743,9 @@ describe("query stream", () => {
 
     const { text } = await api(queryPath, { question: "Find dual power" });
 
-    expect(text).toContain(sseBlock("source", { type: "search", query: "dual power", scope: "kb" }));
+    expect(text).toContain(
+      sseBlock("source", { type: "search", query: "dual power", scope: "kb" }),
+    );
     expect(embeddings.calls).toEqual([["dual power"]]);
     const toolMessage = language.streamCalls[1].messages.find(
       (message) => message.role === "tool" && message.tool_call_id === "tc-search",
@@ -788,9 +793,9 @@ describe("query stream", () => {
     await seedFixtures(true);
     state = { ...currentState(), token: await issueToken(id.alice) };
     await api(queryPath, { question: "Can config enable web without key?" });
-    expect(missingParallelLanguage.streamCalls[0].tools.map((tool) => tool.function.name)).not.toContain(
-      "web_search",
-    );
+    expect(
+      missingParallelLanguage.streamCalls[0].tools.map((tool) => tool.function.name),
+    ).not.toContain("web_search");
     expect(String(missingParallelLanguage.streamCalls[0].messages[0].content)).not.toContain(
       "WEB SEARCH",
     );
@@ -811,7 +816,10 @@ describe("query stream", () => {
       ],
       completions: [
         {
-          text: "```json\n" + JSON.stringify({ results: [{ index: 1, facts: ["Fact one"] }] }) + "\n```",
+          text:
+            "```json\n" +
+            JSON.stringify({ results: [{ index: 1, facts: ["Fact one"] }] }) +
+            "\n```",
           generationId: "extract-gen",
           usage: { cost: 0.004 },
         },

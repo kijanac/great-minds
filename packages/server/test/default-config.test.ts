@@ -2,8 +2,10 @@ import { execFile } from "node:child_process";
 import { readFile, readdir } from "node:fs/promises";
 import { promisify } from "node:util";
 
+import { ConfigProvider, Effect } from "effect";
 import { describe, expect, it } from "vitest";
 
+import { AppConfig, AppConfigLive } from "../src/config.ts";
 import {
   draftHintSystem,
   retrievalCore,
@@ -13,6 +15,27 @@ import {
 import { defaultVaultConfigText } from "../src/vaults.ts";
 
 const execFileAsync = promisify(execFile);
+
+describe("server config defaults", () => {
+  it("uses a 60-day refresh window and local WebAuthn defaults", async () => {
+    const provider = ConfigProvider.fromEnv({
+      env: {
+        DATABASE_URL: "postgresql://great-minds.test/great_minds",
+        JWT_SECRET: "default-config-test-secret",
+      },
+    });
+    const config = await Effect.runPromise(
+      Effect.gen(function* () {
+        return yield* AppConfig;
+      }).pipe(Effect.provide(AppConfigLive), Effect.provide(ConfigProvider.layer(provider))),
+    );
+
+    expect(config.jwtRefreshExpiryDays).toBe(60);
+    expect(config.webauthnRpId).toBe("localhost");
+    expect(config.webauthnOrigins).toEqual(["http://localhost:5173"]);
+    expect(config.webauthnRpName).toBe("Great Minds");
+  });
+});
 
 const pythonConstant = async (file: URL, constantName: string) => {
   const { stdout } = await execFileAsync("python3", [
@@ -50,21 +73,14 @@ describe("default vault config", () => {
 describe("hardcoded query prompts", () => {
   it("stay byte-equal to Python source constants", async () => {
     const querier = new URL("../../../src/great_minds/core/querier.py", import.meta.url);
-    const vaultConfig = new URL(
-      "../../../src/great_minds/core/vaults/config.py",
-      import.meta.url,
-    );
+    const vaultConfig = new URL("../../../src/great_minds/core/vaults/config.py", import.meta.url);
 
     await expect(pythonConstant(querier, "_RETRIEVAL_CORE")).resolves.toBe(retrievalCore);
-    await expect(pythonConstant(querier, "_WEB_SEARCH_GUIDANCE")).resolves.toBe(
-      webSearchGuidance,
-    );
+    await expect(pythonConstant(querier, "_WEB_SEARCH_GUIDANCE")).resolves.toBe(webSearchGuidance);
     await expect(pythonConstant(querier, "_WEB_FACT_EXTRACTION_PROMPT")).resolves.toBe(
       webFactExtractionPrompt,
     );
-    await expect(pythonConstant(vaultConfig, "_DRAFT_HINT_SYSTEM")).resolves.toBe(
-      draftHintSystem,
-    );
+    await expect(pythonConstant(vaultConfig, "_DRAFT_HINT_SYSTEM")).resolves.toBe(draftHintSystem);
   });
 });
 
