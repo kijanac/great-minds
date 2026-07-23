@@ -579,7 +579,7 @@ describe("auth HTTP integration", () => {
     );
     expect(authenticationOptions.rpId).toBe("localhost");
     expect(authenticationOptions.allowCredentials).toEqual([]);
-    expect(authenticationOptions.userVerification).toBe("preferred");
+    expect(authenticationOptions.userVerification).toBe("required");
 
     const registration = await api(
       "POST",
@@ -598,7 +598,7 @@ describe("auth HTTP integration", () => {
     expect(registrationOptions.excludeCredentials).toEqual([]);
     expect(asRecord(registrationOptions.authenticatorSelection)).toMatchObject({
       residentKey: "required",
-      userVerification: "preferred",
+      userVerification: "required",
     });
     const unauthenticatedRegister = await api(
       "POST",

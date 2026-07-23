@@ -210,7 +210,7 @@ export const PasskeysServiceLive = Layer.effect(
               })),
               authenticatorSelection: {
                 residentKey: "required",
-                userVerification: "preferred",
+                userVerification: "required",
               },
             }),
           ).pipe(Effect.orDie);
@@ -269,7 +269,7 @@ export const PasskeysServiceLive = Layer.effect(
             generateAuthenticationOptions({
               rpID: config.webauthnRpId,
               allowCredentials: [],
-              userVerification: "preferred",
+              userVerification: "required",
             }),
           ).pipe(Effect.orDie);
           yield* persistChallenge(options.challenge, "authentication", null, now);
