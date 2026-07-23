@@ -13,6 +13,7 @@
     card,
     content,
     loading,
+    context = "agent",
     onClose,
     onFullScreen,
     onOpenPath,
@@ -20,12 +21,25 @@
     card: SourceRef;
     content: PanelContent | null;
     loading: boolean;
+    // "agent" = opened from a session's source cards (the agent's context);
+    // "citation" = opened from a citation in an article body.
+    context?: "agent" | "citation";
     onClose: () => void;
     onFullScreen: () => void;
     onOpenPath: (path: string) => void;
   } = $props();
 
-  const headingTitle = $derived(displayTitle(card.label, card.title));
+  // Citation-opened cards carry no wire title; the chunk heading is the
+  // document's own heading and reads far better than a hashed path.
+  const headingTitle = $derived(
+    displayTitle(
+      card.label,
+      card.title ??
+        (content?.mode === "chunks"
+          ? (content.chunks[0]?.heading ?? null)
+          : null),
+    ),
+  );
   const subtitle = $derived.by(() => {
     if (card.type === "links") return "connections the agent saw";
     if (content?.mode === "chunks") {
@@ -36,7 +50,9 @@
             : `¶${range.start}–${range.end}`,
         )
         .join(", ");
-      return ranges ? `${ranges} · what the agent read` : "what the agent read";
+      const label =
+        context === "citation" ? "cited passage" : "what the agent read";
+      return ranges ? `${ranges} · ${label}` : label;
     }
     const kind = card.label.startsWith("wiki/") ? "wiki article" : "raw source";
     return `${kind} · full document`;

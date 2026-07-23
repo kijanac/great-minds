@@ -1,13 +1,15 @@
 <script lang="ts">
   import { goto } from "$app/navigation";
+  import { page } from "$app/state";
 
   import { auth } from "$lib/auth.svelte";
-  import IngestionPlaceholder from "$lib/components/ingestion-placeholder.svelte";
+  import IngestionFlow from "$lib/components/ingestion-flow.svelte";
   import ProjectSwitcher from "$lib/components/project-switcher.svelte";
   import SearchBar from "$lib/components/search-bar.svelte";
   import { Button } from "$lib/components/ui/button";
   import { ErrorState, LoadingState } from "$lib/components/ui/feedback";
   import { useExploreBadge } from "$lib/hooks/use-explore-badge.svelte";
+  import { useActiveJob } from "$lib/hooks/use-active-job.svelte";
   import { useSessions } from "$lib/hooks/use-sessions.svelte";
   import { activeVault, useVaults } from "$lib/hooks/use-vault.svelte";
   import type { Phase } from "$lib/types";
@@ -15,6 +17,7 @@
   const vaults = useVaults();
   const sessions = useSessions();
   const badge = useExploreBadge();
+  const activeJob = useActiveJob();
 
   let query = $state("");
   const phase: Phase = "idle";
@@ -26,6 +29,12 @@
       (badge.data?.dirty_topics.length ?? 0) +
       (badge.data?.unmentioned_links.length ?? 0),
   );
+  const hasActivePipeline = $derived(activeJob.data ?? false);
+
+  $effect(() => {
+    const incomingQuery = page.url.searchParams.get("q");
+    if (incomingQuery !== null) query = incomingQuery;
+  });
 
   $effect(() => {
     if (!vaults.isLoading && (vaults.data?.length ?? 0) === 0) {
@@ -92,7 +101,10 @@
       <div
         class="flex min-h-[360px] w-full max-w-[800px] flex-col items-center justify-start pt-10"
       >
-        <IngestionPlaceholder />
+        <IngestionFlow
+          {hasActivePipeline}
+          usesR2={!!currentVault.r2_bucket_name}
+        />
       </div>
     {/if}
   </div>

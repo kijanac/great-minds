@@ -9,9 +9,11 @@
   let {
     node,
     variant,
+    onLinkClick,
   }: {
     node: HastNode;
     variant: Variant;
+    onLinkClick?: (event: MouseEvent) => void;
   } = $props();
 
   const CLASSES: Record<Variant, Record<string, string>> = {
@@ -34,15 +36,15 @@
       td: "border-b border-ink-subtle px-2 py-1.5 text-warm-faint",
     },
     article: {
-      h1: "mt-8 mb-4 text-[length:var(--text-heading)] font-bold text-foreground first:mt-0",
-      h2: "mt-8 mb-3 text-[length:var(--text-heading)] font-bold text-foreground first:mt-0",
-      h3: "mt-6 mb-2 font-mono text-[length:var(--text-caption)] font-medium tracking-[0.14em] text-gold uppercase",
-      p: "mb-4 text-[length:var(--text-body)] leading-[1.85] text-warm-dim",
-      ul: "mb-4 ml-2 list-inside list-disc text-[length:var(--text-body)] leading-[1.85] text-warm-dim",
-      ol: "mb-4 ml-2 list-inside list-decimal text-[length:var(--text-body)] leading-[1.85] text-warm-dim",
+      h1: "mt-8 mb-4 scroll-mt-20 text-[length:var(--text-heading)] font-bold text-foreground first:mt-0 target:border-l-2 target:border-gold target:bg-gold/10 target:pl-3",
+      h2: "mt-8 mb-3 scroll-mt-20 text-[length:var(--text-heading)] font-bold text-foreground first:mt-0 target:border-l-2 target:border-gold target:bg-gold/10 target:pl-3",
+      h3: "mt-6 mb-2 scroll-mt-20 font-mono text-[length:var(--text-caption)] font-medium tracking-[0.14em] text-gold uppercase target:border-l-2 target:border-gold target:bg-gold/10 target:pl-3",
+      p: "mb-4 scroll-mt-20 text-[length:var(--text-body)] leading-[1.85] text-warm-dim target:border-l-2 target:border-gold target:bg-gold/10 target:pl-3",
+      ul: "mb-4 ml-2 list-inside list-disc scroll-mt-20 text-[length:var(--text-body)] leading-[1.85] text-warm-dim target:border-l-2 target:border-gold target:bg-gold/10 target:pl-3",
+      ol: "mb-4 ml-2 list-inside list-decimal scroll-mt-20 text-[length:var(--text-body)] leading-[1.85] text-warm-dim target:border-l-2 target:border-gold target:bg-gold/10 target:pl-3",
       li: "mb-1",
       blockquote:
-        "my-4 border-l-2 border-gold-dim pl-4 text-[length:var(--text-body)] leading-[1.85] text-warm-faint italic",
+        "my-4 scroll-mt-20 border-l-2 border-gold-dim pl-4 text-[length:var(--text-body)] leading-[1.85] text-warm-faint italic target:border-gold target:bg-gold/10",
       em: "text-warm",
       strong: "font-bold text-foreground",
       code: "rounded-sm bg-code-bg px-1.5 py-0.5 font-mono text-[length:var(--text-small)] text-gold",
@@ -111,7 +113,7 @@
 
 {#if node.type === "root"}
   {#each node.children ?? [] as child, index (`${index}-${child.position?.start?.offset ?? ""}`)}
-    <HastNodeView node={child} {variant} />
+    <HastNodeView node={child} {variant} {onLinkClick} />
   {/each}
 {:else if node.type === "text"}
   {node.value ?? ""}
@@ -126,13 +128,14 @@
             {href}
             target={external ? "_blank" : undefined}
             rel={external ? "noopener noreferrer" : undefined}
+            onclick={onLinkClick}
             class={cn(
               "text-gold underline decoration-gold/30 underline-offset-2 transition-colors hover:decoration-gold/60",
               className,
             )}
           >
             {#each node.children ?? [] as child, index (`${index}-${child.position?.start?.offset ?? ""}`)}
-              <HastNodeView node={child} {variant} />
+              <HastNodeView node={child} {variant} {onLinkClick} />
             {/each}
           </a>
         {/snippet}
@@ -145,20 +148,21 @@
       {href}
       target={external ? "_blank" : undefined}
       rel={external ? "noopener noreferrer" : undefined}
+      onclick={onLinkClick}
       class={cn(
         "text-gold underline decoration-gold/30 underline-offset-2 transition-colors hover:decoration-gold/60",
         className,
       )}
     >
       {#each node.children ?? [] as child, index (`${index}-${child.position?.start?.offset ?? ""}`)}
-        <HastNodeView node={child} {variant} />
+        <HastNodeView node={child} {variant} {onLinkClick} />
       {/each}
     </a>
   {/if}
 {:else if node.type === "element"}
   <svelte:element this={tag} {...attrs} class={className || undefined}>
     {#each node.children ?? [] as child, index (`${index}-${child.position?.start?.offset ?? ""}`)}
-      <HastNodeView node={child} {variant} />
+      <HastNodeView node={child} {variant} {onLinkClick} />
     {/each}
   </svelte:element>
 {/if}

@@ -16,17 +16,19 @@
   } from "$lib/api/wiki";
   import { auth } from "$lib/auth.svelte";
   import ArticlePanel from "$lib/components/article-panel.svelte";
-  import IngestionPlaceholder from "$lib/components/ingestion-placeholder.svelte";
+  import IngestionFlow from "$lib/components/ingestion-flow.svelte";
   import PanelHost from "$lib/components/panel-host.svelte";
   import { Button } from "$lib/components/ui/button";
   import { Skeleton } from "$lib/components/ui/skeleton";
   import { activeVault, useVaults } from "$lib/hooks/use-vault.svelte";
+  import { useActiveJob } from "$lib/hooks/use-active-job.svelte";
   import { loadPanelContent } from "$lib/panel-content";
   import type { SourceRef } from "$lib/types";
   import { formatShortDate } from "$lib/utils";
 
   const queryClient = useQueryClient();
   const vaults = useVaults();
+  const activeJob = useActiveJob();
   let selectedCard = $state<SourceRef | null>(null);
 
   const currentVault = $derived(
@@ -74,6 +76,7 @@
   const loading = $derived(
     lint.isLoading || recent.isLoading || sourceFacets.isLoading,
   );
+  const hasActivePipeline = $derived(activeJob.data ?? false);
 
   function openArticle(article: WikiArticleOverview) {
     selectedCard = {
@@ -311,7 +314,10 @@
 
           {#if currentVault?.owner_id === auth.userId}
             <div class="mt-10">
-              <IngestionPlaceholder />
+              <IngestionFlow
+                {hasActivePipeline}
+                usesR2={!!currentVault.r2_bucket_name}
+              />
             </div>
           {/if}
         {/if}

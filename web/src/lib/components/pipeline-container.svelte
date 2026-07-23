@@ -7,7 +7,11 @@
   import { cubicOut } from "svelte/easing";
   import { fly } from "svelte/transition";
 
-  import { ingestStagedFiles, type HashedFile } from "$lib/api/ingest";
+  import {
+    ingestStagedFiles,
+    uploadFile,
+    type HashedFile,
+  } from "$lib/api/ingest";
   import {
     cancelJob,
     listJobs,
@@ -32,6 +36,7 @@
   interface StagedUploadState {
     uploadFiles?: HashedFile[];
     stableJobId?: string;
+    uploadMode?: "staged" | "direct";
   }
 
   const queryClient = useQueryClient();
@@ -103,6 +108,27 @@
         const upload = uploadState?.uploadFiles;
         if (upload && upload.length > 0 && uploadState?.stableJobId) {
           clientUpload = { uploaded: 0, total: upload.length };
+          if (uploadState.uploadMode === "direct") {
+            for (let index = 0; index < upload.length; index += 1) {
+              await uploadFile(upload[index].file);
+              clientUpload = {
+                uploaded: index + 1,
+                total: upload.length,
+              };
+            }
+            const job = await requestCompile(uploadState.stableJobId);
+            resolvedJobId = job.id;
+            await queryClient.invalidateQueries({
+              queryKey: ["vault", vaultId, "active-job"],
+            });
+            clientUpload = null;
+            await goto(`/pipeline/runs/${job.id}`, {
+              replaceState: true,
+              state: {},
+            });
+            return;
+          }
+
           for await (const event of ingestStagedFiles(
             upload,
             uploadState.stableJobId,
