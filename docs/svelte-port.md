@@ -1,5 +1,9 @@
 # Svelte frontend port — living plan
 
+**STATUS 2026-07-23: P0–P4 complete and browser-verified (P4 live-verified
+with a real model: streamed query, BTW threads with anchored replay, margin
+footnotes). P5 cutover executed via the merge that carries this edit.**
+
 Decided 2026-07-22. Hard cut: the React app in `web/` is replaced in place on
 branch `svelte-port`; no coexistence, no shims. `main` stays deployable React
 until the single merge. The deployed React app against the production backend
