@@ -196,7 +196,6 @@ const sessionOverview = (row: typeof sessions.$inferSelect): SessionOverview => 
   origin: normalizeOrigin(decodeSessionOrigin(row.origin)),
 });
 
-// Byte-for-byte port of src/great_minds/core/sessions/service.py::_render_markdown.
 export const renderSessionMarkdown = (events: readonly SessionEvent[]) => {
   const exchanges: SessionExchangeEvent[] = [];
   const latestBtw = new Map<string, SessionBtwEvent>();

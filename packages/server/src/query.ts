@@ -1257,13 +1257,6 @@ export const QueryServiceLive = Layer.effect(
       }
     };
 
-    const addCompletionCost = (
-      context: QueryContext,
-      usage: { readonly cost?: number } | undefined,
-    ) => {
-      addUsageCost(context, usage);
-    };
-
     const extractWebFacts = async (
       context: QueryContext,
       query: string,
@@ -1286,7 +1279,7 @@ export const QueryServiceLive = Layer.effect(
             },
           ],
         });
-        addCompletionCost(context, completion.usage);
+        addUsageCost(context, completion.usage);
         const parsed = JSON.parse(stripMarkdownJsonFence(completion.text)) as unknown;
         if (
           typeof parsed !== "object" ||

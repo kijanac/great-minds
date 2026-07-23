@@ -30,7 +30,6 @@ import {
   canonicalizeRegistryCacheKey,
   CompilePhases,
   CompilePhasesLive,
-  extractCacheKey,
   partitionCacheKey,
   renderCacheKey,
   synthesizeCacheKey,
@@ -425,16 +424,6 @@ describe("M4.3a deterministic compile phases", () => {
   });
 
   it("constructs every compile-cache key with Python length framing", () => {
-    expect(
-      extractCacheKey({
-        documentId: id.source,
-        bodyHash: "body-hash",
-        promptHash: "prompt-hash",
-        model: "extract-model",
-      }),
-    ).toBe(
-      contentHash(`doc=${id.source}`, "body-hash", "prompt=prompt-hash", "model=extract-model"),
-    );
     expect(partitionCacheKey([id.ideaB, id.ideaA], 100_000)).toBe(
       contentHash(id.ideaA, id.ideaB, "target=100000"),
     );
@@ -534,12 +523,12 @@ describe("M4.3a deterministic compile phases", () => {
           .values({
             vaultId: id.vault,
             phase: "extract",
-            cacheKey: extractCacheKey({
-              documentId: id.source,
-              bodyHash: "cached-body",
-              promptHash: promptContentHash(template),
-              model: config.extractModel,
-            }),
+            cacheKey: contentHash(
+              `doc=${id.source}`,
+              "cached-body",
+              `prompt=${promptContentHash(template)}`,
+              `model=${config.extractModel}`,
+            ),
             value: { source_card: { title: "drifted" } },
           })
           .pipe(Effect.orDie);
@@ -593,7 +582,9 @@ describe("M4.3a deterministic compile phases", () => {
 
     await run(Effect.flatMap(CompilePhases, (phases) => phases.extract(id.vault, id.run)));
 
-    const rows = await run(Effect.flatMap(Database, (db) => db.select().from(ideas).pipe(Effect.orDie)));
+    const rows = await run(
+      Effect.flatMap(Database, (db) => db.select().from(ideas).pipe(Effect.orDie)),
+    );
     expect(rows).toEqual([]);
     expect(logEvents).toContainEqual({
       event: "embed_batch.timeout",
@@ -617,7 +608,9 @@ describe("M4.3a deterministic compile phases", () => {
 
     await run(Effect.flatMap(CompilePhases, (phases) => phases.extract(id.vault, id.run)));
 
-    const rows = await run(Effect.flatMap(Database, (db) => db.select().from(ideas).pipe(Effect.orDie)));
+    const rows = await run(
+      Effect.flatMap(Database, (db) => db.select().from(ideas).pipe(Effect.orDie)),
+    );
     expect(rows).toEqual([]);
   });
 
@@ -909,7 +902,9 @@ describe("M4.3a deterministic compile phases", () => {
           .pipe(Effect.orDie);
       }),
     );
-    await run(Effect.flatMap(CompilePhases, (phases) => phases.render(id.vault, id.run, [invalid])));
+    await run(
+      Effect.flatMap(CompilePhases, (phases) => phases.render(id.vault, id.run, [invalid])),
+    );
     expect(files.has("wiki/invalid.md")).toBe(false);
     expect(logEvents).toContainEqual({
       event: "topic_failed",

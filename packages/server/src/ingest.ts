@@ -22,7 +22,9 @@ import * as WorkflowEngine from "effect/unstable/workflow/WorkflowEngine";
 import { htmlToMarkdown } from "./conversion.ts";
 import { dieDatabase } from "./db-defects.ts";
 import { causeDetails, formatError } from "./error-details.ts";
+import { jobResponse } from "./jobs.ts";
 import { buildDocument, sessionExchangeDocumentInput, sessionExchangePath } from "./markdown.ts";
+import { progressSteps, type PipelineProgressStep } from "./pipeline-runs.ts";
 import { ProposalsService } from "./proposals.ts";
 import { SourceDocumentsService } from "./source-documents.ts";
 import { StagedFileIngestWorkflow } from "./staged-file-ingest-workflow.ts";
@@ -36,15 +38,6 @@ type UploadInput = {
   readonly mimetype: string;
   readonly destPath?: string | null;
   readonly origin?: string | null;
-};
-
-type PipelineProgressStep = {
-  readonly key: string;
-  readonly label: string;
-  readonly status: "pending" | "running" | "completed" | "failed";
-  readonly done?: number | null;
-  readonly total?: number | null;
-  readonly detail: string;
 };
 
 type IngestServiceShape = {
@@ -192,49 +185,6 @@ const uploadedDest = (input: UploadInput) => {
     : input.filename;
   return safeDocDest(`${slugify(base) || "doc"}.md`);
 };
-
-const progressSteps = (
-  labels: Record<string, string>,
-  active: string,
-  options: {
-    readonly completed?: ReadonlySet<string>;
-    readonly failed?: ReadonlySet<string>;
-    readonly counts?: Readonly<Record<string, readonly [number | null, number | null]>>;
-    readonly details?: Readonly<Record<string, string>>;
-  } = {},
-): readonly PipelineProgressStep[] =>
-  Object.entries(labels).map(([key, label]) => {
-    const [done, total] = options.counts?.[key] ?? [null, null];
-    return {
-      key,
-      label,
-      status: options.failed?.has(key)
-        ? "failed"
-        : options.completed?.has(key)
-          ? "completed"
-          : key === active
-            ? "running"
-            : "pending",
-      done,
-      total,
-      detail: options.details?.[key] ?? "",
-    };
-  });
-
-const jobResponse = (row: typeof pipelineRuns.$inferSelect): JobResponse => ({
-  id: row.id as Uuid,
-  vault_id: row.vaultId as Uuid,
-  trigger: row.trigger as JobResponse["trigger"],
-  status: row.status as JobResponse["status"],
-  current_phase: row.currentPhase,
-  phase_status: row.phaseStatus,
-  progress_steps: row.progressSteps as JobResponse["progress_steps"],
-  error: row.error,
-  created_at: row.createdAt.toISOString(),
-  updated_at: row.updatedAt.toISOString(),
-  completed_at: row.completedAt?.toISOString() ?? null,
-  stream_url: `/jobs/${row.id}/stream`,
-});
 
 const firstFailure = (cause: Cause.Cause<unknown>) => cause.reasons.find(Cause.isFailReason)?.error;
 

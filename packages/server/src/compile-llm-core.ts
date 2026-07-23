@@ -16,6 +16,7 @@ import { parse as parseYaml } from "yaml";
 
 import type { AppConfigShape } from "./config.ts";
 import {
+  ABSTRACT_STEP_LABELS,
   canonicalizeAssignCacheKey,
   canonicalizeRegistryCacheKey,
   EXTRACT_STEP_LABELS,
@@ -195,9 +196,7 @@ export const extractResponseFormat = (config: CompileVaultConfig) => {
   const extrasProperties = Object.fromEntries(
     config.enrichedFields.map((field) => [
       field.name,
-      field.type === "list"
-        ? { type: "array", items: { type: "string" } }
-        : { type: "string" },
+      field.type === "list" ? { type: "array", items: { type: "string" } } : { type: "string" },
     ]),
   );
   const anchor = {
@@ -315,7 +314,8 @@ const loadPrompt = (storage: StorageService, vaultId: Uuid, name: string) =>
   Effect.gen(function* () {
     const override = yield* Effect.result(storage.readText(vaultId, `prompts/${name}.md`));
     if (override._tag === "Success") return override.success.trim();
-    if (!(override.failure instanceof StorageFileMissing)) return yield* Effect.fail(override.failure);
+    if (!(override.failure instanceof StorageFileMissing))
+      return yield* Effect.fail(override.failure);
     return yield* Effect.tryPromise(() => readFile(promptUrl(name), "utf8")).pipe(
       Effect.orDie,
       Effect.map((value) => value.trim()),
@@ -541,7 +541,8 @@ type CompileLlmCoreOptions = {
 };
 
 export const makeCompileLlmCore = (options: CompileLlmCoreOptions) => {
-  const { config, db, embeddings, languageModel, pipeline, storage, randomBytes, clock, logger } = options;
+  const { config, db, embeddings, languageModel, pipeline, storage, randomBytes, clock, logger } =
+    options;
   const costs = new Map<string, number>();
   let lastMintTimestamp = -1;
 
@@ -777,16 +778,14 @@ export const makeCompileLlmCore = (options: CompileLlmCoreOptions) => {
       yield* Effect.forEach(extractFibers, Fiber.join, { discard: true });
 
       const existing = new Set(
-        (
-          yield* db
-            .select({ id: ideas.ideaId })
-            .from(ideas)
-            .where(eq(ideas.vaultId, vaultId))
-            .pipe(dieDatabase)
-        ).map((row) => row.id),
+        (yield* db
+          .select({ id: ideas.ideaId })
+          .from(ideas)
+          .where(eq(ideas.vaultId, vaultId))
+          .pipe(dieDatabase)).map((row) => row.id),
       );
       const fresh = outcomes.filter(
-        (outcome): outcome is Extract<typeof outcomes[number], { kind: "fresh" }> =>
+        (outcome): outcome is Extract<(typeof outcomes)[number], { kind: "fresh" }> =>
           outcome.kind === "fresh",
       );
       for (const outcome of fresh) {
@@ -817,7 +816,12 @@ export const makeCompileLlmCore = (options: CompileLlmCoreOptions) => {
       if (fresh.length > 0) {
         yield* db
           .delete(ideas)
-          .where(inArray(ideas.documentId, fresh.map((outcome) => outcome.documentId)))
+          .where(
+            inArray(
+              ideas.documentId,
+              fresh.map((outcome) => outcome.documentId),
+            ),
+          )
           .pipe(dieDatabase);
       }
 
@@ -881,7 +885,12 @@ export const makeCompileLlmCore = (options: CompileLlmCoreOptions) => {
           .pipe(dieDatabase);
         yield* db
           .delete(anchors)
-          .where(inArray(anchors.ideaId, ideaRows.map((row) => row.ideaId)))
+          .where(
+            inArray(
+              anchors.ideaId,
+              ideaRows.map((row) => row.ideaId),
+            ),
+          )
           .pipe(dieDatabase);
         const anchorRows = paired.flatMap(({ input: { idea } }) =>
           idea.anchors.map((anchor, position) => ({
@@ -1051,7 +1060,8 @@ const validateExtractOutput = (
 ) =>
   Effect.gen(function* () {
     const record = asRecord(data);
-    if (record === undefined) return yield* Effect.fail(new MalformedLlmOutput("invalid source card"));
+    if (record === undefined)
+      return yield* Effect.fail(new MalformedLlmOutput("invalid source card"));
     const ideasValue = pythonTruthy(record.ideas) ? record.ideas : [];
     if (!Array.isArray(ideasValue)) {
       return yield* Effect.fail(new MalformedLlmOutput("invalid source card ideas"));
@@ -1107,8 +1117,8 @@ const validateExtractOutput = (
           chunkIndex:
             normalizedQuote.length === 0
               ? null
-              : (paragraphBodies.find((paragraph) => paragraph.body.includes(normalizedQuote))?.index ??
-                null),
+              : (paragraphBodies.find((paragraph) => paragraph.body.includes(normalizedQuote))
+                  ?.index ?? null),
         });
       }
       parsedIdeas.push({
@@ -1143,7 +1153,11 @@ type JsonCall = (input: {
   readonly logFields?: Record<string, string | number>;
 }) => Effect.Effect<unknown, unknown>;
 
-type CacheGetter = (vaultId: Uuid, phase: string, cacheKey: string) => Effect.Effect<unknown, unknown>;
+type CacheGetter = (
+  vaultId: Uuid,
+  phase: string,
+  cacheKey: string,
+) => Effect.Effect<unknown, unknown>;
 type CachePutter = (
   vaultId: Uuid,
   phase: string,
@@ -1222,16 +1236,7 @@ const runAbstract = (options: AbstractOptions) =>
       runId,
       "abstract",
       "progress",
-      progressSteps(
-        {
-          group_ideas: "Grouping ideas",
-          synthesize_topics: "Synthesizing topics",
-          merge_candidates: "Merging similar topics",
-          canonicalize_registry: "Organizing topics",
-          validate_registry: "Finalizing topics",
-        },
-        "group_ideas",
-      ),
+      progressSteps(ABSTRACT_STEP_LABELS, "group_ideas"),
     );
 
     const chunks = yield* partitionIdeas(options, contexts);
@@ -1240,17 +1245,7 @@ const runAbstract = (options: AbstractOptions) =>
         runId,
         "abstract",
         "completed",
-        progressSteps(
-          {
-            group_ideas: "Grouping ideas",
-            synthesize_topics: "Synthesizing topics",
-            merge_candidates: "Merging similar topics",
-            canonicalize_registry: "Organizing topics",
-            validate_registry: "Finalizing topics",
-          },
-          "group_ideas",
-          { completed: new Set(["group_ideas"]) },
-        ),
+        progressSteps(ABSTRACT_STEP_LABELS, "group_ideas", { completed: new Set(["group_ideas"]) }),
       );
       return [];
     }
@@ -1259,17 +1254,10 @@ const runAbstract = (options: AbstractOptions) =>
       runId,
       "abstract",
       "progress",
-      progressSteps(
-        {
-          group_ideas: "Grouping ideas",
-          synthesize_topics: "Synthesizing topics",
-          merge_candidates: "Merging similar topics",
-          canonicalize_registry: "Organizing topics",
-          validate_registry: "Finalizing topics",
-        },
-        "synthesize_topics",
-        { completed: new Set(["group_ideas"]), counts: { synthesize_topics: [0, chunks.length] } },
-      ),
+      progressSteps(ABSTRACT_STEP_LABELS, "synthesize_topics", {
+        completed: new Set(["group_ideas"]),
+        counts: { synthesize_topics: [0, chunks.length] },
+      }),
     );
     const localTopics = yield* synthesizeTopics(options, contexts, chunks);
 
@@ -1277,17 +1265,9 @@ const runAbstract = (options: AbstractOptions) =>
       runId,
       "abstract",
       "progress",
-      progressSteps(
-        {
-          group_ideas: "Grouping ideas",
-          synthesize_topics: "Synthesizing topics",
-          merge_candidates: "Merging similar topics",
-          canonicalize_registry: "Organizing topics",
-          validate_registry: "Finalizing topics",
-        },
-        "merge_candidates",
-        { completed: new Set(["group_ideas", "synthesize_topics"]) },
-      ),
+      progressSteps(ABSTRACT_STEP_LABELS, "merge_candidates", {
+        completed: new Set(["group_ideas", "synthesize_topics"]),
+      }),
     );
     const merged = premergeTopics(localTopics, config.compilePremergeJaccardThreshold);
 
@@ -1295,17 +1275,9 @@ const runAbstract = (options: AbstractOptions) =>
       runId,
       "abstract",
       "progress",
-      progressSteps(
-        {
-          group_ideas: "Grouping ideas",
-          synthesize_topics: "Synthesizing topics",
-          merge_candidates: "Merging similar topics",
-          canonicalize_registry: "Organizing topics",
-          validate_registry: "Finalizing topics",
-        },
-        "canonicalize_registry",
-        { completed: new Set(["group_ideas", "synthesize_topics", "merge_candidates"]) },
-      ),
+      progressSteps(ABSTRACT_STEP_LABELS, "canonicalize_registry", {
+        completed: new Set(["group_ideas", "synthesize_topics", "merge_candidates"]),
+      }),
     );
     const vaultConfig = yield* loadVaultConfig(storage, vaultId);
     const canonicals = yield* canonicalizeTopics(options, merged, vaultConfig.thematicHint);
@@ -1314,49 +1286,29 @@ const runAbstract = (options: AbstractOptions) =>
       runId,
       "abstract",
       "progress",
-      progressSteps(
-        {
-          group_ideas: "Grouping ideas",
-          synthesize_topics: "Synthesizing topics",
-          merge_candidates: "Merging similar topics",
-          canonicalize_registry: "Organizing topics",
-          validate_registry: "Finalizing topics",
-        },
-        "validate_registry",
-        {
-          completed: new Set([
-            "group_ideas",
-            "synthesize_topics",
-            "merge_candidates",
-            "canonicalize_registry",
-          ]),
-        },
-      ),
+      progressSteps(ABSTRACT_STEP_LABELS, "validate_registry", {
+        completed: new Set([
+          "group_ideas",
+          "synthesize_topics",
+          "merge_candidates",
+          "canonicalize_registry",
+        ]),
+      }),
     );
     const validated = yield* validateTopics(options, canonicals, merged);
     yield* pipeline.updateProgress(
       runId,
       "abstract",
       "completed",
-      progressSteps(
-        {
-          group_ideas: "Grouping ideas",
-          synthesize_topics: "Synthesizing topics",
-          merge_candidates: "Merging similar topics",
-          canonicalize_registry: "Organizing topics",
-          validate_registry: "Finalizing topics",
-        },
-        "validate_registry",
-        {
-          completed: new Set([
-            "group_ideas",
-            "synthesize_topics",
-            "merge_candidates",
-            "canonicalize_registry",
-            "validate_registry",
-          ]),
-        },
-      ),
+      progressSteps(ABSTRACT_STEP_LABELS, "validate_registry", {
+        completed: new Set([
+          "group_ideas",
+          "synthesize_topics",
+          "merge_candidates",
+          "canonicalize_registry",
+          "validate_registry",
+        ]),
+      }),
     );
     return validated;
   });
@@ -1436,7 +1388,8 @@ class Mt19937 {
 
   private twist() {
     for (let i = 0; i < 624; i += 1) {
-      const y = ((this.state[i] ?? 0) & 0x80000000) | ((this.state[(i + 1) % 624] ?? 0) & 0x7fffffff);
+      const y =
+        ((this.state[i] ?? 0) & 0x80000000) | ((this.state[(i + 1) % 624] ?? 0) & 0x7fffffff);
       this.state[i] = (this.state[(i + 397) % 624] ?? 0) ^ (y >>> 1) ^ (y & 1 ? 0x9908b0df : 0);
     }
     this.index = 0;
@@ -1476,9 +1429,8 @@ class Pcg64Seed42 {
     const xorshifted = ((this.state >> 64n) ^ this.state) & PCG64_MASK_64;
     const rotation = Number(this.state >> 122n);
     return (
-      (xorshifted >> BigInt(rotation)) |
-      (xorshifted << BigInt((-rotation) & 63))
-    ) & PCG64_MASK_64;
+      ((xorshifted >> BigInt(rotation)) | (xorshifted << BigInt(-rotation & 63))) & PCG64_MASK_64
+    );
   }
 
   private uint32() {
@@ -1587,7 +1539,8 @@ const kmeansLabels = (matrix: readonly (readonly number[])[], k: number) => {
       const label = labels[rowIndex] ?? 0;
       counts[label] = (counts[label] ?? 0) + 1;
       for (let dimension = 0; dimension < row.length; dimension += 1) {
-        (sums[label] ?? [])[dimension] = ((sums[label] ?? [])[dimension] ?? 0) + (row[dimension] ?? 0);
+        (sums[label] ?? [])[dimension] =
+          ((sums[label] ?? [])[dimension] ?? 0) + (row[dimension] ?? 0);
       }
     }
     centers = centers.map((center, label) =>
@@ -1609,9 +1562,9 @@ const seededMiniBatchLabels = (matrix: readonly (readonly number[])[], k: number
   for (let epoch = 0; epoch < 10; epoch += 1) {
     const order = permutation.permutation(matrix.length);
     for (let start = 0; start < order.length; start += batchSize) {
-      const batch = order.slice(start, start + batchSize).map((row) =>
-        (matrix[row] ?? []).map(Math.fround),
-      );
+      const batch = order
+        .slice(start, start + batchSize)
+        .map((row) => (matrix[row] ?? []).map(Math.fround));
       if (centers === undefined) {
         if (batch.length < k) throw new Error("k-means batch has fewer rows than clusters");
         centers = chooseCenters(batch, k).map((center) => center.map(Math.fround));
@@ -1699,7 +1652,10 @@ const splitChunk = (
 ): number[][] => {
   if (chunkTokens(chunk, tokens) <= maxTokens || chunk.length < 2) return [[...chunk]];
   const ordered = [...chunk].toSorted((left, right) => left - right);
-  const labels = kmeansLabels(ordered.map((row) => matrix[row] ?? []), 2);
+  const labels = kmeansLabels(
+    ordered.map((row) => matrix[row] ?? []),
+    2,
+  );
   let first = ordered.filter((_row, index) => labels[index] === 0);
   let second = ordered.filter((_row, index) => labels[index] === 1);
   if (first.length === 0 || second.length === 0) {
@@ -1783,9 +1739,7 @@ const synthesizeTopics = (
             promptHash,
             model: options.config.mapModel,
           });
-          const cached = asRecord(
-            yield* options.getCache(options.vaultId, "synthesize", cacheKey),
-          );
+          const cached = asRecord(yield* options.getCache(options.vaultId, "synthesize", cacheKey));
           const cachedTopics = parseLocalTopics(cached?.local_topics);
           if (cachedTopics !== undefined) return cachedTopics;
           const present = chunk.flatMap((ideaId) => {
@@ -1799,13 +1753,15 @@ const synthesizeTopics = (
               options.jsonCall({
                 runId: options.runId,
                 model: options.config.mapModel,
-                messages: [{ role: "user", content: promptTemplate.replace("{idea_block}", block) }],
-                  temperature: 0.3,
-                  responseFormat: jsonObjectResponseFormat,
-                  logFields: { chunk_idx: chunkIdx },
-                }),
-              ),
-            );
+                messages: [
+                  { role: "user", content: promptTemplate.replace("{idea_block}", block) },
+                ],
+                temperature: 0.3,
+                responseFormat: jsonObjectResponseFormat,
+                logFields: { chunk_idx: chunkIdx },
+              }),
+            ),
+          );
           if (result._tag === "Failure") {
             const details = errorDetails(result.failure);
             yield* options.logger.warn("chunk_failed", {
@@ -1836,20 +1792,10 @@ const synthesizeTopics = (
                 options.runId,
                 "abstract",
                 "progress",
-                progressSteps(
-                  {
-                    group_ideas: "Grouping ideas",
-                    synthesize_topics: "Synthesizing topics",
-                    merge_candidates: "Merging similar topics",
-                    canonicalize_registry: "Organizing topics",
-                    validate_registry: "Finalizing topics",
-                  },
-                  "synthesize_topics",
-                  {
-                    completed: new Set(["group_ideas"]),
-                    counts: { synthesize_topics: [chunksCompleted, chunks.length] },
-                  },
-                ),
+                progressSteps(ABSTRACT_STEP_LABELS, "synthesize_topics", {
+                  completed: new Set(["group_ideas"]),
+                  counts: { synthesize_topics: [chunksCompleted, chunks.length] },
+                }),
               );
             }),
           ),
@@ -1917,10 +1863,14 @@ const parseSynthesisResponse = (
       const slug = normalizeSlug(typeof topic.slug === "string" ? topic.slug : "");
       const title = typeof topic.title === "string" ? topic.title.trim() : "";
       const description = typeof topic.description === "string" ? topic.description.trim() : "";
-      const ids = [...new Set(strings(topic.subsumed_idea_ids).flatMap((tag) => {
-        const ideaId = tags.get(tag);
-        return ideaId === undefined ? [] : [ideaId];
-      }))].toSorted();
+      const ids = [
+        ...new Set(
+          strings(topic.subsumed_idea_ids).flatMap((tag) => {
+            const ideaId = tags.get(tag);
+            return ideaId === undefined ? [] : [ideaId];
+          }),
+        ),
+      ].toSorted();
       if (slug.length === 0 || title.length === 0 || ids.length === 0) continue;
       out.push({
         localTopicId: yield* mintUuid7,
@@ -1940,7 +1890,8 @@ export const premergeTopics = (
 ): readonly LocalTopic[] => {
   if (localTopics.length < 2) return localTopics;
   const ordered = [...localTopics].toSorted(
-    (left, right) => left.chunkIdx - right.chunkIdx || compareText(left.localTopicId, right.localTopicId),
+    (left, right) =>
+      left.chunkIdx - right.chunkIdx || compareText(left.localTopicId, right.localTopicId),
   );
   const parent = ordered.map((_topic, index) => index);
   const find = (value: number): number => {
@@ -2037,7 +1988,12 @@ const dumpRegistryTopic = (topic: RegistryTopic) => ({
 });
 
 const slugifyRegistry = (title: string, seen: Set<string>) => {
-  const base = title.toLowerCase().replaceAll("'", "").replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || "topic";
+  const base =
+    title
+      .toLowerCase()
+      .replaceAll("'", "")
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/^-|-$/g, "") || "topic";
   let slug = base;
   let suffix = 2;
   while (seen.has(slug)) {
@@ -2058,7 +2014,11 @@ const canonicalizeTopics = (
     const ordered = [...localTopics].toSorted((left, right) =>
       compareText(left.localTopicId, right.localTopicId),
     );
-    const registryTemplate = yield* loadPrompt(options.storage, options.vaultId, "canonicalize_registry");
+    const registryTemplate = yield* loadPrompt(
+      options.storage,
+      options.vaultId,
+      "canonicalize_registry",
+    );
     const registryPromptHash = promptContentHash(registryTemplate);
     const registryCacheKey = canonicalizeRegistryCacheKey({
       orderedTopics: ordered,
@@ -2088,7 +2048,10 @@ const canonicalizeTopics = (
         ? `The wiki's editorial lens for this vault:\n\n${thematicHint.trim()}\n\n`
         : "";
       const localBlock = ordered
-        .map((topic) => `${topic.title} :: ${topic.description} [${topic.subsumedIdeaIds.length} ideas]`)
+        .map(
+          (topic) =>
+            `${topic.title} :: ${topic.description} [${topic.subsumedIdeaIds.length} ideas]`,
+        )
         .map((line) => `- ${line}`)
         .join("\n");
       const data = yield* options.jsonCall({
@@ -2108,27 +2071,30 @@ const canonicalizeTopics = (
       });
       const seen = new Set<string>();
       const dataRecord = asRecord(data);
-      registry = (Array.isArray(dataRecord?.topics) ? dataRecord.topics : [])
-        .flatMap((raw) => {
-          const topic = asRecord(raw);
-          const title = typeof topic?.title === "string" ? topic.title.trim() : "";
-          if (title.length === 0) return [];
-          return [
-            {
-              slug: slugifyRegistry(title, seen),
-              title,
-              description: typeof topic?.description === "string" ? topic.description.trim() : "",
-              linkTargetTitles: strings(topic?.link_targets),
-            } satisfies RegistryTopic,
-          ];
-        });
+      registry = (Array.isArray(dataRecord?.topics) ? dataRecord.topics : []).flatMap((raw) => {
+        const topic = asRecord(raw);
+        const title = typeof topic?.title === "string" ? topic.title.trim() : "";
+        if (title.length === 0) return [];
+        return [
+          {
+            slug: slugifyRegistry(title, seen),
+            title,
+            description: typeof topic?.description === "string" ? topic.description.trim() : "",
+            linkTargetTitles: strings(topic?.link_targets),
+          } satisfies RegistryTopic,
+        ];
+      });
       yield* options.putCache(options.vaultId, "canonicalize_registry", registryCacheKey, {
         topics: registry.map(dumpRegistryTopic),
       });
     }
     if (registry.length === 0) return [];
 
-    const assignTemplate = yield* loadPrompt(options.storage, options.vaultId, "canonicalize_assign");
+    const assignTemplate = yield* loadPrompt(
+      options.storage,
+      options.vaultId,
+      "canonicalize_assign",
+    );
     const assignPromptHash = promptContentHash(assignTemplate);
     const registryBlock = registry
       .map((topic) => `- ${topic.slug} — ${topic.title}: ${topic.description}`)
@@ -2146,11 +2112,7 @@ const canonicalizeTopics = (
         ),
       );
     }
-    const head = splitTemplate[0];
-    const tail = splitTemplate[1];
-    if (head === undefined || tail === undefined) {
-      return yield* Effect.fail(new MalformedPromptTemplate("canonicalize_assign prompt split failed"));
-    }
+    const [head, tail] = splitTemplate as [string, string];
     const prefix = head.replace("{registry_block}", registryBlock);
     const assignment = new Map<string, string>();
     for (let offset = 0; offset < ordered.length; offset += 30) {
@@ -2161,11 +2123,7 @@ const canonicalizeTopics = (
         promptHash: assignPromptHash,
         model: options.config.reduceModel,
       });
-      const cachedValue = yield* options.getCache(
-        options.vaultId,
-        "canonicalize_assign",
-        cacheKey,
-      );
+      const cachedValue = yield* options.getCache(options.vaultId, "canonicalize_assign", cacheKey);
       if (cachedValue !== undefined) {
         const cached = asRecord(cachedValue);
         const cachedAssign = asRecord(cached?.assign);
@@ -2374,13 +2332,16 @@ const validateTopics = (
           return yield* Effect.fail(new MalformedLlmOutput("cleanup slug rename is not an object"));
         }
         if (pythonTruthy(rename.canonical_tag) && typeof rename.canonical_tag !== "string") {
-          return yield* Effect.fail(new MalformedLlmOutput("cleanup canonical_tag is not a string"));
+          return yield* Effect.fail(
+            new MalformedLlmOutput("cleanup canonical_tag is not a string"),
+          );
         }
         if (pythonTruthy(rename.new_slug) && typeof rename.new_slug !== "string") {
           return yield* Effect.fail(new MalformedLlmOutput("cleanup new_slug is not a string"));
         }
         const index = tagToIndex(rename?.canonical_tag, "c_", canonicals.length);
-        const newSlug = typeof rename?.new_slug === "string" ? rename.new_slug.trim().toLowerCase() : "";
+        const newSlug =
+          typeof rename?.new_slug === "string" ? rename.new_slug.trim().toLowerCase() : "";
         if (index !== undefined && newSlug.length > 0) renames.set(index, newSlug);
       }
       const archivedByTag = new Map(
@@ -2394,13 +2355,17 @@ const validateTopics = (
       for (const raw of rawSupersessions) {
         const entry = asRecord(raw);
         if (entry === undefined) {
-          return yield* Effect.fail(new MalformedLlmOutput("cleanup supersession is not an object"));
+          return yield* Effect.fail(
+            new MalformedLlmOutput("cleanup supersession is not an object"),
+          );
         }
         if (pythonTruthy(entry.archived_tag) && typeof entry.archived_tag !== "string") {
           return yield* Effect.fail(new MalformedLlmOutput("cleanup archived_tag is not a string"));
         }
         if (pythonTruthy(entry.successor_tag) && typeof entry.successor_tag !== "string") {
-          return yield* Effect.fail(new MalformedLlmOutput("cleanup successor_tag is not a string"));
+          return yield* Effect.fail(
+            new MalformedLlmOutput("cleanup successor_tag is not a string"),
+          );
         }
         const archivedId = archivedByTag.get(
           typeof entry?.archived_tag === "string" ? entry.archived_tag : "",
@@ -2591,27 +2556,39 @@ const runRender = (options: RenderOptions) =>
         }),
       );
       const neededIds = [...new Set(toRender.flatMap((topic) => topic.subsumedIdeaIds))];
-      const ideaRows = neededIds.length === 0
-        ? []
-        : yield* options.db
-            .select({
-              ideaId: ideas.ideaId,
-              documentId: ideas.documentId,
-              kind: ideas.kind,
-              label: ideas.label,
-              description: ideas.description,
-            })
-            .from(ideas)
-            .where(inArray(ideas.ideaId, neededIds.map((id) => id as Uuid)))
-            .pipe(dieDatabase);
-      const anchorRows = neededIds.length === 0
-        ? []
-        : yield* options.db
-            .select()
-            .from(anchors)
-            .where(inArray(anchors.ideaId, neededIds.map((id) => id as Uuid)))
-            .orderBy(asc(anchors.ideaId), asc(anchors.position))
-            .pipe(dieDatabase);
+      const ideaRows =
+        neededIds.length === 0
+          ? []
+          : yield* options.db
+              .select({
+                ideaId: ideas.ideaId,
+                documentId: ideas.documentId,
+                kind: ideas.kind,
+                label: ideas.label,
+                description: ideas.description,
+              })
+              .from(ideas)
+              .where(
+                inArray(
+                  ideas.ideaId,
+                  neededIds.map((id) => id as Uuid),
+                ),
+              )
+              .pipe(dieDatabase);
+      const anchorRows =
+        neededIds.length === 0
+          ? []
+          : yield* options.db
+              .select()
+              .from(anchors)
+              .where(
+                inArray(
+                  anchors.ideaId,
+                  neededIds.map((id) => id as Uuid),
+                ),
+              )
+              .orderBy(asc(anchors.ideaId), asc(anchors.position))
+              .pipe(dieDatabase);
       const anchorsByIdea = new Map<string, Anchor[]>();
       for (const anchor of anchorRows) {
         const group = anchorsByIdea.get(anchor.ideaId) ?? [];
@@ -2707,12 +2684,7 @@ const runRender = (options: RenderOptions) =>
               return false;
             }
             const finalOutput = processed.success;
-            yield* options.materializeArticle(
-              options.vaultId,
-              options.runId,
-              topic,
-              finalOutput,
-            );
+            yield* options.materializeArticle(options.vaultId, options.runId, topic, finalOutput);
             yield* options.putCache(
               options.vaultId,
               "render",

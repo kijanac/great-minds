@@ -110,7 +110,6 @@ export class VaultStorage extends Context.Service<VaultStorage, VaultStorageShap
 type ProposalStorageShape = {
   readonly readText: (path: string) => Effect.Effect<string, StorageFileMissing>;
   readonly writeText: (path: string, content: string) => Effect.Effect<void>;
-  readonly exists: (path: string) => Effect.Effect<boolean>;
   readonly deletePath: (path: string) => Effect.Effect<void>;
 };
 
@@ -280,7 +279,6 @@ export const ProposalStorageLive = Layer.effect(
     return {
       readText: (path) => readLocalText(root, path),
       writeText: (path, content) => writeLocalText(root, path, content),
-      exists: (path) => localExists(root, path),
       deletePath: (path) => deleteLocalPath(root, path),
     } satisfies ProposalStorageShape;
   }),

@@ -98,19 +98,6 @@ export type ArchiveTransition = {
   readonly supersededBy: Uuid | null;
 };
 
-export const extractCacheKey = (input: {
-  readonly documentId: string;
-  readonly bodyHash: string;
-  readonly promptHash: string;
-  readonly model: string;
-}) =>
-  contentHash(
-    `doc=${input.documentId}`,
-    input.bodyHash,
-    `prompt=${input.promptHash}`,
-    `model=${input.model}`,
-  );
-
 export const partitionCacheKey = (ideaIds: readonly string[], targetTokens: number) =>
   contentHash(...ideaIds.toSorted(), `target=${targetTokens}`);
 
@@ -520,10 +507,7 @@ export const CompilePhasesLive = Layer.effect(
           .pipe(dieDatabase);
       });
 
-    const applyArchiveTransitions = (
-      vaultId: Uuid,
-      transitions: readonly ArchiveTransition[],
-    ) =>
+    const applyArchiveTransitions = (vaultId: Uuid, transitions: readonly ArchiveTransition[]) =>
       Effect.gen(function* () {
         for (const transition of transitions) {
           yield* db
@@ -557,10 +541,7 @@ export const CompilePhasesLive = Layer.effect(
             .update(wikiArticles)
             .set({ filePath: archivePath, archived: true, updatedAt: sql`now()` })
             .where(
-              and(
-                eq(wikiArticles.vaultId, vaultId),
-                eq(wikiArticles.topicId, transition.topicId),
-              ),
+              and(eq(wikiArticles.vaultId, vaultId), eq(wikiArticles.topicId, transition.topicId)),
             )
             .pipe(dieDatabase);
         }
@@ -956,23 +937,4 @@ export const phaseFailure = (phase: CompilePhase, cause: unknown) => {
   if (cause instanceof CompilePhaseNotPorted || cause instanceof CompilePhaseFailed) return cause;
   const error = errorDetails(cause);
   return new CompilePhaseFailed({ phase, ...error });
-};
-
-export const phaseLabels = (phase: CompilePhase): Record<string, string> => {
-  switch (phase) {
-    case "ingest":
-      return INGEST_STEP_LABELS;
-    case "extract":
-      return EXTRACT_STEP_LABELS;
-    case "abstract":
-      return ABSTRACT_STEP_LABELS;
-    case "derive":
-      return DERIVE_STEP_LABELS;
-    case "render":
-      return RENDER_STEP_LABELS;
-    case "verify":
-      return VERIFY_STEP_LABELS;
-    case "publish":
-      return PUBLISH_STEP_LABELS;
-  }
 };
