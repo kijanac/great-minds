@@ -141,7 +141,9 @@
           <div
             class="mb-[9px] font-mono text-[length:var(--text-chrome)] tracking-[0.06em] text-warm-ghost italic"
           >
-            reply interrupted — ask again below
+            reply interrupted{exchange.error
+              ? ` — ${exchange.error}`
+              : " — ask again below"}
           </div>
         {:else}
           <div

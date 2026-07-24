@@ -13,7 +13,9 @@ export interface Exchange {
   thinking: ThinkingBlock[];
   answer: string;
   btws: BtwThread[];
-  // In-flight while the answer streams; false once committed/persisted.
+  replyId?: string;
+  error?: string | null;
+  // In-flight while the server-owned reply is running.
   streaming: boolean;
 }
 

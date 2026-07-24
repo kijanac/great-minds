@@ -15,13 +15,12 @@ import {
   type DraftHintResponse,
   type HistoryMessage,
   type QueryRequest,
-  type QuerySseEvent,
   type QuerySourceData,
   type QueryStreamPayload,
   type Uuid,
 } from "@great-minds/domain";
 import { and, asc, desc, eq, gte, ilike, lte, ne, or, sql, type SQL } from "drizzle-orm";
-import { Context, Effect, Layer, Stream } from "effect";
+import { Context, Effect, Layer } from "effect";
 import { parse as parseYaml } from "yaml";
 
 import { AppConfig } from "./config.ts";
@@ -39,12 +38,12 @@ import { ParallelSearchService, type ParallelSearchResult } from "./parallel.ts"
 import { StorageFileMissing, VaultStorage } from "./storage.ts";
 
 type QueryServiceShape = {
-  readonly streamQuery: (
+  readonly streamEvents: (
     userId: Uuid,
     vaultId: Uuid,
     input: QueryRequest,
     prechecked: QueryPrecheckedContext,
-  ) => Stream.Stream<QuerySseEvent, never>;
+  ) => AsyncIterable<QueryStreamPayload>;
   readonly draftHint: (
     userId: Uuid,
     description: string,
@@ -97,7 +96,7 @@ type QueryContext = {
   selectedModel?: string;
 };
 
-type QueryPrecheckedContext = {
+export type QueryPrecheckedContext = {
   readonly vaultLabel: string;
 };
 
@@ -139,11 +138,6 @@ const defaultQueryVaultConfig = {
   kinds: ["person", "event", "organization", "concept"],
   webSearch: false,
 } satisfies QueryVaultConfig;
-
-const sse = (payload: QueryStreamPayload): QuerySseEvent => ({
-  event: payload.event,
-  data: JSON.stringify(payload.data),
-});
 
 const first = <A>(values: readonly A[]) => values[0];
 
@@ -1360,7 +1354,7 @@ export const QueryServiceLive = Layer.effect(
       context: QueryContext,
       model: string,
       messages: LlmMessage[],
-    ): AsyncGenerator<QuerySseEvent, ModelRoundState, void> {
+    ): AsyncGenerator<QueryStreamPayload, ModelRoundState, void> {
       const state: ModelRoundState = {
         content: "",
         finishReason: null,
@@ -1374,7 +1368,7 @@ export const QueryServiceLive = Layer.effect(
       })) {
         if (part.type === "token") {
           state.content += part.text;
-          yield sse({ event: "token", data: { text: part.text } });
+          yield { event: "token", data: { text: part.text } };
           continue;
         }
         if (part.type === "tool_call_delta") {
@@ -1398,7 +1392,11 @@ export const QueryServiceLive = Layer.effect(
       return state;
     }
 
-    async function* streamChatLoop(context: QueryContext, model: string, messages: LlmMessage[]) {
+    async function* streamChatLoop(
+      context: QueryContext,
+      model: string,
+      messages: LlmMessage[],
+    ): AsyncGenerator<QueryStreamPayload, void, void> {
       while (true) {
         context.trace.llmRounds += 1;
         await run(
@@ -1434,7 +1432,7 @@ export const QueryServiceLive = Layer.effect(
               });
             } catch (error) {
               if (error instanceof MalformedToolArgs) {
-                yield sse({ event: "error", data: { message: error.message } });
+                yield { event: "error", data: { message: error.message } };
                 return;
               }
               throw error;
@@ -1454,10 +1452,10 @@ export const QueryServiceLive = Layer.effect(
             const source = pendingSourceEvent(toolCall.name, args);
             if (source !== undefined) {
               pendingCallIndexes.add(index);
-              yield sse({
+              yield {
                 event: "source_pending",
                 data: { call_id: toolCall.id, source },
-              });
+              };
             }
           }
           const toolResults = await Promise.allSettled(
@@ -1476,14 +1474,14 @@ export const QueryServiceLive = Layer.effect(
           for (const [index, outcome] of toolResults.entries()) {
             const toolCall = validatedToolCalls[index].toolCall;
             if (pendingCallIndexes.has(index)) {
-              yield sse({ event: "source_settled", data: { call_id: toolCall.id } });
+              yield { event: "source_settled", data: { call_id: toolCall.id } };
             }
             if (outcome.status === "rejected") {
               throw outcome.reason;
             }
             const result = outcome.value;
             if (result.source !== undefined) {
-              yield sse({ event: "source", data: result.source });
+              yield { event: "source", data: result.source };
             }
             messages.push({
               role: "tool",
@@ -1496,7 +1494,7 @@ export const QueryServiceLive = Layer.effect(
         if (state.content.length > 0) {
           messages.push({ role: "assistant", content: state.content });
         }
-        yield sse({ event: "done", data: {} });
+        yield { event: "done", data: {} };
         return;
       }
     }
@@ -1650,7 +1648,7 @@ export const QueryServiceLive = Layer.effect(
       vaultId: Uuid,
       input: QueryRequest,
       prechecked: QueryPrecheckedContext,
-    ) {
+    ): AsyncGenerator<QueryStreamPayload, void, void> {
       const startedAt = Date.now();
       const correlationId = `q-${randomUUID().replaceAll("-", "").slice(0, 8)}`;
       let context: QueryContext | undefined;
@@ -1701,11 +1699,11 @@ export const QueryServiceLive = Layer.effect(
               model,
               ...logErrorFields(error),
             });
-            yield sse({ event: "error", data: { message: sanitizedStreamError } });
+            yield { event: "error", data: { message: sanitizedStreamError } };
             return;
           }
         }
-        yield sse({ event: "error", data: { message: sanitizedStreamError } });
+        yield { event: "error", data: { message: sanitizedStreamError } };
       } catch (error) {
         await errorSafely("query.stream_setup_failed", {
           correlation_id: context?.correlationId ?? correlationId,
@@ -1713,7 +1711,7 @@ export const QueryServiceLive = Layer.effect(
           user_id: userId,
           ...logErrorFields(error),
         });
-        yield sse({ event: "error", data: { message: sanitizedStreamError } });
+        yield { event: "error", data: { message: sanitizedStreamError } };
       } finally {
         try {
           await finalize(context, startedAt, correlationId, userId, vaultId);
@@ -1729,11 +1727,8 @@ export const QueryServiceLive = Layer.effect(
     }
 
     return {
-      streamQuery: (userId, vaultId, input, prechecked) =>
-        Stream.fromAsyncIterable(
-          runQueryStream(userId, vaultId, input, prechecked),
-          () => undefined as never,
-        ) as Stream.Stream<QuerySseEvent, never>,
+      streamEvents: (userId, vaultId, input, prechecked) =>
+        runQueryStream(userId, vaultId, input, prechecked),
       draftHint: (_userId, description) =>
         Effect.gen(function* () {
           if (!languageModel.hasApiKey) {

@@ -6,8 +6,8 @@ export default defineConfig({
   plugins: [tailwindcss(), sveltekit()],
   server: {
     proxy: {
-      // Match vault-scoped SSE endpoint: /api/vaults/{id}/query/stream
-      "^/api/vaults/[^/]+/query/stream": {
+      // Match vault-scoped reply tails before the general API proxy.
+      "^/api/vaults/[^/]+/replies/[^/]+/stream": {
         target: "http://localhost:8000",
         rewrite: (path) => path.replace(/^\/api/, "/v1"),
         configure: (proxy) => {

@@ -6,22 +6,31 @@ import type { BtwThread, Exchange } from "$lib/types";
 
 function replayEvents(events: SessionEvent[]): Exchange[] {
   const exchanges: Exchange[] = [];
+  const exchangeIndexes = new Map<string, number>();
   const latestBtw = new Map<string, Extract<SessionEvent, { type: "btw" }>>();
 
   for (const event of events) {
     if (event.type === "exchange") {
-      exchanges.push({
+      const exchange: Exchange = {
         id: event.exId,
         query: event.query,
         thinking: event.thinking,
         answer: event.answer,
         btws: [],
-        streaming: false,
-      });
+        replyId: event.reply_id,
+        streaming: event.answer.length === 0 && event.reply_id !== undefined,
+      };
+      const existingIndex = exchangeIndexes.get(event.exId);
+      if (existingIndex === undefined) {
+        exchangeIndexes.set(event.exId, exchanges.length);
+        exchanges.push(exchange);
+      } else {
+        exchanges[existingIndex] = exchange;
+      }
     } else if (event.type === "btw") {
       const key = `${event.exId}\0${event.quote}`;
       const existing = latestBtw.get(key);
-      if (!existing || event.ts > existing.ts) latestBtw.set(key, event);
+      if (!existing || event.ts >= existing.ts) latestBtw.set(key, event);
     }
   }
 
@@ -35,13 +44,19 @@ function replayEvents(events: SessionEvent[]): Exchange[] {
         quote: event.quote,
         context: event.context,
       },
-      exchanges: event.exchanges.map((exchange) => ({
-        id: `${event.exId}:${event.blockOffset}:${event.quote}:${exchange.query}`,
+      exchanges: event.exchanges.map((exchange, index) => ({
+        id: `${event.exId}:${event.blockOffset}:${event.quote}:${index}`,
         query: exchange.query,
         thinking: exchange.thinking,
         answer: exchange.answer,
         btws: [],
-        streaming: false,
+        ...(index === event.exchanges.length - 1 && event.reply_id !== undefined
+          ? { replyId: event.reply_id }
+          : {}),
+        streaming:
+          index === event.exchanges.length - 1 &&
+          exchange.answer.length === 0 &&
+          event.reply_id !== undefined,
       })),
     };
     if (!btwsByExchange.has(event.exId)) {

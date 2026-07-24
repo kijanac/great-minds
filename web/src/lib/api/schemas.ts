@@ -9,7 +9,7 @@ export const sourceRefSchema = z.object({
   scope: z.enum(["kb", "web"]).nullable().optional(),
   // For document-scoped searches: which document was searched.
   path: z.string().nullable().optional(),
-  // Transient client state used while a tool call is in flight; never persisted.
+  // Transient reply-snapshot state used while a tool call is in flight.
   pending: z.boolean().optional(),
   // Backend ThinkingSource.thinking is `str | None`, so accept null, not just
   // absent — a null here otherwise fails the whole session-load parse.

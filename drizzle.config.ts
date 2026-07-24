@@ -1,8 +1,10 @@
+import { fileURLToPath } from "node:url";
+
 import { defineConfig } from "drizzle-kit";
 
 export default defineConfig({
-  schema: "./packages/database/src/schema.ts",
-  out: "./packages/database/drizzle",
+  schema: fileURLToPath(new URL("./packages/database/src/schema.ts", import.meta.url)),
+  out: fileURLToPath(new URL("./packages/database/drizzle", import.meta.url)),
   dialect: "postgresql",
   dbCredentials: {
     url:

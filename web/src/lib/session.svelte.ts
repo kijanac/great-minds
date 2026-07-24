@@ -1,13 +1,6 @@
 import { browser } from "$app/environment";
 
-import { consumeStream, streamQuery } from "$lib/api/query";
-import {
-  appendBtw,
-  appendExchange,
-  createSession,
-  type ExchangePayload,
-  type SessionOrigin,
-} from "$lib/api/sessions";
+import { createReply, streamReply, type ReplySnapshot } from "$lib/api/replies";
 import type { BtwThread, Exchange, HistoryMessage, Phase, SelectionInfo } from "$lib/types";
 import { buildBtwHistory, buildBtwQuery, genId, isAbortError } from "$lib/utils";
 
@@ -37,7 +30,6 @@ export class Session {
 
   #originPath: string | undefined;
   #onSessionCreated: ((sessionId: string) => void) | undefined;
-  #createPromise: Promise<string> | null = null;
   #idempotencyKey: string | null = null;
   #abortController: AbortController | null = null;
   #btwControllers = new Set<AbortController>();
@@ -51,10 +43,14 @@ export class Session {
     this.#originPath = options.originPath;
     this.#onSessionCreated = options.onSessionCreated;
 
-    if (browser && options.initialQuery) {
-      const initialQuery = options.initialQuery;
+    if (browser) {
       queueMicrotask(() => {
-        if (!this.#destroyed) void this.#runExchange(initialQuery);
+        if (this.#destroyed) return;
+        if (options.initialQuery) {
+          void this.#runExchange(options.initialQuery);
+        } else {
+          this.#resumePendingReplies();
+        }
       });
     }
   }
@@ -66,33 +62,93 @@ export class Session {
     this.#btwControllers.clear();
   };
 
-  #persistExchange = async (payload: ExchangePayload, origin?: SessionOrigin): Promise<void> => {
-    try {
-      if (!this.sessionId && !this.#createPromise) {
-        this.#idempotencyKey ??= crypto.randomUUID();
-        this.#createPromise = createSession(payload, this.#idempotencyKey, origin).then(
-          ({ id }) => {
-            this.sessionId = id;
-            this.#onSessionCreated?.(id);
-            return id;
-          },
-        );
-        await this.#createPromise;
-        return;
-      }
-
-      const id = this.sessionId ?? (await this.#createPromise!);
-      await appendExchange(id, payload);
-    } catch (error) {
-      if (!this.sessionId) this.#createPromise = null;
-      console.error("Failed to persist session:", error);
-    }
-  };
-
   #updateExchange = (id: string, patch: Partial<Exchange>): void => {
     this.thread = this.thread.map((exchange) =>
       exchange.id === id ? { ...exchange, ...patch } : exchange,
     );
+  };
+
+  #snapshotThinking = (snapshot: ReplySnapshot, alwaysBlock: boolean) =>
+    snapshot.sources.length > 0 || alwaysBlock ? [{ sources: snapshot.sources }] : [];
+
+  #tailExchange = async (
+    exchangeId: string,
+    replyId: string,
+    controller: AbortController,
+  ): Promise<void> => {
+    try {
+      for await (const snapshot of streamReply(replyId, controller.signal)) {
+        this.phase =
+          snapshot.status === "running"
+            ? snapshot.answer.length > 0
+              ? "streaming"
+              : "searching"
+            : "done";
+        this.#updateExchange(exchangeId, {
+          answer: snapshot.answer,
+          thinking: this.#snapshotThinking(snapshot, true),
+          streaming: snapshot.status === "running",
+          error: snapshot.error,
+          replyId,
+        });
+      }
+    } catch (error) {
+      if (isAbortError(error) || controller.signal.aborted) return;
+      console.error("Failed to resume reply:", error);
+      this.#updateExchange(exchangeId, { streaming: false });
+      this.phase = "done";
+    }
+  };
+
+  #updateBtwReply = (replyId: string, patch: Partial<Exchange>): void => {
+    this.thread = this.thread.map((exchange) => ({
+      ...exchange,
+      btws: exchange.btws.map((btw) => ({
+        ...btw,
+        exchanges: btw.exchanges.map((turn) =>
+          turn.replyId === replyId ? { ...turn, ...patch } : turn,
+        ),
+      })),
+    }));
+  };
+
+  #tailBtwReply = async (replyId: string, controller: AbortController): Promise<void> => {
+    try {
+      for await (const snapshot of streamReply(replyId, controller.signal)) {
+        this.#updateBtwReply(replyId, {
+          answer: snapshot.answer,
+          thinking: this.#snapshotThinking(snapshot, false),
+          streaming: snapshot.status === "running",
+          error: snapshot.error,
+        });
+      }
+    } catch (error) {
+      if (isAbortError(error) || controller.signal.aborted) return;
+      console.error("Failed to resume BTW reply:", error);
+      this.#updateBtwReply(replyId, { streaming: false });
+    } finally {
+      this.#btwControllers.delete(controller);
+    }
+  };
+
+  #resumePendingReplies = (): void => {
+    const pendingExchange = this.thread.find(
+      (exchange) => exchange.replyId !== undefined && exchange.answer.length === 0,
+    );
+    if (pendingExchange?.replyId) {
+      this.phase = "searching";
+      const controller = new AbortController();
+      this.#abortController = controller;
+      void this.#tailExchange(pendingExchange.id, pendingExchange.replyId, controller);
+    }
+
+    for (const btw of this.thread.flatMap((exchange) => exchange.btws)) {
+      const turn = btw.exchanges.at(-1);
+      if (turn?.replyId === undefined || turn.answer.length > 0) continue;
+      const controller = new AbortController();
+      this.#btwControllers.add(controller);
+      void this.#tailBtwReply(turn.replyId, controller);
+    }
   };
 
   #runExchange = async (question: string): Promise<void> => {
@@ -120,40 +176,39 @@ export class Session {
     this.#abortController = controller;
 
     try {
-      const { answer, sources } = await consumeStream(
-        streamQuery(question, {
-          signal: controller.signal,
-          originPath: originForQuery,
-          history,
-          mode: "query",
-        }),
-        {
-          onSources: (nextSources) =>
-            this.#updateExchange(exchangeId, {
-              thinking: [{ sources: nextSources }],
-            }),
-          onToken: (text) => {
-            this.phase = "streaming";
-            this.#updateExchange(exchangeId, { answer: text });
-          },
-        },
+      const existingSessionId = this.sessionId;
+      this.#idempotencyKey ??= crypto.randomUUID();
+      const created = await createReply(
+        existingSessionId
+          ? {
+              kind: "exchange",
+              exchange_id: exchangeId,
+              session_id: existingSessionId,
+              question,
+              origin_path: originForQuery,
+              history,
+              mode: "query",
+            }
+          : {
+              kind: "exchange",
+              exchange_id: exchangeId,
+              create: {
+                idempotency_key: this.#idempotencyKey,
+                ...(this.#originPath ? { origin: { doc_path: this.#originPath } } : {}),
+              },
+              question,
+              origin_path: originForQuery,
+              history,
+              mode: "query",
+            },
+        controller.signal,
       );
-
-      this.#updateExchange(exchangeId, {
-        thinking: [{ sources }],
-        answer,
-        streaming: false,
-      });
-      this.phase = "done";
-
-      const payload: ExchangePayload = {
-        id: exchangeId,
-        query: question,
-        thinking: [{ sources }],
-        answer,
-      };
-      const origin = this.#originPath ? { doc_path: this.#originPath } : undefined;
-      void this.#persistExchange(payload, origin);
+      this.#updateExchange(exchangeId, { replyId: created.reply_id });
+      if (this.sessionId === null && created.session_id !== null) {
+        this.sessionId = created.session_id;
+        this.#onSessionCreated?.(created.session_id);
+      }
+      await this.#tailExchange(exchangeId, created.reply_id, controller);
     } catch (error) {
       this.thread = this.thread.filter((exchange) => exchange.id !== exchangeId);
       if (isAbortError(error)) return;
@@ -255,67 +310,48 @@ export class Session {
     const controller = new AbortController();
     this.#btwControllers.add(controller);
 
-    // Reload mid-stream must not lose the turn; completion append supersedes.
-    if (this.sessionId) {
-      appendBtw(this.sessionId, {
-        quote: anchor.quote,
-        blockOffset: anchor.blockOffset,
-        context: anchor.context,
-        exchangeId: ownerExchangeId,
-        exchanges: [...priorExchanges, { query: userText, thinking: [], answer: "" }].map(
-          (exchange) => ({
-            query: exchange.query,
-            thinking: exchange.thinking,
-            answer: exchange.answer,
-          }),
-        ),
-      }).catch((error) => console.warn("Failed to persist pending btw:", error));
-    }
-
     void (async () => {
       try {
-        const { answer, sources } = await consumeStream(
-          streamQuery(question, {
-            history,
-            mode: "btw",
-            signal: controller.signal,
-          }),
-          {
-            onSources: (nextSources) => patchTurn({ thinking: [{ sources: nextSources }] }),
-            onToken: (text) => patchTurn({ answer: text }),
-          },
-        );
-
-        const thinking = sources.length > 0 ? [{ sources }] : [];
-        patchTurn({ thinking, answer, streaming: false });
-
-        if (this.sessionId) {
-          const finalExchanges = [
-            ...priorExchanges,
-            {
-              id: turnId,
-              query: userText,
-              thinking,
-              answer,
-              btws: [],
-              streaming: false,
-            },
-          ];
-          appendBtw(this.sessionId, {
-            quote: anchor.quote,
-            blockOffset: anchor.blockOffset,
-            context: anchor.context,
-            exchangeId: ownerExchangeId,
-            exchanges: finalExchanges.map((exchange) => ({
+        if (!this.sessionId) {
+          throw new Error("Cannot persist BTW without a session");
+        }
+        const pendingBtw = {
+          quote: anchor.quote,
+          blockOffset: anchor.blockOffset,
+          context: anchor.context,
+          exchangeId: ownerExchangeId,
+          exchanges: [...priorExchanges, { query: userText, thinking: [], answer: "" }].map(
+            (exchange) => ({
               query: exchange.query,
               thinking: exchange.thinking,
               answer: exchange.answer,
-            })),
-          }).catch((error) => console.error("Failed to save btw:", error));
+            }),
+          ),
+        };
+        const created = await createReply(
+          {
+            kind: "btw",
+            session_id: this.sessionId,
+            btw: pendingBtw,
+            question,
+            history,
+            mode: "btw",
+          },
+          controller.signal,
+        );
+        patchTurn({ replyId: created.reply_id });
+        for await (const snapshot of streamReply(created.reply_id, controller.signal)) {
+          patchTurn({
+            answer: snapshot.answer,
+            thinking: this.#snapshotThinking(snapshot, false),
+            streaming: snapshot.status === "running",
+            error: snapshot.error,
+          });
         }
       } catch (error) {
         if (isAbortError(error)) return;
-        patchBtwExchanges((exchanges) => exchanges.filter((exchange) => exchange.id !== turnId));
+        console.error("BTW reply failed:", error);
+        patchTurn({ streaming: false });
       } finally {
         this.#btwControllers.delete(controller);
       }

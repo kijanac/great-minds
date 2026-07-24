@@ -51,6 +51,7 @@ const sessionMetaEventSchema = z.object({
 const sessionExchangeEventSchema = z.object({
   type: z.literal("exchange"),
   exId: z.string(),
+  reply_id: z.string().optional(),
   query: z.string(),
   thinking: z.array(thinkingBlockSchema),
   answer: z.string(),
@@ -60,6 +61,7 @@ const sessionExchangeEventSchema = z.object({
 const sessionBtwEventSchema = z.object({
   type: z.literal("btw"),
   exId: z.string(),
+  reply_id: z.string().optional(),
   quote: z.string(),
   blockOffset: z.number(),
   context: z.string(),

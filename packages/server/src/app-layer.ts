@@ -27,6 +27,7 @@ import { PasskeysService, PasskeysServiceLive } from "./passkeys.ts";
 import { PipelineRunsServiceLive } from "./pipeline-runs.ts";
 import { ProposalsService, ProposalsServiceLive } from "./proposals.ts";
 import { QueryService, QueryServiceLive } from "./query.ts";
+import { RepliesService, RepliesServiceLive } from "./replies.ts";
 import { SessionsService, SessionsServiceLive } from "./sessions.ts";
 import { SourceDocumentsService, SourceDocumentsServiceLive } from "./source-documents.ts";
 import { StagedFileIngestWorkflowLive } from "./staged-file-ingest-workflow.ts";
@@ -67,6 +68,7 @@ export type AppLayerServices =
   | CostLookupService
   | ParallelSearchService
   | QueryService
+  | RepliesService
   | VaultStorage
   | ProposalStorage
   | RandomBytesService
@@ -181,6 +183,29 @@ export const makeAppLayers = (overrides: AppLayerOverrides = {}) => {
     Layer.provideMerge(StorageLive),
     Layer.provideMerge(BaseLive),
   );
+  const SessionsLive = SessionsServiceLive.pipe(
+    Layer.provideMerge(VaultAccessLive),
+    Layer.provideMerge(StorageLive),
+    Layer.provideMerge(IngestLive),
+    Layer.provideMerge(ProposalsLive),
+    Layer.provideMerge(SourceDocumentsLive),
+    Layer.provideMerge(BaseLive),
+  );
+  const QueryLive = QueryServiceLive.pipe(
+    Layer.provideMerge(LanguageModelLiveLayer),
+    Layer.provideMerge(EmbeddingsLiveLayer),
+    Layer.provideMerge(CostLookupLiveLayer),
+    Layer.provideMerge(ParallelSearchLiveLayer),
+    Layer.provideMerge(VaultAccessLive),
+    Layer.provideMerge(StorageLive),
+    Layer.provideMerge(BaseLive),
+  );
+  const RepliesLive = RepliesServiceLive.pipe(
+    Layer.provideMerge(SessionsLive),
+    Layer.provideMerge(QueryLive),
+    Layer.provideMerge(VaultAccessLive),
+    Layer.provideMerge(BaseLive),
+  );
   const ReadServicesLive = Layer.mergeAll(
     VaultsLive,
     WikiServiceLive.pipe(Layer.provideMerge(VaultAccessLive), Layer.provideMerge(BaseLive)),
@@ -194,23 +219,9 @@ export const makeAppLayers = (overrides: AppLayerOverrides = {}) => {
       Layer.provideMerge(StorageLive),
       Layer.provideMerge(BaseLive),
     ),
-    SessionsServiceLive.pipe(
-      Layer.provideMerge(VaultAccessLive),
-      Layer.provideMerge(StorageLive),
-      Layer.provideMerge(IngestLive),
-      Layer.provideMerge(ProposalsLive),
-      Layer.provideMerge(SourceDocumentsLive),
-      Layer.provideMerge(BaseLive),
-    ),
-    QueryServiceLive.pipe(
-      Layer.provideMerge(LanguageModelLiveLayer),
-      Layer.provideMerge(EmbeddingsLiveLayer),
-      Layer.provideMerge(CostLookupLiveLayer),
-      Layer.provideMerge(ParallelSearchLiveLayer),
-      Layer.provideMerge(VaultAccessLive),
-      Layer.provideMerge(StorageLive),
-      Layer.provideMerge(BaseLive),
-    ),
+    SessionsLive,
+    QueryLive,
+    RepliesLive,
     SourceDocumentsLive,
     ProposalsLive,
     ProposalStorageLiveLayer,

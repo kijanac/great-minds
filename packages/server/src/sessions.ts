@@ -49,18 +49,21 @@ type SessionsServiceShape = {
     userId: Uuid,
     vaultId: Uuid,
     input: CreateSessionRequest,
+    replyId?: Uuid,
   ) => Effect.Effect<CreateSessionResponse, Forbidden>;
   readonly appendExchange: (
     userId: Uuid,
     vaultId: Uuid,
     sessionId: SessionId,
     input: ExchangeData,
+    replyId?: Uuid,
   ) => Effect.Effect<SessionPathResponse, Forbidden>;
   readonly appendBtw: (
     userId: Uuid,
     vaultId: Uuid,
     sessionId: SessionId,
     input: BtwData,
+    replyId?: Uuid,
   ) => Effect.Effect<SessionPathResponse, Forbidden>;
   readonly promoteExchange: (
     userId: Uuid,
@@ -150,6 +153,7 @@ const normalizeMetaEvent = (event: SessionMetaEvent): SessionMetaEvent => ({
 const normalizeExchangeEvent = (event: SessionExchangeEvent): SessionExchangeEvent => ({
   type: "exchange",
   exId: event.exId,
+  ...(event.reply_id === undefined ? {} : { reply_id: event.reply_id }),
   query: event.query,
   thinking: (event.thinking ?? []).map(normalizeThinkingBlock),
   answer: event.answer ?? "",
@@ -159,6 +163,7 @@ const normalizeExchangeEvent = (event: SessionExchangeEvent): SessionExchangeEve
 const normalizeBtwEvent = (event: SessionBtwEvent): SessionBtwEvent => ({
   type: "btw",
   exId: event.exId,
+  ...(event.reply_id === undefined ? {} : { reply_id: event.reply_id }),
   quote: event.quote,
   blockOffset: event.blockOffset ?? -1,
   context: event.context ?? "",
@@ -200,13 +205,13 @@ export const renderSessionMarkdown = (events: readonly SessionEvent[]) => {
   const exchanges: SessionExchangeEvent[] = [];
   const latestBtw = new Map<string, SessionBtwEvent>();
 
-  for (const event of events) {
+  for (const event of dedupeSessionExchanges(events)) {
     if (event.type === "exchange") {
       exchanges.push(event);
     } else if (event.type === "btw") {
       const key = `${event.exId}\0${event.quote}`;
       const existing = latestBtw.get(key);
-      if (existing === undefined || event.ts > existing.ts) {
+      if (existing === undefined || event.ts >= existing.ts) {
         latestBtw.set(key, event);
       }
     }
@@ -246,6 +251,33 @@ export const renderSessionMarkdown = (events: readonly SessionEvent[]) => {
   }
 
   return `${parts.join("").replace(/\s+$/u, "")}\n`;
+};
+
+export const dedupeSessionExchanges = (events: readonly SessionEvent[]): SessionEvent[] => {
+  const latest = new Map<string, SessionExchangeEvent>();
+  for (const event of events) {
+    if (event.type === "exchange") {
+      latest.set(event.exId, event);
+    }
+  }
+
+  const emitted = new Set<string>();
+  const deduped: SessionEvent[] = [];
+  for (const event of events) {
+    if (event.type !== "exchange") {
+      deduped.push(event);
+      continue;
+    }
+    if (emitted.has(event.exId)) {
+      continue;
+    }
+    emitted.add(event.exId);
+    const latestEvent = latest.get(event.exId);
+    if (latestEvent !== undefined) {
+      deduped.push(latestEvent);
+    }
+  }
+  return deduped;
 };
 
 export const SessionsServiceLive = Layer.effect(
@@ -389,7 +421,7 @@ export const SessionsServiceLive = Layer.effect(
       });
 
     const findExchange = (events: readonly SessionEvent[], exchangeId: string) =>
-      events.find(
+      dedupeSessionExchanges(events).find(
         (event): event is SessionExchangeEvent =>
           event.type === "exchange" && event.exId === exchangeId,
       );
@@ -397,18 +429,24 @@ export const SessionsServiceLive = Layer.effect(
     const findMeta = (events: readonly SessionEvent[]) =>
       events.find((event): event is SessionMetaEvent => event.type === "meta");
 
-    const exchangeEvent = (input: ExchangeData, ts: string): SessionExchangeEvent => ({
+    const exchangeEvent = (
+      input: ExchangeData,
+      ts: string,
+      replyId?: Uuid,
+    ): SessionExchangeEvent => ({
       type: "exchange",
       exId: input.id,
+      ...(replyId === undefined ? {} : { reply_id: replyId }),
       query: input.query,
       thinking: (input.thinking ?? []).map(normalizeThinkingBlock),
       answer: input.answer,
       ts,
     });
 
-    const btwEvent = (input: BtwData, ts: string): SessionBtwEvent => ({
+    const btwEvent = (input: BtwData, ts: string, replyId?: Uuid): SessionBtwEvent => ({
       type: "btw",
       exId: input.exchangeId,
+      ...(replyId === undefined ? {} : { reply_id: replyId }),
       quote: input.quote,
       blockOffset: input.blockOffset,
       context: input.context,
@@ -416,10 +454,15 @@ export const SessionsServiceLive = Layer.effect(
       ts,
     });
 
-    const appendExchangeEvent = (vaultId: Uuid, sessionId: string, input: ExchangeData) =>
+    const appendExchangeEvent = (
+      vaultId: Uuid,
+      sessionId: string,
+      input: ExchangeData,
+      replyId?: Uuid,
+    ) =>
       Effect.gen(function* () {
         const ts = yield* nowIso();
-        const event = exchangeEvent(input, ts);
+        const event = exchangeEvent(input, ts, replyId);
         yield* appendEvent(vaultId, sessionId, event);
         yield* db
           .update(sessions)
@@ -430,10 +473,15 @@ export const SessionsServiceLive = Layer.effect(
         return { path: sessionFilePath(sessionId) } satisfies SessionPathResponse;
       });
 
-    const appendBtwEvent = (vaultId: Uuid, sessionId: string, input: BtwData) =>
+    const appendBtwEvent = (
+      vaultId: Uuid,
+      sessionId: string,
+      input: BtwData,
+      replyId?: Uuid,
+    ) =>
       Effect.gen(function* () {
         const ts = yield* nowIso();
-        const event = btwEvent(input, ts);
+        const event = btwEvent(input, ts, replyId);
         yield* appendEvent(vaultId, sessionId, event);
         yield* db
           .update(sessions)
@@ -445,7 +493,7 @@ export const SessionsServiceLive = Layer.effect(
       });
 
     return {
-      createSession: (userId, vaultId, input) =>
+      createSession: (userId, vaultId, input, replyId) =>
         Effect.gen(function* () {
           yield* access.requireMember(userId, vaultId);
           const existingRows = yield* db
@@ -480,7 +528,7 @@ export const SessionsServiceLive = Layer.effect(
               ),
             );
             if (findExchange(events, input.exchange.id) === undefined) {
-              yield* appendExchangeEvent(vaultId, existing, input.exchange);
+              yield* appendExchangeEvent(vaultId, existing, input.exchange, replyId);
             }
             return { id: existing, path: sessionFilePath(existing) };
           }
@@ -497,7 +545,7 @@ export const SessionsServiceLive = Layer.effect(
             user_id: userId,
             origin,
           };
-          const exchange = exchangeEvent(input.exchange, exchangeTs);
+          const exchange = exchangeEvent(input.exchange, exchangeTs, replyId);
           yield* appendEvent(vaultId, sessionId, meta);
           yield* appendEvent(vaultId, sessionId, exchange);
           yield* db
@@ -526,15 +574,15 @@ export const SessionsServiceLive = Layer.effect(
           yield* rebuildMarkdown(vaultId, sessionId);
           return { id: sessionId, path: sessionFilePath(sessionId) };
         }),
-      appendExchange: (userId, vaultId, sessionId, input) =>
+      appendExchange: (userId, vaultId, sessionId, input, replyId) =>
         Effect.gen(function* () {
           yield* access.requireMember(userId, vaultId);
-          return yield* appendExchangeEvent(vaultId, sessionId, input);
+          return yield* appendExchangeEvent(vaultId, sessionId, input, replyId);
         }),
-      appendBtw: (userId, vaultId, sessionId, input) =>
+      appendBtw: (userId, vaultId, sessionId, input, replyId) =>
         Effect.gen(function* () {
           yield* access.requireMember(userId, vaultId);
-          return yield* appendBtwEvent(vaultId, sessionId, input);
+          return yield* appendBtwEvent(vaultId, sessionId, input, replyId);
         }),
       promoteExchange: (userId, vaultId, sessionId, exchangeId) =>
         Effect.gen(function* () {
@@ -633,7 +681,9 @@ export const SessionsServiceLive = Layer.effect(
         Effect.gen(function* () {
           yield* access.requireMember(userId, vaultId);
           const content = yield* readText(vaultId, sessionId, "jsonl", "Session not found");
-          const events = yield* parseEvents(sessionId, content, { isolateLatestMeta: true });
+          const events = dedupeSessionExchanges(
+            yield* parseEvents(sessionId, content, { isolateLatestMeta: true }),
+          );
           return {
             id: sessionId,
             events,

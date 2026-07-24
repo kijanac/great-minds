@@ -118,6 +118,14 @@
             onBtwReply={session.replyBtw}
             onBtwDismiss={session.dismissBtw}
           />
+        {:else if !exchange.streaming}
+          <div
+            class="mb-[9px] font-mono text-[length:var(--text-chrome)] tracking-[0.06em] text-warm-ghost italic"
+          >
+            reply interrupted{exchange.error
+              ? ` — ${exchange.error}`
+              : " — ask again below"}
+          </div>
         {/if}
       </div>
     {/each}

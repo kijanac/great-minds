@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 
@@ -7,6 +7,7 @@ import {
   backlinks,
   Database,
   llmCostEvents,
+  replies,
   searchIndex,
   sourceDocuments,
   topics,
@@ -16,7 +17,7 @@ import {
   wikiArticles,
 } from "@great-minds/database";
 import type { Uuid } from "@great-minds/domain";
-import { sql } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import { Effect, Layer, Option, Redacted } from "effect";
 import { afterEach, describe, expect, it } from "vitest";
 
@@ -25,6 +26,7 @@ import { ClockService, makeTestClock } from "../src/clock.ts";
 import { AppConfig, type AppConfigShape } from "../src/config.ts";
 import { StructuredLogger, StructuredLoggerLive } from "../src/logging.ts";
 import { makeTestMailer } from "../src/mailer.ts";
+import { RepliesService } from "../src/replies.ts";
 import { startServer } from "../src/server.ts";
 import { TokenService } from "../src/tokens.ts";
 import {
@@ -53,7 +55,13 @@ const id = {
   source: "00000000-0000-4000-8000-000000020501",
 } as const;
 
-type TestServices = AppConfig | Database | ClockService | StructuredLogger | TokenService;
+type TestServices =
+  | AppConfig
+  | Database
+  | ClockService
+  | RepliesService
+  | StructuredLogger
+  | TokenService;
 
 type TestState = {
   readonly started: Awaited<ReturnType<typeof startServer>>;
@@ -400,15 +408,80 @@ const apiWithToken = async (path: string, body: unknown, token: string) => {
   return { response, text };
 };
 
-const sseBlock = (event: string, data: unknown) =>
-  `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
+type ReplySnapshot = {
+  readonly reply_id: string;
+  readonly status: "running" | "completed" | "failed";
+  readonly answer: string;
+  readonly sources: readonly Record<string, unknown>[];
+  readonly error: string | null;
+  readonly version: number;
+};
+
+const replySnapshots = (text: string): ReplySnapshot[] =>
+  text.split("\n\n").flatMap((block) => {
+    const lines = block.split("\n");
+    const event =
+      lines.find((line) => line.startsWith("event:"))?.slice(6).trimStart() ?? "message";
+    const data = lines
+      .filter((line) => line.startsWith("data:"))
+      .map((line) => line.slice(5).trimStart())
+      .join("\n");
+    return event === "message" && data.length > 0
+      ? [JSON.parse(data) as ReplySnapshot]
+      : [];
+  });
+
+const runReply = async (body: Record<string, unknown>) => {
+  const created = await api(repliesPath, {
+    kind: "ephemeral",
+    mode: "query",
+    history: [],
+    ...body,
+  });
+  if (created.response.status !== 202) {
+    return { ...created, snapshots: [] as ReplySnapshot[] };
+  }
+  const { reply_id: replyId } = JSON.parse(created.text) as { reply_id: string };
+  const streamed = await tailReply(replyId);
+  return { ...streamed, snapshots: replySnapshots(streamed.text) };
+};
+
+const tailReply = async (replyId: string) => {
+  const response = await fetch(
+    `${currentState().started.url}/v1/vaults/${id.vault}/replies/${replyId}/stream`,
+    {
+      headers: {
+        accept: "text/event-stream",
+        authorization: `Bearer ${currentState().token}`,
+      },
+    },
+  );
+  const text = await response.text();
+  return { response, text };
+};
+
+const readSessionEvents = async (sessionId: string) => {
+  const content = await readFile(
+    join(currentState().storageRoot, "vaults", id.vault, "sessions", `${sessionId}.jsonl`),
+    "utf8",
+  );
+  return content
+    .trim()
+    .split("\n")
+    .map((line) => JSON.parse(line) as Record<string, unknown>);
+};
+
+const getWithToken = (path: string) =>
+  fetch(`${currentState().started.url}/v1${path}`, {
+    headers: { authorization: `Bearer ${currentState().token}` },
+  });
 
 const vector1024 = (head: readonly number[]) => [
   ...head,
   ...Array.from({ length: 1024 - head.length }, () => 0),
 ];
 
-const queryPath = `/vaults/${id.vault}/query`;
+const repliesPath = `/vaults/${id.vault}/replies`;
 
 afterEach(async () => {
   if (state !== undefined) {
@@ -427,8 +500,8 @@ describe("query stream", () => {
     await insertUser(id.bob, "bob-query@example.com");
     const bobToken = await issueToken(id.bob);
     const nonMember = await apiWithToken(
-      queryPath,
-      { question: "No access", history: [] },
+      repliesPath,
+      { kind: "ephemeral", mode: "query", question: "No access", history: [] },
       bobToken,
     );
     expect(nonMember.response.status).toBe(403);
@@ -437,7 +510,9 @@ describe("query stream", () => {
       detail: "Only vault members can perform this action",
     });
 
-    const unknown = await api("/vaults/00000000-0000-4000-8000-000000029999/query", {
+    const unknown = await api("/vaults/00000000-0000-4000-8000-000000029999/replies", {
+      kind: "ephemeral",
+      mode: "query",
       question: "Missing",
       history: [],
     });
@@ -454,13 +529,221 @@ describe("query stream", () => {
       language: noKeyLanguage,
       configOverrides: { openRouterApiKey: Option.none() },
     });
-    const noKey = await api(queryPath, { question: "No key", history: [] });
+    const noKey = await api(repliesPath, {
+      kind: "ephemeral",
+      mode: "query",
+      question: "No key",
+      history: [],
+    });
     expect(noKey.response.status).toBe(503);
     expect(noKey.response.headers.get("content-type") ?? "").not.toContain("text/event-stream");
     expect(JSON.parse(noKey.text)).toEqual({
       detail: "LLM service not configured (OPENROUTER_API_KEY missing)",
     });
     expect(noKeyLanguage.streamCalls).toHaveLength(0);
+  });
+
+  it("persists pending and final exchange events while the reply tail reaches completed", async () => {
+    const language = makeScriptedLanguageModel({
+      streams: [
+        {
+          kind: "parts",
+          parts: [tokenPart("Durable answer."), finishPart("stop", "durable-generation")],
+        },
+      ],
+    });
+    await startHarness({ language });
+
+    const created = await api(repliesPath, {
+      kind: "exchange",
+      exchange_id: "ex-durable",
+      create: {
+        idempotency_key: "reply-session-idempotency",
+        origin: { doc_path: "wiki/alpha.md" },
+      },
+      question: "Persist this answer",
+      mode: "query",
+      history: [],
+    });
+    expect(created.response.status).toBe(202);
+    const identifiers = JSON.parse(created.text) as {
+      reply_id: string;
+      session_id: string;
+    };
+
+    const submittedEvents = await readSessionEvents(identifiers.session_id);
+    expect(
+      submittedEvents.some(
+        (event) =>
+          event.type === "exchange" &&
+          event.exId === "ex-durable" &&
+          event.answer === "" &&
+          event.reply_id === identifiers.reply_id,
+      ),
+    ).toBe(true);
+
+    const tail = await tailReply(identifiers.reply_id);
+    expect(replySnapshots(tail.text).at(-1)).toMatchObject({
+      status: "completed",
+      answer: "Durable answer.",
+    });
+
+    const completedEvents = await readSessionEvents(identifiers.session_id);
+    const exchangeEvents = completedEvents.filter((event) => event.type === "exchange");
+    expect(exchangeEvents).toHaveLength(2);
+    expect(exchangeEvents.at(-1)).toMatchObject({
+      exId: "ex-durable",
+      reply_id: identifiers.reply_id,
+      answer: "Durable answer.",
+    });
+
+    const replay = await getWithToken(
+      `/vaults/${id.vault}/sessions/${identifiers.session_id}`,
+    );
+    expect(replay.status).toBe(200);
+    const replayBody = (await replay.json()) as {
+      events: readonly Record<string, unknown>[];
+    };
+    expect(replayBody.events.filter((event) => event.type === "exchange")).toEqual([
+      expect.objectContaining({ exId: "ex-durable", answer: "Durable answer." }),
+    ]);
+
+    const markdown = await readFile(
+      join(
+        currentState().storageRoot,
+        "vaults",
+        id.vault,
+        "sessions",
+        `${identifiers.session_id}.md`,
+      ),
+      "utf8",
+    );
+    expect(markdown.match(/^# Persist this answer$/gmu)).toHaveLength(1);
+  });
+
+  it("reuses an idempotently-created session across reply submissions", async () => {
+    const language = makeScriptedLanguageModel({
+      streams: [
+        { kind: "parts", parts: [tokenPart("First"), finishPart("stop", "first")] },
+        { kind: "parts", parts: [tokenPart("Second"), finishPart("stop", "second")] },
+      ],
+    });
+    await startHarness({ language });
+
+    const createExchange = async (exchangeId: string, question: string) => {
+      const created = await api(repliesPath, {
+        kind: "exchange",
+        exchange_id: exchangeId,
+        create: { idempotency_key: "same-session-key" },
+        question,
+        mode: "query",
+        history: [],
+      });
+      expect(created.response.status).toBe(202);
+      const identifiers = JSON.parse(created.text) as {
+        reply_id: string;
+        session_id: string;
+      };
+      await tailReply(identifiers.reply_id);
+      return identifiers;
+    };
+
+    const first = await createExchange("ex-first", "First question");
+    const second = await createExchange("ex-second", "Second question");
+    expect(second.session_id).toBe(first.session_id);
+
+    const replay = await getWithToken(`/vaults/${id.vault}/sessions/${first.session_id}`);
+    const replayBody = (await replay.json()) as {
+      events: readonly Record<string, unknown>[];
+    };
+    expect(
+      replayBody.events
+        .filter((event) => event.type === "exchange")
+        .map((event) => event.answer),
+    ).toEqual(["First", "Second"]);
+  });
+
+  it("leaves the pending session event when generation fails", async () => {
+    const language = makeScriptedLanguageModel({
+      streams: [{ kind: "throw", error: new Error("provider secret") }],
+    });
+    await startHarness({ language });
+
+    const created = await api(repliesPath, {
+      kind: "exchange",
+      exchange_id: "ex-failed",
+      create: { idempotency_key: "failed-session-key" },
+      question: "Fail this answer",
+      mode: "query",
+      history: [],
+    });
+    const identifiers = JSON.parse(created.text) as {
+      reply_id: string;
+      session_id: string;
+    };
+    const tail = await tailReply(identifiers.reply_id);
+    expect(replySnapshots(tail.text).at(-1)).toMatchObject({
+      status: "failed",
+      error: "Something went wrong while answering. Try again in a minute.",
+    });
+
+    const events = await readSessionEvents(identifiers.session_id);
+    expect(events.filter((event) => event.type === "exchange")).toEqual([
+      expect.objectContaining({
+        exId: "ex-failed",
+        reply_id: identifiers.reply_id,
+        answer: "",
+      }),
+    ]);
+  });
+
+  it("marks stale running replies failed during zombie recovery", async () => {
+    const language = makeScriptedLanguageModel({ streams: [] });
+    await startHarness({ language });
+    const zombieId = "00000000-0000-4000-8000-000000020901";
+
+    await runDb(
+      Effect.gen(function* () {
+        const db = yield* Database;
+        yield* db
+          .insert(replies)
+          .values({
+            id: zombieId,
+            vaultId: id.vault,
+            userId: id.alice,
+            kind: "ephemeral",
+            status: "running",
+            answer: "partial",
+            sources: [],
+            request: {
+              kind: "ephemeral",
+              question: "zombie",
+              mode: "query",
+              history: [],
+            },
+            createdAt: initialTime,
+            updatedAt: initialTime,
+          })
+          .pipe(Effect.orDie);
+        const service = yield* RepliesService;
+        expect(
+          yield* service.recoverZombies(new Date(initialTime.getTime() + 60_000)),
+        ).toBe(1);
+      }),
+    );
+
+    const rows = await runDb(
+      Effect.gen(function* () {
+        const db = yield* Database;
+        return yield* db.select().from(replies).where(eq(replies.id, zombieId)).pipe(Effect.orDie);
+      }),
+    );
+    expect(rows[0]).toMatchObject({
+      status: "failed",
+      error: "interrupted by server restart",
+      answer: "partial",
+      version: 1,
+    });
   });
 
   it("streams the full tool loop with exact SSE bytes and records cost", async () => {
@@ -509,88 +792,45 @@ describe("query stream", () => {
     const costs = makeCostLookup(new Map());
     await startHarness({ language, costs });
 
-    const { response, text } = await api(queryPath, { question: "Explain value.", history: [] });
+    const { response, text, snapshots } = await runReply({
+      question: "Explain value.",
+      history: [],
+    });
 
     expect(response.status).toBe(200);
     expect(response.headers.get("content-type") ?? "").toContain("text/event-stream");
     expect(response.headers.get("cache-control")).toBe("no-cache");
     expect(response.headers.get("x-accel-buffering")).toBe("no");
-    expect(text).toBe(
-      sseBlock("source_pending", {
-        call_id: "tc-list",
-        source: { type: "query", filters: { contains: "Alpha", sort: "central" } },
-      }) +
-        sseBlock("source_pending", {
-          call_id: "tc-query",
-          source: { type: "query", filters: { tags: ["theory"], author: "Lenin" } },
-        }) +
-        sseBlock("source_pending", {
-          call_id: "tc-search",
-          source: { type: "search", query: "capital", scope: "kb" },
-        }) +
-        sseBlock("source_pending", {
-          call_id: "tc-search-doc",
-          source: {
-            type: "search",
-            query: "value",
-            scope: "kb",
-            path: "raw/texts/source.md",
-            title: null,
-          },
-        }) +
-        sseBlock("source_settled", { call_id: "tc-list" }) +
-        sseBlock("source", { type: "query", filters: { contains: "Alpha", sort: "central" } }) +
-        sseBlock("source_settled", { call_id: "tc-query" }) +
-        sseBlock("source", { type: "query", filters: { tags: ["theory"], author: "Lenin" } }) +
-        sseBlock("source_settled", { call_id: "tc-search" }) +
-        sseBlock("source", { type: "search", query: "capital", scope: "kb" }) +
-        sseBlock("source_settled", { call_id: "tc-search-doc" }) +
-        sseBlock("source", {
+    expect(text).toContain("event: connected\n");
+    expect(text).toContain("event: done\n");
+    expect(snapshots.at(-1)).toMatchObject({
+      status: "completed",
+      answer: "Answer.",
+      error: null,
+      sources: [
+        { type: "query", label: "contains: Alpha, sort: central" },
+        { type: "query", label: "tags: theory, author: Lenin" },
+        { type: "search", label: "capital", scope: "kb" },
+        {
           type: "search",
-          query: "value",
+          label: "value",
           scope: "kb",
           path: "raw/texts/source.md",
           title: "Raw Source",
-        }) +
-        sseBlock("source_pending", {
-          call_id: "tc-read-wiki",
-          source: { type: "article", path: "wiki/alpha.md", title: null },
-        }) +
-        sseBlock("source_pending", {
-          call_id: "tc-read-raw",
-          source: { type: "raw", path: "raw/texts/source.md", title: null },
-        }) +
-        sseBlock("source_pending", {
-          call_id: "tc-expand",
-          source: {
-            type: "raw",
-            path: "raw/texts/source.md",
-            title: null,
-            start: 0,
-            end: 1,
-          },
-        }) +
-        sseBlock("source_pending", {
-          call_id: "tc-links",
-          source: { type: "links", path: "wiki/alpha.md", title: null },
-        }) +
-        sseBlock("source_settled", { call_id: "tc-read-wiki" }) +
-        sseBlock("source", { type: "article", path: "wiki/alpha.md", title: "Alpha" }) +
-        sseBlock("source_settled", { call_id: "tc-read-raw" }) +
-        sseBlock("source", { type: "raw", path: "raw/texts/source.md", title: "Raw Source" }) +
-        sseBlock("source_settled", { call_id: "tc-expand" }) +
-        sseBlock("source", {
+        },
+        // Links resolves into its pending slot in place; article/raw
+        // resolutions re-push at the end (read+expand collapse to one card).
+        { type: "links", label: "wiki/alpha.md", title: "Alpha" },
+        { type: "article", label: "wiki/alpha.md", title: "Alpha", full: true },
+        {
           type: "raw",
-          path: "raw/texts/source.md",
+          label: "raw/texts/source.md",
           title: "Raw Source",
-          start: 0,
-          end: 1,
-        }) +
-        sseBlock("source_settled", { call_id: "tc-links" }) +
-        sseBlock("source", { type: "links", path: "wiki/alpha.md", title: "Alpha" }) +
-        sseBlock("token", { text: "Answer." }) +
-        sseBlock("done", {}),
-    );
+          full: true,
+          ranges: [{ start: 0, end: 1 }],
+        },
+      ],
+    });
 
     const rows = await runDb(
       Effect.gen(function* () {
@@ -613,7 +853,7 @@ describe("query stream", () => {
     });
     await startHarness({ language });
 
-    await api(queryPath, {
+    await runReply({
       question: "BTW follow-up",
       mode: "btw",
       history: [
@@ -626,7 +866,7 @@ describe("query stream", () => {
         { role: "assistant", content: "First BTW answer" },
       ],
     });
-    await api(queryPath, {
+    await runReply({
       question: "Doc BTW follow-up",
       mode: "btw",
       origin_path: "raw/texts/source.md",
@@ -675,7 +915,7 @@ describe("query stream", () => {
     });
     await startHarness({ language });
 
-    await api(queryPath, {
+    await runReply({
       question: "Read origin",
       origin_path: "wiki/alpha.md",
       history: [],
@@ -741,10 +981,10 @@ describe("query stream", () => {
       }),
     );
 
-    const { text } = await api(queryPath, { question: "Find dual power" });
+    const { snapshots } = await runReply({ question: "Find dual power" });
 
-    expect(text).toContain(
-      sseBlock("source", { type: "search", query: "dual power", scope: "kb" }),
+    expect(snapshots.at(-1)?.sources).toContainEqual(
+      expect.objectContaining({ type: "search", label: "dual power", scope: "kb" }),
     );
     expect(embeddings.calls).toEqual([["dual power"]]);
     const toolMessage = language.streamCalls[1].messages.find(
@@ -774,7 +1014,7 @@ describe("query stream", () => {
       streams: [{ kind: "parts", parts: [tokenPart("Off"), finishPart("stop", "off")] }],
     });
     await startHarness({ language: offLanguage });
-    await api(queryPath, { question: "Can you use the web?" });
+    await runReply({ question: "Can you use the web?" });
     expect(offLanguage.streamCalls[0].tools.map((tool) => tool.function.name)).not.toContain(
       "web_search",
     );
@@ -792,7 +1032,7 @@ describe("query stream", () => {
     await resetDatabase();
     await seedFixtures(true);
     state = { ...currentState(), token: await issueToken(id.alice) };
-    await api(queryPath, { question: "Can config enable web without key?" });
+    await runReply({ question: "Can config enable web without key?" });
     expect(
       missingParallelLanguage.streamCalls[0].tools.map((tool) => tool.function.name),
     ).not.toContain("web_search");
@@ -837,7 +1077,7 @@ describe("query stream", () => {
     await seedFixtures(true);
     state = { ...currentState(), token: await issueToken(id.alice) };
 
-    const { text } = await api(queryPath, { question: "Need current facts" });
+    const { snapshots } = await runReply({ question: "Need current facts" });
     expect(onLanguage.streamCalls[0].tools.map((tool) => tool.function.name)).toContain(
       "web_search",
     );
@@ -846,22 +1086,25 @@ describe("query stream", () => {
       { question: "Need current facts", query: "recent factual query" },
     ]);
     expect(onLanguage.completeCalls[0].model).toBe("extract/test-model");
-    expect(text).toContain(
-      sseBlock("source", { type: "search", query: "recent factual query", scope: "web" }),
+    expect(snapshots.at(-1)?.sources).toContainEqual(
+      expect.objectContaining({
+        type: "search",
+        label: "recent factual query",
+        scope: "web",
+      }),
     );
-    expect(text.endsWith(sseBlock("done", {}))).toBe(true);
+    expect(snapshots.at(-1)?.status).toBe("completed");
   });
 
-  it("emits sanitized setup and mid-loop errors without done", async () => {
+  it("persists sanitized setup and mid-loop failures", async () => {
     const setupLanguage = makeScriptedLanguageModel({ streams: [] });
     await startHarness({ language: setupLanguage });
     await writeVaultFile(id.vault, "config.yaml", ": bad: [");
-    const setup = await api(queryPath, { question: "break setup" });
-    expect(setup.text).toBe(
-      sseBlock("error", {
-        message: "Something went wrong while answering. Try again in a minute.",
-      }),
-    );
+    const setup = await runReply({ question: "break setup" });
+    expect(setup.snapshots.at(-1)).toMatchObject({
+      status: "failed",
+      error: "Something went wrong while answering. Try again in a minute.",
+    });
     await currentState().started.close();
     await rm(currentState().storageRoot, { recursive: true, force: true });
     state = undefined;
@@ -879,20 +1122,14 @@ describe("query stream", () => {
       ],
     });
     await startHarness({ language: loopLanguage });
-    const loop = await api(queryPath, { question: "break loop" });
-    expect(loop.text).toBe(
-      sseBlock("source_pending", {
-        call_id: "tc-list",
-        source: { type: "query", filters: { contains: "Alpha" } },
-      }) +
-        sseBlock("source_settled", { call_id: "tc-list" }) +
-        sseBlock("source", { type: "query", filters: { contains: "Alpha" } }) +
-        sseBlock("error", {
-          message: "Something went wrong while answering. Try again in a minute.",
-        }),
-    );
+    const loop = await runReply({ question: "break loop" });
+    expect(loop.snapshots.at(-1)).toMatchObject({
+      status: "failed",
+      error: "Something went wrong while answering. Try again in a minute.",
+      sources: [{ type: "query", label: "contains: Alpha" }],
+    });
     expect(loop.text).not.toContain("secret provider detail");
-    expect(loop.text).not.toContain("event: done");
+    expect(loop.text).toContain("event: done\n");
   });
 
   it("emits an error and skips the batch when tool arguments are malformed JSON", async () => {
@@ -910,12 +1147,13 @@ describe("query stream", () => {
     });
     await startHarness({ language });
 
-    const malformed = await api(queryPath, { question: "break tool args" });
+    const malformed = await runReply({ question: "break tool args" });
 
-    expect(malformed.text).toBe(
-      sseBlock("error", { message: "Malformed tool args for search_content" }),
-    );
-    expect(malformed.text).not.toContain("event: done");
+    expect(malformed.snapshots.at(-1)).toMatchObject({
+      status: "failed",
+      error: "Malformed tool args for search_content",
+    });
+    expect(malformed.text).toContain("event: done\n");
     expect(malformed.text).not.toContain("Alpha");
   });
 
@@ -934,18 +1172,13 @@ describe("query stream", () => {
     });
     await startHarness({ language });
 
-    const result = await api(queryPath, { question: "missing source" });
+    const result = await runReply({ question: "missing source" });
 
-    expect(result.text).toBe(
-      sseBlock("source_pending", {
-        call_id: "tc-missing",
-        source: { type: "article", path: "wiki/missing.md", title: null },
-      }) +
-        sseBlock("source_settled", { call_id: "tc-missing" }) +
-        sseBlock("token", { text: "Recovered" }) +
-        sseBlock("done", {}),
-    );
-    expect(result.text).not.toContain("event: source\n");
+    expect(result.snapshots.at(-1)).toMatchObject({
+      status: "completed",
+      answer: "Recovered",
+      sources: [],
+    });
   });
 
   it("surfaces invalid list_articles sort instead of silently defaulting", async () => {
@@ -962,19 +1195,13 @@ describe("query stream", () => {
     });
     await startHarness({ language });
 
-    const result = await api(queryPath, { question: "bad sort" });
+    const result = await runReply({ question: "bad sort" });
 
-    expect(result.text).toBe(
-      sseBlock("source_pending", {
-        call_id: "tc-list",
-        source: { type: "query", filters: { contains: "Alpha", sort: "bogus" } },
-      }) +
-        sseBlock("source_settled", { call_id: "tc-list" }) +
-        sseBlock("error", {
-          message: "Something went wrong while answering. Try again in a minute.",
-        }),
-    );
-    expect(result.text).not.toContain("event: done");
+    expect(result.snapshots.at(-1)).toMatchObject({
+      status: "failed",
+      error: "Something went wrong while answering. Try again in a minute.",
+      sources: [],
+    });
   });
 
   it("uses exact genre matching while keeping query_documents limit clamped", async () => {
@@ -995,7 +1222,7 @@ describe("query stream", () => {
     });
     await startHarness({ language });
 
-    await api(queryPath, { question: "genre" });
+    await runReply({ question: "genre" });
 
     const toolMessage = language.streamCalls[1].messages.find(
       (message) => message.role === "tool" && message.tool_call_id === "tc-query",
@@ -1014,13 +1241,13 @@ describe("query stream", () => {
     });
     await startHarness({ language });
 
-    const { text } = await api(queryPath, { question: "fallback please" });
+    const { snapshots } = await runReply({ question: "fallback please" });
 
     expect(language.streamCalls.map((call) => call.model)).toEqual([
       "primary/test-model",
       "fallback/test-model",
     ]);
-    expect(text).toBe(sseBlock("token", { text: "Fallback" }) + sseBlock("done", {}));
+    expect(snapshots.at(-1)).toMatchObject({ status: "completed", answer: "Fallback" });
   });
 
   it("falls back to generation cost lookup after done when streamed cost is absent", async () => {
@@ -1035,9 +1262,9 @@ describe("query stream", () => {
     const costs = makeCostLookup(new Map([["lookup-gen", 0.042]]));
     await startHarness({ language, costs });
 
-    const { text } = await api(queryPath, { question: "cost fallback" });
+    const { snapshots } = await runReply({ question: "cost fallback" });
 
-    expect(text).toBe(sseBlock("token", { text: "Lookup" }) + sseBlock("done", {}));
+    expect(snapshots.at(-1)).toMatchObject({ status: "completed", answer: "Lookup" });
     expect(costs.lookups).toEqual(["lookup-gen"]);
     const rows = await runDb(
       Effect.gen(function* () {
@@ -1061,9 +1288,9 @@ describe("query stream", () => {
     const costs = makeCostLookup(new Map([["zero-gen", 1]]));
     await startHarness({ language, costs });
 
-    const { text } = await api(queryPath, { question: "zero cost" });
+    const { snapshots } = await runReply({ question: "zero cost" });
 
-    expect(text).toBe(sseBlock("token", { text: "Free" }) + sseBlock("done", {}));
+    expect(snapshots.at(-1)).toMatchObject({ status: "completed", answer: "Free" });
     expect(costs.lookups).toEqual([]);
     const rows = await runDb(
       Effect.gen(function* () {
@@ -1121,15 +1348,15 @@ describe("query stream", () => {
     async () => {
       await startLiveHarness();
 
-      const { response, text } = await api(queryPath, {
+      const { response, snapshots } = await runReply({
         question:
           "Use list_articles first to orient on Alpha, then answer in one short sentence with a citation.",
       });
 
       expect(response.status).toBe(200);
-      expect(text).toContain("event: source\n");
-      expect(text).toContain("event: done\n");
-      expect(text).not.toContain("event: error\n");
+      expect(snapshots.at(-1)?.status).toBe("completed");
+      expect(snapshots.at(-1)?.sources.length).toBeGreaterThan(0);
+      expect(snapshots.at(-1)?.answer.length).toBeGreaterThan(0);
       const rows = await runDb(
         Effect.gen(function* () {
           const db = yield* Database;

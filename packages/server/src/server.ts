@@ -1,19 +1,16 @@
 import { createServer, type Server } from "node:http";
 
 import { NodeHttpServer } from "@effect/platform-node";
-import { Database, vaults } from "@great-minds/database";
 import {
   AuthMiddleware,
   BadRequest,
   CurrentAuth,
   GreatMindsApi,
-  NotFound,
   ServiceUnavailable,
   Unauthorized,
   type DomainError,
   type Uuid,
 } from "@great-minds/domain";
-import { eq } from "drizzle-orm";
 import { Cause, Effect, Layer, ManagedRuntime, Option, Redacted, Stream } from "effect";
 import {
   HttpMiddleware,
@@ -32,7 +29,6 @@ import { AppLayerLive, type AppLayerServices } from "./app-layer.ts";
 import { AuthService } from "./auth.ts";
 import { AppConfig } from "./config.ts";
 import { CostsService } from "./costs.ts";
-import { dieDatabase } from "./db-defects.ts";
 import { DocumentRegistryMismatch, DocumentsService } from "./documents.ts";
 import { domainErrorResponse } from "./http-errors.ts";
 import { IngestService } from "./ingest.ts";
@@ -42,6 +38,7 @@ import { StructuredLogger } from "./logging.ts";
 import { PasskeysService } from "./passkeys.ts";
 import { ProposalsService } from "./proposals.ts";
 import { QueryService } from "./query.ts";
+import { RepliesService } from "./replies.ts";
 import { SessionsService } from "./sessions.ts";
 import { SourcesService } from "./sources.ts";
 import { VaultAccessService, VaultsService } from "./vaults.ts";
@@ -840,40 +837,26 @@ const SessionsHandlersLive = HttpApiBuilder.group(MountedGreatMindsApi, "session
     ),
 );
 
-const QueryHandlersLive = HttpApiBuilder.group(MountedGreatMindsApi, "query", (handlers) =>
-  handlers.handle("streamQuery", ({ params, payload }) =>
-    withDomainErrors(
-      Effect.gen(function* () {
-        const current = yield* CurrentAuth;
-        const db = yield* Database;
-        const vaultRows = yield* db
-          .select({ name: vaults.name })
-          .from(vaults)
-          .where(eq(vaults.id, params.vault_id))
-          .limit(1)
-          .pipe(dieDatabase);
-        const vault = vaultRows[0];
-        if (vault === undefined) {
-          return yield* new NotFound({ detail: "Vault not found" });
-        }
-
-        const access = yield* VaultAccessService;
-        yield* access.requireMember(current.user_id, params.vault_id);
-
-        const config = yield* AppConfig;
-        if (Option.isNone(config.openRouterApiKey)) {
-          return yield* new ServiceUnavailable({
-            detail: "LLM service not configured (OPENROUTER_API_KEY missing)",
-          });
-        }
-
-        const query = yield* QueryService;
-        return query.streamQuery(current.user_id, params.vault_id, payload, {
-          vaultLabel: vault.name,
-        });
-      }),
+const RepliesHandlersLive = HttpApiBuilder.group(MountedGreatMindsApi, "replies", (handlers) =>
+  handlers
+    .handle("createReply", ({ params, payload }) =>
+      withDomainErrors(
+        Effect.gen(function* () {
+          const replies = yield* RepliesService;
+          const current = yield* CurrentAuth;
+          return yield* replies.create(current.user_id, params.vault_id, payload);
+        }),
+      ),
+    )
+    .handle("streamReply", ({ params }) =>
+      withDomainErrors(
+        Effect.gen(function* () {
+          const replies = yield* RepliesService;
+          const current = yield* CurrentAuth;
+          return yield* replies.stream(current.user_id, params.vault_id, params.reply_id);
+        }),
+      ),
     ),
-  ),
 );
 
 const StreamHeadersLive = HttpRouter.middleware(
@@ -885,15 +868,15 @@ const StreamHeadersLive = HttpRouter.middleware(
       if (
         response.status === 200 &&
         pathname.startsWith("/v1/vaults/") &&
-        ((request.method === "POST" && pathname.endsWith("/query")) ||
-          (request.method === "GET" && pathname.endsWith("/stream")))
+        request.method === "GET" &&
+        pathname.endsWith("/stream")
       ) {
         const withHeaders = HttpServerResponse.setHeaders(response, {
           "Cache-Control": "no-cache",
-          ...(request.method === "GET" ? { Connection: "keep-alive" } : {}),
+          Connection: "keep-alive",
           "X-Accel-Buffering": "no",
         });
-        if (request.method === "GET" && response.body._tag === "Stream") {
+        if (response.body._tag === "Stream") {
           return HttpServerResponse.setBody(
             withHeaders,
             HttpBody.stream(
@@ -996,7 +979,7 @@ const ApiGroupsLive = Layer.mergeAll(
   CostsHandlersLive,
   DocumentsHandlersLive,
   SessionsHandlersLive,
-  QueryHandlersLive,
+  RepliesHandlersLive,
 ).pipe(Layer.provideMerge(AuthMiddlewareLive));
 
 const ApiLive = HttpApiBuilder.layer(MountedGreatMindsApi).pipe(Layer.provide(ApiGroupsLive));

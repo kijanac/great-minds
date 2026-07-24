@@ -665,6 +665,7 @@ export type SessionMetaEvent = typeof SessionMetaEvent.Type;
 export const SessionExchangeEvent = Schema.Struct({
   type: Schema.Literal("exchange"),
   exId: Schema.String,
+  reply_id: Schema.optionalKey(Uuid),
   query: Schema.String,
   thinking: Schema.optionalKey(Schema.Array(ThinkingBlock)),
   answer: Schema.optionalKey(Schema.String),
@@ -675,6 +676,7 @@ export type SessionExchangeEvent = typeof SessionExchangeEvent.Type;
 export const SessionBtwEvent = Schema.Struct({
   type: Schema.Literal("btw"),
   exId: Schema.String,
+  reply_id: Schema.optionalKey(Uuid),
   quote: Schema.String,
   blockOffset: Schema.optionalKey(Schema.Number),
   context: Schema.optionalKey(Schema.String),
@@ -929,8 +931,69 @@ export const QueryStreamPayload = Schema.Union([
 ]);
 export type QueryStreamPayload = typeof QueryStreamPayload.Type;
 
-export const QuerySseEvent = Sse.EventEncoded;
-export type QuerySseEvent = typeof QuerySseEvent.Type;
+export const ReplySource = Schema.Struct({
+  ...ThinkingSource.fields,
+  pending: Schema.optionalKey(Schema.Boolean),
+});
+export type ReplySource = typeof ReplySource.Type;
+
+const CreateReplyFields = {
+  ...QueryRequest.fields,
+};
+
+const CreateReplySession = Schema.Struct({
+  idempotency_key: Schema.String,
+  origin: Schema.optionalKey(Schema.NullOr(SessionOrigin)),
+});
+
+export const CreateReplyRequest = Schema.Union([
+  Schema.Struct({
+    ...CreateReplyFields,
+    kind: Schema.Literal("exchange"),
+    exchange_id: Schema.String,
+    session_id: SessionId,
+  }),
+  Schema.Struct({
+    ...CreateReplyFields,
+    kind: Schema.Literal("exchange"),
+    exchange_id: Schema.String,
+    create: CreateReplySession,
+  }),
+  Schema.Struct({
+    ...CreateReplyFields,
+    kind: Schema.Literal("btw"),
+    session_id: SessionId,
+    btw: BtwData,
+  }),
+  Schema.Struct({
+    ...CreateReplyFields,
+    kind: Schema.Literal("ephemeral"),
+  }),
+]);
+export type CreateReplyRequest = typeof CreateReplyRequest.Type;
+
+export const CreateReplyResponse = Schema.Struct({
+  reply_id: Uuid,
+  session_id: Schema.NullOr(SessionId),
+});
+export type CreateReplyResponse = typeof CreateReplyResponse.Type;
+
+export const ReplySnapshot = Schema.Struct({
+  reply_id: Uuid,
+  session_id: Schema.NullOr(SessionId),
+  kind: Schema.Literals(["exchange", "btw", "ephemeral"] as const),
+  status: Schema.Literals(["running", "completed", "failed"] as const),
+  answer: Schema.String,
+  sources: Schema.Array(ReplySource),
+  error: Schema.NullOr(Schema.String),
+  version: Schema.Number,
+  created_at: IsoDateTime,
+  updated_at: IsoDateTime,
+});
+export type ReplySnapshot = typeof ReplySnapshot.Type;
+
+export const ReplySseEvent = Sse.EventEncoded;
+export type ReplySseEvent = typeof ReplySseEvent.Type;
 
 export const DraftHintRequest = Schema.Struct({
   description: Schema.String,
@@ -1019,7 +1082,7 @@ const DocumentErrors = [
   NotFoundResponse,
   ValidationResponse,
 ] as const;
-const QueryStreamErrors = [
+const CreateReplyErrors = [
   ForbiddenResponse,
   NotFoundResponse,
   ServiceUnavailableResponse,
@@ -1051,9 +1114,10 @@ const CreatedSessionResponse = CreateSessionResponse.pipe(HttpApiSchema.status("
 const CreatedPromoteExchangeResponse = PromoteExchangeResponse.pipe(
   HttpApiSchema.status("Created"),
 );
-const QueryStream = HttpApiSchema.StreamSse({ events: QuerySseEvent });
 const AcceptedJobResponse = JobResponse.pipe(HttpApiSchema.status(202));
 const JobStream = HttpApiSchema.StreamSse({ events: JobSseEvent });
+const AcceptedReplyResponse = CreateReplyResponse.pipe(HttpApiSchema.status(202));
+const ReplyStream = HttpApiSchema.StreamSse({ events: ReplySseEvent });
 
 export const AuthApiGroup = HttpApiGroup.make("auth").add(
   HttpApiEndpoint.post("requestCode", "/auth/request-code", {
@@ -1501,16 +1565,27 @@ export const SessionsApiGroup = HttpApiGroup.make("sessions").add(
   }).middleware(AuthMiddleware),
 );
 
-export const QueryApiGroup = HttpApiGroup.make("query").add(
-  HttpApiEndpoint.post("streamQuery", "/vaults/:vault_id/query", {
-    params: {
-      vault_id: Uuid,
-    },
-    payload: QueryRequest,
-    success: QueryStream,
-    error: QueryStreamErrors,
-  }).middleware(AuthMiddleware),
-);
+export const RepliesApiGroup = HttpApiGroup.make("replies")
+  .add(
+    HttpApiEndpoint.post("createReply", "/vaults/:vault_id/replies", {
+      params: {
+        vault_id: Uuid,
+      },
+      payload: CreateReplyRequest,
+      success: AcceptedReplyResponse,
+      error: CreateReplyErrors,
+    }).middleware(AuthMiddleware),
+  )
+  .add(
+    HttpApiEndpoint.get("streamReply", "/vaults/:vault_id/replies/:reply_id/stream", {
+      params: {
+        vault_id: Uuid,
+        reply_id: Uuid,
+      },
+      success: ReplyStream,
+      error: ForbiddenNotFoundValidationErrors,
+    }).middleware(AuthMiddleware),
+  );
 
 export const GreatMindsApi = HttpApi.make("great-minds").add(
   MetaApiGroup,
@@ -1526,5 +1601,5 @@ export const GreatMindsApi = HttpApi.make("great-minds").add(
   CostsApiGroup,
   DocumentsApiGroup,
   SessionsApiGroup,
-  QueryApiGroup,
+  RepliesApiGroup,
 );

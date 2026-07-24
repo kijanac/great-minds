@@ -194,9 +194,30 @@ const events = [
   ["done", {}],
 ] as const;
 
-const sse = events
-  .map(([event, data]) => `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`)
-  .join("");
+const expectedSnapshot = {
+  reply_id: "00000000-0000-4000-8000-000000000001",
+  session_id: null,
+  kind: "ephemeral",
+  status: "completed",
+  answer: "Final answer.",
+  sources: [
+    {
+      label: "vector search",
+      type: "search",
+      scope: "kb",
+      title: "Knowledge base",
+      thinking: "kb thought",
+    },
+  ],
+  error: null,
+  version: 2,
+  created_at: "2026-07-23T12:00:00.000Z",
+  updated_at: "2026-07-23T12:00:01.000Z",
+} as const;
+const sse =
+  `event: connected\ndata: {"id":"${expectedSnapshot.reply_id}"}\n\n` +
+  `data: ${JSON.stringify(expectedSnapshot)}\n\n` +
+  `event: done\ndata: {"id":"${expectedSnapshot.reply_id}"}\n\n`;
 const encoded = new TextEncoder().encode(sse);
 const widths = [1, 3, 11, 2, 17, 5, 23];
 
@@ -300,12 +321,23 @@ try {
   });
 
   globalThis.fetch = async (input, init) => {
-    assert.equal(String(input), "http://smoke.test/api/vaults/smoke-vault/query");
-    assert.equal(init?.method, "POST");
-    assert.deepEqual(JSON.parse(String(init?.body)), {
-      question: "smoke",
-      mode: "query",
-    });
+    if (init?.method === "POST") {
+      assert.equal(String(input), "http://smoke.test/api/vaults/smoke-vault/replies");
+      assert.deepEqual(JSON.parse(String(init.body)), {
+        kind: "ephemeral",
+        question: "smoke",
+        history: [],
+        mode: "query",
+      });
+      return Response.json(
+        { reply_id: expectedSnapshot.reply_id, session_id: null },
+        { status: 202 },
+      );
+    }
+    assert.equal(
+      String(input),
+      `http://smoke.test/api/vaults/smoke-vault/replies/${expectedSnapshot.reply_id}/stream`,
+    );
     return new Response(body, {
       status: 200,
       headers: { "content-type": "text/event-stream" },
@@ -355,17 +387,22 @@ try {
     true,
   );
 
-  const queryModule = (await server.ssrLoadModule("/src/lib/api/query.ts")) as {
-    streamQuery: (question: string, options: { mode: "query" | "btw" }) => AsyncGenerator<unknown>;
-    consumeStream: (
-      stream: AsyncGenerator<unknown>,
-    ) => Promise<{ answer: string; sources: unknown[] }>;
+  const repliesModule = (await server.ssrLoadModule("/src/lib/api/replies.ts")) as {
+    createReply: (payload: Record<string, unknown>) => Promise<{ reply_id: string }>;
+    streamReply: (replyId: string) => AsyncGenerator<unknown>;
   };
 
-  const result = await queryModule.consumeStream(
-    queryModule.streamQuery("smoke", { mode: "query" }),
-  );
-  assert.deepStrictEqual(result, expected);
+  const created = await repliesModule.createReply({
+    kind: "ephemeral",
+    question: "smoke",
+    history: [],
+    mode: "query",
+  });
+  const snapshots = [];
+  for await (const snapshot of repliesModule.streamReply(created.reply_id)) {
+    snapshots.push(snapshot);
+  }
+  assert.deepStrictEqual(snapshots, [expectedSnapshot]);
   console.log("stream smoke passed");
 } finally {
   globalThis.fetch = originalFetch;

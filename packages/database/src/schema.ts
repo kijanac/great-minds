@@ -385,6 +385,52 @@ export const sessions = pgTable(
   ],
 );
 
+export const replies = pgTable(
+  "replies",
+  {
+    id: uuid("id").primaryKey(),
+    vaultId: uuid("vault_id").notNull(),
+    userId: uuid("user_id").notNull(),
+    sessionId: text("session_id"),
+    kind: text("kind").notNull(),
+    status: text("status").notNull(),
+    answer: text("answer").default("").notNull(),
+    sources: jsonb("sources")
+      .default(sql`'[]'::jsonb`)
+      .notNull(),
+    error: text("error"),
+    version: integer("version").default(0).notNull(),
+    request: jsonb("request").notNull(),
+    createdAt: timestamptz("created_at").defaultNow().notNull(),
+    updatedAt: timestamptz("updated_at").defaultNow().notNull(),
+  },
+  (table) => [
+    foreignKey({
+      columns: [table.vaultId],
+      foreignColumns: [vaults.id],
+      name: "replies_vault_id_fkey",
+    }).onDelete("cascade"),
+    foreignKey({
+      columns: [table.userId],
+      foreignColumns: [users.id],
+      name: "replies_user_id_fkey",
+    }).onDelete("cascade"),
+    foreignKey({
+      columns: [table.sessionId, table.vaultId],
+      foreignColumns: [sessions.id, sessions.vaultId],
+      name: "replies_session_id_vault_id_fkey",
+    }).onDelete("cascade"),
+    index("ix_replies_vault_id").on(table.vaultId),
+    index("ix_replies_user_id").on(table.userId),
+    index("ix_replies_session_id").on(table.sessionId),
+    index("ix_replies_running_updated_at")
+      .on(table.updatedAt)
+      .where(sql`${table.status} = 'running'`),
+    check("replies_kind_check", sql`${table.kind} IN ('exchange', 'btw', 'ephemeral')`),
+    check("replies_status_check", sql`${table.status} IN ('running', 'completed', 'failed')`),
+  ],
+);
+
 export const sourceDocuments = pgTable(
   "source_documents",
   {

@@ -1,4 +1,4 @@
-import { consumeStream, streamQuery } from "$lib/api/query";
+import { createReply, streamReply } from "$lib/api/replies";
 import { appendExchange, createSession, type ExchangePayload } from "$lib/api/sessions";
 import type { BtwThread, Exchange, SelectionInfo } from "$lib/types";
 import { buildBtwHistory, buildBtwQuery, genId, isAbortError } from "$lib/utils";
@@ -76,26 +76,29 @@ export class EphemeralBtws {
 
     void (async () => {
       try {
-        const { answer, sources } = await consumeStream(
-          streamQuery(question, {
-            originPath: this.originPath,
+        const created = await createReply(
+          {
+            kind: "ephemeral",
+            question,
+            origin_path: this.originPath,
             history,
             mode: "btw",
-            signal: controller.signal,
-          }),
-          {
-            onSources: (nextSources) => patchTurn({ thinking: [{ sources: nextSources }] }),
-            onToken: (text) => patchTurn({ answer: text }),
           },
+          controller.signal,
         );
-        patchTurn({
-          thinking: sources.length > 0 ? [{ sources }] : [],
-          answer,
-          streaming: false,
-        });
+        patchTurn({ replyId: created.reply_id });
+        for await (const snapshot of streamReply(created.reply_id, controller.signal)) {
+          patchTurn({
+            thinking: snapshot.sources.length > 0 ? [{ sources: snapshot.sources }] : [],
+            answer: snapshot.answer,
+            streaming: snapshot.status === "running",
+            error: snapshot.error,
+          });
+        }
       } catch (error) {
         if (isAbortError(error)) return;
-        patchExchanges((exchanges) => exchanges.filter((exchange) => exchange.id !== turnId));
+        console.error("Ephemeral BTW reply failed:", error);
+        patchTurn({ streaming: false });
       } finally {
         this.#controllers.delete(controller);
       }
