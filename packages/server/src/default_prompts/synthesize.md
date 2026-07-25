@@ -21,7 +21,8 @@ Ground rules:
 - Aim for 10–30 topics. Fewer if the subset is thin; more if it spans many distinct themes.
 - Topics are THEMATIC abstractions — events, movements, historical conjunctures, intellectual debates, concept clusters. NOT biographical entities. "Lenin" is an idea, not a topic; "Lenin's theory of imperialism" or "The Russian Revolution of 1905" are topics.
 - A single real-world figure or work may appear across many topics; do not force one-to-one mapping.
-- `subsumed_idea_ids` lists ideas (by their `idea_N` tag in the input below) whose claims substantively contribute to this topic. An idea can appear under multiple topics.
+- `subsumed_idea_ids` lists ideas (by their `idea_N` tag in the input below) whose claims substantively contribute to this topic. An idea can appear under multiple topics when they frame it differently — a strike wave can serve both an events topic and a tactics topic.
+- Every theme appears at exactly ONE granularity. When a broad theme divides into distinct sub-themes, emit the sub-themes; add a topic for the remaining material only if it is substantial, titled for what that remainder actually covers. Never emit a topic whose idea set restates the union of other topics in your list — a topic must not contain another topic.
 - It is FINE to leave ideas unassigned — boilerplate, peripheral mentions, or ideas that don't cohere with the chunk's themes don't need a home. Topic curation beats topic exhaustiveness.
 - Slugs are kebab-case, lowercase, descriptive (e.g. `lenin-on-finance-capital`, `russian-revolution-1905`). Titles are short human-readable phrases, not sentences. Descriptions are 2–3 sentences stating what the topic covers.
 - Every topic must subsume at least one idea. A topic that subsumes zero ideas is discarded on parse.

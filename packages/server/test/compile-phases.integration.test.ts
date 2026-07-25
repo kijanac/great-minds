@@ -269,6 +269,13 @@ const insertSource = (documentId: Uuid, filePath: string, bodyHash: string) =>
 const defaultPrompt = async (name: string) =>
   (await readFile(new URL(`../src/default_prompts/${name}.md`, import.meta.url), "utf8")).trim();
 
+const combinedSynthesizePromptHash = async () =>
+  contentHash(
+    `synthesize=${promptContentHash(await defaultPrompt("synthesize"))}`,
+    `revise=${promptContentHash(await defaultPrompt("synthesize_revise"))}`,
+    `decompose=${promptContentHash(await defaultPrompt("synthesize_decompose"))}`,
+  );
+
 const seedCanonicalPath = async (options: {
   readonly registryValue?: unknown;
   readonly assignmentValue?: unknown;
@@ -312,7 +319,7 @@ const seedCanonicalPath = async (options: {
     description: "Canonical description",
     subsumedIdeaIds: [id.ideaA],
   } as const;
-  const synthPromptHash = promptContentHash(await defaultPrompt("synthesize"));
+  const synthPromptHash = await combinedSynthesizePromptHash();
   const registryPromptHash = promptContentHash(await defaultPrompt("canonicalize_registry"));
   const assignPromptHash = promptContentHash(await defaultPrompt("canonicalize_assign"));
   const registryTopic = {
@@ -1094,5 +1101,191 @@ describe("M4.3a deterministic compile phases", () => {
     const log = await readFile(join(dataDir, ".compile", id.vault, "log.md"), "utf8");
     expect(log).toContain("- topics: 2 (rendered 2, archived 0, dirty 0)");
     expect(log.match(/## 2026-07-12T12:00:00\+00:00/g)).toHaveLength(1);
+  });
+
+  const seedGranularityIdeas = async (count: number) => {
+    files.set("raw/docs/source.md", "# Source\n\nBody\n");
+    const ideaIds = Array.from(
+      { length: count },
+      (_v, index) => `20000000-0000-4000-8000-0000000001${String(index).padStart(2, "0")}` as Uuid,
+    );
+    await run(
+      Effect.gen(function* () {
+        const db = yield* Database;
+        yield* db
+          .insert(sourceDocuments)
+          .values({
+            id: id.source,
+            vaultId: id.vault,
+            filePath: "raw/docs/source.md",
+            fileHash: "file",
+            bodyHash: "body",
+            sourceType: "document",
+            title: "Source",
+            precis: "Precis",
+          })
+          .pipe(Effect.orDie);
+        yield* db
+          .insert(ideas)
+          .values(
+            ideaIds.map((ideaId, index) => ({
+              ideaId,
+              vaultId: id.vault,
+              documentId: id.source,
+              kind: "concept",
+              label: `Idea ${index}`,
+              description: `Description ${index}`,
+              embedding: [1, ...Array.from({ length: 1023 }, () => 0)],
+            })),
+          )
+          .pipe(Effect.orDie);
+      }),
+    );
+    return ideaIds;
+  };
+
+  // The synthesize prompt tags ideas idea_1..idea_N; with one document the
+  // order matches the chunk order, which is not asserted — structure only.
+  const topicJson = (slug: string, tagStart: number, tagEnd: number) => ({
+    slug,
+    title: `Topic ${slug}`,
+    description: `About ${slug}.`,
+    subsumed_idea_ids: Array.from(
+      { length: tagEnd - tagStart + 1 },
+      (_v, index) => `idea_${tagStart + index}`,
+    ),
+  });
+
+  const scriptGranularity = (script: {
+    readonly synthesize: unknown;
+    readonly revise?: (call: number) => unknown;
+    readonly decompose?: unknown;
+  }) => {
+    const calls: string[] = [];
+    let reviseCalls = 0;
+    complete = async (input) => {
+      const content = input.messages
+        .map((message) =>
+          typeof message.content === "string"
+            ? message.content
+            : (message.content ?? []).map((part) => ("text" in part ? part.text : "")).join("\n"),
+        )
+        .join("\n");
+      const respond = (value: unknown) => ({ text: JSON.stringify(value), finishReason: "stop" });
+      if (content.includes("You are refining a list of thematic topics")) {
+        calls.push("revise");
+        reviseCalls += 1;
+        if (script.revise === undefined) throw new Error("unexpected revise call");
+        return respond(script.revise(reviseCalls));
+      }
+      if (content.includes("You are examining one proposed thematic topic")) {
+        calls.push("decompose");
+        if (script.decompose === undefined) throw new Error("unexpected decompose call");
+        return respond(script.decompose);
+      }
+      if (content.includes("You are proposing thematic topics")) {
+        calls.push("synthesize");
+        return respond(script.synthesize);
+      }
+      if (content.includes("designing the canonical table of contents")) {
+        calls.push("registry");
+        return respond({
+          topics: [
+            {
+              slug: "canonical-topic",
+              title: "Canonical Topic",
+              description: "Canonical description",
+              link_target_titles: [],
+            },
+          ],
+        });
+      }
+      if (content.includes("filing candidate sub-topics")) {
+        calls.push("assign");
+        const batchSize = (content.match(/^\d+\. .* :: /gmu) ?? []).length;
+        return respond({
+          assignments: Array.from({ length: batchSize }, (_v, index) => ({
+            n: index + 1,
+            slug: "canonical-topic",
+          })),
+        });
+      }
+      throw new Error(`unexpected compile LLM call: ${content.slice(0, 80)}`);
+    };
+    return calls;
+  };
+
+  const cachedSynthesizedTopics = async (ideaIds: readonly Uuid[]) => {
+    const cacheKey = synthesizeCacheKey({
+      ideaIds,
+      promptHash: await combinedSynthesizePromptHash(),
+      model: config.mapModel,
+    });
+    const rows = await run(
+      Effect.flatMap(Database, (db) =>
+        db
+          .select()
+          .from(compileCacheEntries)
+          .where(eq(compileCacheEntries.cacheKey, cacheKey))
+          .pipe(Effect.orDie),
+      ),
+    );
+    expect(rows).toHaveLength(1);
+    const value = rows[0]?.value as { local_topics: { subsumed_idea_ids: string[] }[] };
+    return value.local_topics;
+  };
+
+  it("revises nested synthesize output and caches the accepted revision", async () => {
+    const ideaIds = await seedGranularityIdeas(10);
+    const calls = scriptGranularity({
+      synthesize: { topics: [topicJson("umbrella", 1, 10), topicJson("facet", 1, 8)] },
+      revise: () => ({ topics: [topicJson("facet", 1, 8), topicJson("remainder", 9, 10)] }),
+    });
+    await run(Effect.flatMap(CompilePhases, (phases) => phases.abstract(id.vault, id.run)));
+    expect(calls.filter((name) => name === "revise")).toHaveLength(1);
+    const cached = await cachedSynthesizedTopics(ideaIds);
+    expect(cached.map((topic) => topic.subsumed_idea_ids.length).toSorted()).toEqual([2, 8]);
+    expect(new Set(cached.flatMap((topic) => topic.subsumed_idea_ids)).size).toBe(10);
+    expect(logEvents.map((entry) => entry.event)).not.toContain("synthesize_nesting_floor");
+  });
+
+  it("applies the mechanical floor when revision keeps nesting, and logs it", async () => {
+    const ideaIds = await seedGranularityIdeas(10);
+    const nested = { topics: [topicJson("umbrella", 1, 10), topicJson("facet", 1, 8)] };
+    const calls = scriptGranularity({ synthesize: nested, revise: () => nested });
+    await run(Effect.flatMap(CompilePhases, (phases) => phases.abstract(id.vault, id.run)));
+    expect(calls.filter((name) => name === "revise")).toHaveLength(2);
+    const cached = await cachedSynthesizedTopics(ideaIds);
+    // Umbrella shrinks to its 2-idea residue; too small to drop because the
+    // residue ideas survive nowhere else.
+    expect(cached.map((topic) => topic.subsumed_idea_ids.length).toSorted()).toEqual([2, 8]);
+    expect(new Set(cached.flatMap((topic) => topic.subsumed_idea_ids)).size).toBe(10);
+    expect(logEvents.map((entry) => entry.event)).toContain("synthesize_nesting_floor");
+  });
+
+  it("decomposes a chunk-covering topic and caches the replacement", async () => {
+    const ideaIds = await seedGranularityIdeas(24);
+    const calls = scriptGranularity({
+      synthesize: { topics: [topicJson("everything", 1, 24)] },
+      decompose: { topics: [topicJson("first-half", 1, 12), topicJson("second-half", 13, 24)] },
+    });
+    await run(Effect.flatMap(CompilePhases, (phases) => phases.abstract(id.vault, id.run)));
+    expect(calls).toContain("decompose");
+    const cached = await cachedSynthesizedTopics(ideaIds);
+    expect(cached.map((topic) => topic.subsumed_idea_ids.length)).toEqual([12, 12]);
+    expect(new Set(cached.flatMap((topic) => topic.subsumed_idea_ids)).size).toBe(24);
+  });
+
+  it("keeps the original topic when decomposition loses idea coverage", async () => {
+    const ideaIds = await seedGranularityIdeas(24);
+    const calls = scriptGranularity({
+      synthesize: { topics: [topicJson("everything", 1, 24)] },
+      decompose: { topics: [topicJson("partial", 1, 12)] },
+    });
+    await run(Effect.flatMap(CompilePhases, (phases) => phases.abstract(id.vault, id.run)));
+    expect(calls).toContain("decompose");
+    const cached = await cachedSynthesizedTopics(ideaIds);
+    expect(cached.map((topic) => topic.subsumed_idea_ids.length)).toEqual([24]);
+    expect(logEvents.map((entry) => entry.event)).toContain("synthesize_decompose_rejected");
   });
 });

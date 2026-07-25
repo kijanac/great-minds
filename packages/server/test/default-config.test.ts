@@ -73,7 +73,11 @@ describe("default prompts", () => {
       "query.md": "d02c29eb9d1367ef61e230741aee22feb3a2dea6564956ff2a433a34c876afee",
       "query_btw.md": "1415f3050b8c6b36867f2f0390281c775a3103991a6ad5a3e296fd7d42cdc138",
       "render.md": "3d0db999681198d4d7f1a6c02adc91a9e4d8ef58e91fc8929981d3792aebd0bf",
-      "synthesize.md": "bfc990e63d9ad3912ea4c119587e6706a647cdb4ad1b783e3b64c3de13ce3e00",
+      "synthesize.md": "9b122a4e2f11e9fb83428c321cb2cc70315105ca2660e350babc573bc72370bf",
+      "synthesize_decompose.md":
+        "74301aece5c13aa01e94d14db1a24f66a2d6ff8458035c2e13e79e1f95195f3a",
+      "synthesize_revise.md":
+        "c058afbc1c98fedcba67b65aed1b5b8a32b1615c607eef079ebb5876663cebcf",
     } as const;
     const names = (await readdir(directory)).filter((name) => name.endsWith(".md")).sort();
     expect(names).toEqual(Object.keys(expected));

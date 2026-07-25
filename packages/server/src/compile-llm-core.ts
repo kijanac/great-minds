@@ -1715,7 +1715,18 @@ const synthesizeTopics = (
 ) =>
   Effect.gen(function* () {
     const promptTemplate = yield* loadPrompt(options.storage, options.vaultId, "synthesize");
-    const promptHash = promptContentHash(promptTemplate);
+    const revisePrompt = yield* loadPrompt(options.storage, options.vaultId, "synthesize_revise");
+    const decomposePrompt = yield* loadPrompt(
+      options.storage,
+      options.vaultId,
+      "synthesize_decompose",
+    );
+    // The cached outcome depends on all three prompts of the phase.
+    const promptHash = contentHash(
+      `synthesize=${promptContentHash(promptTemplate)}`,
+      `revise=${promptContentHash(revisePrompt)}`,
+      `decompose=${promptContentHash(decomposePrompt)}`,
+    );
     const contextsById = new Map(contexts.map((idea) => [idea.ideaId, idea]));
     const localTopics: LocalTopic[] = [];
     let chunksCompleted = 0;
@@ -1769,10 +1780,20 @@ const synthesizeTopics = (
             tags,
             options.mintUuid7,
           );
-          yield* options.putCache(options.vaultId, "synthesize", cacheKey, {
-            local_topics: parsed.map(dumpLocalTopic),
+          const resolved = yield* resolveChunkGranularity(options, {
+            chunkIdx,
+            topics: parsed,
+            ideaBlock: block,
+            tags,
+            contexts: present,
+            revisePrompt,
+            decomposePrompt,
+            withPermit: (effect) => synthesizeSemaphore.withPermit(effect),
           });
-          return parsed;
+          yield* options.putCache(options.vaultId, "synthesize", cacheKey, {
+            local_topics: resolved.map(dumpLocalTopic),
+          });
+          return resolved;
         }).pipe(
           Effect.tap((topics) =>
             Effect.gen(function* () {
@@ -1872,6 +1893,292 @@ const parseSynthesisResponse = (
       });
     }
     return out;
+  });
+
+const NESTING_CONTAINMENT_THRESHOLD = 0.8;
+const DECOMPOSE_COVERAGE_THRESHOLD = 0.5;
+const DECOMPOSE_MIN_IDEAS = 20;
+const MAX_NESTING_REVISE_ROUNDS = 2;
+const MIN_RESIDUE_IDEAS = 5;
+
+export type NestingViolation = {
+  readonly umbrella: number;
+  readonly facets: readonly number[];
+};
+
+// B nests in A when A holds >= threshold of B's ideas and B is strictly smaller.
+export const findNestingViolations = (
+  topics: readonly LocalTopic[],
+): readonly NestingViolation[] => {
+  const sets = topics.map((topic) => new Set(topic.subsumedIdeaIds));
+  const out: NestingViolation[] = [];
+  for (let a = 0; a < topics.length; a += 1) {
+    const container = sets[a];
+    if (container === undefined) continue;
+    const facets: number[] = [];
+    for (let b = 0; b < topics.length; b += 1) {
+      if (a === b) continue;
+      const inner = sets[b];
+      if (inner === undefined || inner.size === 0 || inner.size >= container.size) continue;
+      let overlap = 0;
+      for (const ideaId of inner) if (container.has(ideaId)) overlap += 1;
+      if (overlap / inner.size >= NESTING_CONTAINMENT_THRESHOLD) facets.push(b);
+    }
+    if (facets.length > 0) out.push({ umbrella: a, facets });
+  }
+  return out;
+};
+
+// Mechanical floor: umbrellas shrink to their residue (computed on original
+// sets); a tiny residue is dropped only when every idea in it survives in
+// another final topic.
+export const applyNestingFloor = (
+  topics: readonly LocalTopic[],
+  violations: readonly NestingViolation[],
+): readonly LocalTopic[] => {
+  const originalSets = topics.map((topic) => new Set(topic.subsumedIdeaIds));
+  const residues = new Map<number, Set<string>>();
+  for (const violation of violations) {
+    const original = originalSets[violation.umbrella];
+    if (original === undefined) continue;
+    const residue = new Set(original);
+    for (const facet of violation.facets) {
+      for (const ideaId of originalSets[facet] ?? []) residue.delete(ideaId);
+    }
+    residues.set(violation.umbrella, residue);
+  }
+  const finalSet = (index: number) =>
+    residues.get(index) ?? originalSets[index] ?? new Set<string>();
+  const out: LocalTopic[] = [];
+  topics.forEach((topic, index) => {
+    const ids = finalSet(index);
+    if (ids.size === 0) return;
+    if (residues.has(index) && ids.size < MIN_RESIDUE_IDEAS) {
+      const coveredElsewhere = [...ids].every((ideaId) =>
+        topics.some((_other, other) => other !== index && finalSet(other).has(ideaId)),
+      );
+      if (coveredElsewhere) return;
+    }
+    out.push(
+      ids.size === topic.subsumedIdeaIds.length
+        ? topic
+        : { ...topic, subsumedIdeaIds: [...ids].toSorted() },
+    );
+  });
+  return out;
+};
+
+const coveredIdeaIds = (topics: readonly LocalTopic[]) => {
+  const out = new Set<string>();
+  for (const topic of topics) for (const ideaId of topic.subsumedIdeaIds) out.add(ideaId);
+  return out;
+};
+
+const coversAll = (covered: ReadonlySet<string>, required: Iterable<string>) => {
+  for (const ideaId of required) if (!covered.has(ideaId)) return false;
+  return true;
+};
+
+const reviseTopicBlock = (
+  topics: readonly LocalTopic[],
+  tagsByIdeaId: ReadonlyMap<string, string>,
+) =>
+  topics
+    .map((topic, index) =>
+      [
+        `## t_${index + 1}: ${topic.title}`,
+        topic.description,
+        `subsumed_idea_ids: ${topic.subsumedIdeaIds
+          .flatMap((ideaId) => {
+            const tag = tagsByIdeaId.get(ideaId);
+            return tag === undefined ? [] : [tag];
+          })
+          .join(", ")}`,
+      ].join("\n"),
+    )
+    .join("\n\n");
+
+const nestingViolationBlock = (
+  topics: readonly LocalTopic[],
+  violations: readonly NestingViolation[],
+) =>
+  violations
+    .flatMap((violation) =>
+      violation.facets.map(
+        (facet) =>
+          `- "${topics[violation.umbrella]?.title ?? ""}" contains "${topics[facet]?.title ?? ""}"`,
+      ),
+    )
+    .join("\n");
+
+type ChunkGranularityInput = {
+  readonly chunkIdx: number;
+  readonly topics: readonly LocalTopic[];
+  readonly ideaBlock: string;
+  readonly tags: ReadonlyMap<string, string>;
+  readonly contexts: readonly IdeaContext[];
+  readonly revisePrompt: string;
+  readonly decomposePrompt: string;
+  readonly withPermit: <A, E, R>(effect: Effect.Effect<A, E, R>) => Effect.Effect<A, E, R>;
+};
+
+const resolveChunkGranularity = (options: AbstractOptions, input: ChunkGranularityInput) =>
+  Effect.gen(function* () {
+    let topics = input.topics;
+    let violations = findNestingViolations(topics);
+    for (let round = 0; round < MAX_NESTING_REVISE_ROUNDS && violations.length > 0; round += 1) {
+      const tagsByIdeaId = new Map([...input.tags].map(([tag, ideaId]) => [ideaId, tag]));
+      const content = input.revisePrompt
+        .replace("{violation_block}", nestingViolationBlock(topics, violations))
+        .replace("{topic_block}", reviseTopicBlock(topics, tagsByIdeaId))
+        .replace("{idea_block}", input.ideaBlock);
+      const result = yield* Effect.result(
+        input.withPermit(
+          options.jsonCall({
+            runId: options.runId,
+            model: options.config.mapModel,
+            messages: [{ role: "user", content }],
+            temperature: 0.3,
+            responseFormat: jsonObjectResponseFormat,
+            logFields: { chunk_idx: input.chunkIdx, phase: "synthesize_revise" },
+          }),
+        ),
+      );
+      if (result._tag === "Failure") {
+        const details = errorDetails(result.failure);
+        yield* options.logger.warn("synthesize_revise_failed", {
+          vault_id: options.vaultId,
+          run_id: options.runId,
+          chunk_idx: input.chunkIdx,
+          error_type: details.errorType,
+          error: details.message.slice(0, 300),
+        });
+        break;
+      }
+      const revised = yield* parseSynthesisResponse(
+        result.success,
+        input.chunkIdx,
+        input.tags,
+        options.mintUuid7,
+      );
+      // Resolution never reduces idea coverage; curation happens at first emission only.
+      if (revised.length === 0 || !coversAll(coveredIdeaIds(revised), coveredIdeaIds(topics))) {
+        yield* options.logger.warn("synthesize_revise_rejected", {
+          vault_id: options.vaultId,
+          run_id: options.runId,
+          chunk_idx: input.chunkIdx,
+          topics: revised.length,
+        });
+        break;
+      }
+      topics = revised;
+      violations = findNestingViolations(topics);
+    }
+    if (violations.length > 0) {
+      const beforeCovered = coveredIdeaIds(topics);
+      topics = applyNestingFloor(topics, violations);
+      if (!coversAll(coveredIdeaIds(topics), beforeCovered)) {
+        return yield* Effect.die(
+          new Error(`nesting floor lost idea coverage in chunk ${input.chunkIdx}`),
+        );
+      }
+      yield* options.logger.warn("synthesize_nesting_floor", {
+        vault_id: options.vaultId,
+        run_id: options.runId,
+        chunk_idx: input.chunkIdx,
+        umbrella_count: violations.length,
+      });
+    }
+
+    const chunkIdeaCount = input.contexts.length;
+    const contextsById = new Map(input.contexts.map((idea) => [idea.ideaId, idea]));
+    const next: LocalTopic[] = [];
+    let decomposed = false;
+    for (const [topicIdx, topic] of topics.entries()) {
+      const oversized =
+        topic.subsumedIdeaIds.length >= DECOMPOSE_MIN_IDEAS &&
+        topic.subsumedIdeaIds.length >= chunkIdeaCount * DECOMPOSE_COVERAGE_THRESHOLD;
+      if (!oversized) {
+        next.push(topic);
+        continue;
+      }
+      const subset = topic.subsumedIdeaIds.flatMap((ideaId) => {
+        const idea = contextsById.get(ideaId);
+        return idea === undefined ? [] : [idea];
+      });
+      const { block, tags } = synthesisIdeaBlock(subset);
+      const content = input.decomposePrompt
+        .replace("{topic_title}", topic.title)
+        .replace("{topic_description}", topic.description)
+        .replace("{idea_block}", block);
+      const result = yield* Effect.result(
+        input.withPermit(
+          options.jsonCall({
+            runId: options.runId,
+            model: options.config.mapModel,
+            messages: [{ role: "user", content }],
+            temperature: 0.3,
+            responseFormat: jsonObjectResponseFormat,
+            logFields: { chunk_idx: input.chunkIdx, phase: "synthesize_decompose" },
+          }),
+        ),
+      );
+      if (result._tag === "Failure") {
+        const details = errorDetails(result.failure);
+        yield* options.logger.warn("synthesize_decompose_failed", {
+          vault_id: options.vaultId,
+          run_id: options.runId,
+          chunk_idx: input.chunkIdx,
+          error_type: details.errorType,
+          error: details.message.slice(0, 300),
+        });
+        next.push(topic);
+        continue;
+      }
+      const replacement = yield* parseSynthesisResponse(
+        result.success,
+        input.chunkIdx,
+        tags,
+        options.mintUuid7,
+      );
+      // Accept only replacements that keep every idea covered that no other
+      // topic in the current working state holds; the model may return a
+      // single refined topic.
+      const othersCovered = coveredIdeaIds([...next, ...topics.slice(topicIdx + 1)]);
+      const required = topic.subsumedIdeaIds.filter((ideaId) => !othersCovered.has(ideaId));
+      if (replacement.length === 0 || !coversAll(coveredIdeaIds(replacement), required)) {
+        yield* options.logger.warn("synthesize_decompose_rejected", {
+          vault_id: options.vaultId,
+          run_id: options.runId,
+          chunk_idx: input.chunkIdx,
+          topics: replacement.length,
+        });
+        next.push(topic);
+        continue;
+      }
+      decomposed = true;
+      next.push(...replacement);
+    }
+    topics = next;
+    if (decomposed) {
+      const residual = findNestingViolations(topics);
+      if (residual.length > 0) {
+        const beforeCovered = coveredIdeaIds(topics);
+        topics = applyNestingFloor(topics, residual);
+        if (!coversAll(coveredIdeaIds(topics), beforeCovered)) {
+          return yield* Effect.die(
+            new Error(`nesting floor lost idea coverage in chunk ${input.chunkIdx}`),
+          );
+        }
+        yield* options.logger.warn("synthesize_nesting_floor", {
+          vault_id: options.vaultId,
+          run_id: options.runId,
+          chunk_idx: input.chunkIdx,
+          umbrella_count: residual.length,
+        });
+      }
+    }
+    return topics;
   });
 
 export const premergeTopics = (
