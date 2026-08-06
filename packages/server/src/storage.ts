@@ -28,6 +28,7 @@ import { errorDetails } from "./error-details.ts";
 import { StructuredLogger } from "./logging.ts";
 
 const VAULTS_DIR = "vaults";
+const USERS_DIR = "users";
 const PROPOSALS_DIR = "proposals";
 const R2_READ_TIMEOUT = "30 seconds";
 const R2_WRITE_TIMEOUT = "120 seconds";
@@ -82,6 +83,10 @@ type VaultStorageShape = {
   ) => Effect.Effect<boolean>;
   readonly deletePath: (vaultId: Uuid, path: string) => Effect.Effect<void>;
   readonly clearVault: (vaultId: Uuid, bucketName: string | null) => Effect.Effect<void>;
+  readonly readUserText: (userId: Uuid, path: string) => Effect.Effect<string, StorageFileMissing>;
+  readonly writeUserText: (userId: Uuid, path: string, content: string) => Effect.Effect<void>;
+  readonly deleteUserPath: (userId: Uuid, path: string) => Effect.Effect<void>;
+  readonly clearUser: (userId: Uuid) => Effect.Effect<void>;
   readonly prepareBucketForOwner: (ownerId: Uuid) => Effect.Effect<string | null>;
   readonly deleteOwnerBucket: (bucketName: string | null) => Effect.Effect<void>;
   readonly presignStagedPut: (
@@ -128,6 +133,8 @@ const isNodeMissing = (error: unknown) =>
   typeof error === "object" && error !== null && "code" in error && error.code === "ENOENT";
 
 const localRoot = (dataRoot: string, vaultId: Uuid) => resolve(dataRoot, VAULTS_DIR, vaultId);
+
+const localUserRoot = (dataRoot: string, userId: Uuid) => resolve(dataRoot, USERS_DIR, userId);
 
 const resolveChild = (root: string, path: string) => {
   const fullPath = resolve(root, path);
@@ -236,6 +243,26 @@ export const LocalStorageLive = Layer.effect(
               .error("local_storage.clear_vault_failed", {
                 vault_id: vaultId,
                 bucket: bucketName,
+                error: "Cause",
+                error_message: Cause.pretty(cause),
+              })
+              .pipe(Effect.andThen(Effect.failCause(cause))),
+          ),
+          Effect.orDie,
+        ),
+      readUserText: (userId, path) => readLocalText(localUserRoot(dataRoot, userId), path),
+      writeUserText: (userId, path, content) =>
+        writeLocalText(localUserRoot(dataRoot, userId), path, content),
+      deleteUserPath: (userId, path) => deleteLocalPath(localUserRoot(dataRoot, userId), path),
+      clearUser: (userId) =>
+        Effect.tryPromise({
+          try: () => rm(localUserRoot(dataRoot, userId), { recursive: true, force: true }),
+          catch: (error) => error,
+        }).pipe(
+          Effect.catchCause((cause) =>
+            logger
+              .error("local_storage.clear_user_failed", {
+                user_id: userId,
                 error: "Cause",
                 error_message: Cause.pretty(cause),
               })
@@ -374,9 +401,28 @@ export const R2StorageLive = Layer.effect(
         return row.bucket;
       });
 
+    const userBucket = (userId: Uuid) =>
+      Effect.gen(function* () {
+        const rows = yield* db
+          .select({ bucket: users.r2BucketName })
+          .from(users)
+          .where(eq(users.id, userId))
+          .limit(1)
+          .pipe(Effect.orDie);
+        const row = rows[0];
+        if (row?.bucket === undefined || row.bucket === null || row.bucket === "") {
+          throw new Error(`User ${userId} has no R2 bucket name`);
+        }
+        return row.bucket;
+      });
+
     const objectKey = (vaultId: Uuid, path: string) => `${VAULTS_DIR}/${vaultId}/${path}`;
 
     const objectPrefix = (vaultId: Uuid) => `${VAULTS_DIR}/${vaultId}/`;
+
+    const userObjectKey = (userId: Uuid, path: string) => `${USERS_DIR}/${userId}/${path}`;
+
+    const userObjectPrefix = (userId: Uuid) => `${USERS_DIR}/${userId}/`;
 
     const stagedObjectKey = (vaultId: Uuid, hash: string) => `staging/${vaultId}/${hash}`;
 
@@ -519,10 +565,8 @@ export const R2StorageLive = Layer.effect(
         catch: (error) => error,
       }).pipe(Effect.timeout(R2_ADMIN_TIMEOUT));
 
-    const readR2Text = (vaultId: Uuid, path: string, bucketName?: string | null) =>
+    const readObjectText = (bucket: string, key: string, missingPath: string) =>
       Effect.gen(function* () {
-        const bucket = yield* vaultBucket(vaultId, bucketName);
-        const key = objectKey(vaultId, path);
         const responseResult = yield* Effect.result(
           Effect.tryPromise({
             try: (signal) =>
@@ -538,7 +582,7 @@ export const R2StorageLive = Layer.effect(
         );
         if (responseResult._tag === "Failure") {
           if (isR2Missing(responseResult.failure)) {
-            return yield* fileMissing(path);
+            return yield* fileMissing(missingPath);
           }
           throw responseResult.failure;
         }
@@ -552,6 +596,25 @@ export const R2StorageLive = Layer.effect(
         );
       });
 
+    const readR2Text = (vaultId: Uuid, path: string, bucketName?: string | null) =>
+      Effect.gen(function* () {
+        const bucket = yield* vaultBucket(vaultId, bucketName);
+        return yield* readObjectText(bucket, objectKey(vaultId, path), path);
+      });
+
+    const writeObjectText = (bucket: string, key: string, path: string, content: string) =>
+      Effect.tryPromise((signal) =>
+        client.send(
+          new PutObjectCommand({
+            Bucket: bucket,
+            Key: key,
+            Body: content,
+            ContentType: path.endsWith(".md") ? "text/markdown" : "text/plain",
+          }),
+          { abortSignal: signal },
+        ),
+      ).pipe(Effect.timeout(R2_WRITE_TIMEOUT), Effect.orDie);
+
     const writeR2Text = (
       vaultId: Uuid,
       path: string,
@@ -560,17 +623,7 @@ export const R2StorageLive = Layer.effect(
     ) =>
       Effect.gen(function* () {
         const bucket = yield* vaultBucket(vaultId, bucketName);
-        yield* Effect.tryPromise((signal) =>
-          client.send(
-            new PutObjectCommand({
-              Bucket: bucket,
-              Key: objectKey(vaultId, path),
-              Body: content,
-              ContentType: path.endsWith(".md") ? "text/markdown" : "text/plain",
-            }),
-            { abortSignal: signal },
-          ),
-        ).pipe(Effect.timeout(R2_WRITE_TIMEOUT), Effect.orDie);
+        yield* writeObjectText(bucket, objectKey(vaultId, path), path, content);
       });
 
     return {
@@ -660,6 +713,43 @@ export const R2StorageLive = Layer.effect(
               logger
                 .error("r2_storage.clear_vault_failed", {
                   vault_id: vaultId,
+                  bucket,
+                  error: "Cause",
+                  error_message: Cause.pretty(cause),
+                })
+                .pipe(Effect.andThen(Effect.failCause(cause))),
+            ),
+            Effect.orDie,
+          );
+        }),
+      readUserText: (userId, path) =>
+        Effect.gen(function* () {
+          const bucket = yield* userBucket(userId);
+          return yield* readObjectText(bucket, userObjectKey(userId, path), path);
+        }),
+      writeUserText: (userId, path, content) =>
+        Effect.gen(function* () {
+          const bucket = yield* userBucket(userId);
+          yield* writeObjectText(bucket, userObjectKey(userId, path), path, content);
+        }),
+      deleteUserPath: (userId, path) =>
+        Effect.gen(function* () {
+          const bucket = yield* userBucket(userId);
+          yield* Effect.tryPromise((signal) =>
+            client.send(
+              new DeleteObjectCommand({ Bucket: bucket, Key: userObjectKey(userId, path) }),
+              { abortSignal: signal },
+            ),
+          ).pipe(Effect.timeout(R2_WRITE_TIMEOUT), Effect.orDie);
+        }),
+      clearUser: (userId) =>
+        Effect.gen(function* () {
+          const bucket = yield* userBucket(userId);
+          yield* deleteObjects(bucket, userObjectPrefix(userId)).pipe(
+            Effect.catchCause((cause) =>
+              logger
+                .error("r2_storage.clear_user_failed", {
+                  user_id: userId,
                   bucket,
                   error: "Cause",
                   error_message: Cause.pretty(cause),

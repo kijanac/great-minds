@@ -18,6 +18,7 @@ import {
   tasks,
   topicMembership,
   topics,
+  userDocuments,
   users,
   vaultMemberships,
   vaults,
@@ -34,6 +35,7 @@ import { AppConfig, type AppConfigShape } from "../src/config.ts";
 import { bodyContentHash, fileContentHash } from "../src/crypto.ts";
 import { StructuredLogger, StructuredLoggerLive } from "../src/logging.ts";
 import { makeTestMailer } from "../src/mailer.ts";
+import { parseFrontmatter } from "../src/markdown.ts";
 import { makeTestRandomBytes } from "../src/random.ts";
 import { startServer } from "../src/server.ts";
 import { TokenService } from "../src/tokens.ts";
@@ -199,6 +201,9 @@ const writeVaultFile = async (vaultId: string, path: string, content: string) =>
 const readVaultFile = (vaultId: string, path: string) =>
   readFile(join(currentState().storageRoot, "vaults", vaultId, path), "utf8");
 
+const readUserFile = (userId: string, path: string) =>
+  readFile(join(currentState().storageRoot, "users", userId, path), "utf8");
+
 const fileExists = async (path: string) => {
   try {
     await access(path);
@@ -210,6 +215,9 @@ const fileExists = async (path: string) => {
 
 const vaultFileExists = (vaultId: string, path: string) =>
   fileExists(join(currentState().storageRoot, "vaults", vaultId, path));
+
+const userFileExists = (userId: string, path: string) =>
+  fileExists(join(currentState().storageRoot, "users", userId, path));
 
 const proposalFileExists = (proposalId: string) =>
   fileExists(join(currentState().storageRoot, "proposals", `${proposalId}.md`));
@@ -1226,6 +1234,146 @@ describe("M3.1 write endpoint integration", () => {
     expect(await countTable(compileIntents)).toBe(0);
   });
 
+  it("creates, lists, reads, and deletes owner-scoped personal references", async () => {
+    const { aliceToken, bobToken } = currentFixture();
+    let articleRequests = 0;
+    await withLocalHttpServer(
+      (request, response) => {
+        if (request.url === "/article") {
+          articleRequests += 1;
+          response.writeHead(200, { "content-type": "text/html; charset=utf-8" });
+          response.end(
+            "<html><head><title>Personal Article</title></head><body><article><p>First personal paragraph with enough detail for article extraction.</p><p>Second personal paragraph stays outside every vault corpus.</p><p>Third personal paragraph supports a BTW question.</p></article></body></html>",
+          );
+          return;
+        }
+        if (request.url === "/missing") {
+          response.writeHead(200, { "content-type": "text/plain" });
+          response.end("Missing file body.");
+          return;
+        }
+        if (request.url === "/one/story" || request.url === "/two/story") {
+          response.writeHead(200, { "content-type": "text/html; charset=utf-8" });
+          response.end(
+            `<html><head><title>Story ${request.url}</title></head><body><article><p>Distinct story body for ${request.url} with enough words to extract.</p><p>Second paragraph keeps readability satisfied.</p></article></body></html>`,
+          );
+          return;
+        }
+        response.writeHead(200, { "content-type": "application/pdf" });
+        response.end(Buffer.from("%PDF-1.7\nnot supported\n"));
+      },
+      async (origin) => {
+        const created = await api("POST", "/me/refs", aliceToken, {
+          url: `${origin}/article`,
+        });
+        expect(created.status).toBe(201);
+        const createdBody = asRecord(created.body);
+        expect(createdBody).toMatchObject({
+          file_path: "refs/article.md",
+          title: "Personal Article",
+          url: `${origin}/article`,
+          origin: new URL(origin).host,
+        });
+
+        const content = await readUserFile(id.alice, "refs/article.md");
+        expect(content).toContain("source_type: document");
+        expect(content).toContain(`url: ${origin}/article`);
+        expect(content).toContain("First personal paragraph");
+        expect(content).toContain("^p0");
+        expect(content).not.toContain("# Personal Article");
+
+        const storedRows = await runDb(
+          Effect.gen(function* () {
+            const db = yield* Database;
+            return yield* db
+              .select()
+              .from(userDocuments)
+              .where(eq(userDocuments.userId, id.alice))
+              .pipe(Effect.orDie);
+          }),
+        );
+        expect(storedRows).toHaveLength(1);
+        expect(storedRows[0]).toMatchObject({
+          filePath: "refs/article.md",
+          fileHash: fileContentHash(content),
+          bodyHash: bodyContentHash(parseFrontmatter(content).body),
+          title: "Personal Article",
+        });
+        expect(await countTable(sourceDocuments)).toBe(0);
+        expect(await countTable(searchIndex)).toBe(0);
+        expect(await countTable(compileIntents)).toBe(0);
+
+        const duplicate = await api("POST", "/me/refs", aliceToken, {
+          url: `${origin}/article`,
+        });
+        expect(duplicate.status).toBe(200);
+        expect(asRecord(duplicate.body).id).toBe(createdBody.id);
+        expect(articleRequests).toBe(1);
+
+        const listed = await api("GET", "/me/refs?limit=10&offset=0", aliceToken);
+        expect(listed.status).toBe(200);
+        expect(asRecord(listed.body)).toMatchObject({
+          items: [createdBody],
+          pagination: { limit: 10, offset: 0, total: 1 },
+        });
+
+        const read = await api("GET", "/me/refs/doc/refs/article.md", aliceToken);
+        expect(read.status).toBe(200);
+        expect(asRecord(read.body)).toMatchObject({
+          reference: createdBody,
+        });
+        expect(String(asRecord(read.body).body)).toContain("First personal paragraph");
+
+        const otherUser = await api("GET", "/me/refs/doc/refs/article.md", bobToken);
+        expect(otherUser.status).toBe(404);
+        const traversal = await api("GET", "/me/refs/doc/refs%5Cescape.md", aliceToken);
+        expect(traversal.status).toBe(400);
+
+        const unsupported = await api("POST", "/me/refs", aliceToken, {
+          url: `${origin}/unsupported`,
+        });
+        expect(unsupported.status).toBe(400);
+        expect(String(asRecord(unsupported.body).detail)).toContain(
+          "Unsupported URL content-type: application/pdf",
+        );
+
+        const missingCreated = await api("POST", "/me/refs", aliceToken, {
+          url: `${origin}/missing`,
+        });
+        expect(missingCreated.status).toBe(201);
+        await rm(
+          join(currentState().storageRoot, "users", id.alice, "refs", "missing.md"),
+        );
+        const missingFile = await api("GET", "/me/refs/doc/refs/missing.md", aliceToken);
+        expect(missingFile.status).toBe(404);
+
+        const storyOne = await api("POST", "/me/refs", aliceToken, {
+          url: `${origin}/one/story`,
+        });
+        expect(storyOne.status).toBe(201);
+        expect(asRecord(storyOne.body).file_path).toBe("refs/story.md");
+        const storyTwo = await api("POST", "/me/refs", aliceToken, {
+          url: `${origin}/two/story`,
+        });
+        expect(storyTwo.status).toBe(201);
+        const storyTwoPath = String(asRecord(storyTwo.body).file_path);
+        expect(storyTwoPath).toMatch(/^refs\/story-[0-9a-f]{8}\.md$/);
+        const storyOneRead = await api("GET", "/me/refs/doc/refs/story.md", aliceToken);
+        expect(storyOneRead.status).toBe(200);
+        expect(asRecord(asRecord(storyOneRead.body).reference).url).toBe(`${origin}/one/story`);
+        const storyTwoRead = await api("GET", `/me/refs/doc/${storyTwoPath}`, aliceToken);
+        expect(storyTwoRead.status).toBe(200);
+        expect(asRecord(asRecord(storyTwoRead.body).reference).url).toBe(`${origin}/two/story`);
+
+        const deleted = await api("DELETE", "/me/refs/refs/article.md", aliceToken);
+        expect(deleted.status).toBe(204);
+        expect(await userFileExists(id.alice, "refs/article.md")).toBe(false);
+        const deletedAgain = await api("DELETE", "/me/refs/refs/article.md", aliceToken);
+        expect(deletedAgain.status).toBe(404);
+      },
+    );
+  });
+
   it("runs jobs/url synchronously with member guard, clean markdown conversion, attached compile intent, and persisted failures", async () => {
     const { aliceToken, carolToken, malloryToken } = currentFixture();
     await withLocalHttpServer(
@@ -1260,6 +1408,9 @@ describe("M3.1 write endpoint integration", () => {
         });
 
         const markdown = await readVaultFile(id.vault, "raw/docs/ok.md");
+        expect(markdown).toBe(
+          `---\nsource_type: document\nurl: ${origin}/ok\norigin: ${new URL(origin).host}\n---\n# Local Article\n\nConverted paragraph. ^p0\n`,
+        );
         expect(markdown).toContain("source_type: document");
         expect(markdown).toContain(`url: ${origin}/ok`);
         expect(markdown).toContain("origin: 127.0.0.1:");

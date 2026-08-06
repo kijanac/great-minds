@@ -47,7 +47,25 @@ export const wikiArticleSchema = z.object({
   updated_at: z.string().nullable(),
 });
 
-const articleSchema = z.discriminatedUnion("kind", [sourceDocumentSchema, wikiArticleSchema]);
+export const referenceOverviewSchema = z.object({
+  id: z.string(),
+  file_path: z.string(),
+  title: z.string().nullable(),
+  url: z.string().nullable(),
+  origin: z.string().nullable(),
+  created_at: z.string(),
+  updated_at: z.string(),
+});
+
+const referenceArticleSchema = referenceOverviewSchema.extend({
+  kind: z.literal("reference"),
+});
+
+const articleSchema = z.discriminatedUnion("kind", [
+  sourceDocumentSchema,
+  wikiArticleSchema,
+  referenceArticleSchema,
+]);
 
 const documentResponseSchema = z.object({
   article: articleSchema,
@@ -58,8 +76,10 @@ const documentResponseSchema = z.object({
 
 export type SourceDocument = z.infer<typeof sourceDocumentSchema>;
 export type WikiArticle = z.infer<typeof wikiArticleSchema>;
-export type Article = SourceDocument | WikiArticle;
+export type ReferenceArticle = z.infer<typeof referenceArticleSchema>;
+export type Article = SourceDocument | WikiArticle | ReferenceArticle;
 export type DocumentResponse = z.infer<typeof documentResponseSchema>;
+export type DocumentScope = "vault" | "personal";
 
 /** Normalized metadata across both article types for DocHeader display. */
 export function articleMeta(article: Article) {
@@ -72,6 +92,20 @@ export function articleMeta(article: Article) {
       origin: null as string | null,
       genre: null as string | null,
       precis: article.precis || null,
+      source_type: null as string | null,
+      tags: [] as string[],
+      derived_extras: {} as Record<string, unknown>,
+    };
+  }
+  if (article.kind === "reference") {
+    return {
+      title: article.title,
+      author: null as string | null,
+      published_date: null as string | null,
+      url: article.url,
+      origin: article.origin,
+      genre: null as string | null,
+      precis: null as string | null,
       source_type: null as string | null,
       tags: [] as string[],
       derived_extras: {} as Record<string, unknown>,
@@ -95,6 +129,26 @@ export async function readDocument(path: string, signal?: AbortSignal): Promise<
   const res = await apiFetch(vaultPath(`/doc/${path}`), { signal });
   if (!res.ok) throw new Error(`Document not found: ${path}`);
   return readJson(res, documentResponseSchema);
+}
+
+const personalDocumentResponseSchema = z.object({
+  reference: referenceOverviewSchema,
+  body: z.string(),
+});
+
+export async function readPersonalDocument(
+  path: string,
+  signal?: AbortSignal,
+): Promise<DocumentResponse> {
+  const res = await apiFetch(`/me/refs/doc/${path}`, { signal });
+  if (!res.ok) throw new Error(`Reference not found: ${path}`);
+  const data = await readJson(res, personalDocumentResponseSchema);
+  return {
+    article: { kind: "reference", ...data.reference },
+    body: data.body,
+    archived: false,
+    superseded_by: null,
+  };
 }
 
 // --- Context-panel lazy fetches (what entered the agent's context) ---

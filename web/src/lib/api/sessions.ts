@@ -32,12 +32,14 @@ const pathResponseSchema = z.object({
 
 const sessionOriginSchema = z.object({
   doc_path: z.string(),
+  origin_scope: z.enum(["vault", "personal"]).default("vault"),
   anchor: z.string().nullable().optional(),
   paragraph: z.string().nullable().optional(),
   paragraph_index: z.number().nullable().optional(),
 });
 
 export type SessionOrigin = z.infer<typeof sessionOriginSchema>;
+export type OriginScope = SessionOrigin["origin_scope"];
 
 const sessionMetaEventSchema = z.object({
   type: z.literal("meta"),

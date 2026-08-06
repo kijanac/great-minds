@@ -194,7 +194,9 @@ export class Session {
               exchange_id: exchangeId,
               create: {
                 idempotency_key: this.#idempotencyKey,
-                ...(this.#originPath ? { origin: { doc_path: this.#originPath } } : {}),
+                ...(this.#originPath
+                  ? { origin: { doc_path: this.#originPath, origin_scope: "vault" as const } }
+                  : {}),
               },
               question,
               origin_path: originForQuery,

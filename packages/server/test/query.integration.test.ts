@@ -165,6 +165,12 @@ const writeVaultFile = async (vaultId: string, path: string, content: string) =>
   await writeFile(fullPath, content, "utf8");
 };
 
+const writeUserFile = async (userId: string, path: string, content: string) => {
+  const fullPath = join(currentState().storageRoot, "users", userId, path);
+  await mkdir(dirname(fullPath), { recursive: true });
+  await writeFile(fullPath, content, "utf8");
+};
+
 const issueToken = (userId: string) =>
   runDb(
     Effect.gen(function* () {
@@ -493,6 +499,50 @@ afterEach(async () => {
 });
 
 describe("query stream", () => {
+  it("builds personal origin context from user storage and degrades missing refs", async () => {
+    const language = makeScriptedLanguageModel({
+      streams: [
+        { kind: "parts", parts: [tokenPart("Stored answer."), finishPart("stop")] },
+        { kind: "parts", parts: [tokenPart("Missing answer."), finishPart("stop")] },
+      ],
+    });
+    await startHarness({ language });
+    await writeUserFile(
+      id.alice,
+      "refs/personal.md",
+      "---\nsource_type: document\nurl: https://example.com/personal\norigin: example.com\n---\nPersonal reference body. ^p0\n",
+    );
+    await writeVaultFile(
+      id.vault,
+      "refs/personal.md",
+      "This vault file must not become the personal origin context.",
+    );
+
+    const stored = await runReply({
+      mode: "btw",
+      question: "What does the reference say?",
+      origin_path: "refs/personal.md",
+      origin_scope: "personal",
+    });
+    expect(stored.response.status).toBe(200);
+    expect(stored.snapshots.at(-1)?.status).toBe("completed");
+    const storedMessages = JSON.stringify(language.streamCalls[0]?.messages);
+    expect(storedMessages).toContain("Personal reference body.");
+    expect(storedMessages).not.toContain("This vault file must not");
+
+    const missing = await runReply({
+      mode: "btw",
+      question: "What does the missing reference say?",
+      origin_path: "refs/bogus.md",
+      origin_scope: "personal",
+    });
+    expect(missing.response.status).toBe(200);
+    expect(missing.snapshots.at(-1)?.status).toBe("completed");
+    expect(JSON.stringify(language.streamCalls[1]?.messages)).toContain(
+      "Document not found: refs/bogus.md",
+    );
+  });
+
   it("returns HTTP errors before opening SSE for non-member, missing vault, and missing LLM key", async () => {
     const language = makeScriptedLanguageModel({ streams: [] });
     await startHarness({ language });

@@ -19,7 +19,7 @@ import { and, eq, inArray, sql } from "drizzle-orm";
 import { Cause, Context, Effect, Layer } from "effect";
 import * as WorkflowEngine from "effect/unstable/workflow/WorkflowEngine";
 
-import { htmlToMarkdown } from "./conversion.ts";
+import { htmlToMarkdown, markdownWithTitle } from "./conversion.ts";
 import { dieDatabase } from "./db-defects.ts";
 import { causeDetails, formatError } from "./error-details.ts";
 import { jobResponse } from "./jobs.ts";
@@ -101,14 +101,14 @@ const URL_INGEST_STEP_LABELS = {
 
 const STAGED_TASK_TYPE = "staged_file_ingest";
 
-const slugify = (text: string, maxLen = 80) =>
+export const slugify = (text: string, maxLen = 80) =>
   text
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, "-")
     .replace(/^-+|-+$/g, "")
     .slice(0, maxLen);
 
-const normalizeUrl = (url: string) =>
+export const normalizeUrl = (url: string) =>
   url.startsWith("http://") || url.startsWith("https://") ? url : `https://${url}`;
 
 const urlResponseContentType = (response: Response) =>
@@ -116,6 +116,45 @@ const urlResponseContentType = (response: Response) =>
 
 const isSupportedUrlContentType = (contentType: string) =>
   contentType === "text/html" || contentType === "text/plain";
+
+export const fetchUrlMarkdown = (rawUrl: string) =>
+  Effect.gen(function* () {
+    const url = normalizeUrl(rawUrl);
+    const response = yield* Effect.tryPromise({
+      try: (signal) =>
+        fetch(url, {
+          redirect: "follow",
+          signal: AbortSignal.any([signal, AbortSignal.timeout(30_000)]),
+          headers: { "User-Agent": USER_AGENT },
+        }),
+      catch: (error) =>
+        new BadRequest({
+          detail: `Failed to fetch URL: ${error instanceof Error ? error.message : String(error)}`,
+        }),
+    });
+    if (!response.ok) {
+      return yield* new BadRequest({
+        detail: `Failed to fetch URL: HTTP ${response.status} ${response.statusText}`,
+      });
+    }
+    const contentType = urlResponseContentType(response);
+    if (!isSupportedUrlContentType(contentType)) {
+      return yield* new BadRequest({
+        detail: `Unsupported URL content-type: ${contentType}`,
+      });
+    }
+    const body = yield* Effect.tryPromise({
+      try: () => response.text(),
+      catch: (error) =>
+        new BadRequest({
+          detail: `Failed to fetch URL: ${error instanceof Error ? error.message : String(error)}`,
+        }),
+    });
+    if (contentType === "text/plain") {
+      return { url, title: null, markdown: body };
+    }
+    return { url, ...htmlToMarkdown(body, url) };
+  });
 
 const utcTimestamp = (date: Date) =>
   date
@@ -169,7 +208,8 @@ const uploadToMarkdown = (input: UploadInput) =>
       return text;
     }
     if (isHtmlUpload(input.filename, input.mimetype)) {
-      return htmlToMarkdown(text, "https://uploaded.local/");
+      const converted = htmlToMarkdown(text, "https://uploaded.local/");
+      return markdownWithTitle(converted.title, converted.markdown);
     }
     return yield* new BadRequest({
       detail: `Unsupported upload conversion extension: ${posix.extname(input.filename) || "(none)"}`,
@@ -255,45 +295,6 @@ export const IngestServiceLive = Layer.effect(
         return { file_path: dest } satisfies IngestedDocument;
       });
 
-    const fetchUrlMarkdown = (rawUrl: string) =>
-      Effect.gen(function* () {
-        const url = normalizeUrl(rawUrl);
-        const response = yield* Effect.tryPromise({
-          try: (signal) =>
-            fetch(url, {
-              redirect: "follow",
-              signal: AbortSignal.any([signal, AbortSignal.timeout(30_000)]),
-              headers: { "User-Agent": USER_AGENT },
-            }),
-          catch: (error) =>
-            new BadRequest({
-              detail: `Failed to fetch URL: ${error instanceof Error ? error.message : String(error)}`,
-            }),
-        });
-        if (!response.ok) {
-          return yield* new BadRequest({
-            detail: `Failed to fetch URL: HTTP ${response.status} ${response.statusText}`,
-          });
-        }
-        const contentType = urlResponseContentType(response);
-        if (!isSupportedUrlContentType(contentType)) {
-          return yield* new BadRequest({
-            detail: `Unsupported URL content-type: ${contentType}`,
-          });
-        }
-        const body = yield* Effect.tryPromise({
-          try: () => response.text(),
-          catch: (error) =>
-            new BadRequest({
-              detail: `Failed to fetch URL: ${error instanceof Error ? error.message : String(error)}`,
-            }),
-        });
-        return {
-          url,
-          markdown: contentType === "text/plain" ? body : htmlToMarkdown(body, url),
-        };
-      });
-
     const ingestUrl = (
       vaultId: Uuid,
       rawUrl: string,
@@ -307,7 +308,7 @@ export const IngestServiceLive = Layer.effect(
         const dest = `raw/docs/${slugify(stem) || "doc"}.md`;
         return yield* writeAndIndex(
           vaultId,
-          fetched.markdown,
+          markdownWithTitle(fetched.title, fetched.markdown),
           dest,
           {
             sourceType: "document",

@@ -611,8 +611,14 @@ export const SourceListQuery = Schema.Struct({
 });
 export type SourceListQuery = typeof SourceListQuery.Type;
 
+export const OriginScope = Schema.Literals(["vault", "personal"] as const);
+export type OriginScope = typeof OriginScope.Type;
+
 export const SessionOrigin = Schema.Struct({
   doc_path: Schema.String,
+  origin_scope: OriginScope.pipe(
+    Schema.withDecodingDefaultTypeKey(Effect.succeed("vault" as const)),
+  ),
   anchor: Schema.optionalKey(Schema.NullOr(Schema.String)),
   paragraph: Schema.optionalKey(Schema.NullOr(Schema.String)),
   paragraph_index: Schema.optionalKey(Schema.NullOr(Schema.Number)),
@@ -788,6 +794,41 @@ export const SourceDocument = Schema.Struct({
 });
 export type SourceDocument = typeof SourceDocument.Type;
 
+export const ReferenceCreate = Schema.Struct({
+  url: Schema.String,
+});
+export type ReferenceCreate = typeof ReferenceCreate.Type;
+
+export const ReferenceOverview = Schema.Struct({
+  id: Uuid,
+  file_path: Schema.String,
+  title: Schema.NullOr(Schema.String),
+  url: Schema.NullOr(Schema.String),
+  origin: Schema.NullOr(Schema.String),
+  created_at: IsoDateTime,
+  updated_at: IsoDateTime,
+});
+export type ReferenceOverview = typeof ReferenceOverview.Type;
+
+export const ReferenceDetail = Schema.Struct({
+  ...ReferenceOverview.fields,
+});
+export type ReferenceDetail = typeof ReferenceDetail.Type;
+
+export const ReferencePage = pageOf(ReferenceOverview);
+export type ReferencePage = typeof ReferencePage.Type;
+
+export const ReferenceDocumentResponse = Schema.Struct({
+  reference: ReferenceOverview,
+  body: Schema.String,
+});
+export type ReferenceDocumentResponse = typeof ReferenceDocumentResponse.Type;
+
+export const ReferencePathParams = Schema.Struct({
+  "*": Schema.String,
+});
+export type ReferencePathParams = typeof ReferencePathParams.Type;
+
 export const WikiArticle = Schema.Struct({
   kind: Schema.Literal("wiki"),
   id: Uuid,
@@ -867,6 +908,9 @@ export const QueryRequest = Schema.Struct({
   model: Schema.optionalKey(Schema.NullOr(Schema.String)),
   mode: QueryMode.pipe(Schema.withDecodingDefaultTypeKey(Effect.succeed("query" as const))),
   origin_path: Schema.optionalKey(Schema.NullOr(Schema.String)),
+  origin_scope: OriginScope.pipe(
+    Schema.withDecodingDefaultTypeKey(Effect.succeed("vault" as const)),
+  ),
   history: Schema.Array(HistoryMessage).pipe(Schema.withDecodingDefaultTypeKey(Effect.succeed([]))),
   extra_instructions: Schema.optionalKey(Schema.NullOr(Schema.String)),
 });
@@ -943,6 +987,9 @@ const CreateReplyFields = {
 
 const CreateReplySession = Schema.Struct({
   idempotency_key: Schema.String,
+  origin_scope: OriginScope.pipe(
+    Schema.withDecodingDefaultTypeKey(Effect.succeed("vault" as const)),
+  ),
   origin: Schema.optionalKey(Schema.NullOr(SessionOrigin)),
 });
 
@@ -1082,6 +1129,11 @@ const DocumentErrors = [
   NotFoundResponse,
   ValidationResponse,
 ] as const;
+const ReferenceDocumentErrors = [
+  BadRequestResponse,
+  NotFoundResponse,
+  ValidationResponse,
+] as const;
 const CreateReplyErrors = [
   ForbiddenResponse,
   NotFoundResponse,
@@ -1111,6 +1163,7 @@ const CreatedProposal = Proposal.pipe(HttpApiSchema.status("Created"));
 const CreatedIngestedDocument = IngestedDocument.pipe(HttpApiSchema.status("Created"));
 const CreatedJobResponse = JobResponse.pipe(HttpApiSchema.status("Created"));
 const CreatedSessionResponse = CreateSessionResponse.pipe(HttpApiSchema.status("Created"));
+const CreatedReferenceDetail = ReferenceDetail.pipe(HttpApiSchema.status("Created"));
 const CreatedPromoteExchangeResponse = PromoteExchangeResponse.pipe(
   HttpApiSchema.status("Created"),
 );
@@ -1188,6 +1241,36 @@ export const MetaApiGroup = HttpApiGroup.make("meta").add(
     success: Schema.Struct({ status: Schema.Literal("ok") }),
   }),
 );
+
+export const RefsApiGroup = HttpApiGroup.make("refs")
+  .add(
+    HttpApiEndpoint.post("createReference", "/me/refs", {
+      payload: ReferenceCreate,
+      success: CreatedReferenceDetail,
+      error: [BadRequestResponse, ValidationResponse] as const,
+    }).middleware(AuthMiddleware),
+  )
+  .add(
+    HttpApiEndpoint.get("listReferences", "/me/refs", {
+      query: PageParamsQuery,
+      success: ReferencePage,
+      error: ValidationErrors,
+    }).middleware(AuthMiddleware),
+  )
+  .add(
+    HttpApiEndpoint.get("readReference", "/me/refs/doc/*", {
+      params: ReferencePathParams,
+      success: ReferenceDocumentResponse,
+      error: ReferenceDocumentErrors,
+    }).middleware(AuthMiddleware),
+  )
+  .add(
+    HttpApiEndpoint.delete("deleteReference", "/me/refs/*", {
+      params: ReferencePathParams,
+      success: HttpApiSchema.NoContent,
+      error: ReferenceDocumentErrors,
+    }).middleware(AuthMiddleware),
+  );
 
 export const VaultsApiGroup = HttpApiGroup.make("vaults").add(
   HttpApiEndpoint.get("listVaults", "/vaults", {
@@ -1590,6 +1673,7 @@ export const RepliesApiGroup = HttpApiGroup.make("replies")
 export const GreatMindsApi = HttpApi.make("great-minds").add(
   MetaApiGroup,
   AuthApiGroup,
+  RefsApiGroup,
   VaultsApiGroup,
   WikiApiGroup,
   SourcesApiGroup,

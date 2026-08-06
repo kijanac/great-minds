@@ -7,9 +7,9 @@
 </script>
 
 <svelte:head>
-  <title>Document | Great Minds</title>
+  <title>Reference | Great Minds</title>
 </svelte:head>
 
 {#if path}
-  <ArticleReader {path} scope="vault" />
+  <ArticleReader {path} scope="personal" />
 {/if}

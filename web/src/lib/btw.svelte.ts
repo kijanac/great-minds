@@ -1,5 +1,10 @@
 import { createReply, streamReply } from "$lib/api/replies";
-import { appendExchange, createSession, type ExchangePayload } from "$lib/api/sessions";
+import {
+  appendExchange,
+  createSession,
+  type ExchangePayload,
+  type OriginScope,
+} from "$lib/api/sessions";
 import type { BtwThread, Exchange, SelectionInfo } from "$lib/types";
 import { buildBtwHistory, buildBtwQuery, genId, isAbortError } from "$lib/utils";
 
@@ -9,6 +14,7 @@ export class EphemeralBtws {
 
   constructor(
     private readonly originPath: string,
+    private readonly originScope: OriginScope,
     private readonly onSpunOff: (sessionId: string) => void,
   ) {}
 
@@ -81,6 +87,7 @@ export class EphemeralBtws {
             kind: "ephemeral",
             question,
             origin_path: this.originPath,
+            origin_scope: this.originScope,
             history,
             mode: "btw",
           },
@@ -121,6 +128,7 @@ export class EphemeralBtws {
         crypto.randomUUID(),
         {
           doc_path: this.originPath,
+          origin_scope: this.originScope,
           anchor: target.anchor.quote,
         },
       );

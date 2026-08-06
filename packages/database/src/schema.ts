@@ -482,6 +482,31 @@ export const sourceDocuments = pgTable(
   ],
 );
 
+export const userDocuments = pgTable(
+  "user_documents",
+  {
+    id: uuid("id").primaryKey(),
+    userId: uuid("user_id").notNull(),
+    filePath: text("file_path").notNull(),
+    fileHash: text("file_hash").notNull(),
+    bodyHash: text("body_hash").notNull(),
+    title: text("title"),
+    url: text("url"),
+    origin: text("origin"),
+    createdAt: timestamptz("created_at").defaultNow().notNull(),
+    updatedAt: timestamptz("updated_at").defaultNow().notNull(),
+  },
+  (table) => [
+    foreignKey({
+      columns: [table.userId],
+      foreignColumns: [users.id],
+      name: "user_documents_user_id_fkey",
+    }).onDelete("cascade"),
+    unique("user_documents_user_id_file_path_key").on(table.userId, table.filePath),
+    index("ix_user_documents_user_id").on(table.userId),
+  ],
+);
+
 export const sourceProposals = pgTable(
   "source_proposals",
   {

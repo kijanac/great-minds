@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-import type { BtwPayload, SessionOrigin } from "./sessions";
+import type { BtwPayload, OriginScope, SessionOrigin } from "./sessions";
 import { apiFetch, readJson, vaultPath } from "./client";
 import { sourceRefSchema } from "./schemas";
 import type { HistoryMessage } from "$lib/types";
@@ -9,6 +9,7 @@ interface ReplyQueryPayload {
   question: string;
   model?: string;
   origin_path?: string;
+  origin_scope?: OriginScope;
   history: HistoryMessage[];
   mode: "query" | "btw";
 }
@@ -24,6 +25,7 @@ export type CreateReplyPayload =
       exchange_id: string;
       create: {
         idempotency_key: string;
+        origin_scope?: OriginScope;
         origin?: SessionOrigin;
       };
     })

@@ -110,6 +110,7 @@ const normalizeOrigin = (origin: SessionOrigin | null | undefined): SessionOrigi
     ? null
     : {
         doc_path: origin.doc_path,
+        origin_scope: origin.origin_scope,
         anchor: origin.anchor ?? null,
         paragraph: origin.paragraph ?? null,
         paragraph_index: origin.paragraph_index ?? null,

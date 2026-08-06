@@ -14,6 +14,7 @@ import {
   ServiceUnavailable,
   type DraftHintResponse,
   type HistoryMessage,
+  type OriginScope,
   type QueryRequest,
   type QuerySourceData,
   type QueryStreamPayload,
@@ -703,14 +704,19 @@ export const QueryServiceLive = Layer.effect(
     const readDocumentTool = async (
       context: QueryContext,
       path: string,
+      scope: OriginScope,
       emitSource = true,
     ): Promise<ToolResult> => {
-      const content = await run(Effect.result(storage.readText(context.vaultId, path)));
+      const read =
+        scope === "personal"
+          ? storage.readUserText(context.userId, path)
+          : storage.readText(context.vaultId, path);
+      const content = await run(Effect.result(read));
       if (content._tag === "Failure") {
         throw new ToolMiss(`Document not found: ${path}`);
       }
       const source = emitSource ? await sourceEvent(context, "read_document", { path }) : undefined;
-      if (content.success.length <= readWholeLimit) {
+      if (scope === "personal" || content.success.length <= readWholeLimit) {
         return {
           content: `# ${path} [${context.vaultLabel}]\n\n${content.success}`,
           source,
@@ -1321,7 +1327,7 @@ export const QueryServiceLive = Layer.effect(
     ): Promise<ToolResult> => {
       switch (name) {
         case "read_document":
-          return await readDocumentTool(context, asStringArg(args, "path"));
+          return await readDocumentTool(context, asStringArg(args, "path"), "vault");
         case "expand_context":
           return await expandContextTool(
             context,
@@ -1499,10 +1505,14 @@ export const QueryServiceLive = Layer.effect(
       }
     }
 
-    const buildOriginMessages = async (context: QueryContext, originPath: string) => {
+    const buildOriginMessages = async (
+      context: QueryContext,
+      originPath: string,
+      originScope: OriginScope,
+    ) => {
       let content: string;
       try {
-        content = (await readDocumentTool(context, originPath, false)).content;
+        content = (await readDocumentTool(context, originPath, originScope, false)).content;
       } catch (error) {
         if (error instanceof ToolMiss) {
           content = error.toolMessage;
@@ -1579,7 +1589,9 @@ export const QueryServiceLive = Layer.effect(
         input.origin_path !== null &&
         input.origin_path.length > 0
       ) {
-        messages.push(...(await buildOriginMessages(context, input.origin_path)));
+        messages.push(
+          ...(await buildOriginMessages(context, input.origin_path, input.origin_scope)),
+        );
       }
       messages.push(
         ...input.history.map((message: HistoryMessage) => ({

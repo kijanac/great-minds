@@ -2,6 +2,8 @@ import {
   fetchChunks,
   fetchLinks,
   readDocument,
+  readPersonalDocument,
+  type DocumentScope,
   type DocChunk,
   type LinkedArticles,
 } from "$lib/api/doc";
@@ -14,8 +16,13 @@ export type PanelContent =
 
 export async function loadPanelContent(
   card: SourceRef,
+  scope: DocumentScope,
   signal?: AbortSignal,
 ): Promise<PanelContent | null> {
+  if (scope === "personal") {
+    const document = await readPersonalDocument(card.label, signal);
+    return { mode: "doc", body: document.body };
+  }
   if (card.type === "links") {
     return { mode: "links", links: await fetchLinks(card.label, signal) };
   }

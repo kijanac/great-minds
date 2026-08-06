@@ -19,14 +19,19 @@ const compactMarkdown = (markdown: string) =>
 export const htmlToMarkdown = (html: string, url: string) => {
   const dom = new JSDOM(html, { url });
   const article = new Readability(dom.window.document).parse();
-  const title = article?.title?.trim();
+  const parsedTitle = article?.title?.trim();
+  const title = parsedTitle === undefined || parsedTitle.length === 0 ? null : parsedTitle;
   const content = article?.content ?? dom.window.document.body?.innerHTML ?? html;
-  const body = compactMarkdown(turndown.turndown(content));
-  if (title !== undefined && title.length > 0 && !body.startsWith("# ")) {
-    return compactMarkdown(`# ${title}\n\n${body}`);
-  }
-  return body;
+  return {
+    title,
+    markdown: compactMarkdown(turndown.turndown(content)),
+  };
 };
+
+export const markdownWithTitle = (title: string | null, markdown: string) =>
+  title !== null && !markdown.startsWith("# ")
+    ? compactMarkdown(`# ${title}\n\n${markdown}`)
+    : markdown;
 
 const TEXT_EXTENSIONS = new Set([".md", ".txt", ".text", ".markdown", ".csv", ".json", ".xml"]);
 const HTML_EXTENSIONS = new Set([".html", ".htm"]);
@@ -44,7 +49,8 @@ export const stagedFileToMarkdown = async (
   }
   if (HTML_EXTENSIONS.has(extension) || mimetype.toLowerCase().includes("text/html")) {
     const html = new TextDecoder("utf-8", { fatal: true }).decode(rawBytes);
-    return htmlToMarkdown(html, "https://uploaded.local/");
+    const converted = htmlToMarkdown(html, "https://uploaded.local/");
+    return markdownWithTitle(converted.title, converted.markdown);
   }
   if (BINARY_EXTENSIONS.has(extension)) {
     return parseOfficeAsync(Buffer.from(rawBytes), {

@@ -313,6 +313,7 @@ export const AuthServiceLive = Layer.effect(
       deleteSelf: (userId) =>
         Effect.gen(function* () {
           yield* vaultsService.deleteOwnedVaults(userId);
+          yield* storage.clearUser(userId);
           const rows = yield* db
             .delete(users)
             .where(eq(users.id, userId))

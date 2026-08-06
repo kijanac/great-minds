@@ -57,6 +57,7 @@ const queryRequest = (input: CreateReplyRequest): QueryRequest => ({
   history: input.history,
   ...(input.model === undefined ? {} : { model: input.model }),
   ...(input.origin_path === undefined ? {} : { origin_path: input.origin_path }),
+  origin_scope: input.origin_scope,
   ...(input.extra_instructions === undefined
     ? {}
     : { extra_instructions: input.extra_instructions }),
@@ -534,7 +535,17 @@ export const RepliesServiceLive = Layer.effect(
                 {
                   idempotency_key: input.create.idempotency_key,
                   exchange: pending,
-                  ...(input.create.origin === undefined ? {} : { origin: input.create.origin }),
+                  ...(input.create.origin === undefined
+                    ? {}
+                    : {
+                        origin:
+                          input.create.origin === null
+                            ? null
+                            : {
+                                ...input.create.origin,
+                                origin_scope: input.create.origin_scope,
+                              },
+                      }),
                 },
                 replyId,
               );

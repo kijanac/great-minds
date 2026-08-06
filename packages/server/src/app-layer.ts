@@ -35,6 +35,7 @@ import { SourcesService, SourcesServiceLive } from "./sources.ts";
 import { ProposalStorage, ProposalStorageLive, VaultStorage, VaultStorageLive } from "./storage.ts";
 import { RandomBytesLive, RandomBytesService } from "./random.ts";
 import { TokenService, TokenServiceLive } from "./tokens.ts";
+import { UserDocumentsService, UserDocumentsServiceLive } from "./user-documents.ts";
 import {
   VaultAccessService,
   VaultAccessServiceLive,
@@ -56,6 +57,7 @@ export type AppLayerServices =
   | WikiService
   | SourcesService
   | SourceDocumentsService
+  | UserDocumentsService
   | ProposalsService
   | IngestService
   | JobsService
@@ -118,6 +120,10 @@ export const makeAppLayers = (overrides: AppLayerOverrides = {}) => {
   );
   const MailerLiveLayer = (overrides.mailer ?? MailerLive).pipe(Layer.provideMerge(BaseLive));
   const SourceDocumentsLive = SourceDocumentsServiceLive.pipe(
+    Layer.provideMerge(StorageLive),
+    Layer.provideMerge(BaseLive),
+  );
+  const UserDocumentsLive = UserDocumentsServiceLive.pipe(
     Layer.provideMerge(StorageLive),
     Layer.provideMerge(BaseLive),
   );
@@ -223,6 +229,7 @@ export const makeAppLayers = (overrides: AppLayerOverrides = {}) => {
     QueryLive,
     RepliesLive,
     SourceDocumentsLive,
+    UserDocumentsLive,
     ProposalsLive,
     ProposalStorageLiveLayer,
   );

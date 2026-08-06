@@ -94,7 +94,7 @@
       selectedCard?.ranges,
       selectedCard?.full,
     ],
-    queryFn: ({ signal }) => loadPanelContent(selectedCard!, signal),
+    queryFn: ({ signal }) => loadPanelContent(selectedCard!, "vault", signal),
     enabled: !!activeVault.id && !!selectedCard,
   }));
   const handleLinkClick = createLinkInterceptor((citation) => {

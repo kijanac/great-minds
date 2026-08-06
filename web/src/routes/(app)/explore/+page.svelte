@@ -65,7 +65,7 @@
 
   const panelQuery = createQuery(() => ({
     queryKey: ["vault", activeVault.id, "article-panel", selectedCard?.label],
-    queryFn: ({ signal }) => loadPanelContent(selectedCard!, signal),
+    queryFn: ({ signal }) => loadPanelContent(selectedCard!, "vault", signal),
     enabled: !!activeVault.id && !!selectedCard,
   }));
 

@@ -5,6 +5,7 @@
   import { onDestroy, tick, untrack } from "svelte";
 
   import { EphemeralBtws } from "$lib/btw.svelte";
+  import type { DocumentScope } from "$lib/api/doc";
   import ArticleChrome from "$lib/components/article-chrome.svelte";
   import ArticlePanel from "$lib/components/article-panel.svelte";
   import ArticleView from "$lib/components/article-view.svelte";
@@ -14,7 +15,10 @@
   import { Button } from "$lib/components/ui/button";
   import { Skeleton } from "$lib/components/ui/skeleton";
   import { activeVault } from "$lib/hooks/use-vault.svelte";
-  import { useDocument } from "$lib/hooks/use-document.svelte";
+  import {
+    useDocument,
+    usePersonalDocument,
+  } from "$lib/hooks/use-document.svelte";
   import {
     createLinkInterceptor,
     type RawCitation,
@@ -23,7 +27,7 @@
   import type { SelectionInfo, SourceRef } from "$lib/types";
   import { displayTitle } from "$lib/utils";
 
-  let { path }: { path: string } = $props();
+  let { path, scope }: { path: string; scope: DocumentScope } = $props();
 
   let selectedCard = $state<SourceRef | null>(null);
   let popover = $state<SelectionInfo | null>(null);
@@ -31,11 +35,19 @@
     localStorage.getItem("onboarding-hint-seen") === "true",
   );
   const initialPath = untrack(() => path);
+  const readerScope = untrack(() => scope);
   let btwPath = initialPath;
   let ephemeralBtws = $state(
-    new EphemeralBtws(initialPath, (id) => void goto(`/sessions/${id}`)),
+    new EphemeralBtws(
+      initialPath,
+      readerScope,
+      (id) => void goto(`/sessions/${id}`),
+    ),
   );
-  const documentQuery = useDocument(() => path);
+  const documentQuery =
+    readerScope === "personal"
+      ? usePersonalDocument(() => path)
+      : useDocument(() => path);
   const document = $derived(documentQuery.data?.article ?? null);
   const body = $derived(documentQuery.data?.body ?? null);
   const label = $derived(displayTitle(path, document?.title));
@@ -43,15 +55,16 @@
 
   const panelQuery = createQuery(() => ({
     queryKey: [
-      "vault",
-      activeVault.id,
+      readerScope === "personal" ? "me" : "vault",
+      readerScope === "personal" ? "ref" : activeVault.id,
       "article-panel",
       selectedCard?.label,
       selectedCard?.ranges,
       selectedCard?.full,
     ],
-    queryFn: ({ signal }) => loadPanelContent(selectedCard!, signal),
-    enabled: !!activeVault.id && !!selectedCard,
+    queryFn: ({ signal }) =>
+      loadPanelContent(selectedCard!, readerScope, signal),
+    enabled: !!selectedCard && (readerScope === "personal" || !!activeVault.id),
   }));
 
   function openRawCitation(citation: RawCitation) {
@@ -63,7 +76,7 @@
         citation.chunk == null
           ? undefined
           : [{ start: citation.chunk, end: citation.chunk }],
-      full: citation.chunk == null,
+      full: readerScope === "personal" || citation.chunk == null,
     };
   }
 
@@ -77,6 +90,7 @@
     btwPath = path;
     ephemeralBtws = new EphemeralBtws(
       path,
+      readerScope,
       (id) => void goto(`/sessions/${id}`),
     );
     popover = null;
@@ -111,6 +125,11 @@
   }
 
   function openPanelPath(linkedPath: string) {
+    if (readerScope === "personal") {
+      selectedCard = null;
+      void goto(`/refs/${linkedPath}`);
+      return;
+    }
     if (linkedPath.startsWith("wiki/")) {
       selectedCard = null;
       void goto(`/doc/${linkedPath}`);
@@ -130,7 +149,9 @@
     const range = card.ranges?.length === 1 ? card.ranges[0] : null;
     const hash = range && range.start === range.end ? `#^p${range.start}` : "";
     selectedCard = null;
-    await goto(`/doc/${card.label}${hash}`);
+    await goto(
+      `${readerScope === "personal" ? "/refs/" : "/doc/"}${card.label}${hash}`,
+    );
   }
 
   $effect(() => {

@@ -41,6 +41,7 @@ import { QueryService } from "./query.ts";
 import { RepliesService } from "./replies.ts";
 import { SessionsService } from "./sessions.ts";
 import { SourcesService } from "./sources.ts";
+import { UserDocumentsService } from "./user-documents.ts";
 import { VaultAccessService, VaultsService } from "./vaults.ts";
 import { WikiService } from "./wiki.ts";
 
@@ -325,6 +326,49 @@ const AuthHandlersLive = HttpApiBuilder.group(MountedGreatMindsApi, "auth", (han
           const auth = yield* AuthService;
           const current = yield* CurrentAuth;
           yield* auth.deleteSelf(current.user_id);
+        }),
+      ),
+    ),
+);
+
+const RefsHandlersLive = HttpApiBuilder.group(MountedGreatMindsApi, "refs", (handlers) =>
+  handlers
+    .handle("createReference", ({ payload }) =>
+      withDomainErrors(
+        Effect.gen(function* () {
+          const documents = yield* UserDocumentsService;
+          const current = yield* CurrentAuth;
+          const result = yield* documents.create(current.user_id, payload.url);
+          return result.created
+            ? result.reference
+            : yield* jsonResponse(200, result.reference);
+        }),
+      ),
+    )
+    .handle("listReferences", ({ query }) =>
+      withDomainErrors(
+        Effect.gen(function* () {
+          const documents = yield* UserDocumentsService;
+          const current = yield* CurrentAuth;
+          return yield* documents.list(current.user_id, query);
+        }),
+      ),
+    )
+    .handle("readReference", ({ params }) =>
+      withDomainErrors(
+        Effect.gen(function* () {
+          const documents = yield* UserDocumentsService;
+          const current = yield* CurrentAuth;
+          return yield* documents.read(current.user_id, params["*"]);
+        }),
+      ),
+    )
+    .handle("deleteReference", ({ params }) =>
+      withDomainErrors(
+        Effect.gen(function* () {
+          const documents = yield* UserDocumentsService;
+          const current = yield* CurrentAuth;
+          yield* documents.delete(current.user_id, params["*"]);
         }),
       ),
     ),
@@ -968,6 +1012,7 @@ const UploadRouteLive = HttpRouter.add("POST", "/v1/vaults/:vault_id/ingest/uplo
 const ApiGroupsLive = Layer.mergeAll(
   MetaHandlersLive,
   AuthHandlersLive,
+  RefsHandlersLive,
   VaultHandlersLive,
   WikiHandlersLive,
   SourcesHandlersLive,
