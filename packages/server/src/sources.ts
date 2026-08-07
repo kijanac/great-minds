@@ -13,7 +13,6 @@ import {
 import { and, desc, eq, ilike, or, sql, type SQL } from "drizzle-orm";
 import { Context, Effect, Layer, Schema } from "effect";
 
-import { dieDatabase } from "./db-defects.ts";
 import { pageEnvelope, oneTotal } from "./pagination.ts";
 import { ProposalsService } from "./proposals.ts";
 import { safeRawSourcePath, SourceDocumentsService } from "./source-documents.ts";
@@ -92,20 +91,18 @@ export const SourcesServiceLive = Layer.effect(
         Effect.gen(function* () {
           yield* access.requireMember(userId, vaultId);
           const where = and(...sourceConditions(vaultId, query));
-          const countRows = yield* db
+          const countRows = yield* db.query((d) => d
             .select({ total: sql<number>`count(*)::int` })
             .from(sourceDocuments)
-            .where(where)
-            .pipe(dieDatabase);
-          const rows = yield* db
+            .where(where));
+          const rows = yield* db.query((d) => d
             .select()
             .from(sourceDocuments)
             .where(where)
             .orderBy(desc(sourceDocuments.updatedAt))
             .limit(query.limit)
-            .offset(query.offset)
-            .pipe(dieDatabase);
-          const facetRows = yield* db
+            .offset(query.offset));
+          const facetRows = yield* db.query((d) => d
             .select({
               value: sourceDocuments.sourceType,
               count: sql<number>`count(*)::int`
@@ -113,8 +110,7 @@ export const SourcesServiceLive = Layer.effect(
             .from(sourceDocuments)
             .where(eq(sourceDocuments.vaultId, vaultId))
             .groupBy(sourceDocuments.sourceType)
-            .orderBy(desc(sql`count(*)`))
-            .pipe(dieDatabase);
+            .orderBy(desc(sql`count(*)`)));
 
           return {
             ...pageEnvelope(rows.map(sourceSummary), query, oneTotal(countRows)),

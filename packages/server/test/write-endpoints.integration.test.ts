@@ -181,8 +181,8 @@ const resetDatabase = () =>
   runDb(
     Effect.gen(function* () {
       const db = yield* Database;
-      yield* db.delete(authCodes).pipe(Effect.orDie);
-      yield* db.delete(users).pipe(Effect.orDie);
+      yield* db.query((d) => d.delete(authCodes)).pipe(Effect.orDie);
+      yield* db.query((d) => d.delete(users)).pipe(Effect.orDie);
     }),
   );
 
@@ -234,25 +234,25 @@ const seedBase = async (): Promise<Fixture> => {
   await runDb(
     Effect.gen(function* () {
       const db = yield* Database;
-      yield* db
+      yield* db.query((d) => d
         .insert(users)
         .values([
           { id: id.alice, email: "alice@example.com", createdAt: initialTime },
           { id: id.bob, email: "bob@example.com", createdAt: initialTime },
           { id: id.carol, email: "carol@example.com", createdAt: initialTime },
           { id: id.mallory, email: "mallory@example.com", createdAt: initialTime },
-        ])
+        ]))
         .pipe(Effect.orDie);
-      yield* db
+      yield* db.query((d) => d
         .insert(vaults)
         .values({
           id: id.vault,
           name: "Alpha Vault",
           ownerId: id.alice,
           createdAt: initialTime,
-        })
+        }))
         .pipe(Effect.orDie);
-      yield* db
+      yield* db.query((d) => d
         .insert(vaultMemberships)
         .values([
           {
@@ -273,7 +273,7 @@ const seedBase = async (): Promise<Fixture> => {
             userId: id.carol,
             role: "VIEWER",
           },
-        ])
+        ]))
         .pipe(Effect.orDie);
     }),
   );
@@ -294,7 +294,7 @@ const seedSourceGraph = async () => {
   await runDb(
     Effect.gen(function* () {
       const db = yield* Database;
-      yield* db
+      yield* db.query((d) => d
         .insert(sourceDocuments)
         .values({
           id: id.source,
@@ -306,9 +306,9 @@ const seedSourceGraph = async () => {
           title: "Capital",
           tags: [],
           derivedExtras: {},
-        })
+        }))
         .pipe(Effect.orDie);
-      yield* db
+      yield* db.query((d) => d
         .insert(topics)
         .values({
           topicId: id.topic,
@@ -316,9 +316,9 @@ const seedSourceGraph = async () => {
           slug: "capital",
           title: "Capital",
           description: "Capital",
-        })
+        }))
         .pipe(Effect.orDie);
-      yield* db
+      yield* db.query((d) => d
         .insert(ideas)
         .values([
           {
@@ -337,16 +337,16 @@ const seedSourceGraph = async () => {
             label: "labor",
             description: "Labor",
           },
-        ])
+        ]))
         .pipe(Effect.orDie);
-      yield* db
+      yield* db.query((d) => d
         .insert(topicMembership)
         .values([
           { topicId: id.topic, ideaId: id.ideaOne },
           { topicId: id.topic, ideaId: id.ideaTwo },
-        ])
+        ]))
         .pipe(Effect.orDie);
-      yield* db
+      yield* db.query((d) => d
         .insert(searchIndex)
         .values({
           vaultId: id.vault,
@@ -356,7 +356,7 @@ const seedSourceGraph = async () => {
           body: "Capital body",
           contentHash: "chunk-hash",
           tsv: sql`to_tsvector('english', 'Capital body')`,
-        })
+        }))
         .pipe(Effect.orDie);
     }),
   );
@@ -470,9 +470,9 @@ const countTable = <A>(table: A) =>
   runDb(
     Effect.gen(function* () {
       const db = yield* Database;
-      const rows = yield* db
+      const rows = yield* db.query((d) => d
         .select({ total: sql<number>`count(*)::int` })
-        .from(table as never)
+        .from(table as never))
         .pipe(Effect.orDie);
       return rows[0]?.total ?? 0;
     }),
@@ -571,10 +571,10 @@ describe("M3.1 write endpoint integration", () => {
     const bobMemberships = await runDb(
       Effect.gen(function* () {
         const db = yield* Database;
-        return yield* db
+        return yield* db.query((d) => d
           .select({ role: vaultMemberships.role })
           .from(vaultMemberships)
-          .where(and(eq(vaultMemberships.vaultId, id.vault), eq(vaultMemberships.userId, id.bob)))
+          .where(and(eq(vaultMemberships.vaultId, id.vault), eq(vaultMemberships.userId, id.bob))))
           .pipe(Effect.orDie);
       }),
     );
@@ -625,10 +625,10 @@ describe("M3.1 write endpoint integration", () => {
     const roles = await runDb(
       Effect.gen(function* () {
         const db = yield* Database;
-        return yield* db
+        return yield* db.query((d) => d
           .select({ userId: vaultMemberships.userId, role: vaultMemberships.role })
           .from(vaultMemberships)
-          .where(eq(vaultMemberships.vaultId, id.vault))
+          .where(eq(vaultMemberships.vaultId, id.vault)))
           .pipe(Effect.orDie);
       }),
     );
@@ -739,14 +739,14 @@ describe("M3.1 write endpoint integration", () => {
     const pendingIntents = await runDb(
       Effect.gen(function* () {
         const db = yield* Database;
-        return yield* db
+        return yield* db.query((d) => d
           .select({
             id: compileIntents.id,
             pipelineRunId: compileIntents.pipelineRunId,
             dispatchedAt: compileIntents.dispatchedAt,
           })
           .from(compileIntents)
-          .where(and(eq(compileIntents.vaultId, id.vault), isNull(compileIntents.dispatchedAt)))
+          .where(and(eq(compileIntents.vaultId, id.vault), isNull(compileIntents.dispatchedAt))))
           .pipe(Effect.orDie);
       }),
     );
@@ -796,7 +796,7 @@ describe("M3.1 write endpoint integration", () => {
     await runDb(
       Effect.gen(function* () {
         const db = yield* Database;
-        yield* db
+        yield* db.query((d) => d
           .insert(sourceProposals)
           .values({
             id: id.conflictingProposal,
@@ -806,7 +806,7 @@ describe("M3.1 write endpoint integration", () => {
             contentType: "user_suggestion",
             title: "Conflicting proposal",
             destPath: "raw/books/capital.md",
-          })
+          }))
           .pipe(Effect.orDie);
       }),
     );
@@ -820,9 +820,9 @@ describe("M3.1 write endpoint integration", () => {
     await runDb(
       Effect.gen(function* () {
         const db = yield* Database;
-        yield* db
+        yield* db.query((d) => d
           .delete(sourceProposals)
-          .where(eq(sourceProposals.id, id.conflictingProposal))
+          .where(eq(sourceProposals.id, id.conflictingProposal)))
           .pipe(Effect.orDie);
       }),
     );
@@ -900,7 +900,7 @@ describe("M3.1 write endpoint integration", () => {
     const rawRows = await runDb(
       Effect.gen(function* () {
         const db = yield* Database;
-        return yield* db
+        return yield* db.query((d) => d
           .select()
           .from(sourceDocuments)
           .where(
@@ -908,7 +908,7 @@ describe("M3.1 write endpoint integration", () => {
               eq(sourceDocuments.vaultId, id.vault),
               eq(sourceDocuments.filePath, "raw/docs/raw-direct.md"),
             ),
-          )
+          ))
           .pipe(Effect.orDie);
       }),
     );
@@ -1000,7 +1000,7 @@ describe("M3.1 write endpoint integration", () => {
     const htmlRows = await runDb(
       Effect.gen(function* () {
         const db = yield* Database;
-        return yield* db
+        return yield* db.query((d) => d
           .select()
           .from(sourceDocuments)
           .where(
@@ -1008,7 +1008,7 @@ describe("M3.1 write endpoint integration", () => {
               eq(sourceDocuments.vaultId, id.vault),
               eq(sourceDocuments.filePath, "raw/docs/html-upload.md"),
             ),
-          )
+          ))
           .pipe(Effect.orDie);
       }),
     );
@@ -1060,12 +1060,12 @@ describe("M3.1 write endpoint integration", () => {
       const proposalRows = await runDb(
         Effect.gen(function* () {
           const db = yield* Database;
-          return yield* db
+          return yield* db.query((d) => d
             .select()
             .from(sourceProposals)
             .where(
               and(eq(sourceProposals.vaultId, id.vault), eq(sourceProposals.destPath, editorPath)),
-            )
+            ))
             .pipe(Effect.orDie);
         }),
       );
@@ -1106,7 +1106,7 @@ describe("M3.1 write endpoint integration", () => {
     await runDb(
       Effect.gen(function* () {
         const db = yield* Database;
-        yield* db
+        yield* db.query((d) => d
           .insert(sourceDocuments)
           .values([
             {
@@ -1131,7 +1131,7 @@ describe("M3.1 write endpoint integration", () => {
               tags: [],
               derivedExtras: {},
             },
-          ])
+          ]))
           .pipe(Effect.orDie);
       }),
     );
@@ -1183,7 +1183,7 @@ describe("M3.1 write endpoint integration", () => {
     await runDb(
       Effect.gen(function* () {
         const db = yield* Database;
-        yield* db.delete(sourceDocuments).pipe(Effect.orDie);
+        yield* db.query((d) => d.delete(sourceDocuments)).pipe(Effect.orDie);
       }),
     );
     const processed = await api(
@@ -1207,15 +1207,15 @@ describe("M3.1 write endpoint integration", () => {
     const rows = await runDb(
       Effect.gen(function* () {
         const db = yield* Database;
-        const appTasks = yield* db
+        const appTasks = yield* db.query((d) => d
           .select()
           .from(tasks)
-          .where(eq(tasks.pipelineRunId, id.m32StagedRun))
+          .where(eq(tasks.pipelineRunId, id.m32StagedRun)))
           .pipe(Effect.orDie);
-        const runs = yield* db
+        const runs = yield* db.query((d) => d
           .select()
           .from(pipelineRuns)
-          .where(eq(pipelineRuns.id, id.m32StagedRun))
+          .where(eq(pipelineRuns.id, id.m32StagedRun)))
           .pipe(Effect.orDie);
         return { appTasks, runs };
       }),
@@ -1285,10 +1285,10 @@ describe("M3.1 write endpoint integration", () => {
         const storedRows = await runDb(
           Effect.gen(function* () {
             const db = yield* Database;
-            return yield* db
+            return yield* db.query((d) => d
               .select()
               .from(userDocuments)
-              .where(eq(userDocuments.userId, id.alice))
+              .where(eq(userDocuments.userId, id.alice)))
               .pipe(Effect.orDie);
           }),
         );
@@ -1420,7 +1420,7 @@ describe("M3.1 write endpoint integration", () => {
         const successRows = await runDb(
           Effect.gen(function* () {
             const db = yield* Database;
-            const sourceRows = yield* db
+            const sourceRows = yield* db.query((d) => d
               .select()
               .from(sourceDocuments)
               .where(
@@ -1428,17 +1428,17 @@ describe("M3.1 write endpoint integration", () => {
                   eq(sourceDocuments.vaultId, id.vault),
                   eq(sourceDocuments.filePath, "raw/docs/ok.md"),
                 ),
-              )
+              ))
               .pipe(Effect.orDie);
-            const intentRows = yield* db
+            const intentRows = yield* db.query((d) => d
               .select()
               .from(compileIntents)
-              .where(eq(compileIntents.pipelineRunId, id.m32UrlRun))
+              .where(eq(compileIntents.pipelineRunId, id.m32UrlRun)))
               .pipe(Effect.orDie);
-            const runRows = yield* db
+            const runRows = yield* db.query((d) => d
               .select()
               .from(pipelineRuns)
-              .where(eq(pipelineRuns.id, id.m32UrlRun))
+              .where(eq(pipelineRuns.id, id.m32UrlRun)))
               .pipe(Effect.orDie);
             return { sourceRows, intentRows, runRows };
           }),
@@ -1460,10 +1460,10 @@ describe("M3.1 write endpoint integration", () => {
         const failedRuns = await runDb(
           Effect.gen(function* () {
             const db = yield* Database;
-            return yield* db
+            return yield* db.query((d) => d
               .select()
               .from(pipelineRuns)
-              .where(eq(pipelineRuns.id, id.m32UrlFailRun))
+              .where(eq(pipelineRuns.id, id.m32UrlFailRun)))
               .pipe(Effect.orDie);
           }),
         );
@@ -1486,12 +1486,12 @@ describe("M3.1 write endpoint integration", () => {
         const pdfRows = await runDb(
           Effect.gen(function* () {
             const db = yield* Database;
-            const runRows = yield* db
+            const runRows = yield* db.query((d) => d
               .select()
               .from(pipelineRuns)
-              .where(eq(pipelineRuns.id, id.m32UrlPdfRun))
+              .where(eq(pipelineRuns.id, id.m32UrlPdfRun)))
               .pipe(Effect.orDie);
-            const sourceRows = yield* db
+            const sourceRows = yield* db.query((d) => d
               .select()
               .from(sourceDocuments)
               .where(
@@ -1499,12 +1499,12 @@ describe("M3.1 write endpoint integration", () => {
                   eq(sourceDocuments.vaultId, id.vault),
                   eq(sourceDocuments.filePath, "raw/docs/pdf.md"),
                 ),
-              )
+              ))
               .pipe(Effect.orDie);
-            const intentRows = yield* db
+            const intentRows = yield* db.query((d) => d
               .select()
               .from(compileIntents)
-              .where(eq(compileIntents.pipelineRunId, id.m32UrlPdfRun))
+              .where(eq(compileIntents.pipelineRunId, id.m32UrlPdfRun)))
               .pipe(Effect.orDie);
             return { runRows, sourceRows, intentRows };
           }),
@@ -1553,10 +1553,10 @@ describe("M3.1 write endpoint integration", () => {
     const createdRows = await runDb(
       Effect.gen(function* () {
         const db = yield* Database;
-        return yield* db
+        return yield* db.query((d) => d
           .select()
           .from(sessions)
-          .where(eq(sessions.id, String(asRecord(created.body).id)))
+          .where(eq(sessions.id, String(asRecord(created.body).id))))
           .pipe(Effect.orDie);
       }),
     );
@@ -1695,10 +1695,10 @@ describe("M3.1 write endpoint integration", () => {
       runDb(
         Effect.gen(function* () {
           const db = yield* Database;
-          const rows = yield* db
+          const rows = yield* db.query((d) => d
             .select({ updatedAt: sessions.updatedAt })
             .from(sessions)
-            .where(and(eq(sessions.vaultId, id.vault), eq(sessions.id, sessionId)))
+            .where(and(eq(sessions.vaultId, id.vault), eq(sessions.id, sessionId))))
             .pipe(Effect.orDie);
           return rows[0]?.updatedAt;
         }),
@@ -1809,10 +1809,10 @@ describe("M3.1 write endpoint integration", () => {
     const orphanRows = await runDb(
       Effect.gen(function* () {
         const db = yield* Database;
-        return yield* db
+        return yield* db.query((d) => d
           .select()
           .from(sessions)
-          .where(and(eq(sessions.vaultId, id.vault), eq(sessions.id, "orphan-session")))
+          .where(and(eq(sessions.vaultId, id.vault), eq(sessions.id, "orphan-session"))))
           .pipe(Effect.orDie);
       }),
     );
@@ -1871,7 +1871,7 @@ describe("M3.1 write endpoint integration", () => {
     const promotedRows = await runDb(
       Effect.gen(function* () {
         const db = yield* Database;
-        return yield* db
+        return yield* db.query((d) => d
           .select()
           .from(sourceDocuments)
           .where(
@@ -1879,7 +1879,7 @@ describe("M3.1 write endpoint integration", () => {
               eq(sourceDocuments.vaultId, id.vault),
               eq(sourceDocuments.filePath, "raw/sessions/ex-promote.md"),
             ),
-          )
+          ))
           .pipe(Effect.orDie);
       }),
     );
@@ -1925,10 +1925,10 @@ describe("M3.1 write endpoint integration", () => {
     const proposalRows = await runDb(
       Effect.gen(function* () {
         const db = yield* Database;
-        return yield* db
+        return yield* db.query((d) => d
           .select()
           .from(sourceProposals)
-          .where(and(eq(sourceProposals.vaultId, id.vault), eq(sourceProposals.id, proposalId)))
+          .where(and(eq(sourceProposals.vaultId, id.vault), eq(sourceProposals.id, proposalId))))
           .pipe(Effect.orDie);
       }),
     );
@@ -2043,7 +2043,7 @@ describe("M3.1 write endpoint integration", () => {
     await runDb(
       Effect.gen(function* () {
         const db = yield* Database;
-        yield* db
+        yield* db.query((d) => d
           .insert(pipelineRuns)
           .values({
             id: id.run,
@@ -2053,9 +2053,9 @@ describe("M3.1 write endpoint integration", () => {
             currentPhase: "render",
             phaseStatus: "completed",
             progressSteps: [],
-          })
+          }))
           .pipe(Effect.orDie);
-        yield* db
+        yield* db.query((d) => d
           .insert(tasks)
           .values({
             id: id.task,
@@ -2063,17 +2063,17 @@ describe("M3.1 write endpoint integration", () => {
             type: "compile",
             params: {},
             pipelineRunId: id.run,
-          })
+          }))
           .pipe(Effect.orDie);
-        yield* db
+        yield* db.query((d) => d
           .insert(compileIntents)
-          .values({ vaultId: id.vault, pipelineRunId: id.run })
+          .values({ vaultId: id.vault, pipelineRunId: id.run }))
           .pipe(Effect.orDie);
-        yield* db
+        yield* db.query((d) => d
           .insert(compileCacheEntries)
-          .values({ id: id.cache, vaultId: id.vault, phase: "extract", cacheKey: "k", value: {} })
+          .values({ id: id.cache, vaultId: id.vault, phase: "extract", cacheKey: "k", value: {} }))
           .pipe(Effect.orDie);
-        yield* db
+        yield* db.query((d) => d
           .insert(llmCostEvents)
           .values({
             id: id.cost,
@@ -2081,7 +2081,7 @@ describe("M3.1 write endpoint integration", () => {
             vaultId: id.vault,
             eventType: "query.stream",
             costUsd: "0.010000",
-          })
+          }))
           .pipe(Effect.orDie);
       }),
     );

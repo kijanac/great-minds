@@ -132,23 +132,23 @@ const seed = () =>
   run(
     Effect.gen(function* () {
       const db = yield* Database;
-      yield* db.delete(authCodes).pipe(Effect.orDie);
-      yield* db.delete(users).pipe(Effect.orDie);
-      yield* db
+      yield* db.query((d) => d.delete(authCodes)).pipe(Effect.orDie);
+      yield* db.query((d) => d.delete(users)).pipe(Effect.orDie);
+      yield* db.query((d) => d
         .insert(users)
         .values([
           { id: ids.alice, email: "jobs-alice@example.test", createdAt: now },
           { id: ids.bob, email: "jobs-bob@example.test", createdAt: now },
-        ])
+        ]))
         .pipe(Effect.orDie);
-      yield* db
+      yield* db.query((d) => d
         .insert(vaults)
         .values([
           { id: ids.vault, ownerId: ids.alice, name: "Jobs Vault", createdAt: now },
           { id: ids.otherVault, ownerId: ids.bob, name: "Other Vault", createdAt: now },
-        ])
+        ]))
         .pipe(Effect.orDie);
-      yield* db
+      yield* db.query((d) => d
         .insert(vaultMemberships)
         .values([
           {
@@ -165,9 +165,9 @@ const seed = () =>
             role: "OWNER",
             createdAt: now,
           },
-        ])
+        ]))
         .pipe(Effect.orDie);
-      yield* db
+      yield* db.query((d) => d
         .insert(topics)
         .values([
           {
@@ -190,9 +190,9 @@ const seed = () =>
             compiledFromHash: "same-beta",
             renderedFromHash: "same-beta",
           },
-        ])
+        ]))
         .pipe(Effect.orDie);
-      yield* db
+      yield* db.query((d) => d
         .insert(wikiArticles)
         .values([
           {
@@ -219,17 +219,17 @@ const seed = () =>
             createdAt: now,
             updatedAt: now,
           },
-        ])
+        ]))
         .pipe(Effect.orDie);
-      yield* db
+      yield* db.query((d) => d
         .insert(backlinks)
-        .values({ sourceArticleId: ids.articleAlpha, targetArticleId: ids.articleBeta })
+        .values({ sourceArticleId: ids.articleAlpha, targetArticleId: ids.articleBeta }))
         .pipe(Effect.orDie);
-      yield* db
+      yield* db.query((d) => d
         .insert(topicLinks)
-        .values({ sourceTopicId: ids.topicBeta, targetTopicId: ids.topicAlpha })
+        .values({ sourceTopicId: ids.topicBeta, targetTopicId: ids.topicAlpha }))
         .pipe(Effect.orDie);
-      yield* db
+      yield* db.query((d) => d
         .insert(llmCostEvents)
         .values([
           {
@@ -253,7 +253,7 @@ const seed = () =>
             costUsd: "3.000000",
             createdAt: new Date("2026-07-12T12:00:00Z"),
           },
-        ])
+        ]))
         .pipe(Effect.orDie);
     }),
   );
@@ -316,8 +316,8 @@ describe("compile and job HTTP routes", () => {
       Effect.gen(function* () {
         const db = yield* Database;
         return {
-          runs: yield* db.select().from(pipelineRuns).pipe(Effect.orDie),
-          intents: yield* db.select().from(compileIntents).pipe(Effect.orDie),
+          runs: yield* db.query((d) => d.select().from(pipelineRuns)).pipe(Effect.orDie),
+          intents: yield* db.query((d) => d.select().from(compileIntents)).pipe(Effect.orDie),
         };
       }),
     );
@@ -341,7 +341,7 @@ describe("compile and job HTTP routes", () => {
   it("cancels idempotently without clobbering terminal state or revealing foreign runs", async () => {
     await run(
       Effect.flatMap(Database, (db) =>
-        db
+        db.query((d) => d
           .insert(pipelineRuns)
           .values({
             id: ids.run,
@@ -351,7 +351,7 @@ describe("compile and job HTTP routes", () => {
             currentPhase: "",
             phaseStatus: "",
             progressSteps: [],
-          })
+          }))
           .pipe(Effect.orDie),
       ),
     );
@@ -375,7 +375,7 @@ describe("compile and job HTTP routes", () => {
     expect(missing.status).toBe(204);
     const row = await run(
       Effect.flatMap(Database, (db) =>
-        db.select().from(pipelineRuns).where(eq(pipelineRuns.id, ids.run)).pipe(Effect.orDie),
+        db.query((d) => d.select().from(pipelineRuns).where(eq(pipelineRuns.id, ids.run))).pipe(Effect.orDie),
       ),
     );
     expect(row[0]?.status).toBe("cancelled");
@@ -506,7 +506,7 @@ describe("job progress SSE", () => {
   it("streams current-state transitions through terminal in exact protocol order", async () => {
     await run(
       Effect.flatMap(Database, (db) =>
-        db
+        db.query((d) => d
           .insert(pipelineRuns)
           .values({
             id: ids.run,
@@ -518,7 +518,7 @@ describe("job progress SSE", () => {
             progressSteps: [],
             createdAt: now,
             updatedAt: now,
-          })
+          }))
           .pipe(Effect.orDie),
       ),
     );
@@ -533,7 +533,7 @@ describe("job progress SSE", () => {
     await wait(180);
     await run(
       Effect.flatMap(Database, (db) =>
-        db
+        db.query((d) => d
           .update(pipelineRuns)
           .set({
             status: "running",
@@ -551,14 +551,14 @@ describe("job progress SSE", () => {
             ],
             updatedAt: new Date("2026-07-12T12:00:01Z"),
           })
-          .where(eq(pipelineRuns.id, ids.run))
+          .where(eq(pipelineRuns.id, ids.run)))
           .pipe(Effect.orDie),
       ),
     );
     await wait(180);
     await run(
       Effect.flatMap(Database, (db) =>
-        db
+        db.query((d) => d
           .update(pipelineRuns)
           .set({
             status: "completed",
@@ -577,7 +577,7 @@ describe("job progress SSE", () => {
             updatedAt: new Date("2026-07-12T12:00:02Z"),
             completedAt: new Date("2026-07-12T12:00:02Z"),
           })
-          .where(eq(pipelineRuns.id, ids.run))
+          .where(eq(pipelineRuns.id, ids.run)))
           .pipe(Effect.orDie),
       ),
     );
@@ -599,7 +599,7 @@ describe("job progress SSE", () => {
   it("reconnects to a terminal run with snapshot-first one-shot closure", async () => {
     await run(
       Effect.flatMap(Database, (db) =>
-        db
+        db.query((d) => d
           .insert(pipelineRuns)
           .values({
             id: ids.run,
@@ -611,7 +611,7 @@ describe("job progress SSE", () => {
             progressSteps: [],
             error: "extract seam unavailable",
             completedAt: now,
-          })
+          }))
           .pipe(Effect.orDie),
       ),
     );

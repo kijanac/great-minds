@@ -10,7 +10,6 @@ import {
 import { and, asc, desc, eq, ilike, ne, or, sql, type SQL } from "drizzle-orm";
 import { Context, Effect, Layer } from "effect";
 
-import { dieDatabase } from "./db-defects.ts";
 import { pageEnvelope, oneTotal } from "./pagination.ts";
 import { VaultAccessService } from "./vaults.ts";
 
@@ -79,19 +78,17 @@ export const WikiServiceLive = Layer.effect(
     const listPage = (params: PageParams, conditions: readonly SQL[], orderBy: SQL) =>
       Effect.gen(function* () {
         const where = and(...conditions);
-        const countRows = yield* db
+        const countRows = yield* db.query((d) => d
           .select({ total: sql<number>`count(*)::int` })
           .from(wikiArticles)
-          .where(where)
-          .pipe(dieDatabase);
-        const rows = yield* db
+          .where(where));
+        const rows = yield* db.query((d) => d
           .select()
           .from(wikiArticles)
           .where(where)
           .orderBy(orderBy)
           .limit(params.limit)
-          .offset(params.offset)
-          .pipe(dieDatabase);
+          .offset(params.offset));
         return pageEnvelope(rows.map(articleOverview), params, oneTotal(countRows));
       });
 

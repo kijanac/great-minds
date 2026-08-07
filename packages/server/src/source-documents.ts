@@ -14,7 +14,6 @@ import { Context, Effect, Layer } from "effect";
 import { parse as parseYaml } from "yaml";
 
 import { bodyContentHash, fileContentHash } from "./crypto.ts";
-import { dieDatabase } from "./db-defects.ts";
 import { VaultStorage } from "./storage.ts";
 
 type SourceDocumentRow = typeof sourceDocuments.$inferSelect;
@@ -158,15 +157,14 @@ export const SourceDocumentsServiceLive = Layer.effect(
     return {
       index: (vaultId, filePath, content) =>
         Effect.gen(function* () {
-          const rows = yield* db
+          const rows = yield* db.query((d) => d
             .insert(sourceDocuments)
             .values(sourceRow(vaultId, filePath, content))
             .onConflictDoUpdate({
               target: [sourceDocuments.vaultId, sourceDocuments.filePath],
               set: ingestSet,
             })
-            .returning({ id: sourceDocuments.id })
-            .pipe(dieDatabase);
+            .returning({ id: sourceDocuments.id }));
           const row = rows[0];
           if (row === undefined) {
             throw new Error("source document upsert returned no row");
@@ -178,7 +176,7 @@ export const SourceDocumentsServiceLive = Layer.effect(
           if (documents.length === 0) {
             return;
           }
-          yield* db
+          yield* db.query((d) => d
             .insert(sourceDocuments)
             .values(
               documents.map((document) =>
@@ -188,15 +186,14 @@ export const SourceDocumentsServiceLive = Layer.effect(
             .onConflictDoUpdate({
               target: [sourceDocuments.vaultId, sourceDocuments.filePath],
               set: ingestSet,
-            })
-            .pipe(dieDatabase);
+            }));
         }),
       existingClientHashes: (vaultId, clientHashes) =>
         Effect.gen(function* () {
           if (clientHashes.length === 0) {
             return [];
           }
-          const rows = yield* db
+          const rows = yield* db.query((d) => d
             .select({ clientHash: sourceDocuments.clientHash })
             .from(sourceDocuments)
             .where(
@@ -204,20 +201,18 @@ export const SourceDocumentsServiceLive = Layer.effect(
                 eq(sourceDocuments.vaultId, vaultId),
                 inArray(sourceDocuments.clientHash, [...clientHashes]),
               ),
-            )
-            .pipe(dieDatabase);
+            ));
           return rows
             .map((row) => row.clientHash)
             .filter((hash): hash is string => hash !== null);
         }),
       getByPath: (vaultId, filePath) =>
         Effect.gen(function* () {
-          const rows = yield* db
+          const rows = yield* db.query((d) => d
             .select()
             .from(sourceDocuments)
             .where(and(eq(sourceDocuments.vaultId, vaultId), eq(sourceDocuments.filePath, filePath)))
-            .limit(1)
-            .pipe(dieDatabase);
+            .limit(1));
           return rows[0];
         }),
       deleteSource: (vaultId, filePath, options = {}) =>
@@ -250,8 +245,7 @@ export const SourceDocumentsServiceLive = Layer.effect(
                 yield* tx.delete(sourceDocuments).where(eq(sourceDocuments.id, documentId));
                 return true;
               }),
-            )
-            .pipe(dieDatabase);
+            );
           if (!deleted && options.missingOk !== true) {
             return false;
           }

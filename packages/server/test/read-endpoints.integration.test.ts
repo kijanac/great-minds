@@ -188,8 +188,8 @@ const resetDatabase = () =>
   runDb(
     Effect.gen(function* () {
       const db = yield* Database;
-      yield* db.delete(authCodes).pipe(Effect.orDie);
-      yield* db.delete(users).pipe(Effect.orDie);
+      yield* db.query((d) => d.delete(authCodes)).pipe(Effect.orDie);
+      yield* db.query((d) => d.delete(users)).pipe(Effect.orDie);
     }),
   );
 
@@ -220,7 +220,7 @@ const seedFixtures = async (): Promise<Fixture> => {
   await runDb(
     Effect.gen(function* () {
       const db = yield* Database;
-      yield* db
+      yield* db.query((d) => d
         .insert(users)
         .values([
           {
@@ -234,9 +234,9 @@ const seedFixtures = async (): Promise<Fixture> => {
             email: "mallory@example.com",
             createdAt: new Date("2026-07-01T00:02:00.000Z"),
           },
-        ])
+        ]))
         .pipe(Effect.orDie);
-      yield* db
+      yield* db.query((d) => d
         .insert(vaults)
         .values([
           {
@@ -252,9 +252,9 @@ const seedFixtures = async (): Promise<Fixture> => {
             createdAt: new Date("2026-07-03T00:00:00.000Z"),
             r2BucketName: "beta-bucket",
           },
-        ])
+        ]))
         .pipe(Effect.orDie);
-      yield* db
+      yield* db.query((d) => d
         .insert(vaultMemberships)
         .values([
           {
@@ -281,9 +281,9 @@ const seedFixtures = async (): Promise<Fixture> => {
             userId: id.alice,
             role: "VIEWER",
           },
-        ])
+        ]))
         .pipe(Effect.orDie);
-      yield* db
+      yield* db.query((d) => d
         .insert(apiKeys)
         .values({
           id: id.apiKeyAlice,
@@ -292,9 +292,9 @@ const seedFixtures = async (): Promise<Fixture> => {
           label: "read automation",
           revoked: false,
           createdAt: new Date("2026-07-04T00:00:00.000Z"),
-        })
+        }))
         .pipe(Effect.orDie);
-      yield* db
+      yield* db.query((d) => d
         .insert(pipelineRuns)
         .values({
           id: id.runAlpha,
@@ -306,9 +306,9 @@ const seedFixtures = async (): Promise<Fixture> => {
           progressSteps: [],
           createdAt: new Date("2026-07-05T00:00:00.000Z"),
           updatedAt: new Date("2026-07-05T01:00:00.000Z"),
-        })
+        }))
         .pipe(Effect.orDie);
-      yield* db
+      yield* db.query((d) => d
         .insert(topics)
         .values([
           {
@@ -355,9 +355,9 @@ const seedFixtures = async (): Promise<Fixture> => {
             title: "Other Vault",
             description: "Other",
           },
-        ])
+        ]))
         .pipe(Effect.orDie);
-      yield* db
+      yield* db.query((d) => d
         .insert(wikiArticles)
         .values([
           {
@@ -435,9 +435,9 @@ const seedFixtures = async (): Promise<Fixture> => {
             updatedAt: new Date("2026-07-09T13:00:00.000Z"),
             tags: [],
           },
-        ])
+        ]))
         .pipe(Effect.orDie);
-      yield* db
+      yield* db.query((d) => d
         .insert(sourceDocuments)
         .values([
           {
@@ -511,9 +511,9 @@ const seedFixtures = async (): Promise<Fixture> => {
             derivedExtras: {},
             updatedAt: new Date("2026-07-09T07:00:00.000Z"),
           },
-        ])
+        ]))
         .pipe(Effect.orDie);
-      yield* db
+      yield* db.query((d) => d
         .insert(backlinks)
         .values([
           {
@@ -532,9 +532,9 @@ const seedFixtures = async (): Promise<Fixture> => {
             sourceArticleId: id.articleArchived,
             targetArticleId: id.articleAlpha,
           },
-        ])
+        ]))
         .pipe(Effect.orDie);
-      yield* db
+      yield* db.query((d) => d
         .insert(searchIndex)
         .values(
           Array.from({ length: 106 }, (_, offset) => {
@@ -549,9 +549,9 @@ const seedFixtures = async (): Promise<Fixture> => {
               tsv: sql`to_tsvector('english', ${index === -1 ? "Synthetic metadata row" : `Capital chunk ${index}`})`,
             };
           }),
-        )
+        ))
         .pipe(Effect.orDie);
-      yield* db
+      yield* db.query((d) => d
         .insert(sessions)
         .values([
           {
@@ -588,7 +588,7 @@ const seedFixtures = async (): Promise<Fixture> => {
             updatedAt: new Date("2026-07-08T10:15:00.000Z"),
             idempotencyKey: "bob-main-key",
           },
-        ])
+        ]))
         .pipe(Effect.orDie);
     }),
   );

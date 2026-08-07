@@ -26,7 +26,6 @@ import { alias } from "drizzle-orm/pg-core";
 import { and, asc, eq, gte, lte, sql } from "drizzle-orm";
 import { Context, Effect, Layer, Schema } from "effect";
 
-import { dieDatabase } from "./db-defects.ts";
 import { VaultStorage } from "./storage.ts";
 import { VaultAccessService } from "./vaults.ts";
 
@@ -170,36 +169,33 @@ export const DocumentsServiceLive = Layer.effect(
 
     const getWikiByPath = (vaultId: Uuid, filePath: string) =>
       Effect.gen(function* () {
-        const rows = yield* db
+        const rows = yield* db.query((d) => d
           .select()
           .from(wikiArticles)
           .where(and(eq(wikiArticles.vaultId, vaultId), eq(wikiArticles.filePath, filePath)))
-          .limit(1)
-          .pipe(dieDatabase);
+          .limit(1));
         const row = first(rows);
         return row === undefined ? undefined : wikiArticle(row);
       });
 
     const getWikiByTopic = (vaultId: Uuid, topicId: Uuid) =>
       Effect.gen(function* () {
-        const rows = yield* db
+        const rows = yield* db.query((d) => d
           .select()
           .from(wikiArticles)
           .where(and(eq(wikiArticles.vaultId, vaultId), eq(wikiArticles.topicId, topicId)))
-          .limit(1)
-          .pipe(dieDatabase);
+          .limit(1));
         const row = first(rows);
         return row === undefined ? undefined : wikiArticle(row);
       });
 
     const getSourceByPath = (vaultId: Uuid, filePath: string) =>
       Effect.gen(function* () {
-        const rows = yield* db
+        const rows = yield* db.query((d) => d
           .select()
           .from(sourceDocuments)
           .where(and(eq(sourceDocuments.vaultId, vaultId), eq(sourceDocuments.filePath, filePath)))
-          .limit(1)
-          .pipe(dieDatabase);
+          .limit(1));
         const row = first(rows);
         return row === undefined ? undefined : sourceDocument(row);
       });
@@ -207,12 +203,11 @@ export const DocumentsServiceLive = Layer.effect(
     const readArchivedWiki = (vaultId: Uuid, filePath: string) =>
       Effect.gen(function* () {
         const slug = wikiSlug(filePath.slice(filePath.lastIndexOf("/") + 1));
-        const topicRows = yield* db
+        const topicRows = yield* db.query((d) => d
           .select()
           .from(topics)
           .where(and(eq(topics.vaultId, vaultId), eq(topics.slug, slug)))
-          .limit(1)
-          .pipe(dieDatabase);
+          .limit(1));
         const topic = first(topicRows);
         if (topic === undefined || topic.articleStatus !== "archived") {
           return undefined;
@@ -227,12 +222,12 @@ export const DocumentsServiceLive = Layer.effect(
         }
         let successorSlug: string | null = null;
         if (topic.supersededBy !== null) {
-          const successorRows = yield* db
+          const successorId = topic.supersededBy;
+          const successorRows = yield* db.query((d) => d
             .select({ slug: topics.slug })
             .from(topics)
-            .where(eq(topics.topicId, topic.supersededBy))
-            .limit(1)
-            .pipe(dieDatabase);
+            .where(eq(topics.topicId, successorId))
+            .limit(1));
           successorSlug = first(successorRows)?.slug ?? null;
         }
         return {
@@ -292,7 +287,7 @@ export const DocumentsServiceLive = Layer.effect(
       Effect.gen(function* () {
         yield* access.requireMember(userId, vaultId);
         const end = Math.min(query.end, query.start + MAX_CHUNK_SPAN - 1);
-        const rows = yield* db
+        const rows = yield* db.query((d) => d
           .select({
             path: searchIndex.path,
             chunkIndex: searchIndex.chunkIndex,
@@ -309,8 +304,7 @@ export const DocumentsServiceLive = Layer.effect(
               lte(searchIndex.chunkIndex, end),
             ),
           )
-          .orderBy(asc(searchIndex.chunkIndex))
-          .pipe(dieDatabase);
+          .orderBy(asc(searchIndex.chunkIndex)));
         return rows.map((row) => ({
           path: row.path,
           chunk_index: row.chunkIndex,
@@ -323,7 +317,7 @@ export const DocumentsServiceLive = Layer.effect(
     const readLinks = (userId: Uuid, vaultId: Uuid, query: LinkQuery) =>
       Effect.gen(function* () {
         yield* access.requireMember(userId, vaultId);
-        const sourceArticle = yield* db
+        const sourceArticle = yield* db.query((d) => d
           .select({ id: wikiArticles.id })
           .from(wikiArticles)
           .where(
@@ -333,8 +327,7 @@ export const DocumentsServiceLive = Layer.effect(
               eq(wikiArticles.archived, false),
             ),
           )
-          .limit(1)
-          .pipe(dieDatabase);
+          .limit(1));
         const source = first(sourceArticle);
         if (source === undefined) {
           return yield* new NotFound({ detail: `Not a wiki article: ${query.path}` });
@@ -342,7 +335,7 @@ export const DocumentsServiceLive = Layer.effect(
 
         const outgoingArticle = alias(wikiArticles, "outgoing_article");
         const incomingArticle = alias(wikiArticles, "incoming_article");
-        const outgoing = yield* db
+        const outgoing = yield* db.query((d) => d
           .select({
             filePath: outgoingArticle.filePath,
             title: outgoingArticle.title,
@@ -358,9 +351,8 @@ export const DocumentsServiceLive = Layer.effect(
               eq(outgoingArticle.archived, false),
             ),
           )
-          .orderBy(asc(sql`lower(${outgoingArticle.title})`))
-          .pipe(dieDatabase);
-        const incoming = yield* db
+          .orderBy(asc(sql`lower(${outgoingArticle.title})`)));
+        const incoming = yield* db.query((d) => d
           .select({
             filePath: incomingArticle.filePath,
             title: incomingArticle.title,
@@ -376,8 +368,7 @@ export const DocumentsServiceLive = Layer.effect(
               eq(incomingArticle.archived, false),
             ),
           )
-          .orderBy(asc(sql`lower(${incomingArticle.title})`))
-          .pipe(dieDatabase);
+          .orderBy(asc(sql`lower(${incomingArticle.title})`)));
 
         return {
           outgoing: outgoing.map(wikiOverview),

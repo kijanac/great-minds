@@ -121,10 +121,10 @@ const resetDatabase = () =>
   runDb(
     Effect.gen(function* () {
       const db = yield* Database;
-      yield* db.delete(authCodes).pipe(Effect.orDie);
-      yield* db.delete(webauthnChallenges).pipe(Effect.orDie);
-      yield* db.delete(webauthnCredentials).pipe(Effect.orDie);
-      yield* db.delete(users).pipe(Effect.orDie);
+      yield* db.query((d) => d.delete(authCodes)).pipe(Effect.orDie);
+      yield* db.query((d) => d.delete(webauthnChallenges)).pipe(Effect.orDie);
+      yield* db.query((d) => d.delete(webauthnCredentials)).pipe(Effect.orDie);
+      yield* db.query((d) => d.delete(users)).pipe(Effect.orDie);
     }),
   );
 
@@ -276,11 +276,11 @@ const userByEmail = (email: string) =>
   runDb(
     Effect.gen(function* () {
       const db = yield* Database;
-      const rows = yield* db
+      const rows = yield* db.query((d) => d
         .select()
         .from(users)
         .where(eq(users.email, email))
-        .limit(1)
+        .limit(1))
         .pipe(Effect.orDie);
       return firstRow(rows, `user ${email}`);
     }),
@@ -290,7 +290,7 @@ const ownedVaults = (userId: string) =>
   runDb(
     Effect.gen(function* () {
       const db = yield* Database;
-      return yield* db.select().from(vaults).where(eq(vaults.ownerId, userId)).pipe(Effect.orDie);
+      return yield* db.query((d) => d.select().from(vaults).where(eq(vaults.ownerId, userId))).pipe(Effect.orDie);
     }),
   );
 
@@ -336,11 +336,11 @@ describe("auth HTTP integration", () => {
     const rows = await runDb(
       Effect.gen(function* () {
         const db = yield* Database;
-        return yield* db
+        return yield* db.query((d) => d
           .select()
           .from(authCodes)
           .where(eq(authCodes.email, "person@example.com"))
-          .orderBy(desc(authCodes.createdAt))
+          .orderBy(desc(authCodes.createdAt)))
           .pipe(Effect.orDie);
       }),
     );
@@ -449,7 +449,7 @@ describe("auth HTTP integration", () => {
     const rows = await runDb(
       Effect.gen(function* () {
         const db = yield* Database;
-        return yield* db.select().from(refreshTokens).pipe(Effect.orDie);
+        return yield* db.query((d) => d.select().from(refreshTokens)).pipe(Effect.orDie);
       }),
     );
     expect(rows.filter((row) => row.revoked)).toHaveLength(1);
@@ -558,14 +558,14 @@ describe("auth HTTP integration", () => {
     await runDb(
       Effect.gen(function* () {
         const db = yield* Database;
-        yield* db
+        yield* db.query((d) => d
           .insert(webauthnChallenges)
           .values({
             challenge: "expired-challenge",
             kind: "authentication",
             userId: null,
             expiresAt: new Date(initialTime.getTime() - 1),
-          })
+          }))
           .pipe(Effect.orDie);
       }),
     );
@@ -610,7 +610,7 @@ describe("auth HTTP integration", () => {
     const challenges = await runDb(
       Effect.gen(function* () {
         const db = yield* Database;
-        return yield* db.select().from(webauthnChallenges).pipe(Effect.orDie);
+        return yield* db.query((d) => d.select().from(webauthnChallenges)).pipe(Effect.orDie);
       }),
     );
     expect(challenges).toHaveLength(2);
@@ -667,10 +667,10 @@ describe("auth HTTP integration", () => {
     const remaining = await runDb(
       Effect.gen(function* () {
         const db = yield* Database;
-        return yield* db
+        return yield* db.query((d) => d
           .select()
           .from(webauthnChallenges)
-          .where(eq(webauthnChallenges.challenge, challenge))
+          .where(eq(webauthnChallenges.challenge, challenge)))
           .pipe(Effect.orDie);
       }),
     );
@@ -702,7 +702,7 @@ describe("auth HTTP integration", () => {
     await runDb(
       Effect.gen(function* () {
         const db = yield* Database;
-        yield* db
+        yield* db.query((d) => d
           .insert(webauthnCredentials)
           .values([
             {
@@ -727,7 +727,7 @@ describe("auth HTTP integration", () => {
               createdAt: new Date("2026-07-02T09:00:00.000Z"),
               lastUsedAt: null,
             },
-          ])
+          ]))
           .pipe(Effect.orDie);
       }),
     );
@@ -851,7 +851,7 @@ describe("auth HTTP integration", () => {
     const keyRows = await runDb(
       Effect.gen(function* () {
         const db = yield* Database;
-        return yield* db
+        return yield* db.query((d) => d
           .select()
           .from(apiKeys)
           .where(
@@ -859,7 +859,7 @@ describe("auth HTTP integration", () => {
               eq(apiKeys.id, firstKeyId),
               ne(apiKeys.keyHash, asString(firstKey.raw_key, "raw key")),
             ),
-          )
+          ))
           .pipe(Effect.orDie);
       }),
     );
@@ -878,14 +878,14 @@ describe("auth HTTP integration", () => {
     await runDb(
       Effect.gen(function* () {
         const db = yield* Database;
-        yield* db
+        yield* db.query((d) => d
           .insert(vaultMemberships)
           .values({
             id: randomUUID(),
             vaultId: survivorVault.id,
             userId: deleteUser.id,
             role: "VIEWER",
-          })
+          }))
           .pipe(Effect.orDie);
       }),
     );
@@ -905,25 +905,25 @@ describe("auth HTTP integration", () => {
     const remaining = await runDb(
       Effect.gen(function* () {
         const db = yield* Database;
-        const deletedUsers = yield* db
+        const deletedUsers = yield* db.query((d) => d
           .select()
           .from(users)
-          .where(eq(users.id, deleteUser.id))
+          .where(eq(users.id, deleteUser.id)))
           .pipe(Effect.orDie);
-        const deletedVaults = yield* db
+        const deletedVaults = yield* db.query((d) => d
           .select()
           .from(vaults)
-          .where(eq(vaults.id, deleteUserVault.id))
+          .where(eq(vaults.id, deleteUserVault.id)))
           .pipe(Effect.orDie);
-        const survivorVaults = yield* db
+        const survivorVaults = yield* db.query((d) => d
           .select()
           .from(vaults)
-          .where(eq(vaults.id, survivorVault.id))
+          .where(eq(vaults.id, survivorVault.id)))
           .pipe(Effect.orDie);
-        const deletedMemberships = yield* db
+        const deletedMemberships = yield* db.query((d) => d
           .select()
           .from(vaultMemberships)
-          .where(eq(vaultMemberships.userId, deleteUser.id))
+          .where(eq(vaultMemberships.userId, deleteUser.id)))
           .pipe(Effect.orDie);
         return {
           deletedUsers,

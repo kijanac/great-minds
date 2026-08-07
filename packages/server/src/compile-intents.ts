@@ -7,7 +7,6 @@ import * as Workflow from "effect/unstable/workflow/Workflow";
 import * as WorkflowEngine from "effect/unstable/workflow/WorkflowEngine";
 
 import { ClockService } from "./clock.ts";
-import { dieDatabase } from "./db-defects.ts";
 import { AppConfig } from "./config.ts";
 import { formatError } from "./error-details.ts";
 import {
@@ -179,7 +178,7 @@ export const CompileIntentReconcilerLive = Layer.effect(
     const clock = yield* ClockService;
 
     const markSatisfied = Effect.gen(function* () {
-      const terminal = yield* db
+      const terminal = yield* db.query((d) => d
         .select({ intentId: compileIntents.id })
         .from(compileIntents)
         .innerJoin(pipelineRuns, eq(pipelineRuns.id, compileIntents.pipelineRunId))
@@ -199,10 +198,9 @@ export const CompileIntentReconcilerLive = Layer.effect(
             )`,
           ),
         )
-        .limit(200)
-        .pipe(dieDatabase);
+        .limit(200));
       if (terminal.length > 0) {
-        yield* db
+        yield* db.query((d) => d
           .update(compileIntents)
           .set({ satisfiedAt: sql`now()` })
           .where(
@@ -210,8 +208,7 @@ export const CompileIntentReconcilerLive = Layer.effect(
               compileIntents.id,
               terminal.map((row) => row.intentId),
             ),
-          )
-          .pipe(dieDatabase);
+          ));
       }
       return terminal.length;
     });
@@ -274,8 +271,7 @@ export const CompileIntentReconcilerLive = Layer.effect(
           }
           return dispatches;
         }),
-      )
-      .pipe(dieDatabase);
+      );
 
     const dispatch = (item: Dispatch) =>
       Effect.gen(function* () {
@@ -287,7 +283,7 @@ export const CompileIntentReconcilerLive = Layer.effect(
           },
           { discard: true },
         );
-        yield* db
+        yield* db.query((d) => d
           .insert(tasks)
           .values({
             id: item.intentId,
@@ -300,14 +296,12 @@ export const CompileIntentReconcilerLive = Layer.effect(
             },
             pipelineRunId: item.pipelineRunId,
           })
-          .onConflictDoNothing({ target: tasks.id })
-          .pipe(dieDatabase);
-        yield* db
+          .onConflictDoNothing({ target: tasks.id }));
+        yield* db.query((d) => d
           .update(compileIntents)
           .set({ dispatchedAt: sql`now()`, dispatchedTaskId: item.intentId })
-          .where(eq(compileIntents.id, item.intentId))
-          .pipe(dieDatabase);
-        yield* db
+          .where(eq(compileIntents.id, item.intentId)));
+        yield* db.query((d) => d
           .update(pipelineRuns)
           .set({
             compileTaskId: item.intentId,
@@ -315,8 +309,7 @@ export const CompileIntentReconcilerLive = Layer.effect(
             activeTaskType: "compile",
             updatedAt: sql`now()`,
           })
-          .where(eq(pipelineRuns.id, item.pipelineRunId))
-          .pipe(dieDatabase);
+          .where(eq(pipelineRuns.id, item.pipelineRunId)));
       });
 
     return {

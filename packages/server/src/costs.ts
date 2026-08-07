@@ -3,7 +3,6 @@ import { Forbidden, type CostAggregate, type CostQuery, type Uuid } from "@great
 import { and, desc, eq, gte, lte, sql, type SQL } from "drizzle-orm";
 import { Context, Effect, Layer } from "effect";
 
-import { dieDatabase } from "./db-defects.ts";
 import { VaultAccessService } from "./vaults.ts";
 
 type CostsServiceShape = {
@@ -31,15 +30,14 @@ export const CostsServiceLive = Layer.effect(
         if (query.since !== undefined) conditions.push(gte(llmCostEvents.createdAt, query.since));
         if (query.until !== undefined) conditions.push(lte(llmCostEvents.createdAt, query.until));
         const where = and(...conditions);
-        const totals = yield* db
+        const totals = yield* db.query((d) => d
           .select({
             totalUsd: sql<string>`coalesce(sum(${llmCostEvents.costUsd}), 0)::numeric(12, 6)`,
             eventCount: sql<number>`count(${llmCostEvents.id})::int`,
           })
           .from(llmCostEvents)
-          .where(where)
-          .pipe(dieDatabase);
-        const byVault = yield* db
+          .where(where));
+        const byVault = yield* db.query((d) => d
           .select({
             key: sql<string>`coalesce(${llmCostEvents.vaultId}::text, '(no-vault)')`,
             totalUsd: sql<string>`coalesce(sum(${llmCostEvents.costUsd}), 0)::numeric(12, 6)`,
@@ -48,9 +46,8 @@ export const CostsServiceLive = Layer.effect(
           .from(llmCostEvents)
           .where(where)
           .groupBy(llmCostEvents.vaultId)
-          .orderBy(desc(sql`sum(${llmCostEvents.costUsd})`))
-          .pipe(dieDatabase);
-        const byEventType = yield* db
+          .orderBy(desc(sql`sum(${llmCostEvents.costUsd})`)));
+        const byEventType = yield* db.query((d) => d
           .select({
             key: llmCostEvents.eventType,
             totalUsd: sql<string>`coalesce(sum(${llmCostEvents.costUsd}), 0)::numeric(12, 6)`,
@@ -59,8 +56,7 @@ export const CostsServiceLive = Layer.effect(
           .from(llmCostEvents)
           .where(where)
           .groupBy(llmCostEvents.eventType)
-          .orderBy(desc(sql`sum(${llmCostEvents.costUsd})`))
-          .pipe(dieDatabase);
+          .orderBy(desc(sql`sum(${llmCostEvents.costUsd})`)));
         const total = totals[0];
         if (total === undefined) throw new Error("cost aggregate returned no total row");
         return {

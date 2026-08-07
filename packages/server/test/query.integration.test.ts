@@ -154,8 +154,8 @@ const resetDatabase = () =>
   runDb(
     Effect.gen(function* () {
       const db = yield* Database;
-      yield* db.delete(authCodes).pipe(Effect.orDie);
-      yield* db.delete(users).pipe(Effect.orDie);
+      yield* db.query((d) => d.delete(authCodes)).pipe(Effect.orDie);
+      yield* db.query((d) => d.delete(users)).pipe(Effect.orDie);
     }),
   );
 
@@ -183,9 +183,9 @@ const insertUser = (userId: string, email: string) =>
   runDb(
     Effect.gen(function* () {
       const db = yield* Database;
-      yield* db
+      yield* db.query((d) => d
         .insert(users)
-        .values({ id: userId, email, createdAt: initialTime })
+        .values({ id: userId, email, createdAt: initialTime }))
         .pipe(Effect.orDie);
     }),
   );
@@ -258,24 +258,24 @@ const seedFixtures = async (webSearch: boolean) => {
   await runDb(
     Effect.gen(function* () {
       const db = yield* Database;
-      yield* db
+      yield* db.query((d) => d
         .insert(users)
-        .values({ id: id.alice, email: "alice-query@example.com", createdAt: initialTime })
+        .values({ id: id.alice, email: "alice-query@example.com", createdAt: initialTime }))
         .pipe(Effect.orDie);
-      yield* db
+      yield* db.query((d) => d
         .insert(vaults)
-        .values({ id: id.vault, name: "Query Vault", ownerId: id.alice, createdAt: initialTime })
+        .values({ id: id.vault, name: "Query Vault", ownerId: id.alice, createdAt: initialTime }))
         .pipe(Effect.orDie);
-      yield* db
+      yield* db.query((d) => d
         .insert(vaultMemberships)
         .values({
           id: "00000000-0000-4000-8000-000000020701",
           vaultId: id.vault,
           userId: id.alice,
           role: "OWNER",
-        })
+        }))
         .pipe(Effect.orDie);
-      yield* db
+      yield* db.query((d) => d
         .insert(topics)
         .values([
           {
@@ -294,9 +294,9 @@ const seedFixtures = async (webSearch: boolean) => {
             description: "Beta topic",
             articleStatus: "rendered",
           },
-        ])
+        ]))
         .pipe(Effect.orDie);
-      yield* db
+      yield* db.query((d) => d
         .insert(wikiArticles)
         .values([
           {
@@ -321,16 +321,16 @@ const seedFixtures = async (webSearch: boolean) => {
             precis: "Beta precis.",
             tags: [],
           },
-        ])
+        ]))
         .pipe(Effect.orDie);
-      yield* db
+      yield* db.query((d) => d
         .insert(backlinks)
         .values([
           { sourceArticleId: id.articleAlpha, targetArticleId: id.articleBeta },
           { sourceArticleId: id.articleBeta, targetArticleId: id.articleAlpha },
-        ])
+        ]))
         .pipe(Effect.orDie);
-      yield* db
+      yield* db.query((d) => d
         .insert(sourceDocuments)
         .values({
           id: id.source,
@@ -344,9 +344,9 @@ const seedFixtures = async (webSearch: boolean) => {
           publishedDate: "1916",
           genre: "theoretical",
           tags: ["theory", "capital"],
-        })
+        }))
         .pipe(Effect.orDie);
-      yield* db
+      yield* db.query((d) => d
         .insert(searchIndex)
         .values([
           {
@@ -376,7 +376,7 @@ const seedFixtures = async (webSearch: boolean) => {
             contentHash: "raw-1",
             tsv: sql`to_tsvector('english', 'More value context appears here.')`,
           },
-        ])
+        ]))
         .pipe(Effect.orDie);
     }),
   );
@@ -755,7 +755,7 @@ describe("query stream", () => {
     await runDb(
       Effect.gen(function* () {
         const db = yield* Database;
-        yield* db
+        yield* db.query((d) => d
           .insert(replies)
           .values({
             id: zombieId,
@@ -773,7 +773,7 @@ describe("query stream", () => {
             },
             createdAt: initialTime,
             updatedAt: initialTime,
-          })
+          }))
           .pipe(Effect.orDie);
         const service = yield* RepliesService;
         expect(
@@ -785,7 +785,7 @@ describe("query stream", () => {
     const rows = await runDb(
       Effect.gen(function* () {
         const db = yield* Database;
-        return yield* db.select().from(replies).where(eq(replies.id, zombieId)).pipe(Effect.orDie);
+        return yield* db.query((d) => d.select().from(replies).where(eq(replies.id, zombieId))).pipe(Effect.orDie);
       }),
     );
     expect(rows[0]).toMatchObject({
@@ -885,7 +885,7 @@ describe("query stream", () => {
     const rows = await runDb(
       Effect.gen(function* () {
         const db = yield* Database;
-        return yield* db.select().from(llmCostEvents).pipe(Effect.orDie);
+        return yield* db.query((d) => d.select().from(llmCostEvents)).pipe(Effect.orDie);
       }),
     );
     expect(rows).toHaveLength(1);
@@ -994,8 +994,8 @@ describe("query stream", () => {
     await runDb(
       Effect.gen(function* () {
         const db = yield* Database;
-        yield* db.delete(searchIndex).pipe(Effect.orDie);
-        yield* db
+        yield* db.query((d) => d.delete(searchIndex)).pipe(Effect.orDie);
+        yield* db.query((d) => d
           .insert(searchIndex)
           .values([
             {
@@ -1026,7 +1026,7 @@ describe("query stream", () => {
               contentHash: "bm25-1",
               tsv: sql`to_tsvector('english', 'dual power')`,
             },
-          ])
+          ]))
           .pipe(Effect.orDie);
       }),
     );
@@ -1319,7 +1319,7 @@ describe("query stream", () => {
     const rows = await runDb(
       Effect.gen(function* () {
         const db = yield* Database;
-        return yield* db.select().from(llmCostEvents).pipe(Effect.orDie);
+        return yield* db.query((d) => d.select().from(llmCostEvents)).pipe(Effect.orDie);
       }),
     );
     expect(rows).toHaveLength(1);
@@ -1345,7 +1345,7 @@ describe("query stream", () => {
     const rows = await runDb(
       Effect.gen(function* () {
         const db = yield* Database;
-        return yield* db.select().from(llmCostEvents).pipe(Effect.orDie);
+        return yield* db.query((d) => d.select().from(llmCostEvents)).pipe(Effect.orDie);
       }),
     );
     expect(rows).toHaveLength(0);
@@ -1410,7 +1410,7 @@ describe("query stream", () => {
       const rows = await runDb(
         Effect.gen(function* () {
           const db = yield* Database;
-          return yield* db.select().from(llmCostEvents).pipe(Effect.orDie);
+          return yield* db.query((d) => d.select().from(llmCostEvents)).pipe(Effect.orDie);
         }),
       );
       expect(rows.length).toBeGreaterThanOrEqual(1);

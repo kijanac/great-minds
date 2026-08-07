@@ -4,7 +4,6 @@ import { and, asc, eq, isNotNull, isNull, ne, or, sql } from "drizzle-orm";
 import { alias } from "drizzle-orm/pg-core";
 import { Context, Effect, Layer } from "effect";
 
-import { dieDatabase } from "./db-defects.ts";
 import { VaultAccessService } from "./vaults.ts";
 
 const WIKI_INDEX_PATH = "wiki/_index.md";
@@ -34,7 +33,7 @@ export const LintServiceLive = Layer.effect(
       report: (userId, vaultId) =>
         Effect.gen(function* () {
           yield* access.requireMember(userId, vaultId);
-          const orphans = yield* db
+          const orphans = yield* db.query((d) => d
             .select({
               filePath: wikiArticles.filePath,
               title: wikiArticles.title,
@@ -53,10 +52,9 @@ export const LintServiceLive = Layer.effect(
                 )`,
               ),
             )
-            .orderBy(asc(sql`lower(${wikiArticles.title})`))
-            .pipe(dieDatabase);
+            .orderBy(asc(sql`lower(${wikiArticles.title})`)));
 
-          const dirty = yield* db
+          const dirty = yield* db.query((d) => d
             .select({ topicId: topics.topicId })
             .from(topics)
             .where(
@@ -69,14 +67,13 @@ export const LintServiceLive = Layer.effect(
                   ne(topics.renderedFromHash, topics.compiledFromHash),
                 ),
               ),
-            )
-            .pipe(dieDatabase);
+            ));
 
           const sourceTopic = alias(topics, "lint_source_topic");
           const targetTopic = alias(topics, "lint_target_topic");
           const sourceArticle = alias(wikiArticles, "lint_source_article");
           const targetArticle = alias(wikiArticles, "lint_target_article");
-          const unmentioned = yield* db
+          const unmentioned = yield* db.query((d) => d
             .select({
               sourceSlug: sourceTopic.slug,
               sourceTitle: sourceTopic.title,
@@ -101,8 +98,7 @@ export const LintServiceLive = Layer.effect(
                 )`,
               ),
             )
-            .orderBy(asc(sql`lower(${sourceTopic.slug})`), asc(sql`lower(${targetTopic.slug})`))
-            .pipe(dieDatabase);
+            .orderBy(asc(sql`lower(${sourceTopic.slug})`), asc(sql`lower(${targetTopic.slug})`)));
 
           return {
             orphans: orphans.map((row) => ({

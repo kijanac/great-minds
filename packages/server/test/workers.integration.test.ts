@@ -433,30 +433,30 @@ const seed = () =>
   run(
     Effect.gen(function* () {
       const db = yield* Database;
-      yield* db.delete(users).pipe(Effect.orDie);
-      yield* db
+      yield* db.query((d) => d.delete(users)).pipe(Effect.orDie);
+      yield* db.query((d) => d
         .insert(users)
-        .values({ id: id.user, email: "worker@example.com" })
+        .values({ id: id.user, email: "worker@example.com" }))
         .pipe(Effect.orDie);
-      yield* db
+      yield* db.query((d) => d
         .insert(vaults)
         .values({
           id: id.vault,
           name: "Worker Vault",
           ownerId: id.user,
           r2BucketName: "worker-test-bucket",
-        })
+        }))
         .pipe(Effect.orDie);
-      yield* db
+      yield* db.query((d) => d
         .insert(vaultMemberships)
         .values({
           id: "10000000-0000-4000-8000-000000000017",
           vaultId: id.vault,
           userId: id.user,
           role: "OWNER",
-        })
+        }))
         .pipe(Effect.orDie);
-      yield* db
+      yield* db.query((d) => d
         .insert(pipelineRuns)
         .values({
           id: id.ingestRun,
@@ -466,7 +466,7 @@ const seed = () =>
           currentPhase: "",
           phaseStatus: "",
           progressSteps: [],
-        })
+        }))
         .pipe(Effect.orDie);
     }),
   );
@@ -528,7 +528,7 @@ describe("M4.2 durable workers", () => {
     const state = await run(
       Effect.gen(function* () {
         const db = yield* Database;
-        yield* db
+        yield* db.query((d) => d
           .insert(pipelineRuns)
           .values({
             id: id.cancelIngestRun,
@@ -540,7 +540,7 @@ describe("M4.2 durable workers", () => {
             progressSteps: [],
             activeTaskId: id.cancelIngestRun,
             activeTaskType: "staged_file_ingest",
-          })
+          }))
           .pipe(Effect.orDie);
         yield* StagedFileIngestWorkflow.execute(
           {
@@ -564,15 +564,15 @@ describe("M4.2 durable workers", () => {
         yield* Effect.sync(pause.release);
         yield* Effect.sleep("100 millis");
         return {
-          run: (yield* db
+          run: (yield* db.query((d) => d
             .select()
             .from(pipelineRuns)
-            .where(eq(pipelineRuns.id, id.cancelIngestRun))
+            .where(eq(pipelineRuns.id, id.cancelIngestRun)))
             .pipe(Effect.orDie))[0],
-          documents: yield* db
+          documents: yield* db.query((d) => d
             .select()
             .from(sourceDocuments)
-            .where(eq(sourceDocuments.vaultId, id.vault))
+            .where(eq(sourceDocuments.vaultId, id.vault)))
             .pipe(Effect.orDie),
         };
       }),
@@ -622,12 +622,12 @@ describe("M4.2 durable workers", () => {
       Effect.gen(function* () {
         const db = yield* Database;
         return {
-          documents: yield* db.select().from(sourceDocuments).pipe(Effect.orDie),
-          intents: yield* db.select().from(compileIntents).pipe(Effect.orDie),
-          pipeline: yield* db
+          documents: yield* db.query((d) => d.select().from(sourceDocuments)).pipe(Effect.orDie),
+          intents: yield* db.query((d) => d.select().from(compileIntents)).pipe(Effect.orDie),
+          pipeline: yield* db.query((d) => d
             .select()
             .from(pipelineRuns)
-            .where(eq(pipelineRuns.id, id.ingestRun))
+            .where(eq(pipelineRuns.id, id.ingestRun)))
             .pipe(Effect.orDie),
         };
       }),
@@ -645,7 +645,7 @@ describe("M4.2 durable workers", () => {
     const dedupe = await run(
       Effect.gen(function* () {
         const db = yield* Database;
-        yield* db
+        yield* db.query((d) => d
           .insert(pipelineRuns)
           .values({
             id: id.dedupeRun,
@@ -655,7 +655,7 @@ describe("M4.2 durable workers", () => {
             currentPhase: "",
             phaseStatus: "",
             progressSteps: [],
-          })
+          }))
           .pipe(Effect.orDie);
         return yield* StagedFileIngestWorkflow.execute({
           vaultId: id.vault,
@@ -682,11 +682,11 @@ describe("M4.2 durable workers", () => {
       Effect.gen(function* () {
         const db = yield* Database;
         return {
-          intents: yield* db.select().from(compileIntents).pipe(Effect.orDie),
-          run: yield* db
+          intents: yield* db.query((d) => d.select().from(compileIntents)).pipe(Effect.orDie),
+          run: yield* db.query((d) => d
             .select()
             .from(pipelineRuns)
-            .where(eq(pipelineRuns.id, id.dedupeRun))
+            .where(eq(pipelineRuns.id, id.dedupeRun)))
             .pipe(Effect.orDie),
         };
       }),
@@ -705,7 +705,7 @@ describe("M4.2 durable workers", () => {
     const result = await run(
       Effect.gen(function* () {
         const db = yield* Database;
-        yield* db
+        yield* db.query((d) => d
           .insert(pipelineRuns)
           .values({
             id: id.isolationRun,
@@ -715,7 +715,7 @@ describe("M4.2 durable workers", () => {
             currentPhase: "",
             phaseStatus: "",
             progressSteps: [],
-          })
+          }))
           .pipe(Effect.orDie);
         return yield* StagedFileIngestWorkflow.execute({
           vaultId: id.vault,
@@ -755,20 +755,20 @@ describe("M4.2 durable workers", () => {
       Effect.gen(function* () {
         const db = yield* Database;
         return {
-          documents: yield* db
+          documents: yield* db.query((d) => d
             .select()
             .from(sourceDocuments)
-            .where(eq(sourceDocuments.vaultId, id.vault))
+            .where(eq(sourceDocuments.vaultId, id.vault)))
             .pipe(Effect.orDie),
-          intents: yield* db
+          intents: yield* db.query((d) => d
             .select()
             .from(compileIntents)
-            .where(eq(compileIntents.pipelineRunId, id.isolationRun))
+            .where(eq(compileIntents.pipelineRunId, id.isolationRun)))
             .pipe(Effect.orDie),
-          run: yield* db
+          run: yield* db.query((d) => d
             .select()
             .from(pipelineRuns)
-            .where(eq(pipelineRuns.id, id.isolationRun))
+            .where(eq(pipelineRuns.id, id.isolationRun)))
             .pipe(Effect.orDie),
         };
       }),
@@ -792,7 +792,7 @@ describe("M4.2 durable workers", () => {
     const result = await run(
       Effect.gen(function* () {
         const db = yield* Database;
-        yield* db
+        yield* db.query((d) => d
           .insert(pipelineRuns)
           .values({
             id: id.stagedFailureRun,
@@ -802,7 +802,7 @@ describe("M4.2 durable workers", () => {
             currentPhase: "",
             phaseStatus: "",
             progressSteps: [],
-          })
+          }))
           .pipe(Effect.orDie);
         return yield* Effect.exit(
           StagedFileIngestWorkflow.execute({
@@ -834,10 +834,10 @@ describe("M4.2 durable workers", () => {
     const state = await run(
       Effect.gen(function* () {
         const db = yield* Database;
-        return yield* db
+        return yield* db.query((d) => d
           .select()
           .from(pipelineRuns)
-          .where(eq(pipelineRuns.id, id.stagedFailureRun))
+          .where(eq(pipelineRuns.id, id.stagedFailureRun)))
           .pipe(Effect.orDie);
       }),
     );
@@ -855,7 +855,7 @@ describe("M4.2 durable workers", () => {
     await run(
       Effect.gen(function* () {
         const db = yield* Database;
-        yield* db
+        yield* db.query((d) => d
           .insert(pipelineRuns)
           .values({
             id: id.resumeRun,
@@ -865,7 +865,7 @@ describe("M4.2 durable workers", () => {
             currentPhase: "",
             phaseStatus: "",
             progressSteps: [],
-          })
+          }))
           .pipe(Effect.orDie);
       }),
     );
@@ -875,7 +875,7 @@ describe("M4.2 durable workers", () => {
     const liveRecovered = await run(
       Effect.gen(function* () {
         const db = yield* Database;
-        yield* db
+        yield* db.query((d) => d
           .update(pipelineRuns)
           .set({
             status: "running",
@@ -883,7 +883,7 @@ describe("M4.2 durable workers", () => {
             activeTaskType: "staged_file_ingest",
             updatedAt: new Date(0),
           })
-          .where(eq(pipelineRuns.id, id.resumeRun))
+          .where(eq(pipelineRuns.id, id.resumeRun)))
           .pipe(Effect.orDie);
         const pipeline = yield* PipelineRunsService;
         return yield* pipeline.recoverZombies(new Date(Date.now() - 120_000));
@@ -903,15 +903,15 @@ describe("M4.2 durable workers", () => {
       Effect.gen(function* () {
         const db = yield* Database;
         return {
-          documents: yield* db
+          documents: yield* db.query((d) => d
             .select()
             .from(sourceDocuments)
-            .where(eq(sourceDocuments.vaultId, id.vault))
+            .where(eq(sourceDocuments.vaultId, id.vault)))
             .pipe(Effect.orDie),
-          intents: yield* db
+          intents: yield* db.query((d) => d
             .select()
             .from(compileIntents)
-            .where(eq(compileIntents.pipelineRunId, id.resumeRun))
+            .where(eq(compileIntents.pipelineRunId, id.resumeRun)))
             .pipe(Effect.orDie),
         };
       }),
@@ -924,9 +924,9 @@ describe("M4.2 durable workers", () => {
     await run(
       Effect.gen(function* () {
         const db = yield* Database;
-        yield* db
+        yield* db.query((d) => d
           .insert(compileIntents)
-          .values({ id: id.compileIntent, vaultId: id.vault })
+          .values({ id: id.compileIntent, vaultId: id.vault }))
           .pipe(Effect.orDie);
         const reconciler = yield* CompileIntentReconciler;
         expect((yield* reconciler.reconcileOnce()).dispatched).toBe(1);
@@ -938,20 +938,20 @@ describe("M4.2 durable workers", () => {
       Effect.gen(function* () {
         const db = yield* Database;
         return {
-          intent: yield* db
+          intent: yield* db.query((d) => d
             .select()
             .from(compileIntents)
-            .where(eq(compileIntents.id, id.compileIntent))
+            .where(eq(compileIntents.id, id.compileIntent)))
             .pipe(Effect.orDie),
-          pipeline: yield* db
+          pipeline: yield* db.query((d) => d
             .select()
             .from(pipelineRuns)
-            .where(eq(pipelineRuns.id, id.compileIntent))
+            .where(eq(pipelineRuns.id, id.compileIntent)))
             .pipe(Effect.orDie),
-          task: yield* db
+          task: yield* db.query((d) => d
             .select()
             .from(tasks)
-            .where(eq(tasks.id, id.compileIntent))
+            .where(eq(tasks.id, id.compileIntent)))
             .pipe(Effect.orDie),
         };
       }),
@@ -980,7 +980,7 @@ describe("M4.2 durable workers", () => {
     await run(
       Effect.gen(function* () {
         const db = yield* Database;
-        yield* db
+        yield* db.query((d) => d
           .insert(pipelineRuns)
           .values({
             id: id.renderFailureRun,
@@ -990,7 +990,7 @@ describe("M4.2 durable workers", () => {
             currentPhase: "",
             phaseStatus: "",
             progressSteps: [],
-          })
+          }))
           .pipe(Effect.orDie);
       }),
     );
@@ -1017,10 +1017,10 @@ describe("M4.2 durable workers", () => {
     const rows = await run(
       Effect.gen(function* () {
         const db = yield* Database;
-        return yield* db
+        return yield* db.query((d) => d
           .select()
           .from(pipelineRuns)
-          .where(eq(pipelineRuns.id, id.renderFailureRun))
+          .where(eq(pipelineRuns.id, id.renderFailureRun)))
           .pipe(Effect.orDie);
       }),
     );
@@ -1071,7 +1071,7 @@ describe("M4.2 durable workers", () => {
     const recovered = await run(
       Effect.gen(function* () {
         const db = yield* Database;
-        yield* db
+        yield* db.query((d) => d
           .insert(pipelineRuns)
           .values({
             id: id.queuedRun,
@@ -1082,11 +1082,11 @@ describe("M4.2 durable workers", () => {
             phaseStatus: "completed",
             progressSteps: [],
             updatedAt: new Date(0),
-          })
+          }))
           .pipe(Effect.orDie);
-        yield* db
+        yield* db.query((d) => d
           .insert(compileIntents)
-          .values({ id: id.queuedIntent, vaultId: id.vault, pipelineRunId: id.queuedRun })
+          .values({ id: id.queuedIntent, vaultId: id.vault, pipelineRunId: id.queuedRun }))
           .pipe(Effect.orDie);
         const pipeline = yield* PipelineRunsService;
         return yield* pipeline.recoverZombies(new Date(Date.now() - 120_000));
@@ -1097,10 +1097,10 @@ describe("M4.2 durable workers", () => {
     const rows = await run(
       Effect.gen(function* () {
         const db = yield* Database;
-        return yield* db
+        return yield* db.query((d) => d
           .select()
           .from(pipelineRuns)
-          .where(eq(pipelineRuns.id, id.queuedRun))
+          .where(eq(pipelineRuns.id, id.queuedRun)))
           .pipe(Effect.orDie);
       }),
     );
@@ -1111,7 +1111,7 @@ describe("M4.2 durable workers", () => {
     const recovered = await run(
       Effect.gen(function* () {
         const db = yield* Database;
-        yield* db
+        yield* db.query((d) => d
           .insert(pipelineRuns)
           .values({
             id: id.zombieRun,
@@ -1124,7 +1124,7 @@ describe("M4.2 durable workers", () => {
             activeTaskId: id.zombieRun,
             activeTaskType: "staged_file_ingest",
             updatedAt: new Date(0),
-          })
+          }))
           .pipe(Effect.orDie);
         const pipeline = yield* PipelineRunsService;
         return yield* pipeline.recoverZombies(new Date(Date.now() - 120_000));
@@ -1137,7 +1137,7 @@ describe("M4.2 durable workers", () => {
     const recovered = await run(
       Effect.gen(function* () {
         const db = yield* Database;
-        yield* db
+        yield* db.query((d) => d
           .insert(pipelineRuns)
           .values({
             id: id.maskedCompileRun,
@@ -1151,9 +1151,9 @@ describe("M4.2 durable workers", () => {
             activeTaskId: id.maskedCompileIntent,
             activeTaskType: "compile",
             updatedAt: new Date(0),
-          })
+          }))
           .pipe(Effect.orDie);
-        yield* db
+        yield* db.query((d) => d
           .insert(compileIntents)
           .values({
             id: id.maskedCompileIntent,
@@ -1161,9 +1161,9 @@ describe("M4.2 durable workers", () => {
             pipelineRunId: id.maskedCompileRun,
             dispatchedAt: new Date(0),
             dispatchedTaskId: id.maskedCompileIntent,
-          })
+          }))
           .pipe(Effect.orDie);
-        yield* db
+        yield* db.query((d) => d
           .execute(sql`
           INSERT INTO cluster_messages (
             id,
@@ -1188,7 +1188,7 @@ describe("M4.2 durable workers", () => {
             true,
             900000000000000001
           )
-        `)
+        `))
           .pipe(Effect.orDie);
         const pipeline = yield* PipelineRunsService;
         return yield* pipeline.recoverZombies(new Date(Date.now() - 120_000));
@@ -1199,10 +1199,10 @@ describe("M4.2 durable workers", () => {
     const rows = await run(
       Effect.gen(function* () {
         const db = yield* Database;
-        return yield* db
+        return yield* db.query((d) => d
           .select()
           .from(pipelineRuns)
-          .where(eq(pipelineRuns.id, id.maskedCompileRun))
+          .where(eq(pipelineRuns.id, id.maskedCompileRun)))
           .pipe(Effect.orDie);
       }),
     );
@@ -1217,7 +1217,7 @@ describe("M4.2 durable workers", () => {
     const satisfied = await run(
       Effect.gen(function* () {
         const db = yield* Database;
-        yield* db
+        yield* db.query((d) => d
           .insert(pipelineRuns)
           .values({
             id: id.terminalRun,
@@ -1228,9 +1228,9 @@ describe("M4.2 durable workers", () => {
             phaseStatus: "failed",
             progressSteps: [],
             completedAt: new Date(),
-          })
+          }))
           .pipe(Effect.orDie);
-        yield* db
+        yield* db.query((d) => d
           .insert(compileIntents)
           .values({
             id: id.terminalIntent,
@@ -1238,7 +1238,7 @@ describe("M4.2 durable workers", () => {
             pipelineRunId: id.terminalRun,
             dispatchedAt: new Date(),
             dispatchedTaskId: id.terminalIntent,
-          })
+          }))
           .pipe(Effect.orDie);
         const reconciler = yield* CompileIntentReconciler;
         return (yield* reconciler.reconcileOnce()).satisfied;
@@ -1251,7 +1251,7 @@ describe("M4.2 durable workers", () => {
     await run(
       Effect.gen(function* () {
         const db = yield* Database;
-        yield* db
+        yield* db.query((d) => d
           .insert(pipelineRuns)
           .values({
             id: id.terminalRun,
@@ -1262,7 +1262,7 @@ describe("M4.2 durable workers", () => {
             phaseStatus: "cancelled",
             progressSteps: [],
             completedAt: new Date(),
-          })
+          }))
           .pipe(Effect.orDie);
         yield* Effect.result(
           CompileWorkflow.execute({
@@ -1277,10 +1277,10 @@ describe("M4.2 durable workers", () => {
     const rows = await run(
       Effect.gen(function* () {
         const db = yield* Database;
-        return yield* db
+        return yield* db.query((d) => d
           .select()
           .from(pipelineRuns)
-          .where(eq(pipelineRuns.id, id.terminalRun))
+          .where(eq(pipelineRuns.id, id.terminalRun)))
           .pipe(Effect.orDie);
       }),
     );

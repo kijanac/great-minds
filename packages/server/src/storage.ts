@@ -388,11 +388,11 @@ export const R2StorageLive = Layer.effect(
         if (bucketName !== undefined && bucketName !== null && bucketName.length > 0) {
           return bucketName;
         }
-        const rows = yield* db
+        const rows = yield* db.query((d) => d
           .select({ bucket: vaults.r2BucketName })
           .from(vaults)
           .where(eq(vaults.id, vaultId))
-          .limit(1)
+          .limit(1))
           .pipe(Effect.orDie);
         const row = rows[0];
         if (row?.bucket === undefined || row.bucket === null || row.bucket === "") {
@@ -403,11 +403,11 @@ export const R2StorageLive = Layer.effect(
 
     const userBucket = (userId: Uuid) =>
       Effect.gen(function* () {
-        const rows = yield* db
+        const rows = yield* db.query((d) => d
           .select({ bucket: users.r2BucketName })
           .from(users)
           .where(eq(users.id, userId))
-          .limit(1)
+          .limit(1))
           .pipe(Effect.orDie);
         const row = rows[0];
         if (row?.bucket === undefined || row.bucket === null || row.bucket === "") {
@@ -761,11 +761,11 @@ export const R2StorageLive = Layer.effect(
         }),
       prepareBucketForOwner: (ownerId) =>
         Effect.gen(function* () {
-          const userRows = yield* db
+          const userRows = yield* db.query((d) => d
             .select({ bucket: users.r2BucketName })
             .from(users)
             .where(eq(users.id, ownerId))
-            .limit(1)
+            .limit(1))
             .pipe(Effect.orDie);
           const existing = userRows[0]?.bucket;
           if (existing !== undefined && existing !== null && existing.length > 0) {
@@ -773,10 +773,10 @@ export const R2StorageLive = Layer.effect(
           }
           const bucket = deriveUserBucketName(config.r2BucketPrefix, ownerId);
           yield* ensureBucket(bucket);
-          yield* db
+          yield* db.query((d) => d
             .update(users)
             .set({ r2BucketName: bucket })
-            .where(eq(users.id, ownerId))
+            .where(eq(users.id, ownerId)))
             .pipe(Effect.orDie);
           return bucket;
         }),

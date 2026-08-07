@@ -16,7 +16,6 @@ import { and, desc, eq, sql } from "drizzle-orm";
 import { Context, Effect, Layer } from "effect";
 
 import { bodyContentHash, fileContentHash, sha256Hex } from "./crypto.ts";
-import { dieDatabase } from "./db-defects.ts";
 import { fetchUrlMarkdown, normalizeUrl, slugify } from "./ingest.ts";
 import { buildDocument, parseFrontmatter } from "./markdown.ts";
 import { oneTotal, pageEnvelope } from "./pagination.ts";
@@ -82,28 +81,22 @@ export const UserDocumentsServiceLive = Layer.effect(
     const storage = yield* VaultStorage;
 
     const getByUrl = (userId: Uuid, url: string) =>
-      db
+      db.query((d) => d
         .select()
         .from(userDocuments)
         .where(and(eq(userDocuments.userId, userId), eq(userDocuments.url, url)))
-        .limit(1)
-        .pipe(
-          dieDatabase,
-          Effect.map((rows) => rows[0]),
-        );
+        .limit(1))
+        .pipe(Effect.map((rows) => rows[0]));
 
     const getByPath = (userId: Uuid, filePath: string) =>
-      db
+      db.query((d) => d
         .select()
         .from(userDocuments)
         .where(
           and(eq(userDocuments.userId, userId), eq(userDocuments.filePath, filePath)),
         )
-        .limit(1)
-        .pipe(
-          dieDatabase,
-          Effect.map((rows) => rows[0]),
-        );
+        .limit(1))
+        .pipe(Effect.map((rows) => rows[0]));
 
     const validatePath = (path: string) => {
       const safePath = safeReferencePath(path);
@@ -138,7 +131,7 @@ export const UserDocumentsServiceLive = Layer.effect(
           });
           const parsed = parseFrontmatter(content);
           yield* storage.writeUserText(userId, filePath, content);
-          const rows = yield* db
+          const rows = yield* db.query((d) => d
             .insert(userDocuments)
             .values({
               id: randomUUID(),
@@ -161,8 +154,7 @@ export const UserDocumentsServiceLive = Layer.effect(
                 updatedAt: sql`now()`,
               },
             })
-            .returning()
-            .pipe(dieDatabase);
+            .returning());
           const row = rows[0];
           if (row === undefined) {
             throw new Error("user document upsert returned no row");
@@ -171,19 +163,17 @@ export const UserDocumentsServiceLive = Layer.effect(
         }),
       list: (userId, params) =>
         Effect.gen(function* () {
-          const countRows = yield* db
+          const countRows = yield* db.query((d) => d
             .select({ total: sql<number>`count(*)::int` })
             .from(userDocuments)
-            .where(eq(userDocuments.userId, userId))
-            .pipe(dieDatabase);
-          const rows = yield* db
+            .where(eq(userDocuments.userId, userId)));
+          const rows = yield* db.query((d) => d
             .select()
             .from(userDocuments)
             .where(eq(userDocuments.userId, userId))
             .orderBy(desc(userDocuments.createdAt), desc(userDocuments.id))
             .limit(params.limit)
-            .offset(params.offset)
-            .pipe(dieDatabase);
+            .offset(params.offset));
           return pageEnvelope(rows.map(referenceOverview), params, oneTotal(countRows));
         }),
       read: (userId, path) =>
@@ -205,13 +195,12 @@ export const UserDocumentsServiceLive = Layer.effect(
       delete: (userId, path) =>
         Effect.gen(function* () {
           const safePath = yield* validatePath(path);
-          const rows = yield* db
+          const rows = yield* db.query((d) => d
             .delete(userDocuments)
             .where(
               and(eq(userDocuments.userId, userId), eq(userDocuments.filePath, safePath)),
             )
-            .returning({ id: userDocuments.id })
-            .pipe(dieDatabase);
+            .returning({ id: userDocuments.id }));
           if (rows[0] === undefined) {
             return yield* new NotFound({ detail: `Reference not found: ${safePath}` });
           }

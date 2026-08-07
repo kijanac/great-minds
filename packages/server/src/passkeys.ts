@@ -37,7 +37,6 @@ import { Context, Effect, Layer, Schema } from "effect";
 import { AuthService } from "./auth.ts";
 import { ClockService } from "./clock.ts";
 import { AppConfig } from "./config.ts";
-import { dieDatabase } from "./db-defects.ts";
 import { StructuredLogger } from "./logging.ts";
 
 type CredentialRow = typeof webauthnCredentials.$inferSelect;
@@ -131,7 +130,9 @@ export const PasskeysServiceLive = Layer.effect(
         .pipe(Effect.andThen(Effect.fail(authenticationFailure())));
 
     const deleteExpiredChallenges = (now: Date) =>
-      db.delete(webauthnChallenges).where(lte(webauthnChallenges.expiresAt, now)).pipe(dieDatabase);
+      db.query(
+        (d) => d.delete(webauthnChallenges).where(lte(webauthnChallenges.expiresAt, now))
+      );
 
     const persistChallenge = (
       challenge: string,
@@ -139,15 +140,14 @@ export const PasskeysServiceLive = Layer.effect(
       userId: Uuid | null,
       now: Date,
     ) =>
-      db
+      db.query((d) => d
         .insert(webauthnChallenges)
         .values({
           challenge,
           kind,
           userId,
           expiresAt: addMinutes(now, CHALLENGE_EXPIRY_MINUTES),
-        })
-        .pipe(dieDatabase);
+        }));
 
     const consumeChallenge = <E>(
       clientDataJSON: string,
@@ -161,7 +161,7 @@ export const PasskeysServiceLive = Layer.effect(
           try: () => decodeClientDataJSON(clientDataJSON as Base64URLString).challenge,
           catch: (error) => error,
         }).pipe(Effect.catch((error) => onFailure(errorMessage(error))));
-        const rows = yield* db
+        const rows = yield* db.query((d) => d
           .delete(webauthnChallenges)
           .where(
             and(
@@ -172,8 +172,7 @@ export const PasskeysServiceLive = Layer.effect(
                 : eq(webauthnChallenges.userId, userId),
             ),
           )
-          .returning()
-          .pipe(dieDatabase);
+          .returning());
         const consumed = rows[0];
         if (consumed === undefined || consumed.expiresAt <= now) {
           return yield* onFailure("Challenge is missing, expired, or already used");
@@ -186,14 +185,13 @@ export const PasskeysServiceLive = Layer.effect(
         Effect.gen(function* () {
           const now = yield* clock.now;
           yield* deleteExpiredChallenges(now);
-          const credentials = yield* db
+          const credentials = yield* db.query((d) => d
             .select({
               credentialId: webauthnCredentials.credentialId,
               transports: webauthnCredentials.transports,
             })
             .from(webauthnCredentials)
-            .where(eq(webauthnCredentials.userId, userId))
-            .pipe(dieDatabase);
+            .where(eq(webauthnCredentials.userId, userId)));
           const options = yield* Effect.tryPromise(() =>
             generateRegistrationOptions({
               rpName: config.webauthnRpName,
@@ -242,7 +240,7 @@ export const PasskeysServiceLive = Layer.effect(
             return yield* failRegistration("Verification returned false", userId);
           }
           const credential = verification.registrationInfo.credential;
-          const rows = yield* db
+          const rows = yield* db.query((d) => d
             .insert(webauthnCredentials)
             .values({
               id: randomUUID(),
@@ -253,8 +251,7 @@ export const PasskeysServiceLive = Layer.effect(
               transports: credential.transports ?? [],
               name: registration.name.trim(),
             })
-            .returning()
-            .pipe(dieDatabase);
+            .returning());
           const row = rows[0];
           if (row === undefined) {
             throw new Error("WebAuthn credential insert returned no row");
@@ -286,12 +283,11 @@ export const PasskeysServiceLive = Layer.effect(
             now,
             failAuthentication,
           );
-          const rows = yield* db
+          const rows = yield* db.query((d) => d
             .select()
             .from(webauthnCredentials)
             .where(eq(webauthnCredentials.credentialId, response.id))
-            .limit(1)
-            .pipe(dieDatabase);
+            .limit(1));
           const credential = rows[0];
           if (credential === undefined) {
             return yield* failAuthentication("Credential is unknown");
@@ -319,35 +315,32 @@ export const PasskeysServiceLive = Layer.effect(
           if (!verification.verified) {
             return yield* failAuthentication("Verification returned false", credential.userId);
           }
-          yield* db
+          yield* db.query((d) => d
             .update(webauthnCredentials)
             .set({
               signCount: verification.authenticationInfo.newCounter,
               lastUsedAt: now,
             })
-            .where(eq(webauthnCredentials.id, credential.id))
-            .pipe(dieDatabase);
+            .where(eq(webauthnCredentials.id, credential.id)));
           return yield* auth.issueTokenPair(asUuid(credential.userId));
         }),
       list: (userId) =>
-        db
-          .select()
-          .from(webauthnCredentials)
-          .where(eq(webauthnCredentials.userId, userId))
-          .orderBy(desc(webauthnCredentials.createdAt))
-          .pipe(
-            Effect.map((rows) => rows.map(passkeyResponse)),
-            dieDatabase,
-          ),
+        db.query((d) =>
+          d
+            .select()
+            .from(webauthnCredentials)
+            .where(eq(webauthnCredentials.userId, userId))
+            .orderBy(desc(webauthnCredentials.createdAt))
+            .pipe(Effect.map((rows) => rows.map(passkeyResponse))),
+        ),
       delete: (userId, credentialId) =>
         Effect.gen(function* () {
-          const rows = yield* db
+          const rows = yield* db.query((d) => d
             .delete(webauthnCredentials)
             .where(
               and(eq(webauthnCredentials.id, credentialId), eq(webauthnCredentials.userId, userId)),
             )
-            .returning({ id: webauthnCredentials.id })
-            .pipe(dieDatabase);
+            .returning({ id: webauthnCredentials.id }));
           if (rows[0] === undefined) {
             return yield* new NotFound({ detail: "Passkey not found" });
           }

@@ -14,7 +14,6 @@ import * as Workflow from "effect/unstable/workflow/Workflow";
 import { AppConfig } from "./config.ts";
 import { stagedFileToMarkdown } from "./conversion.ts";
 import { fileContentHash } from "./crypto.ts";
-import { dieDatabase } from "./db-defects.ts";
 import { causeDetails, formatError } from "./error-details.ts";
 import { buildDocument } from "./markdown.ts";
 import { StructuredLogger } from "./logging.ts";
@@ -76,12 +75,11 @@ export const StagedFileIngestWorkflowLive = StagedFileIngestWorkflow.toLayer((pa
       if (config.storageBackend !== "r2") {
         throw new Error("staged_file_ingest requires r2 storage backend");
       }
-      const vaultRows = yield* db
+      const vaultRows = yield* db.query((d) => d
         .select({ bucket: vaults.r2BucketName })
         .from(vaults)
         .where(eq(vaults.id, vaultId))
-        .limit(1)
-        .pipe(dieDatabase);
+        .limit(1));
       const vault = vaultRows[0];
       if (vault === undefined) {
         throw new Error(`Vault ${vaultId} not found`);
@@ -90,11 +88,10 @@ export const StagedFileIngestWorkflowLive = StagedFileIngestWorkflow.toLayer((pa
         throw new Error(`Vault ${vaultId} has no r2_bucket_name`);
       }
       const bucket = vault.bucket;
-      const existingRows = yield* db
+      const existingRows = yield* db.query((d) => d
         .select({ path: sourceDocuments.filePath, hash: sourceDocuments.fileHash })
         .from(sourceDocuments)
-        .where(eq(sourceDocuments.vaultId, vaultId))
-        .pipe(dieDatabase);
+        .where(eq(sourceDocuments.vaultId, vaultId)));
       const existingHashes = new Map(existingRows.map((row) => [row.path, row.hash]));
 
       yield* pipeline.updateProgress(
@@ -227,12 +224,11 @@ export const StagedFileIngestWorkflowLive = StagedFileIngestWorkflow.toLayer((pa
         if (config.storageBackend !== "r2") {
           throw new Error("staged_file_ingest requires r2 storage backend");
         }
-        const vaultRows = yield* db
+        const vaultRows = yield* db.query((d) => d
           .select({ bucket: vaults.r2BucketName })
           .from(vaults)
           .where(eq(vaults.id, vaultId))
-          .limit(1)
-          .pipe(dieDatabase);
+          .limit(1));
         const bucket = vaultRows[0]?.bucket;
         if (bucket === undefined) {
           throw new Error(`Vault ${vaultId} not found`);
@@ -274,8 +270,7 @@ export const StagedFileIngestWorkflowLive = StagedFileIngestWorkflow.toLayer((pa
                   .set({ compileIntentId: intent.id, updatedAt: sql`now()` })
                   .where(eq(pipelineRuns.id, runId));
               }),
-            )
-            .pipe(dieDatabase);
+            );
           const cleanupResults = yield* Effect.forEach(
             cleanupHashes,
             (hash) => Effect.exit(storage.deleteStaged(vaultId, bucket, hash)),

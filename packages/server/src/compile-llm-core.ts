@@ -28,7 +28,6 @@ import {
   type ValidatedTopic,
 } from "./compile-phases.ts";
 import { contentHash, promptContentHash } from "./crypto.ts";
-import { dieDatabase } from "./db-defects.ts";
 import type { EmbeddingsService } from "./embeddings.ts";
 import { errorDetails as describeError } from "./error-details.ts";
 import type { LanguageModel, LlmMessage, ModelCompletion } from "./llm.ts";
@@ -562,15 +561,14 @@ export const makeCompileLlmCore = (options: CompileLlmCoreOptions) => {
       const total = costs.get(runId);
       if (total === undefined) return;
       costs.delete(runId);
-      yield* db
+      yield* db.query((d) => d
         .insert(llmCostEvents)
         .values({
           vaultId,
           eventType: "compile",
           costUsd: total.toFixed(6),
           correlationId: `compile-${runId}`,
-        })
-        .pipe(dieDatabase);
+        }));
     });
 
   const jsonCall = (input: {
@@ -628,14 +626,13 @@ export const makeCompileLlmCore = (options: CompileLlmCoreOptions) => {
     });
 
   const putCache = (vaultId: Uuid, phase: string, cacheKey: string, value: unknown) =>
-    db
+    db.query((d) => d
       .insert(compileCacheEntries)
       .values({ vaultId, phase, cacheKey, value })
-      .onConflictDoNothing()
-      .pipe(dieDatabase);
+      .onConflictDoNothing());
 
   const getCache = (vaultId: Uuid, phase: string, cacheKey: string) =>
-    db
+    db.query((d) => d
       .select({ value: compileCacheEntries.value })
       .from(compileCacheEntries)
       .where(
@@ -645,11 +642,8 @@ export const makeCompileLlmCore = (options: CompileLlmCoreOptions) => {
           eq(compileCacheEntries.cacheKey, cacheKey),
         ),
       )
-      .limit(1)
-      .pipe(
-        dieDatabase,
-        Effect.map((rows) => rows[0]?.value),
-      );
+      .limit(1))
+      .pipe(Effect.map((rows) => rows[0]?.value));
 
   const extract = (vaultId: Uuid, runId: Uuid) =>
     Effect.gen(function* () {
@@ -660,12 +654,11 @@ export const makeCompileLlmCore = (options: CompileLlmCoreOptions) => {
         .replace("{vault_enriched_fields}", formatEnrichedFields(vaultConfig.enrichedFields));
       const promptHash = promptContentHash(renderedTemplate);
       const responseFormat = extractResponseFormat(vaultConfig);
-      const documents = yield* db
+      const documents = yield* db.query((d) => d
         .select()
         .from(sourceDocuments)
         .where(eq(sourceDocuments.vaultId, vaultId))
-        .orderBy(asc(sourceDocuments.filePath))
-        .pipe(dieDatabase);
+        .orderBy(asc(sourceDocuments.filePath)));
 
       yield* pipeline.updateProgress(
         runId,
@@ -778,11 +771,10 @@ export const makeCompileLlmCore = (options: CompileLlmCoreOptions) => {
       yield* Effect.forEach(extractFibers, Fiber.join, { discard: true });
 
       const existing = new Set(
-        (yield* db
+        (yield* db.query((d) => d
           .select({ id: ideas.ideaId })
           .from(ideas)
-          .where(eq(ideas.vaultId, vaultId))
-          .pipe(dieDatabase)).map((row) => row.id),
+          .where(eq(ideas.vaultId, vaultId)))).map((row) => row.id),
       );
       const fresh = outcomes.filter(
         (outcome): outcome is Extract<(typeof outcomes)[number], { kind: "fresh" }> =>
@@ -814,15 +806,14 @@ export const makeCompileLlmCore = (options: CompileLlmCoreOptions) => {
       );
 
       if (fresh.length > 0) {
-        yield* db
+        yield* db.query((d) => d
           .delete(ideas)
           .where(
             inArray(
               ideas.documentId,
               fresh.map((outcome) => outcome.documentId),
             ),
-          )
-          .pipe(dieDatabase);
+          ));
       }
 
       let embeddedCount = 0;
@@ -864,34 +855,34 @@ export const makeCompileLlmCore = (options: CompileLlmCoreOptions) => {
           embedding: sql`${vectorLiteral(embedding)}::vector`,
         }));
         if (ideaRows.length === 0) continue;
-        yield* db
-          .insert(ideas)
-          .values(ideaRows)
-          .onConflictDoUpdate({
-            target: ideas.ideaId,
-            set: {
-              label: sql`excluded.label`,
-              description: sql`excluded.description`,
-              embedding: sql`excluded.embedding`,
-            },
-          })
-          .pipe(
-            Effect.tapError((error) =>
-              Effect.logError("idea insert failed", {
-                cause: "cause" in error ? error.cause : error,
-              }),
+        yield* db.query((d) =>
+          d
+            .insert(ideas)
+            .values(ideaRows)
+            .onConflictDoUpdate({
+              target: ideas.ideaId,
+              set: {
+                label: sql`excluded.label`,
+                description: sql`excluded.description`,
+                embedding: sql`excluded.embedding`,
+              },
+            })
+            .pipe(
+              Effect.tapError((error) =>
+                Effect.logError("idea insert failed", {
+                  cause: "cause" in error ? error.cause : error,
+                }),
+              ),
             ),
-          )
-          .pipe(dieDatabase);
-        yield* db
+        );
+        yield* db.query((d) => d
           .delete(anchors)
           .where(
             inArray(
               anchors.ideaId,
               ideaRows.map((row) => row.ideaId),
             ),
-          )
-          .pipe(dieDatabase);
+          ));
         const anchorRows = paired.flatMap(({ input: { idea } }) =>
           idea.anchors.map((anchor, position) => ({
             ideaId: idea.ideaId as Uuid,
@@ -901,7 +892,7 @@ export const makeCompileLlmCore = (options: CompileLlmCoreOptions) => {
             chunkIndex: anchor.chunkIndex,
           })),
         );
-        if (anchorRows.length > 0) yield* db.insert(anchors).values(anchorRows).pipe(dieDatabase);
+        if (anchorRows.length > 0) yield* db.query((d) => d.insert(anchors).values(anchorRows));
         embeddedCount += paired.length;
         yield* pipeline.updateProgress(
           runId,
@@ -954,7 +945,7 @@ export const makeCompileLlmCore = (options: CompileLlmCoreOptions) => {
           body,
         );
         yield* storage.writeText(vaultId, document.filePath, nextContent);
-        yield* db
+        yield* db.query((d) => d
           .update(sourceDocuments)
           .set({
             title: outcome.card.title,
@@ -966,8 +957,7 @@ export const makeCompileLlmCore = (options: CompileLlmCoreOptions) => {
             derivedExtras: outcome.card.derivedExtras,
             updatedAt: sql`now()`,
           })
-          .where(eq(sourceDocuments.id, document.id))
-          .pipe(dieDatabase);
+          .where(eq(sourceDocuments.id, document.id)));
       }
 
       yield* pipeline.updateProgress(
@@ -1196,7 +1186,7 @@ type IdeaContext = {
 const runAbstract = (options: AbstractOptions) =>
   Effect.gen(function* () {
     const { vaultId, runId, config, db, storage, pipeline } = options;
-    const rows = yield* db
+    const rows = yield* db.query((d) => d
       .select({
         ideaId: ideas.ideaId,
         documentId: ideas.documentId,
@@ -1207,13 +1197,11 @@ const runAbstract = (options: AbstractOptions) =>
       })
       .from(ideas)
       .where(eq(ideas.vaultId, vaultId))
-      .orderBy(asc(ideas.ideaId))
-      .pipe(dieDatabase);
-    const docs = yield* db
+      .orderBy(asc(ideas.ideaId)));
+    const docs = yield* db.query((d) => d
       .select()
       .from(sourceDocuments)
-      .where(eq(sourceDocuments.vaultId, vaultId))
-      .pipe(dieDatabase);
+      .where(eq(sourceDocuments.vaultId, vaultId)));
     const docsById = new Map(docs.map((document) => [document.id, document]));
     const contexts: IdeaContext[] = rows.flatMap((row) => {
       const document = docsById.get(row.documentId);
@@ -2244,12 +2232,13 @@ const validateTopics = (
         (target) => target !== canonical.slug && slugs.has(target),
       ),
     }));
-    const existing = yield* options.db
-      .select()
-      .from(topics)
-      .where(eq(topics.vaultId, options.vaultId))
-      .orderBy(asc(topics.title))
-      .pipe(dieDatabase);
+    const existing = yield* options.db.query((d) =>
+      d
+        .select()
+        .from(topics)
+        .where(eq(topics.vaultId, options.vaultId))
+        .orderBy(asc(topics.title)),
+    );
     const active = existing.filter((topic) => topic.articleStatus !== "archived");
     const collisions = new Map<string, number[]>();
     canonicals.forEach((canonical, index) => {
@@ -2429,23 +2418,12 @@ const validateTopics = (
     });
     yield* options.archiveTransitions(options.vaultId, transitions);
     for (const topic of validated) {
-      yield* options.db
-        .insert(topics)
-        .values({
-          topicId: topic.topicId as Uuid,
-          vaultId: options.vaultId,
-          slug: topic.slug,
-          title: topic.title,
-          description: topic.description,
-          compiledFromHash: contentHash(
-            topic.title,
-            topic.description,
-            ...topic.subsumedIdeaIds.toSorted(),
-          ),
-        })
-        .onConflictDoUpdate({
-          target: topics.topicId,
-          set: {
+      yield* options.db.query((d) =>
+        d
+          .insert(topics)
+          .values({
+            topicId: topic.topicId as Uuid,
+            vaultId: options.vaultId,
             slug: topic.slug,
             title: topic.title,
             description: topic.description,
@@ -2454,10 +2432,22 @@ const validateTopics = (
               topic.description,
               ...topic.subsumedIdeaIds.toSorted(),
             ),
-            updatedAt: sql`now()`,
-          },
-        })
-        .pipe(dieDatabase);
+          })
+          .onConflictDoUpdate({
+            target: topics.topicId,
+            set: {
+              slug: topic.slug,
+              title: topic.title,
+              description: topic.description,
+              compiledFromHash: contentHash(
+                topic.title,
+                topic.description,
+                ...topic.subsumedIdeaIds.toSorted(),
+              ),
+              updatedAt: sql`now()`,
+            },
+          }),
+      );
     }
     return validated;
   });
@@ -2559,36 +2549,38 @@ const runRender = (options: RenderOptions) =>
       const ideaRows =
         neededIds.length === 0
           ? []
-          : yield* options.db
-              .select({
-                ideaId: ideas.ideaId,
-                documentId: ideas.documentId,
-                kind: ideas.kind,
-                label: ideas.label,
-                description: ideas.description,
-              })
-              .from(ideas)
-              .where(
-                inArray(
-                  ideas.ideaId,
-                  neededIds.map((id) => id as Uuid),
+          : yield* options.db.query((d) =>
+              d
+                .select({
+                  ideaId: ideas.ideaId,
+                  documentId: ideas.documentId,
+                  kind: ideas.kind,
+                  label: ideas.label,
+                  description: ideas.description,
+                })
+                .from(ideas)
+                .where(
+                  inArray(
+                    ideas.ideaId,
+                    neededIds.map((id) => id as Uuid),
+                  ),
                 ),
-              )
-              .pipe(dieDatabase);
+            );
       const anchorRows =
         neededIds.length === 0
           ? []
-          : yield* options.db
-              .select()
-              .from(anchors)
-              .where(
-                inArray(
-                  anchors.ideaId,
-                  neededIds.map((id) => id as Uuid),
-                ),
-              )
-              .orderBy(asc(anchors.ideaId), asc(anchors.position))
-              .pipe(dieDatabase);
+          : yield* options.db.query((d) =>
+              d
+                .select()
+                .from(anchors)
+                .where(
+                  inArray(
+                    anchors.ideaId,
+                    neededIds.map((id) => id as Uuid),
+                  ),
+                )
+                .orderBy(asc(anchors.ideaId), asc(anchors.position)),
+            );
       const anchorsByIdea = new Map<string, Anchor[]>();
       for (const anchor of anchorRows) {
         const group = anchorsByIdea.get(anchor.ideaId) ?? [];
@@ -2605,11 +2597,9 @@ const runRender = (options: RenderOptions) =>
           { ...idea, anchors: anchorsByIdea.get(idea.ideaId) ?? [] },
         ]),
       );
-      const documents = yield* options.db
-        .select()
-        .from(sourceDocuments)
-        .where(eq(sourceDocuments.vaultId, options.vaultId))
-        .pipe(dieDatabase);
+      const documents = yield* options.db.query((d) =>
+        d.select().from(sourceDocuments).where(eq(sourceDocuments.vaultId, options.vaultId)),
+      );
       const documentsById = new Map(documents.map((document) => [document.id, document]));
       const topicsBySlug = new Map(options.validated.map((topic) => [topic.slug, topic]));
       let done = 0;

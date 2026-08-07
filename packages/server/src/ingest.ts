@@ -20,7 +20,6 @@ import { Cause, Context, Effect, Layer } from "effect";
 import * as WorkflowEngine from "effect/unstable/workflow/WorkflowEngine";
 
 import { htmlToMarkdown, markdownWithTitle } from "./conversion.ts";
-import { dieDatabase } from "./db-defects.ts";
 import { causeDetails, formatError } from "./error-details.ts";
 import { jobResponse } from "./jobs.ts";
 import { buildDocument, sessionExchangeDocumentInput, sessionExchangePath } from "./markdown.ts";
@@ -249,7 +248,7 @@ export const IngestServiceLive = Layer.effect(
 
     const ensureCompileIntent = (vaultId: Uuid, pipelineRunId?: Uuid | null) =>
       Effect.gen(function* () {
-        const rows = yield* db
+        const rows = yield* db.query((d) => d
           .insert(compileIntents)
           .values({ vaultId, pipelineRunId: pipelineRunId ?? undefined })
           .onConflictDoUpdate({
@@ -257,25 +256,22 @@ export const IngestServiceLive = Layer.effect(
             targetWhere: sql`${compileIntents.dispatchedAt} IS NULL`,
             set: { vaultId: sql`compile_intents.vault_id` },
           })
-          .returning({ id: compileIntents.id, pipelineRunId: compileIntents.pipelineRunId })
-          .pipe(dieDatabase);
+          .returning({ id: compileIntents.id, pipelineRunId: compileIntents.pipelineRunId }));
         const intent = rows[0];
         if (intent === undefined) {
           throw new Error("compile intent upsert returned no row");
         }
         if (pipelineRunId !== undefined && pipelineRunId !== null) {
           if (intent.pipelineRunId === null) {
-            yield* db
+            yield* db.query((d) => d
               .update(compileIntents)
               .set({ pipelineRunId })
-              .where(eq(compileIntents.id, intent.id))
-              .pipe(dieDatabase);
+              .where(eq(compileIntents.id, intent.id)));
           }
-          yield* db
+          yield* db.query((d) => d
             .update(pipelineRuns)
             .set({ compileIntentId: intent.id, updatedAt: sql`now()` })
-            .where(eq(pipelineRuns.id, pipelineRunId))
-            .pipe(dieDatabase);
+            .where(eq(pipelineRuns.id, pipelineRunId)));
         }
         return intent.id as Uuid;
       });
@@ -321,18 +317,17 @@ export const IngestServiceLive = Layer.effect(
 
     const getVaultBucket = (vaultId: Uuid) =>
       Effect.gen(function* () {
-        const rows = yield* db
+        const rows = yield* db.query((d) => d
           .select({ bucket: vaults.r2BucketName })
           .from(vaults)
           .where(eq(vaults.id, vaultId))
-          .limit(1)
-          .pipe(dieDatabase);
+          .limit(1));
         return rows[0]?.bucket ?? null;
       });
 
     const createPipelineRun = (jobId: Uuid, vaultId: Uuid, trigger: "staged_files" | "url") =>
       Effect.gen(function* () {
-        const inserted = yield* db
+        const inserted = yield* db.query((d) => d
           .insert(pipelineRuns)
           .values({
             id: jobId,
@@ -344,16 +339,14 @@ export const IngestServiceLive = Layer.effect(
             progressSteps: [],
           })
           .onConflictDoNothing({ target: pipelineRuns.id })
-          .returning()
-          .pipe(dieDatabase);
+          .returning());
         const row =
           inserted[0] ??
-          (yield* db
+          (yield* db.query((d) => d
             .select()
             .from(pipelineRuns)
             .where(and(eq(pipelineRuns.id, jobId), eq(pipelineRuns.vaultId, vaultId)))
-            .limit(1)
-            .pipe(dieDatabase))[0];
+            .limit(1)))[0];
         if (row === undefined) {
           throw new Error(`Pipeline run missing after create: ${jobId}`);
         }
@@ -362,12 +355,11 @@ export const IngestServiceLive = Layer.effect(
 
     const getPipelineRun = (jobId: Uuid, vaultId: Uuid) =>
       Effect.gen(function* () {
-        const rows = yield* db
+        const rows = yield* db.query((d) => d
           .select()
           .from(pipelineRuns)
           .where(and(eq(pipelineRuns.id, jobId), eq(pipelineRuns.vaultId, vaultId)))
-          .limit(1)
-          .pipe(dieDatabase);
+          .limit(1));
         const row = rows[0];
         if (row === undefined) {
           throw new Error(`Pipeline run not found after creation: ${jobId}`);
@@ -382,7 +374,7 @@ export const IngestServiceLive = Layer.effect(
       steps: readonly PipelineProgressStep[],
       error?: string,
     ) =>
-      db
+      db.query((d) => d
         .update(pipelineRuns)
         .set({
           currentPhase: phase,
@@ -396,8 +388,7 @@ export const IngestServiceLive = Layer.effect(
         // Terminal states, including cancelled, are never overwritten by progress.
         .where(
           and(eq(pipelineRuns.id, jobId), inArray(pipelineRuns.status, ["pending", "running"])),
-        )
-        .pipe(dieDatabase);
+        ));
 
     return {
       ingestRaw: (userId, vaultId, input) =>
@@ -488,7 +479,7 @@ export const IngestServiceLive = Layer.effect(
             hash: file.hash,
             mimetype: file.mimetype ?? "",
           }));
-          yield* db
+          yield* db.query((d) => d
             .insert(tasks)
             .values({
               id: taskId,
@@ -501,9 +492,8 @@ export const IngestServiceLive = Layer.effect(
               },
               pipelineRunId: run.id,
             })
-            .onConflictDoNothing({ target: tasks.id })
-            .pipe(dieDatabase);
-          yield* db
+            .onConflictDoNothing({ target: tasks.id }));
+          yield* db.query((d) => d
             .update(pipelineRuns)
             .set({
               ingestTaskId: taskId,
@@ -511,8 +501,7 @@ export const IngestServiceLive = Layer.effect(
               activeTaskType: STAGED_TASK_TYPE,
               updatedAt: sql`now()`,
             })
-            .where(eq(pipelineRuns.id, run.id))
-            .pipe(dieDatabase);
+            .where(eq(pipelineRuns.id, run.id)));
           yield* StagedFileIngestWorkflow.execute(
             {
               vaultId,

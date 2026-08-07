@@ -201,16 +201,16 @@ const seedBase = () =>
   run(
     Effect.gen(function* () {
       const db = yield* Database;
-      yield* db.delete(users).pipe(Effect.orDie);
-      yield* db
+      yield* db.query((d) => d.delete(users)).pipe(Effect.orDie);
+      yield* db.query((d) => d
         .insert(users)
-        .values({ id: id.user, email: "phases@example.com" })
+        .values({ id: id.user, email: "phases@example.com" }))
         .pipe(Effect.orDie);
-      yield* db
+      yield* db.query((d) => d
         .insert(vaults)
-        .values({ id: id.vault, name: "Compile Phases", ownerId: id.user })
+        .values({ id: id.vault, name: "Compile Phases", ownerId: id.user }))
         .pipe(Effect.orDie);
-      yield* db
+      yield* db.query((d) => d
         .insert(pipelineRuns)
         .values({
           id: id.run,
@@ -220,7 +220,7 @@ const seedBase = () =>
           currentPhase: "",
           phaseStatus: "",
           progressSteps: [],
-        })
+        }))
         .pipe(Effect.orDie);
     }),
   );
@@ -229,7 +229,7 @@ const seedSourceAndIdeas = () =>
   run(
     Effect.gen(function* () {
       const db = yield* Database;
-      yield* db
+      yield* db.query((d) => d
         .insert(sourceDocuments)
         .values({
           id: id.source,
@@ -238,9 +238,9 @@ const seedSourceAndIdeas = () =>
           fileHash: "file",
           bodyHash: "body",
           sourceType: "document",
-        })
+        }))
         .pipe(Effect.orDie);
-      yield* db
+      yield* db.query((d) => d
         .insert(ideas)
         .values(
           [id.ideaA, id.ideaB, id.ideaC].map((ideaId, index) => ({
@@ -251,7 +251,7 @@ const seedSourceAndIdeas = () =>
             label: `Idea ${index}`,
             description: `Description ${index}`,
           })),
-        )
+        ))
         .pipe(Effect.orDie);
     }),
   );
@@ -260,7 +260,7 @@ const insertSource = (documentId: Uuid, filePath: string, bodyHash: string) =>
   run(
     Effect.gen(function* () {
       const db = yield* Database;
-      yield* db
+      yield* db.query((d) => d
         .insert(sourceDocuments)
         .values({
           id: documentId,
@@ -269,7 +269,7 @@ const insertSource = (documentId: Uuid, filePath: string, bodyHash: string) =>
           fileHash: `file-${bodyHash}`,
           bodyHash,
           sourceType: "document",
-        })
+        }))
         .pipe(Effect.orDie);
     }),
   );
@@ -285,7 +285,7 @@ const seedCanonicalPath = async (options: {
   await run(
     Effect.gen(function* () {
       const db = yield* Database;
-      yield* db
+      yield* db.query((d) => d
         .insert(sourceDocuments)
         .values({
           id: id.source,
@@ -296,9 +296,9 @@ const seedCanonicalPath = async (options: {
           sourceType: "document",
           title: "Source",
           precis: "Precis",
-        })
+        }))
         .pipe(Effect.orDie);
-      yield* db
+      yield* db.query((d) => d
         .insert(ideas)
         .values({
           ideaId: id.ideaA,
@@ -308,7 +308,7 @@ const seedCanonicalPath = async (options: {
           label: "Idea",
           description: "Description",
           embedding: [1, ...Array.from({ length: 1023 }, () => 0)],
-        })
+        }))
         .pipe(Effect.orDie);
     }),
   );
@@ -388,7 +388,7 @@ const seedCanonicalPath = async (options: {
   await run(
     Effect.gen(function* () {
       const db = yield* Database;
-      yield* db.insert(compileCacheEntries).values(rows).pipe(Effect.orDie);
+      yield* db.query((d) => d.insert(compileCacheEntries).values(rows)).pipe(Effect.orDie);
     }),
   );
   return { localTopic, registryTopic } as const;
@@ -485,9 +485,9 @@ describe("M4.3a deterministic compile phases", () => {
       Effect.gen(function* () {
         const db = yield* Database;
         return {
-          ideas: yield* db.select().from(ideas).pipe(Effect.orDie),
-          anchors: yield* db.select().from(anchors).pipe(Effect.orDie),
-          docs: yield* db.select().from(sourceDocuments).pipe(Effect.orDie),
+          ideas: yield* db.query((d) => d.select().from(ideas)).pipe(Effect.orDie),
+          anchors: yield* db.query((d) => d.select().from(anchors)).pipe(Effect.orDie),
+          docs: yield* db.query((d) => d.select().from(sourceDocuments)).pipe(Effect.orDie),
         };
       }),
     );
@@ -525,7 +525,7 @@ describe("M4.3a deterministic compile phases", () => {
     await run(
       Effect.gen(function* () {
         const db = yield* Database;
-        yield* db
+        yield* db.query((d) => d
           .insert(compileCacheEntries)
           .values({
             vaultId: id.vault,
@@ -537,7 +537,7 @@ describe("M4.3a deterministic compile phases", () => {
               `model=${config.extractModel}`,
             ),
             value: { source_card: { title: "drifted" } },
-          })
+          }))
           .pipe(Effect.orDie);
       }),
     );
@@ -590,7 +590,7 @@ describe("M4.3a deterministic compile phases", () => {
     await run(Effect.flatMap(CompilePhases, (phases) => phases.extract(id.vault, id.run)));
 
     const rows = await run(
-      Effect.flatMap(Database, (db) => db.select().from(ideas).pipe(Effect.orDie)),
+      Effect.flatMap(Database, (db) => db.query((d) => d.select().from(ideas)).pipe(Effect.orDie)),
     );
     expect(rows).toEqual([]);
     expect(logEvents).toContainEqual({
@@ -616,7 +616,7 @@ describe("M4.3a deterministic compile phases", () => {
     await run(Effect.flatMap(CompilePhases, (phases) => phases.extract(id.vault, id.run)));
 
     const rows = await run(
-      Effect.flatMap(Database, (db) => db.select().from(ideas).pipe(Effect.orDie)),
+      Effect.flatMap(Database, (db) => db.query((d) => d.select().from(ideas)).pipe(Effect.orDie)),
     );
     expect(rows).toEqual([]);
   });
@@ -674,7 +674,7 @@ describe("M4.3a deterministic compile phases", () => {
     await run(
       Effect.gen(function* () {
         const db = yield* Database;
-        yield* db
+        yield* db.query((d) => d
           .insert(topics)
           .values({
             topicId: id.topicB,
@@ -682,7 +682,7 @@ describe("M4.3a deterministic compile phases", () => {
             slug: "old-topic",
             title: "Old Topic",
             description: "Old description",
-          })
+          }))
           .pipe(Effect.orDie);
       }),
     );
@@ -706,7 +706,7 @@ describe("M4.3a deterministic compile phases", () => {
     await run(
       Effect.gen(function* () {
         const db = yield* Database;
-        yield* db
+        yield* db.query((d) => d
           .insert(topics)
           .values({
             topicId: id.topicB,
@@ -714,7 +714,7 @@ describe("M4.3a deterministic compile phases", () => {
             slug: "old-topic",
             title: "Old Topic",
             description: "Old description",
-          })
+          }))
           .pipe(Effect.orDie);
       }),
     );
@@ -736,7 +736,7 @@ describe("M4.3a deterministic compile phases", () => {
     await run(
       Effect.gen(function* () {
         const db = yield* Database;
-        yield* db
+        yield* db.query((d) => d
           .insert(sourceDocuments)
           .values({
             id: id.source,
@@ -745,7 +745,7 @@ describe("M4.3a deterministic compile phases", () => {
             fileHash: "file",
             bodyHash: "body",
             sourceType: "document",
-          })
+          }))
           .pipe(Effect.orDie);
         const phases = yield* CompilePhases;
         yield* phases.ingest(id.vault, id.run);
@@ -754,7 +754,7 @@ describe("M4.3a deterministic compile phases", () => {
     const rows = await run(
       Effect.gen(function* () {
         const db = yield* Database;
-        return yield* db
+        return yield* db.query((d) => d
           .select({
             path: searchIndex.path,
             chunkIndex: searchIndex.chunkIndex,
@@ -763,7 +763,7 @@ describe("M4.3a deterministic compile phases", () => {
             contentHash: searchIndex.contentHash,
           })
           .from(searchIndex)
-          .orderBy(searchIndex.chunkIndex)
+          .orderBy(searchIndex.chunkIndex))
           .pipe(Effect.orDie);
       }),
     );
@@ -801,7 +801,7 @@ describe("M4.3a deterministic compile phases", () => {
     await run(
       Effect.gen(function* () {
         const db = yield* Database;
-        yield* db
+        yield* db.query((d) => d
           .insert(topics)
           .values(
             validated.map((topic) => ({
@@ -811,7 +811,7 @@ describe("M4.3a deterministic compile phases", () => {
               title: topic.title,
               description: topic.description,
             })),
-          )
+          ))
           .pipe(Effect.orDie);
         const phases = yield* CompilePhases;
         yield* phases.derive(id.vault, id.run, validated);
@@ -821,9 +821,9 @@ describe("M4.3a deterministic compile phases", () => {
       Effect.gen(function* () {
         const db = yield* Database;
         return {
-          membership: yield* db.select().from(topicMembership).pipe(Effect.orDie),
-          links: yield* db.select().from(topicLinks).pipe(Effect.orDie),
-          related: yield* db.select().from(topicRelated).pipe(Effect.orDie),
+          membership: yield* db.query((d) => d.select().from(topicMembership)).pipe(Effect.orDie),
+          links: yield* db.query((d) => d.select().from(topicLinks)).pipe(Effect.orDie),
+          related: yield* db.query((d) => d.select().from(topicRelated)).pipe(Effect.orDie),
         };
       }),
     );
@@ -847,7 +847,7 @@ describe("M4.3a deterministic compile phases", () => {
     await run(
       Effect.gen(function* () {
         const db = yield* Database;
-        yield* db
+        yield* db.query((d) => d
           .insert(topics)
           .values({
             topicId: topic.topicId as Uuid,
@@ -856,9 +856,9 @@ describe("M4.3a deterministic compile phases", () => {
             title: topic.title,
             description: topic.description,
             compiledFromHash: "compiled",
-          })
+          }))
           .pipe(Effect.orDie);
-        yield* db
+        yield* db.query((d) => d
           .insert(compileCacheEntries)
           .values({
             vaultId: id.vault,
@@ -869,7 +869,7 @@ describe("M4.3a deterministic compile phases", () => {
               model: DEFAULT_RENDER_MODEL,
             }),
             value: { body: "# Alpha\n\nCached body.", tags: ["Cached Tag", "cached-tag"] },
-          })
+          }))
           .pipe(Effect.orDie);
         const phases = yield* CompilePhases;
         yield* phases.render(id.vault, id.run, [topic]);
@@ -884,7 +884,7 @@ describe("M4.3a deterministic compile phases", () => {
     await run(
       Effect.gen(function* () {
         const db = yield* Database;
-        yield* db
+        yield* db.query((d) => d
           .insert(topics)
           .values({
             topicId: id.topicC,
@@ -892,9 +892,9 @@ describe("M4.3a deterministic compile phases", () => {
             slug: invalid.slug,
             title: invalid.title,
             description: invalid.description,
-          })
+          }))
           .pipe(Effect.orDie);
-        yield* db
+        yield* db.query((d) => d
           .insert(compileCacheEntries)
           .values({
             vaultId: id.vault,
@@ -905,7 +905,7 @@ describe("M4.3a deterministic compile phases", () => {
               model: DEFAULT_RENDER_MODEL,
             }),
             value: { body: 42, tags: [] },
-          })
+          }))
           .pipe(Effect.orDie);
       }),
     );
@@ -934,7 +934,7 @@ describe("M4.3a deterministic compile phases", () => {
     const counts = await run(
       Effect.gen(function* () {
         const db = yield* Database;
-        yield* db
+        yield* db.query((d) => d
           .insert(topics)
           .values({
             topicId: topic.topicId as Uuid,
@@ -943,13 +943,13 @@ describe("M4.3a deterministic compile phases", () => {
             title: topic.title,
             description: topic.description,
             compiledFromHash: "compiled",
-          })
+          }))
           .pipe(Effect.orDie);
         const phases = yield* CompilePhases;
         yield* phases.render(id.vault, id.run, [topic]);
-        const beforePublish = yield* db.select().from(llmCostEvents).pipe(Effect.orDie);
+        const beforePublish = yield* db.query((d) => d.select().from(llmCostEvents)).pipe(Effect.orDie);
         yield* phases.publish(id.vault, id.run, "2026-07-13T12:00:00+00:00");
-        const afterPublish = yield* db.select().from(llmCostEvents).pipe(Effect.orDie);
+        const afterPublish = yield* db.query((d) => d.select().from(llmCostEvents)).pipe(Effect.orDie);
         return { beforePublish, afterPublish };
       }),
     );
@@ -964,7 +964,7 @@ describe("M4.3a deterministic compile phases", () => {
     await run(
       Effect.gen(function* () {
         const db = yield* Database;
-        yield* db
+        yield* db.query((d) => d
           .insert(topics)
           .values([
             {
@@ -989,9 +989,9 @@ describe("M4.3a deterministic compile phases", () => {
               title: "No File",
               description: "C",
             },
-          ])
+          ]))
           .pipe(Effect.orDie);
-        yield* db
+        yield* db.query((d) => d
           .insert(wikiArticles)
           .values({
             id: id.articleA,
@@ -1002,7 +1002,7 @@ describe("M4.3a deterministic compile phases", () => {
             bodyHash: "body",
             title: "Alpha",
             precis: "A",
-          })
+          }))
           .pipe(Effect.orDie);
         const phases = yield* CompilePhases;
         yield* phases.archiveTransitions(id.vault, [
@@ -1016,14 +1016,14 @@ describe("M4.3a deterministic compile phases", () => {
     const archived = await run(
       Effect.gen(function* () {
         const db = yield* Database;
-        return yield* db
+        return yield* db.query((d) => d
           .select({
             id: topics.topicId,
             status: topics.articleStatus,
             successor: topics.supersededBy,
           })
           .from(topics)
-          .where(eq(topics.articleStatus, "archived"))
+          .where(eq(topics.articleStatus, "archived")))
           .pipe(Effect.orDie);
       }),
     );
@@ -1045,7 +1045,7 @@ describe("M4.3a deterministic compile phases", () => {
     await run(
       Effect.gen(function* () {
         const db = yield* Database;
-        yield* db
+        yield* db.query((d) => d
           .insert(topics)
           .values(
             validated.map((topic) => ({
@@ -1058,9 +1058,9 @@ describe("M4.3a deterministic compile phases", () => {
               compiledFromHash: "same",
               renderedFromHash: "same",
             })),
-          )
+          ))
           .pipe(Effect.orDie);
-        yield* db
+        yield* db.query((d) => d
           .insert(wikiArticles)
           .values([
             {
@@ -1083,7 +1083,7 @@ describe("M4.3a deterministic compile phases", () => {
               title: "Beta",
               precis: "Beta description",
             },
-          ])
+          ]))
           .pipe(Effect.orDie);
         const phases = yield* CompilePhases;
         yield* phases.verify(id.vault, id.run);
@@ -1092,7 +1092,7 @@ describe("M4.3a deterministic compile phases", () => {
       }),
     );
     const edges = await run(
-      Effect.flatMap(Database, (db) => db.select().from(backlinks).pipe(Effect.orDie)),
+      Effect.flatMap(Database, (db) => db.query((d) => d.select().from(backlinks)).pipe(Effect.orDie)),
     );
     expect(edges).toEqual([{ sourceArticleId: id.articleA, targetArticleId: id.articleB }]);
     expect(files.get("wiki/_index.md")).toBe(

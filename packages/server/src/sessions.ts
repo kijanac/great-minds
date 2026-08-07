@@ -32,7 +32,6 @@ import {
 import { and, desc, eq, sql } from "drizzle-orm";
 import { Context, Effect, Layer, Schema } from "effect";
 
-import { dieDatabase } from "./db-defects.ts";
 import { IngestService } from "./ingest.ts";
 import { StructuredLogger } from "./logging.ts";
 import { buildSessionExchangeDocument, sessionExchangePath } from "./markdown.ts";
@@ -465,11 +464,10 @@ export const SessionsServiceLive = Layer.effect(
         const ts = yield* nowIso();
         const event = exchangeEvent(input, ts, replyId);
         yield* appendEvent(vaultId, sessionId, event);
-        yield* db
+        yield* db.query((d) => d
           .update(sessions)
           .set({ updatedAt: new Date(ts) })
-          .where(and(eq(sessions.vaultId, vaultId), eq(sessions.id, sessionId)))
-          .pipe(dieDatabase);
+          .where(and(eq(sessions.vaultId, vaultId), eq(sessions.id, sessionId))));
         yield* rebuildMarkdown(vaultId, sessionId);
         return { path: sessionFilePath(sessionId) } satisfies SessionPathResponse;
       });
@@ -484,11 +482,10 @@ export const SessionsServiceLive = Layer.effect(
         const ts = yield* nowIso();
         const event = btwEvent(input, ts, replyId);
         yield* appendEvent(vaultId, sessionId, event);
-        yield* db
+        yield* db.query((d) => d
           .update(sessions)
           .set({ updatedAt: new Date(ts) })
-          .where(and(eq(sessions.vaultId, vaultId), eq(sessions.id, sessionId)))
-          .pipe(dieDatabase);
+          .where(and(eq(sessions.vaultId, vaultId), eq(sessions.id, sessionId))));
         yield* rebuildMarkdown(vaultId, sessionId);
         return { path: sessionFilePath(sessionId) } satisfies SessionPathResponse;
       });
@@ -497,7 +494,7 @@ export const SessionsServiceLive = Layer.effect(
       createSession: (userId, vaultId, input, replyId) =>
         Effect.gen(function* () {
           yield* access.requireMember(userId, vaultId);
-          const existingRows = yield* db
+          const existingRows = yield* db.query((d) => d
             .select({ id: sessions.id })
             .from(sessions)
             .where(
@@ -506,8 +503,7 @@ export const SessionsServiceLive = Layer.effect(
                 eq(sessions.idempotencyKey, input.idempotency_key),
               ),
             )
-            .limit(1)
-            .pipe(dieDatabase);
+            .limit(1));
           const existing = existingRows[0]?.id;
           if (existing !== undefined) {
             const events = yield* loadAllEvents(vaultId, existing as SessionId).pipe(
@@ -549,7 +545,7 @@ export const SessionsServiceLive = Layer.effect(
           const exchange = exchangeEvent(input.exchange, exchangeTs, replyId);
           yield* appendEvent(vaultId, sessionId, meta);
           yield* appendEvent(vaultId, sessionId, exchange);
-          yield* db
+          yield* db.query((d) => d
             .insert(sessions)
             .values({
               id: sessionId,
@@ -570,8 +566,7 @@ export const SessionsServiceLive = Layer.effect(
                 createdAt: new Date(metaTs),
                 updatedAt: new Date(exchangeTs),
               },
-            })
-            .pipe(dieDatabase);
+            }));
           yield* rebuildMarkdown(vaultId, sessionId);
           return { id: sessionId, path: sessionFilePath(sessionId) };
         }),
@@ -663,19 +658,17 @@ export const SessionsServiceLive = Layer.effect(
         Effect.gen(function* () {
           yield* access.requireMember(userId, vaultId);
           const where = and(eq(sessions.vaultId, vaultId), eq(sessions.userId, userId));
-          const countRows = yield* db
+          const countRows = yield* db.query((d) => d
             .select({ total: sql<number>`count(*)::int` })
             .from(sessions)
-            .where(where)
-            .pipe(dieDatabase);
-          const rows = yield* db
+            .where(where));
+          const rows = yield* db.query((d) => d
             .select()
             .from(sessions)
             .where(where)
             .orderBy(desc(sessions.updatedAt))
             .limit(params.limit)
-            .offset(params.offset)
-            .pipe(dieDatabase);
+            .offset(params.offset));
           return pageEnvelope(rows.map(sessionOverview), params, oneTotal(countRows));
         }),
       readSession: (userId, vaultId, sessionId) =>

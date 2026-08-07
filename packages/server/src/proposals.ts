@@ -19,7 +19,6 @@ import { and, desc, eq, sql } from "drizzle-orm";
 import { Context, Effect, Layer } from "effect";
 import { stringify as stringifyYaml } from "yaml";
 
-import { dieDatabase } from "./db-defects.ts";
 import { pageEnvelope, oneTotal } from "./pagination.ts";
 import { ProposalStorage, VaultStorage } from "./storage.ts";
 import { SourceDocumentsService } from "./source-documents.ts";
@@ -167,7 +166,7 @@ export const ProposalsServiceLive = Layer.effect(
     ) =>
       Effect.gen(function* () {
         const proposalId = data.id ?? (randomUUID() as Uuid);
-        const rows = yield* db
+        const rows = yield* db.query((d) => d
           .insert(sourceProposals)
           .values({
             id: proposalId,
@@ -179,8 +178,7 @@ export const ProposalsServiceLive = Layer.effect(
             author: data.author,
             destPath: data.destPath,
           })
-          .returning()
-          .pipe(dieDatabase);
+          .returning());
         const proposal = rows[0];
         if (proposal === undefined) {
           throw new Error("proposal insert returned no row");
@@ -191,17 +189,16 @@ export const ProposalsServiceLive = Layer.effect(
 
     const getForVault = (vaultId: Uuid, proposalId: Uuid) =>
       Effect.gen(function* () {
-        const rows = yield* db
+        const rows = yield* db.query((d) => d
           .select()
           .from(sourceProposals)
           .where(and(eq(sourceProposals.vaultId, vaultId), eq(sourceProposals.id, proposalId)))
-          .limit(1)
-          .pipe(dieDatabase);
+          .limit(1));
         return rows[0];
       });
 
     const ensureCompileIntent = (vaultId: Uuid) =>
-      db
+      db.query((d) => d
         .insert(compileIntents)
         .values({ vaultId })
         .onConflictDoUpdate({
@@ -209,8 +206,7 @@ export const ProposalsServiceLive = Layer.effect(
           targetWhere: sql`${compileIntents.dispatchedAt} IS NULL`,
           set: { vaultId: sql`compile_intents.vault_id` },
         })
-        .returning({ id: compileIntents.id })
-        .pipe(dieDatabase);
+        .returning({ id: compileIntents.id }));
 
     return {
       createRendered: (vaultId, userId, data) =>
@@ -241,7 +237,7 @@ export const ProposalsServiceLive = Layer.effect(
         }),
       findPendingForDest: (vaultId, destPath) =>
         Effect.gen(function* () {
-          const rows = yield* db
+          const rows = yield* db.query((d) => d
             .select()
             .from(sourceProposals)
             .where(
@@ -251,14 +247,13 @@ export const ProposalsServiceLive = Layer.effect(
                 eq(sourceProposals.status, "PENDING"),
               ),
             )
-            .limit(1)
-            .pipe(dieDatabase);
+            .limit(1));
           const row = rows[0];
           return row === undefined ? undefined : proposalResponse(row);
         }),
       createSourceDeletionRequest: (vaultId, userId, source) =>
         Effect.gen(function* () {
-          const existingRows = yield* db
+          const existingRows = yield* db.query((d) => d
             .select()
             .from(sourceProposals)
             .where(
@@ -268,8 +263,7 @@ export const ProposalsServiceLive = Layer.effect(
                 eq(sourceProposals.status, "PENDING"),
               ),
             )
-            .limit(1)
-            .pipe(dieDatabase);
+            .limit(1));
           const existing = existingRows[0];
           if (existing !== undefined) {
             if (existing.contentType === SOURCE_DELETION_CONTENT_TYPE) {
@@ -295,19 +289,17 @@ export const ProposalsServiceLive = Layer.effect(
             query.status === undefined
               ? eq(sourceProposals.vaultId, vaultId)
               : and(eq(sourceProposals.vaultId, vaultId), eq(sourceProposals.status, statusToDb(query.status)));
-          const countRows = yield* db
+          const countRows = yield* db.query((d) => d
             .select({ total: sql<number>`count(*)::int` })
             .from(sourceProposals)
-            .where(where)
-            .pipe(dieDatabase);
-          const rows = yield* db
+            .where(where));
+          const rows = yield* db.query((d) => d
             .select()
             .from(sourceProposals)
             .where(where)
             .orderBy(desc(sourceProposals.createdAt))
             .limit(query.limit)
-            .offset(query.offset)
-            .pipe(dieDatabase);
+            .offset(query.offset));
           return pageEnvelope(rows.map(proposalOverview), query, oneTotal(countRows));
         }),
       get: (userId, vaultId, proposalId) =>
@@ -339,22 +331,20 @@ export const ProposalsServiceLive = Layer.effect(
                 .pipe(Effect.orDie);
               yield* vaultStorage.writeText(vaultId, proposal.destPath, rendered);
               const documentId = yield* sourceDocuments.index(vaultId, proposal.destPath, rendered);
-              yield* db
+              yield* db.query((d) => d
                 .update(sourceProposals)
                 .set({ documentId })
-                .where(eq(sourceProposals.id, proposal.id))
-                .pipe(dieDatabase);
+                .where(eq(sourceProposals.id, proposal.id)));
               yield* ensureCompileIntent(vaultId);
             }
           } else {
             yield* proposalStorage.deletePath(proposalStagingPath(proposal.id as Uuid));
           }
-          const rows = yield* db
+          const rows = yield* db.query((d) => d
             .update(sourceProposals)
             .set({ status: statusToDb(input.status) })
             .where(and(eq(sourceProposals.vaultId, vaultId), eq(sourceProposals.id, proposalId)))
-            .returning()
-            .pipe(dieDatabase);
+            .returning());
           const updated = rows[0];
           if (updated === undefined) {
             throw new Error(`reviewed proposal ${proposalId} not found`);

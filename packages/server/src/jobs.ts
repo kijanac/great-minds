@@ -15,7 +15,6 @@ import * as WorkflowEngine from "effect/unstable/workflow/WorkflowEngine";
 
 import { cancelCompileWorkflow } from "./compile-intents.ts";
 import { AppConfig } from "./config.ts";
-import { dieDatabase } from "./db-defects.ts";
 import { pageEnvelope, oneTotal } from "./pagination.ts";
 import { PipelineRunsService } from "./pipeline-runs.ts";
 import { StagedFileIngestWorkflow } from "./staged-file-ingest-workflow.ts";
@@ -105,15 +104,12 @@ export const JobsServiceLive = Layer.effect(
     const pollIntervalMs = Option.isSome(config.goldensClock) ? 1 : 100;
 
     const readRun = (vaultId: Uuid, jobId: Uuid) =>
-      db
+      db.query((d) => d
         .select()
         .from(pipelineRuns)
         .where(and(eq(pipelineRuns.id, jobId), eq(pipelineRuns.vaultId, vaultId)))
-        .limit(1)
-        .pipe(
-          dieDatabase,
-          Effect.map((rows) => rows[0]),
-        );
+        .limit(1))
+        .pipe(Effect.map((rows) => rows[0]));
 
     const requestCompile = (vaultId: Uuid, jobId: Uuid) =>
       db
@@ -173,8 +169,7 @@ export const JobsServiceLive = Layer.effect(
             }
             return jobResponse(run);
           }),
-        )
-        .pipe(dieDatabase);
+        );
 
     return {
       requestCompile: (userId, vaultId, jobId) =>
@@ -185,7 +180,7 @@ export const JobsServiceLive = Layer.effect(
       cancelCompile: (userId, vaultId, runId) =>
         Effect.gen(function* () {
           yield* access.requireMember(userId, vaultId);
-          const rows = yield* db
+          const rows = yield* db.query((d) => d
             .select({
               activeTaskId: pipelineRuns.activeTaskId,
               activeTaskType: pipelineRuns.activeTaskType,
@@ -198,8 +193,7 @@ export const JobsServiceLive = Layer.effect(
                 inArray(pipelineRuns.status, ["pending", "running"]),
               ),
             )
-            .limit(1)
-            .pipe(dieDatabase);
+            .limit(1));
           const run = rows[0];
           if (run === undefined) return;
           if (run.activeTaskType === "compile" && run.activeTaskId !== null) {
@@ -227,19 +221,17 @@ export const JobsServiceLive = Layer.effect(
             conditions.push(eq(pipelineRuns.status, query.status));
           }
           const where = and(...conditions);
-          const totals = yield* db
+          const totals = yield* db.query((d) => d
             .select({ total: count() })
             .from(pipelineRuns)
-            .where(where)
-            .pipe(dieDatabase);
-          const rows = yield* db
+            .where(where));
+          const rows = yield* db.query((d) => d
             .select()
             .from(pipelineRuns)
             .where(where)
             .orderBy(desc(pipelineRuns.createdAt))
             .limit(query.limit)
-            .offset(query.offset)
-            .pipe(dieDatabase);
+            .offset(query.offset));
           return pageEnvelope(rows.map(jobResponse), query, oneTotal(totals));
         }),
       get: (userId, vaultId, jobId) =>

@@ -3,8 +3,6 @@ import type { Uuid } from "@great-minds/domain";
 import { and, eq, inArray, lt, sql } from "drizzle-orm";
 import { Context, Effect, Layer } from "effect";
 
-import { dieDatabase } from "./db-defects.ts";
-
 export type PipelineProgressStep = {
   readonly key: string;
   readonly label: string;
@@ -73,7 +71,7 @@ export const PipelineRunsServiceLive = Layer.effect(
       steps,
       error,
     ) =>
-      db
+      db.query((d) => d
         .update(pipelineRuns)
         .set({
           currentPhase: phase,
@@ -94,24 +92,21 @@ export const PipelineRunsServiceLive = Layer.effect(
         })
         .where(
           and(eq(pipelineRuns.id, runId), inArray(pipelineRuns.status, ["pending", "running"])),
-        )
-        .pipe(dieDatabase, Effect.asVoid);
+        ))
+        .pipe(Effect.asVoid);
 
     return {
       isActive: (runId) =>
-        db
+        db.query((d) => d
           .select({ id: pipelineRuns.id })
           .from(pipelineRuns)
           .where(
             and(eq(pipelineRuns.id, runId), inArray(pipelineRuns.status, ["pending", "running"])),
           )
-          .limit(1)
-          .pipe(
-            dieDatabase,
-            Effect.map((rows) => rows.length === 1),
-          ),
+          .limit(1))
+          .pipe(Effect.map((rows) => rows.length === 1)),
       cancel: (runId) =>
-        db
+        db.query((d) => d
           .update(pipelineRuns)
           .set({
             status: "cancelled",
@@ -122,11 +117,11 @@ export const PipelineRunsServiceLive = Layer.effect(
           })
           .where(
             and(eq(pipelineRuns.id, runId), inArray(pipelineRuns.status, ["pending", "running"])),
-          )
-          .pipe(dieDatabase, Effect.asVoid),
+          ))
+          .pipe(Effect.asVoid),
       updateProgress,
       failPreservingProgress: (runId, error) =>
-        db
+        db.query((d) => d
           .update(pipelineRuns)
           .set({
             status: "failed",
@@ -137,12 +132,12 @@ export const PipelineRunsServiceLive = Layer.effect(
           })
           .where(
             and(eq(pipelineRuns.id, runId), inArray(pipelineRuns.status, ["pending", "running"])),
-          )
-          .pipe(dieDatabase, Effect.asVoid),
+          ))
+          .pipe(Effect.asVoid),
       fail: (runId, error) => updateProgress(runId, "source_ingest", "failed", [], error),
       recoverZombies: (olderThan) =>
         Effect.gen(function* () {
-          const rows = yield* db
+          const rows = yield* db.query((d) => d
             .update(pipelineRuns)
             .set({
               status: "failed",
@@ -187,8 +182,7 @@ export const PipelineRunsServiceLive = Layer.effect(
                 )`,
               ),
             )
-            .returning({ id: pipelineRuns.id })
-            .pipe(dieDatabase);
+            .returning({ id: pipelineRuns.id }));
           return rows.length;
         }),
     } satisfies PipelineRunsServiceShape;

@@ -25,7 +25,6 @@ import { Context, Effect, Layer } from "effect";
 import { parse as parseYaml } from "yaml";
 
 import { AppConfig } from "./config.ts";
-import { dieDatabase } from "./db-defects.ts";
 import { EmbeddingsService } from "./embeddings.ts";
 import { CostLookupService } from "./llm-costs.ts";
 import {
@@ -493,22 +492,20 @@ export const QueryServiceLive = Layer.effect(
     const titleForPath = async (vaultId: Uuid, path: string) => {
       if (path.startsWith("wiki/")) {
         const rows = await run(
-          db
+          db.query((d) => d
             .select({ title: wikiArticles.title })
             .from(wikiArticles)
             .where(and(eq(wikiArticles.vaultId, vaultId), eq(wikiArticles.filePath, path)))
-            .limit(1)
-            .pipe(dieDatabase),
+            .limit(1)),
         );
         return first(rows)?.title ?? null;
       }
       const rows = await run(
-        db
+        db.query((d) => d
           .select({ title: sourceDocuments.title })
           .from(sourceDocuments)
           .where(and(eq(sourceDocuments.vaultId, vaultId), eq(sourceDocuments.filePath, path)))
-          .limit(1)
-          .pipe(dieDatabase),
+          .limit(1)),
       );
       return first(rows)?.title ?? null;
     };
@@ -516,7 +513,7 @@ export const QueryServiceLive = Layer.effect(
     const buildIdentity = async (vaultId: Uuid, label: string, vaultConfig: QueryVaultConfig) => {
       const [wikiCountRows, rawCountRows] = await Promise.all([
         run(
-          db
+          db.query((d) => d
             .select({ count: sql<number>`count(*)::int` })
             .from(wikiArticles)
             .where(
@@ -525,15 +522,13 @@ export const QueryServiceLive = Layer.effect(
                 eq(wikiArticles.archived, false),
                 ne(wikiArticles.filePath, "wiki/_index.md"),
               ),
-            )
-            .pipe(dieDatabase),
+            )),
         ),
         run(
-          db
+          db.query((d) => d
             .select({ count: sql<number>`count(*)::int` })
             .from(sourceDocuments)
-            .where(eq(sourceDocuments.vaultId, vaultId))
-            .pipe(dieDatabase),
+            .where(eq(sourceDocuments.vaultId, vaultId))),
         ),
       ]);
       const wikiCount = first(wikiCountRows)?.count ?? 0;
@@ -549,14 +544,13 @@ export const QueryServiceLive = Layer.effect(
 
     const distinctTags = async (vaultId: Uuid) => {
       const result = await run(
-        db
+        db.query((d) => d
           .execute(sql<{ tag: string }>`
             select distinct unnest(tags) as tag
             from source_documents
             where vault_id = ${vaultId}
             order by tag
-          `)
-          .pipe(dieDatabase),
+          `)),
       );
       const rows = (result as unknown as { readonly rows: readonly { readonly tag: string }[] })
         .rows;
@@ -675,15 +669,14 @@ export const QueryServiceLive = Layer.effect(
 
     const sectionOutline = async (vaultId: Uuid, path: string) => {
       const chunks = await run(
-        db
+        db.query((d) => d
           .select({
             chunkIndex: searchIndex.chunkIndex,
             heading: searchIndex.heading,
           })
           .from(searchIndex)
           .where(and(eq(searchIndex.vaultId, vaultId), eq(searchIndex.path, path)))
-          .orderBy(asc(searchIndex.chunkIndex))
-          .pipe(dieDatabase),
+          .orderBy(asc(searchIndex.chunkIndex))),
       );
       const sections: { start: number; end: number; heading: string }[] = [];
       for (const chunk of chunks) {
@@ -776,7 +769,7 @@ export const QueryServiceLive = Layer.effect(
       const distance = sql<number>`${searchIndex.embedding} <=> ${vectorLiteral(queryEmbedding)}::vector`;
       const [bm25Rows, vectorRows] = await Promise.all([
         run(
-          db
+          db.query((d) => d
             .select({
               vaultId: searchIndex.vaultId,
               path: searchIndex.path,
@@ -788,11 +781,10 @@ export const QueryServiceLive = Layer.effect(
             .from(searchIndex)
             .where(and(...bm25Conditions))
             .orderBy(desc(rank))
-            .limit(armLimit)
-            .pipe(dieDatabase),
+            .limit(armLimit)),
         ),
         run(
-          db
+          db.query((d) => d
             .select({
               vaultId: searchIndex.vaultId,
               path: searchIndex.path,
@@ -804,8 +796,7 @@ export const QueryServiceLive = Layer.effect(
             .from(searchIndex)
             .where(and(...vectorConditions))
             .orderBy(distance)
-            .limit(armLimit)
-            .pipe(dieDatabase),
+            .limit(armLimit)),
         ),
       ]);
       type SearchRow = (typeof bm25Rows)[number];
@@ -915,7 +906,7 @@ export const QueryServiceLive = Layer.effect(
       }
       end = Math.min(end, start + maxRangeChunks - 1);
       const chunks = await run(
-        db
+        db.query((d) => d
           .select({
             chunkIndex: searchIndex.chunkIndex,
             heading: searchIndex.heading,
@@ -930,8 +921,7 @@ export const QueryServiceLive = Layer.effect(
               lte(searchIndex.chunkIndex, end),
             ),
           )
-          .orderBy(asc(searchIndex.chunkIndex))
-          .pipe(dieDatabase),
+          .orderBy(asc(searchIndex.chunkIndex))),
       );
       if (chunks.length === 0) {
         throw new ToolMiss(
@@ -961,7 +951,7 @@ export const QueryServiceLive = Layer.effect(
         );
       }
       const sourceRows = await run(
-        db
+        db.query((d) => d
           .select({ id: wikiArticles.id })
           .from(wikiArticles)
           .where(
@@ -971,15 +961,14 @@ export const QueryServiceLive = Layer.effect(
               eq(wikiArticles.archived, false),
             ),
           )
-          .limit(1)
-          .pipe(dieDatabase),
+          .limit(1)),
       );
       const source = first(sourceRows);
       if (source === undefined) {
         throw new ToolMiss(`Article not found: ${path}`);
       }
       const outgoing = await run(
-        db
+        db.query((d) => d
           .select({ filePath: wikiArticles.filePath, title: wikiArticles.title })
           .from(backlinks)
           .innerJoin(wikiArticles, eq(wikiArticles.id, backlinks.targetArticleId))
@@ -990,11 +979,10 @@ export const QueryServiceLive = Layer.effect(
               eq(wikiArticles.archived, false),
             ),
           )
-          .orderBy(asc(sql`lower(${wikiArticles.title})`))
-          .pipe(dieDatabase),
+          .orderBy(asc(sql`lower(${wikiArticles.title})`))),
       );
       const incoming = await run(
-        db
+        db.query((d) => d
           .select({ filePath: wikiArticles.filePath, title: wikiArticles.title })
           .from(backlinks)
           .innerJoin(wikiArticles, eq(wikiArticles.id, backlinks.sourceArticleId))
@@ -1005,8 +993,7 @@ export const QueryServiceLive = Layer.effect(
               eq(wikiArticles.archived, false),
             ),
           )
-          .orderBy(asc(sql`lower(${wikiArticles.title})`))
-          .pipe(dieDatabase),
+          .orderBy(asc(sql`lower(${wikiArticles.title})`))),
       );
       const formatLinks = (
         rows: readonly { readonly title: string; readonly filePath: string }[],
@@ -1053,13 +1040,12 @@ export const QueryServiceLive = Layer.effect(
           ? Math.max(1, Math.min(50, Math.trunc(args.limit)))
           : 20;
       const rows = await run(
-        db
+        db.query((d) => d
           .select()
           .from(sourceDocuments)
           .where(and(...conditions))
           .orderBy(desc(sourceDocuments.updatedAt))
-          .limit(limit)
-          .pipe(dieDatabase),
+          .limit(limit)),
       );
       const source = await sourceEvent(context, "query_documents", args);
       if (rows.length === 0) {
@@ -1118,34 +1104,37 @@ export const QueryServiceLive = Layer.effect(
         );
       }
       const countRows = await run(
-        db
+        db.query((d) => d
           .select({ count: sql<number>`count(*)::int` })
           .from(wikiArticles)
-          .where(and(...conditions))
-          .pipe(dieDatabase),
+          .where(and(...conditions))),
       );
       const total = first(countRows)?.count ?? 0;
       const offset = (page - 1) * articlesPerPage;
       const inboundCount = sql<number>`count(${backlinks.sourceArticleId})`;
-      const query = db
-        .select({
-          filePath: wikiArticles.filePath,
-          title: wikiArticles.title,
-          precis: wikiArticles.precis,
-          updatedAt: wikiArticles.updatedAt,
-          inboundCount,
-        })
-        .from(wikiArticles)
-        .leftJoin(backlinks, eq(backlinks.targetArticleId, wikiArticles.id))
-        .where(and(...conditions))
-        .groupBy(wikiArticles.id);
-      const ordered =
-        sort === "recent"
-          ? query.orderBy(desc(wikiArticles.updatedAt))
-          : sort === "alpha"
-            ? query.orderBy(asc(sql`lower(${wikiArticles.title})`))
-            : query.orderBy(desc(inboundCount), asc(sql`lower(${wikiArticles.title})`));
-      const rows = await run(ordered.limit(articlesPerPage).offset(offset).pipe(dieDatabase));
+      const rows = await run(
+        db.query((d) => {
+          const query = d
+            .select({
+              filePath: wikiArticles.filePath,
+              title: wikiArticles.title,
+              precis: wikiArticles.precis,
+              updatedAt: wikiArticles.updatedAt,
+              inboundCount,
+            })
+            .from(wikiArticles)
+            .leftJoin(backlinks, eq(backlinks.targetArticleId, wikiArticles.id))
+            .where(and(...conditions))
+            .groupBy(wikiArticles.id);
+          const ordered =
+            sort === "recent"
+              ? query.orderBy(desc(wikiArticles.updatedAt))
+              : sort === "alpha"
+                ? query.orderBy(asc(sql`lower(${wikiArticles.title})`))
+                : query.orderBy(desc(inboundCount), asc(sql`lower(${wikiArticles.title})`));
+          return ordered.limit(articlesPerPage).offset(offset);
+        }),
+      );
       const source = await sourceEvent(context, "list_articles", args);
       if (rows.length === 0) {
         return {
@@ -1616,7 +1605,7 @@ export const QueryServiceLive = Layer.effect(
       if (context !== undefined && context.costUsd > 0) {
         try {
           await run(
-            db
+            db.query((d) => d
               .insert(llmCostEvents)
               .values({
                 userId: context.userId,
@@ -1624,8 +1613,7 @@ export const QueryServiceLive = Layer.effect(
                 eventType: "query.stream",
                 costUsd: context.costUsd.toFixed(6),
                 correlationId: context.correlationId,
-              })
-              .pipe(dieDatabase),
+              })),
           );
         } catch (error) {
           await run(

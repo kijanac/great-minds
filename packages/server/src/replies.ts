@@ -24,7 +24,6 @@ import { Cause, Context, Effect, Layer, Option, Schema, Stream } from "effect";
 
 import { ClockService } from "./clock.ts";
 import { AppConfig } from "./config.ts";
-import { dieDatabase } from "./db-defects.ts";
 import { StructuredLogger } from "./logging.ts";
 import { type QueryPrecheckedContext, QueryService } from "./query.ts";
 import { formatUuid7, RandomBytesService } from "./random.ts";
@@ -150,41 +149,32 @@ export const RepliesServiceLive = Layer.effect(
       });
 
     const readReply = (vaultId: Uuid, replyId: Uuid) =>
-      db
+      db.query((d) => d
         .select()
         .from(replies)
         .where(and(eq(replies.id, replyId), eq(replies.vaultId, vaultId)))
-        .limit(1)
-        .pipe(
-          dieDatabase,
-          Effect.map((rows) => rows[0]),
-        );
+        .limit(1))
+        .pipe(Effect.map((rows) => rows[0]));
 
     const readReplyById = (replyId: Uuid) =>
-      db
+      db.query((d) => d
         .select()
         .from(replies)
         .where(eq(replies.id, replyId))
-        .limit(1)
-        .pipe(
-          dieDatabase,
-          Effect.map((rows) => rows[0]),
-        );
+        .limit(1))
+        .pipe(Effect.map((rows) => rows[0]));
 
     const requireSession = (vaultId: Uuid, sessionId: SessionId) =>
-      db
+      db.query((d) => d
         .select({ id: sessionsTable.id })
         .from(sessionsTable)
         .where(and(eq(sessionsTable.vaultId, vaultId), eq(sessionsTable.id, sessionId)))
-        .limit(1)
-        .pipe(
-          dieDatabase,
-          Effect.flatMap((rows) =>
-            rows[0] === undefined
-              ? Effect.fail(new NotFound({ detail: "Session not found" }))
-              : Effect.void,
-          ),
-        );
+        .limit(1))
+        .pipe(Effect.flatMap((rows) =>
+        rows[0] === undefined
+          ? Effect.fail(new NotFound({ detail: "Session not found" }))
+          : Effect.void,
+      ));
 
     const snapshot = (row: typeof replies.$inferSelect): ReplySnapshot =>
       decodeReplySnapshot({
@@ -205,7 +195,7 @@ export const RepliesServiceLive = Layer.effect(
       answer: string,
       sources: readonly ReplySource[],
     ) =>
-      db
+      db.query((d) => d
         .update(replies)
         .set({
           answer,
@@ -213,8 +203,8 @@ export const RepliesServiceLive = Layer.effect(
           version: sql`${replies.version} + 1`,
           updatedAt: sql`now()`,
         })
-        .where(eq(replies.id, replyId))
-        .pipe(dieDatabase, Effect.asVoid);
+        .where(eq(replies.id, replyId)))
+        .pipe(Effect.asVoid);
 
     const markFailed = (
       replyId: Uuid,
@@ -222,7 +212,7 @@ export const RepliesServiceLive = Layer.effect(
       answer?: string,
       sources?: readonly ReplySource[],
     ) =>
-      db
+      db.query((d) => d
         .update(replies)
         .set({
           status: "failed",
@@ -232,8 +222,8 @@ export const RepliesServiceLive = Layer.effect(
           version: sql`${replies.version} + 1`,
           updatedAt: sql`now()`,
         })
-        .where(and(eq(replies.id, replyId), eq(replies.status, "running")))
-        .pipe(dieDatabase, Effect.asVoid);
+        .where(and(eq(replies.id, replyId), eq(replies.status, "running"))))
+        .pipe(Effect.asVoid);
 
     const completeReply = (
       row: typeof replies.$inferSelect,
@@ -289,7 +279,7 @@ export const RepliesServiceLive = Layer.effect(
           );
         }
 
-        yield* db
+        yield* db.query((d) => d
           .update(replies)
           .set({
             status: "completed",
@@ -299,8 +289,7 @@ export const RepliesServiceLive = Layer.effect(
             version: sql`${replies.version} + 1`,
             updatedAt: sql`now()`,
           })
-          .where(and(eq(replies.id, row.id), eq(replies.status, "running")))
-          .pipe(dieDatabase);
+          .where(and(eq(replies.id, row.id), eq(replies.status, "running"))));
       });
 
     const generate = (replyId: Uuid) =>
@@ -310,12 +299,11 @@ export const RepliesServiceLive = Layer.effect(
           return;
         }
         const input = yield* decodeCreateReply(row.request).pipe(Effect.orDie);
-        const vaultRows = yield* db
+        const vaultRows = yield* db.query((d) => d
           .select({ name: vaults.name })
           .from(vaults)
           .where(eq(vaults.id, row.vaultId))
-          .limit(1)
-          .pipe(dieDatabase);
+          .limit(1));
         const vault = vaultRows[0];
         if (vault === undefined) {
           yield* markFailed(replyId, sanitizedReplyError);
@@ -479,7 +467,7 @@ export const RepliesServiceLive = Layer.effect(
       );
 
     const recoverZombies = (olderThan: Date) =>
-      db
+      db.query((d) => d
         .update(replies)
         .set({
           status: "failed",
@@ -488,23 +476,19 @@ export const RepliesServiceLive = Layer.effect(
           updatedAt: sql`now()`,
         })
         .where(and(eq(replies.status, "running"), lt(replies.updatedAt, olderThan)))
-        .returning({ id: replies.id })
-        .pipe(
-          dieDatabase,
-          Effect.map((rows) => rows.length),
-        );
+        .returning({ id: replies.id }))
+        .pipe(Effect.map((rows) => rows.length));
 
     yield* recoverZombies(yield* clock.now);
 
     return {
       create: (userId, vaultId, input) =>
         Effect.gen(function* () {
-          const vaultRows = yield* db
+          const vaultRows = yield* db.query((d) => d
             .select({ id: vaults.id })
             .from(vaults)
             .where(eq(vaults.id, vaultId))
-            .limit(1)
-            .pipe(dieDatabase);
+            .limit(1));
           if (vaultRows[0] === undefined) {
             return yield* new NotFound({ detail: "Vault not found" });
           }
@@ -557,7 +541,7 @@ export const RepliesServiceLive = Layer.effect(
             yield* sessions.appendBtw(userId, vaultId, sessionId, input.btw, replyId);
           }
 
-          yield* db
+          yield* db.query((d) => d
             .insert(replies)
             .values({
               id: replyId,
@@ -569,8 +553,7 @@ export const RepliesServiceLive = Layer.effect(
               answer: "",
               sources: [],
               request: input,
-            })
-            .pipe(dieDatabase);
+            }));
           yield* generate(replyId).pipe(Effect.forkDetach({ startImmediately: true }));
           return { reply_id: replyId, session_id: sessionId };
         }),

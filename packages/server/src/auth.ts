@@ -9,7 +9,6 @@ import { Context, Effect, Layer, Result, Schema } from "effect";
 import { ClockService } from "./clock.ts";
 import { AppConfig } from "./config.ts";
 import { generateApiKey, generateAuthCode, generateRefreshToken, sha256Hex } from "./crypto.ts";
-import { dieDatabase } from "./db-defects.ts";
 import { Mailer } from "./mailer.ts";
 import { VaultStorage } from "./storage.ts";
 import { TokenService } from "./tokens.ts";
@@ -78,7 +77,7 @@ export const AuthServiceLive = Layer.effect(
     const vaultsService = yield* VaultsService;
 
     const resolveApiKey = (rawKey: string) =>
-      db
+      db.query((d) => d
         .select({
           id: users.id,
           email: users.email,
@@ -86,7 +85,7 @@ export const AuthServiceLive = Layer.effect(
         .from(users)
         .innerJoin(apiKeys, eq(apiKeys.userId, users.id))
         .where(and(eq(apiKeys.keyHash, sha256Hex(rawKey)), eq(apiKeys.revoked, false)))
-        .limit(1)
+        .limit(1))
         .pipe(Effect.orDie);
 
     const issueTokenPair = (userId: Uuid) =>
@@ -106,8 +105,7 @@ export const AuthServiceLive = Layer.effect(
               });
               return tokenPair(accessToken, refreshToken);
             }),
-          )
-          .pipe(dieDatabase);
+          );
       });
 
     return {
@@ -186,8 +184,7 @@ export const AuthServiceLive = Layer.effect(
                       );
                 return asUuid(user.id);
               }),
-            )
-            .pipe(dieDatabase);
+            );
           const pair = yield* issueTokenPair(result);
           yield* vaultsService.ensureDefaultForUser(result, email);
           return pair;
@@ -230,19 +227,18 @@ export const AuthServiceLive = Layer.effect(
                 });
                 return tokenPair(accessToken, nextRefreshToken);
               }),
-            )
-            .pipe(dieDatabase);
+            );
         }),
       issueTokenPair,
       authenticateBearer: (token) =>
         Effect.gen(function* () {
           const jwtResult = yield* Effect.result(tokens.verifyAccessToken(token));
           if (Result.isSuccess(jwtResult)) {
-            const userRows = yield* db
+            const userRows = yield* db.query((d) => d
               .select()
               .from(users)
               .where(eq(users.id, jwtResult.success))
-              .limit(1)
+              .limit(1))
               .pipe(Effect.orDie);
             const user = userRows[0];
             if (user !== undefined) {
@@ -268,7 +264,7 @@ export const AuthServiceLive = Layer.effect(
       createApiKey: (userId, label) =>
         Effect.gen(function* () {
           const rawKey = yield* generateApiKey;
-          const rows = yield* db
+          const rows = yield* db.query((d) => d
             .insert(apiKeys)
             .values({
               id: randomUUID(),
@@ -277,7 +273,7 @@ export const AuthServiceLive = Layer.effect(
               label,
               revoked: false,
             })
-            .returning()
+            .returning())
             .pipe(Effect.orDie);
           const row = rows[0];
           if (row === undefined) {
@@ -289,22 +285,22 @@ export const AuthServiceLive = Layer.effect(
           };
         }),
       listApiKeys: (userId) =>
-        db
+        db.query((d) => d
           .select()
           .from(apiKeys)
           .where(eq(apiKeys.userId, userId))
-          .orderBy(desc(apiKeys.createdAt))
+          .orderBy(desc(apiKeys.createdAt)))
           .pipe(
             Effect.map((rows) => rows.map(apiKeyResponse)),
             Effect.orDie,
           ),
       revokeApiKey: (userId, keyId) =>
         Effect.gen(function* () {
-          const rows = yield* db
+          const rows = yield* db.query((d) => d
             .update(apiKeys)
             .set({ revoked: true })
             .where(and(eq(apiKeys.id, keyId), eq(apiKeys.userId, userId)))
-            .returning({ id: apiKeys.id })
+            .returning({ id: apiKeys.id }))
             .pipe(Effect.orDie);
           if (rows[0] === undefined) {
             return yield* new NotFound({ detail: "API key not found" });
@@ -314,10 +310,10 @@ export const AuthServiceLive = Layer.effect(
         Effect.gen(function* () {
           yield* vaultsService.deleteOwnedVaults(userId);
           yield* storage.clearUser(userId);
-          const rows = yield* db
+          const rows = yield* db.query((d) => d
             .delete(users)
             .where(eq(users.id, userId))
-            .returning({ id: users.id, r2BucketName: users.r2BucketName })
+            .returning({ id: users.id, r2BucketName: users.r2BucketName }))
             .pipe(Effect.orDie);
           const deleted = rows[0];
           if (deleted === undefined) {

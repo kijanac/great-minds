@@ -20,7 +20,6 @@ import { ClockService } from "./clock.ts";
 import { makeCompileLlmCore } from "./compile-llm-core.ts";
 import { AppConfig } from "./config.ts";
 import { bodyContentHash, contentHash, fileContentHash } from "./crypto.ts";
-import { dieDatabase } from "./db-defects.ts";
 import { EmbeddingsService } from "./embeddings.ts";
 import { errorDetails } from "./error-details.ts";
 import { LanguageModel } from "./llm.ts";
@@ -264,27 +263,25 @@ export const CompilePhasesLive = Layer.effect(
     const rebuildSearchScope = (vaultId: Uuid, runId: Uuid, scope: "raw" | "wiki") =>
       Effect.gen(function* () {
         const prefix = `${scope}/`;
-        const existing = yield* db
+        const existing = yield* db.query((d) => d
           .select({
             path: searchIndex.path,
             chunkIndex: searchIndex.chunkIndex,
             contentHash: searchIndex.contentHash,
           })
           .from(searchIndex)
-          .where(and(eq(searchIndex.vaultId, vaultId), like(searchIndex.path, `${prefix}%`)))
-          .pipe(dieDatabase);
+          .where(and(eq(searchIndex.vaultId, vaultId), like(searchIndex.path, `${prefix}%`))));
         const existingHashes = new Map(
           existing.map((row) => [`${row.path}\u0000${row.chunkIndex}`, row.contentHash]),
         );
-        const documents = yield* db
+        const documents = yield* db.query((d) => d
           .select({
             id: sourceDocuments.id,
             path: sourceDocuments.filePath,
             etag: sourceDocuments.etag,
           })
           .from(sourceDocuments)
-          .where(eq(sourceDocuments.vaultId, vaultId))
-          .pipe(dieDatabase);
+          .where(eq(sourceDocuments.vaultId, vaultId)));
         const documentsByPath = new Map(documents.map((row) => [row.path, row]));
         const files = yield* storage.listMarkdown(vaultId, scope);
         const current = new Map<string, Set<number>>();
@@ -381,7 +378,7 @@ export const CompilePhasesLive = Layer.effect(
               updatedAt: sql`now()`,
             };
           });
-          yield* db
+          yield* db.query((d) => d
             .insert(searchIndex)
             .values(rows)
             .onConflictDoUpdate({
@@ -394,18 +391,16 @@ export const CompilePhasesLive = Layer.effect(
                 embedding: sql`excluded.embedding`,
                 updatedAt: sql`excluded.updated_at`,
               },
-            })
-            .pipe(dieDatabase);
+            }));
         }
 
         const currentPaths = [...current.keys()];
         if (currentPaths.length === 0) {
-          yield* db
+          yield* db.query((d) => d
             .delete(searchIndex)
-            .where(and(eq(searchIndex.vaultId, vaultId), like(searchIndex.path, `${prefix}%`)))
-            .pipe(dieDatabase);
+            .where(and(eq(searchIndex.vaultId, vaultId), like(searchIndex.path, `${prefix}%`))));
         } else {
-          yield* db
+          yield* db.query((d) => d
             .delete(searchIndex)
             .where(
               and(
@@ -413,10 +408,9 @@ export const CompilePhasesLive = Layer.effect(
                 like(searchIndex.path, `${prefix}%`),
                 notInArray(searchIndex.path, currentPaths),
               ),
-            )
-            .pipe(dieDatabase);
+            ));
           for (const [path, indexes] of current) {
-            yield* db
+            yield* db.query((d) => d
               .delete(searchIndex)
               .where(
                 and(
@@ -424,16 +418,14 @@ export const CompilePhasesLive = Layer.effect(
                   eq(searchIndex.path, path),
                   notInArray(searchIndex.chunkIndex, [...indexes]),
                 ),
-              )
-              .pipe(dieDatabase);
+              ));
           }
         }
         for (const etag of etags) {
-          yield* db
+          yield* db.query((d) => d
             .update(sourceDocuments)
             .set({ etag: etag.etag, updatedAt: sql`now()` })
-            .where(eq(sourceDocuments.id, etag.id))
-            .pipe(dieDatabase);
+            .where(eq(sourceDocuments.id, etag.id)));
         }
         return [...current.values()].reduce((total, indexes) => total + indexes.size, 0);
       });
@@ -466,7 +458,7 @@ export const CompilePhasesLive = Layer.effect(
           output.body,
         );
         yield* storage.writeText(vaultId, path, content);
-        yield* db
+        yield* db.query((d) => d
           .insert(wikiArticles)
           .values({
             id: crypto.randomUUID(),
@@ -494,31 +486,28 @@ export const CompilePhasesLive = Layer.effect(
               archived: false,
               updatedAt: sql`now()`,
             },
-          })
-          .pipe(dieDatabase);
-        yield* db
+          }));
+        yield* db.query((d) => d
           .update(topics)
           .set({
             articleStatus: "rendered",
             renderedFromHash: topicContentHash(topic),
             updatedAt: sql`now()`,
           })
-          .where(eq(topics.topicId, topic.topicId as Uuid))
-          .pipe(dieDatabase);
+          .where(eq(topics.topicId, topic.topicId as Uuid)));
       });
 
     const applyArchiveTransitions = (vaultId: Uuid, transitions: readonly ArchiveTransition[]) =>
       Effect.gen(function* () {
         for (const transition of transitions) {
-          yield* db
+          yield* db.query((d) => d
             .update(topics)
             .set({
               articleStatus: "archived",
               supersededBy: transition.supersededBy,
               updatedAt: sql`now()`,
             })
-            .where(eq(topics.topicId, transition.topicId))
-            .pipe(dieDatabase);
+            .where(eq(topics.topicId, transition.topicId)));
           const wikiPath = `wiki/${transition.slug}.md`;
           const content = yield* Effect.result(storage.readText(vaultId, wikiPath));
           if (content._tag === "Failure") continue;
@@ -537,13 +526,12 @@ export const CompilePhasesLive = Layer.effect(
             serializeFrontmatter(frontmatter, parsed.body),
           );
           yield* storage.deletePath(vaultId, wikiPath);
-          yield* db
+          yield* db.query((d) => d
             .update(wikiArticles)
             .set({ filePath: archivePath, archived: true, updatedAt: sql`now()` })
             .where(
               and(eq(wikiArticles.vaultId, vaultId), eq(wikiArticles.topicId, transition.topicId)),
-            )
-            .pipe(dieDatabase);
+            ));
         }
       });
 
@@ -606,15 +594,14 @@ export const CompilePhasesLive = Layer.effect(
               counts: { find_related: [0, validated.length] },
             }),
           );
-          yield* db
+          yield* db.query((d) => d
             .delete(topicMembership)
             .where(
               inArray(
                 topicMembership.topicId,
                 validated.map((topic) => topic.topicId as Uuid),
               ),
-            )
-            .pipe(dieDatabase);
+            ));
           const memberships = validated.flatMap((topic) =>
             topic.subsumedIdeaIds.map((ideaId) => ({
               topicId: topic.topicId as Uuid,
@@ -622,23 +609,21 @@ export const CompilePhasesLive = Layer.effect(
             })),
           );
           if (memberships.length > 0) {
-            yield* db.insert(topicMembership).values(memberships).pipe(dieDatabase);
+            yield* db.query((d) => d.insert(topicMembership).values(memberships));
           }
-          const vaultTopicIds = yield* db
+          const vaultTopicIds = yield* db.query((d) => d
             .select({ id: topics.topicId })
             .from(topics)
-            .where(eq(topics.vaultId, vaultId))
-            .pipe(dieDatabase);
+            .where(eq(topics.vaultId, vaultId)));
           if (vaultTopicIds.length > 0) {
-            yield* db
+            yield* db.query((d) => d
               .delete(topicLinks)
               .where(
                 inArray(
                   topicLinks.sourceTopicId,
                   vaultTopicIds.map((row) => row.id),
                 ),
-              )
-              .pipe(dieDatabase);
+              ));
           }
           const slugToId = new Map(validated.map((topic) => [topic.slug, topic.topicId as Uuid]));
           const links = validated.flatMap((topic) =>
@@ -649,7 +634,7 @@ export const CompilePhasesLive = Layer.effect(
                 : [{ sourceTopicId: topic.topicId as Uuid, targetTopicId: target }];
             }),
           );
-          if (links.length > 0) yield* db.insert(topicLinks).values(links).pipe(dieDatabase);
+          if (links.length > 0) yield* db.query((d) => d.insert(topicLinks).values(links));
 
           const related = new Map<string, { id: Uuid; shared: number; jaccard: number }[]>();
           for (const topic of validated) related.set(topic.topicId, []);
@@ -670,10 +655,9 @@ export const CompilePhasesLive = Layer.effect(
             }
           }
           for (const topic of validated) {
-            yield* db
+            yield* db.query((d) => d
               .delete(topicRelated)
-              .where(eq(topicRelated.topicId, topic.topicId as Uuid))
-              .pipe(dieDatabase);
+              .where(eq(topicRelated.topicId, topic.topicId as Uuid)));
             const rows = (related.get(topic.topicId) ?? [])
               .toSorted(
                 (left, right) => right.jaccard - left.jaccard || compareText(left.id, right.id),
@@ -685,7 +669,7 @@ export const CompilePhasesLive = Layer.effect(
                 sharedIdeas: row.shared,
                 jaccard: row.jaccard,
               }));
-            if (rows.length > 0) yield* db.insert(topicRelated).values(rows).pipe(dieDatabase);
+            if (rows.length > 0) yield* db.query((d) => d.insert(topicRelated).values(rows));
           }
           yield* pipeline.updateProgress(
             runId,
@@ -706,12 +690,11 @@ export const CompilePhasesLive = Layer.effect(
             "progress",
             progressSteps(VERIFY_STEP_LABELS, "check_links"),
           );
-          const rendered = yield* db
+          const rendered = yield* db.query((d) => d
             .select()
             .from(topics)
             .where(and(eq(topics.vaultId, vaultId), eq(topics.articleStatus, "rendered")))
-            .orderBy(asc(topics.title))
-            .pipe(dieDatabase);
+            .orderBy(asc(topics.title)));
           if (rendered.length === 0) {
             yield* pipeline.updateProgress(
               runId,
@@ -731,12 +714,11 @@ export const CompilePhasesLive = Layer.effect(
               counts: { check_links: [0, rendered.length] },
             }),
           );
-          const articles = yield* db
+          const articles = yield* db.query((d) => d
             .select()
             .from(wikiArticles)
             .where(eq(wikiArticles.vaultId, vaultId))
-            .orderBy(asc(wikiArticles.filePath))
-            .pipe(dieDatabase);
+            .orderBy(asc(wikiArticles.filePath)));
           const topicBySlug = new Map(rendered.map((topic) => [topic.slug, topic]));
           const articleByTopic = new Map(articles.map((article) => [article.topicId, article]));
           const sourceIds: Uuid[] = [];
@@ -775,12 +757,11 @@ export const CompilePhasesLive = Layer.effect(
             );
           }
           if (sourceIds.length > 0) {
-            yield* db
+            yield* db.query((d) => d
               .delete(backlinks)
-              .where(inArray(backlinks.sourceArticleId, sourceIds))
-              .pipe(dieDatabase);
+              .where(inArray(backlinks.sourceArticleId, sourceIds)));
           }
-          if (edges.length > 0) yield* db.insert(backlinks).values(edges).pipe(dieDatabase);
+          if (edges.length > 0) yield* db.query((d) => d.insert(backlinks).values(edges));
           yield* pipeline.updateProgress(
             runId,
             "verify",
@@ -799,17 +780,15 @@ export const CompilePhasesLive = Layer.effect(
             "progress",
             progressSteps(PUBLISH_STEP_LABELS, "publish_wiki"),
           );
-          const rendered = yield* db
+          const rendered = yield* db.query((d) => d
             .select()
             .from(topics)
             .where(and(eq(topics.vaultId, vaultId), eq(topics.articleStatus, "rendered")))
-            .orderBy(asc(topics.title))
-            .pipe(dieDatabase);
-          const documents = yield* db
+            .orderBy(asc(topics.title)));
+          const documents = yield* db.query((d) => d
             .select()
             .from(sourceDocuments)
-            .where(eq(sourceDocuments.vaultId, vaultId))
-            .pipe(dieDatabase);
+            .where(eq(sourceDocuments.vaultId, vaultId)));
           yield* pipeline.updateProgress(
             runId,
             "publish",
@@ -876,7 +855,7 @@ export const CompilePhasesLive = Layer.effect(
               counts: { publish_wiki: [2, 2] },
             }),
           );
-          const counts = yield* db
+          const counts = yield* db.query((d) => d
             .select({
               total: sql<number>`count(*)::int`,
               rendered: sql<number>`count(*) filter (where ${topics.articleStatus} = 'rendered')::int`,
@@ -884,16 +863,14 @@ export const CompilePhasesLive = Layer.effect(
               dirty: sql<number>`count(*) filter (where ${topics.articleStatus} != 'archived' and ${topics.compiledFromHash} is not null and (${topics.renderedFromHash} is null or ${topics.renderedFromHash} != ${topics.compiledFromHash}))::int`,
             })
             .from(topics)
-            .where(eq(topics.vaultId, vaultId))
-            .pipe(dieDatabase);
-          const chunkCounts = yield* db
+            .where(eq(topics.vaultId, vaultId)));
+          const chunkCounts = yield* db.query((d) => d
             .select({
               raw: sql<number>`count(*) filter (where ${searchIndex.path} like 'raw/%')::int`,
               wiki: sql<number>`count(*) filter (where ${searchIndex.path} like 'wiki/%')::int`,
             })
             .from(searchIndex)
-            .where(eq(searchIndex.vaultId, vaultId))
-            .pipe(dieDatabase);
+            .where(eq(searchIndex.vaultId, vaultId)));
           const count = counts[0];
           const chunks = chunkCounts[0];
           if (count === undefined || chunks === undefined)

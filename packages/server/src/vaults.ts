@@ -23,7 +23,6 @@ import { and, asc, desc, eq, sql } from "drizzle-orm";
 import { Cause, Context, Effect, Layer, Schema } from "effect";
 import { parse as parseYaml, parseDocument } from "yaml";
 
-import { dieDatabase } from "./db-defects.ts";
 import { StructuredLogger } from "./logging.ts";
 import { Mailer } from "./mailer.ts";
 import { pageEnvelope, oneTotal } from "./pagination.ts";
@@ -248,12 +247,11 @@ export const VaultAccessServiceLive = Layer.effect(
       detail = "Only vault members can perform this action",
     ) =>
       Effect.gen(function* () {
-        const rows = yield* db
+        const rows = yield* db.query((d) => d
           .select({ role: vaultMemberships.role })
           .from(vaultMemberships)
           .where(and(eq(vaultMemberships.userId, userId), eq(vaultMemberships.vaultId, vaultId)))
-          .limit(1)
-          .pipe(dieDatabase);
+          .limit(1));
         const row = rows[0];
         if (row === undefined) {
           return yield* new Forbidden({ detail });
@@ -310,12 +308,11 @@ export const VaultsServiceLive = Layer.effect(
 
     const getVaultRow = (vaultId: Uuid) =>
       Effect.gen(function* () {
-        const rows = yield* db
+        const rows = yield* db.query((d) => d
           .select()
           .from(vaults)
           .where(eq(vaults.id, vaultId))
-          .limit(1)
-          .pipe(dieDatabase);
+          .limit(1));
         return rows[0];
       });
 
@@ -354,15 +351,14 @@ export const VaultsServiceLive = Layer.effect(
     const ensureUser = (emailInput: Email) =>
       Effect.gen(function* () {
         const email = normalizeEmail(emailInput);
-        const inserted = yield* db
+        const inserted = yield* db.query((d) => d
           .insert(users)
           .values({ id: randomUUID(), email })
           .onConflictDoNothing({ target: users.email })
-          .returning()
-          .pipe(dieDatabase);
+          .returning());
         const row =
           inserted[0] ??
-          (yield* db.select().from(users).where(eq(users.email, email)).limit(1).pipe(dieDatabase))[0];
+          (yield* db.query((d) => d.select().from(users).where(eq(users.email, email)).limit(1)))[0];
         if (row === undefined) {
           throw new Error(`user ${email} was not created or found`);
         }
@@ -416,30 +412,26 @@ export const VaultsServiceLive = Layer.effect(
               return row;
             }),
           )
-          .pipe(
-            Effect.catchCause((cause) =>
-              logger
-                .error("vault_create_db_failed_after_storage_seed", {
-                  vault_id: vaultId,
-                  bucket: bucketName,
-                  error: "Cause",
-                  error_message: Cause.pretty(cause),
-                })
-                .pipe(Effect.andThen(Effect.failCause(cause))),
-            ),
-            dieDatabase,
-          );
+          .pipe(Effect.catchCause((cause) =>
+          logger
+            .error("vault_create_db_failed_after_storage_seed", {
+              vault_id: vaultId,
+              bucket: bucketName,
+              error: "Cause",
+              error_message: Cause.pretty(cause),
+            })
+            .pipe(Effect.andThen(Effect.failCause(cause))),
+        ));
         return vaultResponse(created);
       });
 
     return {
       ensureDefaultForUser: (userId, email) =>
         Effect.gen(function* () {
-          const membershipCounts = yield* db
+          const membershipCounts = yield* db.query((d) => d
             .select({ count: sql<number>`count(*)::int` })
             .from(vaultMemberships)
-            .where(eq(vaultMemberships.userId, userId))
-            .pipe(dieDatabase);
+            .where(eq(vaultMemberships.userId, userId)));
           if (oneCount(membershipCounts) > 0) {
             return;
           }
@@ -447,12 +439,11 @@ export const VaultsServiceLive = Layer.effect(
         }),
       deleteOwnedVaults: (userId) =>
         Effect.gen(function* () {
-          const owned = yield* db
+          const owned = yield* db.query((d) => d
             .select({ id: vaults.id, r2BucketName: vaults.r2BucketName })
             .from(vaults)
-            .where(eq(vaults.ownerId, userId))
-            .pipe(dieDatabase);
-          yield* db.delete(vaults).where(eq(vaults.ownerId, userId)).pipe(dieDatabase);
+            .where(eq(vaults.ownerId, userId)));
+          yield* db.query((d) => d.delete(vaults).where(eq(vaults.ownerId, userId)));
           for (const vault of owned) {
             yield* storage.clearVault(asUuid(vault.id), vault.r2BucketName);
           }
@@ -460,12 +451,11 @@ export const VaultsServiceLive = Layer.effect(
       createVault,
       listVaults: (userId, params) =>
         Effect.gen(function* () {
-          const countRows = yield* db
+          const countRows = yield* db.query((d) => d
             .select({ total: sql<number>`count(*)::int` })
             .from(vaultMemberships)
-            .where(eq(vaultMemberships.userId, userId))
-            .pipe(dieDatabase);
-          const rows = yield* db
+            .where(eq(vaultMemberships.userId, userId)));
+          const rows = yield* db.query((d) => d
             .select({
               id: vaults.id,
               name: vaults.name,
@@ -479,8 +469,7 @@ export const VaultsServiceLive = Layer.effect(
             .where(eq(vaultMemberships.userId, userId))
             .orderBy(desc(vaults.createdAt))
             .limit(params.limit)
-            .offset(params.offset)
-            .pipe(dieDatabase);
+            .offset(params.offset));
 
           return {
             ...pageEnvelope(
@@ -494,26 +483,23 @@ export const VaultsServiceLive = Layer.effect(
       getVaultDetail: (userId, vaultId) =>
         Effect.gen(function* () {
           const scope = yield* access.requireMember(userId, vaultId, "Not a member of this vault");
-          const rows = yield* db
+          const rows = yield* db.query((d) => d
             .select()
             .from(vaults)
             .where(eq(vaults.id, vaultId))
-            .limit(1)
-            .pipe(dieDatabase);
+            .limit(1));
           const vault = rows[0];
           if (vault === undefined) {
             return yield* new Forbidden({ detail: "Not a member of this vault" });
           }
-          const memberCounts = yield* db
+          const memberCounts = yield* db.query((d) => d
             .select({ total: sql<number>`count(*)::int` })
             .from(vaultMemberships)
-            .where(eq(vaultMemberships.vaultId, vaultId))
-            .pipe(dieDatabase);
-          const articleCounts = yield* db
+            .where(eq(vaultMemberships.vaultId, vaultId)));
+          const articleCounts = yield* db.query((d) => d
             .select({ total: sql<number>`count(*)::int` })
             .from(wikiArticles)
-            .where(eq(wikiArticles.vaultId, vaultId))
-            .pipe(dieDatabase);
+            .where(eq(wikiArticles.vaultId, vaultId)));
           return {
             ...vaultResponse(vault),
             role: scope.role,
@@ -535,12 +521,11 @@ export const VaultsServiceLive = Layer.effect(
       listMembers: (userId, vaultId, params) =>
         Effect.gen(function* () {
           yield* access.requireOwner(userId, vaultId);
-          const countRows = yield* db
+          const countRows = yield* db.query((d) => d
             .select({ total: sql<number>`count(*)::int` })
             .from(vaultMemberships)
-            .where(eq(vaultMemberships.vaultId, vaultId))
-            .pipe(dieDatabase);
-          const rows = yield* db
+            .where(eq(vaultMemberships.vaultId, vaultId)));
+          const rows = yield* db.query((d) => d
             .select({
               userId: vaultMemberships.userId,
               role: vaultMemberships.role,
@@ -551,8 +536,7 @@ export const VaultsServiceLive = Layer.effect(
             .where(eq(vaultMemberships.vaultId, vaultId))
             .orderBy(asc(users.email))
             .limit(params.limit)
-            .offset(params.offset)
-            .pipe(dieDatabase);
+            .offset(params.offset));
           return pageEnvelope(rows.map(memberResponse), params, oneTotal(countRows));
         }),
       inviteMember: (userId, vaultId, input) =>
@@ -562,16 +546,15 @@ export const VaultsServiceLive = Layer.effect(
           if (vault === undefined) {
             return yield* new Forbidden({ detail: "Only vault owners can perform this action" });
           }
-          const inviterRows = yield* db
+          const inviterRows = yield* db.query((d) => d
             .select({ email: users.email })
             .from(users)
             .where(eq(users.id, userId))
-            .limit(1)
-            .pipe(dieDatabase);
+            .limit(1));
           const inviterEmail = inviterRows[0]?.email ?? "";
           const role = input.role ?? "editor";
           const target = yield* ensureUser(input.email);
-          yield* db
+          yield* db.query((d) => d
             .insert(vaultMemberships)
             .values({
               id: randomUUID(),
@@ -581,8 +564,7 @@ export const VaultsServiceLive = Layer.effect(
             })
             .onConflictDoNothing({
               target: [vaultMemberships.vaultId, vaultMemberships.userId],
-            })
-            .pipe(dieDatabase);
+            }));
           yield* mailer
             .send({
               to: target.email,
@@ -613,17 +595,16 @@ export const VaultsServiceLive = Layer.effect(
       updateMemberRole: (userId, vaultId, memberUserId, role) =>
         Effect.gen(function* () {
           yield* access.requireOwner(userId, vaultId);
-          const userRows = yield* db
+          const userRows = yield* db.query((d) => d
             .select({ id: users.id, email: users.email })
             .from(users)
             .where(eq(users.id, memberUserId))
-            .limit(1)
-            .pipe(dieDatabase);
+            .limit(1));
           const target = userRows[0];
           if (target === undefined) {
             return yield* new NotFound({ detail: "User not found" });
           }
-          const updated = yield* db
+          const updated = yield* db.query((d) => d
             .update(vaultMemberships)
             .set({ role: roleToDb(role) })
             .where(
@@ -632,8 +613,7 @@ export const VaultsServiceLive = Layer.effect(
                 eq(vaultMemberships.userId, memberUserId),
               ),
             )
-            .returning({ role: vaultMemberships.role })
-            .pipe(dieDatabase);
+            .returning({ role: vaultMemberships.role }));
           const row = updated[0];
           if (row === undefined) {
             return yield* new NotFound({ detail: "User is not a member of this vault" });
@@ -647,7 +627,7 @@ export const VaultsServiceLive = Layer.effect(
       removeMember: (userId, vaultId, memberUserId) =>
         Effect.gen(function* () {
           yield* access.requireOwner(userId, vaultId);
-          const deleted = yield* db
+          const deleted = yield* db.query((d) => d
             .delete(vaultMemberships)
             .where(
               and(
@@ -655,8 +635,7 @@ export const VaultsServiceLive = Layer.effect(
                 eq(vaultMemberships.userId, memberUserId),
               ),
             )
-            .returning({ id: vaultMemberships.id })
-            .pipe(dieDatabase);
+            .returning({ id: vaultMemberships.id }));
           if (deleted[0] === undefined) {
             return yield* new NotFound({ detail: "Membership not found" });
           }
@@ -692,8 +671,7 @@ export const VaultsServiceLive = Layer.effect(
                 yield* tx.update(vaults).set({ ownerId: input.new_owner_user_id }).where(eq(vaults.id, vaultId));
                 return true;
               }),
-            )
-            .pipe(dieDatabase);
+            );
           if (!result) {
             return yield* new BadRequest({
               detail: `User ${input.new_owner_user_id} is not a member of vault ${vaultId}`,
@@ -709,7 +687,7 @@ export const VaultsServiceLive = Layer.effect(
           if (vault.ownerId !== userId) {
             return yield* new Forbidden({ detail: "Only vault owners can perform this action" });
           }
-          yield* db.delete(vaults).where(eq(vaults.id, vaultId)).pipe(dieDatabase);
+          yield* db.query((d) => d.delete(vaults).where(eq(vaults.id, vaultId)));
           yield* storage.clearVault(vaultId, vault.r2BucketName);
         }),
     } satisfies VaultsServiceShape;
