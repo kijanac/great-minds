@@ -14,7 +14,7 @@ import { Context, Effect, Layer } from "effect";
 import { parse as parseYaml } from "yaml";
 
 import { bodyContentHash, fileContentHash } from "./crypto.ts";
-import { VaultStorage } from "./storage.ts";
+import { ContentStorage, vaultOwner } from "./storage.ts";
 
 type SourceDocumentRow = typeof sourceDocuments.$inferSelect;
 
@@ -152,7 +152,7 @@ export const SourceDocumentsServiceLive = Layer.effect(
   SourceDocumentsService,
   Effect.gen(function* () {
     const db = yield* Database;
-    const storage = yield* VaultStorage;
+    const storage = yield* ContentStorage;
 
     return {
       index: (vaultId, filePath, content) =>
@@ -249,7 +249,7 @@ export const SourceDocumentsServiceLive = Layer.effect(
           if (!deleted && options.missingOk !== true) {
             return false;
           }
-          yield* storage.deletePath(vaultId, filePath);
+          yield* storage.deletePath(vaultOwner(vaultId), filePath);
           return deleted;
         }),
     } satisfies SourceDocumentsServiceShape;

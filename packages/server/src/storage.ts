@@ -46,47 +46,36 @@ export class StorageFileMissing extends Schema.TaggedErrorClass<StorageFileMissi
 export class StagedStorageError extends Schema.TaggedErrorClass<StagedStorageError>()(
   "StagedStorageError",
   {
-    operation: Schema.Literals(["read", "delete"]),
+    operation: Schema.Literals(["presign", "read", "delete"]),
     path: Schema.String,
     errorType: Schema.String,
     message: Schema.String,
   },
 ) {}
 
-type VaultStorageShape = {
+export type StorageOwner =
+  | { readonly kind: "vault"; readonly id: Uuid; readonly bucket?: string | null }
+  | { readonly kind: "user"; readonly id: Uuid };
+
+export const vaultOwner = (id: Uuid, bucket?: string | null): StorageOwner =>
+  bucket === undefined ? { kind: "vault", id } : { kind: "vault", id, bucket };
+
+export const userOwner = (id: Uuid): StorageOwner => ({ kind: "user", id });
+
+type ContentStorageShape = {
   readonly listMarkdown: (
-    vaultId: Uuid,
+    owner: StorageOwner,
     scope: "raw" | "wiki",
-    bucketName?: string | null,
   ) => Effect.Effect<readonly { readonly path: string; readonly etag: string | null }[]>;
-  readonly readText: (
-    vaultId: Uuid,
-    path: string,
-    bucketName?: string | null,
-  ) => Effect.Effect<string, StorageFileMissing>;
-  readonly writeText: (
-    vaultId: Uuid,
-    path: string,
-    content: string,
-    bucketName?: string | null,
-  ) => Effect.Effect<void>;
-  readonly appendText: (
-    vaultId: Uuid,
-    path: string,
-    content: string,
-    bucketName?: string | null,
-  ) => Effect.Effect<void>;
-  readonly exists: (
-    vaultId: Uuid,
-    path: string,
-    bucketName?: string | null,
-  ) => Effect.Effect<boolean>;
-  readonly deletePath: (vaultId: Uuid, path: string) => Effect.Effect<void>;
-  readonly clearVault: (vaultId: Uuid, bucketName: string | null) => Effect.Effect<void>;
-  readonly readUserText: (userId: Uuid, path: string) => Effect.Effect<string, StorageFileMissing>;
-  readonly writeUserText: (userId: Uuid, path: string, content: string) => Effect.Effect<void>;
-  readonly deleteUserPath: (userId: Uuid, path: string) => Effect.Effect<void>;
-  readonly clearUser: (userId: Uuid) => Effect.Effect<void>;
+  readonly readText: (owner: StorageOwner, path: string) => Effect.Effect<string, StorageFileMissing>;
+  readonly writeText: (owner: StorageOwner, path: string, content: string) => Effect.Effect<void>;
+  readonly appendText: (owner: StorageOwner, path: string, content: string) => Effect.Effect<void>;
+  readonly exists: (owner: StorageOwner, path: string) => Effect.Effect<boolean>;
+  readonly deletePath: (owner: StorageOwner, path: string) => Effect.Effect<void>;
+  readonly clear: (owner: StorageOwner) => Effect.Effect<void>;
+};
+
+type StagedStorageShape = {
   readonly prepareBucketForOwner: (ownerId: Uuid) => Effect.Effect<string | null>;
   readonly deleteOwnerBucket: (bucketName: string | null) => Effect.Effect<void>;
   readonly presignStagedPut: (
@@ -95,7 +84,7 @@ type VaultStorageShape = {
     hash: string,
     contentType: string,
     contentLength: number,
-  ) => Effect.Effect<string>;
+  ) => Effect.Effect<string, StagedStorageError>;
   readonly readStagedBytes: (
     vaultId: Uuid,
     bucketName: string,
@@ -108,9 +97,35 @@ type VaultStorageShape = {
   ) => Effect.Effect<void, StagedStorageError>;
 };
 
-export class VaultStorage extends Context.Service<VaultStorage, VaultStorageShape>()(
-  "@great-minds/server/VaultStorage",
+export class ContentStorage extends Context.Service<ContentStorage, ContentStorageShape>()(
+  "@great-minds/server/ContentStorage",
 ) {}
+
+export class StagedStorage extends Context.Service<StagedStorage, StagedStorageShape>()(
+  "@great-minds/server/StagedStorage",
+) {}
+
+type StorageEntry = { readonly path: string; readonly etag: string | null };
+
+type LocalDriverRoot = { readonly kind: "local"; readonly directory: string };
+
+type R2DriverRoot = {
+  readonly kind: "r2";
+  readonly bucket: string;
+  readonly keyPrefix: string;
+};
+
+type DriverRoot = LocalDriverRoot | R2DriverRoot;
+
+type StorageDriver<Root extends DriverRoot> = {
+  readonly getText: (root: Root, path: string) => Effect.Effect<string, StorageFileMissing>;
+  readonly putText: (root: Root, path: string, content: string) => Effect.Effect<void>;
+  readonly appendText: (root: Root, path: string, content: string) => Effect.Effect<void>;
+  readonly remove: (root: Root, path: string) => Effect.Effect<void>;
+  readonly removeAll: (root: Root) => Effect.Effect<void>;
+  readonly list: (root: Root, subdir: string, recursive: boolean) => Effect.Effect<readonly StorageEntry[]>;
+  readonly exists: (root: Root, path: string) => Effect.Effect<boolean>;
+};
 
 type ProposalStorageShape = {
   readonly readText: (path: string) => Effect.Effect<string, StorageFileMissing>;
@@ -131,10 +146,6 @@ const fileMissing = (path: string) => new StorageFileMissing({ path });
 
 const isNodeMissing = (error: unknown) =>
   typeof error === "object" && error !== null && "code" in error && error.code === "ENOENT";
-
-const localRoot = (dataRoot: string, vaultId: Uuid) => resolve(dataRoot, VAULTS_DIR, vaultId);
-
-const localUserRoot = (dataRoot: string, userId: Uuid) => resolve(dataRoot, USERS_DIR, userId);
 
 const resolveChild = (root: string, path: string) => {
   const fullPath = resolve(root, path);
@@ -200,103 +211,151 @@ const deleteLocalPath = (root: string, path: string) =>
     }
   });
 
-export const LocalStorageLive = Layer.effect(
-  VaultStorage,
+const makeContentStorage = <Root extends DriverRoot>(
+  backend: "local" | "r2",
+  resolveRoot: (owner: StorageOwner) => Effect.Effect<Root>,
+  driver: StorageDriver<Root>,
+  logger: StructuredLogger["Service"],
+): ContentStorageShape => ({
+  listMarkdown: (owner, scope) =>
+    Effect.gen(function* () {
+      const root = yield* resolveRoot(owner);
+      const entries = yield* driver.list(root, `${scope}/`, scope === "raw");
+      return entries
+        .filter((entry) => entry.path.endsWith(".md"))
+        .sort((left, right) =>
+          left.path < right.path ? -1 : left.path > right.path ? 1 : 0,
+        );
+    }),
+  readText: (owner, path) =>
+    Effect.gen(function* () {
+      const root = yield* resolveRoot(owner);
+      return yield* driver.getText(root, path);
+    }),
+  writeText: (owner, path, content) =>
+    Effect.gen(function* () {
+      const root = yield* resolveRoot(owner);
+      yield* driver.putText(root, path, content);
+    }),
+  appendText: (owner, path, content) =>
+    Effect.gen(function* () {
+      const root = yield* resolveRoot(owner);
+      yield* driver.appendText(root, path, content);
+    }),
+  exists: (owner, path) =>
+    Effect.gen(function* () {
+      const root = yield* resolveRoot(owner);
+      return yield* driver.exists(root, path);
+    }),
+  deletePath: (owner, path) =>
+    Effect.gen(function* () {
+      const root = yield* resolveRoot(owner);
+      yield* driver.remove(root, path);
+    }),
+  clear: (owner) => {
+    let resolvedRoot: Root | undefined;
+    return Effect.gen(function* () {
+      resolvedRoot = yield* resolveRoot(owner);
+      yield* driver.removeAll(resolvedRoot);
+    }).pipe(
+      Effect.catchCause((cause) => {
+        const bucket =
+          resolvedRoot?.kind === "r2"
+            ? resolvedRoot.bucket
+            : owner.kind === "vault"
+              ? (owner.bucket ?? null)
+              : undefined;
+        const fields =
+          owner.kind === "vault"
+            ? { vault_id: owner.id, bucket }
+            : { user_id: owner.id, ...(bucket === undefined ? {} : { bucket }) };
+        return logger
+          .error(`${backend}_storage.clear_${owner.kind}_failed`, {
+            ...fields,
+            error: "Cause",
+            error_message: Cause.pretty(cause),
+          })
+          .pipe(Effect.andThen(Effect.failCause(cause)));
+      }),
+      Effect.orDie,
+    );
+  },
+});
+
+const localDriver: StorageDriver<LocalDriverRoot> = {
+  getText: (root, path) => readLocalText(root.directory, path),
+  putText: (root, path, content) => writeLocalText(root.directory, path, content),
+  appendText: (root, path, content) => appendLocalText(root.directory, path, content),
+  remove: (root, path) => deleteLocalPath(root.directory, path),
+  removeAll: (root) =>
+    Effect.tryPromise({
+      try: () => rm(root.directory, { recursive: true, force: true }),
+      catch: (error) => error,
+    }).pipe(Effect.orDie),
+  list: (root, subdir, recursive) =>
+    Effect.gen(function* () {
+      const entries = yield* Effect.result(
+        Effect.tryPromise({
+          try: () => readdir(resolve(root.directory, subdir), { recursive }),
+          catch: (error) => error,
+        }),
+      );
+      if (entries._tag === "Failure") {
+        if (isNodeMissing(entries.failure)) return [];
+        throw entries.failure;
+      }
+      return entries.success.map((entry) => ({ path: `${subdir}${entry}`, etag: null }));
+    }),
+  exists: (root, path) => localExists(root.directory, path),
+};
+
+export const LocalContentStorageLive = Layer.effect(
+  ContentStorage,
   Effect.gen(function* () {
     const config = yield* AppConfig;
     const logger = yield* StructuredLogger;
     const dataRoot = resolve(config.dataDir);
-
-    return {
-      listMarkdown: (vaultId, scope) =>
-        Effect.gen(function* () {
-          const scopeRoot = resolve(localRoot(dataRoot, vaultId), scope);
-          const entries = yield* Effect.result(
-            Effect.tryPromise({
-              try: () => readdir(scopeRoot, { recursive: scope === "raw" }),
-              catch: (error) => error,
-            }),
-          );
-          if (entries._tag === "Failure") {
-            if (isNodeMissing(entries.failure)) return [];
-            throw entries.failure;
-          }
-          return entries.success
-            .filter((entry) => entry.endsWith(".md"))
-            .map((entry) => ({ path: `${scope}/${entry}`, etag: null }))
-            .sort((left, right) => (left.path < right.path ? -1 : left.path > right.path ? 1 : 0));
-        }),
-      readText: (vaultId, path) => readLocalText(localRoot(dataRoot, vaultId), path),
-      writeText: (vaultId, path, content) =>
-        writeLocalText(localRoot(dataRoot, vaultId), path, content),
-      appendText: (vaultId, path, content) =>
-        appendLocalText(localRoot(dataRoot, vaultId), path, content),
-      exists: (vaultId, path) => localExists(localRoot(dataRoot, vaultId), path),
-      deletePath: (vaultId, path) => deleteLocalPath(localRoot(dataRoot, vaultId), path),
-      clearVault: (vaultId, bucketName) =>
-        Effect.tryPromise({
-          try: () => rm(localRoot(dataRoot, vaultId), { recursive: true, force: true }),
-          catch: (error) => error,
-        }).pipe(
-          Effect.catchCause((cause) =>
-            logger
-              .error("local_storage.clear_vault_failed", {
-                vault_id: vaultId,
-                bucket: bucketName,
-                error: "Cause",
-                error_message: Cause.pretty(cause),
-              })
-              .pipe(Effect.andThen(Effect.failCause(cause))),
-          ),
-          Effect.orDie,
+    const resolveRoot = (owner: StorageOwner) =>
+      Effect.succeed({
+        kind: "local" as const,
+        directory: resolve(
+          dataRoot,
+          owner.kind === "vault" ? VAULTS_DIR : USERS_DIR,
+          owner.id,
         ),
-      readUserText: (userId, path) => readLocalText(localUserRoot(dataRoot, userId), path),
-      writeUserText: (userId, path, content) =>
-        writeLocalText(localUserRoot(dataRoot, userId), path, content),
-      deleteUserPath: (userId, path) => deleteLocalPath(localUserRoot(dataRoot, userId), path),
-      clearUser: (userId) =>
-        Effect.tryPromise({
-          try: () => rm(localUserRoot(dataRoot, userId), { recursive: true, force: true }),
-          catch: (error) => error,
-        }).pipe(
-          Effect.catchCause((cause) =>
-            logger
-              .error("local_storage.clear_user_failed", {
-                user_id: userId,
-                error: "Cause",
-                error_message: Cause.pretty(cause),
-              })
-              .pipe(Effect.andThen(Effect.failCause(cause))),
-          ),
-          Effect.orDie,
-        ),
-      prepareBucketForOwner: () => Effect.succeed(null),
-      deleteOwnerBucket: (bucketName) =>
-        logger.info("storage.delete_owner_bucket_skipped", {
-          bucket: bucketName,
-          storage_backend: "local",
-          reason: "local_storage",
-        }),
-      presignStagedPut: (vaultId) =>
-        Effect.die(new Error(`Vault ${vaultId} has no R2 bucket name`)),
-      readStagedBytes: (vaultId) =>
-        Effect.fail(
-          stagedStorageError(
-            "read",
-            `staging/${vaultId}`,
-            new Error(`Vault ${vaultId} has no R2 bucket name`),
-          ),
-        ),
-      deleteStaged: (vaultId) =>
-        Effect.fail(
-          stagedStorageError(
-            "delete",
-            `staging/${vaultId}`,
-            new Error(`Vault ${vaultId} has no R2 bucket name`),
-          ),
-        ),
-    } satisfies VaultStorageShape;
+      });
+    return makeContentStorage("local", resolveRoot, localDriver, logger);
   }),
+);
+
+const localStagedError = (
+  operation: "presign" | "read" | "delete",
+  path: string,
+) =>
+  new StagedStorageError({
+    operation,
+    path,
+    errorType: "StagedStorageUnavailable",
+    message: "Staged uploads require the R2 storage backend",
+  });
+
+export const LocalStagedStorageLive = Layer.effect(
+  StagedStorage,
+  Effect.map(StructuredLogger, (logger) => ({
+    prepareBucketForOwner: () => Effect.succeed(null),
+    deleteOwnerBucket: (bucketName) =>
+      logger.info("storage.delete_owner_bucket_skipped", {
+        bucket: bucketName,
+        storage_backend: "local",
+        reason: "local_storage",
+      }),
+    presignStagedPut: (vaultId, _bucketName, hash) =>
+      Effect.fail(localStagedError("presign", `staging/${vaultId}/${hash}`)),
+    readStagedBytes: (vaultId, _bucketName, hash) =>
+      Effect.fail(localStagedError("read", `staging/${vaultId}/${hash}`)),
+    deleteStaged: (vaultId, _bucketName, hash) =>
+      Effect.fail(localStagedError("delete", `staging/${vaultId}/${hash}`)),
+  } satisfies StagedStorageShape)),
 );
 
 export const ProposalStorageLive = Layer.effect(
@@ -344,7 +403,11 @@ const errorName = (error: unknown) => errorDetails(error).errorType;
 
 const errorMessage = (error: unknown) => errorDetails(error).message;
 
-const stagedStorageError = (operation: "read" | "delete", path: string, error: unknown) =>
+const stagedStorageError = (
+  operation: "presign" | "read" | "delete",
+  path: string,
+  error: unknown,
+) =>
   new StagedStorageError({
     operation,
     path,
@@ -365,66 +428,233 @@ const deriveUserBucketName = (prefix: string, userId: Uuid) => {
   return name;
 };
 
-export const R2StorageLive = Layer.effect(
-  VaultStorage,
+const makeR2Client = (config: AppConfig["Service"]) => {
+  const accountId = stringOption(config.r2AccountId, "R2_ACCOUNT_ID");
+  const accessKeyId = redactedOption(config.r2AccessKeyId, "R2_ACCESS_KEY_ID");
+  const secretAccessKey = redactedOption(config.r2SecretAccessKey, "R2_SECRET_ACCESS_KEY");
+  return new S3Client({
+    endpoint: `https://${accountId}.r2.cloudflarestorage.com`,
+    region: "auto",
+    credentials: { accessKeyId, secretAccessKey },
+  });
+};
+
+const r2Key = (root: R2DriverRoot, path: string) => `${root.keyPrefix}${path}`;
+
+const deleteR2Objects = (client: S3Client, bucket: string, prefix?: string) =>
+  Effect.gen(function* () {
+    let continuationToken: string | undefined;
+    do {
+      const page = yield* Effect.tryPromise({
+        try: (signal) =>
+          client.send(
+            new ListObjectsV2Command({
+              Bucket: bucket,
+              Prefix: prefix,
+              ContinuationToken: continuationToken,
+            }),
+            { abortSignal: signal },
+          ),
+        catch: (error) => error,
+      }).pipe(Effect.timeout(R2_WRITE_TIMEOUT));
+      const objects = (page.Contents ?? [])
+        .map((object) => object.Key)
+        .filter((key): key is string => key !== undefined)
+        .map((Key) => ({ Key }));
+      if (objects.length > 0) {
+        yield* Effect.tryPromise({
+          try: (signal) =>
+            client.send(
+              new DeleteObjectsCommand({
+                Bucket: bucket,
+                Delete: { Objects: objects, Quiet: true },
+              }),
+              { abortSignal: signal },
+            ),
+          catch: (error) => error,
+        }).pipe(Effect.timeout(R2_WRITE_TIMEOUT));
+      }
+      continuationToken = page.IsTruncated === true ? page.NextContinuationToken : undefined;
+    } while (continuationToken !== undefined);
+  });
+
+const deleteR2Bucket = (client: S3Client, bucket: string) =>
+  Effect.tryPromise({
+    try: (signal) =>
+      client.send(new DeleteBucketCommand({ Bucket: bucket }), { abortSignal: signal }),
+    catch: (error) => error,
+  }).pipe(Effect.timeout(R2_ADMIN_TIMEOUT));
+
+const makeR2Driver = (client: S3Client): StorageDriver<R2DriverRoot> => {
+  const getText = (root: R2DriverRoot, path: string) =>
+    Effect.gen(function* () {
+      const key = r2Key(root, path);
+      const responseResult = yield* Effect.result(
+        Effect.tryPromise({
+          try: (signal) =>
+            client.send(
+              new GetObjectCommand({ Bucket: root.bucket, Key: key }),
+              { abortSignal: signal },
+            ),
+          catch: (error) => error,
+        }).pipe(Effect.timeout(R2_READ_TIMEOUT)),
+      );
+      if (responseResult._tag === "Failure") {
+        if (isR2Missing(responseResult.failure)) {
+          return yield* fileMissing(path);
+        }
+        throw responseResult.failure;
+      }
+      const response = responseResult.success;
+      if (response.Body === undefined) {
+        throw new Error(`R2 object ${key} returned no body`);
+      }
+      return yield* Effect.tryPromise(() => response.Body!.transformToString("utf-8")).pipe(
+        Effect.timeout(R2_READ_TIMEOUT),
+        Effect.orDie,
+      );
+    });
+
+  const putText = (root: R2DriverRoot, path: string, content: string) =>
+    Effect.tryPromise((signal) =>
+      client.send(
+        new PutObjectCommand({
+          Bucket: root.bucket,
+          Key: r2Key(root, path),
+          Body: content,
+          ContentType: path.endsWith(".md") ? "text/markdown" : "text/plain",
+        }),
+        { abortSignal: signal },
+      ),
+    ).pipe(Effect.timeout(R2_WRITE_TIMEOUT), Effect.orDie);
+
+  return {
+    getText,
+    putText,
+    appendText: (root, path, content) =>
+      Effect.gen(function* () {
+        const existing = yield* Effect.result(getText(root, path));
+        const prefix = existing._tag === "Success" ? existing.success : "";
+        yield* putText(root, path, `${prefix}${content}`);
+      }),
+    remove: (root, path) =>
+      Effect.tryPromise((signal) =>
+        client.send(
+          new DeleteObjectCommand({ Bucket: root.bucket, Key: r2Key(root, path) }),
+          { abortSignal: signal },
+        ),
+      ).pipe(Effect.timeout(R2_WRITE_TIMEOUT), Effect.orDie),
+    removeAll: (root) => deleteR2Objects(client, root.bucket, root.keyPrefix).pipe(Effect.orDie),
+    list: (root, subdir, recursive) =>
+      Effect.gen(function* () {
+        const prefix = r2Key(root, subdir);
+        const files: StorageEntry[] = [];
+        let continuationToken: string | undefined;
+        do {
+          const page = yield* Effect.tryPromise((signal) =>
+            client.send(
+              new ListObjectsV2Command({
+                Bucket: root.bucket,
+                Prefix: prefix,
+                ContinuationToken: continuationToken,
+                ...(recursive ? {} : { Delimiter: "/" }),
+              }),
+              { abortSignal: signal },
+            ),
+          ).pipe(Effect.timeout(R2_ADMIN_TIMEOUT), Effect.orDie);
+          for (const object of page.Contents ?? []) {
+            if (object.Key === undefined) continue;
+            files.push({
+              path: object.Key.slice(root.keyPrefix.length),
+              etag: object.ETag?.replaceAll('"', "") ?? null,
+            });
+          }
+          continuationToken = page.IsTruncated === true ? page.NextContinuationToken : undefined;
+        } while (continuationToken !== undefined);
+        return files;
+      }),
+    exists: (root, path) =>
+      Effect.gen(function* () {
+        const result = yield* Effect.result(
+          Effect.tryPromise({
+            try: (signal) =>
+              client.send(
+                new HeadObjectCommand({ Bucket: root.bucket, Key: r2Key(root, path) }),
+                { abortSignal: signal },
+              ),
+            catch: (error) => error,
+          }).pipe(Effect.timeout(R2_READ_TIMEOUT)),
+        );
+        if (result._tag === "Success") return true;
+        if (isR2Missing(result.failure)) return false;
+        throw result.failure;
+      }),
+  };
+};
+
+export const R2ContentStorageLive = Layer.effect(
+  ContentStorage,
   Effect.gen(function* () {
     const config = yield* AppConfig;
     const db = yield* Database;
     const logger = yield* StructuredLogger;
-    const accountId = stringOption(config.r2AccountId, "R2_ACCOUNT_ID");
-    const accessKeyId = redactedOption(config.r2AccessKeyId, "R2_ACCESS_KEY_ID");
-    const secretAccessKey = redactedOption(config.r2SecretAccessKey, "R2_SECRET_ACCESS_KEY");
-    const client = new S3Client({
-      endpoint: `https://${accountId}.r2.cloudflarestorage.com`,
-      region: "auto",
-      credentials: {
-        accessKeyId,
-        secretAccessKey,
-      },
-    });
+    const driver = makeR2Driver(makeR2Client(config));
 
-    const vaultBucket = (vaultId: Uuid, bucketName?: string | null) =>
+    const resolveRoot = (owner: StorageOwner) =>
       Effect.gen(function* () {
-        if (bucketName !== undefined && bucketName !== null && bucketName.length > 0) {
-          return bucketName;
+        let bucket =
+          owner.kind === "vault" &&
+          owner.bucket !== undefined &&
+          owner.bucket !== null &&
+          owner.bucket.length > 0
+            ? owner.bucket
+            : undefined;
+        if (bucket === undefined) {
+          const rows =
+            owner.kind === "vault"
+              ? yield* db
+                  .query((d) =>
+                    d
+                      .select({ bucket: vaults.r2BucketName })
+                      .from(vaults)
+                      .where(eq(vaults.id, owner.id))
+                      .limit(1),
+                  )
+                  .pipe(Effect.orDie)
+              : yield* db
+                  .query((d) =>
+                    d
+                      .select({ bucket: users.r2BucketName })
+                      .from(users)
+                      .where(eq(users.id, owner.id))
+                      .limit(1),
+                  )
+                  .pipe(Effect.orDie);
+          bucket = rows[0]?.bucket ?? undefined;
         }
-        const rows = yield* db.query((d) => d
-          .select({ bucket: vaults.r2BucketName })
-          .from(vaults)
-          .where(eq(vaults.id, vaultId))
-          .limit(1))
-          .pipe(Effect.orDie);
-        const row = rows[0];
-        if (row?.bucket === undefined || row.bucket === null || row.bucket === "") {
-          throw new Error(`Vault ${vaultId} has no R2 bucket name`);
+        if (bucket === undefined || bucket.length === 0) {
+          throw new Error(
+            `${owner.kind === "vault" ? "Vault" : "User"} ${owner.id} has no R2 bucket name`,
+          );
         }
-        return row.bucket;
+        return {
+          kind: "r2" as const,
+          bucket,
+          keyPrefix: `${owner.kind === "vault" ? VAULTS_DIR : USERS_DIR}/${owner.id}/`,
+        };
       });
 
-    const userBucket = (userId: Uuid) =>
-      Effect.gen(function* () {
-        const rows = yield* db.query((d) => d
-          .select({ bucket: users.r2BucketName })
-          .from(users)
-          .where(eq(users.id, userId))
-          .limit(1))
-          .pipe(Effect.orDie);
-        const row = rows[0];
-        if (row?.bucket === undefined || row.bucket === null || row.bucket === "") {
-          throw new Error(`User ${userId} has no R2 bucket name`);
-        }
-        return row.bucket;
-      });
+    return makeContentStorage("r2", resolveRoot, driver, logger);
+  }),
+);
 
-    const objectKey = (vaultId: Uuid, path: string) => `${VAULTS_DIR}/${vaultId}/${path}`;
-
-    const objectPrefix = (vaultId: Uuid) => `${VAULTS_DIR}/${vaultId}/`;
-
-    const userObjectKey = (userId: Uuid, path: string) => `${USERS_DIR}/${userId}/${path}`;
-
-    const userObjectPrefix = (userId: Uuid) => `${USERS_DIR}/${userId}/`;
-
-    const stagedObjectKey = (vaultId: Uuid, hash: string) => `staging/${vaultId}/${hash}`;
+export const R2StagedStorageLive = Layer.effect(
+  StagedStorage,
+  Effect.gen(function* () {
+    const config = yield* AppConfig;
+    const db = yield* Database;
+    const logger = yield* StructuredLogger;
+    const client = makeR2Client(config);
 
     const sendAdmin = <A>(effect: Effect.Effect<A, unknown>) =>
       effect.pipe(Effect.timeout(R2_ADMIN_TIMEOUT));
@@ -446,7 +676,9 @@ export const R2StorageLive = Layer.effect(
             const created = yield* Effect.result(
               Effect.tryPromise({
                 try: (signal) =>
-                  client.send(new CreateBucketCommand({ Bucket: bucket }), { abortSignal: signal }),
+                  client.send(new CreateBucketCommand({ Bucket: bucket }), {
+                    abortSignal: signal,
+                  }),
                 catch: (error) => error,
               }).pipe(Effect.timeout(R2_ADMIN_TIMEOUT)),
             );
@@ -521,251 +753,19 @@ export const R2StorageLive = Layer.effect(
       );
     };
 
-    const deleteObjects = (bucket: string, prefix?: string) =>
-      Effect.gen(function* () {
-        let continuationToken: string | undefined;
-        do {
-          const page = yield* Effect.tryPromise({
-            try: (signal) =>
-              client.send(
-                new ListObjectsV2Command({
-                  Bucket: bucket,
-                  Prefix: prefix,
-                  ContinuationToken: continuationToken,
-                }),
-                { abortSignal: signal },
-              ),
-            catch: (error) => error,
-          }).pipe(Effect.timeout(R2_WRITE_TIMEOUT));
-          const objects = (page.Contents ?? [])
-            .map((object) => object.Key)
-            .filter((key): key is string => key !== undefined)
-            .map((Key) => ({ Key }));
-          if (objects.length > 0) {
-            yield* Effect.tryPromise({
-              try: (signal) =>
-                client.send(
-                  new DeleteObjectsCommand({
-                    Bucket: bucket,
-                    Delete: { Objects: objects, Quiet: true },
-                  }),
-                  { abortSignal: signal },
-                ),
-              catch: (error) => error,
-            }).pipe(Effect.timeout(R2_WRITE_TIMEOUT));
-          }
-          continuationToken = page.IsTruncated === true ? page.NextContinuationToken : undefined;
-        } while (continuationToken !== undefined);
-      });
-
-    const deleteBucket = (bucket: string) =>
-      Effect.tryPromise({
-        try: (signal) =>
-          client.send(new DeleteBucketCommand({ Bucket: bucket }), { abortSignal: signal }),
-        catch: (error) => error,
-      }).pipe(Effect.timeout(R2_ADMIN_TIMEOUT));
-
-    const readObjectText = (bucket: string, key: string, missingPath: string) =>
-      Effect.gen(function* () {
-        const responseResult = yield* Effect.result(
-          Effect.tryPromise({
-            try: (signal) =>
-              client.send(
-                new GetObjectCommand({
-                  Bucket: bucket,
-                  Key: key,
-                }),
-                { abortSignal: signal },
-              ),
-            catch: (error) => error,
-          }).pipe(Effect.timeout(R2_READ_TIMEOUT)),
-        );
-        if (responseResult._tag === "Failure") {
-          if (isR2Missing(responseResult.failure)) {
-            return yield* fileMissing(missingPath);
-          }
-          throw responseResult.failure;
-        }
-        const response = responseResult.success;
-        if (response.Body === undefined) {
-          throw new Error(`R2 object ${key} returned no body`);
-        }
-        return yield* Effect.tryPromise(() => response.Body!.transformToString("utf-8")).pipe(
-          Effect.timeout(R2_READ_TIMEOUT),
-          Effect.orDie,
-        );
-      });
-
-    const readR2Text = (vaultId: Uuid, path: string, bucketName?: string | null) =>
-      Effect.gen(function* () {
-        const bucket = yield* vaultBucket(vaultId, bucketName);
-        return yield* readObjectText(bucket, objectKey(vaultId, path), path);
-      });
-
-    const writeObjectText = (bucket: string, key: string, path: string, content: string) =>
-      Effect.tryPromise((signal) =>
-        client.send(
-          new PutObjectCommand({
-            Bucket: bucket,
-            Key: key,
-            Body: content,
-            ContentType: path.endsWith(".md") ? "text/markdown" : "text/plain",
-          }),
-          { abortSignal: signal },
-        ),
-      ).pipe(Effect.timeout(R2_WRITE_TIMEOUT), Effect.orDie);
-
-    const writeR2Text = (
-      vaultId: Uuid,
-      path: string,
-      content: string,
-      bucketName?: string | null,
-    ) =>
-      Effect.gen(function* () {
-        const bucket = yield* vaultBucket(vaultId, bucketName);
-        yield* writeObjectText(bucket, objectKey(vaultId, path), path, content);
-      });
+    const stagedObjectKey = (vaultId: Uuid, hash: string) => `staging/${vaultId}/${hash}`;
 
     return {
-      listMarkdown: (vaultId, scope, bucketName) =>
-        Effect.gen(function* () {
-          const bucket = yield* vaultBucket(vaultId, bucketName);
-          const prefix = objectKey(vaultId, `${scope}/`);
-          const files: { path: string; etag: string | null }[] = [];
-          let continuationToken: string | undefined;
-          do {
-            const page = yield* Effect.tryPromise((signal) =>
-              client.send(
-                new ListObjectsV2Command({
-                  Bucket: bucket,
-                  Prefix: prefix,
-                  ContinuationToken: continuationToken,
-                  ...(scope === "wiki" ? { Delimiter: "/" } : {}),
-                }),
-                { abortSignal: signal },
-              ),
-            ).pipe(Effect.timeout(R2_ADMIN_TIMEOUT), Effect.orDie);
-            for (const object of page.Contents ?? []) {
-              if (object.Key === undefined || !object.Key.endsWith(".md")) continue;
-              const path = object.Key.slice(objectPrefix(vaultId).length);
-              files.push({ path, etag: object.ETag?.replaceAll('"', "") ?? null });
-            }
-            continuationToken = page.IsTruncated === true ? page.NextContinuationToken : undefined;
-          } while (continuationToken !== undefined);
-          return files.sort((left, right) =>
-            left.path < right.path ? -1 : left.path > right.path ? 1 : 0,
-          );
-        }),
-      readText: readR2Text,
-      writeText: writeR2Text,
-      appendText: (vaultId, path, content, bucketName) =>
-        Effect.gen(function* () {
-          const existing = yield* Effect.result(readR2Text(vaultId, path, bucketName));
-          const prefix = existing._tag === "Success" ? existing.success : "";
-          yield* writeR2Text(vaultId, path, `${prefix}${content}`, bucketName);
-        }),
-      exists: (vaultId, path, bucketName) =>
-        Effect.gen(function* () {
-          const bucket = yield* vaultBucket(vaultId, bucketName);
-          const result = yield* Effect.result(
-            Effect.tryPromise({
-              try: (signal) =>
-                client.send(
-                  new HeadObjectCommand({ Bucket: bucket, Key: objectKey(vaultId, path) }),
-                  { abortSignal: signal },
-                ),
-              catch: (error) => error,
-            }).pipe(Effect.timeout(R2_READ_TIMEOUT)),
-          );
-          if (result._tag === "Success") {
-            return true;
-          }
-          if (isR2Missing(result.failure)) {
-            return false;
-          }
-          throw result.failure;
-        }),
-      deletePath: (vaultId, path) =>
-        Effect.gen(function* () {
-          const bucket = yield* vaultBucket(vaultId);
-          yield* Effect.tryPromise((signal) =>
-            client.send(
-              new DeleteObjectCommand({ Bucket: bucket, Key: objectKey(vaultId, path) }),
-              { abortSignal: signal },
-            ),
-          ).pipe(Effect.timeout(R2_WRITE_TIMEOUT), Effect.orDie);
-        }),
-      clearVault: (vaultId, bucketName) =>
-        Effect.gen(function* () {
-          if (bucketName === null || bucketName.length === 0) {
-            const error = new Error(`Vault ${vaultId} has no R2 bucket name`);
-            yield* logger.error("r2_storage.clear_vault_failed", {
-              vault_id: vaultId,
-              bucket: bucketName,
-              error: error.name,
-              error_message: error.message,
-            });
-            throw error;
-          }
-          const bucket = bucketName;
-          yield* deleteObjects(bucket, objectPrefix(vaultId)).pipe(
-            Effect.catchCause((cause) =>
-              logger
-                .error("r2_storage.clear_vault_failed", {
-                  vault_id: vaultId,
-                  bucket,
-                  error: "Cause",
-                  error_message: Cause.pretty(cause),
-                })
-                .pipe(Effect.andThen(Effect.failCause(cause))),
-            ),
-            Effect.orDie,
-          );
-        }),
-      readUserText: (userId, path) =>
-        Effect.gen(function* () {
-          const bucket = yield* userBucket(userId);
-          return yield* readObjectText(bucket, userObjectKey(userId, path), path);
-        }),
-      writeUserText: (userId, path, content) =>
-        Effect.gen(function* () {
-          const bucket = yield* userBucket(userId);
-          yield* writeObjectText(bucket, userObjectKey(userId, path), path, content);
-        }),
-      deleteUserPath: (userId, path) =>
-        Effect.gen(function* () {
-          const bucket = yield* userBucket(userId);
-          yield* Effect.tryPromise((signal) =>
-            client.send(
-              new DeleteObjectCommand({ Bucket: bucket, Key: userObjectKey(userId, path) }),
-              { abortSignal: signal },
-            ),
-          ).pipe(Effect.timeout(R2_WRITE_TIMEOUT), Effect.orDie);
-        }),
-      clearUser: (userId) =>
-        Effect.gen(function* () {
-          const bucket = yield* userBucket(userId);
-          yield* deleteObjects(bucket, userObjectPrefix(userId)).pipe(
-            Effect.catchCause((cause) =>
-              logger
-                .error("r2_storage.clear_user_failed", {
-                  user_id: userId,
-                  bucket,
-                  error: "Cause",
-                  error_message: Cause.pretty(cause),
-                })
-                .pipe(Effect.andThen(Effect.failCause(cause))),
-            ),
-            Effect.orDie,
-          );
-        }),
       prepareBucketForOwner: (ownerId) =>
         Effect.gen(function* () {
-          const userRows = yield* db.query((d) => d
-            .select({ bucket: users.r2BucketName })
-            .from(users)
-            .where(eq(users.id, ownerId))
-            .limit(1))
+          const userRows = yield* db
+            .query((d) =>
+              d
+                .select({ bucket: users.r2BucketName })
+                .from(users)
+                .where(eq(users.id, ownerId))
+                .limit(1),
+            )
             .pipe(Effect.orDie);
           const existing = userRows[0]?.bucket;
           if (existing !== undefined && existing !== null && existing.length > 0) {
@@ -773,10 +773,10 @@ export const R2StorageLive = Layer.effect(
           }
           const bucket = deriveUserBucketName(config.r2BucketPrefix, ownerId);
           yield* ensureBucket(bucket);
-          yield* db.query((d) => d
-            .update(users)
-            .set({ r2BucketName: bucket })
-            .where(eq(users.id, ownerId)))
+          yield* db
+            .query((d) =>
+              d.update(users).set({ r2BucketName: bucket }).where(eq(users.id, ownerId)),
+            )
             .pipe(Effect.orDie);
           return bucket;
         }),
@@ -793,7 +793,7 @@ export const R2StorageLive = Layer.effect(
           }
 
           const startedAt = Date.now();
-          const emptyResult = yield* Effect.result(deleteObjects(bucketName));
+          const emptyResult = yield* Effect.result(deleteR2Objects(client, bucketName));
           if (emptyResult._tag === "Failure") {
             if (isR2Missing(emptyResult.failure)) {
               yield* logger.info("r2_admin.delete_bucket", {
@@ -813,7 +813,7 @@ export const R2StorageLive = Layer.effect(
               .pipe(Effect.andThen(Effect.die(emptyResult.failure)));
           }
 
-          const deleteResult = yield* Effect.result(deleteBucket(bucketName));
+          const deleteResult = yield* Effect.result(deleteR2Bucket(client, bucketName));
           if (deleteResult._tag === "Failure") {
             if (isR2Missing(deleteResult.failure)) {
               yield* logger.info("r2_admin.delete_bucket", {
@@ -849,9 +849,7 @@ export const R2StorageLive = Layer.effect(
               ContentType: contentType,
               ContentLength: contentLength,
             }),
-            {
-              expiresIn: R2_STAGED_UPLOAD_EXPIRES_SECONDS,
-            },
+            { expiresIn: R2_STAGED_UPLOAD_EXPIRES_SECONDS },
           ),
         ).pipe(Effect.orDie),
       readStagedBytes: (vaultId, bucketName, hash) =>
@@ -898,12 +896,18 @@ export const R2StorageLive = Layer.effect(
           Effect.asVoid,
         );
       },
-    } satisfies VaultStorageShape;
+    } satisfies StagedStorageShape;
   }),
 );
 
-export const VaultStorageLive = Layer.unwrap(
+export const ContentStorageLive = Layer.unwrap(
   Effect.map(AppConfig, (config) =>
-    config.storageBackend === "local" ? LocalStorageLive : R2StorageLive,
+    config.storageBackend === "local" ? LocalContentStorageLive : R2ContentStorageLive,
+  ),
+);
+
+export const StagedStorageLive = Layer.unwrap(
+  Effect.map(AppConfig, (config) =>
+    config.storageBackend === "local" ? LocalStagedStorageLive : R2StagedStorageLive,
   ),
 );

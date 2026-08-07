@@ -19,7 +19,7 @@ import { buildDocument } from "./markdown.ts";
 import { StructuredLogger } from "./logging.ts";
 import { PipelineRunsService, progressSteps } from "./pipeline-runs.ts";
 import { SourceDocumentsService } from "./source-documents.ts";
-import { VaultStorage } from "./storage.ts";
+import { ContentStorage, StagedStorage, vaultOwner } from "./storage.ts";
 
 const STAGED_FILE_INGEST_STEP_LABELS = {
   prepare_sources: "Preparing uploaded sources",
@@ -64,7 +64,8 @@ export const StagedFileIngestWorkflowLive = StagedFileIngestWorkflow.toLayer((pa
     execute: Effect.gen(function* () {
       const config = yield* AppConfig;
       const db = yield* Database;
-      const storage = yield* VaultStorage;
+      const storage = yield* ContentStorage;
+      const stagedStorage = yield* StagedStorage;
       const sourceDocumentsService = yield* SourceDocumentsService;
       const pipeline = yield* PipelineRunsService;
       const logger = yield* StructuredLogger;
@@ -117,7 +118,7 @@ export const StagedFileIngestWorkflowLive = StagedFileIngestWorkflow.toLayer((pa
         (file) =>
           Effect.exit(
             Effect.gen(function* () {
-              const bytes = yield* storage.readStagedBytes(vaultId, bucket, file.hash);
+              const bytes = yield* stagedStorage.readStagedBytes(vaultId, bucket, file.hash);
               const markdown = yield* Effect.tryPromise({
                 try: () => stagedFileToMarkdown(bytes, file.name, file.mimetype),
                 catch: (error) => error,
@@ -183,7 +184,7 @@ export const StagedFileIngestWorkflowLive = StagedFileIngestWorkflow.toLayer((pa
           continue;
         }
         yield* requireActive();
-        yield* storage.writeText(vaultId, dest, content, bucket);
+        yield* storage.writeText(vaultOwner(vaultId, bucket), dest, content);
         seen.add(dest);
         batch.push({ filePath: dest, content, clientHash: file.hash });
         ingested += 1;
@@ -214,7 +215,7 @@ export const StagedFileIngestWorkflowLive = StagedFileIngestWorkflow.toLayer((pa
       execute: Effect.gen(function* () {
         const config = yield* AppConfig;
         const db = yield* Database;
-        const storage = yield* VaultStorage;
+        const stagedStorage = yield* StagedStorage;
         const pipeline = yield* PipelineRunsService;
         const logger = yield* StructuredLogger;
         const vaultId = payload.vaultId as Uuid;
@@ -273,7 +274,7 @@ export const StagedFileIngestWorkflowLive = StagedFileIngestWorkflow.toLayer((pa
             );
           const cleanupResults = yield* Effect.forEach(
             cleanupHashes,
-            (hash) => Effect.exit(storage.deleteStaged(vaultId, bucket, hash)),
+            (hash) => Effect.exit(stagedStorage.deleteStaged(vaultId, bucket, hash)),
             { concurrency: 4 },
           );
           const cleanupFailures = cleanupResults.filter(Exit.isFailure).length;

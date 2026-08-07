@@ -26,7 +26,7 @@ import { alias } from "drizzle-orm/pg-core";
 import { and, asc, eq, gte, lte, sql } from "drizzle-orm";
 import { Context, Effect, Layer, Schema } from "effect";
 
-import { VaultStorage } from "./storage.ts";
+import { ContentStorage, vaultOwner } from "./storage.ts";
 import { VaultAccessService } from "./vaults.ts";
 
 const MAX_CHUNK_SPAN = 100;
@@ -165,7 +165,7 @@ export const DocumentsServiceLive = Layer.effect(
   Effect.gen(function* () {
     const db = yield* Database;
     const access = yield* VaultAccessService;
-    const storage = yield* VaultStorage;
+    const storage = yield* ContentStorage;
 
     const getWikiByPath = (vaultId: Uuid, filePath: string) =>
       Effect.gen(function* () {
@@ -216,7 +216,9 @@ export const DocumentsServiceLive = Layer.effect(
         if (article === undefined) {
           return undefined;
         }
-        const archivedContent = yield* Effect.result(storage.readText(vaultId, article.file_path));
+        const archivedContent = yield* Effect.result(
+          storage.readText(vaultOwner(vaultId), article.file_path),
+        );
         if (archivedContent._tag === "Failure") {
           return undefined;
         }
@@ -246,7 +248,7 @@ export const DocumentsServiceLive = Layer.effect(
           return yield* new BadRequest({ detail: `Invalid document path: ${path}` });
         }
 
-        const content = yield* Effect.result(storage.readText(vaultId, safePath));
+        const content = yield* Effect.result(storage.readText(vaultOwner(vaultId), safePath));
         if (content._tag === "Failure") {
           if (safePath.startsWith("wiki/")) {
             const archived = yield* readArchivedWiki(vaultId, safePath);

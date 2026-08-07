@@ -20,7 +20,7 @@ import { Context, Effect, Layer } from "effect";
 import { stringify as stringifyYaml } from "yaml";
 
 import { pageEnvelope, oneTotal } from "./pagination.ts";
-import { ProposalStorage, VaultStorage } from "./storage.ts";
+import { ContentStorage, ProposalStorage, vaultOwner } from "./storage.ts";
 import { SourceDocumentsService } from "./source-documents.ts";
 import { VaultAccessService } from "./vaults.ts";
 
@@ -149,7 +149,7 @@ export const ProposalsServiceLive = Layer.effect(
     const db = yield* Database;
     const access = yield* VaultAccessService;
     const proposalStorage = yield* ProposalStorage;
-    const vaultStorage = yield* VaultStorage;
+    const vaultStorage = yield* ContentStorage;
     const sourceDocuments = yield* SourceDocumentsService;
 
     const insertProposal = (
@@ -329,7 +329,7 @@ export const ProposalsServiceLive = Layer.effect(
               const rendered = yield* proposalStorage
                 .readText(proposalStagingPath(proposal.id as Uuid))
                 .pipe(Effect.orDie);
-              yield* vaultStorage.writeText(vaultId, proposal.destPath, rendered);
+              yield* vaultStorage.writeText(vaultOwner(vaultId), proposal.destPath, rendered);
               const documentId = yield* sourceDocuments.index(vaultId, proposal.destPath, rendered);
               yield* db.query((d) => d
                 .update(sourceProposals)

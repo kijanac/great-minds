@@ -39,7 +39,7 @@ import { pageEnvelope, oneTotal } from "./pagination.ts";
 import { ProposalsService } from "./proposals.ts";
 import { RandomBytesService, formatUuid7 } from "./random.ts";
 import { SourceDocumentsService } from "./source-documents.ts";
-import { VaultStorage } from "./storage.ts";
+import { ContentStorage, vaultOwner } from "./storage.ts";
 import { VaultAccessService } from "./vaults.ts";
 import { ClockService } from "./clock.ts";
 
@@ -285,7 +285,7 @@ export const SessionsServiceLive = Layer.effect(
   Effect.gen(function* () {
     const db = yield* Database;
     const access = yield* VaultAccessService;
-    const storage = yield* VaultStorage;
+    const storage = yield* ContentStorage;
     const logger = yield* StructuredLogger;
     const clock = yield* ClockService;
     const randomBytes = yield* RandomBytesService;
@@ -377,7 +377,7 @@ export const SessionsServiceLive = Layer.effect(
     ) =>
       Effect.gen(function* () {
         const result = yield* Effect.result(
-          storage.readText(vaultId, sessionPath(sessionId, extension)),
+          storage.readText(vaultOwner(vaultId), sessionPath(sessionId, extension)),
         );
         if (result._tag === "Failure") {
           return yield* new NotFound({ detail: missingDetail });
@@ -397,11 +397,17 @@ export const SessionsServiceLive = Layer.effect(
     const nowIso = () => Effect.map(clock.now, (now) => now.toISOString());
 
     const appendEvent = (vaultId: Uuid, sessionId: string, event: SessionEvent) =>
-      storage.appendText(vaultId, sessionFilePath(sessionId), `${JSON.stringify(event)}\n`);
+      storage.appendText(
+        vaultOwner(vaultId),
+        sessionFilePath(sessionId),
+        `${JSON.stringify(event)}\n`,
+      );
 
     const loadAllEvents = (vaultId: Uuid, sessionId: string) =>
       Effect.gen(function* () {
-        const result = yield* Effect.result(storage.readText(vaultId, sessionFilePath(sessionId)));
+        const result = yield* Effect.result(
+          storage.readText(vaultOwner(vaultId), sessionFilePath(sessionId)),
+        );
         if (result._tag === "Failure") {
           return yield* new NotFound({ detail: "Session not found" });
         }
@@ -414,7 +420,7 @@ export const SessionsServiceLive = Layer.effect(
           Effect.catchTag("NotFound", (error) => Effect.die(error)),
         );
         yield* storage.writeText(
-          vaultId,
+          vaultOwner(vaultId),
           sessionPath(sessionId, "md"),
           renderSessionMarkdown(events),
         );

@@ -32,7 +32,14 @@ import { SessionsService, SessionsServiceLive } from "./sessions.ts";
 import { SourceDocumentsService, SourceDocumentsServiceLive } from "./source-documents.ts";
 import { StagedFileIngestWorkflowLive } from "./staged-file-ingest-workflow.ts";
 import { SourcesService, SourcesServiceLive } from "./sources.ts";
-import { ProposalStorage, ProposalStorageLive, VaultStorage, VaultStorageLive } from "./storage.ts";
+import {
+  ContentStorage,
+  ContentStorageLive,
+  ProposalStorage,
+  ProposalStorageLive,
+  StagedStorage,
+  StagedStorageLive,
+} from "./storage.ts";
 import { RandomBytesLive, RandomBytesService } from "./random.ts";
 import { TokenService, TokenServiceLive } from "./tokens.ts";
 import { UserDocumentsService, UserDocumentsServiceLive } from "./user-documents.ts";
@@ -71,7 +78,8 @@ export type AppLayerServices =
   | ParallelSearchService
   | QueryService
   | RepliesService
-  | VaultStorage
+  | ContentStorage
+  | StagedStorage
   | ProposalStorage
   | RandomBytesService
   | AuthService
@@ -82,7 +90,8 @@ export type AppLayerOverrides = {
   readonly clock?: Layer.Layer<ClockService>;
   readonly mailer?: Layer.Layer<Mailer>;
   readonly logger?: Layer.Layer<StructuredLogger>;
-  readonly storage?: Layer.Layer<VaultStorage>;
+  readonly storage?: Layer.Layer<ContentStorage>;
+  readonly stagedStorage?: Layer.Layer<StagedStorage>;
   readonly proposalStorage?: Layer.Layer<ProposalStorage>;
   readonly randomBytes?: Layer.Layer<RandomBytesService>;
   readonly languageModel?: Layer.Layer<LanguageModel>;
@@ -102,7 +111,10 @@ export const makeAppLayers = (overrides: AppLayerOverrides = {}) => {
   );
 
   const VaultAccessLive = VaultAccessServiceLive.pipe(Layer.provideMerge(BaseLive));
-  const StorageLive = (overrides.storage ?? VaultStorageLive).pipe(Layer.provideMerge(BaseLive));
+  const StorageLive = (overrides.storage ?? ContentStorageLive).pipe(Layer.provideMerge(BaseLive));
+  const StagedStorageLiveLayer = (overrides.stagedStorage ?? StagedStorageLive).pipe(
+    Layer.provideMerge(BaseLive),
+  );
   const ProposalStorageLiveLayer = (overrides.proposalStorage ?? ProposalStorageLive).pipe(
     Layer.provideMerge(BaseLive),
   );
@@ -144,6 +156,7 @@ export const makeAppLayers = (overrides: AppLayerOverrides = {}) => {
     Layer.provideMerge(CompilePhasesLiveLayer),
     Layer.provideMerge(PipelineRunsLive),
     Layer.provideMerge(StorageLive),
+    Layer.provideMerge(StagedStorageLiveLayer),
     Layer.provideMerge(WorkflowEngineBaseLive),
     Layer.provideMerge(BaseLive),
   );
@@ -165,6 +178,7 @@ export const makeAppLayers = (overrides: AppLayerOverrides = {}) => {
     Layer.provideMerge(ProposalsLive),
     Layer.provideMerge(SourceDocumentsLive),
     Layer.provideMerge(StorageLive),
+    Layer.provideMerge(StagedStorageLiveLayer),
     Layer.provideMerge(VaultAccessLive),
     Layer.provideMerge(WorkflowsLive),
     Layer.provideMerge(BaseLive),
@@ -187,6 +201,7 @@ export const makeAppLayers = (overrides: AppLayerOverrides = {}) => {
     Layer.provideMerge(MailerLiveLayer),
     Layer.provideMerge(VaultAccessLive),
     Layer.provideMerge(StorageLive),
+    Layer.provideMerge(StagedStorageLiveLayer),
     Layer.provideMerge(BaseLive),
   );
   const SessionsLive = SessionsServiceLive.pipe(
@@ -238,6 +253,7 @@ export const makeAppLayers = (overrides: AppLayerOverrides = {}) => {
     MailerLiveLayer,
     TokenServiceLive,
     StorageLive,
+    StagedStorageLiveLayer,
     LanguageModelLiveLayer,
     EmbeddingsLiveLayer,
     CostLookupLiveLayer,

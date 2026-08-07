@@ -12,7 +12,7 @@ import {
   StagedFileIngestWorkflow,
   StagedFileIngestWorkflowLive,
 } from "../../src/staged-file-ingest-workflow.ts";
-import { VaultStorage } from "../../src/storage.ts";
+import { ContentStorage, StagedStorage } from "../../src/storage.ts";
 import { WorkflowEngineLive } from "../../src/workflow-engine.ts";
 
 const mode = process.argv[2];
@@ -84,18 +84,16 @@ const LoggerLive = Layer.succeed(StructuredLogger, {
   warn: () => Effect.void,
   error: () => Effect.void,
 });
-const StorageLive = Layer.succeed(VaultStorage, {
+const StorageLive = Layer.succeed(ContentStorage, {
   listMarkdown: () => Effect.succeed([]),
   readText: () => Effect.die("unused"),
   writeText: () => Effect.void,
   appendText: () => Effect.die("unused"),
   exists: () => Effect.succeed(false),
   deletePath: () => Effect.void,
-  clearVault: () => Effect.void,
-  readUserText: () => Effect.die(new Error("user storage is unavailable in staged ingest")),
-  writeUserText: () => Effect.void,
-  deleteUserPath: () => Effect.void,
-  clearUser: () => Effect.void,
+  clear: () => Effect.void,
+});
+const StagedStorageLive = Layer.succeed(StagedStorage, {
   prepareBucketForOwner: () => Effect.succeed("worker-test-bucket"),
   deleteOwnerBucket: () => Effect.void,
   presignStagedPut: () => Effect.succeed("https://example.invalid"),
@@ -139,6 +137,7 @@ const MainLive = HandlerLive.pipe(
   Layer.provideMerge(SourceDocumentsLive),
   Layer.provideMerge(PipelineLive),
   Layer.provideMerge(StorageLive),
+  Layer.provideMerge(StagedStorageLive),
   Layer.provideMerge(EngineLive),
   Layer.provideMerge(BaseLive),
 );

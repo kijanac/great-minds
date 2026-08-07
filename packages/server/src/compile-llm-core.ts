@@ -36,11 +36,11 @@ import { markdownParagraphs, parseFrontmatter, serializeFrontmatter } from "./ma
 import type { PipelineRunsService } from "./pipeline-runs.ts";
 import { progressSteps } from "./pipeline-runs.ts";
 import { formatUuid7, type RandomBytesService } from "./random.ts";
-import { StorageFileMissing, type VaultStorage } from "./storage.ts";
+import { type ContentStorage, StorageFileMissing, vaultOwner } from "./storage.ts";
 import type { ClockService } from "./clock.ts";
 
 type DatabaseService = Database["Service"];
-type StorageService = VaultStorage["Service"];
+type StorageService = ContentStorage["Service"];
 type PipelineService = PipelineRunsService["Service"];
 type ModelService = LanguageModel["Service"];
 type EmbeddingService = EmbeddingsService["Service"];
@@ -311,7 +311,9 @@ const promptUrl = (name: string) => new URL(`./default_prompts/${name}.md`, impo
 
 const loadPrompt = (storage: StorageService, vaultId: Uuid, name: string) =>
   Effect.gen(function* () {
-    const override = yield* Effect.result(storage.readText(vaultId, `prompts/${name}.md`));
+    const override = yield* Effect.result(
+      storage.readText(vaultOwner(vaultId), `prompts/${name}.md`),
+    );
     if (override._tag === "Success") return override.success.trim();
     if (!(override.failure instanceof StorageFileMissing))
       return yield* Effect.fail(override.failure);
@@ -323,7 +325,7 @@ const loadPrompt = (storage: StorageService, vaultId: Uuid, name: string) =>
 
 const loadVaultConfig = (storage: StorageService, vaultId: Uuid) =>
   Effect.gen(function* () {
-    const result = yield* Effect.result(storage.readText(vaultId, "config.yaml"));
+    const result = yield* Effect.result(storage.readText(vaultOwner(vaultId), "config.yaml"));
     if (result._tag === "Failure") {
       if (result.failure instanceof StorageFileMissing) return defaultVaultConfig;
       return yield* Effect.fail(result.failure);
@@ -709,7 +711,7 @@ export const makeCompileLlmCore = (options: CompileLlmCoreOptions) => {
                     card: cachedCard,
                   } as const;
                 }
-                const content = yield* storage.readText(vaultId, document.filePath);
+                const content = yield* storage.readText(vaultOwner(vaultId), document.filePath);
                 const body = parseFrontmatter(content).body;
                 const data = yield* extractSemaphore.withPermit(
                   jsonCall({
@@ -912,7 +914,7 @@ export const makeCompileLlmCore = (options: CompileLlmCoreOptions) => {
       for (const outcome of fresh) {
         const document = documentsById.get(outcome.documentId);
         if (document === undefined) throw new Error(`document ${outcome.documentId} disappeared`);
-        const existingContent = yield* storage.readText(vaultId, document.filePath);
+        const existingContent = yield* storage.readText(vaultOwner(vaultId), document.filePath);
         const body = parseFrontmatter(existingContent).body;
         const frontmatter: Record<string, unknown> = {
           source_type: document.sourceType,
@@ -944,7 +946,7 @@ export const makeCompileLlmCore = (options: CompileLlmCoreOptions) => {
           ),
           body,
         );
-        yield* storage.writeText(vaultId, document.filePath, nextContent);
+        yield* storage.writeText(vaultOwner(vaultId), document.filePath, nextContent);
         yield* db.query((d) => d
           .update(sourceDocuments)
           .set({
@@ -2503,7 +2505,9 @@ const runRender = (options: RenderOptions) =>
     const promptTemplate = yield* loadPrompt(options.storage, options.vaultId, "render");
     const promptHash = promptContentHash(promptTemplate);
     const existingWiki = new Set(
-      (yield* options.storage.listMarkdown(options.vaultId, "wiki")).map((file) => file.path),
+      (yield* options.storage.listMarkdown(vaultOwner(options.vaultId), "wiki")).map(
+        (file) => file.path,
+      ),
     );
     const toRender: ValidatedTopic[] = [];
     let materialized = 0;

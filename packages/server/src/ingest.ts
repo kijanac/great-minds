@@ -27,7 +27,7 @@ import { progressSteps, type PipelineProgressStep } from "./pipeline-runs.ts";
 import { ProposalsService } from "./proposals.ts";
 import { SourceDocumentsService } from "./source-documents.ts";
 import { StagedFileIngestWorkflow } from "./staged-file-ingest-workflow.ts";
-import { VaultStorage } from "./storage.ts";
+import { ContentStorage, StagedStorage, vaultOwner } from "./storage.ts";
 import { VaultAccessService } from "./vaults.ts";
 import { ClockService } from "./clock.ts";
 
@@ -240,7 +240,8 @@ export const IngestServiceLive = Layer.effect(
   Effect.gen(function* () {
     const db = yield* Database;
     const access = yield* VaultAccessService;
-    const storage = yield* VaultStorage;
+    const storage = yield* ContentStorage;
+    const stagedStorage = yield* StagedStorage;
     const sourceDocumentsWrite = yield* SourceDocumentsService;
     const proposals = yield* ProposalsService;
     const clock = yield* ClockService;
@@ -285,7 +286,7 @@ export const IngestServiceLive = Layer.effect(
     ) =>
       Effect.gen(function* () {
         const rendered = buildDocument(content, frontmatter);
-        yield* storage.writeText(vaultId, dest, rendered);
+        yield* storage.writeText(vaultOwner(vaultId), dest, rendered);
         yield* sourceDocumentsWrite.index(vaultId, dest, rendered);
         yield* ensureCompileIntent(vaultId, pipelineRunId);
         return { file_path: dest } satisfies IngestedDocument;
@@ -454,12 +455,16 @@ export const IngestServiceLive = Layer.effect(
           }
           const signed: StagedFileSignedUpload[] = [];
           for (const file of files) {
-            const url = yield* storage.presignStagedPut(
+            const url = yield* stagedStorage.presignStagedPut(
               vaultId,
               bucket,
               file.hash,
               file.mimetype ?? "application/octet-stream",
               file.size,
+            ).pipe(
+              Effect.catchTag("StagedStorageError", (error) =>
+                Effect.fail(new BadRequest({ detail: error.message })),
+              ),
             );
             signed.push({ hash: file.hash, url });
           }

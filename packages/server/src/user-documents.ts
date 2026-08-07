@@ -19,7 +19,7 @@ import { bodyContentHash, fileContentHash, sha256Hex } from "./crypto.ts";
 import { fetchUrlMarkdown, normalizeUrl, slugify } from "./ingest.ts";
 import { buildDocument, parseFrontmatter } from "./markdown.ts";
 import { oneTotal, pageEnvelope } from "./pagination.ts";
-import { VaultStorage } from "./storage.ts";
+import { ContentStorage, userOwner } from "./storage.ts";
 
 type UserDocumentRow = typeof userDocuments.$inferSelect;
 
@@ -78,7 +78,7 @@ export const UserDocumentsServiceLive = Layer.effect(
   UserDocumentsService,
   Effect.gen(function* () {
     const db = yield* Database;
-    const storage = yield* VaultStorage;
+    const storage = yield* ContentStorage;
 
     const getByUrl = (userId: Uuid, url: string) =>
       db.query((d) => d
@@ -130,7 +130,7 @@ export const UserDocumentsServiceLive = Layer.effect(
             origin,
           });
           const parsed = parseFrontmatter(content);
-          yield* storage.writeUserText(userId, filePath, content);
+          yield* storage.writeText(userOwner(userId), filePath, content);
           const rows = yield* db.query((d) => d
             .insert(userDocuments)
             .values({
@@ -183,7 +183,7 @@ export const UserDocumentsServiceLive = Layer.effect(
           if (row === undefined) {
             return yield* new NotFound({ detail: `Reference not found: ${safePath}` });
           }
-          const content = yield* Effect.result(storage.readUserText(userId, safePath));
+          const content = yield* Effect.result(storage.readText(userOwner(userId), safePath));
           if (content._tag === "Failure") {
             return yield* new NotFound({ detail: `Reference not found: ${safePath}` });
           }
@@ -204,7 +204,7 @@ export const UserDocumentsServiceLive = Layer.effect(
           if (rows[0] === undefined) {
             return yield* new NotFound({ detail: `Reference not found: ${safePath}` });
           }
-          yield* storage.deleteUserPath(userId, safePath);
+          yield* storage.deletePath(userOwner(userId), safePath);
         }),
     } satisfies UserDocumentsServiceShape;
   }),

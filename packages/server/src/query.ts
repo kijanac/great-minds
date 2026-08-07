@@ -35,7 +35,7 @@ import {
 } from "./llm.ts";
 import { StructuredLogger } from "./logging.ts";
 import { ParallelSearchService, type ParallelSearchResult } from "./parallel.ts";
-import { StorageFileMissing, VaultStorage } from "./storage.ts";
+import { ContentStorage, StorageFileMissing, userOwner, vaultOwner } from "./storage.ts";
 
 type QueryServiceShape = {
   readonly streamEvents: (
@@ -439,7 +439,7 @@ export const QueryServiceLive = Layer.effect(
   QueryService,
   Effect.gen(function* () {
     const db = yield* Database;
-    const storage = yield* VaultStorage;
+    const storage = yield* ContentStorage;
     const logger = yield* StructuredLogger;
     const languageModel = yield* LanguageModel;
     const embeddings = yield* EmbeddingsService;
@@ -450,7 +450,7 @@ export const QueryServiceLive = Layer.effect(
     const run = <A, E>(effect: Effect.Effect<A, E, never>) => Effect.runPromise(effect);
 
     const loadVaultConfig = async (vaultId: Uuid) => {
-      const content = await run(Effect.result(storage.readText(vaultId, configPath)));
+      const content = await run(Effect.result(storage.readText(vaultOwner(vaultId), configPath)));
       if (content._tag === "Failure") {
         if (content.failure instanceof StorageFileMissing) {
           return defaultQueryVaultConfig;
@@ -479,7 +479,9 @@ export const QueryServiceLive = Layer.effect(
     };
 
     const loadPrompt = async (vaultId: Uuid, name: string) => {
-      const override = await run(Effect.result(storage.readText(vaultId, `prompts/${name}.md`)));
+      const override = await run(
+        Effect.result(storage.readText(vaultOwner(vaultId), `prompts/${name}.md`)),
+      );
       if (override._tag === "Success") {
         return override.success.trim();
       }
@@ -702,8 +704,8 @@ export const QueryServiceLive = Layer.effect(
     ): Promise<ToolResult> => {
       const read =
         scope === "personal"
-          ? storage.readUserText(context.userId, path)
-          : storage.readText(context.vaultId, path);
+          ? storage.readText(userOwner(context.userId), path)
+          : storage.readText(vaultOwner(context.vaultId), path);
       const content = await run(Effect.result(read));
       if (content._tag === "Failure") {
         throw new ToolMiss(`Document not found: ${path}`);

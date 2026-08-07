@@ -26,7 +26,7 @@ import { parse as parseYaml, parseDocument } from "yaml";
 import { StructuredLogger } from "./logging.ts";
 import { Mailer } from "./mailer.ts";
 import { pageEnvelope, oneTotal } from "./pagination.ts";
-import { VaultStorage } from "./storage.ts";
+import { ContentStorage, StagedStorage, vaultOwner } from "./storage.ts";
 
 type CountRow = {
   readonly count: number;
@@ -302,7 +302,8 @@ export const VaultsServiceLive = Layer.effect(
   Effect.gen(function* () {
     const db = yield* Database;
     const access = yield* VaultAccessService;
-    const storage = yield* VaultStorage;
+    const storage = yield* ContentStorage;
+    const stagedStorage = yield* StagedStorage;
     const mailer = yield* Mailer;
     const logger = yield* StructuredLogger;
 
@@ -318,15 +319,17 @@ export const VaultsServiceLive = Layer.effect(
 
     const ensureConfig = (vaultId: Uuid, bucketName?: string | null) =>
       Effect.gen(function* () {
-        const exists = yield* storage.exists(vaultId, CONFIG_PATH, bucketName);
+        const owner = vaultOwner(vaultId, bucketName);
+        const exists = yield* storage.exists(owner, CONFIG_PATH);
         if (!exists) {
-          yield* storage.writeText(vaultId, CONFIG_PATH, defaultVaultConfigText, bucketName);
+          yield* storage.writeText(owner, CONFIG_PATH, defaultVaultConfigText);
         }
       });
 
     const applyConfigUpdate = (vaultId: Uuid, input: VaultConfigUpdate, bucketName?: string | null) =>
       Effect.gen(function* () {
-        const existing = yield* Effect.result(storage.readText(vaultId, CONFIG_PATH, bucketName));
+        const owner = vaultOwner(vaultId, bucketName);
+        const existing = yield* Effect.result(storage.readText(owner, CONFIG_PATH));
         const doc = parseDocument(
           existing._tag === "Success" ? existing.success : defaultVaultConfigText,
         );
@@ -336,12 +339,12 @@ export const VaultsServiceLive = Layer.effect(
         if (input.kinds !== undefined && input.kinds !== null) {
           doc.set("kinds", [...input.kinds]);
         }
-        yield* storage.writeText(vaultId, CONFIG_PATH, String(doc), bucketName);
+        yield* storage.writeText(owner, CONFIG_PATH, String(doc));
       });
 
     const readConfig = (vaultId: Uuid) =>
       Effect.gen(function* () {
-        const content = yield* Effect.result(storage.readText(vaultId, CONFIG_PATH));
+        const content = yield* Effect.result(storage.readText(vaultOwner(vaultId), CONFIG_PATH));
         if (content._tag === "Failure") {
           return defaultVaultConfig;
         }
@@ -374,7 +377,7 @@ export const VaultsServiceLive = Layer.effect(
       },
     ) =>
       Effect.gen(function* () {
-        const bucketName = yield* storage.prepareBucketForOwner(userId);
+        const bucketName = yield* stagedStorage.prepareBucketForOwner(userId);
         const vaultId = asUuid(randomUUID());
         yield* ensureConfig(vaultId, bucketName);
         if (input.thematic_hint !== undefined || input.kinds !== undefined) {
@@ -445,7 +448,7 @@ export const VaultsServiceLive = Layer.effect(
             .where(eq(vaults.ownerId, userId)));
           yield* db.query((d) => d.delete(vaults).where(eq(vaults.ownerId, userId)));
           for (const vault of owned) {
-            yield* storage.clearVault(asUuid(vault.id), vault.r2BucketName);
+            yield* storage.clear(vaultOwner(asUuid(vault.id), vault.r2BucketName));
           }
         }),
       createVault,
@@ -688,7 +691,7 @@ export const VaultsServiceLive = Layer.effect(
             return yield* new Forbidden({ detail: "Only vault owners can perform this action" });
           }
           yield* db.query((d) => d.delete(vaults).where(eq(vaults.id, vaultId)));
-          yield* storage.clearVault(vaultId, vault.r2BucketName);
+          yield* storage.clear(vaultOwner(vaultId, vault.r2BucketName));
         }),
     } satisfies VaultsServiceShape;
   }),

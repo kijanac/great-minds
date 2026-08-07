@@ -49,7 +49,7 @@ import {
   StagedFileIngestWorkflow,
   StagedFileIngestWorkflowLive,
 } from "../src/staged-file-ingest-workflow.ts";
-import { StorageFileMissing, VaultStorage } from "../src/storage.ts";
+import { ContentStorage, StagedStorage, StorageFileMissing } from "../src/storage.ts";
 import { VaultAccessServiceLive } from "../src/vaults.ts";
 import { WorkflowEngineLive } from "../src/workflow-engine.ts";
 
@@ -184,7 +184,7 @@ const TestLoggerLive = Layer.succeed(StructuredLogger, {
   error: (event, fields) => Effect.sync(() => logEvents.push({ event, fields })),
 });
 
-const StorageLive = Layer.succeed(VaultStorage, {
+const StorageLive = Layer.succeed(ContentStorage, {
   listMarkdown: () => Effect.succeed([]),
   readText: (_vaultId, path) => {
     const content = written.get(path);
@@ -199,11 +199,10 @@ const StorageLive = Layer.succeed(VaultStorage, {
   appendText: () => Effect.die("unused"),
   exists: () => Effect.succeed(false),
   deletePath: () => Effect.void,
-  clearVault: () => Effect.void,
-  readUserText: () => Effect.die(new Error("user storage is unavailable in worker tests")),
-  writeUserText: () => Effect.void,
-  deleteUserPath: () => Effect.void,
-  clearUser: () => Effect.void,
+  clear: () => Effect.void,
+});
+
+const StagedStorageLive = Layer.succeed(StagedStorage, {
   prepareBucketForOwner: () => Effect.succeed("worker-test-bucket"),
   deleteOwnerBucket: () => Effect.void,
   presignStagedPut: () => Effect.succeed("https://example.invalid"),
@@ -272,6 +271,7 @@ const WorkflowHandlersLive = Layer.mergeAll(StagedFileIngestWorkflowLive, Compil
   Layer.provideMerge(CompilePhasesLiveLayer),
   Layer.provideMerge(PipelineLive),
   Layer.provideMerge(StorageLive),
+  Layer.provideMerge(StagedStorageLive),
   Layer.provideMerge(EngineLive),
   Layer.provideMerge(BaseLive),
 );
@@ -291,6 +291,7 @@ const TestLive = Layer.mergeAll(ReconcilerLive, JobsLive).pipe(
   Layer.provideMerge(PipelineLive),
   Layer.provideMerge(SourceDocumentsLive),
   Layer.provideMerge(StorageLive),
+  Layer.provideMerge(StagedStorageLive),
   Layer.provideMerge(BaseLive),
 );
 

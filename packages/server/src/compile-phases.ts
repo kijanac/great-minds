@@ -31,7 +31,7 @@ import {
   serializeFrontmatter,
 } from "./markdown.ts";
 import { PipelineRunsService, progressSteps } from "./pipeline-runs.ts";
-import { VaultStorage } from "./storage.ts";
+import { ContentStorage, vaultOwner } from "./storage.ts";
 import { RandomBytesService } from "./random.ts";
 
 export const INGEST_STEP_LABELS = { index_sources: "Indexing for search" } as const;
@@ -258,7 +258,7 @@ export const CompilePhasesLive = Layer.effect(
     const pipeline = yield* PipelineRunsService;
     const randomBytes = yield* RandomBytesService;
     const clock = yield* ClockService;
-    const storage = yield* VaultStorage;
+    const storage = yield* ContentStorage;
 
     const rebuildSearchScope = (vaultId: Uuid, runId: Uuid, scope: "raw" | "wiki") =>
       Effect.gen(function* () {
@@ -283,7 +283,7 @@ export const CompilePhasesLive = Layer.effect(
           .from(sourceDocuments)
           .where(eq(sourceDocuments.vaultId, vaultId)));
         const documentsByPath = new Map(documents.map((row) => [row.path, row]));
-        const files = yield* storage.listMarkdown(vaultId, scope);
+        const files = yield* storage.listMarkdown(vaultOwner(vaultId), scope);
         const current = new Map<string, Set<number>>();
         const changed: SearchChunk[] = [];
         const etags: { id: Uuid; etag: string }[] = [];
@@ -322,7 +322,7 @@ export const CompilePhasesLive = Layer.effect(
             );
             continue;
           }
-          const content = yield* storage.readText(vaultId, file.path);
+          const content = yield* storage.readText(vaultOwner(vaultId), file.path);
           if (content.length === 0) continue;
           for (const chunk of chunkDocument(file.path, content)) {
             const indexes = current.get(file.path) ?? new Set<number>();
@@ -457,7 +457,7 @@ export const CompilePhasesLive = Layer.effect(
           },
           output.body,
         );
-        yield* storage.writeText(vaultId, path, content);
+        yield* storage.writeText(vaultOwner(vaultId), path, content);
         yield* db.query((d) => d
           .insert(wikiArticles)
           .values({
@@ -509,7 +509,7 @@ export const CompilePhasesLive = Layer.effect(
             })
             .where(eq(topics.topicId, transition.topicId)));
           const wikiPath = `wiki/${transition.slug}.md`;
-          const content = yield* Effect.result(storage.readText(vaultId, wikiPath));
+          const content = yield* Effect.result(storage.readText(vaultOwner(vaultId), wikiPath));
           if (content._tag === "Failure") continue;
           const parsed = parseFrontmatter(content.success);
           const frontmatter: Record<string, unknown> = {
@@ -521,11 +521,11 @@ export const CompilePhasesLive = Layer.effect(
           }
           const archivePath = `archive/${transition.topicId}/${transition.slug}.md`;
           yield* storage.writeText(
-            vaultId,
+            vaultOwner(vaultId),
             archivePath,
             serializeFrontmatter(frontmatter, parsed.body),
           );
-          yield* storage.deletePath(vaultId, wikiPath);
+          yield* storage.deletePath(vaultOwner(vaultId), wikiPath);
           yield* db.query((d) => d
             .update(wikiArticles)
             .set({ filePath: archivePath, archived: true, updatedAt: sql`now()` })
@@ -726,7 +726,7 @@ export const CompilePhasesLive = Layer.effect(
           let walked = 0;
           for (const topic of rendered) {
             const content = yield* Effect.result(
-              storage.readText(vaultId, `wiki/${topic.slug}.md`),
+              storage.readText(vaultOwner(vaultId), `wiki/${topic.slug}.md`),
             );
             if (content._tag === "Failure") continue;
             const source = articleByTopic.get(topic.topicId);
@@ -812,7 +812,7 @@ export const CompilePhasesLive = Layer.effect(
               ),
             "",
           ];
-          yield* storage.writeText(vaultId, "wiki/_index.md", wikiLines.join("\n"));
+          yield* storage.writeText(vaultOwner(vaultId), "wiki/_index.md", wikiLines.join("\n"));
           yield* pipeline.updateProgress(
             runId,
             "publish",
@@ -845,7 +845,7 @@ export const CompilePhasesLive = Layer.effect(
               }),
             "",
           ];
-          yield* storage.writeText(vaultId, "raw/_index.md", rawLines.join("\n"));
+          yield* storage.writeText(vaultOwner(vaultId), "raw/_index.md", rawLines.join("\n"));
           yield* pipeline.updateProgress(
             runId,
             "publish",

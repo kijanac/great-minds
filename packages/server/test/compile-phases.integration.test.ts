@@ -45,7 +45,7 @@ import { LanguageModel, type CompleteInput, type ModelCompletion } from "../src/
 import { StructuredLogger } from "../src/logging.ts";
 import { PipelineRunsServiceLive } from "../src/pipeline-runs.ts";
 import { RandomBytesLive } from "../src/random.ts";
-import { StorageFileMissing, VaultStorage } from "../src/storage.ts";
+import { ContentStorage, StorageFileMissing } from "../src/storage.ts";
 
 const id = {
   user: "20000000-0000-4000-8000-000000000001" as Uuid,
@@ -128,7 +128,7 @@ let complete = async (_input: CompleteInput): Promise<ModelCompletion> => {
   throw new Error("unexpected compile LLM call");
 };
 
-const StorageLive = Layer.succeed(VaultStorage, {
+const StorageLive = Layer.succeed(ContentStorage, {
   listMarkdown: (_vaultId, scope) =>
     Effect.succeed(
       [...files.keys()]
@@ -148,16 +148,7 @@ const StorageLive = Layer.succeed(VaultStorage, {
   appendText: () => Effect.void,
   exists: (_vaultId, path) => Effect.succeed(files.has(path)),
   deletePath: (_vaultId, path) => Effect.sync(() => files.delete(path)).pipe(Effect.asVoid),
-  clearVault: () => Effect.void,
-  readUserText: () => Effect.die(new Error("user storage is unavailable in compile tests")),
-  writeUserText: () => Effect.void,
-  deleteUserPath: () => Effect.void,
-  clearUser: () => Effect.void,
-  prepareBucketForOwner: () => Effect.succeed(null),
-  deleteOwnerBucket: () => Effect.void,
-  presignStagedPut: () => Effect.die("unused"),
-  readStagedBytes: () => Effect.die("unused"),
-  deleteStaged: () => Effect.die("unused"),
+  clear: () => Effect.void,
 });
 
 const ConfigLive = Layer.succeed(AppConfig, config);
