@@ -583,7 +583,7 @@ const seedFixtures = async (): Promise<Fixture> => {
             vaultId: id.vaultAlpha,
             userId: id.bob,
             query: "What should editors review first?",
-            origin: { doc_path: "raw/books/capital.md" },
+            origin: { doc_path: "raw/books/capital.md", origin_scope: "vault", anchor: null, paragraph: null, paragraph_index: null },
             createdAt: new Date("2026-07-08T10:00:00.000Z"),
             updatedAt: new Date("2026-07-08T10:15:00.000Z"),
             idempotencyKey: "bob-main-key",
@@ -688,6 +688,9 @@ const seedFixtures = async (): Promise<Fixture> => {
               {
                 label: "Alpha Practice",
                 type: "article",
+                title: null,
+                scope: null,
+                path: null,
                 thinking: "Use the article as a shared reference point.",
                 ranges: [{ start: 0, end: 2 }],
                 full: false,
@@ -695,6 +698,9 @@ const seedFixtures = async (): Promise<Fixture> => {
               {
                 label: "Capital Volume",
                 type: "raw",
+                title: null,
+                scope: null,
+                path: null,
                 thinking: "Raw source grounds the discussion.",
                 ranges: [{ start: 3, end: 4 }],
                 full: true,
@@ -702,16 +708,25 @@ const seedFixtures = async (): Promise<Fixture> => {
               {
                 label: "Search: pedagogy",
                 type: "search",
+                title: null,
+                scope: null,
+                path: null,
                 thinking: null,
               },
               {
                 label: "Prior query",
                 type: "query",
+                title: null,
+                scope: null,
+                path: null,
                 thinking: "Compare against previous framing.",
               },
               {
                 label: "Linked articles",
                 type: "links",
+                title: null,
+                scope: null,
+                path: null,
                 thinking: "Trace adjacent topics.",
               },
             ],
@@ -729,7 +744,7 @@ const seedFixtures = async (): Promise<Fixture> => {
         exchanges: [
           {
             query: "Why this passage?",
-            thinking: [{ sources: [{ label: "Linked articles", type: "links", thinking: null }] }],
+            thinking: [{ sources: [{ label: "Linked articles", type: "links", title: null, scope: null, path: null, thinking: null }] }],
             answer: "It gives the group something specific to test.",
           },
           {
@@ -765,7 +780,7 @@ const seedFixtures = async (): Promise<Fixture> => {
         query: "What should editors review first?",
         ts: "2026-07-08T10:00:00.000Z",
         user_id: id.bob,
-        origin: { doc_path: "raw/books/capital.md" },
+        origin: { doc_path: "raw/books/capital.md", origin_scope: "vault", anchor: null, paragraph: null, paragraph_index: null },
       },
       {
         type: "exchange",

@@ -609,7 +609,7 @@ describe("query stream", () => {
       exchange_id: "ex-durable",
       create: {
         idempotency_key: "reply-session-idempotency",
-        origin: { doc_path: "wiki/alpha.md" },
+        origin: { doc_path: "wiki/alpha.md", origin_scope: "vault", anchor: null, paragraph: null, paragraph_index: null },
       },
       question: "Persist this answer",
       mode: "query",

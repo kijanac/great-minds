@@ -452,12 +452,8 @@ export const PipelineProgressStep = Schema.Struct({
   key: Schema.String,
   label: Schema.String,
   status: Schema.Literals(["pending", "running", "completed", "failed"] as const),
-  done: Schema.NullOr(Schema.Number).pipe(
-    Schema.withDecodingDefaultTypeKey(Effect.succeed(null)),
-  ),
-  total: Schema.NullOr(Schema.Number).pipe(
-    Schema.withDecodingDefaultTypeKey(Effect.succeed(null)),
-  ),
+  done: Schema.NullOr(Schema.Number),
+  total: Schema.NullOr(Schema.Number),
   detail: Schema.String,
 });
 export type PipelineProgressStep = typeof PipelineProgressStep.Type;
@@ -623,15 +619,9 @@ export const SessionOrigin = Schema.Struct({
   origin_scope: OriginScope.pipe(
     Schema.withDecodingDefaultTypeKey(Effect.succeed("vault" as const)),
   ),
-  anchor: Schema.NullOr(Schema.String).pipe(
-    Schema.withDecodingDefaultTypeKey(Effect.succeed(null)),
-  ),
-  paragraph: Schema.NullOr(Schema.String).pipe(
-    Schema.withDecodingDefaultTypeKey(Effect.succeed(null)),
-  ),
-  paragraph_index: Schema.NullOr(Schema.Number).pipe(
-    Schema.withDecodingDefaultTypeKey(Effect.succeed(null)),
-  ),
+  anchor: Schema.NullOr(Schema.String),
+  paragraph: Schema.NullOr(Schema.String),
+  paragraph_index: Schema.NullOr(Schema.Number),
 });
 export type SessionOrigin = typeof SessionOrigin.Type;
 
@@ -647,18 +637,10 @@ export type SearchScope = typeof SearchScope.Type;
 export const ThinkingSource = Schema.Struct({
   label: Schema.String,
   type: Schema.Literals(["article", "raw", "search", "query", "links"] as const),
-  title: Schema.NullOr(Schema.String).pipe(
-    Schema.withDecodingDefaultTypeKey(Effect.succeed(null)),
-  ),
-  scope: Schema.NullOr(SearchScope).pipe(
-    Schema.withDecodingDefaultTypeKey(Effect.succeed(null)),
-  ),
-  path: Schema.NullOr(Schema.String).pipe(
-    Schema.withDecodingDefaultTypeKey(Effect.succeed(null)),
-  ),
-  thinking: Schema.NullOr(Schema.String).pipe(
-    Schema.withDecodingDefaultTypeKey(Effect.succeed(null)),
-  ),
+  title: Schema.NullOr(Schema.String),
+  scope: Schema.NullOr(SearchScope),
+  path: Schema.NullOr(Schema.String),
+  thinking: Schema.NullOr(Schema.String),
   ranges: Schema.optionalKey(Schema.Array(ChunkRange)),
   full: Schema.optionalKey(Schema.Boolean),
 });
@@ -682,9 +664,7 @@ export const SessionMetaEvent = Schema.Struct({
   query: Schema.String,
   ts: IsoDateTime,
   user_id: Schema.String,
-  origin: Schema.NullOr(SessionOrigin).pipe(
-    Schema.withDecodingDefaultTypeKey(Effect.succeed(null)),
-  ),
+  origin: Schema.NullOr(SessionOrigin),
 });
 export type SessionMetaEvent = typeof SessionMetaEvent.Type;
 

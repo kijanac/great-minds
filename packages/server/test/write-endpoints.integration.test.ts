@@ -1611,7 +1611,7 @@ describe("M3.1 write endpoint integration", () => {
         thinking: [],
         answer: "Because it carries the document-level claim.",
       },
-      origin: { doc_path: "raw/books/capital.md", anchor: "highlighted passage" },
+      origin: { doc_path: "raw/books/capital.md", origin_scope: "vault", anchor: "highlighted passage", paragraph: null, paragraph_index: null },
     });
     expect(spinOff.status).toBe(201);
     expect(spinOff.body).toEqual({
@@ -1663,7 +1663,7 @@ describe("M3.1 write endpoint integration", () => {
         query: "How should organizers read sources?",
         thinking: [
           {
-            sources: [{ label: "Capital Volume", type: "raw", thinking: null }],
+            sources: [{ label: "Capital Volume", type: "raw", title: null, scope: null, path: null, thinking: null }],
           },
         ],
         answer: "Start with the passage and its claim.",
