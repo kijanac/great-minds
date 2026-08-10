@@ -110,9 +110,9 @@ const normalizeOrigin = (origin: SessionOrigin | null | undefined): SessionOrigi
     : {
         doc_path: origin.doc_path,
         origin_scope: origin.origin_scope,
-        anchor: origin.anchor ?? null,
-        paragraph: origin.paragraph ?? null,
-        paragraph_index: origin.paragraph_index ?? null,
+        anchor: origin.anchor,
+        paragraph: origin.paragraph,
+        paragraph_index: origin.paragraph_index,
       };
 
 const normalizeRange = (range: ChunkRange): ChunkRange => ({
@@ -123,10 +123,10 @@ const normalizeRange = (range: ChunkRange): ChunkRange => ({
 const normalizeThinkingSource = (source: ThinkingSource): ThinkingSource => ({
   label: source.label,
   type: source.type,
-  title: source.title ?? null,
-  scope: source.scope ?? null,
-  path: source.path ?? null,
-  thinking: source.thinking ?? null,
+  title: source.title,
+  scope: source.scope,
+  path: source.path,
+  thinking: source.thinking,
   ranges: (source.ranges ?? []).map(normalizeRange),
   full: source.full ?? false,
 });

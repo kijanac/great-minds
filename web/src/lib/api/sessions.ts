@@ -33,9 +33,9 @@ const pathResponseSchema = z.object({
 const sessionOriginSchema = z.object({
   doc_path: z.string(),
   origin_scope: z.enum(["vault", "personal"]).default("vault"),
-  anchor: z.string().nullable().optional(),
-  paragraph: z.string().nullable().optional(),
-  paragraph_index: z.number().nullable().optional(),
+  anchor: z.string().nullable(),
+  paragraph: z.string().nullable(),
+  paragraph_index: z.number().nullable(),
 });
 
 export type SessionOrigin = z.infer<typeof sessionOriginSchema>;
@@ -47,7 +47,7 @@ const sessionMetaEventSchema = z.object({
   query: z.string(),
   ts: z.string(),
   user_id: z.string(),
-  origin: sessionOriginSchema.nullish(),
+  origin: sessionOriginSchema.nullable(),
 });
 
 const sessionExchangeEventSchema = z.object({
@@ -83,7 +83,7 @@ const sessionSummarySchema = z.object({
   created_at: z.string(),
   updated_at: z.string(),
   user_id: z.string(),
-  origin: sessionOriginSchema.nullish(),
+  origin: sessionOriginSchema.nullable(),
 });
 
 const sessionListSchema = paginatedSchema(sessionSummarySchema);
@@ -175,8 +175,8 @@ const promoteResponseSchema = z.object({
   mode: z.enum(["ingested", "proposed"]),
   path: z.string(),
   title: z.string(),
-  document_id: z.string().nullable().optional(),
-  proposal_id: z.string().nullable().optional(),
+  document_id: z.string().nullable(),
+  proposal_id: z.string().nullable(),
 });
 
 export type PromoteResult = z.infer<typeof promoteResponseSchema>;

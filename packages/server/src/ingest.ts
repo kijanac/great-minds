@@ -36,7 +36,7 @@ type UploadInput = {
   readonly filename: string;
   readonly mimetype: string;
   readonly destPath?: string | null;
-  readonly origin?: string | null;
+  readonly origin?: string;
 };
 
 type IngestServiceShape = {
@@ -74,7 +74,7 @@ type IngestServiceShape = {
   readonly startUrlJob: (
     userId: Uuid,
     vaultId: Uuid,
-    input: { readonly job_id: Uuid; readonly url: string; readonly origin?: string | null },
+    input: { readonly job_id: Uuid; readonly url: string; readonly origin?: string },
   ) => Effect.Effect<JobResponse, BadRequest | Forbidden>;
   readonly ingestSessionExchange: (
     vaultId: Uuid,
@@ -295,7 +295,7 @@ export const IngestServiceLive = Layer.effect(
     const ingestUrl = (
       vaultId: Uuid,
       rawUrl: string,
-      origin?: string | null,
+      origin?: string,
       pipelineRunId?: Uuid,
     ) =>
       Effect.gen(function* () {
@@ -397,7 +397,7 @@ export const IngestServiceLive = Layer.effect(
           yield* access.requireOwner(userId, vaultId);
           return yield* writeAndIndex(vaultId, input.content, input.dest, {
             sourceType: "document",
-            origin: input.origin ?? null,
+            origin: input.origin,
           });
         }),
       ingestUpload: (userId, vaultId, input) =>
@@ -530,7 +530,7 @@ export const IngestServiceLive = Layer.effect(
             }),
           );
           yield* Effect.matchCauseEffect(
-            ingestUrl(vaultId, input.url, input.origin ?? null, run.id as Uuid),
+            ingestUrl(vaultId, input.url, input.origin, run.id as Uuid),
             {
               onSuccess: Effect.succeed,
               onFailure: (cause) =>

@@ -101,6 +101,10 @@
     selectedCard = {
       label: citation.path,
       type: "raw",
+      title: null,
+      scope: null,
+      path: null,
+      thinking: null,
       ranges:
         citation.chunk == null
           ? undefined

@@ -72,6 +72,9 @@
       type: "raw",
       label: citation.path,
       title: null,
+      scope: null,
+      path: null,
+      thinking: null,
       ranges:
         citation.chunk == null
           ? undefined
@@ -139,6 +142,9 @@
       type: "raw",
       label: linkedPath,
       title: null,
+      scope: null,
+      path: null,
+      thinking: null,
       full: true,
     };
   }

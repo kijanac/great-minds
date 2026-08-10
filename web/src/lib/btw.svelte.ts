@@ -130,6 +130,8 @@ export class EphemeralBtws {
           doc_path: this.originPath,
           origin_scope: this.originScope,
           anchor: target.anchor.quote,
+          paragraph: null,
+          paragraph_index: null,
         },
       );
       for (let index = 1; index < target.exchanges.length; index++) {

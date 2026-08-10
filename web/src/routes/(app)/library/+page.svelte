@@ -186,6 +186,9 @@
       type: "article",
       label: item.file_path,
       title: item.title,
+      scope: null,
+      path: null,
+      thinking: null,
     };
   }
 
@@ -194,6 +197,9 @@
       type: "raw",
       label: item.file_path,
       title: item.title,
+      scope: null,
+      path: null,
+      thinking: null,
     };
   }
 
@@ -202,6 +208,9 @@
       type: path.startsWith("wiki/") ? "article" : "raw",
       label: path,
       title: null,
+      scope: null,
+      path: null,
+      thinking: null,
     };
   }
 

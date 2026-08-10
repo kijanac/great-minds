@@ -980,7 +980,7 @@ const parseUpload = (request: HttpServerRequest.HttpServerRequest) =>
       rawBytes,
       filename: file.name,
       mimetype: file.contentType,
-      origin: url.searchParams.get("origin"),
+      origin: url.searchParams.get("origin") ?? undefined,
       destPath: url.searchParams.get("dest_path"),
     };
   });

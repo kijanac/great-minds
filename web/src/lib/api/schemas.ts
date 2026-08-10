@@ -3,17 +3,15 @@ import { z } from "zod";
 export const sourceRefSchema = z.object({
   label: z.string(),
   type: z.enum(["article", "raw", "search", "query", "links"]),
-  title: z.string().nullable().optional(),
-  // For searches: where the search ran. Absent on sessions persisted before
-  // the scope field existed — those render with their legacy prefixed labels.
-  scope: z.enum(["kb", "web"]).nullable().optional(),
+  title: z.string().nullable(),
+  // For searches: where the search ran.
+  scope: z.enum(["kb", "web"]).nullable(),
   // For document-scoped searches: which document was searched.
-  path: z.string().nullable().optional(),
+  path: z.string().nullable(),
   // Transient reply-snapshot state used while a tool call is in flight.
   pending: z.boolean().optional(),
-  // Backend ThinkingSource.thinking is `str | None`, so accept null, not just
-  // absent — a null here otherwise fails the whole session-load parse.
-  thinking: z.string().nullable().optional(),
+  // Backend ThinkingSource.thinking is `str | None`; always present, may be null.
+  thinking: z.string().nullable(),
   // For content cards (article/raw): which chunk ranges the agent expanded,
   // and whether it read the whole document. Drive the context panel.
   ranges: z.array(z.object({ start: z.number(), end: z.number() })).optional(),

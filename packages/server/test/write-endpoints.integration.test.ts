@@ -1542,7 +1542,6 @@ describe("M3.1 write endpoint integration", () => {
     const created = await api("POST", `/vaults/${id.vault}/sessions`, aliceToken, {
       idempotency_key: "stable-create-key",
       exchange: firstExchange,
-      origin: null,
     });
     expect(created.status).toBe(201);
     expect(created.body).toEqual({
@@ -1563,7 +1562,6 @@ describe("M3.1 write endpoint integration", () => {
     expect(createdRows).toHaveLength(1);
     expect(createdRows[0]).toMatchObject({
       query: firstExchange.query,
-      origin: null,
       idempotencyKey: "stable-create-key",
       createdAt: initialTime,
     });
@@ -1571,7 +1569,6 @@ describe("M3.1 write endpoint integration", () => {
     const replay = await api("POST", `/vaults/${id.vault}/sessions`, aliceToken, {
       idempotency_key: "stable-create-key",
       exchange: firstExchange,
-      origin: null,
     });
     expect(replay.status).toBe(201);
     expect(asRecord(replay.body).id).toBe(asRecord(created.body).id);
@@ -1585,7 +1582,6 @@ describe("M3.1 write endpoint integration", () => {
         thinking: [],
         answer: "The retry appends a distinct completed exchange once.",
       },
-      origin: null,
     });
     expect(replayWithLaterExchange.status).toBe(201);
     expect(asRecord(replayWithLaterExchange.body).id).toBe(asRecord(created.body).id);
@@ -1603,7 +1599,6 @@ describe("M3.1 write endpoint integration", () => {
         thinking: [],
         answer: "No; the database/file invariant is corrupt.",
       },
-      origin: null,
     });
     expect(corruptReplay.status).toBe(500);
     expect(await vaultFileExists(id.vault, String(asRecord(created.body).path))).toBe(false);

@@ -579,7 +579,7 @@ export const QueryServiceLive = Layer.effect(
       if (btwPrompt !== null) {
         prompt += "\n\n" + btwPrompt;
       }
-      if (input.extra_instructions !== undefined && input.extra_instructions !== null) {
+      if (input.extra_instructions !== undefined) {
         prompt += "\n\n" + input.extra_instructions;
       }
       return prompt;
@@ -633,10 +633,10 @@ export const QueryServiceLive = Layer.effect(
         return { type, path, title: null };
       }
       if (name === "search_content") {
-        return { type: "search", query: asStringArg(args, "query"), scope: "kb" };
+        return { type: "search", query: asStringArg(args, "query"), scope: "kb", title: null };
       }
       if (name === "web_search") {
-        return { type: "search", query: asStringArg(args, "query"), scope: "web" };
+        return { type: "search", query: asStringArg(args, "query"), scope: "web", title: null };
       }
       if (name === "search_in_document") {
         return {
@@ -1577,7 +1577,6 @@ export const QueryServiceLive = Layer.effect(
       const messages: LlmMessage[] = [{ role: "system", content: systemPrompt }];
       if (
         input.origin_path !== undefined &&
-        input.origin_path !== null &&
         input.origin_path.length > 0
       ) {
         messages.push(
@@ -1667,7 +1666,7 @@ export const QueryServiceLive = Layer.effect(
           }),
         );
         const requestedModel =
-          input.model !== undefined && input.model !== null && input.model.length > 0
+          input.model !== undefined && input.model.length > 0
             ? input.model
             : appConfig.queryModel;
         const fallbackModels = [

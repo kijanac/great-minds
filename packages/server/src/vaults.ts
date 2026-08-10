@@ -55,7 +55,7 @@ type VaultsServiceShape = {
   readonly deleteOwnedVaults: (userId: Uuid) => Effect.Effect<void>;
   readonly createVault: (
     userId: Uuid,
-    input: { readonly name: string; readonly thematic_hint?: string | null; readonly kinds?: readonly string[] | null },
+    input: { readonly name: string; readonly thematic_hint?: string; readonly kinds?: readonly string[] },
   ) => Effect.Effect<Vault>;
   readonly listVaults: (userId: Uuid, params: PageParams) => Effect.Effect<VaultPage>;
   readonly getVaultDetail: (userId: Uuid, vaultId: Uuid) => Effect.Effect<VaultDetail, Forbidden>;
@@ -333,10 +333,10 @@ export const VaultsServiceLive = Layer.effect(
         const doc = parseDocument(
           existing._tag === "Success" ? existing.success : defaultVaultConfigText,
         );
-        if (input.thematic_hint !== undefined && input.thematic_hint !== null) {
+        if (input.thematic_hint !== undefined) {
           doc.set("thematic_hint", input.thematic_hint);
         }
-        if (input.kinds !== undefined && input.kinds !== null) {
+        if (input.kinds !== undefined) {
           doc.set("kinds", [...input.kinds]);
         }
         yield* storage.writeText(owner, CONFIG_PATH, String(doc));
@@ -372,8 +372,8 @@ export const VaultsServiceLive = Layer.effect(
       userId: Uuid,
       input: {
         readonly name: string;
-        readonly thematic_hint?: string | null;
-        readonly kinds?: readonly string[] | null;
+        readonly thematic_hint?: string;
+        readonly kinds?: readonly string[];
       },
     ) =>
       Effect.gen(function* () {
@@ -386,7 +386,7 @@ export const VaultsServiceLive = Layer.effect(
               ? { thematic_hint: input.thematic_hint }
               : {
                   thematic_hint: input.thematic_hint,
-                  kinds: input.kinds === null ? null : [...input.kinds],
+                  kinds: [...input.kinds],
                 };
           yield* applyConfigUpdate(vaultId, update, bucketName);
         }

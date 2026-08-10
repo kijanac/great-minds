@@ -195,7 +195,15 @@ export class Session {
               create: {
                 idempotency_key: this.#idempotencyKey,
                 ...(this.#originPath
-                  ? { origin: { doc_path: this.#originPath, origin_scope: "vault" as const } }
+                  ? {
+                      origin: {
+                        doc_path: this.#originPath,
+                        origin_scope: "vault" as const,
+                        anchor: null,
+                        paragraph: null,
+                        paragraph_index: null,
+                      },
+                    }
                   : {}),
               },
               question,

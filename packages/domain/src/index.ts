@@ -262,8 +262,8 @@ export type InvitedMemberRole = typeof InvitedMemberRole.Type;
 
 export const VaultCreate = Schema.Struct({
   name: Schema.String,
-  thematic_hint: Schema.optionalKey(Schema.NullOr(Schema.String)),
-  kinds: Schema.optionalKey(Schema.NullOr(Schema.Array(Schema.String))),
+  thematic_hint: Schema.optionalKey(Schema.String),
+  kinds: Schema.optionalKey(Schema.Array(Schema.String)),
 });
 export type VaultCreate = typeof VaultCreate.Type;
 
@@ -298,8 +298,8 @@ export const VaultConfig = Schema.Struct({
 export type VaultConfig = typeof VaultConfig.Type;
 
 export const VaultConfigUpdate = Schema.Struct({
-  thematic_hint: Schema.optionalKey(Schema.NullOr(Schema.String)),
-  kinds: Schema.optionalKey(Schema.NullOr(Schema.Array(Schema.String))),
+  thematic_hint: Schema.optionalKey(Schema.String),
+  kinds: Schema.optionalKey(Schema.Array(Schema.String)),
 });
 export type VaultConfigUpdate = typeof VaultConfigUpdate.Type;
 
@@ -381,7 +381,7 @@ export type IngestedDocument = typeof IngestedDocument.Type;
 export const RawSource = Schema.Struct({
   content: Schema.String,
   dest: Schema.String,
-  origin: Schema.optionalKey(Schema.NullOr(Schema.String)),
+  origin: Schema.optionalKey(Schema.String),
 });
 export type RawSource = typeof RawSource.Type;
 
@@ -444,7 +444,7 @@ export type StagedFileProcessRequest = typeof StagedFileProcessRequest.Type;
 export const URLSource = Schema.Struct({
   job_id: Uuid,
   url: Schema.String,
-  origin: Schema.optionalKey(Schema.NullOr(Schema.String)),
+  origin: Schema.optionalKey(Schema.String),
 });
 export type URLSource = typeof URLSource.Type;
 
@@ -452,8 +452,12 @@ export const PipelineProgressStep = Schema.Struct({
   key: Schema.String,
   label: Schema.String,
   status: Schema.Literals(["pending", "running", "completed", "failed"] as const),
-  done: Schema.optionalKey(Schema.NullOr(Schema.Number)),
-  total: Schema.optionalKey(Schema.NullOr(Schema.Number)),
+  done: Schema.NullOr(Schema.Number).pipe(
+    Schema.withDecodingDefaultTypeKey(Effect.succeed(null)),
+  ),
+  total: Schema.NullOr(Schema.Number).pipe(
+    Schema.withDecodingDefaultTypeKey(Effect.succeed(null)),
+  ),
   detail: Schema.String,
 });
 export type PipelineProgressStep = typeof PipelineProgressStep.Type;
@@ -619,9 +623,15 @@ export const SessionOrigin = Schema.Struct({
   origin_scope: OriginScope.pipe(
     Schema.withDecodingDefaultTypeKey(Effect.succeed("vault" as const)),
   ),
-  anchor: Schema.optionalKey(Schema.NullOr(Schema.String)),
-  paragraph: Schema.optionalKey(Schema.NullOr(Schema.String)),
-  paragraph_index: Schema.optionalKey(Schema.NullOr(Schema.Number)),
+  anchor: Schema.NullOr(Schema.String).pipe(
+    Schema.withDecodingDefaultTypeKey(Effect.succeed(null)),
+  ),
+  paragraph: Schema.NullOr(Schema.String).pipe(
+    Schema.withDecodingDefaultTypeKey(Effect.succeed(null)),
+  ),
+  paragraph_index: Schema.NullOr(Schema.Number).pipe(
+    Schema.withDecodingDefaultTypeKey(Effect.succeed(null)),
+  ),
 });
 export type SessionOrigin = typeof SessionOrigin.Type;
 
@@ -637,10 +647,18 @@ export type SearchScope = typeof SearchScope.Type;
 export const ThinkingSource = Schema.Struct({
   label: Schema.String,
   type: Schema.Literals(["article", "raw", "search", "query", "links"] as const),
-  title: Schema.optionalKey(Schema.NullOr(Schema.String)),
-  scope: Schema.optionalKey(Schema.NullOr(SearchScope)),
-  path: Schema.optionalKey(Schema.NullOr(Schema.String)),
-  thinking: Schema.optionalKey(Schema.NullOr(Schema.String)),
+  title: Schema.NullOr(Schema.String).pipe(
+    Schema.withDecodingDefaultTypeKey(Effect.succeed(null)),
+  ),
+  scope: Schema.NullOr(SearchScope).pipe(
+    Schema.withDecodingDefaultTypeKey(Effect.succeed(null)),
+  ),
+  path: Schema.NullOr(Schema.String).pipe(
+    Schema.withDecodingDefaultTypeKey(Effect.succeed(null)),
+  ),
+  thinking: Schema.NullOr(Schema.String).pipe(
+    Schema.withDecodingDefaultTypeKey(Effect.succeed(null)),
+  ),
   ranges: Schema.optionalKey(Schema.Array(ChunkRange)),
   full: Schema.optionalKey(Schema.Boolean),
 });
@@ -664,7 +682,9 @@ export const SessionMetaEvent = Schema.Struct({
   query: Schema.String,
   ts: IsoDateTime,
   user_id: Schema.String,
-  origin: Schema.optionalKey(Schema.NullOr(SessionOrigin)),
+  origin: Schema.NullOr(SessionOrigin).pipe(
+    Schema.withDecodingDefaultTypeKey(Effect.succeed(null)),
+  ),
 });
 export type SessionMetaEvent = typeof SessionMetaEvent.Type;
 
@@ -739,7 +759,7 @@ export type BtwData = typeof BtwData.Type;
 export const CreateSessionRequest = Schema.Struct({
   idempotency_key: Schema.String,
   exchange: ExchangeData,
-  origin: Schema.optionalKey(Schema.NullOr(SessionOrigin)),
+  origin: Schema.optionalKey(SessionOrigin),
 });
 export type CreateSessionRequest = typeof CreateSessionRequest.Type;
 
@@ -758,8 +778,8 @@ export const PromoteExchangeResponse = Schema.Struct({
   mode: Schema.Literals(["ingested", "proposed"] as const),
   path: Schema.String,
   title: Schema.NullOr(Schema.String),
-  document_id: Schema.optionalKey(Schema.NullOr(Uuid)),
-  proposal_id: Schema.optionalKey(Schema.NullOr(Uuid)),
+  document_id: Schema.NullOr(Uuid),
+  proposal_id: Schema.NullOr(Uuid),
 });
 export type PromoteExchangeResponse = typeof PromoteExchangeResponse.Type;
 
@@ -905,14 +925,14 @@ export type QueryMode = typeof QueryMode.Type;
 
 export const QueryRequest = Schema.Struct({
   question: Schema.String,
-  model: Schema.optionalKey(Schema.NullOr(Schema.String)),
+  model: Schema.optionalKey(Schema.String),
   mode: QueryMode.pipe(Schema.withDecodingDefaultTypeKey(Effect.succeed("query" as const))),
-  origin_path: Schema.optionalKey(Schema.NullOr(Schema.String)),
+  origin_path: Schema.optionalKey(Schema.String),
   origin_scope: OriginScope.pipe(
     Schema.withDecodingDefaultTypeKey(Effect.succeed("vault" as const)),
   ),
   history: Schema.Array(HistoryMessage).pipe(Schema.withDecodingDefaultTypeKey(Effect.succeed([]))),
-  extra_instructions: Schema.optionalKey(Schema.NullOr(Schema.String)),
+  extra_instructions: Schema.optionalKey(Schema.String),
 });
 export type QueryRequest = typeof QueryRequest.Type;
 
@@ -931,7 +951,7 @@ export const QuerySourceSearch = Schema.Struct({
   scope: SearchScope,
   // Set when the search was scoped to a single document.
   path: Schema.optionalKey(Schema.String),
-  title: Schema.optionalKey(Schema.NullOr(Schema.String)),
+  title: Schema.NullOr(Schema.String),
 });
 export type QuerySourceSearch = typeof QuerySourceSearch.Type;
 
@@ -990,7 +1010,7 @@ const CreateReplySession = Schema.Struct({
   origin_scope: OriginScope.pipe(
     Schema.withDecodingDefaultTypeKey(Effect.succeed("vault" as const)),
   ),
-  origin: Schema.optionalKey(Schema.NullOr(SessionOrigin)),
+  origin: Schema.optionalKey(SessionOrigin),
 });
 
 export const CreateReplyRequest = Schema.Union([

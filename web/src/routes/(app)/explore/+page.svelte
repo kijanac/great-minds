@@ -83,6 +83,9 @@
       type: "article",
       label: article.file_path,
       title: article.title,
+      scope: null,
+      path: null,
+      thinking: null,
     };
   }
 
@@ -91,6 +94,9 @@
       type: "article",
       label: `wiki/${slug}.md`,
       title,
+      scope: null,
+      path: null,
+      thinking: null,
     };
   }
 
@@ -99,6 +105,9 @@
       type: path.startsWith("wiki/") ? "article" : "raw",
       label: path,
       title: null,
+      scope: null,
+      path: null,
+      thinking: null,
     };
   }
 </script>

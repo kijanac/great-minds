@@ -69,7 +69,9 @@ const sourceRef = (data: QuerySourceData, thinking: string, pending = false): Re
       label: data.path,
       type: data.type,
       title: data.title,
-      thinking: thinking.length === 0 ? undefined : thinking,
+      scope: null,
+      path: null,
+      thinking: thinking.length === 0 ? null : thinking,
       ranges: isExpand ? [{ start: data.start, end: data.end }] : [],
       full: !isExpand,
       pending: pending || undefined,
@@ -80,9 +82,9 @@ const sourceRef = (data: QuerySourceData, thinking: string, pending = false): Re
       label: data.query,
       type: "search",
       scope: data.scope,
-      path: data.path,
-      title: data.title ?? null,
-      thinking: thinking.length === 0 ? undefined : thinking,
+      path: data.path ?? null,
+      title: data.title,
+      thinking: thinking.length === 0 ? null : thinking,
       pending: pending || undefined,
     };
   }
@@ -91,7 +93,9 @@ const sourceRef = (data: QuerySourceData, thinking: string, pending = false): Re
       label: data.path,
       type: "links",
       title: data.title,
-      thinking: thinking.length === 0 ? undefined : thinking,
+      scope: null,
+      path: null,
+      thinking: thinking.length === 0 ? null : thinking,
       pending: pending || undefined,
     };
   }
@@ -103,7 +107,10 @@ const sourceRef = (data: QuerySourceData, thinking: string, pending = false): Re
     return {
       label: summary,
       type: "query",
-      thinking: thinking.length === 0 ? undefined : thinking,
+      title: null,
+      scope: null,
+      path: null,
+      thinking: thinking.length === 0 ? null : thinking,
       pending: pending || undefined,
     };
   }
@@ -522,13 +529,10 @@ export const RepliesServiceLive = Layer.effect(
                   ...(input.create.origin === undefined
                     ? {}
                     : {
-                        origin:
-                          input.create.origin === null
-                            ? null
-                            : {
-                                ...input.create.origin,
-                                origin_scope: input.create.origin_scope,
-                              },
+                        origin: {
+                          ...input.create.origin,
+                          origin_scope: input.create.origin_scope,
+                        },
                       }),
                 },
                 replyId,
