@@ -33,9 +33,9 @@ const stripInfraErrors = <A, E, R>(
 export class Database extends Context.Service<
   Database,
   {
-    readonly query: <A, E, R>(
-      f: (db: DrizzleClient) => Effect.Effect<A, E, R>,
-    ) => Effect.Effect<A, Exclude<E, DatabaseInfraError>, R>;
+    readonly query: <A, R>(
+      f: (db: DrizzleClient) => Effect.Effect<A, DatabaseInfraError, R>,
+    ) => Effect.Effect<A, never, R>;
     readonly transaction: <A, E, R>(
       f: (tx: TransactionClient) => Effect.Effect<A, E, R>,
     ) => Effect.Effect<A, Exclude<E, DatabaseInfraError>, R>;
