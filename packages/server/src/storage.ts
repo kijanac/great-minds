@@ -54,11 +54,13 @@ export class StagedStorageError extends Schema.TaggedErrorClass<StagedStorageErr
 ) {}
 
 export type StorageOwner =
-  | { readonly kind: "vault"; readonly id: Uuid; readonly bucket?: string | null }
+  | { readonly kind: "vault"; readonly id: Uuid; readonly bucket?: string }
   | { readonly kind: "user"; readonly id: Uuid };
 
 export const vaultOwner = (id: Uuid, bucket?: string | null): StorageOwner =>
-  bucket === undefined ? { kind: "vault", id } : { kind: "vault", id, bucket };
+  bucket === undefined || bucket === null || bucket.length === 0
+    ? { kind: "vault", id }
+    : { kind: "vault", id, bucket };
 
 export const userOwner = (id: Uuid): StorageOwner => ({ kind: "user", id });
 
@@ -602,13 +604,7 @@ export const R2ContentStorageLive = Layer.effect(
 
     const resolveRoot = (owner: StorageOwner) =>
       Effect.gen(function* () {
-        let bucket =
-          owner.kind === "vault" &&
-          owner.bucket !== undefined &&
-          owner.bucket !== null &&
-          owner.bucket.length > 0
-            ? owner.bucket
-            : undefined;
+        let bucket = owner.kind === "vault" ? owner.bucket : undefined;
         if (bucket === undefined) {
           const rows =
             owner.kind === "vault"
