@@ -14,7 +14,8 @@
   import { Badge } from "$lib/components/ui/badge";
   import { Button } from "$lib/components/ui/button";
   import { Skeleton } from "$lib/components/ui/skeleton";
-  import { activeVault } from "$lib/hooks/use-vault.svelte";
+  import { useReferencePromotion } from "$lib/hooks/use-reference-promotion.svelte";
+  import { activeVault, useVaults } from "$lib/hooks/use-vault.svelte";
   import {
     useDocument,
     usePersonalDocument,
@@ -48,10 +49,25 @@
     readerScope === "personal"
       ? usePersonalDocument(() => path)
       : useDocument(() => path);
+  const vaults = useVaults();
+  const promotion = useReferencePromotion();
   const document = $derived(documentQuery.data?.article ?? null);
   const body = $derived(documentQuery.data?.body ?? null);
   const label = $derived(displayTitle(path, document?.title));
   const showHint = $derived(!hintDismissed && body !== null);
+  const selectedVault = $derived(
+    vaults.data?.find((vault) => vault.id === activeVault.id) ?? null,
+  );
+  const promotionAction = $derived(
+    readerScope === "personal" && selectedVault
+      ? {
+          vaultName: selectedVault.name,
+          pending: promotion.pending,
+          error: promotion.error,
+          onPromote: promotePersonalReference,
+        }
+      : null,
+  );
 
   const panelQuery = createQuery(() => ({
     queryKey: [
@@ -125,6 +141,16 @@
   function dismissHint() {
     hintDismissed = true;
     localStorage.setItem("onboarding-hint-seen", "true");
+  }
+
+  async function promotePersonalReference() {
+    if (!activeVault.id) return;
+    try {
+      const promoted = await promotion.promote(activeVault.id, path);
+      await goto(`/doc/${promoted.file_path}`);
+    } catch {
+      return;
+    }
   }
 
   function openPanelPath(linkedPath: string) {
@@ -242,6 +268,8 @@
     {:else if document && body !== null}
       <ArticleView
         {document}
+        scope={readerScope}
+        {promotionAction}
         {body}
         archived={documentQuery.data?.archived ?? false}
         supersededBy={documentQuery.data?.superseded_by ?? null}

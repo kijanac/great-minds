@@ -6,7 +6,9 @@ import {
   Forbidden,
   type IngestedDocument,
   type JobResponse,
+  NotFound,
   type RawSource,
+  type ReferencePromote,
   type SessionExchangeEvent,
   type SessionOrigin,
   type StagedFileInput,
@@ -20,6 +22,7 @@ import { Cause, Context, Effect, Layer } from "effect";
 import * as WorkflowEngine from "effect/unstable/workflow/WorkflowEngine";
 
 import { htmlToMarkdown, markdownWithTitle } from "./conversion.ts";
+import { sha256Hex } from "./crypto.ts";
 import { causeDetails, formatError } from "./error-details.ts";
 import { jobResponse } from "./jobs.ts";
 import { buildDocument, sessionExchangeDocumentInput, sessionExchangePath } from "./markdown.ts";
@@ -28,6 +31,7 @@ import { ProposalsService } from "./proposals.ts";
 import { SourceDocumentsService } from "./source-documents.ts";
 import { StagedFileIngestWorkflow } from "./staged-file-ingest-workflow.ts";
 import { ContentStorage, StagedStorage, vaultOwner } from "./storage.ts";
+import { UserDocumentsService } from "./user-documents.ts";
 import { VaultAccessService } from "./vaults.ts";
 import { ClockService } from "./clock.ts";
 
@@ -50,6 +54,14 @@ type IngestServiceShape = {
     vaultId: Uuid,
     input: UploadInput,
   ) => Effect.Effect<IngestedDocument, BadRequest | Forbidden>;
+  readonly promoteReference: (
+    userId: Uuid,
+    vaultId: Uuid,
+    input: ReferencePromote,
+  ) => Effect.Effect<
+    { readonly document: IngestedDocument; readonly created: boolean },
+    BadRequest | Forbidden | NotFound
+  >;
   readonly ingestUserSuggestion: (
     userId: Uuid,
     vaultId: Uuid,
@@ -243,6 +255,7 @@ export const IngestServiceLive = Layer.effect(
     const storage = yield* ContentStorage;
     const stagedStorage = yield* StagedStorage;
     const sourceDocumentsWrite = yield* SourceDocumentsService;
+    const userDocumentsRead = yield* UserDocumentsService;
     const proposals = yield* ProposalsService;
     const clock = yield* ClockService;
     const workflowEngine = yield* WorkflowEngine.WorkflowEngine;
@@ -279,13 +292,11 @@ export const IngestServiceLive = Layer.effect(
 
     const writeAndIndex = (
       vaultId: Uuid,
-      content: string,
+      rendered: string,
       dest: string,
-      frontmatter: Parameters<typeof buildDocument>[1],
       pipelineRunId?: Uuid | null,
     ) =>
       Effect.gen(function* () {
-        const rendered = buildDocument(content, frontmatter);
         yield* storage.writeText(vaultOwner(vaultId), dest, rendered);
         yield* sourceDocumentsWrite.index(vaultId, dest, rendered);
         yield* ensureCompileIntent(vaultId, pipelineRunId);
@@ -305,13 +316,12 @@ export const IngestServiceLive = Layer.effect(
         const dest = `raw/docs/${slugify(stem) || "doc"}.md`;
         return yield* writeAndIndex(
           vaultId,
-          markdownWithTitle(fetched.title, fetched.markdown),
-          dest,
-          {
+          buildDocument(markdownWithTitle(fetched.title, fetched.markdown), {
             sourceType: "document",
             url: fetched.url,
             origin: origin ?? parsed.host,
-          },
+          }),
+          dest,
           pipelineRunId,
         );
       });
@@ -395,10 +405,14 @@ export const IngestServiceLive = Layer.effect(
       ingestRaw: (userId, vaultId, input) =>
         Effect.gen(function* () {
           yield* access.requireOwner(userId, vaultId);
-          return yield* writeAndIndex(vaultId, input.content, input.dest, {
-            sourceType: "document",
-            origin: input.origin,
-          });
+          return yield* writeAndIndex(
+            vaultId,
+            buildDocument(input.content, {
+              sourceType: "document",
+              origin: input.origin,
+            }),
+            input.dest,
+          );
         }),
       ingestUpload: (userId, vaultId, input) =>
         Effect.gen(function* () {
@@ -408,10 +422,38 @@ export const IngestServiceLive = Layer.effect(
             return yield* new BadRequest({ detail: `Invalid dest_path: ${input.destPath}` });
           }
           const content = yield* uploadToMarkdown(input);
-          return yield* writeAndIndex(vaultId, content, dest, {
-            sourceType: "document",
-            origin: input.origin ?? null,
-          });
+          return yield* writeAndIndex(
+            vaultId,
+            buildDocument(content, {
+              sourceType: "document",
+              origin: input.origin ?? null,
+            }),
+            dest,
+          );
+        }),
+      promoteReference: (userId, vaultId, input) =>
+        Effect.gen(function* () {
+          yield* access.requireMember(userId, vaultId);
+          const reference = yield* userDocumentsRead.readUserText(userId, input.path);
+          const parsed = posix.parse(posix.basename(reference.row.filePath));
+          let dest = `raw/docs/${parsed.base}`;
+          let existing = yield* sourceDocumentsWrite.getByPath(vaultId, dest);
+          if (existing?.bodyHash === reference.row.bodyHash) {
+            return { document: { file_path: dest }, created: false };
+          }
+          if (existing !== undefined) {
+            const suffix = sha256Hex(reference.row.url ?? reference.row.bodyHash).slice(0, 8);
+            dest = `raw/docs/${parsed.name}-${suffix}${parsed.ext}`;
+            existing = yield* sourceDocumentsWrite.getByPath(vaultId, dest);
+            if (existing?.bodyHash === reference.row.bodyHash) {
+              return { document: { file_path: dest }, created: false };
+            }
+            if (existing !== undefined) {
+              return yield* new BadRequest({ detail: `Reference destination collision: ${dest}` });
+            }
+          }
+          const document = yield* writeAndIndex(vaultId, reference.content, dest);
+          return { document, created: true };
         }),
       ingestUserSuggestion: (userId, vaultId, input) =>
         Effect.gen(function* () {
@@ -429,7 +471,7 @@ export const IngestServiceLive = Layer.effect(
             intent: input.intent,
           };
           if (scope.role === "owner") {
-            return yield* writeAndIndex(vaultId, input.body, dest, frontmatter);
+            return yield* writeAndIndex(vaultId, buildDocument(input.body, frontmatter), dest);
           }
           const rendered = buildDocument(input.body, frontmatter);
           yield* proposals.createRendered(vaultId, userId, {
@@ -569,9 +611,11 @@ export const IngestServiceLive = Layer.effect(
       ingestSessionExchange: (vaultId, sessionId, exchange, sessionOrigin) =>
         writeAndIndex(
           vaultId,
-          exchange.answer ?? "",
+          buildDocument(
+            exchange.answer ?? "",
+            sessionExchangeDocumentInput(sessionId, exchange, sessionOrigin),
+          ),
           sessionExchangePath(exchange.exId),
-          sessionExchangeDocumentInput(sessionId, exchange, sessionOrigin),
         ),
     } satisfies IngestServiceShape;
   }),

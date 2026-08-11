@@ -1374,6 +1374,92 @@ describe("M3.1 write endpoint integration", () => {
     );
   });
 
+  it("promotes personal references as idempotent member-scoped copies", async () => {
+    const { bobToken, malloryToken } = currentFixture();
+    await withLocalHttpServer(
+      (request, response) => {
+        response.writeHead(200, { "content-type": "text/html; charset=utf-8" });
+        response.end(
+          `<html><head><title>Promoted Reference</title></head><body><article><p>Promoted body for ${request.url} remains byte-identical to the personal reference.</p><p>A second paragraph carries another stable block anchor.</p></article></body></html>`,
+        );
+      },
+      async (origin) => {
+        const created = await api("POST", "/me/refs", bobToken, {
+          url: `${origin}/promoted`,
+        });
+        expect(created.status).toBe(201);
+        const referencePath = String(asRecord(created.body).file_path);
+        const personalBefore = await readUserFile(id.bob, referencePath);
+
+        const promoted = await api(
+          "POST",
+          `/vaults/${id.vault}/ingest/reference`,
+          bobToken,
+          { path: referencePath },
+        );
+        expect(promoted.status).toBe(201);
+        expect(promoted.body).toEqual({ file_path: "raw/docs/promoted.md" });
+        expect(await readVaultFile(id.vault, "raw/docs/promoted.md")).toBe(personalBefore);
+
+        const rows = await runDb(
+          Effect.gen(function* () {
+            const db = yield* Database;
+            return yield* db.query((d) => d
+              .select()
+              .from(sourceDocuments)
+              .where(
+                and(
+                  eq(sourceDocuments.vaultId, id.vault),
+                  eq(sourceDocuments.filePath, "raw/docs/promoted.md"),
+                ),
+              ))
+              .pipe(Effect.orDie);
+          }),
+        );
+        expect(rows).toHaveLength(1);
+        expect(rows[0]).toMatchObject({
+          bodyHash: bodyContentHash(parseFrontmatter(personalBefore).body),
+          url: `${origin}/promoted`,
+          origin: new URL(origin).host,
+        });
+        expect(await countTable(compileIntents)).toBe(1);
+        expect(await countTable(userDocuments)).toBe(1);
+        expect(await readUserFile(id.bob, referencePath)).toBe(personalBefore);
+
+        const repeated = await api(
+          "POST",
+          `/vaults/${id.vault}/ingest/reference`,
+          bobToken,
+          { path: referencePath },
+        );
+        expect(repeated.status).toBe(200);
+        expect(repeated.body).toEqual(promoted.body);
+        expect(await countTable(sourceDocuments)).toBe(1);
+        expect(await countTable(compileIntents)).toBe(1);
+
+        const outsider = await api("POST", "/me/refs", malloryToken, {
+          url: `${origin}/outsider`,
+        });
+        expect(outsider.status).toBe(201);
+        const forbidden = await api(
+          "POST",
+          `/vaults/${id.vault}/ingest/reference`,
+          malloryToken,
+          { path: String(asRecord(outsider.body).file_path) },
+        );
+        expect(forbidden.status).toBe(403);
+
+        const missing = await api(
+          "POST",
+          `/vaults/${id.vault}/ingest/reference`,
+          bobToken,
+          { path: "refs/unknown.md" },
+        );
+        expect(missing.status).toBe(404);
+      },
+    );
+  });
+
   it("runs jobs/url synchronously with member guard, clean markdown conversion, attached compile intent, and persisted failures", async () => {
     const { aliceToken, carolToken, malloryToken } = currentFixture();
     await withLocalHttpServer(

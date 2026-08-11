@@ -613,6 +613,22 @@ const IngestHandlersLive = HttpApiBuilder.group(MountedGreatMindsApi, "ingest", 
         }),
       ),
     )
+    .handle("promoteReference", ({ params, payload }) =>
+      withDomainErrors(
+        Effect.gen(function* () {
+          const ingest = yield* IngestService;
+          const current = yield* CurrentAuth;
+          const result = yield* ingest.promoteReference(
+            current.user_id,
+            params.vault_id,
+            payload,
+          );
+          return result.created
+            ? result.document
+            : yield* jsonResponse(200, result.document);
+        }),
+      ),
+    )
     .handle("ingestUserSuggestion", ({ params, payload }) =>
       withDomainErrors(
         Effect.gen(function* () {

@@ -1,6 +1,7 @@
 import { z } from "zod";
 
 import { apiFetch, vaultPath, readJson } from "./client";
+import { referenceOverviewSchema } from "./references";
 
 export const sourceDocumentSchema = z.object({
   kind: z.literal("source"),
@@ -45,16 +46,6 @@ export const wikiArticleSchema = z.object({
   precis: z.string(),
   created_at: z.string().nullable(),
   updated_at: z.string().nullable(),
-});
-
-export const referenceOverviewSchema = z.object({
-  id: z.string(),
-  file_path: z.string(),
-  title: z.string().nullable(),
-  url: z.string().nullable(),
-  origin: z.string().nullable(),
-  created_at: z.string(),
-  updated_at: z.string(),
 });
 
 const referenceArticleSchema = referenceOverviewSchema.extend({

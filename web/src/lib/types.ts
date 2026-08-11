@@ -61,3 +61,10 @@ export interface DroppedFile {
   file: File;
   path: string;
 }
+
+export interface ReferencePromotionAction {
+  vaultName: string;
+  pending: boolean;
+  error: string | null;
+  onPromote: () => Promise<void>;
+}

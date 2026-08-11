@@ -1,11 +1,17 @@
 <script lang="ts">
-  import type { Article } from "$lib/api/doc";
+  import type { Article, DocumentScope } from "$lib/api/doc";
   import AnswerBlock from "$lib/components/answer-block.svelte";
   import DocHeader from "$lib/components/doc-header.svelte";
-  import type { BtwThread, SelectionInfo } from "$lib/types";
+  import type {
+    BtwThread,
+    ReferencePromotionAction,
+    SelectionInfo,
+  } from "$lib/types";
 
   let {
     document,
+    scope,
+    promotionAction = null,
     body,
     archived = false,
     supersededBy = null,
@@ -20,6 +26,8 @@
     onBtwSpinOff,
   }: {
     document: Article;
+    scope: DocumentScope;
+    promotionAction?: ReferencePromotionAction | null;
     body: string;
     archived?: boolean;
     supersededBy?: string | null;
@@ -38,7 +46,14 @@
 <article
   class="mx-auto max-w-[740px] px-4 pt-6 pb-20 select-text md:px-10 md:pt-10"
 >
-  <DocHeader {document} {archived} {supersededBy} {onSupersessorClick} />
+  <DocHeader
+    {document}
+    {scope}
+    {promotionAction}
+    {archived}
+    {supersededBy}
+    {onSupersessorClick}
+  />
   <AnswerBlock
     text={body}
     exchangeId={documentId}

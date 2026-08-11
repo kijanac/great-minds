@@ -34,6 +34,13 @@ type UserDocumentsServiceShape = {
     url: string,
   ) => Effect.Effect<CreateReferenceResult, BadRequest>;
   readonly list: (userId: Uuid, params: PageParams) => Effect.Effect<ReferencePage>;
+  readonly readUserText: (
+    userId: Uuid,
+    path: string,
+  ) => Effect.Effect<
+    { readonly row: UserDocumentRow; readonly content: string },
+    BadRequest | NotFound
+  >;
   readonly read: (
     userId: Uuid,
     path: string,
@@ -104,6 +111,20 @@ export const UserDocumentsServiceLive = Layer.effect(
         ? Effect.fail(new BadRequest({ detail: `Invalid reference path: ${path}` }))
         : Effect.succeed(safePath);
     };
+
+    const readUserText = (userId: Uuid, path: string) =>
+      Effect.gen(function* () {
+        const safePath = yield* validatePath(path);
+        const row = yield* getByPath(userId, safePath);
+        if (row === undefined) {
+          return yield* new NotFound({ detail: `Reference not found: ${safePath}` });
+        }
+        const content = yield* Effect.result(storage.readText(userOwner(userId), safePath));
+        if (content._tag === "Failure") {
+          return yield* new NotFound({ detail: `Reference not found: ${safePath}` });
+        }
+        return { row, content: content.success };
+      });
 
     return {
       create: (userId, rawUrl) =>
@@ -176,20 +197,13 @@ export const UserDocumentsServiceLive = Layer.effect(
             .offset(params.offset));
           return pageEnvelope(rows.map(referenceOverview), params, oneTotal(countRows));
         }),
+      readUserText,
       read: (userId, path) =>
         Effect.gen(function* () {
-          const safePath = yield* validatePath(path);
-          const row = yield* getByPath(userId, safePath);
-          if (row === undefined) {
-            return yield* new NotFound({ detail: `Reference not found: ${safePath}` });
-          }
-          const content = yield* Effect.result(storage.readText(userOwner(userId), safePath));
-          if (content._tag === "Failure") {
-            return yield* new NotFound({ detail: `Reference not found: ${safePath}` });
-          }
+          const { row, content } = yield* readUserText(userId, path);
           return {
             reference: referenceOverview(row),
-            body: parseFrontmatter(content.success).body,
+            body: parseFrontmatter(content).body,
           };
         }),
       delete: (userId, path) =>

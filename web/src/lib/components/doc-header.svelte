@@ -3,18 +3,24 @@
   import ChevronRight from "@lucide/svelte/icons/chevron-right";
   import ExternalLink from "@lucide/svelte/icons/external-link";
 
-  import { articleMeta, type Article } from "$lib/api/doc";
+  import { articleMeta, type Article, type DocumentScope } from "$lib/api/doc";
+  import ReferencePromoteAction from "$lib/components/reference-promote-action.svelte";
   import * as Collapsible from "$lib/components/ui/collapsible";
   import { CHIP_BASE, CHIP_INACTIVE } from "$lib/chip";
   import { cn } from "$lib/utils";
+  import type { ReferencePromotionAction as PromotionAction } from "$lib/types";
 
   let {
     document,
+    scope,
+    promotionAction = null,
     archived = false,
     supersededBy = null,
     onSupersessorClick,
   }: {
     document: Article;
+    scope: DocumentScope;
+    promotionAction?: PromotionAction | null;
     archived?: boolean;
     supersededBy?: string | null;
     onSupersessorClick?: (slug: string) => void;
@@ -67,9 +73,16 @@
     </div>
   {/if}
 
-  <h1 class="mb-3 text-[length:var(--text-title)] font-bold text-foreground">
-    {metadata.title}
-  </h1>
+  <div class="mb-3 flex items-start justify-between gap-5">
+    <h1
+      class="min-w-0 text-[length:var(--text-title)] font-bold text-foreground"
+    >
+      {metadata.title}
+    </h1>
+    {#if scope === "personal" && promotionAction}
+      <ReferencePromoteAction action={promotionAction} />
+    {/if}
+  </div>
 
   {#if metadata.precis}
     <p

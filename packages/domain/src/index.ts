@@ -799,6 +799,11 @@ export const ReferenceCreate = Schema.Struct({
 });
 export type ReferenceCreate = typeof ReferenceCreate.Type;
 
+export const ReferencePromote = Schema.Struct({
+  path: Schema.String,
+});
+export type ReferencePromote = typeof ReferencePromote.Type;
+
 export const ReferenceOverview = Schema.Struct({
   id: Uuid,
   file_path: Schema.String,
@@ -1450,6 +1455,19 @@ export const IngestApiGroup = HttpApiGroup.make("ingest").add(
     payload: RawSource,
     success: CreatedIngestedDocument,
     error: [ForbiddenResponse, ValidationResponse] as const,
+  }).middleware(AuthMiddleware),
+  HttpApiEndpoint.post("promoteReference", "/vaults/:vault_id/ingest/reference", {
+    params: {
+      vault_id: Uuid,
+    },
+    payload: ReferencePromote,
+    success: CreatedIngestedDocument,
+    error: [
+      BadRequestResponse,
+      ForbiddenResponse,
+      NotFoundResponse,
+      ValidationResponse,
+    ] as const,
   }).middleware(AuthMiddleware),
   HttpApiEndpoint.post("ingestUserSuggestion", "/vaults/:vault_id/ingest/user-suggestion", {
     params: {

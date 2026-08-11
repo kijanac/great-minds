@@ -1,7 +1,11 @@
 <script lang="ts">
   import * as ToggleGroup from "$lib/components/ui/toggle-group";
   import { FILTER_CHIP_CLASS } from "$lib/control-styles";
-  import { LIBRARY_ALL, LIBRARY_ARTICLES } from "$lib/hooks/use-library.svelte";
+  import {
+    LIBRARY_ALL,
+    LIBRARY_ARTICLES,
+    LIBRARY_READING_ROOM,
+  } from "$lib/hooks/use-library.svelte";
   import type { SourceTypeFacet } from "$lib/types";
 
   let {
@@ -9,12 +13,14 @@
     totalCount,
     articleTotal,
     sourceFacets,
+    readingRoomTotal,
     onChange,
   }: {
     activeType: string;
     totalCount: number;
     articleTotal: number;
     sourceFacets: SourceTypeFacet[];
+    readingRoomTotal: number;
     onChange: (value: string) => void;
   } = $props();
 </script>
@@ -38,4 +44,7 @@
       {facet.value} · {facet.count}
     </ToggleGroup.Item>
   {/each}
+  <ToggleGroup.Item value={LIBRARY_READING_ROOM} class={FILTER_CHIP_CLASS}>
+    reading room · {readingRoomTotal}
+  </ToggleGroup.Item>
 </ToggleGroup.Root>

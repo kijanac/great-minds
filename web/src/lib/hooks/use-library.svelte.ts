@@ -17,6 +17,7 @@ import type { SourceRef } from "$lib/types";
 const PAGE_SIZE = 50;
 export const LIBRARY_ALL = "all";
 export const LIBRARY_ARTICLES = "articles";
+export const LIBRARY_READING_ROOM = "reading-room";
 
 export function useLibrary(
   selectedCard: () => SourceRef | null,
@@ -31,7 +32,11 @@ export function useLibrary(
   const activeType = $derived(page.url.searchParams.get("type") || LIBRARY_ALL);
   const searchQuery = $derived(page.url.searchParams.get("q")?.trim() ?? "");
   const sourceType = $derived(
-    activeType === LIBRARY_ALL || activeType === LIBRARY_ARTICLES ? undefined : activeType,
+    activeType === LIBRARY_ALL ||
+      activeType === LIBRARY_ARTICLES ||
+      activeType === LIBRARY_READING_ROOM
+      ? undefined
+      : activeType,
   );
 
   $effect(() => {
@@ -92,7 +97,8 @@ export function useLibrary(
       const next = lastPage.pagination.offset + lastPage.items.length;
       return next < lastPage.pagination.total ? next : undefined;
     },
-    enabled: !!activeVault.id && activeType !== LIBRARY_ARTICLES,
+    enabled:
+      !!activeVault.id && activeType !== LIBRARY_ARTICLES && activeType !== LIBRARY_READING_ROOM,
   }));
 
   const role = createQuery(() => ({

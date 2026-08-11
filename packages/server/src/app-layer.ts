@@ -177,6 +177,7 @@ export const makeAppLayers = (overrides: AppLayerOverrides = {}) => {
   const IngestLive = IngestServiceLive.pipe(
     Layer.provideMerge(ProposalsLive),
     Layer.provideMerge(SourceDocumentsLive),
+    Layer.provideMerge(UserDocumentsLive),
     Layer.provideMerge(StorageLive),
     Layer.provideMerge(StagedStorageLiveLayer),
     Layer.provideMerge(VaultAccessLive),
