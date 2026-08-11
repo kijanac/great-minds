@@ -1,8 +1,9 @@
 <script lang="ts">
   import { goto } from "$app/navigation";
-  import Home from "@lucide/svelte/icons/home";
   import Search from "@lucide/svelte/icons/search";
 
+  import PageHeader from "$lib/components/page-header.svelte";
+  import SessionRow from "$lib/components/session-row.svelte";
   import { Button } from "$lib/components/ui/button";
   import { ErrorState } from "$lib/components/ui/feedback";
   import { Input } from "$lib/components/ui/input";
@@ -22,14 +23,6 @@
       ? sessions.filter((session) => session.query.toLowerCase().includes(term))
       : sessions;
   });
-
-  function formatDate(iso: string): string {
-    return new Date(iso).toLocaleDateString("en-US", {
-      month: "short",
-      day: "numeric",
-      year: "numeric",
-    });
-  }
 </script>
 
 <svelte:head>
@@ -37,26 +30,7 @@
 </svelte:head>
 
 <div class="flex h-screen flex-col overflow-hidden">
-  <header
-    class="flex shrink-0 items-center justify-between gap-3 border-b border-ink-subtle px-4 pt-4 pb-3 md:px-6"
-  >
-    <div class="flex shrink-0 items-center gap-4">
-      <Button
-        variant="ghost"
-        size="icon-xs"
-        onclick={() => void goto("/")}
-        aria-label="home"
-        class="text-muted-foreground hover:bg-transparent hover:text-gold"
-      >
-        <Home size={14} />
-      </Button>
-      <span
-        class="hidden font-mono text-[length:var(--text-chrome)] tracking-[0.14em] text-gold-muted uppercase md:inline"
-      >
-        sessions
-      </span>
-    </div>
-
+  {#snippet filterInput()}
     <div class="flex w-full max-w-[300px] items-center gap-2">
       <Search size={14} class="shrink-0 text-muted-foreground" />
       <Input
@@ -65,7 +39,12 @@
         placeholder="Filter..."
       />
     </div>
-  </header>
+  {/snippet}
+  <PageHeader
+    title="sessions"
+    trailing={filterInput}
+    onHome={() => void goto("/")}
+  />
 
   <div class="min-h-0 flex-1 overflow-y-auto">
     <main class="mx-auto max-w-[740px] px-4 pt-8 pb-20 md:px-10">
@@ -112,22 +91,7 @@
           {#if index > 0}
             <Separator class="my-4 bg-ink-subtle" />
           {/if}
-          <Button
-            variant="ghost"
-            onclick={() => void goto(`/sessions/${session.id}`)}
-            class="group h-auto w-full flex-col items-start justify-start gap-1.5 rounded-sm px-3 py-3 hover:bg-ink-raised"
-          >
-            <span
-              class="w-full truncate text-left font-serif text-[length:var(--text-body)] text-warm-dim italic transition-colors group-hover:text-warm"
-            >
-              {session.query}
-            </span>
-            <span
-              class="flex items-center gap-3 font-mono text-[length:var(--text-chrome)] text-muted-foreground"
-            >
-              {formatDate(session.updated_at)}
-            </span>
-          </Button>
+          <SessionRow {session} onOpen={(id) => void goto(`/sessions/${id}`)} />
         {/each}
 
         {#if !filter && query.hasNextPage}

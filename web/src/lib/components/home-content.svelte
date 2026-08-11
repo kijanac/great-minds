@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { goto } from "$app/navigation";
+  import { goto, replaceState } from "$app/navigation";
   import { createQuery } from "@tanstack/svelte-query";
   import Download from "@lucide/svelte/icons/download";
   import FileText from "@lucide/svelte/icons/file-text";
@@ -114,7 +114,7 @@
   });
 
   function handleSessionCreated(id: string) {
-    window.history.replaceState(null, "", `/sessions/${id}`);
+    replaceState(`/sessions/${id}`, {});
     void sessions.refetch();
   }
 

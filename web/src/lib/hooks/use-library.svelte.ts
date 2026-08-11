@@ -1,0 +1,231 @@
+import { goto } from "$app/navigation";
+import { page } from "$app/state";
+import { createInfiniteQuery, createQuery, useQueryClient } from "@tanstack/svelte-query";
+import { untrack } from "svelte";
+
+import {
+  deleteSourceDocument,
+  fetchSourceDocuments,
+  requestSourceDeletion,
+} from "$lib/api/sources";
+import { getVaultDetail } from "$lib/api/vaults";
+import { fetchWikiArticles } from "$lib/api/wiki";
+import { activeVault } from "$lib/hooks/use-vault.svelte";
+import { loadPanelContent } from "$lib/panel-content";
+import type { SourceRef } from "$lib/types";
+
+const PAGE_SIZE = 50;
+export const LIBRARY_ALL = "all";
+export const LIBRARY_ARTICLES = "articles";
+
+export function useLibrary(
+  selectedCard: () => SourceRef | null,
+  onSourceDeleted: (path: string) => void,
+) {
+  const queryClient = useQueryClient();
+  let search = $state(page.url.searchParams.get("q") ?? "");
+  let actionPath = $state<string | null>(null);
+  let actionError = $state<string | null>(null);
+  let actionNotice = $state<string | null>(null);
+
+  const activeType = $derived(page.url.searchParams.get("type") || LIBRARY_ALL);
+  const searchQuery = $derived(page.url.searchParams.get("q")?.trim() ?? "");
+  const sourceType = $derived(
+    activeType === LIBRARY_ALL || activeType === LIBRARY_ARTICLES ? undefined : activeType,
+  );
+
+  $effect(() => {
+    const urlSearch = page.url.searchParams.get("q") ?? "";
+    if (urlSearch !== untrack(() => search.trim())) search = urlSearch;
+  });
+
+  $effect(() => {
+    const value = search;
+    const timeout = window.setTimeout(() => {
+      const normalized = value.trim();
+      if (normalized === (page.url.searchParams.get("q") ?? "")) return;
+      const params = new URLSearchParams(page.url.searchParams);
+      if (normalized) params.set("q", normalized);
+      else params.delete("q");
+      replaceLibraryUrl(params);
+    }, 300);
+    return () => window.clearTimeout(timeout);
+  });
+
+  const facets = createQuery(() => ({
+    queryKey: ["vault", activeVault.id, "library-facets", searchQuery],
+    queryFn: () =>
+      fetchSourceDocuments({
+        search: searchQuery || undefined,
+        limit: 0,
+      }),
+    enabled: !!activeVault.id,
+  }));
+
+  const articles = createInfiniteQuery(() => ({
+    queryKey: ["vault", activeVault.id, "library-articles", searchQuery],
+    queryFn: ({ pageParam }) =>
+      fetchWikiArticles({
+        contains: searchQuery || undefined,
+        limit: PAGE_SIZE,
+        offset: pageParam,
+      }),
+    initialPageParam: 0,
+    getNextPageParam: (lastPage) => {
+      const next = lastPage.pagination.offset + lastPage.items.length;
+      return next < lastPage.pagination.total ? next : undefined;
+    },
+    enabled: !!activeVault.id,
+  }));
+
+  const sources = createInfiniteQuery(() => ({
+    queryKey: ["vault", activeVault.id, "library-sources", sourceType ?? LIBRARY_ALL, searchQuery],
+    queryFn: ({ pageParam }) =>
+      fetchSourceDocuments({
+        source_type: sourceType,
+        search: searchQuery || undefined,
+        limit: PAGE_SIZE,
+        offset: pageParam,
+      }),
+    initialPageParam: 0,
+    getNextPageParam: (lastPage) => {
+      const next = lastPage.pagination.offset + lastPage.items.length;
+      return next < lastPage.pagination.total ? next : undefined;
+    },
+    enabled: !!activeVault.id && activeType !== LIBRARY_ARTICLES,
+  }));
+
+  const role = createQuery(() => ({
+    queryKey: ["vault", activeVault.id, "detail"],
+    queryFn: () => getVaultDetail(activeVault.id!),
+    enabled: !!activeVault.id,
+  }));
+
+  const panel = createQuery(() => ({
+    queryKey: [
+      "vault",
+      activeVault.id,
+      "article-panel",
+      selectedCard()?.type,
+      selectedCard()?.label,
+      selectedCard()?.ranges,
+      selectedCard()?.full,
+    ],
+    queryFn: ({ signal }) => loadPanelContent(selectedCard()!, "vault", signal),
+    enabled: !!activeVault.id && !!selectedCard(),
+  }));
+
+  const sourceFacets = $derived(facets.data?.facets.source_types ?? []);
+  const sourceTotal = $derived(sourceFacets.reduce((sum, facet) => sum + facet.count, 0));
+  const articleTotal = $derived(articles.data?.pages[0]?.pagination.total ?? 0);
+  // Header count reflects the current search scope; the facet chips keep
+  // whole-vault counts (the facets response ignores search — API behavior).
+  const sourceListTotal = $derived(sources.data?.pages[0]?.pagination.total ?? sourceTotal);
+
+  function replaceLibraryUrl(params: URLSearchParams) {
+    const query = params.toString();
+    void goto(`/library${query ? `?${query}` : ""}`, {
+      replaceState: true,
+      keepFocus: true,
+      noScroll: true,
+    });
+  }
+
+  function chooseType(value: string) {
+    const params = new URLSearchParams(page.url.searchParams);
+    if (!value || value === LIBRARY_ALL) params.delete("type");
+    else params.set("type", value);
+    replaceLibraryUrl(params);
+  }
+
+  async function refreshSources() {
+    await queryClient.invalidateQueries({
+      queryKey: ["vault", activeVault.id, "library-sources"],
+    });
+    await queryClient.invalidateQueries({
+      queryKey: ["vault", activeVault.id, "library-facets"],
+    });
+  }
+
+  async function deleteSource(path: string) {
+    actionPath = path;
+    actionError = null;
+    actionNotice = null;
+    try {
+      await deleteSourceDocument(path);
+      onSourceDeleted(path);
+      await refreshSources();
+    } catch (error) {
+      actionError = error instanceof Error ? error.message : "Failed to delete source";
+      throw error;
+    } finally {
+      actionPath = null;
+    }
+  }
+
+  async function requestDeletion(path: string) {
+    actionPath = path;
+    actionError = null;
+    actionNotice = null;
+    try {
+      await requestSourceDeletion(path);
+      actionNotice = "Deletion request submitted.";
+    } catch (error) {
+      actionError = error instanceof Error ? error.message : "Failed to request source deletion";
+      throw error;
+    } finally {
+      actionPath = null;
+    }
+  }
+
+  return {
+    get actionError() {
+      return actionError;
+    },
+    get actionNotice() {
+      return actionNotice;
+    },
+    get actionPath() {
+      return actionPath;
+    },
+    get activeType() {
+      return activeType;
+    },
+    get articleItems() {
+      return articles.data?.pages.flatMap((result) => result.items) ?? [];
+    },
+    get articleTotal() {
+      return articleTotal;
+    },
+    articles,
+    chooseType,
+    deleteSource,
+    get headerCount() {
+      return articleTotal + sourceListTotal;
+    },
+    get loading() {
+      return articles.isLoading || sources.isLoading || facets.isLoading;
+    },
+    panel,
+    requestDeletion,
+    get role() {
+      return role.data?.role ?? null;
+    },
+    get search() {
+      return search;
+    },
+    setSearch(value: string) {
+      search = value;
+    },
+    get sourceFacets() {
+      return sourceFacets;
+    },
+    get sourceItems() {
+      return sources.data?.pages.flatMap((result) => result.items) ?? [];
+    },
+    sources,
+    get totalCount() {
+      return articleTotal + sourceTotal;
+    },
+  };
+}

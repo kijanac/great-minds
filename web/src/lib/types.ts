@@ -1,6 +1,18 @@
 import type { SourceRef, ThinkingBlock } from "$lib/api/schemas";
+import type { UnmentionedLink } from "$lib/api/explore";
+import type { SessionSummary } from "$lib/api/sessions";
+import type { SourceDocumentSummary, SourceTypeFacet } from "$lib/api/sources";
+import type { WikiArticleOverview } from "$lib/api/wiki";
 
-export type { SourceRef, ThinkingBlock };
+export type {
+  SessionSummary,
+  SourceDocumentSummary,
+  SourceRef,
+  SourceTypeFacet,
+  ThinkingBlock,
+  UnmentionedLink,
+  WikiArticleOverview,
+};
 
 export interface HistoryMessage {
   role: "user" | "assistant";
