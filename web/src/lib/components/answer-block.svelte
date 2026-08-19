@@ -77,10 +77,16 @@
   const fullTree = $derived.by(() =>
     streaming ? emptyRoot() : parseAnswer(displayText),
   );
+  // Offsets of top-level blocks currently rendered in the body (streaming
+  // uses the stable/tail trees, otherwise the full tree). Threads whose
+  // anchor offset is not among these are unresolvable: they render nowhere
+  // in the body (no inline thread, no gutter dot) but stay reachable from
+  // the header panel's notes list.
   const renderedOffsets = $derived.by(() => {
-    const tree = streaming ? null : fullTree;
+    const tree = streaming ? [stableTree, tailTree] : [fullTree];
     return new Set(
-      (tree?.children ?? [])
+      tree
+        .flatMap((t) => t.children ?? [])
         .map((node) => node.position?.start?.offset)
         .filter((offset): offset is number => offset != null),
     );
@@ -89,9 +95,6 @@
   // conversations surface through the doc-header chip instead.
   const bodyThreads = $derived(
     btws.filter((btw) => btw.anchor.quote.length > 0),
-  );
-  const orphanedBtws = $derived(
-    bodyThreads.filter((btw) => !renderedOffsets.has(btw.anchor.blockOffset)),
   );
   const footnoteRoots = $derived(
     streaming ? [stableTree, tailTree] : [fullTree],
@@ -102,10 +105,12 @@
     for (const btw of bodyThreads) {
       if (btw.anchor.blockOffset < 0 || seen.has(btw.anchor.blockOffset))
         continue;
+      if (!renderedOffsets.has(btw.anchor.blockOffset)) continue;
       seen.add(btw.anchor.blockOffset);
       dots.push({
         id: `dot:${btw.anchor.blockOffset}`,
         blockOffset: btw.anchor.blockOffset,
+        quote: btw.anchor.quote,
       });
     }
     return dots;
@@ -358,20 +363,5 @@
         class="ml-px inline-block h-[13px] w-0.5 animate-[blink_1s_step-end_infinite] bg-gold align-middle"
       ></span>
     {/if}
-
-    {#each orphanedBtws as btw (btw.id)}
-      <BtwThread
-        {btw}
-        open={isOpen(btw.id)}
-        onOpenChange={onToggleThread
-          ? () => onToggleThread(btw.id)
-          : () => toggleThread(btw.id)}
-        hideWhenClosed
-        {readOnly}
-        onReply={onBtwReply}
-        onDismiss={onBtwDismiss}
-        onOpenSession={onBtwOpenSession}
-      />
-    {/each}
   {/snippet}
 </FootnoteNotes>

@@ -40,7 +40,7 @@
         class="inline-flex items-center gap-1 text-warm-ghost transition-colors group-hover:text-warm-faint"
       >
         <CornerUpRight size={10} class="text-gold-muted" />
-        from {docDisplayName(session.origin.doc_path)}
+        from {session.origin_title ?? docDisplayName(session.origin.doc_path)}
       </span>
     {/if}
     {formatDate(session.updated_at)}

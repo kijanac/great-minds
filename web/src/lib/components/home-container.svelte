@@ -10,10 +10,12 @@
     sessionId,
     initialQuery,
     origin,
+    originTitle = null,
   }: {
     sessionId?: string;
     initialQuery?: string;
     origin?: string;
+    originTitle?: string | null;
   } = $props();
 
   const vaults = useVaults();
@@ -45,6 +47,7 @@
     {sessionId}
     initialExchanges={saved.data?.exchanges ?? undefined}
     sessionOrigin={saved.data?.origin ?? null}
+    originTitle={saved.data?.originTitle ?? null}
     {initialQuery}
     {origin}
   />

@@ -84,6 +84,9 @@ const sessionSummarySchema = z.object({
   updated_at: z.string(),
   user_id: z.string(),
   origin: sessionOriginSchema.nullable(),
+  // Resolved at read time from the origin document's current title; null
+  // when unresolvable (fall back to the file stem).
+  origin_title: z.string().nullable(),
 });
 
 const sessionListSchema = paginatedSchema(sessionSummarySchema);
@@ -173,6 +176,7 @@ export async function listSessionsByOrigin(
 const sessionResponseSchema = z.object({
   id: z.string(),
   events: z.array(sessionEventSchema),
+  origin_title: z.string().nullable(),
 });
 
 export type SessionResponse = z.infer<typeof sessionResponseSchema>;

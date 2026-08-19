@@ -23,6 +23,7 @@
   export interface MarginDot {
     id: string;
     blockOffset: number;
+    quote: string;
   }
 
   let {
@@ -241,12 +242,13 @@
       class="pointer-events-none absolute inset-0 print:hidden"
     >
       {#each marginDots as dot (dot.id)}
+        {@const dotLabel = `toggle annotation thread: "${dot.quote.slice(0, 40)}"`}
         <button
           type="button"
           data-margin-dot={dot.id}
           onclick={() => onDotClick?.(dot)}
-          title="annotation thread"
-          aria-label="toggle annotation thread"
+          title={dotLabel}
+          aria-label={dotLabel}
           class={`pointer-events-auto absolute left-[calc(100%+0.85rem)] -translate-y-1/2 rounded-full p-1 text-[11px] leading-none text-btw transition-colors hover:text-btw-bright hover:drop-shadow-[0_0_6px_rgba(106,138,96,0.5)] ${dot.id in dotPositions ? "opacity-100" : "opacity-0"}`}
           style:top={`${dotPositions[dot.id] ?? 0}px`}
         >

@@ -16,6 +16,45 @@ const compactMarkdown = (markdown: string) =>
     .replace(/\n{3,}/g, "\n\n")
     .trim();
 
+const escapeRegExp = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+// Converted pages often repeat the extracted <title> at the top of the body —
+// as an <h1>, or as a title-card image whose alt text is the title; the
+// reader already renders the title in the doc header, so drop the duplicate.
+// Only exact-title matches; other headings and images are untouched. Runs
+// inside htmlToMarkdown so markdownWithTitle (the inverse: adds `# title`
+// when missing) never fights it.
+export const stripLeadingTitleHeading = (markdown: string, title: string | null): string => {
+  if (title === null) {
+    return markdown;
+  }
+  const lines = markdown.split("\n");
+  const first = lines.findIndex((line) => line.trim().length > 0);
+  if (first < 0) {
+    return markdown;
+  }
+  const firstLine = lines[first]!;
+  const titleImage = new RegExp(`^\\s*!\\[${escapeRegExp(title.trim())}\\]\\([^)]*\\)\\s*`, "i");
+  if (titleImage.test(firstLine)) {
+    const rest = firstLine.replace(titleImage, "");
+    if (rest.trim().length === 0) {
+      lines.splice(first, 1);
+    } else {
+      lines[first] = rest;
+    }
+    return lines.join("\n").trim();
+  }
+  const match = /^#\s+(.+)$/.exec(firstLine.trim());
+  if (match === null || match[1]!.trim().toLowerCase() !== title.trim().toLowerCase()) {
+    return markdown;
+  }
+  lines.splice(first, 1);
+  if (lines[first] !== undefined && lines[first].trim().length === 0) {
+    lines.splice(first, 1);
+  }
+  return lines.join("\n").trim();
+};
+
 export const htmlToMarkdown = (html: string, url: string) => {
   const dom = new JSDOM(html, { url });
   const article = new Readability(dom.window.document).parse();
@@ -24,7 +63,7 @@ export const htmlToMarkdown = (html: string, url: string) => {
   const content = article?.content ?? dom.window.document.body?.innerHTML ?? html;
   return {
     title,
-    markdown: compactMarkdown(turndown.turndown(content)),
+    markdown: stripLeadingTitleHeading(compactMarkdown(turndown.turndown(content)), title),
   };
 };
 

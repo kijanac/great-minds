@@ -21,6 +21,7 @@
     supersededBy = null,
     onSupersessorClick,
     threads = [],
+    jumpableThreads = null,
     onThreadJump,
     onThreadOpen,
   }: {
@@ -31,6 +32,9 @@
     supersededBy?: string | null;
     onSupersessorClick?: (slug: string) => void;
     threads?: ThreadLike[];
+    // Thread ids whose anchor block resolves in the rendered body; others
+    // keep their row but lose the jump affordance. Null = all jumpable.
+    jumpableThreads?: Set<string> | null;
     onThreadJump?: (threadId: string) => void;
     onThreadOpen?: (threadId: string) => void;
   } = $props();
@@ -40,10 +44,19 @@
   const isAnchored = (thread: ThreadLike): boolean =>
     (thread as { anchored?: boolean }).anchored ?? true;
   const notes = $derived(threads.filter(isAnchored));
+  // Drafts (no session yet) render in the margin but are excluded from the
+  // chip counts until the session exists.
+  const savedNotes = $derived(
+    notes.filter(
+      (note) => (note as { sessionId?: string | null }).sessionId != null,
+    ),
+  );
   const conversations = $derived(
     threads.filter((thread) => !isAnchored(thread)),
   );
-  const showThreadsChip = $derived(notes.length + conversations.length > 0);
+  const showThreadsChip = $derived(
+    savedNotes.length + conversations.length > 0,
+  );
   const shortQuote = (quote: string) =>
     quote.length > 44 ? `${quote.slice(0, 44)}...` : quote;
   const metadata = $derived(articleMeta(document));
@@ -161,7 +174,7 @@
       >
         <span class="text-gold-muted">⊹</span>
         <span>
-          {notes.length} note{notes.length === 1 ? "" : "s"} ·
+          {savedNotes.length} note{savedNotes.length === 1 ? "" : "s"} ·
           {conversations.length} conversation{conversations.length === 1
             ? ""
             : "s"}
@@ -181,9 +194,11 @@
               notes
             </p>
             {#each notes as note (note.id)}
+              {@const jumpable =
+                jumpableThreads === null || jumpableThreads.has(note.id)}
               <button
                 type="button"
-                onclick={() => onThreadJump?.(note.id)}
+                onclick={jumpable ? () => onThreadJump?.(note.id) : undefined}
                 class="group flex w-full items-baseline gap-2 text-left"
               >
                 <span class="shrink-0 text-[10px] leading-none text-btw">●</span
@@ -201,11 +216,13 @@
                     : "s"} ·
                   {formatShortDate(note.createdAt ?? null)}
                 </span>
-                <span
-                  class="shrink-0 font-mono text-[length:var(--text-chrome)] tracking-[0.1em] text-gold-muted uppercase transition-colors group-hover:text-gold"
-                >
-                  jump
-                </span>
+                {#if jumpable}
+                  <span
+                    class="shrink-0 font-mono text-[length:var(--text-chrome)] tracking-[0.1em] text-gold-muted uppercase transition-colors group-hover:text-gold"
+                  >
+                    jump
+                  </span>
+                {/if}
               </button>
             {/each}
           {/if}

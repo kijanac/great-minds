@@ -701,6 +701,9 @@ export const SessionOverview = Schema.Struct({
   updated_at: IsoDateTime,
   user_id: Uuid,
   origin: Schema.NullOr(SessionOrigin),
+  // Resolved at read time from the origin document's current title; never
+  // stored on the session row (titles change). Null when unresolvable.
+  origin_title: Schema.NullOr(Schema.String),
 });
 export type SessionOverview = typeof SessionOverview.Type;
 
@@ -710,6 +713,9 @@ export type SessionPage = typeof SessionPage.Type;
 export const SessionResponse = Schema.Struct({
   id: Schema.String,
   events: Schema.Array(SessionEvent),
+  // Resolved at read time from the origin document's current title; never
+  // stored on the session row (titles change). Null when unresolvable.
+  origin_title: Schema.NullOr(Schema.String),
 });
 export type SessionResponse = typeof SessionResponse.Type;
 

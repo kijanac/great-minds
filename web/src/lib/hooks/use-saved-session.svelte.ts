@@ -7,9 +7,10 @@ import type { BtwThread, Exchange } from "$lib/types";
 export interface SavedSession {
   exchanges: Exchange[];
   origin: SessionOrigin | null;
+  originTitle: string | null;
 }
 
-function replayEvents(events: SessionEvent[]): SavedSession {
+function replayEvents(events: SessionEvent[], originTitle: string | null): SavedSession {
   const exchanges: Exchange[] = [];
   const exchangeIndexes = new Map<string, number>();
   const latestBtw = new Map<string, Extract<SessionEvent, { type: "btw" }>>();
@@ -76,7 +77,7 @@ function replayEvents(events: SessionEvent[]): SavedSession {
   const meta = events.find(
     (event): event is Extract<SessionEvent, { type: "meta" }> => event.type === "meta",
   );
-  return { exchanges, origin: meta?.origin ?? null };
+  return { exchanges, origin: meta?.origin ?? null, originTitle };
 }
 
 export function useSavedSession(sessionId: () => string | null) {
@@ -84,7 +85,7 @@ export function useSavedSession(sessionId: () => string | null) {
     queryKey: ["vault", activeVault.id, "session", sessionId()],
     queryFn: async () => {
       const data = await loadSession(sessionId()!);
-      return replayEvents(data.events);
+      return replayEvents(data.events, data.origin_title);
     },
     enabled: !!sessionId() && !!activeVault.id,
   }));

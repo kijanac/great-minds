@@ -38,12 +38,14 @@
     initialQuery,
     origin,
     sessionOrigin = null,
+    originTitle = null,
   }: {
     sessionId?: string;
     initialExchanges?: Exchange[];
     initialQuery?: string;
     origin?: string;
     sessionOrigin?: SessionOrigin | null;
+    originTitle?: string | null;
   } = $props();
 
   const sessions = useSessions();
@@ -320,6 +322,7 @@
             <SessionThread
               {session}
               origin={viewOrigin}
+              {originTitle}
               activeCard={selectedCard?.label ?? null}
               panelDocked={!!selectedCard}
               onCardClick={toggleCard}

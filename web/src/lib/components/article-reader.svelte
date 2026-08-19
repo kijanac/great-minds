@@ -104,6 +104,16 @@
   onDestroy(() => docThreads.destroy());
 
   $effect(() => {
+    // The body just (re)mounted: re-check which thread anchors resolve to a
+    // rendered block so the header panel can drop the jump affordance for
+    // unresolvable ones.
+    if (body === null) return;
+    void tick().then(() => {
+      requestAnimationFrame(() => docThreads.refreshJumpable());
+    });
+  });
+
+  $effect(() => {
     if (path === btwPath) return;
     docThreads.destroy();
     btwPath = path;
@@ -277,6 +287,7 @@
         onLinkClick={handleLinkClick}
         panelDocked={!!selectedCard}
         threads={docThreads.threads}
+        jumpableThreads={docThreads.jumpable}
         expandedThreads={docThreads.expanded}
         onToggleThread={docThreads.toggleExpanded}
         onOpenThread={docThreads.openSession}

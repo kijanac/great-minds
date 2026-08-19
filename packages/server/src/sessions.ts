@@ -1,4 +1,4 @@
-import { Database, sessions } from "@great-minds/database";
+import { Database, sessions, userDocuments } from "@great-minds/database";
 import {
   BadRequest,
   type BtwData,
@@ -198,13 +198,17 @@ const latestMetaSuffix = (events: readonly SessionEvent[]) => {
   return latestMetaIndex <= 0 ? events : events.slice(latestMetaIndex);
 };
 
-const sessionOverview = (row: typeof sessions.$inferSelect): SessionOverview => ({
+const sessionOverview = (
+  row: typeof sessions.$inferSelect,
+  originTitle: string | null,
+): SessionOverview => ({
   id: row.id,
   query: row.query,
   created_at: dateIso(row.createdAt),
   updated_at: dateIso(row.updatedAt),
   user_id: row.userId as Uuid,
   origin: normalizeOrigin(decodeSessionOrigin(row.origin)),
+  origin_title: originTitle,
 });
 
 export const renderSessionMarkdown = (events: readonly SessionEvent[]) => {
@@ -298,6 +302,31 @@ export const SessionsServiceLive = Layer.effect(
     const sourceDocuments = yield* SourceDocumentsService;
     const proposals = yield* ProposalsService;
     const ingest = yield* IngestService;
+
+    // The origin document's current title, resolved at read time so the chip
+    // shows the real title instead of the file stem. Personal references read
+    // from user_documents.title; vault docs from the source-documents lookup.
+    const originTitleFor = (userId: Uuid, vaultId: Uuid, origin: SessionOrigin | null) =>
+      Effect.gen(function* () {
+        if (origin === null) {
+          return null;
+        }
+        if (origin.origin_scope === "personal") {
+          const rows = yield* db.query((d) => d
+            .select({ title: userDocuments.title })
+            .from(userDocuments)
+            .where(
+              and(
+                eq(userDocuments.userId, userId),
+                eq(userDocuments.filePath, origin.doc_path),
+              ),
+            )
+            .limit(1));
+          return rows[0]?.title ?? null;
+        }
+        const row = yield* sourceDocuments.getByPath(vaultId, origin.doc_path);
+        return row?.title ?? null;
+      });
 
     const decodeEventLine = (sessionId: string, lineNumber: number, data: unknown) =>
       Effect.gen(function* () {
@@ -707,7 +736,16 @@ export const SessionsServiceLive = Layer.effect(
             .orderBy(desc(sessions.updatedAt))
             .limit(params.limit)
             .offset(params.offset));
-          return pageEnvelope(rows.map(sessionOverview), params, oneTotal(countRows));
+          const overviews: SessionOverview[] = [];
+          for (const row of rows) {
+            const originTitle = yield* originTitleFor(
+              userId,
+              vaultId,
+              normalizeOrigin(decodeSessionOrigin(row.origin)),
+            );
+            overviews.push(sessionOverview(row, originTitle));
+          }
+          return pageEnvelope(overviews, params, oneTotal(countRows));
         }),
       listSessionsByOrigin: (userId, vaultId, docPath) =>
         Effect.gen(function* () {
@@ -740,8 +778,13 @@ export const SessionsServiceLive = Layer.effect(
               });
               continue;
             }
+            const originTitle = yield* originTitleFor(
+              userId,
+              vaultId,
+              normalizeOrigin(decodeSessionOrigin(row.origin)),
+            );
             details.push({
-              session: sessionOverview(row),
+              session: sessionOverview(row, originTitle),
               events: dedupeSessionExchanges(result.success),
             });
           }
@@ -755,9 +798,11 @@ export const SessionsServiceLive = Layer.effect(
           const events = dedupeSessionExchanges(
             yield* parseEvents(sessionId, content, { isolateLatestMeta: true }),
           );
+          const origin = normalizeOrigin(findMeta(events)?.origin);
           return {
             id: sessionId,
             events,
+            origin_title: yield* originTitleFor(userId, vaultId, origin),
           };
         }),
       readMarkdown: (userId, vaultId, sessionId) =>

@@ -14,6 +14,11 @@ export class DocThreads {
   threads = $state<DocThread[]>([]);
   loading = $state(false);
   error = $state<string | null>(null);
+  // Thread ids whose anchor block is present in the rendered document body.
+  // Only these offer a jump affordance from the header panel; the body guard
+  // skips inline rendering for unresolvable anchors, so jumping would be a
+  // no-op. Refreshed from the DOM whenever the body (re)mounts.
+  jumpable = $state<Set<string>>(new Set());
   // Thread ids currently expanded inline in the reader. Owned here so both the
   // doc-header chip (jump to mark) and the body rendering share one signal.
   expanded = $state<Set<string>>(new Set());
@@ -77,6 +82,7 @@ export class DocThreads {
         };
       });
       this.error = null;
+      this.refreshJumpable();
     } catch (error) {
       if (isAbortError(error)) return;
       console.error("Failed to load doc threads:", error);
@@ -85,6 +91,19 @@ export class DocThreads {
       this.loading = false;
       this.#controllers.delete(controller);
     }
+  };
+
+  /** Re-check which anchors resolve to a rendered block in the document. */
+  refreshJumpable = (): void => {
+    const next = new Set<string>();
+    for (const thread of this.threads) {
+      if (thread.anchor.blockOffset < 0) continue;
+      const block = window.document.querySelector<HTMLElement>(
+        `[data-block-offset="${CSS.escape(String(thread.anchor.blockOffset))}"]`,
+      );
+      if (block !== null) next.add(thread.id);
+    }
+    this.jumpable = next;
   };
 
   #findThread = (threadId: string): DocThread | undefined =>
@@ -110,6 +129,7 @@ export class DocThreads {
       },
     ];
     this.expanded = new Set([...this.expanded, id]);
+    this.refreshJumpable();
   };
 
   replyThread = (threadId: string, userText: string): void => {

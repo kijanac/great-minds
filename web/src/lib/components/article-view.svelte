@@ -19,6 +19,7 @@
     onLinkClick,
     panelDocked = false,
     threads = [],
+    jumpableThreads = null,
     expandedThreads = null,
     onToggleThread,
     onOpenThread,
@@ -39,6 +40,7 @@
     onLinkClick?: (event: MouseEvent) => void;
     panelDocked?: boolean;
     threads?: ThreadLike[];
+    jumpableThreads?: Set<string> | null;
     expandedThreads?: Set<string> | null;
     onToggleThread?: (threadId: string) => void;
     onOpenThread?: (threadId: string) => void;
@@ -60,6 +62,7 @@
     {supersededBy}
     {onSupersessorClick}
     {threads}
+    {jumpableThreads}
     {onThreadJump}
     {onThreadOpen}
   />

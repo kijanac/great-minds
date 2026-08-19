@@ -1905,7 +1905,7 @@ describe("read-only HTTP integration", () => {
     await writeVaultFile(id.vaultAlpha, "sessions/s-empty.jsonl", "");
     const emptyReplay = await api("GET", `/vaults/${id.vaultAlpha}/sessions/s-empty`, aliceToken);
     expect(emptyReplay.status).toBe(200);
-    expect(emptyReplay.body).toEqual({ id: "s-empty", events: [] });
+    expect(emptyReplay.body).toEqual({ id: "s-empty", events: [], origin_title: null });
 
     const crossVault = await api(
       "GET",

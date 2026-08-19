@@ -19,6 +19,7 @@
   let {
     session,
     origin = null,
+    originTitle = null,
     activeCard,
     panelDocked = false,
     onCardClick,
@@ -26,6 +27,7 @@
   }: {
     session: Session;
     origin?: SessionOrigin | null;
+    originTitle?: string | null;
     activeCard: string | null;
     panelDocked?: boolean;
     onCardClick: (source: SourceRef) => void;
@@ -97,7 +99,7 @@
           class="inline-flex items-center gap-2 rounded-sm border border-ink-border bg-ink-raised px-3 py-1.5 font-mono text-[length:var(--text-chrome)] tracking-[0.08em] text-warm-faint transition-colors hover:border-gold-dim hover:text-warm"
         >
           <CornerUpRight size={12} class="text-gold-muted" />
-          from {docDisplayName(originDocPath ?? "")}
+          from {originTitle ?? docDisplayName(originDocPath ?? "")}
         </button>
         {#if origin?.anchor}
           <blockquote
