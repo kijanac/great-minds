@@ -9,6 +9,8 @@ export const referenceOverviewSchema = z.object({
   title: z.string().nullable(),
   url: z.string().nullable(),
   origin: z.string().nullable(),
+  author: z.string().nullable(),
+  published: z.string().nullable(),
   created_at: z.string(),
   updated_at: z.string(),
 });

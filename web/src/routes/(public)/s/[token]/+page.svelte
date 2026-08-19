@@ -119,6 +119,18 @@
           from {share.origin}
         </p>
       {/if}
+      {#if share.subject_kind === "reference" && (share.author || share.published)}
+        <p
+          class="mt-2 font-mono text-[length:var(--text-chrome)] tracking-[0.06em] text-warm-faint"
+        >
+          {[
+            share.author !== null ? `by ${share.author}` : null,
+            share.published,
+          ]
+            .filter((part): part is string => part !== null)
+            .join(" · ")}
+        </p>
+      {/if}
     </header>
     <AnswerBlock
       text={share.markdown}

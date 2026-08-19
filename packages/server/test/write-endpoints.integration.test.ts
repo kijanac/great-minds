@@ -1244,7 +1244,7 @@ describe("M3.1 write endpoint integration", () => {
           articleRequests += 1;
           response.writeHead(200, { "content-type": "text/html; charset=utf-8" });
           response.end(
-            "<html><head><title>Personal Article</title></head><body><article><p>First personal paragraph with enough detail for article extraction.</p><p>Second personal paragraph stays outside every vault corpus.</p><p>Third personal paragraph supports a BTW question.</p></article></body></html>",
+            "<html><head><title>Personal Article</title><meta name=\"author\" content=\"Ada Lovelace\"><meta property=\"article:published_time\" content=\"2024-03-01\"></head><body><article><p>First personal paragraph with enough detail for article extraction.</p><p>Second personal paragraph stays outside every vault corpus.</p><p>Third personal paragraph supports a BTW question.</p></article></body></html>",
           );
           return;
         }
@@ -1274,6 +1274,8 @@ describe("M3.1 write endpoint integration", () => {
           title: "Personal Article",
           url: `${origin}/article`,
           origin: new URL(origin).host,
+          author: "Ada Lovelace",
+          published: "2024-03-01",
         });
 
         const content = await readUserFile(id.alice, "refs/article.md");
@@ -1299,6 +1301,8 @@ describe("M3.1 write endpoint integration", () => {
           fileHash: fileContentHash(content),
           bodyHash: bodyContentHash(parseFrontmatter(content).body),
           title: "Personal Article",
+          author: "Ada Lovelace",
+          published: "2024-03-01",
         });
         expect(await countTable(sourceDocuments)).toBe(0);
         expect(await countTable(searchIndex)).toBe(0);

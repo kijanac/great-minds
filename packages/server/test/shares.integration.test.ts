@@ -350,7 +350,7 @@ describe("share links", () => {
       (_request, response) => {
         response.writeHead(200, { "content-type": "text/html; charset=utf-8" });
         response.end(
-          "<html><head><title>Shared Article</title></head><body><article><p>First shared paragraph.</p><p>Second shared paragraph.</p></article></body></html>",
+          "<html><head><title>Shared Article</title><meta name=\"author\" content=\"Ada Lovelace\"><meta property=\"article:published_time\" content=\"2024-03-01\"></head><body><article><p>First shared paragraph.</p><p>Second shared paragraph.</p></article></body></html>",
         );
       },
       async (origin) => {
@@ -382,6 +382,8 @@ describe("share links", () => {
           subject_kind: "reference",
           title: "Shared Article",
           origin: new URL(origin).host,
+          author: "Ada Lovelace",
+          published: "2024-03-01",
         });
         const annotatedMarkdown = String(asRecord(annotatedResolved.body).markdown);
         expect(annotatedMarkdown).toContain("First shared paragraph. ^p0");

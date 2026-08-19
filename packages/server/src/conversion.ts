@@ -1,13 +1,6 @@
-import { Readability } from "@mozilla/readability";
+import { Defuddle } from "defuddle/node";
 import { JSDOM } from "jsdom";
 import { parseOfficeAsync } from "officeparser";
-import TurndownService from "turndown";
-
-const turndown = new TurndownService({
-  headingStyle: "atx",
-  codeBlockStyle: "fenced",
-  bulletListMarker: "-",
-});
 
 const compactMarkdown = (markdown: string) =>
   markdown
@@ -16,54 +9,27 @@ const compactMarkdown = (markdown: string) =>
     .replace(/\n{3,}/g, "\n\n")
     .trim();
 
-const escapeRegExp = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-
-// Converted pages often repeat the extracted <title> at the top of the body —
-// as an <h1>, or as a title-card image whose alt text is the title; the
-// reader already renders the title in the doc header, so drop the duplicate.
-// Only exact-title matches; other headings and images are untouched. Runs
-// inside htmlToMarkdown so markdownWithTitle (the inverse: adds `# title`
-// when missing) never fights it.
-export const stripLeadingTitleHeading = (markdown: string, title: string | null): string => {
-  if (title === null) {
-    return markdown;
-  }
-  const lines = markdown.split("\n");
-  const first = lines.findIndex((line) => line.trim().length > 0);
-  if (first < 0) {
-    return markdown;
-  }
-  const firstLine = lines[first]!;
-  const titleImage = new RegExp(`^\\s*!\\[${escapeRegExp(title.trim())}\\]\\([^)]*\\)\\s*`, "i");
-  if (titleImage.test(firstLine)) {
-    const rest = firstLine.replace(titleImage, "");
-    if (rest.trim().length === 0) {
-      lines.splice(first, 1);
-    } else {
-      lines[first] = rest;
-    }
-    return lines.join("\n").trim();
-  }
-  const match = /^#\s+(.+)$/.exec(firstLine.trim());
-  if (match === null || match[1]!.trim().toLowerCase() !== title.trim().toLowerCase()) {
-    return markdown;
-  }
-  lines.splice(first, 1);
-  if (lines[first] !== undefined && lines[first].trim().length === 0) {
-    lines.splice(first, 1);
-  }
-  return lines.join("\n").trim();
+const nullableString = (value: string | null | undefined): string | null => {
+  const trimmed = value?.trim();
+  return trimmed === undefined || trimmed.length === 0 ? null : trimmed;
 };
 
-export const htmlToMarkdown = (html: string, url: string) => {
+export type ExtractedArticle = {
+  readonly title: string | null;
+  readonly markdown: string;
+  readonly author: string | null;
+  readonly published: string | null;
+};
+
+export const htmlToMarkdown = async (html: string, url: string): Promise<ExtractedArticle> => {
   const dom = new JSDOM(html, { url });
-  const article = new Readability(dom.window.document).parse();
-  const parsedTitle = article?.title?.trim();
-  const title = parsedTitle === undefined || parsedTitle.length === 0 ? null : parsedTitle;
-  const content = article?.content ?? dom.window.document.body?.innerHTML ?? html;
+  const article = await Defuddle(dom, url, { markdown: true });
+  const title = nullableString(article.title);
   return {
     title,
-    markdown: stripLeadingTitleHeading(compactMarkdown(turndown.turndown(content)), title),
+    markdown: compactMarkdown(article.content),
+    author: nullableString(article.author),
+    published: nullableString(article.published),
   };
 };
 
@@ -88,7 +54,7 @@ export const stagedFileToMarkdown = async (
   }
   if (HTML_EXTENSIONS.has(extension) || mimetype.toLowerCase().includes("text/html")) {
     const html = new TextDecoder("utf-8", { fatal: true }).decode(rawBytes);
-    const converted = htmlToMarkdown(html, "https://uploaded.local/");
+    const converted = await htmlToMarkdown(html, "https://uploaded.local/");
     return markdownWithTitle(converted.title, converted.markdown);
   }
   if (BINARY_EXTENSIONS.has(extension)) {

@@ -167,6 +167,19 @@
     </p>
   {/if}
 
+  {#if document.kind === "reference" && (document.author || document.published)}
+    <p
+      class="mb-3 font-mono text-[length:var(--text-chrome)] tracking-[0.06em] text-warm-faint"
+    >
+      {[
+        document.author !== null ? `by ${document.author}` : null,
+        document.published,
+      ]
+        .filter((part): part is string => part !== null)
+        .join(" · ")}
+    </p>
+  {/if}
+
   {#if showThreadsChip}
     <Collapsible.Root bind:open={threadsOpen} class="mt-4">
       <Collapsible.Trigger

@@ -496,6 +496,8 @@ export const userDocuments = pgTable(
     title: text("title"),
     url: text("url"),
     origin: text("origin"),
+    author: text("author"),
+    published: text("published"),
     createdAt: timestamptz("created_at").defaultNow().notNull(),
     updatedAt: timestamptz("updated_at").defaultNow().notNull(),
   },

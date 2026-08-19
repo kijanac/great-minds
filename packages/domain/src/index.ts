@@ -827,6 +827,8 @@ export const ReferenceOverview = Schema.Struct({
   title: Schema.NullOr(Schema.String),
   url: Schema.NullOr(Schema.String),
   origin: Schema.NullOr(Schema.String),
+  author: Schema.NullOr(Schema.String),
+  published: Schema.NullOr(Schema.String),
   created_at: IsoDateTime,
   updated_at: IsoDateTime,
 });
@@ -914,6 +916,8 @@ export const SharedReferenceDetail = Schema.Struct({
   title: Schema.NullOr(Schema.String),
   markdown: Schema.String,
   origin: Schema.NullOr(Schema.String),
+  author: Schema.NullOr(Schema.String),
+  published: Schema.NullOr(Schema.String),
   annotations: Schema.Array(SharedAnnotation),
   created_at: IsoDateTime,
 });

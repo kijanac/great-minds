@@ -163,9 +163,10 @@ export const fetchUrlMarkdown = (rawUrl: string, allowPrivateUrlFetch: boolean) 
         new BadRequest({ detail: `Failed to fetch URL: ${errorDetails(error).message}` }),
     });
     if (contentType === "text/plain") {
-      return { url, title: null, markdown: body };
+      return { url, title: null, markdown: body, author: null, published: null };
     }
-    return { url, ...htmlToMarkdown(body, url) };
+    const converted = yield* Effect.promise(() => htmlToMarkdown(body, url));
+    return { url, ...converted };
   });
 
 const utcTimestamp = (date: Date) =>
@@ -220,7 +221,7 @@ const uploadToMarkdown = (input: UploadInput) =>
       return text;
     }
     if (isHtmlUpload(input.filename, input.mimetype)) {
-      const converted = htmlToMarkdown(text, "https://uploaded.local/");
+      const converted = yield* Effect.promise(() => htmlToMarkdown(text, "https://uploaded.local/"));
       return markdownWithTitle(converted.title, converted.markdown);
     }
     return yield* new BadRequest({

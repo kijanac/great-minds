@@ -63,6 +63,8 @@ const referenceOverview = (row: UserDocumentRow): ReferenceOverview => ({
   title: row.title,
   url: row.url,
   origin: row.origin,
+  author: row.author,
+  published: row.published,
   created_at: row.createdAt.toISOString(),
   updated_at: row.updatedAt.toISOString(),
 });
@@ -165,6 +167,8 @@ export const UserDocumentsServiceLive = Layer.effect(
               title: fetched.title,
               url: fetched.url,
               origin,
+              author: fetched.author,
+              published: fetched.published,
             })
             .onConflictDoUpdate({
               target: [userDocuments.userId, userDocuments.filePath],
@@ -174,6 +178,8 @@ export const UserDocumentsServiceLive = Layer.effect(
                 title: sql`excluded.title`,
                 url: sql`excluded.url`,
                 origin: sql`excluded.origin`,
+                author: sql`excluded.author`,
+                published: sql`excluded.published`,
                 updatedAt: sql`now()`,
               },
             })

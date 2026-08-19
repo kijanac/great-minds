@@ -53,6 +53,8 @@ export const sharedReferenceDetailSchema = z.object({
   title: z.string().nullable(),
   markdown: z.string(),
   origin: z.string().nullable(),
+  author: z.string().nullable(),
+  published: z.string().nullable(),
   created_at: z.string(),
   annotations: z.array(sharedAnnotationSchema),
 });

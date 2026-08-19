@@ -280,6 +280,8 @@ export const SharesServiceLive = Layer.effect(
             title: reference.title,
             markdown: row.includeAnnotations ? body : stripAnchors(body),
             origin: reference.origin,
+            author: reference.author,
+            published: reference.published,
             annotations: row.includeAnnotations
               ? yield* loadAnnotations(row.createdBy as Uuid, reference.filePath)
               : [],
