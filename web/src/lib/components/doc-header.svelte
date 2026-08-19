@@ -5,6 +5,7 @@
   import ExternalLink from "@lucide/svelte/icons/external-link";
 
   import { articleMeta, type Article, type DocumentScope } from "$lib/api/doc";
+  import { renameReference } from "$lib/api/references";
   import ReferencePromoteAction from "$lib/components/reference-promote-action.svelte";
   import ShareDialog from "$lib/components/share-dialog.svelte";
   import * as Collapsible from "$lib/components/ui/collapsible";
@@ -12,6 +13,7 @@
   import type { ThreadLike } from "$lib/types";
   import { cn, formatShortDate } from "$lib/utils";
   import type { ReferencePromotionAction as PromotionAction } from "$lib/types";
+  import { tick } from "svelte";
 
   let {
     document,
@@ -41,6 +43,17 @@
 
   let extraOpen = $state(false);
   let threadsOpen = $state(false);
+  // Rename state: while renaming the h1 is replaced by an inline input.
+  // titleOverride carries the locally updated title until the document prop
+  // (query cache) catches up; undefined means "follow the prop".
+  let renaming = $state(false);
+  let titleDraft = $state("");
+  let titleOverride = $state<string | null | undefined>(undefined);
+  let titleInput = $state<HTMLInputElement | null>(null);
+  let renameError = $state<string | null>(null);
+  const title = $derived(
+    titleOverride === undefined ? document.title : titleOverride,
+  );
   const isAnchored = (thread: ThreadLike): boolean =>
     (thread as { anchored?: boolean }).anchored ?? true;
   const notes = $derived(threads.filter(isAnchored));
@@ -77,6 +90,62 @@
     if (typeof value === "object") return JSON.stringify(value);
     return String(value);
   }
+
+  $effect(() => {
+    // A different document arrived: drop any rename state carried over.
+    void document.file_path;
+    renaming = false;
+    titleOverride = undefined;
+    renameError = null;
+  });
+
+  async function startRename() {
+    titleDraft = document.title ?? "";
+    renameError = null;
+    renaming = true;
+    await tick();
+    titleInput?.focus();
+    titleInput?.select();
+  }
+
+  function cancelRename() {
+    renaming = false;
+    renameError = null;
+  }
+
+  async function saveRename() {
+    if (document.kind !== "reference") {
+      cancelRename();
+      return;
+    }
+    const draft = titleDraft.trim();
+    const next = draft === "" ? null : draft;
+    if (next === (titleOverride ?? document.title)) {
+      renaming = false;
+      renameError = null;
+      return;
+    }
+    try {
+      const updated = await renameReference(document.file_path, next);
+      titleOverride = updated.title;
+      renaming = false;
+      renameError = null;
+    } catch (error) {
+      renameError =
+        error instanceof Error ? error.message : "Failed to rename reference";
+    }
+  }
+
+  function handleRenameKeydown(event: KeyboardEvent) {
+    if (event.key === "Enter") {
+      event.preventDefault();
+      void saveRename();
+    }
+    if (event.key === "Escape") {
+      event.preventDefault();
+      cancelRename();
+    }
+  }
 </script>
 
 <header class="mb-10">
@@ -105,23 +174,50 @@
     </div>
   {/if}
 
-  <div class="mb-3 flex items-start justify-between gap-5">
+  {#if scope === "personal"}
+    <div class="mb-3 flex items-start justify-end gap-2">
+      {#if document.kind === "reference"}
+        <button
+          type="button"
+          onclick={() => void startRename()}
+          class="h-8 shrink-0 rounded-sm border border-ink-border bg-transparent px-3 font-mono text-[length:var(--text-chrome)] tracking-[0.06em] text-warm-ghost transition-colors hover:border-gold-dim hover:text-warm"
+        >
+          rename
+        </button>
+      {/if}
+      {#if promotionAction}
+        <ReferencePromoteAction action={promotionAction} />
+      {/if}
+      {#if document.kind === "reference"}
+        <ShareDialog subjectKind="reference" subjectId={document.id} />
+      {/if}
+    </div>
+  {/if}
+
+  {#if renaming && document.kind === "reference"}
+    <div class="mb-3">
+      <input
+        bind:this={titleInput}
+        bind:value={titleDraft}
+        onkeydown={handleRenameKeydown}
+        class="w-full rounded-sm border border-gold-dim bg-ink-raised px-3 py-2 font-serif text-[length:var(--text-title)] font-bold text-foreground caret-gold outline-none focus:border-gold"
+        aria-label="reference title"
+      />
+      {#if renameError}
+        <p
+          class="mt-1 font-mono text-[length:var(--text-chrome)] text-destructive"
+        >
+          {renameError}
+        </p>
+      {/if}
+    </div>
+  {:else}
     <h1
-      class="min-w-0 text-[length:var(--text-title)] font-bold text-foreground"
+      class="mb-3 min-w-0 text-[length:var(--text-title)] font-bold text-foreground"
     >
-      {metadata.title}
+      {title}
     </h1>
-    {#if scope === "personal"}
-      <div class="flex shrink-0 items-start gap-2">
-        {#if promotionAction}
-          <ReferencePromoteAction action={promotionAction} />
-        {/if}
-        {#if document.kind === "reference"}
-          <ShareDialog subjectKind="reference" subjectId={document.id} />
-        {/if}
-      </div>
-    {/if}
-  </div>
+  {/if}
 
   {#if metadata.precis}
     <p

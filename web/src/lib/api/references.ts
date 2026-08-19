@@ -60,3 +60,16 @@ export async function promoteReference(vaultId: string, path: string): Promise<I
   if (!response.ok) throw await responseError(response, "Failed to add reference to vault");
   return readJson(response, ingestedDocumentSchema);
 }
+
+export async function renameReference(
+  path: string,
+  title: string | null,
+): Promise<ReferenceOverview> {
+  const response = await apiFetch(`/me/refs/${path}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ title }),
+  });
+  if (!response.ok) throw await responseError(response, "Failed to rename reference");
+  return readJson(response, referenceOverviewSchema);
+}

@@ -449,6 +449,13 @@ const asRecord = (value: unknown): Record<string, unknown> => {
   return value as Record<string, unknown>;
 };
 
+const asArray = (value: unknown): Array<Record<string, unknown>> => {
+  if (!Array.isArray(value)) {
+    throw new Error("expected array response");
+  }
+  return value.map(asRecord);
+};
+
 const encodeSourcePath = (filePath: string) =>
   filePath
     .split("/")
@@ -1375,6 +1382,199 @@ describe("M3.1 write endpoint integration", () => {
         expect(await userFileExists(id.alice, "refs/article.md")).toBe(false);
         const deletedAgain = await api("DELETE", "/me/refs/refs/article.md", aliceToken);
         expect(deletedAgain.status).toBe(404);
+      },
+    );
+  });
+
+  it("renames personal references, trims titles, and clears them to null", async () => {
+    const { aliceToken, bobToken } = currentFixture();
+    await withLocalHttpServer(
+      (_request, response) => {
+        response.writeHead(200, { "content-type": "text/html; charset=utf-8" });
+        response.end(
+          "<html><head><title>Renamable Article</title></head><body><article><p>Renamable first paragraph with enough detail for article extraction.</p><p>Renamable second paragraph stays outside every vault corpus.</p></article></body></html>",
+        );
+      },
+      async (origin) => {
+        const created = await api("POST", "/me/refs", aliceToken, {
+          url: `${origin}/article`,
+        });
+        expect(created.status).toBe(201);
+        expect(asRecord(created.body).title).toBe("Renamable Article");
+        const contentBefore = await readUserFile(id.alice, "refs/article.md");
+
+        const renamed = await api(
+          "PATCH",
+          "/me/refs/refs/article.md",
+          aliceToken,
+          { title: "  Cleaned Up Title  " },
+        );
+        expect(renamed.status).toBe(200);
+        expect(asRecord(renamed.body)).toMatchObject({
+          file_path: "refs/article.md",
+          title: "Cleaned Up Title",
+        });
+
+        // The stored markdown is untouched; only the user_documents row moves.
+        expect(await readUserFile(id.alice, "refs/article.md")).toBe(contentBefore);
+        const storedRows = await runDb(
+          Effect.gen(function* () {
+            const db = yield* Database;
+            return yield* db.query((d) => d
+              .select()
+              .from(userDocuments)
+              .where(eq(userDocuments.userId, id.alice)))
+              .pipe(Effect.orDie);
+          }),
+        );
+        expect(storedRows).toHaveLength(1);
+        expect(storedRows[0]).toMatchObject({
+          filePath: "refs/article.md",
+          title: "Cleaned Up Title",
+        });
+
+        const cleared = await api(
+          "PATCH",
+          "/me/refs/refs/article.md",
+          aliceToken,
+          { title: "   " },
+        );
+        expect(cleared.status).toBe(200);
+        expect(asRecord(cleared.body).title).toBeNull();
+
+        const explicitNull = await api(
+          "PATCH",
+          "/me/refs/refs/article.md",
+          aliceToken,
+          { title: null },
+        );
+        expect(explicitNull.status).toBe(200);
+        expect(asRecord(explicitNull.body).title).toBeNull();
+
+        const otherUser = await api(
+          "PATCH",
+          "/me/refs/refs/article.md",
+          bobToken,
+          { title: "Sneaky" },
+        );
+        expect(otherUser.status).toBe(404);
+
+        const traversal = await api(
+          "PATCH",
+          "/me/refs/refs%5Cescape.md",
+          aliceToken,
+          { title: "X" },
+        );
+        expect(traversal.status).toBe(400);
+
+        const missing = await api(
+          "PATCH",
+          "/me/refs/refs/missing.md",
+          aliceToken,
+          { title: "X" },
+        );
+        expect(missing.status).toBe(404);
+      },
+    );
+  });
+
+  it("reflects reference renames in session origin titles", async () => {
+    const { aliceToken } = currentFixture();
+    await withLocalHttpServer(
+      (_request, response) => {
+        response.writeHead(200, { "content-type": "text/html; charset=utf-8" });
+        response.end(
+          "<html><head><title>Origin Title Article</title></head><body><article><p>Origin title first paragraph with enough detail for article extraction.</p><p>Origin title second paragraph stays outside every vault corpus.</p></article></body></html>",
+        );
+      },
+      async (origin) => {
+        const created = await api("POST", "/me/refs", aliceToken, {
+          url: `${origin}/article`,
+        });
+        expect(created.status).toBe(201);
+        expect(asRecord(created.body).title).toBe("Origin Title Article");
+
+        await runDb(
+          Effect.gen(function* () {
+            const db = yield* Database;
+            yield* db.query((d) => d
+              .insert(sessions)
+              .values({
+                id: "s-rename-origin",
+                vaultId: id.vault,
+                userId: id.alice,
+                query: "Anchored session on the reference",
+                origin: {
+                  doc_path: "refs/article.md",
+                  origin_scope: "personal",
+                  anchor: "Origin title first paragraph with enough detail for article extraction.",
+                  paragraph: "Origin title first paragraph with enough detail for article extraction.",
+                  paragraph_index: 0,
+                },
+                createdAt: new Date("2026-07-11T09:00:00.000Z"),
+                updatedAt: new Date("2026-07-11T09:05:00.000Z"),
+              }))
+              .pipe(Effect.orDie);
+          }),
+        );
+        await writeVaultFile(
+          id.vault,
+          "sessions/s-rename-origin.jsonl",
+          jsonl([
+            {
+              type: "meta",
+              id: "s-rename-origin",
+              query: "Anchored session on the reference",
+              ts: "2026-07-11T09:00:00.000Z",
+              user_id: id.alice,
+              origin: {
+                doc_path: "refs/article.md",
+                origin_scope: "personal",
+                anchor: "Origin title first paragraph with enough detail for article extraction.",
+                paragraph: "Origin title first paragraph with enough detail for article extraction.",
+                paragraph_index: 0,
+              },
+            },
+            {
+              type: "exchange",
+              exId: "ex-rename-origin",
+              query: "Anchored session on the reference",
+              thinking: [],
+              answer: "Anchored answer.",
+              ts: "2026-07-11T09:05:00.000Z",
+            },
+          ]),
+        );
+
+        const before = await api(
+          "GET",
+          `/vaults/${id.vault}/sessions/by-origin?doc_path=${encodeURIComponent("refs/article.md")}`,
+          aliceToken,
+        );
+        expect(before.status).toBe(200);
+        expect(asRecord(asRecord(asArray(before.body)[0]).session)).toMatchObject({
+          id: "s-rename-origin",
+          origin_title: "Origin Title Article",
+        });
+
+        const renamed = await api(
+          "PATCH",
+          "/me/refs/refs/article.md",
+          aliceToken,
+          { title: "Renamed Origin Article" },
+        );
+        expect(renamed.status).toBe(200);
+
+        const after = await api(
+          "GET",
+          `/vaults/${id.vault}/sessions/by-origin?doc_path=${encodeURIComponent("refs/article.md")}`,
+          aliceToken,
+        );
+        expect(after.status).toBe(200);
+        expect(asRecord(asRecord(asArray(after.body)[0]).session)).toMatchObject({
+          id: "s-rename-origin",
+          origin_title: "Renamed Origin Article",
+        });
       },
     );
   });

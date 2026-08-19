@@ -10,6 +10,7 @@ import {
   type ReferenceDocumentResponse,
   type ReferenceOverview,
   type ReferencePage,
+  type ReferenceUpdate,
   type Uuid,
 } from "@great-minds/domain";
 import { and, desc, eq, sql } from "drizzle-orm";
@@ -50,6 +51,11 @@ type UserDocumentsServiceShape = {
     userId: Uuid,
     path: string,
   ) => Effect.Effect<void, BadRequest | NotFound>;
+  readonly update: (
+    userId: Uuid,
+    path: string,
+    input: ReferenceUpdate,
+  ) => Effect.Effect<ReferenceDetail, BadRequest | NotFound>;
 };
 
 export class UserDocumentsService extends Context.Service<
@@ -227,6 +233,27 @@ export const UserDocumentsServiceLive = Layer.effect(
             return yield* new NotFound({ detail: `Reference not found: ${safePath}` });
           }
           yield* storage.deletePath(userOwner(userId), safePath);
+        }),
+      update: (userId, path, input) =>
+        Effect.gen(function* () {
+          const safePath = yield* validatePath(path);
+          // Trim the incoming title; whitespace-only input clears it. The
+          // stored markdown frontmatter does not carry the title, so only the
+          // user_documents row is touched.
+          const trimmed = input.title?.trim() ?? null;
+          const title = trimmed === "" ? null : trimmed;
+          const rows = yield* db.query((d) => d
+            .update(userDocuments)
+            .set({ title, updatedAt: sql`now()` })
+            .where(
+              and(eq(userDocuments.userId, userId), eq(userDocuments.filePath, safePath)),
+            )
+            .returning());
+          const row = rows[0];
+          if (row === undefined) {
+            return yield* new NotFound({ detail: `Reference not found: ${safePath}` });
+          }
+          return referenceOverview(row);
         }),
     } satisfies UserDocumentsServiceShape;
   }),

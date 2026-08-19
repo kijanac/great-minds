@@ -52,7 +52,8 @@
         <Home size={14} />
       </Button>
       <span
-        class="hidden font-mono text-[length:var(--text-chrome)] tracking-[0.14em] text-gold-muted uppercase md:inline"
+        title={label}
+        class="hidden min-w-0 max-w-[280px] truncate font-mono text-[length:var(--text-chrome)] tracking-[0.14em] text-gold-muted uppercase md:inline"
       >
         {label}
       </span>

@@ -373,6 +373,15 @@ const RefsHandlersLive = HttpApiBuilder.group(MountedGreatMindsApi, "refs", (han
           yield* documents.delete(current.user_id, params["*"]);
         }),
       ),
+    )
+    .handle("updateReference", ({ params, payload }) =>
+      withDomainErrors(
+        Effect.gen(function* () {
+          const documents = yield* UserDocumentsService;
+          const current = yield* CurrentAuth;
+          return yield* documents.update(current.user_id, params["*"], payload);
+        }),
+      ),
     ),
 );
 

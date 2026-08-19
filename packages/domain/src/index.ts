@@ -821,6 +821,12 @@ export const ReferencePromote = Schema.Struct({
 });
 export type ReferencePromote = typeof ReferencePromote.Type;
 
+export const ReferenceUpdate = Schema.Struct({
+  // null clears the title back to none.
+  title: Schema.NullOr(Schema.String),
+});
+export type ReferenceUpdate = typeof ReferenceUpdate.Type;
+
 export const ReferenceOverview = Schema.Struct({
   id: Uuid,
   file_path: Schema.String,
@@ -1367,6 +1373,14 @@ export const RefsApiGroup = HttpApiGroup.make("refs")
     HttpApiEndpoint.delete("deleteReference", "/me/refs/*", {
       params: ReferencePathParams,
       success: HttpApiSchema.NoContent,
+      error: ReferenceDocumentErrors,
+    }).middleware(AuthMiddleware),
+  )
+  .add(
+    HttpApiEndpoint.patch("updateReference", "/me/refs/*", {
+      params: ReferencePathParams,
+      payload: ReferenceUpdate,
+      success: ReferenceDetail,
       error: ReferenceDocumentErrors,
     }).middleware(AuthMiddleware),
   );

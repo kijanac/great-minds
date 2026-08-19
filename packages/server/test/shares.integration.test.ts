@@ -447,6 +447,63 @@ describe("share links", () => {
     );
   });
 
+  it("reflects reference renames in share resolution", async () => {
+    const { aliceToken } = currentFixture();
+    await withLocalHttpServer(
+      (_request, response) => {
+        response.writeHead(200, { "content-type": "text/html; charset=utf-8" });
+        response.end(
+          "<html><head><title>Renameable Share</title></head><body><article><p>First renameable paragraph.</p><p>Second renameable paragraph.</p></article></body></html>",
+        );
+      },
+      async (origin) => {
+        const reference = await api("POST", "/me/refs", aliceToken, {
+          url: `${origin}/article`,
+        });
+        expect(reference.status).toBe(201);
+        const referenceId = String(asRecord(reference.body).id);
+
+        const share = await api("POST", "/shares", aliceToken, {
+          subject_kind: "reference",
+          subject_id: referenceId,
+        });
+        expect(share.status).toBe(201);
+        const token = String(asRecord(asRecord(share.body).share).token);
+
+        const before = await api("GET", `/public/shares/${token}`);
+        expect(before.status).toBe(200);
+        expect(asRecord(before.body).title).toBe("Renameable Share");
+
+        const renamed = await api(
+          "PATCH",
+          "/me/refs/refs/article.md",
+          aliceToken,
+          { title: "Renamed Share Title" },
+        );
+        expect(renamed.status).toBe(200);
+
+        const after = await api("GET", `/public/shares/${token}`);
+        expect(after.status).toBe(200);
+        expect(asRecord(after.body)).toMatchObject({
+          subject_kind: "reference",
+          title: "Renamed Share Title",
+          origin: new URL(origin).host,
+        });
+
+        const cleared = await api(
+          "PATCH",
+          "/me/refs/refs/article.md",
+          aliceToken,
+          { title: "  " },
+        );
+        expect(cleared.status).toBe(200);
+        const clearedResolve = await api("GET", `/public/shares/${token}`);
+        expect(clearedResolve.status).toBe(200);
+        expect(asRecord(clearedResolve.body).title).toBeNull();
+      },
+    );
+  });
+
   it("resolves reference shares with anchored annotation threads when include_annotations is true", async () => {
     const { aliceToken } = currentFixture();
     await withLocalHttpServer(
