@@ -117,7 +117,9 @@ const stringifyRuamelFrontmatter = (frontmatter: Record<string, unknown>) => {
 export const serializeFrontmatter = (frontmatter: Record<string, unknown>, body: string) =>
   `---\n${stringifyRuamelFrontmatter(frontmatter)}---\n${body}`;
 
-export const stripAnchors = (content: string) => content.replace(ANCHOR_MARKER_RE, "");
+// Horizontal whitespace only: ANCHOR_MARKER_RE would swallow the newline and
+// merge adjacent paragraphs when stripping a whole document.
+export const stripAnchors = (content: string) => content.replace(/[ \t]*\^p\d+$/gm, "");
 
 export const injectAnchors = (content: string) => {
   const blocks = walkBlocks(content);

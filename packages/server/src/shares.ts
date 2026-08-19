@@ -2,18 +2,17 @@ import { Database, sessions, shares, userDocuments } from "@great-minds/database
 import {
   NotFound,
   type ShareCreate,
-  type ShareCreated,
+  type ShareCreateResult,
   type ShareOverview,
   type ShareSubjectKind,
   type SharedShareDetail,
   type SessionId,
   type Uuid,
 } from "@great-minds/domain";
-import { and, desc, eq } from "drizzle-orm";
+import { and, desc, eq, isNull } from "drizzle-orm";
 import { Context, Effect, Layer } from "effect";
 
 import { ClockService } from "./clock.ts";
-import { sha256Hex } from "./crypto.ts";
 import { parseFrontmatter, stripAnchors } from "./markdown.ts";
 import { RandomBytesService, formatUuid7 } from "./random.ts";
 import { SessionsService } from "./sessions.ts";
@@ -22,7 +21,7 @@ import { UserDocumentsService } from "./user-documents.ts";
 type ShareRow = typeof shares.$inferSelect;
 
 type SharesServiceShape = {
-  readonly create: (userId: Uuid, input: ShareCreate) => Effect.Effect<ShareCreated, NotFound>;
+  readonly create: (userId: Uuid, input: ShareCreate) => Effect.Effect<ShareCreateResult, NotFound>;
   readonly listMine: (userId: Uuid) => Effect.Effect<readonly ShareOverview[]>;
   readonly revoke: (userId: Uuid, shareId: Uuid) => Effect.Effect<void, NotFound>;
   readonly resolve: (token: string) => Effect.Effect<SharedShareDetail, NotFound>;
@@ -34,6 +33,7 @@ export class SharesService extends Context.Service<SharesService, SharesServiceS
 
 const shareOverview = (row: ShareRow): ShareOverview => ({
   id: row.id as Uuid,
+  token: row.token,
   subject_kind: row.subjectKind as ShareSubjectKind,
   subject_id: row.subjectId as Uuid,
   created_by: row.createdBy as Uuid,
@@ -52,11 +52,11 @@ export const SharesServiceLive = Layer.effect(
     const sessionsService = yield* SessionsService;
     const documents = yield* UserDocumentsService;
 
-    const getByHash = (tokenHash: string) =>
+    const getByToken = (token: string) =>
       db.query((d) => d
         .select()
         .from(shares)
-        .where(eq(shares.tokenHash, tokenHash))
+        .where(eq(shares.token, token))
         .limit(1))
         .pipe(Effect.map((rows) => rows[0]));
 
@@ -102,13 +102,43 @@ export const SharesServiceLive = Layer.effect(
           }
 
           const now = yield* clock.now;
+          const existing = yield* db.query((d) => d
+            .select()
+            .from(shares)
+            .where(and(
+              eq(shares.createdBy, userId),
+              eq(shares.subjectKind, input.subject_kind),
+              eq(shares.subjectId, input.subject_id),
+              isNull(shares.revokedAt),
+            ))
+            .limit(1))
+            .pipe(Effect.orDie);
+          const existingRow = existing[0];
+          if (existingRow !== undefined) {
+            const includeAnnotations = input.include_annotations ?? false;
+            if (existingRow.includeAnnotations !== includeAnnotations) {
+              const updated = yield* db.query((d) => d
+                .update(shares)
+                .set({ includeAnnotations })
+                .where(eq(shares.id, existingRow.id))
+                .returning())
+                .pipe(Effect.orDie);
+              const updatedRow = updated[0];
+              if (updatedRow === undefined) {
+                throw new Error("share update returned no rows");
+              }
+              return { share: shareOverview(updatedRow), created: false };
+            }
+            return { share: shareOverview(existingRow), created: false };
+          }
+
           const idBytes = yield* randomBytes.bytes(16);
           const token = yield* mintToken();
           const rows = yield* db.query((d) => d
             .insert(shares)
             .values({
               id: formatUuid7(now.getTime(), idBytes),
-              tokenHash: sha256Hex(token),
+              token,
               subjectKind: input.subject_kind,
               subjectId: input.subject_id,
               createdBy: userId,
@@ -121,7 +151,7 @@ export const SharesServiceLive = Layer.effect(
           if (row === undefined) {
             throw new Error("share insert returned no rows");
           }
-          return { ...shareOverview(row), token };
+          return { share: shareOverview(row), created: true };
         }),
       listMine: (userId) =>
         db.query((d) => d
@@ -145,7 +175,7 @@ export const SharesServiceLive = Layer.effect(
         }),
       resolve: (token) =>
         Effect.gen(function* () {
-          const row = yield* getByHash(sha256Hex(token));
+          const row = yield* getByToken(token);
           const now = yield* clock.now;
           if (
             row === undefined ||

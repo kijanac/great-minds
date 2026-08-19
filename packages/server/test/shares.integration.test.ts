@@ -303,7 +303,9 @@ describe("share links", () => {
     });
     expect(share.status).toBe(201);
     const shareBody = asRecord(share.body);
-    expect(shareBody).toMatchObject({
+    expect(shareBody.created).toBe(true);
+    const createdShare = asRecord(shareBody.share);
+    expect(createdShare).toMatchObject({
       subject_kind: "session",
       subject_id: sessionId,
       created_by: id.alice,
@@ -311,14 +313,14 @@ describe("share links", () => {
       expires_at: null,
       revoked_at: null,
     });
-    const token = String(shareBody.token);
-    expect(token).toMatch(/^[A-Za-z0-9_-]+$/);
+    const token = String(createdShare.token);
+    expect(token).toMatch(/^[A-Za-z0-9_-]{43}$/);
 
     const listed = await api("GET", "/shares", aliceToken);
     expect(listed.status).toBe(200);
     const listedItems = listed.body as ReadonlyArray<Record<string, unknown>>;
     expect(listedItems).toHaveLength(1);
-    expect(listedItems[0]).toMatchObject({ id: shareBody.id });
+    expect(listedItems[0]).toMatchObject({ id: createdShare.id, token });
 
     const resolved = await api("GET", `/public/shares/${token}`);
     expect(resolved.status).toBe(200);
@@ -354,14 +356,16 @@ describe("share links", () => {
           include_annotations: true,
         });
         expect(annotated.status).toBe(201);
-        expect(asRecord(annotated.body)).toMatchObject({
+        expect(asRecord(annotated.body).created).toBe(true);
+        const annotatedShare = asRecord(asRecord(annotated.body).share);
+        expect(annotatedShare).toMatchObject({
           subject_kind: "reference",
           subject_id: referenceId,
           include_annotations: true,
         });
         const annotatedResolved = await api(
           "GET",
-          `/public/shares/${String(asRecord(annotated.body).token)}`,
+          `/public/shares/${String(annotatedShare.token)}`,
         );
         expect(annotatedResolved.status).toBe(200);
         expect(annotatedResolved.body).toMatchObject({
@@ -393,9 +397,13 @@ describe("share links", () => {
           subject_id: referenceId,
         });
         expect(plain.status).toBe(201);
+        expect(asRecord(plain.body).created).toBe(false);
+        const plainShare = asRecord(asRecord(plain.body).share);
+        expect(plainShare.token).toBe(annotatedShare.token);
+        expect(plainShare.include_annotations).toBe(false);
         const plainResolved = await api(
           "GET",
-          `/public/shares/${String(asRecord(plain.body).token)}`,
+          `/public/shares/${String(plainShare.token)}`,
         );
         expect(plainResolved.status).toBe(200);
         const plainMarkdown = String(asRecord(plainResolved.body).markdown);
@@ -414,8 +422,8 @@ describe("share links", () => {
       subject_kind: "session",
       subject_id: sessionId,
     });
-    const revokedId = String(asRecord(revokedShare.body).id);
-    const revokedToken = String(asRecord(revokedShare.body).token);
+    const revokedId = String(asRecord(asRecord(revokedShare.body).share).id);
+    const revokedToken = String(asRecord(asRecord(revokedShare.body).share).token);
     const revoked = await api("DELETE", `/shares/${revokedId}`, aliceToken);
     expect(revoked.status).toBe(204);
 
@@ -424,7 +432,7 @@ describe("share links", () => {
       subject_id: sessionId,
       expires_at: "2020-01-01T00:00:00.000Z",
     });
-    const expiredToken = String(asRecord(expiredShare.body).token);
+    const expiredToken = String(asRecord(asRecord(expiredShare.body).share).token);
 
     const unknown = await api("GET", "/public/shares/not-a-real-token");
     const revokedResolved = await api("GET", `/public/shares/${revokedToken}`);
@@ -438,14 +446,14 @@ describe("share links", () => {
     expect(unknown.body).toEqual(expiredResolved.body);
   });
 
-  it("stores only a sha256 token hash, never the plaintext", async () => {
+  it("stores the plaintext token in the database", async () => {
     const { aliceToken } = currentFixture();
-    const created = await createSession("share-hash-key", "Hash me?", "Hashed.");
+    const created = await createSession("share-token-key", "Token me?", "Token.");
     const share = await api("POST", "/shares", aliceToken, {
       subject_kind: "session",
       subject_id: String(asRecord(created.body).id),
     });
-    const token = String(asRecord(share.body).token);
+    const token = String(asRecord(asRecord(share.body).share).token);
 
     const rows = await runDb(
       Effect.gen(function* () {
@@ -455,9 +463,64 @@ describe("share links", () => {
     );
     expect(rows).toHaveLength(1);
     const row = rows[0]!;
-    expect(row.tokenHash).toMatch(/^[0-9a-f]{64}$/);
-    expect(row.tokenHash).not.toContain(token);
-    expect(JSON.stringify(row)).not.toContain(token);
+    expect(row.token).toBe(token);
+    expect(row.token).toMatch(/^[A-Za-z0-9_-]{43}$/);
+    expect(JSON.stringify(row)).toContain(token);
+  });
+
+  it("returns the same token when a share already exists for the subject", async () => {
+    const { aliceToken } = currentFixture();
+    const created = await createSession("share-once-key", "Once?", "Once.");
+    const subjectId = String(asRecord(created.body).id);
+
+    const first = await api("POST", "/shares", aliceToken, {
+      subject_kind: "session",
+      subject_id: subjectId,
+    });
+    expect(first.status).toBe(201);
+    expect(asRecord(first.body).created).toBe(true);
+    const firstToken = String(asRecord(asRecord(first.body).share).token);
+
+    const second = await api("POST", "/shares", aliceToken, {
+      subject_kind: "session",
+      subject_id: subjectId,
+    });
+    expect(second.status).toBe(201);
+    expect(asRecord(second.body).created).toBe(false);
+    expect(String(asRecord(asRecord(second.body).share).token)).toBe(firstToken);
+
+    const rows = await runDb(
+      Effect.gen(function* () {
+        const db = yield* Database;
+        return yield* db.query((d) => d.select().from(shares)).pipe(Effect.orDie);
+      }),
+    );
+    expect(rows).toHaveLength(1);
+  });
+
+  it("mints a fresh token after revoke and create", async () => {
+    const { aliceToken } = currentFixture();
+    const created = await createSession("share-rotate-key", "Rotate?", "Rotate.");
+    const subjectId = String(asRecord(created.body).id);
+
+    const first = await api("POST", "/shares", aliceToken, {
+      subject_kind: "session",
+      subject_id: subjectId,
+    });
+    const firstShare = asRecord(asRecord(first.body).share);
+    const firstToken = String(firstShare.token);
+    const revoked = await api("DELETE", `/shares/${String(firstShare.id)}`, aliceToken);
+    expect(revoked.status).toBe(204);
+
+    const second = await api("POST", "/shares", aliceToken, {
+      subject_kind: "session",
+      subject_id: subjectId,
+    });
+    expect(second.status).toBe(201);
+    expect(asRecord(second.body).created).toBe(true);
+    const secondToken = String(asRecord(asRecord(second.body).share).token);
+    expect(secondToken).not.toBe(firstToken);
+    expect(secondToken).toMatch(/^[A-Za-z0-9_-]{43}$/);
   });
 
   it("rejects API-key authentication on share creation", async () => {
@@ -486,7 +549,7 @@ describe("share links", () => {
       subject_kind: "session",
       subject_id: String(asRecord(created.body).id),
     });
-    const shareId = String(asRecord(share.body).id);
+    const shareId = String(asRecord(asRecord(share.body).share).id);
 
     const nonOwner = await api("DELETE", `/shares/${shareId}`, bobToken);
     expect(nonOwner.status).toBe(404);

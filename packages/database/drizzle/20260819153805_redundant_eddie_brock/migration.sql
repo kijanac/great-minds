@@ -1,6 +1,6 @@
 CREATE TABLE "shares" (
 	"id" uuid PRIMARY KEY,
-	"token_hash" text NOT NULL,
+	"token" text NOT NULL,
 	"subject_kind" text NOT NULL,
 	"subject_id" uuid NOT NULL,
 	"created_by" uuid NOT NULL,
@@ -10,5 +10,5 @@ CREATE TABLE "shares" (
 	"revoked_at" timestamp with time zone
 );
 --> statement-breakpoint
-CREATE UNIQUE INDEX "ix_shares_token_hash" ON "shares" ("token_hash");--> statement-breakpoint
+CREATE UNIQUE INDEX "ix_shares_token" ON "shares" ("token");--> statement-breakpoint
 ALTER TABLE "shares" ADD CONSTRAINT "shares_created_by_fkey" FOREIGN KEY ("created_by") REFERENCES "users"("id") ON DELETE CASCADE;

@@ -1,7 +1,7 @@
 {
   "version": "8",
   "dialect": "postgres",
-  "id": "84b3e45e-1d7d-4c2b-a2ff-8a46f690eebf",
+  "id": "69b242c5-3d7b-427d-901a-21d9ed4b4335",
   "prevIds": [
     "e8177cc5-23ab-44f7-8046-e924c953544f"
   ],
@@ -1515,7 +1515,7 @@
       "default": null,
       "generated": null,
       "identity": null,
-      "name": "token_hash",
+      "name": "token",
       "entityType": "columns",
       "schema": "public",
       "table": "shares"
@@ -3520,7 +3520,7 @@
       "nameExplicit": true,
       "columns": [
         {
-          "value": "token_hash",
+          "value": "token",
           "isExpression": false,
           "asc": true,
           "nullsFirst": false,
@@ -3532,7 +3532,7 @@
       "with": "",
       "method": "btree",
       "concurrently": false,
-      "name": "ix_shares_token_hash",
+      "name": "ix_shares_token",
       "entityType": "indexes",
       "schema": "public",
       "table": "shares"

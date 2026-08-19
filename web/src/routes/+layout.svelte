@@ -1,5 +1,6 @@
 <script lang="ts">
   import { dev } from "$app/environment";
+  import { page } from "$app/state";
   import { QueryClientProvider } from "@tanstack/svelte-query";
   import { SvelteQueryDevtools } from "@tanstack/svelte-query-devtools";
   import { onMount } from "svelte";
@@ -14,6 +15,11 @@
   import { theme } from "$lib/theme.svelte";
 
   let { children } = $props();
+
+  // Public share pages are chrome-less: no corner menu, even when signed in.
+  const isShareRoute = $derived(
+    page.route.id?.startsWith("/(public)/s/") ?? false,
+  );
 
   onMount(() => {
     const stopAuth = auth.initialize();
@@ -30,9 +36,11 @@
 <QueryClientProvider client={queryClient}>
   <TooltipProvider>
     <AppShell>
-      {#snippet utility()}
-        <CornerMenu />
-      {/snippet}
+      {#if !isShareRoute}
+        {#snippet utility()}
+          <CornerMenu />
+        {/snippet}
+      {/if}
       {@render children()}
     </AppShell>
   </TooltipProvider>

@@ -847,6 +847,7 @@ export type ShareCreate = typeof ShareCreate.Type;
 
 export const ShareOverview = Schema.Struct({
   id: Uuid,
+  token: Schema.String,
   subject_kind: ShareSubjectKind,
   subject_id: Uuid,
   created_by: Uuid,
@@ -857,11 +858,11 @@ export const ShareOverview = Schema.Struct({
 });
 export type ShareOverview = typeof ShareOverview.Type;
 
-export const ShareCreated = Schema.Struct({
-  ...ShareOverview.fields,
-  token: Schema.String,
+export const ShareCreateResult = Schema.Struct({
+  share: ShareOverview,
+  created: Schema.Boolean,
 });
-export type ShareCreated = typeof ShareCreated.Type;
+export type ShareCreateResult = typeof ShareCreateResult.Type;
 
 export const SharedSessionDetail = Schema.Struct({
   subject_kind: Schema.Literal("session"),
@@ -1218,7 +1219,7 @@ const CreatedIngestedDocument = IngestedDocument.pipe(HttpApiSchema.status("Crea
 const CreatedJobResponse = JobResponse.pipe(HttpApiSchema.status("Created"));
 const CreatedSessionResponse = CreateSessionResponse.pipe(HttpApiSchema.status("Created"));
 const CreatedReferenceDetail = ReferenceDetail.pipe(HttpApiSchema.status("Created"));
-const CreatedShare = ShareCreated.pipe(HttpApiSchema.status("Created"));
+const CreatedShare = ShareCreateResult.pipe(HttpApiSchema.status("Created"));
 const Shares = Schema.Array(ShareOverview);
 const CreatedPromoteExchangeResponse = PromoteExchangeResponse.pipe(
   HttpApiSchema.status("Created"),

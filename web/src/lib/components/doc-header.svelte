@@ -5,6 +5,7 @@
 
   import { articleMeta, type Article, type DocumentScope } from "$lib/api/doc";
   import ReferencePromoteAction from "$lib/components/reference-promote-action.svelte";
+  import ShareDialog from "$lib/components/share-dialog.svelte";
   import * as Collapsible from "$lib/components/ui/collapsible";
   import { CHIP_BASE, CHIP_INACTIVE } from "$lib/chip";
   import { cn } from "$lib/utils";
@@ -79,8 +80,15 @@
     >
       {metadata.title}
     </h1>
-    {#if scope === "personal" && promotionAction}
-      <ReferencePromoteAction action={promotionAction} />
+    {#if scope === "personal"}
+      <div class="flex shrink-0 items-start gap-2">
+        {#if promotionAction}
+          <ReferencePromoteAction action={promotionAction} />
+        {/if}
+        {#if document.kind === "reference"}
+          <ShareDialog subjectKind="reference" subjectId={document.id} />
+        {/if}
+      </div>
     {/if}
   </div>
 

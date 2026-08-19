@@ -5,6 +5,7 @@
   import FileText from "@lucide/svelte/icons/file-text";
   import Home from "@lucide/svelte/icons/home";
   import Printer from "@lucide/svelte/icons/printer";
+  import Share2 from "@lucide/svelte/icons/share-2";
   import { onDestroy, untrack } from "svelte";
   import { cubicOut } from "svelte/easing";
   import { crossfade, fade } from "svelte/transition";
@@ -16,6 +17,7 @@
   import ProjectSwitcher from "$lib/components/project-switcher.svelte";
   import SearchBar from "$lib/components/search-bar.svelte";
   import SessionThread from "$lib/components/session-thread.svelte";
+  import ShareDialog from "$lib/components/share-dialog.svelte";
   import { Button } from "$lib/components/ui/button";
   import * as DropdownMenu from "$lib/components/ui/dropdown-menu";
   import { useActiveJob } from "$lib/hooks/use-active-job.svelte";
@@ -85,6 +87,7 @@
       (badge.data?.unmentioned_links.length ?? 0),
   );
   const isActive = $derived(session.phase !== "idle");
+  const savedSessionId = $derived(session.sessionId);
   const panelQuery = createQuery(() => ({
     queryKey: [
       "vault",
@@ -172,6 +175,22 @@
             <div class="min-w-0 flex-1">
               <SearchBar bind:query phase={session.phase} onSubmit={submit} />
             </div>
+            {#if savedSessionId}
+              <ShareDialog subjectKind="session" subjectId={savedSessionId}>
+                {#snippet trigger({ props })}
+                  <Button
+                    {...props}
+                    variant="ghost"
+                    size="icon-xs"
+                    aria-label="share session"
+                    title="Share session"
+                    class="shrink-0 text-muted-foreground hover:bg-transparent hover:text-gold"
+                  >
+                    <Share2 size={14} />
+                  </Button>
+                {/snippet}
+              </ShareDialog>
+            {/if}
             <DropdownMenu.Root>
               <DropdownMenu.Trigger>
                 {#snippet child({ props })}
