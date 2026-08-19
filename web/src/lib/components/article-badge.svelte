@@ -29,7 +29,7 @@
   title={source.thinking}
   role={onClick ? "button" : undefined}
   tabindex={onClick ? 0 : undefined}
-  class={`h-auto rounded-sm px-[9px] py-[3px] font-mono text-[length:var(--text-chrome)] tracking-[0.06em] whitespace-nowrap transition-all ${
+  class={`h-auto max-w-full rounded-sm px-[9px] py-[3px] font-mono text-[length:var(--text-chrome)] tracking-[0.06em] whitespace-nowrap transition-all ${
     onClick ? "cursor-pointer" : "cursor-default"
   } ${
     active
@@ -38,7 +38,9 @@
   } ${source.pending ? "animate-[pulse-fade_1.6s_ease-in-out_infinite]" : ""}`}
 >
   {#if source.type === "links"}
-    <Waypoints size={9} class="mr-1.5 opacity-60" />
+    <Waypoints size={9} class="mr-1.5 shrink-0 opacity-60" />
   {/if}
-  {displayTitle(source.label, source.title)}
+  <span class="min-w-0 truncate"
+    >{displayTitle(source.label, source.title)}</span
+  >
 </Badge>
