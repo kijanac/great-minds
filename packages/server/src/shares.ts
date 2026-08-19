@@ -5,14 +5,18 @@ import {
   type ShareCreateResult,
   type ShareOverview,
   type ShareSubjectKind,
+  type SharedAnnotation,
   type SharedShareDetail,
+  type SessionExchangeEvent,
   type SessionId,
+  SessionOrigin as SessionOriginSchema,
   type Uuid,
 } from "@great-minds/domain";
-import { and, desc, eq, isNull } from "drizzle-orm";
-import { Context, Effect, Layer } from "effect";
+import { and, asc, desc, eq, isNull, sql } from "drizzle-orm";
+import { Context, Effect, Layer, Schema } from "effect";
 
 import { ClockService } from "./clock.ts";
+import { StructuredLogger } from "./logging.ts";
 import { parseFrontmatter, stripAnchors } from "./markdown.ts";
 import { RandomBytesService, formatUuid7 } from "./random.ts";
 import { SessionsService } from "./sessions.ts";
@@ -43,6 +47,8 @@ const shareOverview = (row: ShareRow): ShareOverview => ({
   revoked_at: row.revokedAt?.toISOString() ?? null,
 });
 
+const decodeSessionOrigin = Schema.decodeUnknownSync(Schema.NullOr(SessionOriginSchema));
+
 export const SharesServiceLive = Layer.effect(
   SharesService,
   Effect.gen(function* () {
@@ -51,6 +57,7 @@ export const SharesServiceLive = Layer.effect(
     const randomBytes = yield* RandomBytesService;
     const sessionsService = yield* SessionsService;
     const documents = yield* UserDocumentsService;
+    const logger = yield* StructuredLogger;
 
     const getByToken = (token: string) =>
       db.query((d) => d
@@ -73,6 +80,52 @@ export const SharesServiceLive = Layer.effect(
         .where(and(eq(sessions.id, sessionId), eq(sessions.userId, userId)))
         .limit(1))
         .pipe(Effect.map((rows) => rows[0]));
+
+    const loadAnnotations = (userId: Uuid, filePath: string) =>
+      Effect.gen(function* () {
+        const rows = yield* db.query((d) => d
+          .select()
+          .from(sessions)
+          .where(
+            and(
+              eq(sessions.userId, userId),
+              sql`${sessions.origin}->>'doc_path' = ${filePath}`,
+              sql`${sessions.origin}->>'origin_scope' = 'personal'`,
+              sql`${sessions.origin}->>'anchor' IS NOT NULL`,
+            ),
+          )
+          .orderBy(asc(sessions.createdAt)));
+        const annotations: SharedAnnotation[] = [];
+        for (const row of rows) {
+          const origin = decodeSessionOrigin(row.origin);
+          if (origin === null) {
+            continue;
+          }
+          const events = yield* Effect.result(
+            sessionsService.readSession(userId, row.vaultId as Uuid, row.id as SessionId),
+          );
+          if (events._tag === "Failure") {
+            yield* logger.warn("share_annotation_skipped", {
+              session_id: row.id,
+              file_path: filePath,
+              reason: "session_unreadable",
+            });
+            continue;
+          }
+          annotations.push({
+            anchor: {
+              quote: origin.anchor ?? "",
+              context: origin.paragraph,
+              block_offset: origin.paragraph_index,
+            },
+            exchanges: events.success.events
+              .filter((event): event is SessionExchangeEvent => event.type === "exchange")
+              .map((event) => ({ query: event.query, answer: event.answer ?? "" })),
+            created_at: row.createdAt.toISOString(),
+          });
+        }
+        return annotations;
+      });
 
     return {
       create: (userId, input) =>
@@ -115,7 +168,7 @@ export const SharesServiceLive = Layer.effect(
             .pipe(Effect.orDie);
           const existingRow = existing[0];
           if (existingRow !== undefined) {
-            const includeAnnotations = input.include_annotations ?? false;
+            const includeAnnotations = input.include_annotations ?? true;
             if (existingRow.includeAnnotations !== includeAnnotations) {
               const updated = yield* db.query((d) => d
                 .update(shares)
@@ -142,7 +195,7 @@ export const SharesServiceLive = Layer.effect(
               subjectKind: input.subject_kind,
               subjectId: input.subject_id,
               createdBy: userId,
-              includeAnnotations: input.include_annotations ?? false,
+              includeAnnotations: input.include_annotations ?? true,
               expiresAt: input.expires_at === undefined ? null : new Date(input.expires_at),
             })
             .returning())
@@ -227,6 +280,9 @@ export const SharesServiceLive = Layer.effect(
             title: reference.title,
             markdown: row.includeAnnotations ? body : stripAnchors(body),
             origin: reference.origin,
+            annotations: row.includeAnnotations
+              ? yield* loadAnnotations(row.createdBy as Uuid, reference.filePath)
+              : [],
             created_at: reference.createdAt.toISOString(),
           };
         }),

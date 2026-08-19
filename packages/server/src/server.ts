@@ -879,6 +879,19 @@ const SessionsHandlersLive = HttpApiBuilder.group(MountedGreatMindsApi, "session
         }),
       ),
     )
+    .handle("listSessionsByOrigin", ({ params, query }) =>
+      withDomainErrors(
+        Effect.gen(function* () {
+          const sessions = yield* SessionsService;
+          const current = yield* CurrentAuth;
+          return yield* sessions.listSessionsByOrigin(
+            current.user_id,
+            params.vault_id,
+            query.doc_path,
+          );
+        }),
+      ),
+    )
     .handle("readSession", ({ params }) =>
       withDomainErrors(
         Effect.gen(function* () {

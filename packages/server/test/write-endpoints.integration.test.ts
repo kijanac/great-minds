@@ -1742,7 +1742,7 @@ describe("M3.1 write endpoint integration", () => {
   });
 
   it("appends exchanges and BTW context, and rebuilds Python-parity markdown sidecars", async () => {
-    const { aliceToken, bobToken, carolToken, malloryToken } = currentFixture();
+    const { aliceToken, bobToken, malloryToken } = currentFixture();
     const created = await api("POST", `/vaults/${id.vault}/sessions`, aliceToken, {
       idempotency_key: "sidecar-key",
       exchange: {
@@ -1759,7 +1759,7 @@ describe("M3.1 write endpoint integration", () => {
     const sessionId = String(asRecord(created.body).id);
 
     currentState().clock.set(new Date("2026-07-10T12:01:00.000Z"));
-    const firstBtw = await api("PATCH", `/vaults/${id.vault}/sessions/${sessionId}/btw`, bobToken, {
+    const firstBtw = await api("PATCH", `/vaults/${id.vault}/sessions/${sessionId}/btw`, aliceToken, {
       quote: "the passage",
       blockOffset: 0,
       context: "Start with the passage and its claim.",
@@ -1791,7 +1791,7 @@ describe("M3.1 write endpoint integration", () => {
     const secondBtw = await api(
       "PATCH",
       `/vaults/${id.vault}/sessions/${sessionId}/btw`,
-      bobToken,
+      aliceToken,
       {
         quote: "the passage",
         blockOffset: 0,
@@ -1815,7 +1815,7 @@ describe("M3.1 write endpoint integration", () => {
     expect(await updatedAt()).toEqual(new Date("2026-07-10T12:02:00.000Z"));
 
     currentState().clock.set(new Date("2026-07-10T12:03:00.000Z"));
-    const appended = await api("PATCH", `/vaults/${id.vault}/sessions/${sessionId}`, carolToken, {
+    const appended = await api("PATCH", `/vaults/${id.vault}/sessions/${sessionId}`, aliceToken, {
       id: "ex-follow-up",
       query: "What should they record?",
       thinking: [],

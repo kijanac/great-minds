@@ -382,6 +382,9 @@ export const sessions = pgTable(
     index("ix_sessions_updated_at").on(table.updatedAt),
     index("ix_sessions_user_id").on(table.userId),
     index("ix_sessions_vault_id").on(table.vaultId),
+    index("ix_sessions_origin_doc_path")
+      .using("btree", sql`(${table.origin}->>'doc_path')`)
+      .where(sql`${table.origin} IS NOT NULL`),
   ],
 );
 

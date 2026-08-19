@@ -713,6 +713,17 @@ export const SessionResponse = Schema.Struct({
 });
 export type SessionResponse = typeof SessionResponse.Type;
 
+export const OriginSessionDetail = Schema.Struct({
+  session: SessionOverview,
+  events: Schema.Array(SessionEvent),
+});
+export type OriginSessionDetail = typeof OriginSessionDetail.Type;
+
+export const OriginSessionsQuery = Schema.Struct({
+  doc_path: Schema.String,
+});
+export type OriginSessionsQuery = typeof OriginSessionsQuery.Type;
+
 export const SessionMarkdown = Schema.String.pipe(
   HttpApiSchema.asText({ contentType: "text/markdown" }),
 );
@@ -872,11 +883,32 @@ export const SharedSessionDetail = Schema.Struct({
 });
 export type SharedSessionDetail = typeof SharedSessionDetail.Type;
 
+export const SharedAnnotationAnchor = Schema.Struct({
+  quote: Schema.String,
+  context: Schema.NullOr(Schema.String),
+  block_offset: Schema.NullOr(Schema.Number),
+});
+export type SharedAnnotationAnchor = typeof SharedAnnotationAnchor.Type;
+
+export const SharedAnnotationExchange = Schema.Struct({
+  query: Schema.String,
+  answer: Schema.String,
+});
+export type SharedAnnotationExchange = typeof SharedAnnotationExchange.Type;
+
+export const SharedAnnotation = Schema.Struct({
+  anchor: SharedAnnotationAnchor,
+  exchanges: Schema.Array(SharedAnnotationExchange),
+  created_at: IsoDateTime,
+});
+export type SharedAnnotation = typeof SharedAnnotation.Type;
+
 export const SharedReferenceDetail = Schema.Struct({
   subject_kind: Schema.Literal("reference"),
   title: Schema.NullOr(Schema.String),
   markdown: Schema.String,
   origin: Schema.NullOr(Schema.String),
+  annotations: Schema.Array(SharedAnnotation),
   created_at: IsoDateTime,
 });
 export type SharedReferenceDetail = typeof SharedReferenceDetail.Type;
@@ -1698,6 +1730,14 @@ export const SessionsApiGroup = HttpApiGroup.make("sessions").add(
     },
     query: PageParamsQuery,
     success: SessionPage,
+    error: ForbiddenValidationErrors,
+  }).middleware(AuthMiddleware),
+  HttpApiEndpoint.get("listSessionsByOrigin", "/vaults/:vault_id/sessions/by-origin", {
+    params: {
+      vault_id: Uuid,
+    },
+    query: OriginSessionsQuery,
+    success: Schema.Array(OriginSessionDetail),
     error: ForbiddenValidationErrors,
   }).middleware(AuthMiddleware),
   HttpApiEndpoint.get("readSession", "/vaults/:vault_id/sessions/:session_id", {

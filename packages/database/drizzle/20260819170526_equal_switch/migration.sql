@@ -1,0 +1,1 @@
+CREATE INDEX "ix_sessions_origin_doc_path" ON "sessions" (("origin"->>'doc_path')) WHERE "origin" IS NOT NULL;

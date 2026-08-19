@@ -1,10 +1,11 @@
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { createServer, type RequestListener, type Server as NodeServer } from "node:http";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 
 import {
   Database,
+  sessions,
   shares,
   userDocuments,
   users,
@@ -261,6 +262,15 @@ const asRecord = (value: unknown): Record<string, unknown> => {
   return value as Record<string, unknown>;
 };
 
+const writeVaultFile = async (vaultId: string, path: string, content: string) => {
+  const fullPath = join(currentState().storageRoot, "vaults", vaultId, path);
+  await mkdir(dirname(fullPath), { recursive: true });
+  await writeFile(fullPath, content, "utf8");
+};
+
+const jsonl = (events: readonly unknown[]) =>
+  events.map((event) => JSON.stringify(event)).join("\n");
+
 const createSession = (idempotencyKey: string, query: string, answer: string) =>
   api("POST", `/vaults/${id.vault}/sessions`, currentFixture().aliceToken, {
     idempotency_key: idempotencyKey,
@@ -309,7 +319,7 @@ describe("share links", () => {
       subject_kind: "session",
       subject_id: sessionId,
       created_by: id.alice,
-      include_annotations: false,
+      include_annotations: true,
       expires_at: null,
       revoked_at: null,
     });
@@ -392,6 +402,8 @@ describe("share links", () => {
           referenceRows[0]!.createdAt.toISOString(),
         );
 
+        // Flag omitted at create defaults to include_annotations: true, so
+        // this reuses the annotated share instead of flipping it off.
         const plain = await api("POST", "/shares", aliceToken, {
           subject_kind: "reference",
           subject_id: referenceId,
@@ -400,15 +412,194 @@ describe("share links", () => {
         expect(asRecord(plain.body).created).toBe(false);
         const plainShare = asRecord(asRecord(plain.body).share);
         expect(plainShare.token).toBe(annotatedShare.token);
-        expect(plainShare.include_annotations).toBe(false);
+        expect(plainShare.include_annotations).toBe(true);
         const plainResolved = await api(
           "GET",
           `/public/shares/${String(plainShare.token)}`,
         );
         expect(plainResolved.status).toBe(200);
         const plainMarkdown = String(asRecord(plainResolved.body).markdown);
-        expect(plainMarkdown).toContain("First shared paragraph.");
-        expect(plainMarkdown).not.toMatch(/\^p\d/);
+        expect(plainMarkdown).toContain("First shared paragraph. ^p0");
+        expect(asRecord(plainResolved.body).annotations).toEqual([]);
+
+        // An explicit false flips the flag and strips the anchors.
+        const stripped = await api("POST", "/shares", aliceToken, {
+          subject_kind: "reference",
+          subject_id: referenceId,
+          include_annotations: false,
+        });
+        expect(stripped.status).toBe(201);
+        expect(asRecord(stripped.body).created).toBe(false);
+        const strippedShare = asRecord(asRecord(stripped.body).share);
+        expect(strippedShare.token).toBe(annotatedShare.token);
+        expect(strippedShare.include_annotations).toBe(false);
+        const strippedResolved = await api(
+          "GET",
+          `/public/shares/${String(strippedShare.token)}`,
+        );
+        expect(strippedResolved.status).toBe(200);
+        const strippedMarkdown = String(asRecord(strippedResolved.body).markdown);
+        expect(strippedMarkdown).toContain("First shared paragraph.");
+        expect(strippedMarkdown).not.toMatch(/\^p\d/);
+      },
+    );
+  });
+
+  it("resolves reference shares with anchored annotation threads when include_annotations is true", async () => {
+    const { aliceToken } = currentFixture();
+    await withLocalHttpServer(
+      (_request, response) => {
+        response.writeHead(200, { "content-type": "text/html; charset=utf-8" });
+        response.end(
+          "<html><head><title>Annotated Article</title></head><body><article><p>Annotated first paragraph with enough words to extract.</p><p>Annotated second paragraph.</p></article></body></html>",
+        );
+      },
+      async (origin) => {
+        const reference = await api("POST", "/me/refs", aliceToken, {
+          url: `${origin}/article`,
+        });
+        expect(reference.status).toBe(201);
+        const referenceId = String(asRecord(reference.body).id);
+
+        await runDb(
+          Effect.gen(function* () {
+            const db = yield* Database;
+            yield* db.query((d) => d
+              .insert(sessions)
+              .values({
+                id: "s-annotated",
+                vaultId: id.vault,
+                userId: id.alice,
+                query: "What does the quote mean?",
+                origin: {
+                  doc_path: "refs/article.md",
+                  origin_scope: "personal",
+                  anchor: "Annotated first paragraph with enough words to extract.",
+                  paragraph: "Annotated first paragraph with enough words to extract.",
+                  paragraph_index: 0,
+                },
+                createdAt: new Date("2026-07-11T09:00:00.000Z"),
+                updatedAt: new Date("2026-07-11T09:05:00.000Z"),
+              }))
+              .pipe(Effect.orDie);
+          }),
+        );
+        await writeVaultFile(
+          id.vault,
+          "sessions/s-annotated.jsonl",
+          jsonl([
+            {
+              type: "meta",
+              id: "s-annotated",
+              query: "What does the quote mean?",
+              ts: "2026-07-11T09:00:00.000Z",
+              user_id: id.alice,
+              origin: {
+                doc_path: "refs/article.md",
+                origin_scope: "personal",
+                anchor: "Annotated first paragraph with enough words to extract.",
+                paragraph: "Annotated first paragraph with enough words to extract.",
+                paragraph_index: 0,
+              },
+            },
+            {
+              type: "exchange",
+              exId: "ex-ann-1",
+              query: "What does the quote mean?",
+              thinking: [
+                {
+                  sources: [
+                    {
+                      label: "secret source",
+                      type: "raw",
+                      title: null,
+                      scope: null,
+                      path: null,
+                      thinking: "internal reasoning",
+                    },
+                  ],
+                },
+              ],
+              answer: "The quote anchors the first claim.",
+              ts: "2026-07-11T09:05:00.000Z",
+            },
+            {
+              type: "exchange",
+              exId: "ex-ann-2",
+              query: "How should organizers use it?",
+              thinking: [],
+              answer: "Use it to open the discussion.",
+              ts: "2026-07-11T09:06:00.000Z",
+            },
+          ]),
+        );
+
+        // Flag omitted at create defaults to include_annotations: true.
+        const share = await api("POST", "/shares", aliceToken, {
+          subject_kind: "reference",
+          subject_id: referenceId,
+        });
+        expect(share.status).toBe(201);
+        expect(asRecord(asRecord(share.body).share)).toMatchObject({
+          include_annotations: true,
+        });
+        const token = String(asRecord(asRecord(share.body).share).token);
+
+        const resolved = await api("GET", `/public/shares/${token}`);
+        expect(resolved.status).toBe(200);
+        expect(asRecord(resolved.body).annotations).toEqual([
+          {
+            anchor: {
+              quote: "Annotated first paragraph with enough words to extract.",
+              context: "Annotated first paragraph with enough words to extract.",
+              block_offset: 0,
+            },
+            exchanges: [
+              {
+                query: "What does the quote mean?",
+                answer: "The quote anchors the first claim.",
+              },
+              {
+                query: "How should organizers use it?",
+                answer: "Use it to open the discussion.",
+              },
+            ],
+            created_at: "2026-07-11T09:00:00.000Z",
+          },
+        ]);
+        // Thinking blocks and sources are stripped from shared annotations.
+        const resolvedJson = JSON.stringify(resolved.body);
+        expect(resolvedJson).not.toContain("secret source");
+        expect(resolvedJson).not.toContain("internal reasoning");
+
+        // Explicit false hides the annotations and strips the anchors.
+        const plain = await api("POST", "/shares", aliceToken, {
+          subject_kind: "reference",
+          subject_id: referenceId,
+          include_annotations: false,
+        });
+        expect(plain.status).toBe(201);
+        expect(asRecord(plain.body).created).toBe(false);
+        expect(asRecord(asRecord(plain.body).share).include_annotations).toBe(false);
+        const plainResolved = await api(
+          "GET",
+          `/public/shares/${String(asRecord(asRecord(plain.body).share).token)}`,
+        );
+        expect(plainResolved.status).toBe(200);
+        expect(asRecord(plainResolved.body).annotations).toEqual([]);
+
+        // Flag omitted again flips back to the include_annotations: true default.
+        const again = await api("POST", "/shares", aliceToken, {
+          subject_kind: "reference",
+          subject_id: referenceId,
+        });
+        expect(again.status).toBe(201);
+        expect(asRecord(asRecord(again.body).share).include_annotations).toBe(true);
+        const againResolved = await api(
+          "GET",
+          `/public/shares/${String(asRecord(asRecord(again.body).share).token)}`,
+        );
+        expect(asRecord(againResolved.body).annotations).toHaveLength(1);
       },
     );
   });

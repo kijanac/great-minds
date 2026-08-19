@@ -7,6 +7,7 @@ import {
   type CreateSessionRequest,
   type CreateSessionResponse,
   type ExchangeData,
+  type OriginSessionDetail,
   type PromoteExchangeResponse,
   SessionBtwEvent as SessionBtwEventSchema,
   SessionExchangeEvent as SessionExchangeEventSchema,
@@ -29,7 +30,7 @@ import {
   type ThinkingSource,
   type Uuid,
 } from "@great-minds/domain";
-import { and, desc, eq, sql } from "drizzle-orm";
+import { and, asc, desc, eq, sql } from "drizzle-orm";
 import { Context, Effect, Layer, Schema } from "effect";
 
 import { IngestService } from "./ingest.ts";
@@ -56,14 +57,14 @@ type SessionsServiceShape = {
     sessionId: SessionId,
     input: ExchangeData,
     replyId?: Uuid,
-  ) => Effect.Effect<SessionPathResponse, Forbidden>;
+  ) => Effect.Effect<SessionPathResponse, Forbidden | NotFound>;
   readonly appendBtw: (
     userId: Uuid,
     vaultId: Uuid,
     sessionId: SessionId,
     input: BtwData,
     replyId?: Uuid,
-  ) => Effect.Effect<SessionPathResponse, Forbidden>;
+  ) => Effect.Effect<SessionPathResponse, Forbidden | NotFound>;
   readonly promoteExchange: (
     userId: Uuid,
     vaultId: Uuid,
@@ -75,6 +76,11 @@ type SessionsServiceShape = {
     vaultId: Uuid,
     params: PageParams,
   ) => Effect.Effect<SessionPage, Forbidden>;
+  readonly listSessionsByOrigin: (
+    userId: Uuid,
+    vaultId: Uuid,
+    docPath: string,
+  ) => Effect.Effect<readonly OriginSessionDetail[], Forbidden>;
   readonly readSession: (
     userId: Uuid,
     vaultId: Uuid,
@@ -435,6 +441,22 @@ export const SessionsServiceLive = Layer.effect(
     const findMeta = (events: readonly SessionEvent[]) =>
       events.find((event): event is SessionMetaEvent => event.type === "meta");
 
+    // Sessions are personal: any path that touches a session's rows or events
+    // must belong to the caller. Storage-only orphans (no DB row) keep the
+    // legacy append/read behavior; real sessions always carry a row.
+    const requireSessionOwner = (userId: Uuid, vaultId: Uuid, sessionId: SessionId) =>
+      Effect.gen(function* () {
+        const rows = yield* db.query((d) => d
+          .select({ userId: sessions.userId })
+          .from(sessions)
+          .where(and(eq(sessions.vaultId, vaultId), eq(sessions.id, sessionId)))
+          .limit(1));
+        const row = rows[0];
+        if (row !== undefined && row.userId !== userId) {
+          return yield* new NotFound({ detail: "Session not found" });
+        }
+      });
+
     const exchangeEvent = (
       input: ExchangeData,
       ts: string,
@@ -506,6 +528,7 @@ export const SessionsServiceLive = Layer.effect(
             .where(
               and(
                 eq(sessions.vaultId, vaultId),
+                eq(sessions.userId, userId),
                 eq(sessions.idempotencyKey, input.idempotency_key),
               ),
             )
@@ -579,11 +602,13 @@ export const SessionsServiceLive = Layer.effect(
       appendExchange: (userId, vaultId, sessionId, input, replyId) =>
         Effect.gen(function* () {
           yield* access.requireMember(userId, vaultId);
+          yield* requireSessionOwner(userId, vaultId, sessionId);
           return yield* appendExchangeEvent(vaultId, sessionId, input, replyId);
         }),
       appendBtw: (userId, vaultId, sessionId, input, replyId) =>
         Effect.gen(function* () {
           yield* access.requireMember(userId, vaultId);
+          yield* requireSessionOwner(userId, vaultId, sessionId);
           return yield* appendBtwEvent(vaultId, sessionId, input, replyId);
         }),
       promoteExchange: (userId, vaultId, sessionId, exchangeId) =>
@@ -663,7 +688,14 @@ export const SessionsServiceLive = Layer.effect(
       listSessions: (userId, vaultId, params) =>
         Effect.gen(function* () {
           yield* access.requireMember(userId, vaultId);
-          const where = and(eq(sessions.vaultId, vaultId), eq(sessions.userId, userId));
+          // Annotation threads (anchored origins) live with their document and
+          // are served by listSessionsByOrigin; doc-initiated conversations
+          // (origin with null anchor) stay in the main list.
+          const where = and(
+            eq(sessions.vaultId, vaultId),
+            eq(sessions.userId, userId),
+            sql`${sessions.origin}->>'anchor' IS NULL`,
+          );
           const countRows = yield* db.query((d) => d
             .select({ total: sql<number>`count(*)::int` })
             .from(sessions)
@@ -677,9 +709,48 @@ export const SessionsServiceLive = Layer.effect(
             .offset(params.offset));
           return pageEnvelope(rows.map(sessionOverview), params, oneTotal(countRows));
         }),
+      listSessionsByOrigin: (userId, vaultId, docPath) =>
+        Effect.gen(function* () {
+          yield* access.requireMember(userId, vaultId);
+          const rows = yield* db.query((d) => d
+            .select()
+            .from(sessions)
+            .where(
+              and(
+                eq(sessions.vaultId, vaultId),
+                eq(sessions.userId, userId),
+                sql`${sessions.origin}->>'doc_path' = ${docPath}`,
+              ),
+            )
+            .orderBy(asc(sessions.createdAt)));
+          const details: OriginSessionDetail[] = [];
+          for (const row of rows) {
+            const result = yield* Effect.result(
+              readText(vaultId, row.id as SessionId, "jsonl", "Session not found").pipe(
+                Effect.flatMap((content) =>
+                  parseEvents(row.id, content, { isolateLatestMeta: true }),
+                ),
+              ),
+            );
+            if (result._tag === "Failure") {
+              yield* logger.warn("session_by_origin_skipped", {
+                session_id: row.id,
+                doc_path: docPath,
+                reason: "missing_jsonl",
+              });
+              continue;
+            }
+            details.push({
+              session: sessionOverview(row),
+              events: dedupeSessionExchanges(result.success),
+            });
+          }
+          return details;
+        }),
       readSession: (userId, vaultId, sessionId) =>
         Effect.gen(function* () {
           yield* access.requireMember(userId, vaultId);
+          yield* requireSessionOwner(userId, vaultId, sessionId);
           const content = yield* readText(vaultId, sessionId, "jsonl", "Session not found");
           const events = dedupeSessionExchanges(
             yield* parseEvents(sessionId, content, { isolateLatestMeta: true }),
@@ -692,6 +763,7 @@ export const SessionsServiceLive = Layer.effect(
       readMarkdown: (userId, vaultId, sessionId) =>
         Effect.gen(function* () {
           yield* access.requireMember(userId, vaultId);
+          yield* requireSessionOwner(userId, vaultId, sessionId);
           return yield* readText(vaultId, sessionId, "md", "Session markdown not found");
         }),
     } satisfies SessionsServiceShape;

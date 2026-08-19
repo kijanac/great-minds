@@ -672,6 +672,69 @@ describe("query stream", () => {
     expect(markdown.match(/^# Persist this answer$/gmu)).toHaveLength(1);
   });
 
+  it("composes the anchored passage prompt for doc-born sessions while storing the clean question", async () => {
+    const language = makeScriptedLanguageModel({
+      streams: [{ kind: "parts", parts: [tokenPart("Anchored answer."), finishPart("stop")] }],
+    });
+    await startHarness({ language });
+
+    const created = await api(repliesPath, {
+      kind: "exchange",
+      exchange_id: "ex-anchored",
+      create: {
+        idempotency_key: "anchored-session-key",
+        origin_scope: "personal",
+        origin: {
+          doc_path: "refs/article.md",
+          anchor: "the highlighted claim",
+          paragraph: "The surrounding passage.",
+          paragraph_index: 2,
+        },
+      },
+      question: "What does this claim imply?",
+      mode: "btw",
+      history: [],
+    });
+    expect(created.response.status).toBe(202);
+    const identifiers = JSON.parse(created.text) as {
+      reply_id: string;
+      session_id: string;
+    };
+
+    const tail = await tailReply(identifiers.reply_id);
+    expect(replySnapshots(tail.text).at(-1)).toMatchObject({ status: "completed" });
+
+    // The LLM received the passage/highlight/question composition, mirroring
+    // the web client's buildBtwQuery.
+    const messages = language.streamCalls[0]?.messages ?? [];
+    const lastUser = [...messages].reverse().find((message) => message.role === "user");
+    expect(lastUser?.content).toBe(
+      "Passage:\n> The surrounding passage.\n\nHighlighted: \"the highlighted claim\"\n\nWhat does this claim imply?",
+    );
+
+    // The session stores the clean question and the full origin anchor.
+    const events = await readSessionEvents(identifiers.session_id);
+    expect(events[0]).toMatchObject({
+      type: "meta",
+      query: "What does this claim imply?",
+      origin: {
+        doc_path: "refs/article.md",
+        origin_scope: "personal",
+        anchor: "the highlighted claim",
+        paragraph: "The surrounding passage.",
+        paragraph_index: 2,
+      },
+    });
+    expect(events[1]).toMatchObject({
+      type: "exchange",
+      exId: "ex-anchored",
+      query: "What does this claim imply?",
+    });
+    // The composed prompt never persists into the session event log.
+    expect(JSON.stringify(events)).not.toContain("Passage:");
+    expect(JSON.stringify(events)).not.toContain("Highlighted:");
+  });
+
   it("reuses an idempotently-created session across reply submissions", async () => {
     const language = makeScriptedLanguageModel({
       streams: [

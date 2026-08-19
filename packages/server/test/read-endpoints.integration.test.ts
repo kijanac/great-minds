@@ -861,19 +861,28 @@ const seedFixtures = async (): Promise<Fixture> => {
   };
 };
 
-const rawApi = async (method: string, path: string, bearer?: string) => {
+const rawApi = async (method: string, path: string, bearer?: string, body?: unknown) => {
   const headers = new Headers();
   if (bearer !== undefined) {
     headers.set("authorization", `Bearer ${bearer}`);
   }
+  if (body !== undefined) {
+    headers.set("content-type", "application/json");
+  }
   return fetch(`${currentState().started.url}/v1${path}`, {
     method,
     headers,
+    body: body === undefined ? undefined : JSON.stringify(body),
   });
 };
 
-const api = async (method: string, path: string, bearer?: string): Promise<ApiResponse> => {
-  const response = await rawApi(method, path, bearer);
+const api = async (
+  method: string,
+  path: string,
+  bearer?: string,
+  body?: unknown,
+): Promise<ApiResponse> => {
+  const response = await rawApi(method, path, bearer, body);
   const text = await response.text();
   const parsed = text === "" ? undefined : (JSON.parse(text) as unknown);
   return { status: response.status, body: parsed, text };
@@ -1491,23 +1500,17 @@ describe("read-only HTTP integration", () => {
     expect(listed.status).toBe(200);
     const page = asPage(listed.body);
     const sessions = itemRecords(page);
-    expect(page.pagination).toEqual({ limit: 50, offset: 0, total: 2 });
-    expect(sessions.map((session) => session.id)).toEqual([
-      id.sessionAliceMain,
-      id.sessionAliceOlder,
-    ]);
+    // The anchored thread (sessionAliceMain) lives with its document and is
+    // excluded from the main list; unanchored and origin-less sessions stay.
+    expect(page.pagination).toEqual({ limit: 50, offset: 0, total: 1 });
+    expect(sessions.map((session) => session.id)).toEqual([id.sessionAliceOlder]);
     expect(sessions[0]).toMatchObject({
-      id: id.sessionAliceMain,
-      query: "How should study circles use source material?",
+      id: id.sessionAliceOlder,
+      query: "Earlier organizing question",
       user_id: id.alice,
-      created_at: "2026-07-07T09:00:00.000Z",
-      updated_at: "2026-07-07T09:45:00.000Z",
-      origin: {
-        doc_path: "wiki/alpha-practice.md",
-        anchor: "alpha-anchor",
-        paragraph: "Alpha paragraph",
-        paragraph_index: 2,
-      },
+      created_at: "2026-07-06T08:00:00.000Z",
+      updated_at: "2026-07-06T08:05:00.000Z",
+      origin: null,
     });
 
     const secondPage = await api(
@@ -1516,15 +1519,13 @@ describe("read-only HTTP integration", () => {
       aliceToken,
     );
     expect(secondPage.status).toBe(200);
-    expect(itemRecords(asPage(secondPage.body)).map((session) => session.id)).toEqual([
-      id.sessionAliceOlder,
-    ]);
+    expect(itemRecords(asPage(secondPage.body)).map((session) => session.id)).toEqual([]);
 
     const zero = await api("GET", `/vaults/${id.vaultAlpha}/sessions?limit=0`, aliceToken);
     expect(zero.status).toBe(200);
     expect(asPage(zero.body)).toEqual({
       items: [],
-      pagination: { limit: 0, offset: 0, total: 2 },
+      pagination: { limit: 0, offset: 0, total: 1 },
     });
 
     const bobList = await api("GET", `/vaults/${id.vaultAlpha}/sessions`, bobToken);
@@ -1536,7 +1537,7 @@ describe("read-only HTTP integration", () => {
     expect(pastEnd.status).toBe(200);
     expect(asPage(pastEnd.body)).toEqual({
       items: [],
-      pagination: { limit: 50, offset: 99, total: 2 },
+      pagination: { limit: 50, offset: 99, total: 1 },
     });
 
     const overCap = await api("GET", `/vaults/${id.vaultAlpha}/sessions?limit=201`, aliceToken);
@@ -1556,12 +1557,245 @@ describe("read-only HTTP integration", () => {
     });
   });
 
-  it("replays sessions from JSONL with member-only access and path-safe ids", async () => {
+  it("serves origin threads by-origin with events while the main list excludes anchored ones", async () => {
+    const { aliceToken, bobToken, malloryToken } = currentFixture();
+    const docPath = "refs/article.md";
+    await runDb(
+      Effect.gen(function* () {
+        const db = yield* Database;
+        yield* db.query((d) => d
+          .insert(sessions)
+          .values([
+            {
+              id: "s-origin-anchored",
+              vaultId: id.vaultAlpha,
+              userId: id.alice,
+              query: "What does the anchored claim mean?",
+              origin: {
+                doc_path: docPath,
+                origin_scope: "personal",
+                anchor: "anchored claim",
+                paragraph: "The anchored paragraph.",
+                paragraph_index: 1,
+              },
+              createdAt: new Date("2026-07-10T08:00:00.000Z"),
+              updatedAt: new Date("2026-07-10T08:10:00.000Z"),
+            },
+            {
+              id: "s-origin-plain",
+              vaultId: id.vaultAlpha,
+              userId: id.alice,
+              query: "Doc-initiated conversation",
+              origin: {
+                doc_path: docPath,
+                origin_scope: "personal",
+                anchor: null,
+                paragraph: null,
+                paragraph_index: null,
+              },
+              createdAt: new Date("2026-07-10T09:00:00.000Z"),
+              updatedAt: new Date("2026-07-10T09:05:00.000Z"),
+            },
+            {
+              id: "s-origin-bob",
+              vaultId: id.vaultAlpha,
+              userId: id.bob,
+              query: "Bob's anchored thread",
+              origin: {
+                doc_path: docPath,
+                origin_scope: "personal",
+                anchor: "bob claim",
+                paragraph: null,
+                paragraph_index: null,
+              },
+              createdAt: new Date("2026-07-10T10:00:00.000Z"),
+              updatedAt: new Date("2026-07-10T10:05:00.000Z"),
+            },
+          ]))
+          .pipe(Effect.orDie);
+      }),
+    );
+    await writeVaultFile(
+      id.vaultAlpha,
+      "sessions/s-origin-anchored.jsonl",
+      jsonl([
+        {
+          type: "meta",
+          id: "s-origin-anchored",
+          query: "What does the anchored claim mean?",
+          ts: "2026-07-10T08:00:00.000Z",
+          user_id: id.alice,
+          origin: {
+            doc_path: docPath,
+            origin_scope: "personal",
+            anchor: "anchored claim",
+            paragraph: "The anchored paragraph.",
+            paragraph_index: 1,
+          },
+        },
+        {
+          type: "exchange",
+          exId: "ex-origin-a",
+          query: "What does the anchored claim mean?",
+          thinking: [],
+          answer: "It anchors the discussion.",
+          ts: "2026-07-10T08:10:00.000Z",
+        },
+      ]),
+    );
+    await writeVaultFile(
+      id.vaultAlpha,
+      "sessions/s-origin-plain.jsonl",
+      jsonl([
+        {
+          type: "meta",
+          id: "s-origin-plain",
+          query: "Doc-initiated conversation",
+          ts: "2026-07-10T09:00:00.000Z",
+          user_id: id.alice,
+          origin: {
+            doc_path: docPath,
+            origin_scope: "personal",
+            anchor: null,
+            paragraph: null,
+            paragraph_index: null,
+          },
+        },
+        {
+          type: "exchange",
+          exId: "ex-origin-p",
+          query: "Doc-initiated conversation",
+          thinking: [],
+          answer: "Plain conversation answer.",
+          ts: "2026-07-10T09:05:00.000Z",
+        },
+      ]),
+    );
+    await writeVaultFile(
+      id.vaultAlpha,
+      "sessions/s-origin-bob.jsonl",
+      jsonl([
+        {
+          type: "meta",
+          id: "s-origin-bob",
+          query: "Bob's anchored thread",
+          ts: "2026-07-10T10:00:00.000Z",
+          user_id: id.bob,
+          origin: {
+            doc_path: docPath,
+            origin_scope: "personal",
+            anchor: "bob claim",
+            paragraph: null,
+            paragraph_index: null,
+          },
+        },
+      ]),
+    );
+
+    // The main list keeps unanchored origin sessions but drops anchored threads.
+    const listed = await api("GET", `/vaults/${id.vaultAlpha}/sessions`, aliceToken);
+    expect(listed.status).toBe(200);
+    const listedIds = itemRecords(asPage(listed.body)).map((session) => session.id);
+    expect(listedIds).toContain("s-origin-plain");
+    expect(listedIds).not.toContain("s-origin-anchored");
+    expect(listedIds).not.toContain("s-origin-bob");
+
+    const byOrigin = await api(
+      "GET",
+      `/vaults/${id.vaultAlpha}/sessions/by-origin?doc_path=${encodeURIComponent(docPath)}`,
+      aliceToken,
+    );
+    expect(byOrigin.status).toBe(200);
+    const details = asArray(byOrigin.body).map(asRecord);
+    expect(details.map((detail) => asRecord(detail.session).id)).toEqual([
+      "s-origin-anchored",
+      "s-origin-plain",
+    ]);
+    expect(asRecord(details[0]?.session)).toMatchObject({
+      id: "s-origin-anchored",
+      user_id: id.alice,
+      created_at: "2026-07-10T08:00:00.000Z",
+      origin: {
+        doc_path: docPath,
+        origin_scope: "personal",
+        anchor: "anchored claim",
+        paragraph: "The anchored paragraph.",
+        paragraph_index: 1,
+      },
+    });
+    expect(
+      asArray(details[0]?.events)
+        .map(asRecord)
+        .map((event) => event.exId)
+        .filter(Boolean),
+    ).toEqual(["ex-origin-a"]);
+    expect(
+      asArray(details[1]?.events)
+        .map(asRecord)
+        .map((event) => event.exId)
+        .filter(Boolean),
+    ).toEqual(["ex-origin-p"]);
+
+    const bobOrigin = await api(
+      "GET",
+      `/vaults/${id.vaultAlpha}/sessions/by-origin?doc_path=${encodeURIComponent(docPath)}`,
+      bobToken,
+    );
+    expect(bobOrigin.status).toBe(200);
+    expect(
+      asArray(bobOrigin.body).map((detail) => asRecord(asRecord(detail).session).id),
+    ).toEqual(["s-origin-bob"]);
+
+    const otherPath = await api(
+      "GET",
+      `/vaults/${id.vaultAlpha}/sessions/by-origin?doc_path=${encodeURIComponent("refs/other.md")}`,
+      aliceToken,
+    );
+    expect(otherPath.status).toBe(200);
+    expect(otherPath.body).toEqual([]);
+
+    const nonMember = await api(
+      "GET",
+      `/vaults/${id.vaultAlpha}/sessions/by-origin?doc_path=${encodeURIComponent(docPath)}`,
+      malloryToken,
+    );
+    expect(nonMember.status).toBe(403);
+  });
+
+  it("rejects appends and markdown reads of another member's session", async () => {
+    const { aliceToken, bobToken } = currentFixture();
+    const append = await api(
+      "PATCH",
+      `/vaults/${id.vaultAlpha}/sessions/${id.sessionAliceMain}`,
+      bobToken,
+      { id: "ex-blocked", query: "Blocked?", thinking: [], answer: "" },
+    );
+    expect(append.status).toBe(404);
+    expect(append.body).toEqual({ detail: "Session not found" });
+
+    const markdown = await api(
+      "GET",
+      `/vaults/${id.vaultAlpha}/sessions/${id.sessionAliceMain}/markdown`,
+      bobToken,
+    );
+    expect(markdown.status).toBe(404);
+    expect(markdown.body).toEqual({ detail: "Session not found" });
+
+    const ownerAppend = await api(
+      "PATCH",
+      `/vaults/${id.vaultAlpha}/sessions/${id.sessionAliceMain}`,
+      aliceToken,
+      { id: "ex-owner", query: "Owner?", thinking: [], answer: "Yes." },
+    );
+    expect(ownerAppend.status).toBe(200);
+  });
+
+  it("replays sessions from JSONL with owner-only access and path-safe ids", async () => {
     const { aliceToken, bobToken, malloryToken } = currentFixture();
     const replay = await api(
       "GET",
       `/vaults/${id.vaultAlpha}/sessions/${id.sessionAliceMain}`,
-      bobToken,
+      aliceToken,
     );
     expect(replay.status).toBe(200);
     const body = asRecord(replay.body);
@@ -1606,15 +1840,21 @@ describe("read-only HTTP integration", () => {
     });
     expect(asArray(btw.exchanges)).toHaveLength(2);
 
+    // Sessions are personal: a vault member cannot read another member's session.
+    const memberReadsOwnerSession = await api(
+      "GET",
+      `/vaults/${id.vaultAlpha}/sessions/${id.sessionAliceMain}`,
+      bobToken,
+    );
+    expect(memberReadsOwnerSession.status).toBe(404);
+    expect(memberReadsOwnerSession.body).toEqual({ detail: "Session not found" });
+
     const ownerReadsMemberSession = await api(
       "GET",
       `/vaults/${id.vaultAlpha}/sessions/${id.sessionBob}`,
       aliceToken,
     );
-    expect(ownerReadsMemberSession.status).toBe(200);
-    expect(asRecord(asArray(asRecord(ownerReadsMemberSession.body).events)[0]).user_id).toBe(
-      id.bob,
-    );
+    expect(ownerReadsMemberSession.status).toBe(404);
 
     const nonMember = await api(
       "GET",
