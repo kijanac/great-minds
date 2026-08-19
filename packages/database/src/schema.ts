@@ -507,6 +507,29 @@ export const userDocuments = pgTable(
   ],
 );
 
+export const shares = pgTable(
+  "shares",
+  {
+    id: uuid("id").primaryKey(),
+    tokenHash: text("token_hash").notNull(),
+    subjectKind: text("subject_kind").notNull(),
+    subjectId: uuid("subject_id").notNull(),
+    createdBy: uuid("created_by").notNull(),
+    includeAnnotations: boolean("include_annotations").default(false).notNull(),
+    createdAt: timestamptz("created_at").defaultNow().notNull(),
+    expiresAt: timestamptz("expires_at"),
+    revokedAt: timestamptz("revoked_at"),
+  },
+  (table) => [
+    foreignKey({
+      columns: [table.createdBy],
+      foreignColumns: [users.id],
+      name: "shares_created_by_fkey",
+    }).onDelete("cascade"),
+    uniqueIndex("ix_shares_token_hash").on(table.tokenHash),
+  ],
+);
+
 export const sourceProposals = pgTable(
   "source_proposals",
   {

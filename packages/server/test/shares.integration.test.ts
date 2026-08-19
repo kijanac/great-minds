@@ -1,0 +1,513 @@
+import { mkdtemp, rm } from "node:fs/promises";
+import { createServer, type RequestListener, type Server as NodeServer } from "node:http";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
+import {
+  Database,
+  shares,
+  userDocuments,
+  users,
+  vaultMemberships,
+  vaults,
+} from "@great-minds/database";
+import type { Uuid } from "@great-minds/domain";
+import { eq } from "drizzle-orm";
+import { Effect, Layer, Option, Redacted } from "effect";
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
+
+import { makeAppLayer } from "../src/app-layer.ts";
+import { ClockService, makeTestClock } from "../src/clock.ts";
+import { AppConfig, type AppConfigShape } from "../src/config.ts";
+import { StructuredLogger, StructuredLoggerLive } from "../src/logging.ts";
+import { makeTestMailer } from "../src/mailer.ts";
+import { makeTestRandomBytes } from "../src/random.ts";
+import { startServer } from "../src/server.ts";
+import { TokenService } from "../src/tokens.ts";
+
+const initialTime = new Date("2026-07-10T12:00:00.000Z");
+
+const id = {
+  alice: "00000000-0000-4000-8000-000000010001",
+  bob: "00000000-0000-4000-8000-000000010002",
+  vault: "00000000-0000-4000-8000-000000010101",
+} as const;
+
+type TestServices = AppConfig | Database | ClockService | StructuredLogger | TokenService;
+
+type TestState = {
+  readonly started: Awaited<ReturnType<typeof startServer>>;
+  readonly clock: ReturnType<typeof makeTestClock>;
+  readonly random: ReturnType<typeof makeTestRandomBytes>;
+  readonly mailer: ReturnType<typeof makeTestMailer>;
+  readonly storageRoot: string;
+};
+
+type Fixture = {
+  readonly aliceToken: string;
+  readonly bobToken: string;
+};
+
+type ApiResponse = {
+  readonly status: number;
+  readonly body: unknown;
+  readonly text: string;
+  readonly headers: Headers;
+};
+
+let state: TestState | undefined;
+let fixture: Fixture | undefined;
+
+const currentState = () => {
+  if (state === undefined) {
+    throw new Error("test state is not initialized");
+  }
+  return state;
+};
+
+const currentFixture = () => {
+  if (fixture === undefined) {
+    throw new Error("fixture is not initialized");
+  }
+  return fixture;
+};
+
+const databaseUrl = () => {
+  const value = process.env.DATABASE_URL;
+  if (value === undefined || value.length === 0) {
+    throw new Error("DATABASE_URL is required for integration tests");
+  }
+  return value;
+};
+
+const testConfig = (url: string, dataDir: string): AppConfigShape => ({
+  databaseUrl: Redacted.make(url),
+  jwtSecret: Redacted.make("integration-test-jwt-secret"),
+  jwtAccessExpiryMinutes: 30,
+  jwtRefreshExpiryDays: 7,
+  authCodeExpiryMinutes: 10,
+  webauthnRpId: "localhost",
+  webauthnOrigins: ["http://localhost:5173"],
+  webauthnRpName: "Great Minds",
+  resendApiKey: Option.none(),
+  resendFromEmail: Option.none(),
+  dataDir,
+  storageBackend: "local",
+  r2AccountId: Option.none(),
+  r2AccessKeyId: Option.none(),
+  r2SecretAccessKey: Option.none(),
+  r2BucketPrefix: "gm-test",
+  openRouterApiKey: Option.none(),
+  openRouterApiUrl: "https://openrouter.ai/api/v1",
+  parallelApiKey: Option.none(),
+  parallelSearchUrl: "https://api.parallel.ai/v1beta/search",
+  queryModel: "z-ai/glm-5.2",
+  queryFallbackModels: ["deepseek/deepseek-v3.2"],
+  extractModel: "deepseek/deepseek-v3.2",
+  mapModel: "deepseek/deepseek-v3.2",
+  reduceModel: "anthropic/claude-sonnet-4.6",
+  renderModel: "qwen/qwen3.6-plus",
+  compileEnrichConcurrency: 1,
+  compileWriteConcurrency: 1,
+  compilePartitionTargetTokens: 100_000,
+  compilePartitionMinFactor: 0.3,
+  compilePartitionMaxFactor: 1.5,
+  compilePremergeJaccardThreshold: 0.8,
+  compileDeriveRelatedLimit: 20,
+  pipelineConcurrency: 1,
+  goldensRandomSeed: Option.none(),
+  goldensClock: Option.none(),
+  embeddingModel: "qwen/qwen3-embedding-8b",
+  corsOrigins: ["http://localhost:5173"],
+  suppressAuth: false,
+  allowPrivateUrlFetch: true,
+  serverHost: "127.0.0.1",
+  serverPort: 0,
+});
+
+const buildTestState = async () => {
+  const clock = makeTestClock(initialTime);
+  const random = makeTestRandomBytes();
+  const mailer = makeTestMailer();
+  const storageRoot = await mkdtemp(join(tmpdir(), "great-minds-shares-storage-"));
+  const configLayer = Layer.succeed(AppConfig, testConfig(databaseUrl(), storageRoot));
+  const appLayer = makeAppLayer({
+    config: configLayer,
+    clock: clock.layer,
+    mailer: mailer.layer,
+    logger: StructuredLoggerLive,
+    randomBytes: random.layer,
+  });
+  const started = await startServer({ layer: appLayer, host: "127.0.0.1", port: 0 });
+  return { started, clock, random, mailer, storageRoot } satisfies TestState;
+};
+
+const runDb = <A>(effect: Effect.Effect<A, unknown, TestServices>) =>
+  currentState().started.runtime.runPromise(effect);
+
+const resetDatabase = () =>
+  runDb(
+    Effect.gen(function* () {
+      const db = yield* Database;
+      yield* db.query((d) => d.delete(users)).pipe(Effect.orDie);
+    }),
+  );
+
+const issueToken = (userId: string) =>
+  runDb(
+    Effect.gen(function* () {
+      const tokens = yield* TokenService;
+      return yield* tokens.issueAccessToken(userId as Uuid, initialTime);
+    }),
+  );
+
+const seedBase = async (): Promise<Fixture> => {
+  await runDb(
+    Effect.gen(function* () {
+      const db = yield* Database;
+      yield* db.query((d) => d
+        .insert(users)
+        .values([
+          { id: id.alice, email: "alice@example.com", createdAt: initialTime },
+          { id: id.bob, email: "bob@example.com", createdAt: initialTime },
+        ]))
+        .pipe(Effect.orDie);
+      yield* db.query((d) => d
+        .insert(vaults)
+        .values({
+          id: id.vault,
+          name: "Alpha Vault",
+          ownerId: id.alice,
+          createdAt: initialTime,
+        }))
+        .pipe(Effect.orDie);
+      yield* db.query((d) => d
+        .insert(vaultMemberships)
+        .values([
+          {
+            id: "00000000-0000-4000-8000-000000012001",
+            vaultId: id.vault,
+            userId: id.alice,
+            role: "OWNER",
+          },
+          {
+            id: "00000000-0000-4000-8000-000000012002",
+            vaultId: id.vault,
+            userId: id.bob,
+            role: "EDITOR",
+          },
+        ]))
+        .pipe(Effect.orDie);
+    }),
+  );
+  return {
+    aliceToken: await issueToken(id.alice),
+    bobToken: await issueToken(id.bob),
+  };
+};
+
+const api = async (
+  method: string,
+  path: string,
+  bearer?: string,
+  body?: unknown,
+): Promise<ApiResponse> => {
+  const headers = new Headers();
+  if (bearer !== undefined) {
+    headers.set("authorization", `Bearer ${bearer}`);
+  }
+  if (body !== undefined) {
+    headers.set("content-type", "application/json");
+  }
+  const response = await fetch(`${currentState().started.url}/v1${path}`, {
+    method,
+    headers,
+    body: body === undefined ? undefined : JSON.stringify(body),
+  });
+  const text = await response.text();
+  return {
+    status: response.status,
+    body: text === "" ? undefined : (JSON.parse(text) as unknown),
+    text,
+    headers: response.headers,
+  };
+};
+
+const withLocalHttpServer = async <A>(
+  handler: RequestListener,
+  use: (baseUrl: string) => Promise<A>,
+) => {
+  const server: NodeServer = createServer(handler);
+  await new Promise<void>((resolve) => {
+    server.listen(0, "127.0.0.1", resolve);
+  });
+  try {
+    const address = server.address();
+    if (address === null || typeof address === "string") {
+      throw new Error("local HTTP test server did not bind to a TCP port");
+    }
+    return await use(`http://127.0.0.1:${address.port}`);
+  } finally {
+    await new Promise<void>((resolve, reject) => {
+      server.close((error) => (error === undefined ? resolve() : reject(error)));
+    });
+  }
+};
+
+const asRecord = (value: unknown): Record<string, unknown> => {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    throw new Error("expected object response");
+  }
+  return value as Record<string, unknown>;
+};
+
+const createSession = (idempotencyKey: string, query: string, answer: string) =>
+  api("POST", `/vaults/${id.vault}/sessions`, currentFixture().aliceToken, {
+    idempotency_key: idempotencyKey,
+    exchange: { id: `ex-${idempotencyKey}`, query, thinking: [], answer },
+  });
+
+describe("share links", () => {
+  beforeAll(async () => {
+    state = await buildTestState();
+  });
+
+  beforeEach(async () => {
+    const current = currentState();
+    current.clock.set(initialTime);
+    current.random.reset();
+    current.mailer.sent.length = 0;
+    await resetDatabase();
+    fixture = await seedBase();
+  });
+
+  afterAll(async () => {
+    const current = state;
+    state = undefined;
+    fixture = undefined;
+    if (current !== undefined) {
+      await current.started.close();
+      await rm(current.storageRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("creates a session share and resolves it to the rendered session without auth", async () => {
+    const { aliceToken } = currentFixture();
+    const created = await createSession("share-session-key", "Share me?", "Shared answer.");
+    expect(created.status).toBe(201);
+    const sessionId = String(asRecord(created.body).id);
+
+    const share = await api("POST", "/shares", aliceToken, {
+      subject_kind: "session",
+      subject_id: sessionId,
+    });
+    expect(share.status).toBe(201);
+    const shareBody = asRecord(share.body);
+    expect(shareBody).toMatchObject({
+      subject_kind: "session",
+      subject_id: sessionId,
+      created_by: id.alice,
+      include_annotations: false,
+      expires_at: null,
+      revoked_at: null,
+    });
+    const token = String(shareBody.token);
+    expect(token).toMatch(/^[A-Za-z0-9_-]+$/);
+
+    const listed = await api("GET", "/shares", aliceToken);
+    expect(listed.status).toBe(200);
+    const listedItems = listed.body as ReadonlyArray<Record<string, unknown>>;
+    expect(listedItems).toHaveLength(1);
+    expect(listedItems[0]).toMatchObject({ id: shareBody.id });
+
+    const resolved = await api("GET", `/public/shares/${token}`);
+    expect(resolved.status).toBe(200);
+    expect(resolved.body).toEqual({
+      subject_kind: "session",
+      title: "Share me?",
+      markdown: "# Share me?\n\nShared answer.\n",
+      created_at: initialTime.toISOString(),
+    });
+    expect(resolved.headers.get("x-robots-tag")).toBe("noindex");
+    expect(resolved.headers.get("referrer-policy")).toBe("no-referrer");
+  });
+
+  it("creates a reference share and resolves title, origin, and markdown", async () => {
+    const { aliceToken } = currentFixture();
+    await withLocalHttpServer(
+      (_request, response) => {
+        response.writeHead(200, { "content-type": "text/html; charset=utf-8" });
+        response.end(
+          "<html><head><title>Shared Article</title></head><body><article><p>First shared paragraph.</p><p>Second shared paragraph.</p></article></body></html>",
+        );
+      },
+      async (origin) => {
+        const reference = await api("POST", "/me/refs", aliceToken, {
+          url: `${origin}/article`,
+        });
+        expect(reference.status).toBe(201);
+        const referenceId = String(asRecord(reference.body).id);
+
+        const annotated = await api("POST", "/shares", aliceToken, {
+          subject_kind: "reference",
+          subject_id: referenceId,
+          include_annotations: true,
+        });
+        expect(annotated.status).toBe(201);
+        expect(asRecord(annotated.body)).toMatchObject({
+          subject_kind: "reference",
+          subject_id: referenceId,
+          include_annotations: true,
+        });
+        const annotatedResolved = await api(
+          "GET",
+          `/public/shares/${String(asRecord(annotated.body).token)}`,
+        );
+        expect(annotatedResolved.status).toBe(200);
+        expect(annotatedResolved.body).toMatchObject({
+          subject_kind: "reference",
+          title: "Shared Article",
+          origin: new URL(origin).host,
+        });
+        const annotatedMarkdown = String(asRecord(annotatedResolved.body).markdown);
+        expect(annotatedMarkdown).toContain("First shared paragraph. ^p0");
+        expect(annotatedMarkdown).toContain("Second shared paragraph. ^p1");
+
+        const referenceRows = await runDb(
+          Effect.gen(function* () {
+            const db = yield* Database;
+            return yield* db.query((d) => d
+              .select()
+              .from(userDocuments)
+              .where(eq(userDocuments.id, referenceId)))
+              .pipe(Effect.orDie);
+          }),
+        );
+        expect(referenceRows).toHaveLength(1);
+        expect(asRecord(annotatedResolved.body).created_at).toBe(
+          referenceRows[0]!.createdAt.toISOString(),
+        );
+
+        const plain = await api("POST", "/shares", aliceToken, {
+          subject_kind: "reference",
+          subject_id: referenceId,
+        });
+        expect(plain.status).toBe(201);
+        const plainResolved = await api(
+          "GET",
+          `/public/shares/${String(asRecord(plain.body).token)}`,
+        );
+        expect(plainResolved.status).toBe(200);
+        const plainMarkdown = String(asRecord(plainResolved.body).markdown);
+        expect(plainMarkdown).toContain("First shared paragraph.");
+        expect(plainMarkdown).not.toMatch(/\^p\d/);
+      },
+    );
+  });
+
+  it("returns the identical 404 for unknown, revoked, and expired tokens", async () => {
+    const { aliceToken } = currentFixture();
+    const created = await createSession("share-404-key", "Gone?", "Vanished.");
+    const sessionId = String(asRecord(created.body).id);
+
+    const revokedShare = await api("POST", "/shares", aliceToken, {
+      subject_kind: "session",
+      subject_id: sessionId,
+    });
+    const revokedId = String(asRecord(revokedShare.body).id);
+    const revokedToken = String(asRecord(revokedShare.body).token);
+    const revoked = await api("DELETE", `/shares/${revokedId}`, aliceToken);
+    expect(revoked.status).toBe(204);
+
+    const expiredShare = await api("POST", "/shares", aliceToken, {
+      subject_kind: "session",
+      subject_id: sessionId,
+      expires_at: "2020-01-01T00:00:00.000Z",
+    });
+    const expiredToken = String(asRecord(expiredShare.body).token);
+
+    const unknown = await api("GET", "/public/shares/not-a-real-token");
+    const revokedResolved = await api("GET", `/public/shares/${revokedToken}`);
+    const expiredResolved = await api("GET", `/public/shares/${expiredToken}`);
+    expect(unknown.status).toBe(404);
+    expect(revokedResolved.status).toBe(404);
+    expect(expiredResolved.status).toBe(404);
+    expect(revokedResolved.body).toEqual({ detail: "Share not found" });
+    expect(expiredResolved.body).toEqual({ detail: "Share not found" });
+    expect(unknown.body).toEqual(revokedResolved.body);
+    expect(unknown.body).toEqual(expiredResolved.body);
+  });
+
+  it("stores only a sha256 token hash, never the plaintext", async () => {
+    const { aliceToken } = currentFixture();
+    const created = await createSession("share-hash-key", "Hash me?", "Hashed.");
+    const share = await api("POST", "/shares", aliceToken, {
+      subject_kind: "session",
+      subject_id: String(asRecord(created.body).id),
+    });
+    const token = String(asRecord(share.body).token);
+
+    const rows = await runDb(
+      Effect.gen(function* () {
+        const db = yield* Database;
+        return yield* db.query((d) => d.select().from(shares)).pipe(Effect.orDie);
+      }),
+    );
+    expect(rows).toHaveLength(1);
+    const row = rows[0]!;
+    expect(row.tokenHash).toMatch(/^[0-9a-f]{64}$/);
+    expect(row.tokenHash).not.toContain(token);
+    expect(JSON.stringify(row)).not.toContain(token);
+  });
+
+  it("rejects API-key authentication on share creation", async () => {
+    const { aliceToken } = currentFixture();
+    const keyCreate = await api("POST", "/auth/api-keys", aliceToken, {
+      label: "share-test",
+    });
+    expect(keyCreate.status).toBe(201);
+    const rawKey = String(asRecord(keyCreate.body).raw_key);
+
+    const created = await createSession("share-apikey-key", "Keyed?", "Denied.");
+    const rejected = await api("POST", "/shares", rawKey, {
+      subject_kind: "session",
+      subject_id: String(asRecord(created.body).id),
+    });
+    expect(rejected.status).toBe(403);
+    expect(rejected.body).toEqual({
+      detail: "Share creation requires session authentication",
+    });
+  });
+
+  it("lets only the owner revoke a share", async () => {
+    const { aliceToken, bobToken } = currentFixture();
+    const created = await createSession("share-revoke-key", "Revoke?", "Later.");
+    const share = await api("POST", "/shares", aliceToken, {
+      subject_kind: "session",
+      subject_id: String(asRecord(created.body).id),
+    });
+    const shareId = String(asRecord(share.body).id);
+
+    const nonOwner = await api("DELETE", `/shares/${shareId}`, bobToken);
+    expect(nonOwner.status).toBe(404);
+    expect(nonOwner.body).toEqual({ detail: "Share not found" });
+
+    const missing = await api("DELETE", "/shares/00000000-0000-4000-8000-000000019999", aliceToken);
+    expect(missing.status).toBe(404);
+    expect(missing.body).toEqual({ detail: "Share not found" });
+
+    const owner = await api("DELETE", `/shares/${shareId}`, aliceToken);
+    expect(owner.status).toBe(204);
+    const rows = await runDb(
+      Effect.gen(function* () {
+        const db = yield* Database;
+        return yield* db.query((d) => d
+          .select({ revokedAt: shares.revokedAt })
+          .from(shares)
+          .where(eq(shares.id, shareId)))
+          .pipe(Effect.orDie);
+      }),
+    );
+    expect(rows[0]?.revokedAt).not.toBeNull();
+  });
+});

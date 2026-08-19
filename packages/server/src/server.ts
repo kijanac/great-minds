@@ -5,6 +5,7 @@ import {
   AuthMiddleware,
   BadRequest,
   CurrentAuth,
+  Forbidden,
   GreatMindsApi,
   ServiceUnavailable,
   Unauthorized,
@@ -40,6 +41,7 @@ import { ProposalsService } from "./proposals.ts";
 import { QueryService } from "./query.ts";
 import { RepliesService } from "./replies.ts";
 import { SessionsService } from "./sessions.ts";
+import { SharesService } from "./shares.ts";
 import { SourcesService } from "./sources.ts";
 import { UserDocumentsService } from "./user-documents.ts";
 import { VaultAccessService, VaultsService } from "./vaults.ts";
@@ -919,6 +921,57 @@ const RepliesHandlersLive = HttpApiBuilder.group(MountedGreatMindsApi, "replies"
     ),
 );
 
+const SharesHandlersLive = HttpApiBuilder.group(MountedGreatMindsApi, "shares", (handlers) =>
+  handlers
+    .handle("createShare", ({ payload }) =>
+      withDomainErrors(
+        Effect.gen(function* () {
+          const shares = yield* SharesService;
+          const current = yield* CurrentAuth;
+          if (current.credential_kind === "api_key") {
+            return yield* new Forbidden({
+              detail: "Share creation requires session authentication",
+            });
+          }
+          return yield* shares.create(current.user_id, payload);
+        }),
+      ),
+    )
+    .handle("listShares", () =>
+      withDomainErrors(
+        Effect.gen(function* () {
+          const shares = yield* SharesService;
+          const current = yield* CurrentAuth;
+          return yield* shares.listMine(current.user_id);
+        }),
+      ),
+    )
+    .handle("deleteShare", ({ params }) =>
+      withDomainErrors(
+        Effect.gen(function* () {
+          const shares = yield* SharesService;
+          const current = yield* CurrentAuth;
+          yield* shares.revoke(current.user_id, params.share_id);
+        }),
+      ),
+    ),
+);
+
+const PublicHandlersLive = HttpApiBuilder.group(MountedGreatMindsApi, "public", (handlers) =>
+  handlers.handle("resolveShare", ({ params }) =>
+    withDomainErrors(
+      Effect.gen(function* () {
+        const shares = yield* SharesService;
+        const detail = yield* shares.resolve(params.token);
+        return HttpServerResponse.setHeaders(HttpServerResponse.jsonUnsafe(detail), {
+          "X-Robots-Tag": "noindex",
+          "Referrer-Policy": "no-referrer",
+        });
+      }),
+    ),
+  ),
+);
+
 const StreamHeadersLive = HttpRouter.middleware(
   (effect) =>
     Effect.gen(function* () {
@@ -1041,6 +1094,8 @@ const ApiGroupsLive = Layer.mergeAll(
   DocumentsHandlersLive,
   SessionsHandlersLive,
   RepliesHandlersLive,
+  SharesHandlersLive,
+  PublicHandlersLive,
 ).pipe(Layer.provideMerge(AuthMiddlewareLive));
 
 const ApiLive = HttpApiBuilder.layer(MountedGreatMindsApi).pipe(Layer.provide(ApiGroupsLive));

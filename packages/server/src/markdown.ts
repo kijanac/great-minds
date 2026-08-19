@@ -117,6 +117,8 @@ const stringifyRuamelFrontmatter = (frontmatter: Record<string, unknown>) => {
 export const serializeFrontmatter = (frontmatter: Record<string, unknown>, body: string) =>
   `---\n${stringifyRuamelFrontmatter(frontmatter)}---\n${body}`;
 
+export const stripAnchors = (content: string) => content.replace(ANCHOR_MARKER_RE, "");
+
 export const injectAnchors = (content: string) => {
   const blocks = walkBlocks(content);
   if (blocks.length === 0) {

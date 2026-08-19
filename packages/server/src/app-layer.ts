@@ -29,6 +29,7 @@ import { ProposalsService, ProposalsServiceLive } from "./proposals.ts";
 import { QueryService, QueryServiceLive } from "./query.ts";
 import { RepliesService, RepliesServiceLive } from "./replies.ts";
 import { SessionsService, SessionsServiceLive } from "./sessions.ts";
+import { SharesService, SharesServiceLive } from "./shares.ts";
 import { SourceDocumentsService, SourceDocumentsServiceLive } from "./source-documents.ts";
 import { StagedFileIngestWorkflowLive } from "./staged-file-ingest-workflow.ts";
 import { SourcesService, SourcesServiceLive } from "./sources.ts";
@@ -72,6 +73,7 @@ export type AppLayerServices =
   | CostsService
   | DocumentsService
   | SessionsService
+  | SharesService
   | LanguageModel
   | EmbeddingsService
   | CostLookupService
@@ -213,6 +215,11 @@ export const makeAppLayers = (overrides: AppLayerOverrides = {}) => {
     Layer.provideMerge(SourceDocumentsLive),
     Layer.provideMerge(BaseLive),
   );
+  const SharesLive = SharesServiceLive.pipe(
+    Layer.provideMerge(SessionsLive),
+    Layer.provideMerge(UserDocumentsLive),
+    Layer.provideMerge(BaseLive),
+  );
   const QueryLive = QueryServiceLive.pipe(
     Layer.provideMerge(LanguageModelLiveLayer),
     Layer.provideMerge(EmbeddingsLiveLayer),
@@ -242,6 +249,7 @@ export const makeAppLayers = (overrides: AppLayerOverrides = {}) => {
       Layer.provideMerge(BaseLive),
     ),
     SessionsLive,
+    SharesLive,
     QueryLive,
     RepliesLive,
     SourceDocumentsLive,

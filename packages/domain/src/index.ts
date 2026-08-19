@@ -834,6 +834,55 @@ export const ReferencePathParams = Schema.Struct({
 });
 export type ReferencePathParams = typeof ReferencePathParams.Type;
 
+export const ShareSubjectKind = Schema.Literals(["session", "reference"] as const);
+export type ShareSubjectKind = typeof ShareSubjectKind.Type;
+
+export const ShareCreate = Schema.Struct({
+  subject_kind: ShareSubjectKind,
+  subject_id: Uuid,
+  include_annotations: Schema.optionalKey(Schema.Boolean),
+  expires_at: Schema.optionalKey(IsoDateTime),
+});
+export type ShareCreate = typeof ShareCreate.Type;
+
+export const ShareOverview = Schema.Struct({
+  id: Uuid,
+  subject_kind: ShareSubjectKind,
+  subject_id: Uuid,
+  created_by: Uuid,
+  include_annotations: Schema.Boolean,
+  created_at: IsoDateTime,
+  expires_at: Schema.NullOr(IsoDateTime),
+  revoked_at: Schema.NullOr(IsoDateTime),
+});
+export type ShareOverview = typeof ShareOverview.Type;
+
+export const ShareCreated = Schema.Struct({
+  ...ShareOverview.fields,
+  token: Schema.String,
+});
+export type ShareCreated = typeof ShareCreated.Type;
+
+export const SharedSessionDetail = Schema.Struct({
+  subject_kind: Schema.Literal("session"),
+  title: Schema.String,
+  markdown: Schema.String,
+  created_at: IsoDateTime,
+});
+export type SharedSessionDetail = typeof SharedSessionDetail.Type;
+
+export const SharedReferenceDetail = Schema.Struct({
+  subject_kind: Schema.Literal("reference"),
+  title: Schema.NullOr(Schema.String),
+  markdown: Schema.String,
+  origin: Schema.NullOr(Schema.String),
+  created_at: IsoDateTime,
+});
+export type SharedReferenceDetail = typeof SharedReferenceDetail.Type;
+
+export const SharedShareDetail = Schema.Union([SharedSessionDetail, SharedReferenceDetail]);
+export type SharedShareDetail = typeof SharedShareDetail.Type;
+
 export const WikiArticle = Schema.Struct({
   kind: Schema.Literal("wiki"),
   id: Uuid,
@@ -1169,6 +1218,8 @@ const CreatedIngestedDocument = IngestedDocument.pipe(HttpApiSchema.status("Crea
 const CreatedJobResponse = JobResponse.pipe(HttpApiSchema.status("Created"));
 const CreatedSessionResponse = CreateSessionResponse.pipe(HttpApiSchema.status("Created"));
 const CreatedReferenceDetail = ReferenceDetail.pipe(HttpApiSchema.status("Created"));
+const CreatedShare = ShareCreated.pipe(HttpApiSchema.status("Created"));
+const Shares = Schema.Array(ShareOverview);
 const CreatedPromoteExchangeResponse = PromoteExchangeResponse.pipe(
   HttpApiSchema.status("Created"),
 );
@@ -1688,6 +1739,35 @@ export const RepliesApiGroup = HttpApiGroup.make("replies")
     }).middleware(AuthMiddleware),
   );
 
+export const SharesApiGroup = HttpApiGroup.make("shares").add(
+  HttpApiEndpoint.post("createShare", "/shares", {
+    payload: ShareCreate,
+    success: CreatedShare,
+    error: ForbiddenNotFoundValidationErrors,
+  }).middleware(AuthMiddleware),
+  HttpApiEndpoint.get("listShares", "/shares", {
+    success: Shares,
+    error: ValidationErrors,
+  }).middleware(AuthMiddleware),
+  HttpApiEndpoint.delete("deleteShare", "/shares/:share_id", {
+    params: {
+      share_id: Uuid,
+    },
+    success: HttpApiSchema.NoContent,
+    error: NotFoundValidationErrors,
+  }).middleware(AuthMiddleware),
+);
+
+export const PublicApiGroup = HttpApiGroup.make("public").add(
+  HttpApiEndpoint.get("resolveShare", "/public/shares/:token", {
+    params: {
+      token: Schema.String,
+    },
+    success: SharedShareDetail,
+    error: NotFoundValidationErrors,
+  }),
+);
+
 export const GreatMindsApi = HttpApi.make("great-minds").add(
   MetaApiGroup,
   AuthApiGroup,
@@ -1704,4 +1784,6 @@ export const GreatMindsApi = HttpApi.make("great-minds").add(
   DocumentsApiGroup,
   SessionsApiGroup,
   RepliesApiGroup,
+  SharesApiGroup,
+  PublicApiGroup,
 );
