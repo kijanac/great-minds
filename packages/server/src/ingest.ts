@@ -21,13 +21,15 @@ import { and, eq, inArray, sql } from "drizzle-orm";
 import { Cause, Context, Effect, Layer } from "effect";
 import * as WorkflowEngine from "effect/unstable/workflow/WorkflowEngine";
 
+import { AppConfig } from "./config.ts";
 import { htmlToMarkdown, markdownWithTitle } from "./conversion.ts";
 import { sha256Hex } from "./crypto.ts";
-import { causeDetails, formatError } from "./error-details.ts";
+import { causeDetails, errorDetails, formatError } from "./error-details.ts";
 import { jobResponse } from "./jobs.ts";
 import { buildDocument, sessionExchangeDocumentInput, sessionExchangePath } from "./markdown.ts";
 import { progressSteps, type PipelineProgressStep } from "./pipeline-runs.ts";
 import { ProposalsService } from "./proposals.ts";
+import { fetchAnyUrl, fetchPublicUrl, responseTextCapped } from "./public-fetch.ts";
 import { SourceDocumentsService } from "./source-documents.ts";
 import { StagedFileIngestWorkflow } from "./staged-file-ingest-workflow.ts";
 import { ContentStorage, StagedStorage, vaultOwner } from "./storage.ts";
@@ -122,44 +124,43 @@ export const slugify = (text: string, maxLen = 80) =>
 export const normalizeUrl = (url: string) =>
   url.startsWith("http://") || url.startsWith("https://") ? url : `https://${url}`;
 
-const urlResponseContentType = (response: Response) =>
-  response.headers.get("content-type")?.split(";", 1)[0]?.trim().toLowerCase() ?? "text/html";
+const urlResponseContentType = (contentTypeHeader: string | null) =>
+  contentTypeHeader?.split(";", 1)[0]?.trim().toLowerCase() ?? "text/html";
 
 const isSupportedUrlContentType = (contentType: string) =>
   contentType === "text/html" || contentType === "text/plain";
 
-export const fetchUrlMarkdown = (rawUrl: string) =>
+const MAX_URL_RESPONSE_BYTES = 25 * 1024 * 1024;
+
+export const fetchUrlMarkdown = (rawUrl: string, allowPrivateUrlFetch: boolean) =>
   Effect.gen(function* () {
     const url = normalizeUrl(rawUrl);
+    const fetchUrl = allowPrivateUrlFetch ? fetchAnyUrl : fetchPublicUrl;
     const response = yield* Effect.tryPromise({
       try: (signal) =>
-        fetch(url, {
+        fetchUrl(url, {
           redirect: "follow",
           signal: AbortSignal.any([signal, AbortSignal.timeout(30_000)]),
           headers: { "User-Agent": USER_AGENT },
         }),
       catch: (error) =>
-        new BadRequest({
-          detail: `Failed to fetch URL: ${error instanceof Error ? error.message : String(error)}`,
-        }),
+        new BadRequest({ detail: `Failed to fetch URL: ${errorDetails(error).message}` }),
     });
     if (!response.ok) {
       return yield* new BadRequest({
         detail: `Failed to fetch URL: HTTP ${response.status} ${response.statusText}`,
       });
     }
-    const contentType = urlResponseContentType(response);
+    const contentType = urlResponseContentType(response.headers.get("content-type"));
     if (!isSupportedUrlContentType(contentType)) {
       return yield* new BadRequest({
         detail: `Unsupported URL content-type: ${contentType}`,
       });
     }
     const body = yield* Effect.tryPromise({
-      try: () => response.text(),
+      try: () => responseTextCapped(response, MAX_URL_RESPONSE_BYTES),
       catch: (error) =>
-        new BadRequest({
-          detail: `Failed to fetch URL: ${error instanceof Error ? error.message : String(error)}`,
-        }),
+        new BadRequest({ detail: `Failed to fetch URL: ${errorDetails(error).message}` }),
     });
     if (contentType === "text/plain") {
       return { url, title: null, markdown: body };
@@ -251,6 +252,7 @@ export const IngestServiceLive = Layer.effect(
   IngestService,
   Effect.gen(function* () {
     const db = yield* Database;
+    const config = yield* AppConfig;
     const access = yield* VaultAccessService;
     const storage = yield* ContentStorage;
     const stagedStorage = yield* StagedStorage;
@@ -310,7 +312,7 @@ export const IngestServiceLive = Layer.effect(
       pipelineRunId?: Uuid,
     ) =>
       Effect.gen(function* () {
-        const fetched = yield* fetchUrlMarkdown(rawUrl);
+        const fetched = yield* fetchUrlMarkdown(rawUrl, config.allowPrivateUrlFetch);
         const parsed = new URL(fetched.url);
         const stem = posix.parse(parsed.pathname).name || "doc";
         const dest = `raw/docs/${slugify(stem) || "doc"}.md`;

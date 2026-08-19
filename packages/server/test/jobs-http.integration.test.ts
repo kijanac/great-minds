@@ -107,6 +107,7 @@ const config = (dataDir: string): AppConfigShape => ({
   embeddingModel: "embedding/test",
   corsOrigins: ["http://localhost:5173"],
   suppressAuth: false,
+  allowPrivateUrlFetch: false,
   serverHost: "127.0.0.1",
   serverPort: 0,
 });

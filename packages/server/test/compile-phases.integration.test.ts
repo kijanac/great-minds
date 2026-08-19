@@ -110,6 +110,7 @@ const config: AppConfigShape = {
   embeddingModel: "qwen/qwen3-embedding-8b",
   corsOrigins: [],
   suppressAuth: false,
+  allowPrivateUrlFetch: false,
   serverHost: "127.0.0.1",
   serverPort: 0,
 };

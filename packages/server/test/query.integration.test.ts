@@ -143,6 +143,7 @@ const testConfig = (
   embeddingModel: "embedding/test-model",
   corsOrigins: ["http://localhost:5173"],
   suppressAuth: false,
+  allowPrivateUrlFetch: false,
   serverHost: "127.0.0.1",
   serverPort: 0,
 });

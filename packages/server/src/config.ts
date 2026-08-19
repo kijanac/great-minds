@@ -43,6 +43,7 @@ export type AppConfigShape = {
   readonly embeddingModel: string;
   readonly corsOrigins: readonly string[];
   readonly suppressAuth: boolean;
+  readonly allowPrivateUrlFetch: boolean;
   readonly serverHost: string;
   readonly serverPort: number;
 };
@@ -152,6 +153,7 @@ const appConfig = Config.all({
     ),
   ),
   suppressAuth: Config.boolean("SUPPRESS_AUTH").pipe(Config.withDefault(false)),
+  allowPrivateUrlFetch: Config.boolean("ALLOW_PRIVATE_URL_FETCH").pipe(Config.withDefault(false)),
   serverHost: nonEmptyString("HOST").pipe(Config.withDefault("0.0.0.0")),
   serverPort: Config.port("PORT").pipe(Config.withDefault(8787)),
 }).pipe(

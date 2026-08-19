@@ -15,6 +15,7 @@ import {
 import { and, desc, eq, sql } from "drizzle-orm";
 import { Context, Effect, Layer } from "effect";
 
+import { AppConfig } from "./config.ts";
 import { bodyContentHash, fileContentHash, sha256Hex } from "./crypto.ts";
 import { fetchUrlMarkdown, normalizeUrl, slugify } from "./ingest.ts";
 import { buildDocument, parseFrontmatter } from "./markdown.ts";
@@ -85,6 +86,7 @@ export const UserDocumentsServiceLive = Layer.effect(
   UserDocumentsService,
   Effect.gen(function* () {
     const db = yield* Database;
+    const config = yield* AppConfig;
     const storage = yield* ContentStorage;
 
     const getByUrl = (userId: Uuid, url: string) =>
@@ -135,7 +137,7 @@ export const UserDocumentsServiceLive = Layer.effect(
             return { reference: referenceOverview(existing), created: false };
           }
 
-          const fetched = yield* fetchUrlMarkdown(normalizedUrl);
+          const fetched = yield* fetchUrlMarkdown(normalizedUrl, config.allowPrivateUrlFetch);
           const parsedUrl = new URL(fetched.url);
           const stem = posix.parse(parsedUrl.pathname).name || "doc";
           const slug = slugify(stem) || "doc";

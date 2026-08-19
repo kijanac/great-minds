@@ -139,6 +139,7 @@ const config: AppConfigShape = {
   embeddingModel: "test",
   corsOrigins: [],
   suppressAuth: false,
+  allowPrivateUrlFetch: false,
   serverHost: "127.0.0.1",
   serverPort: 0,
 };
