@@ -3,6 +3,7 @@
   import ChevronRight from "@lucide/svelte/icons/chevron-right";
   import CornerUpRight from "@lucide/svelte/icons/corner-up-right";
   import ExternalLink from "@lucide/svelte/icons/external-link";
+  import Pencil from "@lucide/svelte/icons/pencil";
 
   import { articleMeta, type Article, type DocumentScope } from "$lib/api/doc";
   import { renameReference } from "$lib/api/references";
@@ -176,15 +177,6 @@
 
   {#if scope === "personal"}
     <div class="mb-3 flex items-start justify-end gap-2">
-      {#if document.kind === "reference"}
-        <button
-          type="button"
-          onclick={() => void startRename()}
-          class="h-8 shrink-0 rounded-sm border border-ink-border bg-transparent px-3 font-mono text-[length:var(--text-chrome)] tracking-[0.06em] text-warm-ghost transition-colors hover:border-gold-dim hover:text-warm"
-        >
-          rename
-        </button>
-      {/if}
       {#if promotionAction}
         <ReferencePromoteAction action={promotionAction} />
       {/if}
@@ -213,9 +205,16 @@
     </div>
   {:else}
     <h1
-      class="mb-3 min-w-0 text-[length:var(--text-title)] font-bold text-foreground"
+      class="group mb-3 min-w-0 text-[length:var(--text-title)] font-bold text-foreground"
     >
-      {title}
+      {title}{#if scope === "personal" && document.kind === "reference"}<button
+          type="button"
+          onclick={() => void startRename()}
+          aria-label="rename reference"
+          class="ml-2 inline-flex translate-y-[-0.15em] align-middle text-warm-ghost opacity-60 transition-opacity hover:text-gold group-hover:opacity-100"
+        >
+          <Pencil size={14} aria-hidden="true" />
+        </button>{/if}
     </h1>
   {/if}
 
