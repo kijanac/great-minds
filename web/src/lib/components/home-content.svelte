@@ -29,6 +29,7 @@
   import { loadPanelContent } from "$lib/panel-content";
   import { downloadSessionMarkdown } from "$lib/session-markdown";
   import { Session } from "$lib/session.svelte";
+  import type { SessionOrigin } from "$lib/api/sessions";
   import type { Exchange, SourceRef } from "$lib/types";
 
   let {
@@ -36,11 +37,13 @@
     initialExchanges,
     initialQuery,
     origin,
+    sessionOrigin = null,
   }: {
     sessionId?: string;
     initialExchanges?: Exchange[];
     initialQuery?: string;
     origin?: string;
+    sessionOrigin?: SessionOrigin | null;
   } = $props();
 
   const sessions = useSessions();
@@ -88,6 +91,21 @@
   );
   const isActive = $derived(session.phase !== "idle");
   const savedSessionId = $derived(session.sessionId);
+  // The opened session's origin: from the loaded session, or — while a
+  // doc-initiated conversation is still being created — from the `origin`
+  // path the reader handed us.
+  const viewOrigin = $derived<SessionOrigin | null>(
+    sessionOrigin ??
+      (initial.origin
+        ? {
+            doc_path: initial.origin,
+            origin_scope: "vault",
+            anchor: null,
+            paragraph: null,
+            paragraph_index: null,
+          }
+        : null),
+  );
   const panelQuery = createQuery(() => ({
     queryKey: [
       "vault",
@@ -301,6 +319,7 @@
           >
             <SessionThread
               {session}
+              origin={viewOrigin}
               activeCard={selectedCard?.label ?? null}
               panelDocked={!!selectedCard}
               onCardClick={toggleCard}

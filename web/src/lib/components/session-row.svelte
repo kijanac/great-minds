@@ -1,6 +1,9 @@
 <script lang="ts">
+  import CornerUpRight from "@lucide/svelte/icons/corner-up-right";
+
   import { Button } from "$lib/components/ui/button";
   import type { SessionSummary } from "$lib/types";
+  import { docDisplayName } from "$lib/utils";
 
   let {
     session,
@@ -32,6 +35,14 @@
   <span
     class="flex items-center gap-3 font-mono text-[length:var(--text-chrome)] text-muted-foreground"
   >
+    {#if session.origin?.doc_path}
+      <span
+        class="inline-flex items-center gap-1 text-warm-ghost transition-colors group-hover:text-warm-faint"
+      >
+        <CornerUpRight size={10} class="text-gold-muted" />
+        from {docDisplayName(session.origin.doc_path)}
+      </span>
+    {/if}
     {formatDate(session.updated_at)}
   </span>
 </Button>

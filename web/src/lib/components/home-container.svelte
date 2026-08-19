@@ -43,7 +43,8 @@
 {:else}
   <HomeContent
     {sessionId}
-    initialExchanges={saved.data ?? undefined}
+    initialExchanges={saved.data?.exchanges ?? undefined}
+    sessionOrigin={saved.data?.origin ?? null}
     {initialQuery}
     {origin}
   />

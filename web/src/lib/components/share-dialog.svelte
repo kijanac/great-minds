@@ -26,16 +26,18 @@
   let shareId = $state<string | null>(null);
   let token = $state<string | null>(null);
   let copied = $state(false);
+  let includeAnnotations = $state(true);
 
   const link = $derived(token ? `${location.origin}/s/${token}` : null);
 
-  async function create() {
+  async function create(include: boolean = includeAnnotations) {
     pending = true;
     error = null;
     try {
       const result = await createShare({
         subject_kind: subjectKind,
         subject_id: subjectId,
+        include_annotations: include,
       });
       shareId = result.share.id;
       token = result.share.token;
@@ -47,6 +49,13 @@
     }
   }
 
+  async function toggleAnnotations() {
+    const next = !includeAnnotations;
+    includeAnnotations = next;
+    // The backend keeps one share per subject and updates the flag in place.
+    await create(next);
+  }
+
   async function recreate() {
     if (!shareId) return;
     revoking = true;
@@ -56,6 +65,7 @@
       const result = await createShare({
         subject_kind: subjectKind,
         subject_id: subjectId,
+        include_annotations: includeAnnotations,
       });
       shareId = result.share.id;
       token = result.share.token;
@@ -78,6 +88,7 @@
     shareId = null;
     token = null;
     copied = false;
+    includeAnnotations = true;
   }
 
   async function copy() {
@@ -151,6 +162,23 @@
           {/if}
         </Button>
       </div>
+      {#if subjectKind === "reference"}
+        <button
+          type="button"
+          role="checkbox"
+          aria-checked={includeAnnotations}
+          onclick={() => void toggleAnnotations()}
+          disabled={pending}
+          class="flex items-center gap-2.5 self-start rounded-sm border border-ink-border px-3 py-1.5 font-mono text-[length:var(--text-chrome)] tracking-[0.06em] text-warm-ghost transition-colors hover:border-gold-dim hover:text-warm-faint disabled:opacity-60"
+        >
+          <span
+            class={`flex h-3.5 w-3.5 items-center justify-center border text-[10px] leading-none ${includeAnnotations ? "border-gold-dim bg-gold/15 text-gold" : "border-ink-border text-transparent"}`}
+          >
+            ✓
+          </span>
+          include annotations
+        </button>
+      {/if}
     {:else if pending}
       <p
         class="font-mono text-[length:var(--text-chrome)] tracking-[0.04em] text-warm-dim"

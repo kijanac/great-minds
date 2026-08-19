@@ -49,6 +49,27 @@ export interface BtwThread {
   exchanges: Exchange[];
 }
 
+// A renderable annotation thread. Doc-born sessions (persistent) carry
+// sessionId/draft/anchored/createdAt; session-scoped BTW threads carry only
+// the base fields (optionals stay undefined).
+export interface ThreadLike {
+  id: string;
+  anchor: TextAnchor;
+  exchanges: Exchange[];
+  sessionId?: string | null;
+  draft?: boolean;
+  createdAt?: string | null;
+}
+
+// A doc-born session as surfaced by the reader: an anchored note thread or a
+// doc-initiated conversation (anchored=false, no span in the body).
+export interface DocThread extends ThreadLike {
+  sessionId: string | null;
+  draft: boolean;
+  anchored: boolean;
+  createdAt: string | null;
+}
+
 export interface SelectionInfo extends TextAnchor {
   x: number;
   y: number;

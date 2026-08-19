@@ -32,12 +32,29 @@ export const sharedSessionDetailSchema = z.object({
 });
 export type SharedSessionDetail = z.infer<typeof sharedSessionDetailSchema>;
 
+const sharedAnnotationSchema = z.object({
+  anchor: z.object({
+    quote: z.string(),
+    context: z.string().nullable(),
+    block_offset: z.number().nullable(),
+  }),
+  exchanges: z.array(
+    z.object({
+      query: z.string(),
+      answer: z.string(),
+    }),
+  ),
+  created_at: z.string(),
+});
+export type SharedAnnotation = z.infer<typeof sharedAnnotationSchema>;
+
 export const sharedReferenceDetailSchema = z.object({
   subject_kind: z.literal("reference"),
   title: z.string().nullable(),
   markdown: z.string(),
   origin: z.string().nullable(),
   created_at: z.string(),
+  annotations: z.array(sharedAnnotationSchema),
 });
 export type SharedReferenceDetail = z.infer<typeof sharedReferenceDetailSchema>;
 
@@ -57,6 +74,7 @@ async function responseError(response: Response, fallback: string): Promise<Erro
 export interface CreateShareInput {
   subject_kind: ShareSubjectKind;
   subject_id: string;
+  include_annotations?: boolean;
 }
 
 export type ResolveShareResult = { status: "ok"; share: SharedShareDetail } | { status: "gone" };

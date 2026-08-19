@@ -20,6 +20,11 @@
     onFootnoteToggle: (id: string) => void;
   }
 
+  export interface MarginDot {
+    id: string;
+    blockOffset: number;
+  }
+
   let {
     roots,
     idPrefix,
@@ -27,6 +32,8 @@
     panelDocked = false,
     resetKey,
     onLinkClick,
+    marginDots = [],
+    onDotClick,
     class: className,
     root = $bindable(null),
     children,
@@ -37,6 +44,8 @@
     panelDocked?: boolean;
     resetKey: string;
     onLinkClick?: (event: MouseEvent) => void;
+    marginDots?: MarginDot[];
+    onDotClick?: (dot: MarginDot) => void;
     class?: string;
     root?: HTMLDivElement | null;
     children: Snippet<[FootnoteRenderContext]>;
@@ -47,6 +56,7 @@
   let hoveredFootnote = $state<string | null>(null);
   let pinnedFootnotes = $state<string[]>([]);
   let notePositions = $state<Record<string, number>>({});
+  let dotPositions = $state<Record<string, number>>({});
 
   const presentation = $derived(buildFootnotePresentation(roots, idPrefix));
   const visibleNotes = $derived(
@@ -73,6 +83,46 @@
     return () => {
       wide.removeEventListener("change", update);
       coarse.removeEventListener("change", update);
+    };
+  });
+
+  $effect(() => {
+    const currentRoot = root;
+    const currentDots = marginDots;
+    if (!currentRoot || currentDots.length === 0) {
+      dotPositions = {};
+      return;
+    }
+
+    let frame = 0;
+    const measure = async () => {
+      await tick();
+      frame = requestAnimationFrame(() => {
+        const rootRect = currentRoot.getBoundingClientRect();
+        const next: Record<string, number> = {};
+        for (const dot of currentDots) {
+          const block = currentRoot.querySelector<HTMLElement>(
+            `[data-block-offset="${CSS.escape(String(dot.blockOffset))}"]`,
+          );
+          const dotElement = currentRoot.querySelector<HTMLElement>(
+            `[data-margin-dot="${CSS.escape(dot.id)}"]`,
+          );
+          if (!block || !dotElement) continue;
+          const rect = block.getBoundingClientRect();
+          next[dot.id] = rect.top - rootRect.top + rect.height / 2;
+        }
+        dotPositions = next;
+      });
+    };
+
+    void measure();
+    const observer = new ResizeObserver(() => void measure());
+    observer.observe(currentRoot);
+    window.addEventListener("resize", measure);
+    return () => {
+      cancelAnimationFrame(frame);
+      observer.disconnect();
+      window.removeEventListener("resize", measure);
     };
   });
 
@@ -181,6 +231,27 @@
             footnoteDefinitions={presentation.definitions}
           />
         </aside>
+      {/each}
+    </div>
+  {/if}
+
+  {#if marginDots.length > 0}
+    <div
+      data-margin-dots
+      class="pointer-events-none absolute inset-0 print:hidden"
+    >
+      {#each marginDots as dot (dot.id)}
+        <button
+          type="button"
+          data-margin-dot={dot.id}
+          onclick={() => onDotClick?.(dot)}
+          title="annotation thread"
+          aria-label="toggle annotation thread"
+          class={`pointer-events-auto absolute left-[calc(100%+0.85rem)] -translate-y-1/2 rounded-full p-1 text-[11px] leading-none text-btw transition-colors hover:text-btw-bright hover:drop-shadow-[0_0_6px_rgba(106,138,96,0.5)] ${dot.id in dotPositions ? "opacity-100" : "opacity-0"}`}
+          style:top={`${dotPositions[dot.id] ?? 0}px`}
+        >
+          ●
+        </button>
       {/each}
     </div>
   {/if}

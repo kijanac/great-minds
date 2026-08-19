@@ -1,6 +1,9 @@
 <script lang="ts">
   import { browser } from "$app/environment";
+  import { goto } from "$app/navigation";
+  import CornerUpRight from "@lucide/svelte/icons/corner-up-right";
 
+  import type { SessionOrigin } from "$lib/api/sessions";
   import AnswerBlock from "$lib/components/answer-block.svelte";
   import FollowUpBar from "$lib/components/follow-up-bar.svelte";
   import PromoteButton from "$lib/components/promote-button.svelte";
@@ -11,20 +14,30 @@
   import { Separator } from "$lib/components/ui/separator";
   import type { Session } from "$lib/session.svelte";
   import type { SourceRef } from "$lib/types";
+  import { docDisplayName } from "$lib/utils";
 
   let {
     session,
+    origin = null,
     activeCard,
     panelDocked = false,
     onCardClick,
     onLinkClick,
   }: {
     session: Session;
+    origin?: SessionOrigin | null;
     activeCard: string | null;
     panelDocked?: boolean;
     onCardClick: (source: SourceRef) => void;
     onLinkClick?: (event: MouseEvent) => void;
   } = $props();
+
+  const originDocPath = $derived(origin?.doc_path ?? null);
+  const originHref = $derived(
+    originDocPath
+      ? `${origin!.origin_scope === "personal" ? "/refs/" : "/doc/"}${originDocPath}`
+      : null,
+  );
 
   let hintDismissed = $state(
     browser && localStorage.getItem("onboarding-hint-seen") === "true",
@@ -76,6 +89,28 @@
   role={onLinkClick ? "presentation" : undefined}
 >
   <div id="session-print" class="mx-auto max-w-[740px] px-4 pt-7 pb-5 md:px-10">
+    {#if originHref}
+      <div class="mb-8">
+        <button
+          type="button"
+          onclick={() => void goto(originHref)}
+          class="inline-flex items-center gap-2 rounded-sm border border-ink-border bg-ink-raised px-3 py-1.5 font-mono text-[length:var(--text-chrome)] tracking-[0.08em] text-warm-faint transition-colors hover:border-gold-dim hover:text-warm"
+        >
+          <CornerUpRight size={12} class="text-gold-muted" />
+          from {docDisplayName(originDocPath ?? "")}
+        </button>
+        {#if origin?.anchor}
+          <blockquote
+            class="mt-4 border-l-2 border-gold-dim pl-4 font-serif text-[length:var(--text-small)] leading-[1.7] text-warm-faint italic"
+          >
+            ❝ …{origin.anchor.length > 160
+              ? `${origin.anchor.slice(0, 160)}…`
+              : origin.anchor}… ❞
+          </blockquote>
+        {/if}
+      </div>
+    {/if}
+
     {#each session.thread as exchange, index (exchange.id)}
       <div>
         {#if index > 0}

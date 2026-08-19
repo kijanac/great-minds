@@ -1,10 +1,15 @@
 import { createQuery } from "@tanstack/svelte-query";
 
-import { loadSession, type SessionEvent } from "$lib/api/sessions";
+import { loadSession, type SessionEvent, type SessionOrigin } from "$lib/api/sessions";
 import { activeVault } from "$lib/hooks/use-vault.svelte";
 import type { BtwThread, Exchange } from "$lib/types";
 
-function replayEvents(events: SessionEvent[]): Exchange[] {
+export interface SavedSession {
+  exchanges: Exchange[];
+  origin: SessionOrigin | null;
+}
+
+function replayEvents(events: SessionEvent[]): SavedSession {
   const exchanges: Exchange[] = [];
   const exchangeIndexes = new Map<string, number>();
   const latestBtw = new Map<string, Extract<SessionEvent, { type: "btw" }>>();
@@ -68,7 +73,10 @@ function replayEvents(events: SessionEvent[]): Exchange[] {
   for (const exchange of exchanges) {
     exchange.btws = btwsByExchange.get(exchange.id) ?? [];
   }
-  return exchanges;
+  const meta = events.find(
+    (event): event is Extract<SessionEvent, { type: "meta" }> => event.type === "meta",
+  );
+  return { exchanges, origin: meta?.origin ?? null };
 }
 
 export function useSavedSession(sessionId: () => string | null) {

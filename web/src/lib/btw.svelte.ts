@@ -1,61 +1,136 @@
 import { createReply, streamReply } from "$lib/api/replies";
-import {
-  appendExchange,
-  createSession,
-  type ExchangePayload,
-  type OriginScope,
-} from "$lib/api/sessions";
-import type { BtwThread, Exchange, SelectionInfo } from "$lib/types";
-import { buildBtwHistory, buildBtwQuery, genId, isAbortError } from "$lib/utils";
+import { listSessionsByOrigin, type OriginScope, type SessionEvent } from "$lib/api/sessions";
+import type { DocThread, Exchange, SelectionInfo } from "$lib/types";
+import { buildBtwHistory, genId, isAbortError } from "$lib/utils";
 
-export class EphemeralBtws {
-  btws = $state<BtwThread[]>([]);
+/**
+ * Persistent annotation threads anchored to a document. Loads every session
+ * the caller owns for this doc (anchored note threads plus doc-initiated
+ * conversations) via by-origin, and owns the local draft flow: a highlight
+ * creates a draft thread locally (no server call) that becomes a real session
+ * the moment its first reply is created.
+ */
+export class DocThreads {
+  threads = $state<DocThread[]>([]);
+  loading = $state(false);
+  error = $state<string | null>(null);
+  // Thread ids currently expanded inline in the reader. Owned here so both the
+  // doc-header chip (jump to mark) and the body rendering share one signal.
+  expanded = $state<Set<string>>(new Set());
+
   #controllers = new Set<AbortController>();
+  #loaded = false;
 
   constructor(
     private readonly originPath: string,
     private readonly originScope: OriginScope,
-    private readonly onSpunOff: (sessionId: string) => void,
-  ) {}
+    private readonly onOpenSession: (sessionId: string) => void,
+  ) {
+    void this.load();
+  }
 
   destroy = (): void => {
     for (const controller of this.#controllers) controller.abort();
     this.#controllers.clear();
-    this.btws = [];
+    this.threads = [];
+    this.expanded = new Set();
+    this.error = null;
+    this.#loaded = false;
   };
 
-  startBtw = (info: SelectionInfo): void => {
-    this.btws = [
-      ...this.btws,
+  load = async (): Promise<void> => {
+    if (this.#loaded) return;
+    this.#loaded = true;
+    this.loading = true;
+    const controller = new AbortController();
+    this.#controllers.add(controller);
+    try {
+      const details = await listSessionsByOrigin(this.originPath, controller.signal);
+      this.threads = details.map((detail) => {
+        const origin = detail.session.origin;
+        const anchored = origin?.anchor !== null && origin?.anchor !== undefined;
+        return {
+          id: `thread:${detail.session.id}`,
+          sessionId: detail.session.id,
+          draft: false,
+          anchored,
+          anchor: {
+            blockOffset: origin?.paragraph_index ?? -1,
+            quote: origin?.anchor ?? "",
+            context: origin?.paragraph ?? "",
+          },
+          exchanges: detail.events
+            .filter(
+              (event): event is Extract<SessionEvent, { type: "exchange" }> =>
+                event.type === "exchange",
+            )
+            .map((event) => ({
+              id: event.exId,
+              query: event.query,
+              thinking: event.thinking,
+              answer: event.answer,
+              btws: [],
+              replyId: event.reply_id,
+              streaming: false,
+            })),
+          createdAt: detail.session.created_at,
+        };
+      });
+      this.error = null;
+    } catch (error) {
+      if (isAbortError(error)) return;
+      console.error("Failed to load doc threads:", error);
+      this.error = "failed to load notes";
+    } finally {
+      this.loading = false;
+      this.#controllers.delete(controller);
+    }
+  };
+
+  #findThread = (threadId: string): DocThread | undefined =>
+    this.threads.find((thread) => thread.id === threadId);
+
+  /** Highlight → local draft. No server call until the first question lands. */
+  startThread = (info: SelectionInfo): void => {
+    const id = genId("note");
+    this.threads = [
+      ...this.threads,
       {
-        id: genId("btw"),
-        exchangeId: info.exchangeId,
+        id,
+        sessionId: null,
+        draft: true,
+        anchored: true,
         anchor: {
           blockOffset: info.blockOffset,
           quote: info.quote,
           context: info.context,
         },
         exchanges: [],
+        createdAt: null,
       },
     ];
+    this.expanded = new Set([...this.expanded, id]);
   };
 
-  replyBtw = (btwId: string, userText: string): void => {
-    const target = this.btws.find((btw) => btw.id === btwId);
-    const anchor = target?.anchor ?? {
-      blockOffset: -1,
-      quote: "",
-      context: "",
-    };
-    const priorExchanges = target?.exchanges ?? [];
-    const isFirst = priorExchanges.length === 0;
+  replyThread = (threadId: string, userText: string): void => {
+    const target = this.#findThread(threadId);
+    if (!target) return;
+    const anchor = target.anchor;
+    const priorExchanges = target.exchanges;
+    // A draft whose first create failed (no session yet) retries as a fresh
+    // first turn; anything with a session follows up on it.
+    const isFirst = priorExchanges.length === 0 || target.sessionId === null;
     const turnId = genId("ex");
 
-    const patchExchanges = (mutate: (exchanges: Exchange[]) => Exchange[]): void => {
-      this.btws = this.btws.map((btw) =>
-        btw.id === btwId ? { ...btw, exchanges: mutate(btw.exchanges) } : btw,
+    const patchThread = (patch: Partial<DocThread>): void => {
+      this.threads = this.threads.map((thread) =>
+        thread.id === threadId ? { ...thread, ...patch } : thread,
       );
     };
+    const patchExchanges = (mutate: (exchanges: Exchange[]) => Exchange[]): void =>
+      patchThread({
+        exchanges: mutate(this.threads.find((thread) => thread.id === threadId)?.exchanges ?? []),
+      });
     const patchTurn = (patch: Partial<Exchange>): void =>
       patchExchanges((exchanges) =>
         exchanges.map((exchange) =>
@@ -75,25 +150,60 @@ export class EphemeralBtws {
       },
     ]);
 
-    const question = isFirst ? buildBtwQuery(anchor, userText) : userText;
-    const history = buildBtwHistory(priorExchanges, anchor);
     const controller = new AbortController();
     this.#controllers.add(controller);
 
+    // The draft survives until the reply settles: once the server owns the
+    // session the thread is persistent, even if the stream then fails.
+    const settleDraft = (): void => {
+      if (this.#findThread(threadId)?.sessionId) {
+        patchThread({ draft: false });
+      }
+    };
+
     void (async () => {
       try {
-        const created = await createReply(
-          {
-            kind: "ephemeral",
-            question,
-            origin_path: this.originPath,
-            origin_scope: this.originScope,
-            history,
-            mode: "btw",
-          },
-          controller.signal,
-        );
+        const created = isFirst
+          ? await createReply(
+              {
+                kind: "exchange",
+                exchange_id: turnId,
+                create: {
+                  idempotency_key: crypto.randomUUID(),
+                  origin_scope: this.originScope,
+                  origin: {
+                    doc_path: this.originPath,
+                    origin_scope: this.originScope,
+                    anchor: anchor.quote,
+                    paragraph: anchor.context,
+                    paragraph_index: anchor.blockOffset,
+                  },
+                },
+                // The server composes the passage/highlight prompt; the
+                // session stores this clean text.
+                question: userText,
+                history: [],
+                mode: "btw",
+              },
+              controller.signal,
+            )
+          : await createReply(
+              {
+                kind: "exchange",
+                exchange_id: turnId,
+                session_id: target.sessionId!,
+                question: userText,
+                // First history turn is composed via buildBtwQuery semantics
+                // from the thread's origin; later turns are raw.
+                history: buildBtwHistory(priorExchanges, anchor),
+                mode: "btw",
+              },
+              controller.signal,
+            );
         patchTurn({ replyId: created.reply_id });
+        if (target.sessionId === null && created.session_id !== null) {
+          patchThread({ sessionId: created.session_id });
+        }
         for await (const snapshot of streamReply(created.reply_id, controller.signal)) {
           patchTurn({
             thinking: snapshot.sources.length > 0 ? [{ sources: snapshot.sources }] : [],
@@ -102,52 +212,49 @@ export class EphemeralBtws {
             error: snapshot.error,
           });
         }
+        settleDraft();
       } catch (error) {
         if (isAbortError(error)) return;
-        console.error("Ephemeral BTW reply failed:", error);
+        console.error("Doc thread reply failed:", error);
         patchTurn({ streaming: false });
+        settleDraft();
       } finally {
         this.#controllers.delete(controller);
       }
     })();
   };
 
-  spinOff = async (btwId: string): Promise<void> => {
-    const target = this.btws.find((btw) => btw.id === btwId);
-    if (
-      !target ||
-      target.exchanges.some((exchange) => exchange.streaming) ||
-      target.exchanges.length === 0
-    ) {
-      return;
-    }
-
-    try {
-      const { id } = await createSession(
-        target.exchanges[0] as ExchangePayload,
-        crypto.randomUUID(),
-        {
-          doc_path: this.originPath,
-          origin_scope: this.originScope,
-          anchor: target.anchor.quote,
-          paragraph: null,
-          paragraph_index: null,
-        },
-      );
-      for (let index = 1; index < target.exchanges.length; index++) {
-        await appendExchange(id, target.exchanges[index] as ExchangePayload);
-      }
-      this.btws = this.btws.filter((btw) => btw.id !== btwId);
-      this.onSpunOff(id);
-    } catch (error) {
-      console.error("Failed to spin off BTW:", error);
-    }
+  dismissEmpty = (threadId: string): void => {
+    const target = this.#findThread(threadId);
+    if (!target?.draft || target.exchanges.length > 0) return;
+    this.threads = this.threads.filter((thread) => thread.id !== threadId);
+    const next = new Set(this.expanded);
+    next.delete(threadId);
+    this.expanded = next;
   };
 
-  dismissEmpty = (btwId: string): void => {
-    const target = this.btws.find((btw) => btw.id === btwId);
-    if (target?.exchanges.length === 0) {
-      this.btws = this.btws.filter((btw) => btw.id !== btwId);
-    }
+  toggleExpanded = (threadId: string): void => {
+    const next = new Set(this.expanded);
+    if (next.has(threadId)) next.delete(threadId);
+    else next.add(threadId);
+    this.expanded = next;
+  };
+
+  openSession = (threadId: string): void => {
+    const target = this.#findThread(threadId);
+    if (target?.sessionId) this.onOpenSession(target.sessionId);
+  };
+
+  /** Expand a thread and scroll its anchor block into view (chip "jump"). */
+  jumpTo = (threadId: string): void => {
+    const target = this.#findThread(threadId);
+    if (!target) return;
+    this.expanded = new Set([...this.expanded, threadId]);
+    requestAnimationFrame(() => {
+      const block = window.document.querySelector<HTMLElement>(
+        `[data-block-offset="${target.anchor.blockOffset}"]`,
+      );
+      block?.scrollIntoView({ block: "start" });
+    });
   };
 }

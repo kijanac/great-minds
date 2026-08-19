@@ -1,6 +1,7 @@
 <script lang="ts">
   import ChevronDown from "@lucide/svelte/icons/chevron-down";
   import ChevronRight from "@lucide/svelte/icons/chevron-right";
+  import CornerUpRight from "@lucide/svelte/icons/corner-up-right";
   import ExternalLink from "@lucide/svelte/icons/external-link";
 
   import { articleMeta, type Article, type DocumentScope } from "$lib/api/doc";
@@ -8,7 +9,8 @@
   import ShareDialog from "$lib/components/share-dialog.svelte";
   import * as Collapsible from "$lib/components/ui/collapsible";
   import { CHIP_BASE, CHIP_INACTIVE } from "$lib/chip";
-  import { cn } from "$lib/utils";
+  import type { ThreadLike } from "$lib/types";
+  import { cn, formatShortDate } from "$lib/utils";
   import type { ReferencePromotionAction as PromotionAction } from "$lib/types";
 
   let {
@@ -18,6 +20,9 @@
     archived = false,
     supersededBy = null,
     onSupersessorClick,
+    threads = [],
+    onThreadJump,
+    onThreadOpen,
   }: {
     document: Article;
     scope: DocumentScope;
@@ -25,9 +30,22 @@
     archived?: boolean;
     supersededBy?: string | null;
     onSupersessorClick?: (slug: string) => void;
+    threads?: ThreadLike[];
+    onThreadJump?: (threadId: string) => void;
+    onThreadOpen?: (threadId: string) => void;
   } = $props();
 
   let extraOpen = $state(false);
+  let threadsOpen = $state(false);
+  const isAnchored = (thread: ThreadLike): boolean =>
+    (thread as { anchored?: boolean }).anchored ?? true;
+  const notes = $derived(threads.filter(isAnchored));
+  const conversations = $derived(
+    threads.filter((thread) => !isAnchored(thread)),
+  );
+  const showThreadsChip = $derived(notes.length + conversations.length > 0);
+  const shortQuote = (quote: string) =>
+    quote.length > 44 ? `${quote.slice(0, 44)}...` : quote;
   const metadata = $derived(articleMeta(document));
   const metaParts = $derived(
     [metadata.author, metadata.published_date, metadata.genre].filter(
@@ -134,6 +152,102 @@
         from {metadata.origin}
       {/if}
     </p>
+  {/if}
+
+  {#if showThreadsChip}
+    <Collapsible.Root bind:open={threadsOpen} class="mt-4">
+      <Collapsible.Trigger
+        class="flex h-auto items-center gap-2 rounded-sm border border-ink-border bg-ink-raised px-3 py-1.5 font-mono text-[length:var(--text-chrome)] tracking-[0.08em] text-warm-faint transition-colors hover:border-gold-dim hover:text-warm"
+      >
+        <span class="text-gold-muted">⊹</span>
+        <span>
+          {notes.length} note{notes.length === 1 ? "" : "s"} ·
+          {conversations.length} conversation{conversations.length === 1
+            ? ""
+            : "s"}
+        </span>
+        {#if threadsOpen}
+          <ChevronDown size={11} />
+        {:else}
+          <ChevronRight size={11} />
+        {/if}
+      </Collapsible.Trigger>
+      <Collapsible.Content>
+        <div class="mt-3 space-y-2.5 border-l border-ink-subtle pl-4">
+          {#if notes.length > 0}
+            <p
+              class="font-mono text-[length:var(--text-chrome)] tracking-[0.1em] text-gold-muted uppercase"
+            >
+              notes
+            </p>
+            {#each notes as note (note.id)}
+              <button
+                type="button"
+                onclick={() => onThreadJump?.(note.id)}
+                class="group flex w-full items-baseline gap-2 text-left"
+              >
+                <span class="shrink-0 text-[10px] leading-none text-btw">●</span
+                >
+                <span
+                  class="min-w-0 flex-1 truncate font-serif text-[length:var(--text-small)] text-warm-dim italic transition-colors group-hover:text-warm"
+                >
+                  “{shortQuote(note.anchor.quote)}”
+                </span>
+                <span
+                  class="shrink-0 font-mono text-[length:var(--text-chrome)] text-warm-ghost lowercase"
+                >
+                  {note.exchanges.length} turn{note.exchanges.length === 1
+                    ? ""
+                    : "s"} ·
+                  {formatShortDate(note.createdAt ?? null)}
+                </span>
+                <span
+                  class="shrink-0 font-mono text-[length:var(--text-chrome)] tracking-[0.1em] text-gold-muted uppercase transition-colors group-hover:text-gold"
+                >
+                  jump
+                </span>
+              </button>
+            {/each}
+          {/if}
+          {#if conversations.length > 0}
+            <p
+              class="font-mono text-[length:var(--text-chrome)] tracking-[0.1em] text-gold-muted uppercase"
+            >
+              conversations
+            </p>
+            {#each conversations as conversation (conversation.id)}
+              <button
+                type="button"
+                onclick={() => onThreadOpen?.(conversation.id)}
+                class="group flex w-full items-baseline gap-2 text-left"
+              >
+                <CornerUpRight
+                  size={11}
+                  class="shrink-0 translate-y-px text-gold-muted"
+                />
+                <span
+                  class="min-w-0 flex-1 truncate font-serif text-[length:var(--text-small)] text-warm-dim italic transition-colors group-hover:text-warm"
+                >
+                  “{shortQuote(
+                    conversation.exchanges[0]?.query ?? "untitled conversation",
+                  )}”
+                </span>
+                <span
+                  class="shrink-0 font-mono text-[length:var(--text-chrome)] text-warm-ghost lowercase"
+                >
+                  {formatShortDate(conversation.createdAt ?? null)}
+                </span>
+                <span
+                  class="shrink-0 font-mono text-[length:var(--text-chrome)] tracking-[0.1em] text-gold-muted uppercase transition-colors group-hover:text-gold"
+                >
+                  open
+                </span>
+              </button>
+            {/each}
+          {/if}
+        </div>
+      </Collapsible.Content>
+    </Collapsible.Root>
   {/if}
 
   {#if extraEntries.length > 0}

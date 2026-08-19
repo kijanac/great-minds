@@ -4,7 +4,7 @@
   import { createQuery } from "@tanstack/svelte-query";
   import { onDestroy, tick, untrack } from "svelte";
 
-  import { EphemeralBtws } from "$lib/btw.svelte";
+  import { DocThreads } from "$lib/btw.svelte";
   import type { DocumentScope } from "$lib/api/doc";
   import ArticleChrome from "$lib/components/article-chrome.svelte";
   import ArticlePanel from "$lib/components/article-panel.svelte";
@@ -38,8 +38,8 @@
   const initialPath = untrack(() => path);
   const readerScope = untrack(() => scope);
   let btwPath = initialPath;
-  let ephemeralBtws = $state(
-    new EphemeralBtws(
+  let docThreads = $state(
+    new DocThreads(
       initialPath,
       readerScope,
       (id) => void goto(`/sessions/${id}`),
@@ -101,13 +101,13 @@
 
   const handleLinkClick = createLinkInterceptor(openRawCitation);
 
-  onDestroy(() => ephemeralBtws.destroy());
+  onDestroy(() => docThreads.destroy());
 
   $effect(() => {
     if (path === btwPath) return;
-    ephemeralBtws.destroy();
+    docThreads.destroy();
     btwPath = path;
-    ephemeralBtws = new EphemeralBtws(
+    docThreads = new DocThreads(
       path,
       readerScope,
       (id) => void goto(`/sessions/${id}`),
@@ -133,7 +133,7 @@
 
   function startBtw() {
     if (!popover) return;
-    ephemeralBtws.startBtw(popover);
+    docThreads.startThread(popover);
     popover = null;
     window.getSelection()?.removeAllRanges();
   }
@@ -276,12 +276,16 @@
         onSupersessorClick={(slug) => void goto(`/doc/wiki/${slug}.md`)}
         onLinkClick={handleLinkClick}
         panelDocked={!!selectedCard}
-        btws={ephemeralBtws.btws}
+        threads={docThreads.threads}
+        expandedThreads={docThreads.expanded}
+        onToggleThread={docThreads.toggleExpanded}
+        onOpenThread={docThreads.openSession}
+        onThreadJump={docThreads.jumpTo}
+        onThreadOpen={docThreads.openSession}
         documentId={path}
         onSelection={(info) => (popover = info)}
-        onBtwReply={ephemeralBtws.replyBtw}
-        onBtwDismiss={ephemeralBtws.dismissEmpty}
-        onBtwSpinOff={(id) => void ephemeralBtws.spinOff(id)}
+        onBtwReply={docThreads.replyThread}
+        onBtwDismiss={docThreads.dismissEmpty}
       />
     {:else}
       <div class="mx-auto max-w-[740px] px-4 pt-6 md:px-10 md:pt-10">

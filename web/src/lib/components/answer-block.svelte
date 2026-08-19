@@ -3,13 +3,15 @@
 
   import { findQuoteRange } from "$lib/anchor";
   import BtwThread from "$lib/components/btw-thread.svelte";
-  import FootnoteNotes from "$lib/components/footnote-notes.svelte";
+  import FootnoteNotes, {
+    type MarginDot,
+  } from "$lib/components/footnote-notes.svelte";
   import HastNodeView from "$lib/components/hast-node.svelte";
   import { clearAnchorHighlights, setAnchorHighlights } from "$lib/highlight";
   import { parseMarkdown } from "$lib/markdown";
   import type { HastNode } from "$lib/markdown-plugins";
   import { splitStreamingMarkdown } from "$lib/streaming-markdown";
-  import type { BtwThread as BtwThreadType, SelectionInfo } from "$lib/types";
+  import type { SelectionInfo, ThreadLike } from "$lib/types";
 
   let {
     text,
@@ -20,30 +22,39 @@
     onSelection,
     onBtwReply,
     onBtwDismiss,
-    onBtwSpinOff,
+    onBtwOpenSession,
     onLinkClick,
     variant = "answer",
     marginFootnotes = true,
     stripBlockRefs = false,
     resolveBlockRefs = false,
+    readOnly = false,
+    expandedThreads = null,
+    onToggleThread,
   }: {
     text: string;
     exchangeId: string;
-    btws: BtwThreadType[];
+    btws: ThreadLike[];
     streaming: boolean;
     panelDocked?: boolean;
-    onSelection: (info: SelectionInfo) => void;
-    onBtwReply: (btwId: string, text: string) => void;
+    onSelection?: (info: SelectionInfo) => void;
+    onBtwReply?: (btwId: string, text: string) => void;
     onBtwDismiss?: (btwId: string) => void;
-    onBtwSpinOff?: (btwId: string) => void;
+    onBtwOpenSession?: (btwId: string) => void;
     onLinkClick?: (event: MouseEvent) => void;
     variant?: "answer" | "article";
     marginFootnotes?: boolean;
     stripBlockRefs?: boolean;
     resolveBlockRefs?: boolean;
+    readOnly?: boolean;
+    // When provided, thread expansion is controlled externally (reader chip /
+    // DocThreads); otherwise AnswerBlock owns a local expansion map.
+    expandedThreads?: Set<string> | null;
+    onToggleThread?: (btwId: string) => void;
   } = $props();
 
   let root: HTMLDivElement | null = $state(null);
+  let localExpanded = $state<Record<string, boolean>>({});
 
   const BLOCK_REF_RE = /\s*\^p\d+(?=\n|$)/gm;
   const displayText = $derived(
@@ -74,12 +85,61 @@
         .filter((offset): offset is number => offset != null),
     );
   });
+  // Only anchored threads (quote present) render in the body; doc-initiated
+  // conversations surface through the doc-header chip instead.
+  const bodyThreads = $derived(
+    btws.filter((btw) => btw.anchor.quote.length > 0),
+  );
   const orphanedBtws = $derived(
-    btws.filter((btw) => !renderedOffsets.has(btw.anchor.blockOffset)),
+    bodyThreads.filter((btw) => !renderedOffsets.has(btw.anchor.blockOffset)),
   );
   const footnoteRoots = $derived(
     streaming ? [stableTree, tailTree] : [fullTree],
   );
+  const marginDots = $derived.by<MarginDot[]>(() => {
+    const seen = new Set<number>();
+    const dots: MarginDot[] = [];
+    for (const btw of bodyThreads) {
+      if (btw.anchor.blockOffset < 0 || seen.has(btw.anchor.blockOffset))
+        continue;
+      seen.add(btw.anchor.blockOffset);
+      dots.push({
+        id: `dot:${btw.anchor.blockOffset}`,
+        blockOffset: btw.anchor.blockOffset,
+      });
+    }
+    return dots;
+  });
+
+  const isOpen = (btwId: string): boolean =>
+    expandedThreads
+      ? expandedThreads.has(btwId)
+      : (localExpanded[btwId] ?? false);
+
+  const toggleThread = (btwId: string): void => {
+    if (expandedThreads) {
+      onToggleThread?.(btwId);
+      return;
+    }
+    localExpanded = {
+      ...localExpanded,
+      [btwId]: !(localExpanded[btwId] ?? false),
+    };
+  };
+
+  // Locally-managed threads (session BTWs, share page) open on arrival unless
+  // read-only; reader threads are controlled by DocThreads instead.
+  $effect(() => {
+    if (expandedThreads) return;
+    let changed = false;
+    const next = { ...localExpanded };
+    for (const btw of btws) {
+      if (btw.id in next) continue;
+      next[btw.id] = !readOnly;
+      changed = true;
+    }
+    if (changed) localExpanded = next;
+  });
 
   $effect(() => {
     const currentRoot = root;
@@ -93,6 +153,7 @@
       if (cancelled) return;
       const ranges: Range[] = [];
       for (const btw of currentBtws) {
+        if (!btw.anchor.quote) continue;
         const block = currentRoot.querySelector<HTMLElement>(
           `[data-block-offset="${btw.anchor.blockOffset}"]`,
         );
@@ -107,6 +168,12 @@
       clearAnchorHighlights(exchangeId);
     };
   });
+
+  function handleDotClick(dot: MarginDot) {
+    for (const btw of bodyThreads) {
+      if (btw.anchor.blockOffset === dot.blockOffset) toggleThread(btw.id);
+    }
+  }
 
   function emptyRoot(): HastNode {
     return { type: "root", children: [] };
@@ -173,7 +240,7 @@
   }
 
   function handleSelect(event: MouseEvent, offset: number): void {
-    if (streaming) return;
+    if (streaming || !onSelection) return;
     const selection = window.getSelection();
     if (!selection || selection.isCollapsed || selection.rangeCount === 0)
       return;
@@ -203,6 +270,8 @@
   {panelDocked}
   resetKey={`${streaming}:${displayText}`}
   {onLinkClick}
+  {marginDots}
+  onDotClick={handleDotClick}
   class="select-text"
 >
   {#snippet children({
@@ -266,12 +335,18 @@
           {onFootnoteToggle}
         />
         {#if offset != null}
-          {#each btws.filter((btw) => btw.anchor.blockOffset === offset) as btw (btw.id)}
+          {#each bodyThreads.filter((btw) => btw.anchor.blockOffset === offset) as btw (btw.id)}
             <BtwThread
               {btw}
+              open={isOpen(btw.id)}
+              onOpenChange={onToggleThread
+                ? () => onToggleThread(btw.id)
+                : () => toggleThread(btw.id)}
+              hideWhenClosed
+              {readOnly}
               onReply={onBtwReply}
               onDismiss={onBtwDismiss}
-              onSpinOff={onBtwSpinOff}
+              onOpenSession={onBtwOpenSession}
             />
           {/each}
         {/if}
@@ -287,9 +362,15 @@
     {#each orphanedBtws as btw (btw.id)}
       <BtwThread
         {btw}
+        open={isOpen(btw.id)}
+        onOpenChange={onToggleThread
+          ? () => onToggleThread(btw.id)
+          : () => toggleThread(btw.id)}
+        hideWhenClosed
+        {readOnly}
         onReply={onBtwReply}
         onDismiss={onBtwDismiss}
-        onSpinOff={onBtwSpinOff}
+        onOpenSession={onBtwOpenSession}
       />
     {/each}
   {/snippet}

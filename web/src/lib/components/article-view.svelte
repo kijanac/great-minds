@@ -3,9 +3,9 @@
   import AnswerBlock from "$lib/components/answer-block.svelte";
   import DocHeader from "$lib/components/doc-header.svelte";
   import type {
-    BtwThread,
     ReferencePromotionAction,
     SelectionInfo,
+    ThreadLike,
   } from "$lib/types";
 
   let {
@@ -18,12 +18,16 @@
     onSupersessorClick,
     onLinkClick,
     panelDocked = false,
-    btws = [],
+    threads = [],
+    expandedThreads = null,
+    onToggleThread,
+    onOpenThread,
+    onThreadJump,
+    onThreadOpen,
     documentId,
     onSelection,
     onBtwReply,
     onBtwDismiss,
-    onBtwSpinOff,
   }: {
     document: Article;
     scope: DocumentScope;
@@ -34,18 +38,20 @@
     onSupersessorClick?: (slug: string) => void;
     onLinkClick?: (event: MouseEvent) => void;
     panelDocked?: boolean;
-    btws?: BtwThread[];
+    threads?: ThreadLike[];
+    expandedThreads?: Set<string> | null;
+    onToggleThread?: (threadId: string) => void;
+    onOpenThread?: (threadId: string) => void;
+    onThreadJump?: (threadId: string) => void;
+    onThreadOpen?: (threadId: string) => void;
     documentId: string;
     onSelection: (info: SelectionInfo) => void;
     onBtwReply: (btwId: string, text: string) => void;
     onBtwDismiss?: (btwId: string) => void;
-    onBtwSpinOff?: (btwId: string) => void;
   } = $props();
 </script>
 
-<article
-  class="mx-auto max-w-[740px] px-4 pt-6 pb-20 select-text md:px-10 md:pt-10"
->
+<article class="mx-auto max-w-[740px] px-4 pt-6 pb-20 select-text md:px-10">
   <DocHeader
     {document}
     {scope}
@@ -53,11 +59,14 @@
     {archived}
     {supersededBy}
     {onSupersessorClick}
+    {threads}
+    {onThreadJump}
+    {onThreadOpen}
   />
   <AnswerBlock
     text={body}
     exchangeId={documentId}
-    {btws}
+    btws={threads}
     streaming={false}
     variant="article"
     stripBlockRefs
@@ -68,6 +77,8 @@
     {onSelection}
     {onBtwReply}
     {onBtwDismiss}
-    {onBtwSpinOff}
+    {expandedThreads}
+    {onToggleThread}
+    onBtwOpenSession={onOpenThread}
   />
 </article>

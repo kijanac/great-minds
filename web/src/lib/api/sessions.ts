@@ -92,6 +92,13 @@ export type SessionEvent = z.infer<typeof sessionEventSchema>;
 export type SessionSummary = z.infer<typeof sessionSummarySchema>;
 export type SessionList = z.infer<typeof sessionListSchema>;
 
+const originSessionDetailSchema = z.object({
+  session: sessionSummarySchema,
+  events: z.array(sessionEventSchema),
+});
+
+export type OriginSessionDetail = z.infer<typeof originSessionDetailSchema>;
+
 const sessionCreatedSchema = z.object({
   id: z.string(),
   path: z.string(),
@@ -150,6 +157,17 @@ export async function listSessions(params?: {
   const res = await apiFetch(vaultPath(`/sessions${qs ? `?${qs}` : ""}`));
   if (!res.ok) throw new Error(`Failed to list sessions: ${res.status}`);
   return readJson(res, sessionListSchema);
+}
+
+/** Sessions anchored to (or initiated from) a document, created_at asc. */
+export async function listSessionsByOrigin(
+  docPath: string,
+  signal?: AbortSignal,
+): Promise<OriginSessionDetail[]> {
+  const qs = new URLSearchParams({ doc_path: docPath });
+  const res = await apiFetch(vaultPath(`/sessions/by-origin?${qs.toString()}`), { signal });
+  if (!res.ok) throw new Error(`Failed to load doc sessions: ${res.status}`);
+  return readJson(res, z.array(originSessionDetailSchema));
 }
 
 const sessionResponseSchema = z.object({

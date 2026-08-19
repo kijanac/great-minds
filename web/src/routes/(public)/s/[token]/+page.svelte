@@ -3,7 +3,8 @@
   import { createQuery } from "@tanstack/svelte-query";
 
   import { resolveShare } from "$lib/api/shares";
-  import MarkdownView from "$lib/components/markdown-view.svelte";
+  import AnswerBlock from "$lib/components/answer-block.svelte";
+  import type { ThreadLike } from "$lib/types";
 
   const token = $derived(page.params.token);
 
@@ -28,6 +29,32 @@
           year: "numeric",
         })
       : "",
+  );
+  // Read-only annotation threads (same anchors + collapsed panels as the
+  // reader, no reply box / open-session affordance).
+  const threads = $derived<ThreadLike[]>(
+    share?.subject_kind === "reference"
+      ? share.annotations.map((annotation, index) => ({
+          id: `ann:${index}`,
+          sessionId: null,
+          draft: false,
+          anchored: true,
+          anchor: {
+            blockOffset: annotation.anchor.block_offset ?? -1,
+            quote: annotation.anchor.quote,
+            context: annotation.anchor.context ?? "",
+          },
+          exchanges: annotation.exchanges.map((exchange, turnIndex) => ({
+            id: `ann:${index}:${turnIndex}`,
+            query: exchange.query,
+            thinking: [],
+            answer: exchange.answer,
+            btws: [],
+            streaming: false,
+          })),
+          createdAt: annotation.created_at,
+        }))
+      : [],
   );
 
   // The share page is read-only: keep external links working but swallow
@@ -93,10 +120,16 @@
         </p>
       {/if}
     </header>
-    <MarkdownView
-      source={share.markdown}
+    <AnswerBlock
+      text={share.markdown}
+      exchangeId={`share:${token}`}
+      btws={threads}
+      streaming={false}
+      variant="article"
       stripBlockRefs
       resolveBlockRefs
+      marginFootnotes={false}
+      readOnly
       {onLinkClick}
     />
   </article>
