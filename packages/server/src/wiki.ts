@@ -66,6 +66,11 @@ const liveArticleConditions = (vaultId: Uuid, query?: WikiListQuery) => {
       conditions.push(containsCondition);
     }
   }
+  if (query?.tag !== undefined && query.tag !== "") {
+    conditions.push(
+      sql`exists (select 1 from unnest(${wikiArticles.tags}) as tag_value where lower(tag_value) = lower(${query.tag}))`
+    );
+  }
   return conditions;
 };
 

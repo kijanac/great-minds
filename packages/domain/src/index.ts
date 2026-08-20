@@ -567,6 +567,7 @@ export const WikiListQuery = Schema.Struct({
   ...PageParamsQuery.fields,
   run: Schema.optionalKey(Uuid),
   contains: Schema.optionalKey(Schema.String),
+  tag: Schema.optionalKey(Schema.String),
 });
 export type WikiListQuery = typeof WikiListQuery.Type;
 
@@ -608,6 +609,7 @@ export const SourceListQuery = Schema.Struct({
   ...PageParamsQuery.fields,
   source_type: Schema.optionalKey(Schema.String),
   search: Schema.optionalKey(Schema.String),
+  tag: Schema.optionalKey(Schema.String),
 });
 export type SourceListQuery = typeof SourceListQuery.Type;
 

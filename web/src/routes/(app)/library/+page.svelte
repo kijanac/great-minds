@@ -25,7 +25,9 @@
   const readingRoom = useReferences();
   const headerCount = $derived(
     library.activeType === LIBRARY_READING_ROOM
-      ? readingRoom.total
+      ? library.activeTag
+        ? 0
+        : readingRoom.total
       : library.headerCount,
   );
 
@@ -44,6 +46,7 @@
 
   const actions = {
     chooseType: library.chooseType,
+    clearTag: library.clearTag,
     openArticle: card.openArticle,
     openSource: card.openSource,
     openReference,

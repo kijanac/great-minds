@@ -20,11 +20,13 @@ export async function fetchWikiArticles(params?: {
   limit?: number;
   offset?: number;
   contains?: string;
+  tag?: string;
 }): Promise<WikiArticleList> {
   const query = new URLSearchParams();
   if (params?.limit !== undefined) query.set("limit", String(params.limit));
   if (params?.offset !== undefined) query.set("offset", String(params.offset));
   if (params?.contains) query.set("contains", params.contains);
+  if (params?.tag) query.set("tag", params.tag);
   const qs = query.toString();
   const path = vaultPath(`/wiki${qs ? `?${qs}` : ""}`);
   const res = await apiFetch(path);

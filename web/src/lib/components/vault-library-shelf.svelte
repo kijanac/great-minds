@@ -15,8 +15,10 @@
   }: {
     library: {
       activeType: string;
+      activeTag: string;
       search: string;
       articleItems: WikiArticleOverview[];
+      pinArticle: WikiArticleOverview | null;
       sourceItems: SourceDocumentSummary[];
       loading: boolean;
       actionNotice: string | null;
@@ -39,7 +41,39 @@
     onDeleteSource: (path: string) => Promise<void>;
     onRequestDeletion: (path: string) => Promise<void>;
   } = $props();
+
+  // The synthesis pin is a presentation-layer match on the active tag; it is
+  // rendered as its own first row and excluded from the ordinary lists so it
+  // never appears twice.
+  const pin = $derived(library.pinArticle);
+  const articleItems = $derived(
+    pin
+      ? library.articleItems.filter(
+          (article) => article.file_path !== pin.file_path,
+        )
+      : library.articleItems,
+  );
 </script>
+
+{#if pin}
+  <section class="mb-10">
+    <div class="mb-2 flex items-center gap-2">
+      <span
+        class="rounded-sm border border-gold-dim bg-gold/10 px-2 py-0.5 font-mono text-[10px] tracking-[0.1em] text-gold uppercase"
+      >
+        synthesis
+      </span>
+      <span
+        class="font-mono text-[length:var(--text-chrome)] tracking-[0.06em] text-warm-ghost lowercase"
+      >
+        tag · {library.activeTag}
+      </span>
+    </div>
+    <div class="rounded-sm border border-gold-dim/40 bg-gold/[0.03] px-1 py-1">
+      <ArticleRow article={pin} onOpen={onOpenArticle} />
+    </div>
+  </section>
+{/if}
 
 {#if library.actionNotice}
   <p
@@ -68,14 +102,16 @@
       </div>
     {/each}
   </div>
-{:else if library.articleItems.length === 0 && library.sourceItems.length === 0}
+{:else if library.articleItems.length === 0 && library.sourceItems.length === 0 && !pin}
   <div class="pt-8 text-center">
     <p class="mb-2 font-serif text-[length:var(--text-body)] text-warm-dim">
       {library.search
         ? "No library items match your search"
-        : "No library items yet"}
+        : library.activeTag
+          ? "No library items carry this tag"
+          : "No library items yet"}
     </p>
-    {#if !library.search}
+    {#if !library.search && !library.activeTag}
       <p
         class="font-mono text-[length:var(--text-chrome)] tracking-[0.06em] text-warm-ghost"
       >
@@ -84,7 +120,7 @@
     {/if}
   </div>
 {:else}
-  {#if library.activeType === LIBRARY_ALL && library.articleItems.length > 0}
+  {#if library.activeType === LIBRARY_ALL && articleItems.length > 0}
     <section class="mb-10">
       <h2
         class="mb-3 font-mono text-[length:var(--text-chrome)] tracking-[0.14em] text-gold-muted uppercase"
@@ -92,7 +128,7 @@
         articles
       </h2>
       <div class="space-y-1">
-        {#each library.articleItems as article (article.file_path)}
+        {#each articleItems as article (article.file_path)}
           <ArticleRow {article} onOpen={onOpenArticle} />
         {/each}
       </div>
@@ -153,9 +189,9 @@
     </section>
   {/if}
 
-  {#if library.activeType === LIBRARY_ARTICLES && library.articleItems.length > 0}
+  {#if library.activeType === LIBRARY_ARTICLES && articleItems.length > 0}
     <div class="space-y-1">
-      {#each library.articleItems as article (article.file_path)}
+      {#each articleItems as article (article.file_path)}
         <ArticleRow {article} onOpen={onOpenArticle} />
       {/each}
     </div>

@@ -237,7 +237,12 @@
   {#if metadata.tags.length > 0}
     <div class="mb-3 flex flex-wrap gap-2">
       {#each metadata.tags as tag (tag)}
-        <span class={cn(CHIP_BASE, CHIP_INACTIVE)}>{tag}</span>
+        <a
+          href={`/library?tag=${encodeURIComponent(tag)}`}
+          class={cn(CHIP_BASE, CHIP_INACTIVE)}
+        >
+          {tag}
+        </a>
       {/each}
     </div>
   {/if}

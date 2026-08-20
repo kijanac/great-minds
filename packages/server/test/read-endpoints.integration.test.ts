@@ -1160,6 +1160,33 @@ describe("read-only HTTP integration", () => {
     expect(noMatch.status).toBe(200);
     expect(asPage(noMatch.body).items).toEqual([]);
 
+    const byTag = await api("GET", `/vaults/${id.vaultAlpha}/wiki?tag=practice`, aliceToken);
+    expect(byTag.status).toBe(200);
+    expect(itemRecords(asPage(byTag.body)).map((article) => article.slug)).toEqual([
+      "alpha-practice",
+    ]);
+    expect(asPage(byTag.body).pagination.total).toBe(1);
+
+    const byTagCase = await api("GET", `/vaults/${id.vaultAlpha}/wiki?tag=THEORY`, aliceToken);
+    expect(byTagCase.status).toBe(200);
+    expect(itemRecords(asPage(byTagCase.body)).map((article) => article.slug)).toEqual([
+      "beta-theory",
+    ]);
+
+    const tagComposed = await api(
+      "GET",
+      `/vaults/${id.vaultAlpha}/wiki?tag=practice&run=${id.runAlpha}`,
+      aliceToken,
+    );
+    expect(tagComposed.status).toBe(200);
+    expect(itemRecords(asPage(tagComposed.body)).map((article) => article.slug)).toEqual([
+      "alpha-practice",
+    ]);
+
+    const tagNoMatch = await api("GET", `/vaults/${id.vaultAlpha}/wiki?tag=absent`, aliceToken);
+    expect(tagNoMatch.status).toBe(200);
+    expect(asPage(tagNoMatch.body).items).toEqual([]);
+
     const zero = await api("GET", `/vaults/${id.vaultAlpha}/wiki?limit=0`, aliceToken);
     expect(zero.status).toBe(200);
     expect(asPage(zero.body).pagination).toEqual({ limit: 0, offset: 0, total: 3 });
@@ -2021,6 +2048,68 @@ describe("read-only HTTP integration", () => {
       "article",
     ]);
     expect(asPage(filtered.body).pagination.total).toBe(1);
+
+    const byTag = await api("GET", `/vaults/${id.vaultAlpha}/raw/sources?tag=party`, aliceToken);
+    expect(byTag.status).toBe(200);
+    expect(itemRecords(asPage(byTag.body)).map((source) => source.file_path)).toEqual([
+      "raw/articles/organization.md",
+    ]);
+    expect(asPage(byTag.body).pagination.total).toBe(1);
+    const byTagFacets = asRecord(byTag.body).facets as {
+      source_types: ReadonlyArray<{ value: string; count: number }>;
+    };
+    expect(byTagFacets.source_types).toEqual([{ value: "article", count: 1 }]);
+
+    const byTagCase = await api(
+      "GET",
+      `/vaults/${id.vaultAlpha}/raw/sources?tag=ECONOMICS`,
+      aliceToken,
+    );
+    expect(byTagCase.status).toBe(200);
+    expect(itemRecords(asPage(byTagCase.body)).map((source) => source.file_path)).toEqual([
+      "raw/books/capital.md",
+    ]);
+    expect(asPage(byTagCase.body).pagination.total).toBe(1);
+
+    const tagComposed = await api(
+      "GET",
+      `/vaults/${id.vaultAlpha}/raw/sources?tag=party&source_type=article`,
+      aliceToken,
+    );
+    expect(tagComposed.status).toBe(200);
+    expect(itemRecords(asPage(tagComposed.body)).map((source) => source.file_path)).toEqual([
+      "raw/articles/organization.md",
+    ]);
+    expect(asPage(tagComposed.body).pagination.total).toBe(1);
+
+    const tagComposedMiss = await api(
+      "GET",
+      `/vaults/${id.vaultAlpha}/raw/sources?tag=party&source_type=book`,
+      aliceToken,
+    );
+    expect(tagComposedMiss.status).toBe(200);
+    expect(asPage(tagComposedMiss.body).items).toEqual([]);
+    expect(asPage(tagComposedMiss.body).pagination.total).toBe(0);
+
+    const tagSearched = await api(
+      "GET",
+      `/vaults/${id.vaultAlpha}/raw/sources?tag=party&search=Lenin`,
+      aliceToken,
+    );
+    expect(tagSearched.status).toBe(200);
+    expect(itemRecords(asPage(tagSearched.body)).map((source) => source.file_path)).toEqual([
+      "raw/articles/organization.md",
+    ]);
+    expect(asPage(tagSearched.body).pagination.total).toBe(1);
+
+    const tagNoMatch = await api(
+      "GET",
+      `/vaults/${id.vaultAlpha}/raw/sources?tag=absent`,
+      aliceToken,
+    );
+    expect(tagNoMatch.status).toBe(200);
+    expect(asPage(tagNoMatch.body).items).toEqual([]);
+    expect(asPage(tagNoMatch.body).pagination.total).toBe(0);
 
     const zero = await api("GET", `/vaults/${id.vaultAlpha}/raw/sources?limit=0`, aliceToken);
     expect(zero.status).toBe(200);

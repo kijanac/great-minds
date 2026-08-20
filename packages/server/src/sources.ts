@@ -60,6 +60,9 @@ const sourceSummary = (
   updated_at: row.updatedAt.toISOString()
 });
 
+const tagCondition = (tag: string) =>
+  sql`exists (select 1 from unnest(${sourceDocuments.tags}) as tag_value where lower(tag_value) = lower(${tag}))`;
+
 const sourceConditions = (vaultId: Uuid, query: SourceListQuery) => {
   const conditions: SQL[] = [eq(sourceDocuments.vaultId, vaultId)];
   if (query.source_type !== undefined && query.source_type !== "") {
@@ -74,6 +77,9 @@ const sourceConditions = (vaultId: Uuid, query: SourceListQuery) => {
     if (searchCondition !== undefined) {
       conditions.push(searchCondition);
     }
+  }
+  if (query.tag !== undefined && query.tag !== "") {
+    conditions.push(tagCondition(query.tag));
   }
   return conditions;
 };
@@ -102,13 +108,19 @@ export const SourcesServiceLive = Layer.effect(
             .orderBy(desc(sourceDocuments.updatedAt))
             .limit(query.limit)
             .offset(query.offset));
+          const facetWhere = and(
+            eq(sourceDocuments.vaultId, vaultId),
+            ...(query.tag !== undefined && query.tag !== ""
+              ? [tagCondition(query.tag)]
+              : [])
+          );
           const facetRows = yield* db.query((d) => d
             .select({
               value: sourceDocuments.sourceType,
               count: sql<number>`count(*)::int`
             })
             .from(sourceDocuments)
-            .where(eq(sourceDocuments.vaultId, vaultId))
+            .where(facetWhere)
             .groupBy(sourceDocuments.sourceType)
             .orderBy(desc(sql`count(*)`)));
 

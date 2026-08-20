@@ -40,12 +40,14 @@ export type SourceDocumentPage = z.infer<typeof sourceDocumentPageSchema>;
 export async function fetchSourceDocuments(params?: {
   source_type?: string;
   search?: string;
+  tag?: string;
   limit?: number;
   offset?: number;
 }): Promise<SourceDocumentPage> {
   const query = new URLSearchParams();
   if (params?.source_type) query.set("source_type", params.source_type);
   if (params?.search) query.set("search", params.search);
+  if (params?.tag) query.set("tag", params.tag);
   if (params?.limit !== undefined) query.set("limit", String(params.limit));
   if (params?.offset !== undefined) query.set("offset", String(params.offset));
 

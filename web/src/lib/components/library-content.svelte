@@ -12,11 +12,13 @@
 
   type LibraryView = {
     activeType: string;
+    activeTag: string;
     search: string;
     sourceFacets: SourceTypeFacet[];
     totalCount: number;
     articleTotal: number;
     articleItems: WikiArticleOverview[];
+    pinArticle: WikiArticleOverview | null;
     sourceItems: SourceDocumentSummary[];
     loading: boolean;
     actionNotice: string | null;
@@ -51,6 +53,7 @@
 
   type LibraryActions = {
     chooseType: (value: string) => void;
+    clearTag: () => void;
     openArticle: (article: WikiArticleOverview) => void;
     openSource: (source: SourceDocumentSummary) => void;
     openReference: (reference: ReferenceOverview) => void;
@@ -68,21 +71,27 @@
     readingRoom: ReadingRoomView;
     actions: LibraryActions;
   } = $props();
+  // Reading-room references carry no tags: under an active tag the shelf is
+  // empty and the type chip count reflects that.
+  const tagActive = $derived(!!library.activeTag);
+  const readingRoomTotal = $derived(tagActive ? 0 : readingRoom.total);
 </script>
 
 <main class="mx-auto max-w-[740px] px-4 pt-8 pb-20 md:px-10">
   <LibraryFilterChips
     activeType={library.activeType}
+    activeTag={library.activeTag}
     totalCount={library.totalCount}
     articleTotal={library.articleTotal}
     sourceFacets={library.sourceFacets}
-    readingRoomTotal={readingRoom.total}
+    {readingRoomTotal}
     onChange={actions.chooseType}
+    onClearTag={actions.clearTag}
   />
 
   {#if library.activeType === LIBRARY_READING_ROOM}
     <ReadingRoomShelf
-      items={readingRoom.items}
+      items={tagActive ? [] : readingRoom.items}
       loading={readingRoom.loading}
       error={readingRoom.error}
       creating={readingRoom.creating}

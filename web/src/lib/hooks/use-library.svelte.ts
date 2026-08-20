@@ -30,6 +30,7 @@ export function useLibrary(
   let actionNotice = $state<string | null>(null);
 
   const activeType = $derived(page.url.searchParams.get("type") || LIBRARY_ALL);
+  const activeTag = $derived(page.url.searchParams.get("tag") ?? "");
   const searchQuery = $derived(page.url.searchParams.get("q")?.trim() ?? "");
   const sourceType = $derived(
     activeType === LIBRARY_ALL ||
@@ -58,20 +59,22 @@ export function useLibrary(
   });
 
   const facets = createQuery(() => ({
-    queryKey: ["vault", activeVault.id, "library-facets", searchQuery],
+    queryKey: ["vault", activeVault.id, "library-facets", searchQuery, activeTag],
     queryFn: () =>
       fetchSourceDocuments({
         search: searchQuery || undefined,
+        tag: activeTag || undefined,
         limit: 0,
       }),
     enabled: !!activeVault.id,
   }));
 
   const articles = createInfiniteQuery(() => ({
-    queryKey: ["vault", activeVault.id, "library-articles", searchQuery],
+    queryKey: ["vault", activeVault.id, "library-articles", searchQuery, activeTag],
     queryFn: ({ pageParam }) =>
       fetchWikiArticles({
         contains: searchQuery || undefined,
+        tag: activeTag || undefined,
         limit: PAGE_SIZE,
         offset: pageParam,
       }),
@@ -84,11 +87,19 @@ export function useLibrary(
   }));
 
   const sources = createInfiniteQuery(() => ({
-    queryKey: ["vault", activeVault.id, "library-sources", sourceType ?? LIBRARY_ALL, searchQuery],
+    queryKey: [
+      "vault",
+      activeVault.id,
+      "library-sources",
+      sourceType ?? LIBRARY_ALL,
+      searchQuery,
+      activeTag,
+    ],
     queryFn: ({ pageParam }) =>
       fetchSourceDocuments({
         source_type: sourceType,
         search: searchQuery || undefined,
+        tag: activeTag || undefined,
         limit: PAGE_SIZE,
         offset: pageParam,
       }),
@@ -124,9 +135,23 @@ export function useLibrary(
   const sourceFacets = $derived(facets.data?.facets.source_types ?? []);
   const sourceTotal = $derived(sourceFacets.reduce((sum, facet) => sum + facet.count, 0));
   const articleTotal = $derived(articles.data?.pages[0]?.pagination.total ?? 0);
-  // Header count reflects the current search scope; the facet chips keep
+  // Header count reflects the current search/tag scope; the facet chips keep
   // whole-vault counts (the facets response ignores search — API behavior).
   const sourceListTotal = $derived(sources.data?.pages[0]?.pagination.total ?? sourceTotal);
+  // Wiki pin: a wiki article whose title or slug matches the active tag
+  // (case-insensitive), surfaced from the already-fetched articles as a
+  // distinct synthesis row. Absence is normal.
+  const pinArticle = $derived(
+    activeTag === ""
+      ? null
+      : (articles.data?.pages
+          .flatMap((result) => result.items)
+          .find(
+            (article) =>
+              article.title.toLowerCase() === activeTag.toLowerCase() ||
+              article.slug.toLowerCase() === activeTag.toLowerCase(),
+          ) ?? null),
+  );
 
   function replaceLibraryUrl(params: URLSearchParams) {
     const query = params.toString();
@@ -141,6 +166,12 @@ export function useLibrary(
     const params = new URLSearchParams(page.url.searchParams);
     if (!value || value === LIBRARY_ALL) params.delete("type");
     else params.set("type", value);
+    replaceLibraryUrl(params);
+  }
+
+  function clearTag() {
+    const params = new URLSearchParams(page.url.searchParams);
+    params.delete("tag");
     replaceLibraryUrl(params);
   }
 
@@ -197,6 +228,9 @@ export function useLibrary(
     get activeType() {
       return activeType;
     },
+    get activeTag() {
+      return activeTag;
+    },
     get articleItems() {
       return articles.data?.pages.flatMap((result) => result.items) ?? [];
     },
@@ -205,6 +239,7 @@ export function useLibrary(
     },
     articles,
     chooseType,
+    clearTag,
     deleteSource,
     get headerCount() {
       return articleTotal + sourceListTotal;
@@ -213,6 +248,9 @@ export function useLibrary(
       return articles.isLoading || sources.isLoading || facets.isLoading;
     },
     panel,
+    get pinArticle() {
+      return pinArticle;
+    },
     requestDeletion,
     get role() {
       return role.data?.role ?? null;
