@@ -416,7 +416,13 @@ export const startCassetteProxy = async (options: {
   const assignmentTable = cassetteAssignmentTable(orderedEntries);
   const preferredRenderEntries = new Map<string, CassetteEntry[]>();
   for (const content of options.preferredRenderContents ?? []) {
+    // Two draws for the same topic can share a long common opening, so a
+    // full-body match decides first; the prefix match stays as a fallback
+    // for serialization drift.
     const entry = orderedEntries.find((candidate) => {
+      const body = responseRenderBody(candidate);
+      return body.length > 0 && content.includes(body);
+    }) ?? orderedEntries.find((candidate) => {
       const body = responseRenderBody(candidate);
       return body.length > 0 && content.includes(body.slice(0, Math.min(240, body.length)));
     });
@@ -484,7 +490,10 @@ export const startCassetteProxy = async (options: {
         }
       }
       const currentIdeaKey = ideaContentKey(parsedRequestBody);
-      if (!options.record && currentIdeaKey !== "[]") {
+      // Raw-first: a byte-exact entry replays the multi-round synthesize flow
+      // faithfully; the effective-response preference only routes requests
+      // whose raw bodies drifted.
+      if (!options.record && currentIdeaKey !== "[]" && rawExisting === undefined) {
         const synthCandidate = preferredSynthesisEntries.get(currentIdeaKey) ?? orderedEntries.find((entry) => !ordinallyUsed.has(entry)
           && entry.method === (request.method ?? "POST")
           && entry.path === (request.url ?? "")

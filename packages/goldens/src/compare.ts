@@ -345,12 +345,24 @@ const normalizeAssignmentBatches = (expected: Row, actual: Row, mapping: Mapping
 const normalizeCacheKeys = (expected: Row, actual: Row, mapping: Mapping) => {
   const withoutKey = (row: Row) => {
     const { cache_key: _cacheKey, sort_key: _sortKey, ...rest } = replace(row, mapping) as Row;
+    if (rest.phase === "synthesize") {
+      // Which same-slug twin becomes the premerge representative is
+      // completion-order dependent, so per-chunk local_topic_id values are
+      // not stable identities; rows pair on chunk content alone while the
+      // assign relation still validates representative ids.
+      const value = rest.value as Row;
+      rest.value = {
+        ...value,
+        local_topics: (value.local_topics as Row[]).map(
+          ({ local_topic_id: _localTopicId, ...topic }) => topic,
+        ),
+      };
+    }
     return JSON.stringify(rest);
   };
   const expectedIndex = indexUnique(rows(expected, "compileCache"), (row) => `${String(row.phase)}\0${withoutKey(row)}`, "golden cache row");
   const actualIndex = indexUnique(rows(actual, "compileCache"), (row) => `${String(row.phase)}\0${withoutKey(row)}`, "replay cache row");
   if (expectedIndex.size !== actualIndex.size) throw new Error(`compile-cache cardinality differs: ${expectedIndex.size} != ${actualIndex.size}`);
-  const reverse = new Map<string, string>();
   for (const [stableKey, actualRow] of actualIndex) {
     const expectedRow = expectedIndex.get(stableKey);
     if (expectedRow === undefined) {
@@ -368,8 +380,29 @@ const normalizeCacheKeys = (expected: Row, actual: Row, mapping: Mapping) => {
     if (actualRow.phase === "extract" && actualRow.cache_key !== expectedRow.cache_key) {
       throw new Error(`extract cache key differs verbatim for document ${String(((actualRow.value as Row).source_card as Row).document_id)}`);
     }
-    addPair(mapping, reverse, String(actualRow.cache_key), String(expectedRow.cache_key), "compile-cache key");
+    actualRow.cache_key = expectedRow.cache_key;
+    actualRow.sort_key = expectedRow.sort_key;
   }
+};
+
+// Which same-slug twin holds which local_topic_id is completion-order noise;
+// the assign relation has already validated the ids, so the final comparison
+// drops them from synthesize rows on both sides.
+const scrubSynthesizeLocalIds = (snapshot: Row) => {
+  snapshot.compileCache = rows(snapshot, "compileCache").map((row) => {
+    if (row.phase !== "synthesize") return row;
+    const value = row.value as Row;
+    return {
+      ...row,
+      value: {
+        ...value,
+        local_topics: (value.local_topics as Row[]).map(
+          ({ local_topic_id: _localTopicId, ...topic }) => topic,
+        ),
+      },
+    };
+  });
+  return snapshot;
 };
 
 const sortNormalized = (value: Row) => {
@@ -380,15 +413,21 @@ const sortNormalized = (value: Row) => {
   return value;
 };
 
+const emptyMapping: Mapping = new Map();
+
 const normalizeSnapshot = (expected: Row, actual: Row) => {
   verifyCacheKeyConstruction(expected);
   verifyCacheKeyConstruction(actual);
   const mapping = buildIdentityMapping(expected, actual);
   normalizeDerivedTopicHashes(expected, actual, mapping);
   normalizeFileHashes(expected, actual, mapping);
-  normalizeAssignmentBatches(expected, actual, mapping);
-  normalizeCacheKeys(expected, actual, mapping);
-  return sortNormalized(replace(actual, mapping) as Row);
+  // Substitute once, then adopt golden rows on the substituted structure.
+  // Both runs mint from the same deterministic uuid pool, so a later
+  // substitution pass would re-map ids inside already-adopted golden rows.
+  const substituted = replace(actual, mapping) as Row;
+  normalizeAssignmentBatches(expected, substituted, emptyMapping);
+  normalizeCacheKeys(expected, substituted, emptyMapping);
+  return sortNormalized(substituted);
 };
 
 const firstDiff = (expected: unknown, actual: unknown, path = "$ "): string | undefined => {
@@ -416,6 +455,8 @@ export const compareJson = (expected: Json, actual: Json) => firstDiff(expected,
 export const compareSnapshots = (expected: Row, actual: Row) => {
   const normalizedExpected = sortNormalized(structuredClone(expected));
   const normalizedActual = normalizeSnapshot(normalizedExpected, structuredClone(actual));
+  sortNormalized(scrubSynthesizeLocalIds(normalizedExpected));
+  sortNormalized(scrubSynthesizeLocalIds(normalizedActual));
   return { diff: firstDiff(normalizedExpected, normalizedActual), normalizedActual };
 };
 

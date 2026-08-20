@@ -85,8 +85,8 @@ describe("compile LLM request composition", () => {
   });
 
   it("canonical registry and assignment match real strict-schema cassette requests", () => {
-    const registry = entry(44).requestBody;
-    expectCassetteRequest(44, {
+    const registry = entry(53).requestBody;
+    expectCassetteRequest(53, {
       model: "anthropic/claude-sonnet-4.6",
       messages: registry.messages,
       temperature: 0.2,
@@ -94,8 +94,8 @@ describe("compile LLM request composition", () => {
       requestProfile: "compile",
     });
 
-    const assignment = entry(45).requestBody;
-    expectCassetteRequest(45, {
+    const assignment = entry(54).requestBody;
+    expectCassetteRequest(54, {
       model: "anthropic/claude-sonnet-4.6",
       messages: assignment.messages,
       temperature: 0.1,
@@ -105,8 +105,8 @@ describe("compile LLM request composition", () => {
   });
 
   it("render and validation cleanup match real JSON-object cassette requests", () => {
-    const render = entry(47).requestBody;
-    expectCassetteRequest(47, {
+    const render = entry(55).requestBody;
+    expectCassetteRequest(55, {
       model: "qwen/qwen3.6-plus",
       messages: render.messages,
       temperature: 0.3,
@@ -114,8 +114,8 @@ describe("compile LLM request composition", () => {
       requestProfile: "compile",
     });
 
-    const cleanup = entry(67).requestBody;
-    expectCassetteRequest(67, {
+    const cleanup = entry(78).requestBody;
+    expectCassetteRequest(78, {
       model: "anthropic/claude-sonnet-4.6",
       messages: cleanup.messages,
       temperature: 0.1,

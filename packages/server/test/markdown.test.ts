@@ -44,7 +44,7 @@ describe("markdown frontmatter", () => {
       }
     }
 
-    expect(renderedFileCount).toBe(45);
-    expect(frontmatterFileCount).toBe(41);
+    expect(renderedFileCount).toBe(57);
+    expect(frontmatterFileCount).toBe(53);
   });
 });

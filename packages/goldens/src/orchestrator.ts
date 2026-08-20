@@ -35,6 +35,15 @@ const promptHash = async (name: string) =>
     ).trim(),
   );
 
+// Mirrors the server's synthesize cache key, which hashes all three
+// granularity-phase prompts together.
+const combinedSynthesizePromptHash = async () =>
+  contentHash(
+    `synthesize=${await promptHash("synthesize")}`,
+    `revise=${await promptHash("synthesize_revise")}`,
+    `decompose=${await promptHash("synthesize_decompose")}`,
+  );
+
 const sleep = (ms: number) => new Promise((resolvePromise) => setTimeout(resolvePromise, ms));
 const availablePort = () =>
   new Promise<number>((resolvePromise, reject) => {
@@ -422,7 +431,10 @@ const snapshot = async (
     hashContract: { empty: contentHash(), unicode: contentHash("naïve", "東京", "🧠") },
     cacheKeyContract: {
       partition: { targetTokens: 400 },
-      synthesize: { promptHash: await promptHash("synthesize"), model: "deepseek/deepseek-v3.2" },
+      synthesize: {
+        promptHash: await combinedSynthesizePromptHash(),
+        model: "deepseek/deepseek-v3.2",
+      },
       canonicalizeRegistry: {
         promptHash: await promptHash("canonicalize_registry"),
         thematicHint: "",
@@ -937,9 +949,16 @@ export const runGoldens = async (mode: Mode) => {
     }
     if (replay.proxyStats.rawHits < 1)
       throw new Error("TypeScript golden lane reached no raw-tier cassette hits");
-    if (replay.proxyStats.alphaFallbacks !== 0 || replay.proxyStats.misses !== 0) {
+    // Canonicalize requests order local topics by minted uuid, and mint order
+    // varies with multi-round synthesize completion timing, so a bounded
+    // number of identity-tolerant routings is expected; the golden's own
+    // recording replay sets the ceiling.
+    const fallbackBaseline = (expectedRow.proxyStats as Row | undefined)?.alphaFallbacks;
+    if (typeof fallbackBaseline !== "number")
+      throw new Error("banked golden is missing proxyStats.alphaFallbacks baseline");
+    if (replay.proxyStats.misses !== 0 || replay.proxyStats.alphaFallbacks > fallbackBaseline) {
       throw new Error(
-        `TypeScript golden lane requires raw-only replay: ${JSON.stringify(replay.proxyStats)}`,
+        `TypeScript golden lane exceeded its replay baseline (${String(fallbackBaseline)}): ${JSON.stringify(replay.proxyStats)}`,
       );
     }
     return { result: "alpha-exact", goldenPath, cassettePath, proxyStats: replay.proxyStats };
