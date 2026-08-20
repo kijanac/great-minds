@@ -34,7 +34,6 @@
     resetKey,
     onLinkClick,
     marginDots = [],
-    onDotClick,
     class: className,
     root = $bindable(null),
     children,
@@ -46,7 +45,6 @@
     resetKey: string;
     onLinkClick?: (event: MouseEvent) => void;
     marginDots?: MarginDot[];
-    onDotClick?: (dot: MarginDot) => void;
     class?: string;
     root?: HTMLDivElement | null;
     children: Snippet<[FootnoteRenderContext]>;
@@ -242,18 +240,18 @@
       class="pointer-events-none absolute inset-0 print:hidden"
     >
       {#each marginDots as dot (dot.id)}
-        {@const dotLabel = `toggle annotation thread: "${dot.quote.slice(0, 40)}"`}
-        <button
-          type="button"
+        {@const dotLabel = `annotation thread: "${dot.quote.slice(0, 40)}"`}
+        <!-- Pure indicator for a thread whose quote could not be located in
+             its block: no click handler, no button role. -->
+        <span
           data-margin-dot={dot.id}
-          onclick={() => onDotClick?.(dot)}
           title={dotLabel}
-          aria-label={dotLabel}
-          class={`pointer-events-auto absolute left-[calc(100%+0.85rem)] -translate-y-1/2 rounded-full p-1 text-[11px] leading-none text-btw transition-colors hover:text-btw-bright hover:drop-shadow-[0_0_6px_rgba(106,138,96,0.5)] ${dot.id in dotPositions ? "opacity-100" : "opacity-0"}`}
+          aria-hidden="true"
+          class={`pointer-events-auto absolute left-[calc(100%+0.85rem)] -translate-y-1/2 rounded-full p-1 text-[11px] leading-none text-btw ${dot.id in dotPositions ? "opacity-100" : "opacity-0"}`}
           style:top={`${dotPositions[dot.id] ?? 0}px`}
         >
           ●
-        </button>
+        </span>
       {/each}
     </div>
   {/if}

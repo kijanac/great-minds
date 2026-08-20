@@ -2,6 +2,11 @@
   import { tick } from "svelte";
 
   import { findQuoteRange } from "$lib/anchor";
+  import {
+    wrapAnchors,
+    type AnchorMark,
+    type AnchorMiss,
+  } from "$lib/anchor-marks";
   import BtwThread from "$lib/components/btw-thread.svelte";
   import FootnoteNotes, {
     type MarginDot,
@@ -55,7 +60,6 @@
 
   let root: HTMLDivElement | null = $state(null);
   let localExpanded = $state<Record<string, boolean>>({});
-
   const BLOCK_REF_RE = /\s*\^p\d+(?=\n|$)/gm;
   const displayText = $derived(
     stripBlockRefs ? text.replace(BLOCK_REF_RE, "") : text,
@@ -66,16 +70,35 @@
   const stableSource = $derived(split?.stable ?? "");
   const tailSource = $derived(split?.tail ?? "");
 
+  // Only persisted threads become real <mark> elements; in-flight drafts
+  // (thread not yet persisted) keep the transient painted highlight.
+  const markAnchors = $derived.by<AnchorMark[]>(() =>
+    bodyThreads
+      .filter((btw) => !btw.draft)
+      .map((btw) => ({
+        threadId: btw.id,
+        blockOffset: btw.anchor.blockOffset,
+        quote: btw.anchor.quote,
+      })),
+  );
   // `stableTree` only depends on the stable prefix string. During token
   // streaming Svelte does not invalidate it until a complete block lands.
-  const stableTree = $derived.by(() =>
-    stableSource ? parseAnswer(stableSource) : emptyRoot(),
+  // Settled trees carry marks; the streaming tail tree is never marked.
+  const stableParsed = $derived.by(() =>
+    stableSource
+      ? parseSettled(stableSource)
+      : { tree: emptyRoot(), misses: [] },
   );
+  const stableTree = $derived(stableParsed.tree);
   const tailTree = $derived.by(() =>
     streaming && tailSource ? parseAnswer(tailSource) : emptyRoot(),
   );
-  const fullTree = $derived.by(() =>
-    streaming ? emptyRoot() : parseAnswer(displayText),
+  const fullParsed = $derived.by(() =>
+    streaming ? { tree: emptyRoot(), misses: [] } : parseSettled(displayText),
+  );
+  const fullTree = $derived(fullParsed.tree);
+  const anchorMisses = $derived(
+    streaming ? stableParsed.misses : fullParsed.misses,
   );
   // Offsets of top-level blocks currently rendered in the body (streaming
   // uses the stable/tail trees, otherwise the full tree). Threads whose
@@ -96,16 +119,22 @@
   const bodyThreads = $derived(
     btws.filter((btw) => btw.anchor.quote.length > 0),
   );
-  const footnoteRoots = $derived(
-    streaming ? [stableTree, tailTree] : [fullTree],
-  );
+  // Gutter dots render only for threads whose block resolves in the body but
+  // whose quote cannot be located in it — pure indicators, no interaction.
+  // Threads with marks get no dot; threads with no block stay header-panel-only.
   const marginDots = $derived.by<MarginDot[]>(() => {
+    const missedBlocks = new Set(
+      anchorMisses
+        .filter((miss) => miss.reason === "quote-not-found")
+        .map((miss) => miss.blockOffset),
+    );
     const seen = new Set<number>();
     const dots: MarginDot[] = [];
     for (const btw of bodyThreads) {
       if (btw.anchor.blockOffset < 0 || seen.has(btw.anchor.blockOffset))
         continue;
       if (!renderedOffsets.has(btw.anchor.blockOffset)) continue;
+      if (!missedBlocks.has(btw.anchor.blockOffset)) continue;
       seen.add(btw.anchor.blockOffset);
       dots.push({
         id: `dot:${btw.anchor.blockOffset}`,
@@ -115,6 +144,9 @@
     }
     return dots;
   });
+  const footnoteRoots = $derived(
+    streaming ? [stableTree, tailTree] : [fullTree],
+  );
 
   const isOpen = (btwId: string): boolean =>
     expandedThreads
@@ -158,7 +190,9 @@
       if (cancelled) return;
       const ranges: Range[] = [];
       for (const btw of currentBtws) {
-        if (!btw.anchor.quote) continue;
+        // The painted path is transient decoration for in-flight drafts only;
+        // persisted anchors are real <mark> elements in the settled tree.
+        if (!btw.draft || !btw.anchor.quote) continue;
         const block = currentRoot.querySelector<HTMLElement>(
           `[data-block-offset="${btw.anchor.blockOffset}"]`,
         );
@@ -174,11 +208,42 @@
     };
   });
 
-  function handleDotClick(dot: MarginDot) {
-    for (const btw of bodyThreads) {
-      if (btw.anchor.blockOffset === dot.blockOffset) toggleThread(btw.id);
-    }
+  // Settled trees carry real marks for persisted anchors; the miss report
+  // feeds the fallback gutter dots via the active parse's derived value.
+  function parseSettled(source: string): {
+    tree: HastNode;
+    misses: AnchorMiss[];
+  } {
+    const tree = parseAnswer(source);
+    const { misses } = wrapAnchors(tree, markAnchors);
+    return { tree, misses };
   }
+
+  // Delegated click on the rendered body: a <mark data-thread-id> toggles its
+  // thread's inline card. Selection wins — a mouseup that left a non-collapsed
+  // selection is a selection, never a click-open.
+  function handleBodyClick(event: MouseEvent): void {
+    const target = event.target;
+    if (!(target instanceof Element)) return;
+    const mark = target.closest("mark[data-thread-id]");
+    if (!mark) return;
+    // A link inside a mark keeps its universal meaning: navigation wins,
+    // the mark's non-link text is the toggle surface.
+    const link = target.closest("a");
+    if (link && mark.contains(link)) return;
+    const selection = window.getSelection();
+    if (selection && !selection.isCollapsed && selection.rangeCount > 0) return;
+    const threadId = mark.getAttribute("data-thread-id");
+    if (!threadId) return;
+    toggleThread(threadId);
+  }
+
+  $effect(() => {
+    const currentRoot = root;
+    if (!currentRoot) return;
+    currentRoot.addEventListener("click", handleBodyClick);
+    return () => currentRoot.removeEventListener("click", handleBodyClick);
+  });
 
   function emptyRoot(): HastNode {
     return { type: "root", children: [] };
@@ -276,7 +341,6 @@
   resetKey={`${streaming}:${displayText}`}
   {onLinkClick}
   {marginDots}
-  onDotClick={handleDotClick}
   class="select-text"
 >
   {#snippet children({

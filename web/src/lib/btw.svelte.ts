@@ -93,11 +93,22 @@ export class DocThreads {
     }
   };
 
-  /** Re-check which anchors resolve to a rendered block in the document. */
+  /** Re-check which anchors resolve to a rendered mark (or, for in-flight
+   * drafts, a rendered block) in the document. Persisted threads whose quote
+   * could not be located render a pure gutter dot instead and lose the jump
+   * affordance. */
   refreshJumpable = (): void => {
     const next = new Set<string>();
     for (const thread of this.threads) {
       if (thread.anchor.blockOffset < 0) continue;
+      const mark = window.document.querySelector<HTMLElement>(
+        `mark[data-thread-id="${CSS.escape(thread.id)}"]`,
+      );
+      if (mark !== null) {
+        next.add(thread.id);
+        continue;
+      }
+      if (!thread.draft) continue;
       const block = window.document.querySelector<HTMLElement>(
         `[data-block-offset="${CSS.escape(String(thread.anchor.blockOffset))}"]`,
       );
@@ -265,12 +276,21 @@ export class DocThreads {
     if (target?.sessionId) this.onOpenSession(target.sessionId);
   };
 
-  /** Expand a thread and scroll its anchor block into view (chip "jump"). */
+  /** Expand a thread and scroll its anchor mark into view (chip "jump").
+   * Drafts have no mark yet — fall back to scrolling their block (the
+   * painted highlight). */
   jumpTo = (threadId: string): void => {
     const target = this.#findThread(threadId);
     if (!target) return;
     this.expanded = new Set([...this.expanded, threadId]);
     requestAnimationFrame(() => {
+      const mark = window.document.querySelector<HTMLElement>(
+        `mark[data-thread-id="${CSS.escape(threadId)}"]`,
+      );
+      if (mark) {
+        mark.scrollIntoView({ block: "start" });
+        return;
+      }
       const block = window.document.querySelector<HTMLElement>(
         `[data-block-offset="${target.anchor.blockOffset}"]`,
       );

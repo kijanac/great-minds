@@ -593,9 +593,26 @@
   }
 }
 
-/* BTW anchor highlights — painted over the highlighted span in answers and
-   articles via the Custom Highlight API (see lib/highlight.ts). */
+/* BTW anchor highlights — painted over the highlighted span for in-flight
+   draft threads via the Custom Highlight API (see lib/highlight.ts). */
 ::highlight(btw-anchor) {
   background-color: color-mix(in oklab, var(--btw) 22%, transparent);
   border-radius: 1px;
+}
+
+/* BTW anchor marks — real <mark> elements for persisted thread anchors,
+   produced by the hast transform (see lib/anchor-marks.ts). The tint uses
+   alpha so nested (overlapping) marks darken. Hover deepens the tint and
+   the cursor advertises the click-to-toggle affordance. scroll-margin keeps
+   header-panel jumps clear of the sticky chrome, like the body blocks. */
+mark.btw-anchor-mark {
+  background-color: color-mix(in oklab, var(--btw) 22%, transparent);
+  border-radius: 1px;
+  color: inherit;
+  cursor: pointer;
+  scroll-margin-top: 5rem;
+}
+
+mark.btw-anchor-mark:hover {
+  background-color: color-mix(in oklab, var(--btw) 34%, transparent);
 }
