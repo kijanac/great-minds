@@ -28,13 +28,12 @@ import { afterAll, beforeEach, describe, expect, it } from "vitest";
 import {
   canonicalizeAssignCacheKey,
   canonicalizeRegistryCacheKey,
-  CompilePhases,
-  CompilePhasesLive,
   partitionCacheKey,
   renderCacheKey,
   synthesizeCacheKey,
   type ValidatedTopic,
-} from "../src/compile-phases.ts";
+} from "../src/compile-contract.ts";
+import { CompilePhases, CompilePhasesLive } from "../src/compile-phases.ts";
 import { AppConfig, type AppConfigShape } from "../src/config.ts";
 import { DEFAULT_RENDER_MODEL } from "../src/config.ts";
 import { ClockLive } from "../src/clock.ts";

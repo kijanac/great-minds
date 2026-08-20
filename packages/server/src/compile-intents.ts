@@ -10,14 +10,14 @@ import { ClockService } from "./clock.ts";
 import { AppConfig } from "./config.ts";
 import { formatError } from "./error-details.ts";
 import {
-  CompilePhases,
   CompilePhaseFailed,
   CompilePhaseNotPorted,
   CompileWorkflowError,
   phaseFailure,
   ValidatedTopic,
   type CompilePhase,
-} from "./compile-phases.ts";
+} from "./compile-contract.ts";
+import { CompilePhases } from "./compile-phases.ts";
 import { StructuredLogger } from "./logging.ts";
 import { PipelineRunsService } from "./pipeline-runs.ts";
 import { workflowExecutionId } from "./workflow-engine.ts";

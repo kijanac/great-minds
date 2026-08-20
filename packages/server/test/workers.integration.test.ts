@@ -24,12 +24,8 @@ import {
   CompileWorkflow,
   CompileWorkflowLive,
 } from "../src/compile-intents.ts";
-import {
-  CompilePhases,
-  CompilePhasesLive,
-  phaseFailure,
-  RENDER_STEP_LABELS,
-} from "../src/compile-phases.ts";
+import { phaseFailure, RENDER_STEP_LABELS } from "../src/compile-contract.ts";
+import { CompilePhases, CompilePhasesLive } from "../src/compile-phases.ts";
 import { AppConfig, type AppConfigShape } from "../src/config.ts";
 import { ClockLive } from "../src/clock.ts";
 import { stagedFileToMarkdown } from "../src/conversion.ts";

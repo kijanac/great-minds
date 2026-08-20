@@ -26,7 +26,7 @@ import {
   synthesizeCacheKey,
   type ArchiveTransition,
   type ValidatedTopic,
-} from "./compile-phases.ts";
+} from "./compile-contract.ts";
 import { contentHash, promptContentHash } from "./crypto.ts";
 import type { EmbeddingsService } from "./embeddings.ts";
 import { errorDetails as describeError } from "./error-details.ts";

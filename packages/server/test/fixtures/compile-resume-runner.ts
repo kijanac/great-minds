@@ -11,11 +11,8 @@ import {
   CompileWorkflow,
   CompileWorkflowLive,
 } from "../../src/compile-intents.ts";
-import {
-  CompilePhaseNotPorted,
-  CompilePhases,
-  EXTRACT_STEP_LABELS,
-} from "../../src/compile-phases.ts";
+import { CompilePhaseNotPorted, EXTRACT_STEP_LABELS } from "../../src/compile-contract.ts";
+import { CompilePhases } from "../../src/compile-phases.ts";
 import { DrizzleLive } from "../../src/db.ts";
 import { StructuredLoggerLive } from "../../src/logging.ts";
 import {
