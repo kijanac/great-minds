@@ -238,11 +238,47 @@
     toggleThread(threadId);
   }
 
+  // Hover highlights every segment of the hovered thread: a quote crossing
+  // inline elements is split into sibling marks, and CSS :hover would only
+  // tint the segment under the cursor.
+  function setThreadHot(threadId: string, hot: boolean): void {
+    if (!root) return;
+    for (const segment of root.querySelectorAll(
+      `mark[data-thread-id="${CSS.escape(threadId)}"]`,
+    )) {
+      segment.classList.toggle("btw-anchor-hot", hot);
+    }
+  }
+
+  function handleBodyHover(event: MouseEvent, hot: boolean): void {
+    const target = event.target;
+    if (!(target instanceof Element)) return;
+    const mark = target.closest("mark[data-thread-id]");
+    if (!mark) return;
+    const related = event.relatedTarget;
+    if (
+      related instanceof Element &&
+      related.closest("mark[data-thread-id]") === mark
+    ) {
+      return;
+    }
+    const threadId = mark.getAttribute("data-thread-id");
+    if (threadId) setThreadHot(threadId, hot);
+  }
+
   $effect(() => {
     const currentRoot = root;
     if (!currentRoot) return;
+    const over = (event: MouseEvent) => handleBodyHover(event, true);
+    const out = (event: MouseEvent) => handleBodyHover(event, false);
     currentRoot.addEventListener("click", handleBodyClick);
-    return () => currentRoot.removeEventListener("click", handleBodyClick);
+    currentRoot.addEventListener("mouseover", over);
+    currentRoot.addEventListener("mouseout", out);
+    return () => {
+      currentRoot.removeEventListener("click", handleBodyClick);
+      currentRoot.removeEventListener("mouseover", over);
+      currentRoot.removeEventListener("mouseout", out);
+    };
   });
 
   function emptyRoot(): HastNode {

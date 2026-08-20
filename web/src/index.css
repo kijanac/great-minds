@@ -613,6 +613,9 @@ mark.btw-anchor-mark {
   scroll-margin-top: 5rem;
 }
 
-mark.btw-anchor-mark:hover {
+/* Hover is applied per-thread (all segments of the hovered thread id), not
+   per-segment: a quote crossing inline elements is split into sibling marks,
+   and segment-local :hover would visibly fragment the highlight. */
+mark.btw-anchor-hot {
   background-color: color-mix(in oklab, var(--btw) 34%, transparent);
 }
