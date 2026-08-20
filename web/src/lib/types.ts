@@ -1,5 +1,5 @@
 import type { SourceRef, ThinkingBlock } from "$lib/api/schemas";
-import type { UnmentionedLink } from "$lib/api/explore";
+import type { UnmentionedLink } from "$lib/api/lint";
 import type { SessionSummary } from "$lib/api/sessions";
 import type { SourceDocumentSummary, SourceTypeFacet } from "$lib/api/sources";
 import type { WikiArticleOverview } from "$lib/api/wiki";

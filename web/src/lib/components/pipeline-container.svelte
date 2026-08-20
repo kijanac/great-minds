@@ -384,10 +384,10 @@
             <Button
               variant="ghost"
               size="xs"
-              onclick={() => void goto("/explore")}
+              onclick={() => void goto("/library")}
               class="h-auto rounded-sm px-3 py-1.5 font-mono text-[length:var(--text-chrome)] tracking-[0.1em] text-gold hover:bg-transparent hover:text-gold-hover"
             >
-              explore the wiki
+              browse the library
             </Button>
             <Button
               variant="ghost"

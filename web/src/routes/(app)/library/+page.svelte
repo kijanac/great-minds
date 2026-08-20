@@ -6,8 +6,10 @@
   import LibraryContent from "$lib/components/library-content.svelte";
   import PageHeader from "$lib/components/page-header.svelte";
   import PanelHost from "$lib/components/panel-host.svelte";
+  import { Button } from "$lib/components/ui/button";
   import { Input } from "$lib/components/ui/input";
   import type { ReferenceOverview } from "$lib/api/references";
+  import { useHealthBadge } from "$lib/hooks/use-health-badge.svelte";
   import {
     LIBRARY_READING_ROOM,
     useLibrary,
@@ -23,6 +25,12 @@
     },
   );
   const readingRoom = useReferences();
+  const badge = useHealthBadge();
+  const badgeCount = $derived(
+    (badge.data?.orphans.length ?? 0) +
+      (badge.data?.dirty_topics.length ?? 0) +
+      (badge.data?.unmentioned_links.length ?? 0),
+  );
   const headerCount = $derived(
     library.activeType === LIBRARY_READING_ROOM
       ? library.activeTag
@@ -82,6 +90,20 @@
         >
           {headerCount}
         </span>
+      {/if}
+      {#if badgeCount > 0}
+        <Button
+          variant="ghost"
+          size="xs"
+          onclick={() => void goto("/health")}
+          title={badgeCount === 1
+            ? "1 item needs attention"
+            : `${badgeCount} items need attention`}
+          aria-label="open vault health"
+          class="h-[18px] min-w-[18px] rounded-full bg-gold/20 px-1 font-mono text-[10px] leading-none text-gold hover:bg-gold/30 hover:text-gold"
+        >
+          {badgeCount}
+        </Button>
       {/if}
     {/snippet}
     {#snippet search()}

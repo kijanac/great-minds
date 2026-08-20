@@ -115,7 +115,7 @@
       <p
         class="font-mono text-[length:var(--text-chrome)] tracking-[0.06em] text-warm-ghost"
       >
-        add sources from explore to build your library
+        add sources from home to build your library
       </p>
     {/if}
   </div>

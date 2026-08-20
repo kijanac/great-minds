@@ -1,13 +1,12 @@
 <script lang="ts">
   import IngestionFlow from "$lib/components/ingestion-flow.svelte";
-  import ExploreArticleRow from "$lib/components/explore-article-row.svelte";
+  import HealthArticleRow from "$lib/components/health-article-row.svelte";
   import { Button } from "$lib/components/ui/button";
   import { Skeleton } from "$lib/components/ui/skeleton";
   import type { UnmentionedLink, WikiArticleOverview } from "$lib/types";
 
-  type ExploreView = {
+  type HealthView = {
     loading: boolean;
-    recentArticles: WikiArticleOverview[];
     dirtyCount: number;
     orphans: WikiArticleOverview[];
     missing: UnmentionedLink[];
@@ -19,13 +18,13 @@
   };
 
   let {
-    explore,
+    health,
     onOpenArticle,
     onOpenSourceArticle,
     onUpdate,
     onBrowseLibrary,
   }: {
-    explore: ExploreView;
+    health: HealthView;
     onOpenArticle: (article: WikiArticleOverview) => void;
     onOpenSourceArticle: (slug: string, title: string) => void;
     onUpdate: () => void;
@@ -34,7 +33,7 @@
 </script>
 
 <main class="mx-auto max-w-[740px] px-4 pt-8 pb-20 md:px-10">
-  {#if explore.loading}
+  {#if health.loading}
     <div class="space-y-8">
       <div class="space-y-3">
         <Skeleton class="h-4 w-32 bg-ink-raised" />
@@ -47,26 +46,13 @@
       </div>
     </div>
   {:else}
-    <section class="mb-10">
-      <h2
-        class="mb-4 font-mono text-[length:var(--text-chrome)] tracking-[0.14em] text-gold-muted uppercase"
-      >
-        recent articles
-      </h2>
-      {#if explore.recentArticles.length > 0}
-        <div class="space-y-1">
-          {#each explore.recentArticles as article (article.file_path)}
-            <ExploreArticleRow {article} onOpen={onOpenArticle} />
-          {/each}
-        </div>
-      {:else}
-        <p class="font-serif text-[length:var(--text-body)] text-warm-dim">
-          No articles yet.
-        </p>
-      {/if}
-    </section>
+    {#if health.dirtyCount === 0 && health.orphans.length === 0 && health.missing.length === 0}
+      <p class="mb-10 font-serif text-[length:var(--text-body)] text-warm-dim">
+        Nothing needs attention — the wiki is healthy.
+      </p>
+    {/if}
 
-    {#if explore.dirtyCount > 0}
+    {#if health.dirtyCount > 0}
       <section class="mb-10">
         <div class="mb-4 flex items-center justify-between gap-4">
           <h2
@@ -78,27 +64,27 @@
             variant="outline"
             size="sm"
             onclick={onUpdate}
-            disabled={explore.compiling}
+            disabled={health.compiling}
             class="rounded-sm border-gold-dim font-mono text-[length:var(--text-chrome)] tracking-[0.08em] text-gold hover:bg-gold/10"
           >
-            {explore.compiling ? "compiling…" : "update now"}
+            {health.compiling ? "compiling…" : "update now"}
           </Button>
         </div>
         <p class="font-serif text-[length:var(--text-body)] text-warm-dim">
-          {explore.dirtyCount} article{explore.dirtyCount === 1 ? "" : "s"} drifted
+          {health.dirtyCount} article{health.dirtyCount === 1 ? "" : "s"} drifted
           from the current topic registry and will be refreshed on the next update.
         </p>
-        {#if explore.compileError}
+        {#if health.compileError}
           <p
             class="mt-3 font-mono text-[length:var(--text-chrome)] text-destructive"
           >
-            {explore.compileError.message}
+            {health.compileError.message}
           </p>
         {/if}
       </section>
     {/if}
 
-    {#if explore.orphans.length > 0}
+    {#if health.orphans.length > 0}
       <section class="mb-10">
         <h2
           class="mb-4 font-mono text-[length:var(--text-chrome)] tracking-[0.14em] text-gold-muted uppercase"
@@ -111,14 +97,14 @@
           rendered articles that no other article links to
         </p>
         <div class="space-y-1">
-          {#each explore.orphans as orphan (orphan.file_path)}
-            <ExploreArticleRow article={orphan} onOpen={onOpenArticle} />
+          {#each health.orphans as orphan (orphan.file_path)}
+            <HealthArticleRow article={orphan} onOpen={onOpenArticle} />
           {/each}
         </div>
       </section>
     {/if}
 
-    {#if explore.missing.length > 0}
+    {#if health.missing.length > 0}
       <section class="mb-10">
         <h2
           class="mb-4 font-mono text-[length:var(--text-chrome)] tracking-[0.14em] text-gold-muted uppercase"
@@ -131,7 +117,7 @@
           links the topic registry intended but the article doesn't include
         </p>
         <div class="space-y-1">
-          {#each explore.missing as connection, index (`${connection.source_slug}-${connection.target_slug}-${index}`)}
+          {#each health.missing as connection, index (`${connection.source_slug}-${connection.target_slug}-${index}`)}
             <button
               type="button"
               onclick={() =>
@@ -168,11 +154,11 @@
       browse the library →
     </a>
 
-    {#if explore.canIngest}
+    {#if health.canIngest}
       <div class="mt-10">
         <IngestionFlow
-          hasActivePipeline={explore.hasActivePipeline}
-          usesR2={explore.usesR2}
+          hasActivePipeline={health.hasActivePipeline}
+          usesR2={health.usesR2}
         />
       </div>
     {/if}

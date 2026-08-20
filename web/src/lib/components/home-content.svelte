@@ -21,9 +21,10 @@
   import { Button } from "$lib/components/ui/button";
   import * as DropdownMenu from "$lib/components/ui/dropdown-menu";
   import { useActiveJob } from "$lib/hooks/use-active-job.svelte";
-  import { useExploreBadge } from "$lib/hooks/use-explore-badge.svelte";
+  import { useHealthBadge } from "$lib/hooks/use-health-badge.svelte";
   import { createLinkInterceptor } from "$lib/hooks/use-link-interceptor";
   import { useSessions } from "$lib/hooks/use-sessions.svelte";
+  import { useVaultCounts } from "$lib/hooks/use-vault-counts.svelte";
   import { activeVault, useVaults } from "$lib/hooks/use-vault.svelte";
   import { MENU_ITEM_CLASS, POPOVER_SURFACE_CLASS } from "$lib/control-styles";
   import { loadPanelContent } from "$lib/panel-content";
@@ -50,7 +51,8 @@
 
   const sessions = useSessions();
   const vaults = useVaults();
-  const badge = useExploreBadge();
+  const badge = useHealthBadge();
+  const counts = useVaultCounts();
   const activeJob = useActiveJob();
   const initial = untrack(() => ({
     sessionId,
@@ -270,12 +272,25 @@
               {#if currentVault}
                 <Button
                   variant="outline"
-                  onclick={() => void goto("/explore")}
+                  onclick={() => void goto("/library")}
                   class="h-auto gap-2.5 rounded-sm border-ink-border px-4 py-1.5 font-mono text-[length:var(--text-chrome)] tracking-[0.14em] text-warm-faint hover:border-gold-dim hover:text-warm"
                 >
                   {currentVault.name}
+                  {#if counts.articleTotal !== null && counts.sourceTotal !== null}
+                    <span class="text-warm-ghost">
+                      {counts.articleTotal} article{counts.articleTotal === 1
+                        ? ""
+                        : "s"} · {counts.sourceTotal} source{counts.sourceTotal ===
+                      1
+                        ? ""
+                        : "s"} →
+                    </span>
+                  {/if}
                   {#if badgeCount > 0}
                     <span
+                      title={badgeCount === 1
+                        ? "1 item needs attention"
+                        : `${badgeCount} items need attention`}
                       class="inline-flex h-[18px] min-w-[18px] items-center justify-center rounded-full bg-gold/20 px-1 text-[10px] leading-none text-gold"
                     >
                       {badgeCount}

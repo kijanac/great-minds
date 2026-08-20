@@ -34,12 +34,6 @@ export async function fetchWikiArticles(params?: {
   return readJson(res, wikiArticleListSchema);
 }
 
-export async function fetchRecentWikiArticles(limit: number = 6): Promise<WikiArticleList> {
-  const res = await apiFetch(vaultPath(`/wiki/recent?limit=${limit}`));
-  if (!res.ok) throw new Error("Failed to fetch recent wiki articles");
-  return readJson(res, wikiArticleListSchema);
-}
-
 /** Articles produced by a given pipeline run — drives the compile completion
  *  card's "what this run built" delta. */
 export async function fetchArticlesByRun(
