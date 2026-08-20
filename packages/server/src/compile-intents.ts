@@ -61,7 +61,16 @@ export const CompileWorkflowLive = Layer.unwrap(
       name: `compile-phase-${phase}`,
       success,
       error: CompileWorkflowError,
-      execute: execute.pipe(
+      // Cancellation guard before each phase's side effects: engine
+      // interruption is cooperative, so a cancelled run must also stop at
+      // the next phase boundary.
+      execute: Effect.gen(function* () {
+        const pipeline = yield* PipelineRunsService;
+        if (!(yield* pipeline.isActive(payload.pipelineRunId as Uuid))) {
+          return yield* Effect.interrupt;
+        }
+        return yield* execute;
+      }).pipe(
         Effect.catchCause((cause) => {
           if (cause.reasons.length > 0 && cause.reasons.every(Cause.isInterruptReason)) {
             return Effect.interrupt;

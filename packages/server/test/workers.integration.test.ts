@@ -1262,13 +1262,15 @@ describe("M4.2 durable workers", () => {
             completedAt: new Date(),
           }))
           .pipe(Effect.orDie);
-        yield* Effect.result(
-          CompileWorkflow.execute({
+        yield* CompileWorkflow.execute(
+          {
             intentId: id.terminalIntent,
             vaultId: id.vault,
             pipelineRunId: id.terminalRun,
-          }),
+          },
+          { discard: true },
         );
+        yield* Effect.sleep("250 millis");
       }),
     );
 
@@ -1287,5 +1289,8 @@ describe("M4.2 durable workers", () => {
       currentPhase: "source_ingest",
       phaseStatus: "cancelled",
     });
-  });
+    // The phase-boundary guard interrupts before any phase runs, so the
+    // workflow writes nothing for a cancelled run.
+    expect(written.size).toBe(0);
+  }, 30_000);
 });
