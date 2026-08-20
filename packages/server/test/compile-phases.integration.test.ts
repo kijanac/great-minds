@@ -1113,8 +1113,7 @@ describe("M4.3a deterministic compile phases", () => {
       Effect.gen(function* () {
         const db = yield* Database;
         yield* db
-          .insert(sourceDocuments)
-          .values({
+          .query((d) => d.insert(sourceDocuments).values({
             id: id.source,
             vaultId: id.vault,
             filePath: "raw/docs/source.md",
@@ -1123,11 +1122,10 @@ describe("M4.3a deterministic compile phases", () => {
             sourceType: "document",
             title: "Source",
             precis: "Precis",
-          })
+          }))
           .pipe(Effect.orDie);
         yield* db
-          .insert(ideas)
-          .values(
+          .query((d) => d.insert(ideas).values(
             ideaIds.map((ideaId, index) => ({
               ideaId,
               vaultId: id.vault,
@@ -1137,7 +1135,7 @@ describe("M4.3a deterministic compile phases", () => {
               description: `Description ${index}`,
               embedding: [1, ...Array.from({ length: 1023 }, () => 0)],
             })),
-          )
+          ))
           .pipe(Effect.orDie);
       }),
     );
@@ -1224,9 +1222,10 @@ describe("M4.3a deterministic compile phases", () => {
     const rows = await run(
       Effect.flatMap(Database, (db) =>
         db
-          .select()
-          .from(compileCacheEntries)
-          .where(eq(compileCacheEntries.cacheKey, cacheKey))
+          .query((d) => d
+            .select()
+            .from(compileCacheEntries)
+            .where(eq(compileCacheEntries.cacheKey, cacheKey)))
           .pipe(Effect.orDie),
       ),
     );
