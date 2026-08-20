@@ -1286,4 +1286,78 @@ describe("M4.3a deterministic compile phases", () => {
     expect(cached.map((topic) => topic.subsumed_idea_ids.length)).toEqual([24]);
     expect(logEvents.map((entry) => entry.event)).toContain("synthesize_decompose_rejected");
   });
+
+  const seedPriorTopic = async (slug: string, memberIdeaIds: readonly Uuid[]) => {
+    await run(
+      Effect.gen(function* () {
+        const db = yield* Database;
+        yield* db
+          .query((d) => d.insert(topics).values({
+            topicId: id.topicB,
+            vaultId: id.vault,
+            slug,
+            title: "Prior Topic",
+            description: "Prior description",
+            articleStatus: "rendered",
+          }))
+          .pipe(Effect.orDie);
+        yield* db
+          .query((d) => d.insert(topicMembership).values(
+            memberIdeaIds.map((ideaId) => ({ topicId: id.topicB, ideaId })),
+          ))
+          .pipe(Effect.orDie);
+      }),
+    );
+  };
+
+  // The granularity script has no cleanup branch — it throws on a cleanup
+  // call — so these tests also prove the mechanical paths skip the LLM.
+  it("carries a renamed topic's identity by composition without a cleanup call", async () => {
+    const ideaIds = await seedGranularityIdeas(6);
+    await seedPriorTopic("old-name", ideaIds);
+    scriptGranularity({ synthesize: { topics: [topicJson("everything", 1, 6)] } });
+
+    const validated = await run(
+      Effect.flatMap(CompilePhases, (phases) => phases.abstract(id.vault, id.run)),
+    );
+
+    expect(validated).toHaveLength(1);
+    expect(validated[0]?.topicId).toBe(id.topicB);
+    expect(validated[0]?.slug).toBe("canonical-topic");
+    const rows = await run(
+      Effect.flatMap(Database, (db) =>
+        db
+          .query((d) => d.select().from(topics).where(eq(topics.topicId, id.topicB)))
+          .pipe(Effect.orDie),
+      ),
+    );
+    expect(rows[0]?.slug).toBe("canonical-topic");
+    expect(rows[0]?.articleStatus).toBe("rendered");
+    const resolved = logEvents.find((entry) => entry.event === "composition_identity_resolved");
+    expect(resolved?.fields).toMatchObject({ carried: 1, archived_mechanical: 0, residue: 0 });
+  });
+
+  it("archives an absorbed topic with a mechanical successor and no cleanup call", async () => {
+    const ideaIds = await seedGranularityIdeas(8);
+    await seedPriorTopic("absorbed", ideaIds.slice(0, 3));
+    scriptGranularity({ synthesize: { topics: [topicJson("everything", 1, 8)] } });
+
+    const validated = await run(
+      Effect.flatMap(CompilePhases, (phases) => phases.abstract(id.vault, id.run)),
+    );
+
+    expect(validated).toHaveLength(1);
+    expect(validated[0]?.topicId).not.toBe(id.topicB);
+    const rows = await run(
+      Effect.flatMap(Database, (db) =>
+        db
+          .query((d) => d.select().from(topics).where(eq(topics.topicId, id.topicB)))
+          .pipe(Effect.orDie),
+      ),
+    );
+    expect(rows[0]?.articleStatus).toBe("archived");
+    expect(rows[0]?.supersededBy).toBe(validated[0]?.topicId);
+    const resolved = logEvents.find((entry) => entry.event === "composition_identity_resolved");
+    expect(resolved?.fields).toMatchObject({ carried: 0, archived_mechanical: 1, residue: 0 });
+  });
 });

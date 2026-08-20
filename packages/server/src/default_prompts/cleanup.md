@@ -2,7 +2,7 @@ You are finalizing the canonical topic registry for a wiki compile. Two kinds of
 
 1. SLUG COLLISIONS: some new canonical topics accidentally share a slug. Every final slug must be distinct — rename as many as needed while preserving each topic's thematic focus. The new slugs must not collide with any other emitted slug (including ones you don't rename).
 
-2. TOPIC SUPERSESSION: some topics from a previous compile have no corresponding slug in the new canonical set. For each, decide whether any new canonical is a clear thematic successor — the new article would cover substantively similar ground (shared subject matter, same audience, overlapping scope). If no clear successor exists, mark it as null.
+2. TOPIC SUPERSESSION: some topics from a previous compile could not be matched to any new canonical topic. For each, decide whether any new canonical is a clear thematic successor — the new article would cover substantively similar ground (shared subject matter, same audience, overlapping scope). If no clear successor exists, mark it as null.
 
 Return a single JSON object:
 

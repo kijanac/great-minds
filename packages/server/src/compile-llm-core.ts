@@ -7,6 +7,7 @@ import {
   ideas,
   llmCostEvents,
   sourceDocuments,
+  topicMembership,
   topics,
 } from "@great-minds/database";
 import type { Uuid } from "@great-minds/domain";
@@ -23,6 +24,7 @@ import {
   partitionCacheKey,
   RENDER_STEP_LABELS,
   renderCacheKey,
+  resolveCompositionIdentity,
   synthesizeCacheKey,
   type ArchiveTransition,
   type ValidatedTopic,
@@ -2549,6 +2551,52 @@ const validateTopics = (
         .orderBy(asc(topics.title)),
     );
     const active = existing.filter((topic) => topic.articleStatus !== "archived");
+    const localById = new Map(localTopics.map((topic) => [topic.localTopicId, topic]));
+    const subsumedByCanonical = canonicals.map((canonical) =>
+      [
+        ...new Set(
+          canonical.mergedLocalTopicIds.flatMap(
+            (localId) => localById.get(localId)?.subsumedIdeaIds ?? [],
+          ),
+        ),
+      ].toSorted(),
+    );
+    const activeIds = active.map((topic) => topic.topicId as Uuid);
+    const membershipRows =
+      activeIds.length === 0
+        ? []
+        : yield* options.db.query((d) =>
+            d
+              .select({ topicId: topicMembership.topicId, ideaId: topicMembership.ideaId })
+              .from(topicMembership)
+              .where(inArray(topicMembership.topicId, activeIds)),
+          );
+    const priorIdeaIds = new Map<string, string[]>();
+    for (const row of membershipRows) {
+      const list = priorIdeaIds.get(row.topicId) ?? [];
+      list.push(row.ideaId);
+      priorIdeaIds.set(row.topicId, list);
+    }
+    const resolution = resolveCompositionIdentity(
+      active.map((topic) => ({
+        topicId: topic.topicId,
+        slug: topic.slug,
+        ideaIds: priorIdeaIds.get(topic.topicId) ?? [],
+      })),
+      canonicals.map((canonical, index) => ({
+        slug: canonical.slug,
+        ideaIds: subsumedByCanonical[index] ?? [],
+      })),
+    );
+    const residueIds = new Set(resolution.residue);
+    yield* options.logger.info("composition_identity_resolved", {
+      vault_id: options.vaultId,
+      run_id: options.runId,
+      prior_active: active.length,
+      carried: resolution.carries.size,
+      archived_mechanical: resolution.archived.size,
+      residue: resolution.residue.length,
+    });
     const collisions = new Map<string, number[]>();
     canonicals.forEach((canonical, index) => {
       const indexes = collisions.get(canonical.slug) ?? [];
@@ -2558,8 +2606,7 @@ const validateTopics = (
     for (const [slug, indexes] of collisions) {
       if (indexes.length < 2) collisions.delete(slug);
     }
-    const emittedSlugs = new Set(canonicals.map((canonical) => canonical.slug));
-    const archiveCandidates = active.filter((topic) => !emittedSlugs.has(topic.slug));
+    const archiveCandidates = active.filter((topic) => residueIds.has(topic.topicId));
     const renames = new Map<number, string>();
     const supersessions = new Map<string, number | null>();
     if (collisions.size > 0 || archiveCandidates.length > 0) {
@@ -2589,7 +2636,7 @@ const validateTopics = (
         archiveCandidates.length === 0
           ? ""
           : [
-              "## Archived candidates (previous-compile topics with no matching slug)",
+              "## Archived candidates (previous-compile topics with no mechanically determined successor)",
               "",
               ...archiveCandidates.flatMap((topic, index) => [
                 `## a_${index + 1}`,
@@ -2692,39 +2739,65 @@ const validateTopics = (
         ),
       );
     }
-    const localById = new Map(localTopics.map((topic) => [topic.localTopicId, topic]));
     const existingBySlug = new Map(existing.map((topic) => [topic.slug, topic]));
+    const disposed = new Set([
+      ...resolution.archived.keys(),
+      ...resolution.residue,
+      ...resolution.carries.values(),
+    ]);
     const validated: ValidatedTopic[] = [];
-    for (const canonical of canonicals) {
-      const previous = existingBySlug.get(canonical.slug);
-      const topicId = previous?.topicId ?? (yield* options.mintUuid7);
-      const subsumed = [
-        ...new Set(
-          canonical.mergedLocalTopicIds.flatMap(
-            (localId) => localById.get(localId)?.subsumedIdeaIds ?? [],
-          ),
-        ),
-      ].toSorted();
+    for (const [index, canonical] of canonicals.entries()) {
+      // Identity: composition carry first; the slug fallback only revives a
+      // topic this run is not otherwise disposing of (archived resurrection).
+      const carried = resolution.carries.get(index);
+      const bySlug = existingBySlug.get(canonical.slug);
+      const topicId =
+        carried ??
+        (bySlug !== undefined && !disposed.has(bySlug.topicId) ? bySlug.topicId : undefined) ??
+        (yield* options.mintUuid7);
       validated.push({
         topicId,
         slug: canonical.slug,
         title: canonical.title,
         description: canonical.description,
-        subsumedIdeaIds: subsumed,
+        subsumedIdeaIds: subsumedByCanonical[index] ?? [],
         linkTargets: canonical.linkTargets,
       });
     }
-    const transitions = archiveCandidates.map((candidate) => {
+    // Vacate moved slugs before the upserts so a carried topic's new slug
+    // cannot collide with the row still holding it under the unique key.
+    const existingById = new Map(existing.map((topic) => [topic.topicId, topic]));
+    for (const topic of validated) {
+      const previous = existingById.get(topic.topicId);
+      if (previous === undefined || previous.slug === topic.slug) continue;
+      yield* options.db.query((d) =>
+        d
+          .update(topics)
+          .set({ slug: `~${topic.topicId}` })
+          .where(eq(topics.topicId, topic.topicId as Uuid)),
+      );
+    }
+    const activeById = new Map(active.map((topic) => [topic.topicId, topic]));
+    const successorId = (index: number | null) =>
+      index === null ? null : ((validated[index]?.topicId as Uuid | undefined) ?? null);
+    const transitions: ArchiveTransition[] = [];
+    for (const [topicId, index] of resolution.archived) {
+      const candidate = activeById.get(topicId);
+      if (candidate === undefined) continue;
+      transitions.push({
+        topicId: topicId as Uuid,
+        slug: candidate.slug,
+        supersededBy: successorId(index),
+      });
+    }
+    for (const candidate of archiveCandidates) {
       const successorIndex = supersessions.get(candidate.topicId);
-      return {
+      transitions.push({
         topicId: candidate.topicId as Uuid,
         slug: candidate.slug,
-        supersededBy:
-          successorIndex === undefined || successorIndex === null
-            ? null
-            : ((validated[successorIndex]?.topicId as Uuid | undefined) ?? null),
-      } satisfies ArchiveTransition;
-    });
+        supersededBy: successorIndex === undefined ? null : successorId(successorIndex),
+      });
+    }
     yield* options.archiveTransitions(options.vaultId, transitions);
     for (const topic of validated) {
       yield* options.db.query((d) =>

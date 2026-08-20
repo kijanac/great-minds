@@ -325,6 +325,13 @@ export const CompilePhasesLive = Layer.effect(
           }
         }
         const path = `wiki/${topic.slug}.md`;
+        const previousRows = yield* db.query((d) => d
+          .select({ filePath: wikiArticles.filePath })
+          .from(wikiArticles)
+          .where(
+            and(eq(wikiArticles.vaultId, vaultId), eq(wikiArticles.topicId, topic.topicId as Uuid)),
+          ));
+        const previousPath = previousRows[0]?.filePath;
         const content = serializeFrontmatter(
           {
             topic_id: topic.topicId,
@@ -364,6 +371,10 @@ export const CompilePhasesLive = Layer.effect(
               updatedAt: sql`now()`,
             },
           }));
+        // A carried topic can change slug; drop the article file at its old path.
+        if (previousPath !== undefined && previousPath !== path && previousPath.startsWith("wiki/")) {
+          yield* storage.deletePath(vaultOwner(vaultId), previousPath);
+        }
         yield* db.query((d) => d
           .update(topics)
           .set({

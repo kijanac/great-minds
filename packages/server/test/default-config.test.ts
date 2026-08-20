@@ -68,7 +68,7 @@ describe("default prompts", () => {
       "canonicalize_assign.md": "49d8130d26be11d16b146fa7f1e193e6a220640da3a71b7654a23fc85bc09d6a",
       "canonicalize_registry.md":
         "12cf15426368b0ad68f5dbc2e6c1b01e22a4deb95831cc8a07d302968333aafc",
-      "cleanup.md": "3bc29dd1ab747ec40dbf19d317b193955819714823a0074399a1f01f2c7d48ca",
+      "cleanup.md": "61d0b385327da35bf09858da3738afbaf65505d45a6cb10025a4891a98340195",
       "extract.md": "0d589c31e7c6413e4aaaea6f70b36d9c36a8a81aa2bfc024477779e4f3c62dda",
       "query.md": "d02c29eb9d1367ef61e230741aee22feb3a2dea6564956ff2a433a34c876afee",
       "query_btw.md": "1415f3050b8c6b36867f2f0390281c775a3103991a6ad5a3e296fd7d42cdc138",
