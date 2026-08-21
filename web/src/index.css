@@ -349,6 +349,11 @@
   .footnote-sep {
     @apply text-gold text-[11px];
   }
+  /* The authored thematic break preceding footnote definitions would render
+   * as a stranded rule once the section itself is visually hidden below. */
+  hr:has(+ [data-footnotes]) {
+    display: none;
+  }
   [data-footnotes] {
     position: absolute;
     width: 1px;
