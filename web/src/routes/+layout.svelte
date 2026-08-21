@@ -33,14 +33,13 @@
   });
 </script>
 
+{#snippet cornerMenu()}
+  <CornerMenu />
+{/snippet}
+
 <QueryClientProvider client={queryClient}>
   <TooltipProvider>
-    <AppShell>
-      {#if !isShareRoute}
-        {#snippet utility()}
-          <CornerMenu />
-        {/snippet}
-      {/if}
+    <AppShell utility={isShareRoute ? undefined : cornerMenu}>
       {@render children()}
     </AppShell>
   </TooltipProvider>
