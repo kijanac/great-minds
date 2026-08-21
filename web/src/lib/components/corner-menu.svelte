@@ -2,8 +2,8 @@
   import LogOut from "@lucide/svelte/icons/log-out";
   import Moon from "@lucide/svelte/icons/moon";
   import Settings from "@lucide/svelte/icons/settings";
+  import SlidersHorizontal from "@lucide/svelte/icons/sliders-horizontal";
   import Sun from "@lucide/svelte/icons/sun";
-  import User from "@lucide/svelte/icons/user";
 
   import { goto } from "$app/navigation";
   import { auth } from "$lib/auth.svelte";
@@ -47,11 +47,11 @@
         {/if}
       </DropdownMenu.Item>
       <DropdownMenu.Item
-        onclick={() => void goto("/account")}
+        onclick={() => void goto("/settings")}
         class={`${MENU_ITEM_CLASS} cursor-pointer gap-2`}
       >
-        <User class="size-3.5" />
-        account
+        <SlidersHorizontal class="size-3.5" />
+        settings
       </DropdownMenu.Item>
       <DropdownMenu.Item
         onclick={() => auth.logout()}

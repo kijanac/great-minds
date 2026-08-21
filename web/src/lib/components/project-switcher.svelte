@@ -3,7 +3,6 @@
   import ArrowLeftRight from "@lucide/svelte/icons/arrow-left-right";
   import Check from "@lucide/svelte/icons/check";
   import Plus from "@lucide/svelte/icons/plus";
-  import Settings from "@lucide/svelte/icons/settings";
 
   import { Button } from "$lib/components/ui/button";
   import * as Popover from "$lib/components/ui/popover";
@@ -32,11 +31,6 @@
       void goto("/");
     }
     open = false;
-  }
-
-  function openSettings(vaultId: string) {
-    open = false;
-    void goto(`/project/${vaultId}/settings`);
   }
 </script>
 
@@ -73,32 +67,19 @@
         class={`w-auto min-w-[220px] p-1 ${POPOVER_SURFACE_CLASS}`}
       >
         {#each list as vault (vault.id)}
-          <div class="group flex items-center">
-            <Button
-              variant="ghost"
-              size="sm"
-              onclick={() => chooseVault(vault.id)}
-              class={`${MENU_ITEM_CLASS} flex-1 justify-start gap-2`}
-            >
-              {#if vault.id === activeVault.id}
-                <Check class="size-3.5" />
-              {:else}
-                <span class="size-3.5"></span>
-              {/if}
-              {vault.name}
-            </Button>
+          <Button
+            variant="ghost"
+            size="sm"
+            onclick={() => chooseVault(vault.id)}
+            class={`${MENU_ITEM_CLASS} w-full justify-start gap-2`}
+          >
             {#if vault.id === activeVault.id}
-              <Button
-                variant="ghost"
-                size="icon-xs"
-                onclick={() => openSettings(vault.id)}
-                aria-label="project settings"
-                class="mr-1 text-warm-ghost opacity-0 transition-opacity group-hover:opacity-100 hover:bg-transparent hover:text-gold focus-visible:opacity-100"
-              >
-                <Settings size={11} />
-              </Button>
+              <Check class="size-3.5" />
+            {:else}
+              <span class="size-3.5"></span>
             {/if}
-          </div>
+            {vault.name}
+          </Button>
         {/each}
         <div class="my-1 border-t border-ink-border"></div>
         <Button
