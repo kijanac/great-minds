@@ -272,7 +272,7 @@ export const Vault = Schema.Struct({
   name: Schema.String,
   owner_id: Uuid,
   created_at: IsoDateTime,
-  r2_bucket_name: Schema.NullOr(Schema.String),
+  staged_uploads: Schema.Boolean,
 });
 export type Vault = typeof Vault.Type;
 

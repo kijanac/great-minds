@@ -7,6 +7,7 @@ import { makeTestClock } from "./clock.ts";
 import { AppConfig, AppConfigLive } from "./config.ts";
 import { makeTestRandomBytes } from "./random.ts";
 import { startServer } from "./server.ts";
+import { ensureSharedBucket } from "./storage.ts";
 
 const config = await Effect.runPromise(AppConfig.pipe(Effect.provide(AppConfigLive)));
 const MigrationLive = DatabaseLive.pipe(Layer.provide(PgClient.layer({ url: config.databaseUrl })));
@@ -14,6 +15,9 @@ const migrationResult = await Effect.runPromise(
   migrateDatabase.pipe(Effect.provide(MigrationLive)),
 );
 logMigrationResult(migrationResult);
+
+await Effect.runPromise(ensureSharedBucket(config));
+console.log(JSON.stringify({ event: "storage_ready", backend: config.storageBackend }));
 
 if (Option.isSome(config.goldensClock) || Option.isSome(config.goldensRandomSeed)) {
   console.error(

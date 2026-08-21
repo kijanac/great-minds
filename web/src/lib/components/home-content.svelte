@@ -324,7 +324,7 @@
               >
                 <IngestionFlow
                   hasActivePipeline={activeJob.data ?? false}
-                  usesR2={!!currentVault.r2_bucket_name}
+                  stagedUploads={currentVault.staged_uploads}
                 />
               </div>
             {/if}

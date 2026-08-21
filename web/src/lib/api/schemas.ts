@@ -27,7 +27,7 @@ export const vaultSchema = z.object({
   name: z.string(),
   owner_id: z.string(),
   created_at: z.string(),
-  r2_bucket_name: z.string().nullable().optional(),
+  staged_uploads: z.boolean(),
 });
 
 export const pageInfoSchema = z.object({

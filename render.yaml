@@ -46,8 +46,8 @@ projects:
                 sync: false
               - key: R2_SECRET_ACCESS_KEY
                 sync: false
-              - key: R2_BUCKET_PREFIX
-                value: gm-prod
+              - key: R2_BUCKET_NAME
+                value: gm-prod-shared
               - key: RESEND_API_KEY
                 sync: false
               - key: RESEND_FROM_EMAIL

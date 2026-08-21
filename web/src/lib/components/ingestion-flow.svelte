@@ -53,10 +53,10 @@
 
   let {
     hasActivePipeline,
-    usesR2,
+    stagedUploads,
   }: {
     hasActivePipeline: boolean;
-    usesR2: boolean;
+    stagedUploads: boolean;
   } = $props();
 
   let expanded = $state(false);
@@ -343,7 +343,7 @@
       state: {
         uploadFiles,
         stableJobId: crypto.randomUUID(),
-        uploadMode: usesR2 ? "staged" : "direct",
+        uploadMode: stagedUploads ? "staged" : "direct",
       },
     });
     files = [];

@@ -10,7 +10,7 @@ import { ClockService } from "./clock.ts";
 import { AppConfig } from "./config.ts";
 import { generateApiKey, generateAuthCode, generateRefreshToken, sha256Hex } from "./crypto.ts";
 import { Mailer } from "./mailer.ts";
-import { ContentStorage, StagedStorage, userOwner } from "./storage.ts";
+import { ContentStorage, userOwner } from "./storage.ts";
 import { TokenService } from "./tokens.ts";
 import { VaultsService } from "./vaults.ts";
 
@@ -73,7 +73,6 @@ export const AuthServiceLive = Layer.effect(
     const clock = yield* ClockService;
     const mailer = yield* Mailer;
     const storage = yield* ContentStorage;
-    const stagedStorage = yield* StagedStorage;
     const tokens = yield* TokenService;
     const vaultsService = yield* VaultsService;
 
@@ -314,13 +313,11 @@ export const AuthServiceLive = Layer.effect(
           const rows = yield* db.query((d) => d
             .delete(users)
             .where(eq(users.id, userId))
-            .returning({ id: users.id, r2BucketName: users.r2BucketName }))
+            .returning({ id: users.id }))
             .pipe(Effect.orDie);
-          const deleted = rows[0];
-          if (deleted === undefined) {
+          if (rows[0] === undefined) {
             return yield* new NotFound({ detail: "User not found" });
           }
-          yield* stagedStorage.deleteOwnerBucket(deleted.r2BucketName);
         }),
     } satisfies AuthServiceShape;
   }),

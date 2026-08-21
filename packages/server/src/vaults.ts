@@ -23,6 +23,7 @@ import { and, asc, desc, eq, inArray, sql } from "drizzle-orm";
 import { Cause, Context, Effect, Layer, Schema } from "effect";
 import { parse as parseYaml, parseDocument } from "yaml";
 
+import { AppConfig } from "./config.ts";
 import { StructuredLogger } from "./logging.ts";
 import { Mailer } from "./mailer.ts";
 import { pageEnvelope, oneTotal } from "./pagination.ts";
@@ -204,18 +205,20 @@ const roleToDb = (role: MemberRole | InvitedMemberRole): DbMemberRole => {
   }
 };
 
-const vaultResponse = (row: {
-  readonly id: string;
-  readonly name: string;
-  readonly ownerId: string;
-  readonly createdAt: Date;
-  readonly r2BucketName: string | null;
-}) => ({
+const vaultResponse = (
+  row: {
+    readonly id: string;
+    readonly name: string;
+    readonly ownerId: string;
+    readonly createdAt: Date;
+  },
+  stagedUploads: boolean,
+) => ({
   id: asUuid(row.id),
   name: row.name,
   owner_id: asUuid(row.ownerId),
   created_at: row.createdAt.toISOString(),
-  r2_bucket_name: row.r2BucketName,
+  staged_uploads: stagedUploads,
 });
 
 const memberResponse = (row: {
@@ -300,12 +303,14 @@ export const VaultAccessServiceLive = Layer.effect(
 export const VaultsServiceLive = Layer.effect(
   VaultsService,
   Effect.gen(function* () {
+    const config = yield* AppConfig;
     const db = yield* Database;
     const access = yield* VaultAccessService;
     const storage = yield* ContentStorage;
     const stagedStorage = yield* StagedStorage;
     const mailer = yield* Mailer;
     const logger = yield* StructuredLogger;
+    const stagedUploads = config.storageBackend === "r2";
 
     const getVaultRow = (vaultId: Uuid) =>
       Effect.gen(function* () {
@@ -341,18 +346,18 @@ export const VaultsServiceLive = Layer.effect(
         }),
       );
 
-    const ensureConfig = (vaultId: Uuid, bucketName?: string | null) =>
+    const ensureConfig = (vaultId: Uuid) =>
       Effect.gen(function* () {
-        const owner = vaultOwner(vaultId, bucketName);
+        const owner = vaultOwner(vaultId);
         const exists = yield* storage.exists(owner, CONFIG_PATH);
         if (!exists) {
           yield* storage.writeText(owner, CONFIG_PATH, defaultVaultConfigText);
         }
       });
 
-    const applyConfigUpdate = (vaultId: Uuid, input: VaultConfigUpdate, bucketName?: string | null) =>
+    const applyConfigUpdate = (vaultId: Uuid, input: VaultConfigUpdate) =>
       Effect.gen(function* () {
-        const owner = vaultOwner(vaultId, bucketName);
+        const owner = vaultOwner(vaultId);
         const existing = yield* Effect.result(storage.readText(owner, CONFIG_PATH));
         const doc = parseDocument(
           existing._tag === "Success" ? existing.success : defaultVaultConfigText,
@@ -401,9 +406,8 @@ export const VaultsServiceLive = Layer.effect(
       },
     ) =>
       Effect.gen(function* () {
-        const bucketName = yield* stagedStorage.prepareBucketForOwner(userId);
         const vaultId = asUuid(randomUUID());
-        yield* ensureConfig(vaultId, bucketName);
+        yield* ensureConfig(vaultId);
         if (input.thematic_hint !== undefined || input.kinds !== undefined) {
           const update: VaultConfigUpdate =
             input.kinds === undefined
@@ -412,7 +416,7 @@ export const VaultsServiceLive = Layer.effect(
                   thematic_hint: input.thematic_hint,
                   kinds: [...input.kinds],
                 };
-          yield* applyConfigUpdate(vaultId, update, bucketName);
+          yield* applyConfigUpdate(vaultId, update);
         }
         const created = yield* db
           .transaction((tx) =>
@@ -423,7 +427,6 @@ export const VaultsServiceLive = Layer.effect(
                   id: vaultId,
                   name: input.name,
                   ownerId: userId,
-                  r2BucketName: bucketName,
                 })
                 .returning();
               yield* tx.insert(vaultMemberships).values({
@@ -443,13 +446,12 @@ export const VaultsServiceLive = Layer.effect(
           logger
             .error("vault_create_db_failed_after_storage_seed", {
               vault_id: vaultId,
-              bucket: bucketName,
               error: "Cause",
               error_message: Cause.pretty(cause),
             })
             .pipe(Effect.andThen(Effect.failCause(cause))),
         ));
-        return vaultResponse(created);
+        return vaultResponse(created, stagedUploads);
       });
 
     return {
@@ -467,7 +469,7 @@ export const VaultsServiceLive = Layer.effect(
       deleteOwnedVaults: (userId) =>
         Effect.gen(function* () {
           const owned = yield* db.query((d) => d
-            .select({ id: vaults.id, r2BucketName: vaults.r2BucketName })
+            .select({ id: vaults.id })
             .from(vaults)
             .where(eq(vaults.ownerId, userId)));
           if (owned.length === 0) {
@@ -476,7 +478,8 @@ export const VaultsServiceLive = Layer.effect(
           // Storage first: a failed wipe leaves the vault intact and retryable,
           // never orphaned files with no DB handle.
           for (const vault of owned) {
-            yield* storage.clear(vaultOwner(asUuid(vault.id), vault.r2BucketName));
+            yield* storage.clear(vaultOwner(asUuid(vault.id)));
+            yield* stagedStorage.clearStaged(asUuid(vault.id));
           }
           yield* deleteVaultRows(owned.map((vault) => vault.id));
         }),
@@ -493,7 +496,6 @@ export const VaultsServiceLive = Layer.effect(
               name: vaults.name,
               ownerId: vaults.ownerId,
               createdAt: vaults.createdAt,
-              r2BucketName: vaults.r2BucketName,
               role: vaultMemberships.role,
             })
             .from(vaultMemberships)
@@ -505,7 +507,7 @@ export const VaultsServiceLive = Layer.effect(
 
           return {
             ...pageEnvelope(
-              rows.map((row) => vaultResponse(row)),
+              rows.map((row) => vaultResponse(row, stagedUploads)),
               params,
               oneTotal(countRows),
             ),
@@ -533,7 +535,7 @@ export const VaultsServiceLive = Layer.effect(
             .from(wikiArticles)
             .where(eq(wikiArticles.vaultId, vaultId)));
           return {
-            ...vaultResponse(vault),
+            ...vaultResponse(vault, stagedUploads),
             role: scope.role,
             member_count: oneTotal(memberCounts),
             article_count: oneTotal(articleCounts),
@@ -721,8 +723,8 @@ export const VaultsServiceLive = Layer.effect(
           }
           // Storage first: a failed wipe leaves the vault intact and retryable,
           // never orphaned files with no DB handle.
-          yield* storage.clear(vaultOwner(vaultId, vault.r2BucketName));
-          yield* stagedStorage.clearStaged(vaultId, vault.r2BucketName);
+          yield* storage.clear(vaultOwner(vaultId));
+          yield* stagedStorage.clearStaged(vaultId);
           yield* deleteVaultRows([vaultId]);
         }),
     } satisfies VaultsServiceShape;

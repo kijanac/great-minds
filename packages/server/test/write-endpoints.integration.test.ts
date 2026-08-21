@@ -134,7 +134,7 @@ const testConfig = (url: string, dataDir: string): AppConfigShape => ({
   r2AccountId: Option.none(),
   r2AccessKeyId: Option.none(),
   r2SecretAccessKey: Option.none(),
-  r2BucketPrefix: "gm-test",
+  r2BucketName: Option.none(),
   openRouterApiKey: Option.none(),
   openRouterApiUrl: "https://openrouter.ai/api/v1",
   parallelApiKey: Option.none(),
@@ -529,7 +529,7 @@ describe("M3.1 write endpoint integration", () => {
     expect(createdBody).toMatchObject({
       name: "New Project",
       owner_id: id.alice,
-      r2_bucket_name: null,
+      staged_uploads: false,
     });
     expect(await readVaultFile(createdVaultId, "config.yaml")).toContain(
       "Prefer movement debates.",
@@ -1179,7 +1179,7 @@ describe("M3.1 write endpoint integration", () => {
       },
     );
     expect(localSign.status).toBe(400);
-    expect(localSign.body).toEqual({ detail: "vault has no r2 bucket; cannot sign uploads" });
+    expect(localSign.body).toEqual({ detail: "Staged uploads require the R2 storage backend" });
 
     const emptyProcess = await api(
       "POST",

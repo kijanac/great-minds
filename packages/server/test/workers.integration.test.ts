@@ -111,7 +111,7 @@ const config: AppConfigShape = {
   r2AccountId: Option.some("test"),
   r2AccessKeyId: Option.some(Redacted.make("test")),
   r2SecretAccessKey: Option.some(Redacted.make("test")),
-  r2BucketPrefix: "gm-test",
+  r2BucketName: Option.none(),
   openRouterApiKey: Option.none(),
   openRouterApiUrl: "https://openrouter.ai/api/v1",
   parallelApiKey: Option.none(),
@@ -200,10 +200,8 @@ const StorageLive = Layer.succeed(ContentStorage, {
 });
 
 const StagedStorageLive = Layer.succeed(StagedStorage, {
-  prepareBucketForOwner: () => Effect.succeed("worker-test-bucket"),
-  deleteOwnerBucket: () => Effect.void,
   presignStagedPut: () => Effect.succeed("https://example.invalid"),
-  readStagedBytes: (_vaultId, _bucket, hash) => {
+  readStagedBytes: (_vaultId, hash) => {
     if (readPause?.hash === hash) {
       const pause = readPause;
       pause.signalStarted();
@@ -224,7 +222,7 @@ const StagedStorageLive = Layer.succeed(StagedStorage, {
       ? Effect.die(new Error(`missing staged object ${hash}`))
       : Effect.succeed(bytes);
   },
-  deleteStaged: (_vaultId, _bucket, hash) => {
+  deleteStaged: (_vaultId, hash) => {
     if (deleteDefects.has(hash)) {
       const error = new Error(`delete exploded for ${hash}`);
       error.name = "DeleteStorageDefect";
@@ -443,7 +441,6 @@ const seed = () =>
           id: id.vault,
           name: "Worker Vault",
           ownerId: id.user,
-          r2BucketName: "worker-test-bucket",
         }))
         .pipe(Effect.orDie);
       yield* db.query((d) => d

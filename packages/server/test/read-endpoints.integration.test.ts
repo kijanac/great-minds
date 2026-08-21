@@ -139,7 +139,7 @@ const testConfig = (url: string, dataDir: string): AppConfigShape => ({
   r2AccountId: Option.none(),
   r2AccessKeyId: Option.none(),
   r2SecretAccessKey: Option.none(),
-  r2BucketPrefix: "gm-test",
+  r2BucketName: Option.none(),
   openRouterApiKey: Option.none(),
   openRouterApiUrl: "https://openrouter.ai/api/v1",
   parallelApiKey: Option.none(),
@@ -251,7 +251,6 @@ const seedFixtures = async (): Promise<Fixture> => {
             name: "Beta Vault",
             ownerId: id.bob,
             createdAt: new Date("2026-07-03T00:00:00.000Z"),
-            r2BucketName: "beta-bucket",
           },
         ]))
         .pipe(Effect.orDie);
@@ -951,8 +950,8 @@ describe("read-only HTTP integration", () => {
     const vaultItems = itemRecords(page);
     expect(page.pagination).toEqual({ limit: 50, offset: 0, total: 2 });
     expect(vaultItems.map((vault) => vault.id)).toEqual([id.vaultBeta, id.vaultAlpha]);
-    expect(vaultItems[0]?.r2_bucket_name).toBe("beta-bucket");
-    expect(vaultItems[1]?.r2_bucket_name).toBeNull();
+    expect(vaultItems[0]?.staged_uploads).toBe(false);
+    expect(vaultItems[1]?.staged_uploads).toBe(false);
     expect(asRecord(listed.body).roles).toEqual({
       [id.vaultAlpha]: "owner",
       [id.vaultBeta]: "viewer",

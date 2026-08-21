@@ -1,6 +1,6 @@
 import { posix } from "node:path";
 
-import { compileIntents, Database, pipelineRuns, tasks, vaults } from "@great-minds/database";
+import { compileIntents, Database, pipelineRuns, tasks } from "@great-minds/database";
 import {
   BadRequest,
   Forbidden,
@@ -329,16 +329,6 @@ export const IngestServiceLive = Layer.effect(
         );
       });
 
-    const getVaultBucket = (vaultId: Uuid) =>
-      Effect.gen(function* () {
-        const rows = yield* db.query((d) => d
-          .select({ bucket: vaults.r2BucketName })
-          .from(vaults)
-          .where(eq(vaults.id, vaultId))
-          .limit(1));
-        return rows[0]?.bucket ?? null;
-      });
-
     const createPipelineRun = (jobId: Uuid, vaultId: Uuid, trigger: "staged_files" | "url") =>
       Effect.gen(function* () {
         const inserted = yield* db.query((d) => d
@@ -494,15 +484,10 @@ export const IngestServiceLive = Layer.effect(
       signStagedFiles: (userId, vaultId, files) =>
         Effect.gen(function* () {
           yield* access.requireOwner(userId, vaultId);
-          const bucket = yield* getVaultBucket(vaultId);
-          if (bucket === null || bucket.length === 0) {
-            return yield* new BadRequest({ detail: "vault has no r2 bucket; cannot sign uploads" });
-          }
           const signed: StagedFileSignedUpload[] = [];
           for (const file of files) {
             const url = yield* stagedStorage.presignStagedPut(
               vaultId,
-              bucket,
               file.hash,
               file.mimetype ?? "application/octet-stream",
               file.size,

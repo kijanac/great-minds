@@ -50,7 +50,7 @@ const config: AppConfigShape = {
   r2AccountId: Option.some("test"),
   r2AccessKeyId: Option.some(Redacted.make("test")),
   r2SecretAccessKey: Option.some(Redacted.make("test")),
-  r2BucketPrefix: "gm-test",
+  r2BucketName: Option.none(),
   openRouterApiKey: Option.none(),
   openRouterApiUrl: "https://openrouter.ai/api/v1",
   parallelApiKey: Option.none(),
@@ -95,8 +95,6 @@ const StorageLive = Layer.succeed(ContentStorage, {
   clear: () => Effect.void,
 });
 const StagedStorageLive = Layer.succeed(StagedStorage, {
-  prepareBucketForOwner: () => Effect.succeed("worker-test-bucket"),
-  deleteOwnerBucket: () => Effect.void,
   presignStagedPut: () => Effect.succeed("https://example.invalid"),
   readStagedBytes: () => Effect.die(new Error("persist activity replayed unexpectedly")),
   deleteStaged: () => Effect.void,

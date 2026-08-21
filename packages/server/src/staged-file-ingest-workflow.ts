@@ -1,10 +1,4 @@
-import {
-  compileIntents,
-  Database,
-  pipelineRuns,
-  sourceDocuments,
-  vaults,
-} from "@great-minds/database";
+import { compileIntents, Database, pipelineRuns, sourceDocuments } from "@great-minds/database";
 import type { Uuid } from "@great-minds/domain";
 import { eq, sql } from "drizzle-orm";
 import { Cause, Effect, Exit, Schema } from "effect";
@@ -76,19 +70,6 @@ export const StagedFileIngestWorkflowLive = StagedFileIngestWorkflow.toLayer((pa
       if (config.storageBackend !== "r2") {
         throw new Error("staged_file_ingest requires r2 storage backend");
       }
-      const vaultRows = yield* db.query((d) => d
-        .select({ bucket: vaults.r2BucketName })
-        .from(vaults)
-        .where(eq(vaults.id, vaultId))
-        .limit(1));
-      const vault = vaultRows[0];
-      if (vault === undefined) {
-        throw new Error(`Vault ${vaultId} not found`);
-      }
-      if (vault.bucket === null || vault.bucket.length === 0) {
-        throw new Error(`Vault ${vaultId} has no r2_bucket_name`);
-      }
-      const bucket = vault.bucket;
       const existingRows = yield* db.query((d) => d
         .select({ path: sourceDocuments.filePath, hash: sourceDocuments.fileHash })
         .from(sourceDocuments)
@@ -118,7 +99,7 @@ export const StagedFileIngestWorkflowLive = StagedFileIngestWorkflow.toLayer((pa
         (file) =>
           Effect.exit(
             Effect.gen(function* () {
-              const bytes = yield* stagedStorage.readStagedBytes(vaultId, bucket, file.hash);
+              const bytes = yield* stagedStorage.readStagedBytes(vaultId, file.hash);
               const markdown = yield* Effect.tryPromise({
                 try: () => stagedFileToMarkdown(bytes, file.name, file.mimetype),
                 catch: (error) => error,
@@ -184,7 +165,7 @@ export const StagedFileIngestWorkflowLive = StagedFileIngestWorkflow.toLayer((pa
           continue;
         }
         yield* requireActive();
-        yield* storage.writeText(vaultOwner(vaultId, bucket), dest, content);
+        yield* storage.writeText(vaultOwner(vaultId), dest, content);
         seen.add(dest);
         batch.push({ filePath: dest, content, clientHash: file.hash });
         ingested += 1;
@@ -225,19 +206,6 @@ export const StagedFileIngestWorkflowLive = StagedFileIngestWorkflow.toLayer((pa
         if (config.storageBackend !== "r2") {
           throw new Error("staged_file_ingest requires r2 storage backend");
         }
-        const vaultRows = yield* db.query((d) => d
-          .select({ bucket: vaults.r2BucketName })
-          .from(vaults)
-          .where(eq(vaults.id, vaultId))
-          .limit(1));
-        const bucket = vaultRows[0]?.bucket;
-        if (bucket === undefined) {
-          throw new Error(`Vault ${vaultId} not found`);
-        }
-        if (bucket === null || bucket.length === 0) {
-          throw new Error(`Vault ${vaultId} has no r2_bucket_name`);
-        }
-
         const { ingested, skipped, failed, cleanupHashes } = result;
 
         if (ingested > 0) {
@@ -274,7 +242,7 @@ export const StagedFileIngestWorkflowLive = StagedFileIngestWorkflow.toLayer((pa
             );
           const cleanupResults = yield* Effect.forEach(
             cleanupHashes,
-            (hash) => Effect.exit(stagedStorage.deleteStaged(vaultId, bucket, hash)),
+            (hash) => Effect.exit(stagedStorage.deleteStaged(vaultId, hash)),
             { concurrency: 4 },
           );
           const cleanupFailures = cleanupResults.filter(Exit.isFailure).length;

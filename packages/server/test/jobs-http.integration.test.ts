@@ -83,7 +83,7 @@ const config = (dataDir: string): AppConfigShape => ({
   r2AccountId: Option.none(),
   r2AccessKeyId: Option.none(),
   r2SecretAccessKey: Option.none(),
-  r2BucketPrefix: "gm-test",
+  r2BucketName: Option.none(),
   openRouterApiKey: Option.some(Redacted.make("test-openrouter-key")),
   openRouterApiUrl: "https://openrouter.ai/api/v1",
   parallelApiKey: Option.none(),

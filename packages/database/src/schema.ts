@@ -52,7 +52,6 @@ export const users = pgTable(
     id: uuid("id").primaryKey(),
     email: varchar("email", { length: 320 }).notNull(),
     createdAt: timestamptz("created_at").defaultNow().notNull(),
-    r2BucketName: text("r2_bucket_name"),
   },
   (table) => [uniqueIndex("ix_users_email").on(table.email)],
 );
@@ -148,7 +147,6 @@ export const vaults = pgTable(
     name: varchar("name", { length: 255 }).notNull(),
     ownerId: uuid("owner_id").notNull(),
     createdAt: timestamptz("created_at").defaultNow().notNull(),
-    r2BucketName: text("r2_bucket_name"),
   },
   (table) => [
     foreignKey({

@@ -14,7 +14,7 @@
     compileError: Error | null;
     canIngest: boolean;
     hasActivePipeline: boolean;
-    usesR2: boolean;
+    stagedUploads: boolean;
   };
 
   let {
@@ -158,7 +158,7 @@
       <div class="mt-10">
         <IngestionFlow
           hasActivePipeline={health.hasActivePipeline}
-          usesR2={health.usesR2}
+          stagedUploads={health.stagedUploads}
         />
       </div>
     {/if}

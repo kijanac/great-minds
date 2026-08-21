@@ -51,7 +51,7 @@
           compileError: health.compileMutation.error,
           canIngest: health.currentVault?.owner_id === auth.userId,
           hasActivePipeline: health.hasActivePipeline,
-          usesR2: !!health.currentVault?.r2_bucket_name,
+          stagedUploads: health.currentVault?.staged_uploads ?? false,
         }}
         onOpenArticle={card.openArticle}
         onOpenSourceArticle={card.openSourceArticle}

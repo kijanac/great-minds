@@ -85,7 +85,7 @@ const config: AppConfigShape = {
   r2AccountId: Option.none(),
   r2AccessKeyId: Option.none(),
   r2SecretAccessKey: Option.none(),
-  r2BucketPrefix: "gm-test",
+  r2BucketName: Option.none(),
   openRouterApiKey: Option.none(),
   openRouterApiUrl: "https://example.invalid",
   parallelApiKey: Option.none(),

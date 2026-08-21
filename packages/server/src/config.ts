@@ -19,7 +19,7 @@ export type AppConfigShape = {
   readonly r2AccountId: Option.Option<string>;
   readonly r2AccessKeyId: Option.Option<Redacted.Redacted<string>>;
   readonly r2SecretAccessKey: Option.Option<Redacted.Redacted<string>>;
-  readonly r2BucketPrefix: string;
+  readonly r2BucketName: Option.Option<string>;
   readonly openRouterApiKey: Option.Option<Redacted.Redacted<string>>;
   readonly openRouterApiUrl: string;
   readonly parallelApiKey: Option.Option<Redacted.Redacted<string>>;
@@ -95,7 +95,7 @@ const appConfig = Config.all({
   r2AccountId: Config.option(nonEmptyString("R2_ACCOUNT_ID")),
   r2AccessKeyId: Config.option(redactedNonEmpty("R2_ACCESS_KEY_ID")),
   r2SecretAccessKey: Config.option(redactedNonEmpty("R2_SECRET_ACCESS_KEY")),
-  r2BucketPrefix: nonEmptyString("R2_BUCKET_PREFIX").pipe(Config.withDefault("gm")),
+  r2BucketName: Config.option(nonEmptyString("R2_BUCKET_NAME")),
   openRouterApiKey: Config.option(redactedNonEmpty("OPENROUTER_API_KEY")),
   openRouterApiUrl: nonEmptyString("OPENROUTER_API_URL").pipe(
     Config.withDefault("https://openrouter.ai/api/v1"),
@@ -175,7 +175,8 @@ const appConfig = Config.all({
     if (
       Option.isSome(config.r2AccountId) &&
       Option.isSome(config.r2AccessKeyId) &&
-      Option.isSome(config.r2SecretAccessKey)
+      Option.isSome(config.r2SecretAccessKey) &&
+      Option.isSome(config.r2BucketName)
     ) {
       return Effect.succeed(config);
     }
@@ -184,7 +185,7 @@ const appConfig = Config.all({
         new Schema.SchemaError(
           new SchemaIssue.InvalidValue(Option.some(config.storageBackend), {
             message:
-              "STORAGE_BACKEND=r2 requires R2_ACCOUNT_ID, R2_ACCESS_KEY_ID, and R2_SECRET_ACCESS_KEY",
+              "STORAGE_BACKEND=r2 requires R2_ACCOUNT_ID, R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY, and R2_BUCKET_NAME",
           }),
         ),
       ),
