@@ -30,7 +30,7 @@
 
 {#if vaults.error}
   <ErrorState
-    message="Couldn't load your projects."
+    message="Couldn't load your vaults."
     onRetry={() => void vaults.refetch()}
   />
 {:else if vaults.isLoading}

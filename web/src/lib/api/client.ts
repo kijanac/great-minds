@@ -169,7 +169,7 @@ export async function createVault(input: CreateVaultInput): Promise<VaultOvervie
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(input),
   });
-  if (!res.ok) throw new Error("Failed to create project");
+  if (!res.ok) throw new Error("Failed to create vault");
   return readJson(res, vaultOverviewSchema);
 }
 

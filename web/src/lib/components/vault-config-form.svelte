@@ -74,7 +74,7 @@
 <form onsubmit={submit} class="space-y-8">
   {#if isCreate}
     <div>
-      <Label for="vault-name" class={SECTION_LABEL}>project name</Label>
+      <Label for="vault-name" class={SECTION_LABEL}>vault name</Label>
       <Input
         id="vault-name"
         bind:value={name}
@@ -152,7 +152,7 @@
     >
       {submitting
         ? "saving…"
-        : (submitLabel ?? (isCreate ? "create project" : "save changes"))}
+        : (submitLabel ?? (isCreate ? "create vault" : "save changes"))}
     </Button>
     {#if onCancel}
       <Button

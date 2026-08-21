@@ -46,7 +46,7 @@
           <h2
             class="font-mono text-[length:var(--text-chrome)] tracking-[0.14em] text-gold-muted uppercase"
           >
-            projects
+            vaults
           </h2>
           <Button
             variant="ghost"
@@ -54,7 +54,7 @@
             class="h-auto gap-2 rounded-sm px-3 py-1.5 font-mono text-[length:var(--text-chrome)] tracking-[0.06em] text-warm-faint hover:bg-ink-raised hover:text-gold"
           >
             <Plus class="size-3" />
-            new project
+            new vault
           </Button>
         </div>
 
@@ -67,14 +67,14 @@
           <p
             class="font-mono text-[length:var(--text-chrome)] tracking-[0.06em] text-warm-ghost"
           >
-            no projects yet
+            no vaults yet
           </p>
         {:else}
           <div class="space-y-1">
             {#each list as vault (vault.id)}
               <Button
                 variant="ghost"
-                onclick={() => void goto(`/project/${vault.id}/settings`)}
+                onclick={() => void goto(`/vaults/${vault.id}/settings`)}
                 class="group h-auto w-full justify-between gap-4 rounded-sm px-3 py-2 hover:bg-ink-raised"
               >
                 <span class="flex min-w-0 items-baseline gap-3">

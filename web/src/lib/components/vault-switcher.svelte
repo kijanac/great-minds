@@ -18,9 +18,9 @@
 
   const list = $derived(vaults.data ?? []);
   const isEmpty = $derived(list.length === 0);
-  const triggerLabel = $derived(isEmpty ? "new project" : "switch project");
+  const triggerLabel = $derived(isEmpty ? "new vault" : "switch vault");
 
-  function createProject() {
+  function createVault() {
     open = false;
     void goto("/vaults/new");
   }
@@ -40,7 +40,7 @@
       variant="ghost"
       size="icon-sm"
       aria-label={triggerLabel}
-      onclick={createProject}
+      onclick={createVault}
       class="rounded-sm text-warm-ghost hover:bg-ink-raised hover:text-warm-faint"
     >
       <Plus class="size-3.5" />
@@ -85,11 +85,11 @@
         <Button
           variant="ghost"
           size="sm"
-          onclick={createProject}
+          onclick={createVault}
           class={`${MENU_ITEM_CLASS} w-full justify-start gap-2`}
         >
           <Plus class="size-3.5" />
-          new project
+          new vault
         </Button>
       </Popover.Content>
     </Popover.Root>

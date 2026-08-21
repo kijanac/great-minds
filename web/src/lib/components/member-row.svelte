@@ -112,7 +112,7 @@
               class="font-mono text-[length:var(--text-chrome)] tracking-[0.04em] text-warm-ghost"
             >
               Make <span class="text-gold">{member.email}</span> the owner of this
-              project. You will become an editor and lose owner privileges; only the
+              vault. You will become an editor and lose owner privileges; only the
               new owner can transfer it back.
             </AlertDialog.Description>
           </AlertDialog.Header>

@@ -21,7 +21,7 @@
 </script>
 
 <svelte:head>
-  <title>New project | Great Minds</title>
+  <title>New vault | Great Minds</title>
 </svelte:head>
 
 <div
@@ -31,7 +31,7 @@
     <h1
       class="mb-2 font-serif text-[length:var(--text-title)] leading-[1.15] text-foreground"
     >
-      {isFirstRun ? "Name your first project" : "New project"}
+      {isFirstRun ? "Name your first vault" : "New vault"}
     </h1>
     <p
       class="mb-10 font-mono text-[length:var(--text-caption)] tracking-[0.1em] text-warm-ghost"
@@ -46,7 +46,7 @@
       submitting={createVault.isPending}
       onSubmit={submit}
       onCancel={isFirstRun ? undefined : () => void goto("/")}
-      submitLabel="create project"
+      submitLabel="create vault"
     />
 
     {#if createVault.error}

@@ -14,7 +14,7 @@
   import ArticlePanel from "$lib/components/article-panel.svelte";
   import IngestionFlow from "$lib/components/ingestion-flow.svelte";
   import PanelHost from "$lib/components/panel-host.svelte";
-  import ProjectSwitcher from "$lib/components/project-switcher.svelte";
+  import VaultSwitcher from "$lib/components/vault-switcher.svelte";
   import SearchBar from "$lib/components/search-bar.svelte";
   import SessionThread from "$lib/components/session-thread.svelte";
   import ShareDialog from "$lib/components/share-dialog.svelte";
@@ -298,7 +298,7 @@
                   {/if}
                 </Button>
               {/if}
-              <ProjectSwitcher />
+              <VaultSwitcher />
             </div>
 
             <div

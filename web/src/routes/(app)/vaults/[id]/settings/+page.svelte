@@ -45,7 +45,7 @@
   let confirmation = $state("");
   let deleteError = $state<string | null>(null);
 
-  const project = createQuery(() => ({
+  const vault = createQuery(() => ({
     queryKey: ["vault", vaultId, "detail"],
     queryFn: () => getVaultDetail(vaultId),
     enabled: !!vaultId,
@@ -66,7 +66,7 @@
     ) ?? false,
   );
   const loading = $derived(
-    project.isLoading || members.isLoading || config.isLoading,
+    vault.isLoading || members.isLoading || config.isLoading,
   );
 
   async function refreshMembers() {
@@ -140,7 +140,7 @@
 </script>
 
 <svelte:head>
-  <title>Project settings | Great Minds</title>
+  <title>Vault settings | Great Minds</title>
 </svelte:head>
 
 <div class="flex h-screen flex-col overflow-hidden">
@@ -167,7 +167,7 @@
 
   <div class="min-h-0 flex-1 overflow-y-auto">
     <main class="mx-auto max-w-[740px] px-4 pt-8 pb-20 md:px-10">
-      {#if loading || !project.data}
+      {#if loading || !vault.data}
         <div class="space-y-6">
           <div class="space-y-2">
             <Skeleton class="h-9 w-48 bg-ink-raised" />
@@ -181,12 +181,12 @@
         </div>
       {:else}
         <h1 class="mb-1 font-serif text-[length:var(--text-heading)] text-warm">
-          {project.data.name}
+          {vault.data.name}
         </h1>
         <p
           class="mb-8 font-mono text-[length:var(--text-chrome)] tracking-[0.06em] text-warm-ghost"
         >
-          {project.data.article_count} articles · {project.data.member_count} member{project
+          {vault.data.article_count} articles · {vault.data.member_count} member{vault
             .data.member_count !== 1
             ? "s"
             : ""}

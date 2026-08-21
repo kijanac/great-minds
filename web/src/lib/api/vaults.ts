@@ -14,7 +14,7 @@ export type { VaultConfig, VaultDetail, Membership };
 
 export async function getVaultDetail(vaultId: string): Promise<VaultDetail> {
   const res = await apiFetch(`/vaults/${vaultId}`);
-  if (!res.ok) throw new Error("Failed to fetch project details");
+  if (!res.ok) throw new Error("Failed to fetch vault details");
   return readJson(res, vaultDetailSchema);
 }
 
@@ -76,7 +76,7 @@ export async function deleteVault(vaultId: string): Promise<void> {
 
 export async function getVaultConfig(vaultId: string): Promise<VaultConfig> {
   const res = await apiFetch(`/vaults/${vaultId}/config`);
-  if (!res.ok) throw new Error("Failed to fetch project config");
+  if (!res.ok) throw new Error("Failed to fetch vault config");
   return readJson(res, vaultConfigSchema);
 }
 
@@ -89,7 +89,7 @@ export async function updateVaultConfig(
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(patch),
   });
-  if (!res.ok) throw new Error("Failed to update project config");
+  if (!res.ok) throw new Error("Failed to update vault config");
   return readJson(res, vaultConfigSchema);
 }
 
