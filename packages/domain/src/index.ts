@@ -996,6 +996,7 @@ export type LinkQuery = typeof LinkQuery.Type;
 export const LinkedArticles = Schema.Struct({
   outgoing: Schema.Array(WikiArticleOverview),
   incoming: Schema.Array(WikiArticleOverview),
+  related: Schema.Array(WikiArticleOverview),
 });
 export type LinkedArticles = typeof LinkedArticles.Type;
 

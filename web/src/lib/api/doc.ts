@@ -165,10 +165,15 @@ export async function fetchChunks(
   return readJson(res, chunksResponseSchema);
 }
 
-const linkItemSchema = z.object({ file_path: z.string(), title: z.string() });
+const linkItemSchema = z.object({
+  file_path: z.string(),
+  title: z.string(),
+  precis: z.string(),
+});
 const linkedArticlesSchema = z.object({
   outgoing: z.array(linkItemSchema),
   incoming: z.array(linkItemSchema),
+  related: z.array(linkItemSchema),
 });
 export type LinkItem = z.infer<typeof linkItemSchema>;
 export type LinkedArticles = z.infer<typeof linkedArticlesSchema>;

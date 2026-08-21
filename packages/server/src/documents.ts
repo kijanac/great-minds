@@ -5,6 +5,7 @@ import {
   Database,
   searchIndex,
   sourceDocuments,
+  topicRelated,
   topics,
   wikiArticles,
 } from "@great-minds/database";
@@ -23,7 +24,7 @@ import {
   type WikiArticleOverview,
 } from "@great-minds/domain";
 import { alias } from "drizzle-orm/pg-core";
-import { and, asc, eq, gte, lte, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gte, lte, sql } from "drizzle-orm";
 import { Context, Effect, Layer, Schema } from "effect";
 
 import { ContentStorage, vaultOwner } from "./storage.ts";
@@ -320,7 +321,7 @@ export const DocumentsServiceLive = Layer.effect(
       Effect.gen(function* () {
         yield* access.requireMember(userId, vaultId);
         const sourceArticle = yield* db.query((d) => d
-          .select({ id: wikiArticles.id })
+          .select({ id: wikiArticles.id, topicId: wikiArticles.topicId })
           .from(wikiArticles)
           .where(
             and(
@@ -372,9 +373,33 @@ export const DocumentsServiceLive = Layer.effect(
           )
           .orderBy(asc(sql`lower(${incomingArticle.title})`)));
 
+        // Idea-overlap relatedness from the derive phase; require at least two
+        // shared ideas so a single incidental overlap never surfaces.
+        const relatedArticle = alias(wikiArticles, "related_article");
+        const related = yield* db.query((d) => d
+          .select({
+            filePath: relatedArticle.filePath,
+            title: relatedArticle.title,
+            precis: relatedArticle.precis,
+            updatedAt: relatedArticle.updatedAt,
+          })
+          .from(topicRelated)
+          .innerJoin(relatedArticle, eq(relatedArticle.topicId, topicRelated.relatedTopicId))
+          .where(
+            and(
+              eq(topicRelated.topicId, source.topicId),
+              gte(topicRelated.sharedIdeas, 2),
+              eq(relatedArticle.vaultId, vaultId),
+              eq(relatedArticle.archived, false),
+            ),
+          )
+          .orderBy(desc(topicRelated.jaccard), asc(sql`lower(${relatedArticle.title})`))
+          .limit(5));
+
         return {
           outgoing: outgoing.map(wikiOverview),
           incoming: incoming.map(wikiOverview),
+          related: related.map(wikiOverview),
         } satisfies LinkedArticles;
       });
 

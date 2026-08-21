@@ -11,6 +11,7 @@ import {
   searchIndex,
   sessions,
   sourceDocuments,
+  topicRelated,
   topics,
   users,
   vaultMemberships,
@@ -510,6 +511,19 @@ const seedFixtures = async (): Promise<Fixture> => {
             tags: [],
             derivedExtras: {},
             updatedAt: new Date("2026-07-09T07:00:00.000Z"),
+          },
+        ]))
+        .pipe(Effect.orDie);
+      yield* db.query((d) => d
+        .insert(topicRelated)
+        .values([
+          { topicId: id.topicAlpha, relatedTopicId: id.topicBeta, sharedIdeas: 3, jaccard: 0.5 },
+          { topicId: id.topicAlpha, relatedTopicId: id.topicGamma, sharedIdeas: 1, jaccard: 0.4 },
+          {
+            topicId: id.topicAlpha,
+            relatedTopicId: id.topicArchived,
+            sharedIdeas: 4,
+            jaccard: 0.9,
           },
         ]))
         .pipe(Effect.orDie);
@@ -1475,6 +1489,15 @@ describe("read-only HTTP integration", () => {
           slug: "gamma-lines",
         },
       ],
+      related: [
+        {
+          file_path: "wiki/beta-theory.md",
+          title: "Beta Theory",
+          precis: "Beta precis",
+          updated_at: "2026-07-09T12:00:00.000Z",
+          slug: "beta-theory",
+        },
+      ],
     });
 
     const betaQuery = new URLSearchParams({ path: "wiki/beta-theory.md" });
@@ -1487,6 +1510,7 @@ describe("read-only HTTP integration", () => {
     expect(betaLinks.body).toMatchObject({
       outgoing: [],
       incoming: [{ file_path: "wiki/alpha-practice.md" }],
+      related: [],
     });
 
     const rawQuery = new URLSearchParams({ path: "raw/books/capital.md" });

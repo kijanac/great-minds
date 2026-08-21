@@ -1,7 +1,8 @@
 <script lang="ts">
-  import type { Article, DocumentScope } from "$lib/api/doc";
+  import type { Article, DocumentScope, LinkItem } from "$lib/api/doc";
   import AnswerBlock from "$lib/components/answer-block.svelte";
   import DocHeader from "$lib/components/doc-header.svelte";
+  import { Button } from "$lib/components/ui/button";
   import type {
     ReferencePromotionAction,
     SelectionInfo,
@@ -16,6 +17,8 @@
     archived = false,
     supersededBy = null,
     onSupersessorClick,
+    related = [],
+    onRelatedClick,
     onLinkClick,
     panelDocked = false,
     threads = [],
@@ -37,6 +40,8 @@
     archived?: boolean;
     supersededBy?: string | null;
     onSupersessorClick?: (slug: string) => void;
+    related?: LinkItem[];
+    onRelatedClick?: (filePath: string) => void;
     onLinkClick?: (event: MouseEvent) => void;
     panelDocked?: boolean;
     threads?: ThreadLike[];
@@ -84,4 +89,35 @@
     {onToggleThread}
     onBtwOpenSession={onOpenThread}
   />
+  {#if !archived && related.length > 0}
+    <footer class="mt-14 border-t border-ink-subtle pt-6">
+      <div
+        class="mb-3 font-mono text-[length:var(--text-chrome)] tracking-[0.1em] text-interactive-dim uppercase"
+      >
+        related ≈
+      </div>
+      <ul class="space-y-3">
+        {#each related as item (item.file_path)}
+          <li>
+            <Button
+              variant="ghost"
+              onclick={() => onRelatedClick?.(item.file_path)}
+              class="flex h-auto w-full flex-col items-start gap-0.5 px-0 py-0 text-left whitespace-normal hover:bg-transparent"
+            >
+              <span
+                class="text-[length:var(--text-body)] text-warm-dim transition-colors group-hover:text-gold hover:text-gold"
+              >
+                {item.title}
+              </span>
+              {#if item.precis}
+                <span class="text-[length:var(--text-small)] text-warm-ghost">
+                  {item.precis}
+                </span>
+              {/if}
+            </Button>
+          </li>
+        {/each}
+      </ul>
+    </footer>
+  {/if}
 </article>

@@ -17,6 +17,7 @@
   import { useReferencePromotion } from "$lib/hooks/use-reference-promotion.svelte";
   import { activeVault, useVaults } from "$lib/hooks/use-vault.svelte";
   import {
+    useArticleLinks,
     useDocument,
     usePersonalDocument,
   } from "$lib/hooks/use-document.svelte";
@@ -50,6 +51,9 @@
       ? usePersonalDocument(() => path)
       : useDocument(() => path);
   const vaults = useVaults();
+  const articleLinks = useArticleLinks(() =>
+    readerScope === "vault" ? path : null,
+  );
   const promotion = useReferencePromotion();
   const document = $derived(documentQuery.data?.article ?? null);
   const body = $derived(documentQuery.data?.body ?? null);
@@ -284,6 +288,8 @@
         archived={documentQuery.data?.archived ?? false}
         supersededBy={documentQuery.data?.superseded_by ?? null}
         onSupersessorClick={(slug) => void goto(`/doc/wiki/${slug}.md`)}
+        related={articleLinks.data?.related ?? []}
+        onRelatedClick={(filePath) => void goto(`/doc/${filePath}`)}
         onLinkClick={handleLinkClick}
         panelDocked={!!selectedCard}
         threads={docThreads.threads}
