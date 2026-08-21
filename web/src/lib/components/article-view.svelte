@@ -94,7 +94,7 @@
       <div
         class="mb-3 font-mono text-[length:var(--text-chrome)] tracking-[0.1em] text-interactive-dim uppercase"
       >
-        related ≈
+        related
       </div>
       <ul class="space-y-3">
         {#each related as item (item.file_path)}
