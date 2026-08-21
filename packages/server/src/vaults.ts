@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 
-import { Database, users, vaultMemberships, vaults, wikiArticles } from "@great-minds/database";
+import { Database, sessions, shares, users, vaultMemberships, vaults, wikiArticles } from "@great-minds/database";
 import {
   BadRequest,
   Email,
@@ -19,7 +19,7 @@ import {
   type VaultDetail,
   type VaultPage,
 } from "@great-minds/domain";
-import { and, asc, desc, eq, sql } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, sql } from "drizzle-orm";
 import { Cause, Context, Effect, Layer, Schema } from "effect";
 import { parse as parseYaml, parseDocument } from "yaml";
 
@@ -317,6 +317,30 @@ export const VaultsServiceLive = Layer.effect(
         return rows[0];
       });
 
+    // Session shares reference sessions polymorphically (subject_kind/subject_id),
+    // so the vault cascade never reaches them; reference shares are user-scoped
+    // and survive vault deletion.
+    const deleteVaultRows = (vaultIds: readonly string[]) =>
+      db.transaction((tx) =>
+        Effect.gen(function* () {
+          const sessionRows = yield* tx
+            .select({ id: sessions.id })
+            .from(sessions)
+            .where(inArray(sessions.vaultId, vaultIds));
+          if (sessionRows.length > 0) {
+            yield* tx
+              .delete(shares)
+              .where(
+                and(
+                  eq(shares.subjectKind, "session"),
+                  inArray(shares.subjectId, sessionRows.map((row) => row.id)),
+                ),
+              );
+          }
+          yield* tx.delete(vaults).where(inArray(vaults.id, vaultIds));
+        }),
+      );
+
     const ensureConfig = (vaultId: Uuid, bucketName?: string | null) =>
       Effect.gen(function* () {
         const owner = vaultOwner(vaultId, bucketName);
@@ -446,10 +470,15 @@ export const VaultsServiceLive = Layer.effect(
             .select({ id: vaults.id, r2BucketName: vaults.r2BucketName })
             .from(vaults)
             .where(eq(vaults.ownerId, userId)));
-          yield* db.query((d) => d.delete(vaults).where(eq(vaults.ownerId, userId)));
+          if (owned.length === 0) {
+            return;
+          }
+          // Storage first: a failed wipe leaves the vault intact and retryable,
+          // never orphaned files with no DB handle.
           for (const vault of owned) {
             yield* storage.clear(vaultOwner(asUuid(vault.id), vault.r2BucketName));
           }
+          yield* deleteVaultRows(owned.map((vault) => vault.id));
         }),
       createVault,
       listVaults: (userId, params) =>
@@ -690,8 +719,11 @@ export const VaultsServiceLive = Layer.effect(
           if (vault.ownerId !== userId) {
             return yield* new Forbidden({ detail: "Only vault owners can perform this action" });
           }
-          yield* db.query((d) => d.delete(vaults).where(eq(vaults.id, vaultId)));
+          // Storage first: a failed wipe leaves the vault intact and retryable,
+          // never orphaned files with no DB handle.
           yield* storage.clear(vaultOwner(vaultId, vault.r2BucketName));
+          yield* stagedStorage.clearStaged(vaultId, vault.r2BucketName);
+          yield* deleteVaultRows([vaultId]);
         }),
     } satisfies VaultsServiceShape;
   }),

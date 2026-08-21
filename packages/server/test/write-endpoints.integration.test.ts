@@ -13,6 +13,7 @@ import {
   pipelineRuns,
   searchIndex,
   sessions,
+  shares,
   sourceDocuments,
   sourceProposals,
   tasks,
@@ -57,6 +58,10 @@ const id = {
   task: "00000000-0000-4000-8000-000000010901",
   cache: "00000000-0000-4000-8000-000000011001",
   cost: "00000000-0000-4000-8000-000000011101",
+  session: "00000000-0000-4000-8000-000000011201",
+  sessionShare: "00000000-0000-4000-8000-000000011301",
+  referenceShare: "00000000-0000-4000-8000-000000011302",
+  reference: "00000000-0000-4000-8000-000000011401",
   m32SourceA: "00000000-0000-4000-8000-000000013001",
   m32SourceB: "00000000-0000-4000-8000-000000013002",
   m32StagedRun: "00000000-0000-4000-8000-000000013101",
@@ -2369,6 +2374,47 @@ describe("M3.1 write endpoint integration", () => {
             costUsd: "0.010000",
           }))
           .pipe(Effect.orDie);
+        yield* db.query((d) => d
+          .insert(sessions)
+          .values({
+            id: id.session,
+            vaultId: id.vault,
+            userId: id.alice,
+            query: "What is capital?",
+            createdAt: initialTime,
+            updatedAt: initialTime,
+          }))
+          .pipe(Effect.orDie);
+        yield* db.query((d) => d
+          .insert(userDocuments)
+          .values({
+            id: id.reference,
+            userId: id.alice,
+            filePath: "references/kept.md",
+            fileHash: "file-hash",
+            bodyHash: "body-hash",
+            title: "Kept reference",
+          }))
+          .pipe(Effect.orDie);
+        yield* db.query((d) => d
+          .insert(shares)
+          .values([
+            {
+              id: id.sessionShare,
+              token: "session-share-token",
+              subjectKind: "session",
+              subjectId: id.session,
+              createdBy: id.alice,
+            },
+            {
+              id: id.referenceShare,
+              token: "reference-share-token",
+              subjectKind: "reference",
+              subjectId: id.reference,
+              createdBy: id.alice,
+            },
+          ]))
+          .pipe(Effect.orDie);
       }),
     );
 
@@ -2388,6 +2434,14 @@ describe("M3.1 write endpoint integration", () => {
     expect(await countTable(searchIndex)).toBe(0);
     expect(await countTable(compileCacheEntries)).toBe(0);
     expect(await countTable(llmCostEvents)).toBe(0);
+    const remainingShares = await runDb(
+      Effect.gen(function* () {
+        const db = yield* Database;
+        return yield* db.query((d) => d.select({ id: shares.id }).from(shares)).pipe(Effect.orDie);
+      }),
+    );
+    expect(remainingShares.map((row) => row.id)).toEqual([id.referenceShare]);
+    expect(await countTable(userDocuments)).toBe(1);
     expect(await fileExists(join(currentState().storageRoot, "vaults", id.vault))).toBe(false);
 
     await resetDatabase();

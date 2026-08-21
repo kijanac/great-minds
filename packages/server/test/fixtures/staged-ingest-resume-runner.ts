@@ -100,6 +100,7 @@ const StagedStorageLive = Layer.succeed(StagedStorage, {
   presignStagedPut: () => Effect.succeed("https://example.invalid"),
   readStagedBytes: () => Effect.die(new Error("persist activity replayed unexpectedly")),
   deleteStaged: () => Effect.void,
+  clearStaged: () => Effect.void,
 });
 const BaseLive = Layer.mergeAll(DrizzleLive.pipe(Layer.provideMerge(ConfigLive)), LoggerLive);
 const PipelineLive = PipelineRunsServiceLive.pipe(Layer.provideMerge(BaseLive));

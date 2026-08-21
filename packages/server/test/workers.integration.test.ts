@@ -232,6 +232,7 @@ const StagedStorageLive = Layer.succeed(StagedStorage, {
     }
     return Effect.sync(() => deleted.push(hash)).pipe(Effect.asVoid);
   },
+  clearStaged: () => Effect.void,
 });
 
 const ConfigLive = Layer.succeed(AppConfig, config);

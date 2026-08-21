@@ -97,6 +97,7 @@ type StagedStorageShape = {
     bucketName: string,
     hash: string,
   ) => Effect.Effect<void, StagedStorageError>;
+  readonly clearStaged: (vaultId: Uuid, bucketName: string | null) => Effect.Effect<void>;
 };
 
 export class ContentStorage extends Context.Service<ContentStorage, ContentStorageShape>()(
@@ -357,6 +358,7 @@ export const LocalStagedStorageLive = Layer.effect(
       Effect.fail(localStagedError("read", `staging/${vaultId}/${hash}`)),
     deleteStaged: (vaultId, _bucketName, hash) =>
       Effect.fail(localStagedError("delete", `staging/${vaultId}/${hash}`)),
+    clearStaged: () => Effect.void,
   } satisfies StagedStorageShape)),
 );
 
@@ -749,7 +751,8 @@ export const R2StagedStorageLive = Layer.effect(
       );
     };
 
-    const stagedObjectKey = (vaultId: Uuid, hash: string) => `staging/${vaultId}/${hash}`;
+    const stagedPrefix = (vaultId: Uuid) => `staging/${vaultId}/`;
+    const stagedObjectKey = (vaultId: Uuid, hash: string) => `${stagedPrefix(vaultId)}${hash}`;
 
     return {
       prepareBucketForOwner: (ownerId) =>
@@ -892,6 +895,18 @@ export const R2StagedStorageLive = Layer.effect(
           Effect.asVoid,
         );
       },
+      clearStaged: (vaultId, bucketName) =>
+        Effect.gen(function* () {
+          if (bucketName === null || bucketName.length === 0) {
+            return;
+          }
+          const result = yield* Effect.result(
+            deleteR2Objects(client, bucketName, stagedPrefix(vaultId)),
+          );
+          if (result._tag === "Failure" && !isR2Missing(result.failure)) {
+            return yield* Effect.die(result.failure);
+          }
+        }),
     } satisfies StagedStorageShape;
   }),
 );
