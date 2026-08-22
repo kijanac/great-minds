@@ -10,6 +10,7 @@ import {
   ideas,
   llmCostEvents,
   pipelineRuns,
+  prompts,
   searchIndex,
   sourceDocuments,
   topicLinks,
@@ -461,6 +462,60 @@ describe("M4.3a deterministic compile phases", () => {
     );
   });
 
+  it("records per-call extract provenance, prompt content, and the embedding model", async () => {
+    files.set("raw/docs/source.md", "# Source\n\nBody\n");
+    await insertSource(id.source, "raw/docs/source.md", "provenance-body");
+    complete = async () => ({
+      text: JSON.stringify({
+        ideas: [{ kind: "concept", label: "Idea", description: "Description", anchors: [] }],
+      }),
+      finishReason: "stop",
+      generationId: "extract-generation",
+      usage: { promptTokens: 17, completionTokens: 9, cost: 0.125 },
+    });
+
+    await run(Effect.flatMap(CompilePhases, (phases) => phases.extract(id.vault, id.run)));
+
+    const template = (await defaultPrompt("extract"))
+      .replace("{kinds}", "person, event, organization, concept")
+      .replace("{vault_enriched_fields}", "");
+    const promptHash = promptContentHash(template);
+    const recorded = await run(
+      Effect.gen(function* () {
+        const db = yield* Database;
+        return {
+          events: yield* db.query((d) => d.select().from(llmCostEvents)).pipe(Effect.orDie),
+          prompts: yield* db.query((d) =>
+            d.select().from(prompts).where(eq(prompts.hash, promptHash))).pipe(Effect.orDie),
+          ideas: yield* db.query((d) => d.select().from(ideas)).pipe(Effect.orDie),
+        };
+      }),
+    );
+
+    expect(recorded.events).toEqual([
+      expect.objectContaining({
+        vaultId: id.vault,
+        eventType: "compile",
+        phase: "extract",
+        model: config.extractModel,
+        promptHash,
+        runId: id.run,
+        correlationId: `compile-${id.run}`,
+        promptTokens: 17,
+        completionTokens: 9,
+        costUsd: "0.125000",
+        generationId: "extract-generation",
+      }),
+    ]);
+    expect(recorded.prompts).toEqual([
+      expect.objectContaining({ hash: promptHash, content: template }),
+    ]);
+    expect(promptContentHash(recorded.prompts[0]!.content)).toBe(recorded.prompts[0]!.hash);
+    expect(recorded.ideas).toEqual([
+      expect.objectContaining({ embeddingModel: config.embeddingModel }),
+    ]);
+  });
+
   it("isolates malformed extract output per document and coerces Python-defaulted fields", async () => {
     files.set("raw/docs/bad.md", "# Bad\n\nMALFORMED\n");
     files.set("raw/docs/good.md", "# Good\n\nGOOD\u0085BODY\n");
@@ -641,6 +696,13 @@ describe("M4.3a deterministic compile phases", () => {
       error_type: "SyntaxError",
     });
     expect(JSON.stringify(retry)).not.toContain("malformed-secret-shaped-output");
+    const events = await run(
+      Effect.flatMap(Database, (db) =>
+        db.query((d) => d.select().from(llmCostEvents)).pipe(Effect.orDie),
+      ),
+    );
+    expect(events).toHaveLength(2);
+    expect(events.every((event) => event.phase === "extract")).toBe(true);
   });
 
   it("fails loudly on a malformed canonical registry cache row", async () => {
@@ -921,7 +983,7 @@ describe("M4.3a deterministic compile phases", () => {
     });
   });
 
-  it("flushes compile LLM cost only after publish completes", async () => {
+  it("writes compile LLM cost before publish and publish adds no rows", async () => {
     await seedSourceAndIdeas();
     const topic = validated[0]!;
     complete = async () => ({
@@ -951,7 +1013,7 @@ describe("M4.3a deterministic compile phases", () => {
         return { beforePublish, afterPublish };
       }),
     );
-    expect(counts.beforePublish).toEqual([]);
+    expect(counts.beforePublish).toHaveLength(1);
     expect(counts.afterPublish).toHaveLength(1);
     expect(counts.afterPublish[0]?.costUsd).toBe("0.125000");
   });

@@ -192,6 +192,13 @@ export const llmCostEvents = pgTable(
     eventType: text("event_type").notNull(),
     costUsd: numeric("cost_usd", { precision: 12, scale: 6 }).notNull(),
     correlationId: text("correlation_id"),
+    phase: text("phase"),
+    model: text("model"),
+    promptHash: text("prompt_hash"),
+    runId: uuid("run_id"),
+    promptTokens: integer("prompt_tokens"),
+    completionTokens: integer("completion_tokens"),
+    generationId: text("generation_id"),
   },
   (table) => [
     foreignKey({
@@ -206,6 +213,12 @@ export const llmCostEvents = pgTable(
     }).onDelete("cascade"),
   ],
 );
+
+export const prompts = pgTable("prompts", {
+  hash: text("hash").primaryKey(),
+  content: text("content").notNull(),
+  firstSeen: timestamptz("first_seen").defaultNow().notNull(),
+});
 
 export const vaultMemberships = pgTable(
   "vault_memberships",
@@ -578,6 +591,7 @@ export const ideas = pgTable(
     label: text("label").notNull(),
     description: text("description").notNull(),
     embedding: vector("embedding", { dimensions: 1024 }),
+    embeddingModel: text("embedding_model"),
     createdAt: timestamptz("created_at").defaultNow().notNull(),
   },
   (table) => [

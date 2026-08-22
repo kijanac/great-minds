@@ -297,7 +297,6 @@ const RenderFailurePhasesLive = Layer.effect(
     const pipeline = yield* PipelineRunsService;
     return {
       archiveTransitions: () => Effect.void,
-      flushLlmCost: () => Effect.void,
       ingest: () => Effect.void,
       extract: () => Effect.void,
       abstract: () =>

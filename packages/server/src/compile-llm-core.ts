@@ -33,6 +33,7 @@ import { contentHash, promptContentHash } from "./crypto.ts";
 import type { EmbeddingsService } from "./embeddings.ts";
 import { errorDetails as describeError } from "./error-details.ts";
 import type { LanguageModel, LlmMessage, ModelCompletion } from "./llm.ts";
+import { recordPrompt } from "./llm-costs.ts";
 import type { StructuredLogger } from "./logging.ts";
 import { markdownParagraphs, parseFrontmatter, serializeFrontmatter } from "./markdown.ts";
 import type { PipelineRunsService } from "./pipeline-runs.ts";
@@ -546,7 +547,6 @@ type CompileLlmCoreOptions = {
 export const makeCompileLlmCore = (options: CompileLlmCoreOptions) => {
   const { config, db, embeddings, languageModel, pipeline, storage, randomBytes, clock, logger } =
     options;
-  const costs = new Map<string, number>();
   let lastMintTimestamp = -1;
 
   const mintUuid7 = Effect.gen(function* () {
@@ -556,27 +556,11 @@ export const makeCompileLlmCore = (options: CompileLlmCoreOptions) => {
     return formatUuid7(timestamp, bytes);
   });
 
-  const addCost = (runId: string, cost: number | undefined) => {
-    if (cost !== undefined) costs.set(runId, (costs.get(runId) ?? 0) + cost);
-  };
-
-  const flushCost = (vaultId: Uuid, runId: Uuid) =>
-    Effect.gen(function* () {
-      const total = costs.get(runId);
-      if (total === undefined) return;
-      costs.delete(runId);
-      yield* db.query((d) => d
-        .insert(llmCostEvents)
-        .values({
-          vaultId,
-          eventType: "compile",
-          costUsd: total.toFixed(6),
-          correlationId: `compile-${runId}`,
-        }));
-    });
-
   const jsonCall = (input: {
+    readonly vaultId: Uuid;
     readonly runId: Uuid;
+    readonly phase: string;
+    readonly promptHash: string;
     readonly model: string;
     readonly messages: readonly LlmMessage[];
     readonly temperature: number;
@@ -599,7 +583,21 @@ export const makeCompileLlmCore = (options: CompileLlmCoreOptions) => {
             }),
           catch: (error) => error,
         });
-        addCost(input.runId, completion.usage?.cost);
+        yield* db.query((d) => d
+          .insert(llmCostEvents)
+          .values({
+            vaultId: input.vaultId,
+            eventType: "compile",
+            phase: input.phase,
+            model: input.model,
+            promptHash: input.promptHash,
+            runId: input.runId,
+            correlationId: `compile-${input.runId}`,
+            promptTokens: completion.usage?.promptTokens ?? null,
+            completionTokens: completion.usage?.completionTokens ?? null,
+            costUsd: completion.usage?.cost?.toFixed(6) ?? "0.000000",
+            generationId: completion.generationId ?? null,
+          }));
         if (completion.finishReason === "length") {
           return yield* Effect.try({
             try: () => decodeCompileJsonCompletion(input.model, completion),
@@ -657,6 +655,7 @@ export const makeCompileLlmCore = (options: CompileLlmCoreOptions) => {
         .replace("{kinds}", vaultConfig.kinds.join(", "))
         .replace("{vault_enriched_fields}", formatEnrichedFields(vaultConfig.enrichedFields));
       const promptHash = promptContentHash(renderedTemplate);
+      yield* recordPrompt(db, promptHash, renderedTemplate);
       const responseFormat = extractResponseFormat(vaultConfig);
       const documents = yield* db.query((d) => d
         .select()
@@ -717,7 +716,10 @@ export const makeCompileLlmCore = (options: CompileLlmCoreOptions) => {
                 const body = parseFrontmatter(content).body;
                 const data = yield* extractSemaphore.withPermit(
                   jsonCall({
+                    vaultId,
                     runId,
+                    phase: "extract",
+                    promptHash,
                     model: config.extractModel,
                     messages: [
                       { role: "user", content: renderedTemplate.replace("{doc_content}", body) },
@@ -857,6 +859,7 @@ export const makeCompileLlmCore = (options: CompileLlmCoreOptions) => {
           label: idea.label,
           description: idea.description,
           embedding: sql`${vectorLiteral(embedding)}::vector`,
+          embeddingModel: config.embeddingModel,
         }));
         if (ideaRows.length === 0) continue;
         yield* db.query((d) =>
@@ -869,6 +872,7 @@ export const makeCompileLlmCore = (options: CompileLlmCoreOptions) => {
                 label: sql`excluded.label`,
                 description: sql`excluded.description`,
                 embedding: sql`excluded.embedding`,
+                embeddingModel: sql`excluded.embedding_model`,
               },
             })
             .pipe(
@@ -1011,7 +1015,7 @@ export const makeCompileLlmCore = (options: CompileLlmCoreOptions) => {
       rebuildWiki: options.rebuildWiki,
     });
 
-  return { extract, abstract, render, flushCost } as const;
+  return { extract, abstract, render } as const;
 };
 
 const pythonTruthy = (value: unknown) => {
@@ -1138,7 +1142,10 @@ const validateExtractOutput = (
   });
 
 type JsonCall = (input: {
+  readonly vaultId: Uuid;
   readonly runId: Uuid;
+  readonly phase: string;
+  readonly promptHash: string;
   readonly model: string;
   readonly messages: readonly LlmMessage[];
   readonly temperature: number;
@@ -1723,11 +1730,17 @@ const synthesizeTopics = (
       options.vaultId,
       "synthesize_decompose",
     );
+    const synthesizePromptHash = promptContentHash(promptTemplate);
+    const revisePromptHash = promptContentHash(revisePrompt);
+    const decomposePromptHash = promptContentHash(decomposePrompt);
+    yield* recordPrompt(options.db, synthesizePromptHash, promptTemplate);
+    yield* recordPrompt(options.db, revisePromptHash, revisePrompt);
+    yield* recordPrompt(options.db, decomposePromptHash, decomposePrompt);
     // The cached outcome depends on all three prompts of the phase.
     const promptHash = contentHash(
-      `synthesize=${promptContentHash(promptTemplate)}`,
-      `revise=${promptContentHash(revisePrompt)}`,
-      `decompose=${promptContentHash(decomposePrompt)}`,
+      `synthesize=${synthesizePromptHash}`,
+      `revise=${revisePromptHash}`,
+      `decompose=${decomposePromptHash}`,
     );
     const contextsById = new Map(contexts.map((idea) => [idea.ideaId, idea]));
     const localTopics: LocalTopic[] = [];
@@ -1754,7 +1767,10 @@ const synthesizeTopics = (
           const result = yield* Effect.result(
             synthesizeSemaphore.withPermit(
               options.jsonCall({
+                vaultId: options.vaultId,
                 runId: options.runId,
+                phase: "synthesize",
+                promptHash: synthesizePromptHash,
                 model: options.config.mapModel,
                 messages: [
                   { role: "user", content: promptTemplate.replace("{idea_block}", block) },
@@ -1789,7 +1805,9 @@ const synthesizeTopics = (
             tags,
             contexts: present,
             revisePrompt,
+            revisePromptHash,
             decomposePrompt,
+            decomposePromptHash,
             withPermit: (effect) => synthesizeSemaphore.withPermit(effect),
           });
           yield* options.putCache(options.vaultId, "synthesize", cacheKey, {
@@ -2020,7 +2038,9 @@ type ChunkGranularityInput = {
   readonly tags: ReadonlyMap<string, string>;
   readonly contexts: readonly IdeaContext[];
   readonly revisePrompt: string;
+  readonly revisePromptHash: string;
   readonly decomposePrompt: string;
+  readonly decomposePromptHash: string;
   readonly withPermit: <A, E, R>(effect: Effect.Effect<A, E, R>) => Effect.Effect<A, E, R>;
 };
 
@@ -2037,7 +2057,10 @@ const resolveChunkGranularity = (options: AbstractOptions, input: ChunkGranulari
       const result = yield* Effect.result(
         input.withPermit(
           options.jsonCall({
+            vaultId: options.vaultId,
             runId: options.runId,
+            phase: "synthesize_revise",
+            promptHash: input.revisePromptHash,
             model: options.config.mapModel,
             messages: [{ role: "user", content }],
             temperature: 0.3,
@@ -2116,7 +2139,10 @@ const resolveChunkGranularity = (options: AbstractOptions, input: ChunkGranulari
       const result = yield* Effect.result(
         input.withPermit(
           options.jsonCall({
+            vaultId: options.vaultId,
             runId: options.runId,
+            phase: "synthesize_decompose",
+            promptHash: input.decomposePromptHash,
             model: options.config.mapModel,
             messages: [{ role: "user", content }],
             temperature: 0.3,
@@ -2319,6 +2345,7 @@ const canonicalizeTopics = (
       "canonicalize_registry",
     );
     const registryPromptHash = promptContentHash(registryTemplate);
+    yield* recordPrompt(options.db, registryPromptHash, registryTemplate);
     const registryCacheKey = canonicalizeRegistryCacheKey({
       orderedTopics: ordered,
       promptHash: registryPromptHash,
@@ -2354,7 +2381,10 @@ const canonicalizeTopics = (
         .map((line) => `- ${line}`)
         .join("\n");
       const data = yield* options.jsonCall({
+        vaultId: options.vaultId,
         runId: options.runId,
+        phase: "canonicalize_registry",
+        promptHash: registryPromptHash,
         model: options.config.reduceModel,
         messages: [
           {
@@ -2395,6 +2425,7 @@ const canonicalizeTopics = (
       "canonicalize_assign",
     );
     const assignPromptHash = promptContentHash(assignTemplate);
+    yield* recordPrompt(options.db, assignPromptHash, assignTemplate);
     const registryBlock = registry
       .map((topic) => `- ${topic.slug} — ${topic.title}: ${topic.description}`)
       .join("\n");
@@ -2445,7 +2476,10 @@ const canonicalizeTopics = (
         .map((topic, index) => `${index + 1}. ${topic.title} :: ${topic.description}`)
         .join("\n");
       const data = yield* options.jsonCall({
+        vaultId: options.vaultId,
         runId: options.runId,
+        phase: "canonicalize_assign",
+        promptHash: assignPromptHash,
         model: options.config.reduceModel,
         messages: [
           {
@@ -2611,6 +2645,8 @@ const validateTopics = (
     const supersessions = new Map<string, number | null>();
     if (collisions.size > 0 || archiveCandidates.length > 0) {
       const template = yield* loadPrompt(options.storage, options.vaultId, "cleanup");
+      const promptHash = promptContentHash(template);
+      yield* recordPrompt(options.db, promptHash, template);
       const canonicalBlock = canonicals
         .flatMap((canonical, index) => [
           `## c_${index + 1}`,
@@ -2647,7 +2683,10 @@ const validateTopics = (
               ]),
             ].join("\n");
       const data = yield* options.jsonCall({
+        vaultId: options.vaultId,
         runId: options.runId,
+        phase: "validate_cleanup",
+        promptHash,
         model: options.config.reduceModel,
         messages: [
           {
@@ -2884,6 +2923,7 @@ const runRender = (options: RenderOptions) =>
     );
     const promptTemplate = yield* loadPrompt(options.storage, options.vaultId, "render");
     const promptHash = promptContentHash(promptTemplate);
+    yield* recordPrompt(options.db, promptHash, promptTemplate);
     const existingWiki = new Set(
       (yield* options.storage.listMarkdown(vaultOwner(options.vaultId), "wiki")).map(
         (file) => file.path,
@@ -3011,7 +3051,10 @@ const runRender = (options: RenderOptions) =>
             const result = yield* Effect.result(
               renderSemaphore.withPermit(
                 options.jsonCall({
+                  vaultId: options.vaultId,
                   runId: options.runId,
+                  phase: "render",
+                  promptHash,
                   model: options.config.renderModel,
                   messages: [{ role: "user", content: prompt }],
                   temperature: 0.3,

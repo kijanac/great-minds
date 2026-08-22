@@ -117,7 +117,6 @@ type CompilePhasesShape = {
     runId: Uuid,
     publishedAt: string,
   ) => Effect.Effect<void, unknown>;
-  readonly flushLlmCost: (vaultId: Uuid, runId: Uuid) => Effect.Effect<void, unknown>;
 };
 
 export class CompilePhases extends Context.Service<CompilePhases, CompilePhasesShape>()(
@@ -458,7 +457,6 @@ export const CompilePhasesLive = Layer.effect(
             }),
           );
         }),
-      flushLlmCost: llmCore.flushCost,
       extract: llmCore.extract,
       abstract: llmCore.abstract,
       derive: (vaultId, runId, validated) =>
@@ -792,7 +790,6 @@ export const CompilePhasesLive = Layer.effect(
               counts: { publish_wiki: [2, 2] },
             }),
           );
-          yield* llmCore.flushCost(vaultId, runId);
         }),
     } satisfies CompilePhasesShape;
   }),

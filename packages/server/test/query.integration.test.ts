@@ -7,6 +7,7 @@ import {
   backlinks,
   Database,
   llmCostEvents,
+  prompts,
   replies,
   searchIndex,
   sourceDocuments,
@@ -24,6 +25,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { makeAppLayer } from "../src/app-layer.ts";
 import { ClockService, makeTestClock } from "../src/clock.ts";
 import { AppConfig, type AppConfigShape } from "../src/config.ts";
+import { promptContentHash } from "../src/crypto.ts";
 import { StructuredLogger, StructuredLoggerLive } from "../src/logging.ts";
 import { makeTestMailer } from "../src/mailer.ts";
 import { RepliesService } from "../src/replies.ts";
@@ -946,15 +948,30 @@ describe("query stream", () => {
       ],
     });
 
-    const rows = await runDb(
+    const systemMessage = language.streamCalls[0]?.messages[0];
+    if (typeof systemMessage?.content !== "string") throw new Error("system prompt missing");
+    const systemPromptHash = promptContentHash(systemMessage.content);
+    const recorded = await runDb(
       Effect.gen(function* () {
         const db = yield* Database;
-        return yield* db.query((d) => d.select().from(llmCostEvents)).pipe(Effect.orDie);
+        return {
+          events: yield* db.query((d) => d.select().from(llmCostEvents)).pipe(Effect.orDie),
+          prompts: yield* db.query((d) =>
+            d.select().from(prompts).where(eq(prompts.hash, systemPromptHash))).pipe(Effect.orDie),
+        };
       }),
     );
-    expect(rows).toHaveLength(1);
-    expect(rows[0].eventType).toBe("query.stream");
-    expect(rows[0].costUsd).toBe("0.060000");
+    expect(recorded.events).toHaveLength(1);
+    expect(recorded.events[0]).toMatchObject({
+      eventType: "query.stream",
+      costUsd: "0.060000",
+      model: "primary/test-model",
+      promptHash: systemPromptHash,
+    });
+    expect(recorded.prompts).toEqual([
+      expect.objectContaining({ hash: systemPromptHash, content: systemMessage.content }),
+    ]);
+    expect(promptContentHash(recorded.prompts[0]!.content)).toBe(recorded.prompts[0]!.hash);
     expect(costs.lookups).toEqual([]);
   });
 

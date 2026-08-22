@@ -1,6 +1,10 @@
+import { type Database, prompts } from "@great-minds/database";
 import { Context, Effect, Layer, Option, Redacted } from "effect";
 
 import { AppConfig } from "./config.ts";
+
+export const recordPrompt = (db: Database["Service"], hash: string, content: string) =>
+  db.query((d) => d.insert(prompts).values({ hash, content }).onConflictDoNothing());
 
 type CostLookupShape = {
   readonly lookupGenerationCost: (generationId: string) => Promise<number | null>;

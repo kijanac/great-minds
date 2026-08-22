@@ -25,8 +25,9 @@ import { Context, Effect, Layer } from "effect";
 import { parse as parseYaml } from "yaml";
 
 import { AppConfig } from "./config.ts";
+import { promptContentHash } from "./crypto.ts";
 import { EmbeddingsService } from "./embeddings.ts";
-import { CostLookupService } from "./llm-costs.ts";
+import { CostLookupService, recordPrompt } from "./llm-costs.ts";
 import {
   isRetryableModelError,
   LanguageModel,
@@ -92,6 +93,7 @@ type QueryContext = {
   readonly webSearchEnabled: boolean;
   readonly trace: Trace;
   readonly fallbackGenerationIds: string[];
+  readonly systemPromptHash: string;
   costUsd: number;
   selectedModel?: string;
 };
@@ -1553,6 +1555,15 @@ export const QueryServiceLive = Layer.effect(
         queryDocumentsTool(tags),
         ...(webSearchEnabled ? [webSearchTool] : []),
       ];
+      const systemPrompt = await buildSystemPrompt(
+        vaultId,
+        vaultLabel,
+        vaultConfig,
+        input,
+        webSearchEnabled,
+      );
+      const systemPromptHash = promptContentHash(systemPrompt);
+      await run(recordPrompt(db, systemPromptHash, systemPrompt));
       const context: QueryContext = {
         userId,
         vaultId,
@@ -1565,15 +1576,9 @@ export const QueryServiceLive = Layer.effect(
         webSearchEnabled,
         trace: emptyTrace(),
         fallbackGenerationIds: [],
+        systemPromptHash,
         costUsd: 0,
       };
-      const systemPrompt = await buildSystemPrompt(
-        vaultId,
-        vaultLabel,
-        vaultConfig,
-        input,
-        webSearchEnabled,
-      );
       const messages: LlmMessage[] = [{ role: "system", content: systemPrompt }];
       if (
         input.origin_path !== undefined &&
@@ -1614,6 +1619,8 @@ export const QueryServiceLive = Layer.effect(
                 eventType: "query.stream",
                 costUsd: context.costUsd.toFixed(6),
                 correlationId: context.correlationId,
+                model: context.selectedModel,
+                promptHash: context.systemPromptHash,
               })),
           );
         } catch (error) {
