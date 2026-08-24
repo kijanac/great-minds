@@ -64,6 +64,9 @@ Do not describe code. Describe what the user sees and does. Technical detail goe
 - Pipeline snapshots are checked every 100 ms with about 30-second heartbeats; browser reconnect delay grows from 1 to 10 seconds. Reopening a terminal run receives its snapshot and closes.
 - Backend phase status, not a numeric step total, is the completion authority. Visible stages map source_ingest→Uploading, ingest→Indexing, extract→Reading, abstract→Synthesizing, derive→Connecting, render→Writing, verify→Checking, publish→Publishing.
 - Cancellation marks terminal state first and is idempotent, but it is cooperative at activity/side-effect boundaries and does not promise rollback of completed uploads, provider calls, or writes.
+- Idle home autofocuses one single-line question input; blank text does nothing, Enter and **query** are equivalent, and an empty focused input can show the three newest-updated recent sessions.
+- The default query configuration searches the vault and has open-web search disabled. The visible query control exposes no model, scope, or attachment choice.
+- A first question appears optimistically, then becomes durable at pending-exchange acceptance. Pre-acceptance failure removes the exchange, restores idle home with the typed text, and currently shows no inline error.
 
 Add load-bearing facts here as each foundation is completed: defaults, limits, timing, durable boundaries, role restrictions, route ownership, recovery rules, and which research document owns each state.
 

@@ -166,7 +166,7 @@ Status is one of `not started`, `drafted`, or `verified`.
 | foundations/research-session-model.md | drafted |
 | foundations/background-work.md | drafted |
 | reading-room/open-an-external-article.md | drafted |
-| research/ask-a-question.md | not started |
+| research/ask-a-question.md | drafted |
 | research/streamed-answer-and-evidence.md | not started |
 | research/follow-up.md | not started |
 | research/btw-threads.md | not started |
