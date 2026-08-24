@@ -5,12 +5,19 @@
     <link rel="icon" href="%sveltekit.assets%/favicon.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <script>
+      // Pre-paint theme: class + inline background so the first frame is the
+      // right color before any stylesheet loads (ssr=false ships no CSS'd HTML).
+      // Literals must match --background in index.css; CSS vars don't exist yet.
+      // theme.svelte.ts removes the inline style once stylesheets are live.
       try {
         const theme = localStorage.getItem("theme");
         const current = theme === "light" || theme === "dark" ? theme : "dark";
         document.documentElement.classList.add(current);
+        document.documentElement.style.backgroundColor =
+          current === "light" ? "#d5ccbc" : "#0c0c0c";
       } catch {
         document.documentElement.classList.add("dark");
+        document.documentElement.style.backgroundColor = "#0c0c0c";
       }
     </script>
     %sveltekit.head%

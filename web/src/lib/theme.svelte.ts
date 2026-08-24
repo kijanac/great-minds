@@ -12,6 +12,9 @@ function getTheme(): Theme {
 function applyTheme(value: Theme): void {
   document.documentElement.classList.toggle("dark", value === "dark");
   document.documentElement.classList.toggle("light", value === "light");
+  // Drop app.html's pre-paint inline background; with stylesheets loaded,
+  // body's token-driven bg-background propagates to the canvas.
+  document.documentElement.style.removeProperty("background-color");
 }
 
 class ThemeState {
