@@ -45,6 +45,10 @@ Do not describe code. Describe what the user sees and does. Technical detail goe
 - The active vault is not part of the route. The same vault-scoped URL is interpreted using the currently stored identifier, and browser Back does not restore an earlier vault.
 - Vault selection is optimistic local state: it is stored before the destination proves loadable. There is no universal fallback or rollback for a deleted, inaccessible, or stale active vault.
 - Server access levels are member (read), editor-or-owner (contribution paths), and owner (direct administration and destructive source work); a hidden control is never the security boundary.
+- Vault sources use nested `raw/…/*.md` paths, vault articles use `wiki/*.md`, and personal references use account-scoped `refs/*.md`; `/doc/` resolves inside the active vault while `/refs/` resolves inside the account.
+- Saved, indexed, and compiled are distinct boundaries. A source can be durable and searchable before it is enriched or represented in articles; a personal reference is neither vault-searchable nor compilable until promoted.
+- Ordinary library text search is metadata search: article title/précis and source title/author. Articles sort alphabetically, sources by latest update, and references newest-first in independent 50-item pages.
+- Live library lists exclude archived articles. Direct retained archived reads show a successor link when the topic has one and an explicit no-successor message otherwise.
 
 Add load-bearing facts here as each foundation is completed: defaults, limits, timing, durable boundaries, role restrictions, route ownership, recovery rules, and which research document owns each state.
 

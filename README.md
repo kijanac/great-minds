@@ -160,7 +160,7 @@ Status is one of `not started`, `drafted`, or `verified`.
 | bug-triage.md | not started |
 | verification/ (4 checklists) | not started |
 | foundations/access-and-vault-context.md | drafted |
-| foundations/content-model.md | not started |
+| foundations/content-model.md | drafted |
 | foundations/navigation-and-page-state.md | not started |
 | foundations/research-session-model.md | not started |
 | foundations/background-work.md | not started |
