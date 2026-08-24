@@ -161,7 +161,7 @@ Status is one of `not started`, `drafted`, or `verified`.
 | verification/ (4 checklists) | not started |
 | foundations/access-and-vault-context.md | drafted |
 | foundations/content-model.md | drafted |
-| foundations/navigation-and-page-state.md | not started |
+| foundations/navigation-and-page-state.md | drafted |
 | foundations/research-session-model.md | not started |
 | foundations/background-work.md | not started |
 | reading-room/open-an-external-article.md | drafted |

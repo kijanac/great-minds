@@ -49,6 +49,10 @@ Do not describe code. Describe what the user sees and does. Technical detail goe
 - Saved, indexed, and compiled are distinct boundaries. A source can be durable and searchable before it is enriched or represented in articles; a personal reference is neither vault-searchable nor compilable until promoted.
 - Ordinary library text search is metadata search: article title/précis and source title/author. Articles sort alphabetically, sources by latest update, and references newest-first in independent 50-item pages.
 - Live library lists exclude archived articles. Direct retained archived reads show a successor link when the topic has one and an explicit no-successor message otherwise.
+- Durable target IDs and library filters belong in routes/query strings; active vault, credentials, theme, open panels, drafts, selection chips, and most transient controls do not.
+- Library text search writes trimmed `q` after a 300 ms debounce with history replacement. Library type/tag are URL state; the sessions-list filter is local and reload-ephemeral.
+- First-session and pipeline launch shims replace themselves with `/sessions/{id}` and `/pipeline/runs/{id}` so Back does not revisit an auto-submitting or half-resolved launch.
+- Preview selection is local: Escape closes it. Below 1200 px it overlays the page (full width at the narrowest size, 370 px from `md`); at 1200 px and above it docks beside the page.
 
 Add load-bearing facts here as each foundation is completed: defaults, limits, timing, durable boundaries, role restrictions, route ownership, recovery rules, and which research document owns each state.
 
