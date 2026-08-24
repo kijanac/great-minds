@@ -164,7 +164,7 @@ Status is one of `not started`, `drafted`, or `verified`.
 | foundations/navigation-and-page-state.md | not started |
 | foundations/research-session-model.md | not started |
 | foundations/background-work.md | not started |
-| reading-room/open-an-external-article.md | not started |
+| reading-room/open-an-external-article.md | drafted |
 | research/ask-a-question.md | not started |
 | research/streamed-answer-and-evidence.md | not started |
 | research/follow-up.md | not started |
