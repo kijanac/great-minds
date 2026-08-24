@@ -58,6 +58,12 @@ Do not describe code. Describe what the user sees and does. Technical detail goe
 - Navigation or client-stream abort does not stop generation. A server restart marks pre-existing running replies failed with `interrupted by server restart` rather than resuming generation.
 - Session storage is append-only. Pending and final events share an exchange id; reads and Markdown keep the latest exchange version. Main sessions list newest-update first in 50-item pages.
 - Anchored origin sessions are document notes and stay out of the main sessions list. Unanchored document-origin sessions remain in the main list and also appear with the document.
+- `/pipeline/runs/{id}` is the durable run route. Bare `/pipeline`, `?url=`, and browser navigation state are launch resolvers and replace themselves after a run is known.
+- Runs are pending/running/completed/failed/cancelled and triggered by staged files, URL, or manual compile. A second compile request coalesces onto an existing undispatched vault intent.
+- The compile reconciler runs at startup and every 5 seconds; default dispatch concurrency is one. Journaled staged-ingest/compile activities resume across process restart, while a run older than 120 seconds without a pending intent or matching journal becomes failed.
+- Pipeline snapshots are checked every 100 ms with about 30-second heartbeats; browser reconnect delay grows from 1 to 10 seconds. Reopening a terminal run receives its snapshot and closes.
+- Backend phase status, not a numeric step total, is the completion authority. Visible stages map source_ingest→Uploading, ingest→Indexing, extract→Reading, abstract→Synthesizing, derive→Connecting, render→Writing, verify→Checking, publish→Publishing.
+- Cancellation marks terminal state first and is idempotent, but it is cooperative at activity/side-effect boundaries and does not promise rollback of completed uploads, provider calls, or writes.
 
 Add load-bearing facts here as each foundation is completed: defaults, limits, timing, durable boundaries, role restrictions, route ownership, recovery rules, and which research document owns each state.
 
