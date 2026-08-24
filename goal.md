@@ -67,6 +67,10 @@ Do not describe code. Describe what the user sees and does. Technical detail goe
 - Idle home autofocuses one single-line question input; blank text does nothing, Enter and **query** are equivalent, and an empty focused input can show the three newest-updated recent sessions.
 - The default query configuration searches the vault and has open-web search disabled. The visible query control exposes no model, scope, or attachment choice.
 - A first question appears optimistically, then becomes durable at pending-exchange acceptance. Pre-acceptance failure removes the exchange, restores idle home with the typed text, and currently shows no inline error.
+- While a running reply has no answer, Thinking is open with **traversing knowledge base…**; first answer text collapses it to settled evidence counts unless the user explicitly toggled it.
+- Pending evidence pulses and is noninteractive. Settled article/raw/link cards can open full documents, exact chunk ranges, or connection lists; search and filter badges remain descriptive.
+- Streaming renders stable Markdown through the latest blank line outside a code fence, reparses only the unfinished tail, and disables Great Minds text-selection actions until terminal state.
+- A failed no-answer reply shows **reply interrupted** and its error; a failed reply with partial text currently renders the text without surfacing the stored error.
 
 Add load-bearing facts here as each foundation is completed: defaults, limits, timing, durable boundaries, role restrictions, route ownership, recovery rules, and which research document owns each state.
 
