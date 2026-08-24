@@ -41,6 +41,10 @@ Do not describe code. Describe what the user sees and does. Technical detail goe
 - Model prose is nondeterministic. Specify observable structure, state, evidence, persistence, and failure behavior, never exact generated wording.
 - Personal references are account-scoped, not vault content. Creating one does not add vault search rows or queue a compile; exact normalized URLs reuse the existing reference without refetching.
 - External-reference fetch accepts HTML and plain text, follows public redirects, times out after 30 seconds, and caps the response body at 25 MiB.
+- Access and refresh tokens plus the active-vault identifier live in browser storage. One serialized refresh is attempted on 401, then the original request is retried once; refresh failure clears all three values.
+- The active vault is not part of the route. The same vault-scoped URL is interpreted using the currently stored identifier, and browser Back does not restore an earlier vault.
+- Vault selection is optimistic local state: it is stored before the destination proves loadable. There is no universal fallback or rollback for a deleted, inaccessible, or stale active vault.
+- Server access levels are member (read), editor-or-owner (contribution paths), and owner (direct administration and destructive source work); a hidden control is never the security boundary.
 
 Add load-bearing facts here as each foundation is completed: defaults, limits, timing, durable boundaries, role restrictions, route ownership, recovery rules, and which research document owns each state.
 
