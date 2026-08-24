@@ -168,7 +168,7 @@ Status is one of `not started`, `drafted`, or `verified`.
 | reading-room/open-an-external-article.md | drafted |
 | research/ask-a-question.md | drafted |
 | research/streamed-answer-and-evidence.md | drafted |
-| research/follow-up.md | not started |
+| research/follow-up.md | drafted |
 | research/btw-threads.md | not started |
 | research/save-an-answer-as-a-source.md | not started |
 | sources/add-files.md | not started |

@@ -71,6 +71,9 @@ Do not describe code. Describe what the user sees and does. Technical detail goe
 - Pending evidence pulses and is noninteractive. Settled article/raw/link cards can open full documents, exact chunk ranges, or connection lists; search and filter badges remain descriptive.
 - Streaming renders stable Markdown through the latest blank line outside a code fence, reparses only the unfinished tail, and disables Great Minds text-selection actions until terminal state.
 - A failed no-answer reply shows **reply interrupted** and its error; a failed reply with partial text currently renders the text without surfacing the stored error.
+- The main follow-up bar exists only in `done`. A selection must trim to at least five characters and remain inside one rendered answer block before **+ follow up** can create a chip.
+- Follow-up chips keep full quotes but visually truncate after 42 characters. Submission maps each to `re: "…"`, appends trimmed free text, and joins parts with ` — `; this composed string is the visible and stored question.
+- Follow-up submit clears text and chips before server acceptance. If creation fails, the optimistic exchange rolls back but the draft is currently lost.
 
 Add load-bearing facts here as each foundation is completed: defaults, limits, timing, durable boundaries, role restrictions, route ownership, recovery rules, and which research document owns each state.
 
