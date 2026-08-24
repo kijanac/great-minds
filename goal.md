@@ -53,6 +53,11 @@ Do not describe code. Describe what the user sees and does. Technical detail goe
 - Library text search writes trimmed `q` after a 300 ms debounce with history replacement. Library type/tag are URL state; the sessions-list filter is local and reload-ephemeral.
 - First-session and pipeline launch shims replace themselves with `/sessions/{id}` and `/pipeline/runs/{id}` so Back does not revisit an auto-submitting or half-resolved launch.
 - Preview selection is local: Escape closes it. Below 1200 px it overlays the page (full width at the narrowest size, 370 px from `md`); at 1200 px and above it docks beside the page.
+- Sessions are vault-scoped for evidence but personal to their creator: even another member or vault owner receives not found when reading or appending someone else's session.
+- Server acceptance writes a pending exchange before detached generation. Running replies persist full versioned answer/evidence snapshots (token flush no more often than 125 ms); the tail polls at 100 ms and browser reconnect delay grows from 1 to 10 seconds.
+- Navigation or client-stream abort does not stop generation. A server restart marks pre-existing running replies failed with `interrupted by server restart` rather than resuming generation.
+- Session storage is append-only. Pending and final events share an exchange id; reads and Markdown keep the latest exchange version. Main sessions list newest-update first in 50-item pages.
+- Anchored origin sessions are document notes and stay out of the main sessions list. Unanchored document-origin sessions remain in the main list and also appear with the document.
 
 Add load-bearing facts here as each foundation is completed: defaults, limits, timing, durable boundaries, role restrictions, route ownership, recovery rules, and which research document owns each state.
 
@@ -64,7 +69,8 @@ Add load-bearing facts here as each foundation is completed: defaults, limits, t
    - `ask-a-question.md` owns composition, submission, creation of the exchange and first durable session, and the transition into waiting;
    - `streamed-answer-and-evidence.md` owns waiting/searching, evidence snapshots, streamed answer replacement, reconnect, completion, and interruption;
    - `follow-up.md` owns selected chips and the next main-line exchange after completion;
-   - `btw-threads.md` owns anchored side-thread creation, turns, persistence, reconnect, and dismissal.
+   - `btw-threads.md` owns anchored side-thread creation, turns, persistence, reconnect, and dismissal;
+   - `save-an-answer-as-a-source.md` owns exchange promotion, owner ingestion versus editor proposal, idempotent repeats, and the resulting source provenance.
 4. Draft `sources/`, then `library/`, `health/`, and `cross-cutting/`. These are independent enough to parallelize after the foundations and research exemplars exist, but review every result for vocabulary, links, established facts, and complete fixed tables.
 5. Run the consistency pass: one owner per behavior, no contradictions, every glossary term defined, fixed rows and order preserved, footers present, structure and coverage exact, and every relative link resolvable with the installed skill's `check-links.py`.
 6. Create `verification/README.md` and all four checklist files. Use stable per-document prefixes and one observable claim per row. Do not mark a document verified from source reading or automated checks alone.

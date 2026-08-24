@@ -132,6 +132,7 @@ research/
   streamed-answer-and-evidence.md      waiting, streamed prose, source cards, citations, and interruption
   follow-up.md                         follow up with free text and selected answer excerpts
   btw-threads.md                       anchored side conversations inside an answer
+  save-an-answer-as-a-source.md        promote a completed exchange into vault source material
 
 sources/
   add-files.md                         select or drop files, review them, upload, and queue processing
@@ -162,13 +163,14 @@ Status is one of `not started`, `drafted`, or `verified`.
 | foundations/access-and-vault-context.md | drafted |
 | foundations/content-model.md | drafted |
 | foundations/navigation-and-page-state.md | drafted |
-| foundations/research-session-model.md | not started |
+| foundations/research-session-model.md | drafted |
 | foundations/background-work.md | not started |
 | reading-room/open-an-external-article.md | drafted |
 | research/ask-a-question.md | not started |
 | research/streamed-answer-and-evidence.md | not started |
 | research/follow-up.md | not started |
 | research/btw-threads.md | not started |
+| research/save-an-answer-as-a-source.md | not started |
 | sources/add-files.md | not started |
 | sources/add-a-url.md | not started |
 | sources/compile-the-vault.md | not started |
