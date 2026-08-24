@@ -2,7 +2,7 @@
   import { goto } from "$app/navigation";
   import { onMount } from "svelte";
   import { cubicOut } from "svelte/easing";
-  import { fade } from "svelte/transition";
+  import { fade, slide } from "svelte/transition";
 
   import { checkDupes, hashFile, type HashedFile } from "$lib/api/ingest";
   import { Button } from "$lib/components/ui/button";
@@ -54,9 +54,11 @@
   let {
     hasActivePipeline,
     stagedUploads,
+    vaultName,
   }: {
     hasActivePipeline: boolean;
     stagedUploads: boolean;
+    vaultName: string;
   } = $props();
 
   let expanded = $state(false);
@@ -298,8 +300,13 @@
     input.type = "file";
     input.multiple = true;
     input.webkitdirectory = true;
+    input.hidden = true;
+    // In the DOM so the document owns it while the native dialog is open;
+    // an unreferenced detached input can be GC'd before change fires.
+    document.body.appendChild(input);
     input.onchange = () => {
       const picked = Array.from(input.files ?? []);
+      input.remove();
       startWithFiles(
         picked.map((file) => ({
           file,
@@ -309,6 +316,7 @@
         })),
       );
     };
+    input.oncancel = () => input.remove();
     input.click();
   }
 
@@ -397,7 +405,30 @@
   }
 </script>
 
-<div class="flex w-full flex-col items-center" bind:this={zone}>
+<div
+  role="group"
+  class="flex w-full flex-col items-center"
+  bind:this={zone}
+  ondragenter={expanded
+    ? (event) => {
+        event.preventDefault();
+        dragCounter += 1;
+        isDragOver = true;
+      }
+    : undefined}
+  ondragover={expanded ? (event) => event.preventDefault() : undefined}
+  ondragleave={expanded
+    ? (event) => {
+        event.preventDefault();
+        dragCounter -= 1;
+        if (dragCounter <= 0) {
+          dragCounter = 0;
+          isDragOver = false;
+        }
+      }
+    : undefined}
+  ondrop={expanded ? handleDrop : undefined}
+>
   <!-- svelte-ignore a11y_no_noninteractive_tabindex - the shell is a keyboard button only while collapsed -->
   <div
     role={expanded ? undefined : "button"}
@@ -414,35 +445,25 @@
         handleCircleClick();
       }
     }}
-    ondragenter={expanded
-      ? (event) => {
-          event.preventDefault();
-          dragCounter += 1;
-          isDragOver = true;
-        }
-      : undefined}
-    ondragover={expanded ? (event) => event.preventDefault() : undefined}
-    ondragleave={expanded
-      ? (event) => {
-          event.preventDefault();
-          dragCounter -= 1;
-          if (dragCounter <= 0) {
-            dragCounter = 0;
-            isDragOver = false;
-          }
-        }
-      : undefined}
-    ondrop={expanded ? handleDrop : undefined}
-    class={`relative transition-[width,height,border-radius,border-color,background-color] duration-300 ease-out ${
+    class={`relative h-12 overflow-hidden border border-solid transition-[width,border-radius,border-color,background-color] ease-[cubic-bezier(0.22,1,0.36,1)] duration-[280ms] ${
       expanded
-        ? "w-full max-w-[800px] overflow-hidden rounded-sm border border-solid border-gold-dim bg-ink-raised"
-        : "h-12 w-12 cursor-pointer rounded-full border border-dashed border-ink-border bg-transparent"
+        ? `w-[min(640px,100%)] rounded-sm ${isDragOver ? "border-gold" : "border-gold-dim"} bg-ink-raised`
+        : "w-12 cursor-pointer rounded-[1.5rem] border-transparent bg-transparent delay-[80ms]"
     }`}
   >
+    <!-- dashed ring crossfades instead of border-style flipping (not animatable) -->
+    <div
+      class={`pointer-events-none absolute inset-0 rounded-[inherit] border border-dashed border-ink-border transition-opacity ease-[cubic-bezier(0.22,1,0.36,1)] ${
+        expanded
+          ? "opacity-0 duration-[120ms]"
+          : "opacity-100 duration-[280ms] delay-[80ms]"
+      }`}
+    ></div>
     {#if !expanded}
       <span
         class="absolute inset-0 flex items-center justify-center font-mono text-[length:var(--text-body)] leading-none text-warm-ghost select-none"
-        transition:fade={{ duration: 100 }}
+        in:fade={{ duration: 80, delay: 200 }}
+        out:fade={{ duration: 80 }}
       >
         +
         {#if hasActivePipeline}
@@ -453,166 +474,149 @@
       </span>
     {:else}
       <div
-        in:fade={{ duration: 180, delay: 100, easing: cubicOut }}
-        out:fade={{ duration: 100 }}
+        class="flex h-full w-full items-center"
+        in:fade={{ duration: 100, delay: 180, easing: cubicOut }}
+        out:fade={{ duration: 80 }}
       >
         {#if hasFiles}
-          <div class="px-5 py-6 md:px-10 md:py-8">
-            <div
-              class="mb-3 flex flex-wrap items-center gap-x-4 gap-y-1.5 font-mono text-[length:var(--text-chrome)] tracking-[0.06em] text-warm-ghost"
-            >
-              <span>{selectedCount} / {files.length} selected</span>
-              <span>{formatSize(totalSize)}</span>
-              {#if checkingCount > 0}
-                <span class="text-gold-dim">{checkingCount} hashing</span>
-              {/if}
-              {#if dupBatchCount > 0}
-                <span class="text-warm-faint">{dupBatchCount} dup in batch</span
-                >
-              {/if}
-              {#if dupVaultCount > 0}
-                <span class="text-warm-faint"
-                  >{dupVaultCount} already in vault</span
-                >
-              {/if}
-              {#if unrecognisedCount > 0}
-                <span class="text-warm-faint"
-                  >{unrecognisedCount} unrecognised</span
-                >
-              {/if}
-            </div>
-
-            <div
-              class="h-[320px] overflow-y-auto rounded-sm border border-ink-subtle"
-            >
-              <ul class="divide-y divide-ink-subtle">
-                {#each files as item (item.id)}
-                  {@const indicator = statusIndicator(item.status)}
-                  {@const isDupe =
-                    item.status === "duplicate-in-batch" ||
-                    item.status === "duplicate-in-vault"}
-                  <li
-                    class={`flex items-center gap-3 px-3 py-1.5 transition-opacity ${isDupe && !item.selected ? "opacity-50" : ""}`}
-                  >
-                    <input
-                      type="checkbox"
-                      checked={item.selected}
-                      onchange={() => toggleSelected(item.id)}
-                      aria-label={item.selected
-                        ? "Click to exclude"
-                        : "Click to include"}
-                      class="h-4 w-4 shrink-0 accent-gold"
-                    />
-                    <span
-                      class="min-w-0 flex-1 truncate font-serif text-[length:var(--text-small)] text-warm-dim"
-                      title={item.path}
-                    >
-                      {item.path}
-                    </span>
-                    <span
-                      class="w-16 shrink-0 text-right font-mono text-[length:var(--text-chrome)] tracking-[0.06em] text-warm-ghost"
-                    >
-                      {formatSize(item.file.size)}
-                    </span>
-                    <span
-                      class="w-14 shrink-0 truncate font-mono text-[length:var(--text-chrome)] tracking-[0.06em] text-warm-ghost"
-                      title={item.ext || "no ext"}
-                    >
-                      {item.ext || "—"}
-                    </span>
-                    <span
-                      class={`flex w-44 shrink-0 items-center gap-1.5 truncate font-mono text-[length:var(--text-chrome)] tracking-[0.06em] ${indicator.className}`}
-                      title={item.error ?? indicator.label}
-                    >
-                      <span class="shrink-0">{indicator.glyph}</span>
-                      <span class="truncate">{indicator.label}</span>
-                    </span>
-                  </li>
-                {/each}
-              </ul>
-            </div>
-
-            <div class="mt-6 border-t border-ink-subtle pt-5">
-              <div class="flex flex-wrap items-center justify-center gap-2">
-                <Button
-                  variant="ghost"
-                  size="xs"
-                  onclick={confirm}
-                  disabled={selectedCount === 0 || checkingCount > 0}
-                  class="h-auto rounded-sm px-3 py-0.5 font-mono text-[length:var(--text-chrome)] tracking-[0.1em] text-gold hover:bg-transparent hover:text-gold-hover disabled:cursor-not-allowed disabled:text-warm-ghost"
-                >
-                  ingest {selectedCount} file{selectedCount !== 1 ? "s" : ""}
-                </Button>
-                {#if dupBatchCount > 0 || dupVaultCount > 0}
-                  <Button
-                    variant="ghost"
-                    size="xs"
-                    onclick={deselectDuplicates}
-                    class="h-auto rounded-sm px-3 py-0.5 font-mono text-[length:var(--text-chrome)] tracking-[0.1em] text-warm-ghost hover:bg-transparent hover:text-warm-faint"
-                  >
-                    deselect duplicates
-                  </Button>
-                {/if}
-                <Button
-                  variant="ghost"
-                  size="xs"
-                  onclick={handleBrowse}
-                  class="h-auto rounded-sm px-3 py-0.5 font-mono text-[length:var(--text-chrome)] tracking-[0.1em] text-warm-ghost hover:bg-transparent hover:text-warm-faint"
-                >
-                  replace
-                </Button>
-              </div>
-            </div>
+          <div
+            class="flex min-w-0 flex-1 items-center gap-x-4 overflow-hidden px-4 font-mono text-[length:var(--text-chrome)] tracking-[0.06em] whitespace-nowrap text-warm-ghost"
+          >
+            <span>{selectedCount} / {files.length} selected</span>
+            <span>{formatSize(totalSize)}</span>
+            {#if checkingCount > 0}
+              <span class="text-gold-dim">{checkingCount} hashing</span>
+            {/if}
+            {#if dupBatchCount > 0}
+              <span class="text-warm-faint">{dupBatchCount} dup in batch</span>
+            {/if}
+            {#if dupVaultCount > 0}
+              <span class="text-warm-faint"
+                >{dupVaultCount} already in vault</span
+              >
+            {/if}
+            {#if unrecognisedCount > 0}
+              <span class="text-warm-faint"
+                >{unrecognisedCount} unrecognised</span
+              >
+            {/if}
           </div>
         {:else}
-          <div
-            class="flex min-h-[500px] flex-col items-center justify-center gap-6 px-5 py-14 md:px-10"
-          >
-            <div class="text-center">
-              <p
-                class="mb-1 font-serif text-[length:var(--text-body)] text-warm-dim"
-              >
-                {isDragOver
-                  ? "drop to add to knowledge base"
-                  : "drop files or folders here"}
-              </p>
-              <p
-                class="font-mono text-[length:var(--text-chrome)] tracking-[0.06em] text-warm-ghost"
-              >
-                or use the field below
-              </p>
-            </div>
-
-            <div class="flex w-full max-w-[420px] items-center gap-2">
-              <Input
-                bind:value={url}
-                onkeydown={(event) => event.key === "Enter" && submitUrl()}
-                class="h-8 flex-1 rounded-sm border-ink-border bg-transparent px-3 py-0 font-mono text-[length:var(--text-chrome)] tracking-[0.08em] text-warm-faint caret-gold placeholder:text-warm-ghost focus-visible:border-gold-dim focus-visible:ring-0 dark:bg-transparent"
-                placeholder="paste a link and press Enter"
-              />
-              {#if url.trim()}
-                <span
-                  class="shrink-0 font-mono text-[length:var(--text-chrome)] text-warm-ghost select-none"
-                  title="Press Enter to ingest this URL"
-                >
-                  ↵
-                </span>
-              {/if}
-            </div>
-
-            <button
-              type="button"
-              onclick={handleBrowse}
-              title="Browse for a folder"
-              class="cursor-pointer border-0 bg-transparent font-mono text-[length:var(--text-chrome)] tracking-[0.1em] text-gold-dim transition-colors hover:text-gold"
+          <Input
+            bind:value={url}
+            onkeydown={(event) => event.key === "Enter" && submitUrl()}
+            class="h-full flex-1 rounded-none border-0 bg-transparent px-4 py-0 font-mono text-[length:var(--text-chrome)] tracking-[0.08em] text-warm-faint shadow-none caret-gold placeholder:text-warm-ghost focus-visible:border-0 focus-visible:ring-0 dark:bg-transparent"
+            placeholder={isDragOver ? `add to ${vaultName}` : "paste a link"}
+          />
+          {#if url.trim()}
+            <span
+              class="mr-3 shrink-0 font-mono text-[length:var(--text-chrome)] text-warm-ghost select-none"
+              title="Press Enter to ingest this URL"
             >
-              or browse for a folder
-            </button>
+              ↵
+            </span>
+          {/if}
+          <div
+            class="flex h-full shrink-0 items-center border-l border-ink-subtle"
+          >
+            <Button
+              variant="ghost"
+              size="xs"
+              onclick={handleBrowse}
+              class="h-full rounded-none px-4 py-0 font-mono text-[length:var(--text-chrome)] tracking-[0.1em] text-gold-dim hover:bg-transparent hover:text-gold"
+            >
+              browse
+            </Button>
           </div>
         {/if}
       </div>
     {/if}
   </div>
+
+  {#if expanded && hasFiles}
+    <div
+      class="mt-2 w-full max-w-[640px] rounded-sm border border-ink-subtle bg-ink-raised"
+      transition:slide={{ duration: 240, easing: cubicOut }}
+    >
+      <ul class="h-[320px] divide-y divide-ink-subtle overflow-y-auto">
+        {#each files as item (item.id)}
+          {@const indicator = statusIndicator(item.status)}
+          {@const isDupe =
+            item.status === "duplicate-in-batch" ||
+            item.status === "duplicate-in-vault"}
+          <li
+            class={`flex items-center gap-3 px-3 py-1.5 transition-opacity ${isDupe && !item.selected ? "opacity-50" : ""}`}
+          >
+            <input
+              type="checkbox"
+              checked={item.selected}
+              onchange={() => toggleSelected(item.id)}
+              aria-label={item.selected
+                ? "Click to exclude"
+                : "Click to include"}
+              class="h-4 w-4 shrink-0 accent-gold"
+            />
+            <span
+              class="min-w-0 flex-1 truncate font-serif text-[length:var(--text-small)] text-warm-dim"
+              title={item.path}
+            >
+              {item.path}
+            </span>
+            <span
+              class="w-16 shrink-0 text-right font-mono text-[length:var(--text-chrome)] tracking-[0.06em] text-warm-ghost"
+            >
+              {formatSize(item.file.size)}
+            </span>
+            <span
+              class="w-14 shrink-0 truncate font-mono text-[length:var(--text-chrome)] tracking-[0.06em] text-warm-ghost"
+              title={item.ext || "no ext"}
+            >
+              {item.ext || "—"}
+            </span>
+            <span
+              class={`flex w-44 shrink-0 items-center gap-1.5 truncate font-mono text-[length:var(--text-chrome)] tracking-[0.06em] ${indicator.className}`}
+              title={item.error ?? indicator.label}
+            >
+              <span class="shrink-0">{indicator.glyph}</span>
+              <span class="truncate">{indicator.label}</span>
+            </span>
+          </li>
+        {/each}
+      </ul>
+
+      <div class="border-t border-ink-subtle px-5 py-5">
+        <div class="flex flex-wrap items-center justify-center gap-2">
+          <Button
+            variant="ghost"
+            size="xs"
+            onclick={confirm}
+            disabled={selectedCount === 0 || checkingCount > 0}
+            class="h-auto rounded-sm px-3 py-0.5 font-mono text-[length:var(--text-chrome)] tracking-[0.1em] text-gold hover:bg-transparent hover:text-gold-hover disabled:cursor-not-allowed disabled:text-warm-ghost"
+          >
+            ingest {selectedCount} file{selectedCount !== 1 ? "s" : ""}
+          </Button>
+          {#if dupBatchCount > 0 || dupVaultCount > 0}
+            <Button
+              variant="ghost"
+              size="xs"
+              onclick={deselectDuplicates}
+              class="h-auto rounded-sm px-3 py-0.5 font-mono text-[length:var(--text-chrome)] tracking-[0.1em] text-warm-ghost hover:bg-transparent hover:text-warm-faint"
+            >
+              deselect duplicates
+            </Button>
+          {/if}
+          <Button
+            variant="ghost"
+            size="xs"
+            onclick={handleBrowse}
+            class="h-auto rounded-sm px-3 py-0.5 font-mono text-[length:var(--text-chrome)] tracking-[0.1em] text-warm-ghost hover:bg-transparent hover:text-warm-faint"
+          >
+            replace
+          </Button>
+        </div>
+      </div>
+    </div>
+  {/if}
 
   {#if hasActivePipeline && !expanded}
     <a

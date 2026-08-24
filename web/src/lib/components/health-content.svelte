@@ -15,6 +15,7 @@
     canIngest: boolean;
     hasActivePipeline: boolean;
     stagedUploads: boolean;
+    vaultName: string;
   };
 
   let {
@@ -159,6 +160,7 @@
         <IngestionFlow
           hasActivePipeline={health.hasActivePipeline}
           stagedUploads={health.stagedUploads}
+          vaultName={health.vaultName}
         />
       </div>
     {/if}

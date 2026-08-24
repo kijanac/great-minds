@@ -52,6 +52,7 @@
           canIngest: health.currentVault?.owner_id === auth.userId,
           hasActivePipeline: health.hasActivePipeline,
           stagedUploads: health.currentVault?.staged_uploads ?? false,
+          vaultName: health.currentVault?.name ?? "",
         }}
         onOpenArticle={card.openArticle}
         onOpenSourceArticle={card.openSourceArticle}
