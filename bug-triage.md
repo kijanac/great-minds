@@ -1,10 +1,10 @@
 # Bug triage
 
-A consolidated list of defects and inconsistencies raised by the feature documents. Every cause below was read from Great Minds source at commit `c8c9e57`; none has yet been confirmed in a hand-verification pass, so there are no Status lines. The list is intentionally separate from product decisions: `fix` means the expected behavior is clear, while `product call` means current behavior is observable but reasonable teams could choose a different contract.
+A consolidated list of defects and inconsistencies raised by the feature documents. Every cause below was read from Great Minds source at commit `c8c9e57`; Status lines are added only after hand verification and may also record later fixes. The list is intentionally separate from product decisions: `fix` means the expected behavior is clear, while `product call` means current behavior is observable but reasonable teams could choose a different contract.
 
 ## Summary
 
-The drafting pass raised 50 deduplicated items: 16 high, 30 medium, and 4 low. The high-severity cluster is dominated by scope/authorization leaks, user work or selected files being silently lost, successful mutations reported as failures, durable terminal state displayed incorrectly, and public-link behavior that can expose more content than the creator saw at creation. Medium items concentrate around missing error/recovery states, lifecycle work that outlives its page, stale active-vault context, and inconsistent content metadata. No item is marked confirmed until its linked verification row is run.
+The drafting pass raised 50 deduplicated items: 16 high, 30 medium, and 4 low. The high-severity cluster is dominated by scope/authorization leaks, user work or selected files being silently lost, successful mutations reported as failures, durable terminal state displayed incorrectly, and public-link behavior that can expose more content than the creator saw at creation. Medium items concentrate around missing error/recovery states, lifecycle work that outlives its page, stale active-vault context, and inconsistent content metadata. One item has been hand-confirmed; its Status line also records the later fix.
 
 | ID | Title | Severity | Area | Decision needed | Issue |
 | --- | --- | --- | --- | --- | --- |
@@ -88,8 +88,8 @@ The drafting pass raised 50 deduplicated items: 16 high, 30 medium, and 4 low. T
 - **Reproduce:** Save a never-promoted owner exchange, observe the error, then verify the new `raw/sessions/…` source and retry after reload.
 - **Why (from the code):** `packages/server/src/sessions.ts:687-713` returns null title on fresh owner/proposal paths; `web/src/lib/api/sessions.ts:196-218` requires `z.string()`; `web/src/lib/components/promote-button.svelte:21-34` turns decode failure into permanent local error state.
 - **Severity:** `high`. It reverses the truth of a durable write and invites duplicate retries.
-- **Decision needed:** `fix`. Align nullable contract and render path/exchange fallback, or always return a display title server-side.
-- **Status:** `confirmed` by `PROMOTE-04` against `c8c9e57`. The first click showed **Invalid input: expected string, received null** for `title`, while Library sources rose from 3 to 4, `raw/sessions/ex-verification-main.md` persisted exactly once, and its compile intent was dispatched and satisfied.
+- **Decision needed:** `fix`. Accept the nullable contract and render neutral success when no title exists, or always return a genuine display title server-side.
+- **Status:** `fixed` by Great Minds commits `e57a25d` and `b7548c2`, without a new regression test. `PROMOTE-04` first confirmed the defect against `c8c9e57`: the click showed **Invalid input: expected string, received null** while the source and compile intent persisted. Manual verification against `b7548c2` then showed neutral **saved as source** success on both the first save and a post-reload repeat; the nullable source remained singular and the repeat created no additional compile intent.
 - **Raised by:** [save answer](research/save-an-answer-as-a-source.md#open-questions-and-verification).
 
 ### B-04: An editor can promote another creator's private session answer
