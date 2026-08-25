@@ -122,6 +122,12 @@ Do not describe code. Describe what the user sees and does. Technical detail goe
 - Health report errors are currently converted by view fallbacks to empty arrays, yielding **Nothing needs attention — the wiki is healthy** and hiding badges with no retry.
 - **update now** appears only when dirty count > 0, is member-wide, and disables only during run creation—not another active pipeline. Orphan-only/missing-only reports have no direct remediation.
 - Health preview rows open orphan articles or the missing link's source article; reports are unpaginated, have no timestamp/refresh/acknowledgement, and are not explicitly invalidated on compile completion or source deletion.
+- Session/reference shares are creator-owned, unauthenticated bearer links with one sequentially reused active token, no UI expiration/central manager, and creator-only revoke. Tokens are 32 random bytes/base64url and stored plaintext.
+- Shares are live, not snapshots: session link resolves current server Markdown (future main/BTW turns included); reference link resolves current metadata/body and optionally all current anchored personal-scope note sessions across the creator's vaults.
+- Reference **include your notes** defaults true, includes anchor + clean questions/answers but strips evidence; existing setting is not editable in UI except revoke/recreate. Session's stored annotation flag has no payload effect.
+- Dialog close does not abort create/revoke; clipboard errors are unhandled; no subject-level uniqueness prevents concurrent active-link races. Revoke blocks future loads but not content already loaded/copied.
+- Session PDF invokes browser print on current client DOM, forces light/thread-only output, hides Thinking and includes only rendered/open BTWs. Markdown downloads durable latest-event sidecar, includes source labels/all persisted BTWs, omits origin/errors, and has no pending/error UI.
+- Share/export can run while reply is pending, so live share, PDF, and Markdown can expose different/incomplete states; failed partial client text can print while absent from durable Markdown/share.
 
 Add load-bearing facts here as each foundation is completed: defaults, limits, timing, durable boundaries, role restrictions, route ownership, recovery rules, and which research document owns each state.
 
