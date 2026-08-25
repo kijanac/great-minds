@@ -89,6 +89,7 @@ The drafting pass raised 50 deduplicated items: 16 high, 30 medium, and 4 low. T
 - **Why (from the code):** `packages/server/src/sessions.ts:687-713` returns null title on fresh owner/proposal paths; `web/src/lib/api/sessions.ts:196-218` requires `z.string()`; `web/src/lib/components/promote-button.svelte:21-34` turns decode failure into permanent local error state.
 - **Severity:** `high`. It reverses the truth of a durable write and invites duplicate retries.
 - **Decision needed:** `fix`. Align nullable contract and render path/exchange fallback, or always return a display title server-side.
+- **Status:** `confirmed` by `PROMOTE-04` against `c8c9e57`. The first click showed **Invalid input: expected string, received null** for `title`, while Library sources rose from 3 to 4, `raw/sessions/ex-verification-main.md` persisted exactly once, and its compile intent was dispatched and satisfied.
 - **Raised by:** [save answer](research/save-an-answer-as-a-source.md#open-questions-and-verification).
 
 ### B-04: An editor can promote another creator's private session answer

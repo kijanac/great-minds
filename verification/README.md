@@ -51,4 +51,4 @@ Provider prose is nondeterministic. Assertions should concern accepted/pending/t
 
 ## Results so far
 
-Hand verification has started. `ACCESS-01` passed against the disposable owner fixture: sign-in and the selected alternate vault survived reload. All other Result cells remain `—`; no feature document is marked `verified`. Source reading, integration tests, link checking, structural checks, and environment smoke checks do not count as visible-product verification.
+Hand verification has started. `ACCESS-01` passed: sign-in and the selected alternate vault survived reload. `PROMOTE-04` passed and confirmed B-03: first save committed the source/compile intent while showing a null-title validation error. All other Result cells remain `—`; no feature document is marked `verified`. Source reading, integration tests, link checking, structural checks, and environment smoke checks do not count as visible-product verification.
