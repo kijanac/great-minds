@@ -4,7 +4,7 @@ A consolidated list of defects and inconsistencies raised by the feature documen
 
 ## Summary
 
-The drafting pass raised 50 deduplicated items: 16 high, 30 medium, and 4 low. The high-severity cluster is dominated by scope/authorization leaks, user work or selected files being silently lost, successful mutations reported as failures, durable terminal state displayed incorrectly, and public-link behavior that can expose more content than the creator saw at creation. Medium items concentrate around missing error/recovery states, lifecycle work that outlives its page, stale active-vault context, and inconsistent content metadata. Three items have been hand-confirmed; their Status lines also record the later fixes.
+The drafting pass raised 50 deduplicated items: 16 high, 30 medium, and 4 low. The high-severity cluster is dominated by scope/authorization leaks, user work or selected files being silently lost, successful mutations reported as failures, durable terminal state displayed incorrectly, and public-link behavior that can expose more content than the creator saw at creation. Medium items concentrate around missing error/recovery states, lifecycle work that outlives its page, stale active-vault context, and inconsistent content metadata. Four items have been hand-confirmed; their Status lines also record the later fixes.
 
 | ID | Title | Severity | Area | Decision needed | Issue |
 | --- | --- | --- | --- | --- | --- |
@@ -13,7 +13,7 @@ The drafting pass raised 50 deduplicated items: 16 high, 30 medium, and 4 low. T
 | B-03 | The first successful save-as-source is reported as a technical error | high | research/source | fix | — |
 | B-04 | An editor can promote another creator's private session answer | high | privacy/source | fix | — |
 | B-05 | Viewer/editor membership permits shared mutations, provider work, and cancellation | high | authorization | resolved | — |
-| B-06 | A failed Health request reports the wiki as healthy | high | health | fix | — |
+| B-06 | A failed Health request reports the wiki as healthy | high | health | resolved | — |
 | B-07 | Different URL sources with the same path stem overwrite one another | high | source ingest | fix | — |
 | B-08 | Direct file ingest discards folders and overwrites same-base files | high | source ingest | fix | — |
 | B-09 | File review and staged ingest can silently omit files counted as selected | high | source ingest | fix | — |
@@ -121,7 +121,8 @@ The drafting pass raised 50 deduplicated items: 16 high, 30 medium, and 4 low. T
 - **Reproduce:** Block `/lint` with no cache and open all three surfaces.
 - **Why (from the code):** `web/src/lib/hooks/use-health.svelte.ts:14-54` exposes loading but no error and defaults absent data to empty; `web/src/lib/components/health-content.svelte:44-53` maps empty arrays to healthy copy.
 - **Severity:** `high`. It turns unknown into a false safety signal.
-- **Decision needed:** `fix`. Add error/retry/stale timestamp states and keep the badge unknown rather than zero.
+- **Decision needed:** `resolved`. A failed report is unavailable and retryable; compact surfaces show an unknown indicator rather than zero. Cached-report timestamps remain a separate enhancement.
+- **Status:** `fixed` by Great Minds commit `817d93f`, without a new regression test. `HEALTH-04` first confirmed the defect against `c8c9e57`: aborting `/lint` made Health claim **Nothing needs attention** and removed known issue counts from Home and Library. Against `817d93f`, the same failure showed concise **Health unavailable** with **retry**, both compact surfaces showed an actionable `?`, and retry restored the known dirty report and count after the request recovered.
 - **Raised by:** [Health](health/review-vault-health.md#open-questions-and-verification), [content model](foundations/content-model.md#open-questions-and-verification).
 
 ### B-07: Different URL sources with the same path stem overwrite one another

@@ -161,7 +161,7 @@ Orphan/missing sections have no direct remediation or acknowledgement. A later c
 
 ## Open questions and verification
 
-- Never map report errors to healthy. Add explicit error/retry/offline state and a “checked at” timestamp/staleness indicator.
+- Great Minds commit `817d93f` fixes fresh report failure with concise **Health unavailable**/**retry** state and actionable unknown indicators on Home and Library. A “checked at” timestamp and stale-cache disclosure remain open.
 - Define whether badge means unique affected content or raw issue count; change **items** wording or deduplicate.
 - Make dirty diagnostics list resolvable article/topic names and distinguish topics with no current article.
 - Provide action or explanation for orphan-only/missing-only states; currently **update now** is absent even though attention is requested.
