@@ -74,6 +74,11 @@ Do not describe code. Describe what the user sees and does. Technical detail goe
 - The main follow-up bar exists only in `done`. A selection must trim to at least five characters and remain inside one rendered answer block before **+ follow up** can create a chip.
 - Follow-up chips keep full quotes but visually truncate after 42 characters. Submission maps each to `re: "…"`, appends trimmed free text, and joins parts with ` — `; this composed string is the visible and stored question.
 - Follow-up submit clears text and chips before server acceptance. If creation fails, the optimistic exchange rolls back but the draft is currently lost.
+- A session BTW is anchored by selected quote, full containing block, and Markdown source offset. Its empty shell and typed text are local until the first side turn is accepted; a blank blurred shell is removed.
+- The first BTW model turn receives main history plus `Passage:`/optional `Highlighted:` context; later turns receive main history plus that thread's prior turns. BTW turns never enter future main-line history.
+- BTW replies run independently of main session phase, so different side threads and a main reply can run concurrently. One thread permits only one running side turn at a time, has no Stop, and reconnects by durable reply id.
+- Pending and final BTW events repeat the whole thread. Replay currently identifies one logical thread by parent exchange id plus quote, so identical quotes in different blocks can collide after reload.
+- A pre-acceptance BTW failure leaves a local interrupted turn and loses the cleared input; a failed reply with partial text hides its error just like a main reply.
 
 Add load-bearing facts here as each foundation is completed: defaults, limits, timing, durable boundaries, role restrictions, route ownership, recovery rules, and which research document owns each state.
 

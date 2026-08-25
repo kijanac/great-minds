@@ -169,7 +169,7 @@ Status is one of `not started`, `drafted`, or `verified`.
 | research/ask-a-question.md | drafted |
 | research/streamed-answer-and-evidence.md | drafted |
 | research/follow-up.md | drafted |
-| research/btw-threads.md | not started |
+| research/btw-threads.md | drafted |
 | research/save-an-answer-as-a-source.md | not started |
 | sources/add-files.md | not started |
 | sources/add-a-url.md | not started |
