@@ -10,7 +10,7 @@ The owner starts work from home or health. Great Minds creates or reuses a clien
 
 The run starts pending, becomes running when progress is written, and updates the same durable record throughout ingest and compile. The browser receives a snapshot whenever that record changes. Earlier stages become complete as a later phase begins; the current step supplies its detail and numeric progress when available.
 
-When publishing completes, the run becomes completed. The page waits 300 ms before showing **Knowledge base updated**, then reports either **Already up to date — nothing changed** or the number and titles of articles written by that run. A failed or cancelled run remains reopenable at the same URL with retry and home actions.
+When publishing completes, the run becomes completed. The page waits 300 ms before showing **Knowledge base updated**, then reports either **Already up to date — nothing changed** or the number and titles of articles written by that run. A failed or cancelled run remains reopenable at the same URL with retry and home actions, although [queued terminal runs with no phase can currently be misclassified as successful](../sources/compile-the-vault.md#edge-cases).
 
 ## The interaction, event by event
 
@@ -54,7 +54,7 @@ A staged-file path separates browser transfer from durable processing. Before th
 
 A local/direct file path uploads and indexes each file through ordinary API requests before requesting a compile. That pre-run transfer depends on navigation state and the live page; the compile becomes durable only when its run is accepted.
 
-A URL run is created before source progress is written. The source fetch, conversion, storage, and indexing occur on the request path, update the run's `source_ingest` steps, and create a compile intent tied to the same run. The HTTP response can therefore take as long as URL ingest even though the durable run already exists.
+A URL run is created before source progress is written. The source fetch, conversion, storage, source registration, and compile-intent attachment occur on the request path. The `source_ingest` snapshot labels that handoff **Indexing source document**, while full search-chunk rebuilding occurs in the compile's later Indexing phase. The HTTP response can therefore take as long as URL ingest even though the durable run already exists.
 
 ### While in progress
 
@@ -120,7 +120,7 @@ After success, the page loads live articles whose render-run identifier matches 
 
 ## Interactions with other systems
 
-**Permissions and roles.** Owner-only controls protect source ingest in the scoped UI and server ingest service. Run list/get/stream, compile request, and cancellation require membership, creating a wider backend boundary that needs a product decision.
+**Permissions and roles.** Owner-only controls protect file ingest in the scoped UI and server ingest service. Health's update action plus run list/get/stream, compile request, URL ingest, and cancellation require only membership, creating a wider boundary that needs a product decision.
 
 **Validation and error display.** Client identifiers and manifests are schema-checked. URL/file conversion and provider failures become stored phase errors. The pipeline page preserves and names the last failed stage where possible.
 
@@ -144,7 +144,7 @@ After success, the page loads live articles whose render-run identifier matches 
 
 - A second compile request while an undispatched intent exists receives the first run identifier; the caller's proposed run record is removed.
 - A repeated request with the same run identifier is idempotent only within its intended vault. Run identifiers are global database keys even though reads are vault-scoped.
-- Direct local file upload has a weaker reload boundary than staged upload: files may be indexed before the durable compile run exists.
+- Direct local file upload has a weaker reload boundary than staged upload: source files/registry rows may be saved before the durable compile run exists; search-chunk indexing still belongs to compile.
 - Staged upload proceeds when at least one file succeeded. Failed transfers are carried in client progress; the durable manifest contains only successful files.
 - The staged workflow processes files in batches of 50, isolates conversion failures, and can still compile successfully ingested files while reporting failed counts at the ingest boundary.
 - A run can complete with zero newly written articles because content-addressed caches and unchanged topics make the vault already current.
@@ -159,7 +159,7 @@ After success, the page loads live articles whose render-run identifier matches 
 
 - Verify cancellation latency in every phase and whether the page should change immediately on click; the cancel button has no local pending label or disabled state before the terminal snapshot arrives.
 - Verify stage updates with screen readers and reduced-motion preferences. Active stages auto-scroll smoothly and dynamic rows have no explicit live-region policy.
-- The UI hides ingest/update from non-owners, but compile and cancellation endpoints currently require only membership. Confirm whether editors and viewers are meant to start or cancel shared vault work; this may be an authorization inconsistency.
+- File-ingest controls are owner-only, but Health update, URL ingest, compile, and cancellation are member-wide. Confirm whether editors/viewers are meant to mutate sources, incur provider work, or cancel shared vault work.
 - Bare `/pipeline` shows **No active job** when the active list contains more than one run as well as when it contains none. Verify the intended recovery for unexpected concurrency.
 - URL ingest performs remote fetch and indexing before the launch request returns, even though the run exists. Verify what the user sees if the browser request times out while the run continues and becomes discoverable later.
 - Verify partial staged-upload messaging: the generator records per-file failures, but the pipeline container does not visibly render the `failed_uploads` list before backend progress takes over.

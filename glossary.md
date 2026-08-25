@@ -20,6 +20,10 @@ The vocabulary used across these documents. When a document uses one of these wo
 
 **Source.** Material added to a vault from a file, URL, promoted reference, or saved research exchange. A source retains provenance and source metadata where available and is input to later compiles and grounded questions.
 
+**Provenance.** Metadata that records where durable content came from: for example a URL/host, parent session/exchange/question, or document path/selected passage. Provenance can survive after the originating object changes or disappears.
+
+**Topic.** A compiled concept that groups extracted source ideas and owns article status, title, description, memberships, and intended links. A topic can have a live article, need revision, have no article, or be archived.
+
 **Article.** A synthesized vault document written around a topic during a compile. The UI sometimes calls these “wiki articles”; these documents use *article* unless distinguishing them from source documents.
 
 **Document.** A full readable source or article at a vault path. “Document” is the neutral term when reader behavior is the same for both kinds.
@@ -34,6 +38,8 @@ The vocabulary used across these documents. When a document uses one of these wo
 
 **Source type.** The source category shown as a library filter, derived from source metadata. “All” includes articles and sources; “Articles” excludes sources; “Reading room” switches to account-scoped references.
 
+**Proposal.** A pending editor contribution that an owner can approve or reject. In this description, proposals appear as the alternate path for editor source deletion and answer/source contribution; the administration/review surface itself is out of scope.
+
 **Chunk.** A numbered searchable section of a vault document. A source card may point to one or more chunk ranges rather than the entire document; opening that card shows only the cited ranges until the user opens the full document.
 
 **Archived article.** An article retained for an older topic state but no longer the live article for that topic. A reader can indicate that it has been superseded and point to the replacement when one exists.
@@ -42,11 +48,13 @@ The vocabulary used across these documents. When a document uses one of these wo
 
 **Vault health.** The set of library conditions that Great Minds marks as needing attention: orphaned articles, dirty topics, and unmentioned links. The health badge is the sum of those reported items, not a general server-health indicator.
 
-**Orphaned article.** An article that the health report considers disconnected from the current live topic graph. It remains readable but appears in the health review.
+**Orphaned article.** A live non-index article with no incoming explicit article backlink. Related-idea similarity and intentional root status do not prevent the health label.
 
-**Dirty topic.** A topic whose current source membership or content no longer matches the article generated for it. A compile can refresh its article.
+**Dirty topic.** A non-archived topic whose compiled content hash has no matching rendered hash. A compile can refresh or create its article.
 
-**Unmentioned link.** A relationship the health report found between two articles that is not represented in the source article's body. The health page names both ends so the owner can inspect the gap.
+**Unmentioned link.** An intended directed topic link whose rendered source article has no explicit backlink to the rendered target article. The health page names both ends so the owner can inspect the gap.
+
+**Backlink.** An explicit compiled wiki link from one article to another. Health uses backlink direction to determine orphaned articles and unmentioned links.
 
 ## Research sessions
 
@@ -72,7 +80,11 @@ The vocabulary used across these documents. When a document uses one of these wo
 
 **Selection chip.** A quoted excerpt selected from an answer and queued above the follow-up input. Removing a chip changes only the unsent follow-up; submitting turns each chip into explicit `re:` context in the next question.
 
-**BTW thread.** A side conversation anchored to selected text inside one answer. “BTW” is the product's label. Its turns are stored with the owning exchange and do not replace the main session's follow-up path.
+**BTW thread.** A side conversation anchored to selected text inside one session answer. “BTW” is the product's label. Its turns are stored with the owning exchange and do not replace the main session's follow-up path.
+
+**Document note.** A document-origin session anchored to selected text in a vault article/source or personal reference. It uses the compact BTW interaction, stays out of the main Sessions list, and is rediscovered through its origin document rather than stored inside an exchange.
+
+**Document-origin conversation.** A main research session started from a reader without a selected anchor. It remains in the main Sessions list and also appears in that document's conversation list.
 
 **Interrupted reply.** An exchange whose durable reply is no longer running but has no answer text. The thread shows an interruption message and, when available, the stored error rather than an empty answer.
 
@@ -86,9 +98,11 @@ The vocabulary used across these documents. When a document uses one of these wo
 
 **Compile.** The vault-wide process that extracts ideas from sources, synthesizes and canonicalizes topics, writes or reuses articles, derives links, checks the result, and publishes the new snapshot. A compile operates on the active vault's durable content, not on unsent browser state.
 
+**Compile intent.** A durable queued request for a vault compile. Undispatched intents for one vault can coalesce; the reconciler later attaches or dispatches the intent through a pipeline run.
+
 **Pipeline run.** The durable record shown on the pipeline page for an ingest or compile operation. A run can be pending, running, completed, failed, or cancelled.
 
-**Active pipeline.** A pending or running pipeline run for the active vault. The home and health surfaces use its presence to prevent or redirect actions that would start conflicting work.
+**Active pipeline.** A pending or running pipeline run for the active vault. Home changes its normal add-sources click into progress navigation when one is known, but drag entry, Health update, and server requests can still create or queue additional work.
 
 **Phase.** A major pipeline section such as ingesting, extracting, synthesizing, writing, connecting, checking, or publishing. A phase is complete only when its phase status says completed; numeric step totals alone do not advance it.
 
@@ -112,7 +126,7 @@ The vocabulary used across these documents. When a document uses one of these wo
 
 **Pending.** Accepted or optimistically represented but not terminal. A pending control is commonly disabled against duplicate submission while the server or background worker continues.
 
-**Saved.** Successfully written to the durable record that owns the feature. “Saved” does not mean compiled: a source can be saved and indexed while its effect on articles still awaits a compile.
+**Saved.** Successfully written to the durable record that owns the feature. “Saved” does not mean search-indexed, enriched, or compiled: those boundaries can occur later.
 
 ## The task lifecycle
 
@@ -168,8 +182,8 @@ The vocabulary used across these documents. When a document uses one of these wo
 
 ## Sharing and export
 
-**Share.** A revocable, optionally expiring public token for one session or personal reference. Creating the same active share configuration can reuse the existing share rather than minting a second equivalent link.
+**Share.** A revocable, optionally expiring public bearer token for one session or personal reference. Sequential creation for the same active creator/subject reuses its token; the current UI creates no expiry and public resolution reads live content rather than a frozen snapshot.
 
-**Annotation.** A stored BTW thread on a personal reference. A reference share can include or omit these anchored conversations; a session share exports the session itself.
+**Annotation.** The read-only shared representation of one personal-reference document note: anchor plus clean main questions/answers, without its evidence. A reference share can include or omit annotations; a session share exports the session itself.
 
 **Session markdown.** The server-rendered text export of a saved session. It is available only after the session has a durable identifier; printing to PDF uses the browser's print path instead.

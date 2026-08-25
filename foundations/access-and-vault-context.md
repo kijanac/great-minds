@@ -132,7 +132,7 @@ If the stored vault is missing, deleted, or no longer accessible, the server rej
 - Verify keyboard focus and screen-reader announcement when the active vault changes and the home content reloads.
 - Verify the user-visible recovery path for a stored vault deleted from another tab or after membership removal; no global fallback is apparent in the client state.
 - Signing in can store valid tokens and then report **Signed in, but failed to load your workspace** if the subsequent vault list fails. Verify whether this leaves the next visit unexpectedly authenticated; it may be worth treating as a bug in success-boundary copy and recovery.
-- The compile endpoint accepts any vault member while owner-facing **update** and ingest controls are hidden from non-owners. Confirm whether member-triggered compiles are intentional or an access-policy inconsistency.
+- Manual compile/cancel endpoints accept any vault member, and Health's **update now** is likewise not role-gated, while source-ingest controls remain owner-only. Confirm whether viewer/editor-triggered provider work and cancellation are intentional.
 - Verify whether a storage-driven vault switch in another tab should force the current tab home. Today it changes context in place, which can make a document or session route fail under the new vault.
 
 Verified against Great Minds commit `c8c9e57`.

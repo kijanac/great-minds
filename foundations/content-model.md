@@ -68,7 +68,7 @@ A saved source appears in the library newest-update first and can be read immedi
 
 A live article appears alphabetically by title in the ordinary library. If its topic is retired, the live list excludes it. A direct read of retained archived content can show an **archived article** notice and either link to the successor topic or state that no successor was identified.
 
-A saved reference appears newest-first in Reading room and remains available across vault switches. Renaming changes its title metadata but not its stored Markdown body or path. Deleting removes its registry row and stored file. Promoting leaves it in Reading room and creates an idempotent vault-scoped copy.
+A saved reference appears newest-first in Reading room and remains available across vault switches. Renaming changes its title metadata but not its stored Markdown body or path. The server can delete its registry row and stored file, but the current authenticated web surface exposes no delete control. Promoting leaves it in Reading room and creates an idempotent vault-scoped copy.
 
 For a vault document to be readable, its stored file and registry row must agree. A missing file returns **Document not found**. A file with no matching source or article registry row is treated as an internal consistency failure rather than anonymous readable content.
 
@@ -119,7 +119,7 @@ For a vault document to be readable, its stored file and registry row must agree
 
 **Accessibility and keyboard use.** Content identity and persistence do not depend on input method. Rows are operable controls, full readers expose semantic article content, and metadata links retain their ordinary browser behavior.
 
-**External side effects.** Ingest can fetch or upload external material; compile can call language and embedding providers; query can read search chunks; sharing can expose a snapshot. Merely listing or reading content performs no provider generation.
+**External side effects.** Ingest can fetch or upload external material; compile can call language and embedding providers; query can read search chunks; sharing can expose a live token view and export can create point-in-time files. Merely listing or reading content performs no provider generation.
 
 ## Edge cases
 
