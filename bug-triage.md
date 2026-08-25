@@ -4,7 +4,7 @@ A consolidated list of defects and inconsistencies raised by the feature documen
 
 ## Summary
 
-The drafting pass raised 50 deduplicated items: 16 high, 30 medium, and 4 low. The high-severity cluster is dominated by scope/authorization leaks, user work or selected files being silently lost, successful mutations reported as failures, durable terminal state displayed incorrectly, and public-link behavior that can expose more content than the creator saw at creation. Medium items concentrate around missing error/recovery states, lifecycle work that outlives its page, stale active-vault context, and inconsistent content metadata. Four items have been hand-confirmed; their Status lines also record the later fixes.
+The drafting pass raised 50 deduplicated items: 16 high, 30 medium, and 4 low. The high-severity cluster is dominated by scope/authorization leaks, user work or selected files being silently lost, successful mutations reported as failures, durable terminal state displayed incorrectly, and public-link behavior that can expose more content than the creator saw at creation. Medium items concentrate around missing error/recovery states, lifecycle work that outlives its page, stale active-vault context, and inconsistent content metadata. Five items have been hand-confirmed; their Status lines preserve the confirmation evidence and, where applicable, later fixes.
 
 | ID | Title | Severity | Area | Decision needed | Issue |
 | --- | --- | --- | --- | --- | --- |
@@ -133,6 +133,7 @@ The drafting pass raised 50 deduplicated items: 16 high, 30 medium, and 4 low. T
 - **Why (from the code):** `packages/server/src/ingest.ts:310-326` derives `posix.parse(parsed.pathname).name`, writes one slug path, and calls upsert without URL collision handling.
 - **Severity:** `high`. It silently destroys/replaces shared source content.
 - **Decision needed:** `fix`. Use normalized URL identity and stable collision suffix or return conflict before write.
+- **Status:** `confirmed` against `c8c9e57` by `URL-05`. From a clean five-source fixture, the owner ingested `host-a/report` and then `host-b/report?version=2`; both visible runs completed, but Library stayed at six sources with one `docs/report` row and its panel changed from the distinct alpha body to the beta body. Supporting storage and SQL showed one `raw/docs/report.md` file/row carrying only the second URL and body.
 - **Raised by:** [URL ingest](sources/add-a-url.md#open-questions-and-verification).
 
 ### B-08: Direct file ingest discards folders and overwrites same-base files
