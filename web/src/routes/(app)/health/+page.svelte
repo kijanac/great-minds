@@ -43,7 +43,8 @@
     <div class="min-h-0 flex-1 overflow-y-auto">
       <HealthContent
         health={{
-          loading: health.loading,
+          status: health.status,
+          checking: health.checking,
           dirtyCount: health.dirtyCount,
           orphans: health.orphans,
           missing: health.missing,
@@ -57,6 +58,7 @@
         onOpenArticle={card.openArticle}
         onOpenSourceArticle={card.openSourceArticle}
         onUpdate={updateNow}
+        onRetry={() => void health.retry()}
         onBrowseLibrary={() => void goto("/library")}
       />
     </div>

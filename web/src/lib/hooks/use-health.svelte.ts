@@ -1,8 +1,8 @@
 import { createMutation, createQuery, useQueryClient } from "@tanstack/svelte-query";
 
 import { compile } from "$lib/api/compile";
-import { fetchLintResults } from "$lib/api/lint";
 import { useActiveJob } from "$lib/hooks/use-active-job.svelte";
+import { useHealthReport } from "$lib/hooks/use-health-report.svelte";
 import { activeVault, useVaults } from "$lib/hooks/use-vault.svelte";
 import { loadPanelContent } from "$lib/panel-content";
 import type { SourceRef } from "$lib/types";
@@ -11,12 +11,7 @@ export function useHealth(selectedCard: () => SourceRef | null) {
   const queryClient = useQueryClient();
   const vaults = useVaults();
   const activeJob = useActiveJob();
-
-  const lint = createQuery(() => ({
-    queryKey: ["vault", activeVault.id, "health-count"],
-    queryFn: fetchLintResults,
-    enabled: !!activeVault.id,
-  }));
+  const report = useHealthReport();
 
   const compileMutation = createMutation(() => ({
     mutationFn: () => compile(),
@@ -34,23 +29,27 @@ export function useHealth(selectedCard: () => SourceRef | null) {
   }));
 
   return {
+    get checking() {
+      return report.checking;
+    },
+    get status() {
+      return report.status;
+    },
+    retry: report.retry,
     get currentVault() {
       return vaults.data?.find((vault) => vault.id === activeVault.id) ?? null;
     },
     get dirtyCount() {
-      return lint.data?.dirty_topics.length ?? 0;
+      return report.data?.dirty_topics.length ?? 0;
     },
     get hasActivePipeline() {
       return activeJob.data ?? false;
     },
-    get loading() {
-      return lint.isLoading;
-    },
     get missing() {
-      return lint.data?.unmentioned_links ?? [];
+      return report.data?.unmentioned_links ?? [];
     },
     get orphans() {
-      return lint.data?.orphans ?? [];
+      return report.data?.orphans ?? [];
     },
     panel,
     compileMutation,

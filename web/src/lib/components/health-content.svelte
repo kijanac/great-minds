@@ -1,12 +1,14 @@
 <script lang="ts">
   import IngestionFlow from "$lib/components/ingestion-flow.svelte";
   import HealthArticleRow from "$lib/components/health-article-row.svelte";
+  import { Alert, AlertTitle } from "$lib/components/ui/alert";
   import { Button } from "$lib/components/ui/button";
   import { Skeleton } from "$lib/components/ui/skeleton";
   import type { UnmentionedLink, WikiArticleOverview } from "$lib/types";
 
   type HealthView = {
-    loading: boolean;
+    status: "loading" | "ready" | "unavailable";
+    checking: boolean;
     dirtyCount: number;
     orphans: WikiArticleOverview[];
     missing: UnmentionedLink[];
@@ -23,18 +25,20 @@
     onOpenArticle,
     onOpenSourceArticle,
     onUpdate,
+    onRetry,
     onBrowseLibrary,
   }: {
     health: HealthView;
     onOpenArticle: (article: WikiArticleOverview) => void;
     onOpenSourceArticle: (slug: string, title: string) => void;
     onUpdate: () => void;
+    onRetry: () => void;
     onBrowseLibrary: () => void;
   } = $props();
 </script>
 
 <main class="mx-auto max-w-[740px] px-4 pt-8 pb-20 md:px-10">
-  {#if health.loading}
+  {#if health.status === "loading"}
     <div class="space-y-8">
       <div class="space-y-3">
         <Skeleton class="h-4 w-32 bg-ink-raised" />
@@ -46,6 +50,26 @@
         <Skeleton class="h-16 w-full bg-ink-raised" />
       </div>
     </div>
+  {:else if health.status === "unavailable"}
+    <Alert
+      variant="destructive"
+      class="rounded-sm border-red-400/25 bg-red-400/5 p-5"
+    >
+      <AlertTitle
+        class="mb-3 font-serif text-[length:var(--text-body)] text-warm-dim"
+      >
+        Health unavailable
+      </AlertTitle>
+      <Button
+        variant="ghost"
+        size="sm"
+        onclick={onRetry}
+        disabled={health.checking}
+        class="h-auto rounded-sm px-3 py-1 font-mono text-[length:var(--text-chrome)] tracking-[0.08em] text-gold hover:bg-transparent hover:text-gold-hover"
+      >
+        {health.checking ? "checking…" : "retry"}
+      </Button>
+    </Alert>
   {:else}
     {#if health.dirtyCount === 0 && health.orphans.length === 0 && health.missing.length === 0}
       <p class="mb-10 font-serif text-[length:var(--text-body)] text-warm-dim">

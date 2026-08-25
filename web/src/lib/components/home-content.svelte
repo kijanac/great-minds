@@ -12,6 +12,7 @@
 
   import { auth } from "$lib/auth.svelte";
   import ArticlePanel from "$lib/components/article-panel.svelte";
+  import HealthIndicator from "$lib/components/health-indicator.svelte";
   import IngestionFlow from "$lib/components/ingestion-flow.svelte";
   import PanelHost from "$lib/components/panel-host.svelte";
   import VaultSwitcher from "$lib/components/vault-switcher.svelte";
@@ -21,7 +22,7 @@
   import { Button } from "$lib/components/ui/button";
   import * as DropdownMenu from "$lib/components/ui/dropdown-menu";
   import { useActiveJob } from "$lib/hooks/use-active-job.svelte";
-  import { useHealthBadge } from "$lib/hooks/use-health-badge.svelte";
+  import { useHealthReport } from "$lib/hooks/use-health-report.svelte";
   import { createLinkInterceptor } from "$lib/hooks/use-link-interceptor";
   import { useSessions } from "$lib/hooks/use-sessions.svelte";
   import { useVaultCounts } from "$lib/hooks/use-vault-counts.svelte";
@@ -51,7 +52,7 @@
 
   const sessions = useSessions();
   const vaults = useVaults();
-  const badge = useHealthBadge();
+  const health = useHealthReport();
   const counts = useVaultCounts();
   const activeJob = useActiveJob();
   const initial = untrack(() => ({
@@ -88,11 +89,7 @@
   const currentVault = $derived(
     vaults.data?.find((vault) => vault.id === activeVault.id) ?? null,
   );
-  const badgeCount = $derived(
-    (badge.data?.orphans.length ?? 0) +
-      (badge.data?.dirty_topics.length ?? 0) +
-      (badge.data?.unmentioned_links.length ?? 0),
-  );
+
   const isActive = $derived(session.phase !== "idle");
   const savedSessionId = $derived(session.sessionId);
   // The opened session's origin: from the loaded session, or — while a
@@ -286,17 +283,12 @@
                         : "s"} →
                     </span>
                   {/if}
-                  {#if badgeCount > 0}
-                    <span
-                      title={badgeCount === 1
-                        ? "1 item needs attention"
-                        : `${badgeCount} items need attention`}
-                      class="inline-flex h-[18px] min-w-[18px] items-center justify-center rounded-full bg-gold/20 px-1 text-[10px] leading-none text-gold"
-                    >
-                      {badgeCount}
-                    </span>
-                  {/if}
                 </Button>
+                <HealthIndicator
+                  status={health.status}
+                  count={health.count}
+                  onOpen={() => void goto("/health")}
+                />
               {/if}
               <VaultSwitcher />
             </div>
