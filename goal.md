@@ -98,6 +98,12 @@ Do not describe code. Describe what the user sees and does. Technical detail goe
 - **cancel** has no confirmation/pending/error state and is cooperative; **retry**/**run again** create a whole new manual run and likewise have no pending/error handling. Compile/cancel remain member-wide server operations.
 - Completion waits 300 ms, reports the total live articles carrying the run id but lists at most eight, and silently omits result-query failures. Zero such articles is labeled **nothing changed** even if non-render work changed.
 - A queued terminal snapshot with empty backend phase is discarded before terminal-status handling; the following SSE `done` frame marks overall success, so a queued cancellation/failure can incorrectly show **Knowledge base updated**.
+- Library commits trimmed `q` after 300 ms and writes `q`/`type`/`tag` with history replacement, focus retention, and no scroll. Search is hidden but preserved/ignored in Reading room.
+- Library metadata search is case-insensitive article title/précis and source title/author only; `%`/`_` are currently unescaped SQL wildcards. Tag is exact case-insensitive array-element matching.
+- Articles sort alphabetically, sources newest-update first, and references newest-created first in independent 50-row pages. All renders article/source sections rather than one merged chronology.
+- Source facet/All counts ignore source text search but respect tag; header/count scopes differ. Reading room becomes zero/empty under any tag because references have no tags.
+- An exact title/slug match among fetched tagged articles moves into a **synthesis** pin; it is page-dependent and can appear even in source-type view.
+- Vault list/facet/load-more errors currently have no error surface and can masquerade as empty/no-match; invalid `type` is treated as a source type and can produce a blank shelf when article items suppress the shared empty state.
 
 Add load-bearing facts here as each foundation is completed: defaults, limits, timing, durable boundaries, role restrictions, route ownership, recovery rules, and which research document owns each state.
 
