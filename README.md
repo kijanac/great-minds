@@ -159,7 +159,7 @@ Status is one of `not started`, `drafted`, or `verified`.
 | --- | --- |
 | glossary.md | drafted |
 | bug-triage.md | not started |
-| verification/ (4 checklists) | not started |
+| verification/ (4 checklists) | drafted |
 | foundations/access-and-vault-context.md | drafted |
 | foundations/content-model.md | drafted |
 | foundations/navigation-and-page-state.md | drafted |
