@@ -111,6 +111,12 @@ Do not describe code. Describe what the user sees and does. Technical detail goe
 - Document-note loading errors are invisible, pending note replies do not reconnect on reader reload, and unresolvable anchors can leave a durable note with neither jump nor open-session access.
 - Changing active vault refetches body/related content but does not recreate document-thread state, so old-vault notes can remain attached to a new-vault document path.
 - Any main read failure (invalid/missing/forbidden/network/schema/registry mismatch) currently renders the same **Document not found.** with no retry; related-link and note-load failures are silent.
+- Owner source deletion is confirmed from a Library row, transactionally removes exact search/source/idea/topic-membership data, then deletes storage. It closes matching preview/refetches sources but creates no compile intent or undo; existing articles remain.
+- Editor deletion requests are idempotent for an existing pending deletion, conflict with other pending destination proposals, leave the source intact, and show only a generic browser error/one local success notice.
+- Reference rename trims/clears only account metadata and `updated_at`; body/path/hash and existing promoted sources are untouched. Current reader uses a local override without cache invalidation or pending serialization.
+- Reference promotion copies exact personal Markdown to basename-derived `raw/docs/…`, reuses same-body destinations, suffixes different-body collision with an 8-character URL/body hash, registers a source, and queues compile while retaining the reference.
+- Promotion does not carry user-row title/author/published metadata (including rename) into the source, and its server boundary currently allows any vault member direct ingest.
+- Personal-reference delete exists server-side but has no authenticated-web client/control.
 
 Add load-bearing facts here as each foundation is completed: defaults, limits, timing, durable boundaries, role restrictions, route ownership, recovery rules, and which research document owns each state.
 
