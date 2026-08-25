@@ -650,8 +650,7 @@ export const SessionsServiceLive = Layer.effect(
               return {
                 mode: "ingested" as const,
                 path: dest,
-                title:
-                  existing.title !== null && existing.title !== "" ? existing.title : exchangeId,
+                title: existing.title,
                 document_id: existing.id as Uuid,
                 proposal_id: null,
               };
@@ -662,8 +661,7 @@ export const SessionsServiceLive = Layer.effect(
               return {
                 mode: "proposed" as const,
                 path: dest,
-                title:
-                  existing.title !== null && existing.title !== "" ? existing.title : exchangeId,
+                title: existing.title,
                 document_id: null,
                 proposal_id: existing.id,
               };
