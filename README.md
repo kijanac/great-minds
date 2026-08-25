@@ -158,7 +158,7 @@ Status is one of `not started`, `drafted`, or `verified`.
 | Document | Status |
 | --- | --- |
 | glossary.md | drafted |
-| bug-triage.md | not started |
+| bug-triage.md | drafted |
 | verification/ (4 checklists) | drafted |
 | foundations/access-and-vault-context.md | drafted |
 | foundations/content-model.md | drafted |
