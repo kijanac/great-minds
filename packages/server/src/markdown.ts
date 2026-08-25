@@ -1,6 +1,6 @@
 import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
 
-import type { SessionExchangeEvent, SessionOrigin } from "@great-minds/domain";
+import type { SessionExchangeEvent, SessionOrigin, Uuid } from "@great-minds/domain";
 
 const PARA_SPLIT_RE = /\n\s*\n/;
 const HEADING_LINE_RE = /^(#{1,6})\s+(.+)$/;
@@ -153,7 +153,8 @@ export const buildDocument = (content: string, input: BuildDocumentInput = {}) =
   return buildFrontmatter(known) + injectAnchors(content);
 };
 
-export const sessionExchangePath = (exchangeId: string) => `raw/sessions/${exchangeId}.md`;
+export const sessionExchangePath = (exchangeId: string, sourceId: Uuid) =>
+  `raw/sessions/${exchangeId}-${sourceId}.md`;
 
 export const sessionExchangeDocumentInput = (
   sessionId: string,

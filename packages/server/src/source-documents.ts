@@ -1,6 +1,3 @@
-import { randomUUID } from "node:crypto";
-import { posix } from "node:path";
-
 import {
   Database,
   ideas,
@@ -14,6 +11,7 @@ import { Context, Effect, Layer } from "effect";
 import { parse as parseYaml } from "yaml";
 
 import { bodyContentHash, fileContentHash } from "./crypto.ts";
+import { sourceIdentityFromFrontmatter } from "./source-identity.ts";
 import { ContentStorage, vaultOwner } from "./storage.ts";
 
 type SourceDocumentRow = typeof sourceDocuments.$inferSelect;
@@ -32,14 +30,17 @@ type SourceDocumentsServiceShape = {
     vaultId: Uuid,
     clientHashes: readonly string[],
   ) => Effect.Effect<readonly string[]>;
+  readonly getById: (
+    vaultId: Uuid,
+    sourceId: Uuid,
+  ) => Effect.Effect<SourceDocumentRow | undefined>;
   readonly getByPath: (
     vaultId: Uuid,
     filePath: string,
   ) => Effect.Effect<SourceDocumentRow | undefined>;
   readonly deleteSource: (
     vaultId: Uuid,
-    filePath: string,
-    options?: { readonly missingOk?: boolean },
+    sourceId: Uuid,
   ) => Effect.Effect<boolean>;
 };
 
@@ -71,6 +72,9 @@ const stringField = (frontmatter: Record<string, unknown>, key: string) => {
   return typeof value === "string" ? value : null;
 };
 
+const documentTitle = (body: string) =>
+  /^#\s+(.+?)(?:\s+\^p\d+)?\s*$/m.exec(body)?.[1]?.trim() ?? null;
+
 const numberField = (frontmatter: Record<string, unknown>, key: string) => {
   const value = frontmatter[key];
   if (typeof value === "number") {
@@ -84,8 +88,9 @@ const numberField = (frontmatter: Record<string, unknown>, key: string) => {
 
 const sourceRow = (vaultId: Uuid, filePath: string, content: string, clientHash?: string) => {
   const parsed = parseFrontmatter(content);
+  const identity = sourceIdentityFromFrontmatter(parsed.frontmatter);
   return {
-    id: randomUUID(),
+    id: identity.sourceId,
     vaultId,
     filePath,
     fileHash: fileContentHash(content),
@@ -93,6 +98,7 @@ const sourceRow = (vaultId: Uuid, filePath: string, content: string, clientHash?
     clientHash,
     sourceType: stringField(parsed.frontmatter, "source_type") ?? "document",
     url: stringField(parsed.frontmatter, "url"),
+    canonicalUrl: identity.canonicalUrl,
     origin: stringField(parsed.frontmatter, "origin"),
     provenanceSessionId: stringField(parsed.frontmatter, "session_id") as Uuid | null,
     provenanceExchangeId: stringField(parsed.frontmatter, "exchange_id"),
@@ -103,16 +109,19 @@ const sourceRow = (vaultId: Uuid, filePath: string, content: string, clientHash?
     provenanceAnchoredTo: stringField(parsed.frontmatter, "anchored_to"),
     provenanceAnchoredSection: stringField(parsed.frontmatter, "anchored_section"),
     provenanceIntent: stringField(parsed.frontmatter, "intent"),
+    title: documentTitle(parsed.body),
   };
 };
 
 const ingestSet = {
+  filePath: sql`excluded.file_path`,
   fileHash: sql`excluded.file_hash`,
   bodyHash: sql`excluded.body_hash`,
   clientHash: sql`excluded.client_hash`,
   sourceType: sql`excluded.source_type`,
   etag: sql`excluded.etag`,
   url: sql`excluded.url`,
+  canonicalUrl: sql`excluded.canonical_url`,
   origin: sql`excluded.origin`,
   provenanceSessionId: sql`excluded.provenance_session_id`,
   provenanceExchangeId: sql`excluded.provenance_exchange_id`,
@@ -123,29 +132,8 @@ const ingestSet = {
   provenanceAnchoredTo: sql`excluded.provenance_anchored_to`,
   provenanceAnchoredSection: sql`excluded.provenance_anchored_section`,
   provenanceIntent: sql`excluded.provenance_intent`,
+  title: sql`excluded.title`,
   updatedAt: sql`now()`,
-};
-
-export const safeRawSourcePath = (path: string) => {
-  if (path.includes("\\")) {
-    return undefined;
-  }
-  if (path.startsWith("/")) {
-    return undefined;
-  }
-  const rawParts = path.split("/");
-  if (rawParts.includes("..")) {
-    return undefined;
-  }
-  const normalized = posix.normalize(path);
-  if (normalized === "." || !normalized.endsWith(".md")) {
-    return undefined;
-  }
-  const parts = normalized.split("/");
-  if (parts[0] === "raw" && parts.length >= 3) {
-    return normalized;
-  }
-  return undefined;
 };
 
 export const SourceDocumentsServiceLive = Layer.effect(
@@ -154,28 +142,36 @@ export const SourceDocumentsServiceLive = Layer.effect(
     const db = yield* Database;
     const storage = yield* ContentStorage;
 
+    const getById = (vaultId: Uuid, sourceId: Uuid) =>
+      db.query((d) => d
+        .select()
+        .from(sourceDocuments)
+        .where(and(eq(sourceDocuments.vaultId, vaultId), eq(sourceDocuments.id, sourceId)))
+        .limit(1))
+        .pipe(Effect.map((rows) => rows[0]));
+
+    const index = (vaultId: Uuid, filePath: string, content: string) =>
+      Effect.gen(function* () {
+        const rows = yield* db.query((d) => d
+          .insert(sourceDocuments)
+          .values(sourceRow(vaultId, filePath, content))
+          .onConflictDoUpdate({
+            target: sourceDocuments.id,
+            set: ingestSet,
+          })
+          .returning({ id: sourceDocuments.id }));
+        const row = rows[0];
+        if (row === undefined) {
+          throw new Error("source document upsert returned no row");
+        }
+        return row.id as Uuid;
+      });
+
     return {
-      index: (vaultId, filePath, content) =>
-        Effect.gen(function* () {
-          const rows = yield* db.query((d) => d
-            .insert(sourceDocuments)
-            .values(sourceRow(vaultId, filePath, content))
-            .onConflictDoUpdate({
-              target: [sourceDocuments.vaultId, sourceDocuments.filePath],
-              set: ingestSet,
-            })
-            .returning({ id: sourceDocuments.id }));
-          const row = rows[0];
-          if (row === undefined) {
-            throw new Error("source document upsert returned no row");
-          }
-          return row.id as Uuid;
-        }),
+      index,
       batchIndex: (vaultId, documents) =>
         Effect.gen(function* () {
-          if (documents.length === 0) {
-            return;
-          }
+          if (documents.length === 0) return;
           yield* db.query((d) => d
             .insert(sourceDocuments)
             .values(
@@ -184,15 +180,13 @@ export const SourceDocumentsServiceLive = Layer.effect(
               ),
             )
             .onConflictDoUpdate({
-              target: [sourceDocuments.vaultId, sourceDocuments.filePath],
+              target: sourceDocuments.id,
               set: ingestSet,
             }));
         }),
       existingClientHashes: (vaultId, clientHashes) =>
         Effect.gen(function* () {
-          if (clientHashes.length === 0) {
-            return [];
-          }
+          if (clientHashes.length === 0) return [];
           const rows = yield* db.query((d) => d
             .select({ clientHash: sourceDocuments.clientHash })
             .from(sourceDocuments)
@@ -206,51 +200,43 @@ export const SourceDocumentsServiceLive = Layer.effect(
             .map((row) => row.clientHash)
             .filter((hash): hash is string => hash !== null);
         }),
+      getById,
       getByPath: (vaultId, filePath) =>
+        db.query((d) => d
+          .select()
+          .from(sourceDocuments)
+          .where(and(eq(sourceDocuments.vaultId, vaultId), eq(sourceDocuments.filePath, filePath)))
+          .limit(1))
+          .pipe(Effect.map((rows) => rows[0])),
+      deleteSource: (vaultId, sourceId) =>
         Effect.gen(function* () {
-          const rows = yield* db.query((d) => d
-            .select()
-            .from(sourceDocuments)
-            .where(and(eq(sourceDocuments.vaultId, vaultId), eq(sourceDocuments.filePath, filePath)))
-            .limit(1));
-          return rows[0];
-        }),
-      deleteSource: (vaultId, filePath, options = {}) =>
-        Effect.gen(function* () {
-          const deleted = yield* db
-            .transaction((tx) =>
-              Effect.gen(function* () {
-                const documentRows = yield* tx
-                  .select({ id: sourceDocuments.id })
-                  .from(sourceDocuments)
-                  .where(
-                    and(eq(sourceDocuments.vaultId, vaultId), eq(sourceDocuments.filePath, filePath)),
-                  )
-                  .limit(1);
-                const documentId = documentRows[0]?.id;
-                if (documentId === undefined) {
-                  return false;
-                }
-                const ideaRows = yield* tx
-                  .select({ id: ideas.ideaId })
-                  .from(ideas)
-                  .where(eq(ideas.documentId, documentId));
-                const ideaIds = ideaRows.map((row) => row.id);
-                if (ideaIds.length > 0) {
-                  yield* tx.delete(topicMembership).where(inArray(topicMembership.ideaId, ideaIds));
-                }
-                yield* tx
-                  .delete(searchIndex)
-                  .where(and(eq(searchIndex.vaultId, vaultId), eq(searchIndex.path, filePath)));
-                yield* tx.delete(sourceDocuments).where(eq(sourceDocuments.id, documentId));
-                return true;
-              }),
-            );
-          if (!deleted && options.missingOk !== true) {
-            return false;
-          }
+          const filePath = yield* db.transaction((tx) =>
+            Effect.gen(function* () {
+              const source = yield* tx
+                .select({ filePath: sourceDocuments.filePath })
+                .from(sourceDocuments)
+                .where(and(eq(sourceDocuments.vaultId, vaultId), eq(sourceDocuments.id, sourceId)))
+                .limit(1);
+              const path = source[0]?.filePath;
+              if (path === undefined) return null;
+              const ideaRows = yield* tx
+                .select({ id: ideas.ideaId })
+                .from(ideas)
+                .where(eq(ideas.documentId, sourceId));
+              const ideaIds = ideaRows.map((row) => row.id);
+              if (ideaIds.length > 0) {
+                yield* tx.delete(topicMembership).where(inArray(topicMembership.ideaId, ideaIds));
+              }
+              yield* tx
+                .delete(searchIndex)
+                .where(and(eq(searchIndex.vaultId, vaultId), eq(searchIndex.path, path)));
+              yield* tx.delete(sourceDocuments).where(eq(sourceDocuments.id, sourceId));
+              return path;
+            }),
+          );
+          if (filePath === null) return false;
           yield* storage.deletePath(vaultOwner(vaultId), filePath);
-          return deleted;
+          return true;
         }),
     } satisfies SourceDocumentsServiceShape;
   }),

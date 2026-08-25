@@ -20,6 +20,7 @@ import { Context, Effect, Layer } from "effect";
 import { stringify as stringifyYaml } from "yaml";
 
 import { pageEnvelope, oneTotal } from "./pagination.ts";
+import { identifySourceMarkdown } from "./source-identity.ts";
 import { ContentStorage, ProposalStorage, vaultOwner } from "./storage.ts";
 import { SourceDocumentsService } from "./source-documents.ts";
 import { VaultAccessService } from "./vaults.ts";
@@ -29,6 +30,7 @@ const SOURCE_DELETION_CONTENT_TYPE = "source_deletion";
 type DbProposal = typeof sourceProposals.$inferSelect;
 
 type SourceForDeletion = {
+  readonly id: Uuid;
   readonly filePath: string;
   readonly title: string | null;
 };
@@ -38,6 +40,7 @@ type ProposalsServiceShape = {
     vaultId: Uuid,
     userId: Uuid,
     data: {
+      readonly sourceId: Uuid;
       readonly contentType: string;
       readonly title: string | null;
       readonly author: string | null;
@@ -117,7 +120,7 @@ const proposalResponse = (row: DbProposal): Proposal => ({
   user_id: row.userId as Uuid,
   author: row.author,
   dest_path: row.destPath,
-  document_id: row.documentId as Uuid | null,
+  source_id: row.sourceId as Uuid,
 });
 
 const proposalStagingPath = (proposalId: Uuid) => `${proposalId}.md`;
@@ -138,6 +141,7 @@ const sourceDeletionDocument = (source: SourceForDeletion) =>
   "---\n" +
   stringifyYaml({
     source_type: SOURCE_DELETION_CONTENT_TYPE,
+    source_id: source.id,
     source_doc_path: source.filePath,
   }) +
   "---\n" +
@@ -157,6 +161,7 @@ export const ProposalsServiceLive = Layer.effect(
       userId: Uuid,
       data: {
         readonly id?: Uuid;
+        readonly sourceId: Uuid;
         readonly contentType: string;
         readonly title: string | null;
         readonly author: string | null;
@@ -177,6 +182,7 @@ export const ProposalsServiceLive = Layer.effect(
             title: data.title,
             author: data.author,
             destPath: data.destPath,
+            sourceId: data.sourceId,
           })
           .returning());
         const proposal = rows[0];
@@ -211,6 +217,7 @@ export const ProposalsServiceLive = Layer.effect(
     return {
       createRendered: (vaultId, userId, data) =>
         insertProposal(vaultId, userId, {
+          sourceId: data.sourceId,
           contentType: data.contentType,
           title: data.title,
           author: data.author,
@@ -226,13 +233,15 @@ export const ProposalsServiceLive = Layer.effect(
           }
           const contentType = input.content_type?.trim() || "user_suggestion";
           const proposalId = randomUUID() as Uuid;
+          const sourceId = randomUUID() as Uuid;
           return yield* insertProposal(vaultId, userId, {
             id: proposalId,
+            sourceId,
             contentType,
             title: input.title?.trim() || null,
             author: input.author?.trim() || null,
-            destPath: `raw/${safeSegment(contentType)}/${proposalId}.md`,
-            rendered: buildDocument(content, contentType),
+            destPath: `raw/${safeSegment(contentType)}/${sourceId}.md`,
+            rendered: identifySourceMarkdown(buildDocument(content, contentType), sourceId),
           });
         }),
       findPendingForDest: (vaultId, destPath) =>
@@ -259,7 +268,7 @@ export const ProposalsServiceLive = Layer.effect(
             .where(
               and(
                 eq(sourceProposals.vaultId, vaultId),
-                eq(sourceProposals.destPath, source.filePath),
+                eq(sourceProposals.sourceId, source.id),
                 eq(sourceProposals.status, "PENDING"),
               ),
             )
@@ -275,6 +284,7 @@ export const ProposalsServiceLive = Layer.effect(
           }
           const sourceLabel = source.title ?? source.filePath;
           return yield* insertProposal(vaultId, userId, {
+            sourceId: source.id,
             contentType: SOURCE_DELETION_CONTENT_TYPE,
             title: `Delete source: ${sourceLabel}`,
             author: null,
@@ -323,18 +333,14 @@ export const ProposalsServiceLive = Layer.effect(
           }
           if (input.status === "approved") {
             if (proposal.contentType === SOURCE_DELETION_CONTENT_TYPE) {
-              yield* sourceDocuments.deleteSource(vaultId, proposal.destPath, { missingOk: true });
+              yield* sourceDocuments.deleteSource(vaultId, proposal.sourceId as Uuid);
               yield* proposalStorage.deletePath(proposalStagingPath(proposal.id as Uuid));
             } else {
               const rendered = yield* proposalStorage
                 .readText(proposalStagingPath(proposal.id as Uuid))
                 .pipe(Effect.orDie);
               yield* vaultStorage.writeText(vaultOwner(vaultId), proposal.destPath, rendered);
-              const documentId = yield* sourceDocuments.index(vaultId, proposal.destPath, rendered);
-              yield* db.query((d) => d
-                .update(sourceProposals)
-                .set({ documentId })
-                .where(eq(sourceProposals.id, proposal.id)));
+              yield* sourceDocuments.index(vaultId, proposal.destPath, rendered);
               yield* ensureCompileIntent(vaultId);
             }
           } else {

@@ -28,6 +28,16 @@ export const SessionId = Schema.String.pipe(
 );
 export type SessionId = typeof SessionId.Type;
 
+export const RawSourcePath = Schema.String.pipe(
+  Schema.check(
+    Schema.isPattern(
+      /^raw\/(?:[A-Za-z0-9_-][A-Za-z0-9._-]*\/)+[A-Za-z0-9_-][A-Za-z0-9._-]*\.md$/,
+    ),
+  ),
+  Schema.brand("RawSourcePath"),
+);
+export type RawSourcePath = typeof RawSourcePath.Type;
+
 export const IsoDateTime = Schema.String;
 export type IsoDateTime = typeof IsoDateTime.Type;
 
@@ -347,7 +357,7 @@ export const Proposal = Schema.Struct({
   user_id: Uuid,
   author: Schema.NullOr(Schema.String),
   dest_path: Schema.String,
-  document_id: Schema.NullOr(Uuid),
+  source_id: Uuid,
 });
 export type Proposal = typeof Proposal.Type;
 
@@ -374,13 +384,14 @@ export const ProposalUpdate = Schema.Struct({
 export type ProposalUpdate = typeof ProposalUpdate.Type;
 
 export const IngestedDocument = Schema.Struct({
+  id: Uuid,
   file_path: Schema.String,
 });
 export type IngestedDocument = typeof IngestedDocument.Type;
 
 export const RawSource = Schema.Struct({
   content: Schema.String,
-  dest: Schema.String,
+  dest: RawSourcePath,
   origin: Schema.optionalKey(Schema.String),
 });
 export type RawSource = typeof RawSource.Type;
@@ -578,6 +589,7 @@ export const FacetCount = Schema.Struct({
 export type FacetCount = typeof FacetCount.Type;
 
 export const SourceDocumentSummary = Schema.Struct({
+  id: Uuid,
   file_path: Schema.String,
   source_type: Schema.String,
   title: Schema.NullOr(Schema.String),
@@ -639,6 +651,7 @@ export type SearchScope = typeof SearchScope.Type;
 export const ThinkingSource = Schema.Struct({
   label: Schema.String,
   type: Schema.Literals(["article", "raw", "search", "query", "links"] as const),
+  document_id: Schema.NullOr(Uuid),
   title: Schema.NullOr(Schema.String),
   scope: Schema.NullOr(SearchScope),
   path: Schema.NullOr(Schema.String),
@@ -791,6 +804,7 @@ export const SourceDocument = Schema.Struct({
   source_type: Schema.String,
   etag: Schema.NullOr(Schema.String),
   url: Schema.NullOr(Schema.String),
+  canonical_url: Schema.NullOr(Schema.String),
   origin: Schema.NullOr(Schema.String),
   provenance_session_id: Schema.NullOr(Uuid),
   provenance_exchange_id: Schema.NullOr(Schema.String),
@@ -964,11 +978,11 @@ export const DocPathParams = Schema.Struct({
 });
 export type DocPathParams = typeof DocPathParams.Type;
 
-export const SourcePathParams = Schema.Struct({
+export const SourceIdParams = Schema.Struct({
   vault_id: Uuid,
-  "*": Schema.String,
+  source_id: Uuid,
 });
-export type SourcePathParams = typeof SourcePathParams.Type;
+export type SourceIdParams = typeof SourceIdParams.Type;
 
 const ChunkBoundary = Schema.NumberFromString.pipe(Schema.check(Schema.isInt()));
 
@@ -1024,6 +1038,7 @@ export type QueryRequest = typeof QueryRequest.Type;
 
 export const QuerySourceArticle = Schema.Struct({
   type: Schema.Literals(["article", "raw"] as const),
+  document_id: Schema.NullOr(Uuid),
   path: Schema.String,
   title: Schema.NullOr(Schema.String),
   start: Schema.optionalKey(Schema.Number),
@@ -1504,22 +1519,31 @@ export const SourcesApiGroup = HttpApiGroup.make("sources").add(
     success: SourceDocumentPage,
     error: ForbiddenValidationErrors,
   }).middleware(AuthMiddleware),
-  HttpApiEndpoint.delete("deleteSource", "/vaults/:vault_id/raw/sources/*", {
-    params: SourcePathParams,
+  HttpApiEndpoint.get("readSource", "/vaults/:vault_id/raw/sources/:source_id", {
+    params: SourceIdParams,
+    success: DocResponse,
+    error: DocumentErrors,
+  }).middleware(AuthMiddleware),
+  HttpApiEndpoint.delete("deleteSource", "/vaults/:vault_id/raw/sources/:source_id", {
+    params: SourceIdParams,
     success: HttpApiSchema.NoContent,
     error: DocumentErrors,
   }).middleware(AuthMiddleware),
-  HttpApiEndpoint.post("requestSourceDeletion", "/vaults/:vault_id/raw/sources/*", {
-    params: SourcePathParams,
-    success: CreatedProposal,
-    error: [
-      BadRequestResponse,
-      ForbiddenResponse,
-      NotFoundResponse,
-      ConflictResponse,
-      ValidationResponse,
-    ] as const,
-  }).middleware(AuthMiddleware),
+  HttpApiEndpoint.post(
+    "requestSourceDeletion",
+    "/vaults/:vault_id/raw/sources/:source_id/deletion-request",
+    {
+      params: SourceIdParams,
+      success: CreatedProposal,
+      error: [
+        BadRequestResponse,
+        ForbiddenResponse,
+        NotFoundResponse,
+        ConflictResponse,
+        ValidationResponse,
+      ] as const,
+    },
+  ).middleware(AuthMiddleware),
 );
 
 export const ProposalsApiGroup = HttpApiGroup.make("proposals").add(

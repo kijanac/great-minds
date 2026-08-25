@@ -16,7 +16,7 @@ export const referenceOverviewSchema = z.object({
 });
 
 const referencePageSchema = paginatedSchema(referenceOverviewSchema);
-const ingestedDocumentSchema = z.object({ file_path: z.string() });
+const ingestedDocumentSchema = z.object({ id: z.string(), file_path: z.string() });
 const errorDetailSchema = z.object({ detail: z.string() });
 
 export type ReferenceOverview = z.infer<typeof referenceOverviewSchema>;

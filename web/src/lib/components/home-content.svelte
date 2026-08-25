@@ -123,6 +123,7 @@
     selectedCard = {
       label: citation.path,
       type: "raw",
+      document_id: null,
       title: null,
       scope: null,
       path: null,

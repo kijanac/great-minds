@@ -48,6 +48,11 @@ type DocumentsServiceShape = {
     vaultId: Uuid,
     path: string,
   ) => Effect.Effect<DocResponse, BadRequest | Forbidden | NotFound>;
+  readonly readSource: (
+    userId: Uuid,
+    vaultId: Uuid,
+    sourceId: Uuid,
+  ) => Effect.Effect<DocResponse, Forbidden | NotFound>;
   readonly readChunks: (
     userId: Uuid,
     vaultId: Uuid,
@@ -95,6 +100,7 @@ const sourceDocument = (row: typeof sourceDocuments.$inferSelect): SourceDocumen
   source_type: row.sourceType,
   etag: row.etag,
   url: row.url,
+  canonical_url: row.canonicalUrl,
   origin: row.origin,
   provenance_session_id: row.provenanceSessionId as Uuid | null,
   provenance_exchange_id: row.provenanceExchangeId,
@@ -201,6 +207,17 @@ export const DocumentsServiceLive = Layer.effect(
         return row === undefined ? undefined : sourceDocument(row);
       });
 
+    const getSourceById = (vaultId: Uuid, sourceId: Uuid) =>
+      Effect.gen(function* () {
+        const rows = yield* db.query((d) => d
+          .select()
+          .from(sourceDocuments)
+          .where(and(eq(sourceDocuments.vaultId, vaultId), eq(sourceDocuments.id, sourceId)))
+          .limit(1));
+        const row = first(rows);
+        return row === undefined ? undefined : sourceDocument(row);
+      });
+
     const readArchivedWiki = (vaultId: Uuid, filePath: string) =>
       Effect.gen(function* () {
         const slug = wikiSlug(filePath.slice(filePath.lastIndexOf("/") + 1));
@@ -284,6 +301,27 @@ export const DocumentsServiceLive = Layer.effect(
         }
 
         throw new DocumentRegistryMismatch(safePath);
+      });
+
+    const readSource = (userId: Uuid, vaultId: Uuid, sourceId: Uuid) =>
+      Effect.gen(function* () {
+        yield* access.requireMember(userId, vaultId);
+        const article = yield* getSourceById(vaultId, sourceId);
+        if (article === undefined) {
+          return yield* new NotFound({ detail: "Source not found" });
+        }
+        const content = yield* Effect.result(
+          storage.readText(vaultOwner(vaultId), article.file_path),
+        );
+        if (content._tag === "Failure") {
+          return yield* new NotFound({ detail: "Source content not found" });
+        }
+        return {
+          article,
+          body: stripFrontmatter(content.success),
+          archived: false,
+          superseded_by: null,
+        } satisfies DocResponse;
       });
 
     const readChunks = (userId: Uuid, vaultId: Uuid, query: ChunkRangeQuery) =>
@@ -405,6 +443,7 @@ export const DocumentsServiceLive = Layer.effect(
 
     return {
       readDocument,
+      readSource,
       readChunks,
       readLinks,
     } satisfies DocumentsServiceShape;

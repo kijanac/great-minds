@@ -20,8 +20,8 @@
   const card = usePanelCard();
   const library = useLibrary(
     () => card.selectedCard,
-    (path) => {
-      if (card.selectedCard?.label === path) card.close();
+    (sourceId) => {
+      if (card.selectedCard?.document_id === sourceId) card.close();
     },
   );
   const readingRoom = useReferences();
@@ -71,7 +71,15 @@
         content={library.panel.data ?? null}
         loading={library.panel.isLoading}
         onClose={card.close}
-        onFullScreen={() => void goto(`/doc/${card.selectedCard?.label}`)}
+        onFullScreen={() => {
+          const selected = card.selectedCard;
+          if (!selected) return;
+          void goto(
+            selected.type === "raw" && selected.document_id
+              ? `/source/${selected.document_id}`
+              : `/doc/${selected.label}`,
+          );
+        }}
         onOpenPath={card.openPath}
       />
     {/if}

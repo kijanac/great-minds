@@ -702,6 +702,7 @@ const seedFixtures = async (): Promise<Fixture> => {
               {
                 label: "Alpha Practice",
                 type: "article",
+                document_id: id.articleAlpha,
                 title: null,
                 scope: null,
                 path: null,
@@ -712,6 +713,7 @@ const seedFixtures = async (): Promise<Fixture> => {
               {
                 label: "Capital Volume",
                 type: "raw",
+                document_id: id.sourceBook,
                 title: null,
                 scope: null,
                 path: null,
@@ -722,6 +724,7 @@ const seedFixtures = async (): Promise<Fixture> => {
               {
                 label: "Search: pedagogy",
                 type: "search",
+                document_id: null,
                 title: null,
                 scope: null,
                 path: null,
@@ -730,6 +733,7 @@ const seedFixtures = async (): Promise<Fixture> => {
               {
                 label: "Prior query",
                 type: "query",
+                document_id: null,
                 title: null,
                 scope: null,
                 path: null,
@@ -738,6 +742,7 @@ const seedFixtures = async (): Promise<Fixture> => {
               {
                 label: "Linked articles",
                 type: "links",
+                document_id: null,
                 title: null,
                 scope: null,
                 path: null,
@@ -758,7 +763,7 @@ const seedFixtures = async (): Promise<Fixture> => {
         exchanges: [
           {
             query: "Why this passage?",
-            thinking: [{ sources: [{ label: "Linked articles", type: "links", title: null, scope: null, path: null, thinking: null }] }],
+            thinking: [{ sources: [{ label: "Linked articles", type: "links", document_id: null, title: null, scope: null, path: null, thinking: null }] }],
             answer: "It gives the group something specific to test.",
           },
           {

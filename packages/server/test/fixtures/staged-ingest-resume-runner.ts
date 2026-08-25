@@ -6,6 +6,7 @@ import { AppConfig, type AppConfigShape } from "../../src/config.ts";
 import { DrizzleLive } from "../../src/db.ts";
 import { StructuredLogger } from "../../src/logging.ts";
 import { PipelineRunsServiceLive } from "../../src/pipeline-runs.ts";
+import { identifySourceMarkdown, sourceIdForKey } from "../../src/source-identity.ts";
 import { SourceDocumentsService, SourceDocumentsServiceLive } from "../../src/source-documents.ts";
 import {
   StagedFileIngestPersistResult,
@@ -114,10 +115,14 @@ const PauseAfterPersistLive = StagedFileIngestWorkflow.toLayer(() => {
     success: StagedFileIngestPersistResult,
     execute: Effect.gen(function* () {
       const documents = yield* SourceDocumentsService;
+      const sourceId = sourceIdForKey(vaultId, `upload:${hash}`);
       yield* documents.batchIndex(vaultId, [
         {
-          filePath: `raw/docs/${hash.slice(0, 12)}.md`,
-          content: "---\nsource_type: document\n---\n# Persisted before crash",
+          filePath: `raw/docs/${sourceId}.md`,
+          content: identifySourceMarkdown(
+            "---\nsource_type: document\n---\n# Persisted before crash",
+            sourceId,
+          ),
           clientHash: hash,
         },
       ]);

@@ -7,6 +7,7 @@ export function usePanelCard() {
     selectedCard = {
       type: "article",
       label: article.file_path,
+      document_id: null,
       title: article.title,
       scope: null,
       path: null,
@@ -18,6 +19,7 @@ export function usePanelCard() {
     selectedCard = {
       type: "raw",
       label: source.file_path,
+      document_id: source.id,
       title: source.title,
       scope: null,
       path: null,
@@ -29,6 +31,7 @@ export function usePanelCard() {
     selectedCard = {
       type: "article",
       label: `wiki/${slug}.md`,
+      document_id: null,
       title,
       scope: null,
       path: null,
@@ -40,6 +43,7 @@ export function usePanelCard() {
     selectedCard = {
       type: path.startsWith("wiki/") ? "article" : "raw",
       label: path,
+      document_id: null,
       title: null,
       scope: null,
       path: null,

@@ -493,25 +493,27 @@ export const QueryServiceLive = Layer.effect(
       return (await readFile(promptUrl(name), "utf8")).trim();
     };
 
-    const titleForPath = async (vaultId: Uuid, path: string) => {
+    const documentForPath = async (vaultId: Uuid, path: string) => {
       if (path.startsWith("wiki/")) {
         const rows = await run(
           db.query((d) => d
-            .select({ title: wikiArticles.title })
+            .select({ id: wikiArticles.id, title: wikiArticles.title })
             .from(wikiArticles)
             .where(and(eq(wikiArticles.vaultId, vaultId), eq(wikiArticles.filePath, path)))
             .limit(1)),
         );
-        return first(rows)?.title ?? null;
+        const row = first(rows);
+        return { document_id: (row?.id as Uuid | undefined) ?? null, title: row?.title ?? null };
       }
       const rows = await run(
         db.query((d) => d
-          .select({ title: sourceDocuments.title })
+          .select({ id: sourceDocuments.id, title: sourceDocuments.title })
           .from(sourceDocuments)
           .where(and(eq(sourceDocuments.vaultId, vaultId), eq(sourceDocuments.filePath, path)))
           .limit(1)),
       );
-      return first(rows)?.title ?? null;
+      const row = first(rows);
+      return { document_id: (row?.id as Uuid | undefined) ?? null, title: row?.title ?? null };
     };
 
     const buildIdentity = async (vaultId: Uuid, label: string, vaultConfig: QueryVaultConfig) => {
@@ -610,8 +612,14 @@ export const QueryServiceLive = Layer.effect(
         const path = asStringArg(args, "path");
         context.trace.searches.push(`${query} · in ${path}`);
       }
+      if (source.type === "article" || source.type === "raw") {
+        return { ...source, ...(await documentForPath(context.vaultId, source.path)) };
+      }
       if ("title" in source && source.path !== undefined) {
-        return { ...source, title: await titleForPath(context.vaultId, source.path) };
+        return {
+          ...source,
+          title: (await documentForPath(context.vaultId, source.path)).title,
+        };
       }
       return source;
     };
@@ -626,13 +634,14 @@ export const QueryServiceLive = Layer.effect(
         if (name === "expand_context") {
           return {
             type,
+            document_id: null,
             path,
             title: null,
             start: asIntArg(args, "start"),
             end: asIntArg(args, "end"),
           };
         }
-        return { type, path, title: null };
+        return { type, document_id: null, path, title: null };
       }
       if (name === "search_content") {
         return { type: "search", query: asStringArg(args, "query"), scope: "kb", title: null };

@@ -457,6 +457,7 @@ export const sourceDocuments = pgTable(
     etag: text("etag"),
     sourceType: text("source_type").notNull(),
     url: text("url"),
+    canonicalUrl: text("canonical_url"),
     origin: text("origin"),
     provenanceSessionId: uuid("provenance_session_id"),
     provenanceExchangeId: text("provenance_exchange_id"),
@@ -489,6 +490,9 @@ export const sourceDocuments = pgTable(
       name: "source_documents_vault_id_fkey",
     }).onDelete("cascade"),
     unique("source_documents_vault_id_file_path_key").on(table.vaultId, table.filePath),
+    uniqueIndex("uq_source_documents_vault_canonical_url")
+      .on(table.vaultId, table.canonicalUrl)
+      .where(sql`${table.canonicalUrl} IS NOT NULL`),
     index("ix_source_documents_vault_client_hash")
       .on(table.vaultId, table.clientHash)
       .where(sql`${table.clientHash} IS NOT NULL`),
@@ -556,8 +560,8 @@ export const sourceProposals = pgTable(
     contentType: varchar("content_type", { length: 50 }).notNull(),
     title: text("title"),
     author: text("author"),
-    destPath: text("dest_path").default("").notNull(),
-    documentId: uuid("document_id"),
+    destPath: text("dest_path").notNull(),
+    sourceId: uuid("source_id").notNull(),
     createdAt: timestamptz("created_at").defaultNow().notNull(),
   },
   (table) => [
@@ -571,12 +575,7 @@ export const sourceProposals = pgTable(
       foreignColumns: [users.id],
       name: "source_proposals_user_id_fkey",
     }).onDelete("cascade"),
-    foreignKey({
-      columns: [table.documentId],
-      foreignColumns: [sourceDocuments.id],
-      name: "source_proposals_document_id_fkey",
-    }).onDelete("set null"),
-    index("ix_source_proposals_document_id").on(table.documentId),
+    index("ix_source_proposals_source_id").on(table.sourceId),
     index("ix_source_proposals_vault_id").on(table.vaultId),
   ],
 );

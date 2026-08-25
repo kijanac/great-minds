@@ -16,8 +16,8 @@
     role?: string | null;
     busy?: boolean;
     onOpen: () => void;
-    onDeleteSource?: (path: string) => Promise<void>;
-    onRequestDeletion?: (path: string) => Promise<void>;
+    onDeleteSource?: (sourceId: string) => Promise<void>;
+    onRequestDeletion?: (sourceId: string) => Promise<void>;
   } = $props();
 
   const author = $derived("author" in source ? source.author : null);

@@ -3,6 +3,7 @@ import {
   fetchLinks,
   readDocument,
   readPersonalDocument,
+  readSourceDocument,
   type DocumentScope,
   type DocChunk,
   type LinkedArticles,
@@ -27,13 +28,19 @@ export async function loadPanelContent(
     return { mode: "links", links: await fetchLinks(card.label, signal) };
   }
 
+  const source =
+    card.type === "raw" && card.document_id !== null
+      ? await readSourceDocument(card.document_id, signal)
+      : null;
+  const path = source?.article.file_path ?? card.label;
+
   if (card.ranges?.length && !card.full) {
     const groups = await Promise.all(
-      card.ranges.map((range) => fetchChunks(card.label, range.start, range.end, signal)),
+      card.ranges.map((range) => fetchChunks(path, range.start, range.end, signal)),
     );
     return { mode: "chunks", chunks: groups.flat() };
   }
 
-  const document = await readDocument(card.label, signal);
+  const document = source ?? (await readDocument(path, signal));
   return { mode: "doc", body: document.body };
 }

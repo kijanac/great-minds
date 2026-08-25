@@ -17,8 +17,8 @@
     item: SourceDocumentSummary;
     role: string | null;
     busy?: boolean;
-    onDeleteSource: (path: string) => Promise<void>;
-    onRequestDeletion: (path: string) => Promise<void>;
+    onDeleteSource: (sourceId: string) => Promise<void>;
+    onRequestDeletion: (sourceId: string) => Promise<void>;
   } = $props();
 
   let open = $state(false);
@@ -47,8 +47,8 @@
   async function confirm() {
     if (!action || busy) return;
     try {
-      if (action.kind === "delete") await onDeleteSource(item.file_path);
-      else await onRequestDeletion(item.file_path);
+      if (action.kind === "delete") await onDeleteSource(item.id);
+      else await onRequestDeletion(item.id);
       open = false;
     } catch {
       // The library owns the visible error message.

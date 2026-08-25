@@ -10,6 +10,7 @@ import {
 } from "./schemas";
 
 const sourceDocumentSummarySchema = z.object({
+  id: z.string(),
   file_path: z.string(),
   source_type: z.string(),
   title: z.string().nullable(),
@@ -58,25 +59,17 @@ export async function fetchSourceDocuments(params?: {
   return readJson(res, sourceDocumentPageSchema);
 }
 
-export async function deleteSourceDocument(filePath: string): Promise<void> {
-  const res = await apiFetch(vaultPath(`/raw/sources/${encodeSourcePath(filePath)}`), {
+export async function deleteSourceDocument(sourceId: string): Promise<void> {
+  const res = await apiFetch(vaultPath(`/raw/sources/${sourceId}`), {
     method: "DELETE",
   });
   if (!res.ok) throw new Error("Failed to delete source");
 }
 
-export async function requestSourceDeletion(filePath: string): Promise<Proposal> {
-  const res = await apiFetch(
-    vaultPath(`/raw/sources/${encodeSourcePath(filePath)}/deletion-request`),
-    { method: "POST" },
-  );
+export async function requestSourceDeletion(sourceId: string): Promise<Proposal> {
+  const res = await apiFetch(vaultPath(`/raw/sources/${sourceId}/deletion-request`), {
+    method: "POST",
+  });
   if (!res.ok) throw new Error("Failed to request source deletion");
   return readJson(res, proposalSchema);
-}
-
-function encodeSourcePath(filePath: string): string {
-  return filePath
-    .split("/")
-    .map((part) => encodeURIComponent(part))
-    .join("/");
 }

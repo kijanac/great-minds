@@ -40,6 +40,7 @@ import {
   progressSteps,
 } from "../src/pipeline-runs.ts";
 import { RandomBytesLive } from "../src/random.ts";
+import { sourceIdForKey } from "../src/source-identity.ts";
 import { SourceDocumentsServiceLive } from "../src/source-documents.ts";
 import {
   StagedFileIngestWorkflow,
@@ -608,7 +609,8 @@ describe("M4.2 durable workers", () => {
       }),
     );
     expect(result).toEqual({ ingested: 2, skipped: 0, failed: 1 });
-    expect(written.get(`raw/docs/${docxHash.slice(0, 12)}.md`)).toContain(
+    const docxSourceId = sourceIdForKey(id.vault, `upload:${docxHash}`);
+    expect(written.get(`raw/docs/${docxSourceId}.md`)).toContain(
       "Durable binary document",
     );
     expect(deleted.sort()).toEqual([docxHash, textHash].sort());
@@ -780,7 +782,8 @@ describe("M4.2 durable workers", () => {
 
   it("logs and persists a descriptive staged terminal failure for a non-Error defect", async () => {
     const hash = "1212121212121212121212121212121212121212121212121212121212121212";
-    const path = `raw/docs/${hash.slice(0, 12)}.md`;
+    const sourceId = sourceIdForKey(id.vault, `upload:${hash}`);
+    const path = `raw/docs/${sourceId}.md`;
     staged.set(hash, Buffer.from("# Defective write\n\nThe failure must stay observable."));
     writeDefects.add(path);
 

@@ -15,7 +15,7 @@ import { Context, Effect, Layer, Schema } from "effect";
 
 import { pageEnvelope, oneTotal } from "./pagination.ts";
 import { ProposalsService } from "./proposals.ts";
-import { safeRawSourcePath, SourceDocumentsService } from "./source-documents.ts";
+import { SourceDocumentsService } from "./source-documents.ts";
 import { VaultAccessService } from "./vaults.ts";
 
 type SourcesServiceShape = {
@@ -27,12 +27,12 @@ type SourcesServiceShape = {
   readonly deleteSource: (
     userId: Uuid,
     vaultId: Uuid,
-    path: string
+    sourceId: Uuid
   ) => Effect.Effect<void, BadRequest | Forbidden | NotFound>;
   readonly requestSourceDeletion: (
     userId: Uuid,
     vaultId: Uuid,
-    path: string
+    sourceId: Uuid
   ) => Effect.Effect<Proposal, BadRequest | Conflict | Forbidden | NotFound>;
 };
 
@@ -46,6 +46,7 @@ const decodeDerivedExtras = Schema.decodeUnknownSync(DerivedExtras);
 const sourceSummary = (
   row: typeof sourceDocuments.$inferSelect
 ): SourceDocumentSummary => ({
+  id: row.id as Uuid,
   file_path: row.filePath,
   source_type: row.sourceType,
   title: row.title,
@@ -131,24 +132,16 @@ export const SourcesServiceLive = Layer.effect(
             }
           };
         }),
-      deleteSource: (userId, vaultId, path) =>
+      deleteSource: (userId, vaultId, sourceId) =>
         Effect.gen(function* () {
-          const sourcePath = safeRawSourcePath(path);
-          if (sourcePath === undefined) {
-            return yield* new BadRequest({ detail: `Invalid source path: ${path}` });
-          }
           yield* access.requireOwner(userId, vaultId);
-          const deleted = yield* sourceDocumentsWrite.deleteSource(vaultId, sourcePath);
+          const deleted = yield* sourceDocumentsWrite.deleteSource(vaultId, sourceId);
           if (!deleted) {
             return yield* new NotFound({ detail: "Source not found" });
           }
         }),
-      requestSourceDeletion: (userId, vaultId, path) =>
+      requestSourceDeletion: (userId, vaultId, sourceId) =>
         Effect.gen(function* () {
-          const sourcePath = safeRawSourcePath(path);
-          if (sourcePath === undefined) {
-            return yield* new BadRequest({ detail: `Invalid source path: ${path}` });
-          }
           const scope = yield* access.requireMember(userId, vaultId);
           if (scope.role === "viewer") {
             return yield* new Forbidden({ detail: "Viewers cannot request source deletion" });
@@ -159,11 +152,12 @@ export const SourcesServiceLive = Layer.effect(
           if (scope.role !== "editor") {
             return yield* new Forbidden({ detail: "Only editors can request source deletion" });
           }
-          const source = yield* sourceDocumentsWrite.getByPath(vaultId, sourcePath);
+          const source = yield* sourceDocumentsWrite.getById(vaultId, sourceId);
           if (source === undefined) {
             return yield* new NotFound({ detail: "Source not found" });
           }
           return yield* proposals.createSourceDeletionRequest(vaultId, userId, {
+            id: source.id as Uuid,
             filePath: source.filePath,
             title: source.title
           });

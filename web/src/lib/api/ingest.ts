@@ -3,10 +3,12 @@ import { z } from "zod";
 import { apiFetch, vaultPath, readJson } from "./client";
 
 export interface IngestResult {
+  id: string;
   file_path: string;
 }
 
 const ingestResultSchema: z.ZodType<IngestResult> = z.object({
+  id: z.string(),
   file_path: z.string(),
 });
 
@@ -292,21 +294,6 @@ export async function postUserSuggestion(params: {
       anchored_to: params.anchoredTo,
       anchored_section: params.anchoredSection,
     }),
-  });
-
-  if (!res.ok) {
-    const detail = await res.text();
-    throw new Error(detail);
-  }
-
-  return readJson(res, ingestResultSchema);
-}
-
-export async function ingestUrl(url: string): Promise<IngestResult> {
-  const res = await apiFetch(vaultPath("/ingest/url"), {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ url }),
   });
 
   if (!res.ok) {

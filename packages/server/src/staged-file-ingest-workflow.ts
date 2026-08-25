@@ -12,6 +12,7 @@ import { causeDetails, formatError } from "./error-details.ts";
 import { buildDocument } from "./markdown.ts";
 import { StructuredLogger } from "./logging.ts";
 import { PipelineRunsService, progressSteps } from "./pipeline-runs.ts";
+import { identifySourceMarkdown, sourceIdForKey } from "./source-identity.ts";
 import { SourceDocumentsService } from "./source-documents.ts";
 import { ContentStorage, StagedStorage, vaultOwner } from "./storage.ts";
 
@@ -157,17 +158,19 @@ export const StagedFileIngestWorkflowLive = StagedFileIngestWorkflow.toLayer((pa
           continue;
         }
         const { content, file } = result.value;
-        const dest = `raw/docs/${file.hash.slice(0, 12)}.md`;
+        const sourceId = sourceIdForKey(vaultId, `upload:${file.hash}`);
+        const dest = `raw/docs/${sourceId}.md`;
+        const identified = identifySourceMarkdown(content, sourceId);
         cleanup.push(file.hash);
-        const contentHash = fileContentHash(content);
+        const contentHash = fileContentHash(identified);
         if (existingHashes.get(dest) === contentHash || seen.has(dest)) {
           skipped += 1;
           continue;
         }
         yield* requireActive();
-        yield* storage.writeText(vaultOwner(vaultId), dest, content);
+        yield* storage.writeText(vaultOwner(vaultId), dest, identified);
         seen.add(dest);
-        batch.push({ filePath: dest, content, clientHash: file.hash });
+        batch.push({ filePath: dest, content: identified, clientHash: file.hash });
         ingested += 1;
         if (batch.length >= BATCH_SIZE) {
           yield* flush();

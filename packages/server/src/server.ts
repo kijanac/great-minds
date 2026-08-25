@@ -42,6 +42,7 @@ import { QueryService } from "./query.ts";
 import { RepliesService } from "./replies.ts";
 import { SessionsService } from "./sessions.ts";
 import { SharesService } from "./shares.ts";
+import { parseCanonicalSourceUrl } from "./source-identity.ts";
 import { SourcesService } from "./sources.ts";
 import { UserDocumentsService } from "./user-documents.ts";
 import { VaultAccessService, VaultsService } from "./vaults.ts";
@@ -340,7 +341,8 @@ const RefsHandlersLive = HttpApiBuilder.group(MountedGreatMindsApi, "refs", (han
         Effect.gen(function* () {
           const documents = yield* UserDocumentsService;
           const current = yield* CurrentAuth;
-          const result = yield* documents.create(current.user_id, payload.url);
+          const canonicalUrl = yield* parseCanonicalSourceUrl(payload.url);
+          const result = yield* documents.create(current.user_id, canonicalUrl);
           return result.created
             ? result.reference
             : yield* jsonResponse(200, result.reference);
@@ -539,12 +541,25 @@ const SourcesHandlersLive = HttpApiBuilder.group(MountedGreatMindsApi, "sources"
         }),
       ),
     )
+    .handle("readSource", ({ params }) =>
+      withDomainErrors(
+        Effect.gen(function* () {
+          const documents = yield* DocumentsService;
+          const current = yield* CurrentAuth;
+          return yield* documents.readSource(
+            current.user_id,
+            params.vault_id,
+            params.source_id,
+          );
+        }),
+      ),
+    )
     .handle("deleteSource", ({ params }) =>
       withDomainErrors(
         Effect.gen(function* () {
           const sources = yield* SourcesService;
           const current = yield* CurrentAuth;
-          yield* sources.deleteSource(current.user_id, params.vault_id, params["*"]);
+          yield* sources.deleteSource(current.user_id, params.vault_id, params.source_id);
         }),
       ),
     )
@@ -553,15 +568,10 @@ const SourcesHandlersLive = HttpApiBuilder.group(MountedGreatMindsApi, "sources"
         Effect.gen(function* () {
           const sources = yield* SourcesService;
           const current = yield* CurrentAuth;
-          const suffix = "/deletion-request";
-          const rawPath = params["*"];
-          if (!rawPath.endsWith(suffix)) {
-            return yield* new BadRequest({ detail: `Invalid source path: ${rawPath}` });
-          }
           return yield* sources.requestSourceDeletion(
             current.user_id,
             params.vault_id,
-            rawPath.slice(0, -suffix.length),
+            params.source_id,
           );
         }),
       ),
@@ -700,7 +710,11 @@ const JobsHandlersLive = HttpApiBuilder.group(MountedGreatMindsApi, "jobs", (han
         Effect.gen(function* () {
           const ingest = yield* IngestService;
           const current = yield* CurrentAuth;
-          return yield* ingest.startUrlJob(current.user_id, params.vault_id, payload);
+          const canonicalUrl = yield* parseCanonicalSourceUrl(payload.url);
+          return yield* ingest.startUrlJob(current.user_id, params.vault_id, {
+            ...payload,
+            url: canonicalUrl,
+          });
         }),
       ),
     )

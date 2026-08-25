@@ -18,7 +18,8 @@ import { Context, Effect, Layer } from "effect";
 
 import { AppConfig } from "./config.ts";
 import { bodyContentHash, fileContentHash, sha256Hex } from "./crypto.ts";
-import { fetchUrlMarkdown, normalizeUrl, slugify } from "./ingest.ts";
+import { fetchUrlMarkdown, slugify } from "./ingest.ts";
+import type { CanonicalSourceUrl } from "./source-identity.ts";
 import { buildDocument, parseFrontmatter } from "./markdown.ts";
 import { oneTotal, pageEnvelope } from "./pagination.ts";
 import { ContentStorage, userOwner } from "./storage.ts";
@@ -33,7 +34,7 @@ type CreateReferenceResult = {
 type UserDocumentsServiceShape = {
   readonly create: (
     userId: Uuid,
-    url: string,
+    url: CanonicalSourceUrl,
   ) => Effect.Effect<CreateReferenceResult, BadRequest>;
   readonly list: (userId: Uuid, params: PageParams) => Effect.Effect<ReferencePage>;
   readonly readUserText: (
@@ -137,15 +138,14 @@ export const UserDocumentsServiceLive = Layer.effect(
       });
 
     return {
-      create: (userId, rawUrl) =>
+      create: (userId, canonicalUrl) =>
         Effect.gen(function* () {
-          const normalizedUrl = normalizeUrl(rawUrl);
-          const existing = yield* getByUrl(userId, normalizedUrl);
+          const existing = yield* getByUrl(userId, canonicalUrl);
           if (existing !== undefined) {
             return { reference: referenceOverview(existing), created: false };
           }
 
-          const fetched = yield* fetchUrlMarkdown(normalizedUrl, config.allowPrivateUrlFetch);
+          const fetched = yield* fetchUrlMarkdown(canonicalUrl, config.allowPrivateUrlFetch);
           const parsedUrl = new URL(fetched.url);
           const stem = posix.parse(parsedUrl.pathname).name || "doc";
           const slug = slugify(stem) || "doc";

@@ -23,7 +23,7 @@
     loading: boolean;
     actionNotice: string | null;
     actionError: string | null;
-    actionPath: string | null;
+    actionId: string | null;
     role: string | null;
     articles: {
       hasNextPage: boolean;
@@ -58,8 +58,8 @@
     openSource: (source: SourceDocumentSummary) => void;
     openReference: (reference: ReferenceOverview) => void;
     openExternal: (url: string) => Promise<void>;
-    deleteSource: (path: string) => Promise<void>;
-    requestDeletion: (path: string) => Promise<void>;
+    deleteSource: (sourceId: string) => Promise<void>;
+    requestDeletion: (sourceId: string) => Promise<void>;
   };
 
   let {

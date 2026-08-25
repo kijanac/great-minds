@@ -23,7 +23,7 @@
       loading: boolean;
       actionNotice: string | null;
       actionError: string | null;
-      actionPath: string | null;
+      actionId: string | null;
       role: string | null;
       articles: {
         hasNextPage: boolean;
@@ -38,8 +38,8 @@
     };
     onOpenArticle: (article: WikiArticleOverview) => void;
     onOpenSource: (source: SourceDocumentSummary) => void;
-    onDeleteSource: (path: string) => Promise<void>;
-    onRequestDeletion: (path: string) => Promise<void>;
+    onDeleteSource: (sourceId: string) => Promise<void>;
+    onRequestDeletion: (sourceId: string) => Promise<void>;
   } = $props();
 
   // The synthesis pin is a presentation-layer match on the active tag; it is
@@ -159,11 +159,11 @@
         </h2>
       {/if}
       <div class="space-y-1">
-        {#each library.sourceItems as source (source.file_path)}
+        {#each library.sourceItems as source (source.id)}
           <SourceRow
             {source}
             role={library.role}
-            busy={library.actionPath === source.file_path}
+            busy={library.actionId === source.id}
             onOpen={() => onOpenSource(source)}
             {onDeleteSource}
             {onRequestDeletion}

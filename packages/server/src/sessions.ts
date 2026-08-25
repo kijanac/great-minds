@@ -39,6 +39,7 @@ import { buildSessionExchangeDocument, sessionExchangePath } from "./markdown.ts
 import { pageEnvelope, oneTotal } from "./pagination.ts";
 import { ProposalsService } from "./proposals.ts";
 import { RandomBytesService, formatUuid7 } from "./random.ts";
+import { identifySourceMarkdown, sourceIdForKey } from "./source-identity.ts";
 import { SourceDocumentsService } from "./source-documents.ts";
 import { ContentStorage, vaultOwner } from "./storage.ts";
 import { VaultAccessService } from "./vaults.ts";
@@ -129,6 +130,7 @@ const normalizeRange = (range: ChunkRange): ChunkRange => ({
 const normalizeThinkingSource = (source: ThinkingSource): ThinkingSource => ({
   label: source.label,
   type: source.type,
+  document_id: source.document_id,
   title: source.title,
   scope: source.scope,
   path: source.path,
@@ -644,15 +646,19 @@ export const SessionsServiceLive = Layer.effect(
         Effect.gen(function* () {
           const scope = yield* access.requireEditor(userId, vaultId);
           yield* requireSessionOwner(userId, vaultId, sessionId);
-          const dest = sessionExchangePath(exchangeId);
+          const sourceId = sourceIdForKey(
+            vaultId,
+            `session:${sessionId}:${exchangeId}`,
+          );
+          const dest = sessionExchangePath(exchangeId, sourceId);
           if (scope.role === "owner") {
-            const existing = yield* sourceDocuments.getByPath(vaultId, dest);
+            const existing = yield* sourceDocuments.getById(vaultId, sourceId);
             if (existing !== undefined) {
               return {
                 mode: "ingested" as const,
-                path: dest,
+                path: existing.filePath,
                 title: existing.title,
-                document_id: existing.id as Uuid,
+                document_id: sourceId,
                 proposal_id: null,
               };
             }
@@ -693,17 +699,21 @@ export const SessionsServiceLive = Layer.effect(
               mode: "ingested" as const,
               path: result.file_path,
               title: null,
-              document_id: null,
+              document_id: result.id,
               proposal_id: null,
             };
           }
 
           const proposal = yield* proposals.createRendered(vaultId, userId, {
+            sourceId,
             contentType: "session",
             title: null,
             author: null,
             destPath: dest,
-            rendered: buildSessionExchangeDocument(sessionId, exchange, sessionOrigin),
+            rendered: identifySourceMarkdown(
+              buildSessionExchangeDocument(sessionId, exchange, sessionOrigin),
+              sourceId,
+            ),
           });
           return {
             mode: "proposed" as const,

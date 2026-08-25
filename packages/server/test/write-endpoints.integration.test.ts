@@ -39,6 +39,7 @@ import { makeTestMailer } from "../src/mailer.ts";
 import { parseFrontmatter } from "../src/markdown.ts";
 import { makeTestRandomBytes } from "../src/random.ts";
 import { startServer } from "../src/server.ts";
+import { sourceIdForKey } from "../src/source-identity.ts";
 import { TokenService } from "../src/tokens.ts";
 
 const initialTime = new Date("2026-07-10T12:00:00.000Z");
@@ -68,6 +69,9 @@ const id = {
   m32UrlRun: "00000000-0000-4000-8000-000000013102",
   m32UrlFailRun: "00000000-0000-4000-8000-000000013103",
   m32UrlPdfRun: "00000000-0000-4000-8000-000000013104",
+  m32UrlCollisionA: "00000000-0000-4000-8000-000000013105",
+  m32UrlCollisionB: "00000000-0000-4000-8000-000000013106",
+  m32UrlReplayRun: "00000000-0000-4000-8000-000000013107",
 } as const;
 
 type TestServices = AppConfig | Database | ClockService | StructuredLogger | TokenService;
@@ -461,12 +465,6 @@ const asArray = (value: unknown): Array<Record<string, unknown>> => {
   return value.map(asRecord);
 };
 
-const encodeSourcePath = (filePath: string) =>
-  filePath
-    .split("/")
-    .map((part) => encodeURIComponent(part))
-    .join("/");
-
 const jsonl = (events: readonly unknown[]) =>
   events.map((event) => JSON.stringify(event)).join("\n");
 
@@ -654,7 +652,6 @@ describe("M3.1 write endpoint integration", () => {
   it("returns 403 to non-members on new vault write endpoints", async () => {
     const { malloryToken } = currentFixture();
     await seedSourceGraph();
-    const encoded = encodeSourcePath("raw/books/capital.md");
 
     const responses = await Promise.all([
       api("PATCH", `/vaults/${id.vault}/config`, malloryToken, { thematic_hint: "Denied" }),
@@ -673,8 +670,8 @@ describe("M3.1 write endpoint integration", () => {
         content_type: "texts",
       }),
       api("GET", `/vaults/${id.vault}/proposals`, malloryToken),
-      api("DELETE", `/vaults/${id.vault}/raw/sources/${encoded}`, malloryToken),
-      api("POST", `/vaults/${id.vault}/raw/sources/${encoded}/deletion-request`, malloryToken),
+      api("DELETE", `/vaults/${id.vault}/raw/sources/${id.source}`, malloryToken),
+      api("POST", `/vaults/${id.vault}/raw/sources/${id.source}/deletion-request`, malloryToken),
     ]);
 
     expect(responses.map((response) => response.status)).toEqual(
@@ -789,11 +786,10 @@ describe("M3.1 write endpoint integration", () => {
   it("deletes sources directly and through idempotent editor deletion requests", async () => {
     const { aliceToken, bobToken, carolToken } = currentFixture();
     await seedSourceGraph();
-    const encoded = encodeSourcePath("raw/books/capital.md");
 
     const viewerRequest = await api(
       "POST",
-      `/vaults/${id.vault}/raw/sources/${encoded}/deletion-request`,
+      `/vaults/${id.vault}/raw/sources/${id.source}/deletion-request`,
       carolToken,
     );
     expect(viewerRequest.status).toBe(403);
@@ -801,7 +797,7 @@ describe("M3.1 write endpoint integration", () => {
 
     const ownerRequest = await api(
       "POST",
-      `/vaults/${id.vault}/raw/sources/${encoded}/deletion-request`,
+      `/vaults/${id.vault}/raw/sources/${id.source}/deletion-request`,
       aliceToken,
     );
     expect(ownerRequest.status).toBe(400);
@@ -819,13 +815,14 @@ describe("M3.1 write endpoint integration", () => {
             contentType: "user_suggestion",
             title: "Conflicting proposal",
             destPath: "raw/books/capital.md",
+            sourceId: id.source,
           }))
           .pipe(Effect.orDie);
       }),
     );
     const conflict = await api(
       "POST",
-      `/vaults/${id.vault}/raw/sources/${encoded}/deletion-request`,
+      `/vaults/${id.vault}/raw/sources/${id.source}/deletion-request`,
       bobToken,
     );
     expect(conflict.status).toBe(409);
@@ -842,14 +839,14 @@ describe("M3.1 write endpoint integration", () => {
 
     const request = await api(
       "POST",
-      `/vaults/${id.vault}/raw/sources/${encoded}/deletion-request`,
+      `/vaults/${id.vault}/raw/sources/${id.source}/deletion-request`,
       bobToken,
     );
     expect(request.status).toBe(201);
     const deletionProposalId = String(asRecord(request.body).id);
     const duplicate = await api(
       "POST",
-      `/vaults/${id.vault}/raw/sources/${encoded}/deletion-request`,
+      `/vaults/${id.vault}/raw/sources/${id.source}/deletion-request`,
       bobToken,
     );
     expect(duplicate.status).toBe(201);
@@ -877,7 +874,7 @@ describe("M3.1 write endpoint integration", () => {
     await seedSourceGraph();
     const deleted = await api(
       "DELETE",
-      `/vaults/${id.vault}/raw/sources/${encoded}`,
+      `/vaults/${id.vault}/raw/sources/${id.source}`,
       freshAliceToken,
     );
     expect(deleted.status).toBe(204);
@@ -890,7 +887,7 @@ describe("M3.1 write endpoint integration", () => {
 
     const missing = await api(
       "DELETE",
-      `/vaults/${id.vault}/raw/sources/${encoded}`,
+      `/vaults/${id.vault}/raw/sources/${id.source}`,
       freshAliceToken,
     );
     expect(missing.status).toBe(404);
@@ -904,10 +901,13 @@ describe("M3.1 write endpoint integration", () => {
       origin: "fixture",
     });
     expect(raw.status).toBe(201);
-    expect(raw.body).toEqual({ file_path: "raw/docs/raw-direct.md" });
-    const rawText = await readVaultFile(id.vault, "raw/docs/raw-direct.md");
+    const rawResult = asRecord(raw.body);
+    const rawId = String(rawResult.id);
+    const rawPath = String(rawResult.file_path);
+    expect(rawPath).toBe(`raw/docs/raw-direct-${rawId}.md`);
+    const rawText = await readVaultFile(id.vault, rawPath);
     expect(rawText).toBe(
-      "---\nsource_type: document\norigin: fixture\n---\n# Raw Title\n\nRaw body paragraph. ^p0\n",
+      `---\nsource_id: ${rawId}\nsource_type: document\norigin: fixture\n---\n# Raw Title\n\nRaw body paragraph. ^p0\n`,
     );
 
     const rawRows = await runDb(
@@ -919,7 +919,7 @@ describe("M3.1 write endpoint integration", () => {
           .where(
             and(
               eq(sourceDocuments.vaultId, id.vault),
-              eq(sourceDocuments.filePath, "raw/docs/raw-direct.md"),
+              eq(sourceDocuments.id, rawId),
             ),
           ))
           .pipe(Effect.orDie);
@@ -927,11 +927,26 @@ describe("M3.1 write endpoint integration", () => {
     );
     expect(rawRows).toHaveLength(1);
     expect(rawRows[0]).toMatchObject({
+      id: rawId,
+      filePath: rawPath,
       sourceType: "document",
       origin: "fixture",
       fileHash: fileContentHash(rawText),
       bodyHash: bodyContentHash("# Raw Title\n\nRaw body paragraph. ^p0\n"),
     });
+    const readById = await api(
+      "GET",
+      `/vaults/${id.vault}/raw/sources/${rawId}`,
+      aliceToken,
+    );
+    expect(readById.status).toBe(200);
+    expect(asRecord(asRecord(readById.body).article)).toMatchObject({
+      id: rawId,
+      file_path: rawPath,
+    });
+    expect(asRecord(readById.body).body).toBe(
+      "# Raw Title\n\nRaw body paragraph. ^p0\n",
+    );
     expect(await countTable(compileIntents)).toBe(1);
 
     const editorDenied = await api("POST", `/vaults/${id.vault}/ingest`, bobToken, {
@@ -983,8 +998,11 @@ describe("M3.1 write endpoint integration", () => {
       form,
     );
     expect(uploaded.status).toBe(201);
-    expect(uploaded.body).toEqual({ file_path: "raw/docs/uploads/custom-name.md" });
-    const uploadedText = await readVaultFile(id.vault, "raw/docs/uploads/custom-name.md");
+    const uploadedResult = asRecord(uploaded.body);
+    const uploadedId = String(uploadedResult.id);
+    const uploadedPath = String(uploadedResult.file_path);
+    expect(uploadedPath).toBe(`raw/docs/uploads/custom-name-${uploadedId}.md`);
+    const uploadedText = await readVaultFile(id.vault, uploadedPath);
     expect(uploadedText).toContain("origin: manual");
     expect(uploadedText).toContain("Uploaded paragraph. ^p0");
 
@@ -1005,10 +1023,13 @@ describe("M3.1 write endpoint integration", () => {
       htmlForm,
     );
     expect(htmlUpload.status).toBe(201);
-    expect(htmlUpload.body).toEqual({ file_path: "raw/docs/html-upload.md" });
-    const htmlText = await readVaultFile(id.vault, "raw/docs/html-upload.md");
+    const htmlResult = asRecord(htmlUpload.body);
+    const htmlId = String(htmlResult.id);
+    const htmlPath = String(htmlResult.file_path);
+    expect(htmlPath).toBe(`raw/docs/html-upload-${htmlId}.md`);
+    const htmlText = await readVaultFile(id.vault, htmlPath);
     expect(htmlText).toBe(
-      "---\nsource_type: document\norigin: html-fixture\n---\n# HTML Upload\n\nConverted upload paragraph. ^p0\n",
+      `---\nsource_id: ${htmlId}\nsource_type: document\norigin: html-fixture\n---\n# HTML Upload\n\nConverted upload paragraph. ^p0\n`,
     );
     const htmlRows = await runDb(
       Effect.gen(function* () {
@@ -1019,7 +1040,7 @@ describe("M3.1 write endpoint integration", () => {
           .where(
             and(
               eq(sourceDocuments.vaultId, id.vault),
-              eq(sourceDocuments.filePath, "raw/docs/html-upload.md"),
+              eq(sourceDocuments.id, htmlId),
             ),
           ))
           .pipe(Effect.orDie);
@@ -1069,7 +1090,9 @@ describe("M3.1 write endpoint integration", () => {
         anchored_section: "section-two",
       });
       expect(editor.status).toBe(201);
-      const editorPath = String(asRecord(editor.body).file_path);
+      const editorResult = asRecord(editor.body);
+      const editorId = String(editorResult.id);
+      const editorPath = String(editorResult.file_path);
       const proposalRows = await runDb(
         Effect.gen(function* () {
           const db = yield* Database;
@@ -1086,7 +1109,7 @@ describe("M3.1 write endpoint integration", () => {
       expect(proposalRows[0]).toMatchObject({
         status: "PENDING",
         contentType: "user_suggestion",
-        documentId: null,
+        sourceId: editorId,
       });
       const staged = await readFile(
         join(currentState().storageRoot, "proposals", `${proposalRows[0]!.id}.md`),
@@ -1584,8 +1607,8 @@ describe("M3.1 write endpoint integration", () => {
     );
   });
 
-  it("promotes personal references as idempotent member-scoped copies", async () => {
-    const { bobToken, malloryToken } = currentFixture();
+  it("promotes personal references as idempotent owner-scoped copies", async () => {
+    const { aliceToken, malloryToken } = currentFixture();
     await withLocalHttpServer(
       (request, response) => {
         response.writeHead(200, { "content-type": "text/html; charset=utf-8" });
@@ -1594,22 +1617,27 @@ describe("M3.1 write endpoint integration", () => {
         );
       },
       async (origin) => {
-        const created = await api("POST", "/me/refs", bobToken, {
+        const created = await api("POST", "/me/refs", aliceToken, {
           url: `${origin}/promoted`,
         });
         expect(created.status).toBe(201);
-        const referencePath = String(asRecord(created.body).file_path);
-        const personalBefore = await readUserFile(id.bob, referencePath);
+        const createdReference = asRecord(created.body);
+        const referenceId = String(createdReference.id);
+        const referencePath = String(createdReference.file_path);
+        const personalBefore = await readUserFile(id.alice, referencePath);
+        const sourceId = sourceIdForKey(id.vault as Uuid, `reference:${referenceId}`);
+        const sourcePath = `raw/docs/promoted-${sourceId}.md`;
 
         const promoted = await api(
           "POST",
           `/vaults/${id.vault}/ingest/reference`,
-          bobToken,
+          aliceToken,
           { path: referencePath },
         );
         expect(promoted.status).toBe(201);
-        expect(promoted.body).toEqual({ file_path: "raw/docs/promoted.md" });
-        expect(await readVaultFile(id.vault, "raw/docs/promoted.md")).toBe(personalBefore);
+        expect(promoted.body).toEqual({ id: sourceId, file_path: sourcePath });
+        const promotedText = await readVaultFile(id.vault, sourcePath);
+        expect(parseFrontmatter(promotedText).body).toBe(parseFrontmatter(personalBefore).body);
 
         const rows = await runDb(
           Effect.gen(function* () {
@@ -1620,7 +1648,7 @@ describe("M3.1 write endpoint integration", () => {
               .where(
                 and(
                   eq(sourceDocuments.vaultId, id.vault),
-                  eq(sourceDocuments.filePath, "raw/docs/promoted.md"),
+                  eq(sourceDocuments.id, sourceId),
                 ),
               ))
               .pipe(Effect.orDie);
@@ -1634,12 +1662,12 @@ describe("M3.1 write endpoint integration", () => {
         });
         expect(await countTable(compileIntents)).toBe(1);
         expect(await countTable(userDocuments)).toBe(1);
-        expect(await readUserFile(id.bob, referencePath)).toBe(personalBefore);
+        expect(await readUserFile(id.alice, referencePath)).toBe(personalBefore);
 
         const repeated = await api(
           "POST",
           `/vaults/${id.vault}/ingest/reference`,
-          bobToken,
+          aliceToken,
           { path: referencePath },
         );
         expect(repeated.status).toBe(200);
@@ -1662,7 +1690,7 @@ describe("M3.1 write endpoint integration", () => {
         const missing = await api(
           "POST",
           `/vaults/${id.vault}/ingest/reference`,
-          bobToken,
+          aliceToken,
           { path: "refs/unknown.md" },
         );
         expect(missing.status).toBe(404);
@@ -1670,7 +1698,7 @@ describe("M3.1 write endpoint integration", () => {
     );
   });
 
-  it("runs jobs/url synchronously with member guard, clean markdown conversion, attached compile intent, and persisted failures", async () => {
+  it("runs jobs/url synchronously with owner guard, stable source identity, clean conversion, and persisted failures", async () => {
     const { aliceToken, carolToken, malloryToken } = currentFixture();
     await withLocalHttpServer(
       (request, response) => {
@@ -1678,6 +1706,20 @@ describe("M3.1 write endpoint integration", () => {
           response.writeHead(200, { "content-type": "text/html" });
           response.end(
             "<html><head><title>Local Article</title></head><body><main><h1>Local Article</h1><p>Converted paragraph.</p></main></body></html>",
+          );
+          return;
+        }
+        if (request.url === "/one/report") {
+          response.writeHead(200, { "content-type": "text/html" });
+          response.end(
+            "<html><head><title>Report Alpha</title></head><body><main><p>Alpha report body remains its own source.</p></main></body></html>",
+          );
+          return;
+        }
+        if (request.url === "/two/report?version=2") {
+          response.writeHead(200, { "content-type": "text/html" });
+          response.end(
+            "<html><head><title>Report Beta</title></head><body><main><p>Beta report body must coexist with alpha.</p></main></body></html>",
           );
           return;
         }
@@ -1690,12 +1732,12 @@ describe("M3.1 write endpoint integration", () => {
         response.end("failed");
       },
       async (origin) => {
-        const viewerSuccess = await api("POST", `/vaults/${id.vault}/jobs/url`, carolToken, {
+        const ownerSuccess = await api("POST", `/vaults/${id.vault}/jobs/url`, aliceToken, {
           job_id: id.m32UrlRun,
-          url: `${origin}/ok`,
+          url: `${origin}/ok#ignored-fragment`,
         });
-        expect(viewerSuccess.status).toBe(201);
-        expect(asRecord(viewerSuccess.body)).toMatchObject({
+        expect(ownerSuccess.status).toBe(201);
+        expect(asRecord(ownerSuccess.body)).toMatchObject({
           id: id.m32UrlRun,
           trigger: "url",
           current_phase: "source_ingest",
@@ -1703,15 +1745,13 @@ describe("M3.1 write endpoint integration", () => {
           stream_url: `/jobs/${id.m32UrlRun}/stream`,
         });
 
-        const markdown = await readVaultFile(id.vault, "raw/docs/ok.md");
+        const canonicalUrl = `${origin}/ok`;
+        const sourceId = sourceIdForKey(id.vault as Uuid, `url:${canonicalUrl}`);
+        const sourcePath = `raw/docs/ok-${sourceId}.md`;
+        const markdown = await readVaultFile(id.vault, sourcePath);
         expect(markdown).toBe(
-          `---\nsource_type: document\nurl: ${origin}/ok\norigin: ${new URL(origin).host}\n---\n# Local Article\n\nConverted paragraph. ^p0\n`,
+          `---\nsource_id: ${sourceId}\ncanonical_url: ${canonicalUrl}\nsource_type: document\nurl: ${canonicalUrl}\norigin: ${new URL(origin).host}\n---\n# Local Article\n\nConverted paragraph. ^p0\n`,
         );
-        expect(markdown).toContain("source_type: document");
-        expect(markdown).toContain(`url: ${origin}/ok`);
-        expect(markdown).toContain("origin: 127.0.0.1:");
-        expect(markdown).toContain("# Local Article");
-        expect(markdown).toContain("Converted paragraph. ^p0");
 
         const successRows = await runDb(
           Effect.gen(function* () {
@@ -1719,12 +1759,7 @@ describe("M3.1 write endpoint integration", () => {
             const sourceRows = yield* db.query((d) => d
               .select()
               .from(sourceDocuments)
-              .where(
-                and(
-                  eq(sourceDocuments.vaultId, id.vault),
-                  eq(sourceDocuments.filePath, "raw/docs/ok.md"),
-                ),
-              ))
+              .where(eq(sourceDocuments.id, sourceId)))
               .pipe(Effect.orDie);
             const intentRows = yield* db.query((d) => d
               .select()
@@ -1741,11 +1776,65 @@ describe("M3.1 write endpoint integration", () => {
         );
         expect(successRows.sourceRows).toHaveLength(1);
         expect(successRows.sourceRows[0]).toMatchObject({
+          id: sourceId,
+          filePath: sourcePath,
           sourceType: "document",
-          url: `${origin}/ok`,
+          url: canonicalUrl,
+          canonicalUrl,
         });
         expect(successRows.intentRows).toHaveLength(1);
         expect(successRows.runRows[0]?.compileIntentId).toBe(successRows.intentRows[0]?.id);
+
+        const viewerDenied = await api("POST", `/vaults/${id.vault}/jobs/url`, carolToken, {
+          job_id: "00000000-0000-4000-8000-000000013198",
+          url: canonicalUrl,
+        });
+        expect(viewerDenied.status).toBe(403);
+
+        const alphaUrl = `${origin}/one/report`;
+        const betaUrl = `${origin}/two/report?version=2`;
+        const alphaId = sourceIdForKey(id.vault as Uuid, `url:${alphaUrl}`);
+        const betaId = sourceIdForKey(id.vault as Uuid, `url:${betaUrl}`);
+        const alphaPath = `raw/docs/report-${alphaId}.md`;
+        const betaPath = `raw/docs/report-${betaId}.md`;
+        const alpha = await api("POST", `/vaults/${id.vault}/jobs/url`, aliceToken, {
+          job_id: id.m32UrlCollisionA,
+          url: alphaUrl,
+        });
+        const beta = await api("POST", `/vaults/${id.vault}/jobs/url`, aliceToken, {
+          job_id: id.m32UrlCollisionB,
+          url: betaUrl,
+        });
+        expect([alpha.status, beta.status]).toEqual([201, 201]);
+        expect(await readVaultFile(id.vault, alphaPath)).toContain(
+          "Alpha report body remains its own source.",
+        );
+        expect(await readVaultFile(id.vault, betaPath)).toContain(
+          "Beta report body must coexist with alpha.",
+        );
+
+        const replay = await api("POST", `/vaults/${id.vault}/jobs/url`, aliceToken, {
+          job_id: id.m32UrlReplayRun,
+          url: alphaUrl,
+        });
+        expect(replay.status).toBe(201);
+        const collisionRows = await runDb(
+          Effect.gen(function* () {
+            const db = yield* Database;
+            return yield* db.query((d) => d
+              .select()
+              .from(sourceDocuments)
+              .where(eq(sourceDocuments.vaultId, id.vault)))
+              .pipe(Effect.orDie);
+          }),
+        );
+        expect(collisionRows).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({ id: alphaId, filePath: alphaPath, canonicalUrl: alphaUrl }),
+            expect.objectContaining({ id: betaId, filePath: betaPath, canonicalUrl: betaUrl }),
+          ]),
+        );
+        expect(collisionRows.filter((row) => row.id === alphaId)).toHaveLength(1);
 
         const failed = await api("POST", `/vaults/${id.vault}/jobs/url`, aliceToken, {
           job_id: id.m32UrlFailRun,
@@ -1793,7 +1882,7 @@ describe("M3.1 write endpoint integration", () => {
               .where(
                 and(
                   eq(sourceDocuments.vaultId, id.vault),
-                  eq(sourceDocuments.filePath, "raw/docs/pdf.md"),
+                  eq(sourceDocuments.canonicalUrl, `${origin}/pdf`),
                 ),
               ))
               .pipe(Effect.orDie);
@@ -1959,7 +2048,7 @@ describe("M3.1 write endpoint integration", () => {
         query: "How should organizers read sources?",
         thinking: [
           {
-            sources: [{ label: "Capital Volume", type: "raw", title: null, scope: null, path: null, thinking: null }],
+            sources: [{ label: "Capital Volume", type: "raw", document_id: null, title: null, scope: null, path: null, thinking: null }],
           },
         ],
         answer: "Start with the passage and its claim.",
@@ -2129,19 +2218,23 @@ describe("M3.1 write endpoint integration", () => {
     });
     const sessionId = String(asRecord(created.body).id);
     currentState().clock.set(new Date("2026-07-10T12:01:00.000Z"));
-    const proposalExchange = await api(
-      "PATCH",
-      `/vaults/${id.vault}/sessions/${sessionId}`,
-      aliceToken,
-      {
+    const editorCreated = await api("POST", `/vaults/${id.vault}/sessions`, bobToken, {
+      idempotency_key: "editor-promote-key",
+      exchange: {
         id: "ex-proposal",
         query: "What should editors propose?",
         thinking: [],
         answer: "Proposal answer body.",
       },
-    );
-    expect(proposalExchange.status).toBe(200);
+    });
+    expect(editorCreated.status).toBe(201);
+    const editorSessionId = String(asRecord(editorCreated.body).id);
 
+    const ownerSourceId = sourceIdForKey(
+      id.vault as Uuid,
+      `session:${sessionId}:ex-promote`,
+    );
+    const ownerSourcePath = `raw/sessions/ex-promote-${ownerSourceId}.md`;
     const ownerPromote = await api(
       "POST",
       `/vaults/${id.vault}/sessions/${sessionId}/exchanges/ex-promote/promote`,
@@ -2150,14 +2243,14 @@ describe("M3.1 write endpoint integration", () => {
     expect(ownerPromote.status).toBe(201);
     expect(ownerPromote.body).toEqual({
       mode: "ingested",
-      path: "raw/sessions/ex-promote.md",
+      path: ownerSourcePath,
       title: null,
-      document_id: null,
+      document_id: ownerSourceId,
       proposal_id: null,
     });
-    const promotedMarkdown = await readVaultFile(id.vault, "raw/sessions/ex-promote.md");
+    const promotedMarkdown = await readVaultFile(id.vault, ownerSourcePath);
     expect(promotedMarkdown).toBe(
-      "---\nsource_type: session\norigin: session-exchange\nsession_id: 019f4be6-1e00-7607-8809-0a0b0c0d0e0f\nexchange_id: ex-promote\nsession_query: What should be promoted?\nsource_doc_path: raw/books/capital.md\nsource_anchor: anchor quote\nsource_paragraph_index: 4\n---\nPromoted answer body. ^p0\n",
+      `---\nsource_id: ${ownerSourceId}\nsource_type: session\norigin: session-exchange\nsession_id: 019f4be6-1e00-7607-8809-0a0b0c0d0e0f\nexchange_id: ex-promote\nsession_query: What should be promoted?\nsource_doc_path: raw/books/capital.md\nsource_anchor: anchor quote\nsource_paragraph_index: 4\n---\nPromoted answer body. ^p0\n`,
     );
     const promotedRows = await runDb(
       Effect.gen(function* () {
@@ -2168,7 +2261,7 @@ describe("M3.1 write endpoint integration", () => {
           .where(
             and(
               eq(sourceDocuments.vaultId, id.vault),
-              eq(sourceDocuments.filePath, "raw/sessions/ex-promote.md"),
+              eq(sourceDocuments.id, ownerSourceId),
             ),
           ))
           .pipe(Effect.orDie);
@@ -2195,21 +2288,26 @@ describe("M3.1 write endpoint integration", () => {
     expect(ownerReplay.status).toBe(201);
     expect(ownerReplay.body).toMatchObject({
       mode: "ingested",
-      path: "raw/sessions/ex-promote.md",
-      title: "ex-promote",
+      path: ownerSourcePath,
+      title: null,
       document_id: promotedRows[0]?.id,
     });
 
+    const editorSourceId = sourceIdForKey(
+      id.vault as Uuid,
+      `session:${editorSessionId}:ex-proposal`,
+    );
+    const editorSourcePath = `raw/sessions/ex-proposal-${editorSourceId}.md`;
     const editorPromote = await api(
       "POST",
-      `/vaults/${id.vault}/sessions/${sessionId}/exchanges/ex-proposal/promote`,
+      `/vaults/${id.vault}/sessions/${editorSessionId}/exchanges/ex-proposal/promote`,
       bobToken,
     );
     expect(editorPromote.status).toBe(201);
     const editorBody = asRecord(editorPromote.body);
     expect(editorBody).toMatchObject({
       mode: "proposed",
-      path: "raw/sessions/ex-proposal.md",
+      path: editorSourcePath,
       title: null,
     });
     const proposalId = String(editorBody.proposal_id);
@@ -2228,8 +2326,8 @@ describe("M3.1 write endpoint integration", () => {
       status: "PENDING",
       contentType: "session",
       title: null,
-      destPath: "raw/sessions/ex-proposal.md",
-      documentId: null,
+      destPath: editorSourcePath,
+      sourceId: editorSourceId,
     });
     const staged = await readFile(
       join(currentState().storageRoot, "proposals", `${proposalId}.md`),
@@ -2242,32 +2340,32 @@ describe("M3.1 write endpoint integration", () => {
 
     const editorReplay = await api(
       "POST",
-      `/vaults/${id.vault}/sessions/${sessionId}/exchanges/ex-proposal/promote`,
+      `/vaults/${id.vault}/sessions/${editorSessionId}/exchanges/ex-proposal/promote`,
       bobToken,
     );
     expect(editorReplay.status).toBe(201);
     expect(editorReplay.body).toMatchObject({
       mode: "proposed",
-      path: "raw/sessions/ex-proposal.md",
-      title: "ex-proposal",
+      path: editorSourcePath,
+      title: null,
       proposal_id: proposalId,
     });
 
     const viewerDenied = await api(
       "POST",
-      `/vaults/${id.vault}/sessions/${sessionId}/exchanges/ex-proposal/promote`,
+      `/vaults/${id.vault}/sessions/${editorSessionId}/exchanges/ex-proposal/promote`,
       carolToken,
     );
     expect(viewerDenied.status).toBe(403);
     const nonMemberDenied = await api(
       "POST",
-      `/vaults/${id.vault}/sessions/${sessionId}/exchanges/ex-proposal/promote`,
+      `/vaults/${id.vault}/sessions/${editorSessionId}/exchanges/ex-proposal/promote`,
       malloryToken,
     );
     expect(nonMemberDenied.status).toBe(403);
     const unauthenticated = await api(
       "POST",
-      `/vaults/${id.vault}/sessions/${sessionId}/exchanges/ex-proposal/promote`,
+      `/vaults/${id.vault}/sessions/${editorSessionId}/exchanges/ex-proposal/promote`,
     );
     expect(unauthenticated.status).toBe(401);
 

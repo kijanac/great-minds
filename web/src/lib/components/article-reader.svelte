@@ -21,6 +21,7 @@
     useArticleLinks,
     useDocument,
     usePersonalDocument,
+    useSourceDocument,
   } from "$lib/hooks/use-document.svelte";
   import {
     createLinkInterceptor,
@@ -30,7 +31,15 @@
   import type { SelectionInfo, SourceRef } from "$lib/types";
   import { displayTitle } from "$lib/utils";
 
-  let { path, scope }: { path: string; scope: DocumentScope } = $props();
+  let {
+    path = null,
+    sourceId = null,
+    scope,
+  }: {
+    path?: string | null;
+    sourceId?: string | null;
+    scope: DocumentScope;
+  } = $props();
 
   let selectedCard = $state<SourceRef | null>(null);
   let popover = $state<SelectionInfo | null>(null);
@@ -38,27 +47,35 @@
     localStorage.getItem("onboarding-hint-seen") === "true",
   );
   const initialPath = untrack(() => path);
+  const initialSourceId = untrack(() => sourceId);
   const readerScope = untrack(() => scope);
-  let btwPath = initialPath;
-  let docThreads = $state(
-    new DocThreads(
-      initialPath,
-      readerScope,
-      (id) => void goto(`/sessions/${id}`),
-    ),
+  let btwPath = $state<string | null>(initialPath);
+  let docThreads = $state<DocThreads | null>(
+    initialPath === null
+      ? null
+      : new DocThreads(
+          initialPath,
+          readerScope,
+          (id) => void goto(`/sessions/${id}`),
+        ),
   );
   const documentQuery =
-    readerScope === "personal"
-      ? usePersonalDocument(() => path)
-      : useDocument(() => path);
+    initialSourceId !== null
+      ? useSourceDocument(() => initialSourceId)
+      : readerScope === "personal"
+        ? usePersonalDocument(() => path)
+        : useDocument(() => path);
   const vaults = useVaults();
-  const articleLinks = useArticleLinks(() =>
-    readerScope === "vault" ? path : null,
-  );
   const promotion = useReferencePromotion();
   const document = $derived(documentQuery.data?.article ?? null);
   const body = $derived(documentQuery.data?.body ?? null);
-  const label = $derived(displayTitle(path, document?.title));
+  const resolvedPath = $derived(document?.file_path ?? path ?? "");
+  const label = $derived(displayTitle(resolvedPath, document?.title));
+  const articleLinks = useArticleLinks(() =>
+    readerScope === "vault" && resolvedPath.startsWith("wiki/")
+      ? resolvedPath
+      : null,
+  );
   const showHint = $derived(!hintDismissed && body !== null);
   const selectedVault = $derived(
     vaults.data?.find((vault) => vault.id === activeVault.id) ?? null,
@@ -92,6 +109,7 @@
     selectedCard = {
       type: "raw",
       label: citation.path,
+      document_id: null,
       title: null,
       scope: null,
       path: null,
@@ -106,7 +124,7 @@
 
   const handleLinkClick = createLinkInterceptor(openRawCitation);
 
-  onDestroy(() => docThreads.destroy());
+  onDestroy(() => docThreads?.destroy());
 
   $effect(() => {
     // The body just (re)mounted: re-check which thread anchors resolve to a
@@ -114,16 +132,17 @@
     // unresolvable ones.
     if (body === null) return;
     void tick().then(() => {
-      requestAnimationFrame(() => docThreads.refreshJumpable());
+      requestAnimationFrame(() => docThreads?.refreshJumpable());
     });
   });
 
   $effect(() => {
-    if (path === btwPath) return;
-    docThreads.destroy();
-    btwPath = path;
+    const currentPath = resolvedPath;
+    if (currentPath === "" || currentPath === btwPath) return;
+    docThreads?.destroy();
+    btwPath = currentPath;
     docThreads = new DocThreads(
-      path,
+      currentPath,
       readerScope,
       (id) => void goto(`/sessions/${id}`),
     );
@@ -147,7 +166,7 @@
   });
 
   function startBtw() {
-    if (!popover) return;
+    if (!popover || !docThreads) return;
     docThreads.startThread(popover);
     popover = null;
     window.getSelection()?.removeAllRanges();
@@ -161,8 +180,8 @@
   async function promotePersonalReference() {
     if (!activeVault.id) return;
     try {
-      const promoted = await promotion.promote(activeVault.id, path);
-      await goto(`/doc/${promoted.file_path}`);
+      const promoted = await promotion.promote(activeVault.id, resolvedPath);
+      await goto(`/source/${promoted.id}`);
     } catch {
       return;
     }
@@ -182,6 +201,7 @@
     selectedCard = {
       type: "raw",
       label: linkedPath,
+      document_id: null,
       title: null,
       scope: null,
       path: null,
@@ -197,14 +217,16 @@
     const hash = range && range.start === range.end ? `#^p${range.start}` : "";
     selectedCard = null;
     await goto(
-      `${readerScope === "personal" ? "/refs/" : "/doc/"}${card.label}${hash}`,
+      readerScope === "vault" && card.type === "raw" && card.document_id
+        ? `/source/${card.document_id}${hash}`
+        : `${readerScope === "personal" ? "/refs/" : "/doc/"}${card.label}${hash}`,
     );
   }
 
   $effect(() => {
     const hash = page.url.hash;
     const renderedBody = body;
-    const currentPath = path;
+    const currentPath = resolvedPath;
     if (!hash || renderedBody === null || !currentPath) return;
 
     void tick().then(() => {
@@ -236,7 +258,7 @@
     onHome={() => void goto("/")}
     onQuery={(question) =>
       void goto(
-        `/?q=${encodeURIComponent(question)}&origin=${encodeURIComponent(path)}`,
+        `/?q=${encodeURIComponent(question)}&origin=${encodeURIComponent(resolvedPath)}`,
       )}
   >
     {#snippet footer()}
@@ -280,7 +302,7 @@
         <Skeleton class="h-4 w-11/12 bg-ink-raised" />
         <Skeleton class="h-4 w-4/5 bg-ink-raised" />
       </div>
-    {:else if document && body !== null}
+    {:else if document && body !== null && docThreads}
       <ArticleView
         {document}
         scope={readerScope}
@@ -300,7 +322,7 @@
         onOpenThread={docThreads.openSession}
         onThreadJump={docThreads.jumpTo}
         onThreadOpen={docThreads.openSession}
-        documentId={path}
+        documentId={resolvedPath}
         onSelection={(info) => (popover = info)}
         onBtwReply={docThreads.replyThread}
         onBtwDismiss={docThreads.dismissEmpty}

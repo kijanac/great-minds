@@ -3,6 +3,7 @@ import { z } from "zod";
 export const sourceRefSchema = z.object({
   label: z.string(),
   type: z.enum(["article", "raw", "search", "query", "links"]),
+  document_id: z.string().nullable(),
   title: z.string().nullable(),
   // For searches: where the search ran.
   scope: z.enum(["kb", "web"]).nullable(),
@@ -117,6 +118,8 @@ export const proposalOverviewSchema = z.object({
 export const proposalSchema = proposalOverviewSchema.extend({
   user_id: z.string(),
   author: z.string().nullable(),
+  dest_path: z.string(),
+  source_id: z.string(),
 });
 
 export const proposalListSchema = paginatedSchema(proposalOverviewSchema);

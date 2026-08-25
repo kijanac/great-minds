@@ -21,11 +21,11 @@ export const LIBRARY_READING_ROOM = "reading-room";
 
 export function useLibrary(
   selectedCard: () => SourceRef | null,
-  onSourceDeleted: (path: string) => void,
+  onSourceDeleted: (sourceId: string) => void,
 ) {
   const queryClient = useQueryClient();
   let search = $state(page.url.searchParams.get("q") ?? "");
-  let actionPath = $state<string | null>(null);
+  let actionId = $state<string | null>(null);
   let actionError = $state<string | null>(null);
   let actionNotice = $state<string | null>(null);
 
@@ -184,34 +184,34 @@ export function useLibrary(
     });
   }
 
-  async function deleteSource(path: string) {
-    actionPath = path;
+  async function deleteSource(sourceId: string) {
+    actionId = sourceId;
     actionError = null;
     actionNotice = null;
     try {
-      await deleteSourceDocument(path);
-      onSourceDeleted(path);
+      await deleteSourceDocument(sourceId);
+      onSourceDeleted(sourceId);
       await refreshSources();
     } catch (error) {
       actionError = error instanceof Error ? error.message : "Failed to delete source";
       throw error;
     } finally {
-      actionPath = null;
+      actionId = null;
     }
   }
 
-  async function requestDeletion(path: string) {
-    actionPath = path;
+  async function requestDeletion(sourceId: string) {
+    actionId = sourceId;
     actionError = null;
     actionNotice = null;
     try {
-      await requestSourceDeletion(path);
+      await requestSourceDeletion(sourceId);
       actionNotice = "Deletion request submitted.";
     } catch (error) {
       actionError = error instanceof Error ? error.message : "Failed to request source deletion";
       throw error;
     } finally {
-      actionPath = null;
+      actionId = null;
     }
   }
 
@@ -222,8 +222,8 @@ export function useLibrary(
     get actionNotice() {
       return actionNotice;
     },
-    get actionPath() {
-      return actionPath;
+    get actionId() {
+      return actionId;
     },
     get activeType() {
       return activeType;

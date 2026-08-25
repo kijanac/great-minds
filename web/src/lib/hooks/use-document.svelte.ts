@@ -1,6 +1,6 @@
 import { createQuery } from "@tanstack/svelte-query";
 
-import { fetchLinks, readDocument, readPersonalDocument } from "$lib/api/doc";
+import { fetchLinks, readDocument, readPersonalDocument, readSourceDocument } from "$lib/api/doc";
 import { activeVault } from "$lib/hooks/use-vault.svelte";
 
 export function useDocument(path: () => string | null) {
@@ -8,6 +8,14 @@ export function useDocument(path: () => string | null) {
     queryKey: ["vault", activeVault.id, "doc", path()],
     queryFn: ({ signal }) => readDocument(path()!, signal),
     enabled: !!path() && !!activeVault.id,
+  }));
+}
+
+export function useSourceDocument(sourceId: () => string | null) {
+  return createQuery(() => ({
+    queryKey: ["vault", activeVault.id, "source", sourceId()],
+    queryFn: ({ signal }) => readSourceDocument(sourceId()!, signal),
+    enabled: !!sourceId() && !!activeVault.id,
   }));
 }
 

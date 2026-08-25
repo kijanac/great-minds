@@ -12,6 +12,7 @@ export const sourceDocumentSchema = z.object({
   source_type: z.string(),
   etag: z.string().nullable(),
   url: z.string().nullable(),
+  canonical_url: z.string().nullable(),
   origin: z.string().nullable(),
   // Provenance (set at ingest for session/user-suggestion docs; null for source_type='document'):
   provenance_session_id: z.string().nullable(),
@@ -119,6 +120,15 @@ export function articleMeta(article: Article) {
 export async function readDocument(path: string, signal?: AbortSignal): Promise<DocumentResponse> {
   const res = await apiFetch(vaultPath(`/doc/${path}`), { signal });
   if (!res.ok) throw new Error(`Document not found: ${path}`);
+  return readJson(res, documentResponseSchema);
+}
+
+export async function readSourceDocument(
+  sourceId: string,
+  signal?: AbortSignal,
+): Promise<DocumentResponse> {
+  const res = await apiFetch(vaultPath(`/raw/sources/${sourceId}`), { signal });
+  if (!res.ok) throw new Error(`Source not found: ${sourceId}`);
   return readJson(res, documentResponseSchema);
 }
 

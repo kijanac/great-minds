@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { posix } from "node:path";
 
 import { compileIntents, Database, pipelineRuns, tasks } from "@great-minds/database";
@@ -23,13 +24,17 @@ import * as WorkflowEngine from "effect/unstable/workflow/WorkflowEngine";
 
 import { AppConfig } from "./config.ts";
 import { htmlToMarkdown, markdownWithTitle } from "./conversion.ts";
-import { sha256Hex } from "./crypto.ts";
 import { causeDetails, errorDetails, formatError } from "./error-details.ts";
 import { jobResponse } from "./jobs.ts";
 import { buildDocument, sessionExchangeDocumentInput, sessionExchangePath } from "./markdown.ts";
 import { progressSteps, type PipelineProgressStep } from "./pipeline-runs.ts";
 import { ProposalsService } from "./proposals.ts";
 import { fetchAnyUrl, fetchPublicUrl, responseTextCapped } from "./public-fetch.ts";
+import {
+  type CanonicalSourceUrl,
+  identifySourceMarkdown,
+  sourceIdForKey,
+} from "./source-identity.ts";
 import { SourceDocumentsService } from "./source-documents.ts";
 import { StagedFileIngestWorkflow } from "./staged-file-ingest-workflow.ts";
 import { ContentStorage, StagedStorage, vaultOwner } from "./storage.ts";
@@ -88,7 +93,7 @@ type IngestServiceShape = {
   readonly startUrlJob: (
     userId: Uuid,
     vaultId: Uuid,
-    input: { readonly job_id: Uuid; readonly url: string; readonly origin?: string },
+    input: { readonly job_id: Uuid; readonly url: CanonicalSourceUrl; readonly origin?: string },
   ) => Effect.Effect<JobResponse, BadRequest | Forbidden>;
   readonly ingestSessionExchange: (
     vaultId: Uuid,
@@ -121,9 +126,6 @@ export const slugify = (text: string, maxLen = 80) =>
     .replace(/^-+|-+$/g, "")
     .slice(0, maxLen);
 
-export const normalizeUrl = (url: string) =>
-  url.startsWith("http://") || url.startsWith("https://") ? url : `https://${url}`;
-
 const urlResponseContentType = (contentTypeHeader: string | null) =>
   contentTypeHeader?.split(";", 1)[0]?.trim().toLowerCase() ?? "text/html";
 
@@ -132,9 +134,8 @@ const isSupportedUrlContentType = (contentType: string) =>
 
 const MAX_URL_RESPONSE_BYTES = 25 * 1024 * 1024;
 
-export const fetchUrlMarkdown = (rawUrl: string, allowPrivateUrlFetch: boolean) =>
+export const fetchUrlMarkdown = (url: CanonicalSourceUrl, allowPrivateUrlFetch: boolean) =>
   Effect.gen(function* () {
-    const url = normalizeUrl(rawUrl);
     const fetchUrl = allowPrivateUrlFetch ? fetchAnyUrl : fetchPublicUrl;
     const response = yield* Effect.tryPromise({
       try: (signal) =>
@@ -176,9 +177,19 @@ const utcTimestamp = (date: Date) =>
     .replaceAll(":", "")
     .replace(/\.\d{3}Z$/, "Z");
 
-const userSuggestionDest = (now: Date, intent: UserSuggestionIntent, anchoredTo: string) => {
+const userSuggestionDest = (
+  now: Date,
+  intent: UserSuggestionIntent,
+  anchoredTo: string,
+  sourceId: Uuid,
+) => {
   const anchorSlug = anchoredTo.length > 0 ? slugify(anchoredTo) || "general" : "general";
-  return `raw/user/${utcTimestamp(now)}-${anchorSlug}-${intent}.md`;
+  return `raw/user/${utcTimestamp(now)}-${anchorSlug}-${intent}-${sourceId}.md`;
+};
+
+const sourcePathWithId = (filePath: string, sourceId: Uuid) => {
+  const parsed = posix.parse(filePath);
+  return posix.join(parsed.dir, `${parsed.name}-${sourceId}.md`);
 };
 
 const safeDocDest = (destPath: string) => {
@@ -295,36 +306,42 @@ export const IngestServiceLive = Layer.effect(
 
     const writeAndIndex = (
       vaultId: Uuid,
+      sourceId: Uuid,
       rendered: string,
       dest: string,
+      canonicalUrl: CanonicalSourceUrl | null = null,
       pipelineRunId?: Uuid | null,
     ) =>
       Effect.gen(function* () {
-        yield* storage.writeText(vaultOwner(vaultId), dest, rendered);
-        yield* sourceDocumentsWrite.index(vaultId, dest, rendered);
+        const content = identifySourceMarkdown(rendered, sourceId, canonicalUrl);
+        yield* storage.writeText(vaultOwner(vaultId), dest, content);
+        yield* sourceDocumentsWrite.index(vaultId, dest, content);
         yield* ensureCompileIntent(vaultId, pipelineRunId);
-        return { file_path: dest } satisfies IngestedDocument;
+        return { id: sourceId, file_path: dest } satisfies IngestedDocument;
       });
 
     const ingestUrl = (
       vaultId: Uuid,
-      rawUrl: string,
+      canonicalUrl: CanonicalSourceUrl,
       origin?: string,
       pipelineRunId?: Uuid,
     ) =>
       Effect.gen(function* () {
-        const fetched = yield* fetchUrlMarkdown(rawUrl, config.allowPrivateUrlFetch);
-        const parsed = new URL(fetched.url);
-        const stem = posix.parse(parsed.pathname).name || "doc";
-        const dest = `raw/docs/${slugify(stem) || "doc"}.md`;
+        const fetched = yield* fetchUrlMarkdown(canonicalUrl, config.allowPrivateUrlFetch);
+        const parsed = new URL(canonicalUrl);
+        const sourceId = sourceIdForKey(vaultId, `url:${canonicalUrl}`);
+        const stem = slugify(posix.parse(parsed.pathname).name || "doc") || "doc";
+        const dest = `raw/docs/${stem}-${sourceId}.md`;
         return yield* writeAndIndex(
           vaultId,
+          sourceId,
           buildDocument(markdownWithTitle(fetched.title, fetched.markdown), {
             sourceType: "document",
-            url: fetched.url,
+            url: canonicalUrl,
             origin: origin ?? parsed.host,
           }),
           dest,
+          canonicalUrl,
           pipelineRunId,
         );
       });
@@ -398,13 +415,15 @@ export const IngestServiceLive = Layer.effect(
       ingestRaw: (userId, vaultId, input) =>
         Effect.gen(function* () {
           yield* access.requireOwner(userId, vaultId);
+          const sourceId = randomUUID() as Uuid;
           return yield* writeAndIndex(
             vaultId,
+            sourceId,
             buildDocument(input.content, {
               sourceType: "document",
               origin: input.origin,
             }),
-            input.dest,
+            sourcePathWithId(input.dest, sourceId),
           );
         }),
       ingestUpload: (userId, vaultId, input) =>
@@ -415,37 +434,37 @@ export const IngestServiceLive = Layer.effect(
             return yield* new BadRequest({ detail: `Invalid dest_path: ${input.destPath}` });
           }
           const content = yield* uploadToMarkdown(input);
+          const sourceId = randomUUID() as Uuid;
           return yield* writeAndIndex(
             vaultId,
+            sourceId,
             buildDocument(content, {
               sourceType: "document",
               origin: input.origin ?? null,
             }),
-            dest,
+            sourcePathWithId(dest, sourceId),
           );
         }),
       promoteReference: (userId, vaultId, input) =>
         Effect.gen(function* () {
           yield* access.requireOwner(userId, vaultId);
           const reference = yield* userDocumentsRead.readUserText(userId, input.path);
-          const parsed = posix.parse(posix.basename(reference.row.filePath));
-          let dest = `raw/docs/${parsed.base}`;
-          let existing = yield* sourceDocumentsWrite.getByPath(vaultId, dest);
-          if (existing?.bodyHash === reference.row.bodyHash) {
-            return { document: { file_path: dest }, created: false };
-          }
+          const sourceId = sourceIdForKey(vaultId, `reference:${reference.row.id}`);
+          const existing = yield* sourceDocumentsWrite.getById(vaultId, sourceId);
           if (existing !== undefined) {
-            const suffix = sha256Hex(reference.row.url ?? reference.row.bodyHash).slice(0, 8);
-            dest = `raw/docs/${parsed.name}-${suffix}${parsed.ext}`;
-            existing = yield* sourceDocumentsWrite.getByPath(vaultId, dest);
-            if (existing?.bodyHash === reference.row.bodyHash) {
-              return { document: { file_path: dest }, created: false };
-            }
-            if (existing !== undefined) {
-              return yield* new BadRequest({ detail: `Reference destination collision: ${dest}` });
-            }
+            return {
+              document: { id: sourceId, file_path: existing.filePath },
+              created: false,
+            };
           }
-          const document = yield* writeAndIndex(vaultId, reference.content, dest);
+          const parsed = posix.parse(posix.basename(reference.row.filePath));
+          const dest = `raw/docs/${parsed.name}-${sourceId}${parsed.ext}`;
+          const document = yield* writeAndIndex(
+            vaultId,
+            sourceId,
+            reference.content,
+            dest,
+          );
           return { document, created: true };
         }),
       ingestUserSuggestion: (userId, vaultId, input) =>
@@ -455,7 +474,8 @@ export const IngestServiceLive = Layer.effect(
             return yield* new BadRequest({ detail: "body is empty" });
           }
           const now = yield* clock.now;
-          const dest = userSuggestionDest(now, input.intent, input.anchored_to);
+          const sourceId = randomUUID() as Uuid;
+          const dest = userSuggestionDest(now, input.intent, input.anchored_to, sourceId);
           const frontmatter = {
             sourceType: "user",
             origin: "user-suggestion",
@@ -464,17 +484,26 @@ export const IngestServiceLive = Layer.effect(
             intent: input.intent,
           };
           if (scope.role === "owner") {
-            return yield* writeAndIndex(vaultId, buildDocument(input.body, frontmatter), dest);
+            return yield* writeAndIndex(
+              vaultId,
+              sourceId,
+              buildDocument(input.body, frontmatter),
+              dest,
+            );
           }
-          const rendered = buildDocument(input.body, frontmatter);
+          const rendered = identifySourceMarkdown(
+            buildDocument(input.body, frontmatter),
+            sourceId,
+          );
           yield* proposals.createRendered(vaultId, userId, {
+            sourceId,
             contentType: "user_suggestion",
             title: null,
             author: null,
             destPath: dest,
             rendered,
           });
-          return { file_path: dest } satisfies IngestedDocument;
+          return { id: sourceId, file_path: dest } satisfies IngestedDocument;
         }),
       checkStagedDupes: (userId, vaultId, clientHashes) =>
         Effect.gen(function* () {
@@ -596,15 +625,21 @@ export const IngestServiceLive = Layer.effect(
           const refreshed = yield* getPipelineRun(run.id as Uuid, vaultId);
           return jobResponse(refreshed);
         }),
-      ingestSessionExchange: (vaultId, sessionId, exchange, sessionOrigin) =>
-        writeAndIndex(
+      ingestSessionExchange: (vaultId, sessionId, exchange, sessionOrigin) => {
+        const sourceId = sourceIdForKey(
           vaultId,
+          `session:${sessionId}:${exchange.exId}`,
+        );
+        return writeAndIndex(
+          vaultId,
+          sourceId,
           buildDocument(
             exchange.answer ?? "",
             sessionExchangeDocumentInput(sessionId, exchange, sessionOrigin),
           ),
-          sessionExchangePath(exchange.exId),
-        ),
+          sessionExchangePath(exchange.exId, sourceId),
+        );
+      },
     } satisfies IngestServiceShape;
   }),
 );

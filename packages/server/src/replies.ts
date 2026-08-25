@@ -91,6 +91,7 @@ const sourceRef = (data: QuerySourceData, thinking: string, pending = false): Re
     return {
       label: data.path,
       type: data.type,
+      document_id: data.document_id,
       title: data.title,
       scope: null,
       path: null,
@@ -104,6 +105,7 @@ const sourceRef = (data: QuerySourceData, thinking: string, pending = false): Re
     return {
       label: data.query,
       type: "search",
+      document_id: null,
       scope: data.scope,
       path: data.path ?? null,
       title: data.title,
@@ -115,6 +117,7 @@ const sourceRef = (data: QuerySourceData, thinking: string, pending = false): Re
     return {
       label: data.path,
       type: "links",
+      document_id: null,
       title: data.title,
       scope: null,
       path: null,
@@ -130,6 +133,7 @@ const sourceRef = (data: QuerySourceData, thinking: string, pending = false): Re
     return {
       label: summary,
       type: "query",
+      document_id: null,
       title: null,
       scope: null,
       path: null,
