@@ -83,6 +83,11 @@ Do not describe code. Describe what the user sees and does. Technical detail goe
 - Exchange promotion is idempotent by destination: an existing source or pending proposal is returned without rewrite or another compile. The session receives no saved marker, so reload shows the action again.
 - Fresh owner ingests and editor proposals return `title: null`, but the browser currently requires a string. The first successful mutation therefore displays a response-validation error after committing; a post-reload repeat can show success through an exchange-id fallback.
 - The promotion path requires editor access but currently omits the parent session-creator check used by read/append, creating a suspected private-session promotion defect for another editor who knows both ids.
+- Owner file review hashes recognized files four-at-a-time, auto-deselects later same-batch hashes and server-known client hashes, and stores the confirmed `File` objects/run id only in `/pipeline` browser history state until a durable run exists.
+- Default local/direct upload is sequential and accepts UTF-8 Markdown/plain text plus HTML, despite the review recognizing many office/PDF/data formats. It discards displayed folder paths and client hashes, derives `raw/docs/{slugified base}.md`, and can overwrite same-named sources.
+- R2 staged upload signs for one hour, PUTs unique hashes four-at-a-time, then starts a durable staged-ingest workflow. Accepted source paths use the first 12 hash characters; staged leftovers expire after one day.
+- Review selected counts include unrecognized/hash-error rows that confirmation silently omits. Partial staged upload/conversion failures can also be omitted when some files continue, and pre-run **retry** starts compile rather than retrying files.
+- Before run creation, file upload has no cancel or durable recovery. Its async resolver is not lifecycle-aborted and resolves the active vault separately on each request, creating navigation and cross-tab vault-drift risks.
 
 Add load-bearing facts here as each foundation is completed: defaults, limits, timing, durable boundaries, role restrictions, route ownership, recovery rules, and which research document owns each state.
 

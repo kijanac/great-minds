@@ -171,7 +171,7 @@ Status is one of `not started`, `drafted`, or `verified`.
 | research/follow-up.md | drafted |
 | research/btw-threads.md | drafted |
 | research/save-an-answer-as-a-source.md | drafted |
-| sources/add-files.md | not started |
+| sources/add-files.md | drafted |
 | sources/add-a-url.md | not started |
 | sources/compile-the-vault.md | not started |
 | library/browse-search-and-filter.md | not started |
