@@ -104,6 +104,13 @@ Do not describe code. Describe what the user sees and does. Technical detail goe
 - Source facet/All counts ignore source text search but respect tag; header/count scopes differ. Reading room becomes zero/empty under any tag because references have no tags.
 - An exact title/slug match among fetched tagged articles moves into a **synthesis** pin; it is page-dependent and can appear even in source-type view.
 - Vault list/facet/load-more errors currently have no error surface and can masquerade as empty/no-match; invalid `type` is treated as a source type and can produce a blank shelf when article items suppress the shared empty state.
+- Full readers resolve `/doc/{wiki|raw path}` in active vault and `/refs/{path}` in account scope, strip visible `^pN` markers, reconstruct block IDs, and route wiki links full-screen/raw links to exact-chunk or full-source preview.
+- Reader title H1 has no path fallback for null source/reference titles. Wiki tags are returned by the server but dropped by the browser schema, so article header tags disagree with Library filtering.
+- Header Query starts `/?q=…&origin=…`; vault origins work, but personal reference scope is lost/hardcoded to vault. Anchored personal BTW notes correctly preserve personal scope, so the two entry paths disagree.
+- Document-origin sessions load as saved anchored notes or unanchored conversations. Empty note is local; first accepted turn creates a private session excluded from main Sessions list and keyed to the document path/quote/block offset.
+- Document-note loading errors are invisible, pending note replies do not reconnect on reader reload, and unresolvable anchors can leave a durable note with neither jump nor open-session access.
+- Changing active vault refetches body/related content but does not recreate document-thread state, so old-vault notes can remain attached to a new-vault document path.
+- Any main read failure (invalid/missing/forbidden/network/schema/registry mismatch) currently renders the same **Document not found.** with no retry; related-link and note-load failures are silent.
 
 Add load-bearing facts here as each foundation is completed: defaults, limits, timing, durable boundaries, role restrictions, route ownership, recovery rules, and which research document owns each state.
 
