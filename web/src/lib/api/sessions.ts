@@ -196,7 +196,7 @@ export async function loadSessionMarkdown(sessionId: string): Promise<string> {
 const promoteResponseSchema = z.object({
   mode: z.enum(["ingested", "proposed"]),
   path: z.string(),
-  title: z.string(),
+  title: z.string().nullable(),
   document_id: z.string().nullable(),
   proposal_id: z.string().nullable(),
 });

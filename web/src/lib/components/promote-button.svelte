@@ -39,7 +39,9 @@
     class="font-mono text-[length:var(--text-chrome)] tracking-[0.06em] text-warm-faint"
   >
     {state.result.mode === "ingested"
-      ? `saved as "${state.result.title}"`
+      ? state.result.title
+        ? `saved as "${state.result.title}"`
+        : "saved as source"
       : "submitted for review"}
   </span>
 {:else if state.kind === "error"}
