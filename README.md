@@ -170,7 +170,7 @@ Status is one of `not started`, `drafted`, or `verified`.
 | research/streamed-answer-and-evidence.md | drafted |
 | research/follow-up.md | drafted |
 | research/btw-threads.md | drafted |
-| research/save-an-answer-as-a-source.md | not started |
+| research/save-an-answer-as-a-source.md | drafted |
 | sources/add-files.md | not started |
 | sources/add-a-url.md | not started |
 | sources/compile-the-vault.md | not started |

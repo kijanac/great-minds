@@ -79,6 +79,10 @@ Do not describe code. Describe what the user sees and does. Technical detail goe
 - BTW replies run independently of main session phase, so different side threads and a main reply can run concurrently. One thread permits only one running side turn at a time, has no Stop, and reconnects by durable reply id.
 - Pending and final BTW events repeat the whole thread. Replay currently identifies one logical thread by parent exchange id plus quote, so identical quotes in different blocks can collide after reload.
 - A pre-acceptance BTW failure leaves a local interrupted turn and loses the cleared input; a failed reply with partial text hides its error just like a main reply.
+- **save as source** copies only one durable main answer to `raw/sessions/{exchange id}.md`, regenerates paragraph anchors, records session/exchange/question/origin provenance, registers a `session` source, and creates or coalesces a compile intent.
+- Exchange promotion is idempotent by destination: an existing source or pending proposal is returned without rewrite or another compile. The session receives no saved marker, so reload shows the action again.
+- Fresh owner ingests and editor proposals return `title: null`, but the browser currently requires a string. The first successful mutation therefore displays a response-validation error after committing; a post-reload repeat can show success through an exchange-id fallback.
+- The promotion path requires editor access but currently omits the parent session-creator check used by read/append, creating a suspected private-session promotion defect for another editor who knows both ids.
 
 Add load-bearing facts here as each foundation is completed: defaults, limits, timing, durable boundaries, role restrictions, route ownership, recovery rules, and which research document owns each state.
 
