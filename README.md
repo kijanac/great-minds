@@ -177,7 +177,7 @@ Status is one of `not started`, `drafted`, or `verified`.
 | library/browse-search-and-filter.md | drafted |
 | library/read-content.md | drafted |
 | library/manage-content.md | drafted |
-| health/review-vault-health.md | not started |
+| health/review-vault-health.md | drafted |
 | cross-cutting/share-and-export.md | not started |
 
 ## Reference

@@ -117,6 +117,11 @@ Do not describe code. Describe what the user sees and does. Technical detail goe
 - Reference promotion copies exact personal Markdown to basename-derived `raw/docs/…`, reuses same-body destinations, suffixes different-body collision with an 8-character URL/body hash, registers a source, and queues compile while retaining the reference.
 - Promotion does not carry user-row title/author/published metadata (including rename) into the source, and its server boundary currently allows any vault member direct ingest.
 - Personal-reference delete exists server-side but has no authenticated-web client/control.
+- Health reports nonarchived topic hash drift, live articles without incoming backlinks, and rendered topic-link pairs missing a source→target backlink; it does not inspect source/storage/search/pipeline/reference health.
+- Home/Library attention badge sums dirty ids + orphan rows + missing-link rows without deduplication. Health calls dirty topics “articles,” though the query does not join/require a live article.
+- Health report errors are currently converted by view fallbacks to empty arrays, yielding **Nothing needs attention — the wiki is healthy** and hiding badges with no retry.
+- **update now** appears only when dirty count > 0, is member-wide, and disables only during run creation—not another active pipeline. Orphan-only/missing-only reports have no direct remediation.
+- Health preview rows open orphan articles or the missing link's source article; reports are unpaginated, have no timestamp/refresh/acknowledgement, and are not explicitly invalidated on compile completion or source deletion.
 
 Add load-bearing facts here as each foundation is completed: defaults, limits, timing, durable boundaries, role restrictions, route ownership, recovery rules, and which research document owns each state.
 
