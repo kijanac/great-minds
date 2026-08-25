@@ -112,6 +112,7 @@ bug-triage.md                          suspected defects, repros, causes, and de
 
 verification/
   README.md                            hand-verification protocol
+  environment/                         isolated database, fixtures, services, and browser profiles
   foundations-and-reading-room.md      foundations and the pilot
   research.md                          question, reply, follow-up, and BTW checklists
   sources-and-library.md               ingest, compile, library, reader, and health checklists

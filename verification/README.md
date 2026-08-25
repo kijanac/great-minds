@@ -17,12 +17,8 @@ Priorities: **P1** is a load-bearing claim or suspected defect; **P2** is an ord
 
 ## How to run a pass
 
-1. Use a disposable local database/storage root and a prepared signed-in owner with one populated active vault. From the Great Minds source repo:
-   - start PostgreSQL with `docker compose up -d db`;
-   - migrate with `DATABASE_URL=postgresql://great_minds:great_minds@localhost:5432/great_minds pnpm --filter @great-minds/database migrate`;
-   - start the API on port 8000 with the required `DATABASE_URL`, a non-production `JWT_SECRET`, `PORT=8000`, and a usable `OPENROUTER_API_KEY` for research/compile items (`SUPPRESS_AUTH=true` may be used in a disposable local environment);
-   - run `just dev` and open `http://localhost:5173`.
-2. Confirm the source commit before every pass: `git -C /Users/kijana/Documents/Code/great_minds rev-parse --short HEAD` must be `c8c9e57`. If not, record the pass as blocked by source drift unless the whole description is intentionally repinned.
+1. Use the isolated [verification environment](environment/README.md). From `verification/environment`, run `node manage.mjs reset` and `node prepare-browsers.mjs`. This creates a separate database/storage root, populated owner vault, alternate vault, role accounts, deterministic external URLs, and saved browser profiles without touching the ordinary Great Minds database. Provider-backed research/compile rows remain blocked until a usable `OPENROUTER_API_KEY` is supplied through ignored `.env.local`; R2 rows require a separate disposable R2 deployment.
+2. Confirm the source commit before every pass: `git -C /Users/kijana/Documents/Code/great_minds rev-parse --short HEAD` must be `c8c9e57`. The harness also refuses startup on source drift or tracked source changes. If the check fails, record the pass as blocked unless the whole description is intentionally repinned.
 3. Keep the linked document beside the browser. Run P1 across all files first, then P2, then P3.
 4. Use real browser interaction for the input under test. Developer tools, SQL, storage inspection, and server logs may establish setup or verify durable state, but synthetic events are not evidence for focus, selection, drag, animation, or accessibility behavior.
 5. Record `pass`, `fail`, or `blocked` in place. For anything except a clean pass, append a concise condition/result note.
