@@ -93,6 +93,11 @@ Do not describe code. Describe what the user sees and does. Technical detail goe
 - URL sources use `raw/docs/{slugified submitted-path stem or doc}.md` with no URL dedupe/collision suffix. Host/query/fragment and redirect destination do not distinguish the path, so unrelated URLs can overwrite.
 - Visible URL ingest is owner-only, but the server route currently allows any vault member—including viewers—to write the shared source and start the run.
 - A pre-resolution URL error leaves a durable failed run but the browser lacks its id; its **retry** starts a manual compile rather than refetching the URL.
+- Health exposes **update now** only for dirty topics and disables it only during the creation request, not for another active run. Compile requests coalesce with an undispatched intent or queue behind dispatched work.
+- Pipeline lays out eight disclosure stages from complete snapshots, auto-opens current/completed/failed rows, smoothly centers a newly active stage, retries transport drops, and treats stream-opening HTTP errors as terminal page errors.
+- **cancel** has no confirmation/pending/error state and is cooperative; **retry**/**run again** create a whole new manual run and likewise have no pending/error handling. Compile/cancel remain member-wide server operations.
+- Completion waits 300 ms, reports the total live articles carrying the run id but lists at most eight, and silently omits result-query failures. Zero such articles is labeled **nothing changed** even if non-render work changed.
+- A queued terminal snapshot with empty backend phase is discarded before terminal-status handling; the following SSE `done` frame marks overall success, so a queued cancellation/failure can incorrectly show **Knowledge base updated**.
 
 Add load-bearing facts here as each foundation is completed: defaults, limits, timing, durable boundaries, role restrictions, route ownership, recovery rules, and which research document owns each state.
 

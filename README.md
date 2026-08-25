@@ -173,7 +173,7 @@ Status is one of `not started`, `drafted`, or `verified`.
 | research/save-an-answer-as-a-source.md | drafted |
 | sources/add-files.md | drafted |
 | sources/add-a-url.md | drafted |
-| sources/compile-the-vault.md | not started |
+| sources/compile-the-vault.md | drafted |
 | library/browse-search-and-filter.md | not started |
 | library/read-content.md | not started |
 | library/manage-content.md | not started |
