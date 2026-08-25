@@ -160,10 +160,10 @@ The session itself gains no event saying the answer was promoted. Its answer, ev
 
 ## Open questions and verification
 
-- Fix the fresh-response contract: either accept nullable title and display a path/exchange fallback in the browser, or make the server always return a display title. This is a P1 trust defect because success is reported as failure after durable side effects.
+- Fix the fresh-response contract: accept nullable title and display neutral success when no genuine title exists, or make the server always return a genuine display title. This is a P1 trust defect because success is reported as failure after durable side effects.
 - Add a durable saved/proposed state or an existing-source check on render so reload does not invite a redundant action.
 - Verify the exact first-click Zod error presentation in the running browser and whether a long technical message damages exchange layout.
-- The promotion service skips the session-creator check used by session read/append. Verify that an editor who knows another creator's session and exchange ids can promote its private answer, then treat it as a privacy/security bug.
+- The promotion service skips the session-creator check used by session read/append. `PROMOTE-08` confirmed that an editor denied session access can still stage its exact private answer as a pending proposal when given controlled ids; treat this as a privacy/security bug.
 - Existing-destination idempotency does not verify provenance or content. Decide whether a collision should return success, conflict, or compare the parent session/exchange ids.
 - Verify when the new source becomes available to full-text/hybrid research relative to the queued compile; storage/registry commit and search indexing may be observable at different times.
 - Verify screen-reader announcement of **saving…**, success, and error because the replacement text has no explicit live status semantics.

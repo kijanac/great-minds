@@ -4,7 +4,7 @@ A consolidated list of defects and inconsistencies raised by the feature documen
 
 ## Summary
 
-The drafting pass raised 50 deduplicated items: 16 high, 30 medium, and 4 low. The high-severity cluster is dominated by scope/authorization leaks, user work or selected files being silently lost, successful mutations reported as failures, durable terminal state displayed incorrectly, and public-link behavior that can expose more content than the creator saw at creation. Medium items concentrate around missing error/recovery states, lifecycle work that outlives its page, stale active-vault context, and inconsistent content metadata. One item has been hand-confirmed; its Status line also records the later fix.
+The drafting pass raised 50 deduplicated items: 16 high, 30 medium, and 4 low. The high-severity cluster is dominated by scope/authorization leaks, user work or selected files being silently lost, successful mutations reported as failures, durable terminal state displayed incorrectly, and public-link behavior that can expose more content than the creator saw at creation. Medium items concentrate around missing error/recovery states, lifecycle work that outlives its page, stale active-vault context, and inconsistent content metadata. Two items have been hand-confirmed; their Status lines also record the later fixes.
 
 | ID | Title | Severity | Area | Decision needed | Issue |
 | --- | --- | --- | --- | --- | --- |
@@ -95,11 +95,12 @@ The drafting pass raised 50 deduplicated items: 16 high, 30 medium, and 4 low. T
 ### B-04: An editor can promote another creator's private session answer
 
 - **Where the user meets it:** The session-exchange promotion endpoint, reachable if an editor knows session/exchange ids.
-- **What happens / what was expected:** Read/append correctly return not found to other members, but promotion loads vault storage without checking session creator and can publish the private answer as shared source.
-- **Reproduce:** As editor, confirm another member's session cannot be loaded; call its promote route with controlled ids; inspect the new shared source.
+- **What happens / what was expected:** Read/append correctly return not found to other members, but promotion loads vault storage without checking session creator. An editor can stage a pending shared proposal containing the private answer; owner approval can then publish it as a source.
+- **Reproduce:** As editor, confirm another member's session cannot be loaded; call its promote route with controlled ids; inspect the pending proposal and staged body.
 - **Why (from the code):** `packages/server/src/sessions.ts:634-640` uses `requireSessionOwner` for append, while `packages/server/src/sessions.ts:643-673` promotion calls `requireEditor` then `loadAllEvents` without that check.
-- **Severity:** `high`. It is a private-to-shared data disclosure.
-- **Decision needed:** `fix`. Require session ownership before existing-destination checks/event reads and add a regression test.
+- **Severity:** `high`. It discloses private session content into a shared contribution workflow and puts publication one approval away.
+- **Decision needed:** `fix`. Require session ownership before existing-destination checks or event reads.
+- **Status:** `fixed` by Great Minds commit `476ed75`, without a new regression test. `PROMOTE-08` first confirmed the defect against `c8c9e57`: the editor's session page showed **Couldn't load this session**, but a controlled browser request returned 201 `proposed` and staged the exact private answer. Manual verification against `476ed75` returned 404 **Session not found** and created no proposal.
 - **Raised by:** [save answer](research/save-an-answer-as-a-source.md#open-questions-and-verification).
 
 ### B-05: Viewer/editor membership permits shared mutations, provider work, and cancellation
