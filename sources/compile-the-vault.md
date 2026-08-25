@@ -162,7 +162,7 @@ A cancelled run shows **Update cancelled**, **run again**, and **back to home**.
 
 ## Open questions and verification
 
-- Restrict compile/cancel to the intended role or explicitly expose member-wide controls. Viewer-triggered provider cost and cancellation are high-impact authorization/product-policy defects.
+- Post-baseline role decision: compile and cancellation are owner-only, while all members may continue reading run state. Great Minds commit `45ac124` enforces that boundary and hides non-owner mutation controls.
 - Fix terminal handling before phase normalization. A queued cancel/failure with an empty phase is currently ignored and the later `done` frame is treated as successful completion.
 - Add pending/error state to **cancel**, **retry**, and **run again**, and distinguish stream-observation errors from durable pipeline failures.
 - Bare pipeline needs a chooser or deterministic redirect when multiple runs are active instead of **No active job**.

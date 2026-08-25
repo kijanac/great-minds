@@ -167,7 +167,7 @@ Orphan/missing sections have no direct remediation or acknowledgement. A later c
 - Provide action or explanation for orphan-only/missing-only states; currently **update now** is absent even though attention is requested.
 - Revisit orphan semantics: intentional roots and idea-related articles may not be defects merely because they have no incoming Markdown link.
 - Invalidate/refetch Health after compile completion, source deletion, proposal review, and relevant ingest, or expose a manual refresh.
-- Restrict manual compile to intended roles as decided in [compiling the vault](../sources/compile-the-vault.md).
+- Post-baseline role decision: **update now** is owner-only. Great Minds commit `45ac124` hides it from editors/viewers and rejects their direct compile requests.
 - Guard Health's late compile-success navigation after unmount and improve raw JSON error copy.
 - Verify panel behavior for stale/deleted issue paths and keyboard/screen-reader interpretation of `source → target` rows.
 - Load-test unpaginated reports and decide whether grouping/collapse/pagination is needed.

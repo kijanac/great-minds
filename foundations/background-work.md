@@ -159,7 +159,7 @@ After success, the page loads live articles whose render-run identifier matches 
 
 - Verify cancellation latency in every phase and whether the page should change immediately on click; the cancel button has no local pending label or disabled state before the terminal snapshot arrives.
 - Verify stage updates with screen readers and reduced-motion preferences. Active stages auto-scroll smoothly and dynamic rows have no explicit live-region policy.
-- File-ingest controls are owner-only, but Health update, URL ingest, compile, and cancellation are member-wide. Confirm whether editors/viewers are meant to mutate sources, incur provider work, or cancel shared vault work.
+- Post-baseline role decision: Health update, direct URL/reference ingest, compile, and cancellation are owner-only; editors use proposal flows and viewers are read-only. Great Minds commit `45ac124` applies that policy.
 - Bare `/pipeline` shows **No active job** when the active list contains more than one run as well as when it contains none. Verify the intended recovery for unexpected concurrency.
 - URL ingest performs remote fetch and indexing before the launch request returns, even though the run exists. Verify what the user sees if the browser request times out while the run continues and becomes discoverable later.
 - Verify partial staged-upload messaging: the generator records per-file failures, but the pipeline container does not visibly render the `failed_uploads` list before backend progress takes over.

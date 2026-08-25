@@ -162,7 +162,7 @@ Reloading `/pipeline?url=…` before route replacement generates a new job id an
 
 - Return the run id immediately and perform fetch/conversion as durable background work so the initiating page can show progress, cancel, and reconnect without duplicate reload submissions.
 - Change **retry** on URL launch failure to refetch the URL (with a deliberate new/reused id) or relabel it **compile existing sources**.
-- Add owner/editor authorization consistent with the intended contribution model; viewer-level direct source mutation is a security/product-policy defect.
+- Post-baseline role decision: direct URL ingest is owner-only; editors contribute through proposal flows and viewers are read-only. Great Minds commit `45ac124` enforces the owner boundary in both server and launch UI.
 - Prevent path collisions by incorporating host/path or by detecting an existing different URL and choosing a stable suffix, as the reading room does.
 - Verify late navigation after leaving `/pipeline?url=…`; the unresolved async launch has no component-lifecycle guard.
 - Verify reload/network-loss duplication and whether coalesced intents can leave one of multiple URL runs active without an attached dispatch.

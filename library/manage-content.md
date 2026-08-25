@@ -202,7 +202,7 @@ There is no way in this UI to delete the personal original. Calling the server e
 ## Open questions and verification
 
 - Add a personal-reference delete affordance with explicit consequences for promoted copies, sessions, notes, and shares—or remove/document the unused server capability.
-- Decide whether member-wide reference promotion is intentional. If not, route editors through proposals and forbid viewers to mutate shared vault sources.
+- Post-baseline role decision: direct reference promotion is owner-only; editors use existing proposal contribution paths and viewers are read-only. Great Minds commit `45ac124` hides the action and rejects non-owner requests.
 - Queue or clearly offer a follow-up compile after source deletion; otherwise article/search health remains knowingly stale with no direct recovery in the dialog.
 - Make source deletion storage/registry failure semantics truthful and retryable; distinguish already deleted from failed and refresh after uncertain outcomes.
 - Preserve/display personal title/author/published provenance when promoting, especially after an explicit rename.

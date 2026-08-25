@@ -4,7 +4,7 @@ A consolidated list of defects and inconsistencies raised by the feature documen
 
 ## Summary
 
-The drafting pass raised 50 deduplicated items: 16 high, 30 medium, and 4 low. The high-severity cluster is dominated by scope/authorization leaks, user work or selected files being silently lost, successful mutations reported as failures, durable terminal state displayed incorrectly, and public-link behavior that can expose more content than the creator saw at creation. Medium items concentrate around missing error/recovery states, lifecycle work that outlives its page, stale active-vault context, and inconsistent content metadata. Two items have been hand-confirmed; their Status lines also record the later fixes.
+The drafting pass raised 50 deduplicated items: 16 high, 30 medium, and 4 low. The high-severity cluster is dominated by scope/authorization leaks, user work or selected files being silently lost, successful mutations reported as failures, durable terminal state displayed incorrectly, and public-link behavior that can expose more content than the creator saw at creation. Medium items concentrate around missing error/recovery states, lifecycle work that outlives its page, stale active-vault context, and inconsistent content metadata. Three items have been hand-confirmed; their Status lines also record the later fixes.
 
 | ID | Title | Severity | Area | Decision needed | Issue |
 | --- | --- | --- | --- | --- | --- |
@@ -12,7 +12,7 @@ The drafting pass raised 50 deduplicated items: 16 high, 30 medium, and 4 low. T
 | B-02 | Follow-up failure destroys the typed text and every selection chip | high | research | fix | — |
 | B-03 | The first successful save-as-source is reported as a technical error | high | research/source | fix | — |
 | B-04 | An editor can promote another creator's private session answer | high | privacy/source | fix | — |
-| B-05 | Viewer/editor membership permits shared mutations, provider work, and cancellation | high | authorization | product call | — |
+| B-05 | Viewer/editor membership permits shared mutations, provider work, and cancellation | high | authorization | resolved | — |
 | B-06 | A failed Health request reports the wiki as healthy | high | health | fix | — |
 | B-07 | Different URL sources with the same path stem overwrite one another | high | source ingest | fix | — |
 | B-08 | Direct file ingest discards folders and overwrites same-base files | high | source ingest | fix | — |
@@ -110,7 +110,8 @@ The drafting pass raised 50 deduplicated items: 16 high, 30 medium, and 4 low. T
 - **Reproduce:** As viewer, start a URL job, promote a personal reference, start Health update, then cancel the run.
 - **Why (from the code):** `packages/server/src/ingest.ts:427-448` and `550-595` use `requireMember`; `packages/server/src/jobs.ts:175-212` uses `requireMember` for compile/cancel; `web/src/lib/components/health-content.svelte:56-72` has no role branch.
 - **Severity:** `high`. It permits shared mutation, spend, and destructive cancellation by the least-privileged role.
-- **Decision needed:** `product call`. Define the role matrix, then enforce it consistently and align controls. If viewers are intentionally trusted, document/expose controls transparently.
+- **Decision needed:** `resolved`. Owners may mutate shared sources, start compile, or cancel runs; editors contribute through proposal flows; viewers are read-only.
+- **Status:** `fixed` by Great Minds commit `45ac124`, without a new regression test. Against `c8c9e57`, `URL-08` and `MANAGE-12` confirmed viewer source writes, a controlled viewer cancel returned 204 and cancelled a pending run, and dirty Health exposed **update now** before the absent provider key returned 503. Against `45ac124`, viewer mutation controls were absent, direct URL/reference/compile/cancel requests returned 403 without changing durable state, editor compile also returned 403, and owner controls and cancellation still worked.
 - **Raised by:** [access](foundations/access-and-vault-context.md#open-questions-and-verification), [background work](foundations/background-work.md#open-questions-and-verification), [URL ingest](sources/add-a-url.md#open-questions-and-verification), [compile](sources/compile-the-vault.md#open-questions-and-verification), [manage](library/manage-content.md#open-questions-and-verification), [Health](health/review-vault-health.md#open-questions-and-verification).
 
 ### B-06: A failed Health request reports the wiki as healthy
