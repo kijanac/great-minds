@@ -426,7 +426,7 @@ export const IngestServiceLive = Layer.effect(
         }),
       promoteReference: (userId, vaultId, input) =>
         Effect.gen(function* () {
-          yield* access.requireMember(userId, vaultId);
+          yield* access.requireOwner(userId, vaultId);
           const reference = yield* userDocumentsRead.readUserText(userId, input.path);
           const parsed = posix.parse(posix.basename(reference.row.filePath));
           let dest = `raw/docs/${parsed.base}`;
@@ -549,7 +549,7 @@ export const IngestServiceLive = Layer.effect(
         }),
       startUrlJob: (userId, vaultId, input) =>
         Effect.gen(function* () {
-          yield* access.requireMember(userId, vaultId);
+          yield* access.requireOwner(userId, vaultId);
           const run = yield* createPipelineRun(input.job_id, vaultId, "url");
           yield* updateProgress(
             run.id as Uuid,

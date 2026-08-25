@@ -19,6 +19,7 @@
     startUrlJob,
   } from "$lib/api/jobs";
   import { fetchArticlesByRun } from "$lib/api/wiki";
+  import { auth } from "$lib/auth.svelte";
   import PipelineStageRow from "$lib/components/pipeline-stage-row.svelte";
   import {
     Alert,
@@ -31,7 +32,7 @@
     buildClientUploadStages,
     useJobSSE,
   } from "$lib/hooks/use-job-sse.svelte";
-  import { activeVault } from "$lib/hooks/use-vault.svelte";
+  import { activeVault, useVaults } from "$lib/hooks/use-vault.svelte";
 
   interface StagedUploadState {
     uploadFiles?: HashedFile[];
@@ -40,6 +41,7 @@
   }
 
   const queryClient = useQueryClient();
+  const vaults = useVaults();
   let resolvedJobId = $state<string | null>(null);
   let noJobFound = $state(false);
   let resolveError = $state<string | null>(null);
@@ -53,6 +55,10 @@
   const jobId = $derived(routeJobId ?? resolvedJobId);
   const urlParam = $derived(page.url.searchParams.get("url"));
   const stagedUpload = $derived(page.state as StagedUploadState);
+  const currentVault = $derived(
+    vaults.data?.find((vault) => vault.id === activeVault.id) ?? null,
+  );
+  const canManage = $derived(currentVault?.owner_id === auth.userId);
   const progress = useJobSSE(() => jobId);
   const stages = $derived(
     !jobId && clientUpload
@@ -99,13 +105,22 @@
     const currentJobId = jobId;
     const currentUrl = urlParam;
     const uploadState = stagedUpload;
+    const upload = uploadState?.uploadFiles;
     const vaultId = activeVault.id;
+    const launchesMutation =
+      (upload && upload.length > 0 && !!uploadState?.stableJobId) ||
+      !!currentUrl;
     if (started || currentJobId || !vaultId) return;
+    if (launchesMutation && !vaults.isFetched) return;
     started = true;
+
+    if (launchesMutation && !canManage) {
+      resolveError = "Only vault owners can add sources or update this vault.";
+      return;
+    }
 
     void (async () => {
       try {
-        const upload = uploadState?.uploadFiles;
         if (upload && upload.length > 0 && uploadState?.stableJobId) {
           clientUpload = { uploaded: 0, total: upload.length };
           if (uploadState.uploadMode === "direct") {
@@ -192,10 +207,11 @@
   });
 
   async function cancel() {
-    if (jobId) await cancelJob(jobId);
+    if (canManage && jobId) await cancelJob(jobId);
   }
 
   async function retry() {
+    if (!canManage) return;
     const job = await requestCompile();
     await goto(`/pipeline/runs/${job.id}`, { replaceState: true });
   }
@@ -218,7 +234,7 @@
     >
       <ArrowLeft size={14} />
     </Button>
-    {#if isRunning && jobId}
+    {#if isRunning && jobId && canManage}
       <Button
         variant="ghost"
         size="xs"
@@ -281,14 +297,16 @@
             {progress.overallError ?? resolveError}
           </AlertDescription>
           <div class="flex items-center gap-4">
-            <Button
-              variant="ghost"
-              size="xs"
-              onclick={() => void retry()}
-              class="h-auto rounded-sm px-3 py-1 font-mono text-[length:var(--text-chrome)] tracking-[0.1em] text-gold hover:bg-transparent hover:text-gold-hover"
-            >
-              retry
-            </Button>
+            {#if canManage}
+              <Button
+                variant="ghost"
+                size="xs"
+                onclick={() => void retry()}
+                class="h-auto rounded-sm px-3 py-1 font-mono text-[length:var(--text-chrome)] tracking-[0.1em] text-gold hover:bg-transparent hover:text-gold-hover"
+              >
+                retry
+              </Button>
+            {/if}
             <Button
               variant="ghost"
               size="xs"
@@ -311,14 +329,16 @@
             Update cancelled
           </p>
           <div class="flex items-center gap-4">
-            <Button
-              variant="ghost"
-              size="xs"
-              onclick={() => void retry()}
-              class="h-auto rounded-sm px-3 py-1 font-mono text-[length:var(--text-chrome)] tracking-[0.1em] text-gold hover:bg-transparent hover:text-gold-hover"
-            >
-              run again
-            </Button>
+            {#if canManage}
+              <Button
+                variant="ghost"
+                size="xs"
+                onclick={() => void retry()}
+                class="h-auto rounded-sm px-3 py-1 font-mono text-[length:var(--text-chrome)] tracking-[0.1em] text-gold hover:bg-transparent hover:text-gold-hover"
+              >
+                run again
+              </Button>
+            {/if}
             <Button
               variant="ghost"
               size="xs"

@@ -4,8 +4,9 @@
   import { createQuery } from "@tanstack/svelte-query";
   import { onDestroy, tick, untrack } from "svelte";
 
-  import { DocThreads } from "$lib/btw.svelte";
   import type { DocumentScope } from "$lib/api/doc";
+  import { auth } from "$lib/auth.svelte";
+  import { DocThreads } from "$lib/btw.svelte";
   import ArticleChrome from "$lib/components/article-chrome.svelte";
   import ArticlePanel from "$lib/components/article-panel.svelte";
   import ArticleView from "$lib/components/article-view.svelte";
@@ -63,7 +64,7 @@
     vaults.data?.find((vault) => vault.id === activeVault.id) ?? null,
   );
   const promotionAction = $derived(
-    readerScope === "personal" && selectedVault
+    readerScope === "personal" && selectedVault?.owner_id === auth.userId
       ? {
           vaultName: selectedVault.name,
           pending: promotion.pending,

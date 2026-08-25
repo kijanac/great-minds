@@ -174,12 +174,12 @@ export const JobsServiceLive = Layer.effect(
     return {
       requestCompile: (userId, vaultId, jobId) =>
         Effect.gen(function* () {
-          yield* access.requireMember(userId, vaultId);
+          yield* access.requireOwner(userId, vaultId);
           return yield* requestCompile(vaultId, jobId);
         }),
       cancelCompile: (userId, vaultId, runId) =>
         Effect.gen(function* () {
-          yield* access.requireMember(userId, vaultId);
+          yield* access.requireOwner(userId, vaultId);
           const rows = yield* db.query((d) => d
             .select({
               activeTaskId: pipelineRuns.activeTaskId,

@@ -49,7 +49,7 @@
           missing: health.missing,
           compiling: health.compileMutation.isPending,
           compileError: health.compileMutation.error,
-          canIngest: health.currentVault?.owner_id === auth.userId,
+          canManage: health.currentVault?.owner_id === auth.userId,
           hasActivePipeline: health.hasActivePipeline,
           stagedUploads: health.currentVault?.staged_uploads ?? false,
           vaultName: health.currentVault?.name ?? "",

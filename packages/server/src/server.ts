@@ -740,7 +740,7 @@ const CompileHandlersLive = HttpApiBuilder.group(MountedGreatMindsApi, "compile"
         Effect.gen(function* () {
           const current = yield* CurrentAuth;
           const access = yield* VaultAccessService;
-          yield* access.requireMember(current.user_id, params.vault_id);
+          yield* access.requireOwner(current.user_id, params.vault_id);
           const config = yield* AppConfig;
           if (Option.isNone(config.openRouterApiKey)) {
             return yield* new ServiceUnavailable({

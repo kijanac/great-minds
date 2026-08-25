@@ -12,7 +12,7 @@
     missing: UnmentionedLink[];
     compiling: boolean;
     compileError: Error | null;
-    canIngest: boolean;
+    canManage: boolean;
     hasActivePipeline: boolean;
     stagedUploads: boolean;
     vaultName: string;
@@ -61,15 +61,17 @@
           >
             needs update
           </h2>
-          <Button
-            variant="outline"
-            size="sm"
-            onclick={onUpdate}
-            disabled={health.compiling}
-            class="rounded-sm border-gold-dim font-mono text-[length:var(--text-chrome)] tracking-[0.08em] text-gold hover:bg-gold/10"
-          >
-            {health.compiling ? "compiling…" : "update now"}
-          </Button>
+          {#if health.canManage}
+            <Button
+              variant="outline"
+              size="sm"
+              onclick={onUpdate}
+              disabled={health.compiling}
+              class="rounded-sm border-gold-dim font-mono text-[length:var(--text-chrome)] tracking-[0.08em] text-gold hover:bg-gold/10"
+            >
+              {health.compiling ? "compiling…" : "update now"}
+            </Button>
+          {/if}
         </div>
         <p class="font-serif text-[length:var(--text-body)] text-warm-dim">
           {health.dirtyCount} article{health.dirtyCount === 1 ? "" : "s"} drifted
@@ -155,7 +157,7 @@
       browse the library →
     </a>
 
-    {#if health.canIngest}
+    {#if health.canManage}
       <div class="mt-10">
         <IngestionFlow
           hasActivePipeline={health.hasActivePipeline}
