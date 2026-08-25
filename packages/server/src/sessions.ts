@@ -643,6 +643,7 @@ export const SessionsServiceLive = Layer.effect(
       promoteExchange: (userId, vaultId, sessionId, exchangeId) =>
         Effect.gen(function* () {
           const scope = yield* access.requireEditor(userId, vaultId);
+          yield* requireSessionOwner(userId, vaultId, sessionId);
           const dest = sessionExchangePath(exchangeId);
           if (scope.role === "owner") {
             const existing = yield* sourceDocuments.getByPath(vaultId, dest);
