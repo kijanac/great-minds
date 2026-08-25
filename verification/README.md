@@ -51,4 +51,4 @@ Provider prose is nondeterministic. Assertions should concern accepted/pending/t
 
 ## Results so far
 
-No hand-verification pass has been run. All Result cells are `—`; no feature document is marked `verified`. Source reading, integration tests, link checking, and structural checks informed drafting but do not count as visible-product verification.
+Hand verification has started. `ACCESS-01` passed against the disposable owner fixture: sign-in and the selected alternate vault survived reload. All other Result cells remain `—`; no feature document is marked `verified`. Source reading, integration tests, link checking, structural checks, and environment smoke checks do not count as visible-product verification.
