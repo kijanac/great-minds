@@ -88,6 +88,11 @@ Do not describe code. Describe what the user sees and does. Technical detail goe
 - R2 staged upload signs for one hour, PUTs unique hashes four-at-a-time, then starts a durable staged-ingest workflow. Accepted source paths use the first 12 hash characters; staged leftovers expire after one day.
 - Review selected counts include unrecognized/hash-error rows that confirmation silently omits. Partial staged upload/conversion failures can also be omitted when some files continue, and pre-run **retry** starts compile rather than retrying files.
 - Before run creation, file upload has no cancel or durable recovery. Its async resolver is not lifecycle-aborted and resolves the active vault separately on each request, creating navigation and cross-tab vault-drift risks.
+- URL ingest trims only in the browser, prefixes lowercase-scheme-missing input with HTTPS, permits HTML/plain text, enforces public-address checks on redirects, a 30-second fetch timeout, and a 25 MiB body cap.
+- URL launch creates a durable run first but waits synchronously for fetch/conversion/storage before returning its id. The initiating page shows skeletons with no cancel/reconnect; reload of unresolved `/pipeline?url=…` starts a new run/fetch.
+- URL sources use `raw/docs/{slugified submitted-path stem or doc}.md` with no URL dedupe/collision suffix. Host/query/fragment and redirect destination do not distinguish the path, so unrelated URLs can overwrite.
+- Visible URL ingest is owner-only, but the server route currently allows any vault member—including viewers—to write the shared source and start the run.
+- A pre-resolution URL error leaves a durable failed run but the browser lacks its id; its **retry** starts a manual compile rather than refetching the URL.
 
 Add load-bearing facts here as each foundation is completed: defaults, limits, timing, durable boundaries, role restrictions, route ownership, recovery rules, and which research document owns each state.
 
