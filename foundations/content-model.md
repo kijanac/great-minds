@@ -136,6 +136,7 @@ For a vault document to be readable, its stored file and registry row must agree
 
 ## Open questions and verification
 
+- Post-baseline Great Minds commit `b588057` makes Markdown authoritative for source content, source ID the durable identity, and file path a storage location. It adds ID-based source reads/mutations and preserves source IDs in Markdown frontmatter; the path-identity prose above remains the observed `c8c9e57` baseline.
 - Verify display fallbacks for newly ingested sources before their first compile, especially source rows with no title, author, or précis.
 - Verify archived-article direct links both with and without a successor, including what happens when retained storage and registry paths differ.
 - The server returns article tags, but the browser's full-document article schema drops them and `articleMeta` supplies an empty tag list for wiki articles. Article tags therefore filter the library but do not render as clickable header chips. This may be worth treating as a cross-surface consistency bug.

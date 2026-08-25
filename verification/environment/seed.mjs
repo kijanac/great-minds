@@ -259,8 +259,10 @@ const seedContent = async (primaryVaultId, ownerUserId) => {
   const searchRows = [];
 
   for (const definition of sourceDefinitions) {
+    const id = stableUuid(primaryVaultId, `source:${definition.key}`);
     const frontmatter = [
       "---",
+      `source_id: ${id}`,
       `source_type: ${definition.sourceType}`,
       ...(definition.title === null ? [] : [`title: ${definition.title}`]),
       "origin: verification fixture",
@@ -269,7 +271,6 @@ const seedContent = async (primaryVaultId, ownerUserId) => {
     ].join("\n");
     const content = `${frontmatter}${definition.body}`;
     const written = await writeFixture(vaultRoot, definition.path, content);
-    const id = stableUuid(primaryVaultId, `source:${definition.key}`);
     sourceRows.push({ ...definition, ...written, id, content });
     searchRows.push({
       path: definition.path,
@@ -466,7 +467,16 @@ COMMIT;
   };
 };
 
-const ensureSessions = async (owner, primaryVaultId) => {
+const ensureSessions = async (owner, primaryVaultId, content) => {
+  const handbook = content.sources.find(
+    (source) => source.path === "raw/books/verification-handbook.md",
+  );
+  const synthesis = content.articles.find(
+    (article) => article.path === "wiki/verification-synthesis.md",
+  );
+  if (handbook === undefined || synthesis === undefined) {
+    throw new Error("Session evidence fixtures are missing");
+  }
   const listed = await jsonRequest("GET", `/vaults/${primaryVaultId}/sessions?limit=200&offset=0`, {
     token: owner.access_token,
     expected: [200],
@@ -488,6 +498,7 @@ const ensureSessions = async (owner, primaryVaultId) => {
                 {
                   label: "Verification Handbook",
                   type: "raw",
+                  document_id: handbook.id,
                   title: "Verification Handbook",
                   scope: "kb",
                   path: "raw/books/verification-handbook.md",
@@ -498,6 +509,7 @@ const ensureSessions = async (owner, primaryVaultId) => {
                 {
                   label: "Verification as observed evidence",
                   type: "article",
+                  document_id: synthesis.id,
                   title: "Verification as observed evidence",
                   scope: "kb",
                   path: "wiki/verification-synthesis.md",
@@ -641,7 +653,7 @@ await ensureMembership(accounts.owner, primary.id, accounts.editor, "editor");
 await ensureMembership(accounts.owner, primary.id, accounts.viewer, "viewer");
 
 const content = await seedContent(primary.id, accounts.owner.user_id);
-const sessions = await ensureSessions(accounts.owner, primary.id);
+const sessions = await ensureSessions(accounts.owner, primary.id, content);
 
 const manifest = {
   source_commit: sourceCommit,

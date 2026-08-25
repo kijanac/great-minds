@@ -14,7 +14,7 @@ The drafting pass raised 50 deduplicated items: 16 high, 30 medium, and 4 low. T
 | B-04 | An editor can promote another creator's private session answer | high | privacy/source | fix | — |
 | B-05 | Viewer/editor membership permits shared mutations, provider work, and cancellation | high | authorization | resolved | — |
 | B-06 | A failed Health request reports the wiki as healthy | high | health | resolved | — |
-| B-07 | Different URL sources with the same path stem overwrite one another | high | source ingest | fix | — |
+| B-07 | Different URL sources with the same path stem overwrite one another | high | source ingest | resolved | — |
 | B-08 | Direct file ingest discards folders and overwrites same-base files | high | source ingest | fix | — |
 | B-09 | File review and staged ingest can silently omit files counted as selected | high | source ingest | fix | — |
 | B-10 | A failed reply with partial prose looks successfully completed | high | research | fix | — |
@@ -132,8 +132,8 @@ The drafting pass raised 50 deduplicated items: 16 high, 30 medium, and 4 low. T
 - **Reproduce:** Ingest two different bodies at `https://a.example/x/article` and `https://b.example/y/article?version=2`.
 - **Why (from the code):** `packages/server/src/ingest.ts:310-326` derives `posix.parse(parsed.pathname).name`, writes one slug path, and calls upsert without URL collision handling.
 - **Severity:** `high`. It silently destroys/replaces shared source content.
-- **Decision needed:** `fix`. Use normalized URL identity and stable collision suffix or return conflict before write.
-- **Status:** `confirmed` against `c8c9e57` by `URL-05`. From a clean five-source fixture, the owner ingested `host-a/report` and then `host-b/report?version=2`; both visible runs completed, but Library stayed at six sources with one `docs/report` row and its panel changed from the distinct alpha body to the beta body. Supporting storage and SQL showed one `raw/docs/report.md` file/row carrying only the second URL and body.
+- **Decision needed:** `resolved`. Markdown remains authoritative for document content; an immutable source ID is document identity, canonical URL is the URL-ingest idempotency key, and file path is a mutable storage location.
+- **Status:** `fixed` by Great Minds commit `b588057`, with integration coverage. `URL-05` first confirmed the defect against `c8c9e57`: from a clean five-source fixture, `host-a/report` followed by `host-b/report?version=2` left one `docs/report` row whose panel changed from alpha to beta. Against `b588057`, a fresh three-source fixture grew to five sources, Library retained separately titled alpha and beta rows and bodies, repeat ingest kept the count at five, full-screen reads used `/source/{source-id}`, and SQL/storage showed distinct IDs, canonical URLs, paths, and matching Markdown `source_id` frontmatter.
 - **Raised by:** [URL ingest](sources/add-a-url.md#open-questions-and-verification).
 
 ### B-08: Direct file ingest discards folders and overwrites same-base files
