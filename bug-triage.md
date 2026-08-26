@@ -4,7 +4,7 @@ A consolidated list of defects and inconsistencies raised by the feature documen
 
 ## Summary
 
-The drafting pass raised 50 deduplicated items: 16 high, 30 medium, and 4 low. Post-baseline implementation verification later added one resolved medium defect, B-51. The high-severity cluster is dominated by scope/authorization leaks, user work or selected files being silently lost, successful mutations reported as failures, durable terminal state displayed incorrectly, and public-link behavior that can expose more content than the creator saw at creation. Medium items concentrate around missing error/recovery states, lifecycle work that outlives its page, stale active-vault context, and inconsistent content metadata. Status lines preserve hand-verification evidence and, where applicable, later fixes.
+The drafting pass raised 50 deduplicated items: 16 high, 30 medium, and 4 low. Post-baseline implementation verification later added two resolved medium defects, B-51 and B-52. The high-severity cluster is dominated by scope/authorization leaks, user work or selected files being silently lost, successful mutations reported as failures, durable terminal state displayed incorrectly, and public-link behavior that can expose more content than the creator saw at creation. Medium items concentrate around missing error/recovery states, lifecycle work that outlives its page, stale active-vault context, and inconsistent content metadata. Status lines preserve hand-verification evidence and, where applicable, later fixes.
 
 | ID | Title | Severity | Area | Decision needed | Issue |
 | --- | --- | --- | --- | --- | --- |
@@ -55,6 +55,7 @@ The drafting pass raised 50 deduplicated items: 16 high, 30 medium, and 4 low. P
 | B-45 | Durable research generation has no Stop action | medium | research | product call | — |
 | B-46 | Dynamic progress and selection actions lack robust assistive semantics | medium | accessibility | fix | — |
 | B-51 | Coalesced source-ingest runs share one compile but only one run terminates | medium | source ingest/pipeline | resolved | — |
+| B-52 | Moving source storage leaves its stable ID bound to the missing old path | medium | source identity/indexing | resolved | — |
 | B-47 | Library count, wildcard, tag, and synthesis-pin semantics are misleading | low | Library | product call | — |
 | B-48 | Clipboard and Markdown-export failures have no visible error | low | sharing/export | fix | — |
 | B-49 | Pipeline pages omit the run context needed to identify work | low | pipeline | product call | — |
@@ -545,6 +546,17 @@ The drafting pass raised 50 deduplicated items: 16 high, 30 medium, and 4 low. P
 - **Decision needed:** `resolved`. Treat every active run with the same compile-intent id as an observer of one shared execution; fan out progress/task/terminal state and cancel the group atomically.
 - **Status:** `fixed` by Great Minds commit `f7606dd`. Before the fix, runs `1cbf74ac-e6d2-4855-99bb-131986d48402` and `feb4e561-c432-465f-973b-4f4385b7e5a7` produced one source and one compile, but only the first finished. A same-browser post-fix repeat with runs `0f4a011f-6e97-4fad-a49e-2694ba1e1a44` and `d6803d2d-4103-4d81-a472-24c4b3d0fe96` visibly completed all stages in both tabs under one shared intent/task, persisted one exact-hash source, and cleaned both staging objects. Fresh-schema integration tests cover shared completion and cancellation.
 - **Raised by:** [add files](sources/add-files.md#open-questions-and-verification), [background work](foundations/background-work.md#open-questions-and-verification), [compile](sources/compile-the-vault.md#open-questions-and-verification).
+
+### B-52: Moving source storage leaves its stable ID bound to the missing old path
+
+- **Where the user meets it:** A source reader or historical evidence card after an administrator moves or renames the source's Markdown object inside `raw/` and then compiles the vault.
+- **What happens / what was expected:** The Markdown still carries the same immutable `source_id`, but the registry retains the missing old path. The stable `/source/{id}` route returns **Document not found**; compile can remove old-path search chunks without repairing the registry. A storage scan should treat frontmatter identity as authoritative, update only the mutable location, and rebuild path-keyed indexes without changing relationships.
+- **Reproduce:** Open source `c0f375a6-09bd-52d1-9285-dff2a5104bae`, move its unchanged file from `raw/books/verification-handbook.md` to an ID-bearing path under `raw/moved/`, reload the same source-ID route, then run a compile and inspect the route, registry, evidence card, and search paths.
+- **Why (from the code):** At `f7606dd`, `packages/server/src/compile-phases.ts` joined storage files to `source_documents` only by `file_path`. It rebuilt path-keyed search state but never parsed `source_id` or called the source registry upsert for discovered raw files, so the database had no way to associate the moved object with its existing row.
+- **Severity:** `medium`. The bytes remain safe and an administrator caused the move, but ordinary reads, evidence excerpts, and search become unavailable despite the stable-identity contract.
+- **Decision needed:** `resolved`. Parse raw Markdown identity at the storage boundary, reject multiple paths claiming one ID before mutation, and refresh the existing row by ID while preserving client fingerprint, derived metadata, and ID-based relationships.
+- **Status:** `fixed` by Great Minds commit `bee8188`. Before the fix, run `2e66bd92-e7cb-435c-a88f-49c36eec2c28` completed all stages while the route remained missing and the registry retained the old path. Post-fix run `4a9aaa7c-75c9-423f-a8cf-2e96e1f9941a` reconciled the moved path; the unchanged source-ID URL rendered the handbook again and its historical session evidence card resolved the source. The physical SHA-256 remained `f63e9de4e7fea6415237e284d1639266bade9cece7238420ea8dab86fb0e76a8`. Integration coverage proves old search paths are replaced, the idea foreign key retains the same source ID, derived fields/fingerprint survive, and duplicate identity claims fail before mutation.
+- **Raised by:** [content model](foundations/content-model.md#open-questions-and-verification), [compile](sources/compile-the-vault.md#open-questions-and-verification), [source verification](verification/sources-and-library.md).
 
 ## Low
 
