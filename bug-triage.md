@@ -35,7 +35,7 @@ The drafting pass raised 50 deduplicated items: 16 high, 30 medium, and 4 low. T
 | B-25 | Full-reader metadata drops article tags and omits null-title fallbacks | medium | reader | fix | — |
 | B-26 | File review recognizes formats that the active converter rejects | medium | source ingest | resolved | — |
 | B-27 | Direct-upload duplicate detection is both racy and ineffective on repeats | medium | source ingest | resolved | — |
-| B-28 | Client file upload has no real cancel/recovery and can navigate after leaving | medium | source ingest | fix | — |
+| B-28 | Client file upload has no real cancel/recovery and can navigate after leaving | medium | source ingest | resolved | — |
 | B-29 | Bare pipeline says No active job when several runs are active | medium | pipeline | fix | — |
 | B-30 | Pipeline cancel/retry/stream errors lack truthful pending and failure state | medium | pipeline | fix | — |
 | B-31 | Source deletion leaves compiled articles stale without queuing repair | medium | content management | product call | — |
@@ -349,7 +349,8 @@ The drafting pass raised 50 deduplicated items: 16 high, 30 medium, and 4 low. T
 - **Reproduce:** Start a delayed batch, navigate Home, then inject a middle-file failure and click Retry.
 - **Why (from the code):** `web/src/lib/components/pipeline-container.svelte:100-188` starts unguarded async loops without cleanup signal; Cancel requires `jobId` at `194-196`; Retry at `198-200` always compiles.
 - **Severity:** `medium`. Recovery wording is false and page navigation can override user intent.
-- **Decision needed:** `fix`. Abort/guard client work, persist recoverable manifest, and implement file-specific retry.
+- **Decision needed:** `resolved`. Guard stale route work, persist the manifest before transfer, and recover missing files by exact-hash reselection.
+- **Status:** `fixed` by Great Minds commits `ccf1b7d` and `2f593d8`. The first creates the run and immutable per-file manifest before transfer, exposes durable cancel/resume/reselection, and commits only after every object is acknowledged. The second gives async creation/resolution/upload work explicit route ownership while allowing an in-flight durable transfer to finish in the background. In a visible gated-transfer check, the owner left run `9c259207-6096-442d-a0a5-2cea10b494d8` for Home before release; the batch, source, and pipeline completed, but the browser stayed Home and the vault grew from 14 to 15 sources.
 - **Raised by:** [add files](sources/add-files.md#open-questions-and-verification).
 
 ### B-29: Bare pipeline says No active job when several runs are active

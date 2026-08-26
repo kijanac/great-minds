@@ -31,6 +31,8 @@ Post-baseline B-27 recheck: Great Minds `8ccfc5c` made the remote duplicate chec
 
 Post-baseline durable-batch recheck: Great Minds `ccf1b7d` created run `69b18e69-7c68-425e-8bd0-6cab5b4d1673` before an intentionally aborted transfer. The canonical route named the failed file; SQL retained a primary-vault `uploading` batch, `pending` file, creator, and active run with no task. Reload recovered **Upload paused** and **reselect files** without a browser `File`; exact-byte reselection resumed the same run, completed the batch/file/pipeline, persisted the matching hash and source Markdown, and cleaned staging. A terminal reload still resolved the primary-vault run while browser vault storage temporarily pointed at the alternate vault. Historical `FILES-12` and `FILES-14` Result cells remain `—`.
 
+Post-baseline navigation-away recheck: with Great Minds `2f593d8`, a browser gate held the only transfer for run `9c259207-6096-442d-a0a5-2cea10b494d8` while the canonical route visibly showed Uploading. The owner clicked **back to home** before release. Releasing from Home completed the batch, file, source, and pipeline, but the browser remained at `/`; reload showed the vault grow from 14 to 15 sources. SQL and raw bytes matched source `f28ec54f-cfa5-5ff7-9d17-ff7d77c9618c`. Historical `FILES-13` remains `—`.
+
 Not checkable by hand:
 
 - Whether folder hierarchy should be preserved or deliberately discarded is a product call; the post-baseline source-ID fix prevents discarded hierarchy from causing same-base replacement.
