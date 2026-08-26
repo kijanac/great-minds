@@ -9,46 +9,72 @@
   import { Input } from "$lib/components/ui/input";
   import type { DroppedFile } from "$lib/types";
 
-  const RECOGNISED_EXTS = new Set([
+  const DIRECT_UPLOAD_EXTS = new Set([
     ".md",
     ".markdown",
     ".txt",
     ".text",
-    ".pdf",
-    ".docx",
-    ".doc",
-    ".pptx",
-    ".ppt",
-    ".xlsx",
-    ".xls",
+    ".html",
+    ".htm",
+  ]);
+  const STAGED_UPLOAD_EXTS = new Set([
+    ".md",
+    ".markdown",
+    ".txt",
+    ".text",
     ".csv",
     ".json",
     ".xml",
     ".html",
     ".htm",
-    ".epub",
-    ".rtf",
+    ".pdf",
+    ".docx",
+    ".pptx",
+    ".xlsx",
     ".odt",
+    ".odp",
+    ".ods",
   ]);
   const HASH_CONCURRENCY = 4;
 
-  type FileStatus =
-    | "checking"
-    | "unique"
-    | "duplicate-in-batch"
-    | "duplicate-in-vault"
-    | "unrecognised"
-    | "error";
-
-  interface IngestableFile {
+  interface FileBase {
     id: string;
     file: File;
     path: string;
     ext: string;
-    status: FileStatus;
-    hash?: string;
+  }
+
+  interface CheckingFile extends FileBase {
+    status: "checking";
+    selected: true;
+  }
+
+  interface HashedIngestableFile extends FileBase {
+    status: "unique" | "duplicate-in-batch" | "duplicate-in-vault";
+    hash: string;
     selected: boolean;
-    error?: string;
+  }
+
+  interface UnsupportedFile extends FileBase {
+    status: "unsupported";
+    selected: false;
+  }
+
+  interface FailedFile extends FileBase {
+    status: "error";
+    selected: false;
+    error: string;
+  }
+
+  type IngestableFile =
+    CheckingFile | HashedIngestableFile | UnsupportedFile | FailedFile;
+
+  function isHashedFile(file: IngestableFile): file is HashedIngestableFile {
+    return (
+      file.status === "unique" ||
+      file.status === "duplicate-in-batch" ||
+      file.status === "duplicate-in-vault"
+    );
   }
 
   let {
@@ -61,16 +87,29 @@
     vaultName: string;
   } = $props();
 
+  function isSelectableFile(
+    file: IngestableFile,
+  ): file is HashedIngestableFile {
+    return isHashedFile(file) && (!stagedUploads || file.status === "unique");
+  }
+
   let expanded = $state(false);
   let isDragOver = $state(false);
   let url = $state("");
   let files = $state<IngestableFile[]>([]);
   let dragCounter = 0;
   let hashRunId = 0;
+  let checkingVault = $state(false);
   let zone: HTMLDivElement;
 
   const hasFiles = $derived(files.length > 0);
-  const selectedCount = $derived(files.filter((file) => file.selected).length);
+  const selectedFiles = $derived(
+    files.filter(
+      (file): file is HashedIngestableFile =>
+        isSelectableFile(file) && file.selected,
+    ),
+  );
+  const selectedCount = $derived(selectedFiles.length);
   const checkingCount = $derived(
     files.filter((file) => file.status === "checking").length,
   );
@@ -80,8 +119,8 @@
   const dupVaultCount = $derived(
     files.filter((file) => file.status === "duplicate-in-vault").length,
   );
-  const unrecognisedCount = $derived(
-    files.filter((file) => file.status === "unrecognised").length,
+  const unsupportedCount = $derived(
+    files.filter((file) => file.status === "unsupported").length,
   );
   const totalSize = $derived(
     files.reduce((total, file) => total + file.file.size, 0),
@@ -95,6 +134,14 @@
 
   function extOf(name: string): string {
     return name.includes(".") ? `.${name.split(".").pop()?.toLowerCase()}` : "";
+  }
+
+  function supportsUpload(file: File, ext: string): boolean {
+    if (stagedUploads) return ext === "" || STAGED_UPLOAD_EXTS.has(ext);
+    return (
+      DIRECT_UPLOAD_EXTS.has(ext) ||
+      file.type.toLowerCase().includes("text/html")
+    );
   }
 
   async function filesFromDrop(
@@ -147,21 +194,17 @@
   function initialIngestable(dropped: DroppedFile[]): IngestableFile[] {
     return dropped.map(({ file, path }) => {
       const ext = extOf(file.name);
-      const recognised = ext === "" || RECOGNISED_EXTS.has(ext);
-      return {
-        id: crypto.randomUUID(),
-        file,
-        path,
-        ext,
-        status: recognised ? "checking" : "unrecognised",
-        selected: true,
-      };
+      const base = { id: crypto.randomUUID(), file, path, ext };
+      return supportsUpload(file, ext)
+        ? { ...base, status: "checking", selected: true }
+        : { ...base, status: "unsupported", selected: false };
     });
   }
 
   function close() {
     expanded = false;
     files = [];
+    checkingVault = false;
     hashRunId += 1;
     url = "";
   }
@@ -213,10 +256,10 @@
     hash: string,
   ): IngestableFile[] {
     const duplicate = current.some(
-      (file) => file.id !== id && file.hash === hash,
+      (file) => file.id !== id && isHashedFile(file) && file.hash === hash,
     );
     return current.map((file) =>
-      file.id === id
+      file.id === id && file.status === "checking"
         ? {
             ...file,
             hash,
@@ -245,10 +288,11 @@
         } catch (error) {
           if (hashRunId !== runId) return;
           files = files.map((file) =>
-            file.id === item.id
+            file.id === item.id && file.status === "checking"
               ? {
                   ...file,
                   status: "error",
+                  selected: false,
                   error: error instanceof Error ? error.message : "hash failed",
                 }
               : file,
@@ -265,24 +309,25 @@
     );
     if (hashRunId !== runId) return;
 
-    const hashes = files
-      .filter(
-        (file) =>
-          file.status === "unique" || file.status === "duplicate-in-batch",
-      )
-      .map((file) => file.hash!)
-      .filter(Boolean);
-    const existing = await checkDupes(Array.from(new Set(hashes)));
-    if (hashRunId !== runId || existing.size === 0) return;
-    files = files.map((file) =>
-      file.hash && existing.has(file.hash)
-        ? { ...file, status: "duplicate-in-vault", selected: false }
-        : file,
-    );
+    const hashes = files.filter(isHashedFile).map((file) => file.hash);
+    if (hashes.length === 0) return;
+    checkingVault = true;
+    try {
+      const existing = await checkDupes(Array.from(new Set(hashes)));
+      if (hashRunId !== runId || existing.size === 0) return;
+      files = files.map((file) =>
+        isHashedFile(file) && existing.has(file.hash)
+          ? { ...file, status: "duplicate-in-vault", selected: false }
+          : file,
+      );
+    } finally {
+      if (hashRunId === runId) checkingVault = false;
+    }
   }
 
   function startWithFiles(dropped: DroppedFile[]) {
     if (dropped.length === 0) return;
+    checkingVault = false;
     const initial = initialIngestable(dropped);
     files = initial;
     void runHashingPipeline(initial);
@@ -327,24 +372,27 @@
 
   function toggleSelected(id: string) {
     files = files.map((file) =>
-      file.id === id ? { ...file, selected: !file.selected } : file,
+      file.id === id && isSelectableFile(file)
+        ? { ...file, selected: !file.selected }
+        : file,
     );
   }
 
   function deselectDuplicates() {
-    files = files.map((file) => ({
-      ...file,
-      selected:
-        file.status === "unique" ||
-        file.status === "unrecognised" ||
-        file.status === "checking",
-    }));
+    files = files.map((file) => {
+      if (file.status === "checking") return { ...file, selected: true };
+      if (isHashedFile(file)) {
+        return { ...file, selected: file.status === "unique" };
+      }
+      return file;
+    });
   }
 
   function confirm() {
-    const uploadFiles: HashedFile[] = files
-      .filter((file) => file.selected && file.hash && file.status !== "error")
-      .map((item) => ({ file: item.file, hash: item.hash! }));
+    const uploadFiles: HashedFile[] = selectedFiles.map((item) => ({
+      file: item.file,
+      hash: item.hash,
+    }));
     if (uploadFiles.length === 0) return;
 
     void goto("/pipeline", {
@@ -362,7 +410,7 @@
     else expanded = true;
   }
 
-  function statusIndicator(status: FileStatus) {
+  function statusIndicator(status: IngestableFile["status"]) {
     switch (status) {
       case "checking":
         return {
@@ -389,10 +437,10 @@
           label: "already in vault",
           className: "text-warm-faint",
         };
-      case "unrecognised":
+      case "unsupported":
         return {
           glyph: "⚠",
-          label: "unrecognised format",
+          label: "unsupported format",
           className: "text-warm-faint",
         };
       case "error":
@@ -482,10 +530,12 @@
           <div
             class="flex min-w-0 flex-1 items-center gap-x-4 overflow-hidden px-4 font-mono text-[length:var(--text-chrome)] tracking-[0.06em] whitespace-nowrap text-warm-ghost"
           >
-            <span>{selectedCount} / {files.length} selected</span>
+            <span>{selectedCount} / {files.length} ready</span>
             <span>{formatSize(totalSize)}</span>
             {#if checkingCount > 0}
               <span class="text-gold-dim">{checkingCount} hashing</span>
+            {:else if checkingVault}
+              <span class="text-gold-dim">checking vault</span>
             {/if}
             {#if dupBatchCount > 0}
               <span class="text-warm-faint">{dupBatchCount} dup in batch</span>
@@ -495,9 +545,8 @@
                 >{dupVaultCount} already in vault</span
               >
             {/if}
-            {#if unrecognisedCount > 0}
-              <span class="text-warm-faint"
-                >{unrecognisedCount} unrecognised</span
+            {#if unsupportedCount > 0}
+              <span class="text-warm-faint">{unsupportedCount} unsupported</span
               >
             {/if}
           </div>
@@ -541,20 +590,22 @@
       <ul class="h-[320px] divide-y divide-ink-subtle overflow-y-auto">
         {#each files as item (item.id)}
           {@const indicator = statusIndicator(item.status)}
-          {@const isDupe =
-            item.status === "duplicate-in-batch" ||
-            item.status === "duplicate-in-vault"}
+          {@const unavailable =
+            item.status === "unsupported" || item.status === "error"}
           <li
-            class={`flex items-center gap-3 px-3 py-1.5 transition-opacity ${isDupe && !item.selected ? "opacity-50" : ""}`}
+            class={`flex items-center gap-3 px-3 py-1.5 transition-opacity ${unavailable ? "opacity-60" : ""}`}
           >
             <input
               type="checkbox"
               checked={item.selected}
+              disabled={!isSelectableFile(item)}
               onchange={() => toggleSelected(item.id)}
-              aria-label={item.selected
-                ? "Click to exclude"
-                : "Click to include"}
-              class="h-4 w-4 shrink-0 accent-gold"
+              aria-label={isSelectableFile(item)
+                ? item.selected
+                  ? `Exclude ${item.path}`
+                  : `Include ${item.path}`
+                : `${item.path} cannot be included: ${indicator.label}`}
+              class="h-4 w-4 shrink-0 accent-gold disabled:cursor-not-allowed"
             />
             <span
               class="min-w-0 flex-1 truncate font-serif text-[length:var(--text-small)] text-warm-dim"
@@ -575,7 +626,7 @@
             </span>
             <span
               class={`flex w-44 shrink-0 items-center gap-1.5 truncate font-mono text-[length:var(--text-chrome)] tracking-[0.06em] ${indicator.className}`}
-              title={item.error ?? indicator.label}
+              title={item.status === "error" ? item.error : indicator.label}
             >
               <span class="shrink-0">{indicator.glyph}</span>
               <span class="truncate">{indicator.label}</span>
@@ -590,7 +641,7 @@
             variant="ghost"
             size="xs"
             onclick={confirm}
-            disabled={selectedCount === 0 || checkingCount > 0}
+            disabled={selectedCount === 0 || checkingCount > 0 || checkingVault}
             class="h-auto rounded-sm px-3 py-0.5 font-mono text-[length:var(--text-chrome)] tracking-[0.1em] text-gold hover:bg-transparent hover:text-gold-hover disabled:cursor-not-allowed disabled:text-warm-ghost"
           >
             ingest {selectedCount} file{selectedCount !== 1 ? "s" : ""}

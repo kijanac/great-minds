@@ -579,7 +579,7 @@ describe("M4.2 durable workers", () => {
     expect(written.size).toBe(0);
   }, 30_000);
 
-  it("converts binary/text files, isolates failures, batches indexes, cleans staging, and emits one intent", async () => {
+  it("persists valid staged files but fails the batch visibly when another file cannot convert", async () => {
     const docxHash = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
     const textHash = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
     const badHash = "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc";
@@ -630,14 +630,21 @@ describe("M4.2 durable workers", () => {
       }),
     );
     expect(rows.documents).toHaveLength(2);
-    expect(rows.intents).toHaveLength(1);
-    expect(rows.intents[0]?.pipelineRunId).toBe(id.ingestRun);
+    expect(rows.intents).toHaveLength(0);
     expect(rows.pipeline[0]).toMatchObject({
       currentPhase: "source_ingest",
-      phaseStatus: "completed",
-      status: "running",
-      compileIntentId: rows.intents[0]?.id,
+      phaseStatus: "failed",
+      status: "failed",
+      error: "1 of 3 files could not be ingested",
+      compileIntentId: null,
     });
+    expect(rows.pipeline[0]?.progressSteps).toContainEqual(
+      expect.objectContaining({
+        key: "read_files",
+        status: "failed",
+        detail: expect.stringContaining("bad.bin"),
+      }),
+    );
 
     const dedupe = await run(
       Effect.gen(function* () {
@@ -688,11 +695,11 @@ describe("M4.2 durable workers", () => {
         };
       }),
     );
-    expect(dedupeState.intents).toHaveLength(1);
+    expect(dedupeState.intents).toHaveLength(0);
     expect(dedupeState.run[0]).toMatchObject({ status: "completed", currentPhase: "publish" });
   }, 30_000);
 
-  it("finalizes with one intent after per-file and cleanup storage defects", async () => {
+  it("persists per-file failure details and does not compile a partial staged batch", async () => {
     const readFailureHash = "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd";
     const cleanupFailureHash = "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee";
     staged.set(cleanupFailureHash, Buffer.from("# Cleanup survives\n\nPersist this source."));
@@ -771,13 +778,20 @@ describe("M4.2 durable workers", () => {
       }),
     );
     expect(state.documents).toHaveLength(1);
-    expect(state.intents).toHaveLength(1);
+    expect(state.intents).toHaveLength(0);
     expect(state.run[0]).toMatchObject({
-      status: "running",
-      phaseStatus: "completed",
-      error: null,
-      compileIntentId: state.intents[0]?.id,
+      status: "failed",
+      phaseStatus: "failed",
+      error: "1 of 2 files could not be ingested",
+      compileIntentId: null,
     });
+    expect(state.run[0]?.progressSteps).toContainEqual(
+      expect.objectContaining({
+        key: "read_files",
+        status: "failed",
+        detail: expect.stringContaining("missing.md"),
+      }),
+    );
   }, 30_000);
 
   it("logs and persists a descriptive staged terminal failure for a non-Error defect", async () => {

@@ -11,6 +11,7 @@
     ingestStagedFiles,
     uploadFile,
     type HashedFile,
+    type UploadFailure,
   } from "$lib/api/ingest";
   import {
     cancelJob,
@@ -46,6 +47,7 @@
   let noJobFound = $state(false);
   let resolveError = $state<string | null>(null);
   let clientUpload = $state<{ uploaded: number; total: number } | null>(null);
+  let uploadFailures = $state<UploadFailure[]>([]);
   let started = $state(false);
   let showCompletion = $state(false);
 
@@ -113,6 +115,7 @@
     if (started || currentJobId || !vaultId) return;
     if (launchesMutation && !vaults.isFetched) return;
     started = true;
+    uploadFailures = [];
 
     if (launchesMutation && !canManage) {
       resolveError = "Only vault owners can add sources or update this vault.";
@@ -125,7 +128,21 @@
           clientUpload = { uploaded: 0, total: upload.length };
           if (uploadState.uploadMode === "direct") {
             for (let index = 0; index < upload.length; index += 1) {
-              await uploadFile(upload[index].file);
+              const selectedFile = upload[index].file;
+              try {
+                await uploadFile(selectedFile);
+              } catch (error) {
+                uploadFailures = [
+                  {
+                    name: selectedFile.name,
+                    error:
+                      error instanceof Error ? error.message : "Upload failed",
+                  },
+                ];
+                resolveError = "File upload stopped";
+                clientUpload = null;
+                return;
+              }
               clientUpload = {
                 uploaded: index + 1,
                 total: upload.length,
@@ -148,6 +165,9 @@
             upload,
             uploadState.stableJobId,
           )) {
+            if (event.failures && event.failures.length > 0) {
+              uploadFailures = event.failures;
+            }
             if (event.phase === "uploading") {
               clientUpload = {
                 uploaded: event.uploaded,
@@ -294,17 +314,28 @@
           <AlertDescription
             class="mb-4 font-mono text-[length:var(--text-chrome)] text-red-400/90"
           >
-            {progress.overallError ?? resolveError}
+            <p>{progress.overallError ?? resolveError}</p>
+            {#if uploadFailures.length > 0}
+              <ul class="mt-3 space-y-1 text-warm-faint">
+                {#each uploadFailures as failure}
+                  <li class="[overflow-wrap:anywhere]">
+                    <span class="text-warm-dim">{failure.name}</span>: {failure.error}
+                  </li>
+                {/each}
+              </ul>
+            {/if}
           </AlertDescription>
           <div class="flex items-center gap-4">
-            {#if canManage}
+            {#if canManage && !resolveError}
               <Button
                 variant="ghost"
                 size="xs"
                 onclick={() => void retry()}
                 class="h-auto rounded-sm px-3 py-1 font-mono text-[length:var(--text-chrome)] tracking-[0.1em] text-gold hover:bg-transparent hover:text-gold-hover"
               >
-                retry
+                {firstErrored?.stage === "uploading"
+                  ? "compile saved files"
+                  : "run again"}
               </Button>
             {/if}
             <Button

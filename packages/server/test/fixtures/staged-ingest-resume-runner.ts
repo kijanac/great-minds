@@ -126,14 +126,18 @@ const PauseAfterPersistLive = StagedFileIngestWorkflow.toLayer(() => {
           clientHash: hash,
         },
       ]);
-      return { ingested: 1, skipped: 0, failed: 0, cleanupHashes: [hash] };
+      return { ingested: 1, skipped: 0, failures: [], cleanupHashes: [hash] };
     }),
   });
   return Effect.gen(function* () {
     const result = yield* persist;
     console.log("STAGED persist journaled");
     yield* Effect.sleep("60 seconds");
-    return { ingested: result.ingested, skipped: result.skipped, failed: result.failed };
+    return {
+      ingested: result.ingested,
+      skipped: result.skipped,
+      failed: result.failures.length,
+    };
   });
 });
 

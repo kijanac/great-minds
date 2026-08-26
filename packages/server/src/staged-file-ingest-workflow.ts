@@ -45,10 +45,15 @@ export const StagedFileIngestWorkflow = Workflow.make("StagedFileIngest", {
   }),
 });
 
+const StagedFileFailure = Schema.Struct({
+  name: Schema.String,
+  error: Schema.String,
+});
+
 export const StagedFileIngestPersistResult = Schema.Struct({
   ingested: Schema.Number,
   skipped: Schema.Number,
-  failed: Schema.Number,
+  failures: Schema.Array(StagedFileFailure),
   cleanupHashes: Schema.Array(Schema.String),
 });
 
@@ -113,7 +118,7 @@ export const StagedFileIngestWorkflowLive = StagedFileIngestWorkflow.toLayer((pa
 
       let ingested = 0;
       let skipped = 0;
-      let failed = 0;
+      const failures: { name: string; error: string }[] = [];
       const seen = new Set<string>();
       const cleanup: string[] = [];
       let batch: { filePath: string; content: string; clientHash: string }[] = [];
@@ -135,19 +140,24 @@ export const StagedFileIngestWorkflowLive = StagedFileIngestWorkflow.toLayer((pa
           "progress",
           progressSteps(STAGED_FILE_INGEST_STEP_LABELS, "index_documents", {
             completed: new Set(["prepare_sources", "read_files"]),
-            counts: { index_documents: [ingested + skipped, total] },
+            counts: {
+              index_documents: [ingested + skipped + failures.length, total],
+            },
           }),
         );
       });
 
       for (const [index, result] of converted.entries()) {
         if (Exit.isFailure(result)) {
-          failed += 1;
           const file = payload.files[index];
           if (file === undefined) {
             throw new Error(`Converted staged file ${index} has no input entry`);
           }
           const error = causeDetails(result.cause);
+          failures.push({
+            name: file.name,
+            error: "The file could not be read or converted",
+          });
           yield* logger.warn("staged_file_ingest.fetch_failed", {
             vault_id: vaultId,
             pipeline_run_id: runId,
@@ -184,11 +194,13 @@ export const StagedFileIngestWorkflowLive = StagedFileIngestWorkflow.toLayer((pa
         "progress",
         progressSteps(STAGED_FILE_INGEST_STEP_LABELS, "index_documents", {
           completed: new Set(["prepare_sources", "read_files"]),
-          counts: { index_documents: [ingested + skipped, total] },
+          counts: {
+            index_documents: [ingested + skipped + failures.length, total],
+          },
         }),
       );
 
-      return { ingested, skipped, failed, cleanupHashes: cleanup };
+      return { ingested, skipped, failures, cleanupHashes: cleanup };
     }),
   });
 
@@ -209,9 +221,45 @@ export const StagedFileIngestWorkflowLive = StagedFileIngestWorkflow.toLayer((pa
         if (config.storageBackend !== "r2") {
           throw new Error("staged_file_ingest requires r2 storage backend");
         }
-        const { ingested, skipped, failed, cleanupHashes } = result;
+        const { ingested, skipped, failures, cleanupHashes } = result;
+        const failed = failures.length;
 
-        if (ingested > 0) {
+        const cleanupResults = yield* Effect.forEach(
+          cleanupHashes,
+          (hash) => Effect.exit(stagedStorage.deleteStaged(vaultId, hash)),
+          { concurrency: 4 },
+        );
+        const cleanupFailures = cleanupResults.filter(Exit.isFailure).length;
+        if (cleanupFailures > 0) {
+          yield* logger.warn("staged_file_ingest.cleanup_failures", {
+            vault_id: vaultId,
+            pipeline_run_id: runId,
+            failed: cleanupFailures,
+            total: cleanupHashes.length,
+          });
+        }
+
+        if (failed > 0) {
+          const error = `${failed} of ${total} files could not be ingested`;
+          const detail = failures
+            .map((failure) => `${failure.name}: ${failure.error}`)
+            .join("; ");
+          yield* pipeline.updateProgress(
+            runId,
+            "source_ingest",
+            "failed",
+            progressSteps(STAGED_FILE_INGEST_STEP_LABELS, "read_files", {
+              completed: new Set(["prepare_sources"]),
+              failed: new Set(["read_files"]),
+              counts: {
+                read_files: [total, total],
+                index_documents: [ingested + skipped, total],
+              },
+              details: { read_files: detail },
+            }),
+            error,
+          );
+        } else if (ingested > 0) {
           yield* db
             .transaction((tx) =>
               Effect.gen(function* () {
@@ -243,20 +291,6 @@ export const StagedFileIngestWorkflowLive = StagedFileIngestWorkflow.toLayer((pa
                   .where(eq(pipelineRuns.id, runId));
               }),
             );
-          const cleanupResults = yield* Effect.forEach(
-            cleanupHashes,
-            (hash) => Effect.exit(stagedStorage.deleteStaged(vaultId, hash)),
-            { concurrency: 4 },
-          );
-          const cleanupFailures = cleanupResults.filter(Exit.isFailure).length;
-          if (cleanupFailures > 0) {
-            yield* logger.warn("staged_file_ingest.cleanup_failures", {
-              vault_id: vaultId,
-              pipeline_run_id: runId,
-              failed: cleanupFailures,
-              total: cleanupHashes.length,
-            });
-          }
           yield* pipeline.updateProgress(
             runId,
             "source_ingest",
@@ -268,19 +302,6 @@ export const StagedFileIngestWorkflowLive = StagedFileIngestWorkflow.toLayer((pa
                 index_documents: [ingested + skipped, total],
               },
             }),
-          );
-        } else if (failed > 0) {
-          const error = `${failed} source(s) failed before compile`;
-          yield* pipeline.updateProgress(
-            runId,
-            "source_ingest",
-            "failed",
-            progressSteps(STAGED_FILE_INGEST_STEP_LABELS, "index_documents", {
-              completed: new Set(["prepare_sources", "read_files"]),
-              failed: new Set(["index_documents"]),
-              details: { index_documents: error },
-            }),
-            error,
           );
         } else {
           yield* pipeline.updateProgress(runId, "publish", "completed", [

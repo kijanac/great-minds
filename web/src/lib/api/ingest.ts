@@ -30,13 +30,18 @@ const PUT_CONCURRENCY = 4;
 
 export type StagedFilePhase = "uploading" | "processing" | "done" | "error";
 
+export interface UploadFailure {
+  name: string;
+  error: string;
+}
+
 export interface StagedFileUploadProgress {
   phase: StagedFilePhase;
   uploaded: number;
   total: number;
   id?: string;
   error?: string;
-  failed_uploads?: { name: string; error: string }[];
+  failures?: UploadFailure[];
 }
 
 export async function uploadFile(file: File, destPath?: string): Promise<IngestResult> {
@@ -122,10 +127,9 @@ export interface HashedFile {
 /**
  * Ingest pre-hashed files via direct-to-R2 staged upload.
  *
- * The UI is expected to have already hashed at pick-time and (for the
- * current preview UX) excluded duplicates. A defensive within-batch
- * dedupe still runs here so legacy callers can't accidentally send
- * conflicting hashes.
+ * The UI hashes files at pick-time and excludes duplicates. This boundary
+ * rejects duplicate hashes rather than silently sending fewer files than
+ * the confirmed count.
  *
  * Yields progress events: per-file "uploading" updates while PUTs are
  * in flight, then a single "processing" event with the durable job_id.
@@ -144,16 +148,33 @@ export async function* ingestStagedFiles(
     mimetype: file.type,
   }));
 
-  // Defensive within-batch dedupe — the UI is supposed to have done
-  // this already, but the cost is one hash-set scan.
+  // Reject duplicate hashes at the upload boundary instead of silently
+  // collapsing a user-confirmed batch.
   const originalCount = hashedFiles.length;
   const seen = new Set<string>();
-  const uniqueManifest = manifest.filter((m) => {
-    if (seen.has(m.hash)) return false;
-    seen.add(m.hash);
+  const duplicateFailures: UploadFailure[] = [];
+  const uniqueManifest = manifest.filter((manifestItem) => {
+    if (seen.has(manifestItem.hash)) {
+      duplicateFailures.push({
+        name: manifestItem.name,
+        error: "Duplicate file content is already selected",
+      });
+      return false;
+    }
+    seen.add(manifestItem.hash);
     return true;
   });
   yield { phase: "uploading", uploaded: 0, total: originalCount };
+  if (duplicateFailures.length > 0) {
+    yield {
+      phase: "error",
+      uploaded: 0,
+      total: originalCount,
+      error: "Remove duplicate files before uploading",
+      failures: duplicateFailures,
+    };
+    return;
+  }
 
   // 1. sign (unique hashes only)
   const signRes = await apiFetch(vaultPath("/ingest/staged-files/sign"), {
@@ -179,62 +200,77 @@ export async function* ingestStagedFiles(
     if (!fileByHash.has(hash)) fileByHash.set(hash, file);
   }
 
-  let uploaded = 0;
-  const failedUploads: { name: string; error: string }[] = [];
-  yield { phase: "uploading", uploaded, total: originalCount };
+  type ManifestItem = (typeof uniqueManifest)[number];
+  type UploadResult =
+    | { ok: true; manifestItem: ManifestItem }
+    | { ok: false; failure: UploadFailure };
 
   const uploadResults = await pMap(
     uniqueManifest,
-    async (m) => {
-      const url = urlByHash.get(m.hash);
+    async (manifestItem): Promise<UploadResult> => {
+      const url = urlByHash.get(manifestItem.hash);
       if (!url) {
-        failedUploads.push({ name: m.name, error: "no presigned URL" });
-        return null;
+        return {
+          ok: false,
+          failure: { name: manifestItem.name, error: "No upload URL was created" },
+        };
       }
-      const file = fileByHash.get(m.hash);
+      const file = fileByHash.get(manifestItem.hash);
       if (!file) {
-        failedUploads.push({ name: m.name, error: "file not found" });
-        return null;
+        return {
+          ok: false,
+          failure: { name: manifestItem.name, error: "The selected file is unavailable" },
+        };
       }
       try {
-        const res = await fetch(url, {
+        const response = await fetch(url, {
           method: "PUT",
           body: file,
           headers: { "Content-Type": file.type || "application/octet-stream" },
         });
-        if (!res.ok) {
-          failedUploads.push({
-            name: m.name,
-            error: `PUT ${res.status}: ${await res.text()}`,
-          });
-          return null;
+        if (!response.ok) {
+          return {
+            ok: false,
+            failure: {
+              name: manifestItem.name,
+              error: `Upload returned ${response.status}`,
+            },
+          };
         }
-        return m;
-      } catch (e) {
-        failedUploads.push({
-          name: m.name,
-          error: e instanceof Error ? e.message : "PUT failed",
-        });
-        return null;
-      } finally {
-        uploaded += 1;
+        return { ok: true, manifestItem };
+      } catch (error) {
+        return {
+          ok: false,
+          failure: {
+            name: manifestItem.name,
+            error: error instanceof Error ? error.message : "Upload failed",
+          },
+        };
       }
     },
     PUT_CONCURRENCY,
   );
 
-  yield { phase: "uploading", uploaded, total: originalCount, failed_uploads: failedUploads };
+  const failures = uploadResults
+    .filter((result): result is Extract<UploadResult, { ok: false }> => !result.ok)
+    .map((result) => result.failure);
+  const successfullyUploaded = uploadResults
+    .filter((result): result is Extract<UploadResult, { ok: true }> => result.ok)
+    .map((result) => result.manifestItem);
+  yield {
+    phase: "uploading",
+    uploaded: successfullyUploaded.length,
+    total: originalCount,
+    failures,
+  };
 
-  const successfullyUploaded = uploadResults.filter(
-    (m): m is (typeof uniqueManifest)[number] => m !== null,
-  );
-  if (successfullyUploaded.length === 0) {
+  if (failures.length > 0) {
     yield {
       phase: "error",
-      uploaded,
+      uploaded: successfullyUploaded.length,
       total: originalCount,
-      error: "all uploads failed",
-      failed_uploads: failedUploads,
+      error: `${failures.length} of ${originalCount} files failed to upload`,
+      failures,
     };
     return;
   }
@@ -258,20 +294,18 @@ export async function* ingestStagedFiles(
   if (!processRes.ok) {
     yield {
       phase: "error",
-      uploaded,
+      uploaded: successfullyUploaded.length,
       total: originalCount,
       error: await processRes.text(),
-      failed_uploads: failedUploads,
     };
     return;
   }
   const { id } = await readJson(processRes, stagedFileProcessResponseSchema);
   yield {
     phase: "processing",
-    uploaded,
+    uploaded: successfullyUploaded.length,
     total: originalCount,
     id,
-    failed_uploads: failedUploads,
   };
 
   return;
