@@ -143,6 +143,7 @@ export const makeAppLayers = (overrides: AppLayerOverrides = {}) => {
   const CompilePhasesLiveLayer = CompilePhasesLive.pipe(
     Layer.provideMerge(LanguageModelLiveLayer),
     Layer.provideMerge(EmbeddingsLiveLayer),
+    Layer.provideMerge(SourceDocumentsLive),
     Layer.provideMerge(PipelineRunsLive),
     Layer.provideMerge(StorageLive),
     Layer.provideMerge(BaseLive),

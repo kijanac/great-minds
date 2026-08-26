@@ -39,6 +39,8 @@ import {
   serializeFrontmatter,
 } from "./markdown.ts";
 import { PipelineRunsService, progressSteps } from "./pipeline-runs.ts";
+import { sourceIdentityFromFrontmatter } from "./source-identity.ts";
+import { SourceDocumentsService } from "./source-documents.ts";
 import { ContentStorage, vaultOwner } from "./storage.ts";
 import { RandomBytesService } from "./random.ts";
 
@@ -135,6 +137,7 @@ export const CompilePhasesLive = Layer.effect(
     const randomBytes = yield* RandomBytesService;
     const clock = yield* ClockService;
     const storage = yield* ContentStorage;
+    const sourceDocumentsWrite = yield* SourceDocumentsService;
 
     const rebuildSearchScope = (vaultId: Uuid, runId: Uuid, scope: "raw" | "wiki") =>
       Effect.gen(function* () {
@@ -150,7 +153,7 @@ export const CompilePhasesLive = Layer.effect(
         const existingHashes = new Map(
           existing.map((row) => [`${row.path}\u0000${row.chunkIndex}`, row.contentHash]),
         );
-        const documents = yield* db.query((d) => d
+        let documents = yield* db.query((d) => d
           .select({
             id: sourceDocuments.id,
             path: sourceDocuments.filePath,
@@ -158,8 +161,66 @@ export const CompilePhasesLive = Layer.effect(
           })
           .from(sourceDocuments)
           .where(eq(sourceDocuments.vaultId, vaultId)));
-        const documentsByPath = new Map(documents.map((row) => [row.path, row]));
+        let documentsByPath = new Map(documents.map((row) => [row.path, row]));
         const files = yield* storage.listMarkdown(vaultOwner(vaultId), scope);
+        const contentByPath = new Map<string, string>();
+
+        if (scope === "raw") {
+          const seenSourcePaths = new Map<Uuid, string>();
+          const refresh: { readonly filePath: string; readonly content: string }[] = [];
+          for (const file of files) {
+            const filename = file.path.slice(file.path.lastIndexOf("/") + 1);
+            if (filename.startsWith("_")) continue;
+            const document = documentsByPath.get(file.path);
+            const hasMetadata = existingHashes.has(`${file.path}\u0000-1`);
+            let sourceId: Uuid;
+            if (
+              document !== undefined &&
+              document.etag !== null &&
+              document.etag === file.etag &&
+              file.etag !== null &&
+              hasMetadata
+            ) {
+              sourceId = document.id as Uuid;
+            } else {
+              const content = yield* storage.readText(vaultOwner(vaultId), file.path);
+              contentByPath.set(file.path, content);
+              sourceId = sourceIdentityFromFrontmatter(
+                parseFrontmatter(content).frontmatter,
+              ).sourceId;
+              if (document !== undefined && document.id !== sourceId) {
+                throw new Error(
+                  `Source identity mismatch at ${file.path}: registered ${document.id}, stored ${sourceId}`,
+                );
+              }
+              refresh.push({ filePath: file.path, content });
+            }
+            const previousPath = seenSourcePaths.get(sourceId);
+            if (previousPath !== undefined && previousPath !== file.path) {
+              throw new Error(
+                `Source ${sourceId} appears at both ${previousPath} and ${file.path}`,
+              );
+            }
+            seenSourcePaths.set(sourceId, file.path);
+          }
+          for (const document of refresh) {
+            yield* sourceDocumentsWrite.refreshFromStorage(
+              vaultId,
+              document.filePath,
+              document.content,
+            );
+          }
+          documents = yield* db.query((d) => d
+            .select({
+              id: sourceDocuments.id,
+              path: sourceDocuments.filePath,
+              etag: sourceDocuments.etag,
+            })
+            .from(sourceDocuments)
+            .where(eq(sourceDocuments.vaultId, vaultId)));
+          documentsByPath = new Map(documents.map((row) => [row.path, row]));
+        }
+
         const current = new Map<string, Set<number>>();
         const changed: SearchChunk[] = [];
         const etags: { id: Uuid; etag: string }[] = [];
@@ -198,7 +259,10 @@ export const CompilePhasesLive = Layer.effect(
             );
             continue;
           }
-          const content = yield* storage.readText(vaultOwner(vaultId), file.path);
+          let content = contentByPath.get(file.path);
+          if (content === undefined) {
+            content = yield* storage.readText(vaultOwner(vaultId), file.path);
+          }
           if (content.length === 0) continue;
           for (const chunk of chunkDocument(file.path, content)) {
             const indexes = current.get(file.path) ?? new Set<number>();

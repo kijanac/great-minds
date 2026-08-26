@@ -23,6 +23,11 @@ type SourceDocumentsServiceShape = {
     content: string,
     clientHash: FileFingerprint | null,
   ) => Effect.Effect<Uuid>;
+  readonly refreshFromStorage: (
+    vaultId: Uuid,
+    filePath: string,
+    content: string,
+  ) => Effect.Effect<Uuid>;
   readonly batchIndex: (
     vaultId: Uuid,
     documents: readonly {
@@ -184,6 +189,24 @@ export const SourceDocumentsServiceLive = Layer.effect(
 
     return {
       index,
+      refreshFromStorage: (vaultId, filePath, content) =>
+        Effect.gen(function* () {
+          const candidate = sourceRow(vaultId, filePath, content, null);
+          const registeredPath = yield* db.query((d) => d
+            .select({ id: sourceDocuments.id })
+            .from(sourceDocuments)
+            .where(and(eq(sourceDocuments.vaultId, vaultId), eq(sourceDocuments.filePath, filePath)))
+            .limit(1));
+          const registeredId = registeredPath[0]?.id;
+          if (registeredId !== undefined && registeredId !== candidate.id) {
+            throw new Error(
+              `Source identity mismatch at ${filePath}: registered ${registeredId}, stored ${candidate.id}`,
+            );
+          }
+          const existing = yield* getById(vaultId, candidate.id as Uuid);
+          const clientHash = existing?.clientHash ?? null;
+          return yield* index(vaultId, filePath, content, clientHash as FileFingerprint | null);
+        }),
       batchIndex: (vaultId, documents) =>
         Effect.gen(function* () {
           if (documents.length === 0) return;

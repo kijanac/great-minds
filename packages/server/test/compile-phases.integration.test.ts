@@ -22,7 +22,7 @@ import {
   wikiArticles,
 } from "@great-minds/database";
 import type { Uuid } from "@great-minds/domain";
-import { eq } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import { Effect, Layer, Option, Redacted } from "effect";
 import { afterAll, beforeEach, describe, expect, it } from "vitest";
 
@@ -38,13 +38,19 @@ import { CompilePhases, CompilePhasesLive } from "../src/compile-phases.ts";
 import { AppConfig, type AppConfigShape } from "../src/config.ts";
 import { DEFAULT_RENDER_MODEL } from "../src/config.ts";
 import { ClockLive } from "../src/clock.ts";
-import { contentHash, promptContentHash } from "../src/crypto.ts";
+import {
+  bodyContentHash,
+  contentHash,
+  fileContentHash,
+  promptContentHash,
+} from "../src/crypto.ts";
 import { DrizzleLive } from "../src/db.ts";
 import { EmbeddingsService } from "../src/embeddings.ts";
 import { LanguageModel, type CompleteInput, type ModelCompletion } from "../src/llm.ts";
 import { StructuredLogger } from "../src/logging.ts";
 import { PipelineRunsServiceLive } from "../src/pipeline-runs.ts";
 import { RandomBytesLive } from "../src/random.ts";
+import { SourceDocumentsServiceLive } from "../src/source-documents.ts";
 import { ContentStorage, StorageFileMissing } from "../src/storage.ts";
 
 const id = {
@@ -159,6 +165,10 @@ const BaseLive = Layer.mergeAll(
   RandomBytesLive,
 );
 const PipelineLive = PipelineRunsServiceLive.pipe(Layer.provideMerge(BaseLive));
+const SourceDocumentsLive = SourceDocumentsServiceLive.pipe(
+  Layer.provideMerge(StorageLive),
+  Layer.provideMerge(BaseLive),
+);
 const EmbeddingsLive = Layer.succeed(EmbeddingsService, {
   embed: (texts) => embed(texts),
 });
@@ -175,6 +185,7 @@ const LoggerLive = Layer.succeed(StructuredLogger, {
 const PhasesLive = CompilePhasesLive.pipe(
   Layer.provideMerge(LanguageModelLive),
   Layer.provideMerge(EmbeddingsLive),
+  Layer.provideMerge(SourceDocumentsLive),
   Layer.provideMerge(PipelineLive),
   Layer.provideMerge(StorageLive),
   Layer.provideMerge(LoggerLive),
@@ -790,7 +801,7 @@ describe("M4.3a deterministic compile phases", () => {
 
   it("ingest indexes path-sorted metadata/body chunks and skips an unchanged ETag replay", async () => {
     const content =
-      "---\ntitle: Source title\nprecis: Source precis\nauthor: Author\n---\n# Heading\n\nFirst paragraph ^p0\n\nSecond paragraph ^p1\n";
+      `---\nsource_id: ${id.source}\ntitle: Source title\nprecis: Source precis\nauthor: Author\n---\n# Heading\n\nFirst paragraph ^p0\n\nSecond paragraph ^p1\n`;
     files.set("raw/docs/source.md", content);
     etags.set("raw/docs/source.md", "etag-one");
     await run(
@@ -854,6 +865,122 @@ describe("M4.3a deterministic compile phases", () => {
     embeddingRequests.length = 0;
     await run(Effect.flatMap(CompilePhases, (phases) => phases.ingest(id.vault, id.run)));
     expect(embeddingRequests).toEqual([]);
+  });
+
+  it("reconciles a moved source path from immutable frontmatter identity", async () => {
+    const oldPath = "raw/books/original.md";
+    const movedPath = `raw/moved/${id.source}-renamed.md`;
+    const body = "# Moved source\n\nThe source body remains attached to its identity. ^p0\n";
+    const content = `---\nsource_id: ${id.source}\nsource_type: book\n---\n${body}`;
+    files.set(movedPath, content);
+    etags.set(movedPath, "etag-moved");
+
+    const state = await run(
+      Effect.gen(function* () {
+        const db = yield* Database;
+        yield* db.query((d) => d
+          .insert(sourceDocuments)
+          .values({
+            id: id.source,
+            vaultId: id.vault,
+            filePath: oldPath,
+            fileHash: "old-file-hash",
+            bodyHash: "old-body-hash",
+            clientHash: "a".repeat(64),
+            etag: "etag-original",
+            sourceType: "book",
+            title: "Original title",
+            precis: "Keep this derived precis",
+            tags: ["keep-this-tag"],
+            derivedExtras: { retained: true },
+          }))
+          .pipe(Effect.orDie);
+        yield* db.query((d) => d
+          .insert(ideas)
+          .values({
+            ideaId: id.ideaA,
+            vaultId: id.vault,
+            documentId: id.source,
+            kind: "concept",
+            label: "Stable idea",
+            description: "Must retain the source ID relationship",
+          }))
+          .pipe(Effect.orDie);
+        yield* db.query((d) => d
+          .insert(searchIndex)
+          .values({
+            vaultId: id.vault,
+            path: oldPath,
+            chunkIndex: 0,
+            heading: "Original",
+            body: "Old indexed body",
+            contentHash: "old-chunk-hash",
+            tsv: sql`to_tsvector('english', 'Old indexed body')`,
+          }))
+          .pipe(Effect.orDie);
+
+        const phases = yield* CompilePhases;
+        yield* phases.ingest(id.vault, id.run);
+        return {
+          sources: yield* db.query((d) => d.select().from(sourceDocuments)).pipe(Effect.orDie),
+          ideas: yield* db.query((d) => d.select().from(ideas)).pipe(Effect.orDie),
+          search: yield* db.query((d) => d.select().from(searchIndex)).pipe(Effect.orDie),
+        };
+      }),
+    );
+
+    expect(state.sources).toHaveLength(1);
+    expect(state.sources[0]).toMatchObject({
+      id: id.source,
+      filePath: movedPath,
+      fileHash: fileContentHash(content),
+      bodyHash: bodyContentHash(body),
+      clientHash: "a".repeat(64),
+      etag: "etag-moved",
+      sourceType: "book",
+      title: "Moved source",
+      precis: "Keep this derived precis",
+      tags: ["keep-this-tag"],
+      derivedExtras: { retained: true },
+    });
+    expect(state.ideas).toHaveLength(1);
+    expect(state.ideas[0]?.documentId).toBe(id.source);
+    expect(state.search.length).toBeGreaterThan(0);
+    expect(new Set(state.search.map((row) => row.path))).toEqual(new Set([movedPath]));
+  });
+
+  it("rejects two storage paths claiming the same source identity", async () => {
+    const originalPath = "raw/docs/original.md";
+    const duplicatePath = "raw/docs/copied.md";
+    const content = `---\nsource_id: ${id.source}\nsource_type: document\n---\n# Duplicate identity\n`;
+    files.set(originalPath, content);
+    files.set(duplicatePath, content);
+    await run(
+      Effect.flatMap(Database, (db) =>
+        db.query((d) => d
+          .insert(sourceDocuments)
+          .values({
+            id: id.source,
+            vaultId: id.vault,
+            filePath: originalPath,
+            fileHash: fileContentHash(content),
+            bodyHash: bodyContentHash("# Duplicate identity\n"),
+            sourceType: "document",
+          }))
+          .pipe(Effect.orDie),
+      ),
+    );
+
+    await expect(
+      run(Effect.flatMap(CompilePhases, (phases) => phases.ingest(id.vault, id.run))),
+    ).rejects.toThrow(`Source ${id.source} appears at both ${duplicatePath} and ${originalPath}`);
+    const sources = await run(
+      Effect.flatMap(Database, (db) =>
+        db.query((d) => d.select().from(sourceDocuments)).pipe(Effect.orDie),
+      ),
+    );
+    expect(sources).toHaveLength(1);
+    expect(sources[0]?.filePath).toBe(originalPath);
   });
 
   it("derive replaces membership, intended links, and deterministic bidirectional Jaccard rows", async () => {

@@ -287,14 +287,15 @@ const LanguageModelLive = Layer.succeed(LanguageModel, {
     throw new Error("unexpected compile LLM call");
   },
 });
-const CompilePhasesLiveLayer = CompilePhasesLive.pipe(
-  Layer.provideMerge(LanguageModelLive),
-  Layer.provideMerge(EmbeddingsLive),
-  Layer.provideMerge(PipelineLive),
+const SourceDocumentsLive = SourceDocumentsServiceLive.pipe(
   Layer.provideMerge(StorageLive),
   Layer.provideMerge(BaseLive),
 );
-const SourceDocumentsLive = SourceDocumentsServiceLive.pipe(
+const CompilePhasesLiveLayer = CompilePhasesLive.pipe(
+  Layer.provideMerge(LanguageModelLive),
+  Layer.provideMerge(EmbeddingsLive),
+  Layer.provideMerge(SourceDocumentsLive),
+  Layer.provideMerge(PipelineLive),
   Layer.provideMerge(StorageLive),
   Layer.provideMerge(BaseLive),
 );
