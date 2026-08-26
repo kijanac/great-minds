@@ -17,7 +17,12 @@ import { ContentStorage, vaultOwner } from "./storage.ts";
 type SourceDocumentRow = typeof sourceDocuments.$inferSelect;
 
 type SourceDocumentsServiceShape = {
-  readonly index: (vaultId: Uuid, filePath: string, content: string) => Effect.Effect<Uuid>;
+  readonly index: (
+    vaultId: Uuid,
+    filePath: string,
+    content: string,
+    clientHash: string | null,
+  ) => Effect.Effect<Uuid>;
   readonly batchIndex: (
     vaultId: Uuid,
     documents: readonly {
@@ -86,7 +91,12 @@ const numberField = (frontmatter: Record<string, unknown>, key: string) => {
   return null;
 };
 
-const sourceRow = (vaultId: Uuid, filePath: string, content: string, clientHash?: string) => {
+const sourceRow = (
+  vaultId: Uuid,
+  filePath: string,
+  content: string,
+  clientHash: string | null,
+) => {
   const parsed = parseFrontmatter(content);
   const identity = sourceIdentityFromFrontmatter(parsed.frontmatter);
   return {
@@ -150,11 +160,16 @@ export const SourceDocumentsServiceLive = Layer.effect(
         .limit(1))
         .pipe(Effect.map((rows) => rows[0]));
 
-    const index = (vaultId: Uuid, filePath: string, content: string) =>
+    const index = (
+      vaultId: Uuid,
+      filePath: string,
+      content: string,
+      clientHash: string | null,
+    ) =>
       Effect.gen(function* () {
         const rows = yield* db.query((d) => d
           .insert(sourceDocuments)
-          .values(sourceRow(vaultId, filePath, content))
+          .values(sourceRow(vaultId, filePath, content, clientHash))
           .onConflictDoUpdate({
             target: sourceDocuments.id,
             set: ingestSet,

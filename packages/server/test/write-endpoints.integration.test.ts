@@ -33,7 +33,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { makeAppLayer } from "../src/app-layer.ts";
 import { ClockService, makeTestClock } from "../src/clock.ts";
 import { AppConfig, type AppConfigShape } from "../src/config.ts";
-import { bodyContentHash, fileContentHash } from "../src/crypto.ts";
+import { bodyContentHash, fileContentHash, rawFileHash } from "../src/crypto.ts";
 import { StructuredLogger, StructuredLoggerLive } from "../src/logging.ts";
 import { makeTestMailer } from "../src/mailer.ts";
 import { parseFrontmatter } from "../src/markdown.ts";
@@ -933,6 +933,7 @@ describe("M3.1 write endpoint integration", () => {
       origin: "fixture",
       fileHash: fileContentHash(rawText),
       bodyHash: bodyContentHash("# Raw Title\n\nRaw body paragraph. ^p0\n"),
+      clientHash: null,
     });
     const readById = await api(
       "GET",
@@ -986,10 +987,12 @@ describe("M3.1 write endpoint integration", () => {
     expect(missingFile.status).toBe(400);
     expect(missingFile.body).toEqual({ detail: "Uploaded file must have a filename" });
 
+    const uploadedRaw = "# Uploaded\n\nUploaded paragraph.";
+    const uploadedClientHash = rawFileHash(new TextEncoder().encode(uploadedRaw));
     const form = new FormData();
     form.append(
       "file",
-      new Blob(["# Uploaded\n\nUploaded paragraph."], { type: "text/plain" }),
+      new Blob([uploadedRaw], { type: "text/plain" }),
       "uploaded.txt",
     );
     const uploaded = await uploadApi(
@@ -1005,6 +1008,27 @@ describe("M3.1 write endpoint integration", () => {
     const uploadedText = await readVaultFile(id.vault, uploadedPath);
     expect(uploadedText).toContain("origin: manual");
     expect(uploadedText).toContain("Uploaded paragraph. ^p0");
+
+    const uploadedRows = await runDb(
+      Effect.gen(function* () {
+        const db = yield* Database;
+        return yield* db.query((d) => d
+          .select({ clientHash: sourceDocuments.clientHash })
+          .from(sourceDocuments)
+          .where(eq(sourceDocuments.id, uploadedId)))
+          .pipe(Effect.orDie);
+      }),
+    );
+    expect(uploadedRows).toEqual([{ clientHash: uploadedClientHash }]);
+
+    const directDupes = await api(
+      "POST",
+      `/vaults/${id.vault}/ingest/staged-files/check-dupes`,
+      aliceToken,
+      { client_hashes: [uploadedClientHash, "0".repeat(64)] },
+    );
+    expect(directDupes.status).toBe(200);
+    expect(asRecord(directDupes.body).existing).toEqual([uploadedClientHash]);
 
     const alphaReportForm = new FormData();
     alphaReportForm.append(
@@ -1044,15 +1068,12 @@ describe("M3.1 write endpoint integration", () => {
     expect(await readVaultFile(id.vault, alphaReportPath)).toContain("Alpha upload body. ^p0");
     expect(await readVaultFile(id.vault, betaReportPath)).toContain("Beta upload body. ^p0");
 
+    const htmlRaw =
+      "<html><head><title>HTML Upload</title></head><body><main><h1>HTML Upload</h1><p>Converted upload paragraph.</p></main></body></html>";
     const htmlForm = new FormData();
     htmlForm.append(
       "file",
-      new Blob(
-        [
-          "<html><head><title>HTML Upload</title></head><body><main><h1>HTML Upload</h1><p>Converted upload paragraph.</p></main></body></html>",
-        ],
-        { type: "text/html" },
-      ),
+      new Blob([htmlRaw], { type: "text/html" }),
       "html-upload.html",
     );
     const htmlUpload = await uploadApi(
@@ -1087,6 +1108,7 @@ describe("M3.1 write endpoint integration", () => {
     expect(htmlRows[0]).toMatchObject({
       fileHash: fileContentHash(htmlText),
       bodyHash: bodyContentHash("# HTML Upload\n\nConverted upload paragraph. ^p0\n"),
+      clientHash: rawFileHash(new TextEncoder().encode(htmlRaw)),
     });
 
     const badDest = new FormData();

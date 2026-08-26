@@ -5,6 +5,9 @@ import { Effect } from "effect";
 export const sha256Hex = (value: string) =>
   createHash("sha256").update(value).digest("hex");
 
+export const rawFileHash = (bytes: Uint8Array) =>
+  createHash("sha256").update(bytes).digest("hex");
+
 export const contentHash = (...parts: readonly string[]) => {
   const hash = createHash("sha256");
   for (const part of parts) {

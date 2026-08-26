@@ -24,6 +24,7 @@ import * as WorkflowEngine from "effect/unstable/workflow/WorkflowEngine";
 
 import { AppConfig } from "./config.ts";
 import { htmlToMarkdown, markdownWithTitle } from "./conversion.ts";
+import { rawFileHash } from "./crypto.ts";
 import { causeDetails, errorDetails, formatError } from "./error-details.ts";
 import { jobResponse } from "./jobs.ts";
 import { buildDocument, sessionExchangeDocumentInput, sessionExchangePath } from "./markdown.ts";
@@ -309,14 +310,26 @@ export const IngestServiceLive = Layer.effect(
       sourceId: Uuid,
       rendered: string,
       dest: string,
-      canonicalUrl: CanonicalSourceUrl | null = null,
-      pipelineRunId?: Uuid | null,
+      options: {
+        readonly canonicalUrl?: CanonicalSourceUrl | null;
+        readonly pipelineRunId?: Uuid | null;
+        readonly clientHash?: string | null;
+      } = {},
     ) =>
       Effect.gen(function* () {
-        const content = identifySourceMarkdown(rendered, sourceId, canonicalUrl);
+        const content = identifySourceMarkdown(
+          rendered,
+          sourceId,
+          options.canonicalUrl ?? null,
+        );
         yield* storage.writeText(vaultOwner(vaultId), dest, content);
-        yield* sourceDocumentsWrite.index(vaultId, dest, content);
-        yield* ensureCompileIntent(vaultId, pipelineRunId);
+        yield* sourceDocumentsWrite.index(
+          vaultId,
+          dest,
+          content,
+          options.clientHash ?? null,
+        );
+        yield* ensureCompileIntent(vaultId, options.pipelineRunId);
         return { id: sourceId, file_path: dest } satisfies IngestedDocument;
       });
 
@@ -341,8 +354,7 @@ export const IngestServiceLive = Layer.effect(
             origin: origin ?? parsed.host,
           }),
           dest,
-          canonicalUrl,
-          pipelineRunId,
+          { canonicalUrl, pipelineRunId },
         );
       });
 
@@ -443,6 +455,7 @@ export const IngestServiceLive = Layer.effect(
               origin: input.origin ?? null,
             }),
             sourcePathWithId(dest, sourceId),
+            { clientHash: rawFileHash(input.rawBytes) },
           );
         }),
       promoteReference: (userId, vaultId, input) =>

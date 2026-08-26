@@ -340,7 +340,7 @@ export const ProposalsServiceLive = Layer.effect(
                 .readText(proposalStagingPath(proposal.id as Uuid))
                 .pipe(Effect.orDie);
               yield* vaultStorage.writeText(vaultOwner(vaultId), proposal.destPath, rendered);
-              yield* sourceDocuments.index(vaultId, proposal.destPath, rendered);
+              yield* sourceDocuments.index(vaultId, proposal.destPath, rendered, null);
               yield* ensureCompileIntent(vaultId);
             }
           } else {
