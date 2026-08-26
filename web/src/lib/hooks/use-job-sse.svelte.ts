@@ -272,33 +272,35 @@ export function useJobSSE(
         return;
       }
       if (message.event === "done") {
-        terminal = true;
-        overallDone = true;
-        invalidateActivePipeline(vaultKey);
+        if (!terminal) {
+          terminal = true;
+          overallError = "Pipeline ended without terminal status";
+          invalidateActivePipeline(vaultKey);
+        }
         disconnect();
         return;
       }
       if (!message.data) return;
 
       try {
-        const data = normalizeEvent(JSON.parse(message.data) as BackendPipelineEvent);
-        if (!data) return;
+        const raw = JSON.parse(message.data) as BackendPipelineEvent;
+        const data = normalizeEvent(raw);
 
-        if (data.job_status === "cancelled") {
+        if (raw.job_status === "cancelled") {
           terminal = true;
           overallCancelled = true;
-          stages = applyEvent(stages, data);
+          if (data) stages = applyEvent(stages, data);
           invalidateActivePipeline(vaultKey);
           return;
         }
-        if (data.phase_status === "failed" || data.job_status === "failed") {
+        if (raw.phase_status === "failed" || raw.job_status === "failed") {
           terminal = true;
-          overallError = data.error ?? "Pipeline failed";
-          stages = applyEvent(stages, data);
+          overallError = raw.error ?? "Pipeline failed";
+          if (data) stages = applyEvent(stages, data);
           invalidateActivePipeline(vaultKey);
           return;
         }
-        if (data.backendPhase === "publish" && data.phase_status === "completed") {
+        if (data?.backendPhase === "publish" && data.phase_status === "completed") {
           terminal = true;
           stages = applyEvent(stages, data).map((stage) => ({
             ...stage,
@@ -309,12 +311,12 @@ export function useJobSSE(
           invalidateActivePipeline(vaultKey);
           return;
         }
-        if (data.job_status === "completed") {
+        if (raw.job_status === "completed") {
           terminal = true;
           overallDone = true;
           invalidateActivePipeline(vaultKey);
         }
-        stages = applyEvent(stages, data);
+        if (data) stages = applyEvent(stages, data);
       } catch {
         // Ignore malformed progress events.
       }
