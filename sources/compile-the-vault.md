@@ -171,6 +171,6 @@ A cancelled run shows **Update cancelled**, **run again**, and **back to home**.
 - Completion should explain/list more than eight rendered articles and surface result-query failure.
 - Reconsider **Already up to date — nothing changed** because zero run-rendered live articles does not prove the entire compile was a no-op.
 - Add run context—vault, trigger, start/elapsed time, and perhaps cost—so a copied URL or multi-run situation is understandable without decoding route state.
-- Verify multiple queued/active runs and intent coalescing across Health, source promotion, direct upload, staged upload, and URL ingest.
+- A post-baseline two-tab exact-byte race verified intent coalescing at the durable-batch boundary. At `b07a9a5`, both runs attached to one intent, but only its representative received compile progress and terminated. Commit `f7606dd` fans shared task, progress, terminal state, and cancellation across every attached run. The visible repeat completed both canonical URLs under one compile task while persisting one source. Broader coalescing combinations across Health, promotion, and URL ingest remain to be checked.
 
 Verified against Great Minds commit `c8c9e57`.
