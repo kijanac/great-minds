@@ -27,6 +27,8 @@ Post-baseline recheck: against Great Minds `b588057`, an owner submitted distinc
 
 Post-baseline B-09/B-26 recheck: before Great Minds `8ccfc5c`, a mixed Markdown/unsupported batch visibly claimed **2 / 2 selected** and **ingest 2 files** but added one source. After the fix, mixed unsupported and forced-hash-error rows were unselected/disabled, exact ready/action counts matched the handoff, and unsupported-only or direct-PDF batches had a disabled **ingest 0 files** action. A staged-client probe stopped after a named PUT failure without calling process; integration tests prove partial conversion now durably fails with the filename and no compile intent. No R2 deployment was available for a visible `FILES-11` recheck. Historical rows `FILES-06`, `FILES-07`, and `FILES-11` remain `—`.
 
+Post-baseline B-27 recheck: Great Minds `8ccfc5c` made the remote duplicate check a blocking review state, and `a60f54e` persisted a server-computed raw-byte SHA-256 for direct uploads. A controlled first upload grew the vault from 9 to 10 sources. Selecting the same bytes again visibly showed **0 / 1 ready**, **1 already in vault**, and disabled **ingest 0 files**; SQL retained one source with the exact hash. Integration coverage also distinguishes original HTML bytes from converted stored Markdown. `FILES-09` remains `—` because its Result column is reserved for the pinned baseline.
+
 Not checkable by hand:
 
 - Whether folder hierarchy should be preserved or deliberately discarded is a product call; the post-baseline source-ID fix prevents discarded hierarchy from causing same-base replacement.

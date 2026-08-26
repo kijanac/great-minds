@@ -34,7 +34,7 @@ The drafting pass raised 50 deduplicated items: 16 high, 30 medium, and 4 low. T
 | B-24 | An unresolvable document note can become inaccessible | medium | reader notes | fix | — |
 | B-25 | Full-reader metadata drops article tags and omits null-title fallbacks | medium | reader | fix | — |
 | B-26 | File review recognizes formats that the active converter rejects | medium | source ingest | resolved | — |
-| B-27 | Direct-upload duplicate detection is both racy and ineffective on repeats | medium | source ingest | fix | — |
+| B-27 | Direct-upload duplicate detection is both racy and ineffective on repeats | medium | source ingest | resolved | — |
 | B-28 | Client file upload has no real cancel/recovery and can navigate after leaving | medium | source ingest | fix | — |
 | B-29 | Bare pipeline says No active job when several runs are active | medium | pipeline | fix | — |
 | B-30 | Pipeline cancel/retry/stream errors lack truthful pending and failure state | medium | pipeline | fix | — |
@@ -338,8 +338,8 @@ The drafting pass raised 50 deduplicated items: 16 high, 30 medium, and 4 low. T
 - **Reproduce:** Delay check-dupes and click immediately; then reselect exact bytes after a successful direct upload.
 - **Why (from the code):** `web/src/lib/components/ingestion-flow.svelte:275-281, 593-597` has no remote-check state. Direct `sourceDocuments.index` calls `sourceRow` without client hash (`packages/server/src/source-documents.ts:158-175`), while only staged `batchIndex` supplies it at `176-188`.
 - **Severity:** `medium`. Duplicate protection is advertised but unreliable.
-- **Decision needed:** `fix`. Send and verify the raw hash on the direct server boundary.
-- **Status:** `partially fixed` by Great Minds commit `8ccfc5c`: confirmation now waits for the vault duplicate check. Direct upload still does not persist `client_hash`, so exact bytes selected later are not recognized as already present.
+- **Decision needed:** `resolved`. Wait for remote classification, then compute the raw-byte hash at the trusted direct-upload server boundary and persist it with the source.
+- **Status:** `fixed` by Great Minds commits `8ccfc5c` and `a60f54e`. The first blocks confirmation during the vault check; the second hashes the received multipart bytes rather than trusting a browser claim and indexes that value as `client_hash`. In a visible recheck, the first controlled upload grew the vault from 9 to 10 sources; selecting the exact bytes again showed **0 / 1 ready**, **1 already in vault**, and disabled **ingest 0 files**. SQL showed one matching source with the exact SHA-256. Pre-fix rows are intentionally not backfilled.
 - **Raised by:** [add files](sources/add-files.md#open-questions-and-verification).
 
 ### B-28: Client file upload has no real cancel/recovery and can navigate after leaving
