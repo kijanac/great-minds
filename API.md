@@ -389,7 +389,7 @@ File ingestion always uses the same staged workflow. Local deployments stage byt
    POST /v1/vaults/{vault_id}/ingest/staged-files/process
    ```
 
-Supported formats are Markdown/text, CSV, JSON, XML, HTML, PDF, DOCX, PPTX, XLSX, ODT, ODP, and ODS. Processing verifies each staged object's size and fingerprint before conversion. Temporary objects are removed during workflow finalization. Abandoned R2 objects expire through lifecycle policy, while stale local objects are pruned before the next upload preparation.
+Supported formats are Markdown/text, CSV, JSON, XML, HTML, PDF, DOCX, PPTX, XLSX, ODT, ODP, and ODS. Processing verifies each staged object's size and fingerprint before conversion. Temporary objects are removed during workflow finalization. Abandoned R2 objects expire through lifecycle policy, while stale local objects are pruned at startup and hourly.
 
 ### Ingest from URL
 

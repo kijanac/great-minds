@@ -1,4 +1,4 @@
-import { access, mkdir, mkdtemp, readFile, rm, utimes, writeFile } from "node:fs/promises";
+import { access, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { createServer, type RequestListener, type Server as NodeServer } from "node:http";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -999,13 +999,6 @@ describe("M3.1 write endpoint integration", () => {
       mimetype: input.type,
     }));
 
-    const staleHash = "f".repeat(64);
-    const stalePath = join(currentState().storageRoot, "staging", id.vault, staleHash);
-    await mkdir(dirname(stalePath), { recursive: true });
-    await writeFile(stalePath, "abandoned");
-    const staleTime = new Date(Date.now() - 25 * 60 * 60 * 1000);
-    await utimes(stalePath, staleTime, staleTime);
-
     const viewerPrepare = await api(
       "POST",
       `/vaults/${id.vault}/ingest/staged-files/prepare`,
@@ -1032,7 +1025,6 @@ describe("M3.1 write endpoint integration", () => {
       { files: manifest },
     );
     expect(prepared.status).toBe(200);
-    expect(await fileExists(stalePath)).toBe(false);
     expect(asArray(asRecord(prepared.body).files)).toEqual(
       manifest.map((file) => ({ hash: file.hash, transport: "api" })),
     );

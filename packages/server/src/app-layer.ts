@@ -35,11 +35,11 @@ import { StagedFileIngestWorkflowLive } from "./staged-file-ingest-workflow.ts";
 import { SourcesService, SourcesServiceLive } from "./sources.ts";
 import {
   ContentStorage,
-  ContentStorageLive,
   ProposalStorage,
-  ProposalStorageLive,
   StagedStorage,
-  StagedStorageLive,
+  StagedUploadGateway,
+  StorageMaintenanceLoopLive,
+  StorageServicesLive,
 } from "./storage.ts";
 import { RandomBytesLive, RandomBytesService } from "./random.ts";
 import { TokenService, TokenServiceLive } from "./tokens.ts";
@@ -82,6 +82,7 @@ export type AppLayerServices =
   | RepliesService
   | ContentStorage
   | StagedStorage
+  | StagedUploadGateway
   | ProposalStorage
   | RandomBytesService
   | AuthService
@@ -92,9 +93,6 @@ export type AppLayerOverrides = {
   readonly clock?: Layer.Layer<ClockService>;
   readonly mailer?: Layer.Layer<Mailer>;
   readonly logger?: Layer.Layer<StructuredLogger>;
-  readonly storage?: Layer.Layer<ContentStorage>;
-  readonly stagedStorage?: Layer.Layer<StagedStorage>;
-  readonly proposalStorage?: Layer.Layer<ProposalStorage>;
   readonly randomBytes?: Layer.Layer<RandomBytesService>;
   readonly languageModel?: Layer.Layer<LanguageModel>;
   readonly embeddings?: Layer.Layer<EmbeddingsService>;
@@ -113,13 +111,7 @@ export const makeAppLayers = (overrides: AppLayerOverrides = {}) => {
   );
 
   const VaultAccessLive = VaultAccessServiceLive.pipe(Layer.provideMerge(BaseLive));
-  const StorageLive = (overrides.storage ?? ContentStorageLive).pipe(Layer.provideMerge(BaseLive));
-  const StagedStorageLiveLayer = (overrides.stagedStorage ?? StagedStorageLive).pipe(
-    Layer.provideMerge(BaseLive),
-  );
-  const ProposalStorageLiveLayer = (overrides.proposalStorage ?? ProposalStorageLive).pipe(
-    Layer.provideMerge(BaseLive),
-  );
+  const StorageLive = StorageServicesLive.pipe(Layer.provideMerge(BaseLive));
   const LanguageModelLiveLayer = (overrides.languageModel ?? LanguageModelLive).pipe(
     Layer.provideMerge(BaseLive),
   );
@@ -158,14 +150,12 @@ export const makeAppLayers = (overrides: AppLayerOverrides = {}) => {
     Layer.provideMerge(CompilePhasesLiveLayer),
     Layer.provideMerge(PipelineRunsLive),
     Layer.provideMerge(StorageLive),
-    Layer.provideMerge(StagedStorageLiveLayer),
     Layer.provideMerge(WorkflowEngineBaseLive),
     Layer.provideMerge(BaseLive),
   );
   const WorkflowsLive = WorkflowHandlersLive.pipe(Layer.provideMerge(WorkflowEngineBaseLive));
   const ProposalsLive = ProposalsServiceLive.pipe(
     Layer.provideMerge(SourceDocumentsLive),
-    Layer.provideMerge(ProposalStorageLiveLayer),
     Layer.provideMerge(StorageLive),
     Layer.provideMerge(VaultAccessLive),
     Layer.provideMerge(BaseLive),
@@ -181,7 +171,6 @@ export const makeAppLayers = (overrides: AppLayerOverrides = {}) => {
     Layer.provideMerge(SourceDocumentsLive),
     Layer.provideMerge(UserDocumentsLive),
     Layer.provideMerge(StorageLive),
-    Layer.provideMerge(StagedStorageLiveLayer),
     Layer.provideMerge(VaultAccessLive),
     Layer.provideMerge(WorkflowsLive),
     Layer.provideMerge(BaseLive),
@@ -204,7 +193,6 @@ export const makeAppLayers = (overrides: AppLayerOverrides = {}) => {
     Layer.provideMerge(MailerLiveLayer),
     Layer.provideMerge(VaultAccessLive),
     Layer.provideMerge(StorageLive),
-    Layer.provideMerge(StagedStorageLiveLayer),
     Layer.provideMerge(BaseLive),
   );
   const SessionsLive = SessionsServiceLive.pipe(
@@ -255,14 +243,12 @@ export const makeAppLayers = (overrides: AppLayerOverrides = {}) => {
     SourceDocumentsLive,
     UserDocumentsLive,
     ProposalsLive,
-    ProposalStorageLiveLayer,
   );
 
   const ServiceDepsLive = Layer.mergeAll(
     MailerLiveLayer,
     TokenServiceLive,
     StorageLive,
-    StagedStorageLiveLayer,
     LanguageModelLiveLayer,
     EmbeddingsLiveLayer,
     CostLookupLiveLayer,
@@ -285,10 +271,13 @@ export const makeAppLayers = (overrides: AppLayerOverrides = {}) => {
     Layer.provideMerge(WorkflowsLive),
     Layer.provideMerge(BaseLive),
   );
-  const ReconcilerLoopLive = CompileIntentReconcilerLoopLive.pipe(
-    Layer.provideMerge(ReconcilerLive),
-    Layer.provideMerge(WorkflowsLive),
-    Layer.provideMerge(BaseLive),
+  const ReconcilerLoopLive = Layer.mergeAll(
+    CompileIntentReconcilerLoopLive.pipe(
+      Layer.provideMerge(ReconcilerLive),
+      Layer.provideMerge(WorkflowsLive),
+      Layer.provideMerge(BaseLive),
+    ),
+    StorageMaintenanceLoopLive.pipe(Layer.provide(StorageLive)),
   );
   return { app: AppLive, reconcilerLoop: ReconcilerLoopLive } as const;
 };

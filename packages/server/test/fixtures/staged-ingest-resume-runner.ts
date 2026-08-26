@@ -97,10 +97,6 @@ const StorageLive = Layer.succeed(ContentStorage, {
   clear: () => Effect.void,
 });
 const StagedStorageLive = Layer.succeed(StagedStorage, {
-  pruneExpiredStaged: () => Effect.void,
-  prepareStagedPut: () =>
-    Effect.succeed({ transport: "presigned" as const, url: "https://example.invalid" }),
-  writeStagedBytes: () => Effect.die(new Error("unused")),
   readStagedBytes: () => Effect.die(new Error("persist activity replayed unexpectedly")),
   deleteStaged: () => Effect.void,
   clearStaged: () => Effect.void,

@@ -39,7 +39,11 @@ import {
 } from "./source-identity.ts";
 import { SourceDocumentsService } from "./source-documents.ts";
 import { StagedFileIngestWorkflow } from "./staged-file-ingest-workflow.ts";
-import { ContentStorage, StagedStorage, vaultOwner } from "./storage.ts";
+import {
+  ContentStorage,
+  StagedUploadGateway,
+  vaultOwner,
+} from "./storage.ts";
 import { UserDocumentsService } from "./user-documents.ts";
 import { VaultAccessService } from "./vaults.ts";
 import { ClockService } from "./clock.ts";
@@ -228,7 +232,7 @@ export const IngestServiceLive = Layer.effect(
     const config = yield* AppConfig;
     const access = yield* VaultAccessService;
     const storage = yield* ContentStorage;
-    const stagedStorage = yield* StagedStorage;
+    const stagedUploads = yield* StagedUploadGateway;
     const sourceDocumentsWrite = yield* SourceDocumentsService;
     const userDocumentsRead = yield* UserDocumentsService;
     const proposals = yield* ProposalsService;
@@ -461,26 +465,20 @@ export const IngestServiceLive = Layer.effect(
         Effect.gen(function* () {
           yield* access.requireOwner(userId, vaultId);
           const manifest = yield* parseStagedManifest(files);
-          yield* stagedStorage.pruneExpiredStaged().pipe(
-            Effect.catchTag("StagedStorageError", (error) =>
-              Effect.fail(new BadRequest({ detail: error.message })),
-            ),
-          );
-          const targets: StagedFileUploadTarget[] = [];
-          for (const file of manifest) {
-            const target = yield* stagedStorage.prepareStagedPut(
+          return yield* stagedUploads
+            .prepare(
               vaultId,
-              file.hash,
-              file.mimetype ?? "application/octet-stream",
-              file.size,
-            ).pipe(
-              Effect.catchTag("StagedStorageError", (error) =>
+              manifest.map((file) => ({
+                hash: file.hash,
+                contentType: file.mimetype ?? "application/octet-stream",
+                contentLength: file.size,
+              })),
+            )
+            .pipe(
+              Effect.catchTag("StorageBackendError", (error) =>
                 Effect.fail(new BadRequest({ detail: error.message })),
               ),
             );
-            targets.push({ hash: file.hash, ...target });
-          }
-          return targets;
         }),
       uploadStagedFile: (userId, vaultId, input) =>
         Effect.gen(function* () {
@@ -490,13 +488,21 @@ export const IngestServiceLive = Layer.effect(
               detail: "Uploaded file fingerprint does not match its bytes",
             });
           }
-          yield* stagedStorage
-            .writeStagedBytes(vaultId, input.hash, input.rawBytes, input.contentType)
-            .pipe(
-              Effect.catchTag("StagedStorageError", (error) =>
-                Effect.fail(new BadRequest({ detail: error.message })),
-              ),
-            );
+          if (stagedUploads.kind !== "api") {
+            return yield* new BadRequest({
+              detail: "Server-mediated staged upload is unavailable for this storage backend",
+            });
+          }
+          yield* stagedUploads.receive(
+            vaultId,
+            input.hash,
+            input.rawBytes,
+            input.contentType,
+          ).pipe(
+            Effect.catchTag("StorageBackendError", (error) =>
+              Effect.fail(new BadRequest({ detail: error.message })),
+            ),
+          );
         }),
       processStagedFiles: (userId, vaultId, jobId, files) =>
         Effect.gen(function* () {

@@ -212,11 +212,6 @@ const StorageLive = Layer.succeed(ContentStorage, {
 });
 
 const StagedStorageLive = Layer.succeed(StagedStorage, {
-  pruneExpiredStaged: () => Effect.void,
-  prepareStagedPut: () =>
-    Effect.succeed({ transport: "presigned" as const, url: "https://example.invalid" }),
-  writeStagedBytes: (_vaultId, hash, bytes) =>
-    Effect.sync(() => staged.set(hash, bytes)).pipe(Effect.asVoid),
   readStagedBytes: (_vaultId, hash) => {
     if (readPause?.hash === hash) {
       const pause = readPause;
