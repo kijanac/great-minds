@@ -1006,6 +1006,44 @@ describe("M3.1 write endpoint integration", () => {
     expect(uploadedText).toContain("origin: manual");
     expect(uploadedText).toContain("Uploaded paragraph. ^p0");
 
+    const alphaReportForm = new FormData();
+    alphaReportForm.append(
+      "file",
+      new Blob(["# Alpha report\n\nAlpha upload body."], { type: "text/markdown" }),
+      "report.md",
+    );
+    const alphaReportUpload = await uploadApi(
+      `/vaults/${id.vault}/ingest/upload`,
+      aliceToken,
+      alphaReportForm,
+    );
+    expect(alphaReportUpload.status).toBe(201);
+
+    const betaReportForm = new FormData();
+    betaReportForm.append(
+      "file",
+      new Blob(["# Beta report\n\nBeta upload body."], { type: "text/plain" }),
+      "report.txt",
+    );
+    const betaReportUpload = await uploadApi(
+      `/vaults/${id.vault}/ingest/upload`,
+      aliceToken,
+      betaReportForm,
+    );
+    expect(betaReportUpload.status).toBe(201);
+
+    const alphaReport = asRecord(alphaReportUpload.body);
+    const betaReport = asRecord(betaReportUpload.body);
+    const alphaReportId = String(alphaReport.id);
+    const betaReportId = String(betaReport.id);
+    const alphaReportPath = String(alphaReport.file_path);
+    const betaReportPath = String(betaReport.file_path);
+    expect(alphaReportId).not.toBe(betaReportId);
+    expect(alphaReportPath).toBe(`raw/docs/report-${alphaReportId}.md`);
+    expect(betaReportPath).toBe(`raw/docs/report-${betaReportId}.md`);
+    expect(await readVaultFile(id.vault, alphaReportPath)).toContain("Alpha upload body. ^p0");
+    expect(await readVaultFile(id.vault, betaReportPath)).toContain("Beta upload body. ^p0");
+
     const htmlForm = new FormData();
     htmlForm.append(
       "file",
