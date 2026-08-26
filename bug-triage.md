@@ -16,7 +16,7 @@ The drafting pass raised 50 deduplicated items: 16 high, 30 medium, and 4 low. T
 | B-06 | A failed Health request reports the wiki as healthy | high | health | resolved | — |
 | B-07 | Different URL sources with the same path stem overwrite one another | high | source ingest | resolved | — |
 | B-08 | Direct file ingest discards folders and overwrites same-base files | high | source ingest | resolved | — |
-| B-09 | File review and staged ingest can silently omit files counted as selected | high | source ingest | fix | — |
+| B-09 | File review and staged ingest can silently omit files counted as selected | high | source ingest | resolved | — |
 | B-10 | A failed reply with partial prose looks successfully completed | high | research | fix | — |
 | B-11 | A queued cancelled/failed run can display Knowledge base updated | high | pipeline | fix | — |
 | B-12 | URL launch cannot reconnect, reloads duplicate work, and Retry does not retry the URL | high | URL ingest | fix | — |
@@ -33,7 +33,7 @@ The drafting pass raised 50 deduplicated items: 16 high, 30 medium, and 4 low. T
 | B-23 | Pending document notes do not reconnect and appear interrupted | medium | reader notes | fix | — |
 | B-24 | An unresolvable document note can become inaccessible | medium | reader notes | fix | — |
 | B-25 | Full-reader metadata drops article tags and omits null-title fallbacks | medium | reader | fix | — |
-| B-26 | File review recognizes formats that the active converter rejects | medium | source ingest | fix | — |
+| B-26 | File review recognizes formats that the active converter rejects | medium | source ingest | resolved | — |
 | B-27 | Direct-upload duplicate detection is both racy and ineffective on repeats | medium | source ingest | fix | — |
 | B-28 | Client file upload has no real cancel/recovery and can navigate after leaving | medium | source ingest | fix | — |
 | B-29 | Bare pipeline says No active job when several runs are active | medium | pipeline | fix | — |
@@ -154,7 +154,8 @@ The drafting pass raised 50 deduplicated items: 16 high, 30 medium, and 4 low. T
 - **Reproduce:** Confirm an unrecognized-only row; then run two-file staged batches with one failed PUT and one failed conversion.
 - **Why (from the code):** `web/src/lib/components/ingestion-flow.svelte:73` counts all selected but `346-350` requires hash/nonerror; labels use that count at `593-597`. `web/src/lib/api/ingest.ts:224-272` emits `failed_uploads`, which `web/src/lib/components/pipeline-container.svelte:130-160` ignores. `packages/server/src/staged-file-ingest-workflow.ts:140-220` can compile when `ingested > 0` despite failures.
 - **Severity:** `high`. It silently drops user-selected source material.
-- **Decision needed:** `fix`. Make eligibility/count identical and render a durable per-file outcome before claiming completion.
+- **Decision needed:** `resolved`. Confirmation is defined by the upload-ready set. Unsupported and hash-error rows are unavailable rather than selected; any staged PUT failure stops before processing; any staged conversion failure durably fails the run with named outcomes and no compile intent.
+- **Status:** `fixed` by Great Minds commit `8ccfc5c`. Before the fix, a visible mixed batch said **2 / 2 selected** and **ingest 2 files**, then persisted only Gamma. After the fix, equivalent mixed, unsupported-only, and forced-hash-error checks showed exact ready counts, disabled unavailable rows, and matching actions. A browser-level staged-client probe stopped after one named PUT failure without calling process; integration tests prove partial conversion persists successful source files but fails the durable run, records the failed filename, and does not compile.
 - **Raised by:** [add files](sources/add-files.md#open-questions-and-verification), [background work](foundations/background-work.md#open-questions-and-verification).
 
 ### B-10: A failed reply with partial prose looks successfully completed
@@ -326,7 +327,8 @@ The drafting pass raised 50 deduplicated items: 16 high, 30 medium, and 4 low. T
 - **Reproduce:** Test the mismatched extensions in local and R2 modes.
 - **Why (from the code):** UI set is `web/src/lib/components/ingestion-flow.svelte:12-35`; direct accepts only text/HTML at `packages/server/src/ingest.ts:198-229`; staged sets differ at `packages/server/src/conversion.ts:41-64`.
 - **Severity:** `medium`. A common file appears accepted then fails after the user commits.
-- **Decision needed:** `fix`. Advertise/validate the exact backend capability set before confirmation.
+- **Decision needed:** `resolved`. Review uses the active direct/staged converter's capability set; unsupported rows are unavailable before confirmation.
+- **Status:** `fixed` by Great Minds commit `8ccfc5c`. Direct mode visibly blocked a PDF as unsupported with **0 / 1 ready** and a disabled action. The staged set now includes ODP/ODS and excludes formats its converter cannot accept; an R2-backed visible recheck remains unavailable.
 - **Raised by:** [add files](sources/add-files.md#open-questions-and-verification).
 
 ### B-27: Direct-upload duplicate detection is both racy and ineffective on repeats
@@ -336,7 +338,8 @@ The drafting pass raised 50 deduplicated items: 16 high, 30 medium, and 4 low. T
 - **Reproduce:** Delay check-dupes and click immediately; then reselect exact bytes after a successful direct upload.
 - **Why (from the code):** `web/src/lib/components/ingestion-flow.svelte:275-281, 593-597` has no remote-check state. Direct `sourceDocuments.index` calls `sourceRow` without client hash (`packages/server/src/source-documents.ts:158-175`), while only staged `batchIndex` supplies it at `176-188`.
 - **Severity:** `medium`. Duplicate protection is advertised but unreliable.
-- **Decision needed:** `fix`. Track remote-check pending and send/verify raw hash on direct server boundary.
+- **Decision needed:** `fix`. Send and verify the raw hash on the direct server boundary.
+- **Status:** `partially fixed` by Great Minds commit `8ccfc5c`: confirmation now waits for the vault duplicate check. Direct upload still does not persist `client_hash`, so exact bytes selected later are not recognized as already present.
 - **Raised by:** [add files](sources/add-files.md#open-questions-and-verification).
 
 ### B-28: Client file upload has no real cancel/recovery and can navigate after leaving

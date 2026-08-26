@@ -162,6 +162,6 @@ After success, the page loads live articles whose render-run identifier matches 
 - Post-baseline role decision: Health update, direct URL/reference ingest, compile, and cancellation are owner-only; editors use proposal flows and viewers are read-only. Great Minds commit `45ac124` applies that policy.
 - Bare `/pipeline` shows **No active job** when the active list contains more than one run as well as when it contains none. Verify the intended recovery for unexpected concurrency.
 - URL ingest performs remote fetch and indexing before the launch request returns, even though the run exists. Verify what the user sees if the browser request times out while the run continues and becomes discoverable later.
-- Verify partial staged-upload messaging: the generator records per-file failures, but the pipeline container does not visibly render the `failed_uploads` list before backend progress takes over.
+- Great Minds commit `8ccfc5c` makes partial staged failures terminal and explicit: any PUT failure stops before durable processing with a named list, while any read/conversion failure durably fails source ingest with per-file detail and no compile intent. A visible R2-backed recheck remains outstanding.
 
 Verified against Great Minds commit `c8c9e57`.

@@ -112,6 +112,8 @@ Not checkable by hand:
 | PIPE-14 | P1 | server control | Stale active run without intent/journal fails after ~120 s; valid evidence exempts it ([While in progress](../foundations/background-work.md#while-in-progress)). | Seed stale runs with/without intent/journal. | 1. Run recovery.<br>2. Inspect statuses. | Orphan becomes failed restart-interruption; evidenced runs remain recoverable. | — |
 | PIPE-15 | P2 | mouse | Terminal success lists result and terminal failure/retry creates a new run ([Finish](../foundations/background-work.md#finish)). | One success and one injected phase failure. | 1. Open each terminal page.<br>2. Choose retry on failed. | Success card/navigation appear; failed record stays failed and retry routes to distinct/coalesced manual run. | — |
 
+Post-baseline B-09 fix: Great Minds `8ccfc5c` aborts staged processing after any PUT failure with named client outcomes. Integration coverage proves a conversion/read failure persists its filename in durable progress, fails source ingest, and emits no compile intent even when other source files were saved. `PIPE-11` remains `—` because no disposable R2-backed deployment was available for visible verification.
+
 Not checkable by hand:
 
 - The post-baseline policy makes compile, cancellation, and direct URL mutation owner-only; PIPE-08 records the partially exercised baseline.

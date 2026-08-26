@@ -25,6 +25,8 @@ Use a disposable owner vault with controlled sources/articles/tags/health graph 
 
 Post-baseline recheck: against Great Minds `b588057`, an owner submitted distinct `report.md` and `report.txt` bodies in one visible direct-upload batch. Both appeared as unique, Library grew by two sources, each row opened its own body, and storage used separate ID-bearing paths. The provider-backed compile launch failed only after persistence because `OPENROUTER_API_KEY` is absent. `FILES-08` remains `—` because its Result column is reserved for the pinned `c8c9e57` baseline.
 
+Post-baseline B-09/B-26 recheck: before Great Minds `8ccfc5c`, a mixed Markdown/unsupported batch visibly claimed **2 / 2 selected** and **ingest 2 files** but added one source. After the fix, mixed unsupported and forced-hash-error rows were unselected/disabled, exact ready/action counts matched the handoff, and unsupported-only or direct-PDF batches had a disabled **ingest 0 files** action. A staged-client probe stopped after a named PUT failure without calling process; integration tests prove partial conversion now durably fails with the filename and no compile intent. No R2 deployment was available for a visible `FILES-11` recheck. Historical rows `FILES-06`, `FILES-07`, and `FILES-11` remain `—`.
+
 Not checkable by hand:
 
 - Whether folder hierarchy should be preserved or deliberately discarded is a product call; the post-baseline source-ID fix prevents discarded hierarchy from causing same-base replacement.

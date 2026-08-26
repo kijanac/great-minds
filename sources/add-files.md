@@ -186,12 +186,12 @@ Once a run exists, terminal success, failure, cancellation, completion articles,
 
 ## Open questions and verification
 
-- Align the review format set with the active upload backend. At minimum, recognized rows should not proceed to a known-unsupported direct converter.
-- Fix selected-count/confirmation parity so every counted row is either uploaded or visibly blocked with a reason.
+- Great Minds commit `8ccfc5c` aligns review with the active direct/staged converter. Unsupported rows are unavailable before confirmation; a direct-mode PDF recheck showed **0 / 1 ready** and a disabled action.
+- Commit `8ccfc5c` also makes the ready count, enabled rows, and handed-off batch identical. Mixed unsupported and forced-hash-error checks exposed one ready file and disabled the omitted row instead of claiming both were selected.
 - Great Minds commit `b588057` makes source ID the uploaded-document identity and uses ID-derived paths, eliminating same-base replacement even though neither upload mode retains folder hierarchy. Post-fix hand verification kept distinct `report.md` and `report.txt` bodies as separate sources. Decide whether review should explicitly label relative folders as review-only provenance or preserve them separately.
-- Make the vault duplicate check a real pending state and persist client hashes for direct uploads, or stop labeling direct preflight as vault-wide duplicate detection.
-- Surface every failed staged PUT/conversion in the pipeline and state clearly whether the remaining files continued.
-- **retry** after pre-run failure should retry the file handoff or be renamed **compile saved files**; current wording implies recovery that does not occur.
+- Commit `8ccfc5c` blocks confirmation while the vault duplicate check is pending. Direct uploads still need to send and persist their raw-byte hash; repeat local uploads otherwise remain invisible to preflight.
+- Commit `8ccfc5c` stops a staged batch before processing if any PUT fails and lists each failed file. Conversion failures now durably fail source ingest with named outcomes and no compile intent instead of continuing as success.
+- Commit `8ccfc5c` removes **retry** from pre-run upload errors and labels the durable partial-ingest recovery **compile saved files**, matching its actual behavior.
 - Verify navigation during client upload. Because no abort/lifecycle guard protects the async resolver, it may continue and navigate the owner back to a run after they leave.
 - Verify active-vault change in another tab during a multi-file operation and pin the vault id for the whole batch.
 - Verify memory/size limits for browser hashing, multipart parsing, R2 PUT, and conversion. The product exposes no count/size limit, but underlying browser/server libraries may impose one.
