@@ -288,6 +288,7 @@ export const pipelineRuns = pgTable(
       name: "pipeline_runs_vault_id_fkey",
     }).onDelete("cascade"),
     index("ix_pipeline_runs_vault_id").on(table.vaultId),
+    index("ix_pipeline_runs_compile_intent_id").on(table.compileIntentId),
   ],
 );
 

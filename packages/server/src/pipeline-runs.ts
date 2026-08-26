@@ -1,4 +1,4 @@
-import { Database, pipelineRuns } from "@great-minds/database";
+import { compileIntents, Database, pipelineRuns } from "@great-minds/database";
 import type { Uuid } from "@great-minds/domain";
 import { and, eq, inArray, lt, sql } from "drizzle-orm";
 import { Context, Effect, Layer } from "effect";
@@ -14,6 +14,7 @@ export type PipelineProgressStep = {
 
 type PipelineRunsServiceShape = {
   readonly cancel: (runId: Uuid) => Effect.Effect<void>;
+  readonly cancelCompileIntent: (intentId: Uuid) => Effect.Effect<void>;
   readonly isActive: (runId: Uuid) => Effect.Effect<boolean>;
   readonly updateProgress: (
     runId: Uuid,
@@ -64,6 +65,14 @@ export const PipelineRunsServiceLive = Layer.effect(
   PipelineRunsService,
   Effect.gen(function* () {
     const db = yield* Database;
+    const runOrCompileGroup = (runId: Uuid) => sql`(
+      ${pipelineRuns.id} = ${runId}
+      OR ${pipelineRuns.compileIntentId} = (
+        SELECT anchor.compile_intent_id
+        FROM pipeline_runs AS anchor
+        WHERE anchor.id = ${runId}
+      )
+    )`;
     const updateProgress: PipelineRunsServiceShape["updateProgress"] = (
       runId,
       phase,
@@ -91,7 +100,7 @@ export const PipelineRunsServiceLive = Layer.effect(
           updatedAt: sql`now()`,
         })
         .where(
-          and(eq(pipelineRuns.id, runId), inArray(pipelineRuns.status, ["pending", "running"])),
+          and(runOrCompileGroup(runId), inArray(pipelineRuns.status, ["pending", "running"])),
         ))
         .pipe(Effect.asVoid);
 
@@ -119,6 +128,35 @@ export const PipelineRunsServiceLive = Layer.effect(
             and(eq(pipelineRuns.id, runId), inArray(pipelineRuns.status, ["pending", "running"])),
           ))
           .pipe(Effect.asVoid),
+      cancelCompileIntent: (intentId) =>
+        db
+          .transaction((tx) =>
+            Effect.gen(function* () {
+              yield* tx
+                .update(pipelineRuns)
+                .set({
+                  status: "cancelled",
+                  phaseStatus: "failed",
+                  error: "Update cancelled",
+                  completedAt: sql`now()`,
+                  updatedAt: sql`now()`,
+                })
+                .where(
+                  and(
+                    eq(pipelineRuns.compileIntentId, intentId),
+                    inArray(pipelineRuns.status, ["pending", "running"]),
+                  ),
+                );
+              yield* tx
+                .update(compileIntents)
+                .set({
+                  dispatchedAt: sql`coalesce(${compileIntents.dispatchedAt}, now())`,
+                  satisfiedAt: sql`coalesce(${compileIntents.satisfiedAt}, now())`,
+                })
+                .where(eq(compileIntents.id, intentId));
+            }),
+          )
+          .pipe(Effect.asVoid),
       updateProgress,
       failPreservingProgress: (runId, error) =>
         db.query((d) => d
@@ -131,7 +169,7 @@ export const PipelineRunsServiceLive = Layer.effect(
             updatedAt: sql`now()`,
           })
           .where(
-            and(eq(pipelineRuns.id, runId), inArray(pipelineRuns.status, ["pending", "running"])),
+            and(runOrCompileGroup(runId), inArray(pipelineRuns.status, ["pending", "running"])),
           ))
           .pipe(Effect.asVoid),
       fail: (runId, error) => updateProgress(runId, "source_ingest", "failed", [], error),

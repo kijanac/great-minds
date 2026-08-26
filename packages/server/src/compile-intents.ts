@@ -1,6 +1,6 @@
 import { compileIntents, Database, pipelineRuns, tasks } from "@great-minds/database";
 import type { Uuid } from "@great-minds/domain";
-import { and, asc, eq, inArray, isNotNull, isNull, sql } from "drizzle-orm";
+import { and, asc, eq, inArray, isNotNull, isNull, or, sql } from "drizzle-orm";
 import { Cause, Context, Effect, Layer, Schema } from "effect";
 import * as Activity from "effect/unstable/workflow/Activity";
 import * as Workflow from "effect/unstable/workflow/Workflow";
@@ -147,11 +147,11 @@ export const CompileWorkflowLive = Layer.unwrap(
   ),
 );
 
-export const cancelCompileWorkflow = (runId: Uuid, intentId: string) =>
+export const cancelCompileWorkflow = (intentId: Uuid) =>
   Effect.gen(function* () {
     const pipeline = yield* PipelineRunsService;
     const engine = yield* WorkflowEngine.WorkflowEngine;
-    yield* pipeline.cancel(runId);
+    yield* pipeline.cancelCompileIntent(intentId);
     yield* engine.interruptUnsafe(
       CompileWorkflow,
       workflowExecutionId(CompileWorkflow._tag, intentId),
@@ -317,7 +317,12 @@ export const CompileIntentReconcilerLive = Layer.effect(
             activeTaskType: "compile",
             updatedAt: sql`now()`,
           })
-          .where(eq(pipelineRuns.id, item.pipelineRunId)));
+          .where(
+            or(
+              eq(pipelineRuns.id, item.pipelineRunId),
+              eq(pipelineRuns.compileIntentId, item.intentId),
+            ),
+          ));
       });
 
     return {

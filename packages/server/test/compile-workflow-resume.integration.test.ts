@@ -27,11 +27,12 @@ const SqlLive = PgClient.layer({ url: Redacted.make(databaseUrl()) });
 const runSql = <A>(effect: Effect.Effect<A, unknown, PgClient.PgClient>) =>
   Effect.runPromise(effect.pipe(Effect.provide(SqlLive)));
 
-const seedRun = (runId: string) =>
+const seedRun = (runId: string, intentId: string) =>
   runSql(
     Effect.gen(function* () {
       const sql = yield* PgClient.PgClient;
-      yield* sql`insert into pipeline_runs(id,vault_id,trigger,status,current_phase,phase_status,progress_steps) values (${runId}::uuid,${ids.vault}::uuid,'manual','pending','','','[]'::jsonb)`;
+      yield* sql`insert into pipeline_runs(id,vault_id,trigger,status,current_phase,phase_status,progress_steps,compile_intent_id) values (${runId}::uuid,${ids.vault}::uuid,'manual','pending','','','[]'::jsonb,${intentId}::uuid)`;
+      yield* sql`insert into compile_intents(id,vault_id,pipeline_run_id) values (${intentId}::uuid,${ids.vault}::uuid,${runId}::uuid)`;
     }),
   );
 
@@ -107,7 +108,7 @@ describe("M4.3a compile workflow durability", () => {
   });
 
   it("SIGKILL resume journals the completed ingest phase boundary", async () => {
-    await seedRun(ids.resumeRun);
+    await seedRun(ids.resumeRun, ids.resumeIntent);
     const markerDir = await mkdtemp(join(tmpdir(), "gm-compile-resume-"));
     try {
       const first = start("pause", ids.resumeIntent, ids.resumeRun, markerDir);
@@ -145,7 +146,7 @@ describe("M4.3a compile workflow durability", () => {
   }, 60_000);
 
   it("cancellation interrupts a mid-phase workflow and cancelled remains terminal", async () => {
-    await seedRun(ids.cancelRun);
+    await seedRun(ids.cancelRun, ids.cancelIntent);
     const markerDir = await mkdtemp(join(tmpdir(), "gm-compile-cancel-"));
     try {
       const runner = start("cancel", ids.cancelIntent, ids.cancelRun, markerDir);

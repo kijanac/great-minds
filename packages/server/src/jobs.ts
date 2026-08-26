@@ -138,11 +138,11 @@ export const JobsServiceLive = Layer.effect(
                 .update(compileIntents)
                 .set({ pipelineRunId: jobId })
                 .where(eq(compileIntents.id, intent.id));
-              yield* tx
-                .update(pipelineRuns)
-                .set({ compileIntentId: intent.id, updatedAt: sql`now()` })
-                .where(and(eq(pipelineRuns.id, runId), eq(pipelineRuns.vaultId, vaultId)));
             }
+            yield* tx
+              .update(pipelineRuns)
+              .set({ compileIntentId: intent.id, updatedAt: sql`now()` })
+              .where(and(eq(pipelineRuns.id, runId), eq(pipelineRuns.vaultId, vaultId)));
             if (insertedRun && runId !== jobId) {
               yield* tx.delete(pipelineRuns).where(eq(pipelineRuns.id, jobId));
             }
@@ -171,6 +171,7 @@ export const JobsServiceLive = Layer.effect(
           const rows = yield* db.query((d) => d
             .select({
               trigger: pipelineRuns.trigger,
+              compileIntentId: pipelineRuns.compileIntentId,
               activeTaskId: pipelineRuns.activeTaskId,
               activeTaskType: pipelineRuns.activeTaskType,
             })
@@ -185,8 +186,8 @@ export const JobsServiceLive = Layer.effect(
             .limit(1));
           const run = rows[0];
           if (run === undefined) return;
-          if (run.activeTaskType === "compile" && run.activeTaskId !== null) {
-            yield* cancelCompileWorkflow(runId, run.activeTaskId).pipe(
+          if (run.compileIntentId !== null) {
+            yield* cancelCompileWorkflow(run.compileIntentId as Uuid).pipe(
               Effect.provideService(WorkflowEngine.WorkflowEngine, workflowEngine),
               Effect.provideService(PipelineRunsService, pipeline),
             );

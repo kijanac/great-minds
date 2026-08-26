@@ -15,7 +15,7 @@ import { fileURLToPath } from "node:url";
 
 import * as PgClient from "@effect/sql-pg/PgClient";
 import type { FileFingerprint, Uuid } from "@great-minds/domain";
-import { eq, sql } from "drizzle-orm";
+import { eq, inArray, sql } from "drizzle-orm";
 import { Effect, Layer, Option, Redacted } from "effect";
 import type * as WorkflowEngine from "effect/unstable/workflow/WorkflowEngine";
 import { beforeEach, describe, expect, it } from "vitest";
@@ -690,6 +690,161 @@ describe("M4.2 durable workers", () => {
     expect(state.replay).toEqual({ ingested: 1, skipped: 0, failed: 0 });
     expect(state.intents).toHaveLength(1);
   }, 30_000);
+
+  it("keeps every coalesced staged run in sync with its shared compile", async () => {
+    const bytes = Buffer.from(
+      "# Concurrent duplicate\n\nBoth batches accepted these exact bytes before compile dispatch.",
+    );
+    const hash = stageBytes(bytes);
+    const file = {
+      name: "duplicate.md",
+      size: bytes.length,
+      hash,
+      mimetype: "text/markdown",
+      needsCompile: true,
+    };
+
+    const state = await run(
+      Effect.gen(function* () {
+        const db = yield* Database;
+        yield* db.query((d) => d
+          .insert(pipelineRuns)
+          .values({
+            id: id.dedupeRun,
+            vaultId: id.vault,
+            trigger: "staged_files",
+            status: "pending",
+            currentPhase: "",
+            phaseStatus: "",
+            progressSteps: [],
+          }))
+          .pipe(Effect.orDie);
+
+        const first = yield* StagedFileIngestWorkflow.execute({
+          vaultId: id.vault,
+          batchId: id.ingestRun,
+          pipelineRunId: id.ingestRun,
+          files: [file],
+        });
+        const second = yield* StagedFileIngestWorkflow.execute({
+          vaultId: id.vault,
+          batchId: id.dedupeRun,
+          pipelineRunId: id.dedupeRun,
+          files: [file],
+        });
+
+        const reconciler = yield* CompileIntentReconciler;
+        yield* reconcileUntilSatisfied(reconciler);
+        return {
+          first,
+          second,
+          documents: yield* db.query((d) => d.select().from(sourceDocuments)).pipe(Effect.orDie),
+          intents: yield* db.query((d) => d.select().from(compileIntents)).pipe(Effect.orDie),
+          runs: yield* db.query((d) => d
+            .select()
+            .from(pipelineRuns)
+            .where(inArray(pipelineRuns.id, [id.ingestRun, id.dedupeRun])))
+            .pipe(Effect.orDie),
+          compileTasks: yield* db.query((d) => d
+            .select()
+            .from(tasks)
+            .where(eq(tasks.type, "compile")))
+            .pipe(Effect.orDie),
+        };
+      }),
+    );
+
+    expect(state.first).toEqual({ ingested: 1, skipped: 0, failed: 0 });
+    expect(state.second).toEqual({ ingested: 1, skipped: 0, failed: 0 });
+    expect(state.documents).toHaveLength(1);
+    expect(state.intents).toHaveLength(1);
+    expect(state.compileTasks).toHaveLength(1);
+    expect(state.runs).toHaveLength(2);
+    expect(new Set(state.runs.map((run) => run.compileIntentId))).toEqual(
+      new Set([state.intents[0]!.id]),
+    );
+    expect(state.runs).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: id.ingestRun,
+          status: "completed",
+          currentPhase: "publish",
+          phaseStatus: "completed",
+          compileTaskId: state.intents[0]!.id,
+        }),
+        expect.objectContaining({
+          id: id.dedupeRun,
+          status: "completed",
+          currentPhase: "publish",
+          phaseStatus: "completed",
+          compileTaskId: state.intents[0]!.id,
+        }),
+      ]),
+    );
+  }, 30_000);
+
+  it("cancels every run coalesced onto a pending compile intent", async () => {
+    const state = await run(
+      Effect.gen(function* () {
+        const db = yield* Database;
+        yield* db.query((d) => d
+          .update(pipelineRuns)
+          .set({
+            status: "running",
+            currentPhase: "source_ingest",
+            phaseStatus: "completed",
+            compileIntentId: id.queuedIntent,
+          })
+          .where(eq(pipelineRuns.id, id.ingestRun)))
+          .pipe(Effect.orDie);
+        yield* db.query((d) => d
+          .insert(pipelineRuns)
+          .values({
+            id: id.dedupeRun,
+            vaultId: id.vault,
+            trigger: "staged_files",
+            status: "running",
+            currentPhase: "source_ingest",
+            phaseStatus: "completed",
+            progressSteps: [],
+            compileIntentId: id.queuedIntent,
+          }))
+          .pipe(Effect.orDie);
+        yield* db.query((d) => d
+          .insert(compileIntents)
+          .values({
+            id: id.queuedIntent,
+            vaultId: id.vault,
+            pipelineRunId: id.ingestRun,
+          }))
+          .pipe(Effect.orDie);
+
+        const jobs = yield* JobsService;
+        yield* jobs.cancelCompile(id.user, id.vault, id.dedupeRun);
+        const reconciler = yield* CompileIntentReconciler;
+        const reconciled = yield* reconciler.reconcileOnce();
+        return {
+          reconciled,
+          runs: yield* db.query((d) => d
+            .select()
+            .from(pipelineRuns)
+            .where(inArray(pipelineRuns.id, [id.ingestRun, id.dedupeRun])))
+            .pipe(Effect.orDie),
+          intent: (yield* db.query((d) => d
+            .select()
+            .from(compileIntents)
+            .where(eq(compileIntents.id, id.queuedIntent)))
+            .pipe(Effect.orDie))[0],
+        };
+      }),
+    );
+
+    expect(state.reconciled.dispatched).toBe(0);
+    expect(state.runs).toHaveLength(2);
+    expect(new Set(state.runs.map((run) => run.status))).toEqual(new Set(["cancelled"]));
+    expect(state.intent?.dispatchedAt).not.toBeNull();
+    expect(state.intent?.satisfiedAt).not.toBeNull();
+  });
 
   it("cancels a mid-flight staged ingest workflow before it can write documents", async () => {
     const hash = stageBytes(Buffer.from("# Must not persist\n\nCancellation wins."));

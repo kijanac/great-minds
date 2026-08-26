@@ -325,6 +325,7 @@ describe("compile and job HTTP routes", () => {
     expect(stored.runs.map((row) => row.id)).toEqual([ids.run]);
     expect(stored.intents).toHaveLength(1);
     expect(stored.intents[0]?.pipelineRunId).toBe(ids.run);
+    expect(stored.runs[0]?.compileIntentId).toBe(stored.intents[0]?.id);
 
     const list = await request(`/v1/vaults/${ids.vault}/jobs?status=active`, current().aliceToken);
     expect(list.status).toBe(200);

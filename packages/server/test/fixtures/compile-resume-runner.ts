@@ -120,7 +120,7 @@ if (mode === "cancel") {
         }
         throw new Error("extract activity did not start");
       });
-      yield* cancelCompileWorkflow(runId, executionId);
+      yield* cancelCompileWorkflow(intentId);
       return executionId;
     }).pipe(Effect.provide(MainLive)),
   );

@@ -1,0 +1,1 @@
+CREATE INDEX "ix_pipeline_runs_compile_intent_id" ON "pipeline_runs" ("compile_intent_id");
