@@ -29,6 +29,8 @@ Post-baseline B-09/B-26 recheck: before Great Minds `8ccfc5c`, a mixed Markdown/
 
 Post-baseline B-27 recheck: Great Minds `8ccfc5c` made the remote duplicate check a blocking review state, and `a60f54e` persisted a server-computed raw-byte SHA-256 for direct uploads. A controlled first upload grew the vault from 9 to 10 sources. Selecting the same bytes again visibly showed **0 / 1 ready**, **1 already in vault**, and disabled **ingest 0 files**; SQL retained one source with the exact hash. Integration coverage also distinguishes original HTML bytes from converted stored Markdown. `FILES-09` remains `—` because its Result column is reserved for the pinned baseline.
 
+Post-baseline durable-batch recheck: Great Minds `ccf1b7d` created run `69b18e69-7c68-425e-8bd0-6cab5b4d1673` before an intentionally aborted transfer. The canonical route named the failed file; SQL retained a primary-vault `uploading` batch, `pending` file, creator, and active run with no task. Reload recovered **Upload paused** and **reselect files** without a browser `File`; exact-byte reselection resumed the same run, completed the batch/file/pipeline, persisted the matching hash and source Markdown, and cleaned staging. A terminal reload still resolved the primary-vault run while browser vault storage temporarily pointed at the alternate vault. Historical `FILES-12` and `FILES-14` Result cells remain `—`.
+
 Not checkable by hand:
 
 - Whether folder hierarchy should be preserved or deliberately discarded is a product call; the post-baseline source-ID fix prevents discarded hierarchy from causing same-base replacement.
