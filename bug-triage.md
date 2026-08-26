@@ -18,7 +18,7 @@ The drafting pass raised 50 deduplicated items: 16 high, 30 medium, and 4 low. P
 | B-08 | Direct file ingest discards folders and overwrites same-base files | high | source ingest | resolved | — |
 | B-09 | File review and staged ingest can silently omit files counted as selected | high | source ingest | resolved | — |
 | B-10 | A failed reply with partial prose looks successfully completed | high | research | fix | — |
-| B-11 | A queued cancelled/failed run can display Knowledge base updated | high | pipeline | fix | — |
+| B-11 | A queued cancelled/failed run can display Knowledge base updated | high | pipeline | resolved | — |
 | B-12 | URL launch cannot reconnect, reloads duplicate work, and Retry does not retry the URL | high | URL ingest | fix | — |
 | B-13 | A share silently expands to future private session turns or reference notes | high | sharing | product call | — |
 | B-14 | Share requests can create unseen or multiple active bearer links | high | sharing/security | fix | — |
@@ -177,7 +177,8 @@ The drafting pass raised 50 deduplicated items: 16 high, 30 medium, and 4 low. P
 - **Reproduce:** Open a pending `current_phase=''` run, cancel before dispatch, wait for stream close.
 - **Why (from the code):** `web/src/lib/hooks/use-job-sse.svelte.ts:271-289` sets success on `done` but calls `normalizeEvent` and returns at `282` before inspecting `job_status` for unknown/empty phases.
 - **Severity:** `high`. It reports cancelled/failed work as successful publication.
-- **Decision needed:** `fix`. Process terminal job status first and make `done` close-only rather than success-authoritative.
+- **Decision needed:** `resolved`. Process terminal job status before phase normalization and treat `done` only as a missing-terminal fallback, never as success-authoritative.
+- **Status:** `fixed` by Great Minds commit `6db5628`. At baseline `c8c9e57`, cancelling pending run `52000000-0000-4000-8000-000000000011` left SQL `cancelled` with **Update cancelled** but visibly rendered **Knowledge base updated — Already up to date — nothing changed**. The fixed client rendered only **Update cancelled** for that same empty-phase row; a second empty-phase failed row rendered **Queued update failed**, not success. `just ci` passed with the three pre-existing web lint warnings.
 - **Raised by:** [compile](sources/compile-the-vault.md#open-questions-and-verification), [background work](foundations/background-work.md#the-simple-case).
 
 ### B-12: URL launch cannot reconnect, reloads duplicate work, and Retry does not retry the URL

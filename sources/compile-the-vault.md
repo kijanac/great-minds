@@ -163,7 +163,7 @@ A cancelled run shows **Update cancelled**, **run again**, and **back to home**.
 ## Open questions and verification
 
 - Post-baseline role decision: compile and cancellation are owner-only, while all members may continue reading run state. Great Minds commit `45ac124` enforces that boundary and hides non-owner mutation controls.
-- Fix terminal handling before phase normalization. A queued cancel/failure with an empty phase is currently ignored and the later `done` frame is treated as successful completion.
+- Post-baseline COMPILE-09 confirmed that an empty-phase cancellation persisted **Update cancelled** while the page rendered **Knowledge base updated**. Great Minds `6db5628` now handles job-level terminal status before phase normalization and treats a bare `done` only as a missing-terminal error fallback. The fixed recheck rendered cancellation and failure truthfully with all phase rows still empty.
 - Add pending/error state to **cancel**, **retry**, and **run again**, and distinguish stream-observation errors from durable pipeline failures.
 - Bare pipeline needs a chooser or deterministic redirect when multiple runs are active instead of **No active job**.
 - Verify progress semantics, stage expansion, inferred fast phases, reconnect, restart resume, early no-topic completion, and cancellation latency in the running app.
