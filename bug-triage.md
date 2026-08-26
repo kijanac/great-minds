@@ -23,7 +23,7 @@ The drafting pass raised 50 deduplicated items: 16 high, 30 medium, and 4 low. T
 | B-13 | A share silently expands to future private session turns or reference notes | high | sharing | product call | — |
 | B-14 | Share requests can create unseen or multiple active bearer links | high | sharing/security | fix | — |
 | B-15 | Public share bearer tokens are stored in plaintext | high | sharing/security | fix | — |
-| B-16 | Another-tab vault switch can retarget an in-progress multi-file operation | high | vault/source ingest | fix | — |
+| B-16 | Another-tab vault switch can retarget an in-progress multi-file operation | high | vault/source ingest | resolved | — |
 | B-17 | Initial question creation errors have no visible explanation | medium | research | fix | — |
 | B-18 | BTW first-turn failure loses text and leaves a malformed local thread | medium | research | fix | — |
 | B-19 | Two BTW threads with the same quote collide after reload | medium | research | fix | — |
@@ -225,7 +225,8 @@ The drafting pass raised 50 deduplicated items: 16 high, 30 medium, and 4 low. T
 - **Reproduce:** Start a slow batch in A, switch to B in a second tab after first request, inspect both vaults and the run.
 - **Why (from the code):** `web/src/lib/hooks/use-vault.svelte.ts:16-30` reacts to storage events; `web/src/lib/api/client.ts:96-100` resolves `vaultPath` per call; `web/src/lib/components/pipeline-container.svelte:108-121` performs multiple calls without captured vault id.
 - **Severity:** `high`. It can write private source files to the wrong shared vault.
-- **Decision needed:** `fix`. Capture vault id in confirmed handoff and pass it explicitly through every request; abort if active context changes.
+- **Decision needed:** `resolved`. Bind one authorized vault to the durable batch before transfer and derive every follow-up from that persisted identity.
+- **Status:** `fixed` by Great Minds commit `ccf1b7d`, visibly rechecked at `b07a9a5`. Run `e24b8166-b371-46fe-95a8-5b7b7c3bf87e` had alpha uploaded and beta/gamma pending in Primary when a second tab in the same browser profile switched shared storage to Alternate. Releasing the remaining transfers completed all three files, the batch, source ingest, compile, and progress observation in Primary. Tasks, task params, compile intent, source rows, and Markdown all retained the Primary id; Primary grew from 16 to 19 sources while Alternate remained at 0 and staging emptied.
 - **Raised by:** [add files](sources/add-files.md#open-questions-and-verification), [access](foundations/access-and-vault-context.md#open-questions-and-verification).
 
 ## Medium

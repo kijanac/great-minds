@@ -133,6 +133,7 @@ If the stored vault is missing, deleted, or no longer accessible, the server rej
 - Verify the user-visible recovery path for a stored vault deleted from another tab or after membership removal; no global fallback is apparent in the client state.
 - Signing in can store valid tokens and then report **Signed in, but failed to load your workspace** if the subsequent vault list fails. Verify whether this leaves the next visit unexpectedly authenticated; it may be worth treating as a bug in success-boundary copy and recovery.
 - Post-baseline role decision: direct shared-source mutation, compile, and cancellation are owner-only; editors use proposal flows and viewers are read-only. Great Minds commit `45ac124` applies that policy while the `c8c9e57` behavior above remains the documented baseline.
+- Post-baseline file ingestion is an explicit exception to active-context reinterpretation. Commit `ccf1b7d` binds an accepted batch to one persisted vault before transfer; a same-profile two-tab check completed three Primary files after shared browser storage changed to Alternate, with no Alternate source, task, intent, or staged object.
 - Verify whether a storage-driven vault switch in another tab should force the current tab home. Today it changes context in place, which can make a document or session route fail under the new vault.
 
 Verified against Great Minds commit `c8c9e57`.

@@ -33,6 +33,8 @@ Post-baseline durable-batch recheck: Great Minds `ccf1b7d` created run `69b18e69
 
 Post-baseline navigation-away recheck: with Great Minds `2f593d8`, a browser gate held the only transfer for run `9c259207-6096-442d-a0a5-2cea10b494d8` while the canonical route visibly showed Uploading. The owner clicked **back to home** before release. Releasing from Home completed the batch, file, source, and pipeline, but the browser remained at `/`; reload showed the vault grow from 14 to 15 sources. SQL and raw bytes matched source `f28ec54f-cfa5-5ff7-9d17-ff7d77c9618c`. Historical `FILES-13` remains `—`.
 
+Post-baseline B-16 recheck: at Great Minds `b07a9a5`, a browser gate let alpha reach **Uploading 1 / 3** in Primary and held beta/gamma. A second tab in the same browser profile visibly switched shared storage to Alternate, which showed 0 sources. The first tab observed the changed storage but kept the canonical Primary run; release completed all stages. SQL pinned the batch, three files, ingest/compile tasks and params, satisfied intent, and three exact-hash sources to Primary. Primary grew from 16 to 19, Alternate stayed at 0, and staging emptied. Historical `FILES-14` remains `—`.
+
 Not checkable by hand:
 
 - Whether folder hierarchy should be preserved or deliberately discarded is a product call; the post-baseline source-ID fix prevents discarded hierarchy from causing same-base replacement.
