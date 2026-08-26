@@ -32,6 +32,21 @@ export const tsvector = customType<{ data: string; driverData: string }>({
 
 export const memberRole = pgEnum("member_role", ["OWNER", "EDITOR", "VIEWER"]);
 export const proposalStatus = pgEnum("proposal_status", ["PENDING", "APPROVED", "REJECTED"]);
+export const fileIngestBatchStatus = pgEnum("file_ingest_batch_status", [
+  "uploading",
+  "processing",
+  "completed",
+  "failed",
+  "cancelled",
+]);
+export const fileIngestFileStatus = pgEnum("file_ingest_file_status", [
+  "pending",
+  "uploaded",
+  "processing",
+  "completed",
+  "failed",
+  "cancelled",
+]);
 
 export const authCodes = pgTable(
   "auth_codes",
@@ -273,6 +288,66 @@ export const pipelineRuns = pgTable(
       name: "pipeline_runs_vault_id_fkey",
     }).onDelete("cascade"),
     index("ix_pipeline_runs_vault_id").on(table.vaultId),
+  ],
+);
+
+export const fileIngestBatches = pgTable(
+  "file_ingest_batches",
+  {
+    id: uuid("id").primaryKey(),
+    createdBy: uuid("created_by").notNull(),
+    status: fileIngestBatchStatus("status").notNull(),
+    error: text("error"),
+    expiresAt: timestamptz("expires_at").notNull(),
+    committedAt: timestamptz("committed_at"),
+    completedAt: timestamptz("completed_at"),
+    createdAt: timestamptz("created_at").defaultNow().notNull(),
+    updatedAt: timestamptz("updated_at").defaultNow().notNull(),
+  },
+  (table) => [
+    foreignKey({
+      columns: [table.id],
+      foreignColumns: [pipelineRuns.id],
+      name: "file_ingest_batches_id_fkey",
+    }).onDelete("cascade"),
+    foreignKey({
+      columns: [table.createdBy],
+      foreignColumns: [users.id],
+      name: "file_ingest_batches_created_by_fkey",
+    }).onDelete("cascade"),
+    index("ix_file_ingest_batches_status_expires_at").on(table.status, table.expiresAt),
+  ],
+);
+
+export const fileIngestFiles = pgTable(
+  "file_ingest_files",
+  {
+    batchId: uuid("batch_id").notNull(),
+    hash: varchar("hash", { length: 64 }).notNull(),
+    position: integer("position").notNull(),
+    name: text("name").notNull(),
+    size: bigint("size", { mode: "number" }).notNull(),
+    mimetype: text("mimetype").notNull(),
+    needsCompile: boolean("needs_compile").notNull(),
+    status: fileIngestFileStatus("status").notNull(),
+    error: text("error"),
+    uploadedAt: timestamptz("uploaded_at"),
+    completedAt: timestamptz("completed_at"),
+    createdAt: timestamptz("created_at").defaultNow().notNull(),
+    updatedAt: timestamptz("updated_at").defaultNow().notNull(),
+  },
+  (table) => [
+    foreignKey({
+      columns: [table.batchId],
+      foreignColumns: [fileIngestBatches.id],
+      name: "file_ingest_files_batch_id_fkey",
+    }).onDelete("cascade"),
+    primaryKey({ columns: [table.batchId, table.hash] }),
+    unique("uq_file_ingest_files_batch_position").on(table.batchId, table.position),
+    check("ck_file_ingest_files_position_nonnegative", sql`${table.position} >= 0`),
+    check("ck_file_ingest_files_name_nonempty", sql`length(${table.name}) > 0`),
+    check("ck_file_ingest_files_size_nonnegative", sql`${table.size} >= 0`),
+    check("ck_file_ingest_files_hash_sha256", sql`${table.hash} ~ '^[0-9a-f]{64}$'`),
   ],
 );
 

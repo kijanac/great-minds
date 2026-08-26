@@ -33,6 +33,7 @@ import { AppConfig } from "./config.ts";
 import { CostsService } from "./costs.ts";
 import { DocumentRegistryMismatch, DocumentsService } from "./documents.ts";
 import { domainErrorResponse } from "./http-errors.ts";
+import { FileIngestBatches } from "./file-ingest-batches.ts";
 import { IngestService } from "./ingest.ts";
 import { JobsService } from "./jobs.ts";
 import { LintService } from "./lint.ts";
@@ -667,12 +668,12 @@ const IngestHandlersLive = HttpApiBuilder.group(MountedGreatMindsApi, "ingest", 
         }),
       ),
     )
-    .handle("checkStagedFileDupes", ({ params, payload }) =>
+    .handle("checkFileIngestDupes", ({ params, payload }) =>
       withDomainErrors(
         Effect.gen(function* () {
-          const ingest = yield* IngestService;
+          const batches = yield* FileIngestBatches;
           const current = yield* CurrentAuth;
-          const existing = yield* ingest.checkStagedDupes(
+          const existing = yield* batches.checkDupes(
             current.user_id,
             params.vault_id,
             payload.client_hashes,
@@ -681,31 +682,53 @@ const IngestHandlersLive = HttpApiBuilder.group(MountedGreatMindsApi, "ingest", 
         }),
       ),
     )
-    .handle("prepareStagedFiles", ({ params, payload }) =>
+    .handle("createFileIngest", ({ params, payload }) =>
       withDomainErrors(
         Effect.gen(function* () {
-          const ingest = yield* IngestService;
+          const batches = yield* FileIngestBatches;
           const current = yield* CurrentAuth;
-          const targets = yield* ingest.prepareStagedFiles(
+          return yield* batches.create(
             current.user_id,
             params.vault_id,
+            payload.batch_id,
             payload.files,
           );
-          return { files: [...targets] };
         }),
       ),
     )
-    .handle("processStagedFiles", ({ params, payload }) =>
+    .handle("getFileIngest", ({ params }) =>
       withDomainErrors(
         Effect.gen(function* () {
-          const ingest = yield* IngestService;
+          const batches = yield* FileIngestBatches;
           const current = yield* CurrentAuth;
-          return yield* ingest.processStagedFiles(
-            current.user_id,
-            params.vault_id,
-            payload.job_id,
-            payload.files,
-          );
+          return yield* batches.get(current.user_id, params.batch_id);
+        }),
+      ),
+    )
+    .handle("resumeFileIngest", ({ params }) =>
+      withDomainErrors(
+        Effect.gen(function* () {
+          const batches = yield* FileIngestBatches;
+          const current = yield* CurrentAuth;
+          return yield* batches.resume(current.user_id, params.batch_id);
+        }),
+      ),
+    )
+    .handle("acknowledgeFileIngestUpload", ({ params }) =>
+      withDomainEmpty(
+        Effect.gen(function* () {
+          const batches = yield* FileIngestBatches;
+          const current = yield* CurrentAuth;
+          yield* batches.acknowledge(current.user_id, params.batch_id, params.hash);
+        }),
+      ),
+    )
+    .handle("commitFileIngest", ({ params }) =>
+      withDomainErrors(
+        Effect.gen(function* () {
+          const batches = yield* FileIngestBatches;
+          const current = yield* CurrentAuth;
+          return yield* batches.commit(current.user_id, params.batch_id);
         }),
       ),
     ),
@@ -1091,15 +1114,15 @@ const parseMultipartFile = (request: HttpServerRequest.HttpServerRequest) =>
     return { rawBytes, contentType: file.contentType };
   });
 
-const StagedUploadRouteLive = HttpRouter.add(
+const FileIngestUploadRouteLive = HttpRouter.add(
   "POST",
-  "/v1/vaults/:vault_id/ingest/staged-files/upload/:hash",
+  "/v1/file-ingests/:batch_id/files/:hash",
   (request) =>
     Effect.gen(function* () {
       const params = yield* HttpRouter.params;
-      const vaultId = parseUuidPathParam(params.vault_id);
+      const batchId = parseUuidPathParam(params.batch_id);
       const hash = parseFileFingerprintPathParam(params.hash);
-      if (vaultId === undefined || hash === undefined) {
+      if (batchId === undefined || hash === undefined) {
         return yield* jsonResponse(422, { detail: "Invalid path parameter" });
       }
       const current = yield* currentAuthFromRequest(request);
@@ -1114,9 +1137,9 @@ const StagedUploadRouteLive = HttpRouter.add(
       if (HttpServerResponse.isHttpServerResponse(upload)) {
         return upload;
       }
-      const ingest = yield* IngestService;
+      const batches = yield* FileIngestBatches;
       return yield* withDomainEmpty(
-        ingest.uploadStagedFile(current.user_id, vaultId, { hash, ...upload }),
+        batches.upload(current.user_id, batchId, { hash, ...upload }),
       );
     }),
 );
@@ -1147,7 +1170,7 @@ const AppRoutesLive = Layer.mergeAll(
   StreamHeadersLive,
   HttpRouter.add("GET", "/health", healthResponse),
   HttpRouter.add("GET", "/", healthResponse),
-  StagedUploadRouteLive,
+  FileIngestUploadRouteLive,
   ApiLive,
 );
 

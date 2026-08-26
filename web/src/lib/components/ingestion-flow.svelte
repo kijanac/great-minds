@@ -4,7 +4,12 @@
   import { cubicOut } from "svelte/easing";
   import { fade, slide } from "svelte/transition";
 
-  import { checkDupes, hashFile, type HashedFile } from "$lib/api/ingest";
+  import {
+    checkDupes,
+    createFileIngestBatch,
+    hashFile,
+    type HashedFile,
+  } from "$lib/api/ingest";
   import { Button } from "$lib/components/ui/button";
   import { Input } from "$lib/components/ui/input";
   import type { DroppedFile } from "$lib/types";
@@ -90,6 +95,8 @@
   let dragCounter = 0;
   let hashRunId = 0;
   let checkingVault = $state(false);
+  let creatingBatch = $state(false);
+  let submitError = $state<string | null>(null);
   let zone: HTMLDivElement;
 
   const hasFiles = $derived(files.length > 0);
@@ -195,6 +202,8 @@
     expanded = false;
     files = [];
     checkingVault = false;
+    creatingBatch = false;
+    submitError = null;
     hashRunId += 1;
     url = "";
   }
@@ -318,6 +327,7 @@
   function startWithFiles(dropped: DroppedFile[]) {
     if (dropped.length === 0) return;
     checkingVault = false;
+    submitError = null;
     const initial = initialIngestable(dropped);
     files = initial;
     void runHashingPipeline(initial);
@@ -378,20 +388,27 @@
     });
   }
 
-  function confirm() {
+  async function confirm() {
     const uploadFiles: HashedFile[] = selectedFiles.map((item) => ({
       file: item.file,
       hash: item.hash,
     }));
-    if (uploadFiles.length === 0) return;
+    if (uploadFiles.length === 0 || creatingBatch) return;
 
-    void goto("/pipeline", {
-      state: {
-        uploadFiles,
-        stableJobId: crypto.randomUUID(),
-      },
-    });
-    files = [];
+    creatingBatch = true;
+    submitError = null;
+    try {
+      const batch = await createFileIngestBatch(uploadFiles);
+      await goto(`/pipeline/runs/${batch.id}`, {
+        state: { uploadFiles, batch },
+      });
+      files = [];
+    } catch (error) {
+      submitError =
+        error instanceof Error ? error.message : "Unable to start file upload";
+    } finally {
+      creatingBatch = false;
+    }
   }
 
   function handleCircleClick() {
@@ -625,15 +642,28 @@
       </ul>
 
       <div class="border-t border-ink-subtle px-5 py-5">
+        {#if submitError}
+          <p
+            role="alert"
+            class="mb-3 [overflow-wrap:anywhere] text-center font-mono text-[length:var(--text-chrome)] text-red-400/90"
+          >
+            {submitError}
+          </p>
+        {/if}
         <div class="flex flex-wrap items-center justify-center gap-2">
           <Button
             variant="ghost"
             size="xs"
-            onclick={confirm}
-            disabled={selectedCount === 0 || checkingCount > 0 || checkingVault}
+            onclick={() => void confirm()}
+            disabled={selectedCount === 0 ||
+              checkingCount > 0 ||
+              checkingVault ||
+              creatingBatch}
             class="h-auto rounded-sm px-3 py-0.5 font-mono text-[length:var(--text-chrome)] tracking-[0.1em] text-gold hover:bg-transparent hover:text-gold-hover disabled:cursor-not-allowed disabled:text-warm-ghost"
           >
-            ingest {selectedCount} file{selectedCount !== 1 ? "s" : ""}
+            {creatingBatch
+              ? "starting upload…"
+              : `ingest ${selectedCount} file${selectedCount !== 1 ? "s" : ""}`}
           </Button>
           {#if dupBatchCount > 0 || dupVaultCount > 0}
             <Button

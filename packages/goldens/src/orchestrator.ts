@@ -489,15 +489,34 @@ const waitForJob = async (
   throw new Error(`job timeout: ${runId}`);
 };
 
-const stagedWorkerScenario = async (baseUrl: string, bearer: string) => {
-  await request(baseUrl, `/v1/vaults/${fixtureIds.vault}/ingest/staged-files/process`, bearer, {
+const stagedWorkerScenario = async (
+  baseUrl: string,
+  bearer: string,
+  env: NodeJS.ProcessEnv,
+) => {
+  const hash = "e".repeat(64);
+  await request(baseUrl, `/v1/vaults/${fixtureIds.vault}/file-ingests`, bearer, {
     method: "POST",
     body: JSON.stringify({
-      job_id: fixtureIds.stagedRun,
+      batch_id: fixtureIds.stagedRun,
       files: [
-        { name: "fixture.md", size: 12, hash: "golden-staged-hash", mimetype: "text/markdown" },
+        { name: "fixture.md", size: 12, hash, mimetype: "text/markdown" },
       ],
     }),
+  });
+  await output(
+    "psql",
+    [
+      databaseUrl,
+      "-v",
+      "ON_ERROR_STOP=1",
+      "-c",
+      `update file_ingest_files set status='uploaded', uploaded_at=now() where batch_id=${sqlString(fixtureIds.stagedRun)} and hash=${sqlString(hash)}`,
+    ],
+    { cwd: repoRoot, env },
+  );
+  await request(baseUrl, `/v1/file-ingests/${fixtureIds.stagedRun}/commit`, bearer, {
+    method: "POST",
   });
   const terminal = await waitForJob(baseUrl, bearer, fixtureIds.stagedRun, ["failed"]);
   return {
@@ -802,7 +821,7 @@ export const executeHarness = async (options: {
           .filter((row) => String(row.path).startsWith("archive/"))
           .map((row) => row.path),
       },
-      stagedWorker: await stagedWorkerScenario(baseUrl, bearer),
+      stagedWorker: await stagedWorkerScenario(baseUrl, bearer, env),
       cancelOddity22: await cancelScenario(baseUrl, bearer, env, proxy),
       ...(await lintAndCostScenarios(baseUrl, bearer, env)),
     };

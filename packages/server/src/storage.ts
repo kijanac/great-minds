@@ -2,7 +2,7 @@ import { posix, resolve } from "node:path";
 
 import type {
   FileFingerprint,
-  StagedFileUploadTarget,
+  FileIngestUploadTarget,
   Uuid,
 } from "@great-minds/domain";
 import { Cause, Context, Effect, Layer, Schema } from "effect";
@@ -55,13 +55,21 @@ type ContentStorageShape = {
 type StagedStorageShape = {
   readonly readStagedBytes: (
     vaultId: Uuid,
+    batchId: Uuid,
     hash: FileFingerprint,
   ) => Effect.Effect<Uint8Array, StorageFileMissing | StorageBackendError>;
+  readonly stagedExists: (
+    vaultId: Uuid,
+    batchId: Uuid,
+    hash: FileFingerprint,
+  ) => Effect.Effect<boolean, StorageBackendError>;
   readonly deleteStaged: (
     vaultId: Uuid,
+    batchId: Uuid,
     hash: FileFingerprint,
   ) => Effect.Effect<void, StorageBackendError>;
-  readonly clearStaged: (vaultId: Uuid) => Effect.Effect<void>;
+  readonly clearStagedBatch: (vaultId: Uuid, batchId: Uuid) => Effect.Effect<void>;
+  readonly clearStagedVault: (vaultId: Uuid) => Effect.Effect<void>;
 };
 
 type ProposalStorageShape = {
@@ -79,14 +87,16 @@ type StagedUploadDescriptor = {
 type StagedUploadGatewayShape = {
   readonly prepare: (
     vaultId: Uuid,
+    batchId: Uuid,
     files: readonly StagedUploadDescriptor[],
-  ) => Effect.Effect<readonly StagedFileUploadTarget[], StorageBackendError>;
+  ) => Effect.Effect<readonly FileIngestUploadTarget[], StorageBackendError>;
 } &
   (
     | {
         readonly kind: "api";
         readonly receive: (
           vaultId: Uuid,
+          batchId: Uuid,
           hash: FileFingerprint,
           bytes: Uint8Array,
           contentType: string,
@@ -142,9 +152,11 @@ const scopedKey = (prefix: string, path: string) => {
   return `${prefix}${normalized}`;
 };
 
-const stagedPrefix = (vaultId: Uuid) => `${STAGING_DIR}/${vaultId}/`;
+const stagedPrefix = (vaultId: Uuid, batchId: Uuid) =>
+  `${STAGING_DIR}/${vaultId}/${batchId}/`;
 
-const stagedKey = (vaultId: Uuid, hash: FileFingerprint) => `${stagedPrefix(vaultId)}${hash}`;
+const stagedKey = (vaultId: Uuid, batchId: Uuid, hash: FileFingerprint) =>
+  `${stagedPrefix(vaultId, batchId)}${hash}`;
 
 const fileMissing = (path: string) => new StorageFileMissing({ path });
 
@@ -238,15 +250,20 @@ export const StagedStorageLive = Layer.effect(
   Effect.map(StorageBackend, (backend) => {
     const objects = backend.objects;
     return {
-      readStagedBytes: (vaultId, hash) => {
-        const path = stagedKey(vaultId, hash);
+      readStagedBytes: (vaultId, batchId, hash) => {
+        const path = stagedKey(vaultId, batchId, hash);
         return objects.get(path).pipe(
           Effect.catchTag("ObjectMissing", () => Effect.fail(fileMissing(path))),
         );
       },
-      deleteStaged: (vaultId, hash) => objects.remove(stagedKey(vaultId, hash)),
-      clearStaged: (vaultId) =>
-        objects.removePrefix(stagedPrefix(vaultId)).pipe(Effect.orDie),
+      stagedExists: (vaultId, batchId, hash) =>
+        objects.exists(stagedKey(vaultId, batchId, hash)),
+      deleteStaged: (vaultId, batchId, hash) =>
+        objects.remove(stagedKey(vaultId, batchId, hash)),
+      clearStagedBatch: (vaultId, batchId) =>
+        objects.removePrefix(stagedPrefix(vaultId, batchId)).pipe(Effect.orDie),
+      clearStagedVault: (vaultId) =>
+        objects.removePrefix(`${STAGING_DIR}/${vaultId}/`).pipe(Effect.orDie),
     } satisfies StagedStorageShape;
   }),
 );
@@ -257,19 +274,19 @@ export const StagedUploadGatewayLive = Layer.effect(
     if (backend.kind === "local") {
       return {
         kind: "api",
-        prepare: (_vaultId, files) =>
+        prepare: (_vaultId, _batchId, files) =>
           Effect.succeed(
             files.map((file) => ({ hash: file.hash, transport: "api" as const })),
           ),
-        receive: (vaultId, hash, bytes, contentType) =>
-          backend.objects.put(stagedKey(vaultId, hash), bytes, { contentType }),
+        receive: (vaultId, batchId, hash, bytes, contentType) =>
+          backend.objects.put(stagedKey(vaultId, batchId, hash), bytes, { contentType }),
       };
     }
     return {
       kind: "presigned",
-      prepare: (vaultId, files) =>
+      prepare: (vaultId, batchId, files) =>
         Effect.forEach(files, (file) => {
-          const path = stagedKey(vaultId, file.hash);
+          const path = stagedKey(vaultId, batchId, file.hash);
           return backend
             .prepareUpload(path, file.contentType, file.contentLength)
             .pipe(

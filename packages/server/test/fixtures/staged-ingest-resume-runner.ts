@@ -98,8 +98,10 @@ const StorageLive = Layer.succeed(ContentStorage, {
 });
 const StagedStorageLive = Layer.succeed(StagedStorage, {
   readStagedBytes: () => Effect.die(new Error("persist activity replayed unexpectedly")),
+  stagedExists: () => Effect.succeed(false),
   deleteStaged: () => Effect.void,
-  clearStaged: () => Effect.void,
+  clearStagedBatch: () => Effect.void,
+  clearStagedVault: () => Effect.void,
 });
 const BaseLive = Layer.mergeAll(DrizzleLive.pipe(Layer.provideMerge(ConfigLive)), LoggerLive);
 const PipelineLive = PipelineRunsServiceLive.pipe(Layer.provideMerge(BaseLive));
@@ -154,8 +156,17 @@ const MainLive = HandlerLive.pipe(
 const result = await Effect.runPromise(
   StagedFileIngestWorkflow.execute({
     vaultId,
+    batchId: pipelineRunId,
     pipelineRunId,
-    files: [{ name: "resume.md", size: 1, hash, mimetype: "text/markdown" }],
+    files: [
+      {
+        name: "resume.md",
+        size: 1,
+        hash,
+        mimetype: "text/markdown",
+        needsCompile: true,
+      },
+    ],
   }).pipe(Effect.provide(MainLive)),
 );
 console.log(`STAGED completed ${JSON.stringify(result)}`);

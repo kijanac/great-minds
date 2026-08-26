@@ -417,13 +417,13 @@ export const UserSuggestion = Schema.Struct({
 });
 export type UserSuggestion = typeof UserSuggestion.Type;
 
-export const StagedFileInput = Schema.Struct({
+export const FileIngestFileInput = Schema.Struct({
   name: Schema.String.pipe(Schema.check(Schema.isMinLength(1))),
   size: Schema.Number.pipe(Schema.check(Schema.isInt(), Schema.isGreaterThanOrEqualTo(0))),
   hash: FileFingerprint,
   mimetype: Schema.optionalKey(Schema.String),
 });
-export type StagedFileInput = typeof StagedFileInput.Type;
+export type FileIngestFileInput = typeof FileIngestFileInput.Type;
 
 export const CheckDupesRequest = Schema.Struct({
   client_hashes: Schema.Array(FileFingerprint),
@@ -435,12 +435,13 @@ export const CheckDupesResponse = Schema.Struct({
 });
 export type CheckDupesResponse = typeof CheckDupesResponse.Type;
 
-export const StagedFilePrepareRequest = Schema.Struct({
-  files: Schema.Array(StagedFileInput),
+export const FileIngestBatchCreate = Schema.Struct({
+  batch_id: Uuid,
+  files: Schema.Array(FileIngestFileInput),
 });
-export type StagedFilePrepareRequest = typeof StagedFilePrepareRequest.Type;
+export type FileIngestBatchCreate = typeof FileIngestBatchCreate.Type;
 
-export const StagedFileUploadTarget = Schema.Union([
+export const FileIngestUploadTarget = Schema.Union([
   Schema.Struct({
     hash: FileFingerprint,
     transport: Schema.Literal("api"),
@@ -451,18 +452,48 @@ export const StagedFileUploadTarget = Schema.Union([
     url: Schema.String,
   }),
 ]);
-export type StagedFileUploadTarget = typeof StagedFileUploadTarget.Type;
+export type FileIngestUploadTarget = typeof FileIngestUploadTarget.Type;
 
-export const StagedFilePrepareResponse = Schema.Struct({
-  files: Schema.Array(StagedFileUploadTarget),
-});
-export type StagedFilePrepareResponse = typeof StagedFilePrepareResponse.Type;
+export const FileIngestBatchStatus = Schema.Literals([
+  "uploading",
+  "processing",
+  "completed",
+  "failed",
+  "cancelled",
+] as const);
+export type FileIngestBatchStatus = typeof FileIngestBatchStatus.Type;
 
-export const StagedFileProcessRequest = Schema.Struct({
-  job_id: Uuid,
-  files: Schema.Array(StagedFileInput),
+export const FileIngestFileStatus = Schema.Literals([
+  "pending",
+  "uploaded",
+  "processing",
+  "completed",
+  "failed",
+  "cancelled",
+] as const);
+export type FileIngestFileStatus = typeof FileIngestFileStatus.Type;
+
+export const FileIngestFile = Schema.Struct({
+  name: Schema.String,
+  size: Schema.Number,
+  hash: FileFingerprint,
+  mimetype: Schema.String,
+  status: FileIngestFileStatus,
+  error: Schema.NullOr(Schema.String),
 });
-export type StagedFileProcessRequest = typeof StagedFileProcessRequest.Type;
+export type FileIngestFile = typeof FileIngestFile.Type;
+
+export const FileIngestBatch = Schema.Struct({
+  id: Uuid,
+  vault_id: Uuid,
+  created_by: Uuid,
+  status: FileIngestBatchStatus,
+  error: Schema.NullOr(Schema.String),
+  expires_at: IsoDateTime,
+  files: Schema.Array(FileIngestFile),
+  targets: Schema.Array(FileIngestUploadTarget),
+});
+export type FileIngestBatch = typeof FileIngestBatch.Type;
 
 export const URLSource = Schema.Struct({
   job_id: Uuid,
@@ -1294,6 +1325,7 @@ const CreatedVault = Vault.pipe(HttpApiSchema.status("Created"));
 const CreatedMember = MemberWithEmail.pipe(HttpApiSchema.status("Created"));
 const CreatedProposal = Proposal.pipe(HttpApiSchema.status("Created"));
 const CreatedIngestedDocument = IngestedDocument.pipe(HttpApiSchema.status("Created"));
+const CreatedFileIngestBatch = FileIngestBatch.pipe(HttpApiSchema.status("Created"));
 const CreatedJobResponse = JobResponse.pipe(HttpApiSchema.status("Created"));
 const CreatedSessionResponse = CreateSessionResponse.pipe(HttpApiSchema.status("Created"));
 const CreatedReferenceDetail = ReferenceDetail.pipe(HttpApiSchema.status("Created"));
@@ -1625,8 +1657,8 @@ export const IngestApiGroup = HttpApiGroup.make("ingest").add(
     error: [BadRequestResponse, ForbiddenResponse, ValidationResponse] as const,
   }).middleware(AuthMiddleware),
   HttpApiEndpoint.post(
-    "checkStagedFileDupes",
-    "/vaults/:vault_id/ingest/staged-files/check-dupes",
+    "checkFileIngestDupes",
+    "/vaults/:vault_id/file-ingests/check-dupes",
     {
       params: {
         vault_id: Uuid,
@@ -1636,21 +1668,51 @@ export const IngestApiGroup = HttpApiGroup.make("ingest").add(
       error: ForbiddenValidationErrors,
     },
   ).middleware(AuthMiddleware),
-  HttpApiEndpoint.post("prepareStagedFiles", "/vaults/:vault_id/ingest/staged-files/prepare", {
+  HttpApiEndpoint.post("createFileIngest", "/vaults/:vault_id/file-ingests", {
     params: {
       vault_id: Uuid,
     },
-    payload: StagedFilePrepareRequest,
-    success: StagedFilePrepareResponse,
-    error: [BadRequestResponse, ForbiddenResponse, ValidationResponse] as const,
+    payload: FileIngestBatchCreate,
+    success: CreatedFileIngestBatch,
+    error: [
+      BadRequestResponse,
+      ForbiddenResponse,
+      ConflictResponse,
+      ValidationResponse,
+    ] as const,
   }).middleware(AuthMiddleware),
-  HttpApiEndpoint.post("processStagedFiles", "/vaults/:vault_id/ingest/staged-files/process", {
+  HttpApiEndpoint.get("getFileIngest", "/file-ingests/:batch_id", {
     params: {
-      vault_id: Uuid,
+      batch_id: Uuid,
     },
-    payload: StagedFileProcessRequest,
+    success: FileIngestBatch,
+    error: ForbiddenNotFoundValidationErrors,
+  }).middleware(AuthMiddleware),
+  HttpApiEndpoint.post("resumeFileIngest", "/file-ingests/:batch_id/resume", {
+    params: {
+      batch_id: Uuid,
+    },
+    success: FileIngestBatch,
+    error: [BadRequestResponse, ForbiddenResponse, NotFoundResponse, ValidationResponse] as const,
+  }).middleware(AuthMiddleware),
+  HttpApiEndpoint.post(
+    "acknowledgeFileIngestUpload",
+    "/file-ingests/:batch_id/files/:hash/complete",
+    {
+      params: {
+        batch_id: Uuid,
+        hash: FileFingerprint,
+      },
+      success: HttpApiSchema.NoContent,
+      error: [BadRequestResponse, ForbiddenResponse, NotFoundResponse, ValidationResponse] as const,
+    },
+  ).middleware(AuthMiddleware),
+  HttpApiEndpoint.post("commitFileIngest", "/file-ingests/:batch_id/commit", {
+    params: {
+      batch_id: Uuid,
+    },
     success: JobResponse,
-    error: [BadRequestResponse, ForbiddenResponse, ValidationResponse] as const,
+    error: [BadRequestResponse, ForbiddenResponse, NotFoundResponse, ValidationResponse] as const,
   }).middleware(AuthMiddleware),
 );
 

@@ -472,7 +472,7 @@ export const VaultsServiceLive = Layer.effect(
           // never orphaned files with no DB handle.
           for (const vault of owned) {
             yield* storage.clear(vaultOwner(asUuid(vault.id)));
-            yield* stagedStorage.clearStaged(asUuid(vault.id));
+            yield* stagedStorage.clearStagedVault(asUuid(vault.id));
           }
           yield* deleteVaultRows(owned.map((vault) => vault.id));
         }),
@@ -717,7 +717,7 @@ export const VaultsServiceLive = Layer.effect(
           // Storage first: a failed wipe leaves the vault intact and retryable,
           // never orphaned files with no DB handle.
           yield* storage.clear(vaultOwner(vaultId));
-          yield* stagedStorage.clearStaged(vaultId);
+          yield* stagedStorage.clearStagedVault(vaultId);
           yield* deleteVaultRows([vaultId]);
         }),
     } satisfies VaultsServiceShape;

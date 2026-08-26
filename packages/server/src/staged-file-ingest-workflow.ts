@@ -1,6 +1,13 @@
-import { compileIntents, Database, pipelineRuns, sourceDocuments } from "@great-minds/database";
+import {
+  compileIntents,
+  Database,
+  fileIngestBatches,
+  fileIngestFiles,
+  pipelineRuns,
+  sourceDocuments,
+} from "@great-minds/database";
 import { FileFingerprint, Uuid } from "@great-minds/domain";
-import { eq, sql } from "drizzle-orm";
+import { and, eq, inArray, sql } from "drizzle-orm";
 import { Cause, Effect, Exit, Schema } from "effect";
 import * as Activity from "effect/unstable/workflow/Activity";
 import * as Workflow from "effect/unstable/workflow/Workflow";
@@ -15,7 +22,7 @@ import { identifySourceMarkdown, sourceIdForKey } from "./source-identity.ts";
 import { SourceDocumentsService } from "./source-documents.ts";
 import { ContentStorage, StagedStorage, vaultOwner } from "./storage.ts";
 
-const STAGED_FILE_INGEST_STEP_LABELS = {
+export const STAGED_FILE_INGEST_STEP_LABELS = {
   prepare_sources: "Preparing uploaded sources",
   read_files: "Reading uploaded files",
   index_documents: "Indexing documents",
@@ -28,11 +35,13 @@ const StagedFile = Schema.Struct({
   size: Schema.Number,
   hash: FileFingerprint,
   mimetype: Schema.String,
+  needsCompile: Schema.Boolean,
 });
 
 export const StagedFileIngestWorkflow = Workflow.make("StagedFileIngest", {
   payload: {
     vaultId: Uuid,
+    batchId: Uuid,
     pipelineRunId: Uuid,
     files: Schema.Array(StagedFile),
   },
@@ -46,6 +55,7 @@ export const StagedFileIngestWorkflow = Workflow.make("StagedFileIngest", {
 
 const StagedFileFailure = Schema.Struct({
   name: Schema.String,
+  hash: FileFingerprint,
   error: Schema.String,
 });
 
@@ -68,6 +78,7 @@ export const StagedFileIngestWorkflowLive = StagedFileIngestWorkflow.toLayer((pa
       const pipeline = yield* PipelineRunsService;
       const logger = yield* StructuredLogger;
       const vaultId = payload.vaultId;
+      const batchId = payload.batchId;
       const runId = payload.pipelineRunId;
       const total = payload.files.length;
 
@@ -100,7 +111,7 @@ export const StagedFileIngestWorkflowLive = StagedFileIngestWorkflow.toLayer((pa
         (file) =>
           Effect.exit(
             Effect.gen(function* () {
-              const bytes = yield* stagedStorage.readStagedBytes(vaultId, file.hash);
+              const bytes = yield* stagedStorage.readStagedBytes(vaultId, batchId, file.hash);
               if (bytes.byteLength !== file.size || rawFileHash(bytes) !== file.hash) {
                 throw new Error(`Staged file integrity check failed: ${file.name}`);
               }
@@ -116,7 +127,7 @@ export const StagedFileIngestWorkflowLive = StagedFileIngestWorkflow.toLayer((pa
 
       let ingested = 0;
       let skipped = 0;
-      const failures: { name: string; error: string }[] = [];
+      const failures: { name: string; hash: FileFingerprint; error: string }[] = [];
       const seen = new Set<string>();
       const cleanup = payload.files.map((file) => file.hash);
       let batch: {
@@ -158,6 +169,7 @@ export const StagedFileIngestWorkflowLive = StagedFileIngestWorkflow.toLayer((pa
           const error = causeDetails(result.cause);
           failures.push({
             name: file.name,
+            hash: file.hash,
             error: "The file could not be read or converted",
           });
           yield* logger.warn("staged_file_ingest.fetch_failed", {
@@ -175,7 +187,8 @@ export const StagedFileIngestWorkflowLive = StagedFileIngestWorkflow.toLayer((pa
         const identified = identifySourceMarkdown(content, sourceId);
         const contentHash = fileContentHash(identified);
         if (existingHashes.get(dest) === contentHash || seen.has(dest)) {
-          skipped += 1;
+          if (file.needsCompile) ingested += 1;
+          else skipped += 1;
           continue;
         }
         yield* requireActive();
@@ -201,6 +214,43 @@ export const StagedFileIngestWorkflowLive = StagedFileIngestWorkflow.toLayer((pa
         }),
       );
 
+      const failedHashes = new Set(failures.map((failure) => failure.hash));
+      const completedHashes = payload.files
+        .filter((file) => !failedHashes.has(file.hash))
+        .map((file) => file.hash);
+      if (completedHashes.length > 0) {
+        yield* db.query((d) => d
+          .update(fileIngestFiles)
+          .set({ status: "completed", completedAt: sql`now()`, updatedAt: sql`now()` })
+          .where(
+            and(
+              eq(fileIngestFiles.batchId, batchId),
+              inArray(fileIngestFiles.hash, completedHashes),
+              eq(fileIngestFiles.status, "processing"),
+            ),
+          ));
+      }
+      yield* Effect.forEach(
+        failures,
+        (failure) =>
+          db.query((d) => d
+            .update(fileIngestFiles)
+            .set({
+              status: "failed",
+              error: failure.error,
+              completedAt: sql`now()`,
+              updatedAt: sql`now()`,
+            })
+            .where(
+              and(
+                eq(fileIngestFiles.batchId, batchId),
+                eq(fileIngestFiles.hash, failure.hash),
+                eq(fileIngestFiles.status, "processing"),
+              ),
+            )),
+        { concurrency: 4 },
+      );
+
       return { ingested, skipped, failures, cleanupHashes: cleanup };
     }),
   });
@@ -215,6 +265,7 @@ export const StagedFileIngestWorkflowLive = StagedFileIngestWorkflow.toLayer((pa
         const pipeline = yield* PipelineRunsService;
         const logger = yield* StructuredLogger;
         const vaultId = payload.vaultId;
+        const batchId = payload.batchId;
         const runId = payload.pipelineRunId;
         const total = payload.files.length;
 
@@ -223,7 +274,7 @@ export const StagedFileIngestWorkflowLive = StagedFileIngestWorkflow.toLayer((pa
 
         const cleanupResults = yield* Effect.forEach(
           cleanupHashes,
-          (hash) => Effect.exit(stagedStorage.deleteStaged(vaultId, hash)),
+          (hash) => Effect.exit(stagedStorage.deleteStaged(vaultId, batchId, hash)),
           { concurrency: 4 },
         );
         const cleanupFailures = cleanupResults.filter(Exit.isFailure).length;
@@ -312,12 +363,27 @@ export const StagedFileIngestWorkflowLive = StagedFileIngestWorkflow.toLayer((pa
             },
           ]);
         }
+        yield* db.query((d) => d
+          .update(fileIngestBatches)
+          .set({
+            status: failed > 0 ? "failed" : "completed",
+            error: failed > 0 ? `${failed} of ${total} files could not be ingested` : null,
+            completedAt: sql`now()`,
+            updatedAt: sql`now()`,
+          })
+          .where(
+            and(
+              eq(fileIngestBatches.id, batchId),
+              eq(fileIngestBatches.status, "processing"),
+            ),
+          ));
         return { ingested, skipped, failed };
       }),
     });
 
   const failRun = <E>(step: "persist" | "finalize", cause: Cause.Cause<E>) =>
     Effect.gen(function* () {
+      const db = yield* Database;
       const pipeline = yield* PipelineRunsService;
       const logger = yield* StructuredLogger;
       const error = causeDetails(cause);
@@ -339,6 +405,34 @@ export const StagedFileIngestWorkflowLive = StagedFileIngestWorkflow.toLayer((pa
         }),
         formatted,
       );
+      yield* db.query((d) => d
+        .update(fileIngestBatches)
+        .set({
+          status: "failed",
+          error: formatted,
+          completedAt: sql`now()`,
+          updatedAt: sql`now()`,
+        })
+        .where(
+          and(
+            eq(fileIngestBatches.id, payload.batchId),
+            eq(fileIngestBatches.status, "processing"),
+          ),
+        ));
+      yield* db.query((d) => d
+        .update(fileIngestFiles)
+        .set({
+          status: "failed",
+          error: formatted,
+          completedAt: sql`now()`,
+          updatedAt: sql`now()`,
+        })
+        .where(
+          and(
+            eq(fileIngestFiles.batchId, payload.batchId),
+            eq(fileIngestFiles.status, "processing"),
+          ),
+        ));
       return yield* Effect.failCause(cause);
     });
 

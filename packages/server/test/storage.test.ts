@@ -23,7 +23,7 @@ describe("local staging maintenance", () => {
   it("removes expired objects without deleting current uploads", async () => {
     const root = await mkdtemp(join(tmpdir(), "gm-storage-"));
     roots.push(root);
-    const staging = join(root, "staging", "vault");
+    const staging = join(root, "staging", "vault", "batch");
     const expired = join(staging, "expired");
     const current = join(staging, "current");
     await mkdir(staging, { recursive: true });

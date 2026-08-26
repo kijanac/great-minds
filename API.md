@@ -329,7 +329,7 @@ Requires `owner` role. Returns `204 No Content`.
 
 Add raw source material to a vault. The vault must be compiled afterward for the content to appear in the wiki and become queryable.
 
-All ingest endpoints are scoped to a vault: `/v1/vaults/{vault_id}/ingest`
+Raw-source ingest endpoints are scoped to `/v1/vaults/{vault_id}/ingest`. Durable file-ingest follow-ups are addressed by batch ID after the vault-bound batch is created.
 
 ### Ingest text
 
@@ -359,37 +359,71 @@ POST /v1/vaults/{vault_id}/ingest
 
 ### Ingest file uploads
 
-File ingestion always uses the same staged workflow. Local deployments stage bytes on the filesystem through the authenticated API; R2 deployments return presigned targets so the browser can stage bytes directly in R2. Both transports then use the same conversion, indexing, cleanup, progress, and compile workflow.
+A durable batch exists before any bytes move. It immutably binds the initiating owner, vault, ordered manifest, and pipeline run. Local deployments transfer through the authenticated API; R2 deployments use presigned PUT targets. Staging keys include both batch and fingerprint, so cancellation or cleanup of one concurrent batch cannot delete another batch's object.
 
-1. Check known fingerprints:
-
-   ```
-   POST /v1/vaults/{vault_id}/ingest/staged-files/check-dupes
-   ```
-
-2. Prepare upload targets for a non-empty manifest of uniquely hashed files:
+1. Optionally check known fingerprints:
 
    ```
-   POST /v1/vaults/{vault_id}/ingest/staged-files/prepare
+   POST /v1/vaults/{vault_id}/file-ingests/check-dupes
    ```
 
-   Each response target is either `{ "hash": "…", "transport": "api" }` or `{ "hash": "…", "transport": "presigned", "url": "…" }`.
-
-3. For an `api` target, send the file as multipart field `file`:
+2. Create the batch with a retry-stable `batch_id` and a non-empty manifest whose hashes are unique:
 
    ```
-   POST /v1/vaults/{vault_id}/ingest/staged-files/upload/{sha256}
+   POST /v1/vaults/{vault_id}/file-ingests
    ```
 
-   The server recomputes SHA-256 from the received bytes and rejects a mismatch. For a `presigned` target, PUT the same bytes to its URL.
+   ```json
+   {
+     "batch_id": "2d04da2c-dbf3-4a40-944f-061dec213014",
+     "files": [
+       {
+         "name": "notes.md",
+         "size": 128,
+         "hash": "<raw-byte-sha256>",
+         "mimetype": "text/markdown"
+       }
+     ]
+   }
+   ```
 
-4. Start durable processing with the prepared manifest and a client-generated `job_id`:
+   The `201` response contains the batch/run ID, pinned `vault_id` and `created_by`, durable batch and per-file statuses, expiry, and transport targets. Reusing the same ID and exact manifest is idempotent; reusing it with a different manifest returns `409`.
+
+3. Transfer each pending target:
+
+   - For `{ "transport": "api" }`, send multipart field `file` to:
+
+     ```
+     POST /v1/file-ingests/{batch_id}/files/{sha256}
+     ```
+
+     The server verifies both byte length and SHA-256 against the persisted manifest.
+   - For `{ "transport": "presigned" }`, PUT the original bytes to its URL.
+
+   Then acknowledge receipt idempotently:
 
    ```
-   POST /v1/vaults/{vault_id}/ingest/staged-files/process
+   POST /v1/file-ingests/{batch_id}/files/{sha256}/complete
    ```
 
-Supported formats are Markdown/text, CSV, JSON, XML, HTML, PDF, DOCX, PPTX, XLSX, ODT, ODP, and ODS. Processing verifies each staged object's size and fingerprint before conversion. Temporary objects are removed during workflow finalization. Abandoned R2 objects expire through lifecycle policy, while stale local objects are pruned at startup and hourly.
+4. Recover after navigation or reconnect:
+
+   ```
+   GET  /v1/file-ingests/{batch_id}
+   POST /v1/file-ingests/{batch_id}/resume
+   ```
+
+   `GET` returns durable status to any vault member without upload targets. Owner-only `resume` reconciles already-present objects and issues fresh targets only for missing files. A browser reload must ask the user to reselect any still-missing local files; matching is by raw-byte hash.
+
+5. Once every expected object has a durable receipt, commit idempotently:
+
+   ```
+   POST /v1/file-ingests/{batch_id}/commit
+   ```
+
+   Commit creates the task and transitions the existing run to processing. The batch table acts as a durable outbox: startup/periodic reconciliation dispatches any committed batch that lost the process between its database commit and workflow enqueue.
+
+Supported formats are Markdown/text, CSV, JSON, XML, HTML, PDF, DOCX, PPTX, XLSX, ODT, ODP, and ODS. The worker remains the trusted boundary for staged-object size and SHA-256 verification, conversion, indexing, per-file terminal state, compile intent, and cleanup. Uploading batches expire after 24 hours; the durable reaper fails their runs and removes their batch-scoped objects. R2 lifecycle expiry and local orphan pruning remain storage-level backstops.
 
 ### Ingest from URL
 

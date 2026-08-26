@@ -93,10 +93,14 @@ async function resolveDefaultVault(): Promise<string> {
   return vaults.items[0].id;
 }
 
+export function vaultPathFor(vaultId: string, path: string): string {
+  return `/vaults/${vaultId}${path}`;
+}
+
 export function vaultPath(path: string): string {
   const vaultId = getVaultId();
   if (!vaultId) throw new Error("No vault selected");
-  return `/vaults/${vaultId}${path}`;
+  return vaultPathFor(vaultId, path);
 }
 
 export async function apiFetch(path: string, init?: RequestInit): Promise<Response> {

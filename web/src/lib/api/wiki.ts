@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-import { apiFetch, vaultPath, readJson } from "./client";
+import { apiFetch, vaultPath, vaultPathFor, readJson } from "./client";
 import { paginatedSchema } from "./schemas";
 
 export const wikiArticleOverviewSchema = z.object({
@@ -39,8 +39,10 @@ export async function fetchWikiArticles(params?: {
 export async function fetchArticlesByRun(
   runId: string,
   limit: number = 8,
+  vaultId?: string,
 ): Promise<WikiArticleList> {
-  const res = await apiFetch(vaultPath(`/wiki?run=${runId}&limit=${limit}`));
+  const path = `/wiki?run=${runId}&limit=${limit}`;
+  const res = await apiFetch(vaultId ? vaultPathFor(vaultId, path) : vaultPath(path));
   if (!res.ok) throw new Error("Failed to fetch articles for run");
   return readJson(res, wikiArticleListSchema);
 }

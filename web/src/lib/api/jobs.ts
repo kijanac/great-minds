@@ -1,7 +1,7 @@
 import { z } from "zod";
 
 import { pageInfoSchema } from "./schemas";
-import { apiFetch, readJson, vaultPath } from "./client";
+import { apiFetch, readJson, vaultPath, vaultPathFor } from "./client";
 
 const progressStepSchema = z.object({
   key: z.string(),
@@ -60,8 +60,11 @@ export async function startUrlJob(url: string, jobId: string = crypto.randomUUID
 
 /** Re-run the compile for this vault (sources already ingested; content-hash
  *  caches make it resume cheaply). Returns the new job to follow. */
-export async function requestCompile(jobId: string = crypto.randomUUID()): Promise<Job> {
-  const res = await apiFetch(vaultPath("/compile"), {
+export async function requestCompile(
+  jobId: string = crypto.randomUUID(),
+  vaultId?: string,
+): Promise<Job> {
+  const res = await apiFetch(vaultId ? vaultPathFor(vaultId, "/compile") : vaultPath("/compile"), {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ job_id: jobId }),
@@ -70,7 +73,10 @@ export async function requestCompile(jobId: string = crypto.randomUUID()): Promi
   return readJson(res, jobSchema);
 }
 
-export async function cancelJob(runId: string): Promise<void> {
-  const res = await apiFetch(vaultPath(`/compile/${runId}/cancel`), { method: "POST" });
+export async function cancelJob(runId: string, vaultId?: string): Promise<void> {
+  const path = vaultId
+    ? vaultPathFor(vaultId, `/compile/${runId}/cancel`)
+    : vaultPath(`/compile/${runId}/cancel`);
+  const res = await apiFetch(path, { method: "POST" });
   if (!res.ok) throw new Error(await res.text());
 }

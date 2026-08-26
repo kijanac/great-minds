@@ -1,10 +1,9 @@
 import { randomUUID } from "node:crypto";
 import { posix } from "node:path";
 
-import { compileIntents, Database, pipelineRuns, tasks } from "@great-minds/database";
+import { compileIntents, Database, pipelineRuns } from "@great-minds/database";
 import {
   BadRequest,
-  type FileFingerprint,
   Forbidden,
   type IngestedDocument,
   type JobResponse,
@@ -13,21 +12,16 @@ import {
   type ReferencePromote,
   type SessionExchangeEvent,
   type SessionOrigin,
-  type StagedFileInput,
-  type StagedFileUploadTarget,
   type UserSuggestion,
   type UserSuggestionIntent,
   type Uuid,
 } from "@great-minds/domain";
 import { and, eq, inArray, sql } from "drizzle-orm";
 import { Cause, Context, Effect, Layer } from "effect";
-import * as WorkflowEngine from "effect/unstable/workflow/WorkflowEngine";
-
 import { AppConfig } from "./config.ts";
 import { htmlToMarkdown, markdownWithTitle } from "./conversion.ts";
-import { rawFileHash } from "./crypto.ts";
 import { causeDetails, errorDetails, formatError } from "./error-details.ts";
-import { jobResponse } from "./jobs.ts";
+import { jobResponse } from "./job-response.ts";
 import { buildDocument, sessionExchangeDocumentInput, sessionExchangePath } from "./markdown.ts";
 import { progressSteps, type PipelineProgressStep } from "./pipeline-runs.ts";
 import { ProposalsService } from "./proposals.ts";
@@ -38,21 +32,10 @@ import {
   sourceIdForKey,
 } from "./source-identity.ts";
 import { SourceDocumentsService } from "./source-documents.ts";
-import { StagedFileIngestWorkflow } from "./staged-file-ingest-workflow.ts";
-import {
-  ContentStorage,
-  StagedUploadGateway,
-  vaultOwner,
-} from "./storage.ts";
+import { ContentStorage, vaultOwner } from "./storage.ts";
 import { UserDocumentsService } from "./user-documents.ts";
 import { VaultAccessService } from "./vaults.ts";
 import { ClockService } from "./clock.ts";
-
-type StagedUploadInput = {
-  readonly hash: FileFingerprint;
-  readonly rawBytes: Uint8Array;
-  readonly contentType: string;
-};
 
 type IngestServiceShape = {
   readonly ingestRaw: (
@@ -73,27 +56,6 @@ type IngestServiceShape = {
     vaultId: Uuid,
     input: UserSuggestion,
   ) => Effect.Effect<IngestedDocument, BadRequest | Forbidden>;
-  readonly checkStagedDupes: (
-    userId: Uuid,
-    vaultId: Uuid,
-    clientHashes: readonly FileFingerprint[],
-  ) => Effect.Effect<readonly FileFingerprint[], Forbidden>;
-  readonly prepareStagedFiles: (
-    userId: Uuid,
-    vaultId: Uuid,
-    files: readonly StagedFileInput[],
-  ) => Effect.Effect<readonly StagedFileUploadTarget[], BadRequest | Forbidden>;
-  readonly uploadStagedFile: (
-    userId: Uuid,
-    vaultId: Uuid,
-    input: StagedUploadInput,
-  ) => Effect.Effect<void, BadRequest | Forbidden>;
-  readonly processStagedFiles: (
-    userId: Uuid,
-    vaultId: Uuid,
-    jobId: Uuid,
-    files: readonly StagedFileInput[],
-  ) => Effect.Effect<JobResponse, BadRequest | Forbidden>;
   readonly startUrlJob: (
     userId: Uuid,
     vaultId: Uuid,
@@ -120,27 +82,6 @@ const URL_INGEST_STEP_LABELS = {
   convert_document: "Converting source document",
   index_document: "Indexing source document",
 } as const;
-
-const STAGED_TASK_TYPE = "staged_file_ingest";
-
-declare const stagedManifestBrand: unique symbol;
-type StagedManifest = readonly [StagedFileInput, ...StagedFileInput[]] & {
-  readonly [stagedManifestBrand]: true;
-};
-
-const parseStagedManifest = (files: readonly StagedFileInput[]) => {
-  if (files.length === 0) {
-    return Effect.fail(new BadRequest({ detail: "no files provided" }));
-  }
-  const hashes = new Set<FileFingerprint>();
-  for (const file of files) {
-    if (hashes.has(file.hash)) {
-      return Effect.fail(new BadRequest({ detail: "duplicate file hashes are not allowed" }));
-    }
-    hashes.add(file.hash);
-  }
-  return Effect.succeed(files as StagedManifest);
-};
 
 export const slugify = (text: string, maxLen = 80) =>
   text
@@ -232,12 +173,10 @@ export const IngestServiceLive = Layer.effect(
     const config = yield* AppConfig;
     const access = yield* VaultAccessService;
     const storage = yield* ContentStorage;
-    const stagedUploads = yield* StagedUploadGateway;
     const sourceDocumentsWrite = yield* SourceDocumentsService;
     const userDocumentsRead = yield* UserDocumentsService;
     const proposals = yield* ProposalsService;
     const clock = yield* ClockService;
-    const workflowEngine = yield* WorkflowEngine.WorkflowEngine;
 
     const ensureCompileIntent = (vaultId: Uuid, pipelineRunId?: Uuid | null) =>
       Effect.gen(function* () {
@@ -316,7 +255,7 @@ export const IngestServiceLive = Layer.effect(
         );
       });
 
-    const createPipelineRun = (jobId: Uuid, vaultId: Uuid, trigger: "staged_files" | "url") =>
+    const createPipelineRun = (jobId: Uuid, vaultId: Uuid, trigger: "url") =>
       Effect.gen(function* () {
         const inserted = yield* db.query((d) => d
           .insert(pipelineRuns)
@@ -455,99 +394,6 @@ export const IngestServiceLive = Layer.effect(
             rendered,
           });
           return { id: sourceId, file_path: dest } satisfies IngestedDocument;
-        }),
-      checkStagedDupes: (userId, vaultId, clientHashes) =>
-        Effect.gen(function* () {
-          yield* access.requireOwner(userId, vaultId);
-          return yield* sourceDocumentsWrite.existingClientHashes(vaultId, clientHashes);
-        }),
-      prepareStagedFiles: (userId, vaultId, files) =>
-        Effect.gen(function* () {
-          yield* access.requireOwner(userId, vaultId);
-          const manifest = yield* parseStagedManifest(files);
-          return yield* stagedUploads
-            .prepare(
-              vaultId,
-              manifest.map((file) => ({
-                hash: file.hash,
-                contentType: file.mimetype ?? "application/octet-stream",
-                contentLength: file.size,
-              })),
-            )
-            .pipe(
-              Effect.catchTag("StorageBackendError", (error) =>
-                Effect.fail(new BadRequest({ detail: error.message })),
-              ),
-            );
-        }),
-      uploadStagedFile: (userId, vaultId, input) =>
-        Effect.gen(function* () {
-          yield* access.requireOwner(userId, vaultId);
-          if (rawFileHash(input.rawBytes) !== input.hash) {
-            return yield* new BadRequest({
-              detail: "Uploaded file fingerprint does not match its bytes",
-            });
-          }
-          if (stagedUploads.kind !== "api") {
-            return yield* new BadRequest({
-              detail: "Server-mediated staged upload is unavailable for this storage backend",
-            });
-          }
-          yield* stagedUploads.receive(
-            vaultId,
-            input.hash,
-            input.rawBytes,
-            input.contentType,
-          ).pipe(
-            Effect.catchTag("StorageBackendError", (error) =>
-              Effect.fail(new BadRequest({ detail: error.message })),
-            ),
-          );
-        }),
-      processStagedFiles: (userId, vaultId, jobId, files) =>
-        Effect.gen(function* () {
-          yield* access.requireOwner(userId, vaultId);
-          const manifest = yield* parseStagedManifest(files);
-          const run = yield* createPipelineRun(jobId, vaultId, "staged_files");
-          const taskId = run.id as Uuid;
-          const workflowFiles = manifest.map((file) => ({
-            name: file.name,
-            size: file.size,
-            hash: file.hash,
-            mimetype: file.mimetype ?? "",
-          }));
-          yield* db.query((d) => d
-            .insert(tasks)
-            .values({
-              id: taskId,
-              vaultId,
-              type: STAGED_TASK_TYPE,
-              params: {
-                vault_id: vaultId,
-                files: workflowFiles,
-                pipeline_run_id: run.id,
-              },
-              pipelineRunId: run.id,
-            })
-            .onConflictDoNothing({ target: tasks.id }));
-          yield* db.query((d) => d
-            .update(pipelineRuns)
-            .set({
-              ingestTaskId: taskId,
-              activeTaskId: taskId,
-              activeTaskType: STAGED_TASK_TYPE,
-              updatedAt: sql`now()`,
-            })
-            .where(eq(pipelineRuns.id, run.id)));
-          yield* StagedFileIngestWorkflow.execute(
-            {
-              vaultId,
-              pipelineRunId: taskId,
-              files: workflowFiles,
-            },
-            { discard: true },
-          ).pipe(Effect.provideService(WorkflowEngine.WorkflowEngine, workflowEngine));
-          return jobResponse(run);
         }),
       startUrlJob: (userId, vaultId, input) =>
         Effect.gen(function* () {

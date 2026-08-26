@@ -1,6 +1,6 @@
 import { useQueryClient } from "@tanstack/svelte-query";
 
-import { apiFetch, vaultPath } from "$lib/api/client";
+import { apiFetch, vaultPathFor } from "$lib/api/client";
 import { activeVault } from "$lib/hooks/use-vault.svelte";
 
 export type PipelineStage =
@@ -221,7 +221,10 @@ function applyEvent(previous: StageProgress[], event: PipelineEvent): StageProgr
   });
 }
 
-export function useJobSSE(jobId: () => string | null) {
+export function useJobSSE(
+  jobId: () => string | null,
+  jobVaultId: () => string | null = () => activeVault.id,
+) {
   const queryClient = useQueryClient();
   let stages = $state<StageProgress[]>(emptyStages());
   let overallDone = $state(false);
@@ -244,7 +247,7 @@ export function useJobSSE(jobId: () => string | null) {
 
   $effect(() => {
     const id = jobId();
-    const vaultId = activeVault.id;
+    const vaultId = jobVaultId();
     if (!id || !vaultId) return;
     const vaultKey: string = vaultId;
 
@@ -321,7 +324,7 @@ export function useJobSSE(jobId: () => string | null) {
       let attempt = 0;
       while (!cancelled && !terminal && !nextController.signal.aborted) {
         try {
-          const response = await apiFetch(vaultPath(`/jobs/${id}/stream`), {
+          const response = await apiFetch(vaultPathFor(vaultKey, `/jobs/${id}/stream`), {
             headers: { Accept: "text/event-stream" },
             signal: nextController.signal,
           });

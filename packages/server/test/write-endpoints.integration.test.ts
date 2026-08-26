@@ -8,6 +8,8 @@ import {
   compileCacheEntries,
   compileIntents,
   Database,
+  fileIngestBatches,
+  fileIngestFiles,
   ideas,
   llmCostEvents,
   pipelineRuns,
@@ -34,6 +36,7 @@ import { makeAppLayer } from "../src/app-layer.ts";
 import { ClockService, makeTestClock } from "../src/clock.ts";
 import { AppConfig, type AppConfigShape } from "../src/config.ts";
 import { bodyContentHash, fileContentHash, rawFileHash } from "../src/crypto.ts";
+import { FileIngestBatches } from "../src/file-ingest-batches.ts";
 import { StructuredLogger, StructuredLoggerLive } from "../src/logging.ts";
 import { makeTestMailer } from "../src/mailer.ts";
 import { parseFrontmatter } from "../src/markdown.ts";
@@ -66,6 +69,7 @@ const id = {
   m32SourceA: "00000000-0000-4000-8000-000000013001",
   m32SourceB: "00000000-0000-4000-8000-000000013002",
   m32StagedRun: "00000000-0000-4000-8000-000000013101",
+  m32StagedRunOther: "00000000-0000-4000-8000-000000013108",
   m32UrlRun: "00000000-0000-4000-8000-000000013102",
   m32UrlFailRun: "00000000-0000-4000-8000-000000013103",
   m32UrlPdfRun: "00000000-0000-4000-8000-000000013104",
@@ -74,7 +78,13 @@ const id = {
   m32UrlReplayRun: "00000000-0000-4000-8000-000000013107",
 } as const;
 
-type TestServices = AppConfig | Database | ClockService | StructuredLogger | TokenService;
+type TestServices =
+  | AppConfig
+  | Database
+  | ClockService
+  | FileIngestBatches
+  | StructuredLogger
+  | TokenService;
 
 type TestState = {
   readonly started: Awaited<ReturnType<typeof startServer>>;
@@ -1001,17 +1011,17 @@ describe("M3.1 write endpoint integration", () => {
 
     const viewerPrepare = await api(
       "POST",
-      `/vaults/${id.vault}/ingest/staged-files/prepare`,
+      `/vaults/${id.vault}/file-ingests`,
       carolToken,
-      { files: manifest },
+      { batch_id: id.m32StagedRun, files: manifest },
     );
     expect(viewerPrepare.status).toBe(403);
 
     const duplicateManifest = await api(
       "POST",
-      `/vaults/${id.vault}/ingest/staged-files/prepare`,
+      `/vaults/${id.vault}/file-ingests`,
       aliceToken,
-      { files: [manifest[0], manifest[0]] },
+      { batch_id: id.m32StagedRun, files: [manifest[0], manifest[0]] },
     );
     expect(duplicateManifest.status).toBe(400);
     expect(duplicateManifest.body).toEqual({
@@ -1020,19 +1030,25 @@ describe("M3.1 write endpoint integration", () => {
 
     const prepared = await api(
       "POST",
-      `/vaults/${id.vault}/ingest/staged-files/prepare`,
+      `/vaults/${id.vault}/file-ingests`,
       aliceToken,
-      { files: manifest },
+      { batch_id: id.m32StagedRun, files: manifest },
     );
-    expect(prepared.status).toBe(200);
-    expect(asArray(asRecord(prepared.body).files)).toEqual(
+    expect(prepared.status).toBe(201);
+    expect(asRecord(prepared.body)).toMatchObject({
+      id: id.m32StagedRun,
+      vault_id: id.vault,
+      created_by: id.alice,
+      status: "uploading",
+    });
+    expect(asArray(asRecord(prepared.body).targets)).toEqual(
       manifest.map((file) => ({ hash: file.hash, transport: "api" })),
     );
 
     const invalidHashForm = new FormData();
     invalidHashForm.append("file", new Blob(["invalid"]), "invalid.md");
     const invalidHash = await uploadApi(
-      `/vaults/${id.vault}/ingest/staged-files/upload/not-a-hash`,
+      `/file-ingests/${id.m32StagedRun}/files/not-a-hash`,
       aliceToken,
       invalidHashForm,
     );
@@ -1041,36 +1057,41 @@ describe("M3.1 write endpoint integration", () => {
     const mismatchForm = new FormData();
     mismatchForm.append("file", new Blob(["wrong bytes"]), inputs[0]!.name);
     const mismatch = await uploadApi(
-      `/vaults/${id.vault}/ingest/staged-files/upload/${inputs[0]!.hash}`,
+      `/file-ingests/${id.m32StagedRun}/files/${inputs[0]!.hash}`,
       aliceToken,
       mismatchForm,
     );
     expect(mismatch.status).toBe(400);
     expect(mismatch.body).toEqual({
-      detail: "Uploaded file fingerprint does not match its bytes",
+      detail: "Uploaded file does not match its manifest",
     });
 
     for (const input of inputs) {
       const form = new FormData();
       form.append("file", new Blob([input.bytes], { type: input.type }), input.name);
       const uploaded = await uploadApi(
-        `/vaults/${id.vault}/ingest/staged-files/upload/${input.hash}`,
+        `/file-ingests/${id.m32StagedRun}/files/${input.hash}`,
         aliceToken,
         form,
       );
       expect(uploaded.status).toBe(204);
       expect(
         await fileExists(
-          join(currentState().storageRoot, "staging", id.vault, input.hash),
+          join(
+            currentState().storageRoot,
+            "staging",
+            id.vault,
+            id.m32StagedRun,
+            input.hash,
+          ),
         ),
       ).toBe(true);
     }
 
     const processed = await api(
       "POST",
-      `/vaults/${id.vault}/ingest/staged-files/process`,
+      `/file-ingests/${id.m32StagedRun}/commit`,
       aliceToken,
-      { job_id: id.m32StagedRun, files: manifest },
     );
     expect(processed.status).toBe(200);
     expect(asRecord(processed.body)).toMatchObject({
@@ -1126,6 +1147,16 @@ describe("M3.1 write endpoint integration", () => {
             .select()
             .from(compileIntents))
             .pipe(Effect.orDie),
+          batches: yield* db.query((d) => d
+            .select()
+            .from(fileIngestBatches)
+            .where(eq(fileIngestBatches.id, id.m32StagedRun)))
+            .pipe(Effect.orDie),
+          batchFiles: yield* db.query((d) => d
+            .select()
+            .from(fileIngestFiles)
+            .where(eq(fileIngestFiles.batchId, id.m32StagedRun)))
+            .pipe(Effect.orDie),
         };
       }),
     );
@@ -1135,18 +1166,34 @@ describe("M3.1 write endpoint integration", () => {
     );
     expect(rows.intents).toHaveLength(1);
     expect(rows.intents[0]?.pipelineRunId).toBe(id.m32StagedRun);
+    expect(rows.batches).toHaveLength(1);
+    expect(rows.batches[0]).toMatchObject({
+      id: id.m32StagedRun,
+      createdBy: id.alice,
+      status: "completed",
+    });
+    expect(rows.batchFiles).toHaveLength(inputs.length);
+    expect(new Set(rows.batchFiles.map((file) => file.status))).toEqual(
+      new Set(["completed"]),
+    );
 
     for (const input of inputs) {
       expect(
         await fileExists(
-          join(currentState().storageRoot, "staging", id.vault, input.hash),
+          join(
+            currentState().storageRoot,
+            "staging",
+            id.vault,
+            id.m32StagedRun,
+            input.hash,
+          ),
         ),
       ).toBe(false);
     }
 
     const dupes = await api(
       "POST",
-      `/vaults/${id.vault}/ingest/staged-files/check-dupes`,
+      `/vaults/${id.vault}/file-ingests/check-dupes`,
       aliceToken,
       { client_hashes: inputs.map((input) => input.hash) },
     );
@@ -1154,6 +1201,108 @@ describe("M3.1 write endpoint integration", () => {
     expect(new Set(asRecord(dupes.body).existing as string[])).toEqual(
       new Set(inputs.map((input) => input.hash)),
     );
+  });
+
+  it("resumes durable receipts and isolates concurrent batch cleanup", async () => {
+    const { aliceToken } = currentFixture();
+    const bytes = new TextEncoder().encode("# Shared bytes\n\nEach batch owns its staging object.");
+    const hash = rawFileHash(bytes);
+    const manifest = [
+      {
+        name: "shared.md",
+        size: bytes.byteLength,
+        hash,
+        mimetype: "text/markdown",
+      },
+    ];
+
+    for (const batchId of [id.m32StagedRun, id.m32StagedRunOther]) {
+      const created = await api(
+        "POST",
+        `/vaults/${id.vault}/file-ingests`,
+        aliceToken,
+        { batch_id: batchId, files: manifest },
+      );
+      expect(created.status).toBe(201);
+      const form = new FormData();
+      form.append("file", new Blob([bytes], { type: "text/markdown" }), "shared.md");
+      const uploaded = await uploadApi(
+        `/file-ingests/${batchId}/files/${hash}`,
+        aliceToken,
+        form,
+      );
+      expect(uploaded.status).toBe(204);
+    }
+
+    const resumed = await api(
+      "POST",
+      `/file-ingests/${id.m32StagedRun}/resume`,
+      aliceToken,
+    );
+    expect(resumed.status).toBe(200);
+    expect(asArray(asRecord(resumed.body).files)[0]).toMatchObject({
+      name: "shared.md",
+      status: "uploaded",
+    });
+    expect(asRecord(resumed.body).targets).toEqual([]);
+
+    const cancelled = await api(
+      "POST",
+      `/vaults/${id.vault}/compile/${id.m32StagedRun}/cancel`,
+      aliceToken,
+    );
+    expect(cancelled.status).toBe(204);
+    expect(
+      await fileExists(
+        join(
+          currentState().storageRoot,
+          "staging",
+          id.vault,
+          id.m32StagedRun,
+          hash,
+        ),
+      ),
+    ).toBe(false);
+    expect(
+      await fileExists(
+        join(
+          currentState().storageRoot,
+          "staging",
+          id.vault,
+          id.m32StagedRunOther,
+          hash,
+        ),
+      ),
+    ).toBe(true);
+
+    const cancelledBatch = await api(
+      "GET",
+      `/file-ingests/${id.m32StagedRun}`,
+      aliceToken,
+    );
+    expect(asRecord(cancelledBatch.body).status).toBe("cancelled");
+
+    const committed = await api(
+      "POST",
+      `/file-ingests/${id.m32StagedRunOther}/commit`,
+      aliceToken,
+    );
+    expect(committed.status).toBe(200);
+    const completed = await waitFor(
+      () =>
+        runDb(
+          Effect.gen(function* () {
+            const db = yield* Database;
+            return (yield* db.query((d) => d
+              .select()
+              .from(fileIngestBatches)
+              .where(eq(fileIngestBatches.id, id.m32StagedRunOther)))
+              .pipe(Effect.orDie))[0];
+          }),
+        ),
+      (batch) => batch?.status === "completed" || batch?.status === "failed",
+    );
+    expect(completed?.status).toBe("completed");
   });
 
   it("branches all user suggestion intents between owner direct ingest and editor proposals", async () => {
@@ -1231,7 +1380,7 @@ describe("M3.1 write endpoint integration", () => {
     expect(viewer.status).toBe(403);
   });
 
-  it("validates staged-file dedupe and process enqueue boundaries", async () => {
+  it("persists immutable file-ingest manifests before upload", async () => {
     const { aliceToken, bobToken } = currentFixture();
     const hashA = "a".repeat(64);
     const hashB = "b".repeat(64);
@@ -1270,7 +1419,7 @@ describe("M3.1 write endpoint integration", () => {
 
     const dupes = await api(
       "POST",
-      `/vaults/${id.vault}/ingest/staged-files/check-dupes`,
+      `/vaults/${id.vault}/file-ingests/check-dupes`,
       aliceToken,
       { client_hashes: [hashA, hashB] },
     );
@@ -1279,23 +1428,47 @@ describe("M3.1 write endpoint integration", () => {
 
     const editorDupes = await api(
       "POST",
-      `/vaults/${id.vault}/ingest/staged-files/check-dupes`,
+      `/vaults/${id.vault}/file-ingests/check-dupes`,
       bobToken,
       { client_hashes: [hashA] },
     );
     expect(editorDupes.status).toBe(403);
 
-    const emptyProcess = await api(
+    const knownDuplicate = await api(
       "POST",
-      `/vaults/${id.vault}/ingest/staged-files/process`,
+      `/vaults/${id.vault}/file-ingests`,
       aliceToken,
       {
-        job_id: id.m32StagedRun,
-        files: [],
+        batch_id: id.m32StagedRunOther,
+        files: [{ name: "known.md", size: 10, hash: hashA, mimetype: "text/markdown" }],
       },
     );
-    expect(emptyProcess.status).toBe(400);
-    expect(emptyProcess.body).toEqual({ detail: "no files provided" });
+    expect(knownDuplicate.status).toBe(201);
+    const knownFile = await runDb(
+      Effect.gen(function* () {
+        const db = yield* Database;
+        return (yield* db.query((d) => d
+          .select()
+          .from(fileIngestFiles)
+          .where(eq(fileIngestFiles.batchId, id.m32StagedRunOther)))
+          .pipe(Effect.orDie))[0];
+      }),
+    );
+    expect(knownFile?.needsCompile).toBe(false);
+    await api(
+      "POST",
+      `/vaults/${id.vault}/compile/${id.m32StagedRunOther}/cancel`,
+      aliceToken,
+    );
+
+    const emptyCreate = await api(
+      "POST",
+      `/vaults/${id.vault}/file-ingests`,
+      aliceToken,
+      { batch_id: id.m32StagedRun, files: [] },
+    );
+    expect(emptyCreate.status).toBe(400);
+    expect(emptyCreate.body).toEqual({ detail: "no files provided" });
 
     await runDb(
       Effect.gen(function* () {
@@ -1303,52 +1476,172 @@ describe("M3.1 write endpoint integration", () => {
         yield* db.query((d) => d.delete(sourceDocuments)).pipe(Effect.orDie);
       }),
     );
-    const processed = await api(
+    const manifest = [
+      { name: "a.md", size: 10, hash: hashA, mimetype: "text/markdown" },
+    ];
+    const created = await api(
       "POST",
-      `/vaults/${id.vault}/ingest/staged-files/process`,
+      `/vaults/${id.vault}/file-ingests`,
       aliceToken,
-      {
-        job_id: id.m32StagedRun,
-        files: [{ name: "a.md", size: 10, hash: hashA, mimetype: "text/markdown" }],
-      },
+      { batch_id: id.m32StagedRun, files: manifest },
     );
-    expect(processed.status).toBe(200);
-    const processedBody = asRecord(processed.body);
-    expect(processedBody).toMatchObject({
+    expect(created.status).toBe(201);
+    expect(asRecord(created.body)).toMatchObject({
       id: id.m32StagedRun,
       vault_id: id.vault,
-      trigger: "staged_files",
-      stream_url: `/jobs/${id.m32StagedRun}/stream`,
+      created_by: id.alice,
+      status: "uploading",
     });
+
+    const replayed = await api(
+      "POST",
+      `/vaults/${id.vault}/file-ingests`,
+      aliceToken,
+      { batch_id: id.m32StagedRun, files: manifest },
+    );
+    expect(replayed.status).toBe(201);
+    expect(asRecord(replayed.body).id).toBe(id.m32StagedRun);
+
+    const conflicting = await api(
+      "POST",
+      `/vaults/${id.vault}/file-ingests`,
+      aliceToken,
+      {
+        batch_id: id.m32StagedRun,
+        files: [{ ...manifest[0], name: "different.md" }],
+      },
+    );
+    expect(conflicting.status).toBe(409);
+    expect(conflicting.body).toEqual({
+      detail: "Batch ID is bound to a different manifest",
+    });
+
+    const visibleToMember = await api(
+      "GET",
+      `/file-ingests/${id.m32StagedRun}`,
+      bobToken,
+    );
+    expect(visibleToMember.status).toBe(200);
+    expect(asRecord(visibleToMember.body).targets).toEqual([]);
+    const editorResume = await api(
+      "POST",
+      `/file-ingests/${id.m32StagedRun}/resume`,
+      bobToken,
+    );
+    expect(editorResume.status).toBe(403);
+
+    const prematureCommit = await api(
+      "POST",
+      `/file-ingests/${id.m32StagedRun}/commit`,
+      aliceToken,
+    );
+    expect(prematureCommit.status).toBe(400);
+    expect(prematureCommit.body).toEqual({ detail: "Waiting for uploads: a.md" });
 
     const rows = await runDb(
       Effect.gen(function* () {
         const db = yield* Database;
-        const appTasks = yield* db.query((d) => d
-          .select()
-          .from(tasks)
-          .where(eq(tasks.pipelineRunId, id.m32StagedRun)))
-          .pipe(Effect.orDie);
-        const runs = yield* db.query((d) => d
-          .select()
-          .from(pipelineRuns)
-          .where(eq(pipelineRuns.id, id.m32StagedRun)))
-          .pipe(Effect.orDie);
-        return { appTasks, runs };
+        return {
+          appTasks: yield* db.query((d) => d
+            .select()
+            .from(tasks)
+            .where(eq(tasks.pipelineRunId, id.m32StagedRun)))
+            .pipe(Effect.orDie),
+          runs: yield* db.query((d) => d
+            .select()
+            .from(pipelineRuns)
+            .where(eq(pipelineRuns.id, id.m32StagedRun)))
+            .pipe(Effect.orDie),
+          batches: yield* db.query((d) => d
+            .select()
+            .from(fileIngestBatches)
+            .where(eq(fileIngestBatches.id, id.m32StagedRun)))
+            .pipe(Effect.orDie),
+          files: yield* db.query((d) => d
+            .select()
+            .from(fileIngestFiles)
+            .where(eq(fileIngestFiles.batchId, id.m32StagedRun)))
+            .pipe(Effect.orDie),
+        };
       }),
     );
-    expect(rows.appTasks).toHaveLength(1);
-    expect(rows.appTasks[0]).toMatchObject({
-      type: "staged_file_ingest",
-      vaultId: id.vault,
-      pipelineRunId: id.m32StagedRun,
-    });
+    expect(rows.appTasks).toHaveLength(0);
     expect(rows.runs[0]).toMatchObject({
-      ingestTaskId: rows.appTasks[0]!.id,
-      activeTaskId: rows.appTasks[0]!.id,
-      activeTaskType: "staged_file_ingest",
+      status: "running",
+      currentPhase: "source_ingest",
+      activeTaskId: null,
+    });
+    expect(rows.batches[0]).toMatchObject({
+      createdBy: id.alice,
+      status: "uploading",
+    });
+    expect(rows.files).toHaveLength(1);
+    expect(rows.files[0]).toMatchObject({
+      status: "pending",
+      position: 0,
+      needsCompile: true,
     });
     expect(await countTable(compileIntents)).toBe(0);
+  });
+
+  it("expires abandoned durable file-ingest batches", async () => {
+    const { aliceToken } = currentFixture();
+    const hash = "c".repeat(64);
+    const created = await api(
+      "POST",
+      `/vaults/${id.vault}/file-ingests`,
+      aliceToken,
+      {
+        batch_id: id.m32StagedRun,
+        files: [
+          {
+            name: "abandoned.md",
+            size: 12,
+            hash,
+            mimetype: "text/markdown",
+          },
+        ],
+      },
+    );
+    expect(created.status).toBe(201);
+
+    currentState().clock.set(new Date(initialTime.getTime() + 25 * 60 * 60 * 1000));
+    const reconciled = await runDb(
+      Effect.gen(function* () {
+        const batches = yield* FileIngestBatches;
+        return yield* batches.reconcileOnce();
+      }),
+    );
+    expect(reconciled.expired).toBe(1);
+
+    const state = await runDb(
+      Effect.gen(function* () {
+        const db = yield* Database;
+        return {
+          batch: (yield* db.query((d) => d
+            .select()
+            .from(fileIngestBatches)
+            .where(eq(fileIngestBatches.id, id.m32StagedRun)))
+            .pipe(Effect.orDie))[0],
+          file: (yield* db.query((d) => d
+            .select()
+            .from(fileIngestFiles)
+            .where(eq(fileIngestFiles.batchId, id.m32StagedRun)))
+            .pipe(Effect.orDie))[0],
+          run: (yield* db.query((d) => d
+            .select()
+            .from(pipelineRuns)
+            .where(eq(pipelineRuns.id, id.m32StagedRun)))
+            .pipe(Effect.orDie))[0],
+        };
+      }),
+    );
+    expect(state.batch).toMatchObject({
+      status: "failed",
+      error: "Upload expired before all files arrived",
+    });
+    expect(state.file).toMatchObject({ status: "failed" });
+    expect(state.run).toMatchObject({ status: "failed", phaseStatus: "failed" });
   });
 
   it("creates, lists, reads, and deletes owner-scoped personal references", async () => {

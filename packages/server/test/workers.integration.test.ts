@@ -1,6 +1,8 @@
 import {
   compileIntents,
   Database,
+  fileIngestBatches,
+  fileIngestFiles,
   pipelineRuns,
   sourceDocuments,
   tasks,
@@ -31,6 +33,10 @@ import { ClockLive } from "../src/clock.ts";
 import { stagedFileToMarkdown } from "../src/conversion.ts";
 import { rawFileHash } from "../src/crypto.ts";
 import { DrizzleLive } from "../src/db.ts";
+import {
+  FileIngestBatches,
+  FileIngestBatchesLive,
+} from "../src/file-ingest-batches.ts";
 import { EmbeddingsService } from "../src/embeddings.ts";
 import { JobsService, JobsServiceLive } from "../src/jobs.ts";
 import { LanguageModel } from "../src/llm.ts";
@@ -47,7 +53,12 @@ import {
   StagedFileIngestWorkflow,
   StagedFileIngestWorkflowLive,
 } from "../src/staged-file-ingest-workflow.ts";
-import { ContentStorage, StagedStorage, StorageFileMissing } from "../src/storage.ts";
+import {
+  ContentStorage,
+  StagedStorage,
+  StagedUploadGateway,
+  StorageFileMissing,
+} from "../src/storage.ts";
 import { VaultAccessServiceLive } from "../src/vaults.ts";
 import { WorkflowEngineLive } from "../src/workflow-engine.ts";
 
@@ -68,6 +79,7 @@ const id = {
   renderFailureRun: "10000000-0000-4000-8000-000000000014" as Uuid,
   cancelIngestRun: "10000000-0000-4000-8000-000000000016" as Uuid,
   stagedFailureRun: "10000000-0000-4000-8000-000000000018" as Uuid,
+  replayDecisionRun: "10000000-0000-4000-8000-000000000021" as Uuid,
   maskedCompileRun: "10000000-0000-4000-8000-000000000019" as Uuid,
   maskedCompileIntent: "10000000-0000-4000-8000-000000000020" as Uuid,
 } as const;
@@ -212,7 +224,7 @@ const StorageLive = Layer.succeed(ContentStorage, {
 });
 
 const StagedStorageLive = Layer.succeed(StagedStorage, {
-  readStagedBytes: (_vaultId, hash) => {
+  readStagedBytes: (_vaultId, _batchId, hash) => {
     if (readPause?.hash === hash) {
       const pause = readPause;
       pause.signalStarted();
@@ -233,7 +245,8 @@ const StagedStorageLive = Layer.succeed(StagedStorage, {
       ? Effect.die(new Error(`missing staged object ${hash}`))
       : Effect.succeed(bytes);
   },
-  deleteStaged: (_vaultId, hash) => {
+  stagedExists: (_vaultId, _batchId, hash) => Effect.succeed(staged.has(hash)),
+  deleteStaged: (_vaultId, _batchId, hash) => {
     if (deleteDefects.has(hash)) {
       const error = new Error(`delete exploded for ${hash}`);
       error.name = "DeleteStorageDefect";
@@ -241,7 +254,20 @@ const StagedStorageLive = Layer.succeed(StagedStorage, {
     }
     return Effect.sync(() => deleted.push(hash)).pipe(Effect.asVoid);
   },
-  clearStaged: () => Effect.void,
+  clearStagedBatch: () => Effect.void,
+  clearStagedVault: () => Effect.void,
+});
+
+const StagedUploadGatewayLive = Layer.succeed(StagedUploadGateway, {
+  kind: "presigned",
+  prepare: (_vaultId, _batchId, files) =>
+    Effect.succeed(
+      files.map((file) => ({
+        hash: file.hash,
+        transport: "presigned" as const,
+        url: `https://uploads.test/${file.hash}`,
+      })),
+    ),
 });
 
 const ConfigLive = Layer.succeed(AppConfig, config);
@@ -283,17 +309,28 @@ const WorkflowHandlersLive = Layer.mergeAll(StagedFileIngestWorkflowLive, Compil
   Layer.provideMerge(BaseLive),
 );
 const WorkflowsLive = WorkflowHandlersLive.pipe(Layer.provideMerge(EngineLive));
+const FileIngestBatchesLiveLayer = FileIngestBatchesLive.pipe(
+  Layer.provideMerge(SourceDocumentsLive),
+  Layer.provideMerge(PipelineLive),
+  Layer.provideMerge(StorageLive),
+  Layer.provideMerge(StagedStorageLive),
+  Layer.provideMerge(StagedUploadGatewayLive),
+  Layer.provideMerge(VaultAccessLive),
+  Layer.provideMerge(WorkflowsLive),
+  Layer.provideMerge(BaseLive),
+);
 const ReconcilerLive = CompileIntentReconcilerLive.pipe(
   Layer.provideMerge(PipelineLive),
   Layer.provideMerge(WorkflowsLive),
   Layer.provideMerge(BaseLive),
 );
 const JobsLive = JobsServiceLive.pipe(
+  Layer.provideMerge(FileIngestBatchesLiveLayer),
   Layer.provideMerge(PipelineLive),
   Layer.provideMerge(VaultAccessLive),
   Layer.provideMerge(BaseLive),
 );
-const TestLive = Layer.mergeAll(ReconcilerLive, JobsLive).pipe(
+const TestLive = Layer.mergeAll(ReconcilerLive, JobsLive, FileIngestBatchesLiveLayer).pipe(
   Layer.provideMerge(WorkflowsLive),
   Layer.provideMerge(PipelineLive),
   Layer.provideMerge(SourceDocumentsLive),
@@ -359,6 +396,7 @@ const run = <A>(
     | Database
     | CompileIntentReconciler
     | JobsService
+    | FileIngestBatches
     | PipelineRunsService
     | WorkflowEngine.WorkflowEngine
   >,
@@ -530,6 +568,129 @@ describe("M4.2 durable workers", () => {
     });
   });
 
+  it("reconciles a committed ingest batch after the dispatch process dies", async () => {
+    const bytes = Buffer.from("# Recovered batch\n\nThe durable outbox dispatches this file.");
+    const hash = stageBytes(bytes);
+
+    const state = await run(
+      Effect.gen(function* () {
+        const db = yield* Database;
+        yield* db.query((d) => d
+          .update(pipelineRuns)
+          .set({
+            status: "running",
+            currentPhase: "source_ingest",
+            phaseStatus: "progress",
+            activeTaskId: id.ingestRun,
+            activeTaskType: "staged_file_ingest",
+            updatedAt: new Date(0),
+          })
+          .where(eq(pipelineRuns.id, id.ingestRun)))
+          .pipe(Effect.orDie);
+        yield* db.query((d) => d
+          .insert(fileIngestBatches)
+          .values({
+            id: id.ingestRun,
+            createdBy: id.user,
+            status: "processing",
+            expiresAt: new Date(Date.now() + 60_000),
+            committedAt: new Date(),
+          }))
+          .pipe(Effect.orDie);
+        yield* db.query((d) => d
+          .insert(fileIngestFiles)
+          .values({
+            batchId: id.ingestRun,
+            position: 0,
+            hash,
+            name: "recovered.md",
+            size: bytes.length,
+            mimetype: "text/markdown",
+            needsCompile: true,
+            status: "processing",
+          }))
+          .pipe(Effect.orDie);
+
+        const pipeline = yield* PipelineRunsService;
+        const recovered = yield* pipeline.recoverZombies(new Date());
+        const batches = yield* FileIngestBatches;
+        const reconciled = yield* batches.reconcileOnce();
+        const deadline = Date.now() + 5_000;
+        while (Date.now() < deadline) {
+          const rows = yield* db.query((d) => d
+            .select()
+            .from(fileIngestBatches)
+            .where(eq(fileIngestBatches.id, id.ingestRun)))
+            .pipe(Effect.orDie);
+          if (rows[0]?.status === "completed" || rows[0]?.status === "failed") {
+            return { recovered, reconciled, batch: rows[0] };
+          }
+          yield* Effect.sleep("25 millis");
+        }
+        throw new Error("reconciled file ingest did not finish");
+      }),
+    );
+
+    expect(state.recovered).toBe(0);
+    expect(state.reconciled.dispatched).toBe(1);
+    expect(state.batch).toMatchObject({ status: "completed", error: null });
+    expect(written.size).toBe(1);
+    expect(deleted).toEqual([hash]);
+  }, 30_000);
+
+  it("preserves the compile decision when a source write outlives its activity journal", async () => {
+    const bytes = Buffer.from("# Replay decision\n\nThe source already exists on activity retry.");
+    const hash = stageBytes(bytes);
+    const file = {
+      name: "replay.md",
+      size: bytes.length,
+      hash,
+      mimetype: "text/markdown",
+      needsCompile: true,
+    };
+
+    const state = await run(
+      Effect.gen(function* () {
+        const db = yield* Database;
+        const first = yield* StagedFileIngestWorkflow.execute({
+          vaultId: id.vault,
+          batchId: id.ingestRun,
+          pipelineRunId: id.ingestRun,
+          files: [file],
+        });
+        yield* db.query((d) => d.delete(compileIntents)).pipe(Effect.orDie);
+        yield* db.query((d) => d
+          .insert(pipelineRuns)
+          .values({
+            id: id.replayDecisionRun,
+            vaultId: id.vault,
+            trigger: "staged_files",
+            status: "pending",
+            currentPhase: "",
+            phaseStatus: "",
+            progressSteps: [],
+          }))
+          .pipe(Effect.orDie);
+        const replay = yield* StagedFileIngestWorkflow.execute({
+          vaultId: id.vault,
+          batchId: id.replayDecisionRun,
+          pipelineRunId: id.replayDecisionRun,
+          files: [file],
+        });
+        const intents = yield* db.query((d) => d
+          .select()
+          .from(compileIntents)
+          .where(eq(compileIntents.pipelineRunId, id.replayDecisionRun)))
+          .pipe(Effect.orDie);
+        return { first, replay, intents };
+      }),
+    );
+
+    expect(state.first).toEqual({ ingested: 1, skipped: 0, failed: 0 });
+    expect(state.replay).toEqual({ ingested: 1, skipped: 0, failed: 0 });
+    expect(state.intents).toHaveLength(1);
+  }, 30_000);
+
   it("cancels a mid-flight staged ingest workflow before it can write documents", async () => {
     const hash = stageBytes(Buffer.from("# Must not persist\n\nCancellation wins."));
     const pause = pauseStagedRead(hash);
@@ -554,6 +715,7 @@ describe("M4.2 durable workers", () => {
         yield* StagedFileIngestWorkflow.execute(
           {
             vaultId: id.vault,
+            batchId: id.cancelIngestRun,
             pipelineRunId: id.cancelIngestRun,
             files: [
               {
@@ -561,6 +723,7 @@ describe("M4.2 durable workers", () => {
                 size: staged.get(hash)!.length,
                 hash,
                 mimetype: "text/markdown",
+                needsCompile: true,
               },
             ],
           },
@@ -600,6 +763,7 @@ describe("M4.2 durable workers", () => {
     const result = await run(
       StagedFileIngestWorkflow.execute({
         vaultId: id.vault,
+        batchId: id.ingestRun,
         pipelineRunId: id.ingestRun,
         files: [
           {
@@ -607,14 +771,22 @@ describe("M4.2 durable workers", () => {
             size: staged.get(docxHash)!.length,
             hash: docxHash,
             mimetype: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            needsCompile: true,
           },
           {
             name: "notes.md",
             size: staged.get(textHash)!.length,
             hash: textHash,
             mimetype: "text/markdown",
+            needsCompile: true,
           },
-          { name: "bad.bin", size: 3, hash: badHash, mimetype: "application/octet-stream" },
+          {
+            name: "bad.bin",
+            size: 3,
+            hash: badHash,
+            mimetype: "application/octet-stream",
+            needsCompile: true,
+          },
         ],
       }),
     );
@@ -673,6 +845,7 @@ describe("M4.2 durable workers", () => {
           .pipe(Effect.orDie);
         return yield* StagedFileIngestWorkflow.execute({
           vaultId: id.vault,
+          batchId: id.dedupeRun,
           pipelineRunId: id.dedupeRun,
           files: [
             {
@@ -680,12 +853,14 @@ describe("M4.2 durable workers", () => {
               size: staged.get(docxHash)!.length,
               hash: docxHash,
               mimetype: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+              needsCompile: false,
             },
             {
               name: "notes.md",
               size: staged.get(textHash)!.length,
               hash: textHash,
               mimetype: "text/markdown",
+              needsCompile: false,
             },
           ],
         });
@@ -734,6 +909,7 @@ describe("M4.2 durable workers", () => {
           .pipe(Effect.orDie);
         return yield* StagedFileIngestWorkflow.execute({
           vaultId: id.vault,
+          batchId: id.isolationRun,
           pipelineRunId: id.isolationRun,
           files: [
             {
@@ -741,13 +917,15 @@ describe("M4.2 durable workers", () => {
               size: 1,
               hash: readFailureHash,
               mimetype: "text/markdown",
+              needsCompile: true,
             },
             {
               name: "cleanup.md",
               size: staged.get(cleanupFailureHash)!.length,
               hash: cleanupFailureHash,
               mimetype: "text/markdown",
-            },
+              needsCompile: true,
+            }
           ],
         });
       }),
@@ -831,6 +1009,7 @@ describe("M4.2 durable workers", () => {
         return yield* Effect.exit(
           StagedFileIngestWorkflow.execute({
             vaultId: id.vault,
+            batchId: id.stagedFailureRun,
             pipelineRunId: id.stagedFailureRun,
             files: [
               {
@@ -838,6 +1017,7 @@ describe("M4.2 durable workers", () => {
                 size: staged.get(hash)!.length,
                 hash,
                 mimetype: "text/markdown",
+                needsCompile: true,
               },
             ],
           }),

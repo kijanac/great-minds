@@ -15,6 +15,8 @@ import * as WorkflowEngine from "effect/unstable/workflow/WorkflowEngine";
 
 import { cancelCompileWorkflow } from "./compile-intents.ts";
 import { AppConfig } from "./config.ts";
+import { FileIngestBatches } from "./file-ingest-batches.ts";
+import { jobResponse } from "./job-response.ts";
 import { pageEnvelope, oneTotal } from "./pagination.ts";
 import { PipelineRunsService } from "./pipeline-runs.ts";
 import { StagedFileIngestWorkflow } from "./staged-file-ingest-workflow.ts";
@@ -22,21 +24,6 @@ import { VaultAccessService } from "./vaults.ts";
 import { workflowExecutionId } from "./workflow-engine.ts";
 
 const terminalStatuses = new Set(["completed", "failed", "cancelled"]);
-
-export const jobResponse = (row: typeof pipelineRuns.$inferSelect): JobResponse => ({
-  id: row.id as Uuid,
-  vault_id: row.vaultId as Uuid,
-  trigger: row.trigger as JobResponse["trigger"],
-  status: row.status as JobResponse["status"],
-  current_phase: row.currentPhase,
-  phase_status: row.phaseStatus,
-  progress_steps: row.progressSteps as JobResponse["progress_steps"],
-  error: row.error,
-  created_at: row.createdAt.toISOString(),
-  updated_at: row.updatedAt.toISOString(),
-  completed_at: row.completedAt?.toISOString() ?? null,
-  stream_url: `/jobs/${row.id}/stream`,
-});
 
 const progressSnapshot = (row: typeof pipelineRuns.$inferSelect): JobProgressSnapshot => ({
   id: row.id as Uuid,
@@ -100,6 +87,7 @@ export const JobsServiceLive = Layer.effect(
     const config = yield* AppConfig;
     const access = yield* VaultAccessService;
     const pipeline = yield* PipelineRunsService;
+    const fileIngestBatches = yield* FileIngestBatches;
     const workflowEngine = yield* WorkflowEngine.WorkflowEngine;
     const pollIntervalMs = Option.isSome(config.goldensClock) ? 1 : 100;
 
@@ -182,6 +170,7 @@ export const JobsServiceLive = Layer.effect(
           yield* access.requireOwner(userId, vaultId);
           const rows = yield* db.query((d) => d
             .select({
+              trigger: pipelineRuns.trigger,
               activeTaskId: pipelineRuns.activeTaskId,
               activeTaskType: pipelineRuns.activeTaskType,
             })
@@ -209,6 +198,9 @@ export const JobsServiceLive = Layer.effect(
               StagedFileIngestWorkflow,
               workflowExecutionId(StagedFileIngestWorkflow._tag, run.activeTaskId),
             );
+          }
+          if (run.trigger === "staged_files") {
+            yield* fileIngestBatches.cancel(runId);
           }
         }),
       list: (userId, vaultId, query) =>

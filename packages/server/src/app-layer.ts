@@ -15,6 +15,11 @@ import { CostsService, CostsServiceLive } from "./costs.ts";
 import { DrizzleLive } from "./db.ts";
 import { DocumentsService, DocumentsServiceLive } from "./documents.ts";
 import { EmbeddingsLive, EmbeddingsService } from "./embeddings.ts";
+import {
+  FileIngestBatchReconcilerLoopLive,
+  FileIngestBatches,
+  FileIngestBatchesLive,
+} from "./file-ingest-batches.ts";
 import { IngestService, IngestServiceLive } from "./ingest.ts";
 import { JobsService, JobsServiceLive } from "./jobs.ts";
 import { LintService, LintServiceLive } from "./lint.ts";
@@ -68,6 +73,7 @@ export type AppLayerServices =
   | UserDocumentsService
   | ProposalsService
   | IngestService
+  | FileIngestBatches
   | JobsService
   | LintService
   | CostsService
@@ -154,6 +160,14 @@ export const makeAppLayers = (overrides: AppLayerOverrides = {}) => {
     Layer.provideMerge(BaseLive),
   );
   const WorkflowsLive = WorkflowHandlersLive.pipe(Layer.provideMerge(WorkflowEngineBaseLive));
+  const FileIngestBatchesLiveLayer = FileIngestBatchesLive.pipe(
+    Layer.provideMerge(SourceDocumentsLive),
+    Layer.provideMerge(PipelineRunsLive),
+    Layer.provideMerge(StorageLive),
+    Layer.provideMerge(VaultAccessLive),
+    Layer.provideMerge(WorkflowsLive),
+    Layer.provideMerge(BaseLive),
+  );
   const ProposalsLive = ProposalsServiceLive.pipe(
     Layer.provideMerge(SourceDocumentsLive),
     Layer.provideMerge(StorageLive),
@@ -172,10 +186,10 @@ export const makeAppLayers = (overrides: AppLayerOverrides = {}) => {
     Layer.provideMerge(UserDocumentsLive),
     Layer.provideMerge(StorageLive),
     Layer.provideMerge(VaultAccessLive),
-    Layer.provideMerge(WorkflowsLive),
     Layer.provideMerge(BaseLive),
   );
   const JobsLive = JobsServiceLive.pipe(
+    Layer.provideMerge(FileIngestBatchesLiveLayer),
     Layer.provideMerge(PipelineRunsLive),
     Layer.provideMerge(WorkflowsLive),
     Layer.provideMerge(VaultAccessLive),
@@ -228,6 +242,7 @@ export const makeAppLayers = (overrides: AppLayerOverrides = {}) => {
     WikiServiceLive.pipe(Layer.provideMerge(VaultAccessLive), Layer.provideMerge(BaseLive)),
     SourcesLive,
     IngestLive,
+    FileIngestBatchesLiveLayer,
     JobsLive,
     LintLive,
     CostsLive,
@@ -275,6 +290,10 @@ export const makeAppLayers = (overrides: AppLayerOverrides = {}) => {
     CompileIntentReconcilerLoopLive.pipe(
       Layer.provideMerge(ReconcilerLive),
       Layer.provideMerge(WorkflowsLive),
+      Layer.provideMerge(BaseLive),
+    ),
+    FileIngestBatchReconcilerLoopLive.pipe(
+      Layer.provideMerge(FileIngestBatchesLiveLayer),
       Layer.provideMerge(BaseLive),
     ),
     StorageMaintenanceLoopLive.pipe(Layer.provide(StorageLive)),

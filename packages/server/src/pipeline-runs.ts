@@ -159,10 +159,22 @@ export const PipelineRunsServiceLive = Layer.effect(
                       WHERE intent.pipeline_run_id = ${pipelineRuns.id}
                         AND intent.satisfied_at IS NULL
                     )
+                    AND NOT EXISTS (
+                      SELECT 1
+                      FROM file_ingest_batches batch
+                      WHERE batch.id = ${pipelineRuns.id}
+                        AND batch.status = 'uploading'
+                    )
                   )
                   OR
                   (
                     ${pipelineRuns.activeTaskId} IS NOT NULL
+                    AND NOT EXISTS (
+                      SELECT 1
+                      FROM file_ingest_batches batch
+                      WHERE batch.id = ${pipelineRuns.id}
+                        AND batch.status = 'processing'
+                    )
                     AND NOT EXISTS (
                       SELECT 1
                       FROM cluster_messages message
