@@ -15,7 +15,7 @@ The drafting pass raised 50 deduplicated items: 16 high, 30 medium, and 4 low. T
 | B-05 | Viewer/editor membership permits shared mutations, provider work, and cancellation | high | authorization | resolved | — |
 | B-06 | A failed Health request reports the wiki as healthy | high | health | resolved | — |
 | B-07 | Different URL sources with the same path stem overwrite one another | high | source ingest | resolved | — |
-| B-08 | Direct file ingest discards folders and overwrites same-base files | high | source ingest | fix | — |
+| B-08 | Direct file ingest discards folders and overwrites same-base files | high | source ingest | resolved | — |
 | B-09 | File review and staged ingest can silently omit files counted as selected | high | source ingest | fix | — |
 | B-10 | A failed reply with partial prose looks successfully completed | high | research | fix | — |
 | B-11 | A queued cancelled/failed run can display Knowledge base updated | high | pipeline | fix | — |
@@ -143,7 +143,8 @@ The drafting pass raised 50 deduplicated items: 16 high, 30 medium, and 4 low. T
 - **Reproduce:** Upload `a/report.txt` and `b/report.md` with different bodies in default local mode.
 - **Why (from the code):** Relative paths are collected in `web/src/lib/components/ingestion-flow.svelte:302-317`, but `web/src/lib/components/pipeline-container.svelte:108-121` calls `uploadFile(file)` without destination; `packages/server/src/ingest.ts:232-241` derives basename-only destination.
 - **Severity:** `high`. A confirmed multi-file batch silently loses one file's content.
-- **Decision needed:** `fix`. Preserve safe relative path or detect/resolve collisions visibly before confirmation.
+- **Decision needed:** `resolved`. A file path is a storage location rather than uploaded-document identity; each accepted upload receives an immutable source ID and an ID-derived path, so same-base files coexist even when folder provenance is not retained.
+- **Status:** `fixed` by Great Minds commit `b588057`, with regression coverage in `e500c9d`. A post-fix owner check submitted distinct `report.md` and `report.txt` bodies together: review showed both as unique, Library grew from five to seven sources, separate Alpha and Beta rows opened their respective bodies, and SQL/storage showed different source IDs and ID-bearing paths. The provider-backed compile launch then hit the known missing-key blocker, after both direct uploads had persisted.
 - **Raised by:** [add files](sources/add-files.md#open-questions-and-verification).
 
 ### B-09: File review and staged ingest can silently omit files counted as selected

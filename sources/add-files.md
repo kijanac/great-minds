@@ -188,7 +188,7 @@ Once a run exists, terminal success, failure, cancellation, completion articles,
 
 - Align the review format set with the active upload backend. At minimum, recognized rows should not proceed to a known-unsupported direct converter.
 - Fix selected-count/confirmation parity so every counted row is either uploaded or visibly blocked with a reason.
-- Preserve or explicitly discard relative folder paths. Current review implies hierarchy that neither upload mode retains; direct mode can overwrite same-named files.
+- Great Minds commit `b588057` makes source ID the uploaded-document identity and uses ID-derived paths, eliminating same-base replacement even though neither upload mode retains folder hierarchy. Post-fix hand verification kept distinct `report.md` and `report.txt` bodies as separate sources. Decide whether review should explicitly label relative folders as review-only provenance or preserve them separately.
 - Make the vault duplicate check a real pending state and persist client hashes for direct uploads, or stop labeling direct preflight as vault-wide duplicate detection.
 - Surface every failed staged PUT/conversion in the pipeline and state clearly whether the remaining files continued.
 - **retry** after pre-run failure should retry the file handoff or be renamed **compile saved files**; current wording implies recovery that does not occur.

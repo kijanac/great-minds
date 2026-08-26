@@ -23,9 +23,11 @@ Use a disposable owner vault with controlled sources/articles/tags/health graph 
 | FILES-15 | P3 | server control | No explicit file count/size limit is shown; practical limits need characterization ([Open questions](../sources/add-files.md#open-questions-and-verification)). | Increasing file sizes/counts, disposable machine. | 1. Hash/review/upload boundary cases.<br>2. record browser/server failures. | Record first practical limits and whether UI explains them; do not exhaust production resources. | — |
 | FILES-16 | P2 | screen reader | Review picker/status/checklist is keyboard/screen-reader usable ([Open questions](../sources/add-files.md#open-questions-and-verification)). | Mixed-status batch. | 1. Open picker/rows by keyboard.<br>2. inspect announced name/status/selection.<br>3. dismiss. | Each row/action/status is understandable and operable without color/hover alone. | — |
 
+Post-baseline recheck: against Great Minds `b588057`, an owner submitted distinct `report.md` and `report.txt` bodies in one visible direct-upload batch. Both appeared as unique, Library grew by two sources, each row opened its own body, and storage used separate ID-bearing paths. The provider-backed compile launch failed only after persistence because `OPENROUTER_API_KEY` is absent. `FILES-08` remains `—` because its Result column is reserved for the pinned `c8c9e57` baseline.
+
 Not checkable by hand:
 
-- Whether folder hierarchy should be preserved or deliberately discarded is a product call; FILES-08 confirms current result.
+- Whether folder hierarchy should be preserved or deliberately discarded is a product call; the post-baseline source-ID fix prevents discarded hierarchy from causing same-base replacement.
 
 ## sources/add-a-url.md
 
