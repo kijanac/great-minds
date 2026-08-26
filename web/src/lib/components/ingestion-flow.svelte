@@ -1,6 +1,6 @@
 <script lang="ts">
   import { beforeNavigate, goto } from "$app/navigation";
-  import { onDestroy, onMount } from "svelte";
+  import { onMount } from "svelte";
   import { cubicOut } from "svelte/easing";
   import { fade, slide } from "svelte/transition";
 
@@ -100,16 +100,15 @@
   let zone: HTMLDivElement;
   let componentActive = true;
   let navigationEpoch = 0;
-  let createAttempt = 0;
 
   beforeNavigate(() => {
     navigationEpoch += 1;
   });
-  onDestroy(() => {
-    componentActive = false;
-    hashRunId += 1;
-    createAttempt += 1;
-  });
+
+  function captureNavigationOwnership(): () => boolean {
+    const epoch = navigationEpoch;
+    return () => componentActive && navigationEpoch === epoch;
+  }
 
   const hasFiles = $derived(files.length > 0);
   const selectedFiles = $derived(
@@ -214,7 +213,6 @@
     expanded = false;
     files = [];
     checkingVault = false;
-    creatingBatch = false;
     submitError = null;
     hashRunId += 1;
     url = "";
@@ -252,6 +250,8 @@
     document.addEventListener("dragover", handleDragOver);
     document.addEventListener("drop", handleDocumentDrop);
     return () => {
+      componentActive = false;
+      hashRunId += 1;
       document.removeEventListener("mousedown", handleMouseDown);
       window.removeEventListener("keydown", handleKeydown);
       document.removeEventListener("dragenter", handleDragEnter);
@@ -407,35 +407,22 @@
     }));
     if (uploadFiles.length === 0 || creatingBatch) return;
 
-    const attempt = ++createAttempt;
-    const startNavigationEpoch = navigationEpoch;
+    const ownsNavigation = captureNavigationOwnership();
     creatingBatch = true;
     submitError = null;
     try {
       const batch = await createFileIngestBatch(uploadFiles);
-      if (
-        !componentActive ||
-        createAttempt !== attempt ||
-        navigationEpoch !== startNavigationEpoch
-      ) {
-        return;
-      }
+      if (!ownsNavigation()) return;
       files = [];
       await goto(`/pipeline/runs/${batch.id}`, {
         state: { uploadFiles, batch },
       });
     } catch (error) {
-      if (
-        !componentActive ||
-        createAttempt !== attempt ||
-        navigationEpoch !== startNavigationEpoch
-      ) {
-        return;
-      }
+      if (!ownsNavigation()) return;
       submitError =
         error instanceof Error ? error.message : "Unable to start file upload";
     } finally {
-      if (componentActive && createAttempt === attempt) creatingBatch = false;
+      if (componentActive) creatingBatch = false;
     }
   }
 

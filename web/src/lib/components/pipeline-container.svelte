@@ -5,6 +5,7 @@
   import { createQuery, useQueryClient } from "@tanstack/svelte-query";
   import { onDestroy, tick } from "svelte";
   import { cubicOut } from "svelte/easing";
+  import { SvelteSet } from "svelte/reactivity";
   import { fly } from "svelte/transition";
 
   import {
@@ -42,6 +43,7 @@
 
   const queryClient = useQueryClient();
   const vaults = useVaults();
+  const uploadingBatchIds = new SvelteSet<string>();
   let resolvedJobId = $state<string | null>(null);
   let noJobFound = $state(false);
   let resolveError = $state<string | null>(null);
@@ -50,7 +52,6 @@
   let routeContextResolved = $state(false);
   let resolvedRouteId = $state<string | null>(null);
   let availableFiles = $state<HashedFile[]>([]);
-  let uploadingBatchIds = $state<string[]>([]);
   let resolverStarted = $state(false);
   let showCompletion = $state(false);
   let componentActive = true;
@@ -92,7 +93,7 @@
     fileBatch?.files.filter((file) => file.status !== "pending").length ?? 0,
   );
   const uploadInProgress = $derived(
-    fileBatch !== null && uploadingBatchIds.includes(fileBatch.id),
+    fileBatch !== null && uploadingBatchIds.has(fileBatch.id),
   );
   const awaitingFiles = $derived(
     fileBatch?.status === "uploading" &&
@@ -108,23 +109,9 @@
       stages.length > 0,
   );
 
-  function ownsBatchRoute(batchId: string, epoch: number): boolean {
-    return (
-      componentActive && navigationEpoch === epoch && routeJobId === batchId
-    );
-  }
-
-  function ownsPipelineResolver(
-    epoch: number,
-    initialUrl: string | null,
-  ): boolean {
-    return (
-      componentActive &&
-      navigationEpoch === epoch &&
-      routeJobId === null &&
-      page.url.pathname === "/pipeline" &&
-      urlParam === initialUrl
-    );
+  function captureRouteOwnership(predicate: () => boolean): () => boolean {
+    const epoch = navigationEpoch;
+    return () => componentActive && navigationEpoch === epoch && predicate();
   }
 
   const result = createQuery(() => ({
@@ -178,14 +165,14 @@
       return;
     }
 
-    const resolveEpoch = navigationEpoch;
+    const ownsRoute = captureRouteOwnership(() => routeJobId === id);
     void (async () => {
       try {
         let batch = await getFileIngestBatch(id);
         if (batch?.status === "uploading" && batch.created_by === auth.userId) {
           batch = await resumeFileIngestBatch(id);
         }
-        if (!ownsBatchRoute(id, resolveEpoch)) return;
+        if (!ownsRoute()) return;
         fileBatch = batch;
         routeContextResolved = true;
         if (
@@ -195,7 +182,7 @@
           void runBatchUpload(batch, []);
         }
       } catch (error) {
-        if (!ownsBatchRoute(id, resolveEpoch)) return;
+        if (!ownsRoute()) return;
         routeContextResolved = true;
         resolveError =
           error instanceof Error ? error.message : "Job unavailable";
@@ -210,7 +197,12 @@
     if (currentUrl && !vaults.isFetched) return;
     resolverStarted = true;
     uploadFailures = [];
-    const resolveEpoch = navigationEpoch;
+    const ownsResolver = captureRouteOwnership(
+      () =>
+        routeJobId === null &&
+        page.url.pathname === "/pipeline" &&
+        urlParam === currentUrl,
+    );
 
     if (currentUrl && !canManage) {
       resolveError = "Only vault owners can add sources or update this vault.";
@@ -224,14 +216,14 @@
           await queryClient.invalidateQueries({
             queryKey: ["vault", vaultId, "active-job"],
           });
-          if (!ownsPipelineResolver(resolveEpoch, currentUrl)) return;
+          if (!ownsResolver()) return;
           resolvedJobId = run.id;
           await goto(`/pipeline/runs/${run.id}`, { replaceState: true });
           return;
         }
 
         const activeJobs = await listJobs("active");
-        if (!ownsPipelineResolver(resolveEpoch, currentUrl)) return;
+        if (!ownsResolver()) return;
         if (activeJobs.items.length === 1) {
           const activeJobId = activeJobs.items[0].id;
           resolvedJobId = activeJobId;
@@ -242,7 +234,7 @@
           noJobFound = true;
         }
       } catch (error) {
-        if (!ownsPipelineResolver(resolveEpoch, currentUrl)) return;
+        if (!ownsResolver()) return;
         resolveError =
           error instanceof Error ? error.message : "Job unavailable";
       }
@@ -250,27 +242,27 @@
   });
 
   async function runBatchUpload(batch: FileIngestBatch, files: HashedFile[]) {
-    const uploadEpoch = navigationEpoch;
+    const ownsRoute = captureRouteOwnership(() => routeJobId === batch.id);
     if (
-      !ownsBatchRoute(batch.id, uploadEpoch) ||
-      uploadingBatchIds.includes(batch.id) ||
+      !ownsRoute() ||
+      uploadingBatchIds.has(batch.id) ||
       batch.status !== "uploading"
     ) {
       return;
     }
-    uploadingBatchIds = [...uploadingBatchIds, batch.id];
+    uploadingBatchIds.add(batch.id);
     availableFiles = files;
     resolveError = null;
     uploadFailures = [];
     try {
       for await (const event of continueFileIngest(batch, files)) {
-        const ownsRoute = ownsBatchRoute(batch.id, uploadEpoch);
-        if (ownsRoute && event.batch) fileBatch = event.batch;
-        if (ownsRoute && event.failures && event.failures.length > 0) {
+        const routeIsCurrent = ownsRoute();
+        if (routeIsCurrent && event.batch) fileBatch = event.batch;
+        if (routeIsCurrent && event.failures && event.failures.length > 0) {
           uploadFailures = event.failures;
         }
         if (event.phase === "error") {
-          if (ownsRoute) resolveError = event.error ?? "Upload failed";
+          if (routeIsCurrent) resolveError = event.error ?? "Upload failed";
           return;
         }
         if (event.phase === "processing") {
@@ -278,7 +270,7 @@
           await queryClient.invalidateQueries({
             queryKey: ["vault", vaultId, "active-job"],
           });
-          if (ownsBatchRoute(batch.id, uploadEpoch)) {
+          if (ownsRoute()) {
             availableFiles = [];
             replaceState(`/pipeline/runs/${batch.id}`, {});
           }
@@ -286,19 +278,19 @@
         }
       }
     } catch (error) {
-      if (!ownsBatchRoute(batch.id, uploadEpoch)) return;
+      if (!ownsRoute()) return;
       resolveError =
         error instanceof Error ? error.message : "Upload unavailable";
       try {
         const recovered = await getFileIngestBatch(batch.id);
-        if (!ownsBatchRoute(batch.id, uploadEpoch)) return;
+        if (!ownsRoute()) return;
         fileBatch = recovered;
         if (recovered?.status === "cancelled") resolveError = null;
       } catch {
         // Keep the last durable snapshot visible; SSE will continue reconnecting.
       }
     } finally {
-      uploadingBatchIds = uploadingBatchIds.filter((id) => id !== batch.id);
+      uploadingBatchIds.delete(batch.id);
     }
   }
 
