@@ -1,6 +1,6 @@
 <script lang="ts">
-  import { goto } from "$app/navigation";
-  import { onMount } from "svelte";
+  import { beforeNavigate, goto } from "$app/navigation";
+  import { onDestroy, onMount } from "svelte";
   import { cubicOut } from "svelte/easing";
   import { fade, slide } from "svelte/transition";
 
@@ -98,6 +98,18 @@
   let creatingBatch = $state(false);
   let submitError = $state<string | null>(null);
   let zone: HTMLDivElement;
+  let componentActive = true;
+  let navigationEpoch = 0;
+  let createAttempt = 0;
+
+  beforeNavigate(() => {
+    navigationEpoch += 1;
+  });
+  onDestroy(() => {
+    componentActive = false;
+    hashRunId += 1;
+    createAttempt += 1;
+  });
 
   const hasFiles = $derived(files.length > 0);
   const selectedFiles = $derived(
@@ -395,19 +407,35 @@
     }));
     if (uploadFiles.length === 0 || creatingBatch) return;
 
+    const attempt = ++createAttempt;
+    const startNavigationEpoch = navigationEpoch;
     creatingBatch = true;
     submitError = null;
     try {
       const batch = await createFileIngestBatch(uploadFiles);
+      if (
+        !componentActive ||
+        createAttempt !== attempt ||
+        navigationEpoch !== startNavigationEpoch
+      ) {
+        return;
+      }
+      files = [];
       await goto(`/pipeline/runs/${batch.id}`, {
         state: { uploadFiles, batch },
       });
-      files = [];
     } catch (error) {
+      if (
+        !componentActive ||
+        createAttempt !== attempt ||
+        navigationEpoch !== startNavigationEpoch
+      ) {
+        return;
+      }
       submitError =
         error instanceof Error ? error.message : "Unable to start file upload";
     } finally {
-      creatingBatch = false;
+      if (componentActive && createAttempt === attempt) creatingBatch = false;
     }
   }
 
