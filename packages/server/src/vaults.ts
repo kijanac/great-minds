@@ -23,7 +23,6 @@ import { and, asc, desc, eq, inArray, sql } from "drizzle-orm";
 import { Cause, Context, Effect, Layer, Schema } from "effect";
 import { parse as parseYaml, parseDocument } from "yaml";
 
-import { AppConfig } from "./config.ts";
 import { StructuredLogger } from "./logging.ts";
 import { Mailer } from "./mailer.ts";
 import { pageEnvelope, oneTotal } from "./pagination.ts";
@@ -205,20 +204,16 @@ const roleToDb = (role: MemberRole | InvitedMemberRole): DbMemberRole => {
   }
 };
 
-const vaultResponse = (
-  row: {
-    readonly id: string;
-    readonly name: string;
-    readonly ownerId: string;
-    readonly createdAt: Date;
-  },
-  stagedUploads: boolean,
-) => ({
+const vaultResponse = (row: {
+  readonly id: string;
+  readonly name: string;
+  readonly ownerId: string;
+  readonly createdAt: Date;
+}) => ({
   id: asUuid(row.id),
   name: row.name,
   owner_id: asUuid(row.ownerId),
   created_at: row.createdAt.toISOString(),
-  staged_uploads: stagedUploads,
 });
 
 const memberResponse = (row: {
@@ -303,14 +298,12 @@ export const VaultAccessServiceLive = Layer.effect(
 export const VaultsServiceLive = Layer.effect(
   VaultsService,
   Effect.gen(function* () {
-    const config = yield* AppConfig;
     const db = yield* Database;
     const access = yield* VaultAccessService;
     const storage = yield* ContentStorage;
     const stagedStorage = yield* StagedStorage;
     const mailer = yield* Mailer;
     const logger = yield* StructuredLogger;
-    const stagedUploads = config.storageBackend === "r2";
 
     const getVaultRow = (vaultId: Uuid) =>
       Effect.gen(function* () {
@@ -451,7 +444,7 @@ export const VaultsServiceLive = Layer.effect(
             })
             .pipe(Effect.andThen(Effect.failCause(cause))),
         ));
-        return vaultResponse(created, stagedUploads);
+        return vaultResponse(created);
       });
 
     return {
@@ -507,7 +500,7 @@ export const VaultsServiceLive = Layer.effect(
 
           return {
             ...pageEnvelope(
-              rows.map((row) => vaultResponse(row, stagedUploads)),
+              rows.map((row) => vaultResponse(row)),
               params,
               oneTotal(countRows),
             ),
@@ -535,7 +528,7 @@ export const VaultsServiceLive = Layer.effect(
             .from(wikiArticles)
             .where(eq(wikiArticles.vaultId, vaultId)));
           return {
-            ...vaultResponse(vault, stagedUploads),
+            ...vaultResponse(vault),
             role: scope.role,
             member_count: oneTotal(memberCounts),
             article_count: oneTotal(articleCounts),

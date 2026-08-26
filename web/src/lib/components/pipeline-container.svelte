@@ -8,8 +8,7 @@
   import { fly } from "svelte/transition";
 
   import {
-    ingestStagedFiles,
-    uploadFile,
+    ingestFiles,
     type HashedFile,
     type UploadFailure,
   } from "$lib/api/ingest";
@@ -35,10 +34,9 @@
   } from "$lib/hooks/use-job-sse.svelte";
   import { activeVault, useVaults } from "$lib/hooks/use-vault.svelte";
 
-  interface StagedUploadState {
+  interface FileUploadState {
     uploadFiles?: HashedFile[];
     stableJobId?: string;
-    uploadMode?: "staged" | "direct";
   }
 
   const queryClient = useQueryClient();
@@ -56,7 +54,7 @@
   );
   const jobId = $derived(routeJobId ?? resolvedJobId);
   const urlParam = $derived(page.url.searchParams.get("url"));
-  const stagedUpload = $derived(page.state as StagedUploadState);
+  const fileUpload = $derived(page.state as FileUploadState);
   const currentVault = $derived(
     vaults.data?.find((vault) => vault.id === activeVault.id) ?? null,
   );
@@ -106,7 +104,7 @@
   $effect(() => {
     const currentJobId = jobId;
     const currentUrl = urlParam;
-    const uploadState = stagedUpload;
+    const uploadState = fileUpload;
     const upload = uploadState?.uploadFiles;
     const vaultId = activeVault.id;
     const launchesMutation =
@@ -126,42 +124,7 @@
       try {
         if (upload && upload.length > 0 && uploadState?.stableJobId) {
           clientUpload = { uploaded: 0, total: upload.length };
-          if (uploadState.uploadMode === "direct") {
-            for (let index = 0; index < upload.length; index += 1) {
-              const selectedFile = upload[index].file;
-              try {
-                await uploadFile(selectedFile);
-              } catch (error) {
-                uploadFailures = [
-                  {
-                    name: selectedFile.name,
-                    error:
-                      error instanceof Error ? error.message : "Upload failed",
-                  },
-                ];
-                resolveError = "File upload stopped";
-                clientUpload = null;
-                return;
-              }
-              clientUpload = {
-                uploaded: index + 1,
-                total: upload.length,
-              };
-            }
-            const job = await requestCompile(uploadState.stableJobId);
-            resolvedJobId = job.id;
-            await queryClient.invalidateQueries({
-              queryKey: ["vault", vaultId, "active-job"],
-            });
-            clientUpload = null;
-            await goto(`/pipeline/runs/${job.id}`, {
-              replaceState: true,
-              state: {},
-            });
-            return;
-          }
-
-          for await (const event of ingestStagedFiles(
+          for await (const event of ingestFiles(
             upload,
             uploadState.stableJobId,
           )) {

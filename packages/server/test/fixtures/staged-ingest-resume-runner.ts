@@ -1,5 +1,5 @@
-import type { Uuid } from "@great-minds/domain";
-import { Effect, Layer, Option, Redacted } from "effect";
+import { FileFingerprint, type Uuid } from "@great-minds/domain";
+import { Effect, Layer, Option, Redacted, Schema } from "effect";
 import * as Activity from "effect/unstable/workflow/Activity";
 
 import { AppConfig, type AppConfigShape } from "../../src/config.ts";
@@ -19,16 +19,17 @@ import { WorkflowEngineLive } from "../../src/workflow-engine.ts";
 const mode = process.argv[2];
 const vaultId = process.argv[3] as Uuid | undefined;
 const pipelineRunId = process.argv[4] as Uuid | undefined;
-const hash = process.argv[5];
+const hashInput = process.argv[5];
 
 if (
   (mode !== "pause" && mode !== "resume") ||
   vaultId === undefined ||
   pipelineRunId === undefined ||
-  hash === undefined
+  hashInput === undefined
 ) {
   throw new Error("mode, vault id, pipeline run id, and hash are required");
 }
+const hash = Schema.decodeUnknownSync(FileFingerprint)(hashInput);
 
 const databaseUrl = process.env.DATABASE_URL;
 if (databaseUrl === undefined || databaseUrl.length === 0) {
@@ -96,7 +97,10 @@ const StorageLive = Layer.succeed(ContentStorage, {
   clear: () => Effect.void,
 });
 const StagedStorageLive = Layer.succeed(StagedStorage, {
-  presignStagedPut: () => Effect.succeed("https://example.invalid"),
+  pruneExpiredStaged: () => Effect.void,
+  prepareStagedPut: () =>
+    Effect.succeed({ transport: "presigned" as const, url: "https://example.invalid" }),
+  writeStagedBytes: () => Effect.die(new Error("unused")),
   readStagedBytes: () => Effect.die(new Error("persist activity replayed unexpectedly")),
   deleteStaged: () => Effect.void,
   clearStaged: () => Effect.void,

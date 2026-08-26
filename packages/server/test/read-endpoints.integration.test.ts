@@ -969,8 +969,6 @@ describe("read-only HTTP integration", () => {
     const vaultItems = itemRecords(page);
     expect(page.pagination).toEqual({ limit: 50, offset: 0, total: 2 });
     expect(vaultItems.map((vault) => vault.id)).toEqual([id.vaultBeta, id.vaultAlpha]);
-    expect(vaultItems[0]?.staged_uploads).toBe(false);
-    expect(vaultItems[1]?.staged_uploads).toBe(false);
     expect(asRecord(listed.body).roles).toEqual({
       [id.vaultAlpha]: "owner",
       [id.vaultBeta]: "viewer",

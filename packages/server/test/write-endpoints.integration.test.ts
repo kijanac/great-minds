@@ -1,4 +1,4 @@
-import { access, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { access, mkdir, mkdtemp, readFile, rm, utimes, writeFile } from "node:fs/promises";
 import { createServer, type RequestListener, type Server as NodeServer } from "node:http";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -489,6 +489,20 @@ const countTable = <A>(table: A) =>
     }),
   );
 
+const waitFor = async <A>(
+  load: () => Promise<A>,
+  ready: (value: A) => boolean,
+  timeoutMs = 10_000,
+) => {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const value = await load();
+    if (ready(value)) return value;
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
+  throw new Error(`condition was not met within ${timeoutMs}ms`);
+};
+
 describe("M3.1 write endpoint integration", () => {
   beforeAll(async () => {
     state = await buildTestState();
@@ -527,7 +541,6 @@ describe("M3.1 write endpoint integration", () => {
     expect(createdBody).toMatchObject({
       name: "New Project",
       owner_id: id.alice,
-      staged_uploads: false,
     });
     expect(await readVaultFile(createdVaultId, "config.yaml")).toContain(
       "Prefer movement debates.",
@@ -893,8 +906,8 @@ describe("M3.1 write endpoint integration", () => {
     expect(missing.status).toBe(404);
   });
 
-  it("ingests raw markdown and direct text uploads with owner guards, frontmatter, hashes, and compile intents", async () => {
-    const { aliceToken, bobToken, carolToken } = currentFixture();
+  it("ingests raw markdown with owner guards, frontmatter, hashes, and compile intents", async () => {
+    const { aliceToken, bobToken } = currentFixture();
     const raw = await api("POST", `/vaults/${id.vault}/ingest`, aliceToken, {
       content: "# Raw Title\n\nRaw body paragraph.",
       dest: "raw/docs/raw-direct.md",
@@ -955,171 +968,200 @@ describe("M3.1 write endpoint integration", () => {
       dest: "raw/docs/denied.md",
     });
     expect(editorDenied.status).toBe(403);
+  });
 
-    const viewerDeniedUpload = new FormData();
-    viewerDeniedUpload.append("file", new Blob(["viewer"], { type: "text/plain" }), "viewer.txt");
-    const viewerUpload = await uploadApi(
-      `/vaults/${id.vault}/ingest/upload`,
+  it("stages local files through the shared durable ingest workflow", async () => {
+    const { aliceToken, carolToken } = currentFixture();
+    const encoder = new TextEncoder();
+    const inputs = [
+      {
+        name: "report.md",
+        type: "text/markdown",
+        bytes: encoder.encode("# Alpha report\n\nAlpha upload body."),
+      },
+      {
+        name: "report.txt",
+        type: "text/plain",
+        bytes: encoder.encode("# Beta report\n\nBeta upload body."),
+      },
+      {
+        name: "html-upload.html",
+        type: "text/html",
+        bytes: encoder.encode(
+          "<html><head><title>HTML Upload</title></head><body><main><h1>HTML Upload</h1><p>Converted upload paragraph.</p></main></body></html>",
+        ),
+      },
+    ].map((input) => ({ ...input, hash: rawFileHash(input.bytes) }));
+    const manifest = inputs.map((input) => ({
+      name: input.name,
+      size: input.bytes.byteLength,
+      hash: input.hash,
+      mimetype: input.type,
+    }));
+
+    const staleHash = "f".repeat(64);
+    const stalePath = join(currentState().storageRoot, "staging", id.vault, staleHash);
+    await mkdir(dirname(stalePath), { recursive: true });
+    await writeFile(stalePath, "abandoned");
+    const staleTime = new Date(Date.now() - 25 * 60 * 60 * 1000);
+    await utimes(stalePath, staleTime, staleTime);
+
+    const viewerPrepare = await api(
+      "POST",
+      `/vaults/${id.vault}/ingest/staged-files/prepare`,
       carolToken,
-      viewerDeniedUpload,
+      { files: manifest },
     );
-    expect(viewerUpload.status).toBe(403);
+    expect(viewerPrepare.status).toBe(403);
 
-    const invalidVaultUpload = new FormData();
-    invalidVaultUpload.append(
-      "file",
-      new Blob(["bad vault"], { type: "text/plain" }),
-      "bad-vault.txt",
-    );
-    const invalidVault = await uploadApi(
-      "/vaults/not-a-uuid/ingest/upload",
+    const duplicateManifest = await api(
+      "POST",
+      `/vaults/${id.vault}/ingest/staged-files/prepare`,
       aliceToken,
-      invalidVaultUpload,
+      { files: [manifest[0], manifest[0]] },
     );
-    expect(invalidVault.status).toBe(422);
-    expect(invalidVault.body).toEqual({ detail: "Invalid path parameter" });
+    expect(duplicateManifest.status).toBe(400);
+    expect(duplicateManifest.body).toEqual({
+      detail: "duplicate file hashes are not allowed",
+    });
 
-    const missingFile = await uploadApi(
-      `/vaults/${id.vault}/ingest/upload`,
+    const prepared = await api(
+      "POST",
+      `/vaults/${id.vault}/ingest/staged-files/prepare`,
       aliceToken,
-      new FormData(),
+      { files: manifest },
     );
-    expect(missingFile.status).toBe(400);
-    expect(missingFile.body).toEqual({ detail: "Uploaded file must have a filename" });
+    expect(prepared.status).toBe(200);
+    expect(await fileExists(stalePath)).toBe(false);
+    expect(asArray(asRecord(prepared.body).files)).toEqual(
+      manifest.map((file) => ({ hash: file.hash, transport: "api" })),
+    );
 
-    const uploadedRaw = "# Uploaded\n\nUploaded paragraph.";
-    const uploadedClientHash = rawFileHash(new TextEncoder().encode(uploadedRaw));
-    const form = new FormData();
-    form.append(
-      "file",
-      new Blob([uploadedRaw], { type: "text/plain" }),
-      "uploaded.txt",
-    );
-    const uploaded = await uploadApi(
-      `/vaults/${id.vault}/ingest/upload?dest_path=uploads/custom-name.txt&origin=manual`,
+    const invalidHashForm = new FormData();
+    invalidHashForm.append("file", new Blob(["invalid"]), "invalid.md");
+    const invalidHash = await uploadApi(
+      `/vaults/${id.vault}/ingest/staged-files/upload/not-a-hash`,
       aliceToken,
-      form,
+      invalidHashForm,
     );
-    expect(uploaded.status).toBe(201);
-    const uploadedResult = asRecord(uploaded.body);
-    const uploadedId = String(uploadedResult.id);
-    const uploadedPath = String(uploadedResult.file_path);
-    expect(uploadedPath).toBe(`raw/docs/uploads/custom-name-${uploadedId}.md`);
-    const uploadedText = await readVaultFile(id.vault, uploadedPath);
-    expect(uploadedText).toContain("origin: manual");
-    expect(uploadedText).toContain("Uploaded paragraph. ^p0");
+    expect(invalidHash.status).toBe(422);
 
-    const uploadedRows = await runDb(
+    const mismatchForm = new FormData();
+    mismatchForm.append("file", new Blob(["wrong bytes"]), inputs[0]!.name);
+    const mismatch = await uploadApi(
+      `/vaults/${id.vault}/ingest/staged-files/upload/${inputs[0]!.hash}`,
+      aliceToken,
+      mismatchForm,
+    );
+    expect(mismatch.status).toBe(400);
+    expect(mismatch.body).toEqual({
+      detail: "Uploaded file fingerprint does not match its bytes",
+    });
+
+    for (const input of inputs) {
+      const form = new FormData();
+      form.append("file", new Blob([input.bytes], { type: input.type }), input.name);
+      const uploaded = await uploadApi(
+        `/vaults/${id.vault}/ingest/staged-files/upload/${input.hash}`,
+        aliceToken,
+        form,
+      );
+      expect(uploaded.status).toBe(204);
+      expect(
+        await fileExists(
+          join(currentState().storageRoot, "staging", id.vault, input.hash),
+        ),
+      ).toBe(true);
+    }
+
+    const processed = await api(
+      "POST",
+      `/vaults/${id.vault}/ingest/staged-files/process`,
+      aliceToken,
+      { job_id: id.m32StagedRun, files: manifest },
+    );
+    expect(processed.status).toBe(200);
+    expect(asRecord(processed.body)).toMatchObject({
+      id: id.m32StagedRun,
+      vault_id: id.vault,
+      trigger: "staged_files",
+    });
+
+    const completed = await waitFor(
+      () =>
+        runDb(
+          Effect.gen(function* () {
+            const db = yield* Database;
+            return (yield* db.query((d) => d
+              .select()
+              .from(pipelineRuns)
+              .where(eq(pipelineRuns.id, id.m32StagedRun)))
+              .pipe(Effect.orDie))[0];
+          }),
+        ),
+      (run) => run?.phaseStatus === "completed" || run?.status === "failed",
+    );
+    expect(completed).toMatchObject({
+      currentPhase: "source_ingest",
+      phaseStatus: "completed",
+      status: "running",
+    });
+
+    const sourceIds = inputs.map((input) =>
+      sourceIdForKey(id.vault as Uuid, `upload:${input.hash}`),
+    );
+    expect(new Set(sourceIds).size).toBe(3);
+    const sourcePaths = sourceIds.map((sourceId) => `raw/docs/${sourceId}.md`);
+    expect(await readVaultFile(id.vault, sourcePaths[0]!)).toContain(
+      "Alpha upload body. ^p0",
+    );
+    expect(await readVaultFile(id.vault, sourcePaths[1]!)).toContain(
+      "Beta upload body. ^p0",
+    );
+    expect(await readVaultFile(id.vault, sourcePaths[2]!)).toContain(
+      "# HTML Upload\n\nConverted upload paragraph. ^p0",
+    );
+
+    const rows = await runDb(
       Effect.gen(function* () {
         const db = yield* Database;
-        return yield* db.query((d) => d
-          .select({ clientHash: sourceDocuments.clientHash })
-          .from(sourceDocuments)
-          .where(eq(sourceDocuments.id, uploadedId)))
-          .pipe(Effect.orDie);
+        return {
+          sources: yield* db.query((d) => d
+            .select({ id: sourceDocuments.id, clientHash: sourceDocuments.clientHash })
+            .from(sourceDocuments))
+            .pipe(Effect.orDie),
+          intents: yield* db.query((d) => d
+            .select()
+            .from(compileIntents))
+            .pipe(Effect.orDie),
+        };
       }),
     );
-    expect(uploadedRows).toEqual([{ clientHash: uploadedClientHash }]);
+    expect(new Set(rows.sources.map((row) => row.id))).toEqual(new Set(sourceIds));
+    expect(new Set(rows.sources.map((row) => row.clientHash))).toEqual(
+      new Set(inputs.map((input) => input.hash)),
+    );
+    expect(rows.intents).toHaveLength(1);
+    expect(rows.intents[0]?.pipelineRunId).toBe(id.m32StagedRun);
 
-    const directDupes = await api(
+    for (const input of inputs) {
+      expect(
+        await fileExists(
+          join(currentState().storageRoot, "staging", id.vault, input.hash),
+        ),
+      ).toBe(false);
+    }
+
+    const dupes = await api(
       "POST",
       `/vaults/${id.vault}/ingest/staged-files/check-dupes`,
       aliceToken,
-      { client_hashes: [uploadedClientHash, "0".repeat(64)] },
+      { client_hashes: inputs.map((input) => input.hash) },
     );
-    expect(directDupes.status).toBe(200);
-    expect(asRecord(directDupes.body).existing).toEqual([uploadedClientHash]);
-
-    const alphaReportForm = new FormData();
-    alphaReportForm.append(
-      "file",
-      new Blob(["# Alpha report\n\nAlpha upload body."], { type: "text/markdown" }),
-      "report.md",
+    expect(dupes.status).toBe(200);
+    expect(new Set(asRecord(dupes.body).existing as string[])).toEqual(
+      new Set(inputs.map((input) => input.hash)),
     );
-    const alphaReportUpload = await uploadApi(
-      `/vaults/${id.vault}/ingest/upload`,
-      aliceToken,
-      alphaReportForm,
-    );
-    expect(alphaReportUpload.status).toBe(201);
-
-    const betaReportForm = new FormData();
-    betaReportForm.append(
-      "file",
-      new Blob(["# Beta report\n\nBeta upload body."], { type: "text/plain" }),
-      "report.txt",
-    );
-    const betaReportUpload = await uploadApi(
-      `/vaults/${id.vault}/ingest/upload`,
-      aliceToken,
-      betaReportForm,
-    );
-    expect(betaReportUpload.status).toBe(201);
-
-    const alphaReport = asRecord(alphaReportUpload.body);
-    const betaReport = asRecord(betaReportUpload.body);
-    const alphaReportId = String(alphaReport.id);
-    const betaReportId = String(betaReport.id);
-    const alphaReportPath = String(alphaReport.file_path);
-    const betaReportPath = String(betaReport.file_path);
-    expect(alphaReportId).not.toBe(betaReportId);
-    expect(alphaReportPath).toBe(`raw/docs/report-${alphaReportId}.md`);
-    expect(betaReportPath).toBe(`raw/docs/report-${betaReportId}.md`);
-    expect(await readVaultFile(id.vault, alphaReportPath)).toContain("Alpha upload body. ^p0");
-    expect(await readVaultFile(id.vault, betaReportPath)).toContain("Beta upload body. ^p0");
-
-    const htmlRaw =
-      "<html><head><title>HTML Upload</title></head><body><main><h1>HTML Upload</h1><p>Converted upload paragraph.</p></main></body></html>";
-    const htmlForm = new FormData();
-    htmlForm.append(
-      "file",
-      new Blob([htmlRaw], { type: "text/html" }),
-      "html-upload.html",
-    );
-    const htmlUpload = await uploadApi(
-      `/vaults/${id.vault}/ingest/upload?origin=html-fixture`,
-      aliceToken,
-      htmlForm,
-    );
-    expect(htmlUpload.status).toBe(201);
-    const htmlResult = asRecord(htmlUpload.body);
-    const htmlId = String(htmlResult.id);
-    const htmlPath = String(htmlResult.file_path);
-    expect(htmlPath).toBe(`raw/docs/html-upload-${htmlId}.md`);
-    const htmlText = await readVaultFile(id.vault, htmlPath);
-    expect(htmlText).toBe(
-      `---\nsource_id: ${htmlId}\nsource_type: document\norigin: html-fixture\n---\n# HTML Upload\n\nConverted upload paragraph. ^p0\n`,
-    );
-    const htmlRows = await runDb(
-      Effect.gen(function* () {
-        const db = yield* Database;
-        return yield* db.query((d) => d
-          .select()
-          .from(sourceDocuments)
-          .where(
-            and(
-              eq(sourceDocuments.vaultId, id.vault),
-              eq(sourceDocuments.id, htmlId),
-            ),
-          ))
-          .pipe(Effect.orDie);
-      }),
-    );
-    expect(htmlRows[0]).toMatchObject({
-      fileHash: fileContentHash(htmlText),
-      bodyHash: bodyContentHash("# HTML Upload\n\nConverted upload paragraph. ^p0\n"),
-      clientHash: rawFileHash(new TextEncoder().encode(htmlRaw)),
-    });
-
-    const badDest = new FormData();
-    badDest.append("file", new Blob(["bad"], { type: "text/plain" }), "bad.txt");
-    const badUpload = await uploadApi(
-      `/vaults/${id.vault}/ingest/upload?dest_path=../bad.md`,
-      aliceToken,
-      badDest,
-    );
-    expect(badUpload.status).toBe(400);
-    expect(badUpload.body).toEqual({ detail: "Invalid dest_path: ../bad.md" });
   });
 
   it("branches all user suggestion intents between owner direct ingest and editor proposals", async () => {
@@ -1197,8 +1239,10 @@ describe("M3.1 write endpoint integration", () => {
     expect(viewer.status).toBe(403);
   });
 
-  it("handles staged-file dedupe, local signing errors, and Effect-only process enqueue", async () => {
+  it("validates staged-file dedupe and process enqueue boundaries", async () => {
     const { aliceToken, bobToken } = currentFixture();
+    const hashA = "a".repeat(64);
+    const hashB = "b".repeat(64);
     await runDb(
       Effect.gen(function* () {
         const db = yield* Database;
@@ -1211,7 +1255,7 @@ describe("M3.1 write endpoint integration", () => {
               filePath: "raw/docs/a.md",
               fileHash: "file-a",
               bodyHash: "body-a",
-              clientHash: "hash-a",
+              clientHash: hashA,
               sourceType: "document",
               tags: [],
               derivedExtras: {},
@@ -1222,7 +1266,7 @@ describe("M3.1 write endpoint integration", () => {
               filePath: "raw/docs/b.md",
               fileHash: "file-b",
               bodyHash: "body-b",
-              clientHash: "hash-a",
+              clientHash: hashA,
               sourceType: "document",
               tags: [],
               derivedExtras: {},
@@ -1236,33 +1280,18 @@ describe("M3.1 write endpoint integration", () => {
       "POST",
       `/vaults/${id.vault}/ingest/staged-files/check-dupes`,
       aliceToken,
-      {
-        client_hashes: ["hash-a", "hash-b"],
-      },
+      { client_hashes: [hashA, hashB] },
     );
     expect(dupes.status).toBe(200);
-    expect(asRecord(dupes.body).existing).toEqual(["hash-a", "hash-a"]);
+    expect(asRecord(dupes.body).existing).toEqual([hashA, hashA]);
 
     const editorDupes = await api(
       "POST",
       `/vaults/${id.vault}/ingest/staged-files/check-dupes`,
       bobToken,
-      {
-        client_hashes: ["hash-a"],
-      },
+      { client_hashes: [hashA] },
     );
     expect(editorDupes.status).toBe(403);
-
-    const localSign = await api(
-      "POST",
-      `/vaults/${id.vault}/ingest/staged-files/sign`,
-      aliceToken,
-      {
-        files: [{ name: "a.md", size: 10, hash: "hash-a", mimetype: "text/markdown" }],
-      },
-    );
-    expect(localSign.status).toBe(400);
-    expect(localSign.body).toEqual({ detail: "Staged uploads require the R2 storage backend" });
 
     const emptyProcess = await api(
       "POST",
@@ -1288,7 +1317,7 @@ describe("M3.1 write endpoint integration", () => {
       aliceToken,
       {
         job_id: id.m32StagedRun,
-        files: [{ name: "a.md", size: 10, hash: "hash-a", mimetype: "text/markdown" }],
+        files: [{ name: "a.md", size: 10, hash: hashA, mimetype: "text/markdown" }],
       },
     );
     expect(processed.status).toBe(200);

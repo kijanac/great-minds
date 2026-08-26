@@ -5,6 +5,7 @@ import {
   AuthMiddleware,
   BadRequest,
   CurrentAuth,
+  type FileFingerprint,
   Forbidden,
   GreatMindsApi,
   ServiceUnavailable,
@@ -82,6 +83,13 @@ const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3
 const parseUuidPathParam = (value: string | undefined) =>
   value !== undefined && UUID_PATTERN.test(value) ? (value as Uuid) : undefined;
 
+const FILE_FINGERPRINT_PATTERN = /^[0-9a-f]{64}$/;
+
+const parseFileFingerprintPathParam = (value: string | undefined) =>
+  value !== undefined && FILE_FINGERPRINT_PATTERN.test(value)
+    ? (value as FileFingerprint)
+    : undefined;
+
 const validationDetail = (error: HttpApiSchemaError) => {
   switch (error.kind) {
     case "Params":
@@ -117,15 +125,15 @@ const withDomainErrors = <A, E extends DomainError, R>(effect: Effect.Effect<A, 
     }),
   );
 
-const withDomainJson = <A, E extends DomainError, R>(
+const withDomainEmpty = <A, E extends DomainError, R>(
   effect: Effect.Effect<A, E, R>,
-  status: number,
+  status = 204,
 ) =>
   withDomainErrors(effect).pipe(
-    Effect.flatMap((value) =>
+    Effect.map((value) =>
       HttpServerResponse.isHttpServerResponse(value)
-        ? Effect.succeed(value)
-        : jsonResponse(status, value),
+        ? value
+        : HttpServerResponse.empty({ status }),
     ),
   );
 
@@ -673,17 +681,17 @@ const IngestHandlersLive = HttpApiBuilder.group(MountedGreatMindsApi, "ingest", 
         }),
       ),
     )
-    .handle("signStagedFiles", ({ params, payload }) =>
+    .handle("prepareStagedFiles", ({ params, payload }) =>
       withDomainErrors(
         Effect.gen(function* () {
           const ingest = yield* IngestService;
           const current = yield* CurrentAuth;
-          const signed = yield* ingest.signStagedFiles(
+          const targets = yield* ingest.prepareStagedFiles(
             current.user_id,
             params.vault_id,
             payload.files,
           );
-          return { files: [...signed] };
+          return { files: [...targets] };
         }),
       ),
     )
@@ -1063,7 +1071,7 @@ const currentAuthFromRequest = (request: HttpServerRequest.HttpServerRequest) =>
     return current.success;
   });
 
-const parseUpload = (request: HttpServerRequest.HttpServerRequest) =>
+const parseMultipartFile = (request: HttpServerRequest.HttpServerRequest) =>
   Effect.gen(function* () {
     const parts = Array.from(
       yield* Stream.runCollect(request.multipartStream).pipe(
@@ -1080,38 +1088,37 @@ const parseUpload = (request: HttpServerRequest.HttpServerRequest) =>
     const rawBytes = yield* file.contentEffect.pipe(
       Effect.mapError(() => new BadRequest({ detail: "Invalid multipart upload" })),
     );
-    const url = new URL(request.url, "http://localhost");
-    return {
-      rawBytes,
-      filename: file.name,
-      mimetype: file.contentType,
-      origin: url.searchParams.get("origin") ?? undefined,
-      destPath: url.searchParams.get("dest_path"),
-    };
+    return { rawBytes, contentType: file.contentType };
   });
 
-const UploadRouteLive = HttpRouter.add("POST", "/v1/vaults/:vault_id/ingest/upload", (request) =>
-  Effect.gen(function* () {
-    const params = yield* HttpRouter.params;
-    const vaultId = parseUuidPathParam(params.vault_id);
-    if (vaultId === undefined) {
-      return yield* jsonResponse(422, { detail: "Invalid path parameter" });
-    }
-    const current = yield* currentAuthFromRequest(request);
-    if (HttpServerResponse.isHttpServerResponse(current)) {
-      return current;
-    }
-    const upload = yield* parseUpload(request).pipe(
-      Effect.catchTags({
-        BadRequest: domainErrorJsonResponse,
-      }),
-    );
-    if (HttpServerResponse.isHttpServerResponse(upload)) {
-      return upload;
-    }
-    const ingest = yield* IngestService;
-    return yield* withDomainJson(ingest.ingestUpload(current.user_id, vaultId, upload), 201);
-  }),
+const StagedUploadRouteLive = HttpRouter.add(
+  "POST",
+  "/v1/vaults/:vault_id/ingest/staged-files/upload/:hash",
+  (request) =>
+    Effect.gen(function* () {
+      const params = yield* HttpRouter.params;
+      const vaultId = parseUuidPathParam(params.vault_id);
+      const hash = parseFileFingerprintPathParam(params.hash);
+      if (vaultId === undefined || hash === undefined) {
+        return yield* jsonResponse(422, { detail: "Invalid path parameter" });
+      }
+      const current = yield* currentAuthFromRequest(request);
+      if (HttpServerResponse.isHttpServerResponse(current)) {
+        return current;
+      }
+      const upload = yield* parseMultipartFile(request).pipe(
+        Effect.catchTags({
+          BadRequest: domainErrorJsonResponse,
+        }),
+      );
+      if (HttpServerResponse.isHttpServerResponse(upload)) {
+        return upload;
+      }
+      const ingest = yield* IngestService;
+      return yield* withDomainEmpty(
+        ingest.uploadStagedFile(current.user_id, vaultId, { hash, ...upload }),
+      );
+    }),
 );
 
 const ApiGroupsLive = Layer.mergeAll(
@@ -1140,7 +1147,7 @@ const AppRoutesLive = Layer.mergeAll(
   StreamHeadersLive,
   HttpRouter.add("GET", "/health", healthResponse),
   HttpRouter.add("GET", "/", healthResponse),
-  UploadRouteLive,
+  StagedUploadRouteLive,
   ApiLive,
 );
 

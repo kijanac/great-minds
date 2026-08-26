@@ -9,15 +9,7 @@
   import { Input } from "$lib/components/ui/input";
   import type { DroppedFile } from "$lib/types";
 
-  const DIRECT_UPLOAD_EXTS = new Set([
-    ".md",
-    ".markdown",
-    ".txt",
-    ".text",
-    ".html",
-    ".htm",
-  ]);
-  const STAGED_UPLOAD_EXTS = new Set([
+  const SUPPORTED_UPLOAD_EXTS = new Set([
     ".md",
     ".markdown",
     ".txt",
@@ -79,18 +71,16 @@
 
   let {
     hasActivePipeline,
-    stagedUploads,
     vaultName,
   }: {
     hasActivePipeline: boolean;
-    stagedUploads: boolean;
     vaultName: string;
   } = $props();
 
   function isSelectableFile(
     file: IngestableFile,
   ): file is HashedIngestableFile {
-    return isHashedFile(file) && (!stagedUploads || file.status === "unique");
+    return file.status === "unique";
   }
 
   let expanded = $state(false);
@@ -137,9 +127,9 @@
   }
 
   function supportsUpload(file: File, ext: string): boolean {
-    if (stagedUploads) return ext === "" || STAGED_UPLOAD_EXTS.has(ext);
     return (
-      DIRECT_UPLOAD_EXTS.has(ext) ||
+      ext === "" ||
+      SUPPORTED_UPLOAD_EXTS.has(ext) ||
       file.type.toLowerCase().includes("text/html")
     );
   }
@@ -399,7 +389,6 @@
       state: {
         uploadFiles,
         stableJobId: crypto.randomUUID(),
-        uploadMode: stagedUploads ? "staged" : "direct",
       },
     });
     files = [];

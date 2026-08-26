@@ -12,13 +12,22 @@ const ingestResultSchema: z.ZodType<IngestResult> = z.object({
   file_path: z.string(),
 });
 
-const stagedFileSignedUrlSchema = z.object({
-  hash: z.string(),
-  url: z.string(),
-});
+const fileFingerprintSchema = z.string().regex(/^[0-9a-f]{64}$/);
 
-const stagedFileSignResponseSchema = z.object({
-  files: z.array(stagedFileSignedUrlSchema),
+const stagedFileUploadTargetSchema = z.discriminatedUnion("transport", [
+  z.object({
+    hash: fileFingerprintSchema,
+    transport: z.literal("api"),
+  }),
+  z.object({
+    hash: fileFingerprintSchema,
+    transport: z.literal("presigned"),
+    url: z.string(),
+  }),
+]);
+
+const stagedFilePrepareResponseSchema = z.object({
+  files: z.array(stagedFileUploadTargetSchema),
 });
 
 const stagedFileProcessResponseSchema = z.object({
@@ -42,26 +51,6 @@ export interface StagedFileUploadProgress {
   id?: string;
   error?: string;
   failures?: UploadFailure[];
-}
-
-export async function uploadFile(file: File, destPath?: string): Promise<IngestResult> {
-  const formData = new FormData();
-  formData.append("file", file);
-  if (destPath) {
-    formData.append("dest_path", destPath);
-  }
-
-  const res = await apiFetch(vaultPath("/ingest/upload"), {
-    method: "POST",
-    body: formData,
-  });
-
-  if (!res.ok) {
-    const detail = await res.text();
-    throw new Error(detail);
-  }
-
-  return readJson(res, ingestResultSchema);
 }
 
 export async function sha256Hex(bytes: ArrayBuffer): Promise<string> {
@@ -124,8 +113,19 @@ export interface HashedFile {
   hash: string;
 }
 
+const uploadStagedFile = (file: File, hash: string) => {
+  const formData = new FormData();
+  formData.append("file", file);
+  return apiFetch(vaultPath(`/ingest/staged-files/upload/${hash}`), {
+    method: "POST",
+    body: formData,
+  });
+};
+
 /**
- * Ingest pre-hashed files via direct-to-R2 staged upload.
+ * Ingest pre-hashed files through the deployment's staged storage.
+ * Local deployments upload through the API; R2 deployments use presigned PUTs.
+ * The durable processing workflow is identical after staging.
  *
  * The UI hashes files at pick-time and excludes duplicates. This boundary
  * rejects duplicate hashes rather than silently sending fewer files than
@@ -135,7 +135,7 @@ export interface HashedFile {
  * in flight, then a single "processing" event with the durable job_id.
  * Caller drives backend progress from the job SSE stream.
  */
-export async function* ingestStagedFiles(
+export async function* ingestFiles(
   hashedFiles: HashedFile[],
   jobId: string = crypto.randomUUID(),
 ): AsyncGenerator<StagedFileUploadProgress> {
@@ -176,25 +176,25 @@ export async function* ingestStagedFiles(
     return;
   }
 
-  // 1. sign (unique hashes only)
-  const signRes = await apiFetch(vaultPath("/ingest/staged-files/sign"), {
+  // 1. Prepare a transport target for each unique file.
+  const prepareRes = await apiFetch(vaultPath("/ingest/staged-files/prepare"), {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ files: uniqueManifest }),
   });
-  if (!signRes.ok) {
+  if (!prepareRes.ok) {
     yield {
       phase: "error",
       uploaded: 0,
       total: originalCount,
-      error: await signRes.text(),
+      error: await prepareRes.text(),
     };
     return;
   }
-  const signed = (await readJson(signRes, stagedFileSignResponseSchema)).files;
-  const urlByHash = new Map(signed.map((s) => [s.hash, s.url]));
+  const targets = (await readJson(prepareRes, stagedFilePrepareResponseSchema)).files;
+  const targetByHash = new Map(targets.map((target) => [target.hash, target]));
 
-  // 2. PUT to R2 (unique files only, one per hash).
+  // 2. Stage unique files through the prepared API or presigned transport.
   const fileByHash = new Map<string, File>();
   for (const { file, hash } of hashedFiles) {
     if (!fileByHash.has(hash)) fileByHash.set(hash, file);
@@ -208,11 +208,11 @@ export async function* ingestStagedFiles(
   const uploadResults = await pMap(
     uniqueManifest,
     async (manifestItem): Promise<UploadResult> => {
-      const url = urlByHash.get(manifestItem.hash);
-      if (!url) {
+      const target = targetByHash.get(manifestItem.hash);
+      if (!target) {
         return {
           ok: false,
-          failure: { name: manifestItem.name, error: "No upload URL was created" },
+          failure: { name: manifestItem.name, error: "No staging target was created" },
         };
       }
       const file = fileByHash.get(manifestItem.hash);
@@ -223,11 +223,15 @@ export async function* ingestStagedFiles(
         };
       }
       try {
-        const response = await fetch(url, {
-          method: "PUT",
-          body: file,
-          headers: { "Content-Type": file.type || "application/octet-stream" },
-        });
+        const contentType = file.type || "application/octet-stream";
+        const response =
+          target.transport === "presigned"
+            ? await fetch(target.url, {
+                method: "PUT",
+                body: file,
+                headers: { "Content-Type": contentType },
+              })
+            : await uploadStagedFile(file, manifestItem.hash);
         if (!response.ok) {
           return {
             ok: false,
@@ -275,9 +279,9 @@ export async function* ingestStagedFiles(
     return;
   }
 
-  // 3. process — spawns/reuses the staged-file ingest worker task.
+  // 3. Process — spawns/reuses the shared staged-file ingest workflow.
   // The client-generated job ID is the public job ID, SSE channel,
-  // and Absurd idempotency key on the backend.
+  // and durable workflow idempotency key on the backend.
   const processRes = await apiFetch(vaultPath("/ingest/staged-files/process"), {
     method: "POST",
     headers: { "Content-Type": "application/json" },

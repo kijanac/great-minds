@@ -357,27 +357,39 @@ POST /v1/vaults/{vault_id}/ingest
 }
 ```
 
-### Ingest file upload
+### Ingest file uploads
 
-```
-POST /v1/vaults/{vault_id}/ingest/upload
-```
+File ingestion always uses the same staged workflow. Local deployments stage bytes on the filesystem through the authenticated API; R2 deployments return presigned targets so the browser can stage bytes directly in R2. Both transports then use the same conversion, indexing, cleanup, progress, and compile workflow.
 
-Multipart form upload. Accepts `.md`, `.txt`, and `.pdf` files.
+1. Check known fingerprints:
 
-| Field          | Type   | Required | Default   | Description              |
-|----------------|--------|----------|-----------|--------------------------|
-| `file`         | file   | yes      |           | The file to upload       |
-| `content_type` | string | no       | `"texts"` | Category folder          |
-| `author`       | string | no       |           | Author name              |
-| `date`         | string | no       |           | Publication date         |
-| `origin`       | string | no       |           | Content origin           |
-| `url`          | string | no       |           | Source URL               |
-| `dest_path`    | string | no       |           | Override destination path |
+   ```
+   POST /v1/vaults/{vault_id}/ingest/staged-files/check-dupes
+   ```
 
-All optional fields are query parameters, not part of the multipart body.
+2. Prepare upload targets for a non-empty manifest of uniquely hashed files:
 
-**Response (201):** Same as text ingest.
+   ```
+   POST /v1/vaults/{vault_id}/ingest/staged-files/prepare
+   ```
+
+   Each response target is either `{ "hash": "…", "transport": "api" }` or `{ "hash": "…", "transport": "presigned", "url": "…" }`.
+
+3. For an `api` target, send the file as multipart field `file`:
+
+   ```
+   POST /v1/vaults/{vault_id}/ingest/staged-files/upload/{sha256}
+   ```
+
+   The server recomputes SHA-256 from the received bytes and rejects a mismatch. For a `presigned` target, PUT the same bytes to its URL.
+
+4. Start durable processing with the prepared manifest and a client-generated `job_id`:
+
+   ```
+   POST /v1/vaults/{vault_id}/ingest/staged-files/process
+   ```
+
+Supported formats are Markdown/text, CSV, JSON, XML, HTML, PDF, DOCX, PPTX, XLSX, ODT, ODP, and ODS. Processing verifies each staged object's size and fingerprint before conversion. Temporary objects are removed during workflow finalization. Abandoned R2 objects expire through lifecycle policy, while stale local objects are pruned before the next upload preparation.
 
 ### Ingest from URL
 

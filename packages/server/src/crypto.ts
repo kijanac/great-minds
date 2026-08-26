@@ -1,12 +1,13 @@
 import { createHash, randomBytes, randomInt } from "node:crypto";
 
+import type { FileFingerprint } from "@great-minds/domain";
 import { Effect } from "effect";
 
 export const sha256Hex = (value: string) =>
   createHash("sha256").update(value).digest("hex");
 
 export const rawFileHash = (bytes: Uint8Array) =>
-  createHash("sha256").update(bytes).digest("hex");
+  createHash("sha256").update(bytes).digest("hex") as FileFingerprint;
 
 export const contentHash = (...parts: readonly string[]) => {
   const hash = createHash("sha256");

@@ -4,6 +4,7 @@ import { posix } from "node:path";
 import { compileIntents, Database, pipelineRuns, tasks } from "@great-minds/database";
 import {
   BadRequest,
+  type FileFingerprint,
   Forbidden,
   type IngestedDocument,
   type JobResponse,
@@ -13,7 +14,7 @@ import {
   type SessionExchangeEvent,
   type SessionOrigin,
   type StagedFileInput,
-  type StagedFileSignedUpload,
+  type StagedFileUploadTarget,
   type UserSuggestion,
   type UserSuggestionIntent,
   type Uuid,
@@ -43,12 +44,10 @@ import { UserDocumentsService } from "./user-documents.ts";
 import { VaultAccessService } from "./vaults.ts";
 import { ClockService } from "./clock.ts";
 
-type UploadInput = {
+type StagedUploadInput = {
+  readonly hash: FileFingerprint;
   readonly rawBytes: Uint8Array;
-  readonly filename: string;
-  readonly mimetype: string;
-  readonly destPath?: string | null;
-  readonly origin?: string;
+  readonly contentType: string;
 };
 
 type IngestServiceShape = {
@@ -57,11 +56,6 @@ type IngestServiceShape = {
     vaultId: Uuid,
     input: RawSource,
   ) => Effect.Effect<IngestedDocument, Forbidden>;
-  readonly ingestUpload: (
-    userId: Uuid,
-    vaultId: Uuid,
-    input: UploadInput,
-  ) => Effect.Effect<IngestedDocument, BadRequest | Forbidden>;
   readonly promoteReference: (
     userId: Uuid,
     vaultId: Uuid,
@@ -78,13 +72,18 @@ type IngestServiceShape = {
   readonly checkStagedDupes: (
     userId: Uuid,
     vaultId: Uuid,
-    clientHashes: readonly string[],
-  ) => Effect.Effect<readonly string[], Forbidden>;
-  readonly signStagedFiles: (
+    clientHashes: readonly FileFingerprint[],
+  ) => Effect.Effect<readonly FileFingerprint[], Forbidden>;
+  readonly prepareStagedFiles: (
     userId: Uuid,
     vaultId: Uuid,
     files: readonly StagedFileInput[],
-  ) => Effect.Effect<readonly StagedFileSignedUpload[], BadRequest | Forbidden>;
+  ) => Effect.Effect<readonly StagedFileUploadTarget[], BadRequest | Forbidden>;
+  readonly uploadStagedFile: (
+    userId: Uuid,
+    vaultId: Uuid,
+    input: StagedUploadInput,
+  ) => Effect.Effect<void, BadRequest | Forbidden>;
   readonly processStagedFiles: (
     userId: Uuid,
     vaultId: Uuid,
@@ -119,6 +118,25 @@ const URL_INGEST_STEP_LABELS = {
 } as const;
 
 const STAGED_TASK_TYPE = "staged_file_ingest";
+
+declare const stagedManifestBrand: unique symbol;
+type StagedManifest = readonly [StagedFileInput, ...StagedFileInput[]] & {
+  readonly [stagedManifestBrand]: true;
+};
+
+const parseStagedManifest = (files: readonly StagedFileInput[]) => {
+  if (files.length === 0) {
+    return Effect.fail(new BadRequest({ detail: "no files provided" }));
+  }
+  const hashes = new Set<FileFingerprint>();
+  for (const file of files) {
+    if (hashes.has(file.hash)) {
+      return Effect.fail(new BadRequest({ detail: "duplicate file hashes are not allowed" }));
+    }
+    hashes.add(file.hash);
+  }
+  return Effect.succeed(files as StagedManifest);
+};
 
 export const slugify = (text: string, maxLen = 80) =>
   text
@@ -193,64 +211,6 @@ const sourcePathWithId = (filePath: string, sourceId: Uuid) => {
   return posix.join(parsed.dir, `${parsed.name}-${sourceId}.md`);
 };
 
-const safeDocDest = (destPath: string) => {
-  if (destPath.includes("\\") || destPath.startsWith("/")) {
-    return undefined;
-  }
-  const normalized = posix.normalize(destPath);
-  const parts = normalized.split("/");
-  if (normalized === "." || parts.length === 0 || parts.includes("..")) {
-    return undefined;
-  }
-  const parsed = posix.parse(normalized);
-  const withMarkdownSuffix = posix.join(parsed.dir, `${parsed.name}.md`);
-  return `raw/docs/${withMarkdownSuffix}`;
-};
-
-const isTextExtension = (filename: string) => {
-  const ext = posix.extname(filename).toLowerCase();
-  return ext === ".md" || ext === ".txt" || ext === ".text" || ext === ".markdown";
-};
-
-const isHtmlUpload = (filename: string, mimetype: string) => {
-  const ext = posix.extname(filename).toLowerCase();
-  return ext === ".html" || ext === ".htm" || mimetype.toLowerCase().includes("text/html");
-};
-
-const decodeUtf8 = (rawBytes: Uint8Array, filename: string) =>
-  Effect.try({
-    try: () => new TextDecoder("utf-8", { fatal: true }).decode(rawBytes),
-    catch: () => new BadRequest({ detail: `File is not valid UTF-8: ${filename}` }),
-  });
-
-const uploadToMarkdown = (input: UploadInput) =>
-  Effect.gen(function* () {
-    if (input.filename.length === 0) {
-      return yield* new BadRequest({ detail: "Uploaded file must have a filename" });
-    }
-    const text = yield* decodeUtf8(input.rawBytes, input.filename);
-    if (isTextExtension(input.filename)) {
-      return text;
-    }
-    if (isHtmlUpload(input.filename, input.mimetype)) {
-      const converted = yield* Effect.promise(() => htmlToMarkdown(text, "https://uploaded.local/"));
-      return markdownWithTitle(converted.title, converted.markdown);
-    }
-    return yield* new BadRequest({
-      detail: `Unsupported upload conversion extension: ${posix.extname(input.filename) || "(none)"}`,
-    });
-  });
-
-const uploadedDest = (input: UploadInput) => {
-  if (input.destPath !== undefined && input.destPath !== null && input.destPath.length > 0) {
-    return safeDocDest(input.destPath);
-  }
-  const base = input.filename.includes(".")
-    ? input.filename.slice(0, input.filename.lastIndexOf("."))
-    : input.filename;
-  return safeDocDest(`${slugify(base) || "doc"}.md`);
-};
-
 const firstFailure = (cause: Cause.Cause<unknown>) => cause.reasons.find(Cause.isFailReason)?.error;
 
 const causeMessage = (cause: Cause.Cause<unknown>) => {
@@ -313,7 +273,6 @@ export const IngestServiceLive = Layer.effect(
       options: {
         readonly canonicalUrl?: CanonicalSourceUrl | null;
         readonly pipelineRunId?: Uuid | null;
-        readonly clientHash?: string | null;
       } = {},
     ) =>
       Effect.gen(function* () {
@@ -323,12 +282,7 @@ export const IngestServiceLive = Layer.effect(
           options.canonicalUrl ?? null,
         );
         yield* storage.writeText(vaultOwner(vaultId), dest, content);
-        yield* sourceDocumentsWrite.index(
-          vaultId,
-          dest,
-          content,
-          options.clientHash ?? null,
-        );
+        yield* sourceDocumentsWrite.index(vaultId, dest, content, null);
         yield* ensureCompileIntent(vaultId, options.pipelineRunId);
         return { id: sourceId, file_path: dest } satisfies IngestedDocument;
       });
@@ -438,26 +392,6 @@ export const IngestServiceLive = Layer.effect(
             sourcePathWithId(input.dest, sourceId),
           );
         }),
-      ingestUpload: (userId, vaultId, input) =>
-        Effect.gen(function* () {
-          yield* access.requireOwner(userId, vaultId);
-          const dest = uploadedDest(input);
-          if (dest === undefined) {
-            return yield* new BadRequest({ detail: `Invalid dest_path: ${input.destPath}` });
-          }
-          const content = yield* uploadToMarkdown(input);
-          const sourceId = randomUUID() as Uuid;
-          return yield* writeAndIndex(
-            vaultId,
-            sourceId,
-            buildDocument(content, {
-              sourceType: "document",
-              origin: input.origin ?? null,
-            }),
-            sourcePathWithId(dest, sourceId),
-            { clientHash: rawFileHash(input.rawBytes) },
-          );
-        }),
       promoteReference: (userId, vaultId, input) =>
         Effect.gen(function* () {
           yield* access.requireOwner(userId, vaultId);
@@ -523,12 +457,18 @@ export const IngestServiceLive = Layer.effect(
           yield* access.requireOwner(userId, vaultId);
           return yield* sourceDocumentsWrite.existingClientHashes(vaultId, clientHashes);
         }),
-      signStagedFiles: (userId, vaultId, files) =>
+      prepareStagedFiles: (userId, vaultId, files) =>
         Effect.gen(function* () {
           yield* access.requireOwner(userId, vaultId);
-          const signed: StagedFileSignedUpload[] = [];
-          for (const file of files) {
-            const url = yield* stagedStorage.presignStagedPut(
+          const manifest = yield* parseStagedManifest(files);
+          yield* stagedStorage.pruneExpiredStaged().pipe(
+            Effect.catchTag("StagedStorageError", (error) =>
+              Effect.fail(new BadRequest({ detail: error.message })),
+            ),
+          );
+          const targets: StagedFileUploadTarget[] = [];
+          for (const file of manifest) {
+            const target = yield* stagedStorage.prepareStagedPut(
               vaultId,
               file.hash,
               file.mimetype ?? "application/octet-stream",
@@ -538,19 +478,33 @@ export const IngestServiceLive = Layer.effect(
                 Effect.fail(new BadRequest({ detail: error.message })),
               ),
             );
-            signed.push({ hash: file.hash, url });
+            targets.push({ hash: file.hash, ...target });
           }
-          return signed;
+          return targets;
+        }),
+      uploadStagedFile: (userId, vaultId, input) =>
+        Effect.gen(function* () {
+          yield* access.requireOwner(userId, vaultId);
+          if (rawFileHash(input.rawBytes) !== input.hash) {
+            return yield* new BadRequest({
+              detail: "Uploaded file fingerprint does not match its bytes",
+            });
+          }
+          yield* stagedStorage
+            .writeStagedBytes(vaultId, input.hash, input.rawBytes, input.contentType)
+            .pipe(
+              Effect.catchTag("StagedStorageError", (error) =>
+                Effect.fail(new BadRequest({ detail: error.message })),
+              ),
+            );
         }),
       processStagedFiles: (userId, vaultId, jobId, files) =>
         Effect.gen(function* () {
           yield* access.requireOwner(userId, vaultId);
-          if (files.length === 0) {
-            return yield* new BadRequest({ detail: "no files provided" });
-          }
+          const manifest = yield* parseStagedManifest(files);
           const run = yield* createPipelineRun(jobId, vaultId, "staged_files");
           const taskId = run.id as Uuid;
-          const workflowFiles = files.map((file) => ({
+          const workflowFiles = manifest.map((file) => ({
             name: file.name,
             size: file.size,
             hash: file.hash,
@@ -582,7 +536,7 @@ export const IngestServiceLive = Layer.effect(
           yield* StagedFileIngestWorkflow.execute(
             {
               vaultId,
-              pipelineRunId: run.id,
+              pipelineRunId: taskId,
               files: workflowFiles,
             },
             { discard: true },

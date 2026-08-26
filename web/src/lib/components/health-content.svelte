@@ -16,7 +16,6 @@
     compileError: Error | null;
     canManage: boolean;
     hasActivePipeline: boolean;
-    stagedUploads: boolean;
     vaultName: string;
   };
 
@@ -185,7 +184,6 @@
       <div class="mt-10">
         <IngestionFlow
           hasActivePipeline={health.hasActivePipeline}
-          stagedUploads={health.stagedUploads}
           vaultName={health.vaultName}
         />
       </div>

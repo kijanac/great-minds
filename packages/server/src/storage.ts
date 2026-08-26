@@ -1,4 +1,13 @@
-import { appendFile, mkdir, readFile, readdir, rm, unlink, writeFile } from "node:fs/promises";
+import {
+  appendFile,
+  mkdir,
+  readFile,
+  readdir,
+  rm,
+  stat,
+  unlink,
+  writeFile,
+} from "node:fs/promises";
 import { isAbsolute, relative, resolve } from "node:path";
 
 import {
@@ -17,7 +26,7 @@ import {
   S3ServiceException,
 } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
-import type { Uuid } from "@great-minds/domain";
+import type { FileFingerprint, Uuid } from "@great-minds/domain";
 import { Cause, Context, Effect, Layer, Option, Redacted, Schema } from "effect";
 
 import { AppConfig } from "./config.ts";
@@ -27,10 +36,12 @@ import { StructuredLogger } from "./logging.ts";
 const VAULTS_DIR = "vaults";
 const USERS_DIR = "users";
 const PROPOSALS_DIR = "proposals";
+const STAGING_DIR = "staging";
 const R2_READ_TIMEOUT = "30 seconds";
 const R2_WRITE_TIMEOUT = "120 seconds";
 const R2_ADMIN_TIMEOUT = "120 seconds";
 const R2_STAGED_UPLOAD_EXPIRES_SECONDS = 3600;
+const LOCAL_STAGED_UPLOAD_EXPIRES_MS = 24 * 60 * 60 * 1000;
 
 export class StorageFileMissing extends Schema.TaggedErrorClass<StorageFileMissing>()(
   "StorageFileMissing",
@@ -42,7 +53,7 @@ export class StorageFileMissing extends Schema.TaggedErrorClass<StorageFileMissi
 export class StagedStorageError extends Schema.TaggedErrorClass<StagedStorageError>()(
   "StagedStorageError",
   {
-    operation: Schema.Literals(["presign", "read", "delete"]),
+    operation: Schema.Literals(["prepare", "write", "read", "delete"]),
     path: Schema.String,
     errorType: Schema.String,
     message: Schema.String,
@@ -68,18 +79,32 @@ type ContentStorageShape = {
   readonly clear: (owner: StorageOwner) => Effect.Effect<void>;
 };
 
+export type StagedPutTarget =
+  | { readonly transport: "api" }
+  | { readonly transport: "presigned"; readonly url: string };
+
 type StagedStorageShape = {
-  readonly presignStagedPut: (
+  readonly pruneExpiredStaged: () => Effect.Effect<void, StagedStorageError>;
+  readonly prepareStagedPut: (
     vaultId: Uuid,
-    hash: string,
+    hash: FileFingerprint,
     contentType: string,
     contentLength: number,
-  ) => Effect.Effect<string, StagedStorageError>;
+  ) => Effect.Effect<StagedPutTarget, StagedStorageError>;
+  readonly writeStagedBytes: (
+    vaultId: Uuid,
+    hash: FileFingerprint,
+    bytes: Uint8Array,
+    contentType: string,
+  ) => Effect.Effect<void, StagedStorageError>;
   readonly readStagedBytes: (
     vaultId: Uuid,
-    hash: string,
+    hash: FileFingerprint,
   ) => Effect.Effect<Uint8Array, StorageFileMissing | StagedStorageError>;
-  readonly deleteStaged: (vaultId: Uuid, hash: string) => Effect.Effect<void, StagedStorageError>;
+  readonly deleteStaged: (
+    vaultId: Uuid,
+    hash: FileFingerprint,
+  ) => Effect.Effect<void, StagedStorageError>;
   readonly clearStaged: (vaultId: Uuid) => Effect.Effect<void>;
 };
 
@@ -306,25 +331,98 @@ export const LocalContentStorageLive = Layer.effect(
 );
 
 const localStagedError = (
-  operation: "presign" | "read" | "delete",
+  operation: "prepare" | "write" | "read" | "delete",
   path: string,
+  error: unknown,
 ) =>
   new StagedStorageError({
     operation,
     path,
-    errorType: "StagedStorageUnavailable",
-    message: "Staged uploads require the R2 storage backend",
+    errorType: errorName(error),
+    message: errorMessage(error),
   });
 
-export const LocalStagedStorageLive = Layer.succeed(StagedStorage, {
-  presignStagedPut: (vaultId, hash) =>
-    Effect.fail(localStagedError("presign", `staging/${vaultId}/${hash}`)),
-  readStagedBytes: (vaultId, hash) =>
-    Effect.fail(localStagedError("read", `staging/${vaultId}/${hash}`)),
-  deleteStaged: (vaultId, hash) =>
-    Effect.fail(localStagedError("delete", `staging/${vaultId}/${hash}`)),
-  clearStaged: () => Effect.void,
-} satisfies StagedStorageShape);
+export const LocalStagedStorageLive = Layer.effect(
+  StagedStorage,
+  Effect.map(AppConfig, (config) => {
+    const root = resolve(config.dataDir, STAGING_DIR);
+    const stagedPath = (vaultId: Uuid, hash: FileFingerprint) => `${vaultId}/${hash}`;
+    return {
+      pruneExpiredStaged: () =>
+        Effect.tryPromise({
+          try: async () => {
+            const entries = await readdir(root, { recursive: true }).catch((error: unknown) => {
+              if (isNodeMissing(error)) return [];
+              throw error;
+            });
+            const expiresBefore = Date.now() - LOCAL_STAGED_UPLOAD_EXPIRES_MS;
+            await Promise.all(
+              entries.map(async (entry) => {
+                const path = resolveChild(root, entry);
+                const details = await stat(path);
+                if (details.isFile() && details.mtimeMs < expiresBefore) {
+                  await unlink(path);
+                }
+              }),
+            );
+          },
+          catch: (error) => error,
+        }).pipe(
+          Effect.mapError((error) => localStagedError("prepare", STAGING_DIR, error)),
+        ),
+      prepareStagedPut: () => Effect.succeed({ transport: "api" as const }),
+      writeStagedBytes: (vaultId, hash, bytes) => {
+        const path = stagedPath(vaultId, hash);
+        const fullPath = resolveChild(root, path);
+        return Effect.gen(function* () {
+          yield* Effect.tryPromise({
+            try: () => mkdir(resolve(fullPath, ".."), { recursive: true }),
+            catch: (error) => error,
+          }).pipe(
+            Effect.mapError((error) => localStagedError("write", path, error)),
+          );
+          yield* Effect.tryPromise({
+            try: () => writeFile(fullPath, bytes),
+            catch: (error) => error,
+          }).pipe(
+            Effect.mapError((error) => localStagedError("write", path, error)),
+          );
+        });
+      },
+      readStagedBytes: (vaultId, hash) => {
+        const path = stagedPath(vaultId, hash);
+        const fullPath = resolveChild(root, path);
+        return Effect.tryPromise({
+          try: () => readFile(fullPath),
+          catch: (error) => error,
+        }).pipe(
+          Effect.mapError((error) =>
+            isNodeMissing(error) ? fileMissing(path) : localStagedError("read", path, error),
+          ),
+        );
+      },
+      deleteStaged: (vaultId, hash) => {
+        const path = stagedPath(vaultId, hash);
+        const fullPath = resolveChild(root, path);
+        return Effect.tryPromise({
+          try: () => unlink(fullPath),
+          catch: (error) => error,
+        }).pipe(
+          Effect.catch((error) =>
+            isNodeMissing(error)
+              ? Effect.void
+              : Effect.fail(localStagedError("delete", path, error)),
+          ),
+        );
+      },
+      clearStaged: (vaultId) =>
+        Effect.tryPromise({
+          try: () => rm(resolveChild(root, vaultId), { recursive: true, force: true }),
+          catch: (error) => error,
+        }).pipe(Effect.orDie),
+    } satisfies StagedStorageShape;
+  }),
+);
 
 export const LocalProposalStorageLive = Layer.effect(
   ProposalStorage,
@@ -372,7 +470,7 @@ const errorName = (error: unknown) => errorDetails(error).errorType;
 const errorMessage = (error: unknown) => errorDetails(error).message;
 
 const stagedStorageError = (
-  operation: "presign" | "read" | "delete",
+  operation: "prepare" | "write" | "read" | "delete",
   path: string,
   error: unknown,
 ) =>
@@ -641,22 +739,52 @@ export const R2StagedStorageLive = Layer.effect(
     const bucket = sharedBucketName(config);
 
     const stagedPrefix = (vaultId: Uuid) => `staging/${vaultId}/`;
-    const stagedObjectKey = (vaultId: Uuid, hash: string) => `${stagedPrefix(vaultId)}${hash}`;
+    const stagedObjectKey = (vaultId: Uuid, hash: FileFingerprint) =>
+      `${stagedPrefix(vaultId)}${hash}`;
 
     return {
-      presignStagedPut: (vaultId, hash, contentType, contentLength) =>
-        Effect.tryPromise(() =>
-          getSignedUrl(
-            client,
-            new PutObjectCommand({
-              Bucket: bucket,
-              Key: stagedObjectKey(vaultId, hash),
-              ContentType: contentType,
-              ContentLength: contentLength,
-            }),
-            { expiresIn: R2_STAGED_UPLOAD_EXPIRES_SECONDS },
-          ),
-        ).pipe(Effect.orDie),
+      pruneExpiredStaged: () => Effect.void,
+      prepareStagedPut: (vaultId, hash, contentType, contentLength) => {
+        const key = stagedObjectKey(vaultId, hash);
+        return Effect.tryPromise({
+          try: () =>
+            getSignedUrl(
+              client,
+              new PutObjectCommand({
+                Bucket: bucket,
+                Key: key,
+                ContentType: contentType,
+                ContentLength: contentLength,
+              }),
+              { expiresIn: R2_STAGED_UPLOAD_EXPIRES_SECONDS },
+            ),
+          catch: (error) => error,
+        }).pipe(
+          Effect.mapError((error) => stagedStorageError("prepare", key, error)),
+          Effect.map((url) => ({ transport: "presigned" as const, url })),
+        );
+      },
+      writeStagedBytes: (vaultId, hash, bytes, contentType) => {
+        const key = stagedObjectKey(vaultId, hash);
+        return Effect.tryPromise({
+          try: (signal) =>
+            client.send(
+              new PutObjectCommand({
+                Bucket: bucket,
+                Key: key,
+                Body: bytes,
+                ContentType: contentType,
+                ContentLength: bytes.byteLength,
+              }),
+              { abortSignal: signal },
+            ),
+          catch: (error) => error,
+        }).pipe(
+          Effect.timeout(R2_WRITE_TIMEOUT),
+          Effect.mapError((error) => stagedStorageError("write", key, error)),
+          Effect.asVoid,
+        );
+      },
       readStagedBytes: (vaultId, hash) =>
         Effect.gen(function* () {
           const key = stagedObjectKey(vaultId, hash);

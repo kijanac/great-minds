@@ -317,7 +317,6 @@
               >
                 <IngestionFlow
                   hasActivePipeline={activeJob.data ?? false}
-                  stagedUploads={currentVault.staged_uploads}
                   vaultName={currentVault.name}
                 />
               </div>

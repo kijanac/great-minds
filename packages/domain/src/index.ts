@@ -38,6 +38,12 @@ export const RawSourcePath = Schema.String.pipe(
 );
 export type RawSourcePath = typeof RawSourcePath.Type;
 
+export const FileFingerprint = Schema.String.pipe(
+  Schema.check(Schema.isPattern(/^[0-9a-f]{64}$/)),
+  Schema.brand("FileFingerprint"),
+);
+export type FileFingerprint = typeof FileFingerprint.Type;
+
 export const IsoDateTime = Schema.String;
 export type IsoDateTime = typeof IsoDateTime.Type;
 
@@ -282,7 +288,6 @@ export const Vault = Schema.Struct({
   name: Schema.String,
   owner_id: Uuid,
   created_at: IsoDateTime,
-  staged_uploads: Schema.Boolean,
 });
 export type Vault = typeof Vault.Type;
 
@@ -413,38 +418,45 @@ export const UserSuggestion = Schema.Struct({
 export type UserSuggestion = typeof UserSuggestion.Type;
 
 export const StagedFileInput = Schema.Struct({
-  name: Schema.String,
-  size: Schema.Number,
-  hash: Schema.String,
+  name: Schema.String.pipe(Schema.check(Schema.isMinLength(1))),
+  size: Schema.Number.pipe(Schema.check(Schema.isInt(), Schema.isGreaterThanOrEqualTo(0))),
+  hash: FileFingerprint,
   mimetype: Schema.optionalKey(Schema.String),
 });
 export type StagedFileInput = typeof StagedFileInput.Type;
 
 export const CheckDupesRequest = Schema.Struct({
-  client_hashes: Schema.Array(Schema.String),
+  client_hashes: Schema.Array(FileFingerprint),
 });
 export type CheckDupesRequest = typeof CheckDupesRequest.Type;
 
 export const CheckDupesResponse = Schema.Struct({
-  existing: Schema.Array(Schema.String),
+  existing: Schema.Array(FileFingerprint),
 });
 export type CheckDupesResponse = typeof CheckDupesResponse.Type;
 
-export const StagedFileSignRequest = Schema.Struct({
+export const StagedFilePrepareRequest = Schema.Struct({
   files: Schema.Array(StagedFileInput),
 });
-export type StagedFileSignRequest = typeof StagedFileSignRequest.Type;
+export type StagedFilePrepareRequest = typeof StagedFilePrepareRequest.Type;
 
-export const StagedFileSignedUpload = Schema.Struct({
-  hash: Schema.String,
-  url: Schema.String,
-});
-export type StagedFileSignedUpload = typeof StagedFileSignedUpload.Type;
+export const StagedFileUploadTarget = Schema.Union([
+  Schema.Struct({
+    hash: FileFingerprint,
+    transport: Schema.Literal("api"),
+  }),
+  Schema.Struct({
+    hash: FileFingerprint,
+    transport: Schema.Literal("presigned"),
+    url: Schema.String,
+  }),
+]);
+export type StagedFileUploadTarget = typeof StagedFileUploadTarget.Type;
 
-export const StagedFileSignResponse = Schema.Struct({
-  files: Schema.Array(StagedFileSignedUpload),
+export const StagedFilePrepareResponse = Schema.Struct({
+  files: Schema.Array(StagedFileUploadTarget),
 });
-export type StagedFileSignResponse = typeof StagedFileSignResponse.Type;
+export type StagedFilePrepareResponse = typeof StagedFilePrepareResponse.Type;
 
 export const StagedFileProcessRequest = Schema.Struct({
   job_id: Uuid,
@@ -1624,12 +1636,12 @@ export const IngestApiGroup = HttpApiGroup.make("ingest").add(
       error: ForbiddenValidationErrors,
     },
   ).middleware(AuthMiddleware),
-  HttpApiEndpoint.post("signStagedFiles", "/vaults/:vault_id/ingest/staged-files/sign", {
+  HttpApiEndpoint.post("prepareStagedFiles", "/vaults/:vault_id/ingest/staged-files/prepare", {
     params: {
       vault_id: Uuid,
     },
-    payload: StagedFileSignRequest,
-    success: StagedFileSignResponse,
+    payload: StagedFilePrepareRequest,
+    success: StagedFilePrepareResponse,
     error: [BadRequestResponse, ForbiddenResponse, ValidationResponse] as const,
   }).middleware(AuthMiddleware),
   HttpApiEndpoint.post("processStagedFiles", "/vaults/:vault_id/ingest/staged-files/process", {

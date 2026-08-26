@@ -1,13 +1,12 @@
 import { compileIntents, Database, pipelineRuns, sourceDocuments } from "@great-minds/database";
-import type { Uuid } from "@great-minds/domain";
+import { FileFingerprint, Uuid } from "@great-minds/domain";
 import { eq, sql } from "drizzle-orm";
 import { Cause, Effect, Exit, Schema } from "effect";
 import * as Activity from "effect/unstable/workflow/Activity";
 import * as Workflow from "effect/unstable/workflow/Workflow";
 
-import { AppConfig } from "./config.ts";
 import { stagedFileToMarkdown } from "./conversion.ts";
-import { fileContentHash } from "./crypto.ts";
+import { fileContentHash, rawFileHash } from "./crypto.ts";
 import { causeDetails, formatError } from "./error-details.ts";
 import { buildDocument } from "./markdown.ts";
 import { StructuredLogger } from "./logging.ts";
@@ -27,14 +26,14 @@ const BATCH_SIZE = 50;
 const StagedFile = Schema.Struct({
   name: Schema.String,
   size: Schema.Number,
-  hash: Schema.String,
+  hash: FileFingerprint,
   mimetype: Schema.String,
 });
 
 export const StagedFileIngestWorkflow = Workflow.make("StagedFileIngest", {
   payload: {
-    vaultId: Schema.String,
-    pipelineRunId: Schema.String,
+    vaultId: Uuid,
+    pipelineRunId: Uuid,
     files: Schema.Array(StagedFile),
   },
   idempotencyKey: ({ pipelineRunId }) => pipelineRunId,
@@ -54,7 +53,7 @@ export const StagedFileIngestPersistResult = Schema.Struct({
   ingested: Schema.Number,
   skipped: Schema.Number,
   failures: Schema.Array(StagedFileFailure),
-  cleanupHashes: Schema.Array(Schema.String),
+  cleanupHashes: Schema.Array(FileFingerprint),
 });
 
 export const StagedFileIngestWorkflowLive = StagedFileIngestWorkflow.toLayer((payload) => {
@@ -62,20 +61,16 @@ export const StagedFileIngestWorkflowLive = StagedFileIngestWorkflow.toLayer((pa
     name: "staged-file-ingest-persist",
     success: StagedFileIngestPersistResult,
     execute: Effect.gen(function* () {
-      const config = yield* AppConfig;
       const db = yield* Database;
       const storage = yield* ContentStorage;
       const stagedStorage = yield* StagedStorage;
       const sourceDocumentsService = yield* SourceDocumentsService;
       const pipeline = yield* PipelineRunsService;
       const logger = yield* StructuredLogger;
-      const vaultId = payload.vaultId as Uuid;
-      const runId = payload.pipelineRunId as Uuid;
+      const vaultId = payload.vaultId;
+      const runId = payload.pipelineRunId;
       const total = payload.files.length;
 
-      if (config.storageBackend !== "r2") {
-        throw new Error("staged_file_ingest requires r2 storage backend");
-      }
       const existingRows = yield* db.query((d) => d
         .select({ path: sourceDocuments.filePath, hash: sourceDocuments.fileHash })
         .from(sourceDocuments)
@@ -106,6 +101,9 @@ export const StagedFileIngestWorkflowLive = StagedFileIngestWorkflow.toLayer((pa
           Effect.exit(
             Effect.gen(function* () {
               const bytes = yield* stagedStorage.readStagedBytes(vaultId, file.hash);
+              if (bytes.byteLength !== file.size || rawFileHash(bytes) !== file.hash) {
+                throw new Error(`Staged file integrity check failed: ${file.name}`);
+              }
               const markdown = yield* Effect.tryPromise({
                 try: () => stagedFileToMarkdown(bytes, file.name, file.mimetype),
                 catch: (error) => error,
@@ -120,8 +118,12 @@ export const StagedFileIngestWorkflowLive = StagedFileIngestWorkflow.toLayer((pa
       let skipped = 0;
       const failures: { name: string; error: string }[] = [];
       const seen = new Set<string>();
-      const cleanup: string[] = [];
-      let batch: { filePath: string; content: string; clientHash: string }[] = [];
+      const cleanup = payload.files.map((file) => file.hash);
+      let batch: {
+        filePath: string;
+        content: string;
+        clientHash: typeof FileFingerprint.Type;
+      }[] = [];
 
       const requireActive = Effect.fn(function* () {
         if (!(yield* pipeline.isActive(runId))) return yield* Effect.interrupt;
@@ -171,7 +173,6 @@ export const StagedFileIngestWorkflowLive = StagedFileIngestWorkflow.toLayer((pa
         const sourceId = sourceIdForKey(vaultId, `upload:${file.hash}`);
         const dest = `raw/docs/${sourceId}.md`;
         const identified = identifySourceMarkdown(content, sourceId);
-        cleanup.push(file.hash);
         const contentHash = fileContentHash(identified);
         if (existingHashes.get(dest) === contentHash || seen.has(dest)) {
           skipped += 1;
@@ -209,18 +210,14 @@ export const StagedFileIngestWorkflowLive = StagedFileIngestWorkflow.toLayer((pa
       name: "staged-file-ingest-finalize",
       success: StagedFileIngestWorkflow.successSchema,
       execute: Effect.gen(function* () {
-        const config = yield* AppConfig;
         const db = yield* Database;
         const stagedStorage = yield* StagedStorage;
         const pipeline = yield* PipelineRunsService;
         const logger = yield* StructuredLogger;
-        const vaultId = payload.vaultId as Uuid;
-        const runId = payload.pipelineRunId as Uuid;
+        const vaultId = payload.vaultId;
+        const runId = payload.pipelineRunId;
         const total = payload.files.length;
 
-        if (config.storageBackend !== "r2") {
-          throw new Error("staged_file_ingest requires r2 storage backend");
-        }
         const { ingested, skipped, failures, cleanupHashes } = result;
         const failed = failures.length;
 
@@ -333,7 +330,7 @@ export const StagedFileIngestWorkflowLive = StagedFileIngestWorkflow.toLayer((pa
         error_message: error.message,
       });
       yield* pipeline.updateProgress(
-        payload.pipelineRunId as Uuid,
+        payload.pipelineRunId,
         "source_ingest",
         "failed",
         progressSteps(STAGED_FILE_INGEST_STEP_LABELS, "prepare_sources", {

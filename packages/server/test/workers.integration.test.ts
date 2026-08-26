@@ -12,7 +12,7 @@ import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
 import * as PgClient from "@effect/sql-pg/PgClient";
-import type { Uuid } from "@great-minds/domain";
+import type { FileFingerprint, Uuid } from "@great-minds/domain";
 import { eq, sql } from "drizzle-orm";
 import { Effect, Layer, Option, Redacted } from "effect";
 import type * as WorkflowEngine from "effect/unstable/workflow/WorkflowEngine";
@@ -29,6 +29,7 @@ import { CompilePhases, CompilePhasesLive } from "../src/compile-phases.ts";
 import { AppConfig, type AppConfigShape } from "../src/config.ts";
 import { ClockLive } from "../src/clock.ts";
 import { stagedFileToMarkdown } from "../src/conversion.ts";
+import { rawFileHash } from "../src/crypto.ts";
 import { DrizzleLive } from "../src/db.ts";
 import { EmbeddingsService } from "../src/embeddings.ts";
 import { JobsService, JobsServiceLive } from "../src/jobs.ts";
@@ -141,16 +142,26 @@ const config: AppConfigShape = {
   serverPort: 0,
 };
 
-const staged = new Map<string, Uint8Array>();
+const staged = new Map<FileFingerprint, Uint8Array>();
 const written = new Map<string, string>();
-const deleted: string[] = [];
-const readDefects = new Set<string>();
-const deleteDefects = new Set<string>();
+const deleted: FileFingerprint[] = [];
+const readDefects = new Set<FileFingerprint>();
+const deleteDefects = new Set<FileFingerprint>();
 const writeDefects = new Set<string>();
 const logEvents: { readonly event: string; readonly fields: Record<string, unknown> }[] = [];
+
+const stageBytes = (bytes: Uint8Array) => {
+  const hash = rawFileHash(bytes);
+  staged.set(hash, bytes);
+  return hash;
+};
+
+const testFingerprint = (character: string) =>
+  character.repeat(64) as FileFingerprint;
+
 let readPause:
   | {
-      readonly hash: string;
+      readonly hash: FileFingerprint;
       readonly started: Promise<void>;
       readonly signalStarted: () => void;
       readonly released: Promise<void>;
@@ -158,7 +169,7 @@ let readPause:
     }
   | undefined;
 
-const pauseStagedRead = (hash: string) => {
+const pauseStagedRead = (hash: FileFingerprint) => {
   let signalStarted = () => {};
   let release = () => {};
   const pause = {
@@ -201,7 +212,11 @@ const StorageLive = Layer.succeed(ContentStorage, {
 });
 
 const StagedStorageLive = Layer.succeed(StagedStorage, {
-  presignStagedPut: () => Effect.succeed("https://example.invalid"),
+  pruneExpiredStaged: () => Effect.void,
+  prepareStagedPut: () =>
+    Effect.succeed({ transport: "presigned" as const, url: "https://example.invalid" }),
+  writeStagedBytes: (_vaultId, hash, bytes) =>
+    Effect.sync(() => staged.set(hash, bytes)).pipe(Effect.asVoid),
   readStagedBytes: (_vaultId, hash) => {
     if (readPause?.hash === hash) {
       const pause = readPause;
@@ -370,7 +385,11 @@ const reconcileUntilSatisfied = (
     throw new Error(`compile intent was not satisfied within ${timeoutMs}ms`);
   });
 
-const startResumeRunner = (mode: "pause" | "resume", runId: Uuid, hash: string) =>
+const startResumeRunner = (
+  mode: "pause" | "resume",
+  runId: Uuid,
+  hash: FileFingerprint,
+) =>
   spawn(
     process.execPath,
     ["--experimental-strip-types", resumeRunnerPath, mode, id.vault, runId, hash],
@@ -517,8 +536,7 @@ describe("M4.2 durable workers", () => {
   });
 
   it("cancels a mid-flight staged ingest workflow before it can write documents", async () => {
-    const hash = "abababababababababababababababababababababababababababababababab";
-    staged.set(hash, Buffer.from("# Must not persist\n\nCancellation wins."));
+    const hash = stageBytes(Buffer.from("# Must not persist\n\nCancellation wins."));
     const pause = pauseStagedRead(hash);
 
     const state = await run(
@@ -580,12 +598,9 @@ describe("M4.2 durable workers", () => {
   }, 30_000);
 
   it("persists valid staged files but fails the batch visibly when another file cannot convert", async () => {
-    const docxHash = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
-    const textHash = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
-    const badHash = "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc";
-    staged.set(docxHash, Buffer.from(docxBase64, "base64"));
-    staged.set(textHash, Buffer.from("# Durable text\n\nWorker content."));
-    staged.set(badHash, Buffer.from([0, 1, 2]));
+    const docxHash = stageBytes(Buffer.from(docxBase64, "base64"));
+    const textHash = stageBytes(Buffer.from("# Durable text\n\nWorker content."));
+    const badHash = stageBytes(Buffer.from([0, 1, 2]));
 
     const result = await run(
       StagedFileIngestWorkflow.execute({
@@ -613,7 +628,7 @@ describe("M4.2 durable workers", () => {
     expect(written.get(`raw/docs/${docxSourceId}.md`)).toContain(
       "Durable binary document",
     );
-    expect(deleted.sort()).toEqual([docxHash, textHash].sort());
+    expect(deleted.sort()).toEqual([badHash, docxHash, textHash].sort());
 
     const rows = await run(
       Effect.gen(function* () {
@@ -700,9 +715,10 @@ describe("M4.2 durable workers", () => {
   }, 30_000);
 
   it("persists per-file failure details and does not compile a partial staged batch", async () => {
-    const readFailureHash = "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd";
-    const cleanupFailureHash = "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee";
-    staged.set(cleanupFailureHash, Buffer.from("# Cleanup survives\n\nPersist this source."));
+    const readFailureHash = testFingerprint("d");
+    const cleanupFailureHash = stageBytes(
+      Buffer.from("# Cleanup survives\n\nPersist this source."),
+    );
     readDefects.add(readFailureHash);
     deleteDefects.add(cleanupFailureHash);
 
@@ -752,7 +768,7 @@ describe("M4.2 durable workers", () => {
     });
     expect(logEvents).toContainEqual({
       event: "staged_file_ingest.cleanup_failures",
-      fields: expect.objectContaining({ failed: 1, total: 1 }),
+      fields: expect.objectContaining({ failed: 1, total: 2 }),
     });
 
     const state = await run(
@@ -795,10 +811,11 @@ describe("M4.2 durable workers", () => {
   }, 30_000);
 
   it("logs and persists a descriptive staged terminal failure for a non-Error defect", async () => {
-    const hash = "1212121212121212121212121212121212121212121212121212121212121212";
+    const hash = stageBytes(
+      Buffer.from("# Defective write\n\nThe failure must stay observable."),
+    );
     const sourceId = sourceIdForKey(id.vault, `upload:${hash}`);
     const path = `raw/docs/${sourceId}.md`;
-    staged.set(hash, Buffer.from("# Defective write\n\nThe failure must stay observable."));
     writeDefects.add(path);
 
     const result = await run(
@@ -863,7 +880,7 @@ describe("M4.2 durable workers", () => {
   }, 30_000);
 
   it("resume-after-persist preserves the journaled ingest decision and creates the intent", async () => {
-    const hash = "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff";
+    const hash = testFingerprint("f");
     await run(
       Effect.gen(function* () {
         const db = yield* Database;

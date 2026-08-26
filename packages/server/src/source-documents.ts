@@ -5,7 +5,7 @@ import {
   sourceDocuments,
   topicMembership,
 } from "@great-minds/database";
-import { type Uuid } from "@great-minds/domain";
+import { type FileFingerprint, type Uuid } from "@great-minds/domain";
 import { and, eq, inArray, sql } from "drizzle-orm";
 import { Context, Effect, Layer } from "effect";
 import { parse as parseYaml } from "yaml";
@@ -21,20 +21,20 @@ type SourceDocumentsServiceShape = {
     vaultId: Uuid,
     filePath: string,
     content: string,
-    clientHash: string | null,
+    clientHash: FileFingerprint | null,
   ) => Effect.Effect<Uuid>;
   readonly batchIndex: (
     vaultId: Uuid,
     documents: readonly {
       readonly filePath: string;
       readonly content: string;
-      readonly clientHash: string;
+      readonly clientHash: FileFingerprint;
     }[],
   ) => Effect.Effect<void>;
   readonly existingClientHashes: (
     vaultId: Uuid,
-    clientHashes: readonly string[],
-  ) => Effect.Effect<readonly string[]>;
+    clientHashes: readonly FileFingerprint[],
+  ) => Effect.Effect<readonly FileFingerprint[]>;
   readonly getById: (
     vaultId: Uuid,
     sourceId: Uuid,
@@ -95,7 +95,7 @@ const sourceRow = (
   vaultId: Uuid,
   filePath: string,
   content: string,
-  clientHash: string | null,
+  clientHash: FileFingerprint | null,
 ) => {
   const parsed = parseFrontmatter(content);
   const identity = sourceIdentityFromFrontmatter(parsed.frontmatter);
@@ -164,7 +164,7 @@ export const SourceDocumentsServiceLive = Layer.effect(
       vaultId: Uuid,
       filePath: string,
       content: string,
-      clientHash: string | null,
+      clientHash: FileFingerprint | null,
     ) =>
       Effect.gen(function* () {
         const rows = yield* db.query((d) => d
@@ -213,7 +213,8 @@ export const SourceDocumentsServiceLive = Layer.effect(
             ));
           return rows
             .map((row) => row.clientHash)
-            .filter((hash): hash is string => hash !== null);
+            .filter((hash): hash is string => hash !== null)
+            .map((hash) => hash as FileFingerprint);
         }),
       getById,
       getByPath: (vaultId, filePath) =>
