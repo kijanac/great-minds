@@ -922,6 +922,7 @@ describe("M3.1 write endpoint integration", () => {
     expect(await vaultFileExists(id.vault, "raw/books/capital.md")).toBe(false);
     expect(await proposalFileExists(deletionProposalId)).toBe(false);
     expect(await countTable(compileIntents)).toBe(0);
+    expect(await countTable(sourceDeletionOutbox)).toBe(1);
 
     await resetDatabase();
     await resetStorage();
