@@ -1,9 +1,9 @@
 {
   "version": "8",
   "dialect": "postgres",
-  "id": "7f4790b6-e1ce-470d-adfb-3858c60c58a3",
+  "id": "bf387060-bf24-46ca-8e63-b94f5f2307f3",
   "prevIds": [
-    "9af4d8b4-22d4-4370-8d8a-360608fe23e2"
+    "3c15fdad-b756-41b1-9116-473cfbfa49e8"
   ],
   "ddl": [
     {
@@ -192,6 +192,12 @@
     {
       "isRlsEnabled": false,
       "name": "topics",
+      "entityType": "tables",
+      "schema": "public"
+    },
+    {
+      "isRlsEnabled": false,
+      "name": "url_ingest_requests",
       "entityType": "tables",
       "schema": "public"
     },
@@ -1709,6 +1715,84 @@
     {
       "type": "timestamp with time zone",
       "typeSchema": null,
+      "notNull": false,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "dispatched_at",
+      "entityType": "columns",
+      "schema": "public",
+      "table": "replies"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": false,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "dispatched_task_id",
+      "entityType": "columns",
+      "schema": "public",
+      "table": "replies"
+    },
+    {
+      "type": "integer",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": "0",
+      "generated": null,
+      "identity": null,
+      "name": "generation_cursor",
+      "entityType": "columns",
+      "schema": "public",
+      "table": "replies"
+    },
+    {
+      "type": "integer",
+      "typeSchema": null,
+      "notNull": false,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "active_generation_step",
+      "entityType": "columns",
+      "schema": "public",
+      "table": "replies"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": false,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "active_generation_kind",
+      "entityType": "columns",
+      "schema": "public",
+      "table": "replies"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": false,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "active_generation_key",
+      "entityType": "columns",
+      "schema": "public",
+      "table": "replies"
+    },
+    {
+      "type": "timestamp with time zone",
+      "typeSchema": null,
       "notNull": true,
       "dimensions": 0,
       "default": "now()",
@@ -2939,6 +3023,110 @@
       "name": "id",
       "entityType": "columns",
       "schema": "public",
+      "table": "url_ingest_requests"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "created_by",
+      "entityType": "columns",
+      "schema": "public",
+      "table": "url_ingest_requests"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "canonical_url",
+      "entityType": "columns",
+      "schema": "public",
+      "table": "url_ingest_requests"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": false,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "origin",
+      "entityType": "columns",
+      "schema": "public",
+      "table": "url_ingest_requests"
+    },
+    {
+      "type": "timestamp with time zone",
+      "typeSchema": null,
+      "notNull": false,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "dispatched_at",
+      "entityType": "columns",
+      "schema": "public",
+      "table": "url_ingest_requests"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": false,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "dispatched_task_id",
+      "entityType": "columns",
+      "schema": "public",
+      "table": "url_ingest_requests"
+    },
+    {
+      "type": "timestamp with time zone",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": "now()",
+      "generated": null,
+      "identity": null,
+      "name": "created_at",
+      "entityType": "columns",
+      "schema": "public",
+      "table": "url_ingest_requests"
+    },
+    {
+      "type": "timestamp with time zone",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": "now()",
+      "generated": null,
+      "identity": null,
+      "name": "updated_at",
+      "entityType": "columns",
+      "schema": "public",
+      "table": "url_ingest_requests"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "id",
+      "entityType": "columns",
+      "schema": "public",
       "table": "user_documents"
     },
     {
@@ -3778,6 +3966,34 @@
       "nameExplicit": true,
       "columns": [
         {
+          "value": "event_type",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        },
+        {
+          "value": "correlation_id",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        }
+      ],
+      "isUnique": true,
+      "where": "\"event_type\" = 'query.stream' AND \"correlation_id\" IS NOT NULL",
+      "with": "",
+      "method": "btree",
+      "concurrently": false,
+      "name": "uq_llm_cost_events_query_correlation",
+      "entityType": "indexes",
+      "schema": "public",
+      "table": "llm_cost_events"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        {
           "value": "vault_id",
           "isExpression": false,
           "asc": true,
@@ -3791,6 +4007,27 @@
       "method": "btree",
       "concurrently": false,
       "name": "ix_pipeline_runs_vault_id",
+      "entityType": "indexes",
+      "schema": "public",
+      "table": "pipeline_runs"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        {
+          "value": "compile_intent_id",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        }
+      ],
+      "isUnique": false,
+      "where": null,
+      "with": "",
+      "method": "btree",
+      "concurrently": false,
+      "name": "ix_pipeline_runs_compile_intent_id",
       "entityType": "indexes",
       "schema": "public",
       "table": "pipeline_runs"
@@ -3883,7 +4120,7 @@
       "nameExplicit": true,
       "columns": [
         {
-          "value": "updated_at",
+          "value": "created_at",
           "isExpression": false,
           "asc": true,
           "nullsFirst": false,
@@ -3891,11 +4128,11 @@
         }
       ],
       "isUnique": false,
-      "where": "\"status\" = 'running'",
+      "where": "\"status\" = 'running' AND \"dispatched_at\" IS NULL",
       "with": "",
       "method": "btree",
       "concurrently": false,
-      "name": "ix_replies_running_updated_at",
+      "name": "ix_replies_pending_dispatch",
       "entityType": "indexes",
       "schema": "public",
       "table": "replies"
@@ -4252,6 +4489,27 @@
       "entityType": "indexes",
       "schema": "public",
       "table": "topics"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        {
+          "value": "created_at",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        }
+      ],
+      "isUnique": false,
+      "where": "\"dispatched_at\" IS NULL",
+      "with": "",
+      "method": "btree",
+      "concurrently": false,
+      "name": "ix_url_ingest_requests_pending",
+      "entityType": "indexes",
+      "schema": "public",
+      "table": "url_ingest_requests"
     },
     {
       "nameExplicit": true,
@@ -4920,6 +5178,40 @@
     {
       "nameExplicit": true,
       "columns": [
+        "id"
+      ],
+      "schemaTo": "public",
+      "tableTo": "pipeline_runs",
+      "columnsTo": [
+        "id"
+      ],
+      "onUpdate": "NO ACTION",
+      "onDelete": "CASCADE",
+      "name": "url_ingest_requests_id_fkey",
+      "entityType": "fks",
+      "schema": "public",
+      "table": "url_ingest_requests"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        "created_by"
+      ],
+      "schemaTo": "public",
+      "tableTo": "users",
+      "columnsTo": [
+        "id"
+      ],
+      "onUpdate": "NO ACTION",
+      "onDelete": "CASCADE",
+      "name": "url_ingest_requests_created_by_fkey",
+      "entityType": "fks",
+      "schema": "public",
+      "table": "url_ingest_requests"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
         "user_id"
       ],
       "schemaTo": "public",
@@ -5322,6 +5614,16 @@
         "id"
       ],
       "nameExplicit": false,
+      "name": "url_ingest_requests_pkey",
+      "schema": "public",
+      "table": "url_ingest_requests",
+      "entityType": "pks"
+    },
+    {
+      "columns": [
+        "id"
+      ],
+      "nameExplicit": false,
       "name": "user_documents_pkey",
       "schema": "public",
       "table": "user_documents",
@@ -5545,6 +5847,13 @@
     {
       "value": "\"status\" IN ('running', 'completed', 'failed')",
       "name": "replies_status_check",
+      "entityType": "checks",
+      "schema": "public",
+      "table": "replies"
+    },
+    {
+      "value": "(\"active_generation_step\" IS NULL AND \"active_generation_kind\" IS NULL AND \"active_generation_key\" IS NULL) OR (\"active_generation_step\" IS NOT NULL AND \"active_generation_kind\" IN ('model', 'tool') AND \"active_generation_key\" IS NOT NULL)",
+      "name": "replies_active_generation_check",
       "entityType": "checks",
       "schema": "public",
       "table": "replies"
