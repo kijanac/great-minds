@@ -203,8 +203,8 @@ There is no way in this UI to delete the personal original. Calling the server e
 
 - Add a personal-reference delete affordance with explicit consequences for promoted copies, sessions, notes, and shares—or remove/document the unused server capability.
 - Post-baseline role decision: direct reference promotion is owner-only; editors use existing proposal contribution paths and viewers are read-only. Great Minds commit `45ac124` hides the action and rejects non-owner requests.
-- Queue or clearly offer a follow-up compile after source deletion; otherwise article/search health remains knowingly stale with no direct recovery in the dialog.
-- Make source deletion storage/registry failure semantics truthful and retryable; distinguish already deleted from failed and refresh after uncertain outcomes.
+- Post-baseline product decision: source deletion deliberately does not queue or offer a compile. It changes the source corpus now while articles remain the last published snapshot until an owner separately starts a compile. Great Minds `24a6ec0` retains the explicit confirmation warning; a visible controlled deletion left both compiled articles unchanged and created no compile intent.
+- Post-baseline B-32 fix: Great Minds `24a6ec0` commits an object-cleanup outbox in the same transaction as source graph removal, attempts the idempotent object delete immediately, and retries unfinished cleanup at startup and every minute. Library refetches after both success and uncertain failure. In a visible forced-storage-failure check, the row disappeared without a false error while the outbox remained pending; removing the obstruction let reconciliation mark cleanup complete.
 - Preserve/display personal title/author/published provenance when promoting, especially after an explicit rename.
 - Fix null-title fallback and the stale draft initialization after clearing a title; invalidate/update Reading room and document query caches on rename.
 - Surface proposal conflict/not-found details and a link/status for an already-submitted deletion request.

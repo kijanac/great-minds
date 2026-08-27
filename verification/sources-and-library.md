@@ -165,9 +165,11 @@ Not checkable by hand:
 | MANAGE-15 | P1 | mouse | Promotion can late-navigate after reader unmount (suspected bug) ([Open questions](../library/manage-content.md#open-questions-and-verification)). | Delay promotion response. | 1. click Add.<br>2. navigate elsewhere.<br>3. release. | Record unexpected redirect to `/doc` after deliberate leave. | — |
 | MANAGE-16 | P2 | screen reader | Rename/promotion/delete statuses and focus are announced/usable ([Interactions](../library/manage-content.md#interactions-with-other-systems)). | Screen reader. | 1. run each action. | Dialog/input/button names and pending/error/success state understandable; focus not lost. | — |
 
+Post-baseline B-31/B-32 recheck: at Great Minds `24a6ec0`, the owner opened the Verification Handbook confirmation and visibly saw the explicit no-auto-compile warning. The source file had been replaced by a directory so local object deletion failed. Confirming still closed the dialog, removed the row, and changed Library from 5 to 4 without a false error. SQL showed source/search/idea state gone, both existing articles unchanged, no compile intent, and a pending cleanup outbox. After removing the obstruction, the periodic reconciler advanced the attempt count and set `completed_at`. Historical `MANAGE-01`–`MANAGE-03` Result cells remain unchanged because they describe the pinned `c8c9e57` baseline.
+
 Not checkable by hand:
 
-- Whether reference deletion, member promotion, and automatic post-delete compile should exist are product calls.
+- Whether personal-reference deletion should exist remains a product call.
 
 ## health/review-vault-health.md
 

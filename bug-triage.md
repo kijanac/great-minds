@@ -4,7 +4,7 @@ A consolidated list of defects and inconsistencies raised by the feature documen
 
 ## Summary
 
-The drafting pass raised 50 deduplicated items: 16 high, 30 medium, and 4 low. Post-baseline implementation verification later added two resolved medium defects, B-51 and B-52. The high-severity cluster is dominated by scope/authorization leaks, user work or selected files being silently lost, successful mutations reported as failures, durable terminal state displayed incorrectly, and public-link behavior that can expose more content than the creator saw at creation. Medium items concentrate around missing error/recovery states, lifecycle work that outlives its page, stale active-vault context, and inconsistent content metadata. Status lines preserve hand-verification evidence and, where applicable, later fixes.
+The drafting pass raised 50 deduplicated items: 16 high, 30 medium, and 4 low. Post-baseline implementation verification later added the resolved medium defects B-51 and B-52, settled B-31 as an intentional product policy, and resolved B-32. The high-severity cluster is dominated by scope/authorization leaks, user work or selected files being silently lost, successful mutations reported as failures, durable terminal state displayed incorrectly, and public-link behavior that can expose more content than the creator saw at creation. Medium items concentrate around missing error/recovery states, lifecycle work that outlives its page, stale active-vault context, and inconsistent content metadata. Status lines preserve hand-verification evidence and, where applicable, later fixes.
 
 | ID | Title | Severity | Area | Decision needed | Issue |
 | --- | --- | --- | --- | --- | --- |
@@ -38,8 +38,8 @@ The drafting pass raised 50 deduplicated items: 16 high, 30 medium, and 4 low. P
 | B-28 | Client file upload has no real cancel/recovery and can navigate after leaving | medium | source ingest | resolved | — |
 | B-29 | Bare pipeline says No active job when several runs are active | medium | pipeline | fix | — |
 | B-30 | Pipeline cancel/retry/stream errors lack truthful pending and failure state | medium | pipeline | fix | — |
-| B-31 | Source deletion leaves compiled articles stale without queuing repair | medium | content management | product call | — |
-| B-32 | Source deletion can commit database removal and then report storage failure | medium | content management | fix | — |
+| B-31 | Source deletion leaves compiled articles stale without queuing repair | medium | content management | resolved | — |
+| B-32 | Source deletion can commit database removal and then report storage failure | medium | content management | resolved | — |
 | B-33 | Reference promotion drops the chosen title, author, and publication date | medium | content management | fix | — |
 | B-34 | Reference rename has stale-null and overlapping-request races | medium | content management | fix | — |
 | B-35 | Personal references cannot be deleted in the authenticated web UI | medium | content management | product call | — |
@@ -385,7 +385,8 @@ The drafting pass raised 50 deduplicated items: 16 high, 30 medium, and 4 low. P
 - **Reproduce:** Delete a source cited by a live article and inspect intents/article/link.
 - **Why (from the code):** `packages/server/src/source-documents.ts:218-253` deletes graph/storage only; `packages/server/src/sources.ts:134-144` returns without intent. Proposal deletion branch at `packages/server/src/proposals.ts:322-327` likewise omits `ensureCompileIntent` used only for additions at `338`.
 - **Severity:** `medium`. Shared published knowledge knowingly points at missing source with no direct repair handoff.
-- **Decision needed:** `product call`. Queue compile automatically or provide explicit Update now action/health issue.
+- **Decision needed:** `resolved`. Source deletion intentionally does not compile. It updates the source corpus immediately while existing articles remain the last published snapshot until an owner separately starts a compile.
+- **Status:** `accepted product decision` on 2026-08-27. At Great Minds `24a6ec0`, the visible confirmation explicitly says the source/search entries disappear now and compiled wiki pages stay as-is until a future compile. A controlled deletion left both compiled articles unchanged and created no compile intent.
 - **Raised by:** [manage](library/manage-content.md#open-questions-and-verification).
 
 ### B-32: Source deletion can commit database removal and then report storage failure
@@ -395,7 +396,8 @@ The drafting pass raised 50 deduplicated items: 16 high, 30 medium, and 4 low. P
 - **Reproduce:** Force storage delete failure after DB transaction.
 - **Why (from the code):** `packages/server/src/source-documents.ts:218-253` completes transaction before `storage.deletePath`; `web/src/lib/hooks/use-library.svelte.ts:187-200` refreshes only success and replaces detail with generic API error.
 - **Severity:** `medium`. Outcome is partially committed and reported inaccurately.
-- **Decision needed:** `fix`. Make deletion convergent/retryable, expose partial state, and always refetch after uncertain outcome.
+- **Decision needed:** `resolved`. Commit graph removal together with a durable object-cleanup outbox, retry the idempotent delete at startup and periodically, and always refetch Library after an uncertain request outcome.
+- **Status:** `fixed` by Great Minds commit `24a6ec0`. A visible owner check replaced the target file with a directory so local object deletion failed deterministically. Confirmation still closed, the row/count refreshed from 5 to 4, and no false failure appeared. SQL showed the source/search/idea graph gone, no compile intent, and a pending `source_deletion_outbox` row. After the obstruction was removed, the reconciler advanced the attempt count and set `completed_at`. Integration coverage injects the same storage failure and proves retry completion.
 - **Raised by:** [manage](library/manage-content.md#open-questions-and-verification).
 
 ### B-33: Reference promotion drops the chosen title, author, and publication date
