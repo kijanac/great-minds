@@ -19,7 +19,7 @@ The drafting pass raised 50 deduplicated items: 16 high, 30 medium, and 4 low. P
 | B-09 | File review and staged ingest can silently omit files counted as selected | high | source ingest | resolved | — |
 | B-10 | A failed reply with partial prose looks successfully completed | high | research | fix | — |
 | B-11 | A queued cancelled/failed run can display Knowledge base updated | high | pipeline | resolved | — |
-| B-12 | URL launch cannot reconnect, reloads duplicate work, and Retry does not retry the URL | high | URL ingest | fix | — |
+| B-12 | URL launch cannot reconnect, reloads duplicate work, and Retry does not retry the URL | high | URL ingest | resolved | — |
 | B-13 | A share silently expands to future private session turns or reference notes | high | sharing | product call | — |
 | B-14 | Share requests can create unseen or multiple active bearer links | high | sharing/security | fix | — |
 | B-15 | Public share bearer tokens are stored in plaintext | high | sharing/security | fix | — |
@@ -188,7 +188,8 @@ The drafting pass raised 50 deduplicated items: 16 high, 30 medium, and 4 low. P
 - **Reproduce:** Submit a delayed/failing URL, reload or navigate before response, inspect runs/request count, then click Retry.
 - **Why (from the code):** `web/src/lib/api/jobs.ts:51-60` mints id inside `startUrlJob`; `web/src/lib/components/pipeline-container.svelte:100-188` has an unguarded async launch and learns id only after await; `198-200` Retry always calls `requestCompile`.
 - **Severity:** `high`. It duplicates remote writes/runs and presents a recovery action that does something else.
-- **Decision needed:** `fix`. Make URL fetch durable background work with immediate id; guard unmount and give URL-specific retry/reconnect.
+- **Decision needed:** `resolved`. Commit an addressable operation/run before fetch, dispatch one durable URL workflow, and make URL-stage retry create a new URL operation from persisted input.
+- **Status:** `fixed` by Great Minds commit `ed55674`. `url_ingest_requests` now persists creator, canonical URL, and dispatch state in the same transaction as the run/task; `UrlIngest` owns fetch, conversion, source upsert, compile handoff, progress, cancellation guards, and replay. The browser receives the pending run immediately and replaces launch state with its canonical route. A visible 10-second fixture reached `/pipeline/runs/42fbd290-d9c5-4083-9bf4-cfbf3bb1b85e` while Uploading was active and SQL already held its dispatched outbox row. A controlled `/error` run showed **retry URL**; clicking it created run `a88938c4-1d0f-45f7-b41e-b15519d7dce4` with the same persisted canonical URL instead of requesting compile. Integration coverage also proves accepted-before-response state, outbox reconciliation, stable URL identity, idempotent replay, terminal conversion/fetch failures, and retry.
 - **Raised by:** [URL ingest](sources/add-a-url.md#open-questions-and-verification), [background work](foundations/background-work.md#open-questions-and-verification).
 
 ### B-13: A share silently expands to future private session turns or reference notes

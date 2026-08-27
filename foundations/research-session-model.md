@@ -146,6 +146,7 @@ Each append also rebuilds a downloadable Markdown representation. It renders mai
 
 ## Open questions and verification
 
+- Post-baseline commit `ed55674` replaces detached generation plus restart-zombie failure with the `ReplyGeneration` workflow. The complete request is the persisted outbox; dispatch metadata records enqueue acknowledgement; reconciliation re-enqueues accepted rows that lost that acknowledgement. Process interruption now leaves a running reply eligible for workflow replay rather than writing **interrupted by server restart**. Scripted-model integration coverage verifies initial dispatch, accepted-but-undispatched reconciliation, terminal snapshots, and completed session materialization.
 - Verify the exact visual transition from a reloaded saved session's initial `done` state back to `searching`; the microtask recovery can briefly expose completed controls before the pending reply is detected.
 - An initial create-reply failure removes the optimistic exchange and logs only to the console. There is no visible inline error explaining why the question disappeared. This appears to be a recoverability bug.
 - A failed reply with partial answer text renders the answer branch, while the stored `error` is displayed only by the no-answer interruption branch. Partial provider failure may therefore look like a clean completed answer. This appears to be a status-communication bug.

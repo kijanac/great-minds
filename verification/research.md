@@ -19,6 +19,8 @@ Use a disposable owner vault with several indexed sources/articles, one source c
 | ASK-11 | P2 | screen reader | Centered input→session header crossfade preserves useful focus/announcement ([Open questions](../research/ask-a-question.md#open-questions-and-verification)). | Screen reader; slow provider. | 1. Submit by keyboard.<br>2. Track focus/name/state. | Record focus destination and searching announcement; no stranded focus. | — |
 | ASK-12 | P1 | second tab | Another-tab active-vault change during create can retarget later calls (suspected context risk) ([Context variants](../research/ask-a-question.md#context-and-state-variants)). | Tab 1 composing in A; Tab 2 can switch B. | 1. Submit slow create in Tab 1.<br>2. Switch B in Tab 2 before subsequent tail/panel calls.<br>3. inspect session/evidence. | Record whether one turn spans vault contexts or fails; route is not forced Home. | — |
 
+Post-baseline durable-reply migration: Great Minds `ed55674` replaces detached generation and startup zombie failure with the `ReplyGeneration` workflow. Integration tests with a deterministic scripted model prove the accepted row records workflow dispatch, produces the same versioned terminal snapshot/session event, and lets reconciliation claim a separately inserted accepted-but-undispatched reply and complete it. No visible provider-backed recheck was possible because `OPENROUTER_API_KEY` remains absent; historical Result cells therefore remain unchanged.
+
 Not checkable by hand:
 
 - Whether no Stop/draft persistence is the intended research contract is a product call.

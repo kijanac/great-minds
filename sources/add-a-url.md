@@ -160,12 +160,10 @@ Reloading `/pipeline?url=…` before route replacement generates a new job id an
 
 ## Open questions and verification
 
-- Return the run id immediately and perform fetch/conversion as durable background work so the initiating page can show progress, cancel, and reconnect without duplicate reload submissions.
-- Change **retry** on URL launch failure to refetch the URL (with a deliberate new/reused id) or relabel it **compile existing sources**.
+- Great Minds commit `ed55674` resolves B-12 through a persisted URL-operation outbox and `UrlIngest` workflow. Acceptance returns the pending run immediately; the browser replaces `?url=` with `/pipeline/runs/{id}` while fetch is still active. URL-stage failures offer **retry URL**, which creates a new run from the previous operation's persisted canonical URL; later compile-stage failures still retry compile.
 - Post-baseline role decision: direct URL ingest is owner-only; editors contribute through proposal flows and viewers are read-only. Great Minds commit `45ac124` enforces the owner boundary in both server and launch UI.
 - Great Minds commit `b588057` resolves path collisions by making source ID the document identity, canonical URL the URL-ingest idempotency key, and path a derived storage location. Post-fix hand verification retained same-stem alpha and beta sources independently and refreshed repeats in place.
-- Verify late navigation after leaving `/pipeline?url=…`; the unresolved async launch has no component-lifecycle guard.
-- Verify reload/network-loss duplication and whether coalesced intents can leave one of multiple URL runs active without an attached dispatch.
+- A visible 10-second fixture confirmed immediate canonical navigation and active Uploading observation before fetch completion. Reload retained the same run. Integration tests additionally hold the remote response while asserting the persisted run/outbox and recover an accepted-but-undispatched row through reconciliation.
 - Verify visible handling for malformed URLs, private redirects, timeout, 25 MiB overflow, HTML conversion failure, and storage failure. They may all be mislabeled as fetch-stage failures.
 - Decide whether final redirect URL, extracted author/date, and original submitted URL should all be preserved distinctly.
 - Verify that putting the full source URL in browser history/query is acceptable when it contains tokens or sensitive query parameters.

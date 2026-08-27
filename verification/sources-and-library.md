@@ -61,6 +61,8 @@ Not checkable by hand:
 | URL-12 | P1 | mouse | Leaving unresolved launch can late-navigate back to run (suspected bug) ([Open questions](../sources/add-a-url.md#open-questions-and-verification)). | Delayed successful fixture. | 1. submit.<br>2. navigate Library/Home.<br>3. wait. | Record whether late success redirects away from chosen page. | — |
 | URL-13 | P2 | screen reader | Enter-only submission/skeleton status is discoverable and announced ([Open questions](../sources/add-a-url.md#open-questions-and-verification)). | Screen reader; delayed fixture. | 1. focus field.<br>2. submit.<br>3. listen through route/result. | Record accessible submission affordance and status; no unlabeled indefinite skeleton. | — |
 
+Post-baseline B-12 recheck: Great Minds `ed55674` accepted a controlled 10-second URL fetch into run `42fbd290-d9c5-4083-9bf4-cfbf3bb1b85e`, replaced the launch query with that canonical run while **Uploading** remained active, and already had its canonical URL and workflow dispatch recorded in `url_ingest_requests`. The workflow persisted source `bfb99982-b269-5ba1-bab2-bc7c165dcf90`; a later compile failure came from the disposable fixture's separately contaminated duplicate source identity, not URL ingest. A controlled `/error` run visibly offered **retry URL**. Clicking it navigated to new run `a88938c4-1d0f-45f7-b41e-b15519d7dce4`; SQL showed both runs carried the same persisted canonical URL and distinct workflow IDs. Historical URL Result cells remain unchanged because they describe `c8c9e57`.
+
 Not checkable by hand:
 
 - Final redirect/provenance policy and destination naming strategy require product decisions.
