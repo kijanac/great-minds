@@ -17,11 +17,13 @@ import {
   type OriginScope,
   type QueryRequest,
   type QuerySourceData,
+  QuerySourceData as QuerySourceDataSchema,
   type QueryStreamPayload,
   type Uuid,
+  Uuid as UuidSchema,
 } from "@great-minds/domain";
 import { and, asc, desc, eq, gte, ilike, lte, ne, or, sql, type SQL } from "drizzle-orm";
-import { Context, Effect, Layer } from "effect";
+import { Context, Effect, Layer, Schema } from "effect";
 import { parse as parseYaml } from "yaml";
 
 import { AppConfig } from "./config.ts";
@@ -39,12 +41,20 @@ import { ParallelSearchService, type ParallelSearchResult } from "./parallel.ts"
 import { ContentStorage, StorageFileMissing, userOwner, vaultOwner } from "./storage.ts";
 
 type QueryServiceShape = {
-  readonly streamEvents: (
+  readonly prepareExecution: (
     userId: Uuid,
     vaultId: Uuid,
     input: QueryRequest,
     prechecked: QueryPrecheckedContext,
-  ) => AsyncIterable<QueryStreamPayload>;
+  ) => Promise<QueryExecutionState>;
+  readonly modelAttempt: (
+    state: QueryExecutionState,
+  ) => AsyncGenerator<QueryStreamPayload, QueryModelAttemptResult, void>;
+  readonly runTool: (
+    state: QueryExecutionState,
+    toolCall: QueryPreparedToolCall,
+  ) => Promise<QueryToolExecutionResult>;
+  readonly finalizeExecution: (state: QueryExecutionState) => Promise<void>;
   readonly draftHint: (
     userId: Uuid,
     description: string,
@@ -59,6 +69,97 @@ type ToolCallState = {
   readonly id: string;
   readonly name: string;
   readonly arguments: string;
+};
+
+const LlmTextContentPartSchema = Schema.Struct({
+  type: Schema.Literal("text"),
+  text: Schema.String,
+  cache_control: Schema.optionalKey(Schema.Struct({ type: Schema.Literal("ephemeral") })),
+});
+
+const LlmAssistantToolCallSchema = Schema.Struct({
+  id: Schema.String,
+  type: Schema.Literal("function"),
+  function: Schema.Struct({ name: Schema.String, arguments: Schema.String }),
+});
+
+const LlmMessageSchema = Schema.Union([
+  Schema.Struct({
+    role: Schema.Literals(["system", "user", "assistant"] as const),
+    content: Schema.Union([
+      Schema.String,
+      Schema.Null,
+      Schema.Array(LlmTextContentPartSchema),
+    ]),
+    tool_calls: Schema.optionalKey(Schema.Array(LlmAssistantToolCallSchema)),
+  }),
+  Schema.Struct({
+    role: Schema.Literal("tool"),
+    tool_call_id: Schema.String,
+    content: Schema.String,
+  }),
+]);
+
+const LlmToolDefinitionSchema = Schema.Struct({
+  type: Schema.Literal("function"),
+  function: Schema.Struct({
+    name: Schema.String,
+    description: Schema.String,
+    parameters: Schema.Record(Schema.String, Schema.Unknown),
+  }),
+});
+
+const QueryTraceSchema = Schema.Struct({
+  articlesRead: Schema.Array(Schema.String),
+  sourcesRead: Schema.Array(Schema.String),
+  searches: Schema.Array(Schema.String),
+  llmRounds: Schema.Number,
+  toolCalls: Schema.Number,
+});
+
+export const QueryExecutionState = Schema.Struct({
+  userId: UuidSchema,
+  vaultId: UuidSchema,
+  question: Schema.String,
+  vaultLabel: Schema.String,
+  mode: Schema.Literals(["query", "btw"] as const),
+  correlationId: Schema.String,
+  tools: Schema.Array(LlmToolDefinitionSchema),
+  messages: Schema.Array(LlmMessageSchema),
+  webSearchEnabled: Schema.Boolean,
+  trace: QueryTraceSchema,
+  fallbackGenerationIds: Schema.Array(Schema.String),
+  systemPromptHash: Schema.String,
+  costUsd: Schema.Number,
+  selectedModel: Schema.NullOr(Schema.String),
+  models: Schema.Array(Schema.String),
+  modelIndex: Schema.Number,
+  startedAt: Schema.Number,
+});
+export type QueryExecutionState = typeof QueryExecutionState.Type;
+
+export const QueryPreparedToolCall = Schema.Struct({
+  id: Schema.String,
+  name: Schema.String,
+  arguments: Schema.String,
+  args: Schema.Record(Schema.String, Schema.Unknown),
+  pendingSource: Schema.optionalKey(QuerySourceDataSchema),
+});
+export type QueryPreparedToolCall = typeof QueryPreparedToolCall.Type;
+
+type QueryModelAttemptResult =
+  | { readonly kind: "retryable"; readonly state: QueryExecutionState }
+  | { readonly kind: "failed"; readonly state: QueryExecutionState; readonly error: string }
+  | { readonly kind: "done"; readonly state: QueryExecutionState }
+  | {
+      readonly kind: "tool_calls";
+      readonly state: QueryExecutionState;
+      readonly toolCalls: readonly QueryPreparedToolCall[];
+    };
+
+type QueryToolExecutionResult = {
+  readonly state: QueryExecutionState;
+  readonly source?: QuerySourceData;
 };
 
 type ModelRoundState = {
@@ -396,6 +497,61 @@ const cloneMessages = (messages: readonly LlmMessage[]): LlmMessage[] =>
       })),
     };
   });
+
+const executionState = (
+  context: QueryContext,
+  messages: readonly LlmMessage[],
+  models: readonly string[],
+  modelIndex: number,
+  startedAt: number,
+): QueryExecutionState => ({
+  userId: context.userId,
+  vaultId: context.vaultId,
+  question: context.question,
+  vaultLabel: context.vaultLabel,
+  mode: context.mode,
+  correlationId: context.correlationId,
+  tools: [...context.tools],
+  messages: cloneMessages(messages),
+  webSearchEnabled: context.webSearchEnabled,
+  trace: {
+    articlesRead: [...context.trace.articlesRead],
+    sourcesRead: [...context.trace.sourcesRead],
+    searches: [...context.trace.searches],
+    llmRounds: context.trace.llmRounds,
+    toolCalls: context.trace.toolCalls,
+  },
+  fallbackGenerationIds: [...context.fallbackGenerationIds],
+  systemPromptHash: context.systemPromptHash,
+  costUsd: context.costUsd,
+  selectedModel: context.selectedModel ?? null,
+  models: [...models],
+  modelIndex,
+  startedAt,
+});
+
+const contextFromExecution = (state: QueryExecutionState): QueryContext => ({
+  userId: state.userId,
+  vaultId: state.vaultId,
+  question: state.question,
+  vaultLabel: state.vaultLabel,
+  mode: state.mode,
+  correlationId: state.correlationId,
+  tools: [...state.tools],
+  baseMessages: cloneMessages(state.messages),
+  webSearchEnabled: state.webSearchEnabled,
+  trace: {
+    articlesRead: [...state.trace.articlesRead],
+    sourcesRead: [...state.trace.sourcesRead],
+    searches: [...state.trace.searches],
+    llmRounds: state.trace.llmRounds,
+    toolCalls: state.trace.toolCalls,
+  },
+  fallbackGenerationIds: [...state.fallbackGenerationIds],
+  systemPromptHash: state.systemPromptHash,
+  costUsd: state.costUsd,
+  ...(state.selectedModel === null ? {} : { selectedModel: state.selectedModel }),
+});
 
 const asStringArg = (args: Record<string, unknown>, key: string) => {
   const value = args[key];
@@ -1400,112 +1556,167 @@ export const QueryServiceLive = Layer.effect(
       return state;
     }
 
-    async function* streamChatLoop(
-      context: QueryContext,
-      model: string,
-      messages: LlmMessage[],
-    ): AsyncGenerator<QueryStreamPayload, void, void> {
-      while (true) {
-        context.trace.llmRounds += 1;
-        await run(
-          logger.info("query.stream_tool_round_start", {
-            correlation_id: context.correlationId,
-            model,
-            round: context.trace.llmRounds,
-          }),
-        );
+    async function* executeModelAttempt(
+      input: QueryExecutionState,
+    ): AsyncGenerator<QueryStreamPayload, QueryModelAttemptResult, void> {
+      const context = contextFromExecution(input);
+      const model = input.models[input.modelIndex];
+      if (model === undefined) {
+        return { kind: "failed", state: input, error: sanitizedStreamError };
+      }
+      const messages = cloneMessages(input.messages);
+      context.selectedModel = model;
+      context.trace.llmRounds += 1;
+      await run(
+        logger.info("query.stream_tool_round_start", {
+          correlation_id: context.correlationId,
+          model,
+          round: context.trace.llmRounds,
+        }),
+      );
+      try {
         const round = runModelRound(context, model, messages);
-        let state: ModelRoundState | undefined;
+        let roundState: ModelRoundState | undefined;
         while (true) {
           const next = await round.next();
           if (next.done === true) {
-            state = next.value;
+            roundState = next.value;
             break;
           }
           yield next.value;
         }
-        if (state.finishReason === "tool_calls" && state.toolCalls.size > 0) {
-          const toolCalls = [...state.toolCalls.entries()]
+        if (roundState.finishReason === "tool_calls" && roundState.toolCalls.size > 0) {
+          const rawToolCalls = [...roundState.toolCalls.entries()]
             .sort(([left], [right]) => left - right)
             .map(([, toolCall]) => toolCall);
-          const validatedToolCalls: Array<{
-            toolCall: (typeof toolCalls)[number];
-            args: Record<string, unknown>;
-          }> = [];
-          for (const toolCall of toolCalls) {
-            try {
-              validatedToolCalls.push({
-                toolCall,
-                args: asObjectArgs(toolCall.arguments, toolCall.name),
+          const toolCalls: QueryPreparedToolCall[] = [];
+          try {
+            for (const toolCall of rawToolCalls) {
+              const args = asObjectArgs(toolCall.arguments, toolCall.name);
+              const pendingSource = pendingSourceEvent(toolCall.name, args);
+              toolCalls.push({
+                ...toolCall,
+                args,
+                ...(pendingSource === undefined ? {} : { pendingSource }),
               });
-            } catch (error) {
-              if (error instanceof MalformedToolArgs) {
-                yield { event: "error", data: { message: error.message } };
-                return;
-              }
-              throw error;
             }
+          } catch (error) {
+            if (error instanceof MalformedToolArgs) {
+              return {
+                kind: "failed",
+                state: executionState(
+                  context,
+                  messages,
+                  input.models,
+                  input.modelIndex,
+                  input.startedAt,
+                ),
+                error: error.message,
+              };
+            }
+            throw error;
           }
           messages.push({
             role: "assistant",
-            content: state.content.length === 0 ? null : state.content,
-            tool_calls: toolCalls.map((toolCall) => ({
+            content: roundState.content.length === 0 ? null : roundState.content,
+            tool_calls: rawToolCalls.map((toolCall) => ({
               id: toolCall.id,
               type: "function",
               function: { name: toolCall.name, arguments: toolCall.arguments },
             })),
           });
-          const pendingCallIndexes = new Set<number>();
-          for (const [index, { toolCall, args }] of validatedToolCalls.entries()) {
-            const source = pendingSourceEvent(toolCall.name, args);
-            if (source !== undefined) {
-              pendingCallIndexes.add(index);
-              yield {
-                event: "source_pending",
-                data: { call_id: toolCall.id, source },
-              };
-            }
-          }
-          const toolResults = await Promise.allSettled(
-            validatedToolCalls.map(async ({ toolCall, args }) => {
-              context.trace.toolCalls += 1;
-              try {
-                return await dispatchTool(context, toolCall.name, args);
-              } catch (error) {
-                if (error instanceof ToolMiss) {
-                  return { content: error.toolMessage } satisfies ToolResult;
-                }
-                throw error;
-              }
-            }),
-          );
-          for (const [index, outcome] of toolResults.entries()) {
-            const toolCall = validatedToolCalls[index].toolCall;
-            if (pendingCallIndexes.has(index)) {
-              yield { event: "source_settled", data: { call_id: toolCall.id } };
-            }
-            if (outcome.status === "rejected") {
-              throw outcome.reason;
-            }
-            const result = outcome.value;
-            if (result.source !== undefined) {
-              yield { event: "source", data: result.source };
-            }
-            messages.push({
-              role: "tool",
-              tool_call_id: toolCall.id,
-              content: result.content,
-            });
-          }
-          continue;
+          return {
+            kind: "tool_calls",
+            state: executionState(
+              context,
+              messages,
+              input.models,
+              input.modelIndex,
+              input.startedAt,
+            ),
+            toolCalls,
+          };
         }
-        if (state.content.length > 0) {
-          messages.push({ role: "assistant", content: state.content });
+        if (roundState.content.length > 0) {
+          messages.push({ role: "assistant", content: roundState.content });
         }
-        yield { event: "done", data: {} };
-        return;
+        return {
+          kind: "done",
+          state: executionState(
+            context,
+            messages,
+            input.models,
+            input.modelIndex,
+            input.startedAt,
+          ),
+        };
+      } catch (error) {
+        const nextState = executionState(
+          context,
+          messages,
+          input.models,
+          input.modelIndex,
+          input.startedAt,
+        );
+        if (isRetryableModelError(error)) {
+          await warnSafely("query.stream_retryable", {
+            correlation_id: context.correlationId,
+            model,
+            ...logErrorFields(error),
+          });
+          const nextModelIndex = input.modelIndex + 1;
+          if (nextModelIndex < input.models.length) {
+            return { kind: "retryable", state: { ...nextState, modelIndex: nextModelIndex } };
+          }
+        } else {
+          await errorSafely("query.stream_failed", {
+            correlation_id: context.correlationId,
+            model,
+            ...logErrorFields(error),
+          });
+        }
+        return { kind: "failed", state: nextState, error: sanitizedStreamError };
       }
     }
+
+    const executeTool = async (
+      input: QueryExecutionState,
+      toolCall: QueryPreparedToolCall,
+    ): Promise<QueryToolExecutionResult> => {
+      const context = contextFromExecution(input);
+      const messages = cloneMessages(input.messages);
+      context.trace.toolCalls += 1;
+      let result: ToolResult;
+      try {
+        result = await dispatchTool(context, toolCall.name, toolCall.args);
+      } catch (error) {
+        if (error instanceof ToolMiss) {
+          result = { content: error.toolMessage };
+        } else {
+          await errorSafely("query.stream_failed", {
+            correlation_id: context.correlationId,
+            model: context.selectedModel,
+            ...logErrorFields(error),
+          });
+          throw error;
+        }
+      }
+      messages.push({
+        role: "tool",
+        tool_call_id: toolCall.id,
+        content: result.content,
+      });
+      return {
+        state: executionState(
+          context,
+          messages,
+          input.models,
+          input.modelIndex,
+          input.startedAt,
+        ),
+        ...(result.source === undefined ? {} : { source: result.source }),
+      };
+    };
 
     const buildOriginMessages = async (
       context: QueryContext,
@@ -1630,7 +1841,8 @@ export const QueryServiceLive = Layer.effect(
                 correlationId: context.correlationId,
                 model: context.selectedModel,
                 promptHash: context.systemPromptHash,
-              })),
+              })
+              .onConflictDoNothing()),
           );
         } catch (error) {
           await run(
@@ -1660,17 +1872,16 @@ export const QueryServiceLive = Layer.effect(
       );
     };
 
-    async function* runQueryStream(
+    const prepareExecution = async (
       userId: Uuid,
       vaultId: Uuid,
       input: QueryRequest,
       prechecked: QueryPrecheckedContext,
-    ): AsyncGenerator<QueryStreamPayload, void, void> {
+    ): Promise<QueryExecutionState> => {
       const startedAt = Date.now();
-      const correlationId = `q-${randomUUID().replaceAll("-", "").slice(0, 8)}`;
-      let context: QueryContext | undefined;
+      const correlationId = `q-${randomUUID()}`;
       try {
-        context = await setupContext(userId, vaultId, input, correlationId, prechecked);
+        const context = await setupContext(userId, vaultId, input, correlationId, prechecked);
         await run(
           logger.info("query.stream_start", {
             correlation_id: context.correlationId,
@@ -1685,67 +1896,46 @@ export const QueryServiceLive = Layer.effect(
           input.model !== undefined && input.model.length > 0
             ? input.model
             : appConfig.queryModel;
-        const fallbackModels = [
+        const models = [
           requestedModel,
           ...appConfig.queryFallbackModels.filter((model) => model !== requestedModel),
         ];
-        for (const model of fallbackModels) {
-          const messages = cloneMessages(context.baseMessages);
-          try {
-            context.selectedModel = model;
-            let emittedDone = false;
-            for await (const event of streamChatLoop(context, model, messages)) {
-              yield event;
-              emittedDone ||= event.event === "done";
-            }
-            if (emittedDone) {
-              await addFallbackGenerationCosts(context);
-            }
-            return;
-          } catch (error) {
-            if (isRetryableModelError(error)) {
-              await warnSafely("query.stream_retryable", {
-                correlation_id: context.correlationId,
-                model,
-                ...logErrorFields(error),
-              });
-              continue;
-            }
-            await errorSafely("query.stream_failed", {
-              correlation_id: context.correlationId,
-              model,
-              ...logErrorFields(error),
-            });
-            yield { event: "error", data: { message: sanitizedStreamError } };
-            return;
-          }
-        }
-        yield { event: "error", data: { message: sanitizedStreamError } };
+        return executionState(context, context.baseMessages, models, 0, startedAt);
       } catch (error) {
         await errorSafely("query.stream_setup_failed", {
-          correlation_id: context?.correlationId ?? correlationId,
+          correlation_id: correlationId,
           vault_id: vaultId,
           user_id: userId,
           ...logErrorFields(error),
         });
-        yield { event: "error", data: { message: sanitizedStreamError } };
-      } finally {
+        throw error;
+      }
+    };
+
+    return {
+      prepareExecution,
+      modelAttempt: executeModelAttempt,
+      runTool: executeTool,
+      finalizeExecution: async (state) => {
+        const context = contextFromExecution(state);
         try {
-          await finalize(context, startedAt, correlationId, userId, vaultId);
+          await addFallbackGenerationCosts(context);
+          await finalize(
+            context,
+            state.startedAt,
+            state.correlationId,
+            state.userId,
+            state.vaultId,
+          );
         } catch (error) {
           await errorSafely("query.stream_finalize_failed", {
-            correlation_id: context?.correlationId ?? correlationId,
-            vault_id: vaultId,
-            user_id: userId,
+            correlation_id: state.correlationId,
+            vault_id: state.vaultId,
+            user_id: state.userId,
             ...logErrorFields(error),
           });
         }
-      }
-    }
-
-    return {
-      streamEvents: (userId, vaultId, input, prechecked) =>
-        runQueryStream(userId, vaultId, input, prechecked),
+      },
       draftHint: (_userId, description) =>
         Effect.gen(function* () {
           if (!languageModel.hasApiKey) {

@@ -226,6 +226,9 @@ export const llmCostEvents = pgTable(
       foreignColumns: [vaults.id],
       name: "llm_cost_events_vault_id_fkey",
     }).onDelete("cascade"),
+    uniqueIndex("uq_llm_cost_events_query_correlation")
+      .on(table.eventType, table.correlationId)
+      .where(sql`${table.eventType} = 'query.stream' AND ${table.correlationId} IS NOT NULL`),
   ],
 );
 
@@ -522,6 +525,10 @@ export const replies = pgTable(
     request: jsonb("request").notNull(),
     dispatchedAt: timestamptz("dispatched_at"),
     dispatchedTaskId: uuid("dispatched_task_id"),
+    generationCursor: integer("generation_cursor").default(0).notNull(),
+    activeGenerationStep: integer("active_generation_step"),
+    activeGenerationKind: text("active_generation_kind"),
+    activeGenerationKey: text("active_generation_key"),
     createdAt: timestamptz("created_at").defaultNow().notNull(),
     updatedAt: timestamptz("updated_at").defaultNow().notNull(),
   },
@@ -549,6 +556,10 @@ export const replies = pgTable(
       .where(sql`${table.status} = 'running' AND ${table.dispatchedAt} IS NULL`),
     check("replies_kind_check", sql`${table.kind} IN ('exchange', 'btw', 'ephemeral')`),
     check("replies_status_check", sql`${table.status} IN ('running', 'completed', 'failed')`),
+    check(
+      "replies_active_generation_check",
+      sql`(${table.activeGenerationStep} IS NULL AND ${table.activeGenerationKind} IS NULL AND ${table.activeGenerationKey} IS NULL) OR (${table.activeGenerationStep} IS NOT NULL AND ${table.activeGenerationKind} IN ('model', 'tool') AND ${table.activeGenerationKey} IS NOT NULL)`,
+    ),
   ],
 );
 

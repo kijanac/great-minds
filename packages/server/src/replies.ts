@@ -12,6 +12,7 @@ import {
   type ReplySnapshot,
   ReplySnapshot as ReplySnapshotSchema,
   type ReplySource,
+  ReplySource as ReplySourceSchema,
   type ReplySseEvent,
   ServiceUnavailable,
   type SessionId,
@@ -29,19 +30,69 @@ import * as WorkflowEngine from "effect/unstable/workflow/WorkflowEngine";
 import { ClockService } from "./clock.ts";
 import { AppConfig } from "./config.ts";
 import { StructuredLogger } from "./logging.ts";
-import { type QueryPrecheckedContext, QueryService } from "./query.ts";
+import {
+  QueryExecutionState,
+  type QueryPrecheckedContext,
+  type QueryPreparedToolCall as QueryPreparedToolCallType,
+  QueryPreparedToolCall,
+  QueryService,
+} from "./query.ts";
 import { formatUuid7, RandomBytesService } from "./random.ts";
 import { SessionsService } from "./sessions.ts";
+import { ContentStorage, vaultOwner } from "./storage.ts";
 import { VaultAccessService } from "./vaults.ts";
 
 const terminalStatuses = new Set(["completed", "failed"]);
 const sanitizedReplyError = "Something went wrong while answering. Try again in a minute.";
+const ambiguousReplyError =
+  "Reply interrupted before an external response could be saved. It was not retried automatically.";
 const flushIntervalMs = 125;
 
 const decodeCreateReply = Schema.decodeUnknownEffect(CreateReplyRequestSchema);
 const decodeReplySnapshot = Schema.decodeUnknownSync(ReplySnapshotSchema);
 const decodeSessionId = Schema.decodeUnknownSync(SessionIdSchema);
 const decodeUuid = Schema.decodeUnknownSync(UuidSchema);
+
+const ReplyStepControl = Schema.Struct({
+  cursor: Schema.Number,
+  outcome: Schema.Literals(["ready", "retryable", "tool_calls", "done", "failed"] as const),
+  error: Schema.NullOr(Schema.String),
+});
+type ReplyStepControl = typeof ReplyStepControl.Type;
+
+const ReplyAccumulator = Schema.Struct({
+  answer: Schema.String,
+  sources: Schema.Array(ReplySourceSchema),
+  pendingCalls: Schema.Array(
+    Schema.Struct({ callId: Schema.String, index: Schema.NullOr(Schema.Number) }),
+  ),
+  clearOnNextToken: Schema.Boolean,
+  replacementSlot: Schema.NullOr(Schema.Number),
+});
+type ReplyAccumulator = typeof ReplyAccumulator.Type;
+
+type MutableReplyAccumulator = {
+  answer: string;
+  sources: ReplySource[];
+  pendingCalls: Map<string, number | null>;
+  clearOnNextToken: boolean;
+  replacementSlot?: number;
+};
+
+const ReplyCheckpoint = Schema.Struct({
+  version: Schema.Literal(1),
+  cursor: Schema.Number,
+  query: QueryExecutionState,
+  accumulator: ReplyAccumulator,
+  pendingTools: Schema.Array(QueryPreparedToolCall),
+  nextToolIndex: Schema.Number,
+  lastControl: ReplyStepControl,
+});
+type ReplyCheckpoint = typeof ReplyCheckpoint.Type;
+
+const decodeReplyCheckpoint = Schema.decodeUnknownSync(ReplyCheckpoint);
+const decodeReplySources = Schema.decodeUnknownSync(Schema.Array(ReplySourceSchema));
+const checkpointPath = (replyId: Uuid) => `operations/replies/${replyId}.json`;
 
 const sse = (event: string, data: unknown): ReplySseEvent => ({
   event,
@@ -182,7 +233,14 @@ type RepliesServiceShape = {
     vaultId: Uuid,
     replyId: Uuid,
   ) => Effect.Effect<Stream.Stream<ReplySseEvent>, Forbidden | NotFound>;
-  readonly generate: (replyId: Uuid) => Effect.Effect<void>;
+  readonly prepareStep: (replyId: Uuid) => Effect.Effect<ReplyStepControl>;
+  readonly modelStep: (replyId: Uuid, cursor: number) => Effect.Effect<ReplyStepControl>;
+  readonly toolStep: (replyId: Uuid, cursor: number) => Effect.Effect<ReplyStepControl>;
+  readonly finalizeStep: (
+    replyId: Uuid,
+    outcome: "done" | "failed",
+    error: string | null,
+  ) => Effect.Effect<void>;
   readonly reconcileOnce: () => Effect.Effect<number>;
 };
 
@@ -201,6 +259,7 @@ export const RepliesServiceLive = Layer.effect(
     const query = yield* QueryService;
     const randomBytes = yield* RandomBytesService;
     const sessions = yield* SessionsService;
+    const storage = yield* ContentStorage;
     const workflowEngine = yield* WorkflowEngine.WorkflowEngine;
     const pollIntervalMs = Option.isSome(config.goldensClock) ? 1 : 100;
 
@@ -283,6 +342,9 @@ export const RepliesServiceLive = Layer.effect(
           ...(answer === undefined ? {} : { answer }),
           ...(sources === undefined ? {} : { sources: [...sources] }),
           version: sql`${replies.version} + 1`,
+          activeGenerationStep: null,
+          activeGenerationKind: null,
+          activeGenerationKey: null,
           updatedAt: sql`now()`,
         })
         .where(and(eq(replies.id, replyId), eq(replies.status, "running"))))
@@ -350,16 +412,267 @@ export const RepliesServiceLive = Layer.effect(
             sources: settledSources,
             error: null,
             version: sql`${replies.version} + 1`,
+            activeGenerationStep: null,
+            activeGenerationKind: null,
+            activeGenerationKey: null,
             updatedAt: sql`now()`,
           })
           .where(and(eq(replies.id, row.id), eq(replies.status, "running"))));
       });
 
-    const generate = (replyId: Uuid) =>
+    const readyControl = (cursor: number): ReplyStepControl => ({
+      cursor,
+      outcome: "ready",
+      error: null,
+    });
+
+    const failedControl = (cursor: number, error: string): ReplyStepControl => ({
+      cursor,
+      outcome: "failed",
+      error,
+    });
+
+    const doneControl = (cursor: number): ReplyStepControl => ({
+      cursor,
+      outcome: "done",
+      error: null,
+    });
+
+    const mutableAccumulator = (value: ReplyAccumulator): MutableReplyAccumulator => ({
+      answer: value.answer,
+      sources: [...value.sources],
+      pendingCalls: new Map(value.pendingCalls.map((entry) => [entry.callId, entry.index])),
+      clearOnNextToken: value.clearOnNextToken,
+      ...(value.replacementSlot === null ? {} : { replacementSlot: value.replacementSlot }),
+    });
+
+    const persistedAccumulator = (value: MutableReplyAccumulator): ReplyAccumulator => ({
+      answer: value.answer,
+      sources: [...value.sources],
+      pendingCalls: [...value.pendingCalls].map(([callId, index]) => ({ callId, index })),
+      clearOnNextToken: value.clearOnNextToken,
+      replacementSlot: value.replacementSlot ?? null,
+    });
+
+    const readCheckpoint = (row: typeof replies.$inferSelect) =>
+      storage.readText(vaultOwner(decodeUuid(row.vaultId)), checkpointPath(decodeUuid(row.id))).pipe(
+        Effect.map((content) => decodeReplyCheckpoint(JSON.parse(content))),
+        Effect.catchTag("StorageFileMissing", () => Effect.succeed(undefined)),
+      );
+
+    const writeCheckpoint = (row: typeof replies.$inferSelect, checkpoint: ReplyCheckpoint) =>
+      storage.writeText(
+        vaultOwner(decodeUuid(row.vaultId)),
+        checkpointPath(decodeUuid(row.id)),
+        JSON.stringify(checkpoint),
+      );
+
+    const removeSource = (accumulator: MutableReplyAccumulator, index: number) => {
+      accumulator.sources.splice(index, 1);
+      for (const [callId, pendingIndex] of accumulator.pendingCalls) {
+        if (pendingIndex !== null && pendingIndex > index) {
+          accumulator.pendingCalls.set(callId, pendingIndex - 1);
+        }
+      }
+    };
+
+    const addPendingSource = (
+      accumulator: MutableReplyAccumulator,
+      callId: string,
+      data: QuerySourceData,
+    ) => {
+      if (
+        (data.type === "article" || data.type === "raw") &&
+        accumulator.sources.some(
+          (source) =>
+            source.label === data.path &&
+            (source.type === "article" || source.type === "raw"),
+        )
+      ) {
+        accumulator.pendingCalls.set(callId, null);
+      } else {
+        accumulator.pendingCalls.set(callId, accumulator.sources.length);
+        accumulator.sources.push(sourceRef(data, accumulator.answer, true));
+        accumulator.clearOnNextToken = true;
+      }
+    };
+
+    const settlePendingSource = (accumulator: MutableReplyAccumulator, callId: string) => {
+      const pendingIndex = accumulator.pendingCalls.get(callId);
+      accumulator.pendingCalls.delete(callId);
+      if (pendingIndex !== undefined && pendingIndex !== null) {
+        accumulator.replacementSlot = pendingIndex;
+      }
+    };
+
+    const addResolvedSource = (
+      accumulator: MutableReplyAccumulator,
+      data: QuerySourceData,
+    ) => {
+      const pendingIndex = accumulator.replacementSlot;
+      accumulator.replacementSlot = undefined;
+      if (data.type === "article" || data.type === "raw") {
+        if (pendingIndex !== undefined) {
+          removeSource(accumulator, pendingIndex);
+        }
+        const isExpand = data.start !== undefined && data.end !== undefined;
+        const range = isExpand ? { start: data.start, end: data.end } : null;
+        const index = accumulator.sources.findIndex(
+          (source) =>
+            source.label === data.path &&
+            (source.type === "article" || source.type === "raw"),
+        );
+        if (index >= 0) {
+          const previous = accumulator.sources[index];
+          accumulator.sources[index] = {
+            ...previous,
+            ranges: range ? [...(previous.ranges ?? []), range] : previous.ranges,
+            full: previous.full || !isExpand,
+          };
+        } else {
+          accumulator.sources.push(sourceRef(data, accumulator.answer));
+        }
+        accumulator.clearOnNextToken = true;
+        return;
+      }
+
+      if (data.type === "links") {
+        const existingIndex = accumulator.sources.findIndex(
+          (source, index) =>
+            index !== pendingIndex && source.type === "links" && source.label === data.path,
+        );
+        if (existingIndex >= 0) {
+          if (pendingIndex !== undefined) {
+            removeSource(accumulator, pendingIndex);
+          }
+          return;
+        }
+      }
+
+      const resolved = sourceRef(data, accumulator.answer);
+      if (pendingIndex === undefined) {
+        accumulator.sources.push(resolved);
+      } else {
+        accumulator.sources.splice(pendingIndex, 1, resolved);
+      }
+      accumulator.clearOnNextToken = true;
+    };
+
+    const flushAccumulator = (replyId: Uuid, accumulator: MutableReplyAccumulator) =>
+      updateSnapshot(replyId, accumulator.answer, accumulator.sources);
+
+    const failRunningReply = (replyId: Uuid, error: string) =>
       Effect.gen(function* () {
         const row = yield* readReplyById(replyId);
-        if (row === undefined || row.status !== "running") {
-          return;
+        if (row === undefined || row.status !== "running") return;
+        const sources = decodeReplySources(row.sources).filter((source) => source.pending !== true);
+        yield* markFailed(replyId, error, row.answer, sources);
+      });
+
+    const stepFailure = (replyId: Uuid, cursor: number, cause: Cause.Cause<unknown>) => {
+      if (cause.reasons.length > 0 && cause.reasons.every(Cause.isInterruptReason)) {
+        return Effect.interrupt;
+      }
+      return logger
+        .error("reply_generation_step_failed", {
+          reply_id: replyId,
+          generation_cursor: cursor,
+          error_message: Cause.pretty(cause),
+        })
+        .pipe(
+          Effect.andThen(failRunningReply(replyId, sanitizedReplyError)),
+          Effect.as(failedControl(cursor, sanitizedReplyError)),
+        );
+    };
+
+    const recoverCompletedStep = (
+      row: typeof replies.$inferSelect,
+      checkpoint: ReplyCheckpoint,
+      expectedCursor: number,
+    ) =>
+      Effect.gen(function* () {
+        if (checkpoint.cursor <= expectedCursor) return undefined;
+        yield* db.query((d) => d
+          .update(replies)
+          .set({
+            generationCursor: checkpoint.cursor,
+            activeGenerationStep: null,
+            activeGenerationKind: null,
+            activeGenerationKey: null,
+            updatedAt: sql`now()`,
+          })
+          .where(eq(replies.id, row.id)));
+        return checkpoint.lastControl;
+      });
+
+    const claimExternalStep = (
+      row: typeof replies.$inferSelect,
+      checkpoint: ReplyCheckpoint,
+      expectedCursor: number,
+      kind: "model" | "tool",
+      key: string,
+    ) =>
+      Effect.gen(function* () {
+        const recovered = yield* recoverCompletedStep(row, checkpoint, expectedCursor);
+        if (recovered !== undefined) return recovered;
+        if (checkpoint.cursor !== expectedCursor || row.generationCursor !== expectedCursor) {
+          throw new Error(
+            `Reply ${row.id} cursor mismatch: workflow=${expectedCursor}, database=${row.generationCursor}, checkpoint=${checkpoint.cursor}`,
+          );
+        }
+        if (row.activeGenerationStep !== null) {
+          yield* failRunningReply(decodeUuid(row.id), ambiguousReplyError);
+          return failedControl(expectedCursor, ambiguousReplyError);
+        }
+        const claimed = yield* db.query((d) => d
+          .update(replies)
+          .set({
+            activeGenerationStep: expectedCursor,
+            activeGenerationKind: kind,
+            activeGenerationKey: key,
+            updatedAt: sql`now()`,
+          })
+          .where(and(
+            eq(replies.id, row.id),
+            eq(replies.status, "running"),
+            eq(replies.generationCursor, expectedCursor),
+            isNull(replies.activeGenerationStep),
+          ))
+          .returning({ id: replies.id }));
+        if (claimed.length !== 1) {
+          throw new Error(`Reply ${row.id} generation step ${expectedCursor} was not claimable`);
+        }
+        return undefined;
+      });
+
+    const commitExternalStep = (
+      row: typeof replies.$inferSelect,
+      checkpoint: ReplyCheckpoint,
+    ) =>
+      Effect.gen(function* () {
+        yield* writeCheckpoint(row, checkpoint);
+        yield* db.query((d) => d
+          .update(replies)
+          .set({
+            generationCursor: checkpoint.cursor,
+            activeGenerationStep: null,
+            activeGenerationKind: null,
+            activeGenerationKey: null,
+            updatedAt: sql`now()`,
+          })
+          .where(eq(replies.id, row.id)));
+      });
+
+    const prepareStep = (replyId: Uuid) =>
+      Effect.gen(function* () {
+        const row = yield* readReplyById(replyId);
+        if (row === undefined) return failedControl(0, sanitizedReplyError);
+        const existing = yield* readCheckpoint(row);
+        if (existing !== undefined) return existing.lastControl;
+        if (row.status !== "running") {
+          return row.status === "completed"
+            ? doneControl(row.generationCursor)
+            : failedControl(row.generationCursor, row.error ?? sanitizedReplyError);
         }
         const input = yield* decodeCreateReply(row.request).pipe(Effect.orDie);
         const vaultRows = yield* db.query((d) => d
@@ -370,153 +683,230 @@ export const RepliesServiceLive = Layer.effect(
         const vault = vaultRows[0];
         if (vault === undefined) {
           yield* markFailed(replyId, sanitizedReplyError);
-          return;
+          return failedControl(row.generationCursor, sanitizedReplyError);
         }
-
         const prechecked: QueryPrecheckedContext = { vaultLabel: vault.name };
-        const userId = decodeUuid(row.userId);
-        const vaultId = decodeUuid(row.vaultId);
-        const sources: ReplySource[] = [];
-        const pendingCallIndexes = new Map<string, number | null>();
-        let answer = "";
-        let clearOnNextToken = false;
-        let replacementSlot: number | undefined;
-        let lastFlushAt = 0;
-
-        const removeSource = (index: number) => {
-          sources.splice(index, 1);
-          for (const [callId, pendingIndex] of pendingCallIndexes) {
-            if (pendingIndex !== null && pendingIndex > index) {
-              pendingCallIndexes.set(callId, pendingIndex - 1);
-            }
-          }
-        };
-
-        const addResolvedSource = (data: QuerySourceData, pendingIndex?: number) => {
-          if (data.type === "article" || data.type === "raw") {
-            if (pendingIndex !== undefined) {
-              removeSource(pendingIndex);
-            }
-            const isExpand = data.start !== undefined && data.end !== undefined;
-            const range = isExpand ? { start: data.start, end: data.end } : null;
-            const index = sources.findIndex(
-              (source) =>
-                source.label === data.path &&
-                (source.type === "article" || source.type === "raw"),
-            );
-            if (index >= 0) {
-              const previous = sources[index];
-              sources[index] = {
-                ...previous,
-                ranges: range ? [...(previous.ranges ?? []), range] : previous.ranges,
-                full: previous.full || !isExpand,
-              };
-            } else {
-              sources.push(sourceRef(data, answer));
-            }
-            clearOnNextToken = true;
-            return;
-          }
-
-          if (data.type === "links") {
-            const existingIndex = sources.findIndex(
-              (source, index) =>
-                index !== pendingIndex && source.type === "links" && source.label === data.path,
-            );
-            if (existingIndex >= 0) {
-              if (pendingIndex !== undefined) {
-                removeSource(pendingIndex);
-              }
-              return;
-            }
-          }
-
-          const resolved = sourceRef(data, answer);
-          if (pendingIndex === undefined) {
-            sources.push(resolved);
-          } else {
-            sources.splice(pendingIndex, 1, resolved);
-          }
-          clearOnNextToken = true;
-        };
-
-        const flush = () =>
-          Effect.gen(function* () {
-            yield* updateSnapshot(replyId, answer, sources);
-            lastFlushAt = Date.now();
-          });
-
-        let terminal: "completed" | "failed" | null = null;
-        let failureMessage = sanitizedReplyError;
-        yield* Stream.fromAsyncIterable(
-          query.streamEvents(
-            userId,
-            vaultId,
+        const queryState = yield* Effect.promise(() =>
+          query.prepareExecution(
+            decodeUuid(row.userId),
+            decodeUuid(row.vaultId),
             queryRequest(input),
             prechecked,
           ),
-          (cause) => cause,
-        ).pipe(
-          Stream.runForEach((event) =>
-            Effect.gen(function* () {
-              if (replacementSlot !== undefined && event.event !== "source") {
-                const pendingIndex = replacementSlot;
-                replacementSlot = undefined;
-                removeSource(pendingIndex);
-              }
-
-              if (event.event === "token") {
-                if (clearOnNextToken) {
-                  answer = "";
-                  clearOnNextToken = false;
-                }
-                answer += event.data.text;
-                if (Date.now() - lastFlushAt >= flushIntervalMs) {
-                  yield* flush();
-                }
-              } else if (event.event === "source_pending") {
-                const data = event.data.source;
-                if (
-                  (data.type === "article" || data.type === "raw") &&
-                  sources.some(
-                    (source) =>
-                      source.label === data.path &&
-                      (source.type === "article" || source.type === "raw"),
-                  )
-                ) {
-                  pendingCallIndexes.set(event.data.call_id, null);
-                } else {
-                  pendingCallIndexes.set(event.data.call_id, sources.length);
-                  sources.push(sourceRef(data, answer, true));
-                  clearOnNextToken = true;
-                }
-                yield* flush();
-              } else if (event.event === "source_settled") {
-                const pendingIndex = pendingCallIndexes.get(event.data.call_id);
-                pendingCallIndexes.delete(event.data.call_id);
-                if (pendingIndex !== undefined && pendingIndex !== null) {
-                  replacementSlot = pendingIndex;
-                }
-                yield* flush();
-              } else if (event.event === "source") {
-                const pendingIndex = replacementSlot;
-                replacementSlot = undefined;
-                addResolvedSource(event.data, pendingIndex);
-                yield* flush();
-              } else if (event.event === "done") {
-                terminal = "completed";
-              } else if (event.event === "error") {
-                terminal = "failed";
-                failureMessage = event.data.message;
-              }
-            }),
-          ),
         );
-        if (terminal === "completed") {
-          yield* completeReply(row, input, answer, sources);
+        const control = readyControl(row.generationCursor);
+        const checkpoint: ReplyCheckpoint = {
+          version: 1,
+          cursor: row.generationCursor,
+          query: queryState,
+          accumulator: {
+            answer: "",
+            sources: [],
+            pendingCalls: [],
+            clearOnNextToken: false,
+            replacementSlot: null,
+          },
+          pendingTools: [],
+          nextToolIndex: 0,
+          lastControl: control,
+        };
+        yield* updateSnapshot(replyId, "", []);
+        yield* writeCheckpoint(row, checkpoint);
+        return control;
+      }).pipe(Effect.catchCause((cause) => stepFailure(replyId, 0, cause)));
+
+    const modelStep = (replyId: Uuid, expectedCursor: number) =>
+      Effect.gen(function* () {
+        const row = yield* readReplyById(replyId);
+        if (row === undefined) return failedControl(expectedCursor, sanitizedReplyError);
+        const checkpoint = yield* readCheckpoint(row);
+        if (checkpoint === undefined) {
+          throw new Error(`Reply ${replyId} has no generation checkpoint`);
+        }
+        if (row.status !== "running") {
+          return row.status === "completed"
+            ? doneControl(row.generationCursor)
+            : failedControl(row.generationCursor, row.error ?? sanitizedReplyError);
+        }
+        const claimed = yield* claimExternalStep(
+          row,
+          checkpoint,
+          expectedCursor,
+          "model",
+          `${checkpoint.query.modelIndex}:${checkpoint.query.trace.llmRounds + 1}`,
+        );
+        if (claimed !== undefined) return claimed;
+
+        const accumulator = mutableAccumulator(checkpoint.accumulator);
+        let lastFlushAt = 0;
+        const attempt = query.modelAttempt(checkpoint.query);
+        let result: Awaited<ReturnType<typeof attempt.next>>;
+        while (true) {
+          result = yield* Effect.promise(() => attempt.next());
+          if (result.done === true) break;
+          const event = result.value;
+          if (event.event !== "token") {
+            throw new Error(`Model attempt emitted unexpected ${event.event} event`);
+          }
+          if (accumulator.replacementSlot !== undefined) {
+            removeSource(accumulator, accumulator.replacementSlot);
+            accumulator.replacementSlot = undefined;
+          }
+          if (accumulator.clearOnNextToken) {
+            accumulator.answer = "";
+            accumulator.clearOnNextToken = false;
+          }
+          accumulator.answer += event.data.text;
+          if (Date.now() - lastFlushAt >= flushIntervalMs) {
+            yield* flushAccumulator(replyId, accumulator);
+            lastFlushAt = Date.now();
+          }
+        }
+
+        const outcome = result.value;
+        let control: ReplyStepControl;
+        let pendingTools: readonly QueryPreparedToolCallType[] = [];
+        if (outcome.kind === "tool_calls") {
+          for (const toolCall of outcome.toolCalls) {
+            if (toolCall.pendingSource !== undefined) {
+              addPendingSource(accumulator, toolCall.id, toolCall.pendingSource);
+            }
+          }
+          pendingTools = outcome.toolCalls;
+          control = {
+            cursor: expectedCursor + 1,
+            outcome: "tool_calls",
+            error: null,
+          };
+        } else if (outcome.kind === "retryable") {
+          accumulator.clearOnNextToken = true;
+          control = {
+            cursor: expectedCursor + 1,
+            outcome: "retryable",
+            error: null,
+          };
+        } else if (outcome.kind === "done") {
+          control = {
+            cursor: expectedCursor + 1,
+            outcome: "done",
+            error: null,
+          };
         } else {
-          const settledSources = sources.filter((source) => source.pending !== true);
-          yield* markFailed(replyId, failureMessage, answer, settledSources);
+          control = failedControl(expectedCursor + 1, outcome.error);
+        }
+        yield* flushAccumulator(replyId, accumulator);
+        const nextCheckpoint: ReplyCheckpoint = {
+          version: 1,
+          cursor: expectedCursor + 1,
+          query: outcome.state,
+          accumulator: persistedAccumulator(accumulator),
+          pendingTools,
+          nextToolIndex: 0,
+          lastControl: control,
+        };
+        yield* commitExternalStep(row, nextCheckpoint);
+        return control;
+      }).pipe(Effect.catchCause((cause) => stepFailure(replyId, expectedCursor, cause)));
+
+    const toolStep = (replyId: Uuid, expectedCursor: number) =>
+      Effect.gen(function* () {
+        const row = yield* readReplyById(replyId);
+        if (row === undefined) return failedControl(expectedCursor, sanitizedReplyError);
+        const checkpoint = yield* readCheckpoint(row);
+        if (checkpoint === undefined) {
+          throw new Error(`Reply ${replyId} has no generation checkpoint`);
+        }
+        if (row.status !== "running") {
+          return failedControl(row.generationCursor, row.error ?? sanitizedReplyError);
+        }
+        const toolCall = checkpoint.pendingTools[checkpoint.nextToolIndex];
+        if (toolCall === undefined) {
+          throw new Error(`Reply ${replyId} has no pending tool at ${checkpoint.nextToolIndex}`);
+        }
+        const claimed = yield* claimExternalStep(
+          row,
+          checkpoint,
+          expectedCursor,
+          "tool",
+          toolCall.id,
+        );
+        if (claimed !== undefined) return claimed;
+
+        const accumulator = mutableAccumulator(checkpoint.accumulator);
+        const result = yield* Effect.promise(() => query.runTool(checkpoint.query, toolCall));
+        if (toolCall.pendingSource !== undefined) {
+          settlePendingSource(accumulator, toolCall.id);
+        }
+        if (result.source !== undefined) {
+          addResolvedSource(accumulator, result.source);
+        } else if (accumulator.replacementSlot !== undefined) {
+          removeSource(accumulator, accumulator.replacementSlot);
+          accumulator.replacementSlot = undefined;
+        }
+        yield* flushAccumulator(replyId, accumulator);
+
+        const nextToolIndex = checkpoint.nextToolIndex + 1;
+        const remaining = checkpoint.pendingTools.length - nextToolIndex;
+        const control: ReplyStepControl =
+          remaining > 0
+            ? {
+                cursor: expectedCursor + 1,
+                outcome: "tool_calls",
+                error: null,
+              }
+            : readyControl(expectedCursor + 1);
+        const nextCheckpoint: ReplyCheckpoint = {
+          version: 1,
+          cursor: expectedCursor + 1,
+          query: result.state,
+          accumulator: persistedAccumulator(accumulator),
+          pendingTools: remaining > 0 ? checkpoint.pendingTools : [],
+          nextToolIndex: remaining > 0 ? nextToolIndex : 0,
+          lastControl: control,
+        };
+        yield* commitExternalStep(row, nextCheckpoint);
+        return control;
+      }).pipe(Effect.catchCause((cause) => stepFailure(replyId, expectedCursor, cause)));
+
+    const finalizeStep = (
+      replyId: Uuid,
+      outcome: "done" | "failed",
+      error: string | null,
+    ) =>
+      Effect.gen(function* () {
+        const row = yield* readReplyById(replyId);
+        if (row === undefined) return;
+        const checkpoint = yield* readCheckpoint(row);
+        if (checkpoint !== undefined) {
+          yield* Effect.promise(() => query.finalizeExecution(checkpoint.query));
+        }
+        yield* storage
+          .deletePath(vaultOwner(decodeUuid(row.vaultId)), checkpointPath(replyId))
+          .pipe(
+            Effect.catchCause((cause) =>
+              logger.warn("reply_checkpoint_cleanup_failed", {
+                reply_id: replyId,
+                error_message: Cause.pretty(cause),
+              }),
+            ),
+          );
+        if (row.status === "running") {
+          const input = yield* decodeCreateReply(row.request).pipe(Effect.orDie);
+          const accumulator =
+            checkpoint === undefined
+              ? { answer: row.answer, sources: decodeReplySources(row.sources) }
+              : checkpoint.accumulator;
+          const settledSources = accumulator.sources.filter((source) => source.pending !== true);
+          if (outcome === "done") {
+            yield* completeReply(row, input, accumulator.answer, settledSources);
+          } else {
+            yield* markFailed(
+              replyId,
+              error ?? sanitizedReplyError,
+              accumulator.answer,
+              settledSources,
+            );
+          }
         }
       }).pipe(
         Effect.catchCause((cause) => {
@@ -524,11 +914,11 @@ export const RepliesServiceLive = Layer.effect(
             return Effect.interrupt;
           }
           return logger
-            .error("reply_generation_failed", {
+            .error("reply_generation_finalize_failed", {
               reply_id: replyId,
               error_message: Cause.pretty(cause),
             })
-            .pipe(Effect.andThen(markFailed(replyId, sanitizedReplyError)));
+            .pipe(Effect.andThen(failRunningReply(replyId, sanitizedReplyError)));
         }),
       );
 
@@ -649,7 +1039,10 @@ export const RepliesServiceLive = Layer.effect(
 
           return replySseStream(events());
         }),
-      generate,
+      prepareStep,
+      modelStep,
+      toolStep,
+      finalizeStep,
       reconcileOnce: () =>
         Effect.gen(function* () {
           const rows = yield* db.query((d) => d
@@ -670,10 +1063,37 @@ export const RepliesServiceLive = Layer.effect(
 );
 
 export const ReplyWorkflowLive = ReplyWorkflow.toLayer((payload) =>
-  Activity.make({
-    name: "reply-generate",
-    success: Schema.Void,
-    execute: Effect.flatMap(RepliesService, (service) => service.generate(payload.replyId)),
+  Effect.gen(function* () {
+    const service = yield* RepliesService;
+    let control = yield* Activity.make({
+      name: "reply-prepare",
+      success: ReplyStepControl,
+      execute: service.prepareStep(payload.replyId),
+    });
+
+    while (control.outcome !== "done" && control.outcome !== "failed") {
+      if (control.outcome === "tool_calls") {
+        const cursor = control.cursor;
+        control = yield* Activity.make({
+          name: `reply-tool-turn-${cursor}`,
+          success: ReplyStepControl,
+          execute: service.toolStep(payload.replyId, cursor),
+        });
+      } else {
+        const cursor = control.cursor;
+        control = yield* Activity.make({
+          name: `reply-model-turn-${cursor}`,
+          success: ReplyStepControl,
+          execute: service.modelStep(payload.replyId, cursor),
+        });
+      }
+    }
+
+    yield* Activity.make({
+      name: "reply-finalize",
+      success: Schema.Void,
+      execute: service.finalizeStep(payload.replyId, control.outcome, control.error),
+    });
   }),
 );
 

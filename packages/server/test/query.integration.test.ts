@@ -650,7 +650,13 @@ describe("query stream", () => {
           .pipe(Effect.orDie);
       }),
     );
-    expect(replyRows[0]?.dispatchedTaskId).toBe(identifiers.reply_id);
+    expect(replyRows[0]).toMatchObject({
+      dispatchedTaskId: identifiers.reply_id,
+      generationCursor: 1,
+      activeGenerationStep: null,
+      activeGenerationKind: null,
+      activeGenerationKey: null,
+    });
     expect(replyRows[0]?.dispatchedAt).not.toBeNull();
 
     const completedEvents = await readSessionEvents(identifiers.session_id);
@@ -971,6 +977,8 @@ describe("query stream", () => {
     const systemMessage = language.streamCalls[0]?.messages[0];
     if (typeof systemMessage?.content !== "string") throw new Error("system prompt missing");
     const systemPromptHash = promptContentHash(systemMessage.content);
+    const replyId = snapshots.at(-1)?.reply_id;
+    if (replyId === undefined) throw new Error("reply id missing");
     const recorded = await runDb(
       Effect.gen(function* () {
         const db = yield* Database;
@@ -978,6 +986,8 @@ describe("query stream", () => {
           events: yield* db.query((d) => d.select().from(llmCostEvents)).pipe(Effect.orDie),
           prompts: yield* db.query((d) =>
             d.select().from(prompts).where(eq(prompts.hash, systemPromptHash))).pipe(Effect.orDie),
+          reply: yield* db.query((d) => d.select().from(replies).where(eq(replies.id, replyId)))
+            .pipe(Effect.orDie),
         };
       }),
     );
@@ -991,6 +1001,19 @@ describe("query stream", () => {
     expect(recorded.prompts).toEqual([
       expect.objectContaining({ hash: systemPromptHash, content: systemMessage.content }),
     ]);
+    expect(recorded.reply[0]).toMatchObject({
+      status: "completed",
+      generationCursor: 11,
+      activeGenerationStep: null,
+      activeGenerationKind: null,
+      activeGenerationKey: null,
+    });
+    await expect(
+      readFile(
+        join(currentState().storageRoot, "vaults", id.vault, "operations", "replies", `${replyId}.json`),
+        "utf8",
+      ),
+    ).rejects.toMatchObject({ code: "ENOENT" });
     expect(promptContentHash(recorded.prompts[0]!.content)).toBe(recorded.prompts[0]!.hash);
     expect(costs.lookups).toEqual([]);
   });
