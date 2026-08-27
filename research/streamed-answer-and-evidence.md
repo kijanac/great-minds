@@ -166,7 +166,7 @@ A non-HTTP tail exception that escapes retry also marks the client exchange non-
 
 ## Open questions and verification
 
-- A failed reply with partial text hides its stored error because the answer branch wins. This should be treated as a bug: the user needs a visible **interrupted** status even when partial prose remains.
+- Post-baseline B-10 fix: Great Minds `a918301` presents a status announcement before failed partial prose: **reply interrupted — partial answer below may be incomplete — {sanitized error}**. The prose and settled evidence remain available, but the exchange cannot be mistaken for clean completion or promoted as a source. Visible main and BTW terminal-snapshot checks confirmed the warning precedes the retained answer.
 - Verify the visual and screen-reader behavior of full answer-string replacement, the streaming cursor, evidence disclosure text, and pulsing pending cards. No explicit live-region semantics are present.
 - Verify scroll behavior on long streamed answers. The session thread has no explicit follow-to-bottom policy, so tokens may continue below the viewport without a “jump to latest” affordance.
 - Verify panel error handling for forbidden, transient network, invalid range, and deleted source. They all appear to collapse to **Not found**, which can misstate a retryable failure.

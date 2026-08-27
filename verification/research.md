@@ -46,6 +46,8 @@ Not checkable by hand:
 | STREAM-14 | P2 | mouse | Evidence paths are live rather than frozen ([Open questions](../research/streamed-answer-and-evidence.md#open-questions-and-verification)). | Complete answer/card; then edit/delete source. | 1. Reopen old session/card after target change. | Card loads changed body or Not found; no captured answer-time copy. | — |
 | STREAM-15 | P2 | screen reader | Dynamic full-answer/evidence updates have usable announcements ([Open questions](../research/streamed-answer-and-evidence.md#open-questions-and-verification)). | Slow sourced reply. | 1. Listen from submit through finish. | Record whether changes/terminal state are silent or excessively reread; no explicit live region is expected in DOM. | — |
 
+Post-baseline B-10 recheck: at Great Minds `a918301`, deterministic failed reply snapshots carried nonempty partial prose plus the sanitized terminal error. The visible main session put **reply interrupted — partial answer below may be incomplete** before the retained paragraph and exposed no **save as source** action. A second visible session showed the same warning before retained prose inside an expanded BTW card, with its recovery input still available. Automated model coverage emits a token and then throws, proving the final SSE snapshot remains `failed` without losing the token or exposing provider detail. Historical `STREAM-10`, `BTW-10`, `PROMOTE-01`, and `PROMOTE-07` Result cells remain unchanged because they describe the pinned `c8c9e57` baseline.
+
 Not checkable by hand:
 
 - Whether historical evidence should be frozen/captured is a product call; STREAM-14 establishes current live-reference behavior.

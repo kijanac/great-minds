@@ -17,7 +17,7 @@ The drafting pass raised 50 deduplicated items: 16 high, 30 medium, and 4 low. P
 | B-07 | Different URL sources with the same path stem overwrite one another | high | source ingest | resolved | — |
 | B-08 | Direct file ingest discards folders and overwrites same-base files | high | source ingest | resolved | — |
 | B-09 | File review and staged ingest can silently omit files counted as selected | high | source ingest | resolved | — |
-| B-10 | A failed reply with partial prose looks successfully completed | high | research | fix | — |
+| B-10 | A failed reply with partial prose looks successfully completed | high | research | resolved | — |
 | B-11 | A queued cancelled/failed run can display Knowledge base updated | high | pipeline | resolved | — |
 | B-12 | URL launch cannot reconnect, reloads duplicate work, and Retry does not retry the URL | high | URL ingest | resolved | — |
 | B-13 | A share silently expands to future private session turns or reference notes | high | sharing | product call | — |
@@ -167,7 +167,8 @@ The drafting pass raised 50 deduplicated items: 16 high, 30 medium, and 4 low. P
 - **Reproduce:** Use a provider fixture that emits one paragraph then error for main and BTW turns.
 - **Why (from the code):** `web/src/lib/components/session-thread.svelte:147-166` and `web/src/lib/components/btw-thread.svelte:146-168` render interruption only when answer is empty; `packages/server/src/replies.ts:239-258, 486-495` persists error and partial answer.
 - **Severity:** `high`. Users can trust incomplete/failed research as final.
-- **Decision needed:** `fix`. Render terminal status independently of answer presence and prevent promotion/share ambiguity.
+- **Decision needed:** `resolved`. Render interruption status before retained partial prose, explain that the answer may be incomplete, preserve the sanitized error, and do not offer failed partial exchanges for source promotion.
+- **Status:** `fixed` by Great Minds commit `a918301`. A deterministic model fixture now emits one answer token and then throws; the terminal SSE snapshot retains that prose with `status=failed` and a sanitized error. Visible seeded terminal snapshots confirmed both main and BTW replies render **reply interrupted — partial answer below may be incomplete** before the prose. The main failed exchange had no **save as source** action; completed main exchanges remain promotable. The warning is rendered with `role=status`; screen-reader behavior remains unverified.
 - **Raised by:** [session model](foundations/research-session-model.md#open-questions-and-verification), [streaming](research/streamed-answer-and-evidence.md#open-questions-and-verification), [BTW](research/btw-threads.md#open-questions-and-verification).
 
 ### B-11: A queued cancelled/failed run can display Knowledge base updated
