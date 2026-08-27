@@ -1,6 +1,6 @@
 # Durable operations
 
-Great Minds uses one execution model for work that must survive the originating request or process: a durable product record is committed first, then an Effect workflow executes idempotent activities. Product tables are the user-visible source of truth and dispatch outbox. Effect's `cluster_*` journal is execution machinery, not a replacement for product state.
+Great Minds commits durable product state before work that must survive the originating request or process. Multi-step operations then use Effect workflows with idempotent activities. A single idempotent cleanup side effect may instead use a persisted outbox and maintenance reconciler. Product tables are the user-visible source of truth and dispatch outbox; Effect's `cluster_*` journal is execution machinery, not a replacement for product state.
 
 ## Managed operations
 
@@ -10,8 +10,9 @@ Great Minds uses one execution model for work that must survive the originating 
 | vault compile | `compile_intents`, `pipeline_runs` | `CompileTask` | compile intent ID |
 | URL ingest | `url_ingest_requests`, `pipeline_runs` | `UrlIngest` | pipeline run ID |
 | research reply | `replies` (`request`, status, snapshots, dispatch metadata, generation cursor/claim) | `ReplyGeneration` | reply ID |
+| source deletion | `source_deletion_outbox` | maintenance reconciler | source ID |
 
-Every acceptance path commits enough input to redispatch work before it asks the workflow engine to execute. Startup/periodic reconcilers enqueue accepted rows whose dispatch acknowledgement was lost. Repeated execution is safe because workflow idempotency keys are stable and activities use deterministic storage keys or guarded upserts.
+Every workflow acceptance path commits enough input to redispatch work before it asks the workflow engine to execute. Startup/periodic reconcilers enqueue accepted rows whose dispatch acknowledgement was lost. Repeated execution is safe because workflow idempotency keys are stable and activities use deterministic storage keys or guarded upserts.
 
 ## Boundaries
 
@@ -19,6 +20,7 @@ Every acceptance path commits enough input to redispatch work before it asks the
 - URL ingest has no browser-byte boundary. The API returns its persisted run immediately, while fetch, conversion, source persistence, and compile intent creation continue in `UrlIngest`.
 - Reply generation persists the complete request before dispatch. Reply snapshots remain the SSE/read model. `ReplyGeneration` journals a compact cursor after separate prepare, model-attempt, tool-call, and finalize activities; the full model transcript and tool outputs live temporarily at `operations/replies/{replyId}.json` in vault object storage and are removed before terminal state is committed.
 - Cancellation first commits terminal product state, then interrupts the workflow. Activities guard before side effects because interruption is cooperative.
+- Source deletion atomically records the source ID, vault, and storage path while removing the database graph. The object delete is idempotent and runs best-effort immediately; a startup/periodic reconciler repeats any unfinished cleanup. Storage failure therefore leaves an operator-visible outbox row rather than failing or resurrecting the user-visible deletion. Deletion deliberately creates no compile intent.
 - Large source bodies, uploads, provider transcripts, and tool outputs stay in object storage. Workflow payloads and journal results contain identifiers, cursors, and compact decisions rather than response bodies.
 
 ## Retry semantics
@@ -29,6 +31,6 @@ A user-requested retry creates a new operation ID. In particular, retrying a fai
 
 ## Work that remains outside workflows
 
-Ordinary reads and single-database CRUD do not need workflow overhead. Local/R2 lifecycle cleanup remains an idempotent maintenance loop. Browser-only review, hashing, and exact-byte reselection remain client/transport concerns.
+Ordinary reads and single-database CRUD do not need workflow overhead. Local/R2 lifecycle cleanup—including the source-deletion outbox—remains an idempotent maintenance loop. Browser-only review, hashing, and exact-byte reselection remain client/transport concerns.
 
-Cross-system mutations should be promoted to this model only when partial completion is not safely convergent. The main remaining audit target is source deletion: database graph removal followed by object deletion can leave a recoverable orphan or resurrectable file if storage deletion fails. Proposal approval and reference promotion are currently retry-safe through stable source IDs and upserts, but should be reevaluated if their product contract becomes asynchronous or cancellable.
+Cross-system mutations should be promoted to workflows only when partial completion is not safely convergent through a small persisted outbox and idempotent side effect. Proposal approval and reference promotion are currently retry-safe through stable source IDs and upserts, but should be reevaluated if their product contract becomes asynchronous or cancellable.

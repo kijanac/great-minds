@@ -618,6 +618,30 @@ export const sourceDocuments = pgTable(
   ],
 );
 
+export const sourceDeletionOutbox = pgTable(
+  "source_deletion_outbox",
+  {
+    sourceId: uuid("source_id").primaryKey(),
+    vaultId: uuid("vault_id").notNull(),
+    filePath: text("file_path").notNull(),
+    attemptCount: integer("attempt_count").default(0).notNull(),
+    lastAttemptAt: timestamptz("last_attempt_at"),
+    completedAt: timestamptz("completed_at"),
+    createdAt: timestamptz("created_at").defaultNow().notNull(),
+    updatedAt: timestamptz("updated_at").defaultNow().notNull(),
+  },
+  (table) => [
+    foreignKey({
+      columns: [table.vaultId],
+      foreignColumns: [vaults.id],
+      name: "source_deletion_outbox_vault_id_fkey",
+    }).onDelete("cascade"),
+    index("ix_source_deletion_outbox_pending")
+      .on(table.createdAt)
+      .where(sql`${table.completedAt} IS NULL`),
+  ],
+);
+
 export const userDocuments = pgTable(
   "user_documents",
   {

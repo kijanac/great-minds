@@ -16,6 +16,7 @@ import {
   searchIndex,
   sessions,
   shares,
+  sourceDeletionOutbox,
   sourceDocuments,
   sourceProposals,
   tasks,
@@ -43,6 +44,7 @@ import { makeTestMailer } from "../src/mailer.ts";
 import { parseFrontmatter } from "../src/markdown.ts";
 import { makeTestRandomBytes } from "../src/random.ts";
 import { startServer } from "../src/server.ts";
+import { SourceDocumentsService } from "../src/source-documents.ts";
 import { sourceIdForKey } from "../src/source-identity.ts";
 import { TokenService } from "../src/tokens.ts";
 import { UrlIngestService } from "../src/url-ingest.ts";
@@ -88,6 +90,7 @@ type TestServices =
   | Database
   | ClockService
   | FileIngestBatches
+  | SourceDocumentsService
   | StructuredLogger
   | TokenService
   | UrlIngestService;
@@ -937,6 +940,19 @@ describe("M3.1 write endpoint integration", () => {
     expect(await countTable(searchIndex)).toBe(0);
     expect(await vaultFileExists(id.vault, "raw/books/capital.md")).toBe(false);
     expect(await countTable(compileIntents)).toBe(0);
+    const deletionRows = await runDb(
+      Effect.gen(function* () {
+        const db = yield* Database;
+        return yield* db.query((d) => d
+          .select()
+          .from(sourceDeletionOutbox)
+          .where(eq(sourceDeletionOutbox.sourceId, id.source)))
+          .pipe(Effect.orDie);
+      }),
+    );
+    expect(deletionRows).toHaveLength(1);
+    expect(deletionRows[0]).toMatchObject({ attemptCount: 1 });
+    expect(deletionRows[0]?.completedAt).toBeInstanceOf(Date);
 
     const missing = await api(
       "DELETE",
@@ -944,6 +960,68 @@ describe("M3.1 write endpoint integration", () => {
       freshAliceToken,
     );
     expect(missing.status).toBe(404);
+  });
+
+  it("commits source deletion and retries idempotent storage cleanup from its outbox", async () => {
+    const { aliceToken } = currentFixture();
+    await seedSourceGraph();
+    const sourcePath = join(
+      currentState().storageRoot,
+      "vaults",
+      id.vault,
+      "raw/books/capital.md",
+    );
+    await rm(sourcePath);
+    await mkdir(sourcePath);
+
+    const deleted = await api(
+      "DELETE",
+      `/vaults/${id.vault}/raw/sources/${id.source}`,
+      aliceToken,
+    );
+    expect(deleted.status).toBe(204);
+    expect(await countTable(sourceDocuments)).toBe(0);
+    expect(await countTable(ideas)).toBe(0);
+    expect(await countTable(topicMembership)).toBe(0);
+    expect(await countTable(searchIndex)).toBe(0);
+    expect(await countTable(compileIntents)).toBe(0);
+
+    const pending = await runDb(
+      Effect.gen(function* () {
+        const db = yield* Database;
+        return yield* db.query((d) => d
+          .select()
+          .from(sourceDeletionOutbox)
+          .where(eq(sourceDeletionOutbox.sourceId, id.source)))
+          .pipe(Effect.orDie);
+      }),
+    );
+    expect(pending).toHaveLength(1);
+    expect(pending[0]).toMatchObject({ attemptCount: 1, completedAt: null });
+
+    await rm(sourcePath, { recursive: true });
+    const reconciled = await runDb(
+      Effect.gen(function* () {
+        const sourceDocumentsService = yield* SourceDocumentsService;
+        return yield* sourceDocumentsService.reconcileDeletionsOnce();
+      }),
+    );
+    expect(reconciled).toBe(1);
+
+    const completed = await runDb(
+      Effect.gen(function* () {
+        const db = yield* Database;
+        return yield* db.query((d) => d
+          .select()
+          .from(sourceDeletionOutbox)
+          .where(eq(sourceDeletionOutbox.sourceId, id.source)))
+          .pipe(Effect.orDie);
+      }),
+    );
+    expect(completed).toHaveLength(1);
+    expect(completed[0]).toMatchObject({ attemptCount: 2 });
+    expect(completed[0]?.completedAt).toBeInstanceOf(Date);
+    expect(await vaultFileExists(id.vault, "raw/books/capital.md")).toBe(false);
   });
 
   it("ingests raw markdown with owner guards, frontmatter, hashes, and compile intents", async () => {

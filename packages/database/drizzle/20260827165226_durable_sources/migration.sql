@@ -34,6 +34,17 @@ CREATE TABLE "file_ingest_files" (
 	CONSTRAINT "ck_file_ingest_files_hash_sha256" CHECK ("hash" ~ '^[0-9a-f]{64}$')
 );
 --> statement-breakpoint
+CREATE TABLE "source_deletion_outbox" (
+	"source_id" uuid PRIMARY KEY,
+	"vault_id" uuid NOT NULL,
+	"file_path" text NOT NULL,
+	"attempt_count" integer DEFAULT 0 NOT NULL,
+	"last_attempt_at" timestamp with time zone,
+	"completed_at" timestamp with time zone,
+	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
+	"updated_at" timestamp with time zone DEFAULT now() NOT NULL
+);
+--> statement-breakpoint
 CREATE TABLE "url_ingest_requests" (
 	"id" uuid PRIMARY KEY,
 	"created_by" uuid NOT NULL,
@@ -62,12 +73,14 @@ CREATE INDEX "ix_file_ingest_batches_status_expires_at" ON "file_ingest_batches"
 CREATE UNIQUE INDEX "uq_llm_cost_events_query_correlation" ON "llm_cost_events" ("event_type","correlation_id") WHERE "event_type" = 'query.stream' AND "correlation_id" IS NOT NULL;--> statement-breakpoint
 CREATE INDEX "ix_pipeline_runs_compile_intent_id" ON "pipeline_runs" ("compile_intent_id");--> statement-breakpoint
 CREATE INDEX "ix_replies_pending_dispatch" ON "replies" ("created_at") WHERE "status" = 'running' AND "dispatched_at" IS NULL;--> statement-breakpoint
+CREATE INDEX "ix_source_deletion_outbox_pending" ON "source_deletion_outbox" ("created_at") WHERE "completed_at" IS NULL;--> statement-breakpoint
 CREATE UNIQUE INDEX "uq_source_documents_vault_canonical_url" ON "source_documents" ("vault_id","canonical_url") WHERE "canonical_url" IS NOT NULL;--> statement-breakpoint
 CREATE INDEX "ix_source_proposals_source_id" ON "source_proposals" ("source_id");--> statement-breakpoint
 CREATE INDEX "ix_url_ingest_requests_pending" ON "url_ingest_requests" ("created_at") WHERE "dispatched_at" IS NULL;--> statement-breakpoint
 ALTER TABLE "file_ingest_batches" ADD CONSTRAINT "file_ingest_batches_id_fkey" FOREIGN KEY ("id") REFERENCES "pipeline_runs"("id") ON DELETE CASCADE;--> statement-breakpoint
 ALTER TABLE "file_ingest_batches" ADD CONSTRAINT "file_ingest_batches_created_by_fkey" FOREIGN KEY ("created_by") REFERENCES "users"("id") ON DELETE CASCADE;--> statement-breakpoint
 ALTER TABLE "file_ingest_files" ADD CONSTRAINT "file_ingest_files_batch_id_fkey" FOREIGN KEY ("batch_id") REFERENCES "file_ingest_batches"("id") ON DELETE CASCADE;--> statement-breakpoint
+ALTER TABLE "source_deletion_outbox" ADD CONSTRAINT "source_deletion_outbox_vault_id_fkey" FOREIGN KEY ("vault_id") REFERENCES "vaults"("id") ON DELETE CASCADE;--> statement-breakpoint
 ALTER TABLE "url_ingest_requests" ADD CONSTRAINT "url_ingest_requests_id_fkey" FOREIGN KEY ("id") REFERENCES "pipeline_runs"("id") ON DELETE CASCADE;--> statement-breakpoint
 ALTER TABLE "url_ingest_requests" ADD CONSTRAINT "url_ingest_requests_created_by_fkey" FOREIGN KEY ("created_by") REFERENCES "users"("id") ON DELETE CASCADE;--> statement-breakpoint
 ALTER TABLE "replies" ADD CONSTRAINT "replies_active_generation_check" CHECK (("active_generation_step" IS NULL AND "active_generation_kind" IS NULL AND "active_generation_key" IS NULL) OR ("active_generation_step" IS NOT NULL AND "active_generation_kind" IN ('model', 'tool') AND "active_generation_key" IS NOT NULL));

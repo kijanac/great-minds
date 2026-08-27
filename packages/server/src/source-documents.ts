@@ -2,15 +2,17 @@ import {
   Database,
   ideas,
   searchIndex,
+  sourceDeletionOutbox,
   sourceDocuments,
   topicMembership,
 } from "@great-minds/database";
 import { type FileFingerprint, type Uuid } from "@great-minds/domain";
-import { and, eq, inArray, sql } from "drizzle-orm";
-import { Context, Effect, Layer } from "effect";
+import { and, asc, eq, inArray, isNull, sql } from "drizzle-orm";
+import { Cause, Context, Effect, Exit, Layer } from "effect";
 import { parse as parseYaml } from "yaml";
 
 import { bodyContentHash, fileContentHash } from "./crypto.ts";
+import { StructuredLogger } from "./logging.ts";
 import { sourceIdentityFromFrontmatter } from "./source-identity.ts";
 import { ContentStorage, vaultOwner } from "./storage.ts";
 
@@ -52,6 +54,7 @@ type SourceDocumentsServiceShape = {
     vaultId: Uuid,
     sourceId: Uuid,
   ) => Effect.Effect<boolean>;
+  readonly reconcileDeletionsOnce: () => Effect.Effect<number>;
 };
 
 export class SourceDocumentsService extends Context.Service<
@@ -156,6 +159,55 @@ export const SourceDocumentsServiceLive = Layer.effect(
   Effect.gen(function* () {
     const db = yield* Database;
     const storage = yield* ContentStorage;
+    const logger = yield* StructuredLogger;
+
+    type PendingDeletion = {
+      readonly sourceId: Uuid;
+      readonly vaultId: Uuid;
+      readonly filePath: string;
+    };
+
+    const recordDeletionAttempt = (deletion: PendingDeletion, completed: boolean) =>
+      db.query((d) => d
+        .update(sourceDeletionOutbox)
+        .set({
+          attemptCount: sql`${sourceDeletionOutbox.attemptCount} + 1`,
+          lastAttemptAt: sql`now()`,
+          ...(completed ? { completedAt: sql`coalesce(${sourceDeletionOutbox.completedAt}, now())` } : {}),
+          updatedAt: sql`now()`,
+        })
+        .where(eq(sourceDeletionOutbox.sourceId, deletion.sourceId)));
+
+    const cleanupDeletion = (deletion: PendingDeletion) =>
+      Effect.gen(function* () {
+        const result = yield* Effect.exit(
+          storage.deletePath(vaultOwner(deletion.vaultId), deletion.filePath),
+        );
+        if (Exit.isSuccess(result)) {
+          yield* recordDeletionAttempt(deletion, true);
+          return true;
+        }
+        yield* logger.warn("source_deletion.storage_cleanup_deferred", {
+          source_id: deletion.sourceId,
+          vault_id: deletion.vaultId,
+          error_message: Cause.pretty(result.cause),
+        });
+        yield* recordDeletionAttempt(deletion, false);
+        return false;
+      });
+
+    const cleanupDeletionBestEffort = (deletion: PendingDeletion) =>
+      cleanupDeletion(deletion).pipe(
+        Effect.catchCause((cause) =>
+          logger
+            .warn("source_deletion.reconciliation_deferred", {
+              source_id: deletion.sourceId,
+              vault_id: deletion.vaultId,
+              error_message: Cause.pretty(cause),
+            })
+            .pipe(Effect.as(false)),
+        ),
+      );
 
     const getById = (vaultId: Uuid, sourceId: Uuid) =>
       db.query((d) => d
@@ -249,7 +301,7 @@ export const SourceDocumentsServiceLive = Layer.effect(
           .pipe(Effect.map((rows) => rows[0])),
       deleteSource: (vaultId, sourceId) =>
         Effect.gen(function* () {
-          const filePath = yield* db.transaction((tx) =>
+          const deletion = yield* db.transaction((tx) =>
             Effect.gen(function* () {
               const source = yield* tx
                 .select({ filePath: sourceDocuments.filePath })
@@ -258,6 +310,11 @@ export const SourceDocumentsServiceLive = Layer.effect(
                 .limit(1);
               const path = source[0]?.filePath;
               if (path === undefined) return null;
+              const pendingDeletion = { sourceId, vaultId, filePath: path } satisfies PendingDeletion;
+              yield* tx
+                .insert(sourceDeletionOutbox)
+                .values(pendingDeletion)
+                .onConflictDoNothing({ target: sourceDeletionOutbox.sourceId });
               const ideaRows = yield* tx
                 .select({ id: ideas.ideaId })
                 .from(ideas)
@@ -269,14 +326,53 @@ export const SourceDocumentsServiceLive = Layer.effect(
               yield* tx
                 .delete(searchIndex)
                 .where(and(eq(searchIndex.vaultId, vaultId), eq(searchIndex.path, path)));
-              yield* tx.delete(sourceDocuments).where(eq(sourceDocuments.id, sourceId));
-              return path;
+              yield* tx
+                .delete(sourceDocuments)
+                .where(and(eq(sourceDocuments.vaultId, vaultId), eq(sourceDocuments.id, sourceId)));
+              return pendingDeletion;
             }),
           );
-          if (filePath === null) return false;
-          yield* storage.deletePath(vaultOwner(vaultId), filePath);
+          if (deletion === null) return false;
+          yield* cleanupDeletionBestEffort(deletion);
           return true;
         }),
+      reconcileDeletionsOnce: () =>
+        Effect.gen(function* () {
+          const rows = yield* db.query((d) => d
+            .select({
+              sourceId: sourceDeletionOutbox.sourceId,
+              vaultId: sourceDeletionOutbox.vaultId,
+              filePath: sourceDeletionOutbox.filePath,
+            })
+            .from(sourceDeletionOutbox)
+            .where(isNull(sourceDeletionOutbox.completedAt))
+            .orderBy(asc(sourceDeletionOutbox.createdAt))
+            .limit(100));
+          yield* Effect.forEach(
+            rows as PendingDeletion[],
+            cleanupDeletionBestEffort,
+            { concurrency: 4 },
+          );
+          return rows.length;
+        }),
     } satisfies SourceDocumentsServiceShape;
+  }),
+);
+
+export const SourceDeletionReconcilerLoopLive = Layer.effectDiscard(
+  Effect.gen(function* () {
+    const service = yield* SourceDocumentsService;
+    const logger = yield* StructuredLogger;
+    const tick = service.reconcileDeletionsOnce().pipe(
+      Effect.catchCause((cause) =>
+        logger.warn("source_deletion.reconciler_tick_failed", {
+          error_message: Cause.pretty(cause),
+        }),
+      ),
+    );
+    yield* tick;
+    yield* Effect.forkScoped(
+      Effect.forever(Effect.sleep("1 minute").pipe(Effect.andThen(tick))),
+    );
   }),
 );

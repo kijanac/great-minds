@@ -188,14 +188,22 @@ export function useLibrary(
     actionId = sourceId;
     actionError = null;
     actionNotice = null;
+    let deleted = false;
     try {
       await deleteSourceDocument(sourceId);
+      deleted = true;
       onSourceDeleted(sourceId);
-      await refreshSources();
     } catch (error) {
       actionError = error instanceof Error ? error.message : "Failed to delete source";
       throw error;
     } finally {
+      try {
+        await refreshSources();
+      } catch {
+        if (deleted) {
+          actionNotice = "Source deleted, but the library could not refresh. Reload to update it.";
+        }
+      }
       actionId = null;
     }
   }

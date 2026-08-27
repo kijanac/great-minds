@@ -40,7 +40,11 @@ import {
 } from "./replies.ts";
 import { SessionsService, SessionsServiceLive } from "./sessions.ts";
 import { SharesService, SharesServiceLive } from "./shares.ts";
-import { SourceDocumentsService, SourceDocumentsServiceLive } from "./source-documents.ts";
+import {
+  SourceDeletionReconcilerLoopLive,
+  SourceDocumentsService,
+  SourceDocumentsServiceLive,
+} from "./source-documents.ts";
 import { StagedFileIngestWorkflowLive } from "./staged-file-ingest-workflow.ts";
 import { SourcesService, SourcesServiceLive } from "./sources.ts";
 import {
@@ -327,6 +331,10 @@ export const makeAppLayers = (overrides: AppLayerOverrides = {}) => {
     ),
     ReplyReconcilerLoopLive.pipe(
       Layer.provideMerge(RepliesLive),
+      Layer.provideMerge(BaseLive),
+    ),
+    SourceDeletionReconcilerLoopLive.pipe(
+      Layer.provideMerge(SourceDocumentsLive),
       Layer.provideMerge(BaseLive),
     ),
     StorageMaintenanceLoopLive.pipe(Layer.provide(StorageLive)),
