@@ -223,6 +223,10 @@ export const PipelineRunsServiceLive = Layer.effect(
                         AND message.entity_type = 'Workflow/StagedFileIngest'
                         AND message.payload::jsonb ->> 'pipelineRunId' = ${pipelineRuns.id}::text
                       ) OR (
+                        ${pipelineRuns.activeTaskType} = 'url_ingest'
+                        AND message.entity_type = 'Workflow/UrlIngest'
+                        AND message.payload::jsonb ->> 'pipelineRunId' = ${pipelineRuns.id}::text
+                      ) OR (
                         ${pipelineRuns.activeTaskType} = 'compile'
                         AND message.entity_type = 'Workflow/CompileTask'
                         AND message.payload::jsonb ->> 'intentId' = ${pipelineRuns.activeTaskId}::text

@@ -640,6 +640,18 @@ describe("query stream", () => {
       status: "completed",
       answer: "Durable answer.",
     });
+    const replyRows = await runDb(
+      Effect.gen(function* () {
+        const db = yield* Database;
+        return yield* db.query((d) => d
+          .select()
+          .from(replies)
+          .where(eq(replies.id, identifiers.reply_id)))
+          .pipe(Effect.orDie);
+      }),
+    );
+    expect(replyRows[0]?.dispatchedTaskId).toBe(identifiers.reply_id);
+    expect(replyRows[0]?.dispatchedAt).not.toBeNull();
 
     const completedEvents = await readSessionEvents(identifiers.session_id);
     const exchangeEvents = completedEvents.filter((event) => event.type === "exchange");
@@ -813,10 +825,17 @@ describe("query stream", () => {
     ]);
   });
 
-  it("marks stale running replies failed during zombie recovery", async () => {
-    const language = makeScriptedLanguageModel({ streams: [] });
+  it("resumes a persisted running reply instead of failing it as a restart zombie", async () => {
+    const language = makeScriptedLanguageModel({
+      streams: [
+        {
+          kind: "parts",
+          parts: [tokenPart("Recovered answer."), finishPart("stop", "recovered-generation")],
+        },
+      ],
+    });
     await startHarness({ language });
-    const zombieId = "00000000-0000-4000-8000-000000020901";
+    const replyId = "00000000-0000-4000-8000-000000020901";
 
     await runDb(
       Effect.gen(function* () {
@@ -824,7 +843,7 @@ describe("query stream", () => {
         yield* db.query((d) => d
           .insert(replies)
           .values({
-            id: zombieId,
+            id: replyId,
             vaultId: id.vault,
             userId: id.alice,
             kind: "ephemeral",
@@ -833,7 +852,7 @@ describe("query stream", () => {
             sources: [],
             request: {
               kind: "ephemeral",
-              question: "zombie",
+              question: "resume after restart",
               mode: "query",
               history: [],
             },
@@ -842,24 +861,25 @@ describe("query stream", () => {
           }))
           .pipe(Effect.orDie);
         const service = yield* RepliesService;
-        expect(
-          yield* service.recoverZombies(new Date(initialTime.getTime() + 60_000)),
-        ).toBe(1);
+        expect(yield* service.reconcileOnce()).toBe(1);
       }),
     );
+    const tail = await tailReply(replyId);
+    expect(replySnapshots(tail.text).at(-1)).toMatchObject({ status: "completed" });
 
     const rows = await runDb(
       Effect.gen(function* () {
         const db = yield* Database;
-        return yield* db.query((d) => d.select().from(replies).where(eq(replies.id, zombieId))).pipe(Effect.orDie);
+        return yield* db.query((d) => d.select().from(replies).where(eq(replies.id, replyId))).pipe(Effect.orDie);
       }),
     );
     expect(rows[0]).toMatchObject({
-      status: "failed",
-      error: "interrupted by server restart",
-      answer: "partial",
-      version: 1,
+      status: "completed",
+      error: null,
+      answer: "Recovered answer.",
+      dispatchedTaskId: replyId,
     });
+    expect(rows[0]?.dispatchedAt).not.toBeNull();
   });
 
   it("streams the full tool loop with exact SSE bytes and records cost", async () => {

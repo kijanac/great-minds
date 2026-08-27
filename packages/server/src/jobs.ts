@@ -20,6 +20,7 @@ import { jobResponse } from "./job-response.ts";
 import { pageEnvelope, oneTotal } from "./pagination.ts";
 import { PipelineRunsService } from "./pipeline-runs.ts";
 import { StagedFileIngestWorkflow } from "./staged-file-ingest-workflow.ts";
+import { UrlIngestWorkflow } from "./url-ingest-workflow.ts";
 import { VaultAccessService } from "./vaults.ts";
 import { workflowExecutionId } from "./workflow-engine.ts";
 
@@ -198,6 +199,12 @@ export const JobsServiceLive = Layer.effect(
             yield* workflowEngine.interruptUnsafe(
               StagedFileIngestWorkflow,
               workflowExecutionId(StagedFileIngestWorkflow._tag, run.activeTaskId),
+            );
+          }
+          if (run.activeTaskType === "url_ingest" && run.activeTaskId !== null) {
+            yield* workflowEngine.interruptUnsafe(
+              UrlIngestWorkflow,
+              workflowExecutionId(UrlIngestWorkflow._tag, run.activeTaskId),
             );
           }
           if (run.trigger === "staged_files") {

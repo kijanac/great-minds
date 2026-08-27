@@ -48,6 +48,7 @@ export interface StageProgress {
 
 interface BackendPipelineEvent {
   id: string;
+  trigger?: "staged_files" | "url" | "manual";
   phase: string;
   phase_status: "started" | "progress" | "completed" | "failed";
   job_status?: "pending" | "running" | "completed" | "failed" | "cancelled";
@@ -230,6 +231,8 @@ export function useJobSSE(
   let overallDone = $state(false);
   let overallError = $state<string | null>(null);
   let overallCancelled = $state(false);
+  let trigger = $state<BackendPipelineEvent["trigger"]>(undefined);
+  let backendPhase = $state("");
   let connected = $state(false);
   let controller: AbortController | null = null;
 
@@ -255,6 +258,8 @@ export function useJobSSE(
     overallDone = false;
     overallError = null;
     overallCancelled = false;
+    trigger = undefined;
+    backendPhase = "";
     stages = emptyStages();
 
     const nextController = new AbortController();
@@ -284,6 +289,8 @@ export function useJobSSE(
 
       try {
         const raw = JSON.parse(message.data) as BackendPipelineEvent;
+        trigger = raw.trigger ?? trigger;
+        backendPhase = raw.phase;
         const data = normalizeEvent(raw);
 
         if (raw.job_status === "cancelled") {
@@ -394,6 +401,12 @@ export function useJobSSE(
     },
     get overallCancelled() {
       return overallCancelled;
+    },
+    get trigger() {
+      return trigger;
+    },
+    get backendPhase() {
+      return backendPhase;
     },
     get connected() {
       return connected;

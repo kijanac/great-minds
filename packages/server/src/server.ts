@@ -45,6 +45,7 @@ import { RepliesService } from "./replies.ts";
 import { SessionsService } from "./sessions.ts";
 import { SharesService } from "./shares.ts";
 import { parseCanonicalSourceUrl } from "./source-identity.ts";
+import { UrlIngestService } from "./url-ingest.ts";
 import { SourcesService } from "./sources.ts";
 import { UserDocumentsService } from "./user-documents.ts";
 import { VaultAccessService, VaultsService } from "./vaults.ts";
@@ -739,13 +740,28 @@ const JobsHandlersLive = HttpApiBuilder.group(MountedGreatMindsApi, "jobs", (han
     .handle("startUrlJob", ({ params, payload }) =>
       withDomainErrors(
         Effect.gen(function* () {
-          const ingest = yield* IngestService;
+          const urlIngest = yield* UrlIngestService;
           const current = yield* CurrentAuth;
           const canonicalUrl = yield* parseCanonicalSourceUrl(payload.url);
-          return yield* ingest.startUrlJob(current.user_id, params.vault_id, {
-            ...payload,
+          return yield* urlIngest.start(current.user_id, params.vault_id, {
+            jobId: payload.job_id,
             url: canonicalUrl,
+            ...(payload.origin === undefined ? {} : { origin: payload.origin }),
           });
+        }),
+      ),
+    )
+    .handle("retryUrlJob", ({ params, payload }) =>
+      withDomainErrors(
+        Effect.gen(function* () {
+          const urlIngest = yield* UrlIngestService;
+          const current = yield* CurrentAuth;
+          return yield* urlIngest.retry(
+            current.user_id,
+            params.vault_id,
+            params.job_id,
+            payload.job_id,
+          );
         }),
       ),
     )

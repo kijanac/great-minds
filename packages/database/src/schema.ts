@@ -352,6 +352,35 @@ export const fileIngestFiles = pgTable(
   ],
 );
 
+export const urlIngestRequests = pgTable(
+  "url_ingest_requests",
+  {
+    id: uuid("id").primaryKey(),
+    createdBy: uuid("created_by").notNull(),
+    canonicalUrl: text("canonical_url").notNull(),
+    origin: text("origin"),
+    dispatchedAt: timestamptz("dispatched_at"),
+    dispatchedTaskId: uuid("dispatched_task_id"),
+    createdAt: timestamptz("created_at").defaultNow().notNull(),
+    updatedAt: timestamptz("updated_at").defaultNow().notNull(),
+  },
+  (table) => [
+    foreignKey({
+      columns: [table.id],
+      foreignColumns: [pipelineRuns.id],
+      name: "url_ingest_requests_id_fkey",
+    }).onDelete("cascade"),
+    foreignKey({
+      columns: [table.createdBy],
+      foreignColumns: [users.id],
+      name: "url_ingest_requests_created_by_fkey",
+    }).onDelete("cascade"),
+    index("ix_url_ingest_requests_pending")
+      .on(table.createdAt)
+      .where(sql`${table.dispatchedAt} IS NULL`),
+  ],
+);
+
 export const compileIntents = pgTable(
   "compile_intents",
   {
@@ -491,6 +520,8 @@ export const replies = pgTable(
     error: text("error"),
     version: integer("version").default(0).notNull(),
     request: jsonb("request").notNull(),
+    dispatchedAt: timestamptz("dispatched_at"),
+    dispatchedTaskId: uuid("dispatched_task_id"),
     createdAt: timestamptz("created_at").defaultNow().notNull(),
     updatedAt: timestamptz("updated_at").defaultNow().notNull(),
   },
@@ -513,9 +544,9 @@ export const replies = pgTable(
     index("ix_replies_vault_id").on(table.vaultId),
     index("ix_replies_user_id").on(table.userId),
     index("ix_replies_session_id").on(table.sessionId),
-    index("ix_replies_running_updated_at")
-      .on(table.updatedAt)
-      .where(sql`${table.status} = 'running'`),
+    index("ix_replies_pending_dispatch")
+      .on(table.createdAt)
+      .where(sql`${table.status} = 'running' AND ${table.dispatchedAt} IS NULL`),
     check("replies_kind_check", sql`${table.kind} IN ('exchange', 'btw', 'ephemeral')`),
     check("replies_status_check", sql`${table.status} IN ('running', 'completed', 'failed')`),
   ],

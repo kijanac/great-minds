@@ -428,17 +428,32 @@ Supported formats are Markdown/text, CSV, JSON, XML, HTML, PDF, DOCX, PPTX, XLSX
 ### Ingest from URL
 
 ```
-POST /v1/vaults/{vault_id}/ingest/url
+POST /v1/vaults/{vault_id}/jobs/url
 ```
 
-Fetches and ingests content from a URL.
+Requires the vault owner. The request commits a URL operation and pipeline run before fetching anything, then dispatches the `UrlIngest` workflow.
 
-| Field          | Type   | Required | Default   | Description     |
-|----------------|--------|----------|-----------|-----------------|
-| `url`          | string | yes      |           | URL to fetch    |
-| `content_type` | string | no       | `"texts"` | Category folder |
+| Field    | Type   | Required | Description |
+|----------|--------|----------|-------------|
+| `job_id` | UUID   | yes      | Retry-stable operation and pipeline-run ID |
+| `url`    | string | yes      | HTTP(S) URL; credentials are rejected and fragments are discarded |
+| `origin` | string | no       | Optional provenance label; defaults to the canonical URL host |
 
-**Response (201):** Same as text ingest.
+**Response (201):** A pending `JobResponse` immediately. Follow `stream_url` or `GET /v1/vaults/{vault_id}/jobs/{job_id}` for fetch, conversion, indexing, compile handoff, and terminal failure state. Reusing the same job ID with the exact persisted request is idempotent; conflicting reuse returns `400`.
+
+The `url_ingest_requests` row is a dispatch outbox. Startup/periodic reconciliation recovers a process loss between database commit and workflow enqueue. The workflow uses deterministic per-vault URL source identity, so activity replay refreshes one source rather than duplicating it.
+
+Retry a failed or cancelled URL operation with a new job ID:
+
+```
+POST /v1/vaults/{vault_id}/jobs/{job_id}/retry
+```
+
+```json
+{ "job_id": "<new-uuid>" }
+```
+
+This copies the persisted canonical URL into a new URL-ingest run. It does not start a generic compile.
 
 ### Ingest user suggestion
 
@@ -568,6 +583,19 @@ data: {"text": "Lenin's analysis..."}
 event: done
 data: {"sources_consulted": [{"kind": "wiki", "path": "wiki/imperialism.md"}, {"kind": "raw", "path": "raw/texts/lenin/imp/01.md"}]}
 ```
+
+### Durable replies
+
+The authenticated web client accepts research work through the durable reply surface:
+
+```
+POST /v1/vaults/{vault_id}/replies
+GET  /v1/vaults/{vault_id}/replies/{reply_id}/stream
+```
+
+`POST` persists the complete exchange, BTW, or ephemeral request and returns `202` with `reply_id` before generation finishes. The `replies` row is both the product read model and dispatch outbox. `ReplyGeneration` updates versioned answer/evidence snapshots; the SSE endpoint replays the latest snapshot after reconnect and ends only when the persisted status is `completed` or `failed`.
+
+If the process stops after acceptance, the workflow journal resumes generation. If dispatch was never acknowledged, startup/periodic reconciliation redispatches the same reply ID. Stale running replies are no longer converted into synthetic restart failures.
 
 ### Using `extra_instructions`
 

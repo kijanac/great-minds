@@ -6,7 +6,6 @@ import {
   BadRequest,
   Forbidden,
   type IngestedDocument,
-  type JobResponse,
   NotFound,
   type RawSource,
   type ReferencePromote,
@@ -16,14 +15,13 @@ import {
   type UserSuggestionIntent,
   type Uuid,
 } from "@great-minds/domain";
-import { and, eq, inArray, sql } from "drizzle-orm";
-import { Cause, Context, Effect, Layer } from "effect";
+import { eq, sql } from "drizzle-orm";
+import { Context, Effect, Layer } from "effect";
 import { AppConfig } from "./config.ts";
 import { htmlToMarkdown, markdownWithTitle } from "./conversion.ts";
-import { causeDetails, errorDetails, formatError } from "./error-details.ts";
-import { jobResponse } from "./job-response.ts";
+import { errorDetails } from "./error-details.ts";
 import { buildDocument, sessionExchangeDocumentInput, sessionExchangePath } from "./markdown.ts";
-import { progressSteps, type PipelineProgressStep } from "./pipeline-runs.ts";
+import { PipelineRunsService } from "./pipeline-runs.ts";
 import { ProposalsService } from "./proposals.ts";
 import { fetchAnyUrl, fetchPublicUrl, responseTextCapped } from "./public-fetch.ts";
 import {
@@ -56,11 +54,12 @@ type IngestServiceShape = {
     vaultId: Uuid,
     input: UserSuggestion,
   ) => Effect.Effect<IngestedDocument, BadRequest | Forbidden>;
-  readonly startUrlJob: (
-    userId: Uuid,
+  readonly ingestUrl: (
     vaultId: Uuid,
-    input: { readonly job_id: Uuid; readonly url: CanonicalSourceUrl; readonly origin?: string },
-  ) => Effect.Effect<JobResponse, BadRequest | Forbidden>;
+    canonicalUrl: CanonicalSourceUrl,
+    origin: string | undefined,
+    pipelineRunId: Uuid,
+  ) => Effect.Effect<IngestedDocument, BadRequest>;
   readonly ingestSessionExchange: (
     vaultId: Uuid,
     sessionId: string,
@@ -76,12 +75,6 @@ export class IngestService extends Context.Service<IngestService, IngestServiceS
 const USER_AGENT =
   "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) " +
   "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36";
-
-const URL_INGEST_STEP_LABELS = {
-  fetch_url: "Fetching source URL",
-  convert_document: "Converting source document",
-  index_document: "Indexing source document",
-} as const;
 
 export const slugify = (text: string, maxLen = 80) =>
   text
@@ -156,16 +149,6 @@ const sourcePathWithId = (filePath: string, sourceId: Uuid) => {
   return posix.join(parsed.dir, `${parsed.name}-${sourceId}.md`);
 };
 
-const firstFailure = (cause: Cause.Cause<unknown>) => cause.reasons.find(Cause.isFailReason)?.error;
-
-const causeMessage = (cause: Cause.Cause<unknown>) => {
-  const failure = firstFailure(cause);
-  if (failure instanceof BadRequest) {
-    return failure.detail;
-  }
-  return formatError(causeDetails(cause));
-};
-
 export const IngestServiceLive = Layer.effect(
   IngestService,
   Effect.gen(function* () {
@@ -176,6 +159,7 @@ export const IngestServiceLive = Layer.effect(
     const sourceDocumentsWrite = yield* SourceDocumentsService;
     const userDocumentsRead = yield* UserDocumentsService;
     const proposals = yield* ProposalsService;
+    const pipeline = yield* PipelineRunsService;
     const clock = yield* ClockService;
 
     const ensureCompileIntent = (vaultId: Uuid, pipelineRunId?: Uuid | null) =>
@@ -233,11 +217,12 @@ export const IngestServiceLive = Layer.effect(
     const ingestUrl = (
       vaultId: Uuid,
       canonicalUrl: CanonicalSourceUrl,
-      origin?: string,
-      pipelineRunId?: Uuid,
+      origin: string | undefined,
+      pipelineRunId: Uuid,
     ) =>
       Effect.gen(function* () {
         const fetched = yield* fetchUrlMarkdown(canonicalUrl, config.allowPrivateUrlFetch);
+        if (!(yield* pipeline.isActive(pipelineRunId))) return yield* Effect.interrupt;
         const parsed = new URL(canonicalUrl);
         const sourceId = sourceIdForKey(vaultId, `url:${canonicalUrl}`);
         const stem = slugify(posix.parse(parsed.pathname).name || "doc") || "doc";
@@ -254,71 +239,6 @@ export const IngestServiceLive = Layer.effect(
           { canonicalUrl, pipelineRunId },
         );
       });
-
-    const createPipelineRun = (jobId: Uuid, vaultId: Uuid, trigger: "url") =>
-      Effect.gen(function* () {
-        const inserted = yield* db.query((d) => d
-          .insert(pipelineRuns)
-          .values({
-            id: jobId,
-            vaultId,
-            trigger,
-            status: "pending",
-            currentPhase: "",
-            phaseStatus: "",
-            progressSteps: [],
-          })
-          .onConflictDoNothing({ target: pipelineRuns.id })
-          .returning());
-        const row =
-          inserted[0] ??
-          (yield* db.query((d) => d
-            .select()
-            .from(pipelineRuns)
-            .where(and(eq(pipelineRuns.id, jobId), eq(pipelineRuns.vaultId, vaultId)))
-            .limit(1)))[0];
-        if (row === undefined) {
-          throw new Error(`Pipeline run missing after create: ${jobId}`);
-        }
-        return row;
-      });
-
-    const getPipelineRun = (jobId: Uuid, vaultId: Uuid) =>
-      Effect.gen(function* () {
-        const rows = yield* db.query((d) => d
-          .select()
-          .from(pipelineRuns)
-          .where(and(eq(pipelineRuns.id, jobId), eq(pipelineRuns.vaultId, vaultId)))
-          .limit(1));
-        const row = rows[0];
-        if (row === undefined) {
-          throw new Error(`Pipeline run not found after creation: ${jobId}`);
-        }
-        return row;
-      });
-
-    const updateProgress = (
-      jobId: Uuid,
-      phase: string,
-      phaseStatus: string,
-      steps: readonly PipelineProgressStep[],
-      error?: string,
-    ) =>
-      db.query((d) => d
-        .update(pipelineRuns)
-        .set({
-          currentPhase: phase,
-          phaseStatus,
-          progressSteps: [...steps],
-          status: phaseStatus === "failed" ? "failed" : "running",
-          error,
-          completedAt: phaseStatus === "failed" ? sql`now()` : undefined,
-          updatedAt: sql`now()`,
-        })
-        // Terminal states, including cancelled, are never overwritten by progress.
-        .where(
-          and(eq(pipelineRuns.id, jobId), inArray(pipelineRuns.status, ["pending", "running"])),
-        ));
 
     return {
       ingestRaw: (userId, vaultId, input) =>
@@ -395,55 +315,7 @@ export const IngestServiceLive = Layer.effect(
           });
           return { id: sourceId, file_path: dest } satisfies IngestedDocument;
         }),
-      startUrlJob: (userId, vaultId, input) =>
-        Effect.gen(function* () {
-          yield* access.requireOwner(userId, vaultId);
-          const run = yield* createPipelineRun(input.job_id, vaultId, "url");
-          yield* updateProgress(
-            run.id as Uuid,
-            "source_ingest",
-            "started",
-            progressSteps(URL_INGEST_STEP_LABELS, "fetch_url", {
-              counts: { fetch_url: [0, 1] },
-            }),
-          );
-          yield* Effect.matchCauseEffect(
-            ingestUrl(vaultId, input.url, input.origin, run.id as Uuid),
-            {
-              onSuccess: Effect.succeed,
-              onFailure: (cause) =>
-                Effect.gen(function* () {
-                  const message = causeMessage(cause);
-                  yield* updateProgress(
-                    run.id as Uuid,
-                    "source_ingest",
-                    "failed",
-                    progressSteps(URL_INGEST_STEP_LABELS, "fetch_url", {
-                      failed: new Set(["fetch_url"]),
-                      details: { fetch_url: message },
-                    }),
-                    message,
-                  );
-                  const failure = firstFailure(cause);
-                  if (failure instanceof BadRequest) {
-                    return yield* failure;
-                  }
-                  return yield* Effect.failCause(cause);
-                }),
-            },
-          );
-          yield* updateProgress(
-            run.id as Uuid,
-            "source_ingest",
-            "completed",
-            progressSteps(URL_INGEST_STEP_LABELS, "index_document", {
-              completed: new Set(Object.keys(URL_INGEST_STEP_LABELS)),
-              counts: { fetch_url: [1, 1] },
-            }),
-          );
-          const refreshed = yield* getPipelineRun(run.id as Uuid, vaultId);
-          return jobResponse(refreshed);
-        }),
+      ingestUrl,
       ingestSessionExchange: (vaultId, sessionId, exchange, sessionOrigin) => {
         const sourceId = sourceIdForKey(
           vaultId,

@@ -21,6 +21,7 @@
     cancelJob,
     listJobs,
     requestCompile,
+    retryUrlJob,
     startUrlJob,
   } from "$lib/api/jobs";
   import { fetchArticlesByRun } from "$lib/api/wiki";
@@ -334,8 +335,12 @@
   }
 
   async function retry() {
-    if (!canManage || !jobVaultId) return;
-    const job = await requestCompile(crypto.randomUUID(), jobVaultId);
+    if (!canManage || !jobVaultId || !jobId) return;
+    const nextId = crypto.randomUUID();
+    const job =
+      progress.trigger === "url" && progress.backendPhase === "source_ingest"
+        ? await retryUrlJob(jobId, nextId, jobVaultId)
+        : await requestCompile(nextId, jobVaultId);
     await goto(`/pipeline/runs/${job.id}`, { replaceState: true });
   }
 </script>
@@ -486,9 +491,12 @@
                 onclick={() => void retry()}
                 class="h-auto rounded-sm px-3 py-1 font-mono text-[length:var(--text-chrome)] tracking-[0.1em] text-gold hover:bg-transparent hover:text-gold-hover"
               >
-                {firstErrored?.stage === "uploading"
-                  ? "compile saved files"
-                  : "run again"}
+                {progress.trigger === "url" &&
+                progress.backendPhase === "source_ingest"
+                  ? "retry URL"
+                  : firstErrored?.stage === "uploading"
+                    ? "compile saved files"
+                    : "run again"}
               </Button>
             {/if}
             <Button

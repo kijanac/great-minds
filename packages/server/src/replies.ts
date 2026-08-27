@@ -20,8 +20,11 @@ import {
   type Uuid,
   Uuid as UuidSchema,
 } from "@great-minds/domain";
-import { and, eq, lt, sql } from "drizzle-orm";
+import { and, asc, eq, isNull, sql } from "drizzle-orm";
 import { Cause, Context, Effect, Layer, Option, Schema, Stream } from "effect";
+import * as Activity from "effect/unstable/workflow/Activity";
+import * as Workflow from "effect/unstable/workflow/Workflow";
+import * as WorkflowEngine from "effect/unstable/workflow/WorkflowEngine";
 
 import { ClockService } from "./clock.ts";
 import { AppConfig } from "./config.ts";
@@ -33,7 +36,6 @@ import { VaultAccessService } from "./vaults.ts";
 
 const terminalStatuses = new Set(["completed", "failed"]);
 const sanitizedReplyError = "Something went wrong while answering. Try again in a minute.";
-const interruptedReplyError = "interrupted by server restart";
 const flushIntervalMs = 125;
 
 const decodeCreateReply = Schema.decodeUnknownEffect(CreateReplyRequestSchema);
@@ -144,6 +146,31 @@ const sourceRef = (data: QuerySourceData, thinking: string, pending = false): Re
   throw new Error(`Unsupported query source: ${data.type}`);
 };
 
+export const ReplyWorkflow = Workflow.make("ReplyGeneration", {
+  payload: { replyId: UuidSchema },
+  idempotencyKey: ({ replyId }) => replyId,
+  success: Schema.Void,
+});
+
+const dispatchReply = (
+  replyId: Uuid,
+  workflowEngine: WorkflowEngine.WorkflowEngine["Service"],
+) =>
+  Effect.gen(function* () {
+    const db = yield* Database;
+    yield* ReplyWorkflow.execute({ replyId }, { discard: true }).pipe(
+      Effect.provideService(WorkflowEngine.WorkflowEngine, workflowEngine),
+    );
+    yield* db.query((d) => d
+      .update(replies)
+      .set({
+        dispatchedAt: sql`coalesce(${replies.dispatchedAt}, now())`,
+        dispatchedTaskId: replyId,
+        updatedAt: sql`now()`,
+      })
+      .where(eq(replies.id, replyId)));
+  });
+
 type RepliesServiceShape = {
   readonly create: (
     userId: Uuid,
@@ -155,7 +182,8 @@ type RepliesServiceShape = {
     vaultId: Uuid,
     replyId: Uuid,
   ) => Effect.Effect<Stream.Stream<ReplySseEvent>, Forbidden | NotFound>;
-  readonly recoverZombies: (olderThan: Date) => Effect.Effect<number>;
+  readonly generate: (replyId: Uuid) => Effect.Effect<void>;
+  readonly reconcileOnce: () => Effect.Effect<number>;
 };
 
 export class RepliesService extends Context.Service<RepliesService, RepliesServiceShape>()(
@@ -173,6 +201,7 @@ export const RepliesServiceLive = Layer.effect(
     const query = yield* QueryService;
     const randomBytes = yield* RandomBytesService;
     const sessions = yield* SessionsService;
+    const workflowEngine = yield* WorkflowEngine.WorkflowEngine;
     const pollIntervalMs = Option.isSome(config.goldensClock) ? 1 : 100;
 
     const newReplyId = () =>
@@ -237,7 +266,7 @@ export const RepliesServiceLive = Layer.effect(
           version: sql`${replies.version} + 1`,
           updatedAt: sql`now()`,
         })
-        .where(eq(replies.id, replyId)))
+        .where(and(eq(replies.id, replyId), eq(replies.status, "running"))))
         .pipe(Effect.asVoid);
 
     const markFailed = (
@@ -329,7 +358,7 @@ export const RepliesServiceLive = Layer.effect(
     const generate = (replyId: Uuid) =>
       Effect.gen(function* () {
         const row = yield* readReplyById(replyId);
-        if (row === undefined) {
+        if (row === undefined || row.status !== "running") {
           return;
         }
         const input = yield* decodeCreateReply(row.request).pipe(Effect.orDie);
@@ -490,30 +519,29 @@ export const RepliesServiceLive = Layer.effect(
           yield* markFailed(replyId, failureMessage, answer, settledSources);
         }
       }).pipe(
-        Effect.catchCause((cause) =>
-          logger
+        Effect.catchCause((cause) => {
+          if (cause.reasons.length > 0 && cause.reasons.every(Cause.isInterruptReason)) {
+            return Effect.interrupt;
+          }
+          return logger
             .error("reply_generation_failed", {
               reply_id: replyId,
               error_message: Cause.pretty(cause),
             })
-            .pipe(Effect.andThen(markFailed(replyId, sanitizedReplyError))),
-        ),
+            .pipe(Effect.andThen(markFailed(replyId, sanitizedReplyError)));
+        }),
       );
 
-    const recoverZombies = (olderThan: Date) =>
-      db.query((d) => d
-        .update(replies)
-        .set({
-          status: "failed",
-          error: interruptedReplyError,
-          version: sql`${replies.version} + 1`,
-          updatedAt: sql`now()`,
-        })
-        .where(and(eq(replies.status, "running"), lt(replies.updatedAt, olderThan)))
-        .returning({ id: replies.id }))
-        .pipe(Effect.map((rows) => rows.length));
-
-    yield* recoverZombies(yield* clock.now);
+    const dispatchBestEffort = (replyId: Uuid) =>
+      dispatchReply(replyId, workflowEngine).pipe(
+        Effect.provideService(Database, db),
+        Effect.catchCause((cause) =>
+          logger.warn("reply_dispatch_deferred", {
+            reply_id: replyId,
+            error_message: Cause.pretty(cause),
+          }),
+        ),
+      );
 
     return {
       create: (userId, vaultId, input) =>
@@ -585,7 +613,7 @@ export const RepliesServiceLive = Layer.effect(
               sources: [],
               request: input,
             }));
-          yield* generate(replyId).pipe(Effect.forkDetach({ startImmediately: true }));
+          yield* dispatchBestEffort(replyId);
           return { reply_id: replyId, session_id: sessionId };
         }),
       stream: (userId, vaultId, replyId) =>
@@ -621,7 +649,48 @@ export const RepliesServiceLive = Layer.effect(
 
           return replySseStream(events());
         }),
-      recoverZombies,
+      generate,
+      reconcileOnce: () =>
+        Effect.gen(function* () {
+          const rows = yield* db.query((d) => d
+            .select({ id: replies.id })
+            .from(replies)
+            .where(and(eq(replies.status, "running"), isNull(replies.dispatchedAt)))
+            .orderBy(asc(replies.createdAt))
+            .limit(100));
+          yield* Effect.forEach(
+            rows,
+            (row) => dispatchBestEffort(row.id as Uuid),
+            { concurrency: config.pipelineConcurrency },
+          );
+          return rows.length;
+        }),
     } satisfies RepliesServiceShape;
+  }),
+);
+
+export const ReplyWorkflowLive = ReplyWorkflow.toLayer((payload) =>
+  Activity.make({
+    name: "reply-generate",
+    success: Schema.Void,
+    execute: Effect.flatMap(RepliesService, (service) => service.generate(payload.replyId)),
+  }),
+);
+
+export const ReplyReconcilerLoopLive = Layer.effectDiscard(
+  Effect.gen(function* () {
+    const replies = yield* RepliesService;
+    const logger = yield* StructuredLogger;
+    const tick = replies.reconcileOnce().pipe(
+      Effect.catchCause((cause) =>
+        logger.warn("reply_reconciler_tick_failed", {
+          error_message: Cause.pretty(cause),
+        }),
+      ),
+    );
+    yield* tick;
+    yield* Effect.forkScoped(
+      Effect.forever(Effect.sleep("5 seconds").pipe(Effect.andThen(tick))),
+    );
   }),
 );

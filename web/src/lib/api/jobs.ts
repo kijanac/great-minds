@@ -58,6 +58,23 @@ export async function startUrlJob(url: string, jobId: string = crypto.randomUUID
   return readJson(res, jobSchema);
 }
 
+export async function retryUrlJob(
+  previousJobId: string,
+  jobId: string = crypto.randomUUID(),
+  vaultId?: string,
+): Promise<Job> {
+  const path = vaultId
+    ? vaultPathFor(vaultId, `/jobs/${previousJobId}/retry`)
+    : vaultPath(`/jobs/${previousJobId}/retry`);
+  const res = await apiFetch(path, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ job_id: jobId }),
+  });
+  if (!res.ok) throw new Error(await res.text());
+  return readJson(res, jobSchema);
+}
+
 /** Re-run the compile for this vault (sources already ingested; content-hash
  *  caches make it resume cheaply). Returns the new job to follow. */
 export async function requestCompile(

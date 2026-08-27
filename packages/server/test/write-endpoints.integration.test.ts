@@ -21,6 +21,7 @@ import {
   tasks,
   topicMembership,
   topics,
+  urlIngestRequests,
   userDocuments,
   users,
   vaultMemberships,
@@ -44,6 +45,7 @@ import { makeTestRandomBytes } from "../src/random.ts";
 import { startServer } from "../src/server.ts";
 import { sourceIdForKey } from "../src/source-identity.ts";
 import { TokenService } from "../src/tokens.ts";
+import { UrlIngestService } from "../src/url-ingest.ts";
 
 const initialTime = new Date("2026-07-10T12:00:00.000Z");
 
@@ -76,6 +78,9 @@ const id = {
   m32UrlCollisionA: "00000000-0000-4000-8000-000000013105",
   m32UrlCollisionB: "00000000-0000-4000-8000-000000013106",
   m32UrlReplayRun: "00000000-0000-4000-8000-000000013107",
+  m32UrlRetryRun: "00000000-0000-4000-8000-000000013108",
+  m32UrlReconcileRun: "00000000-0000-4000-8000-000000013109",
+  m32UrlSlowRun: "00000000-0000-4000-8000-000000013110",
 } as const;
 
 type TestServices =
@@ -84,7 +89,8 @@ type TestServices =
   | ClockService
   | FileIngestBatches
   | StructuredLogger
-  | TokenService;
+  | TokenService
+  | UrlIngestService;
 
 type TestState = {
   readonly started: Awaited<ReturnType<typeof startServer>>;
@@ -459,6 +465,30 @@ const withLocalHttpServer = async <A>(
       server.close((error) => (error === undefined ? resolve() : reject(error)));
     });
   }
+};
+
+const waitForPipelineRun = async (
+  runId: string,
+  predicate: (row: typeof pipelineRuns.$inferSelect) => boolean,
+  timeoutMs: number = 10_000,
+) => {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const rows = await runDb(
+      Effect.gen(function* () {
+        const db = yield* Database;
+        return yield* db.query((d) => d
+          .select()
+          .from(pipelineRuns)
+          .where(eq(pipelineRuns.id, runId)))
+          .pipe(Effect.orDie);
+      }),
+    );
+    const row = rows[0];
+    if (row !== undefined && predicate(row)) return row;
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
+  throw new Error(`Timed out waiting for pipeline run ${runId}`);
 };
 
 const asRecord = (value: unknown): Record<string, unknown> => {
@@ -2072,10 +2102,21 @@ describe("M3.1 write endpoint integration", () => {
     );
   });
 
-  it("runs jobs/url synchronously with owner guard, stable source identity, clean conversion, and persisted failures", async () => {
+  it("accepts durable jobs/url with owner guard, stable identity, retry, and terminal failures", async () => {
     const { aliceToken, carolToken, malloryToken } = currentFixture();
+    let releaseSlowResponse: (() => void) | undefined;
+    let markSlowRequestStarted: (() => void) | undefined;
+    const slowRequestStarted = new Promise<void>((resolve) => {
+      markSlowRequestStarted = resolve;
+    });
     await withLocalHttpServer(
       (request, response) => {
+        if (request.url === "/slow") {
+          response.writeHead(200, { "content-type": "text/plain" });
+          releaseSlowResponse = () => response.end("Durably accepted slow URL body.");
+          markSlowRequestStarted?.();
+          return;
+        }
         if (request.url === "/ok") {
           response.writeHead(200, { "content-type": "text/html" });
           response.end(
@@ -2097,6 +2138,11 @@ describe("M3.1 write endpoint integration", () => {
           );
           return;
         }
+        if (request.url === "/reconcile") {
+          response.writeHead(200, { "content-type": "text/plain" });
+          response.end("Recovered URL operation body.");
+          return;
+        }
         if (request.url === "/pdf") {
           response.writeHead(200, { "content-type": "application/pdf" });
           response.end(Buffer.from("%PDF-1.7\nnot indexed\n"));
@@ -2106,6 +2152,50 @@ describe("M3.1 write endpoint integration", () => {
         response.end("failed");
       },
       async (origin) => {
+        const slowUrl = `${origin}/slow`;
+        const acceptedSlow = await api("POST", `/vaults/${id.vault}/jobs/url`, aliceToken, {
+          job_id: id.m32UrlSlowRun,
+          url: slowUrl,
+        });
+        expect(acceptedSlow.status).toBe(201);
+        expect(asRecord(acceptedSlow.body)).toMatchObject({
+          id: id.m32UrlSlowRun,
+          status: "pending",
+          phase_status: "started",
+        });
+        await slowRequestStarted;
+        const acceptedRows = await runDb(
+          Effect.gen(function* () {
+            const db = yield* Database;
+            return yield* db.query((d) => d
+              .select()
+              .from(urlIngestRequests)
+              .where(eq(urlIngestRequests.id, id.m32UrlSlowRun)))
+              .pipe(Effect.orDie);
+          }),
+        );
+        expect(acceptedRows[0]).toMatchObject({
+          id: id.m32UrlSlowRun,
+          createdBy: id.alice,
+          canonicalUrl: slowUrl,
+          dispatchedTaskId: id.m32UrlSlowRun,
+        });
+        if (releaseSlowResponse === undefined) {
+          throw new Error("slow URL request was not held");
+        }
+        releaseSlowResponse();
+        await waitForPipelineRun(id.m32UrlSlowRun, (row) => row.phaseStatus === "completed");
+        await runDb(
+          Effect.gen(function* () {
+            const db = yield* Database;
+            yield* db.query((d) => d
+              .update(compileIntents)
+              .set({ dispatchedAt: sql`now()`, satisfiedAt: sql`now()` })
+              .where(eq(compileIntents.pipelineRunId, id.m32UrlSlowRun)))
+              .pipe(Effect.orDie);
+          }),
+        );
+
         const ownerSuccess = await api("POST", `/vaults/${id.vault}/jobs/url`, aliceToken, {
           job_id: id.m32UrlRun,
           url: `${origin}/ok#ignored-fragment`,
@@ -2114,10 +2204,15 @@ describe("M3.1 write endpoint integration", () => {
         expect(asRecord(ownerSuccess.body)).toMatchObject({
           id: id.m32UrlRun,
           trigger: "url",
+          status: "pending",
           current_phase: "source_ingest",
-          phase_status: "completed",
+          phase_status: "started",
           stream_url: `/jobs/${id.m32UrlRun}/stream`,
         });
+        await waitForPipelineRun(
+          id.m32UrlRun,
+          (row) => row.currentPhase === "source_ingest" && row.phaseStatus === "completed",
+        );
 
         const canonicalUrl = `${origin}/ok`;
         const sourceId = sourceIdForKey(id.vault as Uuid, `url:${canonicalUrl}`);
@@ -2145,7 +2240,12 @@ describe("M3.1 write endpoint integration", () => {
               .from(pipelineRuns)
               .where(eq(pipelineRuns.id, id.m32UrlRun)))
               .pipe(Effect.orDie);
-            return { sourceRows, intentRows, runRows };
+            const requestRows = yield* db.query((d) => d
+              .select()
+              .from(urlIngestRequests)
+              .where(eq(urlIngestRequests.id, id.m32UrlRun)))
+              .pipe(Effect.orDie);
+            return { sourceRows, intentRows, runRows, requestRows };
           }),
         );
         expect(successRows.sourceRows).toHaveLength(1);
@@ -2158,6 +2258,13 @@ describe("M3.1 write endpoint integration", () => {
         });
         expect(successRows.intentRows).toHaveLength(1);
         expect(successRows.runRows[0]?.compileIntentId).toBe(successRows.intentRows[0]?.id);
+        expect(successRows.requestRows[0]).toMatchObject({
+          id: id.m32UrlRun,
+          createdBy: id.alice,
+          canonicalUrl,
+          dispatchedTaskId: id.m32UrlRun,
+        });
+        expect(successRows.requestRows[0]?.dispatchedAt).not.toBeNull();
 
         const viewerDenied = await api("POST", `/vaults/${id.vault}/jobs/url`, carolToken, {
           job_id: "00000000-0000-4000-8000-000000013198",
@@ -2180,6 +2287,10 @@ describe("M3.1 write endpoint integration", () => {
           url: betaUrl,
         });
         expect([alpha.status, beta.status]).toEqual([201, 201]);
+        await Promise.all([
+          waitForPipelineRun(id.m32UrlCollisionA, (row) => row.phaseStatus === "completed"),
+          waitForPipelineRun(id.m32UrlCollisionB, (row) => row.phaseStatus === "completed"),
+        ]);
         expect(await readVaultFile(id.vault, alphaPath)).toContain(
           "Alpha report body remains its own source.",
         );
@@ -2192,6 +2303,7 @@ describe("M3.1 write endpoint integration", () => {
           url: alphaUrl,
         });
         expect(replay.status).toBe(201);
+        await waitForPipelineRun(id.m32UrlReplayRun, (row) => row.phaseStatus === "completed");
         const collisionRows = await runDb(
           Effect.gen(function* () {
             const db = yield* Database;
@@ -2214,8 +2326,8 @@ describe("M3.1 write endpoint integration", () => {
           job_id: id.m32UrlFailRun,
           url: `${origin}/fail`,
         });
-        expect(failed.status).toBe(400);
-        expect(String(asRecord(failed.body).detail)).toContain("Failed to fetch URL: HTTP 500");
+        expect(failed.status).toBe(201);
+        await waitForPipelineRun(id.m32UrlFailRun, (row) => row.status === "failed");
         const failedRuns = await runDb(
           Effect.gen(function* () {
             const db = yield* Database;
@@ -2238,10 +2350,8 @@ describe("M3.1 write endpoint integration", () => {
           job_id: id.m32UrlPdfRun,
           url: `${origin}/pdf`,
         });
-        expect(pdfFailed.status).toBe(400);
-        expect(String(asRecord(pdfFailed.body).detail)).toContain(
-          "Unsupported URL content-type: application/pdf",
-        );
+        expect(pdfFailed.status).toBe(201);
+        await waitForPipelineRun(id.m32UrlPdfRun, (row) => row.status === "failed");
         const pdfRows = await runDb(
           Effect.gen(function* () {
             const db = yield* Database;
@@ -2279,6 +2389,70 @@ describe("M3.1 write endpoint integration", () => {
         );
         expect(pdfRows.sourceRows).toHaveLength(0);
         expect(pdfRows.intentRows).toHaveLength(0);
+
+        const retried = await api(
+          "POST",
+          `/vaults/${id.vault}/jobs/${id.m32UrlFailRun}/retry`,
+          aliceToken,
+          { job_id: id.m32UrlRetryRun },
+        );
+        expect(retried.status).toBe(201);
+        expect(asRecord(retried.body)).toMatchObject({
+          id: id.m32UrlRetryRun,
+          trigger: "url",
+          status: "pending",
+        });
+        const retriedRun = await waitForPipelineRun(
+          id.m32UrlRetryRun,
+          (row) => row.status === "failed",
+        );
+        expect(retriedRun.error).toContain("Failed to fetch URL: HTTP 500");
+
+        const reconciledUrl = `${origin}/reconcile`;
+        await runDb(
+          Effect.gen(function* () {
+            const db = yield* Database;
+            yield* db.query((d) => d
+              .insert(pipelineRuns)
+              .values({
+                id: id.m32UrlReconcileRun,
+                vaultId: id.vault,
+                trigger: "url",
+                status: "pending",
+                currentPhase: "source_ingest",
+                phaseStatus: "started",
+                progressSteps: [],
+                ingestTaskId: id.m32UrlReconcileRun,
+                activeTaskId: id.m32UrlReconcileRun,
+                activeTaskType: "url_ingest",
+              }))
+              .pipe(Effect.orDie);
+            yield* db.query((d) => d
+              .insert(urlIngestRequests)
+              .values({
+                id: id.m32UrlReconcileRun,
+                createdBy: id.alice,
+                canonicalUrl: reconciledUrl,
+              }))
+              .pipe(Effect.orDie);
+            const urlIngest = yield* UrlIngestService;
+            expect(yield* urlIngest.reconcileOnce()).toBe(1);
+          }),
+        );
+        await waitForPipelineRun(
+          id.m32UrlReconcileRun,
+          (row) => row.phaseStatus === "completed",
+        );
+        const reconciledSourceId = sourceIdForKey(
+          id.vault as Uuid,
+          `url:${reconciledUrl}`,
+        );
+        expect(
+          await readVaultFile(
+            id.vault,
+            `raw/docs/reconcile-${reconciledSourceId}.md`,
+          ),
+        ).toContain("Recovered URL operation body.");
 
         const denied = await api("POST", `/vaults/${id.vault}/jobs/url`, malloryToken, {
           job_id: "00000000-0000-4000-8000-000000013199",

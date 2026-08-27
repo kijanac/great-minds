@@ -1725,6 +1725,17 @@ export const JobsApiGroup = HttpApiGroup.make("jobs").add(
     success: CreatedJobResponse,
     error: [BadRequestResponse, ForbiddenResponse, ValidationResponse] as const,
   }).middleware(AuthMiddleware),
+  HttpApiEndpoint.post("retryUrlJob", "/vaults/:vault_id/jobs/:job_id/retry", {
+    params: { vault_id: Uuid, job_id: Uuid },
+    payload: CompileRequest,
+    success: CreatedJobResponse,
+    error: [
+      BadRequestResponse,
+      ForbiddenResponse,
+      NotFoundResponse,
+      ValidationResponse,
+    ] as const,
+  }).middleware(AuthMiddleware),
   HttpApiEndpoint.get("listJobs", "/vaults/:vault_id/jobs", {
     params: { vault_id: Uuid },
     query: JobListQuery,
