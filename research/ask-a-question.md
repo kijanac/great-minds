@@ -150,7 +150,7 @@ If the server accepted the request but the response was lost, the pending sessio
 - Verify a lost create response followed by retry: session idempotency is explicit, but duplicate reply/exchange behavior can still surprise the user.
 - Reader-launched personal references currently provide an `origin` path without preserving personal scope in the home launch. This is the navigation-foundation bug and can make the question search for a `refs/…` path in vault storage.
 - Verify whether web search is exposed or configurable anywhere in the scoped owner surface. The server default is off and the current visible query bar gives no scope signal.
-- Post-baseline commit `ed55674` dispatches each accepted reply through `ReplyGeneration` using the persisted reply request as its outbox. A server restart no longer intentionally fails every running reply; workflow replay/reconciliation continues accepted generation. The browser's versioned snapshot/reconnect contract is unchanged.
+- Post-baseline commit `ed55674` dispatches each accepted reply through `ReplyGeneration` using the persisted reply request as its outbox. Commit `0ca82b4` checkpoints every completed model/tool turn and resumes from the durable cursor. A restart between turns continues generation; a restart during an external call with no saved response fails explicitly instead of repeating that call. The browser's versioned snapshot/reconnect contract is unchanged.
 - There is no Stop or draft-persistence affordance. Confirm that the intended contract is “submission is durable; leave the page if you no longer want to watch.”
 
 Verified against Great Minds commit `c8c9e57`.
