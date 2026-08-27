@@ -17,6 +17,7 @@ type StreamScript =
   | {
       readonly kind: "parts";
       readonly parts: readonly ModelStreamPart[];
+      readonly errorAfterParts?: unknown;
     }
   | {
       readonly kind: "throw";
@@ -88,6 +89,9 @@ export const makeScriptedLanguageModel = (options: {
         }
         for (const part of script.parts) {
           yield part;
+        }
+        if (script.errorAfterParts !== undefined) {
+          throw script.errorAfterParts;
         }
       }
       return run();

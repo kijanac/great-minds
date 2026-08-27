@@ -7,6 +7,7 @@
   import AnswerBlock from "$lib/components/answer-block.svelte";
   import FollowUpBar from "$lib/components/follow-up-bar.svelte";
   import PromoteButton from "$lib/components/promote-button.svelte";
+  import ReplyInterrupted from "$lib/components/reply-interrupted.svelte";
   import SelectionPopover from "$lib/components/selection-popover.svelte";
   import ThinkingSection from "$lib/components/thinking-section.svelte";
   import { Badge } from "$lib/components/ui/badge";
@@ -45,7 +46,11 @@
     browser && localStorage.getItem("onboarding-hint-seen") === "true",
   );
   const showHint = $derived(
-    !hintDismissed && session.phase === "done" && session.thread.length === 1,
+    !hintDismissed &&
+      session.phase === "done" &&
+      session.thread.length === 1 &&
+      (session.thread[0]?.error === null ||
+        session.thread[0]?.error === undefined),
   );
   const canFollowUp = $derived(session.phase === "done");
 
@@ -125,7 +130,7 @@
           >
             “{exchange.query}”
           </span>
-          {#if session.sessionId && exchange.answer && !exchange.streaming}
+          {#if session.sessionId && exchange.answer && !exchange.streaming && !exchange.error}
             <span class="print:hidden">
               <PromoteButton
                 sessionId={session.sessionId}
@@ -144,6 +149,15 @@
           />
         </div>
 
+        {#if exchange.error}
+          <ReplyInterrupted
+            error={exchange.error}
+            partial={exchange.answer.length > 0}
+          />
+        {:else if !exchange.answer && !exchange.streaming}
+          <ReplyInterrupted />
+        {/if}
+
         {#if exchange.answer}
           <AnswerBlock
             text={exchange.answer}
@@ -155,14 +169,6 @@
             onBtwReply={session.replyBtw}
             onBtwDismiss={session.dismissBtw}
           />
-        {:else if !exchange.streaming}
-          <div
-            class="mb-[9px] font-mono text-[length:var(--text-chrome)] tracking-[0.06em] text-warm-ghost italic"
-          >
-            reply interrupted{exchange.error
-              ? ` — ${exchange.error}`
-              : " — ask again below"}
-          </div>
         {/if}
       </div>
     {/each}

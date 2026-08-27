@@ -1292,13 +1292,18 @@ describe("query stream", () => {
             finishPart("tool_calls", "ok-round"),
           ],
         },
-        { kind: "throw", error: new Error("secret provider detail") },
+        {
+          kind: "parts",
+          parts: [tokenPart("Partial answer that may be incomplete.")],
+          errorAfterParts: new Error("secret provider detail"),
+        },
       ],
     });
     await startHarness({ language: loopLanguage });
     const loop = await runReply({ question: "break loop" });
     expect(loop.snapshots.at(-1)).toMatchObject({
       status: "failed",
+      answer: "Partial answer that may be incomplete.",
       error: "Something went wrong while answering. Try again in a minute.",
       sources: [{ type: "query", label: "contains: Alpha" }],
     });

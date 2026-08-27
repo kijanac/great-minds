@@ -7,6 +7,7 @@
   import ArticleBadge from "$lib/components/article-badge.svelte";
   import FilterBadge from "$lib/components/filter-badge.svelte";
   import MarkdownView from "$lib/components/markdown-view.svelte";
+  import ReplyInterrupted from "$lib/components/reply-interrupted.svelte";
   import SearchBadge from "$lib/components/search-badge.svelte";
   import * as Collapsible from "$lib/components/ui/collapsible";
   import type { ThreadLike } from "$lib/types";
@@ -149,25 +150,28 @@
             >
               {sources.length > 0 ? "reading..." : "thinking..."}
             </div>
-          {:else if !exchange.streaming && !exchange.answer}
-            <div
-              class="mb-[9px] font-mono text-[length:var(--text-chrome)] tracking-[0.06em] text-warm-ghost italic"
-            >
-              reply interrupted{exchange.error
-                ? ` — ${exchange.error}`
-                : " — ask again below"}
-            </div>
           {:else}
-            <div
-              class="mb-[9px] text-[length:var(--text-small)] leading-[1.72] text-warm-faint"
-            >
-              <MarkdownView source={exchange.answer} variant="btw" />
-              {#if exchange.streaming}
-                <span
-                  class="ml-px inline-block h-2.5 w-px animate-[blink_1s_step-end_infinite] bg-gold-muted align-middle"
-                ></span>
-              {/if}
-            </div>
+            {#if exchange.error}
+              <ReplyInterrupted
+                error={exchange.error}
+                partial={exchange.answer.length > 0}
+              />
+            {:else if !exchange.answer}
+              <ReplyInterrupted />
+            {/if}
+
+            {#if exchange.answer}
+              <div
+                class="mb-[9px] text-[length:var(--text-small)] leading-[1.72] text-warm-faint"
+              >
+                <MarkdownView source={exchange.answer} variant="btw" />
+                {#if exchange.streaming}
+                  <span
+                    class="ml-px inline-block h-2.5 w-px animate-[blink_1s_step-end_infinite] bg-gold-muted align-middle"
+                  ></span>
+                {/if}
+              </div>
+            {/if}
           {/if}
         </div>
       {/each}
