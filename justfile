@@ -39,6 +39,10 @@ types-web:
 types-packages:
     pnpm run typecheck
 
+# Run focused browser-library tests without external services
+test-web:
+    pnpm exec vitest run web/src/lib/api/sse-contract.test.ts web/src/lib/api/stream-retry.test.ts
+
 # Run TypeScript package integration tests against scratch Postgres
 test-packages:
     #!/usr/bin/env bash
@@ -62,8 +66,8 @@ goldens-check:
 # Compound checks
 # ---------------------------------------------------------------------------
 
-# Run static CI checks
-ci: lint-web format-web types-web lint-packages types-packages
+# Run fast CI checks
+ci: lint-web format-web types-web test-web lint-packages types-packages
 
 # Run full CI checks, including hermetic TypeScript package integration
 ci-full: ci test-packages

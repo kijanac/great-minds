@@ -1,6 +1,8 @@
 import { useQueryClient } from "@tanstack/svelte-query";
 
 import { apiFetch, vaultPathFor } from "$lib/api/client";
+import { iterateSseMessages, type SseMessage } from "$lib/api/sse";
+import { abortableSleep, retryDelay } from "$lib/api/stream-retry";
 import { activeVault } from "$lib/hooks/use-vault.svelte";
 
 export type PipelineStage =
@@ -61,11 +63,6 @@ interface PipelineEvent extends BackendPipelineEvent {
   phase: PipelineStage;
 }
 
-interface SseMessage {
-  event: string;
-  data: string;
-}
-
 const PHASE_TO_STAGE: Record<BackendPhase, PipelineStage> = {
   source_ingest: "uploading",
   ingest: "indexing",
@@ -106,26 +103,6 @@ function normalizeEvent(raw: BackendPipelineEvent): PipelineEvent | null {
   const backendPhase = raw.phase as BackendPhase;
   const phase = PHASE_TO_STAGE[backendPhase];
   return phase ? { ...raw, backendPhase, phase } : null;
-}
-
-function parseSseBlock(block: string): SseMessage | null {
-  let event = "message";
-  const data: string[] = [];
-
-  for (const rawLine of block.split("\n")) {
-    const line = rawLine.trimEnd();
-    if (!line || line.startsWith(":")) continue;
-
-    const separator = line.indexOf(":");
-    const field = separator === -1 ? line : line.slice(0, separator);
-    let value = separator === -1 ? "" : line.slice(separator + 1);
-    if (value.startsWith(" ")) value = value.slice(1);
-    if (field === "event") event = value;
-    if (field === "data") data.push(value);
-  }
-
-  if (event === "message" && data.length === 0) return null;
-  return { event, data: data.join("\n") };
 }
 
 function applyEvent(previous: StageProgress[], event: PipelineEvent): StageProgress[] {
@@ -208,10 +185,6 @@ export function useJobSSE(
     let cancelled = false;
     let terminal = false;
 
-    const retryDelay = (attempt: number) => Math.min(1000 * 2 ** attempt, 10_000);
-    const sleep = (milliseconds: number) =>
-      new Promise((resolve) => window.setTimeout(resolve, milliseconds));
-
     function handleMessage(message: SseMessage) {
       if (message.event === "connected") return;
       if (message.event === "done") {
@@ -287,22 +260,9 @@ export function useJobSSE(
           }
 
           attempt = 0;
-          const reader = response.body.getReader();
-          const decoder = new TextDecoder();
-          let buffer = "";
-
-          while (!cancelled && !terminal) {
-            const { done, value } = await reader.read();
-            if (done) break;
-            buffer += decoder.decode(value, { stream: true }).replace(/\r\n/g, "\n");
-            let separator = buffer.indexOf("\n\n");
-            while (separator !== -1) {
-              const block = buffer.slice(0, separator);
-              buffer = buffer.slice(separator + 2);
-              const message = parseSseBlock(block);
-              if (message) handleMessage(message);
-              separator = buffer.indexOf("\n\n");
-            }
+          for await (const message of iterateSseMessages(response.body, nextController.signal)) {
+            if (cancelled || terminal) break;
+            handleMessage(message);
           }
         } catch (error) {
           if (nextController.signal.aborted || terminal || cancelled) {
@@ -312,7 +272,7 @@ export function useJobSSE(
         }
 
         if (!cancelled && !terminal && !nextController.signal.aborted) {
-          await sleep(retryDelay(attempt));
+          await abortableSleep(retryDelay(attempt), nextController.signal);
           attempt += 1;
         }
       }

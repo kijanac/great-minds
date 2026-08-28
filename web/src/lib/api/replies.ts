@@ -3,6 +3,8 @@ import { z } from "zod";
 import type { BtwPayload, OriginScope, SessionOrigin } from "./sessions";
 import { apiFetch, readJson, vaultPath } from "./client";
 import { sourceRefSchema } from "./schemas";
+import { iterateSseMessages } from "./sse";
+import { abortableSleep, retryDelay } from "./stream-retry";
 import type { HistoryMessage } from "$lib/types";
 
 interface ReplyQueryPayload {
@@ -71,46 +73,6 @@ export class ReplyStreamError extends Error {
   }
 }
 
-type SseMessage = {
-  event: string;
-  data: string;
-};
-
-function parseSseBlock(block: string): SseMessage | null {
-  let event = "";
-  const data: string[] = [];
-  for (const line of block.split("\n")) {
-    if (line.startsWith("event:")) {
-      event = line.slice(6).trimStart();
-    } else if (line.startsWith("data:")) {
-      data.push(line.slice(5).trimStart());
-    }
-  }
-  // SSE omits the event line for the default "message" event.
-  if (event.length === 0) {
-    return data.length === 0 ? null : { event: "message", data: data.join("\n") };
-  }
-  return { event, data: data.join("\n") };
-}
-
-function retryDelay(attempt: number) {
-  return Math.min(1000 * 2 ** attempt, 10_000);
-}
-
-function sleep(milliseconds: number, signal?: AbortSignal) {
-  return new Promise<void>((resolve) => {
-    const timeout = window.setTimeout(resolve, milliseconds);
-    signal?.addEventListener(
-      "abort",
-      () => {
-        window.clearTimeout(timeout);
-        resolve();
-      },
-      { once: true },
-    );
-  });
-}
-
 export async function createReply(
   payload: CreateReplyPayload,
   signal?: AbortSignal,
@@ -165,32 +127,18 @@ export async function* streamReply(
       }
 
       attempt = 0;
-      const reader = response.body.getReader();
-      const decoder = new TextDecoder();
-      let buffer = "";
-
-      while (!signal?.aborted) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        buffer += decoder.decode(value, { stream: true }).replace(/\r\n/g, "\n");
-        let separator = buffer.indexOf("\n\n");
-        while (separator !== -1) {
-          const block = buffer.slice(0, separator);
-          buffer = buffer.slice(separator + 2);
-          const message = parseSseBlock(block);
-          if (message?.event === "message" && message.data.length > 0) {
-            const snapshot = replySnapshotSchema.parse(JSON.parse(message.data));
-            if (snapshot.version !== previousVersion) {
-              previousVersion = snapshot.version;
-              yield snapshot;
-            }
-            if (snapshot.status !== "running") {
-              return;
-            }
-          } else if (message?.event === "done") {
+      for await (const message of iterateSseMessages(response.body, signal)) {
+        if (message.event === "message" && message.data.length > 0) {
+          const snapshot = replySnapshotSchema.parse(JSON.parse(message.data));
+          if (snapshot.version !== previousVersion) {
+            previousVersion = snapshot.version;
+            yield snapshot;
+          }
+          if (snapshot.status !== "running") {
             return;
           }
-          separator = buffer.indexOf("\n\n");
+        } else if (message.event === "done") {
+          return;
         }
       }
     } catch (error) {
@@ -200,7 +148,7 @@ export async function* streamReply(
     }
 
     if (!signal?.aborted) {
-      await sleep(retryDelay(attempt), signal);
+      await abortableSleep(retryDelay(attempt), signal);
       attempt += 1;
     }
   }
