@@ -1,5 +1,6 @@
 import { Database, replies, sessions as sessionsTable, vaults } from "@great-minds/database";
 import {
+  BadRequest,
   type BtwData,
   type CreateReplyRequest,
   CreateReplyRequest as CreateReplyRequestSchema,
@@ -228,6 +229,14 @@ type RepliesServiceShape = {
     vaultId: Uuid,
     input: CreateReplyRequest,
   ) => Effect.Effect<CreateReplyResponse, Forbidden | NotFound | ServiceUnavailable>;
+  readonly retry: (
+    userId: Uuid,
+    vaultId: Uuid,
+    replyId: Uuid,
+  ) => Effect.Effect<
+    CreateReplyResponse,
+    BadRequest | Forbidden | NotFound | ServiceUnavailable
+  >;
   readonly stream: (
     userId: Uuid,
     vaultId: Uuid,
@@ -933,78 +942,104 @@ export const RepliesServiceLive = Layer.effect(
         ),
       );
 
-    return {
-      create: (userId, vaultId, input) =>
-        Effect.gen(function* () {
-          const vaultRows = yield* db.query((d) => d
-            .select({ id: vaults.id })
-            .from(vaults)
-            .where(eq(vaults.id, vaultId))
-            .limit(1));
-          if (vaultRows[0] === undefined) {
-            return yield* new NotFound({ detail: "Vault not found" });
-          }
-          yield* access.requireMember(userId, vaultId);
-          if (Option.isNone(config.openRouterApiKey)) {
-            return yield* new ServiceUnavailable({
-              detail: "LLM service not configured (OPENROUTER_API_KEY missing)",
-            });
-          }
+    const acceptReply = (
+      userId: Uuid,
+      vaultId: Uuid,
+      input: CreateReplyRequest,
+      existingSessionId?: SessionId,
+    ) =>
+      Effect.gen(function* () {
+        const vaultRows = yield* db.query((d) => d
+          .select({ id: vaults.id })
+          .from(vaults)
+          .where(eq(vaults.id, vaultId))
+          .limit(1));
+        if (vaultRows[0] === undefined) {
+          return yield* new NotFound({ detail: "Vault not found" });
+        }
+        yield* access.requireMember(userId, vaultId);
+        if (Option.isNone(config.openRouterApiKey)) {
+          return yield* new ServiceUnavailable({
+            detail: "LLM service not configured (OPENROUTER_API_KEY missing)",
+          });
+        }
 
-          const replyId = decodeUuid(yield* newReplyId());
-          let sessionId: SessionId | null = null;
-          if (input.kind === "exchange") {
-            const pending: ExchangeData = {
-              id: input.exchange_id,
-              query: input.question,
-              thinking: [],
-              answer: "",
-            };
-            if ("session_id" in input) {
-              sessionId = input.session_id;
-              yield* requireSession(vaultId, sessionId);
-              yield* sessions.appendExchange(userId, vaultId, sessionId, pending, replyId);
-            } else {
-              const created = yield* sessions.createSession(
-                userId,
-                vaultId,
-                {
-                  idempotency_key: input.create.idempotency_key,
-                  exchange: pending,
-                  ...(input.create.origin === undefined
-                    ? {}
-                    : {
-                        origin: {
-                          ...input.create.origin,
-                          origin_scope: input.create.origin_scope,
-                        },
-                      }),
-                },
-                replyId,
-              );
-              sessionId = decodeSessionId(created.id);
-            }
-          } else if (input.kind === "btw") {
+        const replyId = decodeUuid(yield* newReplyId());
+        let sessionId: SessionId | null = null;
+        if (input.kind === "exchange") {
+          const pending: ExchangeData = {
+            id: input.exchange_id,
+            query: input.question,
+            thinking: [],
+            answer: "",
+          };
+          if (existingSessionId !== undefined) {
+            sessionId = existingSessionId;
+            yield* requireSession(vaultId, sessionId);
+            yield* sessions.appendExchange(userId, vaultId, sessionId, pending, replyId);
+          } else if ("session_id" in input) {
             sessionId = input.session_id;
             yield* requireSession(vaultId, sessionId);
-            yield* sessions.appendBtw(userId, vaultId, sessionId, input.btw, replyId);
-          }
-
-          yield* db.query((d) => d
-            .insert(replies)
-            .values({
-              id: replyId,
-              vaultId,
+            yield* sessions.appendExchange(userId, vaultId, sessionId, pending, replyId);
+          } else {
+            const created = yield* sessions.createSession(
               userId,
-              sessionId,
-              kind: input.kind,
-              status: "running",
-              answer: "",
-              sources: [],
-              request: input,
-            }));
-          yield* dispatchBestEffort(replyId);
-          return { reply_id: replyId, session_id: sessionId };
+              vaultId,
+              {
+                idempotency_key: input.create.idempotency_key,
+                exchange: pending,
+                ...(input.create.origin === undefined
+                  ? {}
+                  : {
+                      origin: {
+                        ...input.create.origin,
+                        origin_scope: input.create.origin_scope,
+                      },
+                    }),
+              },
+              replyId,
+            );
+            sessionId = decodeSessionId(created.id);
+          }
+        } else if (input.kind === "btw") {
+          sessionId = existingSessionId ?? input.session_id;
+          yield* requireSession(vaultId, sessionId);
+          yield* sessions.appendBtw(userId, vaultId, sessionId, input.btw, replyId);
+        }
+
+        yield* db.query((d) => d
+          .insert(replies)
+          .values({
+            id: replyId,
+            vaultId,
+            userId,
+            sessionId,
+            kind: input.kind,
+            status: "running",
+            answer: "",
+            sources: [],
+            request: input,
+          }));
+        yield* dispatchBestEffort(replyId);
+        return { reply_id: replyId, session_id: sessionId };
+      });
+
+    return {
+      create: (userId, vaultId, input) => acceptReply(userId, vaultId, input),
+      retry: (userId, vaultId, replyId) =>
+        Effect.gen(function* () {
+          yield* access.requireMember(userId, vaultId);
+          const previous = yield* readReply(vaultId, replyId);
+          if (previous === undefined || previous.userId !== userId) {
+            return yield* new NotFound({ detail: "Reply not found" });
+          }
+          if (previous.status !== "failed") {
+            return yield* new BadRequest({ detail: "Only failed replies can be retried" });
+          }
+          const input = yield* decodeCreateReply(previous.request).pipe(Effect.orDie);
+          const sessionId =
+            previous.sessionId === null ? undefined : decodeSessionId(previous.sessionId);
+          return yield* acceptReply(userId, vaultId, input, sessionId);
         }),
       stream: (userId, vaultId, replyId) =>
         Effect.gen(function* () {

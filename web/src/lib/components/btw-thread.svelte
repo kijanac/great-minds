@@ -15,6 +15,7 @@
   let {
     btw,
     onReply,
+    onRetry,
     onDismiss,
     onOpenSession,
     readOnly = false,
@@ -24,6 +25,7 @@
   }: {
     btw: ThreadLike;
     onReply?: (btwId: string, text: string) => void;
+    onRetry?: (btwId: string, turnId: string) => void;
     onDismiss?: (btwId: string) => void;
     onOpenSession?: (btwId: string) => void;
     readOnly?: boolean;
@@ -113,7 +115,7 @@
     </Collapsible.Trigger>
 
     <Collapsible.Content>
-      {#each btw.exchanges as exchange (exchange.id)}
+      {#each btw.exchanges as exchange, index (exchange.id)}
         {@const sources = exchange.thinking.flatMap((block) => block.sources)}
         <div>
           <div
@@ -151,15 +153,6 @@
               {sources.length > 0 ? "reading..." : "thinking..."}
             </div>
           {:else}
-            {#if exchange.error}
-              <ReplyInterrupted
-                error={exchange.error}
-                partial={exchange.answer.length > 0}
-              />
-            {:else if !exchange.answer}
-              <ReplyInterrupted />
-            {/if}
-
             {#if exchange.answer}
               <div
                 class="mb-[9px] text-[length:var(--text-small)] leading-[1.72] text-warm-faint"
@@ -171,6 +164,18 @@
                   ></span>
                 {/if}
               </div>
+            {/if}
+
+            {#if exchange.error || !exchange.answer}
+              <ReplyInterrupted
+                partial={exchange.answer.length > 0}
+                onRetry={!readOnly &&
+                index === btw.exchanges.length - 1 &&
+                exchange.replyId &&
+                onRetry
+                  ? () => onRetry(btw.id, exchange.id)
+                  : undefined}
+              />
             {/if}
           {/if}
         </div>

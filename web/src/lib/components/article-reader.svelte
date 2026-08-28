@@ -325,6 +325,7 @@
         documentId={resolvedPath}
         onSelection={(info) => (popover = info)}
         onBtwReply={docThreads.replyThread}
+        onBtwRetry={docThreads.retryThread}
         onBtwDismiss={docThreads.dismissEmpty}
       />
     {:else}

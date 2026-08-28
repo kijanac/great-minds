@@ -993,6 +993,15 @@ const RepliesHandlersLive = HttpApiBuilder.group(MountedGreatMindsApi, "replies"
         }),
       ),
     )
+    .handle("retryReply", ({ params }) =>
+      withDomainErrors(
+        Effect.gen(function* () {
+          const replies = yield* RepliesService;
+          const current = yield* CurrentAuth;
+          return yield* replies.retry(current.user_id, params.vault_id, params.reply_id);
+        }),
+      ),
+    )
     .handle("streamReply", ({ params }) =>
       withDomainErrors(
         Effect.gen(function* () {

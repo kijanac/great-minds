@@ -469,6 +469,18 @@ const tailReply = async (replyId: string) => {
   return { response, text };
 };
 
+const retryReply = async (replyId: string) => {
+  const response = await fetch(
+    `${currentState().started.url}/v1/vaults/${id.vault}/replies/${replyId}/retry`,
+    {
+      method: "POST",
+      headers: { authorization: `Bearer ${currentState().token}` },
+    },
+  );
+  const text = await response.text();
+  return { response, text };
+};
+
 const readSessionEvents = async (sessionId: string) => {
   const content = await readFile(
     join(currentState().storageRoot, "vaults", id.vault, "sessions", `${sessionId}.jsonl`),
@@ -829,6 +841,96 @@ describe("query stream", () => {
         answer: "",
       }),
     ]);
+  });
+
+  it("retries a failed reply in place from its persisted request", async () => {
+    const language = makeScriptedLanguageModel({
+      streams: [
+        {
+          kind: "parts",
+          parts: [tokenPart("Incomplete answer.")],
+          errorAfterParts: new Error("provider secret"),
+        },
+        {
+          kind: "parts",
+          parts: [tokenPart("Complete answer."), finishPart("stop", "retry-complete")],
+        },
+      ],
+    });
+    await startHarness({ language });
+
+    const created = await api(repliesPath, {
+      kind: "exchange",
+      exchange_id: "ex-retry",
+      create: {
+        idempotency_key: "retry-session-key",
+        origin_scope: "vault",
+        origin: {
+          doc_path: "raw/texts/source.md",
+          origin_scope: "vault",
+          anchor: "The highlighted claim.",
+          paragraph: "The surrounding passage.",
+          paragraph_index: 3,
+        },
+      },
+      question: "Try this answer",
+      mode: "query",
+      history: [],
+    });
+    expect(created.response.status).toBe(202);
+    const first = JSON.parse(created.text) as {
+      reply_id: string;
+      session_id: string;
+    };
+    const failed = await tailReply(first.reply_id);
+    expect(replySnapshots(failed.text).at(-1)).toMatchObject({
+      status: "failed",
+      answer: "Incomplete answer.",
+    });
+
+    const retried = await retryReply(first.reply_id);
+    expect(retried.response.status).toBe(202);
+    const second = JSON.parse(retried.text) as {
+      reply_id: string;
+      session_id: string;
+    };
+    expect(second.reply_id).not.toBe(first.reply_id);
+    expect(second.session_id).toBe(first.session_id);
+
+    const completed = await tailReply(second.reply_id);
+    expect(replySnapshots(completed.text).at(-1)).toMatchObject({
+      status: "completed",
+      answer: "Complete answer.",
+      error: null,
+    });
+    expect(
+      language.streamCalls[1]?.messages.find((message) => message.role === "user"),
+    ).toMatchObject({
+      role: "user",
+      content:
+        'Passage:\n> The surrounding passage.\n\nHighlighted: "The highlighted claim."\n\nTry this answer',
+    });
+
+    const events = (await readSessionEvents(first.session_id)).filter(
+      (event) => event.type === "exchange",
+    );
+    expect(events).toHaveLength(3);
+    expect(events.at(-2)).toMatchObject({
+      exId: "ex-retry",
+      reply_id: second.reply_id,
+      answer: "",
+    });
+    expect(events.at(-1)).toMatchObject({
+      exId: "ex-retry",
+      reply_id: second.reply_id,
+      answer: "Complete answer.",
+    });
+
+    const retryCompleted = await retryReply(second.reply_id);
+    expect(retryCompleted.response.status).toBe(400);
+    expect(JSON.parse(retryCompleted.text)).toEqual({
+      detail: "Only failed replies can be retried",
+    });
   });
 
   it("resumes a persisted running reply instead of failing it as a restart zombie", async () => {

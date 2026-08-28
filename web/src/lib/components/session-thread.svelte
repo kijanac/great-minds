@@ -149,15 +149,6 @@
           />
         </div>
 
-        {#if exchange.error}
-          <ReplyInterrupted
-            error={exchange.error}
-            partial={exchange.answer.length > 0}
-          />
-        {:else if !exchange.answer && !exchange.streaming}
-          <ReplyInterrupted />
-        {/if}
-
         {#if exchange.answer}
           <AnswerBlock
             text={exchange.answer}
@@ -167,7 +158,17 @@
             {panelDocked}
             onSelection={session.handleSelection}
             onBtwReply={session.replyBtw}
+            onBtwRetry={session.retryBtw}
             onBtwDismiss={session.dismissBtw}
+          />
+        {/if}
+
+        {#if exchange.error || (!exchange.answer && !exchange.streaming)}
+          <ReplyInterrupted
+            partial={exchange.answer.length > 0}
+            onRetry={index === session.thread.length - 1 && exchange.replyId
+              ? () => session.retryExchange(exchange.id)
+              : undefined}
           />
         {/if}
       </div>

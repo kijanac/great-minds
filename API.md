@@ -590,10 +590,13 @@ The authenticated web client accepts research work through the durable reply sur
 
 ```
 POST /v1/vaults/{vault_id}/replies
+POST /v1/vaults/{vault_id}/replies/{reply_id}/retry
 GET  /v1/vaults/{vault_id}/replies/{reply_id}/stream
 ```
 
-`POST` persists the complete exchange, BTW, or ephemeral request and returns `202` with `reply_id` before generation finishes. The `replies` row is both the product read model and dispatch outbox. `ReplyGeneration` updates versioned answer/evidence snapshots; the SSE endpoint replays the latest snapshot after reconnect and ends only when the persisted status is `completed` or `failed`.
+`POST /replies` persists the complete exchange, BTW, or ephemeral request and returns `202` with `reply_id` before generation finishes. The `replies` row is both the product read model and dispatch outbox. `ReplyGeneration` updates versioned answer/evidence snapshots; the SSE endpoint replays the latest snapshot after reconnect and ends only when the persisted status is `completed` or `failed`.
+
+`POST /replies/{reply_id}/retry` accepts a new attempt for a failed reply. It reuses the saved request and session position, returns a new `reply_id`, and leaves the interrupted attempt intact for auditability. Replies that are still running or already completed cannot be retried.
 
 If the process stops after acceptance, the workflow journal resumes generation. If dispatch was never acknowledged, startup/periodic reconciliation redispatches the same reply ID. Stale running replies are no longer converted into synthetic restart failures.
 

@@ -1,24 +1,29 @@
 <script lang="ts">
   let {
-    error = null,
     partial = false,
+    onRetry,
   }: {
-    error?: string | null;
     partial?: boolean;
+    onRetry?: () => void;
   } = $props();
 </script>
 
 <div
   role="status"
-  class="mb-3 rounded-sm border border-gold-dim/70 bg-gold/5 px-3 py-2 font-mono text-[length:var(--text-chrome)] leading-relaxed tracking-[0.06em] text-gold-muted"
+  class="mt-3 mb-2 flex flex-wrap items-baseline gap-x-3 gap-y-1 font-mono text-[length:var(--text-chrome)] leading-relaxed tracking-[0.04em] text-warm-faint"
 >
-  <span class="font-semibold text-gold">reply interrupted</span>
-  {#if partial}
-    — partial answer below may be incomplete
-  {:else if !error}
-    — ask again below
-  {/if}
-  {#if error}
-    <span class="text-warm-faint"> — {error}</span>
+  <span>
+    {partial
+      ? "Answer interrupted. This response may be incomplete."
+      : "Couldn’t generate an answer."}
+  </span>
+  {#if onRetry}
+    <button
+      type="button"
+      onclick={onRetry}
+      class="shrink-0 text-gold underline decoration-gold-dim underline-offset-4 transition-colors hover:text-foreground focus-visible:rounded-xs focus-visible:outline-1 focus-visible:outline-offset-4 focus-visible:outline-gold"
+    >
+      Try again
+    </button>
   {/if}
 </div>

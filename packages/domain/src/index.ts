@@ -1304,6 +1304,13 @@ const CreateReplyErrors = [
   ServiceUnavailableResponse,
   ValidationResponse,
 ] as const;
+const RetryReplyErrors = [
+  BadRequestResponse,
+  ForbiddenResponse,
+  NotFoundResponse,
+  ServiceUnavailableResponse,
+  ValidationResponse,
+] as const;
 
 export class AuthMiddleware extends HttpApiMiddleware.Service<
   AuthMiddleware,
@@ -1903,6 +1910,16 @@ export const RepliesApiGroup = HttpApiGroup.make("replies")
       payload: CreateReplyRequest,
       success: AcceptedReplyResponse,
       error: CreateReplyErrors,
+    }).middleware(AuthMiddleware),
+  )
+  .add(
+    HttpApiEndpoint.post("retryReply", "/vaults/:vault_id/replies/:reply_id/retry", {
+      params: {
+        vault_id: Uuid,
+        reply_id: Uuid,
+      },
+      success: AcceptedReplyResponse,
+      error: RetryReplyErrors,
     }).middleware(AuthMiddleware),
   )
   .add(

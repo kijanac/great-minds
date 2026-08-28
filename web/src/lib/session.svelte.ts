@@ -1,6 +1,6 @@
 import { browser } from "$app/environment";
 
-import { createReply, streamReply, type ReplySnapshot } from "$lib/api/replies";
+import { createReply, retryReply, streamReply, type ReplySnapshot } from "$lib/api/replies";
 import type { BtwThread, Exchange, HistoryMessage, Phase, SelectionInfo } from "$lib/types";
 import { buildBtwHistory, buildBtwQuery, genId, isAbortError } from "$lib/utils";
 
@@ -109,6 +109,22 @@ export class Session {
           turn.replyId === replyId ? { ...turn, ...patch } : turn,
         ),
       })),
+    }));
+  };
+
+  #updateBtwTurn = (btwId: string, turnId: string, patch: Partial<Exchange>): void => {
+    this.thread = this.thread.map((exchange) => ({
+      ...exchange,
+      btws: exchange.btws.map((btw) =>
+        btw.id !== btwId
+          ? btw
+          : {
+              ...btw,
+              exchanges: btw.exchanges.map((turn) =>
+                turn.id === turnId ? { ...turn, ...patch } : turn,
+              ),
+            },
+      ),
     }));
   };
 
@@ -230,6 +246,46 @@ export class Session {
   submitQuery = (question: string): void => {
     if (this.phase !== "idle" && this.phase !== "done") return;
     void this.#runExchange(question);
+  };
+
+  retryExchange = (exchangeId: string): void => {
+    if (this.phase !== "done") return;
+    const index = this.thread.findIndex((exchange) => exchange.id === exchangeId);
+    const previous = this.thread[index];
+    if (
+      previous === undefined ||
+      index !== this.thread.length - 1 ||
+      previous.streaming ||
+      previous.replyId === undefined
+    ) {
+      return;
+    }
+
+    this.phase = "searching";
+    this.#updateExchange(exchangeId, {
+      thinking: [],
+      answer: "",
+      streaming: true,
+      error: null,
+    });
+    this.#abortController?.abort();
+    const controller = new AbortController();
+    this.#abortController = controller;
+
+    void (async () => {
+      try {
+        const created = await retryReply(previous.replyId!, controller.signal);
+        this.#updateExchange(exchangeId, { replyId: created.reply_id });
+        await this.#tailExchange(exchangeId, created.reply_id, controller);
+      } catch (error) {
+        if (isAbortError(error) || controller.signal.aborted) return;
+        console.error("Reply retry failed:", error);
+        this.thread = this.thread.map((exchange) =>
+          exchange.id === exchangeId ? previous : exchange,
+        );
+        this.phase = "done";
+      }
+    })();
   };
 
   submitFollowUp = (additionalText: string): void => {
@@ -362,6 +418,58 @@ export class Session {
         if (isAbortError(error)) return;
         console.error("BTW reply failed:", error);
         patchTurn({ streaming: false });
+      } finally {
+        this.#btwControllers.delete(controller);
+      }
+    })();
+  };
+
+  retryBtw = (btwId: string, turnId: string): void => {
+    const btw = this.thread
+      .flatMap((exchange) => exchange.btws)
+      .find((candidate) => candidate.id === btwId);
+    const index = btw?.exchanges.findIndex((turn) => turn.id === turnId) ?? -1;
+    const previous = index >= 0 ? btw?.exchanges[index] : undefined;
+    if (
+      btw === undefined ||
+      previous === undefined ||
+      index !== btw.exchanges.length - 1 ||
+      previous.streaming ||
+      previous.replyId === undefined
+    ) {
+      return;
+    }
+
+    this.#updateBtwTurn(btwId, turnId, {
+      thinking: [],
+      answer: "",
+      streaming: true,
+      error: null,
+    });
+    const controller = new AbortController();
+    this.#btwControllers.add(controller);
+
+    void (async () => {
+      try {
+        const created = await retryReply(previous.replyId!, controller.signal);
+        this.#updateBtwTurn(btwId, turnId, { replyId: created.reply_id });
+        await this.#tailBtwReply(created.reply_id, controller);
+      } catch (error) {
+        if (isAbortError(error) || controller.signal.aborted) return;
+        console.error("BTW reply retry failed:", error);
+        this.thread = this.thread.map((exchange) => ({
+          ...exchange,
+          btws: exchange.btws.map((candidate) =>
+            candidate.id !== btwId
+              ? candidate
+              : {
+                  ...candidate,
+                  exchanges: candidate.exchanges.map((turn) =>
+                    turn.id === turnId ? previous : turn,
+                  ),
+                },
+          ),
+        }));
       } finally {
         this.#btwControllers.delete(controller);
       }

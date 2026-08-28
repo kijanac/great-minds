@@ -126,6 +126,20 @@ export async function createReply(
   return readJson(response, createReplyResponseSchema);
 }
 
+export async function retryReply(
+  replyId: string,
+  signal?: AbortSignal,
+): Promise<CreateReplyResponse> {
+  const response = await apiFetch(vaultPath(`/replies/${replyId}/retry`), {
+    method: "POST",
+    signal,
+  });
+  if (!response.ok) {
+    throw new ReplyStreamError(await response.text(), response.status);
+  }
+  return readJson(response, createReplyResponseSchema);
+}
+
 export async function* streamReply(
   replyId: string,
   signal?: AbortSignal,

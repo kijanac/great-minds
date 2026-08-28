@@ -1,4 +1,4 @@
-import { createReply, streamReply } from "$lib/api/replies";
+import { createReply, retryReply, streamReply } from "$lib/api/replies";
 import { listSessionsByOrigin, type OriginScope, type SessionEvent } from "$lib/api/sessions";
 import type { DocThread, Exchange, SelectionInfo } from "$lib/types";
 import { buildBtwHistory, genId, isAbortError } from "$lib/utils";
@@ -249,6 +249,66 @@ export class DocThreads {
         console.error("Doc thread reply failed:", error);
         patchTurn({ streaming: false });
         settleDraft();
+      } finally {
+        this.#controllers.delete(controller);
+      }
+    })();
+  };
+
+  retryThread = (threadId: string, turnId: string): void => {
+    const target = this.#findThread(threadId);
+    const index = target?.exchanges.findIndex((turn) => turn.id === turnId) ?? -1;
+    const previous = index >= 0 ? target?.exchanges[index] : undefined;
+    if (
+      target === undefined ||
+      previous === undefined ||
+      index !== target.exchanges.length - 1 ||
+      previous.streaming ||
+      previous.replyId === undefined
+    ) {
+      return;
+    }
+
+    const patchTurn = (patch: Partial<Exchange>): void => {
+      this.threads = this.threads.map((thread) =>
+        thread.id !== threadId
+          ? thread
+          : {
+              ...thread,
+              exchanges: thread.exchanges.map((turn) =>
+                turn.id === turnId ? { ...turn, ...patch } : turn,
+              ),
+            },
+      );
+    };
+
+    patchTurn({ thinking: [], answer: "", streaming: true, error: null });
+    const controller = new AbortController();
+    this.#controllers.add(controller);
+
+    void (async () => {
+      try {
+        const created = await retryReply(previous.replyId!, controller.signal);
+        patchTurn({ replyId: created.reply_id });
+        for await (const snapshot of streamReply(created.reply_id, controller.signal)) {
+          patchTurn({
+            thinking: snapshot.sources.length > 0 ? [{ sources: snapshot.sources }] : [],
+            answer: snapshot.answer,
+            streaming: snapshot.status === "running",
+            error: snapshot.error,
+          });
+        }
+      } catch (error) {
+        if (isAbortError(error) || controller.signal.aborted) return;
+        console.error("Doc thread reply retry failed:", error);
+        this.threads = this.threads.map((thread) =>
+          thread.id !== threadId
+            ? thread
+            : {
+                ...thread,
+                exchanges: thread.exchanges.map((turn) => (turn.id === turnId ? previous : turn)),
+              },
+        );
       } finally {
         this.#controllers.delete(controller);
       }

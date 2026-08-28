@@ -26,6 +26,7 @@
     panelDocked = false,
     onSelection,
     onBtwReply,
+    onBtwRetry,
     onBtwDismiss,
     onBtwOpenSession,
     onLinkClick,
@@ -44,6 +45,7 @@
     panelDocked?: boolean;
     onSelection?: (info: SelectionInfo) => void;
     onBtwReply?: (btwId: string, text: string) => void;
+    onBtwRetry?: (btwId: string, turnId: string) => void;
     onBtwDismiss?: (btwId: string) => void;
     onBtwOpenSession?: (btwId: string) => void;
     onLinkClick?: (event: MouseEvent) => void;
@@ -450,6 +452,7 @@
               hideWhenClosed
               {readOnly}
               onReply={onBtwReply}
+              onRetry={onBtwRetry}
               onDismiss={onBtwDismiss}
               onOpenSession={onBtwOpenSession}
             />

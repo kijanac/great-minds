@@ -31,6 +31,7 @@
     documentId,
     onSelection,
     onBtwReply,
+    onBtwRetry,
     onBtwDismiss,
   }: {
     document: Article;
@@ -54,6 +55,7 @@
     documentId: string;
     onSelection: (info: SelectionInfo) => void;
     onBtwReply: (btwId: string, text: string) => void;
+    onBtwRetry?: (btwId: string, turnId: string) => void;
     onBtwDismiss?: (btwId: string) => void;
   } = $props();
 </script>
@@ -84,6 +86,7 @@
     {onLinkClick}
     {onSelection}
     {onBtwReply}
+    {onBtwRetry}
     {onBtwDismiss}
     {expandedThreads}
     {onToggleThread}
