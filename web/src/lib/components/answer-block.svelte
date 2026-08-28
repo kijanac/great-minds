@@ -7,6 +7,7 @@
     type AnchorMark,
     type AnchorMiss,
   } from "$lib/anchor-marks";
+  import { assignBlockRefIds, stripBlockRefMarkers } from "$lib/block-refs";
   import BtwThread from "$lib/components/btw-thread.svelte";
   import FootnoteNotes, {
     type MarginDot,
@@ -62,9 +63,8 @@
 
   let root: HTMLDivElement | null = $state(null);
   let localExpanded = $state<Record<string, boolean>>({});
-  const BLOCK_REF_RE = /\s*\^p\d+(?=\n|$)/gm;
   const displayText = $derived(
-    stripBlockRefs ? text.replace(BLOCK_REF_RE, "") : text,
+    stripBlockRefs ? stripBlockRefMarkers(text) : text,
   );
   const split = $derived(
     streaming ? splitStreamingMarkdown(displayText) : null,
@@ -293,58 +293,6 @@
       assignBlockRefIds(tree, text);
     }
     return tree;
-  }
-
-  function assignBlockRefIds(tree: HastNode, originalSource: string): void {
-    const markers: { position: number; chunk: number }[] = [];
-    const markerPattern = /\s*\^p(\d+)(?=\n|$)/gm;
-    let removed = 0;
-    let match: RegExpExecArray | null;
-    while ((match = markerPattern.exec(originalSource)) !== null) {
-      markers.push({
-        position: match.index - removed,
-        chunk: Number(match[1]),
-      });
-      removed += match[0].length;
-    }
-
-    const anchoredTags = new Set([
-      "h1",
-      "h2",
-      "h3",
-      "p",
-      "ul",
-      "ol",
-      "blockquote",
-    ]);
-    const claimed = new Set<number>();
-    const walk = (node: HastNode): void => {
-      if (
-        node.type === "element" &&
-        node.tagName &&
-        anchoredTags.has(node.tagName)
-      ) {
-        const start = node.position?.start?.offset;
-        const end = node.position?.end?.offset;
-        if (start != null && end != null) {
-          const marker = markers.find(
-            (candidate) =>
-              !claimed.has(candidate.chunk) &&
-              candidate.position >= start &&
-              candidate.position <= end + 1,
-          );
-          if (marker) {
-            claimed.add(marker.chunk);
-            node.properties = {
-              ...node.properties,
-              id: `^p${marker.chunk}`,
-            };
-          }
-        }
-      }
-      node.children?.forEach(walk);
-    };
-    walk(tree);
   }
 
   function handleSelect(event: MouseEvent, offset: number): void {

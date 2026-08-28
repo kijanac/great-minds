@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-import { apiFetch, vaultPath, readJson } from "./client";
+import { apiFetch, paginationParams, vaultPath, readJson } from "./client";
 import { paginatedSchema, thinkingBlockSchema } from "./schemas";
 
 const btwExchangeSchema = z.object({
@@ -95,9 +95,7 @@ export async function listSessions(params?: {
   limit?: number;
   offset?: number;
 }): Promise<SessionList> {
-  const query = new URLSearchParams();
-  if (params?.limit !== undefined) query.set("limit", String(params.limit));
-  if (params?.offset !== undefined) query.set("offset", String(params.offset));
+  const query = paginationParams(params);
 
   const qs = query.toString();
   const res = await apiFetch(vaultPath(`/sessions${qs ? `?${qs}` : ""}`));

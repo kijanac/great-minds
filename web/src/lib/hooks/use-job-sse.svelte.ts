@@ -77,43 +77,15 @@ const PHASE_TO_STAGE: Record<BackendPhase, PipelineStage> = {
   publish: "publishing",
 };
 
-const STAGES: {
-  stage: PipelineStage;
-  label: string;
-  activeLabel: string;
-}[] = [
-  { stage: "uploading", label: "Uploading", activeLabel: "Uploading files…" },
-  {
-    stage: "indexing",
-    label: "Indexing",
-    activeLabel: "Indexing documents for search…",
-  },
-  {
-    stage: "reading",
-    label: "Reading",
-    activeLabel: "Reading documents…",
-  },
-  {
-    stage: "synthesizing",
-    label: "Synthesizing",
-    activeLabel: "Synthesizing topics…",
-  },
-  {
-    stage: "connecting",
-    label: "Connecting",
-    activeLabel: "Mapping connections…",
-  },
-  {
-    stage: "writing",
-    label: "Writing",
-    activeLabel: "Writing articles…",
-  },
-  {
-    stage: "checking",
-    label: "Checking",
-    activeLabel: "Checking references…",
-  },
-  { stage: "publishing", label: "Publishing", activeLabel: "Finalizing…" },
+const STAGES: { stage: PipelineStage; label: string }[] = [
+  { stage: "uploading", label: "Uploading" },
+  { stage: "indexing", label: "Indexing" },
+  { stage: "reading", label: "Reading" },
+  { stage: "synthesizing", label: "Synthesizing" },
+  { stage: "connecting", label: "Connecting" },
+  { stage: "writing", label: "Writing" },
+  { stage: "checking", label: "Checking" },
+  { stage: "publishing", label: "Publishing" },
 ];
 
 function emptyStages(): StageProgress[] {
@@ -128,35 +100,6 @@ function emptyStages(): StageProgress[] {
     complete: false,
     errored: false,
   }));
-}
-
-export function buildClientUploadStages(uploaded: number, total: number): StageProgress[] {
-  const safeTotal = Math.max(total, 1);
-  return STAGES.map((stage, index) =>
-    index === 0
-      ? {
-          stage: stage.stage,
-          label: stage.activeLabel,
-          detail: "",
-          done: uploaded,
-          total: safeTotal,
-          steps: [],
-          active: true,
-          complete: false,
-          errored: false,
-        }
-      : {
-          stage: stage.stage,
-          label: stage.label,
-          detail: "",
-          done: 0,
-          total: 1,
-          steps: [],
-          active: false,
-          complete: false,
-          errored: false,
-        },
-  );
 }
 
 function normalizeEvent(raw: BackendPipelineEvent): PipelineEvent | null {
@@ -233,13 +176,11 @@ export function useJobSSE(
   let overallCancelled = $state(false);
   let trigger = $state<BackendPipelineEvent["trigger"]>(undefined);
   let backendPhase = $state("");
-  let connected = $state(false);
   let controller: AbortController | null = null;
 
   function disconnect() {
     controller?.abort();
     controller = null;
-    connected = false;
   }
 
   function invalidateActivePipeline(vaultId: string) {
@@ -272,10 +213,7 @@ export function useJobSSE(
       new Promise((resolve) => window.setTimeout(resolve, milliseconds));
 
     function handleMessage(message: SseMessage) {
-      if (message.event === "connected") {
-        connected = true;
-        return;
-      }
+      if (message.event === "connected") return;
       if (message.event === "done") {
         if (!terminal) {
           terminal = true;
@@ -371,8 +309,6 @@ export function useJobSSE(
             return;
           }
           console.warn("Progress stream disconnected; retrying", error);
-        } finally {
-          connected = false;
         }
 
         if (!cancelled && !terminal && !nextController.signal.aborted) {
@@ -408,9 +344,5 @@ export function useJobSSE(
     get backendPhase() {
       return backendPhase;
     },
-    get connected() {
-      return connected;
-    },
-    disconnect,
   };
 }

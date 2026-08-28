@@ -1,4 +1,4 @@
-import { apiFetch, readJson } from "./client";
+import { apiFetch, paginationParams, readJson } from "./client";
 import {
   proposalListSchema,
   proposalSchema,
@@ -21,10 +21,8 @@ export async function listProposals(
   vaultId: string,
   params?: { status?: ProposalStatus; limit?: number; offset?: number },
 ): Promise<ProposalList> {
-  const query = new URLSearchParams();
+  const query = paginationParams(params);
   if (params?.status) query.set("status", params.status);
-  if (params?.limit !== undefined) query.set("limit", String(params.limit));
-  if (params?.offset !== undefined) query.set("offset", String(params.offset));
   const qs = query.toString();
   const path = `/vaults/${vaultId}/proposals${qs ? `?${qs}` : ""}`;
   const res = await apiFetch(path);

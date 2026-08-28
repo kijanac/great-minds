@@ -49,7 +49,7 @@
   const initialPath = untrack(() => path);
   const initialSourceId = untrack(() => sourceId);
   const readerScope = untrack(() => scope);
-  let btwPath = $state<string | null>(initialPath);
+  let btwPath: string | null = initialPath;
   let docThreads = $state<DocThreads | null>(
     initialPath === null
       ? null

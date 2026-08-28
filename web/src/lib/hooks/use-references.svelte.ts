@@ -1,6 +1,7 @@
 import { createInfiniteQuery, createMutation, useQueryClient } from "@tanstack/svelte-query";
 
 import { createReference, listReferences } from "$lib/api/references";
+import { nextPageOffset } from "$lib/api/schemas";
 
 const PAGE_SIZE = 50;
 
@@ -11,10 +12,7 @@ export function useReferences() {
     queryFn: ({ pageParam, signal }) =>
       listReferences({ limit: PAGE_SIZE, offset: pageParam }, signal),
     initialPageParam: 0,
-    getNextPageParam: (lastPage) => {
-      const next = lastPage.pagination.offset + lastPage.items.length;
-      return next < lastPage.pagination.total ? next : undefined;
-    },
+    getNextPageParam: (lastPage) => nextPageOffset(lastPage),
   }));
   const create = createMutation(() => ({
     mutationFn: createReference,

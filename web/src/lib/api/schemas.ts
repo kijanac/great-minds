@@ -36,6 +36,19 @@ export const pageInfoSchema = z.object({
   total: z.number(),
 });
 
+export function nextPageOffset(page: {
+  items: readonly unknown[];
+  pagination: z.infer<typeof pageInfoSchema>;
+}): number | undefined {
+  const next = page.pagination.offset + page.items.length;
+  return next < page.pagination.total ? next : undefined;
+}
+
+export const ingestedDocumentSchema = z.object({
+  id: z.string(),
+  file_path: z.string(),
+});
+
 export function paginatedSchema<T extends z.ZodTypeAny>(itemSchema: T) {
   return z.object({
     items: z.array(itemSchema),

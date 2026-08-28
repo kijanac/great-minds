@@ -1,5 +1,3 @@
-export const FILTER_GROUP_CLASS = "flex-wrap";
-
 export const FILTER_CHIP_CLASS =
   "rounded-sm border-control-border px-3 font-mono text-[length:var(--text-chrome)] font-normal tracking-[0.08em] text-warm-ghost hover:border-gold-dim hover:bg-transparent hover:text-warm-faint focus-visible:ring-0 data-pressed:border-gold-dim data-pressed:bg-control-active data-pressed:text-control-active-foreground aria-pressed:border-gold-dim aria-pressed:bg-control-active aria-pressed:text-control-active-foreground data-[state=on]:border-gold-dim data-[state=on]:bg-control-active data-[state=on]:text-control-active-foreground";
 

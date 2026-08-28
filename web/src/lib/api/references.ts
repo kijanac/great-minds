@@ -1,7 +1,7 @@
 import { z } from "zod";
 
-import { apiFetch, readJson } from "./client";
-import { paginatedSchema } from "./schemas";
+import { apiFetch, paginationParams, readJson, responseError } from "./client";
+import { ingestedDocumentSchema, paginatedSchema } from "./schemas";
 
 export const referenceOverviewSchema = z.object({
   id: z.string(),
@@ -16,25 +16,16 @@ export const referenceOverviewSchema = z.object({
 });
 
 const referencePageSchema = paginatedSchema(referenceOverviewSchema);
-const ingestedDocumentSchema = z.object({ id: z.string(), file_path: z.string() });
-const errorDetailSchema = z.object({ detail: z.string() });
 
 export type ReferenceOverview = z.infer<typeof referenceOverviewSchema>;
 export type ReferencePage = z.infer<typeof referencePageSchema>;
 export type IngestedDocument = z.infer<typeof ingestedDocumentSchema>;
 
-async function responseError(response: Response, fallback: string): Promise<Error> {
-  const parsed = errorDetailSchema.safeParse(await response.json().catch(() => null));
-  return new Error(parsed.success ? parsed.data.detail : fallback);
-}
-
 export async function listReferences(
   params?: { limit?: number; offset?: number },
   signal?: AbortSignal,
 ): Promise<ReferencePage> {
-  const query = new URLSearchParams();
-  if (params?.limit !== undefined) query.set("limit", String(params.limit));
-  if (params?.offset !== undefined) query.set("offset", String(params.offset));
+  const query = paginationParams(params);
   const qs = query.toString();
   const response = await apiFetch(`/me/refs${qs ? `?${qs}` : ""}`, { signal });
   if (!response.ok) throw await responseError(response, "Failed to load reading room");

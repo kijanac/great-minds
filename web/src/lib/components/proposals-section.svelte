@@ -13,6 +13,7 @@
     reviewProposal,
     type ProposalStatus,
   } from "$lib/api/proposals";
+  import { nextPageOffset } from "$lib/api/schemas";
   import { Button } from "$lib/components/ui/button";
   import { Input } from "$lib/components/ui/input";
   import * as Select from "$lib/components/ui/select";
@@ -54,10 +55,7 @@
         offset: pageParam,
       }),
     initialPageParam: 0,
-    getNextPageParam: (lastPage) => {
-      const next = lastPage.pagination.offset + lastPage.items.length;
-      return next < lastPage.pagination.total ? next : undefined;
-    },
+    getNextPageParam: (lastPage) => nextPageOffset(lastPage),
     enabled: !!vaultId,
   }));
 

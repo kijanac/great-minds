@@ -33,7 +33,6 @@
     AlertTitle,
   } from "$lib/components/ui/alert";
   import { Button } from "$lib/components/ui/button";
-  import { Skeleton } from "$lib/components/ui/skeleton";
   import { useJobSSE } from "$lib/hooks/use-job-sse.svelte";
   import { activeVault, useVaults } from "$lib/hooks/use-vault.svelte";
 
@@ -106,8 +105,7 @@
     !noJobFound &&
       !progress.overallDone &&
       !progress.overallError &&
-      !progress.overallCancelled &&
-      stages.length > 0,
+      !progress.overallCancelled,
   );
 
   function captureRouteOwnership(predicate: () => boolean): () => boolean {
@@ -399,14 +397,6 @@
         </div>
       {/if}
 
-      {#if !noJobFound && stages.length === 0 && !progress.overallError && !resolveError}
-        <div class="space-y-3">
-          <Skeleton class="h-4 w-28 bg-ink-raised" />
-          <Skeleton class="h-12 w-full bg-ink-raised" />
-          <Skeleton class="h-12 w-5/6 bg-ink-raised" />
-        </div>
-      {/if}
-
       {#if awaitingFiles && !resolveError}
         <div class="mb-8 rounded-sm border border-gold-dim bg-ink-raised p-5">
           <p
@@ -543,7 +533,7 @@
         </div>
       {/if}
 
-      {#if !noJobFound && stages.length > 0}
+      {#if !noJobFound}
         {#each stages as stage, index (stage.stage)}
           <div
             in:fly={{

@@ -129,7 +129,7 @@
           </ul>
         {/if}
 
-        {#if stage.active && stage.total > 1}
+        {#if hasCount}
           <Progress
             value={(stage.done / stage.total) * 100}
             class="mt-2 bg-ink-border [&_[data-slot=progress-indicator]]:bg-gold"

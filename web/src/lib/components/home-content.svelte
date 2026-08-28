@@ -91,7 +91,6 @@
   );
 
   const isActive = $derived(session.phase !== "idle");
-  const savedSessionId = $derived(session.sessionId);
   // The opened session's origin: from the loaded session, or — while a
   // doc-initiated conversation is still being created — from the `origin`
   // path the reader handed us.
@@ -195,8 +194,8 @@
             <div class="min-w-0 flex-1">
               <SearchBar bind:query phase={session.phase} onSubmit={submit} />
             </div>
-            {#if savedSessionId}
-              <ShareDialog subjectKind="session" subjectId={savedSessionId}>
+            {#if session.sessionId}
+              <ShareDialog subjectKind="session" subjectId={session.sessionId}>
                 {#snippet trigger({ props })}
                   <Button
                     {...props}
@@ -307,7 +306,6 @@
                   sessionsLoading={sessions.isLoading}
                   submissionFailed={session.submission.status === "failed"}
                   onQueryChange={session.clearSubmissionFailure}
-                  onRetry={submit}
                   onSessionClick={(id) => void goto(`/sessions/${id}`)}
                   onViewAllSessions={() => void goto("/sessions")}
                 />

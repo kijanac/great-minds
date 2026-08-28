@@ -16,7 +16,6 @@
     sessionsLoading = false,
     submissionFailed = false,
     onQueryChange,
-    onRetry,
     onSessionClick,
     onViewAllSessions,
   }: {
@@ -27,7 +26,6 @@
     sessionsLoading?: boolean;
     submissionFailed?: boolean;
     onQueryChange?: () => void;
-    onRetry?: () => void;
     onSessionClick?: (id: string) => void;
     onViewAllSessions?: () => void;
   } = $props();
@@ -82,8 +80,8 @@
     {/if}
   </div>
 
-  {#if submissionFailed && onRetry}
-    <ReplySubmissionError class="mt-2 px-1" {onRetry} />
+  {#if submissionFailed}
+    <ReplySubmissionError class="mt-2 px-1" onRetry={onSubmit} />
   {/if}
 
   {#if showDropdown}

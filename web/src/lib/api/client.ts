@@ -14,6 +14,20 @@ export async function readJson<T>(res: Response, schema: z.ZodType<T>): Promise<
   return schema.parse(await res.json());
 }
 
+const errorDetailSchema = z.object({ detail: z.string() });
+
+export async function responseError(response: Response, fallback: string): Promise<Error> {
+  const parsed = errorDetailSchema.safeParse(await response.json().catch(() => null));
+  return new Error(parsed.success ? parsed.data.detail : fallback);
+}
+
+export function paginationParams(params?: { limit?: number; offset?: number }): URLSearchParams {
+  const query = new URLSearchParams();
+  if (params?.limit !== undefined) query.set("limit", String(params.limit));
+  if (params?.offset !== undefined) query.set("offset", String(params.offset));
+  return query;
+}
+
 export const authTokensSchema = z.object({
   access_token: z.string(),
   refresh_token: z.string(),

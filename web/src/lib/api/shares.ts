@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-import { apiFetch, publicApiFetch, readJson } from "./client";
+import { apiFetch, publicApiFetch, readJson, responseError } from "./client";
 
 export const shareSubjectKindSchema = z.enum(["session", "reference"]);
 export type ShareSubjectKind = z.infer<typeof shareSubjectKindSchema>;
@@ -65,13 +65,6 @@ export const sharedShareDetailSchema = z.discriminatedUnion("subject_kind", [
   sharedReferenceDetailSchema,
 ]);
 export type SharedShareDetail = z.infer<typeof sharedShareDetailSchema>;
-
-const errorDetailSchema = z.object({ detail: z.string() });
-
-async function responseError(response: Response, fallback: string): Promise<Error> {
-  const parsed = errorDetailSchema.safeParse(await response.json().catch(() => null));
-  return new Error(parsed.success ? parsed.data.detail : fallback);
-}
 
 export interface CreateShareInput {
   subject_kind: ShareSubjectKind;

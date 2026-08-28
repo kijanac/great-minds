@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-import { apiFetch, vaultPath, readJson } from "./client";
+import { apiFetch, paginationParams, vaultPath, readJson } from "./client";
 import {
   facetedPaginatedSchema,
   facetCountSchema,
@@ -45,12 +45,10 @@ export async function fetchSourceDocuments(params?: {
   limit?: number;
   offset?: number;
 }): Promise<SourceDocumentPage> {
-  const query = new URLSearchParams();
+  const query = paginationParams(params);
   if (params?.source_type) query.set("source_type", params.source_type);
   if (params?.search) query.set("search", params.search);
   if (params?.tag) query.set("tag", params.tag);
-  if (params?.limit !== undefined) query.set("limit", String(params.limit));
-  if (params?.offset !== undefined) query.set("offset", String(params.offset));
 
   const qs = query.toString();
   const path = vaultPath(`/raw/sources${qs ? `?${qs}` : ""}`);

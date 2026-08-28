@@ -53,7 +53,6 @@
       (session.thread[0]?.error === null ||
         session.thread[0]?.error === undefined),
   );
-  const canFollowUp = $derived(session.phase === "done");
 
   function dismissHint() {
     hintDismissed = true;
@@ -207,7 +206,7 @@
   </div>
 {/if}
 
-{#if canFollowUp}
+{#if session.phase === "done"}
   <FollowUpBar
     bind:value={session.followUpDraft}
     chips={session.chips}
@@ -215,7 +214,6 @@
     onValueChange={session.clearSubmissionFailure}
     onRemoveChip={session.removeChip}
     onSubmit={session.submitFollowUp}
-    onRetry={session.submitFollowUp}
   />
 {/if}
 

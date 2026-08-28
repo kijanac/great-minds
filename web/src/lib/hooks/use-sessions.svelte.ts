@@ -1,5 +1,6 @@
 import { createInfiniteQuery, createQuery } from "@tanstack/svelte-query";
 
+import { nextPageOffset } from "$lib/api/schemas";
 import { listSessions } from "$lib/api/sessions";
 import { activeVault } from "$lib/hooks/use-vault.svelte";
 
@@ -16,10 +17,7 @@ export function useInfiniteSessions(pageSize: number = 50) {
     queryKey: ["vault", activeVault.id, "sessions", "infinite"],
     queryFn: ({ pageParam }) => listSessions({ limit: pageSize, offset: pageParam }),
     initialPageParam: 0,
-    getNextPageParam: (lastPage) => {
-      const next = lastPage.pagination.offset + lastPage.items.length;
-      return next < lastPage.pagination.total ? next : undefined;
-    },
+    getNextPageParam: (lastPage) => nextPageOffset(lastPage),
     enabled: !!activeVault.id,
   }));
 }

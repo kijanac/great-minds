@@ -3,6 +3,7 @@ import { page } from "$app/state";
 import { createInfiniteQuery, createQuery, useQueryClient } from "@tanstack/svelte-query";
 import { untrack } from "svelte";
 
+import { nextPageOffset } from "$lib/api/schemas";
 import {
   deleteSourceDocument,
   fetchSourceDocuments,
@@ -79,10 +80,7 @@ export function useLibrary(
         offset: pageParam,
       }),
     initialPageParam: 0,
-    getNextPageParam: (lastPage) => {
-      const next = lastPage.pagination.offset + lastPage.items.length;
-      return next < lastPage.pagination.total ? next : undefined;
-    },
+    getNextPageParam: (lastPage) => nextPageOffset(lastPage),
     enabled: !!activeVault.id,
   }));
 
@@ -104,10 +102,7 @@ export function useLibrary(
         offset: pageParam,
       }),
     initialPageParam: 0,
-    getNextPageParam: (lastPage) => {
-      const next = lastPage.pagination.offset + lastPage.items.length;
-      return next < lastPage.pagination.total ? next : undefined;
-    },
+    getNextPageParam: (lastPage) => nextPageOffset(lastPage),
     enabled:
       !!activeVault.id && activeType !== LIBRARY_ARTICLES && activeType !== LIBRARY_READING_ROOM,
   }));

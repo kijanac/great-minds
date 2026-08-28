@@ -1,16 +1,9 @@
 import { z } from "zod";
 
 import { apiFetch, vaultPath, readJson } from "./client";
+import { ingestedDocumentSchema } from "./schemas";
 
-export interface IngestResult {
-  id: string;
-  file_path: string;
-}
-
-const ingestResultSchema: z.ZodType<IngestResult> = z.object({
-  id: z.string(),
-  file_path: z.string(),
-});
+export type IngestResult = z.infer<typeof ingestedDocumentSchema>;
 
 const fileFingerprintSchema = z.string().regex(/^[0-9a-f]{64}$/);
 
@@ -331,5 +324,5 @@ export async function postUserSuggestion(params: {
     throw new Error(detail);
   }
 
-  return readJson(res, ingestResultSchema);
+  return readJson(res, ingestedDocumentSchema);
 }

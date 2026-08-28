@@ -14,7 +14,6 @@
     onValueChange,
     onRemoveChip,
     onSubmit,
-    onRetry,
   }: {
     value: string;
     chips: string[];
@@ -23,7 +22,6 @@
     onValueChange?: () => void;
     onRemoveChip: (index: number) => void;
     onSubmit: () => void;
-    onRetry?: () => void;
   } = $props();
 
   const canSubmit = $derived(!disabled && (chips.length > 0 || !!value.trim()));
@@ -88,8 +86,8 @@
       </Button>
     </div>
 
-    {#if submissionFailed && onRetry}
-      <ReplySubmissionError {onRetry} />
+    {#if submissionFailed}
+      <ReplySubmissionError onRetry={onSubmit} />
     {/if}
   </div>
 </div>

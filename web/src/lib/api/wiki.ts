@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-import { apiFetch, vaultPath, vaultPathFor, readJson } from "./client";
+import { apiFetch, paginationParams, vaultPath, vaultPathFor, readJson } from "./client";
 import { paginatedSchema } from "./schemas";
 
 export const wikiArticleOverviewSchema = z.object({
@@ -22,9 +22,7 @@ export async function fetchWikiArticles(params?: {
   contains?: string;
   tag?: string;
 }): Promise<WikiArticleList> {
-  const query = new URLSearchParams();
-  if (params?.limit !== undefined) query.set("limit", String(params.limit));
-  if (params?.offset !== undefined) query.set("offset", String(params.offset));
+  const query = paginationParams(params);
   if (params?.contains) query.set("contains", params.contains);
   if (params?.tag) query.set("tag", params.tag);
   const qs = query.toString();
