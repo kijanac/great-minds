@@ -11,8 +11,8 @@ import {
 } from "$lib/api/sources";
 import { getVaultDetail } from "$lib/api/vaults";
 import { fetchWikiArticles } from "$lib/api/wiki";
+import { usePanelContent } from "$lib/hooks/use-panel-content.svelte";
 import { activeVault } from "$lib/hooks/use-vault.svelte";
-import { loadPanelContent } from "$lib/panel-content";
 import type { SourceRef } from "$lib/types";
 
 const PAGE_SIZE = 50;
@@ -113,19 +113,7 @@ export function useLibrary(
     enabled: !!activeVault.id,
   }));
 
-  const panel = createQuery(() => ({
-    queryKey: [
-      "vault",
-      activeVault.id,
-      "article-panel",
-      selectedCard()?.type,
-      selectedCard()?.label,
-      selectedCard()?.ranges,
-      selectedCard()?.full,
-    ],
-    queryFn: ({ signal }) => loadPanelContent(selectedCard()!, "vault", signal),
-    enabled: !!activeVault.id && !!selectedCard(),
-  }));
+  const panel = usePanelContent(selectedCard);
 
   const sourceFacets = $derived(facets.data?.facets.source_types ?? []);
   const sourceTotal = $derived(sourceFacets.reduce((sum, facet) => sum + facet.count, 0));

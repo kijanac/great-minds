@@ -1,7 +1,6 @@
 <script lang="ts">
   import { goto } from "$app/navigation";
   import { page } from "$app/state";
-  import { createQuery } from "@tanstack/svelte-query";
   import { onDestroy, tick, untrack } from "svelte";
 
   import type { DocumentScope } from "$lib/api/doc";
@@ -27,7 +26,7 @@
     createLinkInterceptor,
     type RawCitation,
   } from "$lib/hooks/use-link-interceptor";
-  import { loadPanelContent } from "$lib/panel-content";
+  import { usePanelContent } from "$lib/hooks/use-panel-content.svelte";
   import type { SelectionInfo, SourceRef } from "$lib/types";
   import { displayTitle } from "$lib/utils";
 
@@ -91,19 +90,7 @@
       : null,
   );
 
-  const panelQuery = createQuery(() => ({
-    queryKey: [
-      readerScope === "personal" ? "me" : "vault",
-      readerScope === "personal" ? "ref" : activeVault.id,
-      "article-panel",
-      selectedCard?.label,
-      selectedCard?.ranges,
-      selectedCard?.full,
-    ],
-    queryFn: ({ signal }) =>
-      loadPanelContent(selectedCard!, readerScope, signal),
-    enabled: !!selectedCard && (readerScope === "personal" || !!activeVault.id),
-  }));
+  const panelQuery = usePanelContent(() => selectedCard, readerScope);
 
   function openRawCitation(citation: RawCitation) {
     selectedCard = {

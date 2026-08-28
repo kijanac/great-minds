@@ -1,10 +1,10 @@
-import { createMutation, createQuery, useQueryClient } from "@tanstack/svelte-query";
+import { createMutation, useQueryClient } from "@tanstack/svelte-query";
 
 import { requestCompile } from "$lib/api/jobs";
 import { useActiveJob } from "$lib/hooks/use-active-job.svelte";
 import { useHealthReport } from "$lib/hooks/use-health-report.svelte";
+import { usePanelContent } from "$lib/hooks/use-panel-content.svelte";
 import { activeVault, useVaults } from "$lib/hooks/use-vault.svelte";
-import { loadPanelContent } from "$lib/panel-content";
 import type { SourceRef } from "$lib/types";
 
 export function useHealth(selectedCard: () => SourceRef | null) {
@@ -22,11 +22,7 @@ export function useHealth(selectedCard: () => SourceRef | null) {
     },
   }));
 
-  const panel = createQuery(() => ({
-    queryKey: ["vault", activeVault.id, "article-panel", selectedCard()?.label],
-    queryFn: ({ signal }) => loadPanelContent(selectedCard()!, "vault", signal),
-    enabled: !!activeVault.id && !!selectedCard(),
-  }));
+  const panel = usePanelContent(selectedCard);
 
   return {
     get checking() {

@@ -1,6 +1,5 @@
 <script lang="ts">
   import { goto, replaceState } from "$app/navigation";
-  import { createQuery } from "@tanstack/svelte-query";
   import Download from "@lucide/svelte/icons/download";
   import FileText from "@lucide/svelte/icons/file-text";
   import Home from "@lucide/svelte/icons/home";
@@ -24,11 +23,11 @@
   import { useActiveJob } from "$lib/hooks/use-active-job.svelte";
   import { useHealthReport } from "$lib/hooks/use-health-report.svelte";
   import { createLinkInterceptor } from "$lib/hooks/use-link-interceptor";
+  import { usePanelContent } from "$lib/hooks/use-panel-content.svelte";
   import { useSessions } from "$lib/hooks/use-sessions.svelte";
   import { useVaultCounts } from "$lib/hooks/use-vault-counts.svelte";
   import { activeVault, useVaults } from "$lib/hooks/use-vault.svelte";
   import { MENU_ITEM_CLASS, POPOVER_SURFACE_CLASS } from "$lib/control-styles";
-  import { loadPanelContent } from "$lib/panel-content";
   import { downloadSessionMarkdown } from "$lib/session-markdown";
   import { Session } from "$lib/session.svelte";
   import type { SessionOrigin } from "$lib/api/sessions";
@@ -106,18 +105,7 @@
           }
         : null),
   );
-  const panelQuery = createQuery(() => ({
-    queryKey: [
-      "vault",
-      activeVault.id,
-      "article-panel",
-      selectedCard?.label,
-      selectedCard?.ranges,
-      selectedCard?.full,
-    ],
-    queryFn: ({ signal }) => loadPanelContent(selectedCard!, "vault", signal),
-    enabled: !!activeVault.id && !!selectedCard,
-  }));
+  const panelQuery = usePanelContent(() => selectedCard);
   const handleLinkClick = createLinkInterceptor((citation) => {
     selectedCard = {
       label: citation.path,
