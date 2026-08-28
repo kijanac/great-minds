@@ -48,6 +48,7 @@
   const showHint = $derived(
     !hintDismissed &&
       session.phase === "done" &&
+      session.submission.status !== "failed" &&
       session.thread.length === 1 &&
       (session.thread[0]?.error === null ||
         session.thread[0]?.error === undefined),
@@ -208,9 +209,13 @@
 
 {#if canFollowUp}
   <FollowUpBar
+    bind:value={session.followUpDraft}
     chips={session.chips}
+    submissionFailed={session.submission.status === "failed"}
+    onValueChange={session.clearSubmissionFailure}
     onRemoveChip={session.removeChip}
     onSubmit={session.submitFollowUp}
+    onRetry={session.submitFollowUp}
   />
 {/if}
 

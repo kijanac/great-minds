@@ -111,6 +111,7 @@ describe("reply workflow restart recovery", () => {
             'ephemeral',
             'running',
             ${JSON.stringify({
+              reply_id: replyId,
               kind: "ephemeral",
               question: "Will this provider call repeat?",
               mode: "query",

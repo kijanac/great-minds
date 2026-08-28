@@ -1,29 +1,36 @@
 <script lang="ts">
   import X from "@lucide/svelte/icons/x";
 
+  import ReplySubmissionError from "$lib/components/reply-submission-error.svelte";
   import { Badge } from "$lib/components/ui/badge";
   import { Button } from "$lib/components/ui/button";
   import { Input } from "$lib/components/ui/input";
 
   let {
+    value = $bindable(),
     chips,
     disabled = false,
+    submissionFailed = false,
+    onValueChange,
     onRemoveChip,
     onSubmit,
+    onRetry,
   }: {
+    value: string;
     chips: string[];
     disabled?: boolean;
+    submissionFailed?: boolean;
+    onValueChange?: () => void;
     onRemoveChip: (index: number) => void;
-    onSubmit: (text: string) => void;
+    onSubmit: () => void;
+    onRetry?: () => void;
   } = $props();
 
-  let input = $state("");
-  const canSubmit = $derived(!disabled && (chips.length > 0 || !!input.trim()));
+  const canSubmit = $derived(!disabled && (chips.length > 0 || !!value.trim()));
 
   function submit() {
     if (!canSubmit) return;
-    onSubmit(input.trim());
-    input = "";
+    onSubmit();
   }
 </script>
 
@@ -59,12 +66,13 @@
 
     <div class="flex items-center">
       <Input
-        bind:value={input}
+        bind:value
         {disabled}
         class="h-auto flex-1 rounded-none border-0 border-b border-b-gold-dim bg-transparent px-0 py-[3px] font-serif text-[length:var(--text-small)] text-warm-dim caret-gold transition-colors placeholder:text-interactive-dim focus-visible:border-b-gold focus-visible:ring-0 dark:bg-transparent"
         placeholder={chips.length > 0
           ? "add context or submit selections..."
           : "follow up..."}
+        oninput={onValueChange}
         onkeydown={(event) => {
           if (event.key === "Enter") submit();
         }}
@@ -79,5 +87,9 @@
         FOLLOW UP
       </Button>
     </div>
+
+    {#if submissionFailed && onRetry}
+      <ReplySubmissionError {onRetry} />
+    {/if}
   </div>
 </div>

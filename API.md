@@ -594,9 +594,11 @@ POST /v1/vaults/{vault_id}/replies/{reply_id}/retry
 GET  /v1/vaults/{vault_id}/replies/{reply_id}/stream
 ```
 
-`POST /replies` persists the complete exchange, BTW, or ephemeral request and returns `202` with `reply_id` before generation finishes. The `replies` row is both the product read model and dispatch outbox. `ReplyGeneration` updates versioned answer/evidence snapshots; the SSE endpoint replays the latest snapshot after reconnect and ends only when the persisted status is `completed` or `failed`.
+`POST /replies` requires a client-minted `reply_id`, persists the complete exchange, BTW, or ephemeral request, and returns `202` before generation finishes. Repeating the same request with the same `reply_id` returns the original acceptance without appending another turn or dispatching duplicate work; reusing that ID for different input returns `409`. This closes the accepted-but-response-lost ambiguity at the submission boundary.
 
-`POST /replies/{reply_id}/retry` accepts a new attempt for a failed reply. It reuses the saved request and session position, returns a new `reply_id`, and leaves the interrupted attempt intact for auditability. Replies that are still running or already completed cannot be retried.
+The `replies` row is both the product read model and dispatch outbox. `ReplyGeneration` updates versioned answer/evidence snapshots; the SSE endpoint replays the latest snapshot after reconnect and ends only when the persisted status is `completed` or `failed`.
+
+`POST /replies/{reply_id}/retry` accepts `{ "reply_id": "<new client-minted UUID>" }` for a failed reply. It reuses the saved request and session position, returns the new `reply_id`, and leaves the interrupted attempt intact for auditability. Repeating the retry with that same new ID is idempotent. Replies that are still running or already completed cannot be retried.
 
 If the process stops after acceptance, the workflow journal resumes generation. If dispatch was never acknowledged, startup/periodic reconciliation redispatches the same reply ID. Stale running replies are no longer converted into synthetic restart failures.
 

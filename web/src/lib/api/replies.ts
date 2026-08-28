@@ -6,6 +6,7 @@ import { sourceRefSchema } from "./schemas";
 import type { HistoryMessage } from "$lib/types";
 
 interface ReplyQueryPayload {
+  reply_id: string;
   question: string;
   model?: string;
   origin_path?: string;
@@ -128,10 +129,13 @@ export async function createReply(
 
 export async function retryReply(
   replyId: string,
+  nextReplyId: string,
   signal?: AbortSignal,
 ): Promise<CreateReplyResponse> {
   const response = await apiFetch(vaultPath(`/replies/${replyId}/retry`), {
     method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ reply_id: nextReplyId }),
     signal,
   });
   if (!response.ok) {

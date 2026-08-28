@@ -197,6 +197,7 @@ export class DocThreads {
         const created = isFirst
           ? await createReply(
               {
+                reply_id: crypto.randomUUID(),
                 kind: "exchange",
                 exchange_id: turnId,
                 create: {
@@ -220,6 +221,7 @@ export class DocThreads {
             )
           : await createReply(
               {
+                reply_id: crypto.randomUUID(),
                 kind: "exchange",
                 exchange_id: turnId,
                 session_id: target.sessionId!,
@@ -288,7 +290,7 @@ export class DocThreads {
 
     void (async () => {
       try {
-        const created = await retryReply(previous.replyId!, controller.signal);
+        const created = await retryReply(previous.replyId!, crypto.randomUUID(), controller.signal);
         patchTurn({ replyId: created.reply_id });
         for await (const snapshot of streamReply(created.reply_id, controller.signal)) {
           patchTurn({

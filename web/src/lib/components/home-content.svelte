@@ -305,6 +305,9 @@
                   onSubmit={submit}
                   recentSessions={sessions.data?.items ?? []}
                   sessionsLoading={sessions.isLoading}
+                  submissionFailed={session.submission.status === "failed"}
+                  onQueryChange={session.clearSubmissionFailure}
+                  onRetry={submit}
                   onSessionClick={(id) => void goto(`/sessions/${id}`)}
                   onViewAllSessions={() => void goto("/sessions")}
                 />

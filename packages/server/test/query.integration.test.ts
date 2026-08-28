@@ -405,13 +405,20 @@ const api = async (path: string, body: unknown) => {
 };
 
 const apiWithToken = async (path: string, body: unknown, token: string) => {
+  const payload =
+    path.endsWith("/replies") &&
+    typeof body === "object" &&
+    body !== null &&
+    !Array.isArray(body)
+      ? { reply_id: crypto.randomUUID(), ...body }
+      : body;
   const response = await fetch(`${currentState().started.url}/v1${path}`, {
     method: "POST",
     headers: {
       "content-type": "application/json",
       authorization: `Bearer ${token}`,
     },
-    body: JSON.stringify(body),
+    body: JSON.stringify(payload),
   });
   const text = await response.text();
   return { response, text };
@@ -469,12 +476,16 @@ const tailReply = async (replyId: string) => {
   return { response, text };
 };
 
-const retryReply = async (replyId: string) => {
+const retryReply = async (replyId: string, nextReplyId = crypto.randomUUID()) => {
   const response = await fetch(
     `${currentState().started.url}/v1/vaults/${id.vault}/replies/${replyId}/retry`,
     {
       method: "POST",
-      headers: { authorization: `Bearer ${currentState().token}` },
+      headers: {
+        "content-type": "application/json",
+        authorization: `Bearer ${currentState().token}`,
+      },
+      body: JSON.stringify({ reply_id: nextReplyId }),
     },
   );
   const text = await response.text();
@@ -704,6 +715,60 @@ describe("query stream", () => {
     expect(markdown.match(/^# Persist this answer$/gmu)).toHaveLength(1);
   });
 
+  it("replays client-keyed reply acceptance without duplicating work", async () => {
+    const language = makeScriptedLanguageModel({
+      streams: [
+        {
+          kind: "parts",
+          parts: [tokenPart("Accepted once."), finishPart("stop", "accepted-once")],
+        },
+      ],
+    });
+    await startHarness({ language });
+
+    const replyId = crypto.randomUUID();
+    const payload = {
+      reply_id: replyId,
+      kind: "exchange" as const,
+      exchange_id: "ex-accepted-once",
+      create: { idempotency_key: "accepted-once-session" },
+      question: "Accept this once",
+      mode: "query" as const,
+      history: [],
+    };
+    const first = await api(repliesPath, payload);
+    const replayed = await api(repliesPath, payload);
+    expect(first.response.status).toBe(202);
+    expect(replayed.response.status).toBe(202);
+    expect(JSON.parse(replayed.text)).toEqual(JSON.parse(first.text));
+
+    const reusedForDifferentRequest = await api(repliesPath, {
+      ...payload,
+      question: "This is a different request",
+    });
+    expect(reusedForDifferentRequest.response.status).toBe(409);
+    expect(JSON.parse(reusedForDifferentRequest.text)).toEqual({
+      detail: "Reply id already belongs to another request",
+    });
+
+    const identifiers = JSON.parse(first.text) as {
+      reply_id: string;
+      session_id: string;
+    };
+    const tail = await tailReply(identifiers.reply_id);
+    expect(replySnapshots(tail.text).at(-1)).toMatchObject({
+      status: "completed",
+      answer: "Accepted once.",
+    });
+    expect(language.streamCalls).toHaveLength(1);
+
+    const events = (await readSessionEvents(identifiers.session_id)).filter(
+      (event) => event.type === "exchange",
+    );
+    expect(events).toHaveLength(2);
+    expect(events.map((event) => event.reply_id)).toEqual([replyId, replyId]);
+  });
+
   it("composes the anchored passage prompt for doc-born sessions while storing the clean question", async () => {
     const language = makeScriptedLanguageModel({
       streams: [{ kind: "parts", parts: [tokenPart("Anchored answer."), finishPart("stop")] }],
@@ -888,13 +953,17 @@ describe("query stream", () => {
       answer: "Incomplete answer.",
     });
 
-    const retried = await retryReply(first.reply_id);
+    const retryId = crypto.randomUUID();
+    const retried = await retryReply(first.reply_id, retryId);
+    const retryReplay = await retryReply(first.reply_id, retryId);
     expect(retried.response.status).toBe(202);
+    expect(retryReplay.response.status).toBe(202);
+    expect(JSON.parse(retryReplay.text)).toEqual(JSON.parse(retried.text));
     const second = JSON.parse(retried.text) as {
       reply_id: string;
       session_id: string;
     };
-    expect(second.reply_id).not.toBe(first.reply_id);
+    expect(second.reply_id).toBe(retryId);
     expect(second.session_id).toBe(first.session_id);
 
     const completed = await tailReply(second.reply_id);
@@ -959,6 +1028,7 @@ describe("query stream", () => {
             answer: "partial",
             sources: [],
             request: {
+              reply_id: replyId,
               kind: "ephemeral",
               question: "resume after restart",
               mode: "query",

@@ -2,6 +2,7 @@
   import { tick } from "svelte";
 
   import type { SessionSummary } from "$lib/api/sessions";
+  import ReplySubmissionError from "$lib/components/reply-submission-error.svelte";
   import { Button } from "$lib/components/ui/button";
   import { Input } from "$lib/components/ui/input";
   import type { Phase } from "$lib/types";
@@ -13,6 +14,9 @@
     onSubmit,
     recentSessions,
     sessionsLoading = false,
+    submissionFailed = false,
+    onQueryChange,
+    onRetry,
     onSessionClick,
     onViewAllSessions,
   }: {
@@ -21,6 +25,9 @@
     onSubmit: () => void;
     recentSessions?: SessionSummary[];
     sessionsLoading?: boolean;
+    submissionFailed?: boolean;
+    onQueryChange?: () => void;
+    onRetry?: () => void;
     onSessionClick?: (id: string) => void;
     onViewAllSessions?: () => void;
   } = $props();
@@ -57,6 +64,7 @@
       class="h-auto flex-1 rounded-none border-none bg-transparent px-[18px] py-[13px] font-serif text-[length:var(--text-body)] text-foreground caret-gold placeholder:text-input focus-visible:border-none focus-visible:ring-0 disabled:opacity-100 dark:bg-transparent"
       placeholder="Ask a question across the knowledge base..."
       onkeydown={(event) => event.key === "Enter" && onSubmit()}
+      oninput={onQueryChange}
       onfocus={() => (focused = true)}
       onblur={() => (focused = false)}
       disabled={isActive}
@@ -73,6 +81,10 @@
       </Button>
     {/if}
   </div>
+
+  {#if submissionFailed && onRetry}
+    <ReplySubmissionError class="mt-2 px-1" {onRetry} />
+  {/if}
 
   {#if showDropdown}
     <div

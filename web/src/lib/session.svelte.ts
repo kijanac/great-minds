@@ -1,6 +1,12 @@
 import { browser } from "$app/environment";
 
-import { createReply, retryReply, streamReply, type ReplySnapshot } from "$lib/api/replies";
+import {
+  createReply,
+  retryReply,
+  streamReply,
+  type CreateReplyPayload,
+  type ReplySnapshot,
+} from "$lib/api/replies";
 import type { BtwThread, Exchange, HistoryMessage, Phase, SelectionInfo } from "$lib/types";
 import { buildBtwHistory, buildBtwQuery, genId, isAbortError } from "$lib/utils";
 
@@ -12,6 +18,15 @@ function threadToHistory(thread: Exchange[]): HistoryMessage[] {
   }
   return history;
 }
+
+type MainReplyPayload = Extract<CreateReplyPayload, { kind: "exchange" }>;
+
+type MainReplyAttempt = {
+  exchangeId: string;
+  payload: MainReplyPayload;
+};
+
+type SubmissionState = { status: "ready" } | { status: "failed"; attempt: MainReplyAttempt };
 
 export interface SessionOptions {
   initialExchanges?: Exchange[];
@@ -26,6 +41,8 @@ export class Session {
   thread = $state<Exchange[]>([]);
   sessionId = $state<string | null>(null);
   chips = $state<string[]>([]);
+  followUpDraft = $state("");
+  submission = $state<SubmissionState>({ status: "ready" });
   popover = $state<SelectionInfo | null>(null);
 
   #originPath: string | undefined;
@@ -40,6 +57,7 @@ export class Session {
     this.phase = options.initialExchanges?.length ? "done" : "idle";
     this.thread = options.initialExchanges ?? [];
     this.sessionId = options.sessionId ?? null;
+    this.#isFirstExchange = this.sessionId === null;
     this.#originPath = options.originPath;
     this.#onSessionCreated = options.onSessionCreated;
 
@@ -167,19 +185,64 @@ export class Session {
     }
   };
 
-  #runExchange = async (question: string): Promise<void> => {
+  #makeMainReplyAttempt = (question: string): MainReplyAttempt => {
     const exchangeId = genId("ex");
-    this.phase = "searching";
-
-    const originForQuery = this.#isFirstExchange ? this.#originPath : undefined;
-    this.#isFirstExchange = false;
+    const replyId = crypto.randomUUID();
+    const firstExchange = this.#isFirstExchange;
+    const originForQuery = firstExchange ? this.#originPath : undefined;
     const history = threadToHistory(this.thread);
+    const existingSessionId = this.sessionId;
+    this.#idempotencyKey ??= crypto.randomUUID();
 
+    const payload: MainReplyPayload = existingSessionId
+      ? {
+          reply_id: replyId,
+          kind: "exchange",
+          exchange_id: exchangeId,
+          session_id: existingSessionId,
+          question,
+          origin_path: originForQuery,
+          history,
+          mode: "query",
+        }
+      : {
+          reply_id: replyId,
+          kind: "exchange",
+          exchange_id: exchangeId,
+          create: {
+            idempotency_key: this.#idempotencyKey,
+            ...(this.#originPath
+              ? {
+                  origin: {
+                    doc_path: this.#originPath,
+                    origin_scope: "vault" as const,
+                    anchor: null,
+                    paragraph: null,
+                    paragraph_index: null,
+                  },
+                }
+              : {}),
+          },
+          question,
+          origin_path: originForQuery,
+          history,
+          mode: "query",
+        };
+    return { exchangeId, payload };
+  };
+
+  #runExchange = async (question: string): Promise<boolean> => {
+    const attempt =
+      this.submission.status === "failed" && this.submission.attempt.payload.question === question
+        ? this.submission.attempt
+        : this.#makeMainReplyAttempt(question);
+    this.submission = { status: "ready" };
+    this.phase = "searching";
     this.thread = [
       ...this.thread,
       {
-        id: exchangeId,
-        query: question,
+        id: attempt.exchangeId,
+        query: attempt.payload.question,
         thinking: [],
         answer: "",
         btws: [],
@@ -191,56 +254,27 @@ export class Session {
     const controller = new AbortController();
     this.#abortController = controller;
 
+    let created;
     try {
-      const existingSessionId = this.sessionId;
-      this.#idempotencyKey ??= crypto.randomUUID();
-      const created = await createReply(
-        existingSessionId
-          ? {
-              kind: "exchange",
-              exchange_id: exchangeId,
-              session_id: existingSessionId,
-              question,
-              origin_path: originForQuery,
-              history,
-              mode: "query",
-            }
-          : {
-              kind: "exchange",
-              exchange_id: exchangeId,
-              create: {
-                idempotency_key: this.#idempotencyKey,
-                ...(this.#originPath
-                  ? {
-                      origin: {
-                        doc_path: this.#originPath,
-                        origin_scope: "vault" as const,
-                        anchor: null,
-                        paragraph: null,
-                        paragraph_index: null,
-                      },
-                    }
-                  : {}),
-              },
-              question,
-              origin_path: originForQuery,
-              history,
-              mode: "query",
-            },
-        controller.signal,
-      );
-      this.#updateExchange(exchangeId, { replyId: created.reply_id });
-      if (this.sessionId === null && created.session_id !== null) {
-        this.sessionId = created.session_id;
-        this.#onSessionCreated?.(created.session_id);
-      }
-      await this.#tailExchange(exchangeId, created.reply_id, controller);
+      created = await createReply(attempt.payload, controller.signal);
     } catch (error) {
-      this.thread = this.thread.filter((exchange) => exchange.id !== exchangeId);
-      if (isAbortError(error)) return;
+      const remaining = this.thread.filter((exchange) => exchange.id !== attempt.exchangeId);
+      this.thread = remaining;
+      this.phase = remaining.length > 0 ? "done" : "idle";
+      if (isAbortError(error) || controller.signal.aborted) return false;
       console.error("Query failed:", error);
-      this.phase = "idle";
+      this.submission = { status: "failed", attempt };
+      return false;
     }
+
+    this.#isFirstExchange = false;
+    this.#updateExchange(attempt.exchangeId, { replyId: created.reply_id });
+    if (this.sessionId === null && created.session_id !== null) {
+      this.sessionId = created.session_id;
+      this.#onSessionCreated?.(created.session_id);
+    }
+    void this.#tailExchange(attempt.exchangeId, created.reply_id, controller);
+    return true;
   };
 
   submitQuery = (question: string): void => {
@@ -274,7 +308,7 @@ export class Session {
 
     void (async () => {
       try {
-        const created = await retryReply(previous.replyId!, controller.signal);
+        const created = await retryReply(previous.replyId!, crypto.randomUUID(), controller.signal);
         this.#updateExchange(exchangeId, { replyId: created.reply_id });
         await this.#tailExchange(exchangeId, created.reply_id, controller);
       } catch (error) {
@@ -288,21 +322,39 @@ export class Session {
     })();
   };
 
-  submitFollowUp = (additionalText: string): void => {
-    const parts = [...this.chips.map((chip) => `re: "${chip}"`), additionalText].filter(Boolean);
+  submitFollowUp = (): void => {
+    if (this.phase !== "done") return;
+    const draft = this.followUpDraft;
+    const selectedChips = [...this.chips];
+    const parts = [...selectedChips.map((chip) => `re: "${chip}"`), draft.trim()].filter(Boolean);
     const question = parts.join(" — ");
     if (!question.trim()) return;
-    this.chips = [];
-    void this.#runExchange(question);
+
+    void (async () => {
+      const accepted = await this.#runExchange(question);
+      if (!accepted) return;
+      if (this.followUpDraft === draft) {
+        this.followUpDraft = "";
+      }
+      if (selectedChips.every((chip, index) => this.chips[index] === chip)) {
+        this.chips = this.chips.slice(selectedChips.length);
+      }
+    })();
+  };
+
+  clearSubmissionFailure = (): void => {
+    this.submission = { status: "ready" };
   };
 
   addChip = (text: string): void => {
+    this.clearSubmissionFailure();
     this.chips = [...this.chips, text];
     this.popover = null;
     window.getSelection()?.removeAllRanges();
   };
 
   removeChip = (index: number): void => {
+    this.clearSubmissionFailure();
     this.chips = this.chips.filter((_, itemIndex) => itemIndex !== index);
   };
 
@@ -396,6 +448,7 @@ export class Session {
         };
         const created = await createReply(
           {
+            reply_id: crypto.randomUUID(),
             kind: "btw",
             session_id: this.sessionId,
             btw: pendingBtw,
@@ -451,7 +504,7 @@ export class Session {
 
     void (async () => {
       try {
-        const created = await retryReply(previous.replyId!, controller.signal);
+        const created = await retryReply(previous.replyId!, crypto.randomUUID(), controller.signal);
         this.#updateBtwTurn(btwId, turnId, { replyId: created.reply_id });
         await this.#tailBtwReply(created.reply_id, controller);
       } catch (error) {

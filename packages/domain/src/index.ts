@@ -1147,6 +1147,7 @@ export type ReplySource = typeof ReplySource.Type;
 
 const CreateReplyFields = {
   ...QueryRequest.fields,
+  reply_id: Uuid,
 };
 
 const CreateReplySession = Schema.Struct({
@@ -1188,6 +1189,11 @@ export const CreateReplyResponse = Schema.Struct({
   session_id: Schema.NullOr(SessionId),
 });
 export type CreateReplyResponse = typeof CreateReplyResponse.Type;
+
+export const RetryReplyRequest = Schema.Struct({
+  reply_id: Uuid,
+});
+export type RetryReplyRequest = typeof RetryReplyRequest.Type;
 
 export const ReplySnapshot = Schema.Struct({
   reply_id: Uuid,
@@ -1299,6 +1305,7 @@ const ReferenceDocumentErrors = [
   ValidationResponse,
 ] as const;
 const CreateReplyErrors = [
+  ConflictResponse,
   ForbiddenResponse,
   NotFoundResponse,
   ServiceUnavailableResponse,
@@ -1306,6 +1313,7 @@ const CreateReplyErrors = [
 ] as const;
 const RetryReplyErrors = [
   BadRequestResponse,
+  ConflictResponse,
   ForbiddenResponse,
   NotFoundResponse,
   ServiceUnavailableResponse,
@@ -1918,6 +1926,7 @@ export const RepliesApiGroup = HttpApiGroup.make("replies")
         vault_id: Uuid,
         reply_id: Uuid,
       },
+      payload: RetryReplyRequest,
       success: AcceptedReplyResponse,
       error: RetryReplyErrors,
     }).middleware(AuthMiddleware),

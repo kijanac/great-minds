@@ -204,7 +204,9 @@ const expectedSnapshot = {
     {
       label: "vector search",
       type: "search",
+      document_id: null,
       scope: "kb",
+      path: null,
       title: "Knowledge base",
       thinking: "kb thought",
     },
@@ -324,6 +326,7 @@ try {
     if (init?.method === "POST") {
       assert.equal(String(input), "http://smoke.test/api/vaults/smoke-vault/replies");
       assert.deepEqual(JSON.parse(String(init.body)), {
+        reply_id: expectedSnapshot.reply_id,
         kind: "ephemeral",
         question: "smoke",
         history: [],
@@ -393,6 +396,7 @@ try {
   };
 
   const created = await repliesModule.createReply({
+    reply_id: expectedSnapshot.reply_id,
     kind: "ephemeral",
     question: "smoke",
     history: [],

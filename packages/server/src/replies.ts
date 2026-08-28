@@ -1,3 +1,5 @@
+import { isDeepStrictEqual } from "node:util";
+
 import { Database, replies, sessions as sessionsTable, vaults } from "@great-minds/database";
 import {
   BadRequest,
@@ -5,6 +7,7 @@ import {
   type CreateReplyRequest,
   CreateReplyRequest as CreateReplyRequestSchema,
   type CreateReplyResponse,
+  Conflict,
   type ExchangeData,
   Forbidden,
   NotFound,
@@ -28,7 +31,6 @@ import * as Activity from "effect/unstable/workflow/Activity";
 import * as Workflow from "effect/unstable/workflow/Workflow";
 import * as WorkflowEngine from "effect/unstable/workflow/WorkflowEngine";
 
-import { ClockService } from "./clock.ts";
 import { AppConfig } from "./config.ts";
 import { StructuredLogger } from "./logging.ts";
 import {
@@ -38,7 +40,6 @@ import {
   QueryPreparedToolCall,
   QueryService,
 } from "./query.ts";
-import { formatUuid7, RandomBytesService } from "./random.ts";
 import { SessionsService } from "./sessions.ts";
 import { ContentStorage, vaultOwner } from "./storage.ts";
 import { VaultAccessService } from "./vaults.ts";
@@ -228,14 +229,15 @@ type RepliesServiceShape = {
     userId: Uuid,
     vaultId: Uuid,
     input: CreateReplyRequest,
-  ) => Effect.Effect<CreateReplyResponse, Forbidden | NotFound | ServiceUnavailable>;
+  ) => Effect.Effect<CreateReplyResponse, Conflict | Forbidden | NotFound | ServiceUnavailable>;
   readonly retry: (
     userId: Uuid,
     vaultId: Uuid,
     replyId: Uuid,
+    nextReplyId: Uuid,
   ) => Effect.Effect<
     CreateReplyResponse,
-    BadRequest | Forbidden | NotFound | ServiceUnavailable
+    BadRequest | Conflict | Forbidden | NotFound | ServiceUnavailable
   >;
   readonly stream: (
     userId: Uuid,
@@ -262,22 +264,13 @@ export const RepliesServiceLive = Layer.effect(
   Effect.gen(function* () {
     const db = yield* Database;
     const access = yield* VaultAccessService;
-    const clock = yield* ClockService;
     const config = yield* AppConfig;
     const logger = yield* StructuredLogger;
     const query = yield* QueryService;
-    const randomBytes = yield* RandomBytesService;
     const sessions = yield* SessionsService;
     const storage = yield* ContentStorage;
     const workflowEngine = yield* WorkflowEngine.WorkflowEngine;
     const pollIntervalMs = Option.isSome(config.goldensClock) ? 1 : 100;
-
-    const newReplyId = () =>
-      Effect.gen(function* () {
-        const now = yield* clock.now;
-        const bytes = yield* randomBytes.bytes(16);
-        return formatUuid7(now.getTime(), bytes);
-      });
 
     const readReply = (vaultId: Uuid, replyId: Uuid) =>
       db.query((d) => d
@@ -942,6 +935,29 @@ export const RepliesServiceLive = Layer.effect(
         ),
       );
 
+    const acceptedResponseFor = (
+      row: typeof replies.$inferSelect,
+      userId: Uuid,
+      vaultId: Uuid,
+      input: CreateReplyRequest,
+    ) =>
+      Effect.gen(function* () {
+        const storedInput = yield* decodeCreateReply(row.request).pipe(Effect.orDie);
+        if (
+          row.userId !== userId ||
+          row.vaultId !== vaultId ||
+          !isDeepStrictEqual(storedInput, input)
+        ) {
+          return yield* new Conflict({
+            detail: "Reply id already belongs to another request",
+          });
+        }
+        return {
+          reply_id: decodeUuid(row.id),
+          session_id: row.sessionId === null ? null : decodeSessionId(row.sessionId),
+        };
+      });
+
     const acceptReply = (
       userId: Uuid,
       vaultId: Uuid,
@@ -958,13 +974,18 @@ export const RepliesServiceLive = Layer.effect(
           return yield* new NotFound({ detail: "Vault not found" });
         }
         yield* access.requireMember(userId, vaultId);
+
+        const replyId = input.reply_id;
+        const accepted = yield* readReplyById(replyId);
+        if (accepted !== undefined) {
+          return yield* acceptedResponseFor(accepted, userId, vaultId, input);
+        }
         if (Option.isNone(config.openRouterApiKey)) {
           return yield* new ServiceUnavailable({
             detail: "LLM service not configured (OPENROUTER_API_KEY missing)",
           });
         }
 
-        const replyId = decodeUuid(yield* newReplyId());
         let sessionId: SessionId | null = null;
         if (input.kind === "exchange") {
           const pending: ExchangeData = {
@@ -1007,7 +1028,7 @@ export const RepliesServiceLive = Layer.effect(
           yield* sessions.appendBtw(userId, vaultId, sessionId, input.btw, replyId);
         }
 
-        yield* db.query((d) => d
+        const inserted = yield* db.query((d) => d
           .insert(replies)
           .values({
             id: replyId,
@@ -1019,14 +1040,23 @@ export const RepliesServiceLive = Layer.effect(
             answer: "",
             sources: [],
             request: input,
-          }));
+          })
+          .onConflictDoNothing({ target: replies.id })
+          .returning({ id: replies.id }));
+        if (inserted.length === 0) {
+          const concurrent = yield* readReplyById(replyId);
+          if (concurrent === undefined) {
+            throw new Error(`Reply ${replyId} conflicted but could not be read`);
+          }
+          return yield* acceptedResponseFor(concurrent, userId, vaultId, input);
+        }
         yield* dispatchBestEffort(replyId);
         return { reply_id: replyId, session_id: sessionId };
       });
 
     return {
       create: (userId, vaultId, input) => acceptReply(userId, vaultId, input),
-      retry: (userId, vaultId, replyId) =>
+      retry: (userId, vaultId, replyId, nextReplyId) =>
         Effect.gen(function* () {
           yield* access.requireMember(userId, vaultId);
           const previous = yield* readReply(vaultId, replyId);
@@ -1036,7 +1066,14 @@ export const RepliesServiceLive = Layer.effect(
           if (previous.status !== "failed") {
             return yield* new BadRequest({ detail: "Only failed replies can be retried" });
           }
-          const input = yield* decodeCreateReply(previous.request).pipe(Effect.orDie);
+          if (nextReplyId === replyId) {
+            return yield* new BadRequest({ detail: "Retry requires a new reply id" });
+          }
+          const previousInput = yield* decodeCreateReply(previous.request).pipe(Effect.orDie);
+          const input: CreateReplyRequest = {
+            ...previousInput,
+            reply_id: nextReplyId,
+          };
           const sessionId =
             previous.sessionId === null ? undefined : decodeSessionId(previous.sessionId);
           return yield* acceptReply(userId, vaultId, input, sessionId);
