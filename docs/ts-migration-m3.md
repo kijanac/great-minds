@@ -1,5 +1,7 @@
 # M3 — Write paths and the query engine
 
+> **Completed-plan note.** Session creation, follow-ups, and BTW persistence now belong to durable replies. The temporary direct session-write endpoints carried through the port were retired after cutover; session reads, export, promotion, and sharing remain.
+
 **Parent plan:** `docs/ts-migration.md`. **House rules:** `docs/ts-migration-m1.md` (Design stance, House rules — unchanged and binding). **Verification:** integration tests per task + `packages/parity` manifest extensions; LLM-dependent endpoints are excluded from parity with reasons and verified by stub-layer integration tests instead.
 
 **Objective:** the TS backend serves every remaining non-pipeline endpoint — vault/member/config writes, proposals, source deletion, ingest surface, session writes, and the streaming query engine — leaving only the compile pipeline (M4) between this and cutover.

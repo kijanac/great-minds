@@ -832,6 +832,111 @@ describe("query stream", () => {
     expect(JSON.stringify(events)).not.toContain("Highlighted:");
   });
 
+  it("persists follow-up exchanges and BTW threads through canonical replies", async () => {
+    const language = makeScriptedLanguageModel({
+      streams: [
+        { kind: "parts", parts: [tokenPart("First answer."), finishPart("stop")] },
+        { kind: "parts", parts: [tokenPart("Follow-up answer."), finishPart("stop")] },
+        { kind: "parts", parts: [tokenPart("BTW answer."), finishPart("stop")] },
+      ],
+    });
+    await startHarness({ language });
+
+    const first = await api(repliesPath, {
+      kind: "exchange",
+      exchange_id: "ex-canonical-first",
+      create: { idempotency_key: "canonical-session-key" },
+      question: "First question",
+      mode: "query",
+      history: [],
+    });
+    expect(first.response.status).toBe(202);
+    const firstIds = JSON.parse(first.text) as {
+      reply_id: string;
+      session_id: string;
+    };
+    await tailReply(firstIds.reply_id);
+
+    const followUp = await api(repliesPath, {
+      kind: "exchange",
+      exchange_id: "ex-canonical-follow-up",
+      session_id: firstIds.session_id,
+      question: "Follow-up question",
+      mode: "query",
+      history: [
+        { role: "user", content: "First question" },
+        { role: "assistant", content: "First answer." },
+      ],
+    });
+    expect(followUp.response.status).toBe(202);
+    const followUpIds = JSON.parse(followUp.text) as { reply_id: string };
+    await tailReply(followUpIds.reply_id);
+
+    const btw = await api(repliesPath, {
+      kind: "btw",
+      session_id: firstIds.session_id,
+      btw: {
+        quote: "First answer",
+        blockOffset: 0,
+        context: "First answer.",
+        exchangeId: "ex-canonical-first",
+        exchanges: [
+          {
+            query: "Why this answer?",
+            thinking: [],
+            answer: "",
+          },
+        ],
+      },
+      question: "Why this answer?",
+      mode: "btw",
+      history: [
+        { role: "user", content: "First question" },
+        { role: "assistant", content: "First answer." },
+      ],
+    });
+    expect(btw.response.status).toBe(202);
+    const btwIds = JSON.parse(btw.text) as { reply_id: string };
+    await tailReply(btwIds.reply_id);
+
+    const replay = await getWithToken(`/vaults/${id.vault}/sessions/${firstIds.session_id}`);
+    expect(replay.status).toBe(200);
+    const replayBody = (await replay.json()) as {
+      events: readonly Record<string, unknown>[];
+    };
+    expect(
+      replayBody.events
+        .filter((event) => event.type === "exchange")
+        .map((event) => ({ id: event.exId, answer: event.answer })),
+    ).toEqual([
+      { id: "ex-canonical-first", answer: "First answer." },
+      { id: "ex-canonical-follow-up", answer: "Follow-up answer." },
+    ]);
+    const btwEvents = replayBody.events.filter((event) => event.type === "btw");
+    expect(btwEvents.at(-1)).toMatchObject({
+      exId: "ex-canonical-first",
+      context: "First answer.",
+      exchanges: [{ query: "Why this answer?", answer: "BTW answer." }],
+    });
+
+    const markdown = await readFile(
+      join(
+        currentState().storageRoot,
+        "vaults",
+        id.vault,
+        "sessions",
+        `${firstIds.session_id}.md`,
+      ),
+      "utf8",
+    );
+    expect(markdown).toContain("# First question");
+    expect(markdown).toContain("First answer.");
+    expect(markdown).toContain('> **BTW** re: "First answer"');
+    expect(markdown).toContain("> BTW answer.");
+    expect(markdown).toContain("# Follow-up question");
+    expect(markdown).toContain("Follow-up answer.");
+  });
+
   it("reuses an idempotently-created session across reply submissions", async () => {
     const language = makeScriptedLanguageModel({
       streams: [

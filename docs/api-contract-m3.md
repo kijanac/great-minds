@@ -1,5 +1,7 @@
 # M3 API contract inventory — write paths + query engine
 
+> **Historical inventory.** The current TypeScript runtime persists session creation, follow-ups, and BTW turns through the durable `POST /replies` boundary. The superseded direct writes (`POST /sessions`, `PATCH /sessions/:id`, and `PATCH /sessions/:id/btw`) have been retired; the descriptions below remain as migration evidence for the former Python contract.
+
 Built the same way as `docs/api-contract-m1.md`: Zod schemas/fetch calls in `web/src/api/*.ts` (+ hooks) cross-checked against FastAPI routers/schemas and the core domain services they call. Python is the requirements source, not the design source. Continues M1's endpoint-table format; does not repeat anything M1 already covered (all vault/session _reads_, wiki/doc reads, auth).
 
 ## Mount reality (delta from M1)

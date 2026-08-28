@@ -1,7 +1,7 @@
 import { z } from "zod";
 
 import { apiFetch, vaultPath, readJson } from "./client";
-import { paginatedSchema, thinkingBlockSchema, type ThinkingBlock } from "./schemas";
+import { paginatedSchema, thinkingBlockSchema } from "./schemas";
 
 const btwExchangeSchema = z.object({
   query: z.string(),
@@ -11,13 +11,6 @@ const btwExchangeSchema = z.object({
 
 export type BtwExchange = z.infer<typeof btwExchangeSchema>;
 
-export interface ExchangePayload {
-  id: string;
-  query: string;
-  thinking: ThinkingBlock[];
-  answer: string;
-}
-
 export interface BtwPayload {
   quote: string;
   blockOffset: number;
@@ -25,10 +18,6 @@ export interface BtwPayload {
   exchangeId: string;
   exchanges: BtwExchange[];
 }
-
-const pathResponseSchema = z.object({
-  path: z.string(),
-});
 
 const sessionOriginSchema = z.object({
   doc_path: z.string(),
@@ -101,52 +90,6 @@ const originSessionDetailSchema = z.object({
 });
 
 export type OriginSessionDetail = z.infer<typeof originSessionDetailSchema>;
-
-const sessionCreatedSchema = z.object({
-  id: z.string(),
-  path: z.string(),
-});
-
-export type SessionCreated = z.infer<typeof sessionCreatedSchema>;
-
-export async function createSession(
-  exchange: ExchangePayload,
-  idempotencyKey: string,
-  origin?: SessionOrigin,
-): Promise<SessionCreated> {
-  const res = await apiFetch(vaultPath(`/sessions`), {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ idempotency_key: idempotencyKey, exchange, origin }),
-  });
-  if (!res.ok) throw new Error(`Failed to create session: ${res.status}`);
-  return readJson(res, sessionCreatedSchema);
-}
-
-export async function appendExchange(
-  sessionId: string,
-  exchange: ExchangePayload,
-): Promise<string> {
-  const res = await apiFetch(vaultPath(`/sessions/${sessionId}`), {
-    method: "PATCH",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(exchange),
-  });
-  if (!res.ok) throw new Error(`Failed to append exchange: ${res.status}`);
-  const data = await readJson(res, pathResponseSchema);
-  return data.path;
-}
-
-export async function appendBtw(sessionId: string, btw: BtwPayload): Promise<string> {
-  const res = await apiFetch(vaultPath(`/sessions/${sessionId}/btw`), {
-    method: "PATCH",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(btw),
-  });
-  if (!res.ok) throw new Error(`Failed to append btw: ${res.status}`);
-  const data = await readJson(res, pathResponseSchema);
-  return data.path;
-}
 
 export async function listSessions(params?: {
   limit?: number;

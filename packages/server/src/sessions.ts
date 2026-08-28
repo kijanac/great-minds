@@ -4,8 +4,6 @@ import {
   type BtwData,
   Forbidden,
   NotFound,
-  type CreateSessionRequest,
-  type CreateSessionResponse,
   type ExchangeData,
   type OriginSessionDetail,
   type PromoteExchangeResponse,
@@ -18,13 +16,13 @@ import {
   type SessionEvent,
   type SessionExchangeEvent,
   type SessionId,
+  SessionId as SessionIdSchema,
   type SessionMetaEvent,
   SessionMetaEvent as SessionMetaEventSchema,
   type SessionOrigin,
   SessionOrigin as SessionOriginSchema,
   type SessionOverview,
   type SessionPage,
-  type SessionPathResponse,
   type SessionResponse,
   type ThinkingBlock,
   type ThinkingSource,
@@ -45,27 +43,33 @@ import { ContentStorage, vaultOwner } from "./storage.ts";
 import { VaultAccessService } from "./vaults.ts";
 import { ClockService } from "./clock.ts";
 
+type SessionCreate = {
+  readonly idempotencyKey: string;
+  readonly exchange: ExchangeData;
+  readonly origin?: SessionOrigin;
+};
+
 type SessionsServiceShape = {
   readonly createSession: (
     userId: Uuid,
     vaultId: Uuid,
-    input: CreateSessionRequest,
+    input: SessionCreate,
     replyId?: Uuid,
-  ) => Effect.Effect<CreateSessionResponse, Forbidden>;
+  ) => Effect.Effect<SessionId, Forbidden>;
   readonly appendExchange: (
     userId: Uuid,
     vaultId: Uuid,
     sessionId: SessionId,
     input: ExchangeData,
     replyId?: Uuid,
-  ) => Effect.Effect<SessionPathResponse, Forbidden | NotFound>;
+  ) => Effect.Effect<void, Forbidden | NotFound>;
   readonly appendBtw: (
     userId: Uuid,
     vaultId: Uuid,
     sessionId: SessionId,
     input: BtwData,
     replyId?: Uuid,
-  ) => Effect.Effect<SessionPathResponse, Forbidden | NotFound>;
+  ) => Effect.Effect<void, Forbidden | NotFound>;
   readonly promoteExchange: (
     userId: Uuid,
     vaultId: Uuid,
@@ -98,6 +102,7 @@ export class SessionsService extends Context.Service<SessionsService, SessionsSe
   "@great-minds/server/SessionsService",
 ) {}
 
+const decodeSessionId = Schema.decodeUnknownSync(SessionIdSchema);
 const decodeSessionOrigin = Schema.decodeUnknownSync(Schema.NullOr(SessionOriginSchema));
 const decodeMetaEvent = Schema.decodeUnknownEffect(SessionMetaEventSchema);
 const decodeExchangeEvent = Schema.decodeUnknownEffect(SessionExchangeEventSchema);
@@ -428,7 +433,7 @@ export const SessionsServiceLive = Layer.effect(
       Effect.gen(function* () {
         const now = yield* clock.now;
         const bytes = yield* randomBytes.bytes(16);
-        return formatUuid7(now.getTime(), bytes);
+        return decodeSessionId(formatUuid7(now.getTime(), bytes));
       });
 
     const nowIso = () => Effect.map(clock.now, (now) => now.toISOString());
@@ -472,9 +477,7 @@ export const SessionsServiceLive = Layer.effect(
     const findMeta = (events: readonly SessionEvent[]) =>
       events.find((event): event is SessionMetaEvent => event.type === "meta");
 
-    // Sessions are personal: any path that touches a session's rows or events
-    // must belong to the caller. Storage-only orphans (no DB row) keep the
-    // legacy append/read behavior; real sessions always carry a row.
+    // Sessions are personal and always have an owning database row.
     const requireSessionOwner = (userId: Uuid, vaultId: Uuid, sessionId: SessionId) =>
       Effect.gen(function* () {
         const rows = yield* db.query((d) => d
@@ -483,7 +486,7 @@ export const SessionsServiceLive = Layer.effect(
           .where(and(eq(sessions.vaultId, vaultId), eq(sessions.id, sessionId)))
           .limit(1));
         const row = rows[0];
-        if (row !== undefined && row.userId !== userId) {
+        if (row === undefined || row.userId !== userId) {
           return yield* new NotFound({ detail: "Session not found" });
         }
       });
@@ -528,7 +531,6 @@ export const SessionsServiceLive = Layer.effect(
           .set({ updatedAt: new Date(ts) })
           .where(and(eq(sessions.vaultId, vaultId), eq(sessions.id, sessionId))));
         yield* rebuildMarkdown(vaultId, sessionId);
-        return { path: sessionFilePath(sessionId) } satisfies SessionPathResponse;
       });
 
     const appendBtwEvent = (
@@ -546,7 +548,6 @@ export const SessionsServiceLive = Layer.effect(
           .set({ updatedAt: new Date(ts) })
           .where(and(eq(sessions.vaultId, vaultId), eq(sessions.id, sessionId))));
         yield* rebuildMarkdown(vaultId, sessionId);
-        return { path: sessionFilePath(sessionId) } satisfies SessionPathResponse;
       });
 
     return {
@@ -560,20 +561,20 @@ export const SessionsServiceLive = Layer.effect(
               and(
                 eq(sessions.vaultId, vaultId),
                 eq(sessions.userId, userId),
-                eq(sessions.idempotencyKey, input.idempotency_key),
+                eq(sessions.idempotencyKey, input.idempotencyKey),
               ),
             )
             .limit(1));
           const existing = existingRows[0]?.id;
           if (existing !== undefined) {
-            const events = yield* loadAllEvents(vaultId, existing as SessionId).pipe(
+            const events = yield* loadAllEvents(vaultId, decodeSessionId(existing)).pipe(
               Effect.catchTag("NotFound", () =>
                 logger
                   .error("session_create_replay_missing_jsonl", {
                     user_id: userId,
                     vault_id: vaultId,
                     session_id: existing,
-                    idempotency_key: input.idempotency_key,
+                    idempotency_key: input.idempotencyKey,
                   })
                   .pipe(
                     Effect.andThen(
@@ -587,7 +588,7 @@ export const SessionsServiceLive = Layer.effect(
             if (findExchange(events, input.exchange.id) === undefined) {
               yield* appendExchangeEvent(vaultId, existing, input.exchange, replyId);
             }
-            return { id: existing, path: sessionFilePath(existing) };
+            return decodeSessionId(existing);
           }
 
           const sessionId = yield* newSessionId();
@@ -615,7 +616,7 @@ export const SessionsServiceLive = Layer.effect(
               origin,
               createdAt: new Date(metaTs),
               updatedAt: new Date(exchangeTs),
-              idempotencyKey: input.idempotency_key,
+              idempotencyKey: input.idempotencyKey,
             })
             .onConflictDoUpdate({
               target: [sessions.id, sessions.vaultId],
@@ -628,19 +629,19 @@ export const SessionsServiceLive = Layer.effect(
               },
             }));
           yield* rebuildMarkdown(vaultId, sessionId);
-          return { id: sessionId, path: sessionFilePath(sessionId) };
+          return sessionId;
         }),
       appendExchange: (userId, vaultId, sessionId, input, replyId) =>
         Effect.gen(function* () {
           yield* access.requireMember(userId, vaultId);
           yield* requireSessionOwner(userId, vaultId, sessionId);
-          return yield* appendExchangeEvent(vaultId, sessionId, input, replyId);
+          yield* appendExchangeEvent(vaultId, sessionId, input, replyId);
         }),
       appendBtw: (userId, vaultId, sessionId, input, replyId) =>
         Effect.gen(function* () {
           yield* access.requireMember(userId, vaultId);
           yield* requireSessionOwner(userId, vaultId, sessionId);
-          return yield* appendBtwEvent(vaultId, sessionId, input, replyId);
+          yield* appendBtwEvent(vaultId, sessionId, input, replyId);
         }),
       promoteExchange: (userId, vaultId, sessionId, exchangeId) =>
         Effect.gen(function* () {

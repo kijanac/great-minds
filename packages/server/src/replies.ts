@@ -1003,11 +1003,11 @@ export const RepliesServiceLive = Layer.effect(
             yield* requireSession(vaultId, sessionId);
             yield* sessions.appendExchange(userId, vaultId, sessionId, pending, replyId);
           } else {
-            const created = yield* sessions.createSession(
+            sessionId = yield* sessions.createSession(
               userId,
               vaultId,
               {
-                idempotency_key: input.create.idempotency_key,
+                idempotencyKey: input.create.idempotency_key,
                 exchange: pending,
                 ...(input.create.origin === undefined
                   ? {}
@@ -1020,7 +1020,6 @@ export const RepliesServiceLive = Layer.effect(
               },
               replyId,
             );
-            sessionId = decodeSessionId(created.id);
           }
         } else if (input.kind === "btw") {
           sessionId = existingSessionId ?? input.session_id;

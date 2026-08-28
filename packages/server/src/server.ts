@@ -889,43 +889,6 @@ const DocumentsHandlersLive = HttpApiBuilder.group(MountedGreatMindsApi, "docume
 
 const SessionsHandlersLive = HttpApiBuilder.group(MountedGreatMindsApi, "sessions", (handlers) =>
   handlers
-    .handle("createSession", ({ params, payload }) =>
-      withDomainErrors(
-        Effect.gen(function* () {
-          const sessions = yield* SessionsService;
-          const current = yield* CurrentAuth;
-          return yield* sessions.createSession(current.user_id, params.vault_id, payload);
-        }),
-      ),
-    )
-    .handle("appendSessionExchange", ({ params, payload }) =>
-      withDomainErrors(
-        Effect.gen(function* () {
-          const sessions = yield* SessionsService;
-          const current = yield* CurrentAuth;
-          return yield* sessions.appendExchange(
-            current.user_id,
-            params.vault_id,
-            params.session_id,
-            payload,
-          );
-        }),
-      ),
-    )
-    .handle("appendSessionBtw", ({ params, payload }) =>
-      withDomainErrors(
-        Effect.gen(function* () {
-          const sessions = yield* SessionsService;
-          const current = yield* CurrentAuth;
-          return yield* sessions.appendBtw(
-            current.user_id,
-            params.vault_id,
-            params.session_id,
-            payload,
-          );
-        }),
-      ),
-    )
     .handle("promoteSessionExchange", ({ params }) =>
       withDomainErrors(
         Effect.gen(function* () {

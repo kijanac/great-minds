@@ -29,7 +29,7 @@ import {
   vaults,
   wikiArticles,
 } from "@great-minds/database";
-import type { Uuid } from "@great-minds/domain";
+import type { ExchangeData, SessionOrigin, Uuid } from "@great-minds/domain";
 import { and, eq, isNull, sql } from "drizzle-orm";
 import { Effect, Layer, Option, Redacted } from "effect";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
@@ -44,6 +44,7 @@ import { makeTestMailer } from "../src/mailer.ts";
 import { parseFrontmatter } from "../src/markdown.ts";
 import { makeTestRandomBytes } from "../src/random.ts";
 import { startServer } from "../src/server.ts";
+import { SessionsService } from "../src/sessions.ts";
 import { SourceDocumentsService } from "../src/source-documents.ts";
 import { sourceIdForKey } from "../src/source-identity.ts";
 import { TokenService } from "../src/tokens.ts";
@@ -90,6 +91,7 @@ type TestServices =
   | Database
   | ClockService
   | FileIngestBatches
+  | SessionsService
   | SourceDocumentsService
   | StructuredLogger
   | TokenService
@@ -205,6 +207,23 @@ const buildTestState = async () => {
 
 const runDb = <A>(effect: Effect.Effect<A, unknown, TestServices>) =>
   currentState().started.runtime.runPromise(effect);
+
+const createSessionForTest = (
+  userId: Uuid,
+  idempotencyKey: string,
+  exchange: ExchangeData,
+  origin?: SessionOrigin,
+) =>
+  runDb(
+    Effect.gen(function* () {
+      const sessions = yield* SessionsService;
+      return yield* sessions.createSession(userId, id.vault as Uuid, {
+        idempotencyKey,
+        exchange,
+        ...(origin === undefined ? {} : { origin }),
+      });
+    }),
+  );
 
 const resetDatabase = () =>
   runDb(
@@ -510,15 +529,6 @@ const asArray = (value: unknown): Array<Record<string, unknown>> => {
 
 const jsonl = (events: readonly unknown[]) =>
   events.map((event) => JSON.stringify(event)).join("\n");
-
-const readSessionEvents = async (sessionId: string) => {
-  const text = await readVaultFile(id.vault, `sessions/${sessionId}.jsonl`);
-  return text
-    .trim()
-    .split("\n")
-    .filter((line) => line.length > 0)
-    .map((line) => JSON.parse(line) as Record<string, unknown>);
-};
 
 const countTable = <A>(table: A) =>
   runDb(
@@ -2542,320 +2552,32 @@ describe("M3.1 write endpoint integration", () => {
     );
   });
 
-  it("creates sessions with uuid7 ids, idempotent replay, spin-off origins, and member guards", async () => {
-    const { aliceToken, carolToken, malloryToken } = currentFixture();
-    const firstExchange = {
-      id: "ex-first",
-      query: "How should organizers read sources?",
-      thinking: [],
-      answer: "Read for claims and evidence.",
-    };
-
-    const created = await api("POST", `/vaults/${id.vault}/sessions`, aliceToken, {
-      idempotency_key: "stable-create-key",
-      exchange: firstExchange,
-    });
-    expect(created.status).toBe(201);
-    expect(created.body).toEqual({
-      id: "019f4be6-1e00-7607-8809-0a0b0c0d0e0f",
-      path: "sessions/019f4be6-1e00-7607-8809-0a0b0c0d0e0f.jsonl",
-    });
-    expect(String(asRecord(created.body).id)[14]).toBe("7");
-    const createdRows = await runDb(
-      Effect.gen(function* () {
-        const db = yield* Database;
-        return yield* db.query((d) => d
-          .select()
-          .from(sessions)
-          .where(eq(sessions.id, String(asRecord(created.body).id))))
-          .pipe(Effect.orDie);
-      }),
-    );
-    expect(createdRows).toHaveLength(1);
-    expect(createdRows[0]).toMatchObject({
-      query: firstExchange.query,
-      idempotencyKey: "stable-create-key",
-      createdAt: initialTime,
-    });
-
-    const replay = await api("POST", `/vaults/${id.vault}/sessions`, aliceToken, {
-      idempotency_key: "stable-create-key",
-      exchange: firstExchange,
-    });
-    expect(replay.status).toBe(201);
-    expect(asRecord(replay.body).id).toBe(asRecord(created.body).id);
-    expect(await readSessionEvents(String(asRecord(created.body).id))).toHaveLength(2);
-
-    const replayWithLaterExchange = await api("POST", `/vaults/${id.vault}/sessions`, aliceToken, {
-      idempotency_key: "stable-create-key",
-      exchange: {
-        id: "ex-later",
-        query: "What comes after the first question?",
-        thinking: [],
-        answer: "The retry appends a distinct completed exchange once.",
-      },
-    });
-    expect(replayWithLaterExchange.status).toBe(201);
-    expect(asRecord(replayWithLaterExchange.body).id).toBe(asRecord(created.body).id);
-    const replayEvents = await readSessionEvents(String(asRecord(created.body).id));
-    expect(replayEvents.map((event) => event.type)).toEqual(["meta", "exchange", "exchange"]);
-
-    await rm(
-      join(currentState().storageRoot, "vaults", id.vault, String(asRecord(created.body).path)),
-    );
-    const corruptReplay = await api("POST", `/vaults/${id.vault}/sessions`, aliceToken, {
-      idempotency_key: "stable-create-key",
-      exchange: {
-        id: "ex-corrupt-replay",
-        query: "Can a missing event log be recreated?",
-        thinking: [],
-        answer: "No; the database/file invariant is corrupt.",
-      },
-    });
-    expect(corruptReplay.status).toBe(500);
-    expect(await vaultFileExists(id.vault, String(asRecord(created.body).path))).toBe(false);
-
-    const spinOff = await api("POST", `/vaults/${id.vault}/sessions`, aliceToken, {
-      idempotency_key: "fresh-spin-off-key",
-      exchange: {
-        id: "ex-spin",
-        query: "Why this highlighted passage?",
-        thinking: [],
-        answer: "Because it carries the document-level claim.",
-      },
-      origin: { doc_path: "raw/books/capital.md", origin_scope: "vault", anchor: "highlighted passage", paragraph: null, paragraph_index: null },
-    });
-    expect(spinOff.status).toBe(201);
-    expect(spinOff.body).toEqual({
-      id: "019f4be6-1e00-7617-9819-1a1b1c1d1e1f",
-      path: "sessions/019f4be6-1e00-7617-9819-1a1b1c1d1e1f.jsonl",
-    });
-    const spinOffEvents = await readSessionEvents(String(asRecord(spinOff.body).id));
-    expect(spinOffEvents[0]).toMatchObject({
-      type: "meta",
-      origin: {
-        doc_path: "raw/books/capital.md",
-        anchor: "highlighted passage",
-        paragraph: null,
-        paragraph_index: null,
-      },
-    });
-
-    const viewerCreate = await api("POST", `/vaults/${id.vault}/sessions`, carolToken, {
-      idempotency_key: "viewer-key",
-      exchange: {
-        id: "ex-viewer",
-        query: "Can viewers persist sessions?",
-        thinking: [],
-        answer: "Yes, any vault member can create a session.",
-      },
-    });
-    expect(viewerCreate.status).toBe(201);
-    expect(asRecord(viewerCreate.body).id).toBe("019f4be6-1e00-7627-a829-2a2b2c2d2e2f");
-
-    const nonMember = await api("POST", `/vaults/${id.vault}/sessions`, malloryToken, {
-      idempotency_key: "blocked-key",
-      exchange: firstExchange,
-    });
-    expect(nonMember.status).toBe(403);
-
-    const unauthenticated = await api("POST", `/vaults/${id.vault}/sessions`, undefined, {
-      idempotency_key: "anonymous-key",
-      exchange: firstExchange,
-    });
-    expect(unauthenticated.status).toBe(401);
-  });
-
-  it("appends exchanges and BTW context, and rebuilds Python-parity markdown sidecars", async () => {
-    const { aliceToken, bobToken, malloryToken } = currentFixture();
-    const created = await api("POST", `/vaults/${id.vault}/sessions`, aliceToken, {
-      idempotency_key: "sidecar-key",
-      exchange: {
-        id: "ex-sidecar",
-        query: "How should organizers read sources?",
-        thinking: [
-          {
-            sources: [{ label: "Capital Volume", type: "raw", document_id: null, title: null, scope: null, path: null, thinking: null }],
-          },
-        ],
-        answer: "Start with the passage and its claim.",
-      },
-    });
-    const sessionId = String(asRecord(created.body).id);
-
-    currentState().clock.set(new Date("2026-07-10T12:01:00.000Z"));
-    const firstBtw = await api("PATCH", `/vaults/${id.vault}/sessions/${sessionId}/btw`, aliceToken, {
-      quote: "the passage",
-      blockOffset: 0,
-      context: "Start with the passage and its claim.",
-      exchangeId: "ex-sidecar",
-      exchanges: [
-        {
-          query: "Why that passage?",
-          thinking: [],
-          answer: "Because it gives the group something concrete.",
-        },
-      ],
-    });
-    expect(firstBtw.status).toBe(200);
-    const updatedAt = async () =>
-      runDb(
-        Effect.gen(function* () {
-          const db = yield* Database;
-          const rows = yield* db.query((d) => d
-            .select({ updatedAt: sessions.updatedAt })
-            .from(sessions)
-            .where(and(eq(sessions.vaultId, id.vault), eq(sessions.id, sessionId))))
-            .pipe(Effect.orDie);
-          return rows[0]?.updatedAt;
-        }),
-      );
-    expect(await updatedAt()).toEqual(new Date("2026-07-10T12:01:00.000Z"));
-
-    currentState().clock.set(new Date("2026-07-10T12:02:00.000Z"));
-    const secondBtw = await api(
-      "PATCH",
-      `/vaults/${id.vault}/sessions/${sessionId}/btw`,
-      aliceToken,
-      {
-        quote: "the passage",
-        blockOffset: 0,
-        context: "Start with the passage and its claim.",
-        exchangeId: "ex-sidecar",
-        exchanges: [
-          {
-            query: "Why that passage?",
-            thinking: [],
-            answer: "Because it anchors the discussion.",
-          },
-          {
-            query: "What if people disagree?",
-            thinking: [],
-            answer: "Let the disagreement name the claim.",
-          },
-        ],
-      },
-    );
-    expect(secondBtw.status).toBe(200);
-    expect(await updatedAt()).toEqual(new Date("2026-07-10T12:02:00.000Z"));
-
-    currentState().clock.set(new Date("2026-07-10T12:03:00.000Z"));
-    const appended = await api("PATCH", `/vaults/${id.vault}/sessions/${sessionId}`, aliceToken, {
-      id: "ex-follow-up",
-      query: "What should they record?",
-      thinking: [],
-      answer: "Record the quote and open questions.",
-    });
-    expect(appended.status).toBe(200);
-    expect(appended.body).toEqual({ path: `sessions/${sessionId}.jsonl` });
-    expect(await updatedAt()).toEqual(new Date("2026-07-10T12:03:00.000Z"));
-
-    for (const [suffix, token, status] of [
-      ["", malloryToken, 403],
-      ["", undefined, 401],
-      ["/btw", malloryToken, 403],
-      ["/btw", undefined, 401],
-    ] as const) {
-      const denied = await api(
-        "PATCH",
-        `/vaults/${id.vault}/sessions/${sessionId}${suffix}`,
-        token,
-        suffix === "/btw"
-          ? {
-              quote: "blocked",
-              blockOffset: 0,
-              context: "blocked",
-              exchangeId: "ex-sidecar",
-              exchanges: [],
-            }
-          : {
-              id: "ex-blocked",
-              query: "Blocked?",
-              thinking: [],
-              answer: "Yes.",
-            },
-      );
-      expect(denied.status).toBe(status);
-    }
-
-    const events = await readSessionEvents(sessionId);
-    expect(events).toHaveLength(5);
-    expect(events[3]).toMatchObject({
-      type: "btw",
-      context: "Start with the passage and its claim.",
-      exchanges: [
-        { query: "Why that passage?", answer: "Because it anchors the discussion." },
-        { query: "What if people disagree?", answer: "Let the disagreement name the claim." },
-      ],
-    });
-
-    const replay = await api("GET", `/vaults/${id.vault}/sessions/${sessionId}`, aliceToken);
-    expect(replay.status).toBe(200);
-    const replayEvents = asRecord(replay.body).events;
-    expect(Array.isArray(replayEvents)).toBe(true);
-    expect((replayEvents as readonly Record<string, unknown>[])[3]).toMatchObject({
-      type: "btw",
-      context: "Start with the passage and its claim.",
-    });
-
-    const expected = await readFile(
-      new URL("./fixtures/session-sidecar.expected.md", import.meta.url),
-      "utf8",
-    );
-    expect(await readVaultFile(id.vault, `sessions/${sessionId}.md`)).toBe(expected);
-
-    const orphan = await api("PATCH", `/vaults/${id.vault}/sessions/orphan-session`, bobToken, {
-      id: "ex-orphan",
-      query: "Can append create storage?",
-      thinking: [],
-      answer: "Append creates JSONL and sidecar storage without an overview row.",
-    });
-    expect(orphan.status).toBe(200);
-    expect(await vaultFileExists(id.vault, "sessions/orphan-session.jsonl")).toBe(true);
-    expect(await vaultFileExists(id.vault, "sessions/orphan-session.md")).toBe(true);
-    const orphanRows = await runDb(
-      Effect.gen(function* () {
-        const db = yield* Database;
-        return yield* db.query((d) => d
-          .select()
-          .from(sessions)
-          .where(and(eq(sessions.vaultId, id.vault), eq(sessions.id, "orphan-session"))))
-          .pipe(Effect.orDie);
-      }),
-    );
-    expect(orphanRows).toHaveLength(0);
-  });
-
   it("promotes exchanges through owner ingest and editor proposals with corrected 404s", async () => {
     const { aliceToken, bobToken, carolToken, malloryToken } = currentFixture();
-    const created = await api("POST", `/vaults/${id.vault}/sessions`, aliceToken, {
-      idempotency_key: "promote-key",
-      exchange: {
+    const sessionId = await createSessionForTest(
+      id.alice as Uuid,
+      "promote-key",
+      {
         id: "ex-promote",
         query: "What should be promoted?",
         thinking: [],
         answer: "Promoted answer body.",
       },
-      origin: {
+      {
         doc_path: "raw/books/capital.md",
+        origin_scope: "vault",
         anchor: "anchor quote",
         paragraph: "Full paragraph",
         paragraph_index: 4,
       },
-    });
-    const sessionId = String(asRecord(created.body).id);
+    );
     currentState().clock.set(new Date("2026-07-10T12:01:00.000Z"));
-    const editorCreated = await api("POST", `/vaults/${id.vault}/sessions`, bobToken, {
-      idempotency_key: "editor-promote-key",
-      exchange: {
-        id: "ex-proposal",
-        query: "What should editors propose?",
-        thinking: [],
-        answer: "Proposal answer body.",
-      },
+    const editorSessionId = await createSessionForTest(id.bob as Uuid, "editor-promote-key", {
+      id: "ex-proposal",
+      query: "What should editors propose?",
+      thinking: [],
+      answer: "Proposal answer body.",
     });
-    expect(editorCreated.status).toBe(201);
-    const editorSessionId = String(asRecord(editorCreated.body).id);
 
     const ownerSourceId = sourceIdForKey(
       id.vault as Uuid,
@@ -3021,31 +2743,19 @@ describe("M3.1 write endpoint integration", () => {
     expect(emptySession.status).toBe(404);
     expect(emptySession.body).toEqual({ detail: "Session not found" });
 
-    await writeVaultFile(
-      id.vault,
-      "sessions/s-empty-answer.jsonl",
-      jsonl([
-        {
-          type: "meta",
-          id: "s-empty-answer",
-          query: "Empty answer",
-          ts: "2026-07-10T12:00:00.000Z",
-          user_id: id.alice,
-          origin: null,
-        },
-        {
-          type: "exchange",
-          exId: "ex-empty",
-          query: "Empty answer",
-          thinking: [],
-          answer: "  ",
-          ts: "2026-07-10T12:00:00.000Z",
-        },
-      ]),
+    const emptyAnswerSessionId = await createSessionForTest(
+      id.alice as Uuid,
+      "empty-answer-key",
+      {
+        id: "ex-empty",
+        query: "Empty answer",
+        thinking: [],
+        answer: "  ",
+      },
     );
     const emptyAnswer = await api(
       "POST",
-      `/vaults/${id.vault}/sessions/s-empty-answer/exchanges/ex-empty/promote`,
+      `/vaults/${id.vault}/sessions/${emptyAnswerSessionId}/exchanges/ex-empty/promote`,
       aliceToken,
     );
     expect(emptyAnswer.status).toBe(400);

@@ -24,6 +24,7 @@ import { StructuredLogger, StructuredLoggerLive } from "../src/logging.ts";
 import { makeTestMailer } from "../src/mailer.ts";
 import { makeTestRandomBytes } from "../src/random.ts";
 import { startServer } from "../src/server.ts";
+import { SessionsService } from "../src/sessions.ts";
 import { TokenService } from "../src/tokens.ts";
 
 const initialTime = new Date("2026-07-10T12:00:00.000Z");
@@ -34,7 +35,13 @@ const id = {
   vault: "00000000-0000-4000-8000-000000010101",
 } as const;
 
-type TestServices = AppConfig | Database | ClockService | StructuredLogger | TokenService;
+type TestServices =
+  | AppConfig
+  | Database
+  | ClockService
+  | SessionsService
+  | StructuredLogger
+  | TokenService;
 
 type TestState = {
   readonly started: Awaited<ReturnType<typeof startServer>>;
@@ -272,10 +279,15 @@ const jsonl = (events: readonly unknown[]) =>
   events.map((event) => JSON.stringify(event)).join("\n");
 
 const createSession = (idempotencyKey: string, query: string, answer: string) =>
-  api("POST", `/vaults/${id.vault}/sessions`, currentFixture().aliceToken, {
-    idempotency_key: idempotencyKey,
-    exchange: { id: `ex-${idempotencyKey}`, query, thinking: [], answer },
-  });
+  runDb(
+    Effect.gen(function* () {
+      const sessions = yield* SessionsService;
+      return yield* sessions.createSession(id.alice as Uuid, id.vault as Uuid, {
+        idempotencyKey,
+        exchange: { id: `ex-${idempotencyKey}`, query, thinking: [], answer },
+      });
+    }),
+  );
 
 describe("share links", () => {
   beforeAll(async () => {
@@ -303,9 +315,7 @@ describe("share links", () => {
 
   it("creates a session share and resolves it to the rendered session without auth", async () => {
     const { aliceToken } = currentFixture();
-    const created = await createSession("share-session-key", "Share me?", "Shared answer.");
-    expect(created.status).toBe(201);
-    const sessionId = String(asRecord(created.body).id);
+    const sessionId = await createSession("share-session-key", "Share me?", "Shared answer.");
 
     const share = await api("POST", "/shares", aliceToken, {
       subject_kind: "session",
@@ -666,8 +676,7 @@ describe("share links", () => {
 
   it("returns the identical 404 for unknown, revoked, and expired tokens", async () => {
     const { aliceToken } = currentFixture();
-    const created = await createSession("share-404-key", "Gone?", "Vanished.");
-    const sessionId = String(asRecord(created.body).id);
+    const sessionId = await createSession("share-404-key", "Gone?", "Vanished.");
 
     const revokedShare = await api("POST", "/shares", aliceToken, {
       subject_kind: "session",
@@ -699,10 +708,10 @@ describe("share links", () => {
 
   it("stores the plaintext token in the database", async () => {
     const { aliceToken } = currentFixture();
-    const created = await createSession("share-token-key", "Token me?", "Token.");
+    const sessionId = await createSession("share-token-key", "Token me?", "Token.");
     const share = await api("POST", "/shares", aliceToken, {
       subject_kind: "session",
-      subject_id: String(asRecord(created.body).id),
+      subject_id: sessionId,
     });
     const token = String(asRecord(asRecord(share.body).share).token);
 
@@ -721,8 +730,7 @@ describe("share links", () => {
 
   it("returns the same token when a share already exists for the subject", async () => {
     const { aliceToken } = currentFixture();
-    const created = await createSession("share-once-key", "Once?", "Once.");
-    const subjectId = String(asRecord(created.body).id);
+    const subjectId = await createSession("share-once-key", "Once?", "Once.");
 
     const first = await api("POST", "/shares", aliceToken, {
       subject_kind: "session",
@@ -751,8 +759,7 @@ describe("share links", () => {
 
   it("mints a fresh token after revoke and create", async () => {
     const { aliceToken } = currentFixture();
-    const created = await createSession("share-rotate-key", "Rotate?", "Rotate.");
-    const subjectId = String(asRecord(created.body).id);
+    const subjectId = await createSession("share-rotate-key", "Rotate?", "Rotate.");
 
     const first = await api("POST", "/shares", aliceToken, {
       subject_kind: "session",
@@ -782,10 +789,10 @@ describe("share links", () => {
     expect(keyCreate.status).toBe(201);
     const rawKey = String(asRecord(keyCreate.body).raw_key);
 
-    const created = await createSession("share-apikey-key", "Keyed?", "Denied.");
+    const sessionId = await createSession("share-apikey-key", "Keyed?", "Denied.");
     const rejected = await api("POST", "/shares", rawKey, {
       subject_kind: "session",
-      subject_id: String(asRecord(created.body).id),
+      subject_id: sessionId,
     });
     expect(rejected.status).toBe(403);
     expect(rejected.body).toEqual({
@@ -795,10 +802,10 @@ describe("share links", () => {
 
   it("lets only the owner revoke a share", async () => {
     const { aliceToken, bobToken } = currentFixture();
-    const created = await createSession("share-revoke-key", "Revoke?", "Later.");
+    const sessionId = await createSession("share-revoke-key", "Revoke?", "Later.");
     const share = await api("POST", "/shares", aliceToken, {
       subject_kind: "session",
-      subject_id: String(asRecord(created.body).id),
+      subject_id: sessionId,
     });
     const shareId = String(asRecord(asRecord(share.body).share).id);
 

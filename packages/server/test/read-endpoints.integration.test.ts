@@ -602,6 +602,26 @@ const seedFixtures = async (): Promise<Fixture> => {
             updatedAt: new Date("2026-07-08T10:15:00.000Z"),
             idempotencyKey: "bob-main-key",
           },
+          {
+            id: id.sessionNoMarkdown,
+            vaultId: id.vaultAlpha,
+            userId: id.alice,
+            query: "Missing markdown sidecar",
+            origin: { doc_path: "refs/test-fixture.md", origin_scope: "vault", anchor: "missing-sidecar", paragraph: null, paragraph_index: null },
+            createdAt: new Date("2026-07-09T10:00:00.000Z"),
+            updatedAt: new Date("2026-07-09T10:00:00.000Z"),
+            idempotencyKey: "missing-sidecar-key",
+          },
+          {
+            id: id.sessionMalformed,
+            vaultId: id.vaultAlpha,
+            userId: id.alice,
+            query: "Malformed event handling",
+            origin: { doc_path: "refs/test-fixture.md", origin_scope: "vault", anchor: "malformed-events", paragraph: null, paragraph_index: null },
+            createdAt: new Date("2026-07-09T11:00:00.000Z"),
+            updatedAt: new Date("2026-07-09T11:04:00.000Z"),
+            idempotencyKey: "malformed-events-key",
+          },
         ]))
         .pipe(Effect.orDie);
     }),
@@ -1815,17 +1835,8 @@ describe("read-only HTTP integration", () => {
     expect(nonMember.status).toBe(403);
   });
 
-  it("rejects appends and markdown reads of another member's session", async () => {
-    const { aliceToken, bobToken } = currentFixture();
-    const append = await api(
-      "PATCH",
-      `/vaults/${id.vaultAlpha}/sessions/${id.sessionAliceMain}`,
-      bobToken,
-      { id: "ex-blocked", query: "Blocked?", thinking: [], answer: "" },
-    );
-    expect(append.status).toBe(404);
-    expect(append.body).toEqual({ detail: "Session not found" });
-
+  it("rejects markdown reads of another member's session", async () => {
+    const { bobToken } = currentFixture();
     const markdown = await api(
       "GET",
       `/vaults/${id.vaultAlpha}/sessions/${id.sessionAliceMain}/markdown`,
@@ -1833,14 +1844,6 @@ describe("read-only HTTP integration", () => {
     );
     expect(markdown.status).toBe(404);
     expect(markdown.body).toEqual({ detail: "Session not found" });
-
-    const ownerAppend = await api(
-      "PATCH",
-      `/vaults/${id.vaultAlpha}/sessions/${id.sessionAliceMain}`,
-      aliceToken,
-      { id: "ex-owner", query: "Owner?", thinking: [], answer: "Yes." },
-    );
-    expect(ownerAppend.status).toBe(200);
   });
 
   it("replays sessions from JSONL with owner-only access and path-safe ids", async () => {
@@ -1957,8 +1960,8 @@ describe("read-only HTTP integration", () => {
 
     await writeVaultFile(id.vaultAlpha, "sessions/s-empty.jsonl", "");
     const emptyReplay = await api("GET", `/vaults/${id.vaultAlpha}/sessions/s-empty`, aliceToken);
-    expect(emptyReplay.status).toBe(200);
-    expect(emptyReplay.body).toEqual({ id: "s-empty", events: [], origin_title: null });
+    expect(emptyReplay.status).toBe(404);
+    expect(emptyReplay.body).toEqual({ detail: "Session not found" });
 
     const crossVault = await api(
       "GET",
