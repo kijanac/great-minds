@@ -148,7 +148,7 @@ Selecting excerpts remains available after the new reply finishes. Chips that we
 
 ## Open questions and verification
 
-- Losing the input and every chip on pre-acceptance failure appears to be a high-impact recoverability bug. The bar should retain or restore the composed draft when the optimistic exchange rolls back.
+- At the pinned baseline, a pre-acceptance failure loses the input and every chip. Post-baseline commit `fc68057` moves both into session-owned draft state, clears them only after `202 Accepted`, restores the completed session on rejection, and shows **Couldn’t start this reply. Try again**. An unchanged retry reuses the same client-minted reply/exchange IDs, so a lost acceptance response converges on one operation.
 - Verify keyboard-only creation of a selection chip. Native text selection is possible, but the fixed popover's discovery and focus path may be pointer-dependent.
 - Verify scroll placement after appending a follow-up and while its answer grows. There is no explicit scroll-to-new-exchange or jump-to-latest behavior.
 - Verify concurrent same-account follow-ups from two tabs. The append-only session can preserve both, but ordering and each tab's stale local thread may confuse the user.

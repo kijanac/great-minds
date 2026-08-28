@@ -88,6 +88,8 @@ Not checkable by hand:
 | SESSION-14 | P2 | screen reader | Streaming/evidence replacement has meaningful announcement behavior ([Open questions](../foundations/research-session-model.md#open-questions-and-verification)). | Slow sourced reply. | 1. Submit by keyboard.<br>2. Listen through evidence/tokens/terminal. | Record announcements; no repeated full-answer storm or silent terminal transition is expected. | — |
 | SESSION-15 | P2 | mouse | Session Markdown rebuilds after main/BTW appends ([Finish](../foundations/research-session-model.md#finish)). | Completed session plus BTW and follow-up. | 1. Export Markdown after each append. | Latest main turns/BTW are present once, in parent order. | — |
 
+Post-baseline acceptance recheck: Great Minds `fc68057` makes the browser-minted reply ID the acceptance idempotency key. Repeating an exact create request returned the original reply/session identifiers, wrote one pending/final exchange pair, and made one scripted provider call; changing the request under the same ID returned 409. Visible missing-provider checks confirmed rejected first questions and structured follow-up drafts return to their owning input with **Couldn’t start this reply. Try again**. Historical `SESSION-09` and `SESSION-12` Result cells remain unchanged because they describe the pinned `c8c9e57` baseline.
+
 Not checkable by hand:
 
 - Whether durable generation intentionally has no Stop is a product call after SESSION-11 confirms the surface.

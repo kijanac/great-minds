@@ -9,7 +9,7 @@ The drafting pass raised 50 deduplicated items: 16 high, 30 medium, and 4 low. P
 | ID | Title | Severity | Area | Decision needed | Issue |
 | --- | --- | --- | --- | --- | --- |
 | B-01 | Personal-reference Query grounds and links the session as vault content | high | research/reader | fix | — |
-| B-02 | Follow-up failure destroys the typed text and every selection chip | high | research | fix | — |
+| B-02 | Follow-up failure destroys the typed text and every selection chip | high | research | resolved | — |
 | B-03 | The first successful save-as-source is reported as a technical error | high | research/source | fix | — |
 | B-04 | An editor can promote another creator's private session answer | high | privacy/source | fix | — |
 | B-05 | Viewer/editor membership permits shared mutations, provider work, and cancellation | high | authorization | resolved | — |
@@ -24,7 +24,7 @@ The drafting pass raised 50 deduplicated items: 16 high, 30 medium, and 4 low. P
 | B-14 | Share requests can create unseen or multiple active bearer links | high | sharing/security | fix | — |
 | B-15 | Public share bearer tokens are stored in plaintext | high | sharing/security | fix | — |
 | B-16 | Another-tab vault switch can retarget an in-progress multi-file operation | high | vault/source ingest | resolved | — |
-| B-17 | Initial question creation errors have no visible explanation | medium | research | fix | — |
+| B-17 | Initial question creation errors have no visible explanation | medium | research | resolved | — |
 | B-18 | BTW first-turn failure loses text and leaves a malformed local thread | medium | research | fix | — |
 | B-19 | Two BTW threads with the same quote collide after reload | medium | research | fix | — |
 | B-20 | Long main answers and follow-ups have no follow-to-latest behavior | medium | research | product call | — |
@@ -80,7 +80,8 @@ The drafting pass raised 50 deduplicated items: 16 high, 30 medium, and 4 low. P
 - **Reproduce:** Queue two selection chips and text, block the create-reply request, then submit.
 - **Why (from the code):** `web/src/lib/components/follow-up-bar.svelte:19-27` clears its input immediately; `web/src/lib/session.svelte.ts:235-241` clears chips before `#runExchange`; `web/src/lib/session.svelte.ts:222-227` rolls back only the exchange.
 - **Severity:** `high`. It loses deliberate user work on an ordinary transient failure.
-- **Decision needed:** `fix`. Clear only after acceptance or restore the full structured draft in the catch path and show the error.
+- **Decision needed:** `resolved`. Keep the structured draft until acceptance, restore the completed-session state on rejection, and provide one inline recovery action.
+- **Status:** `fixed` by Great Minds commit `fc68057`. Follow-up text and selection chips now live with the session rather than the conditionally mounted bar and clear only after `202 Accepted`. A rejected create rolls back only the optimistic exchange, returns to the same completed session, and shows **Couldn’t start this reply. Try again** with the exact text and chips retained. The same client-minted reply and exchange IDs are reused while that draft is unchanged, so a lost acceptance response reconnects to the original operation instead of duplicating provider work or session turns. A visible missing-provider check retained both the selected quote and typed context through submission and repeated retry; no reply row was written. Integration coverage proves duplicate acceptance returns the original IDs and dispatches one model call.
 - **Raised by:** [follow-up](research/follow-up.md#open-questions-and-verification), [research model](foundations/research-session-model.md#open-questions-and-verification).
 
 ### B-03: The first successful save-as-source is reported as a technical error
@@ -243,7 +244,8 @@ The drafting pass raised 50 deduplicated items: 16 high, 30 medium, and 4 low. P
 - **Reproduce:** Block/fail create-reply before pending write.
 - **Why (from the code):** `web/src/lib/session.svelte.ts:222-227` filters the exchange, logs, and sets idle with no error state rendered by Home.
 - **Severity:** `medium`. Recoverable, but trust and duplicate-retry behavior are poor.
-- **Decision needed:** `fix`. Preserve question and show acceptance-specific inline error/uncertain state.
+- **Decision needed:** `resolved`. Preserve the question, distinguish failure before acceptance from terminal reply failure, and provide a safe retry at the question surface.
+- **Status:** `fixed` by Great Minds commit `fc68057`. A rejected first question returns to idle Home with its text intact and shows **Couldn’t start this reply. Try again** below the query field. The retry reuses the unchanged attempt's browser-minted reply and exchange IDs. Server acceptance is idempotent for an exact `(reply_id, request)` replay and returns 409 if the same ID is reused for different input, closing the accepted-but-response-lost ambiguity. Visible verification used the missing-provider boundary and confirmed both the query button and **Try again** preserve the exact question; integration coverage proves only one pending/final exchange and one provider call for repeated acceptance.
 - **Raised by:** [session model](foundations/research-session-model.md#open-questions-and-verification), [ask](research/ask-a-question.md#open-questions-and-verification).
 
 ### B-18: BTW first-turn failure loses text and leaves a malformed local thread
