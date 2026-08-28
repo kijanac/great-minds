@@ -470,7 +470,17 @@ Persists a structured user suggestion as a source document under `raw/user/` wit
 | `anchored_to`      | string | no       | Slug of the wiki concept the suggestion targets    |
 | `anchored_section` | string | no       | Highlighted passage or section header for context  |
 
-**Response (201):** Same as text ingest.
+**Response (201):**
+
+```json
+{
+  "id": "<source-uuid>",
+  "file_path": "raw/user/...md",
+  "mode": "ingested"
+}
+```
+
+`mode` is `"ingested"` when an owner adds the suggestion directly and `"proposed"` when an editor sends it for owner review.
 
 ---
 

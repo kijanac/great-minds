@@ -1437,6 +1437,7 @@ describe("M3.1 write endpoint integration", () => {
         anchored_section: "section-one",
       });
       expect(owner.status).toBe(201);
+      expect(asRecord(owner.body).mode).toBe("ingested");
       const ownerPath = String(asRecord(owner.body).file_path);
       const ownerText = await readVaultFile(id.vault, ownerPath);
       expect(ownerText).toContain("source_type: user");
@@ -1453,6 +1454,7 @@ describe("M3.1 write endpoint integration", () => {
       });
       expect(editor.status).toBe(201);
       const editorResult = asRecord(editor.body);
+      expect(editorResult.mode).toBe("proposed");
       const editorId = String(editorResult.id);
       const editorPath = String(editorResult.file_path);
       const proposalRows = await runDb(

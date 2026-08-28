@@ -417,6 +417,12 @@ export const UserSuggestion = Schema.Struct({
 });
 export type UserSuggestion = typeof UserSuggestion.Type;
 
+export const UserSuggestionResult = Schema.Struct({
+  ...IngestedDocument.fields,
+  mode: Schema.Literals(["ingested", "proposed"] as const),
+});
+export type UserSuggestionResult = typeof UserSuggestionResult.Type;
+
 export const FileIngestFileInput = Schema.Struct({
   name: Schema.String.pipe(Schema.check(Schema.isMinLength(1))),
   size: Schema.Number.pipe(Schema.check(Schema.isInt(), Schema.isGreaterThanOrEqualTo(0))),
@@ -1321,6 +1327,9 @@ const CreatedVault = Vault.pipe(HttpApiSchema.status("Created"));
 const CreatedMember = MemberWithEmail.pipe(HttpApiSchema.status("Created"));
 const CreatedProposal = Proposal.pipe(HttpApiSchema.status("Created"));
 const CreatedIngestedDocument = IngestedDocument.pipe(HttpApiSchema.status("Created"));
+const CreatedUserSuggestionResult = UserSuggestionResult.pipe(
+  HttpApiSchema.status("Created"),
+);
 const CreatedFileIngestBatch = FileIngestBatch.pipe(HttpApiSchema.status("Created"));
 const CreatedJobResponse = JobResponse.pipe(HttpApiSchema.status("Created"));
 const CreatedReferenceDetail = ReferenceDetail.pipe(HttpApiSchema.status("Created"));
@@ -1648,7 +1657,7 @@ export const IngestApiGroup = HttpApiGroup.make("ingest").add(
       vault_id: Uuid,
     },
     payload: UserSuggestion,
-    success: CreatedIngestedDocument,
+    success: CreatedUserSuggestionResult,
     error: [BadRequestResponse, ForbiddenResponse, ValidationResponse] as const,
   }).middleware(AuthMiddleware),
   HttpApiEndpoint.post(

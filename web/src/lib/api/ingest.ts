@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-import { apiFetch, vaultPath, readJson } from "./client";
+import { apiFetch, responseError, vaultPath, readJson } from "./client";
 import { ingestedDocumentSchema } from "./schemas";
 
 export type IngestResult = z.infer<typeof ingestedDocumentSchema>;
@@ -302,12 +302,17 @@ export async function* continueFileIngest(
 
 export type UserSuggestionIntent = "disagree" | "correct" | "add_context" | "restructure";
 
+const userSuggestionResultSchema = ingestedDocumentSchema.extend({
+  mode: z.enum(["ingested", "proposed"]),
+});
+export type UserSuggestionResult = z.infer<typeof userSuggestionResultSchema>;
+
 export async function postUserSuggestion(params: {
   body: string;
   intent: UserSuggestionIntent;
   anchoredTo: string;
   anchoredSection: string;
-}): Promise<IngestResult> {
+}): Promise<UserSuggestionResult> {
   const res = await apiFetch(vaultPath("/ingest/user-suggestion"), {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -319,10 +324,6 @@ export async function postUserSuggestion(params: {
     }),
   });
 
-  if (!res.ok) {
-    const detail = await res.text();
-    throw new Error(detail);
-  }
-
-  return readJson(res, ingestedDocumentSchema);
+  if (!res.ok) throw await responseError(res, "Suggestion could not be sent");
+  return readJson(res, userSuggestionResultSchema);
 }

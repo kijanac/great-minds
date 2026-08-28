@@ -1,9 +1,15 @@
 <script lang="ts">
   import { goto } from "$app/navigation";
   import { page } from "$app/state";
+  import { createQuery } from "@tanstack/svelte-query";
   import { onDestroy, tick, untrack } from "svelte";
 
   import type { DocumentScope } from "$lib/api/doc";
+  import {
+    postUserSuggestion,
+    type UserSuggestionResult,
+  } from "$lib/api/ingest";
+  import { getVaultDetail } from "$lib/api/vaults";
   import { auth } from "$lib/auth.svelte";
   import { DocThreads } from "$lib/btw.svelte";
   import ArticleChrome from "$lib/components/article-chrome.svelte";
@@ -11,6 +17,9 @@
   import ArticleView from "$lib/components/article-view.svelte";
   import PanelHost from "$lib/components/panel-host.svelte";
   import SelectionPopover from "$lib/components/selection-popover.svelte";
+  import SuggestionForm, {
+    type SuggestionPayload,
+  } from "$lib/components/suggestion-form.svelte";
   import { Badge } from "$lib/components/ui/badge";
   import { Button } from "$lib/components/ui/button";
   import { Skeleton } from "$lib/components/ui/skeleton";
@@ -42,6 +51,7 @@
 
   let selectedCard = $state<SourceRef | null>(null);
   let popover = $state<SelectionInfo | null>(null);
+  let suggestionTarget = $state<SelectionInfo | null>(null);
   let hintDismissed = $state(
     localStorage.getItem("onboarding-hint-seen") === "true",
   );
@@ -70,6 +80,25 @@
   const body = $derived(documentQuery.data?.body ?? null);
   const resolvedPath = $derived(document?.file_path ?? path ?? "");
   const label = $derived(displayTitle(resolvedPath, document?.title));
+  const wikiSlug = $derived(
+    readerScope === "vault" &&
+      resolvedPath.startsWith("wiki/") &&
+      resolvedPath.endsWith(".md")
+      ? resolvedPath.slice("wiki/".length, -".md".length)
+      : null,
+  );
+  const vaultDetail = createQuery(() => ({
+    queryKey: ["vault", activeVault.id, "detail"],
+    queryFn: () => getVaultDetail(activeVault.id!),
+    enabled: wikiSlug !== null && !!activeVault.id,
+  }));
+  const suggestionMode = $derived<UserSuggestionResult["mode"] | null>(
+    vaultDetail.data?.role === "owner"
+      ? "ingested"
+      : vaultDetail.data?.role === "editor"
+        ? "proposed"
+        : null,
+  );
   const articleLinks = useArticleLinks(() =>
     readerScope === "vault" && resolvedPath.startsWith("wiki/")
       ? resolvedPath
@@ -134,6 +163,7 @@
       (id) => void goto(`/sessions/${id}`),
     );
     popover = null;
+    suggestionTarget = null;
   });
 
   $effect(() => {
@@ -157,6 +187,31 @@
     docThreads.startThread(popover);
     popover = null;
     window.getSelection()?.removeAllRanges();
+  }
+
+  function startSuggestion() {
+    if (!popover || !suggestionMode) return;
+    suggestionTarget = popover;
+    popover = null;
+    window.getSelection()?.removeAllRanges();
+  }
+
+  async function submitSuggestion(
+    payload: SuggestionPayload,
+  ): Promise<UserSuggestionResult["mode"]> {
+    const target = suggestionTarget;
+    const anchor = wikiSlug;
+    if (!target || !anchor) {
+      throw new Error(
+        "This suggestion is no longer attached to an article passage.",
+      );
+    }
+    const result = await postUserSuggestion({
+      ...payload,
+      anchoredTo: anchor,
+      anchoredSection: target.quote,
+    });
+    return result.mode;
   }
 
   function dismissHint() {
@@ -249,7 +304,15 @@
       )}
   >
     {#snippet footer()}
-      {#if showHint}
+      {#if suggestionTarget && suggestionMode}
+        <SuggestionForm
+          articleLabel={label}
+          anchoredSection={suggestionTarget.quote}
+          expectedMode={suggestionMode}
+          onSubmit={submitSuggestion}
+          onClose={() => (suggestionTarget = null)}
+        />
+      {:else if showHint}
         <div
           class="shrink-0 animate-[slide-up_0.28s_ease] border-t border-ink-subtle px-4 py-3 md:px-10"
         >
@@ -266,7 +329,8 @@
                 tip
               </Badge>
               highlight any text to start a
-              <span class="text-btw">btw</span> thread
+              <span class="text-btw">btw</span>
+              thread{#if suggestionMode}{" or suggest a change"}{/if}
             </p>
             <Button
               variant="ghost"
@@ -323,7 +387,11 @@
     {/if}
 
     {#if popover}
-      <SelectionPopover info={popover} onBtw={startBtw} />
+      <SelectionPopover
+        info={popover}
+        onBtw={startBtw}
+        onSuggest={suggestionMode ? startSuggestion : undefined}
+      />
     {/if}
   </ArticleChrome>
 </PanelHost>

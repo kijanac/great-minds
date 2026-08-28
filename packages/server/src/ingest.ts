@@ -13,6 +13,7 @@ import {
   type SessionOrigin,
   type UserSuggestion,
   type UserSuggestionIntent,
+  type UserSuggestionResult,
   type Uuid,
 } from "@great-minds/domain";
 import { eq, sql } from "drizzle-orm";
@@ -53,7 +54,7 @@ type IngestServiceShape = {
     userId: Uuid,
     vaultId: Uuid,
     input: UserSuggestion,
-  ) => Effect.Effect<IngestedDocument, BadRequest | Forbidden>;
+  ) => Effect.Effect<UserSuggestionResult, BadRequest | Forbidden>;
   readonly ingestUrl: (
     vaultId: Uuid,
     canonicalUrl: CanonicalSourceUrl,
@@ -294,12 +295,13 @@ export const IngestServiceLive = Layer.effect(
             intent: input.intent,
           };
           if (scope.role === "owner") {
-            return yield* writeAndIndex(
+            const document = yield* writeAndIndex(
               vaultId,
               sourceId,
               buildDocument(input.body, frontmatter),
               dest,
             );
+            return { ...document, mode: "ingested" } satisfies UserSuggestionResult;
           }
           const rendered = identifySourceMarkdown(
             buildDocument(input.body, frontmatter),
@@ -313,7 +315,11 @@ export const IngestServiceLive = Layer.effect(
             destPath: dest,
             rendered,
           });
-          return { id: sourceId, file_path: dest } satisfies IngestedDocument;
+          return {
+            id: sourceId,
+            file_path: dest,
+            mode: "proposed",
+          } satisfies UserSuggestionResult;
         }),
       ingestUrl,
       ingestSessionExchange: (vaultId, sessionId, exchange, sessionOrigin) => {
