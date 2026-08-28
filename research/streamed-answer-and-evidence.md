@@ -166,7 +166,7 @@ A non-HTTP tail exception that escapes retry also marks the client exchange non-
 
 ## Open questions and verification
 
-- Post-baseline B-10 fix: Great Minds `a918301` presents a status announcement before failed partial prose: **reply interrupted — partial answer below may be incomplete — {sanitized error}**. The prose and settled evidence remain available, but the exchange cannot be mistaken for clean completion or promoted as a source. Visible main and BTW terminal-snapshot checks confirmed the warning precedes the retained answer.
+- Post-baseline B-10 fix: Great Minds `a918301` first made failed status visible when partial prose existed. Commit `acbcb62` simplifies the treatment to one inline stopping-point row after the retained prose: **Answer interrupted. This response may be incomplete. Try again**. It removes the warning container and redundant generic server message. **Try again** starts a new durable reply from the saved failed request in the same session position; failed partial main exchanges remain ineligible for promotion. Visible main and BTW checks confirmed the compact row follows readable prose.
 - Verify the visual and screen-reader behavior of full answer-string replacement, the streaming cursor, evidence disclosure text, and pulsing pending cards. No explicit live-region semantics are present.
 - Verify scroll behavior on long streamed answers. The session thread has no explicit follow-to-bottom policy, so tokens may continue below the viewport without a “jump to latest” affordance.
 - Verify panel error handling for forbidden, transient network, invalid range, and deleted source. They all appear to collapse to **Not found**, which can misstate a retryable failure.

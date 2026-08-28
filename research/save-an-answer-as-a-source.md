@@ -144,7 +144,7 @@ The session itself gains no event saying the answer was promoted. Its answer, ev
 
 ## Edge cases
 
-- At the pinned baseline, a failed reply with partial text can show **save as source**, then receive **Exchange has no answer yet** because only the empty pending exchange is durable. Post-baseline Great Minds `a918301` removes the action from failed partial exchanges while retaining the visibly marked partial prose.
+- At the pinned baseline, a failed reply with partial text can show **save as source**, then receive **Exchange has no answer yet** because only the empty pending exchange is durable. Post-baseline Great Minds `a918301` removes the action from failed partial exchanges; `acbcb62` retains that guard while moving the compact interruption and retry row after the readable partial prose.
 - Whitespace-only answer text is truthy enough to show the browser action but is rejected after server trimming.
 - The first successful owner response is currently rendered as an error because title is null; the mutation is not rolled back.
 - Reload always forgets **saved as…** and shows the button again. The server, not the button, provides idempotency.

@@ -164,7 +164,7 @@ On reload after acceptance, Great Minds reconstructs the latest BTW version unde
 
 - Verify keyboard-only discovery, activation, closing, and reopening of a BTW anchor. Selection-positioned controls and clickable `<mark>` content may not expose sufficient semantics.
 - Pre-acceptance failure clears the typed question, leaves an undismissable interrupted turn locally, and can persist that empty failed turn if the owner continues. This should be treated as a recoverability bug.
-- Post-baseline B-10 fix: Great Minds `a918301` renders the shared **reply interrupted — partial answer below may be incomplete** status before a failed BTW's retained prose and keeps the reply field available. A visible seeded failed snapshot confirmed the error and partial answer coexist in the expanded card.
+- Post-baseline B-10 fix: Great Minds `a918301` first marked failed partial BTW turns. Commit `acbcb62` reduces that treatment to **Answer interrupted. This response may be incomplete. Try again** after the retained fragment. The ordinary reply field remains available, while **Try again** reruns the saved failed turn in place. A visible seeded snapshot confirmed the compact row inside the expanded card without a second generic error message.
 - Replay keys a BTW by parent exchange id plus quote, not block offset. Confirm that identical selected text in two different blocks collapses to one thread after reload and fix the identity if so.
 - Verify exact anchor recovery across rich Markdown, repeated quotes, inline links, overlapping threads, and older saved answers whose parser offsets differ.
 - Verify whether compact evidence should open the same source preview as main answer evidence; current badges look related but are noninteractive.
