@@ -1,6 +1,6 @@
 import { createMutation, createQuery, useQueryClient } from "@tanstack/svelte-query";
 
-import { compile } from "$lib/api/compile";
+import { requestCompile } from "$lib/api/jobs";
 import { useActiveJob } from "$lib/hooks/use-active-job.svelte";
 import { useHealthReport } from "$lib/hooks/use-health-report.svelte";
 import { activeVault, useVaults } from "$lib/hooks/use-vault.svelte";
@@ -14,7 +14,7 @@ export function useHealth(selectedCard: () => SourceRef | null) {
   const report = useHealthReport();
 
   const compileMutation = createMutation(() => ({
-    mutationFn: () => compile(),
+    mutationFn: () => requestCompile(),
     onSuccess: async () => {
       await queryClient.invalidateQueries({
         queryKey: ["vault", activeVault.id, "active-job"],

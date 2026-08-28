@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-import { pageInfoSchema } from "./schemas";
+import { paginatedSchema } from "./schemas";
 import { apiFetch, readJson, vaultPath, vaultPathFor } from "./client";
 
 const progressStepSchema = z.object({
@@ -29,10 +29,7 @@ export const jobSchema = z.object({
 
 export type Job = z.infer<typeof jobSchema>;
 
-const jobPageSchema = z.object({
-  items: z.array(jobSchema),
-  pagination: pageInfoSchema,
-});
+const jobPageSchema = paginatedSchema(jobSchema);
 
 export type JobPage = z.infer<typeof jobPageSchema>;
 

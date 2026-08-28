@@ -10,12 +10,10 @@
     sessionId,
     initialQuery,
     origin,
-    originTitle = null,
   }: {
     sessionId?: string;
     initialQuery?: string;
     origin?: string;
-    originTitle?: string | null;
   } = $props();
 
   const vaults = useVaults();

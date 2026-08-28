@@ -15,20 +15,10 @@
   } = $props();
 
   let open = $state(false);
-  const status = $derived(
-    stage.errored
-      ? "failed"
-      : stage.complete
-        ? "completed"
-        : stage.active
-          ? "running"
-          : "pending",
-  );
   const expandable = $derived(stage.active || stage.complete || stage.errored);
   const hasCount = $derived(stage.active && stage.total > 1);
 
   $effect(() => {
-    status;
     open = expandable;
   });
 

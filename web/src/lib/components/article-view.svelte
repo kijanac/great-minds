@@ -25,9 +25,8 @@
     jumpableThreads = null,
     expandedThreads = null,
     onToggleThread,
-    onOpenThread,
+    onOpenSession,
     onThreadJump,
-    onThreadOpen,
     documentId,
     onSelection,
     onBtwReply,
@@ -49,9 +48,8 @@
     jumpableThreads?: Set<string> | null;
     expandedThreads?: Set<string> | null;
     onToggleThread?: (threadId: string) => void;
-    onOpenThread?: (threadId: string) => void;
+    onOpenSession?: (threadId: string) => void;
     onThreadJump?: (threadId: string) => void;
-    onThreadOpen?: (threadId: string) => void;
     documentId: string;
     onSelection: (info: SelectionInfo) => void;
     onBtwReply: (btwId: string, text: string) => void;
@@ -71,7 +69,7 @@
     {threads}
     {jumpableThreads}
     {onThreadJump}
-    {onThreadOpen}
+    onThreadOpen={onOpenSession}
   />
   <AnswerBlock
     text={body}
@@ -90,7 +88,7 @@
     {onBtwDismiss}
     {expandedThreads}
     {onToggleThread}
-    onBtwOpenSession={onOpenThread}
+    onBtwOpenSession={onOpenSession}
   />
   {#if !archived && related.length > 0}
     <footer class="mt-14 border-t border-ink-subtle pt-6">

@@ -1,7 +1,6 @@
 <script lang="ts">
   import { goto } from "$app/navigation";
   import { page } from "$app/state";
-  import Home from "@lucide/svelte/icons/home";
   import { createQuery, useQueryClient } from "@tanstack/svelte-query";
 
   import {
@@ -17,6 +16,7 @@
   } from "$lib/api/vaults";
   import { auth } from "$lib/auth.svelte";
   import MemberRow from "$lib/components/member-row.svelte";
+  import PageHeader from "$lib/components/page-header.svelte";
   import ProposalsSection from "$lib/components/proposals-section.svelte";
   import { Alert, AlertDescription } from "$lib/components/ui/alert";
   import * as AlertDialog from "$lib/components/ui/alert-dialog";
@@ -144,26 +144,7 @@
 </svelte:head>
 
 <div class="flex h-screen flex-col overflow-hidden">
-  <header
-    class="flex shrink-0 items-center justify-between gap-3 border-b border-ink-subtle px-4 pt-4 pb-3 md:px-6"
-  >
-    <div class="flex shrink-0 items-center gap-4">
-      <Button
-        variant="ghost"
-        size="icon-xs"
-        onclick={() => void goto("/")}
-        aria-label="home"
-        class="text-muted-foreground hover:bg-transparent hover:text-gold"
-      >
-        <Home size={14} />
-      </Button>
-      <span
-        class="hidden font-mono text-[length:var(--text-chrome)] tracking-[0.14em] text-gold-muted uppercase md:inline"
-      >
-        settings
-      </span>
-    </div>
-  </header>
+  <PageHeader title="settings" onHome={() => void goto("/")} />
 
   <div class="min-h-0 flex-1 overflow-y-auto">
     <main class="mx-auto max-w-[740px] px-4 pt-8 pb-20 md:px-10">

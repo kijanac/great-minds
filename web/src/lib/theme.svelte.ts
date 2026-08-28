@@ -19,14 +19,12 @@ function applyTheme(value: Theme): void {
 
 class ThemeState {
   current = $state<Theme>("dark");
-  ready = $state(false);
 
   #initialized = false;
 
   #sync = () => {
     this.current = getTheme();
     applyTheme(this.current);
-    this.ready = true;
   };
 
   initialize(): () => void {
@@ -47,8 +45,8 @@ class ThemeState {
   toggle(): void {
     const next = this.current === "dark" ? "light" : "dark";
     localStorage.setItem(STORAGE_KEY, next);
+    this.current = next;
     applyTheme(next);
-    window.dispatchEvent(new StorageEvent("storage"));
   }
 }
 

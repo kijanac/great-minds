@@ -319,9 +319,8 @@
         jumpableThreads={docThreads.jumpable}
         expandedThreads={docThreads.expanded}
         onToggleThread={docThreads.toggleExpanded}
-        onOpenThread={docThreads.openSession}
+        onOpenSession={docThreads.openSession}
         onThreadJump={docThreads.jumpTo}
-        onThreadOpen={docThreads.openSession}
         documentId={resolvedPath}
         onSelection={(info) => (popover = info)}
         onBtwReply={docThreads.replyThread}

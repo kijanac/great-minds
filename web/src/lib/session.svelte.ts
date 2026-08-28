@@ -50,14 +50,12 @@ export class Session {
   #idempotencyKey: string | null = null;
   #abortController: AbortController | null = null;
   #btwControllers = new Set<AbortController>();
-  #isFirstExchange = true;
   #destroyed = false;
 
   constructor(options: SessionOptions = {}) {
     this.phase = options.initialExchanges?.length ? "done" : "idle";
     this.thread = options.initialExchanges ?? [];
     this.sessionId = options.sessionId ?? null;
-    this.#isFirstExchange = this.sessionId === null;
     this.#originPath = options.originPath;
     this.#onSessionCreated = options.onSessionCreated;
 
@@ -188,7 +186,7 @@ export class Session {
   #makeMainReplyAttempt = (question: string): MainReplyAttempt => {
     const exchangeId = genId("ex");
     const replyId = crypto.randomUUID();
-    const firstExchange = this.#isFirstExchange;
+    const firstExchange = this.sessionId === null;
     const originForQuery = firstExchange ? this.#originPath : undefined;
     const history = threadToHistory(this.thread);
     const existingSessionId = this.sessionId;
@@ -267,7 +265,6 @@ export class Session {
       return false;
     }
 
-    this.#isFirstExchange = false;
     this.#updateExchange(attempt.exchangeId, { replyId: created.reply_id });
     if (this.sessionId === null && created.session_id !== null) {
       this.sessionId = created.session_id;
@@ -459,14 +456,7 @@ export class Session {
           controller.signal,
         );
         patchTurn({ replyId: created.reply_id });
-        for await (const snapshot of streamReply(created.reply_id, controller.signal)) {
-          patchTurn({
-            answer: snapshot.answer,
-            thinking: this.#snapshotThinking(snapshot, false),
-            streaming: snapshot.status === "running",
-            error: snapshot.error,
-          });
-        }
+        await this.#tailBtwReply(created.reply_id, controller);
       } catch (error) {
         if (isAbortError(error)) return;
         console.error("BTW reply failed:", error);
