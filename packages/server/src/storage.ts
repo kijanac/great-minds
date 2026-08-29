@@ -26,7 +26,7 @@ const LOCAL_STAGED_UPLOAD_EXPIRES_MS = 24 * 60 * 60 * 1000;
 const textEncoder = new TextEncoder();
 const textDecoder = new TextDecoder();
 
-export class StorageFileMissing extends Schema.TaggedErrorClass<StorageFileMissing>()(
+export class StorageFileMissing extends Schema.TaggedError<StorageFileMissing>()(
   "StorageFileMissing",
   {
     path: Schema.String,

@@ -17,7 +17,7 @@ export const URL_INGEST_STEP_LABELS = {
   index_document: "Indexing source document",
 } as const;
 
-export class UrlIngestWorkflowError extends Schema.TaggedErrorClass<UrlIngestWorkflowError>()(
+export class UrlIngestWorkflowError extends Schema.TaggedError<UrlIngestWorkflowError>()(
   "UrlIngestWorkflowError",
   { message: Schema.String },
 ) {}

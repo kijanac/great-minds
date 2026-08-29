@@ -1213,31 +1213,31 @@ export class CurrentAuth extends Context.Service<CurrentAuth, AuthContext>()(
   "@great-minds/domain/CurrentAuth",
 ) {}
 
-export class Unauthorized extends Schema.TaggedErrorClass<Unauthorized>()("Unauthorized", {
+export class Unauthorized extends Schema.TaggedError<Unauthorized>()("Unauthorized", {
   detail: Schema.String,
 }) {}
 
-export class Forbidden extends Schema.TaggedErrorClass<Forbidden>()("Forbidden", {
+export class Forbidden extends Schema.TaggedError<Forbidden>()("Forbidden", {
   detail: Schema.String,
 }) {}
 
-export class NotFound extends Schema.TaggedErrorClass<NotFound>()("NotFound", {
+export class NotFound extends Schema.TaggedError<NotFound>()("NotFound", {
   detail: Schema.String,
 }) {}
 
-export class Validation extends Schema.TaggedErrorClass<Validation>()("Validation", {
+export class Validation extends Schema.TaggedError<Validation>()("Validation", {
   detail: Schema.String,
 }) {}
 
-export class BadRequest extends Schema.TaggedErrorClass<BadRequest>()("BadRequest", {
+export class BadRequest extends Schema.TaggedError<BadRequest>()("BadRequest", {
   detail: Schema.String,
 }) {}
 
-export class Conflict extends Schema.TaggedErrorClass<Conflict>()("Conflict", {
+export class Conflict extends Schema.TaggedError<Conflict>()("Conflict", {
   detail: Schema.String,
 }) {}
 
-export class ServiceUnavailable extends Schema.TaggedErrorClass<ServiceUnavailable>()(
+export class ServiceUnavailable extends Schema.TaggedError<ServiceUnavailable>()(
   "ServiceUnavailable",
   {
     detail: Schema.String,

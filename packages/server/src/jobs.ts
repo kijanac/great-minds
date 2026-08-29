@@ -266,7 +266,7 @@ export const JobsServiceLive = Layer.effect(
                 }
               }
               if (Date.now() >= heartbeatAt) {
-                // HttpApi's SSE encoder renders an empty message as a blank keepalive frame.
+                // The HTTP adapter rewrites this empty message frame to an SSE comment.
                 yield sse("message", "");
                 heartbeatAt = Date.now() + 30_000;
               }

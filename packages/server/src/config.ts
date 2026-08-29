@@ -162,7 +162,7 @@ const appConfig = Config.all({
       return Effect.fail(
         new Config.ConfigError(
           new Schema.SchemaError(
-            new SchemaIssue.InvalidValue(Option.some(config.webauthnOrigins), {
+            new SchemaIssue.InvalidValue({
               message: "WEBAUTHN_ORIGINS must contain at least one origin",
             }),
           ),
@@ -183,7 +183,7 @@ const appConfig = Config.all({
     return Effect.fail(
       new Config.ConfigError(
         new Schema.SchemaError(
-          new SchemaIssue.InvalidValue(Option.some(config.storageBackend), {
+          new SchemaIssue.InvalidValue({
             message:
               "STORAGE_BACKEND=r2 requires R2_ACCOUNT_ID, R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY, and R2_BUCKET_NAME",
           }),

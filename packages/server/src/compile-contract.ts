@@ -39,12 +39,12 @@ export const CompilePhase = Schema.Literals([
 ] as const);
 export type CompilePhase = typeof CompilePhase.Type;
 
-export class CompilePhaseNotPorted extends Schema.TaggedErrorClass<CompilePhaseNotPorted>()(
+export class CompilePhaseNotPorted extends Schema.TaggedError<CompilePhaseNotPorted>()(
   "CompilePhaseNotPorted",
   { phase: CompilePhase, message: Schema.String },
 ) {}
 
-export class CompilePhaseFailed extends Schema.TaggedErrorClass<CompilePhaseFailed>()(
+export class CompilePhaseFailed extends Schema.TaggedError<CompilePhaseFailed>()(
   "CompilePhaseFailed",
   { phase: CompilePhase, errorType: Schema.String, message: Schema.String },
 ) {}

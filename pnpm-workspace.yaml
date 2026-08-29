@@ -17,11 +17,6 @@ confirmModulesPurge: false
 # so pulled / hijacked packages have time to be caught and yanked.
 minimumReleaseAge: 4320
 minimumReleaseAgeExclude:
-  - '@effect/ai-openai-compat@4.0.0-beta.94'
-  - '@effect/ai-openrouter@4.0.0-beta.94'
-  - '@effect/platform-node-shared@4.0.0-beta.94'
-  - '@effect/platform-node@4.0.0-beta.94'
-  - '@effect/sql-pg@4.0.0-beta.94'
   - '@effect/tsgo-darwin-arm64@0.16.3'
   - '@effect/tsgo-darwin-x64@0.16.3'
   - '@effect/tsgo-linux-arm64@0.16.3'
@@ -39,7 +34,4 @@ minimumReleaseAgeExclude:
   - '@typescript/native-preview-win32-arm64@7.0.0-dev.20260707.2'
   - '@typescript/native-preview-win32-x64@7.0.0-dev.20260707.2'
   - '@typescript/native-preview@7.0.0-dev.20260707.2'
-  - 'drizzle-kit@1.0.0-rc.4'
-  - 'drizzle-orm@1.0.0-rc.4'
-  - 'effect@4.0.0-beta.94'
   - 'fast-check@4.9.0'

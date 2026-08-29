@@ -72,10 +72,15 @@ const jsonResponse = (status: number, body: unknown) =>
   HttpServerResponse.json(body, { status }).pipe(Effect.orDie);
 
 const healthResponse = jsonResponse(200, { status: "ok" });
-const heartbeatBytes = new TextEncoder().encode(": heartbeat\n\n");
+const textEncoder = new TextEncoder();
+const emptyMessageBytes = textEncoder.encode("data: \n\n");
+const heartbeatBytes = textEncoder.encode(": heartbeat\n\n");
 
 export const jobSseHeartbeatChunk = (chunk: Uint8Array) =>
-  chunk.length === 1 && chunk[0] === 10 ? heartbeatBytes : chunk;
+  chunk.length === emptyMessageBytes.length &&
+  chunk.every((byte, index) => byte === emptyMessageBytes[index])
+    ? heartbeatBytes
+    : chunk;
 
 const clean500Response = jsonResponse(500, { detail: "Internal Server Error" });
 

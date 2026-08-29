@@ -470,10 +470,11 @@ const parseSse = (text: string): readonly ParsedEvent[] =>
 describe("job progress SSE", () => {
   it("pins Effect's empty-message encoding and singleton chunks for heartbeat rewriting", async () => {
     const empty = { _tag: "Event" as const, id: undefined, event: "message", data: "" };
-    expect(Sse.encoder.write(empty)).toBe("\n");
-    expect(new TextDecoder().decode(jobSseHeartbeatChunk(new Uint8Array([10])))).toBe(
-      ": heartbeat\n\n",
-    );
+    const encodedEmpty = Sse.encoder.write(empty);
+    expect(encodedEmpty).toBe("data: \n\n");
+    expect(
+      new TextDecoder().decode(jobSseHeartbeatChunk(new TextEncoder().encode(encodedEmpty))),
+    ).toBe(": heartbeat\n\n");
 
     async function* consecutiveEvents() {
       yield { _tag: "Event" as const, id: undefined, event: "first", data: "one" };
