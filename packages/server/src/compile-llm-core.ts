@@ -923,6 +923,8 @@ export const makeCompileLlmCore = (options: CompileLlmCoreOptions) => {
         const existingContent = yield* storage.readText(vaultOwner(vaultId), document.filePath);
         const body = parseFrontmatter(existingContent).body;
         const frontmatter: Record<string, unknown> = {
+          source_id: document.id,
+          canonical_url: document.canonicalUrl,
           source_type: document.sourceType,
           url: document.url,
           origin: document.origin,

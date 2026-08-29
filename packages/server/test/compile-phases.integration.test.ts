@@ -48,6 +48,7 @@ import { DrizzleLive } from "../src/db.ts";
 import { EmbeddingsService } from "../src/embeddings.ts";
 import { LanguageModel, type CompleteInput, type ModelCompletion } from "../src/llm.ts";
 import { StructuredLogger } from "../src/logging.ts";
+import { parseFrontmatter } from "../src/markdown.ts";
 import { PipelineRunsServiceLive } from "../src/pipeline-runs.ts";
 import { RandomBytesLive } from "../src/random.ts";
 import { SourceDocumentsServiceLive } from "../src/source-documents.ts";
@@ -259,7 +260,12 @@ const seedSourceAndIdeas = () =>
     }),
   );
 
-const insertSource = (documentId: Uuid, filePath: string, bodyHash: string) =>
+const insertSource = (
+  documentId: Uuid,
+  filePath: string,
+  bodyHash: string,
+  canonicalUrl: string | null = null,
+) =>
   run(
     Effect.gen(function* () {
       const db = yield* Database;
@@ -272,6 +278,7 @@ const insertSource = (documentId: Uuid, filePath: string, bodyHash: string) =>
           fileHash: `file-${bodyHash}`,
           bodyHash,
           sourceType: "document",
+          canonicalUrl,
         }))
         .pipe(Effect.orDie);
     }),
@@ -474,8 +481,12 @@ describe("M4.3a deterministic compile phases", () => {
   });
 
   it("records per-call extract provenance, prompt content, and the embedding model", async () => {
-    files.set("raw/docs/source.md", "# Source\n\nBody\n");
-    await insertSource(id.source, "raw/docs/source.md", "provenance-body");
+    const canonicalUrl = "https://example.com/source";
+    files.set(
+      "raw/docs/source.md",
+      `---\nsource_id: ${id.source}\ncanonical_url: ${canonicalUrl}\n---\n# Source\n\nBody\n`,
+    );
+    await insertSource(id.source, "raw/docs/source.md", "provenance-body", canonicalUrl);
     complete = async () => ({
       text: JSON.stringify({
         ideas: [{ kind: "concept", label: "Idea", description: "Description", anchors: [] }],
@@ -525,6 +536,10 @@ describe("M4.3a deterministic compile phases", () => {
     expect(recorded.ideas).toEqual([
       expect.objectContaining({ embeddingModel: config.embeddingModel }),
     ]);
+    expect(parseFrontmatter(files.get("raw/docs/source.md") ?? "").frontmatter).toMatchObject({
+      source_id: id.source,
+      canonical_url: canonicalUrl,
+    });
   });
 
   it("isolates malformed extract output per document and coerces Python-defaulted fields", async () => {
