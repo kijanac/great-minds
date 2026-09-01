@@ -1,6 +1,5 @@
 {
-
-  "recordingId": "4c7cc562-fcf7-45af-93c3-a0106f7151d7",
+  "recordingId": "cc83da5b-5512-4174-9a37-b48f37e9013a",
   "sseProgress": {
     "first": {
       "protocol": {
@@ -226,29 +225,29 @@
       {
         "key": "prepare_sources",
         "label": "Preparing uploaded sources",
-        "status": "failed",
+        "status": "completed",
         "done": null,
         "total": null,
-        "detail": "staged_file_ingest requires r2 storage backend"
+        "detail": ""
       },
       {
         "key": "read_files",
         "label": "Reading uploaded files",
-        "status": "pending",
-        "done": null,
-        "total": null,
-        "detail": ""
+        "status": "failed",
+        "done": 1,
+        "total": 1,
+        "detail": "fixture.md: The file could not be read or converted"
       },
       {
         "key": "index_documents",
         "label": "Indexing documents",
         "status": "pending",
-        "done": null,
-        "total": null,
+        "done": 0,
+        "total": 1,
         "detail": ""
       }
     ],
-    "error": "staged_file_ingest requires r2 storage backend"
+    "error": "1 of 1 files could not be ingested"
   },
   "cancelOddity22": {
     "observedBeforeTaskStop": {
@@ -256,10 +255,10 @@
       "phaseStatus": "failed"
     },
     "afterCancelledTaskHandler": {
-      "jobStatus": "failed",
+      "jobStatus": "cancelled",
       "phaseStatus": "failed",
-      "error": "",
-      "clobberedBy": "python"
+      "error": "Update cancelled",
+      "clobberedBy": "typescript"
     },
     "sse": {
       "protocol": {

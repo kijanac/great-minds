@@ -29,5 +29,5 @@ const subjects = [
 export const corpus = subjects.map((title, index) => ({
   id: fixtureIds.docs[index] as string,
   path: `raw/docs/golden-${index + 1}.md`,
-  content: `---\nsource_type: document\norigin: golden fixture\n---\n# ${title}\n\n${title} depends on durable relationships, shared knowledge, and accountable institutions. This fixture contrasts immediate service delivery with long-term capacity building and records concrete tradeoffs for synthesis. ^p0\n\nA second section connects the case to governance, access, maintenance, and the distribution of decision-making power. It provides overlapping vocabulary across documents while retaining a distinct empirical emphasis. ^p1\n`,
+  content: `---\nsource_id: ${fixtureIds.docs[index]}\nsource_type: document\norigin: golden fixture\n---\n# ${title}\n\n${title} depends on durable relationships, shared knowledge, and accountable institutions. This fixture contrasts immediate service delivery with long-term capacity building and records concrete tradeoffs for synthesis. ^p0\n\nA second section connects the case to governance, access, maintenance, and the distribution of decision-making power. It provides overlapping vocabulary across documents while retaining a distinct empirical emphasis. ^p1\n`,
 }));

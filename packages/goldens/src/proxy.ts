@@ -114,10 +114,11 @@ export const createReplayOrderGate = () => {
   const waiters = new Map<number, () => void>();
   return {
     wait: async (rank: number) => {
-      if (rank === nextRank) return;
+      if (rank <= nextRank) return;
       await new Promise<void>((resolve) => { waiters.set(rank, resolve); });
     },
     release: (rank: number) => {
+      if (rank < nextRank) return;
       if (rank !== nextRank) throw new Error(`replay order gate released rank ${rank}, expected ${nextRank}`);
       nextRank += 1;
       const resolve = waiters.get(nextRank);
@@ -617,7 +618,10 @@ export const startCassetteProxy = async (options: {
         const duplicate = currentRenderKey === "" ? duplicateRanks.get(existing) : undefined;
         if (duplicate !== undefined) await duplicate.gate.wait(duplicate.rank);
         response.end(JSON.stringify(rewriteEmbeddingOrder(existing.requestBody, parsedRequestBody, ideaRewritten)));
-        if (extractionRank !== undefined) extractionOrder.release(extractionRank);
+        if (extractionRank !== undefined) {
+          await new Promise((resolve) => setTimeout(resolve, 250));
+          extractionOrder.release(extractionRank);
+        }
         if (synthesisRank !== undefined) {
           await new Promise((resolve) => setTimeout(resolve, 250));
           synthesisOrder.release(synthesisRank);
@@ -683,6 +687,11 @@ export const startCassetteProxy = async (options: {
       response.writeHead(upstream.status, { "content-type": entry.response.contentType });
       response.end(text);
     } catch (error) {
+      console.error("cassette proxy request failed:", error);
+      if (response.headersSent) {
+        response.destroy(error instanceof Error ? error : new Error(String(error)));
+        return;
+      }
       response.writeHead(500, { "content-type": "application/json" });
       response.end(JSON.stringify({ error: { message: error instanceof Error ? error.message : String(error) } }));
     }
