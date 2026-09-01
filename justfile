@@ -20,11 +20,15 @@ default:
 
 # Lint frontend with oxlint
 lint-web:
-    pnpm --prefix web exec oxlint src
+    pnpm --prefix web exec oxlint -c ../.oxlintrc.json src
 
 # Lint TypeScript packages with oxlint
 lint-packages:
     pnpm exec oxlint packages/domain/src packages/database/src packages/server/src packages/server/test packages/goldens/src packages/goldens/test
+
+# Test the custom oxlint boundary rules
+test-lint-plugin:
+    node --experimental-strip-types --test lint/boundary-plugin.test.ts
 
 # Check frontend formatting (read-only): oxfmt for .ts, prettier for .svelte
 format-web:
@@ -67,7 +71,7 @@ goldens-check:
 # ---------------------------------------------------------------------------
 
 # Run fast CI checks
-ci: lint-web format-web types-web test-web lint-packages types-packages
+ci: lint-web format-web types-web test-web lint-packages test-lint-plugin types-packages
 
 # Run full CI checks, including hermetic TypeScript package integration
 ci-full: ci test-packages

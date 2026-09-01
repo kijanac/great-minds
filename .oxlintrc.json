@@ -1,0 +1,7 @@
+{
+  "jsPlugins": ["./lint/boundary-plugin.ts"],
+  "rules": {
+    "boundary/no-alternate-key-probing": "error",
+    "boundary/no-unknown-record-cast": "warn"
+  }
+}
