@@ -24,7 +24,7 @@ lint-web:
 
 # Lint TypeScript packages with oxlint
 lint-packages:
-    pnpm exec oxlint packages/domain/src packages/database/src packages/server/src packages/server/test packages/goldens/src packages/goldens/test
+    pnpm exec oxlint packages/domain/src packages/database/src packages/server/src packages/server/scripts packages/server/test packages/goldens/src packages/goldens/test
 
 # Test the custom oxlint boundary rules
 test-lint-plugin:
