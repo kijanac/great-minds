@@ -1,4 +1,4 @@
-import { Context, Effect, Layer, Option, Redacted } from "effect";
+import { Context, Effect, Layer, Option, Redacted, Schema } from "effect";
 
 import { AppConfig } from "./config.ts";
 
@@ -36,24 +36,16 @@ const optionalRedactedValue = (value: Option.Option<Redacted.Redacted<string>>) 
     onSome: Redacted.value,
   });
 
-const asResult = (value: unknown): ParallelSearchResult | undefined => {
-  if (typeof value !== "object" || value === null) {
-    return undefined;
-  }
-  const record = value as Record<string, unknown>;
-  const url = typeof record.url === "string" ? record.url : undefined;
-  const title = typeof record.title === "string" && record.title.length > 0 ? record.title : url;
-  const rawExcerpts = record.excerpts;
-  const excerpts = Array.isArray(rawExcerpts)
-    ? rawExcerpts.filter((excerpt): excerpt is string => typeof excerpt === "string")
-    : typeof rawExcerpts === "string"
-      ? [rawExcerpts]
-      : [];
-  if (url === undefined) {
-    return undefined;
-  }
-  return { title: title ?? url, url, excerpts };
-};
+const ParallelSearchResponse = Schema.Struct({
+  results: Schema.Array(
+    Schema.Struct({
+      url: Schema.String,
+      title: Schema.optionalKey(Schema.String),
+      excerpts: Schema.Array(Schema.String),
+    }),
+  ),
+});
+const decodeParallelSearchResponse = Schema.decodeUnknownSync(ParallelSearchResponse);
 
 export const ParallelSearchLive = Layer.effect(
   ParallelSearchService,
@@ -87,15 +79,13 @@ export const ParallelSearchLive = Layer.effect(
         if (!response.ok) {
           throw new ParallelSearchError(`Parallel search returned ${response.status}`);
         }
-        const json = (await response.json()) as Record<string, unknown>;
-        const results = json.results;
-        if (!Array.isArray(results)) {
-          return [];
-        }
-        return results.flatMap((result) => {
-          const parsed = asResult(result);
-          return parsed === undefined ? [] : [parsed];
-        });
+        const body = decodeParallelSearchResponse(await response.json());
+        return body.results.map((result) => ({
+          title:
+            result.title !== undefined && result.title.length > 0 ? result.title : result.url,
+          url: result.url,
+          excerpts: result.excerpts,
+        }));
       },
     } satisfies ParallelSearchShape;
   }),

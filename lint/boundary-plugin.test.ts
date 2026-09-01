@@ -42,6 +42,8 @@ tester.run("boundary/no-unknown-record-cast", asLibraryRule(plugin.rules["no-unk
     "const a = value as Record<number, unknown>;",
     "const a: Record<string, unknown> = {};",
     "const a = value as SomethingElse<string, unknown>;",
+    "const a = {} as Record<string, unknown>;",
+    "const a = { seeded: true } as Record<string, unknown>;",
   ],
   invalid: [
     { code: "const a = value as Record<string, unknown>;", errors: 1 },

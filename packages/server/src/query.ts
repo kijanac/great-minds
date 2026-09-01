@@ -611,6 +611,13 @@ const vectorLiteral = (embedding: readonly number[]) => `[${embedding.join(",")}
 const stripMarkdownJsonFence = (raw: string) =>
   raw.replace(/^```(?:json)?\n?/, "").replace(/\n?```$/, "");
 
+const WebFactExtraction = Schema.Struct({
+  results: Schema.Array(
+    Schema.Struct({ index: Schema.Number, facts: Schema.Array(Schema.String) }),
+  ),
+});
+const decodeWebFactExtraction = Schema.decodeUnknownSync(WebFactExtraction);
+
 export const QueryServiceLive = Layer.effect(
   QueryService,
   Effect.gen(function* () {
@@ -715,18 +722,12 @@ export const QueryServiceLive = Layer.effect(
       });
 
     const distinctTags = (vaultId: Uuid) =>
-      Effect.gen(function* () {
-        const result = yield* db.query((d) => d
-          .execute(sql<{ tag: string }>`
-            select distinct unnest(tags) as tag
-            from source_documents
-            where vault_id = ${vaultId}
-            order by tag
-          `));
-        const rows = (result as unknown as { readonly rows: readonly { readonly tag: string }[] })
-          .rows;
-        return rows.map((row) => row.tag).filter((tag) => tag.length > 0);
-      });
+      db.query((d) => d
+        .selectDistinct({ tag: sql<string>`unnest(${sourceDocuments.tags})`.as("tag") })
+        .from(sourceDocuments)
+        .where(eq(sourceDocuments.vaultId, vaultId))
+        .orderBy(asc(sql`tag`)))
+        .pipe(Effect.map((rows) => rows.map((row) => row.tag).filter((tag) => tag.length > 0)));
 
     const buildSystemPrompt = (
       vaultId: Uuid,
@@ -1416,29 +1417,12 @@ export const QueryServiceLive = Layer.effect(
           catch: (error) => error,
         });
         addUsageCost(context, completion.usage);
-        const parsed = JSON.parse(stripMarkdownJsonFence(completion.text)) as unknown;
-        if (
-          typeof parsed !== "object" ||
-          parsed === null ||
-          !Array.isArray((parsed as Record<string, unknown>).results)
-        ) {
-          return undefined;
-        }
-        const facts = new Map<number, readonly string[]>();
-        for (const item of (parsed as { results: readonly unknown[] }).results) {
-          if (typeof item !== "object" || item === null) {
-            continue;
-          }
-          const record = item as Record<string, unknown>;
-          if (typeof record.index !== "number" || !Array.isArray(record.facts)) {
-            continue;
-          }
-          facts.set(
-            record.index,
-            record.facts.filter((fact): fact is string => typeof fact === "string"),
-          );
-        }
-        return facts;
+        const parsed = decodeWebFactExtraction(
+          JSON.parse(stripMarkdownJsonFence(completion.text)),
+        );
+        return new Map<number, readonly string[]>(
+          parsed.results.map((item) => [item.index, item.facts]),
+        );
       }).pipe(
         Effect.catchCause((cause) =>
           isInterruptOnly(cause)

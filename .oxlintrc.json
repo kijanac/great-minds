@@ -3,5 +3,19 @@
   "rules": {
     "boundary/no-alternate-key-probing": "error",
     "boundary/no-unknown-record-cast": "warn"
-  }
+  },
+  "overrides": [
+    {
+      "files": [
+        "packages/goldens/**",
+        "packages/server/test/**",
+        "packages/server/src/error-details.ts",
+        "packages/server/src/markdown.ts",
+        "packages/server/src/source-documents.ts"
+      ],
+      "rules": {
+        "boundary/no-unknown-record-cast": "off"
+      }
+    }
+  ]
 }

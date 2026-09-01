@@ -1,6 +1,6 @@
 import { Buffer } from "node:buffer";
 
-import { Context, Effect, Layer, Option, Redacted } from "effect";
+import { Context, Effect, Layer, Option, Redacted, Schema } from "effect";
 
 import { AppConfig } from "./config.ts";
 import { ModelProviderError } from "./llm.ts";
@@ -54,41 +54,44 @@ const decodeBase64Float32Le = (embedding: string): readonly number[] => {
   return decoded;
 };
 
-const decodeEmbedding = (embedding: unknown): readonly number[] => {
+const decodeEmbedding = (embedding: string | readonly number[]): readonly number[] => {
   if (typeof embedding === "string") {
     return decodeBase64Float32Le(embedding);
   }
-  if (
-    Array.isArray(embedding) &&
-    embedding.length > 0 &&
-    embedding.every((value) => typeof value === "number" && Number.isFinite(value))
-  ) {
+  if (embedding.length > 0 && embedding.every((value) => Number.isFinite(value))) {
     return embedding;
   }
   throw new ModelProviderError("embedding provider returned an invalid vector");
 };
 
+const EmbeddingResponse = Schema.Struct({
+  data: Schema.Array(
+    Schema.Struct({
+      index: Schema.Number,
+      embedding: Schema.Union([Schema.String, Schema.Array(Schema.Number)]),
+    }),
+  ),
+});
+const decodeEmbeddingResponse = Schema.decodeUnknownSync(EmbeddingResponse);
+
 export const parseEmbeddingResponse = (
   value: unknown,
   expectedCount: number,
 ): readonly (readonly number[])[] => {
-  if (typeof value !== "object" || value === null) {
-    throw new ModelProviderError("embedding provider returned a non-object response");
+  let response: typeof EmbeddingResponse.Type;
+  try {
+    response = decodeEmbeddingResponse(value);
+  } catch {
+    throw new ModelProviderError("embedding provider returned an unexpected response shape");
   }
-  const data = (value as Record<string, unknown>).data;
-  if (!Array.isArray(data) || data.length !== expectedCount) {
+  if (response.data.length !== expectedCount) {
     throw new ModelProviderError("embedding provider returned an unexpected data shape");
   }
-  const indexed = data.map((item) => {
-    if (typeof item !== "object" || item === null) {
-      throw new ModelProviderError("embedding provider returned an invalid item");
-    }
-    const embedding = (item as Record<string, unknown>).embedding;
-    const index = (item as Record<string, unknown>).index;
-    if (!Number.isInteger(index) || (index as number) < 0 || (index as number) >= expectedCount) {
+  const indexed = response.data.map((item) => {
+    if (!Number.isInteger(item.index) || item.index < 0 || item.index >= expectedCount) {
       throw new ModelProviderError("embedding provider returned an invalid index");
     }
-    return { index: index as number, embedding: truncateAndNormalize(decodeEmbedding(embedding)) };
+    return { index: item.index, embedding: truncateAndNormalize(decodeEmbedding(item.embedding)) };
   });
   const byIndex = new Map(indexed.map((item) => [item.index, item.embedding]));
   if (byIndex.size !== expectedCount) {

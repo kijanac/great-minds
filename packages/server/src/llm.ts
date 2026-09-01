@@ -1,4 +1,4 @@
-import { Context, Effect, Layer, Option, Redacted } from "effect";
+import { Context, Effect, Layer, Option, Redacted, Schema } from "effect";
 
 import { AppConfig } from "./config.ts";
 
@@ -136,15 +136,77 @@ const openRouterHeaders = (apiKey: string) => ({
   "content-type": "application/json",
 });
 
-const usageFrom = (value: unknown): LlmUsage | undefined => {
-  if (typeof value !== "object" || value === null) {
+const WireUsage = Schema.Struct({
+  prompt_tokens: Schema.optionalKey(Schema.NullOr(Schema.Number)),
+  completion_tokens: Schema.optionalKey(Schema.NullOr(Schema.Number)),
+  total_tokens: Schema.optionalKey(Schema.NullOr(Schema.Number)),
+  cost: Schema.optionalKey(Schema.NullOr(Schema.Number)),
+});
+
+const WireToolCallDelta = Schema.Struct({
+  index: Schema.optionalKey(Schema.NullOr(Schema.Number)),
+  id: Schema.optionalKey(Schema.NullOr(Schema.String)),
+  function: Schema.optionalKey(
+    Schema.NullOr(
+      Schema.Struct({
+        name: Schema.optionalKey(Schema.NullOr(Schema.String)),
+        arguments: Schema.optionalKey(Schema.NullOr(Schema.String)),
+      }),
+    ),
+  ),
+});
+
+const WireStreamChunk = Schema.Struct({
+  id: Schema.optionalKey(Schema.NullOr(Schema.String)),
+  usage: Schema.optionalKey(Schema.NullOr(WireUsage)),
+  choices: Schema.optionalKey(
+    Schema.NullOr(
+      Schema.Array(
+        Schema.Struct({
+          delta: Schema.optionalKey(
+            Schema.NullOr(
+              Schema.Struct({
+                content: Schema.optionalKey(Schema.NullOr(Schema.String)),
+                tool_calls: Schema.optionalKey(Schema.NullOr(Schema.Array(WireToolCallDelta))),
+              }),
+            ),
+          ),
+          finish_reason: Schema.optionalKey(Schema.NullOr(Schema.String)),
+        }),
+      ),
+    ),
+  ),
+});
+const decodeWireStreamChunk = Schema.decodeUnknownSync(WireStreamChunk);
+
+const WireCompletion = Schema.Struct({
+  id: Schema.optionalKey(Schema.NullOr(Schema.String)),
+  usage: Schema.optionalKey(Schema.NullOr(WireUsage)),
+  choices: Schema.optionalKey(
+    Schema.NullOr(
+      Schema.Array(
+        Schema.Struct({
+          message: Schema.optionalKey(
+            Schema.NullOr(
+              Schema.Struct({ content: Schema.optionalKey(Schema.NullOr(Schema.String)) }),
+            ),
+          ),
+          finish_reason: Schema.optionalKey(Schema.NullOr(Schema.String)),
+        }),
+      ),
+    ),
+  ),
+});
+const decodeWireCompletion = Schema.decodeUnknownSync(WireCompletion);
+
+const usageFrom = (usage: typeof WireUsage.Type | null | undefined): LlmUsage | undefined => {
+  if (usage === undefined || usage === null) {
     return undefined;
   }
-  const record = value as Record<string, unknown>;
-  const promptTokens = numberField(record.prompt_tokens);
-  const completionTokens = numberField(record.completion_tokens);
-  const totalTokens = numberField(record.total_tokens);
-  const cost = numberField(record.cost);
+  const promptTokens = usage.prompt_tokens ?? undefined;
+  const completionTokens = usage.completion_tokens ?? undefined;
+  const totalTokens = usage.total_tokens ?? undefined;
+  const cost = usage.cost ?? undefined;
   if (
     promptTokens === undefined &&
     completionTokens === undefined &&
@@ -155,8 +217,6 @@ const usageFrom = (value: unknown): LlmUsage | undefined => {
   }
   return { promptTokens, completionTokens, totalTokens, cost };
 };
-
-const numberField = (value: unknown) => (typeof value === "number" ? value : undefined);
 
 const readWithTimeout = async <A>(promise: Promise<A>) => {
   let timeout: ReturnType<typeof setTimeout> | undefined;
@@ -268,37 +328,17 @@ const parseDataLines = (block: string) =>
     .map((line) => line.slice("data:".length).trimStart())
     .join("\n");
 
-const toolCallDeltas = (choice: Record<string, unknown>): readonly LlmToolCallDelta[] => {
-  const delta = choice.delta;
-  if (typeof delta !== "object" || delta === null) {
-    return [];
-  }
-  const raw = (delta as Record<string, unknown>).tool_calls;
-  if (!Array.isArray(raw)) {
-    return [];
-  }
-  return raw.flatMap((item) => {
-    if (typeof item !== "object" || item === null) {
-      return [];
-    }
-    const record = item as Record<string, unknown>;
-    const fn = record.function;
-    const functionRecord =
-      typeof fn === "object" && fn !== null ? (fn as Record<string, unknown>) : {};
-    const index = typeof record.index === "number" ? record.index : 0;
-    return [
-      {
-        index,
-        id: typeof record.id === "string" ? record.id : undefined,
-        name: typeof functionRecord.name === "string" ? functionRecord.name : undefined,
-        argumentsDelta:
-          typeof functionRecord.arguments === "string" ? functionRecord.arguments : undefined,
-      },
-    ];
-  });
-};
+const toolCallDeltas = (
+  toolCalls: readonly (typeof WireToolCallDelta.Type)[] | null | undefined,
+): readonly LlmToolCallDelta[] =>
+  (toolCalls ?? []).map((item) => ({
+    index: item.index ?? 0,
+    id: item.id ?? undefined,
+    name: item.function?.name ?? undefined,
+    argumentsDelta: item.function?.arguments ?? undefined,
+  }));
 
-async function* parseOpenRouterStream(response: Response): AsyncIterable<ModelStreamPart> {
+export async function* parseOpenRouterStream(response: Response): AsyncIterable<ModelStreamPart> {
   if (response.body === null) {
     throw new RetryableModelError("model provider returned no stream body");
   }
@@ -326,27 +366,23 @@ async function* parseOpenRouterStream(response: Response): AsyncIterable<ModelSt
       if (data.length === 0 || data === "[DONE]") {
         continue;
       }
-      const parsed = JSON.parse(data) as Record<string, unknown>;
-      if (typeof parsed.id === "string") {
-        generationId = parsed.id;
+      const chunk = decodeWireStreamChunk(JSON.parse(data));
+      if (chunk.id !== undefined && chunk.id !== null) {
+        generationId = chunk.id;
       }
-      usage = usageFrom(parsed.usage) ?? usage;
-      const choices = parsed.choices;
-      if (!Array.isArray(choices) || choices.length === 0) {
+      usage = usageFrom(chunk.usage) ?? usage;
+      const choice = chunk.choices?.[0];
+      if (choice === undefined) {
         continue;
       }
-      const choice = choices[0] as Record<string, unknown>;
-      if (typeof choice.finish_reason === "string" || choice.finish_reason === null) {
-        finishReason = choice.finish_reason as string | null;
+      if (choice.finish_reason !== undefined) {
+        finishReason = choice.finish_reason;
       }
-      const delta = choice.delta;
-      if (typeof delta === "object" && delta !== null) {
-        const content = (delta as Record<string, unknown>).content;
-        if (typeof content === "string" && content.length > 0) {
-          yield { type: "token", text: content };
-        }
+      const content = choice.delta?.content;
+      if (content !== undefined && content !== null && content.length > 0) {
+        yield { type: "token", text: content };
       }
-      for (const deltaPart of toolCallDeltas(choice)) {
+      for (const deltaPart of toolCallDeltas(choice.delta?.tool_calls)) {
         yield { type: "tool_call_delta", delta: deltaPart };
       }
     }
@@ -395,25 +431,13 @@ export const LanguageModelLive = Layer.effect(
           key,
           completionRequestBody(input),
         );
-        const json = (await response.json()) as Record<string, unknown>;
-        const choices = json.choices;
-        const first =
-          Array.isArray(choices) && choices.length > 0
-            ? (choices[0] as Record<string, unknown>)
-            : undefined;
-        const message =
-          typeof first?.message === "object" && first.message !== null
-            ? (first.message as Record<string, unknown>)
-            : undefined;
-        const text = typeof message?.content === "string" ? message.content : "";
+        const completion = decodeWireCompletion(await response.json());
+        const first = completion.choices?.[0];
         return {
-          text,
-          finishReason:
-            typeof first?.finish_reason === "string" || first?.finish_reason === null
-              ? (first.finish_reason as string | null)
-              : null,
-          generationId: typeof json.id === "string" ? json.id : undefined,
-          usage: usageFrom(json.usage),
+          text: first?.message?.content ?? "",
+          finishReason: first?.finish_reason ?? null,
+          generationId: completion.id ?? undefined,
+          usage: usageFrom(completion.usage),
         };
       },
     } satisfies LanguageModelShape;
