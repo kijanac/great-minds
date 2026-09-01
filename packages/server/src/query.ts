@@ -23,7 +23,7 @@ import {
   Uuid as UuidSchema,
 } from "@great-minds/domain";
 import { and, asc, desc, eq, gte, ilike, lte, ne, or, sql, type SQL } from "drizzle-orm";
-import { Context, Effect, Layer, Schema } from "effect";
+import { Cause, Context, Effect, Layer, Schema, Stream } from "effect";
 import { parse as parseYaml } from "yaml";
 
 import { AppConfig } from "./config.ts";
@@ -38,7 +38,7 @@ import {
 } from "./llm.ts";
 import { StructuredLogger } from "./logging.ts";
 import { ParallelSearchService, type ParallelSearchResult } from "./parallel.ts";
-import { ContentStorage, StorageFileMissing, userOwner, vaultOwner } from "./storage.ts";
+import { ContentStorage, userOwner, vaultOwner } from "./storage.ts";
 
 type QueryServiceShape = {
   readonly prepareExecution: (
@@ -46,15 +46,16 @@ type QueryServiceShape = {
     vaultId: Uuid,
     input: QueryRequest,
     prechecked: QueryPrecheckedContext,
-  ) => Promise<QueryExecutionState>;
+  ) => Effect.Effect<QueryExecutionState, unknown>;
   readonly modelAttempt: (
     state: QueryExecutionState,
-  ) => AsyncGenerator<QueryStreamPayload, QueryModelAttemptResult, void>;
+    emit: (payload: QueryStreamPayload) => Effect.Effect<void>,
+  ) => Effect.Effect<QueryModelAttemptResult, unknown>;
   readonly runTool: (
     state: QueryExecutionState,
     toolCall: QueryPreparedToolCall,
-  ) => Promise<QueryToolExecutionResult>;
-  readonly finalizeExecution: (state: QueryExecutionState) => Promise<void>;
+  ) => Effect.Effect<QueryToolExecutionResult, unknown>;
+  readonly finalizeExecution: (state: QueryExecutionState) => Effect.Effect<void>;
   readonly draftHint: (
     userId: Uuid,
     description: string,
@@ -267,6 +268,23 @@ const logErrorFields = (error: unknown) => {
     error_message: String(error),
     stack: undefined,
   };
+};
+
+const isInterruptOnly = (cause: Cause.Cause<unknown>) =>
+  cause.reasons.length > 0 && cause.reasons.every(Cause.isInterruptReason);
+
+const causeError = (cause: Cause.Cause<unknown>): unknown => {
+  for (const reason of cause.reasons) {
+    if (Cause.isFailReason(reason)) {
+      return reason.error;
+    }
+  }
+  for (const reason of cause.reasons) {
+    if (Cause.isDieReason(reason)) {
+      return reason.defect;
+    }
+  }
+  return cause;
 };
 
 export const retrievalCore = `You answer questions over a knowledge base by researching its documents with tools, then writing a cited answer. Work in four stages — each stage tells you which tool to reach for. Don't jump straight to whole-base search.
@@ -605,180 +623,176 @@ export const QueryServiceLive = Layer.effect(
     const parallel = yield* ParallelSearchService;
     const appConfig = yield* AppConfig;
 
-    const run = <A, E>(effect: Effect.Effect<A, E, never>) => Effect.runPromise(effect);
-
-    const loadVaultConfig = async (vaultId: Uuid) => {
-      const content = await run(Effect.result(storage.readText(vaultOwner(vaultId), configPath)));
-      if (content._tag === "Failure") {
-        if (content.failure instanceof StorageFileMissing) {
-          return defaultQueryVaultConfig;
-        }
-        throw content.failure;
-      }
-      const parsed = parseYaml(content.success) as unknown;
-      if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
-        return defaultQueryVaultConfig;
-      }
-      const record = parsed as Record<string, unknown>;
-      const kinds = Array.isArray(record.kinds)
-        ? record.kinds.filter((kind): kind is string => typeof kind === "string" && kind.length > 0)
-        : defaultQueryVaultConfig.kinds;
-      return {
-        thematicHint:
-          typeof record.thematic_hint === "string"
-            ? record.thematic_hint
-            : defaultQueryVaultConfig.thematicHint,
-        kinds: kinds.length > 0 ? kinds : defaultQueryVaultConfig.kinds,
-        webSearch:
-          typeof record.web_search === "boolean"
-            ? record.web_search
-            : defaultQueryVaultConfig.webSearch,
-      } satisfies QueryVaultConfig;
-    };
-
-    const loadPrompt = async (vaultId: Uuid, name: string) => {
-      const override = await run(
-        Effect.result(storage.readText(vaultOwner(vaultId), `prompts/${name}.md`)),
+    const loadVaultConfig = (vaultId: Uuid) =>
+      storage.readText(vaultOwner(vaultId), configPath).pipe(
+        Effect.map((content) => {
+          const parsed = parseYaml(content) as unknown;
+          if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+            return defaultQueryVaultConfig;
+          }
+          const record = parsed as Record<string, unknown>;
+          const kinds = Array.isArray(record.kinds)
+            ? record.kinds.filter(
+                (kind): kind is string => typeof kind === "string" && kind.length > 0,
+              )
+            : defaultQueryVaultConfig.kinds;
+          return {
+            thematicHint:
+              typeof record.thematic_hint === "string"
+                ? record.thematic_hint
+                : defaultQueryVaultConfig.thematicHint,
+            kinds: kinds.length > 0 ? kinds : defaultQueryVaultConfig.kinds,
+            webSearch:
+              typeof record.web_search === "boolean"
+                ? record.web_search
+                : defaultQueryVaultConfig.webSearch,
+          } satisfies QueryVaultConfig;
+        }),
+        Effect.catchTag("StorageFileMissing", () => Effect.succeed(defaultQueryVaultConfig)),
       );
-      if (override._tag === "Success") {
-        return override.success.trim();
-      }
-      if (!(override.failure instanceof StorageFileMissing)) {
-        throw override.failure;
-      }
-      return (await readFile(promptUrl(name), "utf8")).trim();
-    };
 
-    const documentForPath = async (vaultId: Uuid, path: string) => {
-      if (path.startsWith("wiki/")) {
-        const rows = await run(
-          db.query((d) => d
+    const loadPrompt = (vaultId: Uuid, name: string) =>
+      storage.readText(vaultOwner(vaultId), `prompts/${name}.md`).pipe(
+        Effect.catchTag("StorageFileMissing", () =>
+          Effect.tryPromise({
+            try: () => readFile(promptUrl(name), "utf8"),
+            catch: (error) => error,
+          }),
+        ),
+        Effect.map((content) => content.trim()),
+      );
+
+    const documentForPath = (vaultId: Uuid, path: string) =>
+      Effect.gen(function* () {
+        if (path.startsWith("wiki/")) {
+          const rows = yield* db.query((d) => d
             .select({ id: wikiArticles.id, title: wikiArticles.title })
             .from(wikiArticles)
             .where(and(eq(wikiArticles.vaultId, vaultId), eq(wikiArticles.filePath, path)))
-            .limit(1)),
-        );
-        const row = first(rows);
-        return { document_id: (row?.id as Uuid | undefined) ?? null, title: row?.title ?? null };
-      }
-      const rows = await run(
-        db.query((d) => d
+            .limit(1));
+          const row = first(rows);
+          return { document_id: (row?.id as Uuid | undefined) ?? null, title: row?.title ?? null };
+        }
+        const rows = yield* db.query((d) => d
           .select({ id: sourceDocuments.id, title: sourceDocuments.title })
           .from(sourceDocuments)
           .where(and(eq(sourceDocuments.vaultId, vaultId), eq(sourceDocuments.filePath, path)))
-          .limit(1)),
-      );
-      const row = first(rows);
-      return { document_id: (row?.id as Uuid | undefined) ?? null, title: row?.title ?? null };
-    };
+          .limit(1));
+        const row = first(rows);
+        return { document_id: (row?.id as Uuid | undefined) ?? null, title: row?.title ?? null };
+      });
 
-    const buildIdentity = async (vaultId: Uuid, label: string, vaultConfig: QueryVaultConfig) => {
-      const [wikiCountRows, rawCountRows] = await Promise.all([
-        run(
-          db.query((d) => d
-            .select({ count: sql<number>`count(*)::int` })
-            .from(wikiArticles)
-            .where(
-              and(
-                eq(wikiArticles.vaultId, vaultId),
-                eq(wikiArticles.archived, false),
-                ne(wikiArticles.filePath, "wiki/_index.md"),
-              ),
-            )),
-        ),
-        run(
-          db.query((d) => d
-            .select({ count: sql<number>`count(*)::int` })
-            .from(sourceDocuments)
-            .where(eq(sourceDocuments.vaultId, vaultId))),
-        ),
-      ]);
-      const wikiCount = first(wikiCountRows)?.count ?? 0;
-      const rawCount = first(rawCountRows)?.count ?? 0;
-      const focus = vaultConfig.thematicHint.trim() || "(no editorial focus set)";
-      return (
-        `### ${label}\n` +
-        `Focus: ${focus}\n` +
-        `Coverage: ${wikiCount} wiki article${wikiCount === 1 ? "" : "s"}, ` +
-        `${rawCount} raw source${rawCount === 1 ? "" : "s"}.`
-      );
-    };
+    const buildIdentity = (vaultId: Uuid, label: string, vaultConfig: QueryVaultConfig) =>
+      Effect.gen(function* () {
+        const [wikiCountRows, rawCountRows] = yield* Effect.all(
+          [
+            db.query((d) => d
+              .select({ count: sql<number>`count(*)::int` })
+              .from(wikiArticles)
+              .where(
+                and(
+                  eq(wikiArticles.vaultId, vaultId),
+                  eq(wikiArticles.archived, false),
+                  ne(wikiArticles.filePath, "wiki/_index.md"),
+                ),
+              )),
+            db.query((d) => d
+              .select({ count: sql<number>`count(*)::int` })
+              .from(sourceDocuments)
+              .where(eq(sourceDocuments.vaultId, vaultId))),
+          ],
+          { concurrency: "unbounded" },
+        );
+        const wikiCount = first(wikiCountRows)?.count ?? 0;
+        const rawCount = first(rawCountRows)?.count ?? 0;
+        const focus = vaultConfig.thematicHint.trim() || "(no editorial focus set)";
+        return (
+          `### ${label}\n` +
+          `Focus: ${focus}\n` +
+          `Coverage: ${wikiCount} wiki article${wikiCount === 1 ? "" : "s"}, ` +
+          `${rawCount} raw source${rawCount === 1 ? "" : "s"}.`
+        );
+      });
 
-    const distinctTags = async (vaultId: Uuid) => {
-      const result = await run(
-        db.query((d) => d
+    const distinctTags = (vaultId: Uuid) =>
+      Effect.gen(function* () {
+        const result = yield* db.query((d) => d
           .execute(sql<{ tag: string }>`
             select distinct unnest(tags) as tag
             from source_documents
             where vault_id = ${vaultId}
             order by tag
-          `)),
-      );
-      const rows = (result as unknown as { readonly rows: readonly { readonly tag: string }[] })
-        .rows;
-      return rows.map((row) => row.tag).filter((tag) => tag.length > 0);
-    };
+          `));
+        const rows = (result as unknown as { readonly rows: readonly { readonly tag: string }[] })
+          .rows;
+        return rows.map((row) => row.tag).filter((tag) => tag.length > 0);
+      });
 
-    const buildSystemPrompt = async (
+    const buildSystemPrompt = (
       vaultId: Uuid,
       label: string,
       vaultConfig: QueryVaultConfig,
       input: QueryRequest,
       webSearchEnabled: boolean,
-    ) => {
-      const [identity, queryPrompt, btwPrompt] = await Promise.all([
-        buildIdentity(vaultId, label, vaultConfig),
-        loadPrompt(vaultId, "query"),
-        input.mode === "btw" ? loadPrompt(vaultId, "query_btw") : Promise.resolve(null),
-      ]);
-      let prompt = retrievalCore.replace("{identity}", identity);
-      prompt += "\n\n" + queryPrompt;
-      if (webSearchEnabled) {
-        prompt += "\n\n" + webSearchGuidance;
-      }
-      if (btwPrompt !== null) {
-        prompt += "\n\n" + btwPrompt;
-      }
-      if (input.extra_instructions !== undefined) {
-        prompt += "\n\n" + input.extra_instructions;
-      }
-      return prompt;
-    };
+    ) =>
+      Effect.gen(function* () {
+        const [identity, queryPrompt, btwPrompt] = yield* Effect.all(
+          [
+            buildIdentity(vaultId, label, vaultConfig),
+            loadPrompt(vaultId, "query"),
+            input.mode === "btw" ? loadPrompt(vaultId, "query_btw") : Effect.succeed(null),
+          ],
+          { concurrency: "unbounded" },
+        );
+        let prompt = retrievalCore.replace("{identity}", identity);
+        prompt += "\n\n" + queryPrompt;
+        if (webSearchEnabled) {
+          prompt += "\n\n" + webSearchGuidance;
+        }
+        if (btwPrompt !== null) {
+          prompt += "\n\n" + btwPrompt;
+        }
+        if (input.extra_instructions !== undefined) {
+          prompt += "\n\n" + input.extra_instructions;
+        }
+        return prompt;
+      });
 
-    const sourceEvent = async (
+    const sourceEvent = (
       context: QueryContext,
       name: string,
       args: Record<string, unknown>,
-    ): Promise<QuerySourceData | undefined> => {
-      const source = pendingSourceEvent(name, args);
-      if (source === undefined) return undefined;
-      if (name === "read_document" || name === "expand_context") {
-        const path = asStringArg(args, "path");
-        if (path.startsWith("wiki/")) {
-          context.trace.articlesRead.push(path);
-        } else {
-          context.trace.sourcesRead.push(path);
+    ): Effect.Effect<QuerySourceData | undefined> =>
+      Effect.gen(function* () {
+        const source = pendingSourceEvent(name, args);
+        if (source === undefined) return undefined;
+        if (name === "read_document" || name === "expand_context") {
+          const path = asStringArg(args, "path");
+          if (path.startsWith("wiki/")) {
+            context.trace.articlesRead.push(path);
+          } else {
+            context.trace.sourcesRead.push(path);
+          }
+        } else if (name === "search_content") {
+          context.trace.searches.push(asStringArg(args, "query"));
+        } else if (name === "web_search") {
+          context.trace.searches.push(`web: ${asStringArg(args, "query")}`);
+        } else if (name === "search_in_document") {
+          const query = asStringArg(args, "query");
+          const path = asStringArg(args, "path");
+          context.trace.searches.push(`${query} · in ${path}`);
         }
-      } else if (name === "search_content") {
-        context.trace.searches.push(asStringArg(args, "query"));
-      } else if (name === "web_search") {
-        context.trace.searches.push(`web: ${asStringArg(args, "query")}`);
-      } else if (name === "search_in_document") {
-        const query = asStringArg(args, "query");
-        const path = asStringArg(args, "path");
-        context.trace.searches.push(`${query} · in ${path}`);
-      }
-      if (source.type === "article" || source.type === "raw") {
-        return { ...source, ...(await documentForPath(context.vaultId, source.path)) };
-      }
-      if ("title" in source && source.path !== undefined) {
-        return {
-          ...source,
-          title: (await documentForPath(context.vaultId, source.path)).title,
-        };
-      }
-      return source;
-    };
+        if (source.type === "article" || source.type === "raw") {
+          return { ...source, ...(yield* documentForPath(context.vaultId, source.path)) };
+        }
+        if ("title" in source && source.path !== undefined) {
+          return {
+            ...source,
+            title: (yield* documentForPath(context.vaultId, source.path)).title,
+          };
+        }
+        return source;
+      });
 
     const pendingSourceEvent = (
       name: string,
@@ -836,246 +850,254 @@ export const QueryServiceLive = Layer.effect(
       return undefined;
     };
 
-    const sectionOutline = async (vaultId: Uuid, path: string) => {
-      const chunks = await run(
-        db.query((d) => d
+    const sectionOutline = (vaultId: Uuid, path: string) =>
+      Effect.gen(function* () {
+        const chunks = yield* db.query((d) => d
           .select({
             chunkIndex: searchIndex.chunkIndex,
             heading: searchIndex.heading,
           })
           .from(searchIndex)
           .where(and(eq(searchIndex.vaultId, vaultId), eq(searchIndex.path, path)))
-          .orderBy(asc(searchIndex.chunkIndex))),
-      );
-      const sections: { start: number; end: number; heading: string }[] = [];
-      for (const chunk of chunks) {
-        const last = sections[sections.length - 1];
-        if (
-          last === undefined ||
-          last.heading !== chunk.heading ||
-          last.end !== chunk.chunkIndex - 1
-        ) {
-          sections.push({ start: chunk.chunkIndex, end: chunk.chunkIndex, heading: chunk.heading });
-        } else {
-          last.end = chunk.chunkIndex;
+          .orderBy(asc(searchIndex.chunkIndex)));
+        const sections: { start: number; end: number; heading: string }[] = [];
+        for (const chunk of chunks) {
+          const last = sections[sections.length - 1];
+          if (
+            last === undefined ||
+            last.heading !== chunk.heading ||
+            last.end !== chunk.chunkIndex - 1
+          ) {
+            sections.push({
+              start: chunk.chunkIndex,
+              end: chunk.chunkIndex,
+              heading: chunk.heading,
+            });
+          } else {
+            last.end = chunk.chunkIndex;
+          }
         }
-      }
-      return sections;
-    };
+        return sections;
+      });
 
-    const readDocumentTool = async (
+    const readDocumentTool = (
       context: QueryContext,
       path: string,
       scope: OriginScope,
       emitSource = true,
-    ): Promise<ToolResult> => {
-      const read =
-        scope === "personal"
-          ? storage.readText(userOwner(context.userId), path)
-          : storage.readText(vaultOwner(context.vaultId), path);
-      const content = await run(Effect.result(read));
-      if (content._tag === "Failure") {
-        throw new ToolMiss(`Document not found: ${path}`);
-      }
-      const source = emitSource ? await sourceEvent(context, "read_document", { path }) : undefined;
-      if (scope === "personal" || content.success.length <= readWholeLimit) {
-        return {
-          content: `# ${path} [${context.vaultLabel}]\n\n${content.success}`,
-          source,
-        };
-      }
-      const outline = await sectionOutline(context.vaultId, path);
-      const lines = outline.map(
-        (section) =>
-          `- chunks ${section.start}-${section.end}: ${section.heading || "(no heading)"}`,
-      );
-      return {
-        content:
-          `# ${path} [${context.vaultLabel}]\n\n` +
-          `This document is large (${content.success.length.toLocaleString("en-US")} chars) — do NOT read it from the top. To find the passages relevant to your question, call search_in_document(path, query). Use expand_context(path, start, end) only on a range a search hit or a specific section below points to.\n\n` +
-          "Section outline (a map, not the text):\n\n" +
-          lines.join("\n"),
-        source,
-      };
-    };
-
-    const searchRows = async (vaultId: Uuid, query: string, path?: string) => {
-      if (query.trim().length === 0) {
-        return [];
-      }
-      const armLimit = maxSearchResults * searchArmMultiplier;
-      // OR-joined per-word tsquery matching the Python search repository:
-      // strip non-word chars, drop words <= 2 chars, OR-join via plainto_tsquery.
-      const words = query
-        .replace(/[^\w\s]/g, "")
-        .split(/\s+/)
-        .filter((word) => word.length > 2);
-      const orJoined = words
-        .slice(1)
-        .reduce(
-          (acc, word) => sql`${acc} || plainto_tsquery('english', ${word})`,
-          sql`plainto_tsquery('english', ${words[0]})`,
+    ): Effect.Effect<ToolResult, ToolMiss> =>
+      Effect.gen(function* () {
+        const read =
+          scope === "personal"
+            ? storage.readText(userOwner(context.userId), path)
+            : storage.readText(vaultOwner(context.vaultId), path);
+        const content = yield* read.pipe(
+          Effect.mapError(() => new ToolMiss(`Document not found: ${path}`)),
         );
-      const tsquery =
-        words.length === 0 ? sql`plainto_tsquery('english', ${query})` : sql`(${orJoined})`;
-      const bm25Conditions: SQL[] = [
-        eq(searchIndex.vaultId, vaultId),
-        sql`${searchIndex.tsv} @@ ${tsquery}`,
-      ];
-      const vectorConditions: SQL[] = [
-        eq(searchIndex.vaultId, vaultId),
-        sql`${searchIndex.embedding} is not null`,
-      ];
-      if (path !== undefined) {
-        bm25Conditions.push(eq(searchIndex.path, path));
-        vectorConditions.push(eq(searchIndex.path, path));
-      }
-      const rank = sql<number>`ts_rank(${searchIndex.tsv}, ${tsquery})`;
-      const queryEmbedding = (await embeddings.embed([query]))[0];
-      if (queryEmbedding === undefined) {
-        return [];
-      }
-      const distance = sql<number>`${searchIndex.embedding} <=> ${vectorLiteral(queryEmbedding)}::vector`;
-      const [bm25Rows, vectorRows] = await Promise.all([
-        run(
-          db.query((d) => d
-            .select({
-              vaultId: searchIndex.vaultId,
-              path: searchIndex.path,
-              chunkIndex: searchIndex.chunkIndex,
-              heading: searchIndex.heading,
-              body: searchIndex.body,
-              score: rank,
-            })
-            .from(searchIndex)
-            .where(and(...bm25Conditions))
-            .orderBy(desc(rank))
-            .limit(armLimit)),
-        ),
-        run(
-          db.query((d) => d
-            .select({
-              vaultId: searchIndex.vaultId,
-              path: searchIndex.path,
-              chunkIndex: searchIndex.chunkIndex,
-              heading: searchIndex.heading,
-              body: searchIndex.body,
-              score: sql<number>`1 - (${distance})`,
-            })
-            .from(searchIndex)
-            .where(and(...vectorConditions))
-            .orderBy(distance)
-            .limit(armLimit)),
-        ),
-      ]);
-      type SearchRow = (typeof bm25Rows)[number];
-      type SearchKey = `${string}:${string}:${number}`;
-      const scores = new Map<SearchKey, number>();
-      const metadata = new Map<SearchKey, SearchRow>();
-      const vectorRanks = new Map<SearchKey, number>();
-      const bm25Ranks = new Map<SearchKey, number>();
-      const keyFor = (row: SearchRow): SearchKey => `${row.vaultId}:${row.path}:${row.chunkIndex}`;
-      const addRows = (rows: readonly SearchRow[], ranks: Map<SearchKey, number>) => {
-        rows.forEach((row, rankIndex) => {
-          const key = keyFor(row);
-          if (!scores.has(key)) {
-            scores.set(key, 0);
-            metadata.set(key, row);
-          }
-          ranks.set(key, rankIndex + 1);
-          scores.set(key, (scores.get(key) ?? 0) + 1 / (rrfK + rankIndex + 1));
-        });
-      };
-      addRows(bm25Rows, bm25Ranks);
-      addRows(vectorRows, vectorRanks);
-      return [...scores.entries()]
-        .sort(([leftKey, leftScore], [rightKey, rightScore]) => {
-          if (rightScore !== leftScore) {
-            return rightScore - leftScore;
-          }
-          const leftVectorRank = vectorRanks.get(leftKey) ?? Number.POSITIVE_INFINITY;
-          const rightVectorRank = vectorRanks.get(rightKey) ?? Number.POSITIVE_INFINITY;
-          if (leftVectorRank !== rightVectorRank) {
-            return leftVectorRank - rightVectorRank;
-          }
-          const leftBm25Rank = bm25Ranks.get(leftKey) ?? Number.POSITIVE_INFINITY;
-          const rightBm25Rank = bm25Ranks.get(rightKey) ?? Number.POSITIVE_INFINITY;
-          if (leftBm25Rank !== rightBm25Rank) {
-            return leftBm25Rank - rightBm25Rank;
-          }
-          return leftKey.localeCompare(rightKey);
-        })
-        .slice(0, maxSearchResults)
-        .map(([key, score]) => {
-          const row = metadata.get(key);
-          if (row === undefined) {
-            throw new Error(`missing search metadata for ${key}`);
-          }
+        const source = emitSource
+          ? yield* sourceEvent(context, "read_document", { path })
+          : undefined;
+        if (scope === "personal" || content.length <= readWholeLimit) {
           return {
-            ...row,
-            body: row.body.length > 500 ? row.body.slice(0, 500) : row.body,
-            score,
+            content: `# ${path} [${context.vaultLabel}]\n\n${content}`,
+            source,
           };
-        });
-    };
-
-    const searchContentTool = async (context: QueryContext, query: string): Promise<ToolResult> => {
-      const results = await searchRows(context.vaultId, query);
-      const source = await sourceEvent(context, "search_content", { query });
-      if (results.length === 0) {
-        return { content: `No results found for: ${query}`, source };
-      }
-      const parts = results.map((row) => {
-        const heading = row.heading.length > 0 ? ` — ${row.heading}` : "";
-        return `### ${row.path} [chunk ${row.chunkIndex}]${heading}\n${row.body}`;
-      });
-      return {
-        content:
-          `Found ${results.length} results for '${query}'. Each result shows a document \`path\` and \`chunk_index\` — pass those to expand_context(path, start, end) to read the surrounding paragraphs, or read_document(path) for the whole document.\n\n` +
-          parts.join("\n\n"),
-        source,
-      };
-    };
-
-    const searchInDocumentTool = async (
-      context: QueryContext,
-      path: string,
-      query: string,
-    ): Promise<ToolResult> => {
-      const results = await searchRows(context.vaultId, query, path);
-      const source = await sourceEvent(context, "search_in_document", { path, query });
-      if (results.length === 0) {
+        }
+        const outline = yield* sectionOutline(context.vaultId, path);
+        const lines = outline.map(
+          (section) =>
+            `- chunks ${section.start}-${section.end}: ${section.heading || "(no heading)"}`,
+        );
         return {
-          content: `No passages in ${path} match '${query}'. Check the path (from list_articles or a search_content hit), or use search_content to search the whole knowledge base.`,
+          content:
+            `# ${path} [${context.vaultLabel}]\n\n` +
+            `This document is large (${content.length.toLocaleString("en-US")} chars) — do NOT read it from the top. To find the passages relevant to your question, call search_in_document(path, query). Use expand_context(path, start, end) only on a range a search hit or a specific section below points to.\n\n` +
+            "Section outline (a map, not the text):\n\n" +
+            lines.join("\n"),
           source,
         };
-      }
-      const parts = results.map((row) => {
-        const heading = row.heading.length > 0 ? ` — ${row.heading}` : "";
-        return `[chunk ${row.chunkIndex}]${heading}\n${row.body}`;
       });
-      return {
-        content:
-          `Found ${results.length} matching passages in ${path}. Read more around any with expand_context(path, start, end).\n\n` +
-          parts.join("\n\n"),
-        source,
-      };
-    };
 
-    const expandContextTool = async (
+    const searchRows = (vaultId: Uuid, query: string, path?: string) =>
+      Effect.gen(function* () {
+        if (query.trim().length === 0) {
+          return [];
+        }
+        const armLimit = maxSearchResults * searchArmMultiplier;
+        // OR-joined per-word tsquery matching the Python search repository:
+        // strip non-word chars, drop words <= 2 chars, OR-join via plainto_tsquery.
+        const words = query
+          .replace(/[^\w\s]/g, "")
+          .split(/\s+/)
+          .filter((word) => word.length > 2);
+        const orJoined = words
+          .slice(1)
+          .reduce(
+            (acc, word) => sql`${acc} || plainto_tsquery('english', ${word})`,
+            sql`plainto_tsquery('english', ${words[0]})`,
+          );
+        const tsquery =
+          words.length === 0 ? sql`plainto_tsquery('english', ${query})` : sql`(${orJoined})`;
+        const bm25Conditions: SQL[] = [
+          eq(searchIndex.vaultId, vaultId),
+          sql`${searchIndex.tsv} @@ ${tsquery}`,
+        ];
+        const vectorConditions: SQL[] = [
+          eq(searchIndex.vaultId, vaultId),
+          sql`${searchIndex.embedding} is not null`,
+        ];
+        if (path !== undefined) {
+          bm25Conditions.push(eq(searchIndex.path, path));
+          vectorConditions.push(eq(searchIndex.path, path));
+        }
+        const rank = sql<number>`ts_rank(${searchIndex.tsv}, ${tsquery})`;
+        const embedded = yield* Effect.tryPromise({
+          try: () => embeddings.embed([query]),
+          catch: (error) => error,
+        });
+        const queryEmbedding = embedded[0];
+        if (queryEmbedding === undefined) {
+          return [];
+        }
+        const distance = sql<number>`${searchIndex.embedding} <=> ${vectorLiteral(queryEmbedding)}::vector`;
+        const [bm25Rows, vectorRows] = yield* Effect.all(
+          [
+            db.query((d) => d
+              .select({
+                vaultId: searchIndex.vaultId,
+                path: searchIndex.path,
+                chunkIndex: searchIndex.chunkIndex,
+                heading: searchIndex.heading,
+                body: searchIndex.body,
+                score: rank,
+              })
+              .from(searchIndex)
+              .where(and(...bm25Conditions))
+              .orderBy(desc(rank))
+              .limit(armLimit)),
+            db.query((d) => d
+              .select({
+                vaultId: searchIndex.vaultId,
+                path: searchIndex.path,
+                chunkIndex: searchIndex.chunkIndex,
+                heading: searchIndex.heading,
+                body: searchIndex.body,
+                score: sql<number>`1 - (${distance})`,
+              })
+              .from(searchIndex)
+              .where(and(...vectorConditions))
+              .orderBy(distance)
+              .limit(armLimit)),
+          ],
+          { concurrency: "unbounded" },
+        );
+        type SearchRow = (typeof bm25Rows)[number];
+        type SearchKey = `${string}:${string}:${number}`;
+        const scores = new Map<SearchKey, number>();
+        const metadata = new Map<SearchKey, SearchRow>();
+        const vectorRanks = new Map<SearchKey, number>();
+        const bm25Ranks = new Map<SearchKey, number>();
+        const keyFor = (row: SearchRow): SearchKey =>
+          `${row.vaultId}:${row.path}:${row.chunkIndex}`;
+        const addRows = (rows: readonly SearchRow[], ranks: Map<SearchKey, number>) => {
+          rows.forEach((row, rankIndex) => {
+            const key = keyFor(row);
+            if (!scores.has(key)) {
+              scores.set(key, 0);
+              metadata.set(key, row);
+            }
+            ranks.set(key, rankIndex + 1);
+            scores.set(key, (scores.get(key) ?? 0) + 1 / (rrfK + rankIndex + 1));
+          });
+        };
+        addRows(bm25Rows, bm25Ranks);
+        addRows(vectorRows, vectorRanks);
+        return [...scores.entries()]
+          .sort(([leftKey, leftScore], [rightKey, rightScore]) => {
+            if (rightScore !== leftScore) {
+              return rightScore - leftScore;
+            }
+            const leftVectorRank = vectorRanks.get(leftKey) ?? Number.POSITIVE_INFINITY;
+            const rightVectorRank = vectorRanks.get(rightKey) ?? Number.POSITIVE_INFINITY;
+            if (leftVectorRank !== rightVectorRank) {
+              return leftVectorRank - rightVectorRank;
+            }
+            const leftBm25Rank = bm25Ranks.get(leftKey) ?? Number.POSITIVE_INFINITY;
+            const rightBm25Rank = bm25Ranks.get(rightKey) ?? Number.POSITIVE_INFINITY;
+            if (leftBm25Rank !== rightBm25Rank) {
+              return leftBm25Rank - rightBm25Rank;
+            }
+            return leftKey.localeCompare(rightKey);
+          })
+          .slice(0, maxSearchResults)
+          .map(([key, score]) => {
+            const row = metadata.get(key);
+            if (row === undefined) {
+              throw new Error(`missing search metadata for ${key}`);
+            }
+            return {
+              ...row,
+              body: row.body.length > 500 ? row.body.slice(0, 500) : row.body,
+              score,
+            };
+          });
+      });
+
+    const searchContentTool = (context: QueryContext, query: string) =>
+      Effect.gen(function* () {
+        const results = yield* searchRows(context.vaultId, query);
+        const source = yield* sourceEvent(context, "search_content", { query });
+        if (results.length === 0) {
+          return { content: `No results found for: ${query}`, source } satisfies ToolResult;
+        }
+        const parts = results.map((row) => {
+          const heading = row.heading.length > 0 ? ` — ${row.heading}` : "";
+          return `### ${row.path} [chunk ${row.chunkIndex}]${heading}\n${row.body}`;
+        });
+        return {
+          content:
+            `Found ${results.length} results for '${query}'. Each result shows a document \`path\` and \`chunk_index\` — pass those to expand_context(path, start, end) to read the surrounding paragraphs, or read_document(path) for the whole document.\n\n` +
+            parts.join("\n\n"),
+          source,
+        } satisfies ToolResult;
+      });
+
+    const searchInDocumentTool = (context: QueryContext, path: string, query: string) =>
+      Effect.gen(function* () {
+        const results = yield* searchRows(context.vaultId, query, path);
+        const source = yield* sourceEvent(context, "search_in_document", { path, query });
+        if (results.length === 0) {
+          return {
+            content: `No passages in ${path} match '${query}'. Check the path (from list_articles or a search_content hit), or use search_content to search the whole knowledge base.`,
+            source,
+          } satisfies ToolResult;
+        }
+        const parts = results.map((row) => {
+          const heading = row.heading.length > 0 ? ` — ${row.heading}` : "";
+          return `[chunk ${row.chunkIndex}]${heading}\n${row.body}`;
+        });
+        return {
+          content:
+            `Found ${results.length} matching passages in ${path}. Read more around any with expand_context(path, start, end).\n\n` +
+            parts.join("\n\n"),
+          source,
+        } satisfies ToolResult;
+      });
+
+    const expandContextTool = (
       context: QueryContext,
       path: string,
       rawStart: number,
       rawEnd: number,
-    ): Promise<ToolResult> => {
-      let start = Math.trunc(rawStart);
-      let end = Math.trunc(rawEnd);
-      if (end < start) {
-        [start, end] = [end, start];
-      }
-      end = Math.min(end, start + maxRangeChunks - 1);
-      const chunks = await run(
-        db.query((d) => d
+    ) =>
+      Effect.gen(function* () {
+        let start = Math.trunc(rawStart);
+        let end = Math.trunc(rawEnd);
+        if (end < start) {
+          [start, end] = [end, start];
+        }
+        end = Math.min(end, start + maxRangeChunks - 1);
+        const chunks = yield* db.query((d) => d
           .select({
             chunkIndex: searchIndex.chunkIndex,
             heading: searchIndex.heading,
@@ -1090,37 +1112,40 @@ export const QueryServiceLive = Layer.effect(
               lte(searchIndex.chunkIndex, end),
             ),
           )
-          .orderBy(asc(searchIndex.chunkIndex))),
-      );
-      if (chunks.length === 0) {
-        throw new ToolMiss(
-          `No indexed paragraphs at ${path} for chunks ${start}-${end}. Check the path and range against a search hit or document outline.`,
-        );
-      }
-      const sections = chunks.map((chunk) => {
-        const heading = chunk.heading.length > 0 ? `${chunk.heading}\n` : "";
-        return `[chunk ${chunk.chunkIndex}]\n${heading}${chunk.body}`;
+          .orderBy(asc(searchIndex.chunkIndex)));
+        if (chunks.length === 0) {
+          return yield* Effect.fail(
+            new ToolMiss(
+              `No indexed paragraphs at ${path} for chunks ${start}-${end}. Check the path and range against a search hit or document outline.`,
+            ),
+          );
+        }
+        const sections = chunks.map((chunk) => {
+          const heading = chunk.heading.length > 0 ? `${chunk.heading}\n` : "";
+          return `[chunk ${chunk.chunkIndex}]\n${heading}${chunk.body}`;
+        });
+        return {
+          content:
+            `# ${path} [${context.vaultLabel}] (chunks ${chunks[0].chunkIndex}–${chunks[chunks.length - 1].chunkIndex})\n\n` +
+            sections.join("\n\n"),
+          source: yield* sourceEvent(context, "expand_context", {
+            path,
+            start: rawStart,
+            end: rawEnd,
+          }),
+        } satisfies ToolResult;
       });
-      return {
-        content:
-          `# ${path} [${context.vaultLabel}] (chunks ${chunks[0].chunkIndex}–${chunks[chunks.length - 1].chunkIndex})\n\n` +
-          sections.join("\n\n"),
-        source: await sourceEvent(context, "expand_context", {
-          path,
-          start: rawStart,
-          end: rawEnd,
-        }),
-      };
-    };
 
-    const linkedArticlesTool = async (context: QueryContext, path: string): Promise<ToolResult> => {
-      if (!path.startsWith("wiki/")) {
-        throw new ToolMiss(
-          `${path} is not a wiki article — the link graph only covers wiki articles. Use search_content to find related material.`,
-        );
-      }
-      const sourceRows = await run(
-        db.query((d) => d
+    const linkedArticlesTool = (context: QueryContext, path: string) =>
+      Effect.gen(function* () {
+        if (!path.startsWith("wiki/")) {
+          return yield* Effect.fail(
+            new ToolMiss(
+              `${path} is not a wiki article — the link graph only covers wiki articles. Use search_content to find related material.`,
+            ),
+          );
+        }
+        const sourceRows = yield* db.query((d) => d
           .select({ id: wikiArticles.id })
           .from(wikiArticles)
           .where(
@@ -1130,14 +1155,12 @@ export const QueryServiceLive = Layer.effect(
               eq(wikiArticles.archived, false),
             ),
           )
-          .limit(1)),
-      );
-      const source = first(sourceRows);
-      if (source === undefined) {
-        throw new ToolMiss(`Article not found: ${path}`);
-      }
-      const outgoing = await run(
-        db.query((d) => d
+          .limit(1));
+        const source = first(sourceRows);
+        if (source === undefined) {
+          return yield* Effect.fail(new ToolMiss(`Article not found: ${path}`));
+        }
+        const outgoing = yield* db.query((d) => d
           .select({ filePath: wikiArticles.filePath, title: wikiArticles.title })
           .from(backlinks)
           .innerJoin(wikiArticles, eq(wikiArticles.id, backlinks.targetArticleId))
@@ -1148,10 +1171,8 @@ export const QueryServiceLive = Layer.effect(
               eq(wikiArticles.archived, false),
             ),
           )
-          .orderBy(asc(sql`lower(${wikiArticles.title})`))),
-      );
-      const incoming = await run(
-        db.query((d) => d
+          .orderBy(asc(sql`lower(${wikiArticles.title})`)));
+        const incoming = yield* db.query((d) => d
           .select({ filePath: wikiArticles.filePath, title: wikiArticles.title })
           .from(backlinks)
           .innerJoin(wikiArticles, eq(wikiArticles.id, backlinks.sourceArticleId))
@@ -1162,127 +1183,123 @@ export const QueryServiceLive = Layer.effect(
               eq(wikiArticles.archived, false),
             ),
           )
-          .orderBy(asc(sql`lower(${wikiArticles.title})`))),
-      );
-      const formatLinks = (
-        rows: readonly { readonly title: string; readonly filePath: string }[],
-      ) => rows.map((row) => `- [${row.title}](${row.filePath})`).join("\n") || "none";
-      return {
-        content:
-          `# Links for ${path} [${context.vaultLabel}]\n\n` +
-          `Outgoing (this article cites):\n${formatLinks(outgoing)}\n\n` +
-          `Incoming (articles that cite this):\n${formatLinks(incoming)}`,
-        source: await sourceEvent(context, "linked_articles", { path }),
-      };
-    };
+          .orderBy(asc(sql`lower(${wikiArticles.title})`)));
+        const formatLinks = (
+          rows: readonly { readonly title: string; readonly filePath: string }[],
+        ) => rows.map((row) => `- [${row.title}](${row.filePath})`).join("\n") || "none";
+        return {
+          content:
+            `# Links for ${path} [${context.vaultLabel}]\n\n` +
+            `Outgoing (this article cites):\n${formatLinks(outgoing)}\n\n` +
+            `Incoming (articles that cite this):\n${formatLinks(incoming)}`,
+          source: yield* sourceEvent(context, "linked_articles", { path }),
+        } satisfies ToolResult;
+      });
 
-    const queryDocumentsToolRun = async (
-      context: QueryContext,
-      args: Record<string, unknown>,
-    ): Promise<ToolResult> => {
-      const conditions: SQL[] = [eq(sourceDocuments.vaultId, context.vaultId)];
-      const tags = Array.isArray(args.tags)
-        ? args.tags.filter((tag): tag is string => typeof tag === "string" && tag.length > 0)
-        : [];
-      if (tags.length > 0) {
-        conditions.push(
-          sql`${sourceDocuments.tags} @> ARRAY[${sql.join(
-            tags.map((tag) => sql`${tag}`),
-            sql`, `,
-          )}]::text[]`,
-        );
-      }
-      if (typeof args.author === "string" && args.author.length > 0) {
-        conditions.push(ilike(sourceDocuments.author, `%${args.author}%`));
-      }
-      if (typeof args.genre === "string" && args.genre.length > 0) {
-        conditions.push(eq(sourceDocuments.genre, args.genre));
-      }
-      if (typeof args.date_gte === "string" && args.date_gte.length > 0) {
-        conditions.push(gte(sourceDocuments.publishedDate, args.date_gte));
-      }
-      if (typeof args.date_lte === "string" && args.date_lte.length > 0) {
-        conditions.push(lte(sourceDocuments.publishedDate, args.date_lte));
-      }
-      const limit =
-        typeof args.limit === "number" && Number.isFinite(args.limit)
-          ? Math.max(1, Math.min(50, Math.trunc(args.limit)))
-          : 20;
-      const rows = await run(
-        db.query((d) => d
+    const queryDocumentsToolRun = (context: QueryContext, args: Record<string, unknown>) =>
+      Effect.gen(function* () {
+        const conditions: SQL[] = [eq(sourceDocuments.vaultId, context.vaultId)];
+        const tags = Array.isArray(args.tags)
+          ? args.tags.filter((tag): tag is string => typeof tag === "string" && tag.length > 0)
+          : [];
+        if (tags.length > 0) {
+          conditions.push(
+            sql`${sourceDocuments.tags} @> ARRAY[${sql.join(
+              tags.map((tag) => sql`${tag}`),
+              sql`, `,
+            )}]::text[]`,
+          );
+        }
+        if (typeof args.author === "string" && args.author.length > 0) {
+          conditions.push(ilike(sourceDocuments.author, `%${args.author}%`));
+        }
+        if (typeof args.genre === "string" && args.genre.length > 0) {
+          conditions.push(eq(sourceDocuments.genre, args.genre));
+        }
+        if (typeof args.date_gte === "string" && args.date_gte.length > 0) {
+          conditions.push(gte(sourceDocuments.publishedDate, args.date_gte));
+        }
+        if (typeof args.date_lte === "string" && args.date_lte.length > 0) {
+          conditions.push(lte(sourceDocuments.publishedDate, args.date_lte));
+        }
+        const limit =
+          typeof args.limit === "number" && Number.isFinite(args.limit)
+            ? Math.max(1, Math.min(50, Math.trunc(args.limit)))
+            : 20;
+        const rows = yield* db.query((d) => d
           .select()
           .from(sourceDocuments)
           .where(and(...conditions))
           .orderBy(desc(sourceDocuments.updatedAt))
-          .limit(limit)),
-      );
-      const source = await sourceEvent(context, "query_documents", args);
-      if (rows.length === 0) {
-        const filters = Object.fromEntries(
-          Object.entries({
-            tags: tags.length > 0 ? tags : undefined,
-            author: args.author,
-            genre: args.genre,
-            date_gte: args.date_gte,
-            date_lte: args.date_lte,
-            limit,
-          }).filter(([, value]) => Boolean(value)),
-        );
-        return { content: `No documents match the filters: ${JSON.stringify(filters)}`, source };
-      }
-      const parts = rows.map((row) => {
-        const lines = [`### ${row.title ?? row.filePath}`, `  [raw] ${row.filePath}`];
-        if (row.author !== null) {
-          lines[1] += ` by ${row.author}`;
+          .limit(limit));
+        const source = yield* sourceEvent(context, "query_documents", args);
+        if (rows.length === 0) {
+          const filters = Object.fromEntries(
+            Object.entries({
+              tags: tags.length > 0 ? tags : undefined,
+              author: args.author,
+              genre: args.genre,
+              date_gte: args.date_gte,
+              date_lte: args.date_lte,
+              limit,
+            }).filter(([, value]) => Boolean(value)),
+          );
+          return {
+            content: `No documents match the filters: ${JSON.stringify(filters)}`,
+            source,
+          } satisfies ToolResult;
         }
-        if (row.publishedDate !== null) {
-          lines[1] += ` (${row.publishedDate})`;
-        }
-        if (row.genre !== null) {
-          lines.push(`  genre: ${row.genre}`);
-        }
-        if (row.tags.length > 0) {
-          lines.push(`  tags: ${row.tags.join(", ")}`);
-        }
-        return lines.join("\n");
+        const parts = rows.map((row) => {
+          const lines = [`### ${row.title ?? row.filePath}`, `  [raw] ${row.filePath}`];
+          if (row.author !== null) {
+            lines[1] += ` by ${row.author}`;
+          }
+          if (row.publishedDate !== null) {
+            lines[1] += ` (${row.publishedDate})`;
+          }
+          if (row.genre !== null) {
+            lines.push(`  genre: ${row.genre}`);
+          }
+          if (row.tags.length > 0) {
+            lines.push(`  tags: ${row.tags.join(", ")}`);
+          }
+          return lines.join("\n");
+        });
+        return {
+          content: `Found ${rows.length} documents:\n\n${parts.join("\n\n")}`,
+          source,
+        } satisfies ToolResult;
       });
-      return { content: `Found ${rows.length} documents:\n\n${parts.join("\n\n")}`, source };
-    };
 
-    const listArticlesToolRun = async (
-      context: QueryContext,
-      args: Record<string, unknown>,
-    ): Promise<ToolResult> => {
-      const contains =
-        typeof args.contains === "string" && args.contains.length > 0 ? args.contains : undefined;
-      const sort = args.sort ?? "central";
-      if (sort !== "recent" && sort !== "alpha" && sort !== "central") {
-        throw new Error(`Invalid list_articles sort: ${String(sort)}`);
-      }
-      const page =
-        args.page === undefined || args.page === null ? 1 : Math.max(1, asIntArg(args, "page"));
-      const conditions: SQL[] = [
-        eq(wikiArticles.vaultId, context.vaultId),
-        eq(wikiArticles.archived, false),
-        ne(wikiArticles.filePath, "wiki/_index.md"),
-      ];
-      if (contains !== undefined) {
-        const pattern = `%${contains}%`;
-        conditions.push(
-          or(ilike(wikiArticles.title, pattern), ilike(wikiArticles.precis, pattern)) as SQL,
-        );
-      }
-      const countRows = await run(
-        db.query((d) => d
+    const listArticlesToolRun = (context: QueryContext, args: Record<string, unknown>) =>
+      Effect.gen(function* () {
+        const contains =
+          typeof args.contains === "string" && args.contains.length > 0 ? args.contains : undefined;
+        const sort = args.sort ?? "central";
+        if (sort !== "recent" && sort !== "alpha" && sort !== "central") {
+          throw new Error(`Invalid list_articles sort: ${String(sort)}`);
+        }
+        const page =
+          args.page === undefined || args.page === null ? 1 : Math.max(1, asIntArg(args, "page"));
+        const conditions: SQL[] = [
+          eq(wikiArticles.vaultId, context.vaultId),
+          eq(wikiArticles.archived, false),
+          ne(wikiArticles.filePath, "wiki/_index.md"),
+        ];
+        if (contains !== undefined) {
+          const pattern = `%${contains}%`;
+          conditions.push(
+            or(ilike(wikiArticles.title, pattern), ilike(wikiArticles.precis, pattern)) as SQL,
+          );
+        }
+        const countRows = yield* db.query((d) => d
           .select({ count: sql<number>`count(*)::int` })
           .from(wikiArticles)
-          .where(and(...conditions))),
-      );
-      const total = first(countRows)?.count ?? 0;
-      const offset = (page - 1) * articlesPerPage;
-      const inboundCount = sql<number>`count(${backlinks.sourceArticleId})`;
-      const rows = await run(
-        db.query((d) => {
+          .where(and(...conditions)));
+        const total = first(countRows)?.count ?? 0;
+        const offset = (page - 1) * articlesPerPage;
+        const inboundCount = sql<number>`count(${backlinks.sourceArticleId})`;
+        const rows = yield* db.query((d) => {
           const query = d
             .select({
               filePath: wikiArticles.filePath,
@@ -1302,31 +1319,30 @@ export const QueryServiceLive = Layer.effect(
                 ? query.orderBy(asc(sql`lower(${wikiArticles.title})`))
                 : query.orderBy(desc(inboundCount), asc(sql`lower(${wikiArticles.title})`));
           return ordered.limit(articlesPerPage).offset(offset);
-        }),
-      );
-      const source = await sourceEvent(context, "list_articles", args);
-      if (rows.length === 0) {
+        });
+        const source = yield* sourceEvent(context, "list_articles", args);
+        if (rows.length === 0) {
+          return {
+            content:
+              contains !== undefined
+                ? `No article titles or precis contain '${contains}'. Try search_content for topical matches — it searches article bodies and raw sources too.`
+                : "No wiki articles have been compiled yet.",
+            source,
+          } satisfies ToolResult;
+        }
+        const hi = offset + rows.length;
+        const scope = contains === undefined ? "" : ` matching '${contains}'`;
+        const lines = rows.map((row) => `- ${row.title} — ${row.filePath}\n  ${row.precis}`);
+        const more =
+          hi < total ? `\n\nMore available — call list_articles(page=${page + 1}) to continue.` : "";
         return {
           content:
-            contains !== undefined
-              ? `No article titles or precis contain '${contains}'. Try search_content for topical matches — it searches article bodies and raw sources too.`
-              : "No wiki articles have been compiled yet.",
+            `Articles ${offset + 1}–${hi} of ${total}${scope} (by ${sort}):\n\n` +
+            lines.join("\n") +
+            more,
           source,
-        };
-      }
-      const hi = offset + rows.length;
-      const scope = contains === undefined ? "" : ` matching '${contains}'`;
-      const lines = rows.map((row) => `- ${row.title} — ${row.filePath}\n  ${row.precis}`);
-      const more =
-        hi < total ? `\n\nMore available — call list_articles(page=${page + 1}) to continue.` : "";
-      return {
-        content:
-          `Articles ${offset + 1}–${hi} of ${total}${scope} (by ${sort}):\n\n` +
-          lines.join("\n") +
-          more,
-        source,
-      };
-    };
+        } satisfies ToolResult;
+      });
 
     const addUsageCost = (context: QueryContext, usage: { readonly cost?: number } | undefined) => {
       if (usage?.cost === undefined) {
@@ -1338,38 +1354,34 @@ export const QueryServiceLive = Layer.effect(
       return true;
     };
 
-    const warnSafely = async (event: string, fields: SafeLogFields) => {
-      try {
-        await run(logger.warn(event, fields));
-      } catch {
-        // Logging must never turn a handled stream condition into a stream failure event.
-      }
-    };
+    const warnSafely = (event: string, fields: SafeLogFields) =>
+      logger.warn(event, fields).pipe(Effect.catchCause(() => Effect.void));
 
-    const errorSafely = async (event: string, fields: SafeLogFields) => {
-      try {
-        await run(logger.error(event, fields));
-      } catch {
-        // Logging must never turn a handled stream condition into a stream failure event.
-      }
-    };
+    const errorSafely = (event: string, fields: SafeLogFields) =>
+      logger.error(event, fields).pipe(Effect.catchCause(() => Effect.void));
 
-    const addFallbackGenerationCosts = async (context: QueryContext) => {
-      for (const generationId of context.fallbackGenerationIds) {
-        try {
-          const cost = await costs.lookupGenerationCost(generationId);
-          if (cost !== null && Number.isFinite(cost) && cost > 0) {
-            context.costUsd += cost;
-          }
-        } catch (error) {
-          await warnSafely("query.cost_lookup_failed", {
-            correlation_id: context.correlationId,
-            generation_id: generationId,
-            ...logErrorFields(error),
-          });
-        }
-      }
-    };
+    const addFallbackGenerationCosts = (context: QueryContext) =>
+      Effect.forEach(
+        context.fallbackGenerationIds,
+        (generationId) =>
+          costs.lookupGenerationCost(generationId).pipe(
+            Effect.map((cost) => {
+              if (cost !== null && Number.isFinite(cost) && cost > 0) {
+                context.costUsd += cost;
+              }
+            }),
+            Effect.catchCause((cause) =>
+              isInterruptOnly(cause)
+                ? Effect.interrupt
+                : warnSafely("query.cost_lookup_failed", {
+                    correlation_id: context.correlationId,
+                    generation_id: generationId,
+                    ...logErrorFields(causeError(cause)),
+                  }),
+            ),
+          ),
+        { discard: true },
+      );
 
     const addGenerationCostFallback = (context: QueryContext, generationId: string | undefined) => {
       if (generationId !== undefined) {
@@ -1377,27 +1389,31 @@ export const QueryServiceLive = Layer.effect(
       }
     };
 
-    const extractWebFacts = async (
+    const extractWebFacts = (
       context: QueryContext,
       query: string,
       results: readonly ParallelSearchResult[],
-    ) => {
-      const numbered = results.map((result, index) => {
-        const content = result.excerpts.join(" ");
-        return `[${index + 1}] ${result.title}\n${result.url}\n${content}`;
-      });
-      try {
-        const completion = await languageModel.complete({
-          model: appConfig.extractModel,
-          temperature: 0,
-          responseFormat: "json_object",
-          messages: [
-            { role: "system", content: webFactExtractionPrompt },
-            {
-              role: "user",
-              content: `USER QUESTION: ${context.question}\n\nWEB RESULTS:\n\n${numbered.join("\n\n")}`,
-            },
-          ],
+    ) =>
+      Effect.gen(function* () {
+        const numbered = results.map((result, index) => {
+          const content = result.excerpts.join(" ");
+          return `[${index + 1}] ${result.title}\n${result.url}\n${content}`;
+        });
+        const completion = yield* Effect.tryPromise({
+          try: () =>
+            languageModel.complete({
+              model: appConfig.extractModel,
+              temperature: 0,
+              responseFormat: "json_object",
+              messages: [
+                { role: "system", content: webFactExtractionPrompt },
+                {
+                  role: "user",
+                  content: `USER QUESTION: ${context.question}\n\nWEB RESULTS:\n\n${numbered.join("\n\n")}`,
+                },
+              ],
+            }),
+          catch: (error) => error,
         });
         addUsageCost(context, completion.usage);
         const parsed = JSON.parse(stripMarkdownJsonFence(completion.text)) as unknown;
@@ -1423,210 +1439,238 @@ export const QueryServiceLive = Layer.effect(
           );
         }
         return facts;
-      } catch (error) {
-        await run(
-          logger.warn("query.web_extract_failed", {
-            correlation_id: context.correlationId,
-            query,
-            ...logErrorFields(error),
-          }),
-        );
-        return undefined;
-      }
-    };
+      }).pipe(
+        Effect.catchCause((cause) =>
+          isInterruptOnly(cause)
+            ? Effect.interrupt
+            : logger
+                .warn("query.web_extract_failed", {
+                  correlation_id: context.correlationId,
+                  query,
+                  ...logErrorFields(causeError(cause)),
+                })
+                .pipe(Effect.as(undefined)),
+        ),
+      );
 
-    const webSearchToolRun = async (context: QueryContext, query: string): Promise<ToolResult> => {
-      const source = await sourceEvent(context, "web_search", { query });
-      try {
-        const results = await parallel.search({ question: context.question, query });
-        if (results.length === 0) {
-          return { content: `No web results for '${query}'.`, source };
-        }
-        const facts = await extractWebFacts(context, query, results);
-        if (facts === undefined) {
+    const webSearchToolRun = (context: QueryContext, query: string) =>
+      Effect.gen(function* () {
+        const source = yield* sourceEvent(context, "web_search", { query });
+        return yield* Effect.gen(function* () {
+          const results = yield* Effect.tryPromise({
+            try: () => parallel.search({ question: context.question, query }),
+            catch: (error) => error,
+          });
+          if (results.length === 0) {
+            return { content: `No web results for '${query}'.`, source } satisfies ToolResult;
+          }
+          const facts = yield* extractWebFacts(context, query, results);
+          if (facts === undefined) {
+            return {
+              content: `Web results for '${query}' could not be distilled to facts this call; rely on the knowledge base.`,
+              source,
+            } satisfies ToolResult;
+          }
+          const blocks = results.map((result, index) => {
+            const extracted = facts.get(index + 1) ?? [];
+            const body =
+              extracted.length > 0
+                ? extracted.map((fact) => `- ${fact}`).join("\n")
+                : "(no extractable facts)";
+            return `### ${result.title}\n${result.url}\n${body}`;
+          });
           return {
-            content: `Web results for '${query}' could not be distilled to facts this call; rely on the knowledge base.`,
+            content:
+              `Web FACTS for '${query}' — EXTERNAL, not from the knowledge base. These are facts only; the analysis is yours, from the knowledge base. Cite a fact's source as [title](url):\n\n` +
+              blocks.join("\n\n"),
             source,
-          };
-        }
-        const blocks = results.map((result, index) => {
-          const extracted = facts.get(index + 1) ?? [];
-          const body =
-            extracted.length > 0
-              ? extracted.map((fact) => `- ${fact}`).join("\n")
-              : "(no extractable facts)";
-          return `### ${result.title}\n${result.url}\n${body}`;
-        });
-        return {
-          content:
-            `Web FACTS for '${query}' — EXTERNAL, not from the knowledge base. These are facts only; the analysis is yours, from the knowledge base. Cite a fact's source as [title](url):\n\n` +
-            blocks.join("\n\n"),
-          source,
-        };
-      } catch (error) {
-        await run(
-          logger.warn("query.web_search_failed", {
-            correlation_id: context.correlationId,
-            query,
-            ...logErrorFields(error),
-          }),
+          } satisfies ToolResult;
+        }).pipe(
+          Effect.catchCause((cause) =>
+            isInterruptOnly(cause)
+              ? Effect.interrupt
+              : logger
+                  .warn("query.web_search_failed", {
+                    correlation_id: context.correlationId,
+                    query,
+                    ...logErrorFields(causeError(cause)),
+                  })
+                  .pipe(
+                    Effect.as({
+                      content: `Web search failed for '${query}'. Rely on the knowledge base or rephrase.`,
+                      source,
+                    } satisfies ToolResult),
+                  ),
+          ),
         );
-        return {
-          content: `Web search failed for '${query}'. Rely on the knowledge base or rephrase.`,
-          source,
-        };
-      }
-    };
+      });
 
-    const dispatchTool = async (
+    const dispatchTool = (
       context: QueryContext,
       name: string,
       args: Record<string, unknown>,
-    ): Promise<ToolResult> => {
+    ): Effect.Effect<ToolResult, unknown> => {
       switch (name) {
         case "read_document":
-          return await readDocumentTool(context, asStringArg(args, "path"), "vault");
+          return readDocumentTool(context, asStringArg(args, "path"), "vault");
         case "expand_context":
-          return await expandContextTool(
+          return expandContextTool(
             context,
             asStringArg(args, "path"),
             asIntArg(args, "start"),
             asIntArg(args, "end"),
           );
         case "linked_articles":
-          return await linkedArticlesTool(context, asStringArg(args, "path"));
+          return linkedArticlesTool(context, asStringArg(args, "path"));
         case "search_content":
-          return await searchContentTool(context, asStringArg(args, "query"));
+          return searchContentTool(context, asStringArg(args, "query"));
         case "search_in_document":
-          return await searchInDocumentTool(
+          return searchInDocumentTool(
             context,
             asStringArg(args, "path"),
             asStringArg(args, "query"),
           );
         case "query_documents":
-          return await queryDocumentsToolRun(context, args);
+          return queryDocumentsToolRun(context, args);
         case "list_articles":
-          return await listArticlesToolRun(context, args);
+          return listArticlesToolRun(context, args);
         case "web_search":
-          return await webSearchToolRun(context, asStringArg(args, "query"));
+          return webSearchToolRun(context, asStringArg(args, "query"));
         default:
-          return { content: `Unknown tool: ${name}` };
+          return Effect.succeed({ content: `Unknown tool: ${name}` });
       }
     };
 
-    async function* runModelRound(
+    const runModelRound = (
       context: QueryContext,
       model: string,
       messages: LlmMessage[],
-    ): AsyncGenerator<QueryStreamPayload, ModelRoundState, void> {
-      const state: ModelRoundState = {
-        content: "",
-        finishReason: null,
-        toolCalls: new Map(),
-      };
-      for await (const part of languageModel.streamChat({
-        model,
-        messages,
-        tools: context.tools,
-        temperature: 0.3,
-      })) {
-        if (part.type === "token") {
-          state.content += part.text;
-          yield { event: "token", data: { text: part.text } };
-          continue;
-        }
-        if (part.type === "tool_call_delta") {
-          const current = state.toolCalls.get(part.delta.index) ?? {
-            id: "",
-            name: "",
-            arguments: "",
-          };
-          state.toolCalls.set(part.delta.index, {
-            id: part.delta.id ?? current.id,
-            name: part.delta.name ?? current.name,
-            arguments: current.arguments + (part.delta.argumentsDelta ?? ""),
-          });
-          continue;
-        }
-        state.finishReason = part.finishReason;
-        if (!addUsageCost(context, part.usage)) {
-          addGenerationCostFallback(context, part.generationId);
-        }
-      }
-      return state;
-    }
+      emit: (payload: QueryStreamPayload) => Effect.Effect<void>,
+    ) =>
+      Effect.gen(function* () {
+        const state: ModelRoundState = {
+          content: "",
+          finishReason: null,
+          toolCalls: new Map(),
+        };
+        yield* Stream.fromAsyncIterable(
+          languageModel.streamChat({
+            model,
+            messages,
+            tools: context.tools,
+            temperature: 0.3,
+          }),
+          (error) => error,
+        ).pipe(
+          Stream.runForEach((part) => {
+            if (part.type === "token") {
+              state.content += part.text;
+              return emit({ event: "token", data: { text: part.text } });
+            }
+            if (part.type === "tool_call_delta") {
+              const current = state.toolCalls.get(part.delta.index) ?? {
+                id: "",
+                name: "",
+                arguments: "",
+              };
+              state.toolCalls.set(part.delta.index, {
+                id: part.delta.id ?? current.id,
+                name: part.delta.name ?? current.name,
+                arguments: current.arguments + (part.delta.argumentsDelta ?? ""),
+              });
+              return Effect.void;
+            }
+            state.finishReason = part.finishReason;
+            if (!addUsageCost(context, part.usage)) {
+              addGenerationCostFallback(context, part.generationId);
+            }
+            return Effect.void;
+          }),
+        );
+        return state;
+      });
 
-    async function* executeModelAttempt(
+    const executeModelAttempt = (
       input: QueryExecutionState,
-    ): AsyncGenerator<QueryStreamPayload, QueryModelAttemptResult, void> {
-      const context = contextFromExecution(input);
-      const model = input.models[input.modelIndex];
-      if (model === undefined) {
-        return { kind: "failed", state: input, error: sanitizedStreamError };
-      }
-      const messages = cloneMessages(input.messages);
-      context.selectedModel = model;
-      context.trace.llmRounds += 1;
-      await run(
-        logger.info("query.stream_tool_round_start", {
+      emit: (payload: QueryStreamPayload) => Effect.Effect<void>,
+    ): Effect.Effect<QueryModelAttemptResult, unknown> =>
+      Effect.gen(function* () {
+        const context = contextFromExecution(input);
+        const model = input.models[input.modelIndex];
+        if (model === undefined) {
+          return {
+            kind: "failed",
+            state: input,
+            error: sanitizedStreamError,
+          } satisfies QueryModelAttemptResult;
+        }
+        const messages = cloneMessages(input.messages);
+        context.selectedModel = model;
+        context.trace.llmRounds += 1;
+        yield* logger.info("query.stream_tool_round_start", {
           correlation_id: context.correlationId,
           model,
           round: context.trace.llmRounds,
-        }),
-      );
-      try {
-        const round = runModelRound(context, model, messages);
-        let roundState: ModelRoundState | undefined;
-        while (true) {
-          const next = await round.next();
-          if (next.done === true) {
-            roundState = next.value;
-            break;
-          }
-          yield next.value;
-        }
-        if (roundState.finishReason === "tool_calls" && roundState.toolCalls.size > 0) {
-          const rawToolCalls = [...roundState.toolCalls.entries()]
-            .sort(([left], [right]) => left - right)
-            .map(([, toolCall]) => toolCall);
-          const toolCalls: QueryPreparedToolCall[] = [];
-          try {
-            for (const toolCall of rawToolCalls) {
-              const args = asObjectArgs(toolCall.arguments, toolCall.name);
-              const pendingSource = pendingSourceEvent(toolCall.name, args);
-              toolCalls.push({
-                ...toolCall,
-                args,
-                ...(pendingSource === undefined ? {} : { pendingSource }),
-              });
+        });
+        return yield* Effect.gen(function* () {
+          const roundState = yield* runModelRound(context, model, messages, emit);
+          if (roundState.finishReason === "tool_calls" && roundState.toolCalls.size > 0) {
+            const rawToolCalls = [...roundState.toolCalls.entries()]
+              .sort(([left], [right]) => left - right)
+              .map(([, toolCall]) => toolCall);
+            const toolCalls: QueryPreparedToolCall[] = [];
+            try {
+              for (const toolCall of rawToolCalls) {
+                const args = asObjectArgs(toolCall.arguments, toolCall.name);
+                const pendingSource = pendingSourceEvent(toolCall.name, args);
+                toolCalls.push({
+                  ...toolCall,
+                  args,
+                  ...(pendingSource === undefined ? {} : { pendingSource }),
+                });
+              }
+            } catch (error) {
+              if (error instanceof MalformedToolArgs) {
+                return {
+                  kind: "failed",
+                  state: executionState(
+                    context,
+                    messages,
+                    input.models,
+                    input.modelIndex,
+                    input.startedAt,
+                  ),
+                  error: error.message,
+                } satisfies QueryModelAttemptResult;
+              }
+              throw error;
             }
-          } catch (error) {
-            if (error instanceof MalformedToolArgs) {
-              return {
-                kind: "failed",
-                state: executionState(
-                  context,
-                  messages,
-                  input.models,
-                  input.modelIndex,
-                  input.startedAt,
-                ),
-                error: error.message,
-              };
-            }
-            throw error;
+            messages.push({
+              role: "assistant",
+              content: roundState.content.length === 0 ? null : roundState.content,
+              tool_calls: rawToolCalls.map((toolCall) => ({
+                id: toolCall.id,
+                type: "function",
+                function: { name: toolCall.name, arguments: toolCall.arguments },
+              })),
+            });
+            return {
+              kind: "tool_calls",
+              state: executionState(
+                context,
+                messages,
+                input.models,
+                input.modelIndex,
+                input.startedAt,
+              ),
+              toolCalls,
+            } satisfies QueryModelAttemptResult;
           }
-          messages.push({
-            role: "assistant",
-            content: roundState.content.length === 0 ? null : roundState.content,
-            tool_calls: rawToolCalls.map((toolCall) => ({
-              id: toolCall.id,
-              type: "function",
-              function: { name: toolCall.name, arguments: toolCall.arguments },
-            })),
-          });
+          if (roundState.content.length > 0) {
+            messages.push({ role: "assistant", content: roundState.content });
+          }
           return {
-            kind: "tool_calls",
+            kind: "done",
             state: executionState(
               context,
               messages,
@@ -1634,14 +1678,80 @@ export const QueryServiceLive = Layer.effect(
               input.modelIndex,
               input.startedAt,
             ),
-            toolCalls,
-          };
-        }
-        if (roundState.content.length > 0) {
-          messages.push({ role: "assistant", content: roundState.content });
-        }
+          } satisfies QueryModelAttemptResult;
+        }).pipe(
+          Effect.catchCause((cause) => {
+            if (isInterruptOnly(cause)) {
+              return Effect.failCause(cause);
+            }
+            const error = causeError(cause);
+            const nextState = executionState(
+              context,
+              messages,
+              input.models,
+              input.modelIndex,
+              input.startedAt,
+            );
+            if (isRetryableModelError(error)) {
+              return warnSafely("query.stream_retryable", {
+                correlation_id: context.correlationId,
+                model,
+                ...logErrorFields(error),
+              }).pipe(
+                Effect.map((): QueryModelAttemptResult => {
+                  const nextModelIndex = input.modelIndex + 1;
+                  if (nextModelIndex < input.models.length) {
+                    return {
+                      kind: "retryable",
+                      state: { ...nextState, modelIndex: nextModelIndex },
+                    };
+                  }
+                  return { kind: "failed", state: nextState, error: sanitizedStreamError };
+                }),
+              );
+            }
+            return errorSafely("query.stream_failed", {
+              correlation_id: context.correlationId,
+              model,
+              ...logErrorFields(error),
+            }).pipe(
+              Effect.as({
+                kind: "failed",
+                state: nextState,
+                error: sanitizedStreamError,
+              } satisfies QueryModelAttemptResult),
+            );
+          }),
+        );
+      });
+
+    const executeTool = (input: QueryExecutionState, toolCall: QueryPreparedToolCall) =>
+      Effect.gen(function* () {
+        const context = contextFromExecution(input);
+        const messages = cloneMessages(input.messages);
+        context.trace.toolCalls += 1;
+        const result = yield* dispatchTool(context, toolCall.name, toolCall.args).pipe(
+          Effect.catchCause((cause) => {
+            const error = causeError(cause);
+            if (error instanceof ToolMiss) {
+              return Effect.succeed<ToolResult>({ content: error.toolMessage });
+            }
+            if (isInterruptOnly(cause)) {
+              return Effect.failCause(cause);
+            }
+            return errorSafely("query.stream_failed", {
+              correlation_id: context.correlationId,
+              model: context.selectedModel,
+              ...logErrorFields(error),
+            }).pipe(Effect.andThen(Effect.failCause(cause)));
+          }),
+        );
+        messages.push({
+          role: "tool",
+          tool_call_id: toolCall.id,
+          content: result.content,
+        });
         return {
-          kind: "done",
           state: executionState(
             context,
             messages,
@@ -1649,212 +1759,144 @@ export const QueryServiceLive = Layer.effect(
             input.modelIndex,
             input.startedAt,
           ),
-        };
-      } catch (error) {
-        const nextState = executionState(
-          context,
-          messages,
-          input.models,
-          input.modelIndex,
-          input.startedAt,
-        );
-        if (isRetryableModelError(error)) {
-          await warnSafely("query.stream_retryable", {
-            correlation_id: context.correlationId,
-            model,
-            ...logErrorFields(error),
-          });
-          const nextModelIndex = input.modelIndex + 1;
-          if (nextModelIndex < input.models.length) {
-            return { kind: "retryable", state: { ...nextState, modelIndex: nextModelIndex } };
-          }
-        } else {
-          await errorSafely("query.stream_failed", {
-            correlation_id: context.correlationId,
-            model,
-            ...logErrorFields(error),
-          });
-        }
-        return { kind: "failed", state: nextState, error: sanitizedStreamError };
-      }
-    }
-
-    const executeTool = async (
-      input: QueryExecutionState,
-      toolCall: QueryPreparedToolCall,
-    ): Promise<QueryToolExecutionResult> => {
-      const context = contextFromExecution(input);
-      const messages = cloneMessages(input.messages);
-      context.trace.toolCalls += 1;
-      let result: ToolResult;
-      try {
-        result = await dispatchTool(context, toolCall.name, toolCall.args);
-      } catch (error) {
-        if (error instanceof ToolMiss) {
-          result = { content: error.toolMessage };
-        } else {
-          await errorSafely("query.stream_failed", {
-            correlation_id: context.correlationId,
-            model: context.selectedModel,
-            ...logErrorFields(error),
-          });
-          throw error;
-        }
-      }
-      messages.push({
-        role: "tool",
-        tool_call_id: toolCall.id,
-        content: result.content,
+          ...(result.source === undefined ? {} : { source: result.source }),
+        } satisfies QueryToolExecutionResult;
       });
-      return {
-        state: executionState(
-          context,
-          messages,
-          input.models,
-          input.modelIndex,
-          input.startedAt,
-        ),
-        ...(result.source === undefined ? {} : { source: result.source }),
-      };
-    };
 
-    const buildOriginMessages = async (
+    const buildOriginMessages = (
       context: QueryContext,
       originPath: string,
       originScope: OriginScope,
-    ) => {
-      let content: string;
-      try {
-        content = (await readDocumentTool(context, originPath, originScope, false)).content;
-      } catch (error) {
-        if (error instanceof ToolMiss) {
-          content = error.toolMessage;
-        } else {
-          throw error;
-        }
-      }
-      const toolCallId = `origin-${randomUUID().replaceAll("-", "").slice(0, 8)}`;
-      return [
-        {
-          role: "assistant",
-          content: null,
-          tool_calls: [
-            {
-              id: toolCallId,
-              type: "function",
-              function: {
-                name: "read_document",
-                arguments: JSON.stringify({ path: originPath }),
+    ) =>
+      Effect.gen(function* () {
+        const content = yield* readDocumentTool(context, originPath, originScope, false).pipe(
+          Effect.map((result) => result.content),
+          Effect.catch((error) =>
+            error instanceof ToolMiss ? Effect.succeed(error.toolMessage) : Effect.fail(error),
+          ),
+        );
+        const toolCallId = `origin-${randomUUID().replaceAll("-", "").slice(0, 8)}`;
+        return [
+          {
+            role: "assistant",
+            content: null,
+            tool_calls: [
+              {
+                id: toolCallId,
+                type: "function",
+                function: {
+                  name: "read_document",
+                  arguments: JSON.stringify({ path: originPath }),
+                },
               },
-            },
-          ],
-        },
-        {
-          role: "tool",
-          tool_call_id: toolCallId,
-          content,
-        },
-      ] satisfies LlmMessage[];
-    };
+            ],
+          },
+          {
+            role: "tool",
+            tool_call_id: toolCallId,
+            content,
+          },
+        ] satisfies LlmMessage[];
+      });
 
-    const setupContext = async (
+    const setupContext = (
       userId: Uuid,
       vaultId: Uuid,
       input: QueryRequest,
       correlationId: string,
       prechecked: QueryPrecheckedContext,
-    ) => {
-      const vaultLabel = prechecked.vaultLabel;
-      const [vaultConfig, tags] = await Promise.all([
-        loadVaultConfig(vaultId),
-        distinctTags(vaultId),
-      ]);
-      const webSearchEnabled = vaultConfig.webSearch && parallel.hasApiKey;
-      const tools = [
-        ...baseTools,
-        queryDocumentsTool(tags),
-        ...(webSearchEnabled ? [webSearchTool] : []),
-      ];
-      const systemPrompt = await buildSystemPrompt(
-        vaultId,
-        vaultLabel,
-        vaultConfig,
-        input,
-        webSearchEnabled,
-      );
-      const systemPromptHash = promptContentHash(systemPrompt);
-      await run(recordPrompt(db, systemPromptHash, systemPrompt));
-      const context: QueryContext = {
-        userId,
-        vaultId,
-        question: input.question,
-        vaultLabel,
-        mode: input.mode,
-        correlationId,
-        tools,
-        baseMessages: [],
-        webSearchEnabled,
-        trace: emptyTrace(),
-        fallbackGenerationIds: [],
-        systemPromptHash,
-        costUsd: 0,
-      };
-      const messages: LlmMessage[] = [{ role: "system", content: systemPrompt }];
-      if (
-        input.origin_path !== undefined &&
-        input.origin_path.length > 0
-      ) {
-        messages.push(
-          ...(await buildOriginMessages(context, input.origin_path, input.origin_scope)),
+    ) =>
+      Effect.gen(function* () {
+        const vaultLabel = prechecked.vaultLabel;
+        const [vaultConfig, tags] = yield* Effect.all(
+          [loadVaultConfig(vaultId), distinctTags(vaultId)],
+          { concurrency: "unbounded" },
         );
-      }
-      messages.push(
-        ...input.history.map((message: HistoryMessage) => ({
-          role: message.role,
-          content: message.content,
-        })),
-      );
-      messages.push({ role: "user", content: input.question });
-      return {
-        ...context,
-        baseMessages: messages,
-      } satisfies QueryContext;
-    };
+        const webSearchEnabled = vaultConfig.webSearch && parallel.hasApiKey;
+        const tools = [
+          ...baseTools,
+          queryDocumentsTool(tags),
+          ...(webSearchEnabled ? [webSearchTool] : []),
+        ];
+        const systemPrompt = yield* buildSystemPrompt(
+          vaultId,
+          vaultLabel,
+          vaultConfig,
+          input,
+          webSearchEnabled,
+        );
+        const systemPromptHash = promptContentHash(systemPrompt);
+        yield* recordPrompt(db, systemPromptHash, systemPrompt);
+        const context: QueryContext = {
+          userId,
+          vaultId,
+          question: input.question,
+          vaultLabel,
+          mode: input.mode,
+          correlationId,
+          tools,
+          baseMessages: [],
+          webSearchEnabled,
+          trace: emptyTrace(),
+          fallbackGenerationIds: [],
+          systemPromptHash,
+          costUsd: 0,
+        };
+        const messages: LlmMessage[] = [{ role: "system", content: systemPrompt }];
+        if (
+          input.origin_path !== undefined &&
+          input.origin_path.length > 0
+        ) {
+          messages.push(
+            ...(yield* buildOriginMessages(context, input.origin_path, input.origin_scope)),
+          );
+        }
+        messages.push(
+          ...input.history.map((message: HistoryMessage) => ({
+            role: message.role,
+            content: message.content,
+          })),
+        );
+        messages.push({ role: "user", content: input.question });
+        return {
+          ...context,
+          baseMessages: messages,
+        } satisfies QueryContext;
+      });
 
-    const finalize = async (
+    const finalize = (
       context: QueryContext | undefined,
       startedAt: number,
       correlationId: string,
       userId: Uuid,
       vaultId: Uuid,
-    ) => {
-      if (context !== undefined && context.costUsd > 0) {
-        try {
-          await run(
-            db.query((d) => d
-              .insert(llmCostEvents)
-              .values({
-                userId: context.userId,
-                vaultId: context.vaultId,
-                eventType: "query.stream",
-                costUsd: context.costUsd.toFixed(6),
-                correlationId: context.correlationId,
-                model: context.selectedModel,
-                promptHash: context.systemPromptHash,
-              })
-              .onConflictDoNothing()),
-          );
-        } catch (error) {
-          await run(
-            logger.error("query.cost_write_failed", {
-              correlation_id: context.correlationId,
-              ...logErrorFields(error),
-            }),
-          );
+    ) =>
+      Effect.gen(function* () {
+        if (context !== undefined && context.costUsd > 0) {
+          yield* db.query((d) => d
+            .insert(llmCostEvents)
+            .values({
+              userId: context.userId,
+              vaultId: context.vaultId,
+              eventType: "query.stream",
+              costUsd: context.costUsd.toFixed(6),
+              correlationId: context.correlationId,
+              model: context.selectedModel,
+              promptHash: context.systemPromptHash,
+            })
+            .onConflictDoNothing())
+            .pipe(
+              Effect.catchCause((cause) =>
+                isInterruptOnly(cause)
+                  ? Effect.interrupt
+                  : logger.error("query.cost_write_failed", {
+                      correlation_id: context.correlationId,
+                      ...logErrorFields(causeError(cause)),
+                    }),
+              ),
+            );
         }
-      }
-      await run(
-        logger.info("query.stream_finalize", {
+        yield* logger.info("query.stream_finalize", {
           correlation_id: context?.correlationId ?? correlationId,
           user_id: context?.userId ?? userId,
           vault_id: context?.vaultId ?? vaultId,
@@ -1868,74 +1910,78 @@ export const QueryServiceLive = Layer.effect(
           tool_calls: context?.trace.toolCalls ?? 0,
           cost_usd: Number((context?.costUsd ?? 0).toFixed(6)),
           duration_ms: Date.now() - startedAt,
-        }),
-      );
-    };
+        });
+      });
 
-    const prepareExecution = async (
+    const prepareExecution = (
       userId: Uuid,
       vaultId: Uuid,
       input: QueryRequest,
       prechecked: QueryPrecheckedContext,
-    ): Promise<QueryExecutionState> => {
-      const startedAt = Date.now();
-      const correlationId = `q-${randomUUID()}`;
-      try {
-        const context = await setupContext(userId, vaultId, input, correlationId, prechecked);
-        await run(
-          logger.info("query.stream_start", {
+    ): Effect.Effect<QueryExecutionState, unknown> =>
+      Effect.gen(function* () {
+        const startedAt = Date.now();
+        const correlationId = `q-${randomUUID()}`;
+        return yield* Effect.gen(function* () {
+          const context = yield* setupContext(userId, vaultId, input, correlationId, prechecked);
+          yield* logger.info("query.stream_start", {
             correlation_id: context.correlationId,
             user_id: userId,
             vault_id: vaultId,
             mode: context.mode,
             question_length: input.question.length,
             web_search: context.webSearchEnabled,
-          }),
+          });
+          const requestedModel =
+            input.model !== undefined && input.model.length > 0
+              ? input.model
+              : appConfig.queryModel;
+          const models = [
+            requestedModel,
+            ...appConfig.queryFallbackModels.filter((model) => model !== requestedModel),
+          ];
+          return executionState(context, context.baseMessages, models, 0, startedAt);
+        }).pipe(
+          Effect.catchCause((cause) =>
+            isInterruptOnly(cause)
+              ? Effect.failCause(cause)
+              : errorSafely("query.stream_setup_failed", {
+                  correlation_id: correlationId,
+                  vault_id: vaultId,
+                  user_id: userId,
+                  ...logErrorFields(causeError(cause)),
+                }).pipe(Effect.andThen(Effect.failCause(cause))),
+          ),
         );
-        const requestedModel =
-          input.model !== undefined && input.model.length > 0
-            ? input.model
-            : appConfig.queryModel;
-        const models = [
-          requestedModel,
-          ...appConfig.queryFallbackModels.filter((model) => model !== requestedModel),
-        ];
-        return executionState(context, context.baseMessages, models, 0, startedAt);
-      } catch (error) {
-        await errorSafely("query.stream_setup_failed", {
-          correlation_id: correlationId,
-          vault_id: vaultId,
-          user_id: userId,
-          ...logErrorFields(error),
-        });
-        throw error;
-      }
-    };
+      });
 
     return {
       prepareExecution,
       modelAttempt: executeModelAttempt,
       runTool: executeTool,
-      finalizeExecution: async (state) => {
-        const context = contextFromExecution(state);
-        try {
-          await addFallbackGenerationCosts(context);
-          await finalize(
+      finalizeExecution: (state) =>
+        Effect.gen(function* () {
+          const context = contextFromExecution(state);
+          yield* addFallbackGenerationCosts(context);
+          yield* finalize(
             context,
             state.startedAt,
             state.correlationId,
             state.userId,
             state.vaultId,
           );
-        } catch (error) {
-          await errorSafely("query.stream_finalize_failed", {
-            correlation_id: state.correlationId,
-            vault_id: state.vaultId,
-            user_id: state.userId,
-            ...logErrorFields(error),
-          });
-        }
-      },
+        }).pipe(
+          Effect.catchCause((cause) =>
+            isInterruptOnly(cause)
+              ? Effect.interrupt
+              : errorSafely("query.stream_finalize_failed", {
+                  correlation_id: state.correlationId,
+                  vault_id: state.vaultId,
+                  user_id: state.userId,
+                  ...logErrorFields(causeError(cause)),
+                }),
+          ),
+        ),
       draftHint: (_userId, description) =>
         Effect.gen(function* () {
           if (!languageModel.hasApiKey) {

@@ -688,13 +688,11 @@ export const RepliesServiceLive = Layer.effect(
           return failedControl(row.generationCursor, sanitizedReplyError);
         }
         const prechecked: QueryPrecheckedContext = { vaultLabel: vault.name };
-        const queryState = yield* Effect.promise(() =>
-          query.prepareExecution(
-            decodeUuid(row.userId),
-            decodeUuid(row.vaultId),
-            queryRequest(input),
-            prechecked,
-          ),
+        const queryState = yield* query.prepareExecution(
+          decodeUuid(row.userId),
+          decodeUuid(row.vaultId),
+          queryRequest(input),
+          prechecked,
         );
         const control = readyControl(row.generationCursor);
         const checkpoint: ReplyCheckpoint = {
@@ -741,31 +739,26 @@ export const RepliesServiceLive = Layer.effect(
 
         const accumulator = mutableAccumulator(checkpoint.accumulator);
         let lastFlushAt = 0;
-        const attempt = query.modelAttempt(checkpoint.query);
-        let result: Awaited<ReturnType<typeof attempt.next>>;
-        while (true) {
-          result = yield* Effect.promise(() => attempt.next());
-          if (result.done === true) break;
-          const event = result.value;
-          if (event.event !== "token") {
-            throw new Error(`Model attempt emitted unexpected ${event.event} event`);
-          }
-          if (accumulator.replacementSlot !== undefined) {
-            removeSource(accumulator, accumulator.replacementSlot);
-            accumulator.replacementSlot = undefined;
-          }
-          if (accumulator.clearOnNextToken) {
-            accumulator.answer = "";
-            accumulator.clearOnNextToken = false;
-          }
-          accumulator.answer += event.data.text;
-          if (Date.now() - lastFlushAt >= flushIntervalMs) {
-            yield* flushAccumulator(replyId, accumulator);
-            lastFlushAt = Date.now();
-          }
-        }
-
-        const outcome = result.value;
+        const outcome = yield* query.modelAttempt(checkpoint.query, (event) =>
+          Effect.gen(function* () {
+            if (event.event !== "token") {
+              throw new Error(`Model attempt emitted unexpected ${event.event} event`);
+            }
+            if (accumulator.replacementSlot !== undefined) {
+              removeSource(accumulator, accumulator.replacementSlot);
+              accumulator.replacementSlot = undefined;
+            }
+            if (accumulator.clearOnNextToken) {
+              accumulator.answer = "";
+              accumulator.clearOnNextToken = false;
+            }
+            accumulator.answer += event.data.text;
+            if (Date.now() - lastFlushAt >= flushIntervalMs) {
+              yield* flushAccumulator(replyId, accumulator);
+              lastFlushAt = Date.now();
+            }
+          }),
+        );
         let control: ReplyStepControl;
         let pendingTools: readonly QueryPreparedToolCallType[] = [];
         if (outcome.kind === "tool_calls") {
@@ -835,7 +828,7 @@ export const RepliesServiceLive = Layer.effect(
         if (claimed !== undefined) return claimed;
 
         const accumulator = mutableAccumulator(checkpoint.accumulator);
-        const result = yield* Effect.promise(() => query.runTool(checkpoint.query, toolCall));
+        const result = yield* query.runTool(checkpoint.query, toolCall);
         if (toolCall.pendingSource !== undefined) {
           settlePendingSource(accumulator, toolCall.id);
         }
@@ -880,7 +873,7 @@ export const RepliesServiceLive = Layer.effect(
         if (row === undefined) return;
         const checkpoint = yield* readCheckpoint(row);
         if (checkpoint !== undefined) {
-          yield* Effect.promise(() => query.finalizeExecution(checkpoint.query));
+          yield* query.finalizeExecution(checkpoint.query);
         }
         yield* storage
           .deletePath(vaultOwner(decodeUuid(row.vaultId)), checkpointPath(replyId))

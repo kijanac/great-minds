@@ -1,4 +1,4 @@
-import { Layer } from "effect";
+import { Effect, Layer } from "effect";
 
 import { EmbeddingsService } from "../src/embeddings.ts";
 import { CostLookupService } from "../src/llm-costs.ts";
@@ -117,9 +117,9 @@ export const makeCostLookup = (costs: ReadonlyMap<string, number>) => {
   return {
     lookups,
     layer: Layer.succeed(CostLookupService, {
-      lookupGenerationCost: async (generationId: string) => {
+      lookupGenerationCost: (generationId: string) => {
         lookups.push(generationId);
-        return costs.get(generationId) ?? null;
+        return Effect.succeed(costs.get(generationId) ?? null);
       },
     }),
   };
