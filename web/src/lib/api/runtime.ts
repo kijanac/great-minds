@@ -110,6 +110,7 @@ export const makeApi = (options: ApiOptions) => {
     authenticatedClient,
     HttpClientRequest.prependUrl(options.baseUrl),
   );
+  const externalHttp = transportClient;
 
   const run = <A>(
     effect: Effect.Effect<A, ClientFailure, Layer.Success<typeof services>>,
@@ -129,7 +130,7 @@ export const makeApi = (options: ApiOptions) => {
     return abortAware(Stream.toAsyncIterableWith(withStreamErrors(halted), context), signal);
   };
 
-  return { api, http, run, stream };
+  return { api, http, externalHttp, run, stream };
 };
 
 export type Api = ReturnType<typeof makeApi>["api"];

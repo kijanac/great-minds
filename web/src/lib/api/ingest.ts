@@ -6,11 +6,11 @@ import {
   type UserSuggestionResult,
 } from "@great-minds/domain";
 import { Effect, Schema } from "effect";
-import { HttpClientRequest } from "effect/unstable/http";
+import { HttpBody, HttpClientRequest } from "effect/unstable/http";
 
 import { getVaultId } from "../vault-selection";
 
-import { api, http, run } from "./app";
+import { api, externalHttp, http, run } from "./app";
 import { errorMessage } from "./errors";
 import { withApiErrors } from "./runtime";
 
@@ -128,15 +128,15 @@ const uploadViaApi = (batchId: Uuid, file: File, hash: FileFingerprint) => {
 };
 
 const uploadViaPresignedUrl = (url: string, file: File) =>
-  Effect.tryPromise({
-    try: () =>
-      fetch(url, {
-        method: "PUT",
-        body: file,
-        headers: { "Content-Type": file.type || "application/octet-stream" },
-      }),
-    catch: (error) => error,
-  });
+  externalHttp
+    .execute(
+      HttpClientRequest.put(url).pipe(
+        HttpClientRequest.setBody(
+          HttpBody.raw(file, { contentType: file.type || "application/octet-stream" }),
+        ),
+      ),
+    )
+    .pipe(withApiErrors);
 
 const isSuccessStatus = (status: number) => status >= 200 && status < 300;
 
