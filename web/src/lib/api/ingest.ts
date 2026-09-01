@@ -12,6 +12,7 @@ import { getVaultId } from "../vault-selection";
 
 import { api, http, run } from "./app";
 import { errorMessage } from "./errors";
+import { withApiErrors } from "./runtime";
 
 export type { FileIngestBatch, UserSuggestionIntent, UserSuggestionResult };
 
@@ -68,33 +69,21 @@ export function checkDupes(clientHashes: string[]): Promise<Set<string>> {
   );
 }
 
-async function pMap<T, R>(
-  items: readonly T[],
-  fn: (item: T, index: number) => Promise<R>,
-  concurrency: number,
-): Promise<R[]> {
-  const results: R[] = Array.from({ length: items.length });
-  let cursor = 0;
-  async function worker() {
-    while (true) {
-      const i = cursor++;
-      if (i >= items.length) return;
-      results[i] = await fn(items[i], i);
-    }
-  }
-  await Promise.all(Array.from({ length: Math.min(concurrency, items.length) }, worker));
-  return results;
-}
-
 export interface HashedFile {
   file: File;
   hash: string;
 }
 
-export const hashFiles = (files: File[]): Promise<HashedFile[]> =>
-  pMap(files, async (file) => ({ file, hash: await hashFile(file) }), PUT_CONCURRENCY);
+export const hashFiles = (files: readonly File[]): Promise<readonly HashedFile[]> =>
+  run(
+    Effect.forEach(
+      files,
+      (file) => Effect.promise(async () => ({ file, hash: await hashFile(file) })),
+      { concurrency: PUT_CONCURRENCY },
+    ),
+  );
 
-const manifestFor = (hashedFiles: HashedFile[]) =>
+const manifestFor = (hashedFiles: readonly HashedFile[]) =>
   hashedFiles.map(({ file, hash }) => ({
     name: file.name,
     size: file.size,
@@ -103,7 +92,7 @@ const manifestFor = (hashedFiles: HashedFile[]) =>
   }));
 
 export function createFileIngestBatch(
-  hashedFiles: HashedFile[],
+  hashedFiles: readonly HashedFile[],
   batchId: string = crypto.randomUUID(),
 ): Promise<FileIngestBatch> {
   return run(
@@ -129,33 +118,74 @@ export function resumeFileIngestBatch(batchId: string): Promise<FileIngestBatch>
 const uploadViaApi = (batchId: Uuid, file: File, hash: FileFingerprint) => {
   const formData = new FormData();
   formData.append("file", file);
-  return run(
-    http.execute(
+  return http
+    .execute(
       HttpClientRequest.post(`/file-ingests/${batchId}/files/${hash}`).pipe(
         HttpClientRequest.bodyFormData(formData),
       ),
-    ),
-  );
+    )
+    .pipe(withApiErrors);
 };
 
 const uploadViaPresignedUrl = (url: string, file: File) =>
-  fetch(url, {
-    method: "PUT",
-    body: file,
-    headers: { "Content-Type": file.type || "application/octet-stream" },
+  Effect.tryPromise({
+    try: () =>
+      fetch(url, {
+        method: "PUT",
+        body: file,
+        headers: { "Content-Type": file.type || "application/octet-stream" },
+      }),
+    catch: (error) => error,
   });
-
-const acknowledgeUpload = (batchId: Uuid, hash: FileFingerprint) =>
-  run(api.ingest.acknowledgeFileIngestUpload({ params: { batch_id: batchId, hash } }));
-
-const commitFileIngest = (batchId: Uuid) =>
-  run(api.ingest.commitFileIngest({ params: { batch_id: batchId } }));
 
 const isSuccessStatus = (status: number) => status >= 200 && status < 300;
 
+type UploadResult = { ok: true; hash: string } | { ok: false; failure: UploadFailure };
+
+const uploadOne =
+  (batch: FileIngestBatch, fileByHash: ReadonlyMap<string, File>) =>
+  (target: FileIngestBatch["targets"][number]) => {
+    const manifestFile = batch.files.find((file) => file.hash === target.hash);
+    const file = fileByHash.get(target.hash);
+    if (!manifestFile || !file) {
+      return Effect.succeed<UploadResult>({
+        ok: false,
+        failure: {
+          name: manifestFile?.name ?? target.hash,
+          error: "Reselect this file to continue",
+        },
+      });
+    }
+    return Effect.gen(function* () {
+      const response =
+        target.transport === "presigned"
+          ? yield* uploadViaPresignedUrl(target.url, file)
+          : yield* uploadViaApi(batch.id, file, target.hash);
+      if (!isSuccessStatus(response.status)) {
+        return {
+          ok: false,
+          failure: { name: manifestFile.name, error: `Upload returned ${response.status}` },
+        } satisfies UploadResult;
+      }
+      yield* withApiErrors(
+        api.ingest.acknowledgeFileIngestUpload({
+          params: { batch_id: batch.id, hash: target.hash },
+        }),
+      );
+      return { ok: true, hash: target.hash } satisfies UploadResult;
+    }).pipe(
+      Effect.catch((error) =>
+        Effect.succeed<UploadResult>({
+          ok: false,
+          failure: { name: manifestFile.name, error: errorMessage(error, "Upload failed") },
+        }),
+      ),
+    );
+  };
+
 export async function* continueFileIngest(
   initialBatch: FileIngestBatch,
-  hashedFiles: HashedFile[],
+  hashedFiles: readonly HashedFile[],
 ): AsyncGenerator<FileIngestProgress> {
   let batch = initialBatch;
   const total = batch.files.length;
@@ -182,43 +212,10 @@ export async function* continueFileIngest(
   yield { phase: "uploading", uploaded: received(), total, batch };
 
   const fileByHash = new Map(hashedFiles.map(({ file, hash }) => [hash, file]));
-  type UploadResult = { ok: true; hash: string } | { ok: false; failure: UploadFailure };
-
-  const results = await pMap(
-    batch.targets,
-    async (target): Promise<UploadResult> => {
-      const manifestFile = batch.files.find((file) => file.hash === target.hash);
-      const file = fileByHash.get(target.hash);
-      if (!manifestFile || !file) {
-        return {
-          ok: false,
-          failure: {
-            name: manifestFile?.name ?? target.hash,
-            error: "Reselect this file to continue",
-          },
-        };
-      }
-      try {
-        const status =
-          target.transport === "presigned"
-            ? (await uploadViaPresignedUrl(target.url, file)).status
-            : (await uploadViaApi(batch.id, file, target.hash)).status;
-        if (!isSuccessStatus(status)) {
-          return {
-            ok: false,
-            failure: { name: manifestFile.name, error: `Upload returned ${status}` },
-          };
-        }
-        await acknowledgeUpload(batch.id, target.hash);
-        return { ok: true, hash: target.hash };
-      } catch (error) {
-        return {
-          ok: false,
-          failure: { name: manifestFile.name, error: errorMessage(error, "Upload failed") },
-        };
-      }
-    },
-    PUT_CONCURRENCY,
+  const results = await run(
+    Effect.forEach(batch.targets, uploadOne(batch, fileByHash), {
+      concurrency: PUT_CONCURRENCY,
+    }),
   );
 
   const uploadedNow = results.filter((result) => result.ok).length;
@@ -241,7 +238,7 @@ export async function* continueFileIngest(
     return;
   }
 
-  const job = await commitFileIngest(batch.id);
+  const job = await run(api.ingest.commitFileIngest({ params: { batch_id: batch.id } }));
   batch = { ...batch, status: "processing", targets: [] };
   yield { phase: "processing", uploaded: total, total, id: job.id, batch };
 }

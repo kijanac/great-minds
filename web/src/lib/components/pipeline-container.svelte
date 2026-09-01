@@ -37,7 +37,7 @@
   import { activeVault, useVaults } from "$lib/hooks/use-vault.svelte";
 
   interface FileUploadState {
-    uploadFiles?: HashedFile[];
+    uploadFiles?: readonly HashedFile[];
     batch?: FileIngestBatch;
   }
 
@@ -51,7 +51,7 @@
   let fileBatch = $state<FileIngestBatch | null>(null);
   let routeContextResolved = $state(false);
   let resolvedRouteId = $state<string | null>(null);
-  let availableFiles = $state<HashedFile[]>([]);
+  let availableFiles = $state<readonly HashedFile[]>([]);
   let resolverStarted = $state(false);
   let showCompletion = $state(false);
   let componentActive = true;
@@ -240,7 +240,10 @@
     })();
   });
 
-  async function runBatchUpload(batch: FileIngestBatch, files: HashedFile[]) {
+  async function runBatchUpload(
+    batch: FileIngestBatch,
+    files: readonly HashedFile[],
+  ) {
     const ownsRoute = captureRouteOwnership(() => routeJobId === batch.id);
     if (
       !ownsRoute() ||

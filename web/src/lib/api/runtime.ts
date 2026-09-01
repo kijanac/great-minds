@@ -33,7 +33,7 @@ const transportMessage = (reason: HttpClientError.HttpClientErrorReason): string
   }
 };
 
-const withApiErrors = <A, R>(effect: Effect.Effect<A, ClientFailure, R>) =>
+export const withApiErrors = <A, R>(effect: Effect.Effect<A, ClientFailure, R>) =>
   effect.pipe(
     Effect.catchTags({
       HttpClientError: (error) =>
