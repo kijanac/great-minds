@@ -1,5 +1,6 @@
 import { createMutation } from "@tanstack/svelte-query";
 
+import { errorMessage } from "$lib/api/errors";
 import { promoteReference } from "$lib/api/references";
 
 export function useReferencePromotion() {
@@ -10,7 +11,7 @@ export function useReferencePromotion() {
 
   return {
     get error() {
-      return mutation.error instanceof Error ? mutation.error.message : null;
+      return mutation.error ? errorMessage(mutation.error) : null;
     },
     get pending() {
       return mutation.isPending;

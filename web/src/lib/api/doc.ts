@@ -1,79 +1,43 @@
-import { z } from "zod";
+import {
+  Uuid,
+  type Chunk,
+  type DocResponse,
+  type LinkedArticles,
+  type ReferenceOverview,
+  type SourceDocument,
+  type WikiArticle,
+  type WikiArticleOverview,
+} from "@great-minds/domain";
+import { Schema } from "effect";
 
-import { apiFetch, vaultPath, readJson } from "./client";
-import { referenceOverviewSchema } from "./references";
+import { getVaultId } from "../vault-selection";
 
-export const sourceDocumentSchema = z.object({
-  kind: z.literal("source"),
-  id: z.string(),
-  vault_id: z.string(),
-  file_path: z.string(),
-  body_hash: z.string(),
-  source_type: z.string(),
-  etag: z.string().nullable(),
-  url: z.string().nullable(),
-  canonical_url: z.string().nullable(),
-  origin: z.string().nullable(),
-  // Provenance (set at ingest for session/user-suggestion docs; null for source_type='document'):
-  provenance_session_id: z.string().nullable(),
-  provenance_exchange_id: z.string().nullable(),
-  provenance_session_query: z.string().nullable(),
-  provenance_source_doc_path: z.string().nullable(),
-  provenance_source_anchor: z.string().nullable(),
-  provenance_source_paragraph_index: z.number().nullable(),
-  provenance_anchored_to: z.string().nullable(),
-  provenance_anchored_section: z.string().nullable(),
-  provenance_intent: z.string().nullable(),
-  // LLM-derived (null until first compile):
-  title: z.string().nullable(),
-  precis: z.string().nullable(),
-  author: z.string().nullable(),
-  published_date: z.string().nullable(),
-  genre: z.string().nullable(),
-  tags: z.array(z.string()),
-  derived_extras: z.record(z.string(), z.unknown()),
-  created_at: z.string().nullable(),
-  updated_at: z.string().nullable(),
-});
+import { api, run } from "./app";
 
-export const wikiArticleSchema = z.object({
-  kind: z.literal("wiki"),
-  id: z.string(),
-  vault_id: z.string(),
-  topic_id: z.string(),
-  file_path: z.string(),
-  body_hash: z.string(),
-  title: z.string(),
-  precis: z.string(),
-  created_at: z.string().nullable(),
-  updated_at: z.string().nullable(),
-});
+export type { Chunk, DocResponse, LinkedArticles, SourceDocument, WikiArticle };
 
-const referenceArticleSchema = referenceOverviewSchema.extend({
-  kind: z.literal("reference"),
-});
-
-const articleSchema = z.discriminatedUnion("kind", [
-  sourceDocumentSchema,
-  wikiArticleSchema,
-  referenceArticleSchema,
-]);
-
-const documentResponseSchema = z.object({
-  article: articleSchema,
-  body: z.string(),
-  archived: z.boolean(),
-  superseded_by: z.string().nullable(),
-});
-
-export type SourceDocument = z.infer<typeof sourceDocumentSchema>;
-export type WikiArticle = z.infer<typeof wikiArticleSchema>;
-export type ReferenceArticle = z.infer<typeof referenceArticleSchema>;
+export type DocChunk = Chunk;
+export type LinkItem = WikiArticleOverview;
+export type ReferenceArticle = ReferenceOverview & { kind: "reference" };
 export type Article = SourceDocument | WikiArticle | ReferenceArticle;
-export type DocumentResponse = z.infer<typeof documentResponseSchema>;
 export type DocumentScope = "vault" | "personal";
+export type DocumentResponse =
+  | DocResponse
+  | {
+      article: ReferenceArticle;
+      body: string;
+      archived: false;
+      superseded_by: null;
+    };
 
-/** Normalized metadata across both article types for DocHeader display. */
+const uuid = Schema.decodeSync(Uuid);
+
+function selectedVault(): Uuid {
+  const id = getVaultId();
+  if (id === null) throw new Error("No vault selected");
+  return uuid(id);
+}
+
 export function articleMeta(article: Article) {
   if (article.kind === "wiki") {
     return {
@@ -117,33 +81,28 @@ export function articleMeta(article: Article) {
   };
 }
 
-export async function readDocument(path: string, signal?: AbortSignal): Promise<DocumentResponse> {
-  const res = await apiFetch(vaultPath(`/doc/${path}`), { signal });
-  if (!res.ok) throw new Error(`Document not found: ${path}`);
-  return readJson(res, documentResponseSchema);
+export async function readDocument(path: string, signal?: AbortSignal): Promise<DocResponse> {
+  return run(
+    api.documents.resolveDocument({ params: { vault_id: selectedVault() }, query: { path } }),
+    { signal },
+  );
 }
 
 export async function readSourceDocument(
   sourceId: string,
   signal?: AbortSignal,
-): Promise<DocumentResponse> {
-  const res = await apiFetch(vaultPath(`/raw/sources/${sourceId}`), { signal });
-  if (!res.ok) throw new Error(`Source not found: ${sourceId}`);
-  return readJson(res, documentResponseSchema);
+): Promise<DocResponse> {
+  return run(
+    api.sources.readSource({ params: { vault_id: selectedVault(), source_id: uuid(sourceId) } }),
+    { signal },
+  );
 }
-
-const personalDocumentResponseSchema = z.object({
-  reference: referenceOverviewSchema,
-  body: z.string(),
-});
 
 export async function readPersonalDocument(
   path: string,
   signal?: AbortSignal,
 ): Promise<DocumentResponse> {
-  const res = await apiFetch(`/me/refs/doc/${path}`, { signal });
-  if (!res.ok) throw new Error(`Reference not found: ${path}`);
-  const data = await readJson(res, personalDocumentResponseSchema);
+  const data = await run(api.refs.resolveReference({ query: { path } }), { signal });
   return {
     article: { kind: "reference", ...data.reference },
     body: data.body,
@@ -152,46 +111,23 @@ export async function readPersonalDocument(
   };
 }
 
-// --- Context-panel lazy fetches (what entered the agent's context) ---
-
-const docChunkSchema = z.object({
-  chunk_index: z.number(),
-  heading: z.string(),
-  body: z.string(),
-});
-const chunksResponseSchema = z.array(docChunkSchema);
-export type DocChunk = z.infer<typeof docChunkSchema>;
-
-/** The paragraphs the agent expanded — chunks [start, end] of a document. */
 export async function fetchChunks(
   path: string,
   start: number,
   end: number,
   signal?: AbortSignal,
-): Promise<DocChunk[]> {
-  const qs = new URLSearchParams({ path, start: String(start), end: String(end) });
-  const res = await apiFetch(vaultPath(`/chunks?${qs.toString()}`), { signal });
-  if (!res.ok) throw new Error(`Chunks not found: ${path}`);
-  return readJson(res, chunksResponseSchema);
+): Promise<readonly DocChunk[]> {
+  return run(
+    api.documents.readChunks({
+      params: { vault_id: selectedVault() },
+      query: { path, start, end },
+    }),
+    { signal },
+  );
 }
 
-const linkItemSchema = z.object({
-  file_path: z.string(),
-  title: z.string(),
-  precis: z.string(),
-});
-const linkedArticlesSchema = z.object({
-  outgoing: z.array(linkItemSchema),
-  incoming: z.array(linkItemSchema),
-  related: z.array(linkItemSchema),
-});
-export type LinkItem = z.infer<typeof linkItemSchema>;
-export type LinkedArticles = z.infer<typeof linkedArticlesSchema>;
-
-/** A wiki article's outgoing/incoming links — what a linked_articles call saw. */
 export async function fetchLinks(path: string, signal?: AbortSignal): Promise<LinkedArticles> {
-  const qs = new URLSearchParams({ path });
-  const res = await apiFetch(vaultPath(`/links?${qs.toString()}`), { signal });
-  if (!res.ok) throw new Error(`Links not found: ${path}`);
-  return readJson(res, linkedArticlesSchema);
+  return run(api.documents.readLinks({ params: { vault_id: selectedVault() }, query: { path } }), {
+    signal,
+  });
 }

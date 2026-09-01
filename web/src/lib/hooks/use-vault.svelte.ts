@@ -1,13 +1,8 @@
 import { browser } from "$app/environment";
 import { createMutation, createQuery, useQueryClient } from "@tanstack/svelte-query";
 
-import {
-  createVault,
-  fetchVaults,
-  getVaultId,
-  storeVaultId,
-  type CreateVaultInput,
-} from "$lib/api/client";
+import { createVault, fetchVaults, type CreateVaultInput } from "$lib/api/vaults";
+import { getVaultId, storeVaultId } from "$lib/vault-selection";
 
 class ActiveVaultSelection {
   id = $state<string | null>(null);

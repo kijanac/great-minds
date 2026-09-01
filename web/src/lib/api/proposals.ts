@@ -1,64 +1,66 @@
-import { apiFetch, paginationParams, readJson } from "./client";
 import {
-  proposalListSchema,
-  proposalSchema,
+  Uuid,
   type Proposal,
-  type ProposalList,
+  type ProposalCreate,
   type ProposalOverview,
+  type ProposalPage,
   type ProposalStatus,
-} from "./schemas";
+  type ProposalUpdate,
+} from "@great-minds/domain";
+import { Schema } from "effect";
 
-export type { Proposal, ProposalList, ProposalOverview, ProposalStatus };
+import { api, run } from "./app";
 
-export interface ProposalCreateInput {
-  content: string;
-  content_type?: string;
-  title?: string;
-  author?: string;
-}
+export type { Proposal, ProposalOverview, ProposalPage, ProposalStatus };
+
+const uuid = Schema.decodeSync(Uuid);
 
 export async function listProposals(
   vaultId: string,
-  params?: { status?: ProposalStatus; limit?: number; offset?: number },
-): Promise<ProposalList> {
-  const query = paginationParams(params);
-  if (params?.status) query.set("status", params.status);
-  const qs = query.toString();
-  const path = `/vaults/${vaultId}/proposals${qs ? `?${qs}` : ""}`;
-  const res = await apiFetch(path);
-  if (!res.ok) throw new Error("Failed to list proposals");
-  return readJson(res, proposalListSchema);
+  params: { status?: ProposalStatus; limit: number; offset: number },
+): Promise<ProposalPage> {
+  const query = params.status
+    ? { limit: params.limit, offset: params.offset, status: params.status }
+    : { limit: params.limit, offset: params.offset };
+  return run(
+    api.proposals.listProposals({
+      params: { vault_id: uuid(vaultId) },
+      query,
+    }),
+  );
 }
 
 export async function getProposal(vaultId: string, proposalId: string): Promise<Proposal> {
-  const res = await apiFetch(`/vaults/${vaultId}/proposals/${proposalId}`);
-  if (!res.ok) throw new Error("Failed to fetch proposal");
-  return readJson(res, proposalSchema);
+  return run(
+    api.proposals.getProposal({
+      params: { vault_id: uuid(vaultId), proposal_id: uuid(proposalId) },
+    }),
+  );
 }
 
-export async function createProposal(
-  vaultId: string,
-  input: ProposalCreateInput,
-): Promise<Proposal> {
-  const res = await apiFetch(`/vaults/${vaultId}/proposals`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(input),
-  });
-  if (!res.ok) throw new Error("Failed to submit proposal");
-  return readJson(res, proposalSchema);
+export async function createProposal(vaultId: string, input: ProposalCreate): Promise<Proposal> {
+  return run(
+    api.proposals.createProposal({
+      params: { vault_id: uuid(vaultId) },
+      payload: {
+        content: input.content,
+        ...(input.content_type !== undefined ? { content_type: input.content_type } : {}),
+        ...(input.title !== undefined ? { title: input.title } : {}),
+        ...(input.author !== undefined ? { author: input.author } : {}),
+      },
+    }),
+  );
 }
 
 export async function reviewProposal(
   vaultId: string,
   proposalId: string,
-  status: "approved" | "rejected",
+  status: ProposalUpdate["status"],
 ): Promise<Proposal> {
-  const res = await apiFetch(`/vaults/${vaultId}/proposals/${proposalId}`, {
-    method: "PATCH",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ status }),
-  });
-  if (!res.ok) throw new Error("Failed to review proposal");
-  return readJson(res, proposalSchema);
+  return run(
+    api.proposals.reviewProposal({
+      params: { vault_id: uuid(vaultId), proposal_id: uuid(proposalId) },
+      payload: { status },
+    }),
+  );
 }

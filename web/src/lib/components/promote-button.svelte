@@ -1,11 +1,14 @@
 <script lang="ts">
-  import { promoteExchange, type PromoteResult } from "$lib/api/sessions";
+  import type { PromoteExchangeResponse } from "@great-minds/domain";
+
+  import { errorMessage } from "$lib/api/errors";
+  import { promoteExchange } from "$lib/api/sessions";
   import { Button } from "$lib/components/ui/button";
 
   type State =
     | { kind: "idle" }
     | { kind: "pending" }
-    | { kind: "done"; result: PromoteResult }
+    | { kind: "done"; result: PromoteExchangeResponse }
     | { kind: "error"; message: string };
 
   let {
@@ -28,7 +31,7 @@
     } catch (error) {
       state = {
         kind: "error",
-        message: error instanceof Error ? error.message : "Failed to promote",
+        message: errorMessage(error, "Failed to promote"),
       };
     }
   }

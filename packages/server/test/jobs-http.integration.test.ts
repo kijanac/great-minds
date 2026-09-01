@@ -390,7 +390,7 @@ describe("compile and job HTTP routes", () => {
       current().bobToken,
     );
     expect(forbidden.status).toBe(403);
-    expect(await forbidden.json()).toEqual({
+    expect(await forbidden.json()).toMatchObject({
       detail: "Only vault members can perform this action",
     });
     const missing = await request(
@@ -398,7 +398,7 @@ describe("compile and job HTTP routes", () => {
       current().aliceToken,
     );
     expect(missing.status).toBe(404);
-    expect(await missing.json()).toEqual({ detail: "Job not found" });
+    expect(await missing.json()).toMatchObject({ detail: "Job not found" });
   });
 });
 

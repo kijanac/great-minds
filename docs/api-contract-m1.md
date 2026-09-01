@@ -10,6 +10,7 @@ Source of truth per `docs/ts-migration-m1.md`: the Zod schemas/fetch calls in `w
 - Effective full paths: `/v1/auth/...`, `/v1/vaults`, `/v1/vaults/{vault_id}`, `/v1/vaults/{vault_id}/wiki`, `/v1/vaults/{vault_id}/doc/{path}`, `/v1/vaults/{vault_id}/sessions`, etc.
 - **Frontend prepends `VITE_API_BASE`** (`web/src/api/client.ts::apiFetch`), default `"/api"` in dev (proxied), but `render.yaml` sets prod's `VITE_API_BASE = https://great-minds-api.onrender.com/v1`. So in the deployed app, `API_BASE` already includes `/v1` — frontend calls `apiFetch("/vaults")`, `vaultPath("/wiki")` etc. **without** an explicit `/v1` segment; the prefix comes entirely from the env var. A TS reimplementation must mount its router at whatever path `VITE_API_BASE` is pointed at during smoke testing — the `/v1` segment is not hardcoded in the frontend, only in the env config.
 - Auth: `HTTPBearer` (`Authorization: Bearer <token>`) required on every in-scope endpoint except `POST /auth/request-code` and `POST /auth/verify-code` and `POST /auth/refresh` (pre-auth by definition). `get_current_user` tries JWT decode first, then falls back to API-key lookup (`gm_...` raw keys, SHA-256 hashed at rest) — either credential type authenticates any endpoint using `CurrentUser`. No scope/permission difference between JWT and API-key auth in M1's read surface.
+- Error bodies: every declared 4xx/503 error is a tagged domain error encoded as `{"_tag": "<Unauthorized|Forbidden|NotFound|Validation|BadRequest|Conflict|ServiceUnavailable>", "detail": "<message>"}`. The per-endpoint `{"detail": ...}` examples below omit `_tag` for brevity; clients built from the `HttpApi` contract decode these into typed errors.
 
 ---
 
@@ -202,7 +203,9 @@ All routes below live under the vault-scoped router (`Depends(require_vault_memb
 | Errors | `404` `{"detail": "Article not found: {slug}"}` |
 | **Frontend usage** | **No caller found anywhere in `web/src`.** Appears dead/unused by the current React app (see oddities). |
 
-### GET `/doc/{path}` — document content read (the one the frontend actually uses)
+### GET `/doc?path={path}` — document content read by storage path (the one the frontend actually uses)
+
+> 2026-08-29: the path moved from a wildcard URL segment to the `path` query parameter (`GET /vaults/{vault_id}/doc?path=wiki/slug.md`); personal references read by path via `GET /me/refs/doc?path=…`, and `PATCH`/`DELETE /me/refs/{reference_id}` are keyed by the reference id. The rows below describe the response shape, which is unchanged.
 
 | | |
 |---|---|

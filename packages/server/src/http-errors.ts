@@ -1,27 +1,33 @@
-import type { DomainError } from "@great-minds/domain";
+import { DomainErrorSchema, type DomainError } from "@great-minds/domain";
+import { Schema } from "effect";
 
 type HttpErrorResponse = {
   readonly status: 400 | 401 | 403 | 404 | 409 | 422 | 503;
-  readonly body: {
-    readonly detail: string;
-  };
+  readonly body: typeof DomainErrorSchema.Encoded;
 };
 
-export const domainErrorResponse = (error: DomainError): HttpErrorResponse => {
+const encodeDomainError = Schema.encodeSync(DomainErrorSchema);
+
+const statusOf = (error: DomainError): HttpErrorResponse["status"] => {
   switch (error._tag) {
     case "Unauthorized":
-      return { status: 401, body: { detail: error.detail } };
+      return 401;
     case "Forbidden":
-      return { status: 403, body: { detail: error.detail } };
+      return 403;
     case "NotFound":
-      return { status: 404, body: { detail: error.detail } };
+      return 404;
     case "Validation":
-      return { status: 422, body: { detail: error.detail } };
+      return 422;
     case "BadRequest":
-      return { status: 400, body: { detail: error.detail } };
+      return 400;
     case "Conflict":
-      return { status: 409, body: { detail: error.detail } };
+      return 409;
     case "ServiceUnavailable":
-      return { status: 503, body: { detail: error.detail } };
+      return 503;
   }
 };
+
+export const domainErrorResponse = (error: DomainError): HttpErrorResponse => ({
+  status: statusOf(error),
+  body: encodeDomainError(error),
+});

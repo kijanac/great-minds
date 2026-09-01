@@ -119,6 +119,9 @@ importers:
       '@fontsource/libre-baskerville':
         specifier: 5.3.0
         version: 5.3.0
+      '@great-minds/domain':
+        specifier: workspace:*
+        version: link:../packages/domain
       '@internationalized/date':
         specifier: 3.12.2
         version: 3.12.2
@@ -140,9 +143,9 @@ importers:
       clsx:
         specifier: 2.1.1
         version: 2.1.1
-      eventsource-parser:
-        specifier: 3.1.0
-        version: 3.1.0
+      effect:
+        specifier: 4.0.0-rc.112
+        version: 4.0.0-rc.112
       jose:
         specifier: 6.2.3
         version: 6.2.3
@@ -173,9 +176,6 @@ importers:
       unified:
         specifier: 11.0.5
         version: 11.0.5
-      zod:
-        specifier: 4.4.3
-        version: 4.4.3
     devDependencies:
       '@sveltejs/adapter-static':
         specifier: 3.0.10
@@ -8883,6 +8883,7 @@ snapshots:
 
   zod@3.25.76: {}
 
-  zod@4.4.3: {}
+  zod@4.4.3:
+    optional: true
 
   zwitch@2.0.4: {}

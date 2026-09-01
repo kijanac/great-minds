@@ -1,155 +1,88 @@
-import { z } from "zod";
+import {
+  CreateReplyRequest,
+  ReplySnapshot,
+  Uuid,
+  type CreateReplyResponse,
+} from "@great-minds/domain";
+import { Filter, Option, Schema, Stream } from "effect";
+import type * as Sse from "effect/unstable/encoding/Sse";
 
-import type { BtwPayload, OriginScope, SessionOrigin } from "./sessions";
-import { apiFetch, readJson, vaultPath } from "./client";
-import { sourceRefSchema } from "./schemas";
-import { iterateSseMessages } from "./sse";
-import { abortableSleep, retryDelay } from "./stream-retry";
-import type { HistoryMessage } from "$lib/types";
+import { getVaultId } from "../vault-selection";
 
-interface ReplyQueryPayload {
-  reply_id: string;
-  question: string;
-  model?: string;
-  origin_path?: string;
-  origin_scope?: OriginScope;
-  history: HistoryMessage[];
-  mode: "query" | "btw";
+import { api, run, stream } from "./app";
+import { followUntil } from "./sse";
+
+export type CreateReplyPayload = typeof CreateReplyRequest.Encoded;
+export type { CreateReplyResponse, ReplySnapshot };
+
+type ReplyEvent =
+  | { readonly _tag: "Snapshot"; readonly snapshot: ReplySnapshot }
+  | { readonly _tag: "Done" };
+
+const uuid = Schema.decodeSync(Uuid);
+const decodeCreate = Schema.decodeSync(Schema.fromJsonString(CreateReplyRequest));
+const snapshotFromJson = Schema.decodeOption(Schema.fromJsonString(ReplySnapshot));
+
+function selectedVault(): Uuid {
+  const id = getVaultId();
+  if (id === null) throw new Error("No vault selected");
+  return uuid(id);
 }
 
-export type CreateReplyPayload =
-  | (ReplyQueryPayload & {
-      kind: "exchange";
-      exchange_id: string;
-      session_id: string;
-    })
-  | (ReplyQueryPayload & {
-      kind: "exchange";
-      exchange_id: string;
-      create: {
-        idempotency_key: string;
-        origin_scope?: OriginScope;
-        origin?: SessionOrigin;
-      };
-    })
-  | (ReplyQueryPayload & {
-      kind: "btw";
-      session_id: string;
-      btw: BtwPayload;
-    })
-  | (ReplyQueryPayload & {
-      kind: "ephemeral";
-    });
-
-const createReplyResponseSchema = z.object({
-  reply_id: z.string(),
-  session_id: z.string().nullable(),
-});
-
-export type CreateReplyResponse = z.infer<typeof createReplyResponseSchema>;
-
-export const replySnapshotSchema = z.object({
-  reply_id: z.string(),
-  session_id: z.string().nullable(),
-  kind: z.enum(["exchange", "btw", "ephemeral"]),
-  status: z.enum(["running", "completed", "failed"]),
-  answer: z.string(),
-  sources: z.array(sourceRefSchema),
-  error: z.string().nullable(),
-  version: z.number(),
-  created_at: z.string(),
-  updated_at: z.string(),
-});
-
-export type ReplySnapshot = z.infer<typeof replySnapshotSchema>;
-
-export class ReplyStreamError extends Error {
-  constructor(
-    message: string,
-    readonly status: number,
-  ) {
-    super(message);
-    this.name = "ReplyStreamError";
+const createReplyRequest = (payload: CreateReplyRequest) => {
+  const params = { vault_id: selectedVault() };
+  switch (payload.kind) {
+    case "btw":
+      return api.replies.createReply({ params, payload });
+    case "ephemeral":
+      return api.replies.createReply({ params, payload });
+    case "exchange":
+      return "session_id" in payload
+        ? api.replies.createReply({ params, payload })
+        : api.replies.createReply({ params, payload });
   }
-}
+};
 
-export async function createReply(
+export function createReply(
   payload: CreateReplyPayload,
   signal?: AbortSignal,
 ): Promise<CreateReplyResponse> {
-  const response = await apiFetch(vaultPath("/replies"), {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(payload),
-    signal,
-  });
-  if (!response.ok) {
-    throw new ReplyStreamError(await response.text(), response.status);
-  }
-  return readJson(response, createReplyResponseSchema);
+  return run(createReplyRequest(decodeCreate(JSON.stringify(payload))), { signal });
 }
 
-export async function retryReply(
+export function retryReply(
   replyId: string,
   nextReplyId: string,
   signal?: AbortSignal,
 ): Promise<CreateReplyResponse> {
-  const response = await apiFetch(vaultPath(`/replies/${replyId}/retry`), {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ reply_id: nextReplyId }),
-    signal,
-  });
-  if (!response.ok) {
-    throw new ReplyStreamError(await response.text(), response.status);
-  }
-  return readJson(response, createReplyResponseSchema);
+  return run(
+    api.replies.retryReply({
+      params: { vault_id: selectedVault(), reply_id: uuid(replyId) },
+      payload: { reply_id: uuid(nextReplyId) },
+    }),
+    { signal },
+  );
 }
 
-export async function* streamReply(
-  replyId: string,
-  signal?: AbortSignal,
-): AsyncGenerator<ReplySnapshot> {
-  let attempt = 0;
-  let previousVersion = -1;
+const toReplyEvent = (event: Sse.EventEncoded): Option.Option<ReplyEvent> => {
+  if (event.event === "done") return Option.some({ _tag: "Done" });
+  if (event.event !== "message" || event.data.length === 0) return Option.none();
+  return Option.map(snapshotFromJson(event.data), (snapshot) => ({ _tag: "Snapshot", snapshot }));
+};
 
-  while (!signal?.aborted) {
-    try {
-      const response = await apiFetch(vaultPath(`/replies/${replyId}/stream`), {
-        headers: { Accept: "text/event-stream" },
-        signal,
-      });
-      if (!response.ok) {
-        throw new ReplyStreamError(await response.text(), response.status);
-      }
-      if (!response.body) {
-        throw new ReplyStreamError("Reply stream unavailable", response.status);
-      }
+const isTerminal = (event: ReplyEvent) =>
+  event._tag === "Done" || event.snapshot.status !== "running";
 
-      attempt = 0;
-      for await (const message of iterateSseMessages(response.body, signal)) {
-        if (message.event === "message" && message.data.length > 0) {
-          const snapshot = replySnapshotSchema.parse(JSON.parse(message.data));
-          if (snapshot.version !== previousVersion) {
-            previousVersion = snapshot.version;
-            yield snapshot;
-          }
-          if (snapshot.status !== "running") {
-            return;
-          }
-        } else if (message.event === "done") {
-          return;
-        }
-      }
-    } catch (error) {
-      if (signal?.aborted) return;
-      if (error instanceof ReplyStreamError) throw error;
-      console.warn("Reply stream disconnected; retrying", error);
-    }
+const snapshotOf = (event: ReplyEvent) =>
+  event._tag === "Snapshot" ? Option.some(event.snapshot) : Option.none();
 
-    if (!signal?.aborted) {
-      await abortableSleep(retryDelay(attempt), signal);
-      attempt += 1;
-    }
-  }
+export function streamReply(replyId: string, signal?: AbortSignal): AsyncIterable<ReplySnapshot> {
+  const events = Stream.unwrap(
+    api.replies.streamReply({ params: { vault_id: selectedVault(), reply_id: uuid(replyId) } }),
+  ).pipe(Stream.filterMap(Filter.fromPredicateOption(toReplyEvent)));
+  const snapshots = followUntil(events, isTerminal).pipe(
+    Stream.filterMap(Filter.fromPredicateOption(snapshotOf)),
+    Stream.changesWith((previous, next) => previous.version === next.version),
+  );
+  return stream(snapshots, signal);
 }

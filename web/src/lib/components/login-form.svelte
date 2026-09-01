@@ -8,15 +8,12 @@
   } from "@simplewebauthn/browser";
   import { onMount } from "svelte";
 
+  import { api, run } from "$lib/api/app";
   import {
     loginWithCode,
     loginWithTokenPair,
     requestCode,
-  } from "$lib/api/client";
-  import {
-    getPasskeyAuthenticationOptions,
-    verifyPasskey,
-  } from "$lib/api/passkeys";
+  } from "$lib/api/auth";
   import { auth } from "$lib/auth.svelte";
   import { Alert, AlertDescription } from "$lib/components/ui/alert";
   import { Label } from "$lib/components/ui/label";
@@ -35,13 +32,13 @@
     useBrowserAutofill: boolean,
     shouldContinue: () => boolean = () => true,
   ): Promise<void> {
-    const optionsJSON = await getPasskeyAuthenticationOptions();
+    const optionsJSON = await run(api.auth.passkeyAuthenticationOptions());
     if (!shouldContinue()) return;
     const response = await startAuthentication({
       optionsJSON,
       useBrowserAutofill,
     });
-    const tokens = await verifyPasskey(response);
+    const tokens = await run(api.auth.verifyPasskey({ payload: response }));
     await loginWithTokenPair(tokens);
     auth.login();
     await goto("/");

@@ -1,48 +1,46 @@
-import { createParser, type EventSourceMessage } from "eventsource-parser";
+import type { DomainError } from "@great-minds/domain";
+import { Data, Duration, Effect, Stream, type Schema } from "effect";
+import type * as Sse from "effect/unstable/encoding/Sse";
+import type * as HttpClientError from "effect/unstable/http/HttpClientError";
 
-export interface SseMessage {
-  event: string;
-  data: string;
-  id?: string;
-}
+export type StreamFailure =
+  | DomainError
+  | HttpClientError.HttpClientError
+  | Schema.SchemaError
+  | Sse.SseError
+  | Sse.Retry;
 
-export async function* iterateSseMessages(
-  body: ReadableStream<Uint8Array>,
-  signal?: AbortSignal,
-): AsyncGenerator<SseMessage> {
-  const reader = body.getReader();
-  const decoder = new TextDecoder();
-  const pending: EventSourceMessage[] = [];
-  const parser = createParser({
-    onEvent: (message) => pending.push(message),
-  });
-  const cancel = () => void reader.cancel().catch(() => undefined);
-  signal?.addEventListener("abort", cancel, { once: true });
+class Disconnected extends Data.TaggedError("Disconnected") {}
 
-  try {
-    while (!signal?.aborted) {
-      const { done, value } = await reader.read();
-      if (signal?.aborted) return;
-      if (done) {
-        const trailing = decoder.decode();
-        if (trailing) parser.feed(trailing);
-      } else {
-        parser.feed(decoder.decode(value, { stream: true }));
-      }
+const reconnectDelay = (attempt: number) => Duration.millis(Math.min(1000 * 2 ** attempt, 10_000));
 
-      for (const message of pending) {
-        yield {
-          event: message.event ?? "message",
-          data: message.data,
-          ...(message.id === undefined ? {} : { id: message.id }),
-        };
-      }
-      pending.length = 0;
-      if (done) return;
-    }
-  } finally {
-    signal?.removeEventListener("abort", cancel);
-    await reader.cancel().catch(() => undefined);
-    reader.releaseLock();
+const reconnectable = (error: HttpClientError.HttpClientError) =>
+  error.reason._tag === "TransportError";
+
+export const followUntil = <A>(
+  connect: Stream.Stream<A, StreamFailure>,
+  isTerminal: (event: A) => boolean,
+): Stream.Stream<A, StreamFailure> => {
+  function attempt(count: number): Stream.Stream<A, StreamFailure> {
+    return connect.pipe(
+      Stream.concat(Stream.fail(new Disconnected())),
+      Stream.takeUntil(isTerminal),
+      Stream.catchTags({
+        Disconnected: () => reconnectAfter(reconnectDelay(count), count),
+        SseError: () => reconnectAfter(reconnectDelay(count), count),
+        Retry: (retry) => reconnectAfter(retry.duration, count),
+        HttpClientError: (error) =>
+          reconnectable(error) ? reconnectAfter(reconnectDelay(count), count) : Stream.fail(error),
+      }),
+    );
   }
-}
+
+  function reconnectAfter(
+    delay: Duration.Duration,
+    count: number,
+  ): Stream.Stream<A, StreamFailure> {
+    return Stream.unwrap(Effect.as(Effect.sleep(delay), attempt(count + 1)));
+  }
+
+  return attempt(0);
+};

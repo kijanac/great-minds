@@ -40,7 +40,7 @@
     archived?: boolean;
     supersededBy?: string | null;
     onSupersessorClick?: (slug: string) => void;
-    related?: LinkItem[];
+    related?: readonly LinkItem[];
     onRelatedClick?: (filePath: string) => void;
     onLinkClick?: (event: MouseEvent) => void;
     panelDocked?: boolean;

@@ -48,15 +48,12 @@ type UserDocumentsServiceShape = {
     userId: Uuid,
     path: string,
   ) => Effect.Effect<ReferenceDocumentResponse, BadRequest | NotFound>;
-  readonly delete: (
-    userId: Uuid,
-    path: string,
-  ) => Effect.Effect<void, BadRequest | NotFound>;
+  readonly delete: (userId: Uuid, referenceId: Uuid) => Effect.Effect<void, NotFound>;
   readonly update: (
     userId: Uuid,
-    path: string,
+    referenceId: Uuid,
     input: ReferenceUpdate,
-  ) => Effect.Effect<ReferenceDetail, BadRequest | NotFound>;
+  ) => Effect.Effect<ReferenceDetail, NotFound>;
 };
 
 export class UserDocumentsService extends Context.Service<
@@ -220,23 +217,20 @@ export const UserDocumentsServiceLive = Layer.effect(
             body: parseFrontmatter(content).body,
           };
         }),
-      delete: (userId, path) =>
+      delete: (userId, referenceId) =>
         Effect.gen(function* () {
-          const safePath = yield* validatePath(path);
           const rows = yield* db.query((d) => d
             .delete(userDocuments)
-            .where(
-              and(eq(userDocuments.userId, userId), eq(userDocuments.filePath, safePath)),
-            )
-            .returning({ id: userDocuments.id }));
-          if (rows[0] === undefined) {
-            return yield* new NotFound({ detail: `Reference not found: ${safePath}` });
+            .where(and(eq(userDocuments.userId, userId), eq(userDocuments.id, referenceId)))
+            .returning({ filePath: userDocuments.filePath }));
+          const deleted = rows[0];
+          if (deleted === undefined) {
+            return yield* new NotFound({ detail: "Reference not found" });
           }
-          yield* storage.deletePath(userOwner(userId), safePath);
+          yield* storage.deletePath(userOwner(userId), deleted.filePath);
         }),
-      update: (userId, path, input) =>
+      update: (userId, referenceId, input) =>
         Effect.gen(function* () {
-          const safePath = yield* validatePath(path);
           // Trim the incoming title; whitespace-only input clears it. The
           // stored markdown frontmatter does not carry the title, so only the
           // user_documents row is touched.
@@ -245,13 +239,11 @@ export const UserDocumentsServiceLive = Layer.effect(
           const rows = yield* db.query((d) => d
             .update(userDocuments)
             .set({ title, updatedAt: sql`now()` })
-            .where(
-              and(eq(userDocuments.userId, userId), eq(userDocuments.filePath, safePath)),
-            )
+            .where(and(eq(userDocuments.userId, userId), eq(userDocuments.id, referenceId)))
             .returning());
           const row = rows[0];
           if (row === undefined) {
-            return yield* new NotFound({ detail: `Reference not found: ${safePath}` });
+            return yield* new NotFound({ detail: "Reference not found" });
           }
           return referenceOverview(row);
         }),

@@ -10,7 +10,7 @@ export interface SavedSession {
   originTitle: string | null;
 }
 
-function replayEvents(events: SessionEvent[], originTitle: string | null): SavedSession {
+function replayEvents(events: readonly SessionEvent[], originTitle: string | null): SavedSession {
   const exchanges: Exchange[] = [];
   const exchangeIndexes = new Map<string, number>();
   const latestBtw = new Map<string, Extract<SessionEvent, { type: "btw" }>>();
@@ -20,11 +20,11 @@ function replayEvents(events: SessionEvent[], originTitle: string | null): Saved
       const exchange: Exchange = {
         id: event.exId,
         query: event.query,
-        thinking: event.thinking,
-        answer: event.answer,
+        thinking: (event.thinking ?? []).map((block) => ({ sources: block.sources ?? [] })),
+        answer: event.answer ?? "",
         btws: [],
         replyId: event.reply_id,
-        streaming: event.answer.length === 0 && event.reply_id !== undefined,
+        streaming: (event.answer ?? "").length === 0 && event.reply_id !== undefined,
       };
       const existingIndex = exchangeIndexes.get(event.exId);
       if (existingIndex === undefined) {
@@ -43,25 +43,27 @@ function replayEvents(events: SessionEvent[], originTitle: string | null): Saved
   const btwsByExchange = new Map<string, BtwThread[]>();
   for (const event of latestBtw.values()) {
     const btw: BtwThread = {
-      id: `${event.exId}:${event.blockOffset}:${event.quote}`,
+      id: `${event.exId}:${event.blockOffset ?? -1}:${event.quote}`,
       exchangeId: event.exId,
       anchor: {
-        blockOffset: event.blockOffset,
+        blockOffset: event.blockOffset ?? -1,
         quote: event.quote,
-        context: event.context,
+        context: event.context ?? "",
       },
       exchanges: event.exchanges.map((exchange, index) => ({
-        id: `${event.exId}:${event.blockOffset}:${event.quote}:${index}`,
+        id: `${event.exId}:${event.blockOffset ?? -1}:${event.quote}:${index}`,
         query: exchange.query,
-        thinking: exchange.thinking,
-        answer: exchange.answer,
+        thinking: (exchange.thinking ?? []).map((block) => ({
+          sources: block.sources ?? [],
+        })),
+        answer: exchange.answer ?? "",
         btws: [],
         ...(index === event.exchanges.length - 1 && event.reply_id !== undefined
           ? { replyId: event.reply_id }
           : {}),
         streaming:
           index === event.exchanges.length - 1 &&
-          exchange.answer.length === 0 &&
+          (exchange.answer ?? "").length === 0 &&
           event.reply_id !== undefined,
       })),
     };

@@ -3,7 +3,8 @@ import { page } from "$app/state";
 import { createInfiniteQuery, createQuery, useQueryClient } from "@tanstack/svelte-query";
 import { untrack } from "svelte";
 
-import { nextPageOffset } from "$lib/api/schemas";
+import { errorMessage } from "$lib/api/errors";
+import { nextPageOffset } from "$lib/api/pagination";
 import {
   deleteSourceDocument,
   fetchSourceDocuments,
@@ -115,7 +116,7 @@ export function useLibrary(
 
   const panel = usePanelContent(selectedCard);
 
-  const sourceFacets = $derived(facets.data?.facets.source_types ?? []);
+  const sourceFacets = $derived([...(facets.data?.facets.source_types ?? [])]);
   const sourceTotal = $derived(sourceFacets.reduce((sum, facet) => sum + facet.count, 0));
   const articleTotal = $derived(articles.data?.pages[0]?.pagination.total ?? 0);
   // Header count reflects the current search/tag scope; the facet chips keep
@@ -177,7 +178,7 @@ export function useLibrary(
       deleted = true;
       onSourceDeleted(sourceId);
     } catch (error) {
-      actionError = error instanceof Error ? error.message : "Failed to delete source";
+      actionError = errorMessage(error, "Failed to delete source");
       throw error;
     } finally {
       try {
@@ -199,7 +200,7 @@ export function useLibrary(
       await requestSourceDeletion(sourceId);
       actionNotice = "Deletion request submitted.";
     } catch (error) {
-      actionError = error instanceof Error ? error.message : "Failed to request source deletion";
+      actionError = errorMessage(error, "Failed to request source deletion");
       throw error;
     } finally {
       actionId = null;

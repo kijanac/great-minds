@@ -318,12 +318,12 @@ describe("auth HTTP integration", () => {
   it("requests codes, normalizes email, stores only hashes, invalidates older codes, and validates email input", async () => {
     const invalid = await api("POST", "/auth/request-code", { email: "not-email" });
     expect(invalid.status).toBe(422);
-    expect(invalid.body).toEqual({ detail: "Invalid request body" });
+    expect(invalid.body).toMatchObject({ detail: "Invalid request body" });
 
     const oversizedEmail = `${"a".repeat(309)}@example.com`;
     const oversized = await api("POST", "/auth/request-code", { email: oversizedEmail });
     expect(oversized.status).toBe(422);
-    expect(oversized.body).toEqual({ detail: "Invalid request body" });
+    expect(oversized.body).toMatchObject({ detail: "Invalid request body" });
 
     const first = await api("POST", "/auth/request-code", { email: "Person@Example.COM" });
     expect(first.status).toBe(204);
@@ -388,7 +388,7 @@ describe("auth HTTP integration", () => {
       code: wrongCode,
     });
     expect(wrong.status).toBe(401);
-    expect(wrong.body).toEqual({ detail: "Invalid or expired code" });
+    expect(wrong.body).toMatchObject({ detail: "Invalid or expired code" });
 
     const verify = await api("POST", "/auth/verify-code", {
       email: "LOGIN@example.com",
@@ -404,7 +404,7 @@ describe("auth HTTP integration", () => {
       code,
     });
     expect(reuse.status).toBe(401);
-    expect(reuse.body).toEqual({ detail: "Invalid or expired code" });
+    expect(reuse.body).toMatchObject({ detail: "Invalid or expired code" });
 
     const user = await userByEmail("login@example.com");
     const userVaults = await ownedVaults(user.id);
@@ -419,7 +419,7 @@ describe("auth HTTP integration", () => {
       code: expiredCode,
     });
     expect(expired.status).toBe(401);
-    expect(expired.body).toEqual({ detail: "Invalid or expired code" });
+    expect(expired.body).toMatchObject({ detail: "Invalid or expired code" });
   });
 
   it("rotates refresh tokens and rejects reused or expired refresh tokens", async () => {
@@ -445,7 +445,7 @@ describe("auth HTTP integration", () => {
       refresh_token: pair.refresh_token,
     });
     expect(reused.status).toBe(401);
-    expect(reused.body).toEqual({ detail: "Invalid or expired refresh token" });
+    expect(reused.body).toMatchObject({ detail: "Invalid or expired refresh token" });
 
     const rows = await runDb(
       Effect.gen(function* () {
@@ -461,7 +461,7 @@ describe("auth HTTP integration", () => {
       refresh_token: expiredPair.refresh_token,
     });
     expect(expired.status).toBe(401);
-    expect(expired.body).toEqual({ detail: "Invalid or expired refresh token" });
+    expect(expired.body).toMatchObject({ detail: "Invalid or expired refresh token" });
   });
 
   it("authenticates protected routes with JWT and bearer API keys and rejects missing or expired credentials", async () => {
@@ -469,7 +469,7 @@ describe("auth HTTP integration", () => {
 
     const missing = await api("GET", "/auth/api-keys");
     expect(missing.status).toBe(401);
-    expect(missing.body).toEqual({ detail: "Invalid credentials" });
+    expect(missing.body).toMatchObject({ detail: "Invalid credentials" });
 
     const create = await api("POST", "/auth/api-keys", { label: "automation" }, pair.access_token);
     expect(create.status).toBe(201);
@@ -492,12 +492,12 @@ describe("auth HTTP integration", () => {
 
     const withRevokedApiKey = await api("GET", "/auth/api-keys", undefined, rawKey);
     expect(withRevokedApiKey.status).toBe(401);
-    expect(withRevokedApiKey.body).toEqual({ detail: "Invalid credentials" });
+    expect(withRevokedApiKey.body).toMatchObject({ detail: "Invalid credentials" });
 
     currentState().clock.set(new Date(initialTime.getTime() + 31 * 60 * 1000));
     const expiredJwt = await api("GET", "/auth/api-keys", undefined, pair.access_token);
     expect(expiredJwt.status).toBe(401);
-    expect(expiredJwt.body).toEqual({ detail: "Invalid credentials" });
+    expect(expiredJwt.body).toMatchObject({ detail: "Invalid credentials" });
   });
 
   it("rejects malformed verify-code and refresh bodies", async () => {
@@ -505,11 +505,11 @@ describe("auth HTTP integration", () => {
       email: "malformed@example.com",
     });
     expect(malformedVerify.status).toBe(422);
-    expect(malformedVerify.body).toEqual({ detail: "Invalid request body" });
+    expect(malformedVerify.body).toMatchObject({ detail: "Invalid request body" });
 
     const malformedRefresh = await api("POST", "/auth/refresh", {});
     expect(malformedRefresh.status).toBe(422);
-    expect(malformedRefresh.body).toEqual({ detail: "Invalid request body" });
+    expect(malformedRefresh.body).toMatchObject({ detail: "Invalid request body" });
   });
 
   it("answers CORS preflight and echoes an allowed origin, rejecting others", async () => {
@@ -654,14 +654,14 @@ describe("auth HTTP integration", () => {
 
     const first = await api("POST", "/auth/passkeys/register", response, pair.access_token);
     expect(first.status).toBe(422);
-    expect(first.body).toEqual({
+    expect(first.body).toMatchObject({
       detail: "Passkey registration could not be verified",
     });
     expect(JSON.stringify(first.body)).not.toContain(challenge);
 
     const second = await api("POST", "/auth/passkeys/register", response, pair.access_token);
     expect(second.status).toBe(422);
-    expect(second.body).toEqual({
+    expect(second.body).toMatchObject({
       detail: "Passkey registration could not be verified",
     });
 
@@ -685,12 +685,12 @@ describe("auth HTTP integration", () => {
 
     const first = await api("POST", "/auth/passkeys/verify", response);
     expect(first.status).toBe(401);
-    expect(first.body).toEqual({ detail: "Passkey authentication failed" });
+    expect(first.body).toMatchObject({ detail: "Passkey authentication failed" });
     expect(JSON.stringify(first.body)).not.toContain(challenge);
 
     const second = await api("POST", "/auth/passkeys/verify", response);
     expect(second.status).toBe(401);
-    expect(second.body).toEqual({ detail: "Passkey authentication failed" });
+    expect(second.body).toMatchObject({ detail: "Passkey authentication failed" });
   });
 
   it("lists only safe passkey metadata and restricts deletion to the owner", async () => {
@@ -755,7 +755,7 @@ describe("auth HTTP integration", () => {
       ownerPair.access_token,
     );
     expect(deleteOther.status).toBe(404);
-    expect(deleteOther.body).toEqual({ detail: "Passkey not found" });
+    expect(deleteOther.body).toMatchObject({ detail: "Passkey not found" });
 
     const otherStillListed = await api("GET", "/auth/passkeys", undefined, otherPair.access_token);
     expect(asArray(otherStillListed.body)).toHaveLength(1);
@@ -814,7 +814,7 @@ describe("auth HTTP integration", () => {
       ownerPair.access_token,
     );
     expect(notOwned.status).toBe(404);
-    expect(notOwned.body).toEqual({ detail: "API key not found" });
+    expect(notOwned.body).toMatchObject({ detail: "API key not found" });
 
     const malformed = await api(
       "DELETE",
@@ -823,7 +823,7 @@ describe("auth HTTP integration", () => {
       ownerPair.access_token,
     );
     expect(malformed.status).toBe(422);
-    expect(malformed.body).toEqual({ detail: "Invalid path parameter" });
+    expect(malformed.body).toMatchObject({ detail: "Invalid path parameter" });
 
     const deleted = await api(
       "DELETE",
@@ -898,7 +898,7 @@ describe("auth HTTP integration", () => {
       ownerPair.access_token,
     );
     expect(invalidConfirm.status).toBe(422);
-    expect(invalidConfirm.body).toEqual({ detail: "Invalid request body" });
+    expect(invalidConfirm.body).toMatchObject({ detail: "Invalid request body" });
 
     const deleted = await api("DELETE", "/auth/me", { confirm: "DELETE" }, ownerPair.access_token);
     expect(deleted.status).toBe(204);

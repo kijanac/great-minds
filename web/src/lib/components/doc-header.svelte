@@ -6,6 +6,7 @@
   import Pencil from "@lucide/svelte/icons/pencil";
 
   import { articleMeta, type Article, type DocumentScope } from "$lib/api/doc";
+  import { errorMessage } from "$lib/api/errors";
   import { renameReference } from "$lib/api/references";
   import ReferencePromoteAction from "$lib/components/reference-promote-action.svelte";
   import ShareDialog from "$lib/components/share-dialog.svelte";
@@ -127,13 +128,12 @@
       return;
     }
     try {
-      const updated = await renameReference(document.file_path, next);
+      const updated = await renameReference(document.id, next);
       titleOverride = updated.title;
       renaming = false;
       renameError = null;
     } catch (error) {
-      renameError =
-        error instanceof Error ? error.message : "Failed to rename reference";
+      renameError = errorMessage(error);
     }
   }
 

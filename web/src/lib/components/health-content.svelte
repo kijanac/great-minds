@@ -4,14 +4,17 @@
   import { Alert, AlertTitle } from "$lib/components/ui/alert";
   import { Button } from "$lib/components/ui/button";
   import { Skeleton } from "$lib/components/ui/skeleton";
-  import type { UnmentionedLink, WikiArticleOverview } from "$lib/types";
+  import type {
+    UnmentionedLink,
+    WikiArticleOverview,
+  } from "@great-minds/domain";
 
   type HealthView = {
     status: "loading" | "ready" | "unavailable";
     checking: boolean;
     dirtyCount: number;
-    orphans: WikiArticleOverview[];
-    missing: UnmentionedLink[];
+    orphans: readonly WikiArticleOverview[];
+    missing: readonly UnmentionedLink[];
     compiling: boolean;
     compileError: Error | null;
     canManage: boolean;

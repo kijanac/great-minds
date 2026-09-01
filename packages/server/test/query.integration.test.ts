@@ -582,7 +582,7 @@ describe("query stream", () => {
     );
     expect(nonMember.response.status).toBe(403);
     expect(nonMember.response.headers.get("content-type") ?? "").not.toContain("text/event-stream");
-    expect(JSON.parse(nonMember.text)).toEqual({
+    expect(JSON.parse(nonMember.text)).toMatchObject({
       detail: "Only vault members can perform this action",
     });
 
@@ -594,7 +594,7 @@ describe("query stream", () => {
     });
     expect(unknown.response.status).toBe(404);
     expect(unknown.response.headers.get("content-type") ?? "").not.toContain("text/event-stream");
-    expect(JSON.parse(unknown.text)).toEqual({ detail: "Vault not found" });
+    expect(JSON.parse(unknown.text)).toMatchObject({ detail: "Vault not found" });
 
     await currentState().started.close();
     await rm(currentState().storageRoot, { recursive: true, force: true });
@@ -613,7 +613,7 @@ describe("query stream", () => {
     });
     expect(noKey.response.status).toBe(503);
     expect(noKey.response.headers.get("content-type") ?? "").not.toContain("text/event-stream");
-    expect(JSON.parse(noKey.text)).toEqual({
+    expect(JSON.parse(noKey.text)).toMatchObject({
       detail: "LLM service not configured (OPENROUTER_API_KEY missing)",
     });
     expect(noKeyLanguage.streamCalls).toHaveLength(0);
@@ -747,7 +747,7 @@ describe("query stream", () => {
       question: "This is a different request",
     });
     expect(reusedForDifferentRequest.response.status).toBe(409);
-    expect(JSON.parse(reusedForDifferentRequest.text)).toEqual({
+    expect(JSON.parse(reusedForDifferentRequest.text)).toMatchObject({
       detail: "Reply id already belongs to another request",
     });
 
@@ -1102,7 +1102,7 @@ describe("query stream", () => {
 
     const retryCompleted = await retryReply(second.reply_id);
     expect(retryCompleted.response.status).toBe(400);
-    expect(JSON.parse(retryCompleted.text)).toEqual({
+    expect(JSON.parse(retryCompleted.text)).toMatchObject({
       detail: "Only failed replies can be retried",
     });
   });
@@ -1780,7 +1780,7 @@ describe("query stream", () => {
 
     const bad = await api("/vaults/draft-hint", { description: "   " });
     expect(bad.response.status).toBe(400);
-    expect(JSON.parse(bad.text)).toEqual({ detail: "description required" });
+    expect(JSON.parse(bad.text)).toMatchObject({ detail: "description required" });
   });
 
   it("returns draft-hint 503 before blank-description validation when the LLM key is missing", async () => {
@@ -1793,7 +1793,7 @@ describe("query stream", () => {
     const response = await api("/vaults/draft-hint", { description: "   " });
 
     expect(response.response.status).toBe(503);
-    expect(JSON.parse(response.text)).toEqual({
+    expect(JSON.parse(response.text)).toMatchObject({
       detail: "LLM service not configured (OPENROUTER_API_KEY missing)",
     });
     expect(language.completeCalls).toHaveLength(0);

@@ -87,10 +87,21 @@ export type AuthenticatorTransport = typeof AuthenticatorTransport.Type;
 const PublicKeyCredentialDescriptor = Schema.Struct({
   id: Base64Url,
   type: Schema.Literal("public-key"),
-  transports: Schema.optionalKey(Schema.Array(AuthenticatorTransport)),
+  transports: Schema.optionalKey(Schema.mutable(Schema.Array(AuthenticatorTransport))),
 });
 
-const ClientExtensionResults = Schema.Record(Schema.String, Schema.Unknown);
+const ClientExtensionResults = Schema.Struct({
+  appid: Schema.optionalKey(Schema.Boolean),
+  credProps: Schema.optionalKey(Schema.Struct({ rk: Schema.optionalKey(Schema.Boolean) })),
+  hmacCreateSecret: Schema.optionalKey(Schema.Boolean),
+});
+
+const ClientExtensionInputs = Schema.Struct({
+  appid: Schema.optionalKey(Schema.String),
+  credProps: Schema.optionalKey(Schema.Boolean),
+  hmacCreateSecret: Schema.optionalKey(Schema.Boolean),
+  minPinLength: Schema.optionalKey(Schema.Boolean),
+});
 
 const AuthenticatorAttachment = Schema.Literals(["cross-platform", "platform"] as const);
 
@@ -142,14 +153,16 @@ export const PasskeyRegistrationOptions = Schema.Struct({
     displayName: Schema.String,
   }),
   challenge: Base64Url,
-  pubKeyCredParams: Schema.Array(
-    Schema.Struct({
-      alg: Schema.Number,
-      type: Schema.Literal("public-key"),
-    }),
+  pubKeyCredParams: Schema.mutable(
+    Schema.Array(
+      Schema.Struct({
+        alg: Schema.Number,
+        type: Schema.Literal("public-key"),
+      }),
+    ),
   ),
   timeout: Schema.optionalKey(Schema.Number),
-  excludeCredentials: Schema.optionalKey(Schema.Array(PublicKeyCredentialDescriptor)),
+  excludeCredentials: Schema.optionalKey(Schema.mutable(Schema.Array(PublicKeyCredentialDescriptor))),
   authenticatorSelection: Schema.optionalKey(
     Schema.Struct({
       authenticatorAttachment: Schema.optionalKey(AuthenticatorAttachment),
@@ -163,11 +176,11 @@ export const PasskeyRegistrationOptions = Schema.Struct({
     }),
   ),
   hints: Schema.optionalKey(
-    Schema.Array(Schema.Literals(["hybrid", "security-key", "client-device"] as const)),
+    Schema.mutable(Schema.Array(Schema.Literals(["hybrid", "security-key", "client-device"] as const))),
   ),
   attestation: Schema.optionalKey(Schema.Literals(["direct", "enterprise", "none"] as const)),
   attestationFormats: Schema.optionalKey(
-    Schema.Array(
+    Schema.mutable(Schema.Array(
       Schema.Literals([
         "fido-u2f",
         "packed",
@@ -177,9 +190,10 @@ export const PasskeyRegistrationOptions = Schema.Struct({
         "apple",
         "none",
       ] as const),
+      ),
     ),
   ),
-  extensions: Schema.optionalKey(Schema.Record(Schema.String, Schema.Unknown)),
+  extensions: Schema.optionalKey(ClientExtensionInputs),
 });
 export type PasskeyRegistrationOptions = typeof PasskeyRegistrationOptions.Type;
 
@@ -187,14 +201,14 @@ export const PasskeyAuthenticationOptions = Schema.Struct({
   challenge: Base64Url,
   timeout: Schema.optionalKey(Schema.Number),
   rpId: Schema.optionalKey(Schema.String),
-  allowCredentials: Schema.optionalKey(Schema.Array(PublicKeyCredentialDescriptor)),
+  allowCredentials: Schema.optionalKey(Schema.mutable(Schema.Array(PublicKeyCredentialDescriptor))),
   userVerification: Schema.optionalKey(
     Schema.Literals(["discouraged", "preferred", "required"] as const),
   ),
   hints: Schema.optionalKey(
-    Schema.Array(Schema.Literals(["hybrid", "security-key", "client-device"] as const)),
+    Schema.mutable(Schema.Array(Schema.Literals(["hybrid", "security-key", "client-device"] as const))),
   ),
-  extensions: Schema.optionalKey(Schema.Record(Schema.String, Schema.Unknown)),
+  extensions: Schema.optionalKey(ClientExtensionInputs),
 });
 export type PasskeyAuthenticationOptions = typeof PasskeyAuthenticationOptions.Type;
 
@@ -900,10 +914,10 @@ export const ReferenceDocumentResponse = Schema.Struct({
 });
 export type ReferenceDocumentResponse = typeof ReferenceDocumentResponse.Type;
 
-export const ReferencePathParams = Schema.Struct({
-  "*": Schema.String,
+export const ReferenceIdParams = Schema.Struct({
+  reference_id: Uuid,
 });
-export type ReferencePathParams = typeof ReferencePathParams.Type;
+export type ReferenceIdParams = typeof ReferenceIdParams.Type;
 
 export const ShareSubjectKind = Schema.Literals(["session", "reference"] as const);
 export type ShareSubjectKind = typeof ShareSubjectKind.Type;
@@ -1002,11 +1016,10 @@ export const DocResponse = Schema.Struct({
 });
 export type DocResponse = typeof DocResponse.Type;
 
-export const DocPathParams = Schema.Struct({
-  vault_id: Uuid,
-  "*": Schema.String,
+export const DocumentPathQuery = Schema.Struct({
+  path: Schema.String,
 });
-export type DocPathParams = typeof DocPathParams.Type;
+export type DocumentPathQuery = typeof DocumentPathQuery.Type;
 
 export const SourceIdParams = Schema.Struct({
   vault_id: Uuid,
@@ -1253,17 +1266,23 @@ export type DomainError =
   | Conflict
   | ServiceUnavailable;
 
-const ErrorDetail = Schema.Struct({
-  detail: Schema.String,
-});
+export const DomainErrorSchema = Schema.Union([
+  Unauthorized,
+  Forbidden,
+  NotFound,
+  Validation,
+  BadRequest,
+  Conflict,
+  ServiceUnavailable,
+]);
 
-const BadRequestResponse = ErrorDetail.pipe(HttpApiSchema.status(400));
-const UnauthorizedResponse = ErrorDetail.pipe(HttpApiSchema.status(401));
-const ConflictResponse = ErrorDetail.pipe(HttpApiSchema.status(409));
-const ForbiddenResponse = ErrorDetail.pipe(HttpApiSchema.status(403));
-const NotFoundResponse = ErrorDetail.pipe(HttpApiSchema.status(404));
-const ValidationResponse = ErrorDetail.pipe(HttpApiSchema.status(422));
-const ServiceUnavailableResponse = ErrorDetail.pipe(HttpApiSchema.status(503));
+const BadRequestResponse = BadRequest.pipe(HttpApiSchema.status(400));
+const UnauthorizedResponse = Unauthorized.pipe(HttpApiSchema.status(401));
+const ConflictResponse = Conflict.pipe(HttpApiSchema.status(409));
+const ForbiddenResponse = Forbidden.pipe(HttpApiSchema.status(403));
+const NotFoundResponse = NotFound.pipe(HttpApiSchema.status(404));
+const ValidationResponse = Validation.pipe(HttpApiSchema.status(422));
+const ServiceUnavailableResponse = ServiceUnavailable.pipe(HttpApiSchema.status(503));
 
 const ValidationErrors = [ValidationResponse] as const;
 const UnauthorizedValidationErrors = [UnauthorizedResponse, ValidationResponse] as const;
@@ -1317,6 +1336,7 @@ export class AuthMiddleware extends HttpApiMiddleware.Service<
   security: {
     bearer: HttpApiSecurity.bearer,
   },
+  requiredForClient: true,
 }) {}
 
 const CreatedApiKeyWithSecret = ApiKeyWithSecret.pipe(HttpApiSchema.status("Created"));
@@ -1429,22 +1449,22 @@ export const RefsApiGroup = HttpApiGroup.make("refs")
     }).middleware(AuthMiddleware),
   )
   .add(
-    HttpApiEndpoint.get("readReference", "/me/refs/doc/*", {
-      params: ReferencePathParams,
+    HttpApiEndpoint.get("resolveReference", "/me/refs/doc", {
+      query: DocumentPathQuery,
       success: ReferenceDocumentResponse,
       error: ReferenceDocumentErrors,
     }).middleware(AuthMiddleware),
   )
   .add(
-    HttpApiEndpoint.delete("deleteReference", "/me/refs/*", {
-      params: ReferencePathParams,
+    HttpApiEndpoint.delete("deleteReference", "/me/refs/:reference_id", {
+      params: ReferenceIdParams,
       success: HttpApiSchema.NoContent,
       error: ReferenceDocumentErrors,
     }).middleware(AuthMiddleware),
   )
   .add(
-    HttpApiEndpoint.patch("updateReference", "/me/refs/*", {
-      params: ReferencePathParams,
+    HttpApiEndpoint.patch("updateReference", "/me/refs/:reference_id", {
+      params: ReferenceIdParams,
       payload: ReferenceUpdate,
       success: ReferenceDetail,
       error: ReferenceDocumentErrors,
@@ -1801,8 +1821,9 @@ export const CostsApiGroup = HttpApiGroup.make("costs")
   );
 
 export const DocumentsApiGroup = HttpApiGroup.make("documents").add(
-  HttpApiEndpoint.get("readDocument", "/vaults/:vault_id/doc/*", {
-    params: DocPathParams,
+  HttpApiEndpoint.get("resolveDocument", "/vaults/:vault_id/doc", {
+    params: { vault_id: Uuid },
+    query: DocumentPathQuery,
     success: DocResponse,
     error: DocumentErrors,
   }).middleware(AuthMiddleware),

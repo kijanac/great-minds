@@ -8,7 +8,7 @@ export type HealthReportStatus = "loading" | "ready" | "unavailable";
 export function useHealthReport() {
   const query = createQuery(() => ({
     queryKey: ["vault", activeVault.id, "health-count"],
-    queryFn: fetchLintResults,
+    queryFn: () => fetchLintResults(activeVault.id!),
     enabled: !!activeVault.id,
   }));
 

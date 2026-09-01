@@ -14,7 +14,7 @@
     onCardClick,
     activeCard,
   }: {
-    blocks: ThinkingBlock[];
+    blocks: readonly ThinkingBlock[];
     streaming: boolean;
     onCardClick: (source: SourceRef) => void;
     activeCard: string | null;

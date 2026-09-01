@@ -486,7 +486,7 @@ describe("share links", () => {
 
         const renamed = await api(
           "PATCH",
-          "/me/refs/refs/article.md",
+          `/me/refs/${referenceId}`,
           aliceToken,
           { title: "Renamed Share Title" },
         );
@@ -502,7 +502,7 @@ describe("share links", () => {
 
         const cleared = await api(
           "PATCH",
-          "/me/refs/refs/article.md",
+          `/me/refs/${referenceId}`,
           aliceToken,
           { title: "  " },
         );
@@ -700,8 +700,8 @@ describe("share links", () => {
     expect(unknown.status).toBe(404);
     expect(revokedResolved.status).toBe(404);
     expect(expiredResolved.status).toBe(404);
-    expect(revokedResolved.body).toEqual({ detail: "Share not found" });
-    expect(expiredResolved.body).toEqual({ detail: "Share not found" });
+    expect(revokedResolved.body).toMatchObject({ detail: "Share not found" });
+    expect(expiredResolved.body).toMatchObject({ detail: "Share not found" });
     expect(unknown.body).toEqual(revokedResolved.body);
     expect(unknown.body).toEqual(expiredResolved.body);
   });
@@ -795,7 +795,7 @@ describe("share links", () => {
       subject_id: sessionId,
     });
     expect(rejected.status).toBe(403);
-    expect(rejected.body).toEqual({
+    expect(rejected.body).toMatchObject({
       detail: "Share creation requires session authentication",
     });
   });
@@ -811,11 +811,11 @@ describe("share links", () => {
 
     const nonOwner = await api("DELETE", `/shares/${shareId}`, bobToken);
     expect(nonOwner.status).toBe(404);
-    expect(nonOwner.body).toEqual({ detail: "Share not found" });
+    expect(nonOwner.body).toMatchObject({ detail: "Share not found" });
 
     const missing = await api("DELETE", "/shares/00000000-0000-4000-8000-000000019999", aliceToken);
     expect(missing.status).toBe(404);
-    expect(missing.body).toEqual({ detail: "Share not found" });
+    expect(missing.body).toMatchObject({ detail: "Share not found" });
 
     const owner = await api("DELETE", `/shares/${shareId}`, aliceToken);
     expect(owner.status).toBe(204);

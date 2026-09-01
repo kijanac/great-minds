@@ -12,10 +12,11 @@
 
   async function submit(data: VaultConfigFormSubmit) {
     if (!data.name) return;
-    await createVault.mutateAsync({
-      name: data.name,
-      thematic_hint: data.thematic_hint || undefined,
-    });
+    await createVault.mutateAsync(
+      data.thematic_hint
+        ? { name: data.name, thematic_hint: data.thematic_hint }
+        : { name: data.name },
+    );
     await goto("/");
   }
 </script>

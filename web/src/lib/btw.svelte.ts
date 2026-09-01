@@ -72,8 +72,10 @@ export class DocThreads {
             .map((event) => ({
               id: event.exId,
               query: event.query,
-              thinking: event.thinking,
-              answer: event.answer,
+              thinking: (event.thinking ?? []).map((block) => ({
+                sources: block.sources ?? [],
+              })),
+              answer: event.answer ?? "",
               btws: [],
               replyId: event.reply_id,
               streaming: false,

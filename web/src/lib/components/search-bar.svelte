@@ -22,7 +22,7 @@
     query: string;
     phase: Phase;
     onSubmit: () => void;
-    recentSessions?: SessionSummary[];
+    recentSessions?: readonly SessionSummary[];
     sessionsLoading?: boolean;
     submissionFailed?: boolean;
     onQueryChange?: () => void;

@@ -3,6 +3,7 @@
     UserSuggestionIntent,
     UserSuggestionResult,
   } from "$lib/api/ingest";
+  import { errorMessage } from "$lib/api/errors";
   import { CHIP_ACTIVE, CHIP_BASE, CHIP_INACTIVE } from "$lib/chip";
   import { Button } from "$lib/components/ui/button";
   import { Label } from "$lib/components/ui/label";
@@ -76,12 +77,10 @@
     try {
       submittedMode = await onSubmit({ body: body.trim(), intent });
     } catch (cause) {
-      error =
-        cause instanceof TypeError
-          ? "Suggestion could not be sent. Check your connection and try again."
-          : cause instanceof Error && cause.message
-            ? cause.message
-            : "Suggestion could not be sent. Your draft is still here; try again.";
+      error = errorMessage(
+        cause,
+        "Suggestion could not be sent. Your draft is still here; try again.",
+      );
     } finally {
       submitting = false;
     }

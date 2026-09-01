@@ -10,6 +10,7 @@ import {
   GreatMindsApi,
   ServiceUnavailable,
   Unauthorized,
+  Validation,
   type DomainError,
   type Uuid,
 } from "@great-minds/domain";
@@ -108,41 +109,18 @@ const validationDetail = (error: HttpApiSchemaError) => {
       return "Invalid request headers";
     case "Query":
       return "Invalid query parameters";
+    case "ResponseHeaders":
+      return "Invalid response headers";
   }
 };
 
 const schemaErrorResponse = (error: HttpApiSchemaError) =>
-  jsonResponse(422, { detail: validationDetail(error) });
+  domainErrorJsonResponse(new Validation({ detail: validationDetail(error) }));
 
 const domainErrorJsonResponse = (error: DomainError) => {
   const response = domainErrorResponse(error);
   return jsonResponse(response.status, response.body);
 };
-
-const withDomainErrors = <A, E extends DomainError, R>(effect: Effect.Effect<A, E, R>) =>
-  effect.pipe(
-    Effect.catchTags({
-      Unauthorized: domainErrorJsonResponse,
-      Forbidden: domainErrorJsonResponse,
-      NotFound: domainErrorJsonResponse,
-      Validation: domainErrorJsonResponse,
-      BadRequest: domainErrorJsonResponse,
-      Conflict: domainErrorJsonResponse,
-      ServiceUnavailable: domainErrorJsonResponse,
-    }),
-  );
-
-const withDomainEmpty = <A, E extends DomainError, R>(
-  effect: Effect.Effect<A, E, R>,
-  status = 204,
-) =>
-  withDomainErrors(effect).pipe(
-    Effect.map((value) =>
-      HttpServerResponse.isHttpServerResponse(value)
-        ? value
-        : HttpServerResponse.empty({ status }),
-    ),
-  );
 
 const schemaErrorFromCause = (cause: Cause.Cause<unknown>) => {
   for (const reason of cause.reasons) {
@@ -219,12 +197,8 @@ const AuthMiddlewareLive = Layer.effect(
   Effect.map(AuthService, (auth) => ({
     bearer: (httpEffect, { credential }) =>
       Effect.gen(function* () {
-        const token = Redacted.value(credential);
-        const current = yield* Effect.result(auth.authenticateBearer(token));
-        if (current._tag === "Failure") {
-          return yield* domainErrorJsonResponse(current.failure);
-        }
-        return yield* Effect.provideService(httpEffect, CurrentAuth, current.success);
+        const current = yield* auth.authenticateBearer(Redacted.value(credential));
+        return yield* Effect.provideService(httpEffect, CurrentAuth, current);
       }),
   })),
 );
@@ -236,608 +210,478 @@ const MetaHandlersLive = HttpApiBuilder.group(MountedGreatMindsApi, "meta", (han
 const AuthHandlersLive = HttpApiBuilder.group(MountedGreatMindsApi, "auth", (handlers) =>
   handlers
     .handle("requestCode", ({ payload }) =>
-      withDomainErrors(
-        Effect.gen(function* () {
-          const auth = yield* AuthService;
-          yield* auth.requestCode(payload.email);
-        }),
-      ),
+      Effect.gen(function* () {
+        const auth = yield* AuthService;
+        yield* auth.requestCode(payload.email);
+      }),
     )
     .handle("verifyCode", ({ payload }) =>
-      withDomainErrors(
-        Effect.gen(function* () {
-          const auth = yield* AuthService;
-          return yield* auth.verifyCode(payload.email, payload.code);
-        }),
-      ),
+      Effect.gen(function* () {
+        const auth = yield* AuthService;
+        return yield* auth.verifyCode(payload.email, payload.code);
+      }),
     )
     .handle("refresh", ({ payload }) =>
-      withDomainErrors(
-        Effect.gen(function* () {
-          const auth = yield* AuthService;
-          return yield* auth.refresh(payload.refresh_token);
-        }),
-      ),
+      Effect.gen(function* () {
+        const auth = yield* AuthService;
+        return yield* auth.refresh(payload.refresh_token);
+      }),
     )
     .handle("passkeyRegisterOptions", () =>
-      withDomainErrors(
-        Effect.gen(function* () {
-          const passkeys = yield* PasskeysService;
-          const current = yield* CurrentAuth;
-          return yield* passkeys.registrationOptions(current.user_id, current.email);
-        }),
-      ),
+      Effect.gen(function* () {
+        const passkeys = yield* PasskeysService;
+        const current = yield* CurrentAuth;
+        return yield* passkeys.registrationOptions(current.user_id, current.email);
+      }),
     )
     .handle("registerPasskey", ({ payload }) =>
-      withDomainErrors(
-        Effect.gen(function* () {
-          const passkeys = yield* PasskeysService;
-          const current = yield* CurrentAuth;
-          return yield* passkeys.register(current.user_id, payload);
-        }),
-      ),
+      Effect.gen(function* () {
+        const passkeys = yield* PasskeysService;
+        const current = yield* CurrentAuth;
+        return yield* passkeys.register(current.user_id, payload);
+      }),
     )
     .handle("passkeyAuthenticationOptions", () =>
-      withDomainErrors(
-        Effect.gen(function* () {
-          const passkeys = yield* PasskeysService;
-          return yield* passkeys.authenticationOptions();
-        }),
-      ),
+      Effect.gen(function* () {
+        const passkeys = yield* PasskeysService;
+        return yield* passkeys.authenticationOptions();
+      }),
     )
     .handle("verifyPasskey", ({ payload }) =>
-      withDomainErrors(
-        Effect.gen(function* () {
-          const passkeys = yield* PasskeysService;
-          return yield* passkeys.verify(payload);
-        }),
-      ),
+      Effect.gen(function* () {
+        const passkeys = yield* PasskeysService;
+        return yield* passkeys.verify(payload);
+      }),
     )
     .handle("listPasskeys", () =>
-      withDomainErrors(
-        Effect.gen(function* () {
-          const passkeys = yield* PasskeysService;
-          const current = yield* CurrentAuth;
-          return yield* passkeys.list(current.user_id);
-        }),
-      ),
+      Effect.gen(function* () {
+        const passkeys = yield* PasskeysService;
+        const current = yield* CurrentAuth;
+        return yield* passkeys.list(current.user_id);
+      }),
     )
     .handle("deletePasskey", ({ params }) =>
-      withDomainErrors(
-        Effect.gen(function* () {
-          const passkeys = yield* PasskeysService;
-          const current = yield* CurrentAuth;
-          yield* passkeys.delete(current.user_id, params.id);
-        }),
-      ),
+      Effect.gen(function* () {
+        const passkeys = yield* PasskeysService;
+        const current = yield* CurrentAuth;
+        yield* passkeys.delete(current.user_id, params.id);
+      }),
     )
     .handle("createApiKey", ({ payload }) =>
-      withDomainErrors(
-        Effect.gen(function* () {
-          const auth = yield* AuthService;
-          const current = yield* CurrentAuth;
-          return yield* auth.createApiKey(current.user_id, payload.label);
-        }),
-      ),
+      Effect.gen(function* () {
+        const auth = yield* AuthService;
+        const current = yield* CurrentAuth;
+        return yield* auth.createApiKey(current.user_id, payload.label);
+      }),
     )
     .handle("listApiKeys", () =>
-      withDomainErrors(
-        Effect.gen(function* () {
-          const auth = yield* AuthService;
-          const current = yield* CurrentAuth;
-          return yield* auth.listApiKeys(current.user_id);
-        }),
-      ),
+      Effect.gen(function* () {
+        const auth = yield* AuthService;
+        const current = yield* CurrentAuth;
+        return yield* auth.listApiKeys(current.user_id);
+      }),
     )
     .handle("deleteApiKey", ({ params }) =>
-      withDomainErrors(
-        Effect.gen(function* () {
-          const auth = yield* AuthService;
-          const current = yield* CurrentAuth;
-          yield* auth.revokeApiKey(current.user_id, params.key_id);
-        }),
-      ),
+      Effect.gen(function* () {
+        const auth = yield* AuthService;
+        const current = yield* CurrentAuth;
+        yield* auth.revokeApiKey(current.user_id, params.key_id);
+      }),
     )
     .handle("deleteMe", () =>
-      withDomainErrors(
-        Effect.gen(function* () {
-          const auth = yield* AuthService;
-          const current = yield* CurrentAuth;
-          yield* auth.deleteSelf(current.user_id);
-        }),
-      ),
+      Effect.gen(function* () {
+        const auth = yield* AuthService;
+        const current = yield* CurrentAuth;
+        yield* auth.deleteSelf(current.user_id);
+      }),
     ),
 );
 
 const RefsHandlersLive = HttpApiBuilder.group(MountedGreatMindsApi, "refs", (handlers) =>
   handlers
     .handle("createReference", ({ payload }) =>
-      withDomainErrors(
-        Effect.gen(function* () {
-          const documents = yield* UserDocumentsService;
-          const current = yield* CurrentAuth;
-          const canonicalUrl = yield* parseCanonicalSourceUrl(payload.url);
-          const result = yield* documents.create(current.user_id, canonicalUrl);
-          return result.created
-            ? result.reference
-            : yield* jsonResponse(200, result.reference);
-        }),
-      ),
+      Effect.gen(function* () {
+        const documents = yield* UserDocumentsService;
+        const current = yield* CurrentAuth;
+        const canonicalUrl = yield* parseCanonicalSourceUrl(payload.url);
+        const result = yield* documents.create(current.user_id, canonicalUrl);
+        return result.created ? result.reference : yield* jsonResponse(200, result.reference);
+      }),
     )
     .handle("listReferences", ({ query }) =>
-      withDomainErrors(
-        Effect.gen(function* () {
-          const documents = yield* UserDocumentsService;
-          const current = yield* CurrentAuth;
-          return yield* documents.list(current.user_id, query);
-        }),
-      ),
+      Effect.gen(function* () {
+        const documents = yield* UserDocumentsService;
+        const current = yield* CurrentAuth;
+        return yield* documents.list(current.user_id, query);
+      }),
     )
-    .handle("readReference", ({ params }) =>
-      withDomainErrors(
-        Effect.gen(function* () {
-          const documents = yield* UserDocumentsService;
-          const current = yield* CurrentAuth;
-          return yield* documents.read(current.user_id, params["*"]);
-        }),
-      ),
+    .handle("resolveReference", ({ query }) =>
+      Effect.gen(function* () {
+        const documents = yield* UserDocumentsService;
+        const current = yield* CurrentAuth;
+        return yield* documents.read(current.user_id, query.path);
+      }),
     )
     .handle("deleteReference", ({ params }) =>
-      withDomainErrors(
-        Effect.gen(function* () {
-          const documents = yield* UserDocumentsService;
-          const current = yield* CurrentAuth;
-          yield* documents.delete(current.user_id, params["*"]);
-        }),
-      ),
+      Effect.gen(function* () {
+        const documents = yield* UserDocumentsService;
+        const current = yield* CurrentAuth;
+        yield* documents.delete(current.user_id, params.reference_id);
+      }),
     )
     .handle("updateReference", ({ params, payload }) =>
-      withDomainErrors(
-        Effect.gen(function* () {
-          const documents = yield* UserDocumentsService;
-          const current = yield* CurrentAuth;
-          return yield* documents.update(current.user_id, params["*"], payload);
-        }),
-      ),
+      Effect.gen(function* () {
+        const documents = yield* UserDocumentsService;
+        const current = yield* CurrentAuth;
+        return yield* documents.update(current.user_id, params.reference_id, payload);
+      }),
     ),
 );
 
 const VaultHandlersLive = HttpApiBuilder.group(MountedGreatMindsApi, "vaults", (handlers) =>
   handlers
     .handle("listVaults", ({ query }) =>
-      withDomainErrors(
-        Effect.gen(function* () {
-          const vaultsService = yield* VaultsService;
-          const current = yield* CurrentAuth;
-          return yield* vaultsService.listVaults(current.user_id, query);
-        }),
-      ),
+      Effect.gen(function* () {
+        const vaultsService = yield* VaultsService;
+        const current = yield* CurrentAuth;
+        return yield* vaultsService.listVaults(current.user_id, query);
+      }),
     )
     .handle("createVault", ({ payload }) =>
-      withDomainErrors(
-        Effect.gen(function* () {
-          const vaultsService = yield* VaultsService;
-          const current = yield* CurrentAuth;
-          return yield* vaultsService.createVault(current.user_id, payload);
-        }),
-      ),
+      Effect.gen(function* () {
+        const vaultsService = yield* VaultsService;
+        const current = yield* CurrentAuth;
+        return yield* vaultsService.createVault(current.user_id, payload);
+      }),
     )
     .handle("draftVaultHint", ({ payload }) =>
-      withDomainErrors(
-        Effect.gen(function* () {
-          const query = yield* QueryService;
-          const current = yield* CurrentAuth;
-          return yield* query.draftHint(current.user_id, payload.description);
-        }),
-      ),
+      Effect.gen(function* () {
+        const query = yield* QueryService;
+        const current = yield* CurrentAuth;
+        return yield* query.draftHint(current.user_id, payload.description);
+      }),
     )
     .handle("getVault", ({ params }) =>
-      withDomainErrors(
-        Effect.gen(function* () {
-          const vaultsService = yield* VaultsService;
-          const current = yield* CurrentAuth;
-          return yield* vaultsService.getVaultDetail(current.user_id, params.vault_id);
-        }),
-      ),
+      Effect.gen(function* () {
+        const vaultsService = yield* VaultsService;
+        const current = yield* CurrentAuth;
+        return yield* vaultsService.getVaultDetail(current.user_id, params.vault_id);
+      }),
     )
     .handle("getVaultConfig", ({ params }) =>
-      withDomainErrors(
-        Effect.gen(function* () {
-          const vaultsService = yield* VaultsService;
-          const current = yield* CurrentAuth;
-          return yield* vaultsService.getVaultConfig(current.user_id, params.vault_id);
-        }),
-      ),
+      Effect.gen(function* () {
+        const vaultsService = yield* VaultsService;
+        const current = yield* CurrentAuth;
+        return yield* vaultsService.getVaultConfig(current.user_id, params.vault_id);
+      }),
     )
     .handle("updateVaultConfig", ({ params, payload }) =>
-      withDomainErrors(
-        Effect.gen(function* () {
-          const vaultsService = yield* VaultsService;
-          const current = yield* CurrentAuth;
-          return yield* vaultsService.updateVaultConfig(current.user_id, params.vault_id, payload);
-        }),
-      ),
+      Effect.gen(function* () {
+        const vaultsService = yield* VaultsService;
+        const current = yield* CurrentAuth;
+        return yield* vaultsService.updateVaultConfig(current.user_id, params.vault_id, payload);
+      }),
     )
     .handle("listVaultMembers", ({ params, query }) =>
-      withDomainErrors(
-        Effect.gen(function* () {
-          const vaultsService = yield* VaultsService;
-          const current = yield* CurrentAuth;
-          return yield* vaultsService.listMembers(current.user_id, params.vault_id, query);
-        }),
-      ),
+      Effect.gen(function* () {
+        const vaultsService = yield* VaultsService;
+        const current = yield* CurrentAuth;
+        return yield* vaultsService.listMembers(current.user_id, params.vault_id, query);
+      }),
     )
     .handle("inviteVaultMember", ({ params, payload }) =>
-      withDomainErrors(
-        Effect.gen(function* () {
-          const vaultsService = yield* VaultsService;
-          const current = yield* CurrentAuth;
-          return yield* vaultsService.inviteMember(current.user_id, params.vault_id, payload);
-        }),
-      ),
+      Effect.gen(function* () {
+        const vaultsService = yield* VaultsService;
+        const current = yield* CurrentAuth;
+        return yield* vaultsService.inviteMember(current.user_id, params.vault_id, payload);
+      }),
     )
     .handle("updateVaultMember", ({ params, payload }) =>
-      withDomainErrors(
-        Effect.gen(function* () {
-          const vaultsService = yield* VaultsService;
-          const current = yield* CurrentAuth;
-          return yield* vaultsService.updateMemberRole(
-            current.user_id,
-            params.vault_id,
-            params.member_user_id,
-            payload.role,
-          );
-        }),
-      ),
+      Effect.gen(function* () {
+        const vaultsService = yield* VaultsService;
+        const current = yield* CurrentAuth;
+        return yield* vaultsService.updateMemberRole(
+          current.user_id,
+          params.vault_id,
+          params.member_user_id,
+          payload.role,
+        );
+      }),
     )
     .handle("removeVaultMember", ({ params }) =>
-      withDomainErrors(
-        Effect.gen(function* () {
-          const vaultsService = yield* VaultsService;
-          const current = yield* CurrentAuth;
-          yield* vaultsService.removeMember(
-            current.user_id,
-            params.vault_id,
-            params.member_user_id,
-          );
-        }),
-      ),
+      Effect.gen(function* () {
+        const vaultsService = yield* VaultsService;
+        const current = yield* CurrentAuth;
+        yield* vaultsService.removeMember(current.user_id, params.vault_id, params.member_user_id);
+      }),
     )
     .handle("transferVaultOwnership", ({ params, payload }) =>
-      withDomainErrors(
-        Effect.gen(function* () {
-          const vaultsService = yield* VaultsService;
-          const current = yield* CurrentAuth;
-          yield* vaultsService.transferOwnership(current.user_id, params.vault_id, payload);
-        }),
-      ),
+      Effect.gen(function* () {
+        const vaultsService = yield* VaultsService;
+        const current = yield* CurrentAuth;
+        yield* vaultsService.transferOwnership(current.user_id, params.vault_id, payload);
+      }),
     )
     .handle("deleteVault", ({ params }) =>
-      withDomainErrors(
-        Effect.gen(function* () {
-          const vaultsService = yield* VaultsService;
-          const current = yield* CurrentAuth;
-          yield* vaultsService.deleteVault(current.user_id, params.vault_id);
-        }),
-      ),
+      Effect.gen(function* () {
+        const vaultsService = yield* VaultsService;
+        const current = yield* CurrentAuth;
+        yield* vaultsService.deleteVault(current.user_id, params.vault_id);
+      }),
     ),
 );
 
 const WikiHandlersLive = HttpApiBuilder.group(MountedGreatMindsApi, "wiki", (handlers) =>
   handlers
     .handle("listWikiArticles", ({ params, query }) =>
-      withDomainErrors(
-        Effect.gen(function* () {
-          const wiki = yield* WikiService;
-          const current = yield* CurrentAuth;
-          return yield* wiki.listArticles(current.user_id, params.vault_id, query);
-        }),
-      ),
+      Effect.gen(function* () {
+        const wiki = yield* WikiService;
+        const current = yield* CurrentAuth;
+        return yield* wiki.listArticles(current.user_id, params.vault_id, query);
+      }),
     )
     .handle("listRecentWikiArticles", ({ params, query }) =>
-      withDomainErrors(
-        Effect.gen(function* () {
-          const wiki = yield* WikiService;
-          const current = yield* CurrentAuth;
-          return yield* wiki.listRecent(current.user_id, params.vault_id, query);
-        }),
-      ),
+      Effect.gen(function* () {
+        const wiki = yield* WikiService;
+        const current = yield* CurrentAuth;
+        return yield* wiki.listRecent(current.user_id, params.vault_id, query);
+      }),
     ),
 );
 
 const SourcesHandlersLive = HttpApiBuilder.group(MountedGreatMindsApi, "sources", (handlers) =>
   handlers
     .handle("listSources", ({ params, query }) =>
-      withDomainErrors(
-        Effect.gen(function* () {
-          const sources = yield* SourcesService;
-          const current = yield* CurrentAuth;
-          return yield* sources.listSources(current.user_id, params.vault_id, query);
-        }),
-      ),
+      Effect.gen(function* () {
+        const sources = yield* SourcesService;
+        const current = yield* CurrentAuth;
+        return yield* sources.listSources(current.user_id, params.vault_id, query);
+      }),
     )
     .handle("readSource", ({ params }) =>
-      withDomainErrors(
-        Effect.gen(function* () {
-          const documents = yield* DocumentsService;
-          const current = yield* CurrentAuth;
-          return yield* documents.readSource(
-            current.user_id,
-            params.vault_id,
-            params.source_id,
-          );
-        }),
-      ),
+      Effect.gen(function* () {
+        const documents = yield* DocumentsService;
+        const current = yield* CurrentAuth;
+        return yield* documents.readSource(current.user_id, params.vault_id, params.source_id);
+      }),
     )
     .handle("deleteSource", ({ params }) =>
-      withDomainErrors(
-        Effect.gen(function* () {
-          const sources = yield* SourcesService;
-          const current = yield* CurrentAuth;
-          yield* sources.deleteSource(current.user_id, params.vault_id, params.source_id);
-        }),
-      ),
+      Effect.gen(function* () {
+        const sources = yield* SourcesService;
+        const current = yield* CurrentAuth;
+        yield* sources.deleteSource(current.user_id, params.vault_id, params.source_id);
+      }),
     )
     .handle("requestSourceDeletion", ({ params }) =>
-      withDomainErrors(
-        Effect.gen(function* () {
-          const sources = yield* SourcesService;
-          const current = yield* CurrentAuth;
-          return yield* sources.requestSourceDeletion(
-            current.user_id,
-            params.vault_id,
-            params.source_id,
-          );
-        }),
-      ),
+      Effect.gen(function* () {
+        const sources = yield* SourcesService;
+        const current = yield* CurrentAuth;
+        return yield* sources.requestSourceDeletion(
+          current.user_id,
+          params.vault_id,
+          params.source_id,
+        );
+      }),
     ),
 );
 
 const ProposalsHandlersLive = HttpApiBuilder.group(MountedGreatMindsApi, "proposals", (handlers) =>
   handlers
     .handle("listProposals", ({ params, query }) =>
-      withDomainErrors(
-        Effect.gen(function* () {
-          const proposals = yield* ProposalsService;
-          const current = yield* CurrentAuth;
-          return yield* proposals.list(current.user_id, params.vault_id, query);
-        }),
-      ),
+      Effect.gen(function* () {
+        const proposals = yield* ProposalsService;
+        const current = yield* CurrentAuth;
+        return yield* proposals.list(current.user_id, params.vault_id, query);
+      }),
     )
     .handle("createProposal", ({ params, payload }) =>
-      withDomainErrors(
-        Effect.gen(function* () {
-          const proposals = yield* ProposalsService;
-          const current = yield* CurrentAuth;
-          return yield* proposals.create(current.user_id, params.vault_id, payload);
-        }),
-      ),
+      Effect.gen(function* () {
+        const proposals = yield* ProposalsService;
+        const current = yield* CurrentAuth;
+        return yield* proposals.create(current.user_id, params.vault_id, payload);
+      }),
     )
     .handle("getProposal", ({ params }) =>
-      withDomainErrors(
-        Effect.gen(function* () {
-          const proposals = yield* ProposalsService;
-          const current = yield* CurrentAuth;
-          return yield* proposals.get(current.user_id, params.vault_id, params.proposal_id);
-        }),
-      ),
+      Effect.gen(function* () {
+        const proposals = yield* ProposalsService;
+        const current = yield* CurrentAuth;
+        return yield* proposals.get(current.user_id, params.vault_id, params.proposal_id);
+      }),
     )
     .handle("reviewProposal", ({ params, payload }) =>
-      withDomainErrors(
-        Effect.gen(function* () {
-          const proposals = yield* ProposalsService;
-          const current = yield* CurrentAuth;
-          return yield* proposals.review(
-            current.user_id,
-            params.vault_id,
-            params.proposal_id,
-            payload,
-          );
-        }),
-      ),
+      Effect.gen(function* () {
+        const proposals = yield* ProposalsService;
+        const current = yield* CurrentAuth;
+        return yield* proposals.review(
+          current.user_id,
+          params.vault_id,
+          params.proposal_id,
+          payload,
+        );
+      }),
     ),
 );
 
 const IngestHandlersLive = HttpApiBuilder.group(MountedGreatMindsApi, "ingest", (handlers) =>
   handlers
     .handle("ingestRaw", ({ params, payload }) =>
-      withDomainErrors(
-        Effect.gen(function* () {
-          const ingest = yield* IngestService;
-          const current = yield* CurrentAuth;
-          return yield* ingest.ingestRaw(current.user_id, params.vault_id, payload);
-        }),
-      ),
+      Effect.gen(function* () {
+        const ingest = yield* IngestService;
+        const current = yield* CurrentAuth;
+        return yield* ingest.ingestRaw(current.user_id, params.vault_id, payload);
+      }),
     )
     .handle("promoteReference", ({ params, payload }) =>
-      withDomainErrors(
-        Effect.gen(function* () {
-          const ingest = yield* IngestService;
-          const current = yield* CurrentAuth;
-          const result = yield* ingest.promoteReference(
-            current.user_id,
-            params.vault_id,
-            payload,
-          );
-          return result.created
-            ? result.document
-            : yield* jsonResponse(200, result.document);
-        }),
-      ),
+      Effect.gen(function* () {
+        const ingest = yield* IngestService;
+        const current = yield* CurrentAuth;
+        const result = yield* ingest.promoteReference(current.user_id, params.vault_id, payload);
+        return result.created ? result.document : yield* jsonResponse(200, result.document);
+      }),
     )
     .handle("ingestUserSuggestion", ({ params, payload }) =>
-      withDomainErrors(
-        Effect.gen(function* () {
-          const ingest = yield* IngestService;
-          const current = yield* CurrentAuth;
-          return yield* ingest.ingestUserSuggestion(current.user_id, params.vault_id, payload);
-        }),
-      ),
+      Effect.gen(function* () {
+        const ingest = yield* IngestService;
+        const current = yield* CurrentAuth;
+        return yield* ingest.ingestUserSuggestion(current.user_id, params.vault_id, payload);
+      }),
     )
     .handle("checkFileIngestDupes", ({ params, payload }) =>
-      withDomainErrors(
-        Effect.gen(function* () {
-          const batches = yield* FileIngestBatches;
-          const current = yield* CurrentAuth;
-          const existing = yield* batches.checkDupes(
-            current.user_id,
-            params.vault_id,
-            payload.client_hashes,
-          );
-          return { existing: [...existing] };
-        }),
-      ),
+      Effect.gen(function* () {
+        const batches = yield* FileIngestBatches;
+        const current = yield* CurrentAuth;
+        const existing = yield* batches.checkDupes(
+          current.user_id,
+          params.vault_id,
+          payload.client_hashes,
+        );
+        return { existing: [...existing] };
+      }),
     )
     .handle("createFileIngest", ({ params, payload }) =>
-      withDomainErrors(
-        Effect.gen(function* () {
-          const batches = yield* FileIngestBatches;
-          const current = yield* CurrentAuth;
-          return yield* batches.create(
-            current.user_id,
-            params.vault_id,
-            payload.batch_id,
-            payload.files,
-          );
-        }),
-      ),
+      Effect.gen(function* () {
+        const batches = yield* FileIngestBatches;
+        const current = yield* CurrentAuth;
+        return yield* batches.create(
+          current.user_id,
+          params.vault_id,
+          payload.batch_id,
+          payload.files,
+        );
+      }),
     )
     .handle("getFileIngest", ({ params }) =>
-      withDomainErrors(
-        Effect.gen(function* () {
-          const batches = yield* FileIngestBatches;
-          const current = yield* CurrentAuth;
-          return yield* batches.get(current.user_id, params.batch_id);
-        }),
-      ),
+      Effect.gen(function* () {
+        const batches = yield* FileIngestBatches;
+        const current = yield* CurrentAuth;
+        return yield* batches.get(current.user_id, params.batch_id);
+      }),
     )
     .handle("resumeFileIngest", ({ params }) =>
-      withDomainErrors(
-        Effect.gen(function* () {
-          const batches = yield* FileIngestBatches;
-          const current = yield* CurrentAuth;
-          return yield* batches.resume(current.user_id, params.batch_id);
-        }),
-      ),
+      Effect.gen(function* () {
+        const batches = yield* FileIngestBatches;
+        const current = yield* CurrentAuth;
+        return yield* batches.resume(current.user_id, params.batch_id);
+      }),
     )
     .handle("acknowledgeFileIngestUpload", ({ params }) =>
-      withDomainEmpty(
-        Effect.gen(function* () {
-          const batches = yield* FileIngestBatches;
-          const current = yield* CurrentAuth;
-          yield* batches.acknowledge(current.user_id, params.batch_id, params.hash);
-        }),
-      ),
+      Effect.gen(function* () {
+        const batches = yield* FileIngestBatches;
+        const current = yield* CurrentAuth;
+        yield* batches.acknowledge(current.user_id, params.batch_id, params.hash);
+      }),
     )
     .handle("commitFileIngest", ({ params }) =>
-      withDomainErrors(
-        Effect.gen(function* () {
-          const batches = yield* FileIngestBatches;
-          const current = yield* CurrentAuth;
-          return yield* batches.commit(current.user_id, params.batch_id);
-        }),
-      ),
+      Effect.gen(function* () {
+        const batches = yield* FileIngestBatches;
+        const current = yield* CurrentAuth;
+        return yield* batches.commit(current.user_id, params.batch_id);
+      }),
     ),
 );
 
 const JobsHandlersLive = HttpApiBuilder.group(MountedGreatMindsApi, "jobs", (handlers) =>
   handlers
     .handle("startUrlJob", ({ params, payload }) =>
-      withDomainErrors(
-        Effect.gen(function* () {
-          const urlIngest = yield* UrlIngestService;
-          const current = yield* CurrentAuth;
-          const canonicalUrl = yield* parseCanonicalSourceUrl(payload.url);
-          return yield* urlIngest.start(current.user_id, params.vault_id, {
-            jobId: payload.job_id,
-            url: canonicalUrl,
-            ...(payload.origin === undefined ? {} : { origin: payload.origin }),
-          });
-        }),
-      ),
+      Effect.gen(function* () {
+        const urlIngest = yield* UrlIngestService;
+        const current = yield* CurrentAuth;
+        const canonicalUrl = yield* parseCanonicalSourceUrl(payload.url);
+        return yield* urlIngest.start(current.user_id, params.vault_id, {
+          jobId: payload.job_id,
+          url: canonicalUrl,
+          ...(payload.origin === undefined ? {} : { origin: payload.origin }),
+        });
+      }),
     )
     .handle("retryUrlJob", ({ params, payload }) =>
-      withDomainErrors(
-        Effect.gen(function* () {
-          const urlIngest = yield* UrlIngestService;
-          const current = yield* CurrentAuth;
-          return yield* urlIngest.retry(
-            current.user_id,
-            params.vault_id,
-            params.job_id,
-            payload.job_id,
-          );
-        }),
-      ),
+      Effect.gen(function* () {
+        const urlIngest = yield* UrlIngestService;
+        const current = yield* CurrentAuth;
+        return yield* urlIngest.retry(
+          current.user_id,
+          params.vault_id,
+          params.job_id,
+          payload.job_id,
+        );
+      }),
     )
     .handle("listJobs", ({ params, query }) =>
-      withDomainErrors(
-        Effect.gen(function* () {
-          const jobs = yield* JobsService;
-          const current = yield* CurrentAuth;
-          return yield* jobs.list(current.user_id, params.vault_id, query);
-        }),
-      ),
+      Effect.gen(function* () {
+        const jobs = yield* JobsService;
+        const current = yield* CurrentAuth;
+        return yield* jobs.list(current.user_id, params.vault_id, query);
+      }),
     )
     .handle("getJob", ({ params }) =>
-      withDomainErrors(
-        Effect.gen(function* () {
-          const jobs = yield* JobsService;
-          const current = yield* CurrentAuth;
-          return yield* jobs.get(current.user_id, params.vault_id, params.job_id);
-        }),
-      ),
+      Effect.gen(function* () {
+        const jobs = yield* JobsService;
+        const current = yield* CurrentAuth;
+        return yield* jobs.get(current.user_id, params.vault_id, params.job_id);
+      }),
     )
     .handle("streamJob", ({ params }) =>
-      withDomainErrors(
-        Effect.gen(function* () {
-          const jobs = yield* JobsService;
-          const current = yield* CurrentAuth;
-          return yield* jobs.stream(current.user_id, params.vault_id, params.job_id);
-        }),
-      ),
+      Effect.gen(function* () {
+        const jobs = yield* JobsService;
+        const current = yield* CurrentAuth;
+        return yield* jobs.stream(current.user_id, params.vault_id, params.job_id);
+      }),
     ),
 );
 
 const CompileHandlersLive = HttpApiBuilder.group(MountedGreatMindsApi, "compile", (handlers) =>
   handlers
     .handle("requestCompile", ({ params, payload }) =>
-      withDomainErrors(
-        Effect.gen(function* () {
-          const current = yield* CurrentAuth;
-          const access = yield* VaultAccessService;
-          yield* access.requireOwner(current.user_id, params.vault_id);
-          const config = yield* AppConfig;
-          if (Option.isNone(config.openRouterApiKey)) {
-            return yield* new ServiceUnavailable({
-              detail: "LLM service not configured (OPENROUTER_API_KEY missing)",
-            });
-          }
-          const jobs = yield* JobsService;
-          return yield* jobs.requestCompile(current.user_id, params.vault_id, payload.job_id);
-        }),
-      ),
+      Effect.gen(function* () {
+        const current = yield* CurrentAuth;
+        const access = yield* VaultAccessService;
+        yield* access.requireOwner(current.user_id, params.vault_id);
+        const config = yield* AppConfig;
+        if (Option.isNone(config.openRouterApiKey)) {
+          return yield* new ServiceUnavailable({
+            detail: "LLM service not configured (OPENROUTER_API_KEY missing)",
+          });
+        }
+        const jobs = yield* JobsService;
+        return yield* jobs.requestCompile(current.user_id, params.vault_id, payload.job_id);
+      }),
     )
     .handle("cancelCompile", ({ params }) =>
-      withDomainErrors(
-        Effect.gen(function* () {
-          const jobs = yield* JobsService;
-          const current = yield* CurrentAuth;
-          yield* jobs.cancelCompile(current.user_id, params.vault_id, params.run_id);
-        }),
-      ),
+      Effect.gen(function* () {
+        const jobs = yield* JobsService;
+        const current = yield* CurrentAuth;
+        yield* jobs.cancelCompile(current.user_id, params.vault_id, params.run_id);
+      }),
     ),
 );
 
 const LintHandlersLive = HttpApiBuilder.group(MountedGreatMindsApi, "lint", (handlers) =>
   handlers.handle("getLint", ({ params }) =>
-    withDomainErrors(
-      Effect.gen(function* () {
-        const lint = yield* LintService;
-        const current = yield* CurrentAuth;
-        return yield* lint.report(current.user_id, params.vault_id);
-      }),
-    ),
+    Effect.gen(function* () {
+      const lint = yield* LintService;
+      const current = yield* CurrentAuth;
+      return yield* lint.report(current.user_id, params.vault_id);
+    }),
   ),
 );
 
@@ -851,189 +695,157 @@ const CostsHandlersLive = HttpApiBuilder.group(MountedGreatMindsApi, "costs", (h
       }),
     )
     .handle("getVaultCosts", ({ params, query }) =>
-      withDomainErrors(
-        Effect.gen(function* () {
-          const costs = yield* CostsService;
-          const current = yield* CurrentAuth;
-          return yield* costs.forVault(current.user_id, params.vault_id, query);
-        }),
-      ),
+      Effect.gen(function* () {
+        const costs = yield* CostsService;
+        const current = yield* CurrentAuth;
+        return yield* costs.forVault(current.user_id, params.vault_id, query);
+      }),
     ),
 );
 
 const DocumentsHandlersLive = HttpApiBuilder.group(MountedGreatMindsApi, "documents", (handlers) =>
   handlers
-    .handle("readDocument", ({ params }) =>
-      withDomainErrors(
-        Effect.gen(function* () {
-          const documents = yield* DocumentsService;
-          const current = yield* CurrentAuth;
-          return yield* documents.readDocument(current.user_id, params.vault_id, params["*"]);
-        }),
-      ),
+    .handle("resolveDocument", ({ params, query }) =>
+      Effect.gen(function* () {
+        const documents = yield* DocumentsService;
+        const current = yield* CurrentAuth;
+        return yield* documents.readDocument(current.user_id, params.vault_id, query.path);
+      }),
     )
     .handle("readChunks", ({ params, query }) =>
-      withDomainErrors(
-        Effect.gen(function* () {
-          const documents = yield* DocumentsService;
-          const current = yield* CurrentAuth;
-          return yield* documents.readChunks(current.user_id, params.vault_id, query);
-        }),
-      ),
+      Effect.gen(function* () {
+        const documents = yield* DocumentsService;
+        const current = yield* CurrentAuth;
+        return yield* documents.readChunks(current.user_id, params.vault_id, query);
+      }),
     )
     .handle("readLinks", ({ params, query }) =>
-      withDomainErrors(
-        Effect.gen(function* () {
-          const documents = yield* DocumentsService;
-          const current = yield* CurrentAuth;
-          return yield* documents.readLinks(current.user_id, params.vault_id, query);
-        }),
-      ),
+      Effect.gen(function* () {
+        const documents = yield* DocumentsService;
+        const current = yield* CurrentAuth;
+        return yield* documents.readLinks(current.user_id, params.vault_id, query);
+      }),
     ),
 );
 
 const SessionsHandlersLive = HttpApiBuilder.group(MountedGreatMindsApi, "sessions", (handlers) =>
   handlers
     .handle("promoteSessionExchange", ({ params }) =>
-      withDomainErrors(
-        Effect.gen(function* () {
-          const sessions = yield* SessionsService;
-          const current = yield* CurrentAuth;
-          return yield* sessions.promoteExchange(
-            current.user_id,
-            params.vault_id,
-            params.session_id,
-            params.exchange_id,
-          );
-        }),
-      ),
+      Effect.gen(function* () {
+        const sessions = yield* SessionsService;
+        const current = yield* CurrentAuth;
+        return yield* sessions.promoteExchange(
+          current.user_id,
+          params.vault_id,
+          params.session_id,
+          params.exchange_id,
+        );
+      }),
     )
     .handle("listSessions", ({ params, query }) =>
-      withDomainErrors(
-        Effect.gen(function* () {
-          const sessions = yield* SessionsService;
-          const current = yield* CurrentAuth;
-          return yield* sessions.listSessions(current.user_id, params.vault_id, query);
-        }),
-      ),
+      Effect.gen(function* () {
+        const sessions = yield* SessionsService;
+        const current = yield* CurrentAuth;
+        return yield* sessions.listSessions(current.user_id, params.vault_id, query);
+      }),
     )
     .handle("listSessionsByOrigin", ({ params, query }) =>
-      withDomainErrors(
-        Effect.gen(function* () {
-          const sessions = yield* SessionsService;
-          const current = yield* CurrentAuth;
-          return yield* sessions.listSessionsByOrigin(
-            current.user_id,
-            params.vault_id,
-            query.doc_path,
-          );
-        }),
-      ),
+      Effect.gen(function* () {
+        const sessions = yield* SessionsService;
+        const current = yield* CurrentAuth;
+        return yield* sessions.listSessionsByOrigin(
+          current.user_id,
+          params.vault_id,
+          query.doc_path,
+        );
+      }),
     )
     .handle("readSession", ({ params }) =>
-      withDomainErrors(
-        Effect.gen(function* () {
-          const sessions = yield* SessionsService;
-          const current = yield* CurrentAuth;
-          return yield* sessions.readSession(current.user_id, params.vault_id, params.session_id);
-        }),
-      ),
+      Effect.gen(function* () {
+        const sessions = yield* SessionsService;
+        const current = yield* CurrentAuth;
+        return yield* sessions.readSession(current.user_id, params.vault_id, params.session_id);
+      }),
     )
     .handle("readSessionMarkdown", ({ params }) =>
-      withDomainErrors(
-        Effect.gen(function* () {
-          const sessions = yield* SessionsService;
-          const current = yield* CurrentAuth;
-          return yield* sessions.readMarkdown(current.user_id, params.vault_id, params.session_id);
-        }),
-      ),
+      Effect.gen(function* () {
+        const sessions = yield* SessionsService;
+        const current = yield* CurrentAuth;
+        return yield* sessions.readMarkdown(current.user_id, params.vault_id, params.session_id);
+      }),
     ),
 );
 
 const RepliesHandlersLive = HttpApiBuilder.group(MountedGreatMindsApi, "replies", (handlers) =>
   handlers
     .handle("createReply", ({ params, payload }) =>
-      withDomainErrors(
-        Effect.gen(function* () {
-          const replies = yield* RepliesService;
-          const current = yield* CurrentAuth;
-          return yield* replies.create(current.user_id, params.vault_id, payload);
-        }),
-      ),
+      Effect.gen(function* () {
+        const replies = yield* RepliesService;
+        const current = yield* CurrentAuth;
+        return yield* replies.create(current.user_id, params.vault_id, payload);
+      }),
     )
     .handle("retryReply", ({ params, payload }) =>
-      withDomainErrors(
-        Effect.gen(function* () {
-          const replies = yield* RepliesService;
-          const current = yield* CurrentAuth;
-          return yield* replies.retry(
-            current.user_id,
-            params.vault_id,
-            params.reply_id,
-            payload.reply_id,
-          );
-        }),
-      ),
+      Effect.gen(function* () {
+        const replies = yield* RepliesService;
+        const current = yield* CurrentAuth;
+        return yield* replies.retry(
+          current.user_id,
+          params.vault_id,
+          params.reply_id,
+          payload.reply_id,
+        );
+      }),
     )
     .handle("streamReply", ({ params }) =>
-      withDomainErrors(
-        Effect.gen(function* () {
-          const replies = yield* RepliesService;
-          const current = yield* CurrentAuth;
-          return yield* replies.stream(current.user_id, params.vault_id, params.reply_id);
-        }),
-      ),
+      Effect.gen(function* () {
+        const replies = yield* RepliesService;
+        const current = yield* CurrentAuth;
+        return yield* replies.stream(current.user_id, params.vault_id, params.reply_id);
+      }),
     ),
 );
 
 const SharesHandlersLive = HttpApiBuilder.group(MountedGreatMindsApi, "shares", (handlers) =>
   handlers
     .handle("createShare", ({ payload }) =>
-      withDomainErrors(
-        Effect.gen(function* () {
-          const shares = yield* SharesService;
-          const current = yield* CurrentAuth;
-          if (current.credential_kind === "api_key") {
-            return yield* new Forbidden({
-              detail: "Share creation requires session authentication",
-            });
-          }
-          return yield* shares.create(current.user_id, payload);
-        }),
-      ),
+      Effect.gen(function* () {
+        const shares = yield* SharesService;
+        const current = yield* CurrentAuth;
+        if (current.credential_kind === "api_key") {
+          return yield* new Forbidden({
+            detail: "Share creation requires session authentication",
+          });
+        }
+        return yield* shares.create(current.user_id, payload);
+      }),
     )
     .handle("listShares", () =>
-      withDomainErrors(
-        Effect.gen(function* () {
-          const shares = yield* SharesService;
-          const current = yield* CurrentAuth;
-          return yield* shares.listMine(current.user_id);
-        }),
-      ),
+      Effect.gen(function* () {
+        const shares = yield* SharesService;
+        const current = yield* CurrentAuth;
+        return yield* shares.listMine(current.user_id);
+      }),
     )
     .handle("deleteShare", ({ params }) =>
-      withDomainErrors(
-        Effect.gen(function* () {
-          const shares = yield* SharesService;
-          const current = yield* CurrentAuth;
-          yield* shares.revoke(current.user_id, params.share_id);
-        }),
-      ),
+      Effect.gen(function* () {
+        const shares = yield* SharesService;
+        const current = yield* CurrentAuth;
+        yield* shares.revoke(current.user_id, params.share_id);
+      }),
     ),
 );
 
 const PublicHandlersLive = HttpApiBuilder.group(MountedGreatMindsApi, "public", (handlers) =>
   handlers.handle("resolveShare", ({ params }) =>
-    withDomainErrors(
-      Effect.gen(function* () {
-        const shares = yield* SharesService;
-        const detail = yield* shares.resolve(params.token);
-        return HttpServerResponse.setHeaders(HttpServerResponse.jsonUnsafe(detail), {
-          "X-Robots-Tag": "noindex",
-          "Referrer-Policy": "no-referrer",
-        });
-      }),
-    ),
+    Effect.gen(function* () {
+      const shares = yield* SharesService;
+      const detail = yield* shares.resolve(params.token);
+      return HttpServerResponse.setHeaders(HttpServerResponse.jsonUnsafe(detail), {
+        "X-Robots-Tag": "noindex",
+        "Referrer-Policy": "no-referrer",
+      });
+    }),
   ),
 );
 
@@ -1136,8 +948,17 @@ const FileIngestUploadRouteLive = HttpRouter.add(
         return upload;
       }
       const batches = yield* FileIngestBatches;
-      return yield* withDomainEmpty(
-        batches.upload(current.user_id, batchId, { hash, ...upload }),
+      return yield* batches.upload(current.user_id, batchId, { hash, ...upload }).pipe(
+        Effect.catchTags({
+          BadRequest: domainErrorJsonResponse,
+          Forbidden: domainErrorJsonResponse,
+          NotFound: domainErrorJsonResponse,
+        }),
+        Effect.map((value) =>
+          HttpServerResponse.isHttpServerResponse(value)
+            ? value
+            : HttpServerResponse.empty({ status: 204 }),
+        ),
       );
     }),
 );

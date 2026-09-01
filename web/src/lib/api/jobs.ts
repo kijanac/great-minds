@@ -1,96 +1,104 @@
-import { z } from "zod";
+import {
+  JobProgressSnapshot,
+  Uuid,
+  type JobPage,
+  type JobResponse,
+  type PipelineRunFilter,
+} from "@great-minds/domain";
+import { Filter, Option, Schema, Stream } from "effect";
+import type * as Sse from "effect/unstable/encoding/Sse";
 
-import { paginatedSchema } from "./schemas";
-import { apiFetch, readJson, vaultPath, vaultPathFor } from "./client";
+import { getVaultId } from "../vault-selection";
 
-const progressStepSchema = z.object({
-  key: z.string(),
-  label: z.string(),
-  status: z.enum(["pending", "running", "completed", "failed"]),
-  done: z.number().nullable(),
-  total: z.number().nullable(),
-  detail: z.string(),
-});
+import { api, run, stream } from "./app";
+import { followUntil } from "./sse";
 
-export const jobSchema = z.object({
-  id: z.string(),
-  vault_id: z.string(),
-  trigger: z.string(),
-  status: z.string(),
-  current_phase: z.string(),
-  phase_status: z.string(),
-  progress_steps: z.array(progressStepSchema),
-  error: z.string().nullable(),
-  created_at: z.string(),
-  updated_at: z.string(),
-  completed_at: z.string().nullable(),
-  stream_url: z.string(),
-});
+export type { JobProgressSnapshot, JobResponse };
 
-export type Job = z.infer<typeof jobSchema>;
+export type JobEvent =
+  | { readonly _tag: "Snapshot"; readonly snapshot: JobProgressSnapshot }
+  | { readonly _tag: "Ended" };
 
-const jobPageSchema = paginatedSchema(jobSchema);
+const uuid = Schema.decodeSync(Uuid);
+const snapshotFromJson = Schema.decodeOption(Schema.fromJsonString(JobProgressSnapshot));
 
-export type JobPage = z.infer<typeof jobPageSchema>;
-
-export async function listJobs(
-  status?: "active",
-  limit: number = 50,
-  offset: number = 0,
-): Promise<JobPage> {
-  const params = new URLSearchParams({ limit: String(limit), offset: String(offset) });
-  if (status) params.set("status", status);
-  const res = await apiFetch(vaultPath(`/jobs?${params.toString()}`));
-  if (!res.ok) throw new Error(await res.text());
-  return readJson(res, jobPageSchema);
+function selectedVault(vaultId?: string): Uuid {
+  const id = vaultId ?? getVaultId();
+  if (id === null) throw new Error("No vault selected");
+  return uuid(id);
 }
 
-export async function startUrlJob(url: string, jobId: string = crypto.randomUUID()): Promise<Job> {
-  const res = await apiFetch(vaultPath("/jobs/url"), {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ job_id: jobId, url }),
-  });
-  if (!res.ok) throw new Error(await res.text());
-  return readJson(res, jobSchema);
+export function listJobs(status?: PipelineRunFilter, limit = 50, offset = 0): Promise<JobPage> {
+  const query = status === undefined ? { limit, offset } : { limit, offset, status };
+  return run(api.jobs.listJobs({ params: { vault_id: selectedVault() }, query }));
 }
 
-export async function retryUrlJob(
+export function startUrlJob(
+  url: string,
+  jobId: string = crypto.randomUUID(),
+): Promise<JobResponse> {
+  return run(
+    api.jobs.startUrlJob({
+      params: { vault_id: selectedVault() },
+      payload: { job_id: uuid(jobId), url },
+    }),
+  );
+}
+
+export function retryUrlJob(
   previousJobId: string,
   jobId: string = crypto.randomUUID(),
   vaultId?: string,
-): Promise<Job> {
-  const path = vaultId
-    ? vaultPathFor(vaultId, `/jobs/${previousJobId}/retry`)
-    : vaultPath(`/jobs/${previousJobId}/retry`);
-  const res = await apiFetch(path, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ job_id: jobId }),
-  });
-  if (!res.ok) throw new Error(await res.text());
-  return readJson(res, jobSchema);
+): Promise<JobResponse> {
+  return run(
+    api.jobs.retryUrlJob({
+      params: { vault_id: selectedVault(vaultId), job_id: uuid(previousJobId) },
+      payload: { job_id: uuid(jobId) },
+    }),
+  );
 }
 
-/** Re-run the compile for this vault (sources already ingested; content-hash
- *  caches make it resume cheaply). Returns the new job to follow. */
-export async function requestCompile(
+export function requestCompile(
   jobId: string = crypto.randomUUID(),
   vaultId?: string,
-): Promise<Job> {
-  const res = await apiFetch(vaultId ? vaultPathFor(vaultId, "/compile") : vaultPath("/compile"), {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ job_id: jobId }),
-  });
-  if (!res.ok) throw new Error(await res.text());
-  return readJson(res, jobSchema);
+): Promise<JobResponse> {
+  return run(
+    api.compile.requestCompile({
+      params: { vault_id: selectedVault(vaultId) },
+      payload: { job_id: uuid(jobId) },
+    }),
+  );
 }
 
-export async function cancelJob(runId: string, vaultId?: string): Promise<void> {
-  const path = vaultId
-    ? vaultPathFor(vaultId, `/compile/${runId}/cancel`)
-    : vaultPath(`/compile/${runId}/cancel`);
-  const res = await apiFetch(path, { method: "POST" });
-  if (!res.ok) throw new Error(await res.text());
+export function cancelJob(runId: string, vaultId?: string): Promise<void> {
+  return run(
+    api.compile.cancelCompile({
+      params: { vault_id: selectedVault(vaultId), run_id: uuid(runId) },
+    }),
+  );
+}
+
+const toJobEvent = (event: Sse.EventEncoded): Option.Option<JobEvent> => {
+  if (event.event === "done") return Option.some({ _tag: "Ended" });
+  if (event.event !== "message" || event.data.length === 0) return Option.none();
+  return Option.map(snapshotFromJson(event.data), (snapshot) => ({ _tag: "Snapshot", snapshot }));
+};
+
+const terminalSnapshot = (snapshot: JobProgressSnapshot) =>
+  snapshot.job_status !== "pending" && snapshot.job_status !== "running"
+    ? true
+    : snapshot.phase_status === "failed" ||
+      (snapshot.phase === "publish" && snapshot.phase_status === "completed");
+
+const isTerminal = (event: JobEvent) => event._tag === "Ended" || terminalSnapshot(event.snapshot);
+
+export function followJob(
+  jobId: string,
+  vaultId: string,
+  signal?: AbortSignal,
+): AsyncIterable<JobEvent> {
+  const events = Stream.unwrap(
+    api.jobs.streamJob({ params: { vault_id: uuid(vaultId), job_id: uuid(jobId) } }),
+  ).pipe(Stream.filterMap(Filter.fromPredicateOption(toJobEvent)));
+  return stream(followUntil(events, isTerminal), signal);
 }

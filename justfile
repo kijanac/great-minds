@@ -41,7 +41,7 @@ types-packages:
 
 # Run focused browser-library tests without external services
 test-web:
-    pnpm exec vitest run web/src/lib/api/sse-contract.test.ts web/src/lib/api/stream-retry.test.ts
+    pnpm exec vitest run web/src/lib/api/runtime.test.ts
 
 # Run TypeScript package integration tests against scratch Postgres
 test-packages:

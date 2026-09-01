@@ -13,7 +13,7 @@
     reviewProposal,
     type ProposalStatus,
   } from "$lib/api/proposals";
-  import { nextPageOffset } from "$lib/api/schemas";
+  import { nextPageOffset } from "$lib/api/pagination";
   import { Button } from "$lib/components/ui/button";
   import { Input } from "$lib/components/ui/input";
   import * as Select from "$lib/components/ui/select";

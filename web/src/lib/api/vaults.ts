@@ -1,42 +1,69 @@
-import { apiFetch, readJson } from "./client";
 import {
-  vaultConfigSchema,
-  vaultDetailSchema,
-  draftHintResponseSchema,
-  membershipListSchema,
-  membershipSchema,
+  Email,
+  InvitedMemberRole,
+  MemberRole,
+  Uuid,
+  type MemberWithEmail,
+  type Vault,
   type VaultConfig,
+  type VaultConfigUpdate,
+  type VaultCreate,
   type VaultDetail,
-  type Membership,
-} from "./schemas";
+} from "@great-minds/domain";
+import { Effect, Schema } from "effect";
 
-export type { VaultConfig, VaultDetail, Membership };
+import { api, run } from "./app";
 
-export async function getVaultDetail(vaultId: string): Promise<VaultDetail> {
-  const res = await apiFetch(`/vaults/${vaultId}`);
-  if (!res.ok) throw new Error("Failed to fetch vault details");
-  return readJson(res, vaultDetailSchema);
+export type { VaultConfig, VaultConfigUpdate, VaultDetail };
+export type Membership = MemberWithEmail;
+export type VaultOverview = Vault;
+export type CreateVaultInput = VaultCreate;
+
+const uuid = Schema.decodeSync(Uuid);
+const email = Schema.decodeSync(Email);
+const firstPage = { limit: 50, offset: 0 } as const;
+
+function memberRole(role: string): MemberRole {
+  if (Schema.is(MemberRole)(role)) return role;
+  throw new Error(`Unknown role: ${role}`);
 }
 
-export async function listMembers(vaultId: string): Promise<Membership[]> {
-  const res = await apiFetch(`/vaults/${vaultId}/members`);
-  if (!res.ok) throw new Error("Failed to fetch members");
-  const parsed = await readJson(res, membershipListSchema);
-  return parsed.items;
+function invitedRole(role: string): InvitedMemberRole {
+  if (Schema.is(InvitedMemberRole)(role)) return role;
+  throw new Error(`Unknown role: ${role}`);
+}
+
+export async function fetchVaults(): Promise<readonly VaultOverview[]> {
+  const page = await run(api.vaults.listVaults({ query: firstPage }));
+  return page.items;
+}
+
+export async function createVault(input: CreateVaultInput): Promise<VaultOverview> {
+  return run(api.vaults.createVault({ payload: input }));
+}
+
+export async function getVaultDetail(vaultId: string): Promise<VaultDetail> {
+  return run(api.vaults.getVault({ params: { vault_id: uuid(vaultId) } }));
+}
+
+export async function listMembers(vaultId: string): Promise<readonly Membership[]> {
+  const page = await run(
+    api.vaults.listVaultMembers({ params: { vault_id: uuid(vaultId) }, query: firstPage }),
+  );
+  return page.items;
 }
 
 export async function inviteMember(
   vaultId: string,
-  email: string,
+  address: string,
   role: string = "editor",
 ): Promise<Membership> {
-  const res = await apiFetch(`/vaults/${vaultId}/members`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ email, role }),
-  });
-  if (!res.ok) throw new Error("Failed to invite member");
-  return readJson(res, membershipSchema);
+  return run(
+    api.vaults.inviteVaultMember({
+      params: { vault_id: uuid(vaultId) },
+      payload: { email: email(address), role: invitedRole(role) },
+    }),
+  );
 }
 
 export async function updateMemberRole(
@@ -44,62 +71,50 @@ export async function updateMemberRole(
   userId: string,
   role: string,
 ): Promise<Membership> {
-  const res = await apiFetch(`/vaults/${vaultId}/members/${userId}`, {
-    method: "PUT",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ role }),
-  });
-  if (!res.ok) throw new Error("Failed to update member role");
-  return readJson(res, membershipSchema);
+  return run(
+    api.vaults.updateVaultMember({
+      params: { vault_id: uuid(vaultId), member_user_id: uuid(userId) },
+      payload: { role: memberRole(role) },
+    }),
+  );
 }
 
 export async function removeMember(vaultId: string, userId: string): Promise<void> {
-  const res = await apiFetch(`/vaults/${vaultId}/members/${userId}`, {
-    method: "DELETE",
-  });
-  if (!res.ok) throw new Error("Failed to remove member");
+  return run(
+    api.vaults.removeVaultMember({
+      params: { vault_id: uuid(vaultId), member_user_id: uuid(userId) },
+    }),
+  );
 }
 
 export async function transferOwnership(vaultId: string, newOwnerUserId: string): Promise<void> {
-  const res = await apiFetch(`/vaults/${vaultId}/transfer-ownership`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ new_owner_user_id: newOwnerUserId }),
-  });
-  if (!res.ok) throw new Error("Failed to transfer ownership");
+  return run(
+    api.vaults.transferVaultOwnership({
+      params: { vault_id: uuid(vaultId) },
+      payload: { new_owner_user_id: uuid(newOwnerUserId) },
+    }),
+  );
 }
 
 export async function deleteVault(vaultId: string): Promise<void> {
-  const res = await apiFetch(`/vaults/${vaultId}`, { method: "DELETE" });
-  if (!res.ok) throw new Error("Failed to delete vault");
+  return run(api.vaults.deleteVault({ params: { vault_id: uuid(vaultId) } }));
 }
 
 export async function getVaultConfig(vaultId: string): Promise<VaultConfig> {
-  const res = await apiFetch(`/vaults/${vaultId}/config`);
-  if (!res.ok) throw new Error("Failed to fetch vault config");
-  return readJson(res, vaultConfigSchema);
+  return run(api.vaults.getVaultConfig({ params: { vault_id: uuid(vaultId) } }));
 }
 
 export async function updateVaultConfig(
   vaultId: string,
-  patch: Partial<VaultConfig>,
+  patch: VaultConfigUpdate,
 ): Promise<VaultConfig> {
-  const res = await apiFetch(`/vaults/${vaultId}/config`, {
-    method: "PATCH",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(patch),
-  });
-  if (!res.ok) throw new Error("Failed to update vault config");
-  return readJson(res, vaultConfigSchema);
+  return run(api.vaults.updateVaultConfig({ params: { vault_id: uuid(vaultId) }, payload: patch }));
 }
 
 export async function draftThematicHint(description: string): Promise<string> {
-  const res = await apiFetch(`/vaults/draft-hint`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ description }),
-  });
-  if (!res.ok) throw new Error("Failed to draft hint");
-  const parsed = await readJson(res, draftHintResponseSchema);
-  return parsed.thematic_hint;
+  return run(
+    api.vaults
+      .draftVaultHint({ payload: { description } })
+      .pipe(Effect.map((response) => response.thematic_hint)),
+  );
 }

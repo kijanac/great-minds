@@ -1,26 +1,12 @@
-import { z } from "zod";
+import { type LintReport, type UnmentionedLink, Uuid } from "@great-minds/domain";
+import { Schema } from "effect";
 
-import { apiFetch, vaultPath, readJson } from "./client";
-import { wikiArticleOverviewSchema } from "./wiki";
+import { api, run } from "./app";
 
-const unmentionedLinkSchema = z.object({
-  source_slug: z.string(),
-  source_title: z.string(),
-  target_slug: z.string(),
-  target_title: z.string(),
-});
+export type { UnmentionedLink };
 
-const lintResponseSchema = z.object({
-  orphans: z.array(wikiArticleOverviewSchema),
-  dirty_topics: z.array(z.string()),
-  unmentioned_links: z.array(unmentionedLinkSchema),
-});
+const uuid = Schema.decodeSync(Uuid);
 
-export type UnmentionedLink = z.infer<typeof unmentionedLinkSchema>;
-export type LintResponse = z.infer<typeof lintResponseSchema>;
-
-export async function fetchLintResults(): Promise<LintResponse> {
-  const res = await apiFetch(vaultPath("/lint"));
-  if (!res.ok) throw new Error("Failed to fetch lint results");
-  return readJson(res, lintResponseSchema);
+export async function fetchLintResults(vaultId: string): Promise<LintReport> {
+  return run(api.lint.getLint({ params: { vault_id: uuid(vaultId) } }));
 }

@@ -1,18 +1,22 @@
-import type { SourceRef, ThinkingBlock } from "$lib/api/schemas";
+import type { ReplySource } from "@great-minds/domain";
 import type { UnmentionedLink } from "$lib/api/lint";
 import type { SessionSummary } from "$lib/api/sessions";
 import type { SourceDocumentSummary, SourceTypeFacet } from "$lib/api/sources";
 import type { WikiArticleOverview } from "$lib/api/wiki";
 
+export type SourceRef = ReplySource;
+
 export type {
   SessionSummary,
   SourceDocumentSummary,
-  SourceRef,
   SourceTypeFacet,
-  ThinkingBlock,
   UnmentionedLink,
   WikiArticleOverview,
 };
+
+export interface ThinkingBlock {
+  sources: readonly SourceRef[];
+}
 
 export interface HistoryMessage {
   role: "user" | "assistant";
@@ -22,7 +26,7 @@ export interface HistoryMessage {
 export interface Exchange {
   id: string;
   query: string;
-  thinking: ThinkingBlock[];
+  thinking: readonly ThinkingBlock[];
   answer: string;
   btws: BtwThread[];
   replyId?: string;

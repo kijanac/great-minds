@@ -3,12 +3,11 @@
   import Copy from "@lucide/svelte/icons/copy";
   import type { Snippet } from "svelte";
 
-  import {
-    createShare,
-    deleteShare,
-    listShares,
-    type ShareOverview,
-  } from "$lib/api/shares";
+  import { type ShareOverview, Uuid } from "@great-minds/domain";
+  import { Schema } from "effect";
+
+  import { api, run } from "$lib/api/app";
+  import { errorMessage } from "$lib/api/errors";
   import { Button } from "$lib/components/ui/button";
   import * as AlertDialog from "$lib/components/ui/alert-dialog";
   import { POPOVER_SURFACE_CLASS } from "$lib/control-styles";
@@ -22,6 +21,8 @@
     subjectId: string;
     trigger?: Snippet<[{ props: Record<string, unknown> }]>;
   } = $props();
+
+  const uuid = Schema.decodeSync(Uuid);
 
   let open = $state(false);
   let loading = $state(false);
@@ -48,7 +49,7 @@
     loading = true;
     error = null;
     try {
-      const shares = await listShares();
+      const shares = await run(api.shares.listShares());
       share =
         shares.find(
           (s) =>
@@ -57,8 +58,7 @@
             s.revoked_at === null,
         ) ?? null;
     } catch (cause) {
-      error =
-        cause instanceof Error ? cause.message : "Failed to load share status";
+      error = errorMessage(cause, "Failed to load share status");
     } finally {
       loading = false;
     }
@@ -68,17 +68,20 @@
     creating = true;
     error = null;
     try {
-      const result = await createShare({
-        subject_kind: subjectKind,
-        subject_id: subjectId,
-        include_annotations: includeAnnotations,
-      });
+      const result = await run(
+        api.shares.createShare({
+          payload: {
+            subject_kind: subjectKind,
+            subject_id: uuid(subjectId),
+            include_annotations: includeAnnotations,
+          },
+        }),
+      );
       share = result.share;
       created = true;
       window.setTimeout(() => (created = false), 1500);
     } catch (cause) {
-      error =
-        cause instanceof Error ? cause.message : "Failed to create share link";
+      error = errorMessage(cause, "Failed to create share link");
     } finally {
       creating = false;
     }
@@ -89,14 +92,13 @@
     revoking = true;
     error = null;
     try {
-      await deleteShare(share.id);
+      await run(api.shares.deleteShare({ params: { share_id: share.id } }));
       share = null;
       copied = false;
       created = false;
       includeAnnotations = true;
     } catch (cause) {
-      error =
-        cause instanceof Error ? cause.message : "Failed to revoke share link";
+      error = errorMessage(cause, "Failed to revoke share link");
     } finally {
       revoking = false;
     }

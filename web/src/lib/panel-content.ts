@@ -12,7 +12,7 @@ import type { SourceRef } from "$lib/types";
 
 export type PanelContent =
   | { mode: "doc"; body: string }
-  | { mode: "chunks"; chunks: DocChunk[] }
+  | { mode: "chunks"; chunks: readonly DocChunk[] }
   | { mode: "links"; links: LinkedArticles };
 
 export async function loadPanelContent(
@@ -38,7 +38,10 @@ export async function loadPanelContent(
     const groups = await Promise.all(
       card.ranges.map((range) => fetchChunks(path, range.start, range.end, signal)),
     );
-    return { mode: "chunks", chunks: groups.flat() };
+    return {
+      mode: "chunks",
+      chunks: groups.reduce((all, chunks) => all.concat(chunks), [] as DocChunk[]),
+    };
   }
 
   const document = source ?? (await readDocument(path, signal));

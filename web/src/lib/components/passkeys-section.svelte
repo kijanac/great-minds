@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { type Passkey, type Uuid } from "@great-minds/domain";
   import X from "@lucide/svelte/icons/x";
   import {
     startRegistration,
@@ -10,13 +11,9 @@
     useQueryClient,
   } from "@tanstack/svelte-query";
 
-  import {
-    deletePasskey,
-    getPasskeyRegistrationOptions,
-    listPasskeys,
-    registerPasskey,
-    type Passkey,
-  } from "$lib/api/passkeys";
+  import { api, run } from "$lib/api/app";
+  import { errorMessage } from "$lib/api/errors";
+  import { registerPasskey } from "$lib/api/passkeys";
   import { Alert, AlertDescription } from "$lib/components/ui/alert";
   import * as AlertDialog from "$lib/components/ui/alert-dialog";
   import { Button } from "$lib/components/ui/button";
@@ -26,10 +23,10 @@
   const queryClient = useQueryClient();
   const passkeysQuery = createQuery(() => ({
     queryKey: ["passkeys"],
-    queryFn: listPasskeys,
+    queryFn: () => run(api.auth.listPasskeys()),
   }));
   const remove = createMutation(() => ({
-    mutationFn: deletePasskey,
+    mutationFn: (id: Uuid) => run(api.auth.deletePasskey({ params: { id } })),
     onSuccess: async () => {
       await queryClient.invalidateQueries({ queryKey: ["passkeys"] });
     },
@@ -82,17 +79,17 @@
     cancelled = false;
     addError = null;
     try {
-      const optionsJSON = await getPasskeyRegistrationOptions();
+      const optionsJSON = await run(api.auth.passkeyRegisterOptions());
       const response = await startRegistration({ optionsJSON });
       await registerPasskey(trimmed, response);
       await queryClient.invalidateQueries({ queryKey: ["passkeys"] });
       naming = false;
     } catch (error) {
       if (!cancelled) {
-        addError =
-          error instanceof Error
-            ? error.message
-            : "We couldn't add this passkey. Please try again.";
+        addError = errorMessage(
+          error,
+          "We couldn't add this passkey. Please try again.",
+        );
       }
     } finally {
       adding = false;

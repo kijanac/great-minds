@@ -620,7 +620,7 @@ describe("M3.1 write endpoint integration", () => {
       thematic_hint: "Editor steer",
     });
     expect(denied.status).toBe(403);
-    expect(denied.body).toEqual({ detail: "Only vault owners can perform this action" });
+    expect(denied.body).toMatchObject({ detail: "Only vault owners can perform this action" });
   });
 
   it("manages members with owner guards, invite role limits, 404s, and ownership transfer", async () => {
@@ -670,13 +670,13 @@ describe("M3.1 write endpoint integration", () => {
       { role: "viewer" },
     );
     expect(missingUser.status).toBe(404);
-    expect(missingUser.body).toEqual({ detail: "User not found" });
+    expect(missingUser.body).toMatchObject({ detail: "User not found" });
 
     const nonMember = await api("PUT", `/vaults/${id.vault}/members/${id.mallory}`, aliceToken, {
       role: "viewer",
     });
     expect(nonMember.status).toBe(404);
-    expect(nonMember.body).toEqual({ detail: "User is not a member of this vault" });
+    expect(nonMember.body).toMatchObject({ detail: "User is not a member of this vault" });
 
     const changed = await api("PUT", `/vaults/${id.vault}/members/${id.bob}`, aliceToken, {
       role: "viewer",
@@ -859,7 +859,7 @@ describe("M3.1 write endpoint integration", () => {
       carolToken,
     );
     expect(viewerRequest.status).toBe(403);
-    expect(viewerRequest.body).toEqual({ detail: "Viewers cannot request source deletion" });
+    expect(viewerRequest.body).toMatchObject({ detail: "Viewers cannot request source deletion" });
 
     const ownerRequest = await api(
       "POST",
@@ -892,7 +892,7 @@ describe("M3.1 write endpoint integration", () => {
       bobToken,
     );
     expect(conflict.status).toBe(409);
-    expect(conflict.body).toEqual({ detail: "A pending proposal already targets this source" });
+    expect(conflict.body).toMatchObject({ detail: "A pending proposal already targets this source" });
     await runDb(
       Effect.gen(function* () {
         const db = yield* Database;
@@ -1143,7 +1143,7 @@ describe("M3.1 write endpoint integration", () => {
       { batch_id: id.m32StagedRun, files: [manifest[0], manifest[0]] },
     );
     expect(duplicateManifest.status).toBe(400);
-    expect(duplicateManifest.body).toEqual({
+    expect(duplicateManifest.body).toMatchObject({
       detail: "duplicate file hashes are not allowed",
     });
 
@@ -1181,7 +1181,7 @@ describe("M3.1 write endpoint integration", () => {
       mismatchForm,
     );
     expect(mismatch.status).toBe(400);
-    expect(mismatch.body).toEqual({
+    expect(mismatch.body).toMatchObject({
       detail: "Uploaded file does not match its manifest",
     });
 
@@ -1492,7 +1492,7 @@ describe("M3.1 write endpoint integration", () => {
       intent: "correct",
     });
     expect(blank.status).toBe(400);
-    expect(blank.body).toEqual({ detail: "body is empty" });
+    expect(blank.body).toMatchObject({ detail: "body is empty" });
 
     const viewer = await api("POST", `/vaults/${id.vault}/ingest/user-suggestion`, carolToken, {
       body: "Viewer suggestion",
@@ -1589,7 +1589,7 @@ describe("M3.1 write endpoint integration", () => {
       { batch_id: id.m32StagedRun, files: [] },
     );
     expect(emptyCreate.status).toBe(400);
-    expect(emptyCreate.body).toEqual({ detail: "no files provided" });
+    expect(emptyCreate.body).toMatchObject({ detail: "no files provided" });
 
     await runDb(
       Effect.gen(function* () {
@@ -1633,7 +1633,7 @@ describe("M3.1 write endpoint integration", () => {
       },
     );
     expect(conflicting.status).toBe(409);
-    expect(conflicting.body).toEqual({
+    expect(conflicting.body).toMatchObject({
       detail: "Batch ID is bound to a different manifest",
     });
 
@@ -1657,7 +1657,7 @@ describe("M3.1 write endpoint integration", () => {
       aliceToken,
     );
     expect(prematureCommit.status).toBe(400);
-    expect(prematureCommit.body).toEqual({ detail: "Waiting for uploads: a.md" });
+    expect(prematureCommit.body).toMatchObject({ detail: "Waiting for uploads: a.md" });
 
     const rows = await runDb(
       Effect.gen(function* () {
@@ -1852,16 +1852,16 @@ describe("M3.1 write endpoint integration", () => {
           pagination: { limit: 10, offset: 0, total: 1 },
         });
 
-        const read = await api("GET", "/me/refs/doc/refs/article.md", aliceToken);
+        const read = await api("GET", "/me/refs/doc?path=refs/article.md", aliceToken);
         expect(read.status).toBe(200);
         expect(asRecord(read.body)).toMatchObject({
           reference: createdBody,
         });
         expect(String(asRecord(read.body).body)).toContain("First personal paragraph");
 
-        const otherUser = await api("GET", "/me/refs/doc/refs/article.md", bobToken);
+        const otherUser = await api("GET", "/me/refs/doc?path=refs/article.md", bobToken);
         expect(otherUser.status).toBe(404);
-        const traversal = await api("GET", "/me/refs/doc/refs%5Cescape.md", aliceToken);
+        const traversal = await api("GET", "/me/refs/doc?path=refs%5Cescape.md", aliceToken);
         expect(traversal.status).toBe(400);
 
         const unsupported = await api("POST", "/me/refs", aliceToken, {
@@ -1879,7 +1879,7 @@ describe("M3.1 write endpoint integration", () => {
         await rm(
           join(currentState().storageRoot, "users", id.alice, "refs", "missing.md"),
         );
-        const missingFile = await api("GET", "/me/refs/doc/refs/missing.md", aliceToken);
+        const missingFile = await api("GET", "/me/refs/doc?path=refs/missing.md", aliceToken);
         expect(missingFile.status).toBe(404);
 
         const storyOne = await api("POST", "/me/refs", aliceToken, {
@@ -1893,17 +1893,17 @@ describe("M3.1 write endpoint integration", () => {
         expect(storyTwo.status).toBe(201);
         const storyTwoPath = String(asRecord(storyTwo.body).file_path);
         expect(storyTwoPath).toMatch(/^refs\/story-[0-9a-f]{8}\.md$/);
-        const storyOneRead = await api("GET", "/me/refs/doc/refs/story.md", aliceToken);
+        const storyOneRead = await api("GET", "/me/refs/doc?path=refs/story.md", aliceToken);
         expect(storyOneRead.status).toBe(200);
         expect(asRecord(asRecord(storyOneRead.body).reference).url).toBe(`${origin}/one/story`);
-        const storyTwoRead = await api("GET", `/me/refs/doc/${storyTwoPath}`, aliceToken);
+        const storyTwoRead = await api("GET", `/me/refs/doc?path=${storyTwoPath}`, aliceToken);
         expect(storyTwoRead.status).toBe(200);
         expect(asRecord(asRecord(storyTwoRead.body).reference).url).toBe(`${origin}/two/story`);
 
-        const deleted = await api("DELETE", "/me/refs/refs/article.md", aliceToken);
+        const deleted = await api("DELETE", `/me/refs/${createdBody.id}`, aliceToken);
         expect(deleted.status).toBe(204);
         expect(await userFileExists(id.alice, "refs/article.md")).toBe(false);
-        const deletedAgain = await api("DELETE", "/me/refs/refs/article.md", aliceToken);
+        const deletedAgain = await api("DELETE", `/me/refs/${createdBody.id}`, aliceToken);
         expect(deletedAgain.status).toBe(404);
       },
     );
@@ -1928,7 +1928,7 @@ describe("M3.1 write endpoint integration", () => {
 
         const renamed = await api(
           "PATCH",
-          "/me/refs/refs/article.md",
+          `/me/refs/${asRecord(created.body).id}`,
           aliceToken,
           { title: "  Cleaned Up Title  " },
         );
@@ -1958,7 +1958,7 @@ describe("M3.1 write endpoint integration", () => {
 
         const cleared = await api(
           "PATCH",
-          "/me/refs/refs/article.md",
+          `/me/refs/${asRecord(created.body).id}`,
           aliceToken,
           { title: "   " },
         );
@@ -1967,7 +1967,7 @@ describe("M3.1 write endpoint integration", () => {
 
         const explicitNull = await api(
           "PATCH",
-          "/me/refs/refs/article.md",
+          `/me/refs/${asRecord(created.body).id}`,
           aliceToken,
           { title: null },
         );
@@ -1976,7 +1976,7 @@ describe("M3.1 write endpoint integration", () => {
 
         const otherUser = await api(
           "PATCH",
-          "/me/refs/refs/article.md",
+          `/me/refs/${asRecord(created.body).id}`,
           bobToken,
           { title: "Sneaky" },
         );
@@ -1984,15 +1984,15 @@ describe("M3.1 write endpoint integration", () => {
 
         const traversal = await api(
           "PATCH",
-          "/me/refs/refs%5Cescape.md",
+          "/me/refs/not-a-reference-id",
           aliceToken,
           { title: "X" },
         );
-        expect(traversal.status).toBe(400);
+        expect(traversal.status).toBe( 422);
 
         const missing = await api(
           "PATCH",
-          "/me/refs/refs/missing.md",
+          "/me/refs/018f6a2e-0000-7000-8000-00000000dead",
           aliceToken,
           { title: "X" },
         );
@@ -2082,7 +2082,7 @@ describe("M3.1 write endpoint integration", () => {
 
         const renamed = await api(
           "PATCH",
-          "/me/refs/refs/article.md",
+          `/me/refs/${asRecord(created.body).id}`,
           aliceToken,
           { title: "Renamed Origin Article" },
         );
@@ -2726,7 +2726,7 @@ describe("M3.1 write endpoint integration", () => {
       aliceToken,
     );
     expect(wrongExchange.status).toBe(404);
-    expect(wrongExchange.body).toEqual({ detail: "Exchange not found in session" });
+    expect(wrongExchange.body).toMatchObject({ detail: "Exchange not found in session" });
 
     const missingSession = await api(
       "POST",
@@ -2734,7 +2734,7 @@ describe("M3.1 write endpoint integration", () => {
       aliceToken,
     );
     expect(missingSession.status).toBe(404);
-    expect(missingSession.body).toEqual({ detail: "Session not found" });
+    expect(missingSession.body).toMatchObject({ detail: "Session not found" });
 
     await writeVaultFile(id.vault, "sessions/s-empty.jsonl", "");
     const emptySession = await api(
@@ -2743,7 +2743,7 @@ describe("M3.1 write endpoint integration", () => {
       aliceToken,
     );
     expect(emptySession.status).toBe(404);
-    expect(emptySession.body).toEqual({ detail: "Session not found" });
+    expect(emptySession.body).toMatchObject({ detail: "Session not found" });
 
     const emptyAnswerSessionId = await createSessionForTest(
       id.alice as Uuid,
@@ -2761,7 +2761,7 @@ describe("M3.1 write endpoint integration", () => {
       aliceToken,
     );
     expect(emptyAnswer.status).toBe(400);
-    expect(emptyAnswer.body).toEqual({ detail: "Exchange has no answer yet" });
+    expect(emptyAnswer.body).toMatchObject({ detail: "Exchange has no answer yet" });
   });
 
   it("deletes vault DB cascades and local storage, including auth-owned vault cleanup", async () => {

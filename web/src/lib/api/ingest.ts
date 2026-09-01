@@ -1,53 +1,29 @@
-import { z } from "zod";
+import {
+  FileFingerprint,
+  Uuid,
+  type FileIngestBatch,
+  type UserSuggestionIntent,
+  type UserSuggestionResult,
+} from "@great-minds/domain";
+import { Effect, Schema } from "effect";
+import { HttpClientRequest } from "effect/unstable/http";
 
-import { apiFetch, responseError, vaultPath, readJson } from "./client";
-import { ingestedDocumentSchema } from "./schemas";
+import { getVaultId } from "../vault-selection";
 
-export type IngestResult = z.infer<typeof ingestedDocumentSchema>;
+import { api, http, run } from "./app";
+import { errorMessage } from "./errors";
 
-const fileFingerprintSchema = z.string().regex(/^[0-9a-f]{64}$/);
+export type { FileIngestBatch, UserSuggestionIntent, UserSuggestionResult };
 
-const fileIngestUploadTargetSchema = z.discriminatedUnion("transport", [
-  z.object({
-    hash: fileFingerprintSchema,
-    transport: z.literal("api"),
-  }),
-  z.object({
-    hash: fileFingerprintSchema,
-    transport: z.literal("presigned"),
-    url: z.string(),
-  }),
-]);
-
-const fileIngestFileSchema = z.object({
-  name: z.string(),
-  size: z.number(),
-  hash: fileFingerprintSchema,
-  mimetype: z.string(),
-  status: z.enum(["pending", "uploaded", "processing", "completed", "failed", "cancelled"]),
-  error: z.string().nullable(),
-});
-
-const fileIngestBatchSchema = z.object({
-  id: z.string(),
-  vault_id: z.string(),
-  created_by: z.string(),
-  status: z.enum(["uploading", "processing", "completed", "failed", "cancelled"]),
-  error: z.string().nullable(),
-  expires_at: z.string(),
-  files: z.array(fileIngestFileSchema),
-  targets: z.array(fileIngestUploadTargetSchema),
-});
-
-const fileIngestCommitSchema = z.object({
-  id: z.string(),
-  stream_url: z.string(),
-});
-
-export type FileIngestBatch = z.infer<typeof fileIngestBatchSchema>;
-export type FileIngestUploadTarget = z.infer<typeof fileIngestUploadTargetSchema>;
-
+const uuid = Schema.decodeSync(Uuid);
+const fingerprint = Schema.decodeSync(FileFingerprint);
 const PUT_CONCURRENCY = 4;
+
+function selectedVault(): Uuid {
+  const id = getVaultId();
+  if (id === null) throw new Error("No vault selected");
+  return uuid(id);
+}
 
 export type FileIngestPhase = "uploading" | "processing" | "error";
 
@@ -73,30 +49,27 @@ export async function sha256Hex(bytes: ArrayBuffer): Promise<string> {
     .join("");
 }
 
-/** SHA-256 of a File's original bytes for review and advisory duplicate checks. */
 export async function hashFile(file: File): Promise<string> {
   return sha256Hex(await file.arrayBuffer());
 }
 
-const checkDupesResponseSchema = z.object({
-  existing: z.array(z.string()),
-});
-
-/** Pre-flight: which of these client hashes already exist in the active vault? */
-export async function checkDupes(clientHashes: string[]): Promise<Set<string>> {
-  if (clientHashes.length === 0) return new Set();
-  const res = await apiFetch(vaultPath("/file-ingests/check-dupes"), {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ client_hashes: clientHashes }),
-  });
-  if (!res.ok) return new Set();
-  const { existing } = await readJson(res, checkDupesResponseSchema);
-  return new Set(existing);
+export function checkDupes(clientHashes: string[]): Promise<Set<string>> {
+  if (clientHashes.length === 0) return Promise.resolve(new Set());
+  return run(
+    api.ingest
+      .checkFileIngestDupes({
+        params: { vault_id: selectedVault() },
+        payload: { client_hashes: clientHashes.map((hash) => fingerprint(hash)) },
+      })
+      .pipe(
+        Effect.map((response) => new Set<string>(response.existing)),
+        Effect.catch(() => Effect.succeed(new Set<string>())),
+      ),
+  );
 }
 
 async function pMap<T, R>(
-  items: T[],
+  items: readonly T[],
   fn: (item: T, index: number) => Promise<R>,
   concurrency: number,
 ): Promise<R[]> {
@@ -113,7 +86,6 @@ async function pMap<T, R>(
   return results;
 }
 
-/** One browser File paired with its client-computed raw-byte SHA-256. */
 export interface HashedFile {
   file: File;
   hash: string;
@@ -122,71 +94,65 @@ export interface HashedFile {
 export const hashFiles = (files: File[]): Promise<HashedFile[]> =>
   pMap(files, async (file) => ({ file, hash: await hashFile(file) }), PUT_CONCURRENCY);
 
-const batchPath = (batchId: string, suffix = "") => `/file-ingests/${batchId}${suffix}`;
-
-const errorText = async (response: Response) => {
-  const text = await response.text();
-  return text || `Request returned ${response.status}`;
-};
-
 const manifestFor = (hashedFiles: HashedFile[]) =>
   hashedFiles.map(({ file, hash }) => ({
     name: file.name,
     size: file.size,
-    hash,
+    hash: fingerprint(hash),
     mimetype: file.type,
   }));
 
-export async function createFileIngestBatch(
+export function createFileIngestBatch(
   hashedFiles: HashedFile[],
   batchId: string = crypto.randomUUID(),
 ): Promise<FileIngestBatch> {
-  const res = await apiFetch(vaultPath("/file-ingests"), {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ batch_id: batchId, files: manifestFor(hashedFiles) }),
-  });
-  if (!res.ok) throw new Error(await errorText(res));
-  return readJson(res, fileIngestBatchSchema);
+  return run(
+    api.ingest.createFileIngest({
+      params: { vault_id: selectedVault() },
+      payload: { batch_id: uuid(batchId), files: manifestFor(hashedFiles) },
+    }),
+  );
 }
 
-export async function getFileIngestBatch(batchId: string): Promise<FileIngestBatch | null> {
-  const res = await apiFetch(batchPath(batchId));
-  if (res.status === 404) return null;
-  if (!res.ok) throw new Error(await errorText(res));
-  return readJson(res, fileIngestBatchSchema);
+export function getFileIngestBatch(batchId: string): Promise<FileIngestBatch | null> {
+  return run(
+    api.ingest
+      .getFileIngest({ params: { batch_id: uuid(batchId) } })
+      .pipe(Effect.catchTag("NotFound", () => Effect.succeed(null))),
+  );
 }
 
-export async function resumeFileIngestBatch(batchId: string): Promise<FileIngestBatch> {
-  const res = await apiFetch(batchPath(batchId, "/resume"), { method: "POST" });
-  if (!res.ok) throw new Error(await errorText(res));
-  return readJson(res, fileIngestBatchSchema);
+export function resumeFileIngestBatch(batchId: string): Promise<FileIngestBatch> {
+  return run(api.ingest.resumeFileIngest({ params: { batch_id: uuid(batchId) } }));
 }
 
-const uploadFile = (batchId: string, file: File, hash: string) => {
+const uploadViaApi = (batchId: Uuid, file: File, hash: FileFingerprint) => {
   const formData = new FormData();
   formData.append("file", file);
-  return apiFetch(batchPath(batchId, `/files/${hash}`), {
-    method: "POST",
-    body: formData,
+  return run(
+    http.execute(
+      HttpClientRequest.post(`/file-ingests/${batchId}/files/${hash}`).pipe(
+        HttpClientRequest.bodyFormData(formData),
+      ),
+    ),
+  );
+};
+
+const uploadViaPresignedUrl = (url: string, file: File) =>
+  fetch(url, {
+    method: "PUT",
+    body: file,
+    headers: { "Content-Type": file.type || "application/octet-stream" },
   });
-};
 
-const acknowledgeUpload = (batchId: string, hash: string) =>
-  apiFetch(batchPath(batchId, `/files/${hash}/complete`), { method: "POST" });
+const acknowledgeUpload = (batchId: Uuid, hash: FileFingerprint) =>
+  run(api.ingest.acknowledgeFileIngestUpload({ params: { batch_id: batchId, hash } }));
 
-const commitFileIngest = async (batchId: string) => {
-  const res = await apiFetch(batchPath(batchId, "/commit"), { method: "POST" });
-  if (!res.ok) throw new Error(await errorText(res));
-  return readJson(res, fileIngestCommitSchema);
-};
+const commitFileIngest = (batchId: Uuid) =>
+  run(api.ingest.commitFileIngest({ params: { batch_id: batchId } }));
 
-/**
- * Transfers only the files still missing from a durable batch, acknowledges each
- * successful object, then commits the immutable manifest for worker processing.
- * Uploaded receipts survive navigation and API restarts; missing browser File
- * objects are reported by name so the user can reselect them.
- */
+const isSuccessStatus = (status: number) => status >= 200 && status < 300;
+
 export async function* continueFileIngest(
   initialBatch: FileIngestBatch,
   hashedFiles: HashedFile[],
@@ -233,42 +199,22 @@ export async function* continueFileIngest(
         };
       }
       try {
-        const contentType = file.type || "application/octet-stream";
-        const response =
+        const status =
           target.transport === "presigned"
-            ? await fetch(target.url, {
-                method: "PUT",
-                body: file,
-                headers: { "Content-Type": contentType },
-              })
-            : await uploadFile(batch.id, file, target.hash);
-        if (!response.ok) {
+            ? (await uploadViaPresignedUrl(target.url, file)).status
+            : (await uploadViaApi(batch.id, file, target.hash)).status;
+        if (!isSuccessStatus(status)) {
           return {
             ok: false,
-            failure: {
-              name: manifestFile.name,
-              error: `Upload returned ${response.status}`,
-            },
+            failure: { name: manifestFile.name, error: `Upload returned ${status}` },
           };
         }
-        const acknowledged = await acknowledgeUpload(batch.id, target.hash);
-        if (!acknowledged.ok) {
-          return {
-            ok: false,
-            failure: {
-              name: manifestFile.name,
-              error: `Upload acknowledgement returned ${acknowledged.status}`,
-            },
-          };
-        }
+        await acknowledgeUpload(batch.id, target.hash);
         return { ok: true, hash: target.hash };
       } catch (error) {
         return {
           ok: false,
-          failure: {
-            name: manifestFile.name,
-            error: error instanceof Error ? error.message : "Upload failed",
-          },
+          failure: { name: manifestFile.name, error: errorMessage(error, "Upload failed") },
         };
       }
     },
@@ -300,30 +246,21 @@ export async function* continueFileIngest(
   yield { phase: "processing", uploaded: total, total, id: job.id, batch };
 }
 
-export type UserSuggestionIntent = "disagree" | "correct" | "add_context" | "restructure";
-
-const userSuggestionResultSchema = ingestedDocumentSchema.extend({
-  mode: z.enum(["ingested", "proposed"]),
-});
-export type UserSuggestionResult = z.infer<typeof userSuggestionResultSchema>;
-
-export async function postUserSuggestion(params: {
+export function postUserSuggestion(params: {
   body: string;
   intent: UserSuggestionIntent;
   anchoredTo: string;
   anchoredSection: string;
 }): Promise<UserSuggestionResult> {
-  const res = await apiFetch(vaultPath("/ingest/user-suggestion"), {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      body: params.body,
-      intent: params.intent,
-      anchored_to: params.anchoredTo,
-      anchored_section: params.anchoredSection,
+  return run(
+    api.ingest.ingestUserSuggestion({
+      params: { vault_id: selectedVault() },
+      payload: {
+        body: params.body,
+        intent: params.intent,
+        anchored_to: params.anchoredTo,
+        anchored_section: params.anchoredSection,
+      },
     }),
-  });
-
-  if (!res.ok) throw await responseError(res, "Suggestion could not be sent");
-  return readJson(res, userSuggestionResultSchema);
+  );
 }

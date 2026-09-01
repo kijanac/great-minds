@@ -1018,11 +1018,11 @@ describe("read-only HTTP integration", () => {
 
     const overCap = await api("GET", "/vaults?limit=201", aliceToken);
     expect(overCap.status).toBe(422);
-    expect(overCap.body).toEqual({ detail: "Invalid query parameters" });
+    expect(overCap.body).toMatchObject({ detail: "Invalid query parameters" });
 
     const unauthenticated = await api("GET", "/vaults");
     expect(unauthenticated.status).toBe(401);
-    expect(unauthenticated.body).toEqual({ detail: "Invalid credentials" });
+    expect(unauthenticated.body).toMatchObject({ detail: "Invalid credentials" });
   });
 
   it("reads vault detail and collapses non-member and unknown vaults to 403", async () => {
@@ -1043,11 +1043,11 @@ describe("read-only HTTP integration", () => {
 
     const existingNotMine = await api("GET", `/vaults/${id.vaultAlpha}`, malloryToken);
     expect(existingNotMine.status).toBe(403);
-    expect(existingNotMine.body).toEqual({ detail: "Not a member of this vault" });
+    expect(existingNotMine.body).toMatchObject({ detail: "Not a member of this vault" });
 
     const unknown = await api("GET", `/vaults/${id.unknownVault}`, malloryToken);
     expect(unknown.status).toBe(403);
-    expect(unknown.body).toEqual({ detail: "Not a member of this vault" });
+    expect(unknown.body).toMatchObject({ detail: "Not a member of this vault" });
 
     const unauthenticated = await api("GET", `/vaults/${id.vaultAlpha}`);
     expect(unauthenticated.status).toBe(401);
@@ -1100,7 +1100,7 @@ describe("read-only HTTP integration", () => {
 
     const nonMember = await api("GET", `/vaults/${id.vaultAlpha}/config`, malloryToken);
     expect(nonMember.status).toBe(403);
-    expect(nonMember.body).toEqual({
+    expect(nonMember.body).toMatchObject({
       detail: "Only vault members can perform this action",
     });
 
@@ -1137,7 +1137,7 @@ describe("read-only HTTP integration", () => {
 
     const editorDenied = await api("GET", `/vaults/${id.vaultAlpha}/members`, bobToken);
     expect(editorDenied.status).toBe(403);
-    expect(editorDenied.body).toEqual({
+    expect(editorDenied.body).toMatchObject({
       detail: "Only vault owners can perform this action",
     });
 
@@ -1288,7 +1288,7 @@ describe("read-only HTTP integration", () => {
     const { aliceToken, malloryToken } = currentFixture();
     const wikiDoc = await api(
       "GET",
-      `/vaults/${id.vaultAlpha}/doc/wiki/alpha-practice.md`,
+      `/vaults/${id.vaultAlpha}/doc?path=wiki/alpha-practice.md`,
       aliceToken,
     );
     expect(wikiDoc.status).toBe(200);
@@ -1307,7 +1307,7 @@ describe("read-only HTTP integration", () => {
 
     const encodedSlash = await api(
       "GET",
-      `/vaults/${id.vaultAlpha}/doc/wiki%2Falpha-practice.md`,
+      `/vaults/${id.vaultAlpha}/doc?path=wiki%2Falpha-practice.md`,
       aliceToken,
     );
     expect(encodedSlash.status).toBe(200);
@@ -1315,7 +1315,7 @@ describe("read-only HTTP integration", () => {
 
     const rawDoc = await api(
       "GET",
-      `/vaults/${id.vaultAlpha}/doc/raw/books/capital.md`,
+      `/vaults/${id.vaultAlpha}/doc?path=raw/books/capital.md`,
       aliceToken,
     );
     expect(rawDoc.status).toBe(200);
@@ -1332,7 +1332,7 @@ describe("read-only HTTP integration", () => {
 
     const encodedSpace = await api(
       "GET",
-      `/vaults/${id.vaultAlpha}/doc/raw/books/encoded%20title.md`,
+      `/vaults/${id.vaultAlpha}/doc?path=raw/books/encoded%20title.md`,
       aliceToken,
     );
     expect(encodedSpace.status).toBe(200);
@@ -1346,7 +1346,7 @@ describe("read-only HTTP integration", () => {
 
     const archived = await api(
       "GET",
-      `/vaults/${id.vaultAlpha}/doc/wiki/archived-essay.md`,
+      `/vaults/${id.vaultAlpha}/doc?path=wiki/archived-essay.md`,
       aliceToken,
     );
     expect(archived.status).toBe(200);
@@ -1364,35 +1364,35 @@ describe("read-only HTTP integration", () => {
 
     const dbRowWithoutFile = await api(
       "GET",
-      `/vaults/${id.vaultAlpha}/doc/raw/articles/organization.md`,
+      `/vaults/${id.vaultAlpha}/doc?path=raw/articles/organization.md`,
       aliceToken,
     );
     expect(dbRowWithoutFile.status).toBe(404);
-    expect(dbRowWithoutFile.body).toEqual({
+    expect(dbRowWithoutFile.body).toMatchObject({
       detail: "Document not found: raw/articles/organization.md",
     });
 
     const fileWithoutRow = await api(
       "GET",
-      `/vaults/${id.vaultAlpha}/doc/wiki/orphan-on-disk.md`,
+      `/vaults/${id.vaultAlpha}/doc?path=wiki/orphan-on-disk.md`,
       aliceToken,
     );
     expect(fileWithoutRow.status).toBe(500);
-    expect(fileWithoutRow.body).toEqual({
+    expect(fileWithoutRow.body).toMatchObject({
       detail: "Document on disk lacks a registry row: wiki/orphan-on-disk.md",
     });
 
-    const invalid = await api("GET", `/vaults/${id.vaultAlpha}/doc/wiki/%5Cbad.md`, aliceToken);
+    const invalid = await api("GET", `/vaults/${id.vaultAlpha}/doc?path=wiki/%5Cbad.md`, aliceToken);
     expect(invalid.status).toBe(400);
 
     const nonMember = await api(
       "GET",
-      `/vaults/${id.vaultAlpha}/doc/wiki/alpha-practice.md`,
+      `/vaults/${id.vaultAlpha}/doc?path=wiki/alpha-practice.md`,
       malloryToken,
     );
     expect(nonMember.status).toBe(403);
 
-    const unauthenticated = await api("GET", `/vaults/${id.vaultAlpha}/doc/wiki/alpha-practice.md`);
+    const unauthenticated = await api("GET", `/vaults/${id.vaultAlpha}/doc?path=wiki/alpha-practice.md`);
     expect(unauthenticated.status).toBe(401);
   });
 
@@ -1543,7 +1543,7 @@ describe("read-only HTTP integration", () => {
       aliceToken,
     );
     expect(rawLinks.status).toBe(404);
-    expect(rawLinks.body).toEqual({ detail: "Not a wiki article: raw/books/capital.md" });
+    expect(rawLinks.body).toMatchObject({ detail: "Not a wiki article: raw/books/capital.md" });
 
     const archivedQuery = new URLSearchParams({ path: "archive/archived-essay.md" });
     const archivedLinks = await api(
@@ -1843,7 +1843,7 @@ describe("read-only HTTP integration", () => {
       bobToken,
     );
     expect(markdown.status).toBe(404);
-    expect(markdown.body).toEqual({ detail: "Session not found" });
+    expect(markdown.body).toMatchObject({ detail: "Session not found" });
   });
 
   it("replays sessions from JSONL with owner-only access and path-safe ids", async () => {
@@ -1903,7 +1903,7 @@ describe("read-only HTTP integration", () => {
       bobToken,
     );
     expect(memberReadsOwnerSession.status).toBe(404);
-    expect(memberReadsOwnerSession.body).toEqual({ detail: "Session not found" });
+    expect(memberReadsOwnerSession.body).toMatchObject({ detail: "Session not found" });
 
     const ownerReadsMemberSession = await api(
       "GET",
@@ -1925,7 +1925,7 @@ describe("read-only HTTP integration", () => {
       aliceToken,
     );
     expect(missingEvents.status).toBe(404);
-    expect(missingEvents.body).toEqual({ detail: "Session not found" });
+    expect(missingEvents.body).toMatchObject({ detail: "Session not found" });
 
     const traversal = await api(
       "GET",
@@ -1933,7 +1933,7 @@ describe("read-only HTTP integration", () => {
       aliceToken,
     );
     expect(traversal.status).toBe(422);
-    expect(traversal.body).toEqual({ detail: "Invalid path parameter" });
+    expect(traversal.body).toMatchObject({ detail: "Invalid path parameter" });
 
     const unauthenticated = await api(
       "GET",
@@ -1961,7 +1961,7 @@ describe("read-only HTTP integration", () => {
     await writeVaultFile(id.vaultAlpha, "sessions/s-empty.jsonl", "");
     const emptyReplay = await api("GET", `/vaults/${id.vaultAlpha}/sessions/s-empty`, aliceToken);
     expect(emptyReplay.status).toBe(404);
-    expect(emptyReplay.body).toEqual({ detail: "Session not found" });
+    expect(emptyReplay.body).toMatchObject({ detail: "Session not found" });
 
     const crossVault = await api(
       "GET",
@@ -1969,7 +1969,7 @@ describe("read-only HTTP integration", () => {
       currentFixture().bobToken,
     );
     expect(crossVault.status).toBe(404);
-    expect(crossVault.body).toEqual({ detail: "Session not found" });
+    expect(crossVault.body).toMatchObject({ detail: "Session not found" });
   });
 
   it("serves pre-rendered session markdown with decided 404 for missing sidecars", async () => {
@@ -1991,7 +1991,7 @@ describe("read-only HTTP integration", () => {
       aliceToken,
     );
     expect(missingSidecar.status).toBe(404);
-    expect(missingSidecar.body).toEqual({ detail: "Session markdown not found" });
+    expect(missingSidecar.body).toMatchObject({ detail: "Session markdown not found" });
 
     const nonMember = await api(
       "GET",

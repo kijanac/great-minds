@@ -1,6 +1,6 @@
 import { createInfiniteQuery, createQuery } from "@tanstack/svelte-query";
 
-import { nextPageOffset } from "$lib/api/schemas";
+import { nextPageOffset } from "$lib/api/pagination";
 import { listSessions } from "$lib/api/sessions";
 import { activeVault } from "$lib/hooks/use-vault.svelte";
 

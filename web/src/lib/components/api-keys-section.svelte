@@ -1,4 +1,5 @@
 <script lang="ts">
+  import type { Uuid } from "@great-minds/domain";
   import Check from "@lucide/svelte/icons/check";
   import ChevronDown from "@lucide/svelte/icons/chevron-down";
   import ChevronRight from "@lucide/svelte/icons/chevron-right";
@@ -10,7 +11,7 @@
     useQueryClient,
   } from "@tanstack/svelte-query";
 
-  import { createApiKey, listApiKeys, revokeApiKey } from "$lib/api/api-keys";
+  import { api, run } from "$lib/api/app";
   import { Button } from "$lib/components/ui/button";
   import * as Collapsible from "$lib/components/ui/collapsible";
   import { Input } from "$lib/components/ui/input";
@@ -19,16 +20,18 @@
   const queryClient = useQueryClient();
   const keysQuery = createQuery(() => ({
     queryKey: ["api-keys"],
-    queryFn: listApiKeys,
+    queryFn: () => run(api.auth.listApiKeys({})),
   }));
   const create = createMutation(() => ({
-    mutationFn: createApiKey,
+    mutationFn: (label: string) =>
+      run(api.auth.createApiKey({ payload: { label } })),
     onSuccess: async () => {
       await queryClient.invalidateQueries({ queryKey: ["api-keys"] });
     },
   }));
   const revoke = createMutation(() => ({
-    mutationFn: revokeApiKey,
+    mutationFn: (keyId: Uuid) =>
+      run(api.auth.deleteApiKey({ params: { key_id: keyId } })),
     onSuccess: async () => {
       await queryClient.invalidateQueries({ queryKey: ["api-keys"] });
     },
