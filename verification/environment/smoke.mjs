@@ -81,9 +81,9 @@ expect(
   `expected no unmentioned links, found ${lint.unmentioned_links.length}`,
 );
 
-await request(`/vaults/${primary}/doc/wiki/verification-synthesis.md`, ownerToken);
-await request(`/vaults/${primary}/doc/raw/books/verification-handbook.md`, ownerToken);
-await request("/me/refs/doc/refs/verification-reference.md", ownerToken);
+await request(`/vaults/${primary}/doc?path=wiki/verification-synthesis.md`, ownerToken);
+await request(`/vaults/${primary}/doc?path=raw/books/verification-handbook.md`, ownerToken);
+await request("/me/refs/doc?path=refs/verification-reference.md", ownerToken);
 
 const web = await fetch(`${manifest.urls.web}/login`, { signal: AbortSignal.timeout(5_000) });
 expect(web.ok, `web login returned ${web.status}`);

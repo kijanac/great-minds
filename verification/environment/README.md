@@ -1,6 +1,6 @@
 # Disposable verification environment
 
-This harness runs the Great Minds owner surface at source commit `c8c9e57` without touching the repository's ordinary `great_minds` database or storage. It is intended only for the hand-verification checklists in the parent directory.
+This harness runs the Great Minds owner surface at source commit `cbc9094` without touching the repository's ordinary `great_minds` database or storage. It is intended only for the hand-verification checklists in the parent directory.
 
 ## Safety boundary
 
@@ -8,7 +8,7 @@ This harness runs the Great Minds owner surface at source commit `c8c9e57` witho
 - API storage, logs, process IDs, tokens, fixture manifest, and saved browser states live under ignored `.state/`.
 - The API runs with `SUPPRESS_AUTH=true`, a disposable JWT secret, local storage, and private-URL fetch enabled. Never expose it beyond localhost or reuse it as production configuration.
 - `reset` deletes only this harness's Compose volume and `.state/`; it does not operate on the ordinary `great_minds` Compose project.
-- Startup refuses a Great Minds source checkout whose HEAD is not exactly `c8c9e57` or whose tracked files are modified.
+- Startup refuses a Great Minds source checkout whose HEAD is not exactly `cbc9094` or whose tracked files are modified.
 
 ## Start from a clean fixture
 
@@ -32,7 +32,7 @@ node manage.mjs start
 | Service | Address | Notes |
 | --- | --- | --- |
 | Web | `http://localhost:5173` | Authenticated verification surface |
-| API | `http://127.0.0.1:8000` | TypeScript API pinned to `c8c9e57` |
+| API | `http://127.0.0.1:8000` | TypeScript API pinned to `cbc9094` |
 | PostgreSQL | `127.0.0.1:55435` | Database `gm_product_verification` |
 | URL fixtures | `http://127.0.0.1:4174` | Deterministic external-fetch cases |
 

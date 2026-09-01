@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
-import { chmod, mkdir, writeFile } from "node:fs/promises";
-import { dirname, join } from "node:path";
+import { chmod, mkdir, readFile, writeFile } from "node:fs/promises";
+import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawnSync } from "node:child_process";
 
@@ -11,7 +11,8 @@ const apiBase = process.env.GM_VERIFICATION_API ?? "http://127.0.0.1:8000/v1";
 const webBase = process.env.GM_VERIFICATION_WEB ?? "http://localhost:5173";
 const fixtureBase = process.env.GM_VERIFICATION_FIXTURES ?? "http://127.0.0.1:4174";
 const composeFile = join(environmentDir, "docker-compose.yml");
-const sourceCommit = process.env.GM_EXPECTED_COMMIT ?? "c8c9e57";
+const sourceCommit = process.env.GM_EXPECTED_COMMIT ?? "cbc9094";
+const sourceRoot = resolve(process.env.GM_SOURCE_ROOT ?? join(environmentDir, "../../../great_minds"));
 
 const identities = {
   owner: { email: "owner.verify@example.test" },
@@ -467,7 +468,7 @@ COMMIT;
   };
 };
 
-const ensureSessions = async (owner, primaryVaultId, content) => {
+const seedSessionSpecs = (owner, content) => {
   const handbook = content.sources.find(
     (source) => source.path === "raw/books/verification-handbook.md",
   );
@@ -477,143 +478,142 @@ const ensureSessions = async (owner, primaryVaultId, content) => {
   if (handbook === undefined || synthesis === undefined) {
     throw new Error("Session evidence fixtures are missing");
   }
-  const listed = await jsonRequest("GET", `/vaults/${primaryVaultId}/sessions?limit=200&offset=0`, {
-    token: owner.access_token,
-    expected: [200],
-  });
-
-  const mainQuery = "How should this verification vault be used?";
-  let main = listed.items.find((item) => item.query === mainQuery);
-  if (main === undefined) {
-    main = await jsonRequest("POST", `/vaults/${primaryVaultId}/sessions`, {
-      token: owner.access_token,
-      body: {
-        idempotency_key: "verification-main-session-v1",
-        exchange: {
-          id: "ex-verification-main",
-          query: mainQuery,
-          thinking: [
-            {
-              sources: [
-                {
-                  label: "Verification Handbook",
-                  type: "raw",
-                  document_id: handbook.id,
-                  title: "Verification Handbook",
-                  scope: "kb",
-                  path: "raw/books/verification-handbook.md",
-                  thinking: "Read the fixture's grounding and interruption claims.",
-                  ranges: [{ start: 0, end: 0 }],
-                  full: false,
-                },
-                {
-                  label: "Verification as observed evidence",
-                  type: "article",
-                  document_id: synthesis.id,
-                  title: "Verification as observed evidence",
-                  scope: "kb",
-                  path: "wiki/verification-synthesis.md",
-                  thinking: "Connect source inspection with visible-product observation.",
-                  ranges: [{ start: 0, end: 0 }],
-                  full: false,
-                },
-              ],
-            },
-          ],
-          answer:
-            "Use it as a disposable workspace: inspect evidence, interrupt work, change scope, and record only what the running product actually shows.",
-        },
-      },
-      expected: [201],
-    });
-
-    await jsonRequest("PATCH", `/vaults/${primaryVaultId}/sessions/${main.id}/btw`, {
-      token: owner.access_token,
-      body: {
-        quote: "record only what the running product actually shows",
-        blockOffset: 0,
-        context:
-          "Use it as a disposable workspace: inspect evidence, interrupt work, change scope, and record only what the running product actually shows.",
-        exchangeId: "ex-verification-main",
-        exchanges: [
+  return [
+    {
+      key: "main",
+      idempotency_key: "verification-main-session-v1",
+      exchange: {
+        id: "ex-verification-main",
+        query: "How should this verification vault be used?",
+        thinking: [
           {
-            query: "Why is source reading not enough?",
-            thinking: [],
-            answer:
-              "Source reading predicts behavior; hand verification establishes the visible outcome.",
+            sources: [
+              {
+                label: "Verification Handbook",
+                type: "raw",
+                document_id: handbook.id,
+                title: "Verification Handbook",
+                scope: "kb",
+                path: "raw/books/verification-handbook.md",
+                thinking: "Read the fixture's grounding and interruption claims.",
+                ranges: [{ start: 0, end: 0 }],
+                full: false,
+              },
+              {
+                label: "Verification as observed evidence",
+                type: "article",
+                document_id: synthesis.id,
+                title: "Verification as observed evidence",
+                scope: "kb",
+                path: "wiki/verification-synthesis.md",
+                thinking: "Connect source inspection with visible-product observation.",
+                ranges: [{ start: 0, end: 0 }],
+                full: false,
+              },
+            ],
           },
         ],
-      },
-      expected: [200],
-    });
-
-    await jsonRequest("PATCH", `/vaults/${primaryVaultId}/sessions/${main.id}`, {
-      token: owner.access_token,
-      body: {
-        id: "ex-verification-follow-up",
-        query: "What should be recorded after a failure?",
-        thinking: [],
         answer:
-          "Record the setup, exact visible result, recovery path, and matching triage identifier.",
+          "Use it as a disposable workspace: inspect evidence, interrupt work, change scope, and record only what the running product actually shows.",
       },
-      expected: [200],
-    });
-  }
-
-  const referenceQuery = "Why does the silver kingfisher phrase matter?";
-  let referenceNote = listed.items.find((item) => item.query === referenceQuery);
-  if (referenceNote === undefined) {
-    referenceNote = await jsonRequest("POST", `/vaults/${primaryVaultId}/sessions`, {
-      token: owner.access_token,
-      body: {
-        idempotency_key: "verification-personal-reference-note-v1",
-        exchange: {
-          id: "ex-verification-reference-note",
-          query: referenceQuery,
+      btws: [
+        {
+          quote: "record only what the running product actually shows",
+          blockOffset: 0,
+          context:
+            "Use it as a disposable workspace: inspect evidence, interrupt work, change scope, and record only what the running product actually shows.",
+          exchangeId: "ex-verification-main",
+          exchanges: [
+            {
+              query: "Why is source reading not enough?",
+              thinking: [],
+              answer:
+                "Source reading predicts behavior; hand verification establishes the visible outcome.",
+            },
+          ],
+        },
+      ],
+      follow_ups: [
+        {
+          id: "ex-verification-follow-up",
+          query: "What should be recorded after a failure?",
           thinking: [],
-          answer: "It is unique to the personal reference and makes a scope leak observable.",
+          answer:
+            "Record the setup, exact visible result, recovery path, and matching triage identifier.",
         },
-        origin: {
-          doc_path: "refs/verification-reference.md",
-          origin_scope: "personal",
-          anchor: "silver kingfisher phrase",
-          paragraph: null,
-          paragraph_index: 0,
-        },
+      ],
+    },
+    {
+      key: "reference_note",
+      idempotency_key: "verification-personal-reference-note-v1",
+      exchange: {
+        id: "ex-verification-reference-note",
+        query: "Why does the silver kingfisher phrase matter?",
+        thinking: [],
+        answer: "It is unique to the personal reference and makes a scope leak observable.",
       },
-      expected: [201],
-    });
-  }
-
-  const articleQuery = "What does observed evidence add?";
-  let articleNote = listed.items.find((item) => item.query === articleQuery);
-  if (articleNote === undefined) {
-    articleNote = await jsonRequest("POST", `/vaults/${primaryVaultId}/sessions`, {
-      token: owner.access_token,
-      body: {
-        idempotency_key: "verification-article-note-v1",
-        exchange: {
-          id: "ex-verification-article-note",
-          query: articleQuery,
-          thinking: [],
-          answer: "It establishes what a person can actually see, understand, and recover from.",
-        },
-        origin: {
-          doc_path: "wiki/verification-synthesis.md",
-          origin_scope: "vault",
-          anchor: "what a person can see and recover from",
-          paragraph: null,
-          paragraph_index: 0,
-        },
+      origin: {
+        doc_path: "refs/verification-reference.md",
+        origin_scope: "personal",
+        anchor: "silver kingfisher phrase",
+        paragraph: null,
+        paragraph_index: 0,
       },
-      expected: [201],
-    });
-  }
+    },
+    {
+      key: "article_note",
+      idempotency_key: "verification-article-note-v1",
+      exchange: {
+        id: "ex-verification-article-note",
+        query: "What does observed evidence add?",
+        thinking: [],
+        answer: "It establishes what a person can actually see, understand, and recover from.",
+      },
+      origin: {
+        doc_path: "wiki/verification-synthesis.md",
+        origin_scope: "vault",
+        anchor: "what a person can see and recover from",
+        paragraph: null,
+        paragraph_index: 0,
+      },
+    },
+  ];
+};
 
+const ensureSessions = async (owner, primaryVaultId, content) => {
+  const spec = {
+    user_id: owner.user_id,
+    vault_id: primaryVaultId,
+    sessions: seedSessionSpecs(owner, content),
+  };
+  const outputPath = join(stateDir, "session-seed-result.json");
+  const result = spawnSync(
+    process.execPath,
+    [
+      "--experimental-strip-types",
+      join(sourceRoot, "packages/server/scripts/seed-verification-sessions.ts"),
+      outputPath,
+    ],
+    {
+      cwd: sourceRoot,
+      input: JSON.stringify(spec),
+      encoding: "utf8",
+      env: process.env,
+    },
+  );
+  if (result.status !== 0) {
+    throw new Error(`session seeding failed: ${result.stderr || result.stdout}`);
+  }
+  const seeded = JSON.parse(await readFile(outputPath, "utf8")).sessions;
+  for (const item of spec.sessions) {
+    if (typeof seeded[item.key] !== "string") {
+      throw new Error(`session seeding returned no id for ${item.key}`);
+    }
+  }
   return {
-    main_session_id: main.id,
-    personal_reference_note_session_id: referenceNote.id,
-    article_note_session_id: articleNote.id,
+    main_session_id: seeded.main,
+    personal_reference_note_session_id: seeded.reference_note,
+    article_note_session_id: seeded.article_note,
   };
 };
 

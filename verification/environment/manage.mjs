@@ -15,7 +15,7 @@ import { fileURLToPath } from "node:url";
 import { connect } from "node:net";
 
 const environmentDir = dirname(fileURLToPath(import.meta.url));
-const expectedCommit = "c8c9e57";
+const expectedCommit = "cbc9094";
 const stateDir = join(environmentDir, ".state");
 const logsDir = join(stateDir, "logs");
 const composeFile = join(environmentDir, "docker-compose.yml");
@@ -285,6 +285,10 @@ const start = async () => {
     env: {
       ...process.env,
       DATA_DIR: join(stateDir, "data"),
+      DATABASE_URL: databaseUrl,
+      JWT_SECRET: process.env.JWT_SECRET ?? "gm-product-verification-only-jwt-secret",
+      STORAGE_BACKEND: "local",
+      GM_SOURCE_ROOT: sourceRoot,
       GM_VERIFICATION_STATE_DIR: stateDir,
       GM_EXPECTED_COMMIT: expectedCommit,
     },
