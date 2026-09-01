@@ -99,7 +99,11 @@ const noUnknownRecordCast: Rule = {
   create(context) {
     return {
       TSAsExpression(node) {
-        if (asNode(node.expression)?.type === "ObjectExpression") {
+        const expression = asNode(node.expression);
+        if (
+          expression?.type === "ObjectExpression" &&
+          nodeList(expression.properties).length === 0
+        ) {
           return;
         }
         const annotation = asNode(node.typeAnnotation);
