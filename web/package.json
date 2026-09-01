@@ -39,7 +39,7 @@
     "@sveltejs/vite-plugin-svelte": "7.2.0",
     "@tailwindcss/vite": "4.2.2",
     "@tanstack/svelte-query-devtools": "6.1.36",
-    "@types/node": "26.1.1",
+    "@types/node": "26.4.0",
     "esbuild": "0.27.2",
     "prettier": "3.9.5",
     "prettier-plugin-svelte": "4.1.1",

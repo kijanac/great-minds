@@ -1,8 +1,8 @@
 # Harness-standard justfile.
 #
 # Naming conventions:
-#   Frontend: pnpm --prefix web (tsgo, oxlint, oxfmt)
-#   TypeScript packages: pnpm (tsgo, oxlint)
+#   Frontend: pnpm --prefix web (tsc, oxlint, oxfmt)
+#   TypeScript packages: pnpm (tsc, oxlint)
 
 set dotenv-load := false
 
@@ -35,7 +35,7 @@ format-web:
 types-web:
     pnpm --prefix web exec svelte-check
 
-# Type-check TypeScript packages with tsgo
+# Type-check TypeScript packages with tsc
 types-packages:
     pnpm run typecheck
 

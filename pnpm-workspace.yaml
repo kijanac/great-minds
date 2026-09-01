@@ -17,21 +17,4 @@ confirmModulesPurge: false
 # so pulled / hijacked packages have time to be caught and yanked.
 minimumReleaseAge: 4320
 minimumReleaseAgeExclude:
-  - '@effect/tsgo-darwin-arm64@0.16.3'
-  - '@effect/tsgo-darwin-x64@0.16.3'
-  - '@effect/tsgo-linux-arm64@0.16.3'
-  - '@effect/tsgo-linux-arm@0.16.3'
-  - '@effect/tsgo-linux-x64@0.16.3'
-  - '@effect/tsgo-win32-arm64@0.16.3'
-  - '@effect/tsgo-win32-x64@0.16.3'
-  - '@effect/tsgo@0.16.3'
-  - '@types/node@26.1.1'
-  - '@typescript/native-preview-darwin-arm64@7.0.0-dev.20260707.2'
-  - '@typescript/native-preview-darwin-x64@7.0.0-dev.20260707.2'
-  - '@typescript/native-preview-linux-arm64@7.0.0-dev.20260707.2'
-  - '@typescript/native-preview-linux-arm@7.0.0-dev.20260707.2'
-  - '@typescript/native-preview-linux-x64@7.0.0-dev.20260707.2'
-  - '@typescript/native-preview-win32-arm64@7.0.0-dev.20260707.2'
-  - '@typescript/native-preview-win32-x64@7.0.0-dev.20260707.2'
-  - '@typescript/native-preview@7.0.0-dev.20260707.2'
   - 'fast-check@4.9.0'
