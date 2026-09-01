@@ -9,9 +9,9 @@ import {
 import { type FileFingerprint, type Uuid } from "@great-minds/domain";
 import { and, asc, eq, inArray, isNull, sql } from "drizzle-orm";
 import { Cause, Context, Effect, Exit, Layer } from "effect";
-import { parse as parseYaml } from "yaml";
 
 import { bodyContentHash, fileContentHash } from "./crypto.ts";
+import { parseFrontmatter } from "./markdown.ts";
 import { StructuredLogger } from "./logging.ts";
 import { sourceIdentityFromFrontmatter } from "./source-identity.ts";
 import { ContentStorage, vaultOwner } from "./storage.ts";
@@ -61,24 +61,6 @@ export class SourceDocumentsService extends Context.Service<
   SourceDocumentsService,
   SourceDocumentsServiceShape
 >()("@great-minds/server/SourceDocumentsService") {}
-
-const FRONTMATTER_RE = /^---\n([\s\S]+?)\n---\n/;
-
-const parseFrontmatter = (content: string) => {
-  const match = FRONTMATTER_RE.exec(content);
-  if (match === null) {
-    return { frontmatter: {}, body: content } as const;
-  }
-  const yaml = match[1] ?? "";
-  const parsed = parseYaml(yaml) as unknown;
-  return {
-    frontmatter:
-      typeof parsed === "object" && parsed !== null && !Array.isArray(parsed)
-        ? (parsed as Record<string, unknown>)
-        : {},
-    body: content.slice(match[0].length),
-  } as const;
-};
 
 const stringField = (frontmatter: Record<string, unknown>, key: string) => {
   const value = frontmatter[key];

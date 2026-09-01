@@ -67,6 +67,7 @@ describe("compile LLM request composition", () => {
       responseFormat: extractResponseFormat({
         thematicHint: "",
         kinds: ["person", "event", "organization", "concept"],
+        webSearch: false,
         enrichedFields: [],
       }),
       requestProfile: "compile",

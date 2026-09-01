@@ -9,9 +9,7 @@
       "files": [
         "packages/goldens/**",
         "packages/server/test/**",
-        "packages/server/src/error-details.ts",
-        "packages/server/src/markdown.ts",
-        "packages/server/src/source-documents.ts"
+        "packages/server/src/error-details.ts"
       ],
       "rules": {
         "boundary/no-unknown-record-cast": "off"

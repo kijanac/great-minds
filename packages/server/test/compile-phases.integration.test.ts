@@ -480,6 +480,17 @@ describe("M4.3a deterministic compile phases", () => {
     );
   });
 
+const fullCard = (ideas: readonly unknown[]) => ({
+  title: "",
+  precis: "",
+  author: null,
+  published_date: null,
+  genre: null,
+  tags: [],
+  derived_extras: {},
+  ideas,
+});
+
   it("records per-call extract provenance, prompt content, and the embedding model", async () => {
     const canonicalUrl = "https://example.com/source";
     files.set(
@@ -488,9 +499,9 @@ describe("M4.3a deterministic compile phases", () => {
     );
     await insertSource(id.source, "raw/docs/source.md", "provenance-body", canonicalUrl);
     complete = async () => ({
-      text: JSON.stringify({
-        ideas: [{ kind: "concept", label: "Idea", description: "Description", anchors: [] }],
-      }),
+      text: JSON.stringify(
+        fullCard([{ kind: "concept", label: "Idea", description: "Description", anchors: [] }]),
+      ),
       finishReason: "stop",
       generationId: "extract-generation",
       usage: { promptTokens: 17, completionTokens: 9, cost: 0.125 },
@@ -542,7 +553,7 @@ describe("M4.3a deterministic compile phases", () => {
     });
   });
 
-  it("isolates malformed extract output per document and coerces Python-defaulted fields", async () => {
+  it("isolates malformed extract output per document under the strict contract", async () => {
     files.set("raw/docs/bad.md", "# Bad\n\nMALFORMED\n");
     files.set("raw/docs/good.md", "# Good\n\nGOOD\u0085BODY\n");
     await insertSource(id.source, "raw/docs/bad.md", "bad-body");
@@ -552,8 +563,17 @@ describe("M4.3a deterministic compile phases", () => {
       const prompt = typeof content === "string" ? content : "";
       return {
         text: prompt.includes("MALFORMED")
-          ? JSON.stringify({ ideas: [null] })
-          : JSON.stringify({ ideas: [{ anchors: [{ claim: null, quote: "GOOD BODY" }] }] }),
+          ? JSON.stringify(fullCard([null]))
+          : JSON.stringify(
+              fullCard([
+                {
+                  kind: "other",
+                  label: "",
+                  description: "",
+                  anchors: [{ claim: "", quote: "GOOD BODY" }],
+                },
+              ]),
+            ),
         finishReason: "stop",
       };
     };
@@ -639,9 +659,9 @@ describe("M4.3a deterministic compile phases", () => {
     files.set("raw/docs/source.md", "# Source\n\nBody\n");
     await insertSource(id.source, "raw/docs/source.md", "embedding-body");
     complete = async () => ({
-      text: JSON.stringify({
-        ideas: [{ kind: "concept", label: "Idea", description: "Description", anchors: [] }],
-      }),
+      text: JSON.stringify(
+        fullCard([{ kind: "concept", label: "Idea", description: "Description", anchors: [] }]),
+      ),
       finishReason: "stop",
     });
     embed = async () => {
@@ -657,9 +677,9 @@ describe("M4.3a deterministic compile phases", () => {
     files.set("raw/docs/source.md", "# Source\n\nBody\n");
     await insertSource(id.source, "raw/docs/source.md", "timeout-body");
     complete = async () => ({
-      text: JSON.stringify({
-        ideas: [{ kind: "concept", label: "Idea", description: "Description", anchors: [] }],
-      }),
+      text: JSON.stringify(
+        fullCard([{ kind: "concept", label: "Idea", description: "Description", anchors: [] }]),
+      ),
       finishReason: "stop",
     });
     embed = async () => {
@@ -685,9 +705,9 @@ describe("M4.3a deterministic compile phases", () => {
     files.set("raw/docs/source.md", "# Source\n\nBody\n");
     await insertSource(id.source, "raw/docs/source.md", "short-embedding-body");
     complete = async () => ({
-      text: JSON.stringify({
-        ideas: [{ kind: "concept", label: "Idea", description: "Description", anchors: [] }],
-      }),
+      text: JSON.stringify(
+        fullCard([{ kind: "concept", label: "Idea", description: "Description", anchors: [] }]),
+      ),
       finishReason: "stop",
     });
     embed = async () => [];
@@ -707,7 +727,7 @@ describe("M4.3a deterministic compile phases", () => {
     complete = async () => {
       attempt += 1;
       return {
-        text: attempt === 1 ? "{malformed-secret-shaped-output}" : JSON.stringify({ ideas: [] }),
+        text: attempt === 1 ? "{malformed-secret-shaped-output}" : JSON.stringify(fullCard([])),
         finishReason: "stop",
       };
     };
@@ -811,7 +831,7 @@ describe("M4.3a deterministic compile phases", () => {
 
     await expect(
       run(Effect.flatMap(CompilePhases, (phases) => phases.abstract(id.vault, id.run))),
-    ).rejects.toThrow("cleanup slug rename is not an object");
+    ).rejects.toThrow("validate_cleanup response does not match its contract");
   });
 
   it("ingest indexes path-sorted metadata/body chunks and skips an unchanged ETag replay", async () => {
@@ -1393,10 +1413,9 @@ describe("M4.3a deterministic compile phases", () => {
         return respond({
           topics: [
             {
-              slug: "canonical-topic",
               title: "Canonical Topic",
               description: "Canonical description",
-              link_target_titles: [],
+              link_targets: [],
             },
           ],
         });

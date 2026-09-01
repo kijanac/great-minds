@@ -12,8 +12,7 @@ import {
 } from "@great-minds/database";
 import type { Uuid } from "@great-minds/domain";
 import { and, asc, eq, inArray, sql } from "drizzle-orm";
-import { Effect, Fiber, Semaphore } from "effect";
-import { parse as parseYaml } from "yaml";
+import { Effect, Fiber, Schema, Semaphore } from "effect";
 
 import type { AppConfigShape } from "./config.ts";
 import {
@@ -40,6 +39,7 @@ import type { PipelineRunsService } from "./pipeline-runs.ts";
 import { progressSteps } from "./pipeline-runs.ts";
 import { formatUuid7, type RandomBytesService } from "./random.ts";
 import { type ContentStorage, StorageFileMissing, vaultOwner } from "./storage.ts";
+import { readVaultConfig, type EnrichedField, type VaultConfigFile } from "./vault-config.ts";
 import type { ClockService } from "./clock.ts";
 
 type DatabaseService = Database["Service"];
@@ -108,18 +108,6 @@ const isTimeoutError = (error: unknown): boolean => {
   return "name" in error && error.name === "TimeoutError";
 };
 
-type EnrichedField = {
-  readonly name: string;
-  readonly type: "string" | "list";
-  readonly description: string;
-};
-
-type CompileVaultConfig = {
-  readonly thematicHint: string;
-  readonly kinds: readonly string[];
-  readonly enrichedFields: readonly EnrichedField[];
-};
-
 type Anchor = {
   readonly claim: string;
   readonly quote: string;
@@ -173,28 +161,181 @@ type CanonicalDraft = {
 
 type SourceRow = typeof sourceDocuments.$inferSelect;
 
-const defaultVaultConfig: CompileVaultConfig = {
-  thematicHint: "",
-  kinds: ["person", "event", "organization", "concept"],
-  enrichedFields: [],
-};
+const nullableString = (value: string | null) =>
+  value !== null && value.length > 0 ? value : null;
 
-const asRecord = (value: unknown): Record<string, unknown> | undefined =>
-  typeof value === "object" && value !== null && !Array.isArray(value)
-    ? (value as Record<string, unknown>)
-    : undefined;
+const decodeOr =
+  <A>(decode: (value: unknown) => A) =>
+  (value: unknown): A | undefined => {
+    try {
+      return decode(value);
+    } catch {
+      return undefined;
+    }
+  };
 
-const strings = (value: unknown): readonly string[] =>
-  Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : [];
+const contractDecoder =
+  <A>(phase: string, decode: (value: unknown) => A) =>
+  (value: unknown): A => {
+    try {
+      return decode(value);
+    } catch {
+      throw new MalformedLlmOutput(`${phase} response does not match its contract`);
+    }
+  };
 
-const nullableString = (value: unknown) =>
-  typeof value === "string" && value.length > 0 ? value : null;
+const ExtractResponse = Schema.Struct({
+  title: Schema.String,
+  precis: Schema.String,
+  author: Schema.NullOr(Schema.String),
+  published_date: Schema.NullOr(Schema.String),
+  genre: Schema.NullOr(Schema.String),
+  tags: Schema.Array(Schema.String),
+  ideas: Schema.Array(
+    Schema.Struct({
+      kind: Schema.String,
+      label: Schema.String,
+      description: Schema.String,
+      anchors: Schema.Array(Schema.Struct({ claim: Schema.String, quote: Schema.String })),
+    }),
+  ),
+  derived_extras: Schema.Record(Schema.String, Schema.Unknown),
+});
+const decodeExtractResponse = contractDecoder("extract", Schema.decodeUnknownSync(ExtractResponse));
+
+const SynthesisResponse = Schema.Struct({
+  topics: Schema.optionalKey(
+    Schema.NullOr(
+      Schema.Array(
+        Schema.Struct({
+          slug: Schema.optionalKey(Schema.NullOr(Schema.String)),
+          title: Schema.optionalKey(Schema.NullOr(Schema.String)),
+          description: Schema.optionalKey(Schema.NullOr(Schema.String)),
+          subsumed_idea_ids: Schema.optionalKey(Schema.NullOr(Schema.Array(Schema.String))),
+        }),
+      ),
+    ),
+  ),
+});
+const decodeSynthesisResponse = contractDecoder("synthesize", Schema.decodeUnknownSync(SynthesisResponse));
+
+const RegistryResponse = Schema.Struct({
+  topics: Schema.Array(
+    Schema.Struct({
+      title: Schema.String,
+      description: Schema.String,
+      link_targets: Schema.Array(Schema.String),
+    }),
+  ),
+});
+const decodeRegistryResponse = contractDecoder("canonicalize_registry", Schema.decodeUnknownSync(RegistryResponse));
+
+const AssignmentsResponse = Schema.Struct({
+  assignments: Schema.Array(Schema.Struct({ n: Schema.Int, slug: Schema.String })),
+});
+const decodeAssignmentsResponse = contractDecoder("canonicalize_assign", Schema.decodeUnknownSync(AssignmentsResponse));
+
+const CleanupResponse = Schema.Struct({
+  slug_renames: Schema.optionalKey(
+    Schema.NullOr(
+      Schema.Array(
+        Schema.Struct({
+          canonical_tag: Schema.optionalKey(Schema.NullOr(Schema.String)),
+          new_slug: Schema.optionalKey(Schema.NullOr(Schema.String)),
+        }),
+      ),
+    ),
+  ),
+  supersessions: Schema.optionalKey(
+    Schema.NullOr(
+      Schema.Array(
+        Schema.Struct({
+          archived_tag: Schema.optionalKey(Schema.NullOr(Schema.String)),
+          successor_tag: Schema.optionalKey(Schema.NullOr(Schema.String)),
+        }),
+      ),
+    ),
+  ),
+});
+const decodeCleanupResponse = contractDecoder("validate_cleanup", Schema.decodeUnknownSync(CleanupResponse));
+
+const RenderResponse = Schema.Struct({
+  body: Schema.String,
+  tags: Schema.Array(Schema.String),
+});
+const decodeRenderResponse = contractDecoder("render", Schema.decodeUnknownSync(RenderResponse));
+
+const CachedAnchor = Schema.Struct({
+  claim: Schema.String,
+  quote: Schema.String,
+  chunk_index: Schema.optionalKey(Schema.NullOr(Schema.Int)),
+});
+
+const CachedIdea = Schema.Struct({
+  idea_id: Schema.String,
+  document_id: Schema.String,
+  kind: Schema.String,
+  label: Schema.String,
+  description: Schema.String,
+  anchors: Schema.optionalKey(Schema.Array(CachedAnchor)),
+});
+
+const CachedSourceCard = Schema.Struct({
+  document_id: Schema.String,
+  title: Schema.String,
+  precis: Schema.String,
+  author: Schema.optionalKey(Schema.NullOr(Schema.String)),
+  published_date: Schema.optionalKey(Schema.NullOr(Schema.String)),
+  genre: Schema.optionalKey(Schema.NullOr(Schema.String)),
+  tags: Schema.optionalKey(Schema.Array(Schema.String)),
+  derived_extras: Schema.optionalKey(Schema.Record(Schema.String, Schema.Unknown)),
+  ideas: Schema.Array(CachedIdea),
+});
+const decodeExtractCacheRow = decodeOr(
+  Schema.decodeUnknownSync(Schema.Struct({ source_card: CachedSourceCard })),
+);
+
+const CachedLocalTopic = Schema.Struct({
+  local_topic_id: Schema.String,
+  chunk_idx: Schema.Int,
+  slug: Schema.String,
+  title: Schema.String,
+  description: Schema.String,
+  subsumed_idea_ids: Schema.Array(Schema.String),
+});
+const decodeSynthesizeCacheRow = decodeOr(
+  Schema.decodeUnknownSync(Schema.Struct({ local_topics: Schema.Array(CachedLocalTopic) })),
+);
+
+const decodePartitionCacheRow = decodeOr(
+  Schema.decodeUnknownSync(
+    Schema.Struct({ chunks: Schema.Array(Schema.Array(Schema.String)) }),
+  ),
+);
+
+const CachedRegistryTopic = Schema.Struct({
+  slug: Schema.String,
+  title: Schema.String,
+  description: Schema.String,
+  link_target_titles: Schema.Array(Schema.String),
+});
+const decodeRegistryCacheRow = decodeOr(
+  Schema.decodeUnknownSync(Schema.Struct({ topics: Schema.Array(CachedRegistryTopic) })),
+);
+
+const decodeAssignCacheRow = decodeOr(
+  Schema.decodeUnknownSync(
+    Schema.Struct({ assign: Schema.Record(Schema.String, Schema.String) }),
+  ),
+);
+
+const decodeRenderCacheRow = decodeOr(Schema.decodeUnknownSync(RenderResponse));
 
 const compareText = (left: string, right: string) => (left < right ? -1 : left > right ? 1 : 0);
 const vectorLiteral = (embedding: readonly number[]) => `[${embedding.join(",")}]`;
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-export const extractResponseFormat = (config: CompileVaultConfig) => {
+export const extractResponseFormat = (config: VaultConfigFile) => {
   const extrasProperties = Object.fromEntries(
     config.enrichedFields.map((field) => [
       field.name,
@@ -326,38 +467,6 @@ const loadPrompt = (storage: StorageService, vaultId: Uuid, name: string) =>
     );
   });
 
-const loadVaultConfig = (storage: StorageService, vaultId: Uuid) =>
-  Effect.gen(function* () {
-    const result = yield* Effect.result(storage.readText(vaultOwner(vaultId), "config.yaml"));
-    if (result._tag === "Failure") {
-      if (result.failure instanceof StorageFileMissing) return defaultVaultConfig;
-      return yield* Effect.fail(result.failure);
-    }
-    const decoded = asRecord(parseYaml(result.success));
-    if (decoded === undefined) return defaultVaultConfig;
-    const configuredKinds = strings(decoded.kinds);
-    const metadata = asRecord(decoded.metadata) ?? {};
-    const enrichedFields: EnrichedField[] = [];
-    for (const [name, raw] of Object.entries(metadata)) {
-      const spec = asRecord(raw);
-      if (spec === undefined) continue;
-      const type = spec.type === "list" ? "list" : "string";
-      enrichedFields.push({
-        name,
-        type,
-        description: typeof spec.description === "string" ? spec.description : "",
-      });
-    }
-    return {
-      thematicHint:
-        typeof decoded.thematic_hint === "string" && decoded.thematic_hint.length > 0
-          ? decoded.thematic_hint
-          : defaultVaultConfig.thematicHint,
-      kinds: configuredKinds.length > 0 ? configuredKinds : defaultVaultConfig.kinds,
-      enrichedFields,
-    } satisfies CompileVaultConfig;
-  });
-
 const formatEnrichedFields = (fields: readonly EnrichedField[]) =>
   fields
     .map((field) => {
@@ -379,62 +488,16 @@ export const decodeCompileJsonCompletion = (model: string, completion: ModelComp
   return JSON.parse(stripJsonFencing(completion.text.trim())) as unknown;
 };
 
+const decodeCachedSourceCard = decodeOr(Schema.decodeUnknownSync(CachedSourceCard));
+
 const parseSourceCard = (value: unknown): SourceCard | undefined => {
-  const source = asRecord(value);
+  const source = decodeCachedSourceCard(value);
   if (source === undefined) return undefined;
-  const rawIdeas = Array.isArray(source.ideas) ? source.ideas : undefined;
-  const rawTags = source.tags === undefined ? [] : source.tags;
-  const rawExtras = source.derived_extras === undefined ? {} : source.derived_extras;
-  if (
-    typeof source.document_id !== "string" ||
-    !UUID_PATTERN.test(source.document_id) ||
-    typeof source.title !== "string" ||
-    typeof source.precis !== "string" ||
-    rawIdeas === undefined ||
-    !Array.isArray(rawTags) ||
-    strings(rawTags).length !== rawTags.length ||
-    asRecord(rawExtras) === undefined ||
-    ![source.author, source.published_date, source.genre].every(
-      (field) => field === undefined || field === null || typeof field === "string",
-    )
-  ) {
-    return undefined;
-  }
+  if (!UUID_PATTERN.test(source.document_id)) return undefined;
   const parsedIdeas: Idea[] = [];
-  for (const raw of rawIdeas) {
-    const idea = asRecord(raw);
-    const rawAnchors = idea?.anchors === undefined ? [] : idea.anchors;
-    if (
-      idea === undefined ||
-      typeof idea.idea_id !== "string" ||
-      !UUID_PATTERN.test(idea.idea_id) ||
-      typeof idea.document_id !== "string" ||
-      !UUID_PATTERN.test(idea.document_id) ||
-      typeof idea.kind !== "string" ||
-      typeof idea.label !== "string" ||
-      typeof idea.description !== "string" ||
-      !Array.isArray(rawAnchors)
-    ) {
+  for (const idea of source.ideas) {
+    if (!UUID_PATTERN.test(idea.idea_id) || !UUID_PATTERN.test(idea.document_id)) {
       return undefined;
-    }
-    const parsedAnchors: Anchor[] = [];
-    for (const rawAnchor of rawAnchors) {
-      const anchor = asRecord(rawAnchor);
-      if (
-        anchor === undefined ||
-        typeof anchor.claim !== "string" ||
-        typeof anchor.quote !== "string" ||
-        (anchor.chunk_index !== undefined &&
-          anchor.chunk_index !== null &&
-          !Number.isInteger(anchor.chunk_index))
-      ) {
-        return undefined;
-      }
-      parsedAnchors.push({
-        claim: anchor.claim,
-        quote: anchor.quote,
-        chunkIndex: Number.isInteger(anchor.chunk_index) ? (anchor.chunk_index as number) : null,
-      });
     }
     parsedIdeas.push({
       ideaId: idea.idea_id,
@@ -442,18 +505,22 @@ const parseSourceCard = (value: unknown): SourceCard | undefined => {
       kind: idea.kind,
       label: idea.label,
       description: idea.description,
-      anchors: parsedAnchors,
+      anchors: (idea.anchors ?? []).map((anchor) => ({
+        claim: anchor.claim,
+        quote: anchor.quote,
+        chunkIndex: anchor.chunk_index ?? null,
+      })),
     });
   }
   return {
     documentId: source.document_id,
-    title: source.title as string,
-    precis: source.precis as string,
-    author: nullableString(source.author),
-    publishedDate: nullableString(source.published_date),
-    genre: nullableString(source.genre),
-    tags: strings(rawTags),
-    derivedExtras: asRecord(rawExtras) as Record<string, unknown>,
+    title: source.title,
+    precis: source.precis,
+    author: nullableString(source.author ?? null),
+    publishedDate: nullableString(source.published_date ?? null),
+    genre: nullableString(source.genre ?? null),
+    tags: source.tags ?? [],
+    derivedExtras: { ...source.derived_extras },
     ideas: parsedIdeas,
   };
 };
@@ -481,35 +548,19 @@ const dumpSourceCard = (card: SourceCard) => ({
   })),
 });
 
+const decodeCachedLocalTopics = decodeOr(Schema.decodeUnknownSync(Schema.Array(CachedLocalTopic)));
+
 const parseLocalTopics = (value: unknown): readonly LocalTopic[] | undefined => {
-  if (!Array.isArray(value)) return undefined;
-  const out: LocalTopic[] = [];
-  for (const raw of value) {
-    const topic = asRecord(raw);
-    if (
-      topic === undefined ||
-      typeof topic.local_topic_id !== "string" ||
-      !Number.isInteger(topic.chunk_idx) ||
-      typeof topic.slug !== "string" ||
-      typeof topic.title !== "string" ||
-      typeof topic.description !== "string"
-    ) {
-      return undefined;
-    }
-    const ids = strings(topic.subsumed_idea_ids);
-    if (!Array.isArray(topic.subsumed_idea_ids) || ids.length !== topic.subsumed_idea_ids.length) {
-      return undefined;
-    }
-    out.push({
-      localTopicId: topic.local_topic_id,
-      chunkIdx: topic.chunk_idx as number,
-      slug: topic.slug,
-      title: topic.title,
-      description: topic.description,
-      subsumedIdeaIds: ids,
-    });
-  }
-  return out;
+  const decoded = decodeCachedLocalTopics(value);
+  if (decoded === undefined) return undefined;
+  return decoded.map((topic) => ({
+    localTopicId: topic.local_topic_id,
+    chunkIdx: topic.chunk_idx,
+    slug: topic.slug,
+    title: topic.title,
+    description: topic.description,
+    subsumedIdeaIds: topic.subsumed_idea_ids,
+  }));
 };
 
 const dumpLocalTopic = (topic: LocalTopic) => ({
@@ -556,7 +607,7 @@ export const makeCompileLlmCore = (options: CompileLlmCoreOptions) => {
     return formatUuid7(timestamp, bytes);
   });
 
-  const jsonCall = (input: {
+  const jsonCall = <A>(input: {
     readonly vaultId: Uuid;
     readonly runId: Uuid;
     readonly phase: string;
@@ -565,9 +616,10 @@ export const makeCompileLlmCore = (options: CompileLlmCoreOptions) => {
     readonly messages: readonly LlmMessage[];
     readonly temperature: number;
     readonly responseFormat: Record<string, unknown>;
+    readonly decode: (value: unknown) => A;
     readonly maxParseRetries?: number;
     readonly logFields?: Record<string, string | number>;
-  }) =>
+  }): Effect.Effect<A, unknown> =>
     Effect.gen(function* () {
       const totalAttempts = (input.maxParseRetries ?? 1) + 1;
       let lastError: unknown;
@@ -600,13 +652,13 @@ export const makeCompileLlmCore = (options: CompileLlmCoreOptions) => {
           }));
         if (completion.finishReason === "length") {
           return yield* Effect.try({
-            try: () => decodeCompileJsonCompletion(input.model, completion),
+            try: () => input.decode(decodeCompileJsonCompletion(input.model, completion)),
             catch: (error) => error,
           });
         }
         const decoded = yield* Effect.result(
           Effect.try({
-            try: () => decodeCompileJsonCompletion(input.model, completion),
+            try: () => input.decode(decodeCompileJsonCompletion(input.model, completion)),
             catch: (error) => error,
           }),
         );
@@ -649,7 +701,7 @@ export const makeCompileLlmCore = (options: CompileLlmCoreOptions) => {
 
   const extract = (vaultId: Uuid, runId: Uuid) =>
     Effect.gen(function* () {
-      const vaultConfig = yield* loadVaultConfig(storage, vaultId);
+      const vaultConfig = yield* readVaultConfig(storage, vaultId);
       const promptTemplate = yield* loadPrompt(storage, vaultId, "extract");
       const renderedTemplate = promptTemplate
         .replace("{kinds}", vaultConfig.kinds.join(", "))
@@ -699,8 +751,9 @@ export const makeCompileLlmCore = (options: CompileLlmCoreOptions) => {
                 );
                 const cachedValue = yield* getCache(vaultId, "extract", cacheKey);
                 if (cachedValue !== undefined) {
-                  const cached = asRecord(cachedValue);
-                  const cachedCard = parseSourceCard(cached?.source_card);
+                  const cached = decodeExtractCacheRow(cachedValue);
+                  const cachedCard =
+                    cached === undefined ? undefined : parseSourceCard(cached.source_card);
                   if (cachedCard === undefined) {
                     return yield* Effect.fail(
                       new MalformedCompileCache(`extract cache row ${cacheKey} is malformed`),
@@ -726,6 +779,7 @@ export const makeCompileLlmCore = (options: CompileLlmCoreOptions) => {
                     ],
                     temperature: 0.2,
                     responseFormat,
+                    decode: decodeExtractResponse,
                     logFields: { document_id: document.id, path: document.filePath },
                   }),
                 );
@@ -1020,29 +1074,6 @@ export const makeCompileLlmCore = (options: CompileLlmCoreOptions) => {
   return { extract, abstract, render } as const;
 };
 
-const pythonTruthy = (value: unknown) => {
-  if (value === null || value === undefined || value === false || value === 0 || value === "") {
-    return false;
-  }
-  if (Array.isArray(value)) return value.length > 0;
-  if (typeof value === "object") return Object.keys(value).length > 0;
-  return true;
-};
-
-const coercedString = (value: unknown, field: string) => {
-  if (!pythonTruthy(value)) return Effect.succeed("");
-  return typeof value === "string"
-    ? Effect.succeed(value)
-    : Effect.fail(new MalformedLlmOutput(`invalid source card ${field}`));
-};
-
-const coercedNullableString = (value: unknown, field: string) => {
-  if (!pythonTruthy(value)) return Effect.succeed(null);
-  return typeof value === "string"
-    ? Effect.succeed(value)
-    : Effect.fail(new MalformedLlmOutput(`invalid source card ${field}`));
-};
-
 const PYTHON_WHITESPACE = new RegExp(
   String.raw`[\t\n\v\f\r\u001c-\u001f \u0085\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000]+`,
   "g",
@@ -1052,98 +1083,56 @@ export const normalizePythonWhitespace = (value: string) =>
   value.replace(PYTHON_WHITESPACE, " ").replace(/^ | $/g, "");
 
 const validateExtractOutput = (
-  data: unknown,
+  data: typeof ExtractResponse.Type,
   documentId: string,
   allowedKinds: readonly string[],
   body: string,
   mintUuid7: Effect.Effect<string>,
 ) =>
   Effect.gen(function* () {
-    const record = asRecord(data);
-    if (record === undefined)
-      return yield* Effect.fail(new MalformedLlmOutput("invalid source card"));
-    const ideasValue = pythonTruthy(record.ideas) ? record.ideas : [];
-    if (!Array.isArray(ideasValue)) {
-      return yield* Effect.fail(new MalformedLlmOutput("invalid source card ideas"));
-    }
-    const title = yield* coercedString(record.title, "title");
-    const precis = yield* coercedString(record.precis, "precis");
-    const author = yield* coercedNullableString(record.author, "author");
-    const publishedDate = yield* coercedNullableString(record.published_date, "published_date");
-    const genre = yield* coercedNullableString(record.genre, "genre");
-    const tagsValue = pythonTruthy(record.tags) ? record.tags : [];
-    if (!Array.isArray(tagsValue) || strings(tagsValue).length !== tagsValue.length) {
-      return yield* Effect.fail(new MalformedLlmOutput("invalid source card tags"));
-    }
-    const extrasValue = pythonTruthy(record.derived_extras) ? record.derived_extras : {};
-    const derivedExtras = asRecord(extrasValue);
-    if (derivedExtras === undefined) {
-      return yield* Effect.fail(new MalformedLlmOutput("invalid source card derived_extras"));
-    }
     const paragraphBodies = markdownParagraphs(body).map((paragraph) => ({
       index: paragraph.index,
       body: normalizePythonWhitespace(paragraph.body),
     }));
     const parsedIdeas: Idea[] = [];
-    for (const raw of ideasValue) {
-      const idea = asRecord(raw);
-      if (idea === undefined) return yield* Effect.fail(new MalformedLlmOutput("invalid idea"));
-      const anchorsValue = pythonTruthy(idea.anchors) ? idea.anchors : [];
-      if (!Array.isArray(anchorsValue)) {
-        return yield* Effect.fail(new MalformedLlmOutput("invalid idea anchors"));
-      }
-      const rawKind = pythonTruthy(idea.kind) ? idea.kind : "other";
-      if (typeof rawKind === "object") {
-        return yield* Effect.fail(new MalformedLlmOutput("invalid idea kind"));
-      }
+    for (const idea of data.ideas) {
       const kind =
-        typeof rawKind === "string" && (allowedKinds.includes(rawKind) || rawKind === "other")
-          ? rawKind
-          : "other";
-      const label = yield* coercedString(idea.label, "idea label");
-      const description = yield* coercedString(idea.description, "idea description");
-      const parsedAnchors: Anchor[] = [];
-      for (const rawAnchor of anchorsValue) {
-        const anchor = asRecord(rawAnchor);
-        if (anchor === undefined) {
-          return yield* Effect.fail(new MalformedLlmOutput("invalid anchor"));
-        }
-        const claim = yield* coercedString(anchor.claim, "anchor claim");
-        const quote = yield* coercedString(anchor.quote, "anchor quote");
-        const normalizedQuote = normalizePythonWhitespace(quote);
-        parsedAnchors.push({
-          claim,
-          quote,
+        allowedKinds.includes(idea.kind) || idea.kind === "other" ? idea.kind : "other";
+      const parsedAnchors: Anchor[] = idea.anchors.map((anchor) => {
+        const normalizedQuote = normalizePythonWhitespace(anchor.quote);
+        return {
+          claim: anchor.claim,
+          quote: anchor.quote,
           chunkIndex:
             normalizedQuote.length === 0
               ? null
               : (paragraphBodies.find((paragraph) => paragraph.body.includes(normalizedQuote))
                   ?.index ?? null),
-        });
-      }
+        };
+      });
       parsedIdeas.push({
         ideaId: yield* mintUuid7,
         documentId,
         kind,
-        label,
-        description,
+        label: idea.label,
+        description: idea.description,
         anchors: parsedAnchors,
       });
     }
     return {
       documentId,
-      title,
-      precis,
-      author,
-      publishedDate,
-      genre,
-      tags: strings(tagsValue),
-      derivedExtras,
+      title: data.title,
+      precis: data.precis,
+      author: nullableString(data.author),
+      publishedDate: nullableString(data.published_date),
+      genre: nullableString(data.genre),
+      tags: data.tags,
+      derivedExtras: { ...data.derived_extras },
       ideas: parsedIdeas,
     } satisfies SourceCard;
   });
 
-type JsonCall = (input: {
+type JsonCall = <A>(input: {
   readonly vaultId: Uuid;
   readonly runId: Uuid;
   readonly phase: string;
@@ -1152,9 +1141,10 @@ type JsonCall = (input: {
   readonly messages: readonly LlmMessage[];
   readonly temperature: number;
   readonly responseFormat: Record<string, unknown>;
+  readonly decode: (value: unknown) => A;
   readonly maxParseRetries?: number;
   readonly logFields?: Record<string, string | number>;
-}) => Effect.Effect<unknown, unknown>;
+}) => Effect.Effect<A, unknown>;
 
 type CacheGetter = (
   vaultId: Uuid,
@@ -1280,7 +1270,7 @@ const runAbstract = (options: AbstractOptions) =>
         completed: new Set(["group_ideas", "synthesize_topics", "merge_candidates"]),
       }),
     );
-    const vaultConfig = yield* loadVaultConfig(storage, vaultId);
+    const vaultConfig = yield* readVaultConfig(storage, vaultId);
     const canonicals = yield* canonicalizeTopics(options, merged, vaultConfig.thematicHint);
 
     yield* pipeline.updateProgress(
@@ -1335,12 +1325,10 @@ const partitionIdeas = (options: AbstractOptions, contexts: readonly IdeaContext
     if (contexts.length === 0) return [] as readonly (readonly string[])[];
     const ids = contexts.map((idea) => idea.ideaId).toSorted();
     const cacheKey = partitionCacheKey(ids, options.config.compilePartitionTargetTokens);
-    const cached = asRecord(yield* options.getCache(options.vaultId, "partition", cacheKey));
-    const cachedChunks = cached?.chunks;
-    if (Array.isArray(cachedChunks)) {
-      const chunks = cachedChunks.map(strings);
-      if (cachedChunks.every(Array.isArray)) return chunks;
-    }
+    const cached = decodePartitionCacheRow(
+      yield* options.getCache(options.vaultId, "partition", cacheKey),
+    );
+    if (cached !== undefined) return cached.chunks;
     const tokens = contexts.map(estimateTokens);
     const totalTokens = tokens.reduce((sum, value) => sum + value, 0);
     const k = Math.min(
@@ -1757,8 +1745,11 @@ const synthesizeTopics = (
             promptHash,
             model: options.config.mapModel,
           });
-          const cached = asRecord(yield* options.getCache(options.vaultId, "synthesize", cacheKey));
-          const cachedTopics = parseLocalTopics(cached?.local_topics);
+          const cached = decodeSynthesizeCacheRow(
+            yield* options.getCache(options.vaultId, "synthesize", cacheKey),
+          );
+          const cachedTopics =
+            cached === undefined ? undefined : parseLocalTopics(cached.local_topics);
           if (cachedTopics !== undefined) return cachedTopics;
           const present = chunk.flatMap((ideaId) => {
             const idea = contextsById.get(ideaId);
@@ -1779,6 +1770,7 @@ const synthesizeTopics = (
                 ],
                 temperature: 0.3,
                 responseFormat: jsonObjectResponseFormat,
+                decode: decodeSynthesisResponse,
                 logFields: { chunk_idx: chunkIdx },
               }),
             ),
@@ -1881,24 +1873,20 @@ const normalizeSlug = (slug: string) =>
     .replace(/^-|-$/g, "");
 
 const parseSynthesisResponse = (
-  data: unknown,
+  data: typeof SynthesisResponse.Type,
   chunkIdx: number,
   tags: ReadonlyMap<string, string>,
   mintUuid7: Effect.Effect<string>,
 ) =>
   Effect.gen(function* () {
-    const record = asRecord(data);
-    const rawTopics = Array.isArray(record?.topics) ? record.topics : [];
     const out: LocalTopic[] = [];
-    for (const raw of rawTopics) {
-      const topic = asRecord(raw);
-      if (topic === undefined) continue;
-      const slug = normalizeSlug(typeof topic.slug === "string" ? topic.slug : "");
-      const title = typeof topic.title === "string" ? topic.title.trim() : "";
-      const description = typeof topic.description === "string" ? topic.description.trim() : "";
+    for (const topic of data.topics ?? []) {
+      const slug = normalizeSlug(topic.slug ?? "");
+      const title = (topic.title ?? "").trim();
+      const description = (topic.description ?? "").trim();
       const ids = [
         ...new Set(
-          strings(topic.subsumed_idea_ids).flatMap((tag) => {
+          (topic.subsumed_idea_ids ?? []).flatMap((tag) => {
             const ideaId = tags.get(tag);
             return ideaId === undefined ? [] : [ideaId];
           }),
@@ -2067,6 +2055,7 @@ const resolveChunkGranularity = (options: AbstractOptions, input: ChunkGranulari
             messages: [{ role: "user", content }],
             temperature: 0.3,
             responseFormat: jsonObjectResponseFormat,
+            decode: decodeSynthesisResponse,
             logFields: { chunk_idx: input.chunkIdx, phase: "synthesize_revise" },
           }),
         ),
@@ -2149,6 +2138,7 @@ const resolveChunkGranularity = (options: AbstractOptions, input: ChunkGranulari
             messages: [{ role: "user", content }],
             temperature: 0.3,
             responseFormat: jsonObjectResponseFormat,
+            decode: decodeSynthesisResponse,
             logFields: { chunk_idx: input.chunkIdx, phase: "synthesize_decompose" },
           }),
         ),
@@ -2282,31 +2272,6 @@ export const premergeTopics = (
     .toSorted((left, right) => compareText(left.slug, right.slug));
 };
 
-const parseRegistryTopics = (value: unknown): readonly RegistryTopic[] | undefined => {
-  if (!Array.isArray(value)) return undefined;
-  const result: RegistryTopic[] = [];
-  for (const raw of value) {
-    const topic = asRecord(raw);
-    if (
-      topic === undefined ||
-      typeof topic.slug !== "string" ||
-      typeof topic.title !== "string" ||
-      typeof topic.description !== "string" ||
-      !Array.isArray(topic.link_target_titles) ||
-      strings(topic.link_target_titles).length !== topic.link_target_titles.length
-    ) {
-      return undefined;
-    }
-    result.push({
-      slug: topic.slug,
-      title: topic.title,
-      description: topic.description,
-      linkTargetTitles: strings(topic.link_target_titles),
-    });
-  }
-  return result;
-};
-
 const dumpRegistryTopic = (topic: RegistryTopic) => ({
   slug: topic.slug,
   title: topic.title,
@@ -2361,8 +2326,16 @@ const canonicalizeTopics = (
     );
     let registry: readonly RegistryTopic[];
     if (cachedRegistryValue !== undefined) {
-      const cachedRegistry = asRecord(cachedRegistryValue);
-      const parsed = parseRegistryTopics(cachedRegistry?.topics);
+      const cachedRegistry = decodeRegistryCacheRow(cachedRegistryValue);
+      const parsed =
+        cachedRegistry === undefined
+          ? undefined
+          : cachedRegistry.topics.map((topic) => ({
+              slug: topic.slug,
+              title: topic.title,
+              description: topic.description,
+              linkTargetTitles: topic.link_target_titles,
+            }));
       if (parsed === undefined) {
         return yield* Effect.fail(
           new MalformedCompileCache(
@@ -2398,20 +2371,19 @@ const canonicalizeTopics = (
         ],
         temperature: 0.2,
         responseFormat: registryResponseFormat,
+        decode: decodeRegistryResponse,
         logFields: { vault_id: options.vaultId, phase: "canonicalize_registry" },
       });
       const seen = new Set<string>();
-      const dataRecord = asRecord(data);
-      registry = (Array.isArray(dataRecord?.topics) ? dataRecord.topics : []).flatMap((raw) => {
-        const topic = asRecord(raw);
-        const title = typeof topic?.title === "string" ? topic.title.trim() : "";
+      registry = data.topics.flatMap((topic) => {
+        const title = topic.title.trim();
         if (title.length === 0) return [];
         return [
           {
             slug: slugifyRegistry(title, seen),
             title,
-            description: typeof topic?.description === "string" ? topic.description.trim() : "",
-            linkTargetTitles: strings(topic?.link_targets),
+            description: topic.description.trim(),
+            linkTargetTitles: topic.link_targets,
           } satisfies RegistryTopic,
         ];
       });
@@ -2457,20 +2429,17 @@ const canonicalizeTopics = (
       });
       const cachedValue = yield* options.getCache(options.vaultId, "canonicalize_assign", cacheKey);
       if (cachedValue !== undefined) {
-        const cached = asRecord(cachedValue);
-        const cachedAssign = asRecord(cached?.assign);
+        const cached = decodeAssignCacheRow(cachedValue);
         if (
-          cachedAssign === undefined ||
-          Object.entries(cachedAssign).some(
-            ([localId, slug]) => !UUID_PATTERN.test(localId) || typeof slug !== "string",
-          )
+          cached === undefined ||
+          Object.keys(cached.assign).some((localId) => !UUID_PATTERN.test(localId))
         ) {
           return yield* Effect.fail(
             new MalformedCompileCache(`canonicalize_assign cache row ${cacheKey} is malformed`),
           );
         }
-        for (const [localId, slug] of Object.entries(cachedAssign)) {
-          assignment.set(localId, slug as string);
+        for (const [localId, slug] of Object.entries(cached.assign)) {
+          assignment.set(localId, slug);
         }
         continue;
       }
@@ -2494,6 +2463,7 @@ const canonicalizeTopics = (
         ],
         temperature: 0.1,
         responseFormat: assignmentsResponseFormat,
+        decode: decodeAssignmentsResponse,
         maxParseRetries: 2,
         logFields: {
           vault_id: options.vaultId,
@@ -2502,24 +2472,12 @@ const canonicalizeTopics = (
         },
       });
       const batchAssign: Record<string, string> = {};
-      const rawAssignments = Array.isArray(asRecord(data)?.assignments)
-        ? (asRecord(data)?.assignments as unknown[])
-        : [];
-      for (const raw of rawAssignments) {
-        const item = asRecord(raw);
-        const n = item?.n;
-        const slug = item?.slug;
-        if (
-          Number.isInteger(n) &&
-          (n as number) >= 1 &&
-          (n as number) <= batch.length &&
-          typeof slug === "string" &&
-          slugs.has(slug)
-        ) {
-          const localId = batch[(n as number) - 1]?.localTopicId;
+      for (const item of data.assignments) {
+        if (item.n >= 1 && item.n <= batch.length && slugs.has(item.slug)) {
+          const localId = batch[item.n - 1]?.localTopicId;
           if (localId !== undefined) {
-            assignment.set(localId, slug);
-            batchAssign[localId] = slug;
+            assignment.set(localId, item.slug);
+            batchAssign[localId] = item.slug;
           }
         }
       }
@@ -2557,8 +2515,8 @@ const canonicalizeTopics = (
     });
   });
 
-const tagToIndex = (tag: unknown, prefix: string, upperBound: number) => {
-  if (typeof tag !== "string" || !tag.startsWith(prefix)) return undefined;
+const tagToIndex = (tag: string, prefix: string, upperBound: number) => {
+  if (!tag.startsWith(prefix)) return undefined;
   const suffix = tag.slice(prefix.length);
   if (!/^\d+$/.test(suffix)) return undefined;
   const parsed = Number(suffix) - 1;
@@ -2701,63 +2659,21 @@ const validateTopics = (
         ],
         temperature: 0.1,
         responseFormat: jsonObjectResponseFormat,
+        decode: decodeCleanupResponse,
         logFields: { vault_id: options.vaultId, phase: "validate_cleanup" },
       });
-      const record = asRecord(data);
-      if (record === undefined) {
-        return yield* Effect.fail(new MalformedLlmOutput("cleanup response is not an object"));
-      }
-      const renamesValue = pythonTruthy(record.slug_renames) ? record.slug_renames : [];
-      if (!Array.isArray(renamesValue)) {
-        return yield* Effect.fail(new MalformedLlmOutput("cleanup slug_renames is not an array"));
-      }
-      const rawRenames = renamesValue;
-      for (const raw of rawRenames) {
-        const rename = asRecord(raw);
-        if (rename === undefined) {
-          return yield* Effect.fail(new MalformedLlmOutput("cleanup slug rename is not an object"));
-        }
-        if (pythonTruthy(rename.canonical_tag) && typeof rename.canonical_tag !== "string") {
-          return yield* Effect.fail(
-            new MalformedLlmOutput("cleanup canonical_tag is not a string"),
-          );
-        }
-        if (pythonTruthy(rename.new_slug) && typeof rename.new_slug !== "string") {
-          return yield* Effect.fail(new MalformedLlmOutput("cleanup new_slug is not a string"));
-        }
-        const index = tagToIndex(rename?.canonical_tag, "c_", canonicals.length);
-        const newSlug =
-          typeof rename?.new_slug === "string" ? rename.new_slug.trim().toLowerCase() : "";
+      for (const rename of data.slug_renames ?? []) {
+        const index = tagToIndex(rename.canonical_tag ?? "", "c_", canonicals.length);
+        const newSlug = (rename.new_slug ?? "").trim().toLowerCase();
         if (index !== undefined && newSlug.length > 0) renames.set(index, newSlug);
       }
       const archivedByTag = new Map(
         archiveCandidates.map((topic, index) => [`a_${index + 1}`, topic.topicId]),
       );
-      const supersessionsValue = pythonTruthy(record.supersessions) ? record.supersessions : [];
-      if (!Array.isArray(supersessionsValue)) {
-        return yield* Effect.fail(new MalformedLlmOutput("cleanup supersessions is not an array"));
-      }
-      const rawSupersessions = supersessionsValue;
-      for (const raw of rawSupersessions) {
-        const entry = asRecord(raw);
-        if (entry === undefined) {
-          return yield* Effect.fail(
-            new MalformedLlmOutput("cleanup supersession is not an object"),
-          );
-        }
-        if (pythonTruthy(entry.archived_tag) && typeof entry.archived_tag !== "string") {
-          return yield* Effect.fail(new MalformedLlmOutput("cleanup archived_tag is not a string"));
-        }
-        if (pythonTruthy(entry.successor_tag) && typeof entry.successor_tag !== "string") {
-          return yield* Effect.fail(
-            new MalformedLlmOutput("cleanup successor_tag is not a string"),
-          );
-        }
-        const archivedId = archivedByTag.get(
-          typeof entry?.archived_tag === "string" ? entry.archived_tag : "",
-        );
+      for (const entry of data.supersessions ?? []) {
+        const archivedId = archivedByTag.get(entry.archived_tag ?? "");
         if (archivedId === undefined) continue;
-        const successor = entry?.successor_tag
+        const successor = entry.successor_tag
           ? tagToIndex(entry.successor_tag, "c_", canonicals.length)
           : undefined;
         supersessions.set(archivedId, successor ?? null);
@@ -2939,9 +2855,10 @@ const runRender = (options: RenderOptions) =>
         promptHash,
         model: options.config.renderModel,
       });
-      const cached = parseRenderOutput(
+      const cachedRow = decodeRenderCacheRow(
         yield* options.getCache(options.vaultId, "render", cacheKey),
       );
+      const cached = cachedRow === undefined ? undefined : normalizeRenderOutput(cachedRow);
       if (cached === undefined) {
         toRender.push(topic);
       } else if (!existingWiki.has(`wiki/${topic.slug}.md`)) {
@@ -3061,6 +2978,7 @@ const runRender = (options: RenderOptions) =>
                   messages: [{ role: "user", content: prompt }],
                   temperature: 0.3,
                   responseFormat: jsonObjectResponseFormat,
+                  decode: decodeRenderResponse,
                   logFields: { topic_id: topic.topicId, topic_slug: topic.slug },
                 }),
               ),
@@ -3079,7 +2997,7 @@ const runRender = (options: RenderOptions) =>
             }
             const processed = yield* Effect.result(
               Effect.gen(function* () {
-                const output = parseRenderOutput(result.success);
+                const output = normalizeRenderOutput(result.success);
                 if (output === undefined) {
                   return yield* Effect.fail(new MalformedLlmOutput("invalid render output"));
                 }
@@ -3184,20 +3102,14 @@ const runRender = (options: RenderOptions) =>
     );
   });
 
-const parseRenderOutput = (value: unknown) => {
-  const record = asRecord(value);
-  if (record === undefined || typeof record.body !== "string" || !Array.isArray(record.tags)) {
-    return undefined;
-  }
-  const rawTags = strings(record.tags);
-  if (rawTags.length !== record.tags.length) return undefined;
+const normalizeRenderOutput = (value: typeof RenderResponse.Type) => {
   const tags: string[] = [];
-  for (const raw of rawTags) {
+  for (const raw of value.tags) {
     const tag = raw.trim().toLowerCase().replaceAll(" ", "-");
     if (tag.length === 0) return undefined;
     if (!tags.includes(tag)) tags.push(tag);
   }
-  return { body: record.body, tags } as const;
+  return { body: value.body, tags } as const;
 };
 
 const sourceLabel = (document: SourceRow) => {

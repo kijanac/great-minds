@@ -24,9 +24,9 @@ import {
 } from "@great-minds/domain";
 import { and, asc, desc, eq, gte, ilike, lte, ne, or, sql, type SQL } from "drizzle-orm";
 import { Cause, Context, Effect, Layer, Schema, Stream } from "effect";
-import { parse as parseYaml } from "yaml";
 
 import { AppConfig } from "./config.ts";
+import { readVaultConfig, type VaultConfigFile } from "./vault-config.ts";
 import { promptContentHash } from "./crypto.ts";
 import { EmbeddingsService } from "./embeddings.ts";
 import { CostLookupService, recordPrompt } from "./llm-costs.ts";
@@ -177,12 +177,6 @@ type Trace = {
   toolCalls: number;
 };
 
-type QueryVaultConfig = {
-  readonly thematicHint: string;
-  readonly kinds: readonly string[];
-  readonly webSearch: boolean;
-};
-
 type QueryContext = {
   readonly userId: Uuid;
   readonly vaultId: Uuid;
@@ -232,16 +226,9 @@ const sanitizedStreamError = "Something went wrong while answering. Try again in
 const readWholeLimit = 20_000;
 const maxRangeChunks = 40;
 const articlesPerPage = 25;
-const configPath = "config.yaml";
 const rrfK = 60;
 const maxSearchResults = 20;
 const searchArmMultiplier = 2;
-
-const defaultQueryVaultConfig = {
-  thematicHint: "",
-  kinds: ["person", "event", "organization", "concept"],
-  webSearch: false,
-} satisfies QueryVaultConfig;
 
 const first = <A>(values: readonly A[]) => values[0];
 
@@ -597,11 +584,17 @@ const asObjectArgs = (json: string, toolName: string) => {
   } catch {
     throw new MalformedToolArgs(toolName);
   }
-  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+  if (Array.isArray(parsed)) {
     throw new Error("Tool arguments must be an object");
   }
-  return parsed as Record<string, unknown>;
+  try {
+    return decodeToolArgs(parsed);
+  } catch {
+    throw new Error("Tool arguments must be an object");
+  }
 };
+
+const decodeToolArgs = Schema.decodeUnknownSync(Schema.Record(Schema.String, Schema.Unknown));
 
 const truthyEntries = (args: Record<string, unknown>) =>
   Object.entries(args).filter(([, value]) => Boolean(value));
@@ -630,33 +623,6 @@ export const QueryServiceLive = Layer.effect(
     const parallel = yield* ParallelSearchService;
     const appConfig = yield* AppConfig;
 
-    const loadVaultConfig = (vaultId: Uuid) =>
-      storage.readText(vaultOwner(vaultId), configPath).pipe(
-        Effect.map((content) => {
-          const parsed = parseYaml(content) as unknown;
-          if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
-            return defaultQueryVaultConfig;
-          }
-          const record = parsed as Record<string, unknown>;
-          const kinds = Array.isArray(record.kinds)
-            ? record.kinds.filter(
-                (kind): kind is string => typeof kind === "string" && kind.length > 0,
-              )
-            : defaultQueryVaultConfig.kinds;
-          return {
-            thematicHint:
-              typeof record.thematic_hint === "string"
-                ? record.thematic_hint
-                : defaultQueryVaultConfig.thematicHint,
-            kinds: kinds.length > 0 ? kinds : defaultQueryVaultConfig.kinds,
-            webSearch:
-              typeof record.web_search === "boolean"
-                ? record.web_search
-                : defaultQueryVaultConfig.webSearch,
-          } satisfies QueryVaultConfig;
-        }),
-        Effect.catchTag("StorageFileMissing", () => Effect.succeed(defaultQueryVaultConfig)),
-      );
 
     const loadPrompt = (vaultId: Uuid, name: string) =>
       storage.readText(vaultOwner(vaultId), `prompts/${name}.md`).pipe(
@@ -689,7 +655,7 @@ export const QueryServiceLive = Layer.effect(
         return { document_id: (row?.id as Uuid | undefined) ?? null, title: row?.title ?? null };
       });
 
-    const buildIdentity = (vaultId: Uuid, label: string, vaultConfig: QueryVaultConfig) =>
+    const buildIdentity = (vaultId: Uuid, label: string, vaultConfig: VaultConfigFile) =>
       Effect.gen(function* () {
         const [wikiCountRows, rawCountRows] = yield* Effect.all(
           [
@@ -732,7 +698,7 @@ export const QueryServiceLive = Layer.effect(
     const buildSystemPrompt = (
       vaultId: Uuid,
       label: string,
-      vaultConfig: QueryVaultConfig,
+      vaultConfig: VaultConfigFile,
       input: QueryRequest,
       webSearchEnabled: boolean,
     ) =>
@@ -1793,7 +1759,7 @@ export const QueryServiceLive = Layer.effect(
       Effect.gen(function* () {
         const vaultLabel = prechecked.vaultLabel;
         const [vaultConfig, tags] = yield* Effect.all(
-          [loadVaultConfig(vaultId), distinctTags(vaultId)],
+          [readVaultConfig(storage, vaultId), distinctTags(vaultId)],
           { concurrency: "unbounded" },
         );
         const webSearchEnabled = vaultConfig.webSearch && parallel.hasApiKey;
