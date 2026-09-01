@@ -38,33 +38,46 @@ function selectedVault(): Uuid {
   return uuid(id);
 }
 
-export function articleMeta(article: Article) {
+export type ArticleMeta = {
+  readonly title: string | null;
+  readonly author: string | null;
+  readonly published_date: string | null;
+  readonly url: string | null;
+  readonly origin: string | null;
+  readonly genre: string | null;
+  readonly precis: string | null;
+  readonly source_type: string | null;
+  readonly tags: readonly string[];
+  readonly derived_extras: Readonly<Record<string, unknown>>;
+};
+
+export function articleMeta(article: Article): ArticleMeta {
   if (article.kind === "wiki") {
     return {
       title: article.title,
-      author: null as string | null,
-      published_date: null as string | null,
-      url: null as string | null,
-      origin: null as string | null,
-      genre: null as string | null,
+      author: null,
+      published_date: null,
+      url: null,
+      origin: null,
+      genre: null,
       precis: article.precis || null,
-      source_type: null as string | null,
-      tags: [] as string[],
-      derived_extras: {} as Record<string, unknown>,
+      source_type: null,
+      tags: [],
+      derived_extras: {},
     };
   }
   if (article.kind === "reference") {
     return {
       title: article.title,
-      author: null as string | null,
-      published_date: null as string | null,
+      author: null,
+      published_date: null,
       url: article.url,
       origin: article.origin,
-      genre: null as string | null,
-      precis: null as string | null,
-      source_type: null as string | null,
-      tags: [] as string[],
-      derived_extras: {} as Record<string, unknown>,
+      genre: null,
+      precis: null,
+      source_type: null,
+      tags: [],
+      derived_extras: {},
     };
   }
   return {
