@@ -1,13 +1,19 @@
-import { access, appendFile, mkdir, readFile, readdir, rm, stat, unlink, writeFile } from "node:fs/promises";
+import {
+  access,
+  appendFile,
+  mkdir,
+  readFile,
+  readdir,
+  rm,
+  stat,
+  unlink,
+  writeFile,
+} from "node:fs/promises";
 import { isAbsolute, relative, resolve } from "node:path";
 
 import { Effect } from "effect";
 
-import {
-  ObjectMissing,
-  type ObjectStore,
-  storageBackendError,
-} from "./object-store.ts";
+import { ObjectMissing, type ObjectStore, storageBackendError } from "./object-store.ts";
 
 const isNodeMissing = (error: unknown) =>
   typeof error === "object" && error !== null && "code" in error && error.code === "ENOENT";
@@ -91,9 +97,7 @@ export const makeLocalObjectStore = (directory: string): ObjectStore => {
             ? Effect.succeed([])
             : Effect.fail(storageBackendError("list", prefix, error)),
         ),
-        Effect.map((entries) =>
-          entries.map((entry) => ({ key: `${prefix}${entry}`, etag: null })),
-        ),
+        Effect.map((entries) => entries.map((entry) => ({ key: `${prefix}${entry}`, etag: null }))),
       ),
     exists: (key) =>
       Effect.tryPromise({
@@ -113,27 +117,39 @@ export const makeLocalObjectStore = (directory: string): ObjectStore => {
 
 export const pruneLocalStaging = (directory: string, expiresBefore: number) => {
   const root = resolve(directory);
-  const staging = resolveKey(root, "staging");
-  const pruneDirectory = async (path: string): Promise<void> => {
-    const entries = await readdir(path, { withFileTypes: true });
-    await Promise.all(
-      entries.map(async (entry) => {
-        const child = resolveKey(path, entry.name);
-        if (entry.isDirectory()) return pruneDirectory(child);
-        if (!entry.isFile()) return;
-        try {
-          const details = await stat(child);
-          if (details.mtimeMs < expiresBefore) await unlink(child);
-        } catch (error) {
-          if (!isNodeMissing(error)) throw error;
-        }
-      }),
+
+  const tryFs = <A>(run: () => Promise<A>) =>
+    Effect.tryPromise({ try: run, catch: (error) => error });
+
+  const removeIfExpired = (path: string) =>
+    tryFs(() => stat(path)).pipe(
+      Effect.flatMap((details) =>
+        details.mtimeMs < expiresBefore ? tryFs(() => unlink(path)) : Effect.void,
+      ),
+      Effect.catch((error) => (isNodeMissing(error) ? Effect.void : Effect.fail(error))),
     );
+
+  const pruneEntry = (
+    parent: string,
+    entry: { name: string; isDirectory(): boolean; isFile(): boolean },
+  ) => {
+    const child = resolveKey(parent, entry.name);
+    if (entry.isDirectory()) return pruneDirectory(child);
+    if (entry.isFile()) return removeIfExpired(child);
+    return Effect.void;
   };
-  return Effect.tryPromise({
-    try: () => pruneDirectory(staging),
-    catch: (error) => error,
-  }).pipe(
+
+  const pruneDirectory = (path: string): Effect.Effect<void, unknown> =>
+    tryFs(() => readdir(path, { withFileTypes: true })).pipe(
+      Effect.flatMap((entries) =>
+        Effect.forEach(entries, (entry) => pruneEntry(path, entry), {
+          concurrency: "unbounded",
+          discard: true,
+        }),
+      ),
+    );
+
+  return pruneDirectory(resolveKey(root, "staging")).pipe(
     Effect.catch((error) =>
       isNodeMissing(error)
         ? Effect.void
