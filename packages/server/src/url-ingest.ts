@@ -1,7 +1,6 @@
 import {
   Database,
   pipelineRuns,
-  tasks,
   urlIngestRequests,
 } from "@great-minds/database";
 import {
@@ -125,21 +124,6 @@ export const UrlIngestServiceLive = Layer.effect(
               canonicalUrl,
               origin,
             });
-            yield* tx
-              .insert(tasks)
-              .values({
-                id: jobId,
-                vaultId,
-                type: URL_INGEST_TASK_TYPE,
-                params: {
-                  pipeline_run_id: jobId,
-                  vault_id: vaultId,
-                  canonical_url: canonicalUrl,
-                  origin: origin ?? null,
-                },
-                pipelineRunId: jobId,
-              })
-              .onConflictDoNothing({ target: tasks.id });
           }
 
           const requestRows = yield* tx

@@ -5,7 +5,6 @@ import {
   fileIngestFiles,
   pipelineRuns,
   sourceDocuments,
-  tasks,
   users,
   vaultMemberships,
   vaults,
@@ -746,11 +745,6 @@ describe("M4.2 durable workers", () => {
             .from(pipelineRuns)
             .where(inArray(pipelineRuns.id, [id.ingestRun, id.dedupeRun])))
             .pipe(Effect.orDie),
-          compileTasks: yield* db.query((d) => d
-            .select()
-            .from(tasks)
-            .where(eq(tasks.type, "compile")))
-            .pipe(Effect.orDie),
         };
       }),
     );
@@ -759,7 +753,6 @@ describe("M4.2 durable workers", () => {
     expect(state.second).toEqual({ ingested: 1, skipped: 0, failed: 0 });
     expect(state.documents).toHaveLength(1);
     expect(state.intents).toHaveLength(1);
-    expect(state.compileTasks).toHaveLength(1);
     expect(state.runs).toHaveLength(2);
     expect(new Set(state.runs.map((run) => run.compileIntentId))).toEqual(
       new Set([state.intents[0]!.id]),
@@ -1308,11 +1301,6 @@ describe("M4.2 durable workers", () => {
             .from(pipelineRuns)
             .where(eq(pipelineRuns.id, id.compileIntent)))
             .pipe(Effect.orDie),
-          task: yield* db.query((d) => d
-            .select()
-            .from(tasks)
-            .where(eq(tasks.id, id.compileIntent)))
-            .pipe(Effect.orDie),
         };
       }),
     );
@@ -1333,7 +1321,6 @@ describe("M4.2 durable workers", () => {
         detail: "",
       },
     ]);
-    expect(rows.task[0]).toMatchObject({ type: "compile" });
   }, 30_000);
 
   it("preserves the last render progress snapshot when a later phase seam fails", async () => {

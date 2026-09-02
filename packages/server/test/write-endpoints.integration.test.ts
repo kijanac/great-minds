@@ -19,7 +19,6 @@ import {
   sourceDeletionOutbox,
   sourceDocuments,
   sourceProposals,
-  tasks,
   topicMembership,
   topics,
   urlIngestRequests,
@@ -64,7 +63,6 @@ const id = {
   ideaOne: "00000000-0000-4000-8000-000000010701",
   ideaTwo: "00000000-0000-4000-8000-000000010702",
   run: "00000000-0000-4000-8000-000000010801",
-  task: "00000000-0000-4000-8000-000000010901",
   cache: "00000000-0000-4000-8000-000000011001",
   cost: "00000000-0000-4000-8000-000000011101",
   session: "00000000-0000-4000-8000-000000011201",
@@ -1663,11 +1661,6 @@ describe("M3.1 write endpoint integration", () => {
       Effect.gen(function* () {
         const db = yield* Database;
         return {
-          appTasks: yield* db.query((d) => d
-            .select()
-            .from(tasks)
-            .where(eq(tasks.pipelineRunId, id.m32StagedRun)))
-            .pipe(Effect.orDie),
           runs: yield* db.query((d) => d
             .select()
             .from(pipelineRuns)
@@ -1686,7 +1679,6 @@ describe("M3.1 write endpoint integration", () => {
         };
       }),
     );
-    expect(rows.appTasks).toHaveLength(0);
     expect(rows.runs[0]).toMatchObject({
       status: "running",
       currentPhase: "source_ingest",
@@ -2784,16 +2776,6 @@ describe("M3.1 write endpoint integration", () => {
           }))
           .pipe(Effect.orDie);
         yield* db.query((d) => d
-          .insert(tasks)
-          .values({
-            id: id.task,
-            vaultId: id.vault,
-            type: "compile",
-            params: {},
-            pipelineRunId: id.run,
-          }))
-          .pipe(Effect.orDie);
-        yield* db.query((d) => d
           .insert(compileIntents)
           .values({ vaultId: id.vault, pipelineRunId: id.run }))
           .pipe(Effect.orDie);
@@ -2867,7 +2849,6 @@ describe("M3.1 write endpoint integration", () => {
     expect(await countTable(sourceProposals)).toBe(0);
     expect(await countTable(compileIntents)).toBe(0);
     expect(await countTable(pipelineRuns)).toBe(0);
-    expect(await countTable(tasks)).toBe(0);
     expect(await countTable(searchIndex)).toBe(0);
     expect(await countTable(compileCacheEntries)).toBe(0);
     expect(await countTable(llmCostEvents)).toBe(0);

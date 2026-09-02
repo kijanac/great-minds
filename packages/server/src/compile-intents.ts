@@ -1,4 +1,4 @@
-import { compileIntents, Database, pipelineRuns, tasks } from "@great-minds/database";
+import { compileIntents, Database, pipelineRuns } from "@great-minds/database";
 import type { Uuid } from "@great-minds/domain";
 import { and, asc, eq, inArray, isNotNull, isNull, or, sql } from "drizzle-orm";
 import { Cause, Context, Effect, Layer, Schema } from "effect";
@@ -291,20 +291,6 @@ export const CompileIntentReconcilerLive = Layer.effect(
           },
           { discard: true },
         );
-        yield* db.query((d) => d
-          .insert(tasks)
-          .values({
-            id: item.intentId,
-            vaultId: item.vaultId,
-            type: "compile",
-            params: {
-              intent_id: item.intentId,
-              vault_id: item.vaultId,
-              pipeline_run_id: item.pipelineRunId,
-            },
-            pipelineRunId: item.pipelineRunId,
-          })
-          .onConflictDoNothing({ target: tasks.id }));
         yield* db.query((d) => d
           .update(compileIntents)
           .set({ dispatchedAt: sql`now()`, dispatchedTaskId: item.intentId })

@@ -416,32 +416,6 @@ export const compileIntents = pgTable(
   ],
 );
 
-export const tasks = pgTable(
-  "tasks",
-  {
-    id: uuid("id").primaryKey(),
-    vaultId: uuid("vault_id").notNull(),
-    type: text("type").notNull(),
-    params: jsonb("params").notNull(),
-    pipelineRunId: uuid("pipeline_run_id"),
-    createdAt: timestamptz("created_at").defaultNow().notNull(),
-  },
-  (table) => [
-    foreignKey({
-      columns: [table.vaultId],
-      foreignColumns: [vaults.id],
-      name: "tasks_vault_id_fkey",
-    }).onDelete("cascade"),
-    foreignKey({
-      columns: [table.pipelineRunId],
-      foreignColumns: [pipelineRuns.id],
-      name: "tasks_pipeline_run_id_fkey",
-    }).onDelete("set null"),
-    index("ix_tasks_vault_id").on(table.vaultId),
-    index("ix_tasks_pipeline_run_id").on(table.pipelineRunId),
-  ],
-);
-
 export const searchIndex = pgTable(
   "search_index",
   {

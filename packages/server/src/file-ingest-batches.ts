@@ -4,7 +4,6 @@ import {
   fileIngestFiles,
   pipelineRuns,
   sourceDocuments,
-  tasks,
 } from "@great-minds/database";
 import {
   BadRequest,
@@ -405,27 +404,6 @@ export const FileIngestBatchesLive = Layer.effect(
                     eq(fileIngestFiles.status, "uploaded"),
                   ),
                 );
-              yield* tx
-                .insert(tasks)
-                .values({
-                  id: batch.id,
-                  vaultId: batch.vaultId,
-                  type: STAGED_TASK_TYPE,
-                  params: {
-                    batch_id: batch.id,
-                    vault_id: batch.vaultId,
-                    files: files.map((file) => ({
-                      name: file.name,
-                      size: file.size,
-                      hash: file.hash,
-                      mimetype: file.mimetype,
-                      needs_compile: file.needsCompile,
-                    })),
-                    pipeline_run_id: batch.id,
-                  },
-                  pipelineRunId: batch.id,
-                })
-                .onConflictDoNothing({ target: tasks.id });
               yield* tx
                 .update(pipelineRuns)
                 .set({
