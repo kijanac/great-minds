@@ -14,12 +14,13 @@ import {
   S3ServiceException,
 } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
-import { Effect, Option, Redacted } from "effect";
+import { Data, Effect, Option, Redacted, Schedule } from "effect";
 
 import type { AppConfig } from "../config.ts";
 import {
   ObjectMissing,
   type ObjectStore,
+  type PutObjectOptions,
   StorageBackendError,
   storageBackendError,
 } from "./object-store.ts";
@@ -52,6 +53,18 @@ const isMissing = (error: unknown) => {
 
 const isAlreadyOwned = (error: unknown) =>
   error instanceof S3ServiceException && error.name === "BucketAlreadyOwnedByYou";
+
+const isPreconditionFailed = (error: unknown) =>
+  error instanceof S3ServiceException &&
+  (error.name === "PreconditionFailed" || error.$metadata.httpStatusCode === 412);
+
+class AppendConflict extends Data.TaggedError("AppendConflict")<{ readonly key: string }> {}
+
+const APPEND_RETRY = {
+  schedule: Schedule.exponential("20 millis").pipe(Schedule.jittered),
+  times: 8,
+  while: (error: AppendConflict | StorageBackendError) => error._tag === "AppendConflict",
+};
 
 const storeFailure = (
   operation: "read" | "write" | "delete" | "list" | "exists" | "prepare",
@@ -121,8 +134,18 @@ const deletePrefix = (client: S3Client, bucket: string, prefix: string) =>
     } while (continuationToken !== undefined);
   });
 
-const makeObjectStore = (client: S3Client, bucket: string): ObjectStore => {
-  const get: ObjectStore["get"] = (key) =>
+type Versioned = { readonly bytes: Uint8Array; readonly etag: string | undefined };
+type PutCondition = { readonly IfMatch: string } | { readonly IfNoneMatch: "*" };
+
+const concat = (head: Uint8Array, tail: Uint8Array) => {
+  const combined = new Uint8Array(head.byteLength + tail.byteLength);
+  combined.set(head);
+  combined.set(tail, head.byteLength);
+  return combined;
+};
+
+export const makeObjectStore = (client: S3Client, bucket: string): ObjectStore => {
+  const getVersioned = (key: string) =>
     Effect.gen(function* () {
       const response = yield* request(READ_TIMEOUT, (signal) =>
         client.send(new GetObjectCommand({ Bucket: bucket, Key: key }), {
@@ -140,17 +163,25 @@ const makeObjectStore = (client: S3Client, bucket: string): ObjectStore => {
           new Error(`R2 object ${key} returned no body`),
         );
       }
-      return yield* Effect.tryPromise({
+      const bytes = yield* Effect.tryPromise({
         try: () => response.Body!.transformToByteArray(),
         catch: (error) => storageBackendError("read", key, error),
       }).pipe(
         Effect.timeout(READ_TIMEOUT),
         Effect.mapError((error) => storeFailure("read", key, error)),
       );
+      return { bytes, etag: response.ETag } satisfies Versioned;
     });
 
-  const put: ObjectStore["put"] = (key, bytes, options) =>
-    objectRequest("write", key, WRITE_TIMEOUT, (signal) =>
+  const get: ObjectStore["get"] = (key) => getVersioned(key).pipe(Effect.map((v) => v.bytes));
+
+  const sendPut = (
+    key: string,
+    bytes: Uint8Array,
+    options: PutObjectOptions | undefined,
+    condition: PutCondition | undefined,
+  ) =>
+    request(WRITE_TIMEOUT, (signal) =>
       client.send(
         new PutObjectCommand({
           Bucket: bucket,
@@ -158,24 +189,53 @@ const makeObjectStore = (client: S3Client, bucket: string): ObjectStore => {
           Body: bytes,
           ContentType: options?.contentType,
           ContentLength: bytes.byteLength,
+          ...condition,
         }),
         { abortSignal: signal },
       ),
     ).pipe(Effect.asVoid);
 
+  const put: ObjectStore["put"] = (key, bytes, options) =>
+    sendPut(key, bytes, options, undefined).pipe(
+      Effect.mapError((error) => storeFailure("write", key, error)),
+    );
+
+  const putConditional = (
+    key: string,
+    bytes: Uint8Array,
+    options: PutObjectOptions | undefined,
+    condition: PutCondition,
+  ) =>
+    sendPut(key, bytes, options, condition).pipe(
+      Effect.mapError((error) =>
+        isPreconditionFailed(error)
+          ? new AppendConflict({ key })
+          : storeFailure("write", key, error),
+      ),
+    );
+
+  const appendOnce = (key: string, bytes: Uint8Array, options: PutObjectOptions | undefined) =>
+    Effect.gen(function* () {
+      const existing = yield* getVersioned(key).pipe(
+        Effect.catchTag("ObjectMissing", () =>
+          Effect.succeed<Versioned>({ bytes: new Uint8Array(), etag: undefined }),
+        ),
+      );
+      const condition =
+        existing.etag === undefined ? { IfNoneMatch: "*" as const } : { IfMatch: existing.etag };
+      yield* putConditional(key, concat(existing.bytes, bytes), options, condition);
+    });
+
   return {
     get,
     put,
     append: (key, bytes, options) =>
-      Effect.gen(function* () {
-        const existing = yield* get(key).pipe(
-          Effect.catchTag("ObjectMissing", () => Effect.succeed(new Uint8Array())),
-        );
-        const combined = new Uint8Array(existing.byteLength + bytes.byteLength);
-        combined.set(existing);
-        combined.set(bytes, existing.byteLength);
-        yield* put(key, combined, options);
-      }),
+      appendOnce(key, bytes, options).pipe(
+        Effect.retry(APPEND_RETRY),
+        Effect.catchTag("AppendConflict", (conflict) =>
+          storageBackendError("write", key, conflict),
+        ),
+      ),
     remove: (key) =>
       objectRequest("delete", key, WRITE_TIMEOUT, (signal) =>
         client.send(new DeleteObjectCommand({ Bucket: bucket, Key: key }), {
