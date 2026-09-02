@@ -121,6 +121,9 @@ export class ModelProviderError extends Error {
 
 export const isRetryableModelError = (error: unknown) => error instanceof RetryableModelError;
 
+export const stripJsonFence = (raw: string) =>
+  raw.replace(/^```(?:json)?\n?/, "").replace(/\n?```$/, "");
+
 const streamChunkTimeoutMs = 30_000;
 const rateLimitRetries = 6;
 const maxRateLimitBackoffMs = 60_000;

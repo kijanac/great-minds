@@ -8,11 +8,11 @@ import {
   type FileFingerprint,
   Forbidden,
   GreatMindsApi,
+  isUuid,
   ServiceUnavailable,
   Unauthorized,
   Validation,
   type DomainError,
-  type Uuid,
 } from "@great-minds/domain";
 import { Cause, Effect, Layer, ManagedRuntime, Option, Redacted, Stream } from "effect";
 import {
@@ -85,11 +85,8 @@ export const jobSseHeartbeatChunk = (chunk: Uint8Array) =>
 
 const clean500Response = jsonResponse(500, { detail: "Internal Server Error" });
 
-// Keep the version nibble in lockstep with the domain Uuid schema (accepts v1-v8).
-const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-
 const parseUuidPathParam = (value: string | undefined) =>
-  value !== undefined && UUID_PATTERN.test(value) ? (value as Uuid) : undefined;
+  value !== undefined && isUuid(value) ? value : undefined;
 
 const FILE_FINGERPRINT_PATTERN = /^[0-9a-f]{64}$/;
 

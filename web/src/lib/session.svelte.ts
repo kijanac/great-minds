@@ -1,4 +1,5 @@
 import { browser } from "$app/environment";
+import { composeAnchoredQuestion } from "@great-minds/domain";
 
 import {
   createReply,
@@ -8,7 +9,7 @@ import {
   type ReplySnapshot,
 } from "$lib/api/replies";
 import type { BtwThread, Exchange, HistoryMessage, Phase, SelectionInfo } from "$lib/types";
-import { buildBtwHistory, buildBtwQuery, genId, isAbortError } from "$lib/utils";
+import { buildBtwHistory, genId, isAbortError } from "$lib/utils";
 
 function threadToHistory(thread: Exchange[]): HistoryMessage[] {
   const history: HistoryMessage[] = [];
@@ -420,7 +421,7 @@ export class Session {
       },
     ]);
 
-    const question = isFirst ? buildBtwQuery(anchor, userText) : userText;
+    const question = isFirst ? composeAnchoredQuestion(anchor, userText) : userText;
     const history = [...baseHistory, ...buildBtwHistory(priorExchanges, anchor)];
     const controller = new AbortController();
     this.#btwControllers.add(controller);

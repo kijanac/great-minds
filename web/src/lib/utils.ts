@@ -1,3 +1,4 @@
+import { composeAnchoredQuestion } from "@great-minds/domain";
 import { clsx, type ClassValue } from "clsx";
 import { twMerge } from "tailwind-merge";
 
@@ -65,14 +66,6 @@ export function displayTitle(path: string, title?: string | null): string {
   return title || docDisplayName(path);
 }
 
-export function buildBtwQuery(anchor: TextAnchor, userText: string): string {
-  const parts: string[] = [];
-  if (anchor.context) parts.push(`Passage:\n> ${anchor.context}`);
-  if (anchor.quote && anchor.quote !== anchor.context) parts.push(`Highlighted: "${anchor.quote}"`);
-  parts.push(userText);
-  return parts.join("\n\n");
-}
-
 // Flatten BTW exchanges into the LLM's alternating role/content history. The
 // first user turn carries the passage prefix so the model has the BTW anchor
 // in conversation history; later turns are raw text since context is established.
@@ -82,7 +75,7 @@ export function buildBtwHistory(priorExchanges: Exchange[], anchor: TextAnchor):
     const ex = priorExchanges[i];
     history.push({
       role: "user",
-      content: i === 0 ? buildBtwQuery(anchor, ex.query) : ex.query,
+      content: i === 0 ? composeAnchoredQuestion(anchor, ex.query) : ex.query,
     });
     history.push({ role: "assistant", content: ex.answer });
   }

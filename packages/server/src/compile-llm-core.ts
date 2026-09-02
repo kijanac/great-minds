@@ -1,5 +1,3 @@
-import { readFile } from "node:fs/promises";
-
 import {
   anchors,
   compileCacheEntries,
@@ -10,7 +8,7 @@ import {
   topicMembership,
   topics,
 } from "@great-minds/database";
-import type { Uuid } from "@great-minds/domain";
+import { isUuid, type Uuid } from "@great-minds/domain";
 import { and, asc, eq, inArray, sql } from "drizzle-orm";
 import { Effect, Fiber, Schema, Semaphore } from "effect";
 
@@ -29,16 +27,17 @@ import {
   type ValidatedTopic,
 } from "./compile-contract.ts";
 import { contentHash, promptContentHash } from "./crypto.ts";
-import { embedBatch, type EmbeddingsService, isTimeoutError } from "./embeddings.ts";
+import { embedBatch, type EmbeddingsService, isTimeoutError, vectorLiteral } from "./embeddings.ts";
 import { errorDetails as describeError } from "./error-details.ts";
-import type { LanguageModel, LlmMessage, ModelCompletion } from "./llm.ts";
+import { type LanguageModel, type LlmMessage, type ModelCompletion, stripJsonFence } from "./llm.ts";
 import { recordPrompt } from "./llm-costs.ts";
 import type { StructuredLogger } from "./logging.ts";
 import { markdownParagraphs, parseFrontmatter, serializeFrontmatter } from "./markdown.ts";
 import type { PipelineRunsService } from "./pipeline-runs.ts";
 import { progressSteps } from "./pipeline-runs.ts";
+import { loadPrompt } from "./prompts.ts";
 import { formatUuid7, type RandomBytesService } from "./random.ts";
-import { type ContentStorage, StorageFileMissing, vaultOwner } from "./storage.ts";
+import { type ContentStorage, vaultOwner } from "./storage.ts";
 import { readVaultConfig, type EnrichedField, type VaultConfigFile } from "./vault-config.ts";
 import type { ClockService } from "./clock.ts";
 
@@ -315,8 +314,6 @@ const decodeAssignCacheRow = decodeOr(
 const decodeRenderCacheRow = decodeOr(Schema.decodeUnknownSync(RenderResponse));
 
 const compareText = (left: string, right: string) => (left < right ? -1 : left > right ? 1 : 0);
-const vectorLiteral = (embedding: readonly number[]) => `[${embedding.join(",")}]`;
-const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 export const extractResponseFormat = (config: VaultConfigFile) => {
   const extrasProperties = Object.fromEntries(
@@ -434,22 +431,6 @@ export const assignmentsResponseFormat = {
 
 const jsonObjectResponseFormat = { type: "json_object" } as const;
 
-const promptUrl = (name: string) => new URL(`./default_prompts/${name}.md`, import.meta.url);
-
-const loadPrompt = (storage: StorageService, vaultId: Uuid, name: string) =>
-  Effect.gen(function* () {
-    const override = yield* Effect.result(
-      storage.readText(vaultOwner(vaultId), `prompts/${name}.md`),
-    );
-    if (override._tag === "Success") return override.success.trim();
-    if (!(override.failure instanceof StorageFileMissing))
-      return yield* Effect.fail(override.failure);
-    return yield* Effect.tryPromise(() => readFile(promptUrl(name), "utf8")).pipe(
-      Effect.orDie,
-      Effect.map((value) => value.trim()),
-    );
-  });
-
 const formatEnrichedFields = (fields: readonly EnrichedField[]) =>
   fields
     .map((field) => {
@@ -459,27 +440,20 @@ const formatEnrichedFields = (fields: readonly EnrichedField[]) =>
     })
     .join("\n");
 
-const stripJsonFencing = (raw: string) =>
-  raw.replace(/^```(?:json)?\n?/, "").replace(/\n?```$/, "");
-
 export const decodeCompileJsonCompletion = (model: string, completion: ModelCompletion) => {
   if (completion.finishReason === "length") {
     throw new Error(
       `${model} output hit the token limit (finish_reason=length) and was truncated — the request is too large for a single completion`,
     );
   }
-  return JSON.parse(stripJsonFencing(completion.text.trim())) as unknown;
+  return JSON.parse(stripJsonFence(completion.text.trim())) as unknown;
 };
 
-const decodeCachedSourceCard = decodeOr(Schema.decodeUnknownSync(CachedSourceCard));
-
-const parseSourceCard = (value: unknown): SourceCard | undefined => {
-  const source = decodeCachedSourceCard(value);
-  if (source === undefined) return undefined;
-  if (!UUID_PATTERN.test(source.document_id)) return undefined;
+const toSourceCard = (source: typeof CachedSourceCard.Type): SourceCard | undefined => {
+  if (!isUuid(source.document_id)) return undefined;
   const parsedIdeas: Idea[] = [];
   for (const idea of source.ideas) {
-    if (!UUID_PATTERN.test(idea.idea_id) || !UUID_PATTERN.test(idea.document_id)) {
+    if (!isUuid(idea.idea_id) || !isUuid(idea.document_id)) {
       return undefined;
     }
     parsedIdeas.push({
@@ -605,7 +579,6 @@ export const makeCompileLlmCore = (options: CompileLlmCoreOptions) => {
   }): Effect.Effect<A, unknown> =>
     Effect.gen(function* () {
       const totalAttempts = (input.maxParseRetries ?? 1) + 1;
-      let lastError: unknown;
       for (let attempt = 1; attempt <= totalAttempts; attempt += 1) {
         const completion = yield* Effect.tryPromise({
           try: () =>
@@ -646,7 +619,6 @@ export const makeCompileLlmCore = (options: CompileLlmCoreOptions) => {
           }),
         );
         if (decoded._tag === "Success") return decoded.success;
-        lastError = decoded.failure;
         if (attempt === totalAttempts) return yield* Effect.fail(decoded.failure);
         const details = errorDetails(decoded.failure);
         yield* logger.warn("json_llm_parse_retry", {
@@ -659,7 +631,7 @@ export const makeCompileLlmCore = (options: CompileLlmCoreOptions) => {
           ...input.logFields,
         });
       }
-      return yield* Effect.fail(lastError);
+      return yield* Effect.die(new Error("jsonCall retry loop exited without resolution"));
     });
 
   const putCache = (vaultId: Uuid, phase: string, cacheKey: string, value: unknown) =>
@@ -736,7 +708,7 @@ export const makeCompileLlmCore = (options: CompileLlmCoreOptions) => {
                 if (cachedValue !== undefined) {
                   const cached = decodeExtractCacheRow(cachedValue);
                   const cachedCard =
-                    cached === undefined ? undefined : parseSourceCard(cached.source_card);
+                    cached === undefined ? undefined : toSourceCard(cached.source_card);
                   if (cachedCard === undefined) {
                     return yield* Effect.fail(
                       new MalformedCompileCache(`extract cache row ${cacheKey} is malformed`),
@@ -2412,7 +2384,7 @@ const canonicalizeTopics = (
         const cached = decodeAssignCacheRow(cachedValue);
         if (
           cached === undefined ||
-          Object.keys(cached.assign).some((localId) => !UUID_PATTERN.test(localId))
+          Object.keys(cached.assign).some((localId) => !isUuid(localId))
         ) {
           return yield* Effect.fail(
             new MalformedCompileCache(`canonicalize_assign cache row ${cacheKey} is malformed`),

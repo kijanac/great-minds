@@ -21,6 +21,7 @@ export const Uuid = Schema.String.pipe(
   Schema.brand("Uuid"),
 );
 export type Uuid = typeof Uuid.Type;
+export const isUuid = Schema.is(Uuid);
 
 export const SessionId = Schema.String.pipe(
   Schema.check(Schema.isPattern(/^[A-Za-z0-9][A-Za-z0-9._-]*$/)),
@@ -706,6 +707,21 @@ export const SessionOrigin = Schema.Struct({
   paragraph_index: Schema.NullOr(Schema.Number),
 });
 export type SessionOrigin = typeof SessionOrigin.Type;
+
+export const composeAnchoredQuestion = (
+  anchor: { readonly quote: string | null; readonly context: string | null },
+  question: string,
+): string => {
+  const parts: string[] = [];
+  if (anchor.context !== null && anchor.context.length > 0) {
+    parts.push(`Passage:\n> ${anchor.context}`);
+  }
+  if (anchor.quote !== null && anchor.quote.length > 0 && anchor.quote !== anchor.context) {
+    parts.push(`Highlighted: "${anchor.quote}"`);
+  }
+  parts.push(question);
+  return parts.join("\n\n");
+};
 
 export const ChunkRange = Schema.Struct({
   start: Schema.Number,

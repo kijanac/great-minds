@@ -34,6 +34,8 @@ export const isTimeoutError = (error: unknown): boolean => {
   return "name" in error && error.name === "TimeoutError";
 };
 
+export const vectorLiteral = (embedding: readonly number[]) => `[${embedding.join(",")}]`;
+
 export const embedBatch = (embeddings: EmbeddingsShape, texts: readonly string[]) =>
   Effect.tryPromise({
     try: () => embeddings.embed(texts),

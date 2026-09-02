@@ -29,7 +29,7 @@ import {
 import { makeCompileLlmCore } from "./compile-llm-core.ts";
 import { AppConfig } from "./config.ts";
 import { bodyContentHash, contentHash, fileContentHash } from "./crypto.ts";
-import { embedBatch, EmbeddingsService, isTimeoutError } from "./embeddings.ts";
+import { embedBatch, EmbeddingsService, isTimeoutError, vectorLiteral } from "./embeddings.ts";
 import { errorDetails } from "./error-details.ts";
 import { LanguageModel } from "./llm.ts";
 import { StructuredLogger } from "./logging.ts";
@@ -45,7 +45,6 @@ import { SourceDocumentsService } from "./source-documents.ts";
 import { ContentStorage, vaultOwner } from "./storage.ts";
 import { RandomBytesService } from "./random.ts";
 
-const vectorLiteral = (embedding: readonly number[]) => `[${embedding.join(",")}]`;
 const compareText = (left: string, right: string) => (left < right ? -1 : left > right ? 1 : 0);
 const metadataText = (frontmatter: Record<string, unknown>) => {
   const parts: string[] = [];

@@ -7,6 +7,7 @@ import {
   type CreateReplyRequest,
   CreateReplyRequest as CreateReplyRequestSchema,
   type CreateReplyResponse,
+  composeAnchoredQuestion,
   Conflict,
   type ExchangeData,
   Forbidden,
@@ -21,7 +22,6 @@ import {
   ServiceUnavailable,
   type SessionId,
   SessionId as SessionIdSchema,
-  type SessionOrigin,
   type Uuid,
   Uuid as UuidSchema,
 } from "@great-minds/domain";
@@ -113,7 +113,10 @@ const queryRequest = (input: CreateReplyRequest): QueryRequest => ({
     "create" in input &&
     input.create.origin !== undefined &&
     input.create.origin.anchor !== null
-      ? composeAnchoredQuestion(input.create.origin, input.question)
+      ? composeAnchoredQuestion(
+          { quote: input.create.origin.anchor, context: input.create.origin.paragraph },
+          input.question,
+        )
       : input.question,
   mode: input.mode,
   history: input.history,
@@ -124,22 +127,6 @@ const queryRequest = (input: CreateReplyRequest): QueryRequest => ({
     ? {}
     : { extra_instructions: input.extra_instructions }),
 });
-
-// Mirrors web/src/lib/utils.ts buildBtwQuery: the surrounding paragraph first,
-// then the highlighted quote (when distinct), then the user's clean question.
-// Used only for the anchored first turn of a doc-born session; the session
-// itself stores the clean question and the composed text never persists.
-export const composeAnchoredQuestion = (origin: SessionOrigin, question: string): string => {
-  const parts: string[] = [];
-  if (origin.paragraph !== null && origin.paragraph.length > 0) {
-    parts.push(`Passage:\n> ${origin.paragraph}`);
-  }
-  if (origin.anchor !== null && origin.anchor !== origin.paragraph) {
-    parts.push(`Highlighted: "${origin.anchor}"`);
-  }
-  parts.push(question);
-  return parts.join("\n\n");
-};
 
 const sourceRef = (data: QuerySourceData, thinking: string, pending = false): ReplySource => {
   if (data.type === "article" || data.type === "raw") {

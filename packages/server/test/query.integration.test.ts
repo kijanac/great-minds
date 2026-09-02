@@ -801,8 +801,7 @@ describe("query stream", () => {
     const tail = await tailReply(identifiers.reply_id);
     expect(replySnapshots(tail.text).at(-1)).toMatchObject({ status: "completed" });
 
-    // The LLM received the passage/highlight/question composition, mirroring
-    // the web client's buildBtwQuery.
+    // The LLM received the passage/highlight/question composition.
     const messages = language.streamCalls[0]?.messages ?? [];
     const lastUser = [...messages].reverse().find((message) => message.role === "user");
     expect(lastUser?.content).toBe(

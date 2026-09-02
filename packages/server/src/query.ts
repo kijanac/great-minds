@@ -1,5 +1,4 @@
 import { randomUUID } from "node:crypto";
-import { readFile } from "node:fs/promises";
 
 import {
   backlinks,
@@ -28,16 +27,18 @@ import { Cause, Context, Effect, Layer, Schema, Stream } from "effect";
 import { AppConfig } from "./config.ts";
 import { readVaultConfig, type VaultConfigFile } from "./vault-config.ts";
 import { promptContentHash } from "./crypto.ts";
-import { EmbeddingsService } from "./embeddings.ts";
+import { EmbeddingsService, vectorLiteral } from "./embeddings.ts";
 import { CostLookupService, recordPrompt } from "./llm-costs.ts";
 import {
   isRetryableModelError,
   LanguageModel,
   type LlmMessage,
   type LlmToolDefinition,
+  stripJsonFence,
 } from "./llm.ts";
 import { StructuredLogger } from "./logging.ts";
 import { ParallelSearchService, type ParallelSearchResult } from "./parallel.ts";
+import { loadPrompt } from "./prompts.ts";
 import { ContentStorage, userOwner, vaultOwner } from "./storage.ts";
 
 type QueryServiceShape = {
@@ -232,7 +233,6 @@ const searchArmMultiplier = 2;
 
 const first = <A>(values: readonly A[]) => values[0];
 
-const promptUrl = (name: string) => new URL(`./default_prompts/${name}.md`, import.meta.url);
 
 const emptyTrace = (): Trace => ({
   articlesRead: [],
@@ -612,10 +612,6 @@ const decodeToolArgs = Schema.decodeUnknownSync(Schema.Record(Schema.String, Sch
 const truthyEntries = (args: Record<string, unknown>) =>
   Object.entries(args).filter(([, value]) => Boolean(value));
 
-const vectorLiteral = (embedding: readonly number[]) => `[${embedding.join(",")}]`;
-
-const stripMarkdownJsonFence = (raw: string) =>
-  raw.replace(/^```(?:json)?\n?/, "").replace(/\n?```$/, "");
 
 const WebFactExtraction = Schema.Struct({
   results: Schema.Array(
@@ -635,18 +631,6 @@ export const QueryServiceLive = Layer.effect(
     const costs = yield* CostLookupService;
     const parallel = yield* ParallelSearchService;
     const appConfig = yield* AppConfig;
-
-
-    const loadPrompt = (vaultId: Uuid, name: string) =>
-      storage.readText(vaultOwner(vaultId), `prompts/${name}.md`).pipe(
-        Effect.catchTag("StorageFileMissing", () =>
-          Effect.tryPromise({
-            try: () => readFile(promptUrl(name), "utf8"),
-            catch: (error) => error,
-          }),
-        ),
-        Effect.map((content) => content.trim()),
-      );
 
     const documentForPath = (vaultId: Uuid, path: string) =>
       Effect.gen(function* () {
@@ -719,8 +703,10 @@ export const QueryServiceLive = Layer.effect(
         const [identity, queryPrompt, btwPrompt] = yield* Effect.all(
           [
             buildIdentity(vaultId, label, vaultConfig),
-            loadPrompt(vaultId, "query"),
-            input.mode === "btw" ? loadPrompt(vaultId, "query_btw") : Effect.succeed(null),
+            loadPrompt(storage, vaultId, "query"),
+            input.mode === "btw"
+              ? loadPrompt(storage, vaultId, "query_btw")
+              : Effect.succeed(null),
           ],
           { concurrency: "unbounded" },
         );
@@ -1399,7 +1385,7 @@ export const QueryServiceLive = Layer.effect(
         });
         addUsageCost(context, completion.usage);
         const parsed = decodeWebFactExtraction(
-          JSON.parse(stripMarkdownJsonFence(completion.text)),
+          JSON.parse(stripJsonFence(completion.text)),
         );
         return new Map<number, readonly string[]>(
           parsed.results.map((item) => [item.index, item.facts]),

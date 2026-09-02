@@ -228,8 +228,6 @@ export class DocThreads {
                 exchange_id: turnId,
                 session_id: target.sessionId!,
                 question: userText,
-                // First history turn is composed via buildBtwQuery semantics
-                // from the thread's origin; later turns are raw.
                 history: buildBtwHistory(priorExchanges, anchor),
                 mode: "btw",
               },
