@@ -1637,26 +1637,65 @@ describe("query stream", () => {
     });
   });
 
-  it("surfaces invalid list_articles sort instead of silently defaulting", async () => {
+  it("returns invalid tool arguments to the model as tool messages instead of failing the reply", async () => {
     const language = makeScriptedLanguageModel({
       streams: [
         {
           kind: "parts",
           parts: [
             toolCallPart(0, "tc-list", "list_articles", { contains: "Alpha", sort: "bogus" }),
-            finishPart("tool_calls", "bad-sort-round"),
+            toolCallPart(1, "tc-expand", "expand_context", {
+              path: "wiki/alpha.md",
+              start: "zero",
+              end: 2,
+            }),
+            finishPart("tool_calls", "bad-args-round"),
+          ],
+        },
+        { kind: "parts", parts: [tokenPart("Recovered"), finishPart("stop", "bad-args-final")] },
+      ],
+    });
+    await startHarness({ language });
+
+    const result = await runReply({ question: "bad args" });
+
+    expect(result.snapshots.at(-1)).toMatchObject({
+      status: "completed",
+      answer: "Recovered",
+      sources: [],
+    });
+    const secondRound = language.streamCalls[1]!.messages;
+    expect(secondRound).toContainEqual({
+      role: "tool",
+      tool_call_id: "tc-list",
+      content: "Invalid list_articles sort: bogus (expected recent, alpha, or central)",
+    });
+    expect(secondRound).toContainEqual({
+      role: "tool",
+      tool_call_id: "tc-expand",
+      content: "Tool argument start must be an integer",
+    });
+  });
+
+  it("treats non-object tool arguments as malformed", async () => {
+    const language = makeScriptedLanguageModel({
+      streams: [
+        {
+          kind: "parts",
+          parts: [
+            malformedToolCallPart(0, "tc-array", "search_content", '["Alpha"]'),
+            finishPart("tool_calls", "array-args-round"),
           ],
         },
       ],
     });
     await startHarness({ language });
 
-    const result = await runReply({ question: "bad sort" });
+    const result = await runReply({ question: "array args" });
 
     expect(result.snapshots.at(-1)).toMatchObject({
       status: "failed",
-      error: "Something went wrong while answering. Try again in a minute.",
-      sources: [],
+      error: "Malformed tool args for search_content",
     });
   });
 

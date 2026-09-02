@@ -561,7 +561,7 @@ const contextFromExecution = (state: QueryExecutionState): QueryContext => ({
 const asStringArg = (args: Record<string, unknown>, key: string) => {
   const value = args[key];
   if (typeof value !== "string" || value.length === 0) {
-    throw new Error(`Tool argument ${key} must be a non-empty string`);
+    throw new ToolMiss(`Tool argument ${key} must be a non-empty string`);
   }
   return value;
 };
@@ -574,7 +574,7 @@ const asIntArg = (args: Record<string, unknown>, key: string) => {
   if (typeof value === "string" && /^[-+]?\d+$/.test(value.trim())) {
     return Number.parseInt(value, 10);
   }
-  throw new Error(`Tool argument ${key} must be an integer`);
+  throw new ToolMiss(`Tool argument ${key} must be an integer`);
 };
 
 const asObjectArgs = (json: string, toolName: string) => {
@@ -585,12 +585,25 @@ const asObjectArgs = (json: string, toolName: string) => {
     throw new MalformedToolArgs(toolName);
   }
   if (Array.isArray(parsed)) {
-    throw new Error("Tool arguments must be an object");
+    throw new MalformedToolArgs(toolName);
   }
   try {
     return decodeToolArgs(parsed);
   } catch {
-    throw new Error("Tool arguments must be an object");
+    throw new MalformedToolArgs(toolName);
+  }
+};
+
+const previewSourceEvent = (
+  name: string,
+  args: Record<string, unknown>,
+  build: (name: string, args: Record<string, unknown>) => QuerySourceData | undefined,
+) => {
+  try {
+    return build(name, args);
+  } catch (error) {
+    if (error instanceof ToolMiss) return undefined;
+    throw error;
   }
 };
 
@@ -1244,7 +1257,9 @@ export const QueryServiceLive = Layer.effect(
           typeof args.contains === "string" && args.contains.length > 0 ? args.contains : undefined;
         const sort = args.sort ?? "central";
         if (sort !== "recent" && sort !== "alpha" && sort !== "central") {
-          throw new Error(`Invalid list_articles sort: ${String(sort)}`);
+          throw new ToolMiss(
+            `Invalid list_articles sort: ${String(sort)} (expected recent, alpha, or central)`,
+          );
         }
         const page =
           args.page === undefined || args.page === null ? 1 : Math.max(1, asIntArg(args, "page"));
@@ -1459,37 +1474,38 @@ export const QueryServiceLive = Layer.effect(
       context: QueryContext,
       name: string,
       args: Record<string, unknown>,
-    ): Effect.Effect<ToolResult, unknown> => {
-      switch (name) {
-        case "read_document":
-          return readDocumentTool(context, asStringArg(args, "path"), "vault");
-        case "expand_context":
-          return expandContextTool(
-            context,
-            asStringArg(args, "path"),
-            asIntArg(args, "start"),
-            asIntArg(args, "end"),
-          );
-        case "linked_articles":
-          return linkedArticlesTool(context, asStringArg(args, "path"));
-        case "search_content":
-          return searchContentTool(context, asStringArg(args, "query"));
-        case "search_in_document":
-          return searchInDocumentTool(
-            context,
-            asStringArg(args, "path"),
-            asStringArg(args, "query"),
-          );
-        case "query_documents":
-          return queryDocumentsToolRun(context, args);
-        case "list_articles":
-          return listArticlesToolRun(context, args);
-        case "web_search":
-          return webSearchToolRun(context, asStringArg(args, "query"));
-        default:
-          return Effect.succeed({ content: `Unknown tool: ${name}` });
-      }
-    };
+    ): Effect.Effect<ToolResult, unknown> =>
+      Effect.suspend(() => {
+        switch (name) {
+          case "read_document":
+            return readDocumentTool(context, asStringArg(args, "path"), "vault");
+          case "expand_context":
+            return expandContextTool(
+              context,
+              asStringArg(args, "path"),
+              asIntArg(args, "start"),
+              asIntArg(args, "end"),
+            );
+          case "linked_articles":
+            return linkedArticlesTool(context, asStringArg(args, "path"));
+          case "search_content":
+            return searchContentTool(context, asStringArg(args, "query"));
+          case "search_in_document":
+            return searchInDocumentTool(
+              context,
+              asStringArg(args, "path"),
+              asStringArg(args, "query"),
+            );
+          case "query_documents":
+            return queryDocumentsToolRun(context, args);
+          case "list_articles":
+            return listArticlesToolRun(context, args);
+          case "web_search":
+            return webSearchToolRun(context, asStringArg(args, "query"));
+          default:
+            return Effect.succeed({ content: `Unknown tool: ${name}` });
+        }
+      });
 
     const runModelRound = (
       context: QueryContext,
@@ -1572,7 +1588,7 @@ export const QueryServiceLive = Layer.effect(
             try {
               for (const toolCall of rawToolCalls) {
                 const args = asObjectArgs(toolCall.arguments, toolCall.name);
-                const pendingSource = pendingSourceEvent(toolCall.name, args);
+                const pendingSource = previewSourceEvent(toolCall.name, args, pendingSourceEvent);
                 toolCalls.push({
                   ...toolCall,
                   args,
