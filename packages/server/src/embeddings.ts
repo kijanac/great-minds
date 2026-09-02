@@ -17,6 +17,29 @@ export class EmbeddingsService extends Context.Service<EmbeddingsService, Embedd
   "@great-minds/server/EmbeddingsService",
 ) {}
 
+export class EmbeddingBatchFailed extends Error {
+  readonly _tag = "EmbeddingBatchFailed";
+  readonly cause: unknown;
+
+  constructor(cause: unknown) {
+    super(cause instanceof Error ? cause.message : String(cause));
+    this.name = this._tag;
+    this.cause = cause;
+  }
+}
+
+export const isTimeoutError = (error: unknown): boolean => {
+  if (typeof error !== "object" || error === null) return false;
+  if ("cause" in error && error.cause !== error) return isTimeoutError(error.cause);
+  return "name" in error && error.name === "TimeoutError";
+};
+
+export const embedBatch = (embeddings: EmbeddingsShape, texts: readonly string[]) =>
+  Effect.tryPromise({
+    try: () => embeddings.embed(texts),
+    catch: (error) => new EmbeddingBatchFailed(error),
+  });
+
 const optionalRedactedValue = (value: Option.Option<Redacted.Redacted<string>>) =>
   Option.match(value, {
     onNone: () => undefined,

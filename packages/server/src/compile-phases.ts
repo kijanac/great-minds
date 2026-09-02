@@ -14,7 +14,7 @@ import {
 } from "@great-minds/database";
 import type { Uuid } from "@great-minds/domain";
 import { and, asc, eq, inArray, like, notInArray, sql } from "drizzle-orm";
-import { Context, Effect, Exit, Layer } from "effect";
+import { Context, Effect, Layer } from "effect";
 
 import { ClockService } from "./clock.ts";
 import {
@@ -29,7 +29,8 @@ import {
 import { makeCompileLlmCore } from "./compile-llm-core.ts";
 import { AppConfig } from "./config.ts";
 import { bodyContentHash, contentHash, fileContentHash } from "./crypto.ts";
-import { EmbeddingsService } from "./embeddings.ts";
+import { embedBatch, EmbeddingsService, isTimeoutError } from "./embeddings.ts";
+import { errorDetails } from "./error-details.ts";
 import { LanguageModel } from "./llm.ts";
 import { StructuredLogger } from "./logging.ts";
 import {
@@ -223,7 +224,7 @@ export const CompilePhasesLive = Layer.effect(
 
         const current = new Map<string, Set<number>>();
         const changed: SearchChunk[] = [];
-        const etags: { id: Uuid; etag: string }[] = [];
+        const etags: { id: Uuid; path: string; etag: string }[] = [];
 
         if (scope === "raw") {
           yield* pipeline.updateProgress(
@@ -241,7 +242,7 @@ export const CompilePhasesLive = Layer.effect(
           if (filename.startsWith("_")) continue;
           const document = documentsByPath.get(file.path);
           if (scope === "raw" && document !== undefined && file.etag !== null) {
-            etags.push({ id: document.id as Uuid, etag: file.etag });
+            etags.push({ id: document.id as Uuid, path: file.path, etag: file.etag });
           }
           const hasMetadata = existingHashes.has(`${file.path}\u0000-1`);
           if (
@@ -297,14 +298,29 @@ export const CompilePhasesLive = Layer.effect(
           );
         }
 
+        const unindexedPaths = new Set<string>();
         for (let offset = 0; offset < changed.length; offset += 50) {
           const batch = changed.slice(offset, offset + 50);
-          const embedded = yield* Effect.exit(
-            Effect.tryPromise(() => embeddings.embed(batch.map((chunk) => chunk.body))),
+          const embedded = yield* Effect.result(
+            embedBatch(embeddings, batch.map((chunk) => chunk.body)),
           );
-          if (Exit.isFailure(embedded)) continue;
+          if (embedded._tag === "Failure") {
+            if (!isTimeoutError(embedded.failure)) return yield* Effect.fail(embedded.failure);
+            const details = errorDetails(embedded.failure.cause);
+            yield* logger.warn("search_index.embed_batch_timeout", {
+              vault_id: vaultId,
+              run_id: runId,
+              scope,
+              batch_offset: offset,
+              batch_size: batch.length,
+              error_type: details.errorType,
+              error: details.message.slice(0, 300),
+            });
+            for (const chunk of batch) unindexedPaths.add(chunk.path);
+            continue;
+          }
           const rows = batch.map((chunk, index) => {
-            const embedding = embedded.value[index];
+            const embedding = embedded.success[index];
             if (embedding === undefined) throw new Error(`Embedding ${index} missing from batch`);
             return {
               vaultId,
@@ -362,6 +378,7 @@ export const CompilePhasesLive = Layer.effect(
           }
         }
         for (const etag of etags) {
+          if (unindexedPaths.has(etag.path)) continue;
           yield* db.query((d) => d
             .update(sourceDocuments)
             .set({ etag: etag.etag, updatedAt: sql`now()` })

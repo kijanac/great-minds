@@ -29,7 +29,7 @@ import {
   type ValidatedTopic,
 } from "./compile-contract.ts";
 import { contentHash, promptContentHash } from "./crypto.ts";
-import type { EmbeddingsService } from "./embeddings.ts";
+import { embedBatch, type EmbeddingsService, isTimeoutError } from "./embeddings.ts";
 import { errorDetails as describeError } from "./error-details.ts";
 import type { LanguageModel, LlmMessage, ModelCompletion } from "./llm.ts";
 import { recordPrompt } from "./llm-costs.ts";
@@ -78,17 +78,6 @@ class MalformedPromptTemplate extends Error {
   }
 }
 
-class EmbeddingBatchFailed extends Error {
-  readonly _tag = "EmbeddingBatchFailed";
-  readonly cause: unknown;
-
-  constructor(cause: unknown) {
-    super(cause instanceof Error ? cause.message : String(cause));
-    this.name = this._tag;
-    this.cause = cause;
-  }
-}
-
 const errorDetails = (error: unknown): { readonly errorType: string; readonly message: string } => {
   if (
     typeof error === "object" &&
@@ -100,12 +89,6 @@ const errorDetails = (error: unknown): { readonly errorType: string; readonly me
     return describeError(error.cause);
   }
   return describeError(error);
-};
-
-const isTimeoutError = (error: unknown): boolean => {
-  if (typeof error !== "object" || error === null) return false;
-  if ("cause" in error && error.cause !== error) return isTimeoutError(error.cause);
-  return "name" in error && error.name === "TimeoutError";
 };
 
 type Anchor = {
@@ -880,13 +863,10 @@ export const makeCompileLlmCore = (options: CompileLlmCoreOptions) => {
       for (let offset = 0; offset < embeddingInputs.length; offset += 50) {
         const batch = embeddingInputs.slice(offset, offset + 50);
         const embedded = yield* Effect.result(
-          Effect.tryPromise({
-            try: () =>
-              embeddings.embed(
-                batch.map(({ idea }) => `${idea.label}. ${idea.description}`.trim()),
-              ),
-            catch: (error) => new EmbeddingBatchFailed(error),
-          }),
+          embedBatch(
+            embeddings,
+            batch.map(({ idea }) => `${idea.label}. ${idea.description}`.trim()),
+          ),
         );
         if (embedded._tag === "Failure") {
           if (!isTimeoutError(embedded.failure)) return yield* Effect.fail(embedded.failure);

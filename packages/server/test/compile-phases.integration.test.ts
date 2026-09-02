@@ -902,6 +902,84 @@ const fullCard = (ideas: readonly unknown[]) => ({
     expect(embeddingRequests).toEqual([]);
   });
 
+  it("ingest withholds the ETag for a timed-out embedding batch so the next run re-indexes it", async () => {
+    const content = `---\nsource_id: ${id.source}\ntitle: Source title\n---\n# Heading\n\nBody\n`;
+    files.set("raw/docs/source.md", content);
+    etags.set("raw/docs/source.md", "etag-one");
+    await run(
+      Effect.flatMap(Database, (db) => db.query((d) => d
+        .insert(sourceDocuments)
+        .values({
+          id: id.source,
+          vaultId: id.vault,
+          filePath: "raw/docs/source.md",
+          fileHash: "file",
+          bodyHash: "body",
+          sourceType: "document",
+        }))
+        .pipe(Effect.orDie)),
+    );
+    embed = async () => {
+      throw new DOMException("embedding timed out", "TimeoutError");
+    };
+
+    await run(Effect.flatMap(CompilePhases, (phases) => phases.ingest(id.vault, id.run)));
+
+    const indexed = () =>
+      run(
+        Effect.flatMap(Database, (db) => db.query((d) => d
+          .select({ chunkIndex: searchIndex.chunkIndex })
+          .from(searchIndex)
+          .orderBy(searchIndex.chunkIndex))
+          .pipe(Effect.orDie)),
+      );
+    const storedEtag = () =>
+      run(
+        Effect.flatMap(Database, (db) => db.query((d) => d
+          .select({ etag: sourceDocuments.etag })
+          .from(sourceDocuments)
+          .where(eq(sourceDocuments.id, id.source)))
+          .pipe(Effect.orDie)),
+      );
+    expect(await indexed()).toEqual([]);
+    expect(await storedEtag()).toEqual([{ etag: null }]);
+    expect(logEvents).toContainEqual({
+      event: "search_index.embed_batch_timeout",
+      fields: expect.objectContaining({ scope: "raw", batch_size: 2, error_type: "TimeoutError" }),
+    });
+
+    embed = defaultEmbed;
+    embeddingRequests.length = 0;
+    await run(Effect.flatMap(CompilePhases, (phases) => phases.ingest(id.vault, id.run)));
+    expect(embeddingRequests).toHaveLength(1);
+    expect(await indexed()).toEqual([{ chunkIndex: -1 }, { chunkIndex: 0 }]);
+    expect(await storedEtag()).toEqual([{ etag: "etag-one" }]);
+  });
+
+  it("ingest fails loudly on a non-timeout embedding error", async () => {
+    files.set("raw/docs/source.md", `---\nsource_id: ${id.source}\n---\n# Heading\n\nBody\n`);
+    await run(
+      Effect.flatMap(Database, (db) => db.query((d) => d
+        .insert(sourceDocuments)
+        .values({
+          id: id.source,
+          vaultId: id.vault,
+          filePath: "raw/docs/source.md",
+          fileHash: "file",
+          bodyHash: "body",
+          sourceType: "document",
+        }))
+        .pipe(Effect.orDie)),
+    );
+    embed = async () => {
+      throw new Error("revoked credential");
+    };
+
+    await expect(
+      run(Effect.flatMap(CompilePhases, (phases) => phases.ingest(id.vault, id.run))),
+    ).rejects.toThrow("revoked credential");
+  });
+
   it("reconciles a moved source path from immutable frontmatter identity", async () => {
     const oldPath = "raw/books/original.md";
     const movedPath = `raw/moved/${id.source}-renamed.md`;
