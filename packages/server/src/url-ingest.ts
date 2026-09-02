@@ -14,6 +14,7 @@ import { and, asc, eq, inArray, isNull, sql } from "drizzle-orm";
 import { Cause, Context, Effect, Layer } from "effect";
 import * as WorkflowEngine from "effect/unstable/workflow/WorkflowEngine";
 
+import { backgroundLoop } from "./background-loop.ts";
 import { AppConfig } from "./config.ts";
 import { jobResponse } from "./job-response.ts";
 import { StructuredLogger } from "./logging.ts";
@@ -254,19 +255,10 @@ export const UrlIngestServiceLive = Layer.effect(
 );
 
 export const UrlIngestReconcilerLoopLive = Layer.effectDiscard(
-  Effect.gen(function* () {
-    const service = yield* UrlIngestService;
-    const logger = yield* StructuredLogger;
-    const tick = service.reconcileOnce().pipe(
-      Effect.catchCause((cause) =>
-        logger.warn("url_ingest_reconciler_tick_failed", {
-          error_message: Cause.pretty(cause),
-        }),
-      ),
-    );
-    yield* tick;
-    yield* Effect.forkScoped(
-      Effect.forever(Effect.sleep("5 seconds").pipe(Effect.andThen(tick))),
-    );
-  }),
+  Effect.flatMap(UrlIngestService, (service) =>
+    backgroundLoop({
+      failureEvent: "url_ingest_reconciler_tick_failed",
+      interval: "5 seconds",
+      tick: service.reconcileOnce(),
+    })),
 );

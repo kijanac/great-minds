@@ -10,6 +10,7 @@ import { type FileFingerprint, type Uuid } from "@great-minds/domain";
 import { and, asc, eq, inArray, isNull, sql } from "drizzle-orm";
 import { Cause, Context, Effect, Exit, Layer } from "effect";
 
+import { backgroundLoop } from "./background-loop.ts";
 import { bodyContentHash, fileContentHash } from "./crypto.ts";
 import { parseFrontmatter } from "./markdown.ts";
 import { StructuredLogger } from "./logging.ts";
@@ -342,19 +343,10 @@ export const SourceDocumentsServiceLive = Layer.effect(
 );
 
 export const SourceDeletionReconcilerLoopLive = Layer.effectDiscard(
-  Effect.gen(function* () {
-    const service = yield* SourceDocumentsService;
-    const logger = yield* StructuredLogger;
-    const tick = service.reconcileDeletionsOnce().pipe(
-      Effect.catchCause((cause) =>
-        logger.warn("source_deletion.reconciler_tick_failed", {
-          error_message: Cause.pretty(cause),
-        }),
-      ),
-    );
-    yield* tick;
-    yield* Effect.forkScoped(
-      Effect.forever(Effect.sleep("1 minute").pipe(Effect.andThen(tick))),
-    );
-  }),
+  Effect.flatMap(SourceDocumentsService, (service) =>
+    backgroundLoop({
+      failureEvent: "source_deletion.reconciler_tick_failed",
+      interval: "1 minute",
+      tick: service.reconcileDeletionsOnce(),
+    })),
 );

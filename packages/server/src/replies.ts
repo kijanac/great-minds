@@ -31,6 +31,7 @@ import * as Activity from "effect/unstable/workflow/Activity";
 import * as Workflow from "effect/unstable/workflow/Workflow";
 import * as WorkflowEngine from "effect/unstable/workflow/WorkflowEngine";
 
+import { backgroundLoop } from "./background-loop.ts";
 import { AppConfig } from "./config.ts";
 import { StructuredLogger } from "./logging.ts";
 import {
@@ -1162,19 +1163,10 @@ export const ReplyWorkflowLive = ReplyWorkflow.toLayer((payload) =>
 );
 
 export const ReplyReconcilerLoopLive = Layer.effectDiscard(
-  Effect.gen(function* () {
-    const replies = yield* RepliesService;
-    const logger = yield* StructuredLogger;
-    const tick = replies.reconcileOnce().pipe(
-      Effect.catchCause((cause) =>
-        logger.warn("reply_reconciler_tick_failed", {
-          error_message: Cause.pretty(cause),
-        }),
-      ),
-    );
-    yield* tick;
-    yield* Effect.forkScoped(
-      Effect.forever(Effect.sleep("5 seconds").pipe(Effect.andThen(tick))),
-    );
-  }),
+  Effect.flatMap(RepliesService, (replies) =>
+    backgroundLoop({
+      failureEvent: "reply_reconciler_tick_failed",
+      interval: "5 seconds",
+      tick: replies.reconcileOnce(),
+    })),
 );

@@ -21,6 +21,7 @@ import { and, asc, count, eq, inArray, lt, sql } from "drizzle-orm";
 import { Cause, Context, Effect, Layer } from "effect";
 import * as WorkflowEngine from "effect/unstable/workflow/WorkflowEngine";
 
+import { backgroundLoop } from "./background-loop.ts";
 import { ClockService } from "./clock.ts";
 import { rawFileHash } from "./crypto.ts";
 import { jobResponse } from "./job-response.ts";
@@ -750,20 +751,10 @@ export const FileIngestBatchesLive = Layer.effect(
 );
 
 export const FileIngestBatchReconcilerLoopLive = Layer.effectDiscard(
-  Effect.gen(function* () {
-    const batches = yield* FileIngestBatches;
-    const logger = yield* StructuredLogger;
-    const tick = batches.reconcileOnce().pipe(
-      Effect.catchCause((cause) =>
-        logger.warn("file_ingest_reconciler_tick_failed", {
-          error: "Cause",
-          error_message: Cause.pretty(cause),
-        }),
-      ),
-    );
-    yield* tick;
-    yield* Effect.forkScoped(
-      Effect.forever(Effect.sleep("5 seconds").pipe(Effect.andThen(tick))),
-    );
-  }),
+  Effect.flatMap(FileIngestBatches, (batches) =>
+    backgroundLoop({
+      failureEvent: "file_ingest_reconciler_tick_failed",
+      interval: "5 seconds",
+      tick: batches.reconcileOnce(),
+    })),
 );

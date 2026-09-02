@@ -6,6 +6,7 @@ import * as Activity from "effect/unstable/workflow/Activity";
 import * as Workflow from "effect/unstable/workflow/Workflow";
 import * as WorkflowEngine from "effect/unstable/workflow/WorkflowEngine";
 
+import { backgroundLoop } from "./background-loop.ts";
 import { ClockService } from "./clock.ts";
 import { AppConfig } from "./config.ts";
 import { formatError } from "./error-details.ts";
@@ -327,18 +328,10 @@ export const CompileIntentReconcilerLive = Layer.effect(
 );
 
 export const CompileIntentReconcilerLoopLive = Layer.effectDiscard(
-  Effect.gen(function* () {
-    const reconciler = yield* CompileIntentReconciler;
-    const logger = yield* StructuredLogger;
-    const tick = reconciler.reconcileOnce().pipe(
-      Effect.catchCause((cause) =>
-        logger.warn("intent_reconciler_tick_failed", {
-          error: "Cause",
-          error_message: Cause.pretty(cause),
-        }),
-      ),
-    );
-    yield* tick;
-    yield* Effect.forkScoped(Effect.forever(Effect.sleep("5 seconds").pipe(Effect.andThen(tick))));
-  }),
+  Effect.flatMap(CompileIntentReconciler, (reconciler) =>
+    backgroundLoop({
+      failureEvent: "intent_reconciler_tick_failed",
+      interval: "5 seconds",
+      tick: reconciler.reconcileOnce(),
+    })),
 );

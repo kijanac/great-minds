@@ -7,6 +7,7 @@ import type {
 } from "@great-minds/domain";
 import { Cause, Context, Effect, Layer, Schema } from "effect";
 
+import { backgroundLoop } from "./background-loop.ts";
 import { ClockService } from "./clock.ts";
 import { AppConfig } from "./config.ts";
 import { StructuredLogger } from "./logging.ts";
@@ -306,24 +307,15 @@ const StorageMaintenanceFromBackendLive = Layer.effectDiscard(
     const backend = yield* StorageBackend;
     if (backend.kind === "r2") return;
     const clock = yield* ClockService;
-    const logger = yield* StructuredLogger;
-    const reap = clock.now.pipe(
-      Effect.flatMap((now) =>
-        pruneLocalStaging(
-          backend.directory,
-          now.getTime() - LOCAL_STAGED_UPLOAD_EXPIRES_MS,
+    yield* backgroundLoop({
+      failureEvent: "local_storage.staging_reap_failed",
+      interval: "1 hour",
+      tick: clock.now.pipe(
+        Effect.flatMap((now) =>
+          pruneLocalStaging(backend.directory, now.getTime() - LOCAL_STAGED_UPLOAD_EXPIRES_MS),
         ),
       ),
-      Effect.catchCause((cause) =>
-        logger.warn("local_storage.staging_reap_failed", {
-          error: "Cause",
-          error_message: Cause.pretty(cause),
-        }),
-      ),
-    );
-    yield* Effect.forkScoped(
-      Effect.forever(Effect.sleep("1 hour").pipe(Effect.andThen(reap))),
-    );
+    });
   }),
 );
 
