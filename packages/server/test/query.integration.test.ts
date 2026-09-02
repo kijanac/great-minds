@@ -937,6 +937,43 @@ describe("query stream", () => {
     expect(markdown).toContain("Follow-up answer.");
   });
 
+  it("rejects a BTW without exchanges and exchange ids outside the path charset", async () => {
+    const language = makeScriptedLanguageModel({
+      streams: [{ kind: "parts", parts: [tokenPart("First answer."), finishPart("stop")] }],
+    });
+    await startHarness({ language });
+    const first = await api(repliesPath, {
+      kind: "exchange",
+      exchange_id: "ex-guard",
+      create: { idempotency_key: "guard-session-key" },
+      question: "First question",
+      mode: "query",
+      history: [],
+    });
+    expect(first.response.status).toBe(202);
+    const { session_id } = JSON.parse(first.text) as { session_id: string };
+
+    const emptyBtw = await api(repliesPath, {
+      kind: "btw",
+      session_id,
+      btw: { quote: "First", blockOffset: 0, context: "First answer.", exchangeId: "ex-guard", exchanges: [] },
+      question: "Why?",
+      mode: "query",
+      history: [],
+    });
+    expect(emptyBtw.response.status).toBe(422);
+
+    const traversal = await api(repliesPath, {
+      kind: "exchange",
+      exchange_id: "../../wiki/index",
+      session_id,
+      question: "Second question",
+      mode: "query",
+      history: [],
+    });
+    expect(traversal.response.status).toBe(422);
+  });
+
   it("reuses an idempotently-created session across reply submissions", async () => {
     const language = makeScriptedLanguageModel({
       streams: [

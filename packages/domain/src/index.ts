@@ -28,6 +28,11 @@ export const SessionId = Schema.String.pipe(
 );
 export type SessionId = typeof SessionId.Type;
 
+export const ExchangeId = Schema.String.pipe(
+  Schema.check(Schema.isPattern(/^[A-Za-z0-9][A-Za-z0-9._-]*$/)),
+);
+export type ExchangeId = typeof ExchangeId.Type;
+
 export const RawSourcePath = Schema.String.pipe(
   Schema.check(
     Schema.isPattern(
@@ -825,8 +830,8 @@ export const BtwData = Schema.Struct({
   quote: Schema.String,
   blockOffset: Schema.Number.pipe(Schema.withDecodingDefaultTypeKey(Effect.succeed(-1))),
   context: Schema.String.pipe(Schema.withDecodingDefaultTypeKey(Effect.succeed(""))),
-  exchangeId: Schema.String,
-  exchanges: Schema.Array(BtwExchange),
+  exchangeId: ExchangeId,
+  exchanges: Schema.Array(BtwExchange).pipe(Schema.check(Schema.isNonEmpty())),
 });
 export type BtwData = typeof BtwData.Type;
 
@@ -1162,13 +1167,13 @@ export const CreateReplyRequest = Schema.Union([
   Schema.Struct({
     ...CreateReplyFields,
     kind: Schema.Literal("exchange"),
-    exchange_id: Schema.String,
+    exchange_id: ExchangeId,
     session_id: SessionId,
   }),
   Schema.Struct({
     ...CreateReplyFields,
     kind: Schema.Literal("exchange"),
-    exchange_id: Schema.String,
+    exchange_id: ExchangeId,
     create: CreateReplySession,
   }),
   Schema.Struct({
@@ -1853,7 +1858,7 @@ export const SessionsApiGroup = HttpApiGroup.make("sessions").add(
       params: {
         vault_id: Uuid,
         session_id: SessionId,
-        exchange_id: Schema.String,
+        exchange_id: ExchangeId,
       },
       success: CreatedPromoteExchangeResponse,
       error: [BadRequestResponse, ForbiddenResponse, NotFoundResponse, ValidationResponse] as const,
