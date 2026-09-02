@@ -58,12 +58,6 @@ importers:
       '@aws-sdk/s3-request-presigner':
         specifier: 3.1080.0
         version: 3.1080.0
-      '@effect/ai-openai-compat':
-        specifier: 4.0.0-rc.112
-        version: 4.0.0-rc.112(effect@4.0.0-rc.112)
-      '@effect/ai-openrouter':
-        specifier: 4.0.0-rc.112
-        version: 4.0.0-rc.112(effect@4.0.0-rc.112)
       '@effect/platform-node':
         specifier: 4.0.0-rc.112
         version: 4.0.0-rc.112(effect@4.0.0-rc.112)(redis@6.2.1)
@@ -491,16 +485,6 @@ packages:
 
   '@drizzle-team/brocli@0.12.0':
     resolution: {integrity: sha512-mlUE+rZ8CatQekLhnaiN91Iemdd+e2gFKooGlnRB3oPTL3VghLfX24dx7HrzMNeC1JrIB/0kpsfyty3f5HNfxQ==}
-
-  '@effect/ai-openai-compat@4.0.0-rc.112':
-    resolution: {integrity: sha512-bfNYHgfjhzKhDwaw2na75JshGACrawSXWqqzTncBtBHpUIhZ+VHF2I5AdgCmfh6fnAuvhxcuJnzrixGOkG9YZw==}
-    peerDependencies:
-      effect: ^4.0.0-rc.112
-
-  '@effect/ai-openrouter@4.0.0-rc.112':
-    resolution: {integrity: sha512-wgMy6v4P5SsvMoZRcDBBozgHyQ1YujRD8U3ggYt/fkyVXvCIrh28lNEbqLKM2NLojc43kVM3hk2Fe7LKhaEqcw==}
-    peerDependencies:
-      effect: ^4.0.0-rc.112
 
   '@effect/platform-node-shared@4.0.0-rc.112':
     resolution: {integrity: sha512-ttjz0xKamFN7vL8pNDYVwddJLjZvqKePc05djlz2VcdaKbLsnYbtMnL1rbOfHgEnIUSHGh7FkjaN4DM1Ov81sQ==}
@@ -5204,14 +5188,6 @@ snapshots:
   '@dotenvx/primitives@0.8.0': {}
 
   '@drizzle-team/brocli@0.12.0': {}
-
-  '@effect/ai-openai-compat@4.0.0-rc.112(effect@4.0.0-rc.112)':
-    dependencies:
-      effect: 4.0.0-rc.112
-
-  '@effect/ai-openrouter@4.0.0-rc.112(effect@4.0.0-rc.112)':
-    dependencies:
-      effect: 4.0.0-rc.112
 
   '@effect/platform-node-shared@4.0.0-rc.112(effect@4.0.0-rc.112)':
     dependencies:

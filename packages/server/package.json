@@ -17,8 +17,6 @@
   "dependencies": {
     "@aws-sdk/client-s3": "3.1080.0",
     "@aws-sdk/s3-request-presigner": "3.1080.0",
-    "@effect/ai-openai-compat": "4.0.0-rc.112",
-    "@effect/ai-openrouter": "4.0.0-rc.112",
     "@effect/platform-node": "4.0.0-rc.112",
     "@effect/sql-pg": "4.0.0-rc.112",
     "@great-minds/database": "workspace:*",
