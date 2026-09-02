@@ -321,9 +321,11 @@ export const completionRequestBody = (input: CompleteInput) => {
   };
 };
 
+const SSE_FRAME_BOUNDARY = /\r\n\r\n|\n\n|\r\r/;
+
 const parseDataLines = (block: string) =>
   block
-    .split(/\r?\n/)
+    .split(/\r\n|\n|\r/)
     .filter((line) => line.startsWith("data:"))
     .map((line) => line.slice("data:".length).trimStart())
     .join("\n");
@@ -356,12 +358,12 @@ export async function* parseOpenRouterStream(response: Response): AsyncIterable<
     }
     buffer += decoder.decode(value, { stream: true });
     while (true) {
-      const splitAt = buffer.indexOf("\n\n");
-      if (splitAt === -1) {
+      const boundary = SSE_FRAME_BOUNDARY.exec(buffer);
+      if (boundary === null) {
         break;
       }
-      const block = buffer.slice(0, splitAt);
-      buffer = buffer.slice(splitAt + 2);
+      const block = buffer.slice(0, boundary.index);
+      buffer = buffer.slice(boundary.index + boundary[0].length);
       const data = parseDataLines(block);
       if (data.length === 0 || data === "[DONE]") {
         continue;

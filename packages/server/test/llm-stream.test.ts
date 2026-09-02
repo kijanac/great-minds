@@ -2,10 +2,13 @@ import { describe, expect, it } from "vitest";
 
 import { parseOpenRouterStream, type ModelStreamPart } from "../src/llm.ts";
 
-const sseResponse = (blocks: readonly string[]) =>
-  new Response(new Blob([blocks.map((block) => `${block}\n\n`).join("")]).stream(), {
-    headers: { "content-type": "text/event-stream" },
-  });
+const sseResponse = (blocks: readonly string[], newline = "\n") =>
+  new Response(
+    new Blob([
+      blocks.map((block) => `${block.replaceAll("\n", newline)}${newline}${newline}`).join(""),
+    ]).stream(),
+    { headers: { "content-type": "text/event-stream" } },
+  );
 
 const collect = async (response: Response) => {
   const parts: ModelStreamPart[] = [];
@@ -60,6 +63,25 @@ describe("openrouter stream protocol", () => {
     expect(parts).toEqual([
       { type: "token", text: "A" },
       { type: "finish", finishReason: "stop", generationId: "gen-2", usage: undefined },
+    ]);
+  });
+
+  it.each(["\r\n", "\r"])("frames events delimited by %j like LF", async (newline) => {
+    const parts = await collect(
+      sseResponse(
+        [
+          'data: {"id":"gen-3","choices":[{"index":0,"delta":{"content":"multi"},"finish_reason":null}]}',
+          'data: {"id":"gen-3","choices":[{"index":0,"delta":{"content":"line"},\ndata: "finish_reason":"stop"}]}',
+          "data: [DONE]",
+        ],
+        newline,
+      ),
+    );
+
+    expect(parts).toEqual([
+      { type: "token", text: "multi" },
+      { type: "token", text: "line" },
+      { type: "finish", finishReason: "stop", generationId: "gen-3", usage: undefined },
     ]);
   });
 
