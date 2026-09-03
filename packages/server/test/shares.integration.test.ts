@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { createServer, type RequestListener, type Server as NodeServer } from "node:http";
 import { tmpdir } from "node:os";
@@ -12,9 +13,12 @@ import {
   vaultMemberships,
   vaults,
 } from "@great-minds/database";
-import type { Uuid } from "@great-minds/domain";
+import {
+  Uuid as UuidSchema,
+  type Uuid,
+} from "@great-minds/domain";
 import { eq } from "drizzle-orm";
-import { Effect, Layer, Option, Redacted } from "effect";
+import { Effect, Layer, Option, Redacted, Schema } from "effect";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 
 import { makeAppLayer } from "../src/app-layer.ts";
@@ -278,14 +282,30 @@ const writeVaultFile = async (vaultId: string, path: string, content: string) =>
 const jsonl = (events: readonly unknown[]) =>
   events.map((event) => JSON.stringify(event)).join("\n");
 
+const decodeUuid = Schema.decodeUnknownSync(UuidSchema);
+
 const createSession = (idempotencyKey: string, query: string, answer: string) =>
   runDb(
     Effect.gen(function* () {
       const sessions = yield* SessionsService;
-      return yield* sessions.createSession(id.alice as Uuid, id.vault as Uuid, {
+      const replyId = decodeUuid(randomUUID());
+      const sessionId = yield* sessions.createSession(id.alice as Uuid, id.vault as Uuid, {
         idempotencyKey,
-        exchange: { id: `ex-${idempotencyKey}`, query, thinking: [], answer },
+        pending: {
+          replyId,
+          exchangeId: `ex-${idempotencyKey}`,
+          question: query,
+        },
       });
+      yield* sessions.completeReply(id.alice as Uuid, id.vault as Uuid, sessionId, replyId, {
+        messages: [
+          { role: "user", content: query },
+          { role: "assistant", content: answer },
+        ],
+        sources: [],
+        answer,
+      });
+      return sessionId;
     }),
   );
 
@@ -572,32 +592,32 @@ describe("share links", () => {
               },
             },
             {
-              type: "exchange",
-              exId: "ex-ann-1",
-              query: "What does the quote mean?",
-              thinking: [
-                {
-                  sources: [
-                    {
-                      label: "secret source",
-                      type: "raw",
-                      document_id: null,
-                      title: null,
-                      scope: null,
-                      path: null,
-                      thinking: "internal reasoning",
-                    },
-                  ],
-                },
+              type: "reply",
+              reply_id: "00000000-0000-4000-8000-000000000711",
+              parent_reply_id: null,
+              exchange_id: "ex-ann-1",
+              question: "What does the quote mean?",
+              status: "completed",
+              messages: [
+                { role: "user", content: "What does the quote mean?" },
+                { role: "assistant", content: "The quote anchors the first claim." },
               ],
+              sources: [],
               answer: "The quote anchors the first claim.",
               ts: "2026-07-11T09:05:00.000Z",
             },
             {
-              type: "exchange",
-              exId: "ex-ann-2",
-              query: "How should organizers use it?",
-              thinking: [],
+              type: "reply",
+              reply_id: "00000000-0000-4000-8000-000000000712",
+              parent_reply_id: "00000000-0000-4000-8000-000000000711",
+              exchange_id: "ex-ann-2",
+              question: "How should organizers use it?",
+              status: "completed",
+              messages: [
+                { role: "user", content: "How should organizers use it?" },
+                { role: "assistant", content: "Use it to open the discussion." },
+              ],
+              sources: [],
               answer: "Use it to open the discussion.",
               ts: "2026-07-11T09:06:00.000Z",
             },

@@ -1,8 +1,5 @@
-import { composeAnchoredQuestion } from "@great-minds/domain";
 import { clsx, type ClassValue } from "clsx";
 import { twMerge } from "tailwind-merge";
-
-import type { Exchange, HistoryMessage, TextAnchor } from "$lib/types";
 
 export type {
   WithElementRef,
@@ -64,20 +61,4 @@ export function docDisplayName(path: string): string {
 
 export function displayTitle(path: string, title?: string | null): string {
   return title || docDisplayName(path);
-}
-
-// Flatten BTW exchanges into the LLM's alternating role/content history. The
-// first user turn carries the passage prefix so the model has the BTW anchor
-// in conversation history; later turns are raw text since context is established.
-export function buildBtwHistory(priorExchanges: Exchange[], anchor: TextAnchor): HistoryMessage[] {
-  const history: HistoryMessage[] = [];
-  for (let i = 0; i < priorExchanges.length; i++) {
-    const ex = priorExchanges[i];
-    history.push({
-      role: "user",
-      content: i === 0 ? composeAnchoredQuestion(anchor, ex.query) : ex.query,
-    });
-    history.push({ role: "assistant", content: ex.answer });
-  }
-  return history;
 }

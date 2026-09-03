@@ -210,6 +210,42 @@ const writeVaultFile = async (vaultId: string, path: string, content: string) =>
 const jsonl = (events: readonly unknown[]) =>
   events.map((event) => JSON.stringify(event)).join("\n");
 
+const replyNode = (
+  replyId: string,
+  exchangeId: string,
+  question: string,
+  answer: string,
+  ts: string,
+  extra: {
+    readonly parentReplyId?: string | null;
+    readonly messages?: readonly unknown[];
+    readonly sources?: readonly unknown[];
+    readonly btw?: {
+      readonly exchange_id: string;
+      readonly quote: string;
+      readonly block_offset: number;
+      readonly context: string;
+    };
+  } = {},
+) => ({
+  type: "reply",
+  reply_id: replyId,
+  parent_reply_id: extra.parentReplyId ?? null,
+  exchange_id: exchangeId,
+  ...(extra.btw === undefined ? {} : { btw: extra.btw }),
+  question,
+  status: "completed",
+  messages:
+    extra.messages ??
+    [
+      { role: "user", content: question },
+      { role: "assistant", content: answer },
+    ],
+  sources: extra.sources ?? [],
+  answer,
+  ts,
+});
+
 const issueToken = (userId: string) =>
   runDb(
     Effect.gen(function* () {
@@ -691,14 +727,13 @@ const seedFixtures = async (): Promise<Fixture> => {
         user_id: id.alice,
         origin: null,
       },
-      {
-        type: "exchange",
-        exId: "ex-stale",
-        query: "Stale pre-reload question",
-        thinking: [],
-        answer: "This belongs to an older client-reused id.",
-        ts: "2026-07-01T08:01:00.000Z",
-      },
+      replyNode(
+        "00000000-0000-4000-8000-000000000101",
+        "ex-stale",
+        "Stale pre-reload question",
+        "This belongs to an older client-reused id.",
+        "2026-07-01T08:01:00.000Z",
+      ),
       {
         type: "meta",
         id: id.sessionAliceMain,
@@ -712,96 +747,116 @@ const seedFixtures = async (): Promise<Fixture> => {
           paragraph_index: 2,
         },
       },
-      {
-        type: "exchange",
-        exId: "ex-1",
-        query: "How should study circles use source material?",
-        thinking: [
-          {
-            sources: [
-              {
-                label: "Alpha Practice",
-                type: "article",
-                document_id: id.articleAlpha,
-                title: null,
-                scope: null,
-                path: null,
-                thinking: "Use the article as a shared reference point.",
-                ranges: [{ start: 0, end: 2 }],
-                full: false,
-              },
-              {
-                label: "Capital Volume",
-                type: "raw",
-                document_id: id.sourceBook,
-                title: null,
-                scope: null,
-                path: null,
-                thinking: "Raw source grounds the discussion.",
-                ranges: [{ start: 3, end: 4 }],
-                full: true,
-              },
-              {
-                label: "Search: pedagogy",
-                type: "search",
-                document_id: null,
-                title: null,
-                scope: null,
-                path: null,
-                thinking: null,
-              },
-              {
-                label: "Prior query",
-                type: "query",
-                document_id: null,
-                title: null,
-                scope: null,
-                path: null,
-                thinking: "Compare against previous framing.",
-              },
-              {
-                label: "Linked articles",
-                type: "links",
-                document_id: null,
-                title: null,
-                scope: null,
-                path: null,
-                thinking: "Trace adjacent topics.",
-              },
-            ],
+      replyNode(
+        "00000000-0000-4000-8000-000000000102",
+        "ex-1",
+        "How should study circles use source material?",
+        "Start with a concrete passage, then ask what claim it supports.",
+        "2026-07-07T09:10:00.000Z",
+        {
+          sources: [
+            {
+              label: "Alpha Practice",
+              type: "article",
+              document_id: id.articleAlpha,
+              title: null,
+              scope: null,
+              path: null,
+              thinking: "Use the article as a shared reference point.",
+              ranges: [{ start: 0, end: 2 }],
+              full: false,
+            },
+            {
+              label: "Capital Volume",
+              type: "raw",
+              document_id: id.sourceBook,
+              title: null,
+              scope: null,
+              path: null,
+              thinking: "Raw source grounds the discussion.",
+              ranges: [{ start: 3, end: 4 }],
+              full: true,
+            },
+            {
+              label: "Search: pedagogy",
+              type: "search",
+              document_id: null,
+              title: null,
+              scope: null,
+              path: null,
+              thinking: null,
+            },
+            {
+              label: "Prior query",
+              type: "query",
+              document_id: null,
+              title: null,
+              scope: null,
+              path: null,
+              thinking: "Compare against previous framing.",
+            },
+            {
+              label: "Linked articles",
+              type: "links",
+              document_id: null,
+              title: null,
+              scope: null,
+              path: null,
+              thinking: "Trace adjacent topics.",
+            },
+          ],
+        },
+      ),
+      replyNode(
+        "00000000-0000-4000-8000-000000000103",
+        "ex-1-btw-1",
+        "Why this passage?",
+        "It gives the group something specific to test.",
+        "2026-07-07T09:20:00.000Z",
+        {
+          parentReplyId: "00000000-0000-4000-8000-000000000102",
+          btw: {
+            exchange_id: "ex-1",
+            quote: "concrete passage",
+            block_offset: 0,
+            context: "Start with a concrete passage",
           },
-        ],
-        answer: "Start with a concrete passage, then ask what claim it supports.",
-        ts: "2026-07-07T09:10:00.000Z",
-      },
-      {
-        type: "btw",
-        exId: "ex-1",
-        quote: "concrete passage",
-        blockOffset: 0,
-        context: "Start with a concrete passage",
-        exchanges: [
-          {
-            query: "Why this passage?",
-            thinking: [{ sources: [{ label: "Linked articles", type: "links", document_id: null, title: null, scope: null, path: null, thinking: null }] }],
-            answer: "It gives the group something specific to test.",
+          sources: [
+            {
+              label: "Linked articles",
+              type: "links",
+              document_id: null,
+              title: null,
+              scope: null,
+              path: null,
+              thinking: null,
+            },
+          ],
+        },
+      ),
+      replyNode(
+        "00000000-0000-4000-8000-000000000104",
+        "ex-1-btw-2",
+        "How do we avoid over-reading it?",
+        "Keep claims proportional to the evidence.",
+        "2026-07-07T09:21:00.000Z",
+        {
+          parentReplyId: "00000000-0000-4000-8000-000000000103",
+          btw: {
+            exchange_id: "ex-1",
+            quote: "concrete passage",
+            block_offset: 0,
+            context: "Start with a concrete passage",
           },
-          {
-            query: "How do we avoid over-reading it?",
-            thinking: [],
-            answer: "Keep claims proportional to the evidence.",
-          },
-        ],
-        ts: "2026-07-07T09:20:00.000Z",
-      },
-      {
-        type: "exchange",
-        exId: "ex-2",
-        query: "What should the facilitator write down?",
-        thinking: [],
-        answer: "Record the passage, the claim, and unresolved questions.",
-        ts: "2026-07-07T09:45:00.000Z",
-      },
+        },
+      ),
+      replyNode(
+        "00000000-0000-4000-8000-000000000105",
+        "ex-2",
+        "What should the facilitator write down?",
+        "Record the passage, the claim, and unresolved questions.",
+        "2026-07-07T09:45:00.000Z",
+      ),
     ]),
   );
   await writeVaultFile(
@@ -857,38 +912,44 @@ const seedFixtures = async (): Promise<Fixture> => {
         user_id: id.alice,
         origin: null,
       },
-      {
-        type: "exchange",
-        exId: "ex-good",
-        query: "Malformed event handling",
-        thinking: [],
-        answer: "The first event is valid.",
-        ts: "2026-07-09T11:01:00.000Z",
-      },
+      replyNode(
+        "00000000-0000-4000-8000-000000000201",
+        "ex-good",
+        "Malformed event handling",
+        "The first event is valid.",
+        "2026-07-09T11:01:00.000Z",
+      ),
       { type: "unknown", ts: "2026-07-09T11:02:00.000Z" },
       {
-        type: "exchange",
-        query: "Missing exId should be skipped.",
-        thinking: [],
+        type: "reply",
+        reply_id: "00000000-0000-4000-8000-000000000202",
+        parent_reply_id: null,
+        question: "Missing exId should be skipped.",
+        status: "completed",
+        messages: [
+          { role: "user", content: "Missing exId should be skipped." },
+          { role: "assistant", content: "This event is invalid." },
+        ],
+        sources: [],
         answer: "This event is invalid.",
         ts: "2026-07-09T11:03:00.000Z",
       },
-      {
-        type: "exchange",
-        exId: "ex-after-invalid",
-        query: "Does parsing continue after invalid typed events?",
-        thinking: [],
-        answer: "Yes, invalid typed events are skipped.",
-        ts: "2026-07-09T11:04:00.000Z",
-      },
-    ])}\n{not valid json}\n${JSON.stringify({
-      type: "exchange",
-      exId: "ex-after-bad-json",
-      query: "This tail is truncated.",
-      thinking: [],
-      answer: "This must not appear.",
-      ts: "2026-07-09T11:05:00.000Z",
-    })}\n`,
+      replyNode(
+        "00000000-0000-4000-8000-000000000203",
+        "ex-after-invalid",
+        "Does parsing continue after invalid typed events?",
+        "Yes, invalid typed events are skipped.",
+        "2026-07-09T11:04:00.000Z",
+      ),
+    ])}\n{not valid json}\n${JSON.stringify(
+      replyNode(
+        "00000000-0000-4000-8000-000000000204",
+        "ex-after-bad-json",
+        "This tail is truncated.",
+        "This must not appear.",
+        "2026-07-09T11:05:00.000Z",
+      ),
+    )}\n`,
   );
 
   return {
@@ -1706,14 +1767,13 @@ describe("read-only HTTP integration", () => {
             paragraph_index: 1,
           },
         },
-        {
-          type: "exchange",
-          exId: "ex-origin-a",
-          query: "What does the anchored claim mean?",
-          thinking: [],
-          answer: "It anchors the discussion.",
-          ts: "2026-07-10T08:10:00.000Z",
-        },
+        replyNode(
+          "00000000-0000-4000-8000-000000000301",
+          "ex-origin-a",
+          "What does the anchored claim mean?",
+          "It anchors the discussion.",
+          "2026-07-10T08:10:00.000Z",
+        ),
       ]),
     );
     await writeVaultFile(
@@ -1734,14 +1794,13 @@ describe("read-only HTTP integration", () => {
             paragraph_index: null,
           },
         },
-        {
-          type: "exchange",
-          exId: "ex-origin-p",
-          query: "Doc-initiated conversation",
-          thinking: [],
-          answer: "Plain conversation answer.",
-          ts: "2026-07-10T09:05:00.000Z",
-        },
+        replyNode(
+          "00000000-0000-4000-8000-000000000302",
+          "ex-origin-p",
+          "Doc-initiated conversation",
+          "Plain conversation answer.",
+          "2026-07-10T09:05:00.000Z",
+        ),
       ]),
     );
     await writeVaultFile(
@@ -1857,7 +1916,7 @@ describe("read-only HTTP integration", () => {
     const body = asRecord(replay.body);
     expect(body.id).toBe(id.sessionAliceMain);
     const events = asArray(body.events).map(asRecord);
-    expect(events.map((event) => event.type)).toEqual(["meta", "exchange", "btw", "exchange"]);
+    expect(events.map((event) => event.type)).toEqual(["meta", "exchange", "exchange", "btw"]);
     expect(events.map((event) => event.exId).filter(Boolean)).not.toContain("ex-stale");
     expect(events[0]).toMatchObject({
       type: "meta",
@@ -1882,11 +1941,11 @@ describe("read-only HTTP integration", () => {
     ]);
     expect(sources[2]).toMatchObject({
       label: "Search: pedagogy",
+      type: "search",
       thinking: null,
-      ranges: [],
-      full: false,
+      scope: null,
     });
-    const btw = events[2] ?? {};
+    const btw = events[3] ?? {};
     expect(btw).toMatchObject({
       type: "btw",
       exId: "ex-1",

@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { access, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { createServer, type RequestListener, type Server as NodeServer } from "node:http";
 import { tmpdir } from "node:os";
@@ -28,9 +29,13 @@ import {
   vaults,
   wikiArticles,
 } from "@great-minds/database";
-import type { ExchangeData, SessionOrigin, Uuid } from "@great-minds/domain";
+import {
+  Uuid as UuidSchema,
+  type SessionOrigin,
+  type Uuid,
+} from "@great-minds/domain";
 import { and, eq, isNull, sql } from "drizzle-orm";
-import { Effect, Layer, Option, Redacted } from "effect";
+import { Effect, Layer, Option, Redacted, Schema } from "effect";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 
 import { makeAppLayer } from "../src/app-layer.ts";
@@ -206,20 +211,41 @@ const buildTestState = async () => {
 const runDb = <A>(effect: Effect.Effect<A, unknown, TestServices>) =>
   currentState().started.runtime.runPromise(effect);
 
+const decodeUuid = Schema.decodeUnknownSync(UuidSchema);
+
 const createSessionForTest = (
   userId: Uuid,
   idempotencyKey: string,
-  exchange: ExchangeData,
+  exchange: {
+    readonly id: string;
+    readonly query: string;
+    readonly answer: string;
+    readonly thinking?: readonly unknown[];
+  },
   origin?: SessionOrigin,
 ) =>
   runDb(
     Effect.gen(function* () {
       const sessions = yield* SessionsService;
-      return yield* sessions.createSession(userId, id.vault as Uuid, {
+      const replyId = decodeUuid(randomUUID());
+      const sessionId = yield* sessions.createSession(userId, id.vault as Uuid, {
         idempotencyKey,
-        exchange,
         ...(origin === undefined ? {} : { origin }),
+        pending: {
+          replyId,
+          exchangeId: exchange.id,
+          question: exchange.query,
+        },
       });
+      yield* sessions.completeReply(userId, id.vault as Uuid, sessionId, replyId, {
+        messages: [
+          { role: "user", content: exchange.query },
+          { role: "assistant", content: exchange.answer },
+        ],
+        sources: [],
+        answer: exchange.answer,
+      });
+      return sessionId;
     }),
   );
 

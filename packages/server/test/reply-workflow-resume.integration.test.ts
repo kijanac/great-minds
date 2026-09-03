@@ -115,7 +115,6 @@ describe("reply workflow restart recovery", () => {
               kind: "ephemeral",
               question: "Will this provider call repeat?",
               mode: "query",
-              history: [],
             })}::jsonb
           )
         `;

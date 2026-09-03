@@ -51,7 +51,7 @@ function replayEvents(events: readonly SessionEvent[], originTitle: string | nul
         context: event.context ?? "",
       },
       exchanges: event.exchanges.map((exchange, index) => ({
-        id: `${event.exId}:${event.blockOffset ?? -1}:${event.quote}:${index}`,
+        id: exchange.exchange_id,
         query: exchange.query,
         thinking: (exchange.thinking ?? []).map((block) => ({
           sources: block.sources ?? [],

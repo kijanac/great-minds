@@ -40,6 +40,35 @@ export type LlmAssistantToolCall = {
   };
 };
 
+export const LlmTextContentPartSchema = Schema.Struct({
+  type: Schema.Literal("text"),
+  text: Schema.String,
+  cache_control: Schema.optionalKey(Schema.Struct({ type: Schema.Literal("ephemeral") })),
+});
+
+export const LlmAssistantToolCallSchema = Schema.Struct({
+  id: Schema.String,
+  type: Schema.Literal("function"),
+  function: Schema.Struct({ name: Schema.String, arguments: Schema.String }),
+});
+
+export const LlmMessageSchema = Schema.Union([
+  Schema.Struct({
+    role: Schema.Literals(["system", "user", "assistant"] as const),
+    content: Schema.Union([
+      Schema.String,
+      Schema.Null,
+      Schema.Array(LlmTextContentPartSchema),
+    ]),
+    tool_calls: Schema.optionalKey(Schema.Array(LlmAssistantToolCallSchema)),
+  }),
+  Schema.Struct({
+    role: Schema.Literal("tool"),
+    tool_call_id: Schema.String,
+    content: Schema.String,
+  }),
+]);
+
 export type LlmToolCallDelta = {
   readonly index: number;
   readonly id?: string;

@@ -27,9 +27,11 @@ import { ClockService, makeTestClock } from "../src/clock.ts";
 import { AppConfig, type AppConfigShape } from "../src/config.ts";
 import { promptContentHash } from "../src/crypto.ts";
 import { StructuredLogger, StructuredLoggerLive } from "../src/logging.ts";
+import { type LlmAssistantToolCall, type LlmMessage } from "../src/llm.ts";
 import { makeTestMailer } from "../src/mailer.ts";
 import { RepliesService } from "../src/replies.ts";
 import { startServer } from "../src/server.ts";
+import type { ReplyNode, StoredSessionEvent } from "../src/sessions.ts";
 import { TokenService } from "../src/tokens.ts";
 import {
   finishPart,
@@ -451,7 +453,6 @@ const runReply = async (body: Record<string, unknown>) => {
   const created = await api(repliesPath, {
     kind: "ephemeral",
     mode: "query",
-    history: [],
     ...body,
   });
   if (created.response.status !== 202) {
@@ -500,13 +501,33 @@ const readSessionEvents = async (sessionId: string) => {
   return content
     .trim()
     .split("\n")
-    .map((line) => JSON.parse(line) as Record<string, unknown>);
+    .map((line) => JSON.parse(line) as StoredSessionEvent);
 };
 
 const getWithToken = (path: string) =>
   fetch(`${currentState().started.url}/v1${path}`, {
     headers: { authorization: `Bearer ${currentState().token}` },
   });
+
+type OriginReadHit = {
+  readonly index: number;
+  readonly call: LlmAssistantToolCall;
+};
+
+const originReadHits = (messages: readonly LlmMessage[]): readonly OriginReadHit[] => {
+  const hits: OriginReadHit[] = [];
+  for (const [index, message] of messages.entries()) {
+    if (message.role !== "assistant") {
+      continue;
+    }
+    for (const call of message.tool_calls ?? []) {
+      if (call.function.name === "read_document") {
+        hits.push({ index, call });
+      }
+    }
+  }
+  return hits;
+};
 
 const vector1024 = (head: readonly number[]) => [
   ...head,
@@ -577,7 +598,7 @@ describe("query stream", () => {
     const bobToken = await issueToken(id.bob);
     const nonMember = await apiWithToken(
       repliesPath,
-      { kind: "ephemeral", mode: "query", question: "No access", history: [] },
+      { kind: "ephemeral", mode: "query", question: "No access" },
       bobToken,
     );
     expect(nonMember.response.status).toBe(403);
@@ -590,7 +611,6 @@ describe("query stream", () => {
       kind: "ephemeral",
       mode: "query",
       question: "Missing",
-      history: [],
     });
     expect(unknown.response.status).toBe(404);
     expect(unknown.response.headers.get("content-type") ?? "").not.toContain("text/event-stream");
@@ -609,7 +629,6 @@ describe("query stream", () => {
       kind: "ephemeral",
       mode: "query",
       question: "No key",
-      history: [],
     });
     expect(noKey.response.status).toBe(503);
     expect(noKey.response.headers.get("content-type") ?? "").not.toContain("text/event-stream");
@@ -639,7 +658,6 @@ describe("query stream", () => {
       },
       question: "Persist this answer",
       mode: "query",
-      history: [],
     });
     expect(created.response.status).toBe(202);
     const identifiers = JSON.parse(created.text) as {
@@ -651,8 +669,9 @@ describe("query stream", () => {
     expect(
       submittedEvents.some(
         (event) =>
-          event.type === "exchange" &&
-          event.exId === "ex-durable" &&
+          event.type === "reply" &&
+          event.exchange_id === "ex-durable" &&
+          event.status === "pending" &&
           event.answer === "" &&
           event.reply_id === identifiers.reply_id,
       ),
@@ -683,11 +702,13 @@ describe("query stream", () => {
     expect(replyRows[0]?.dispatchedAt).not.toBeNull();
 
     const completedEvents = await readSessionEvents(identifiers.session_id);
-    const exchangeEvents = completedEvents.filter((event) => event.type === "exchange");
-    expect(exchangeEvents).toHaveLength(2);
-    expect(exchangeEvents.at(-1)).toMatchObject({
-      exId: "ex-durable",
+    const replyEvents = completedEvents.filter((event) => event.type === "reply");
+    expect(replyEvents).toHaveLength(2);
+    expect(replyEvents.at(-1)).toMatchObject({
+      type: "reply",
+      exchange_id: "ex-durable",
       reply_id: identifiers.reply_id,
+      status: "completed",
       answer: "Durable answer.",
     });
 
@@ -734,7 +755,6 @@ describe("query stream", () => {
       create: { idempotency_key: "accepted-once-session" },
       question: "Accept this once",
       mode: "query" as const,
-      history: [],
     };
     const first = await api(repliesPath, payload);
     const replayed = await api(repliesPath, payload);
@@ -763,10 +783,11 @@ describe("query stream", () => {
     expect(language.streamCalls).toHaveLength(1);
 
     const events = (await readSessionEvents(identifiers.session_id)).filter(
-      (event) => event.type === "exchange",
+      (event) => event.type === "reply",
     );
     expect(events).toHaveLength(2);
     expect(events.map((event) => event.reply_id)).toEqual([replyId, replyId]);
+    expect(events.map((event) => event.status)).toEqual(["pending", "completed"]);
   });
 
   it("composes the anchored passage prompt for doc-born sessions while storing the clean question", async () => {
@@ -790,7 +811,6 @@ describe("query stream", () => {
       },
       question: "What does this claim imply?",
       mode: "btw",
-      history: [],
     });
     expect(created.response.status).toBe(202);
     const identifiers = JSON.parse(created.text) as {
@@ -808,7 +828,6 @@ describe("query stream", () => {
       "Passage:\n> The surrounding passage.\n\nHighlighted: \"the highlighted claim\"\n\nWhat does this claim imply?",
     );
 
-    // The session stores the clean question and the full origin anchor.
     const events = await readSessionEvents(identifiers.session_id);
     expect(events[0]).toMatchObject({
       type: "meta",
@@ -821,14 +840,30 @@ describe("query stream", () => {
         paragraph_index: 2,
       },
     });
-    expect(events[1]).toMatchObject({
-      type: "exchange",
-      exId: "ex-anchored",
-      query: "What does this claim imply?",
+    const pendingNode = events.find(
+      (event): event is ReplyNode =>
+        event.type === "reply" &&
+        event.exchange_id === "ex-anchored" &&
+        event.status === "pending",
+    );
+    const completedNode = events.find(
+      (event): event is ReplyNode =>
+        event.type === "reply" &&
+        event.exchange_id === "ex-anchored" &&
+        event.status === "completed",
+    );
+    expect(pendingNode).toMatchObject({
+      question: "What does this claim imply?",
     });
-    // The composed prompt never persists into the session event log.
-    expect(JSON.stringify(events)).not.toContain("Passage:");
-    expect(JSON.stringify(events)).not.toContain("Highlighted:");
+    expect(completedNode).toMatchObject({
+      question: "What does this claim imply?",
+      answer: "Anchored answer.",
+    });
+    expect(completedNode?.messages?.[0]).toMatchObject({
+      role: "user",
+      content:
+        'Passage:\n> The surrounding passage.\n\nHighlighted: "the highlighted claim"\n\nWhat does this claim imply?',
+    });
   });
 
   it("persists follow-up exchanges and BTW threads through canonical replies", async () => {
@@ -847,7 +882,6 @@ describe("query stream", () => {
       create: { idempotency_key: "canonical-session-key" },
       question: "First question",
       mode: "query",
-      history: [],
     });
     expect(first.response.status).toBe(202);
     const firstIds = JSON.parse(first.text) as {
@@ -862,10 +896,6 @@ describe("query stream", () => {
       session_id: firstIds.session_id,
       question: "Follow-up question",
       mode: "query",
-      history: [
-        { role: "user", content: "First question" },
-        { role: "assistant", content: "First answer." },
-      ],
     });
     expect(followUp.response.status).toBe(202);
     const followUpIds = JSON.parse(followUp.text) as { reply_id: string };
@@ -873,26 +903,16 @@ describe("query stream", () => {
 
     const btw = await api(repliesPath, {
       kind: "btw",
+      exchange_id: "ex-canonical-btw-1",
       session_id: firstIds.session_id,
       btw: {
         quote: "First answer",
         blockOffset: 0,
         context: "First answer.",
         exchangeId: "ex-canonical-first",
-        exchanges: [
-          {
-            query: "Why this answer?",
-            thinking: [],
-            answer: "",
-          },
-        ],
       },
       question: "Why this answer?",
       mode: "btw",
-      history: [
-        { role: "user", content: "First question" },
-        { role: "assistant", content: "First answer." },
-      ],
     });
     expect(btw.response.status).toBe(202);
     const btwIds = JSON.parse(btw.text) as { reply_id: string };
@@ -914,8 +934,15 @@ describe("query stream", () => {
     const btwEvents = replayBody.events.filter((event) => event.type === "btw");
     expect(btwEvents.at(-1)).toMatchObject({
       exId: "ex-canonical-first",
+      reply_id: btwIds.reply_id,
       context: "First answer.",
-      exchanges: [{ query: "Why this answer?", answer: "BTW answer." }],
+      exchanges: [
+        {
+          exchange_id: "ex-canonical-btw-1",
+          query: "Why this answer?",
+          answer: "BTW answer.",
+        },
+      ],
     });
 
     const markdown = await readFile(
@@ -936,7 +963,7 @@ describe("query stream", () => {
     expect(markdown).toContain("Follow-up answer.");
   });
 
-  it("rejects a BTW without exchanges and exchange ids outside the path charset", async () => {
+  it("rejects exchange ids outside the path charset on session-bound replies", async () => {
     const language = makeScriptedLanguageModel({
       streams: [{ kind: "parts", parts: [tokenPart("First answer."), finishPart("stop")] }],
     });
@@ -947,20 +974,24 @@ describe("query stream", () => {
       create: { idempotency_key: "guard-session-key" },
       question: "First question",
       mode: "query",
-      history: [],
     });
     expect(first.response.status).toBe(202);
     const { session_id } = JSON.parse(first.text) as { session_id: string };
 
-    const emptyBtw = await api(repliesPath, {
+    const btwTraversal = await api(repliesPath, {
       kind: "btw",
+      exchange_id: "../../wiki/index",
       session_id,
-      btw: { quote: "First", blockOffset: 0, context: "First answer.", exchangeId: "ex-guard", exchanges: [] },
+      btw: {
+        quote: "First",
+        blockOffset: 0,
+        context: "First answer.",
+        exchangeId: "../../wiki/index",
+      },
       question: "Why?",
       mode: "query",
-      history: [],
     });
-    expect(emptyBtw.response.status).toBe(422);
+    expect(btwTraversal.response.status).toBe(422);
 
     const traversal = await api(repliesPath, {
       kind: "exchange",
@@ -968,7 +999,6 @@ describe("query stream", () => {
       session_id,
       question: "Second question",
       mode: "query",
-      history: [],
     });
     expect(traversal.response.status).toBe(422);
   });
@@ -989,7 +1019,6 @@ describe("query stream", () => {
         create: { idempotency_key: "same-session-key" },
         question,
         mode: "query",
-        history: [],
       });
       expect(created.response.status).toBe(202);
       const identifiers = JSON.parse(created.text) as {
@@ -1027,7 +1056,6 @@ describe("query stream", () => {
       create: { idempotency_key: "failed-session-key" },
       question: "Fail this answer",
       mode: "query",
-      history: [],
     });
     const identifiers = JSON.parse(created.text) as {
       reply_id: string;
@@ -1040,10 +1068,11 @@ describe("query stream", () => {
     });
 
     const events = await readSessionEvents(identifiers.session_id);
-    expect(events.filter((event) => event.type === "exchange")).toEqual([
+    expect(events.filter((event) => event.type === "reply")).toEqual([
       expect.objectContaining({
-        exId: "ex-failed",
+        exchange_id: "ex-failed",
         reply_id: identifiers.reply_id,
+        status: "pending",
         answer: "",
       }),
     ]);
@@ -1081,7 +1110,6 @@ describe("query stream", () => {
       },
       question: "Try this answer",
       mode: "query",
-      history: [],
     });
     expect(created.response.status).toBe(202);
     const first = JSON.parse(created.text) as {
@@ -1122,17 +1150,21 @@ describe("query stream", () => {
     });
 
     const events = (await readSessionEvents(first.session_id)).filter(
-      (event) => event.type === "exchange",
+      (event) => event.type === "reply",
     );
     expect(events).toHaveLength(3);
     expect(events.at(-2)).toMatchObject({
-      exId: "ex-retry",
+      type: "reply",
+      exchange_id: "ex-retry",
       reply_id: second.reply_id,
+      status: "pending",
       answer: "",
     });
     expect(events.at(-1)).toMatchObject({
-      exId: "ex-retry",
+      type: "reply",
+      exchange_id: "ex-retry",
       reply_id: second.reply_id,
+      status: "completed",
       answer: "Complete answer.",
     });
 
@@ -1173,7 +1205,6 @@ describe("query stream", () => {
               kind: "ephemeral",
               question: "resume after restart",
               mode: "query",
-              history: [],
             },
             createdAt: initialTime,
             updatedAt: initialTime,
@@ -1249,7 +1280,6 @@ describe("query stream", () => {
 
     const { response, text, snapshots } = await runReply({
       question: "Explain value.",
-      history: [],
     });
 
     expect(response.status).toBe(200);
@@ -1321,64 +1351,138 @@ describe("query stream", () => {
       activeGenerationKind: null,
       activeGenerationKey: null,
     });
-    await expect(
-      readFile(
+    const checkpoint = JSON.parse(
+      await readFile(
         join(currentState().storageRoot, "vaults", id.vault, "operations", "replies", `${replyId}.json`),
         "utf8",
       ),
-    ).rejects.toMatchObject({ code: "ENOENT" });
+    ) as { readonly query: { readonly turnStart: number } };
+    expect(checkpoint.query.turnStart).toBe(1);
     expect(promptContentHash(recorded.prompts[0]!.content)).toBe(recorded.prompts[0]!.hash);
     expect(costs.lookups).toEqual([]);
   });
 
-  it("threads BTW history for both session and document-reader flows", async () => {
+  it("replays the previous turn's tool results verbatim and stubs older ones", async () => {
+    const stubToolResult =
+      "(tool result omitted from context; call the tool again if you need it)";
     const language = makeScriptedLanguageModel({
       streams: [
-        { kind: "parts", parts: [tokenPart("A"), finishPart("stop", "btw-1")] },
-        { kind: "parts", parts: [tokenPart("B"), finishPart("stop", "btw-2")] },
+        {
+          kind: "parts",
+          parts: [
+            toolCallPart(0, "tc-alpha", "read_document", { path: "wiki/alpha.md" }),
+            finishPart("tool_calls", "verbatim-round-1"),
+          ],
+        },
+        {
+          kind: "parts",
+          parts: [tokenPart("First answer."), finishPart("stop", "verbatim-gen-1")],
+        },
+        {
+          kind: "parts",
+          parts: [
+            toolCallPart(0, "tc-source", "read_document", { path: "raw/texts/source.md" }),
+            finishPart("tool_calls", "verbatim-round-2"),
+          ],
+        },
+        {
+          kind: "parts",
+          parts: [tokenPart("Second answer."), finishPart("stop", "verbatim-gen-2")],
+        },
+        { kind: "parts", parts: [tokenPart("Third."), finishPart("stop", "verbatim-gen-3")] },
       ],
     });
     await startHarness({ language });
 
-    await runReply({
-      question: "BTW follow-up",
-      mode: "btw",
-      history: [
-        { role: "user", content: "Parent question" },
-        { role: "assistant", content: "Parent answer" },
-        {
-          role: "user",
-          content: 'Passage:\n> Parent answer\n\nHighlighted: "answer"\n\nFirst BTW',
-        },
-        { role: "assistant", content: "First BTW answer" },
-      ],
-    });
-    await runReply({
-      question: "Doc BTW follow-up",
-      mode: "btw",
-      origin_path: "raw/texts/source.md",
-      history: [
-        { role: "user", content: 'Passage:\n> Raw quote\n\nHighlighted: "quote"\n\nFirst doc BTW' },
-        { role: "assistant", content: "First doc answer" },
-      ],
-    });
+    const submit = async (
+      exchangeId: string,
+      question: string,
+      sessionId: string | null,
+    ) => {
+      const created = await api(
+        repliesPath,
+        sessionId === null
+          ? {
+              kind: "exchange",
+              exchange_id: exchangeId,
+              create: { idempotency_key: "verbatim-session-key" },
+              question,
+              mode: "query",
+            }
+          : {
+              kind: "exchange",
+              exchange_id: exchangeId,
+              session_id: sessionId,
+              question,
+              mode: "query",
+            },
+      );
+      expect(created.response.status).toBe(202);
+      const ids = JSON.parse(created.text) as { reply_id: string; session_id: string };
+      const tail = await tailReply(ids.reply_id);
+      expect(replySnapshots(tail.text).at(-1)).toMatchObject({ status: "completed" });
+      return ids;
+    };
 
-    const sessionMessages = language.streamCalls[0].messages;
-    expect(sessionMessages[0]).toMatchObject({ role: "system" });
-    expect(String(sessionMessages[0].content)).toContain("This is a BTW");
-    expect(sessionMessages.some((message) => message.role === "tool")).toBe(false);
-    expect(sessionMessages.slice(1, 5)).toEqual([
-      { role: "user", content: "Parent question" },
-      { role: "assistant", content: "Parent answer" },
-      { role: "user", content: 'Passage:\n> Parent answer\n\nHighlighted: "answer"\n\nFirst BTW' },
-      { role: "assistant", content: "First BTW answer" },
-    ]);
+    const firstIds = await submit("ex-verbatim-1", "First question", null);
+    await submit("ex-verbatim-2", "Second question", firstIds.session_id);
+    await submit("ex-verbatim-3", "Third question", firstIds.session_id);
 
-    const docMessages = language.streamCalls[1].messages;
-    expect(docMessages[1]).toMatchObject({
+    expect(language.streamCalls).toHaveLength(5);
+    const firstTurnToolContent = language.streamCalls[1]!.messages.find(
+      (message) => message.role === "tool" && message.tool_call_id === "tc-alpha",
+    )?.content;
+    const secondTurnToolContent = language.streamCalls[3]!.messages.find(
+      (message) => message.role === "tool" && message.tool_call_id === "tc-source",
+    )?.content;
+    expect(firstTurnToolContent).toBeTypeOf("string");
+    expect(secondTurnToolContent).toBeTypeOf("string");
+
+    const third = language.streamCalls[4]!.messages;
+    expect(third).toHaveLength(11);
+    expect(third[0]).toMatchObject({ role: "system" });
+    expect(third[1]).toEqual({
+      role: "user",
+      content: "First question",
+      tool_calls: undefined,
+    });
+    expect(third[2]).toEqual({
       role: "assistant",
+      content: null,
       tool_calls: [
         {
+          id: "tc-alpha",
+          type: "function",
+          function: {
+            name: "read_document",
+            arguments: JSON.stringify({ path: "wiki/alpha.md" }),
+          },
+        },
+      ],
+    });
+    expect(third[3]).toEqual({
+      role: "tool",
+      tool_call_id: "tc-alpha",
+      content: stubToolResult,
+    });
+    expect(third[3].content).not.toBe(firstTurnToolContent);
+    expect(third[4]).toEqual({
+      role: "assistant",
+      content: "First answer.",
+      tool_calls: undefined,
+    });
+    expect(third[5]).toEqual({
+      role: "user",
+      content: "Second question",
+      tool_calls: undefined,
+    });
+    expect(third[6]).toEqual({
+      role: "assistant",
+      content: null,
+      tool_calls: [
+        {
+          id: "tc-source",
+          type: "function",
           function: {
             name: "read_document",
             arguments: JSON.stringify({ path: "raw/texts/source.md" }),
@@ -1386,12 +1490,371 @@ describe("query stream", () => {
         },
       ],
     });
-    expect(docMessages[2]).toMatchObject({ role: "tool" });
-    expect(String(docMessages[2].content)).toContain("# raw/texts/source.md [Query Vault]");
-    expect(docMessages.slice(3, 5)).toEqual([
-      { role: "user", content: 'Passage:\n> Raw quote\n\nHighlighted: "quote"\n\nFirst doc BTW' },
-      { role: "assistant", content: "First doc answer" },
+    expect(third[7]).toEqual({
+      role: "tool",
+      tool_call_id: "tc-source",
+      content: secondTurnToolContent,
+    });
+    expect(third[8]).toEqual({
+      role: "assistant",
+      content: "Second answer.",
+      tool_calls: undefined,
+    });
+    expect(third[9]).toEqual({
+      role: "user",
+      content: "Third question",
+      tool_calls: undefined,
+    });
+    expect(third[10]).toEqual({ role: "assistant", content: "Third." });
+  });
+
+  it("branches BTW threads off the main line", async () => {
+    const language = makeScriptedLanguageModel({
+      streams: [
+        {
+          kind: "parts",
+          parts: [tokenPart("Parent answer."), finishPart("stop", "branch-parent")],
+        },
+        {
+          kind: "parts",
+          parts: [tokenPart("First BTW answer."), finishPart("stop", "branch-btw-1")],
+        },
+        {
+          kind: "parts",
+          parts: [tokenPart("Second BTW answer."), finishPart("stop", "branch-btw-2")],
+        },
+        {
+          kind: "parts",
+          parts: [tokenPart("Main answer."), finishPart("stop", "branch-main")],
+        },
+      ],
+    });
+    await startHarness({ language });
+
+    const root = await api(repliesPath, {
+      kind: "exchange",
+      exchange_id: "ex-branch-parent",
+      create: { idempotency_key: "branch-session-key" },
+      question: "Parent question",
+      mode: "query",
+    });
+    expect(root.response.status).toBe(202);
+    const rootIds = JSON.parse(root.text) as { reply_id: string; session_id: string };
+    const rootTail = await tailReply(rootIds.reply_id);
+    expect(replySnapshots(rootTail.text).at(-1)).toMatchObject({ status: "completed" });
+
+    const sendBtw = async (exchangeId: string, question: string) => {
+      const created = await api(repliesPath, {
+        kind: "btw",
+        exchange_id: exchangeId,
+        session_id: rootIds.session_id,
+        btw: {
+          quote: "answer",
+          blockOffset: 0,
+          context: "Parent answer.",
+          exchangeId: "ex-branch-parent",
+        },
+        question,
+        mode: "btw",
+      });
+      expect(created.response.status).toBe(202);
+      const ids = JSON.parse(created.text) as { reply_id: string };
+      const tail = await tailReply(ids.reply_id);
+      expect(replySnapshots(tail.text).at(-1)).toMatchObject({ status: "completed" });
+      return ids.reply_id;
+    };
+    const firstBtwReplyId = await sendBtw("ex-branch-btw-1", "First BTW");
+    const secondBtwReplyId = await sendBtw("ex-branch-btw-2", "Second BTW");
+
+    const follow = await api(repliesPath, {
+      kind: "exchange",
+      exchange_id: "ex-branch-follow-up",
+      session_id: rootIds.session_id,
+      question: "Main follow-up",
+      mode: "query",
+    });
+    expect(follow.response.status).toBe(202);
+    const followIds = JSON.parse(follow.text) as { reply_id: string };
+    const followTail = await tailReply(followIds.reply_id);
+    expect(replySnapshots(followTail.text).at(-1)).toMatchObject({ status: "completed" });
+
+    expect(language.streamCalls).toHaveLength(4);
+    const btwContext = [
+      { role: "user", content: "Parent question", tool_calls: undefined },
+      { role: "assistant", content: "Parent answer.", tool_calls: undefined },
+      {
+        role: "user",
+        content: 'Passage:\n> Parent answer.\n\nHighlighted: "answer"\n\nFirst BTW',
+        tool_calls: undefined,
+      },
+    ];
+    const firstBtw = language.streamCalls[1]!.messages;
+    expect(firstBtw).toHaveLength(5);
+    expect(firstBtw[0]).toMatchObject({ role: "system" });
+    expect(String(firstBtw[0].content)).toContain("This is a BTW");
+    expect(firstBtw.slice(1, 4)).toEqual(btwContext);
+    expect(firstBtw[4]).toEqual({ role: "assistant", content: "First BTW answer." });
+
+    const secondBtw = language.streamCalls[2]!.messages;
+    expect(secondBtw).toHaveLength(7);
+    expect(secondBtw.slice(1, 4)).toEqual(btwContext);
+    expect(secondBtw[4]).toEqual({
+      role: "assistant",
+      content: "First BTW answer.",
+      tool_calls: undefined,
+    });
+    expect(secondBtw[5]).toEqual({
+      role: "user",
+      content: "Second BTW",
+      tool_calls: undefined,
+    });
+    expect(secondBtw[6]).toEqual({ role: "assistant", content: "Second BTW answer." });
+
+    const main = language.streamCalls[3]!.messages;
+    expect(main.filter((message) => message.role === "user").map((message) => message.content)).toEqual(
+      ["Parent question", "Main follow-up"],
+    );
+    expect(JSON.stringify(main)).not.toContain("Passage");
+    expect(JSON.stringify(main)).not.toContain("Highlighted");
+    expect(JSON.stringify(main)).not.toContain("Second BTW");
+
+    const sessionResponse = await getWithToken(
+      `/vaults/${id.vault}/sessions/${rootIds.session_id}`,
+    );
+    expect(sessionResponse.status).toBe(200);
+    const sessionBody = (await sessionResponse.json()) as {
+      events: readonly Record<string, unknown>[];
+    };
+    const exchangeEvents = sessionBody.events.filter((event) => event.type === "exchange");
+    expect(exchangeEvents).toHaveLength(2);
+    expect(exchangeEvents.map((event) => event.query)).toEqual(["Parent question", "Main follow-up"]);
+    const btwEvents = sessionBody.events.filter((event) => event.type === "btw");
+    expect(btwEvents).toHaveLength(1);
+    expect(btwEvents[0]).toMatchObject({
+      exId: "ex-branch-parent",
+      quote: "answer",
+      blockOffset: 0,
+      context: "Parent answer.",
+      reply_id: secondBtwReplyId,
+      exchanges: [
+        expect.objectContaining({
+          exchange_id: "ex-branch-btw-1",
+          query: "First BTW",
+          answer: "First BTW answer.",
+        }),
+        expect.objectContaining({
+          exchange_id: "ex-branch-btw-2",
+          query: "Second BTW",
+          answer: "Second BTW answer.",
+        }),
+      ],
+    });
+    expect(firstBtwReplyId).not.toBe(secondBtwReplyId);
+
+    const markdown = await readFile(
+      join(
+        currentState().storageRoot,
+        "vaults",
+        id.vault,
+        "sessions",
+        `${rootIds.session_id}.md`,
+      ),
+      "utf8",
+    );
+    expect(markdown).toContain("> *First BTW*");
+    expect(markdown).toContain("> First BTW answer.");
+    expect(markdown).toContain("> *Second BTW*");
+    expect(markdown).toContain("> Second BTW answer.");
+  });
+
+  it("inherits the origin read from the root turn", async () => {
+    const language = makeScriptedLanguageModel({
+      streams: [
+        {
+          kind: "parts",
+          parts: [tokenPart("Root doc answer."), finishPart("stop", "origin-root")],
+        },
+        {
+          kind: "parts",
+          parts: [tokenPart("Doc answer."), finishPart("stop", "origin-doc")],
+        },
+        {
+          kind: "parts",
+          parts: [tokenPart("Third answer."), finishPart("stop", "origin-third")],
+        },
+      ],
+    });
+    await startHarness({ language });
+    await writeVaultFile(
+      id.vault,
+      "raw/texts/source.md",
+      "---\ntitle: Raw Source\n---\nRaw source paragraph body with the quoted claim in it.\n",
+    );
+
+    const root = await api(repliesPath, {
+      kind: "exchange",
+      exchange_id: "ex-origin-root",
+      create: {
+        idempotency_key: "origin-inherit-session-key",
+        origin_scope: "vault",
+        origin: {
+          doc_path: "raw/texts/source.md",
+          origin_scope: "vault",
+          anchor: "quote",
+          paragraph: "Raw quote",
+          paragraph_index: 0,
+        },
+      },
+      origin_path: "raw/texts/source.md",
+      question: "First doc BTW",
+      mode: "btw",
+    });
+    expect(root.response.status).toBe(202);
+    const rootIds = JSON.parse(root.text) as { reply_id: string; session_id: string };
+    const rootTail = await tailReply(rootIds.reply_id);
+    expect(replySnapshots(rootTail.text).at(-1)).toMatchObject({ status: "completed" });
+
+    const submit = async (exchangeId: string, question: string, originPath?: string) => {
+      const created = await api(
+        repliesPath,
+        originPath === undefined
+          ? {
+              kind: "exchange",
+              exchange_id: exchangeId,
+              session_id: rootIds.session_id,
+              question,
+              mode: "btw",
+            }
+          : {
+              kind: "exchange",
+              exchange_id: exchangeId,
+              session_id: rootIds.session_id,
+              origin_path: originPath,
+              question,
+              mode: "btw",
+            },
+      );
+      expect(created.response.status).toBe(202);
+      const ids = JSON.parse(created.text) as { reply_id: string };
+      const tail = await tailReply(ids.reply_id);
+      expect(replySnapshots(tail.text).at(-1)).toMatchObject({ status: "completed" });
+    };
+    await submit("ex-origin-doc", "Doc follow-up");
+    await submit("ex-origin-third", "Third doc follow-up", "raw/texts/source.md");
+
+    expect(language.streamCalls).toHaveLength(3);
+    const rootHits = originReadHits(language.streamCalls[0]!.messages);
+    expect(rootHits).toHaveLength(1);
+    const rootCall = rootHits[0]?.call;
+    expect(rootCall).toMatchObject({
+      id: expect.any(String),
+      function: {
+        name: "read_document",
+        arguments: JSON.stringify({ path: "raw/texts/source.md" }),
+      },
+    });
+    const rootId = rootCall?.id;
+    const rootTool = language.streamCalls[0]!.messages.find(
+      (message) => message.role === "tool" && message.tool_call_id === rootId,
+    );
+    expect(rootTool?.content).toBeTypeOf("string");
+    for (const messages of [language.streamCalls[1]!.messages, language.streamCalls[2]!.messages]) {
+      const hits = originReadHits(messages);
+      expect(hits).toHaveLength(1);
+      expect(hits[0]?.call).toEqual(rootCall);
+      const composedIndex = messages.findIndex(
+        (message) =>
+          message.role === "user" &&
+          typeof message.content === "string" &&
+          message.content.startsWith("Passage:"),
+      );
+      expect(composedIndex).toBeGreaterThan(0);
+      expect(hits[0]?.index).toBeLessThan(composedIndex);
+    }
+    const docFollowUp = language.streamCalls[1]!.messages;
+    expect(
+      docFollowUp.find((message) => message.role === "tool" && message.tool_call_id === rootId)
+        ?.content,
+    ).toEqual(rootTool?.content);
+    const thirdFollowUp = language.streamCalls[2]!.messages;
+    expect(thirdFollowUp).toContainEqual({
+      role: "tool",
+      tool_call_id: rootId,
+      content: "(tool result omitted from context; call the tool again if you need it)",
+    });
+  });
+
+  it("chains past a failed reply", async () => {
+    const language = makeScriptedLanguageModel({
+      streams: [
+        { kind: "parts", parts: [tokenPart("A."), finishPart("stop", "chain-a")] },
+        { kind: "throw", error: new Error("provider secret") },
+        { kind: "parts", parts: [tokenPart("C."), finishPart("stop", "chain-c")] },
+      ],
+    });
+    await startHarness({ language });
+
+    const root = await api(repliesPath, {
+      kind: "exchange",
+      exchange_id: "ex-chain-1",
+      create: { idempotency_key: "chain-session-key" },
+      question: "First question",
+      mode: "query",
+    });
+    expect(root.response.status).toBe(202);
+    const rootIds = JSON.parse(root.text) as { reply_id: string; session_id: string };
+    const rootTail = await tailReply(rootIds.reply_id);
+    expect(replySnapshots(rootTail.text).at(-1)).toMatchObject({ status: "completed" });
+
+    const failed = await api(repliesPath, {
+      kind: "exchange",
+      exchange_id: "ex-chain-2",
+      session_id: rootIds.session_id,
+      question: "Second question",
+      mode: "query",
+    });
+    expect(failed.response.status).toBe(202);
+    const failedIds = JSON.parse(failed.text) as { reply_id: string };
+    const failedTail = await tailReply(failedIds.reply_id);
+    expect(replySnapshots(failedTail.text).at(-1)).toMatchObject({ status: "failed" });
+
+    const third = await api(repliesPath, {
+      kind: "exchange",
+      exchange_id: "ex-chain-3",
+      session_id: rootIds.session_id,
+      question: "Third question",
+      mode: "query",
+    });
+    expect(third.response.status).toBe(202);
+    const thirdIds = JSON.parse(third.text) as { reply_id: string };
+    const thirdTail = await tailReply(thirdIds.reply_id);
+    expect(replySnapshots(thirdTail.text).at(-1)).toMatchObject({ status: "completed" });
+
+    const thirdMessages = language.streamCalls[2]!.messages;
+    expect(thirdMessages).toEqual([
+      expect.objectContaining({ role: "system" }),
+      { role: "user", content: "First question", tool_calls: undefined },
+      { role: "assistant", content: "A.", tool_calls: undefined },
+      { role: "user", content: "Third question", tool_calls: undefined },
+      { role: "assistant", content: "C." },
     ]);
+    expect(JSON.stringify(thirdMessages)).not.toContain("Second question");
+
+    const sessionResponse = await getWithToken(
+      `/vaults/${id.vault}/sessions/${rootIds.session_id}`,
+    );
+    expect(sessionResponse.status).toBe(200);
+    const sessionBody = (await sessionResponse.json()) as {
+      events: readonly Record<string, unknown>[];
+    };
+    const exchangeEvents = sessionBody.events.filter((event) => event.type === "exchange");
+    expect(exchangeEvents).toHaveLength(3);
+    expect(exchangeEvents.map((event) => event.exId)).toEqual([
+      "ex-chain-1",
+      "ex-chain-2",
+      "ex-chain-3",
+    ]);
+    expect(exchangeEvents.map((event) => event.answer)).toEqual(["A.", "", "C."]);
   });
 
   it("preloads origin documents with raw frontmatter intact", async () => {
@@ -1405,7 +1868,6 @@ describe("query stream", () => {
     await runReply({
       question: "Read origin",
       origin_path: "wiki/alpha.md",
-      history: [],
     });
 
     const messages = language.streamCalls[0].messages;

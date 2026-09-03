@@ -12,7 +12,6 @@ import {
   BadRequest,
   ServiceUnavailable,
   type DraftHintResponse,
-  type HistoryMessage,
   type OriginScope,
   type QueryRequest,
   type QuerySourceData,
@@ -32,6 +31,7 @@ import { CostLookupService, recordPrompt } from "./llm-costs.ts";
 import {
   isRetryableModelError,
   LanguageModel,
+  LlmMessageSchema,
   type LlmMessage,
   type LlmToolDefinition,
   stripJsonFence,
@@ -47,6 +47,7 @@ type QueryServiceShape = {
     vaultId: Uuid,
     input: QueryRequest,
     prechecked: QueryPrecheckedContext,
+    prior: readonly LlmMessage[],
   ) => Effect.Effect<QueryExecutionState, unknown>;
   readonly modelAttempt: (
     state: QueryExecutionState,
@@ -72,35 +73,6 @@ type ToolCallState = {
   readonly name: string;
   readonly arguments: string;
 };
-
-const LlmTextContentPartSchema = Schema.Struct({
-  type: Schema.Literal("text"),
-  text: Schema.String,
-  cache_control: Schema.optionalKey(Schema.Struct({ type: Schema.Literal("ephemeral") })),
-});
-
-const LlmAssistantToolCallSchema = Schema.Struct({
-  id: Schema.String,
-  type: Schema.Literal("function"),
-  function: Schema.Struct({ name: Schema.String, arguments: Schema.String }),
-});
-
-const LlmMessageSchema = Schema.Union([
-  Schema.Struct({
-    role: Schema.Literals(["system", "user", "assistant"] as const),
-    content: Schema.Union([
-      Schema.String,
-      Schema.Null,
-      Schema.Array(LlmTextContentPartSchema),
-    ]),
-    tool_calls: Schema.optionalKey(Schema.Array(LlmAssistantToolCallSchema)),
-  }),
-  Schema.Struct({
-    role: Schema.Literal("tool"),
-    tool_call_id: Schema.String,
-    content: Schema.String,
-  }),
-]);
 
 const LlmToolDefinitionSchema = Schema.Struct({
   type: Schema.Literal("function"),
@@ -128,6 +100,7 @@ export const QueryExecutionState = Schema.Struct({
   correlationId: Schema.String,
   tools: Schema.Array(LlmToolDefinitionSchema),
   messages: Schema.Array(LlmMessageSchema),
+  turnStart: Schema.Number,
   webSearchEnabled: Schema.Boolean,
   trace: QueryTraceSchema,
   fallbackGenerationIds: Schema.Array(Schema.String),
@@ -187,6 +160,7 @@ type QueryContext = {
   readonly correlationId: string;
   readonly tools: readonly LlmToolDefinition[];
   readonly baseMessages: readonly LlmMessage[];
+  readonly turnStart: number;
   readonly webSearchEnabled: boolean;
   readonly trace: Trace;
   readonly fallbackGenerationIds: string[];
@@ -518,6 +492,7 @@ const executionState = (
   correlationId: context.correlationId,
   tools: [...context.tools],
   messages: cloneMessages(messages),
+  turnStart: context.turnStart,
   webSearchEnabled: context.webSearchEnabled,
   trace: {
     articlesRead: [...context.trace.articlesRead],
@@ -544,6 +519,7 @@ const contextFromExecution = (state: QueryExecutionState): QueryContext => ({
   correlationId: state.correlationId,
   tools: [...state.tools],
   baseMessages: cloneMessages(state.messages),
+  turnStart: state.turnStart,
   webSearchEnabled: state.webSearchEnabled,
   trace: {
     articlesRead: [...state.trace.articlesRead],
@@ -1757,6 +1733,7 @@ export const QueryServiceLive = Layer.effect(
       input: QueryRequest,
       correlationId: string,
       prechecked: QueryPrecheckedContext,
+      prior: readonly LlmMessage[],
     ) =>
       Effect.gen(function* () {
         const vaultLabel = prechecked.vaultLabel;
@@ -1788,6 +1765,7 @@ export const QueryServiceLive = Layer.effect(
           correlationId,
           tools,
           baseMessages: [],
+          turnStart: 1 + prior.length,
           webSearchEnabled,
           trace: emptyTrace(),
           fallbackGenerationIds: [],
@@ -1796,6 +1774,7 @@ export const QueryServiceLive = Layer.effect(
         };
         const messages: LlmMessage[] = [{ role: "system", content: systemPrompt }];
         if (
+          prior.length === 0 &&
           input.origin_path !== undefined &&
           input.origin_path.length > 0
         ) {
@@ -1803,12 +1782,7 @@ export const QueryServiceLive = Layer.effect(
             ...(yield* buildOriginMessages(context, input.origin_path, input.origin_scope)),
           );
         }
-        messages.push(
-          ...input.history.map((message: HistoryMessage) => ({
-            role: message.role,
-            content: message.content,
-          })),
-        );
+        messages.push(...prior);
         messages.push({ role: "user", content: input.question });
         return {
           ...context,
@@ -1870,12 +1844,20 @@ export const QueryServiceLive = Layer.effect(
       vaultId: Uuid,
       input: QueryRequest,
       prechecked: QueryPrecheckedContext,
+      prior: readonly LlmMessage[],
     ): Effect.Effect<QueryExecutionState, unknown> =>
       Effect.gen(function* () {
         const startedAt = Date.now();
         const correlationId = `q-${randomUUID()}`;
         return yield* Effect.gen(function* () {
-          const context = yield* setupContext(userId, vaultId, input, correlationId, prechecked);
+          const context = yield* setupContext(
+            userId,
+            vaultId,
+            input,
+            correlationId,
+            prechecked,
+            prior,
+          );
           yield* logger.info("query.stream_start", {
             correlation_id: context.correlationId,
             user_id: userId,

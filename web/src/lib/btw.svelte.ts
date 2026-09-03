@@ -1,7 +1,7 @@
 import { createReply, retryReply, streamReply } from "$lib/api/replies";
 import { listSessionsByOrigin, type OriginScope, type SessionEvent } from "$lib/api/sessions";
 import type { DocThread, Exchange, SelectionInfo } from "$lib/types";
-import { buildBtwHistory, genId, isAbortError } from "$lib/utils";
+import { genId, isAbortError } from "$lib/utils";
 
 /**
  * Persistent annotation threads anchored to a document. Loads every session
@@ -216,7 +216,6 @@ export class DocThreads {
                 // The server composes the passage/highlight prompt; the
                 // session stores this clean text.
                 question: userText,
-                history: [],
                 mode: "btw",
               },
               controller.signal,
@@ -228,7 +227,6 @@ export class DocThreads {
                 exchange_id: turnId,
                 session_id: target.sessionId!,
                 question: userText,
-                history: buildBtwHistory(priorExchanges, anchor),
                 mode: "btw",
               },
               controller.signal,

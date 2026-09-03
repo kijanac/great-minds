@@ -1,69 +1,166 @@
-import type { SessionEvent } from "@great-minds/domain";
+import { Uuid } from "@great-minds/domain";
+import { Schema } from "effect";
 import { describe, expect, it } from "vitest";
 
-import { dedupeSessionExchanges, renderSessionMarkdown } from "../src/sessions.ts";
+import {
+  projectSession,
+  renderSessionMarkdown,
+  type ReplyNode,
+  type StoredSessionEvent,
+} from "../src/sessions.ts";
+
+const uuid = (value: string) => Schema.decodeUnknownSync(Uuid)(value);
 
 const ts = "2026-07-23T12:00:00.000Z";
 
-describe("session event replay", () => {
-  it("keeps the last exchange value in the original turn position", () => {
-    const events: SessionEvent[] = [
-      {
-        type: "meta",
-        id: "session-1",
-        query: "First question",
-        ts,
-        user_id: "00000000-0000-4000-8000-000000000001",
-        origin: null,
-      },
-      {
-        type: "exchange",
-        exId: "ex-1",
-        query: "First question",
-        thinking: [],
+const meta: StoredSessionEvent = {
+  type: "meta",
+  id: "session-1",
+  query: "First question",
+  ts,
+  user_id: uuid("00000000-0000-4000-8000-000000000001"),
+  origin: null,
+};
+
+const node = (overrides: Partial<ReplyNode>): ReplyNode => ({
+  type: "reply",
+  reply_id: uuid("00000000-0000-4000-8000-000000000101"),
+  parent_reply_id: null,
+  exchange_id: "ex-1",
+  question: "Question",
+  status: "completed",
+  messages: [{ role: "user", content: "Question" }],
+  sources: [],
+  answer: "Answer",
+  ts,
+  ...overrides,
+});
+
+describe("session projection", () => {
+  it("keeps the latest node per exchange id in the original position", () => {
+    const events: StoredSessionEvent[] = [
+      meta,
+      node({
+        exchange_id: "ex-1",
+        question: "First question",
+        status: "pending",
+        messages: [],
+        sources: [],
         answer: "",
-        ts,
-      },
-      {
-        type: "exchange",
-        exId: "ex-2",
-        query: "Second question",
-        thinking: [],
+        reply_id: uuid("00000000-0000-4000-8000-000000000101"),
+      }),
+      node({
+        exchange_id: "ex-2",
+        question: "Second question",
         answer: "Second answer",
-        ts,
-      },
-      {
-        type: "exchange",
-        exId: "ex-1",
-        query: "First question",
-        thinking: [],
+        reply_id: uuid("00000000-0000-4000-8000-000000000102"),
+      }),
+      node({
+        exchange_id: "ex-1",
+        question: "First question",
         answer: "First answer",
-        ts,
-      },
+        reply_id: uuid("00000000-0000-4000-8000-000000000103"),
+      }),
     ];
 
-    const deduped = dedupeSessionExchanges(events);
-    expect(deduped.filter((event) => event.type === "exchange")).toEqual([
-      expect.objectContaining({ exId: "ex-1", answer: "First answer" }),
+    const projected = projectSession(events);
+    expect(projected.filter((event) => event.type === "exchange")).toEqual([
+      expect.objectContaining({
+        exId: "ex-1",
+        reply_id: uuid("00000000-0000-4000-8000-000000000103"),
+        answer: "First answer",
+      }),
       expect.objectContaining({ exId: "ex-2", answer: "Second answer" }),
     ]);
-    const markdown = renderSessionMarkdown(events);
+    const markdown = renderSessionMarkdown(projected);
     expect(markdown.match(/^# First question$/gmu)).toHaveLength(1);
     expect(markdown.indexOf("# First question")).toBeLessThan(markdown.indexOf("# Second question"));
   });
 
-  it("leaves legacy non-duplicate exchanges unchanged", () => {
-    const events: SessionEvent[] = [
-      {
-        type: "exchange",
-        exId: "legacy",
-        query: "Legacy question",
-        thinking: [],
-        answer: "Legacy answer",
-        ts,
-      },
+  it("projects a BTW thread of two turns into one btw event", () => {
+    const events: StoredSessionEvent[] = [
+      meta,
+      node({
+        exchange_id: "ex-1",
+        question: "Parent question",
+        answer: "Parent answer",
+        reply_id: uuid("00000000-0000-4000-8000-000000000101"),
+      }),
+      node({
+        exchange_id: "btw-1",
+        question: "First BTW",
+        answer: "First BTW answer",
+        parent_reply_id: uuid("00000000-0000-4000-8000-000000000101"),
+        btw: {
+          exchange_id: "ex-1",
+          quote: "Parent answer",
+          block_offset: 0,
+          context: "Parent answer.",
+        },
+        reply_id: uuid("00000000-0000-4000-8000-000000000102"),
+      }),
+      node({
+        exchange_id: "btw-2",
+        question: "Second BTW",
+        answer: "Second BTW answer",
+        parent_reply_id: uuid("00000000-0000-4000-8000-000000000102"),
+        btw: {
+          exchange_id: "ex-1",
+          quote: "Parent answer",
+          block_offset: 0,
+          context: "Parent answer.",
+        },
+        reply_id: uuid("00000000-0000-4000-8000-000000000103"),
+      }),
     ];
 
-    expect(dedupeSessionExchanges(events)).toEqual(events);
+    const projected = projectSession(events);
+    expect(projected.filter((event) => event.type === "exchange")).toEqual([
+      expect.objectContaining({ exId: "ex-1", answer: "Parent answer" }),
+    ]);
+    const btwEvents = projected.filter((event) => event.type === "btw");
+    expect(btwEvents).toHaveLength(1);
+    expect(btwEvents[0]).toMatchObject({
+      exId: "ex-1",
+      quote: "Parent answer",
+      reply_id: uuid("00000000-0000-4000-8000-000000000103"),
+      blockOffset: 0,
+      context: "Parent answer.",
+      exchanges: [
+        {
+          exchange_id: "btw-1",
+          query: "First BTW",
+          answer: "First BTW answer",
+        },
+        {
+          exchange_id: "btw-2",
+          query: "Second BTW",
+          answer: "Second BTW answer",
+        },
+      ],
+    });
+    const markdown = renderSessionMarkdown(projected);
+    expect(markdown).toContain("> First BTW");
+    expect(markdown).toContain("> Second BTW");
+  });
+
+  it("projects a pending node with an empty answer and no thinking", () => {
+    const events: StoredSessionEvent[] = [
+      meta,
+      node({
+        exchange_id: "ex-1",
+        question: "Pending question",
+        status: "pending",
+        messages: [],
+        sources: [],
+        answer: "",
+        reply_id: uuid("00000000-0000-4000-8000-000000000101"),
+      }),
+    ];
+
+    const projected = projectSession(events);
+    expect(projected.filter((event) => event.type === "exchange")).toEqual([
+      expect.objectContaining({ exId: "ex-1", answer: "", thinking: [] }),
+    ]);
   });
 });

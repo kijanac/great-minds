@@ -18,11 +18,6 @@ export interface ThinkingBlock {
   sources: readonly SourceRef[];
 }
 
-export interface HistoryMessage {
-  role: "user" | "assistant";
-  content: string;
-}
-
 export interface Exchange {
   id: string;
   query: string;

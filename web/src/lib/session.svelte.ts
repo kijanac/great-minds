@@ -1,5 +1,4 @@
 import { browser } from "$app/environment";
-import { composeAnchoredQuestion } from "@great-minds/domain";
 
 import {
   createReply,
@@ -8,17 +7,8 @@ import {
   type CreateReplyPayload,
   type ReplySnapshot,
 } from "$lib/api/replies";
-import type { BtwThread, Exchange, HistoryMessage, Phase, SelectionInfo } from "$lib/types";
-import { buildBtwHistory, genId, isAbortError } from "$lib/utils";
-
-function threadToHistory(thread: Exchange[]): HistoryMessage[] {
-  const history: HistoryMessage[] = [];
-  for (const exchange of thread) {
-    history.push({ role: "user", content: exchange.query });
-    history.push({ role: "assistant", content: exchange.answer });
-  }
-  return history;
-}
+import type { BtwThread, Exchange, Phase, SelectionInfo } from "$lib/types";
+import { genId, isAbortError } from "$lib/utils";
 
 type MainReplyPayload = Extract<CreateReplyPayload, { kind: "exchange" }>;
 
@@ -189,7 +179,6 @@ export class Session {
     const replyId = crypto.randomUUID();
     const firstExchange = this.sessionId === null;
     const originForQuery = firstExchange ? this.#originPath : undefined;
-    const history = threadToHistory(this.thread);
     const existingSessionId = this.sessionId;
     this.#idempotencyKey ??= crypto.randomUUID();
 
@@ -201,7 +190,6 @@ export class Session {
           session_id: existingSessionId,
           question,
           origin_path: originForQuery,
-          history,
           mode: "query",
         }
       : {
@@ -224,7 +212,6 @@ export class Session {
           },
           question,
           origin_path: originForQuery,
-          history,
           mode: "query",
         };
     return { exchangeId, payload };
@@ -382,13 +369,8 @@ export class Session {
       quote: "",
       context: "",
     };
-    const priorExchanges = target?.exchanges ?? [];
-    const isFirst = priorExchanges.length === 0;
     const ownerExchangeId = target?.exchangeId ?? "";
     const turnId = genId("ex");
-
-    // History must exclude the optimistic turn added below.
-    const baseHistory = threadToHistory(this.thread);
 
     const patchBtwExchanges = (mutate: (exchanges: Exchange[]) => Exchange[]): void => {
       this.thread = this.thread.map((exchange) =>
@@ -421,8 +403,6 @@ export class Session {
       },
     ]);
 
-    const question = isFirst ? composeAnchoredQuestion(anchor, userText) : userText;
-    const history = [...baseHistory, ...buildBtwHistory(priorExchanges, anchor)];
     const controller = new AbortController();
     this.#btwControllers.add(controller);
 
@@ -431,27 +411,19 @@ export class Session {
         if (!this.sessionId) {
           throw new Error("Cannot persist BTW without a session");
         }
-        const pendingBtw = {
-          quote: anchor.quote,
-          blockOffset: anchor.blockOffset,
-          context: anchor.context,
-          exchangeId: ownerExchangeId,
-          exchanges: [...priorExchanges, { query: userText, thinking: [], answer: "" }].map(
-            (exchange) => ({
-              query: exchange.query,
-              thinking: exchange.thinking,
-              answer: exchange.answer,
-            }),
-          ),
-        };
         const created = await createReply(
           {
             reply_id: crypto.randomUUID(),
             kind: "btw",
+            exchange_id: turnId,
             session_id: this.sessionId,
-            btw: pendingBtw,
-            question,
-            history,
+            btw: {
+              quote: anchor.quote,
+              blockOffset: anchor.blockOffset,
+              context: anchor.context,
+              exchangeId: ownerExchangeId,
+            },
+            question: userText,
             mode: "btw",
           },
           controller.signal,

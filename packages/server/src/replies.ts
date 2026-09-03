@@ -3,13 +3,11 @@ import { isDeepStrictEqual } from "node:util";
 import { Database, replies, sessions as sessionsTable, vaults } from "@great-minds/database";
 import {
   BadRequest,
-  type BtwData,
   type CreateReplyRequest,
   CreateReplyRequest as CreateReplyRequestSchema,
   type CreateReplyResponse,
   composeAnchoredQuestion,
   Conflict,
-  type ExchangeData,
   Forbidden,
   NotFound,
   type QueryRequest,
@@ -41,7 +39,7 @@ import {
   QueryPreparedToolCall,
   QueryService,
 } from "./query.ts";
-import { SessionsService } from "./sessions.ts";
+import { type ReplyTranscript, SessionsService } from "./sessions.ts";
 import { ContentStorage, vaultOwner } from "./storage.ts";
 import { VaultAccessService } from "./vaults.ts";
 
@@ -107,19 +105,30 @@ const replySseStream = <A>(events: AsyncIterable<A>) =>
     Stream.catch((cause) => Stream.fromEffect(Effect.die(cause))),
   );
 
-const queryRequest = (input: CreateReplyRequest): QueryRequest => ({
-  question:
+const modelQuestion = (input: CreateReplyRequest, threadRoot: boolean): string => {
+  if (
     input.kind === "exchange" &&
     "create" in input &&
-    input.create.origin !== undefined &&
-    input.create.origin.anchor !== null
-      ? composeAnchoredQuestion(
-          { quote: input.create.origin.anchor, context: input.create.origin.paragraph },
-          input.question,
-        )
-      : input.question,
+    input.create.origin?.anchor !== null &&
+    input.create.origin?.anchor !== undefined
+  ) {
+    return composeAnchoredQuestion(
+      { quote: input.create.origin.anchor, context: input.create.origin.paragraph },
+      input.question,
+    );
+  }
+  if (input.kind === "btw" && threadRoot) {
+    return composeAnchoredQuestion(
+      { quote: input.btw.quote, context: input.btw.context },
+      input.question,
+    );
+  }
+  return input.question;
+};
+
+const queryRequest = (input: CreateReplyRequest, threadRoot: boolean): QueryRequest => ({
+  question: modelQuestion(input, threadRoot),
   mode: input.mode,
-  history: input.history,
   ...(input.model === undefined ? {} : { model: input.model }),
   ...(input.origin_path === undefined ? {} : { origin_path: input.origin_path }),
   origin_scope: input.origin_scope,
@@ -340,75 +349,22 @@ export const RepliesServiceLive = Layer.effect(
         .where(and(eq(replies.id, replyId), eq(replies.status, "running"))))
         .pipe(Effect.asVoid);
 
-    const completeReply = (
-      row: typeof replies.$inferSelect,
-      input: CreateReplyRequest,
-      answer: string,
-      sources: readonly ReplySource[],
-    ) =>
-      Effect.gen(function* () {
-        const settledSources = sources.filter((source) => source.pending !== true);
-        const userId = decodeUuid(row.userId);
-        const vaultId = decodeUuid(row.vaultId);
-        const persistedReplyId = decodeUuid(row.id);
-        if (input.kind === "exchange") {
-          if (row.sessionId === null) {
-            throw new Error(`Exchange reply ${row.id} is missing its session`);
-          }
-          const exchange: ExchangeData = {
-            id: input.exchange_id,
-            query: input.question,
-            thinking: [{ sources: settledSources }],
-            answer,
-          };
-          yield* sessions.appendExchange(
-            userId,
-            vaultId,
-            decodeSessionId(row.sessionId),
-            exchange,
-            persistedReplyId,
-          );
-        } else if (input.kind === "btw") {
-          if (row.sessionId === null) {
-            throw new Error(`BTW reply ${row.id} is missing its session`);
-          }
-          const lastIndex = input.btw.exchanges.length - 1;
-          const btw: BtwData = {
-            ...input.btw,
-            exchanges: input.btw.exchanges.map((exchange, index) =>
-              index === lastIndex
-                ? {
-                    ...exchange,
-                    thinking: settledSources.length === 0 ? [] : [{ sources: settledSources }],
-                    answer,
-                  }
-                : exchange,
-            ),
-          };
-          yield* sessions.appendBtw(
-            userId,
-            vaultId,
-            decodeSessionId(row.sessionId),
-            btw,
-            persistedReplyId,
-          );
-        }
-
-        yield* db.query((d) => d
-          .update(replies)
-          .set({
-            status: "completed",
-            answer,
-            sources: settledSources,
-            error: null,
-            version: sql`${replies.version} + 1`,
-            activeGenerationStep: null,
-            activeGenerationKind: null,
-            activeGenerationKey: null,
-            updatedAt: sql`now()`,
-          })
-          .where(and(eq(replies.id, row.id), eq(replies.status, "running"))));
-      });
+    const completeReplyRow = (row: typeof replies.$inferSelect, answer: string, sources: readonly ReplySource[]) =>
+      db.query((d) => d
+        .update(replies)
+        .set({
+          status: "completed",
+          answer,
+          sources: [...sources],
+          error: null,
+          version: sql`${replies.version} + 1`,
+          activeGenerationStep: null,
+          activeGenerationKind: null,
+          activeGenerationKey: null,
+          updatedAt: sql`now()`,
+        })
+        .where(and(eq(replies.id, row.id), eq(replies.status, "running"))))
+        .pipe(Effect.asVoid);
 
     const readyControl = (cursor: number): ReplyStepControl => ({
       cursor,
@@ -665,6 +621,17 @@ export const RepliesServiceLive = Layer.effect(
             : failedControl(row.generationCursor, row.error ?? sanitizedReplyError);
         }
         const input = yield* decodeCreateReply(row.request).pipe(Effect.orDie);
+        let transcript: ReplyTranscript = { prior: [], threadRoot: false };
+        if (input.kind !== "ephemeral") {
+          if (row.sessionId === null) {
+            throw new Error(`Reply ${row.id} is missing its session`);
+          }
+          transcript = yield* sessions.readTranscript(
+            decodeUuid(row.vaultId),
+            decodeSessionId(row.sessionId),
+            decodeUuid(row.id),
+          );
+        }
         const vaultRows = yield* db.query((d) => d
           .select({ name: vaults.name })
           .from(vaults)
@@ -679,8 +646,9 @@ export const RepliesServiceLive = Layer.effect(
         const queryState = yield* query.prepareExecution(
           decodeUuid(row.userId),
           decodeUuid(row.vaultId),
-          queryRequest(input),
+          queryRequest(input, transcript.threadRoot),
           prechecked,
+          transcript.prior,
         );
         const control = readyControl(row.generationCursor);
         const checkpoint: ReplyCheckpoint = {
@@ -863,25 +831,32 @@ export const RepliesServiceLive = Layer.effect(
         if (checkpoint !== undefined) {
           yield* query.finalizeExecution(checkpoint.query);
         }
-        yield* storage
-          .deletePath(vaultOwner(decodeUuid(row.vaultId)), checkpointPath(replyId))
-          .pipe(
-            Effect.catchCause((cause) =>
-              logger.warn("reply_checkpoint_cleanup_failed", {
-                reply_id: replyId,
-                error_message: Cause.pretty(cause),
-              }),
-            ),
-          );
         if (row.status === "running") {
-          const input = yield* decodeCreateReply(row.request).pipe(Effect.orDie);
           const accumulator =
             checkpoint === undefined
               ? { answer: row.answer, sources: decodeReplySources(row.sources) }
               : checkpoint.accumulator;
           const settledSources = accumulator.sources.filter((source) => source.pending !== true);
           if (outcome === "done") {
-            yield* completeReply(row, input, accumulator.answer, settledSources);
+            if (row.sessionId !== null) {
+              if (checkpoint === undefined) {
+                return yield* Effect.die(
+                  new Error(`Reply ${replyId} finished without a checkpoint transcript`),
+                );
+              }
+              yield* sessions.completeReply(
+                decodeUuid(row.userId),
+                decodeUuid(row.vaultId),
+                decodeSessionId(row.sessionId),
+                replyId,
+                {
+                  messages: checkpoint.query.messages.slice(checkpoint.query.turnStart),
+                  sources: settledSources,
+                  answer: accumulator.answer,
+                },
+              );
+            }
+            yield* completeReplyRow(row, accumulator.answer, settledSources);
           } else {
             yield* markFailed(
               replyId,
@@ -968,44 +943,44 @@ export const RepliesServiceLive = Layer.effect(
         }
 
         let sessionId: SessionId | null = null;
-        if (input.kind === "exchange") {
-          const pending: ExchangeData = {
-            id: input.exchange_id,
-            query: input.question,
-            thinking: [],
-            answer: "",
-          };
-          if (existingSessionId !== undefined) {
-            sessionId = existingSessionId;
-            yield* requireSession(vaultId, sessionId);
-            yield* sessions.appendExchange(userId, vaultId, sessionId, pending, replyId);
-          } else if ("session_id" in input) {
-            sessionId = input.session_id;
-            yield* requireSession(vaultId, sessionId);
-            yield* sessions.appendExchange(userId, vaultId, sessionId, pending, replyId);
-          } else {
-            sessionId = yield* sessions.createSession(
-              userId,
-              vaultId,
-              {
-                idempotencyKey: input.create.idempotency_key,
-                exchange: pending,
-                ...(input.create.origin === undefined
-                  ? {}
-                  : {
-                      origin: {
-                        ...input.create.origin,
-                        origin_scope: input.create.origin_scope,
-                      },
-                    }),
-              },
-              replyId,
-            );
+        if (input.kind === "exchange" && "create" in input && existingSessionId === undefined) {
+          sessionId = yield* sessions.createSession(userId, vaultId, {
+            idempotencyKey: input.create.idempotency_key,
+            ...(input.create.origin === undefined
+              ? {}
+              : {
+                  origin: {
+                    ...input.create.origin,
+                    origin_scope: input.create.origin_scope,
+                  },
+                }),
+            pending: {
+              replyId: input.reply_id,
+              exchangeId: input.exchange_id,
+              question: input.question,
+            },
+          });
+        } else if (input.kind !== "ephemeral") {
+          sessionId = existingSessionId ?? ("session_id" in input ? input.session_id : null);
+          if (sessionId === null) {
+            return yield* Effect.die(new Error(`Reply ${replyId} has no session to append to`));
           }
-        } else if (input.kind === "btw") {
-          sessionId = existingSessionId ?? input.session_id;
           yield* requireSession(vaultId, sessionId);
-          yield* sessions.appendBtw(userId, vaultId, sessionId, input.btw, replyId);
+          yield* sessions.appendPending(userId, vaultId, sessionId, {
+            replyId: input.reply_id,
+            exchangeId: input.exchange_id,
+            question: input.question,
+            ...(input.kind === "btw"
+              ? {
+                  btw: {
+                    exchange_id: input.btw.exchangeId,
+                    quote: input.btw.quote,
+                    block_offset: input.btw.blockOffset,
+                    context: input.btw.context,
+                  },
+                }
+              : {}),
+          });
         }
 
         const inserted = yield* db.query((d) => d

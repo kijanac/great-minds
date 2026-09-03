@@ -751,6 +751,7 @@ export const ThinkingBlock = Schema.Struct({
 export type ThinkingBlock = typeof ThinkingBlock.Type;
 
 export const BtwExchange = Schema.Struct({
+  exchange_id: ExchangeId,
   query: Schema.String,
   thinking: Schema.optionalKey(Schema.Array(ThinkingBlock)),
   answer: Schema.optionalKey(Schema.String),
@@ -834,20 +835,11 @@ export const SessionMarkdown = Schema.String.pipe(
 );
 export type SessionMarkdown = typeof SessionMarkdown.Type;
 
-export const ExchangeData = Schema.Struct({
-  id: Schema.String,
-  query: Schema.String,
-  thinking: Schema.Array(ThinkingBlock).pipe(Schema.withDecodingDefaultTypeKey(Effect.succeed([]))),
-  answer: Schema.String,
-});
-export type ExchangeData = typeof ExchangeData.Type;
-
 export const BtwData = Schema.Struct({
   quote: Schema.String,
   blockOffset: Schema.Number.pipe(Schema.withDecodingDefaultTypeKey(Effect.succeed(-1))),
   context: Schema.String.pipe(Schema.withDecodingDefaultTypeKey(Effect.succeed(""))),
   exchangeId: ExchangeId,
-  exchanges: Schema.Array(BtwExchange).pipe(Schema.check(Schema.isNonEmpty())),
 });
 export type BtwData = typeof BtwData.Type;
 
@@ -1078,12 +1070,6 @@ export const LinkedArticles = Schema.Struct({
 });
 export type LinkedArticles = typeof LinkedArticles.Type;
 
-export const HistoryMessage = Schema.Struct({
-  role: Schema.Literals(["user", "assistant"] as const),
-  content: Schema.String,
-});
-export type HistoryMessage = typeof HistoryMessage.Type;
-
 export const QueryMode = Schema.Literals(["query", "btw"] as const);
 export type QueryMode = typeof QueryMode.Type;
 
@@ -1095,7 +1081,6 @@ export const QueryRequest = Schema.Struct({
   origin_scope: OriginScope.pipe(
     Schema.withDecodingDefaultTypeKey(Effect.succeed("vault" as const)),
   ),
-  history: Schema.Array(HistoryMessage).pipe(Schema.withDecodingDefaultTypeKey(Effect.succeed([]))),
   extra_instructions: Schema.optionalKey(Schema.String),
 });
 export type QueryRequest = typeof QueryRequest.Type;
@@ -1195,6 +1180,7 @@ export const CreateReplyRequest = Schema.Union([
   Schema.Struct({
     ...CreateReplyFields,
     kind: Schema.Literal("btw"),
+    exchange_id: ExchangeId,
     session_id: SessionId,
     btw: BtwData,
   }),
