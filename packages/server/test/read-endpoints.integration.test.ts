@@ -67,6 +67,17 @@ const id = {
   sessionMalformed: "s-malformed",
 } as const;
 
+const EX_STALE = "00000000-0000-4000-8000-000000000801";
+const EX_1 = "00000000-0000-4000-8000-000000000802";
+const EX_1_BTW_1 = "00000000-0000-4000-8000-000000000803";
+const EX_1_BTW_2 = "00000000-0000-4000-8000-000000000804";
+const EX_2 = "00000000-0000-4000-8000-000000000805";
+const EX_GOOD = "00000000-0000-4000-8000-000000000806";
+const EX_AFTER_INVALID = "00000000-0000-4000-8000-000000000807";
+const EX_AFTER_BAD_JSON = "00000000-0000-4000-8000-000000000808";
+const EX_ORIGIN_A = "00000000-0000-4000-8000-000000000809";
+const EX_ORIGIN_P = "00000000-0000-4000-8000-00000000080a";
+
 const aliceApiKey = "gm_alice_read_key";
 
 type TestServices = AppConfig | Database | ClockService | StructuredLogger | TokenService;
@@ -729,7 +740,7 @@ const seedFixtures = async (): Promise<Fixture> => {
       },
       replyNode(
         "00000000-0000-4000-8000-000000000101",
-        "ex-stale",
+        EX_STALE,
         "Stale pre-reload question",
         "This belongs to an older client-reused id.",
         "2026-07-01T08:01:00.000Z",
@@ -749,7 +760,7 @@ const seedFixtures = async (): Promise<Fixture> => {
       },
       replyNode(
         "00000000-0000-4000-8000-000000000102",
-        "ex-1",
+        EX_1,
         "How should study circles use source material?",
         "Start with a concrete passage, then ask what claim it supports.",
         "2026-07-07T09:10:00.000Z",
@@ -809,14 +820,14 @@ const seedFixtures = async (): Promise<Fixture> => {
       ),
       replyNode(
         "00000000-0000-4000-8000-000000000103",
-        "ex-1-btw-1",
+        EX_1_BTW_1,
         "Why this passage?",
         "It gives the group something specific to test.",
         "2026-07-07T09:20:00.000Z",
         {
           parentReplyId: "00000000-0000-4000-8000-000000000102",
           btw: {
-            exchange_id: "ex-1",
+            exchange_id: EX_1,
             quote: "concrete passage",
             block_offset: 0,
             context: "Start with a concrete passage",
@@ -836,14 +847,14 @@ const seedFixtures = async (): Promise<Fixture> => {
       ),
       replyNode(
         "00000000-0000-4000-8000-000000000104",
-        "ex-1-btw-2",
+        EX_1_BTW_2,
         "How do we avoid over-reading it?",
         "Keep claims proportional to the evidence.",
         "2026-07-07T09:21:00.000Z",
         {
           parentReplyId: "00000000-0000-4000-8000-000000000103",
           btw: {
-            exchange_id: "ex-1",
+            exchange_id: EX_1,
             quote: "concrete passage",
             block_offset: 0,
             context: "Start with a concrete passage",
@@ -852,7 +863,7 @@ const seedFixtures = async (): Promise<Fixture> => {
       ),
       replyNode(
         "00000000-0000-4000-8000-000000000105",
-        "ex-2",
+        EX_2,
         "What should the facilitator write down?",
         "Record the passage, the claim, and unresolved questions.",
         "2026-07-07T09:45:00.000Z",
@@ -914,7 +925,7 @@ const seedFixtures = async (): Promise<Fixture> => {
       },
       replyNode(
         "00000000-0000-4000-8000-000000000201",
-        "ex-good",
+        EX_GOOD,
         "Malformed event handling",
         "The first event is valid.",
         "2026-07-09T11:01:00.000Z",
@@ -936,7 +947,7 @@ const seedFixtures = async (): Promise<Fixture> => {
       },
       replyNode(
         "00000000-0000-4000-8000-000000000203",
-        "ex-after-invalid",
+        EX_AFTER_INVALID,
         "Does parsing continue after invalid typed events?",
         "Yes, invalid typed events are skipped.",
         "2026-07-09T11:04:00.000Z",
@@ -944,7 +955,7 @@ const seedFixtures = async (): Promise<Fixture> => {
     ])}\n{not valid json}\n${JSON.stringify(
       replyNode(
         "00000000-0000-4000-8000-000000000204",
-        "ex-after-bad-json",
+        EX_AFTER_BAD_JSON,
         "This tail is truncated.",
         "This must not appear.",
         "2026-07-09T11:05:00.000Z",
@@ -1769,7 +1780,7 @@ describe("read-only HTTP integration", () => {
         },
         replyNode(
           "00000000-0000-4000-8000-000000000301",
-          "ex-origin-a",
+          EX_ORIGIN_A,
           "What does the anchored claim mean?",
           "It anchors the discussion.",
           "2026-07-10T08:10:00.000Z",
@@ -1796,7 +1807,7 @@ describe("read-only HTTP integration", () => {
         },
         replyNode(
           "00000000-0000-4000-8000-000000000302",
-          "ex-origin-p",
+          EX_ORIGIN_P,
           "Doc-initiated conversation",
           "Plain conversation answer.",
           "2026-07-10T09:05:00.000Z",
@@ -1860,13 +1871,13 @@ describe("read-only HTTP integration", () => {
         .map(asRecord)
         .map((event) => event.exId)
         .filter(Boolean),
-    ).toEqual(["ex-origin-a"]);
+    ).toEqual([EX_ORIGIN_A]);
     expect(
       asArray(details[1]?.events)
         .map(asRecord)
         .map((event) => event.exId)
         .filter(Boolean),
-    ).toEqual(["ex-origin-p"]);
+    ).toEqual([EX_ORIGIN_P]);
 
     const bobOrigin = await api(
       "GET",
@@ -1917,7 +1928,7 @@ describe("read-only HTTP integration", () => {
     expect(body.id).toBe(id.sessionAliceMain);
     const events = asArray(body.events).map(asRecord);
     expect(events.map((event) => event.type)).toEqual(["meta", "exchange", "exchange", "btw"]);
-    expect(events.map((event) => event.exId).filter(Boolean)).not.toContain("ex-stale");
+    expect(events.map((event) => event.exId).filter(Boolean)).not.toContain(EX_STALE);
     expect(events[0]).toMatchObject({
       type: "meta",
       query: "How should study circles use source material?",
@@ -1948,7 +1959,7 @@ describe("read-only HTTP integration", () => {
     const btw = events[3] ?? {};
     expect(btw).toMatchObject({
       type: "btw",
-      exId: "ex-1",
+      exId: EX_1,
       quote: "concrete passage",
       blockOffset: 0,
       context: "Start with a concrete passage",
@@ -2012,10 +2023,10 @@ describe("read-only HTTP integration", () => {
     const events = asArray(asRecord(replay.body).events).map(asRecord);
     expect(events.map((event) => event.type)).toEqual(["meta", "exchange", "exchange"]);
     expect(events.map((event) => event.exId).filter(Boolean)).toEqual([
-      "ex-good",
-      "ex-after-invalid",
+      EX_GOOD,
+      EX_AFTER_INVALID,
     ]);
-    expect(events.map((event) => event.exId).filter(Boolean)).not.toContain("ex-after-bad-json");
+    expect(events.map((event) => event.exId).filter(Boolean)).not.toContain(EX_AFTER_BAD_JSON);
 
     await writeVaultFile(id.vaultAlpha, "sessions/s-empty.jsonl", "");
     const emptyReplay = await api("GET", `/vaults/${id.vaultAlpha}/sessions/s-empty`, aliceToken);

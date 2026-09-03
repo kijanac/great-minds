@@ -175,7 +175,7 @@ export class Session {
   };
 
   #makeMainReplyAttempt = (question: string): MainReplyAttempt => {
-    const exchangeId = genId("ex");
+    const exchangeId = crypto.randomUUID();
     const replyId = crypto.randomUUID();
     const firstExchange = this.sessionId === null;
     const originForQuery = firstExchange ? this.#originPath : undefined;
@@ -370,7 +370,7 @@ export class Session {
       context: "",
     };
     const ownerExchangeId = target?.exchangeId ?? "";
-    const turnId = genId("ex");
+    const turnId = crypto.randomUUID();
 
     const patchBtwExchanges = (mutate: (exchanges: Exchange[]) => Exchange[]): void => {
       this.thread = this.thread.map((exchange) =>

@@ -11,6 +11,11 @@ import {
 
 const uuid = (value: string) => Schema.decodeUnknownSync(Uuid)(value);
 
+const EX_1 = uuid("00000000-0000-4000-8000-000000000301");
+const EX_2 = uuid("00000000-0000-4000-8000-000000000302");
+const BTW_1 = uuid("00000000-0000-4000-8000-000000000303");
+const BTW_2 = uuid("00000000-0000-4000-8000-000000000304");
+
 const ts = "2026-07-23T12:00:00.000Z";
 
 const meta: StoredSessionEvent = {
@@ -26,7 +31,7 @@ const node = (overrides: Partial<ReplyNode>): ReplyNode => ({
   type: "reply",
   reply_id: uuid("00000000-0000-4000-8000-000000000101"),
   parent_reply_id: null,
-  exchange_id: "ex-1",
+  exchange_id: EX_1,
   question: "Question",
   status: "completed",
   messages: [{ role: "user", content: "Question" }],
@@ -41,7 +46,7 @@ describe("session projection", () => {
     const events: StoredSessionEvent[] = [
       meta,
       node({
-        exchange_id: "ex-1",
+        exchange_id: EX_1,
         question: "First question",
         status: "pending",
         messages: [],
@@ -50,13 +55,13 @@ describe("session projection", () => {
         reply_id: uuid("00000000-0000-4000-8000-000000000101"),
       }),
       node({
-        exchange_id: "ex-2",
+        exchange_id: EX_2,
         question: "Second question",
         answer: "Second answer",
         reply_id: uuid("00000000-0000-4000-8000-000000000102"),
       }),
       node({
-        exchange_id: "ex-1",
+        exchange_id: EX_1,
         question: "First question",
         answer: "First answer",
         reply_id: uuid("00000000-0000-4000-8000-000000000103"),
@@ -66,11 +71,11 @@ describe("session projection", () => {
     const projected = projectSession(events);
     expect(projected.filter((event) => event.type === "exchange")).toEqual([
       expect.objectContaining({
-        exId: "ex-1",
+        exId: EX_1,
         reply_id: uuid("00000000-0000-4000-8000-000000000103"),
         answer: "First answer",
       }),
-      expect.objectContaining({ exId: "ex-2", answer: "Second answer" }),
+      expect.objectContaining({ exId: EX_2, answer: "Second answer" }),
     ]);
     const markdown = renderSessionMarkdown(projected);
     expect(markdown.match(/^# First question$/gmu)).toHaveLength(1);
@@ -81,18 +86,18 @@ describe("session projection", () => {
     const events: StoredSessionEvent[] = [
       meta,
       node({
-        exchange_id: "ex-1",
+        exchange_id: EX_1,
         question: "Parent question",
         answer: "Parent answer",
         reply_id: uuid("00000000-0000-4000-8000-000000000101"),
       }),
       node({
-        exchange_id: "btw-1",
+        exchange_id: BTW_1,
         question: "First BTW",
         answer: "First BTW answer",
         parent_reply_id: uuid("00000000-0000-4000-8000-000000000101"),
         btw: {
-          exchange_id: "ex-1",
+          exchange_id: EX_1,
           quote: "Parent answer",
           block_offset: 0,
           context: "Parent answer.",
@@ -100,12 +105,12 @@ describe("session projection", () => {
         reply_id: uuid("00000000-0000-4000-8000-000000000102"),
       }),
       node({
-        exchange_id: "btw-2",
+        exchange_id: BTW_2,
         question: "Second BTW",
         answer: "Second BTW answer",
         parent_reply_id: uuid("00000000-0000-4000-8000-000000000102"),
         btw: {
-          exchange_id: "ex-1",
+          exchange_id: EX_1,
           quote: "Parent answer",
           block_offset: 0,
           context: "Parent answer.",
@@ -116,24 +121,24 @@ describe("session projection", () => {
 
     const projected = projectSession(events);
     expect(projected.filter((event) => event.type === "exchange")).toEqual([
-      expect.objectContaining({ exId: "ex-1", answer: "Parent answer" }),
+      expect.objectContaining({ exId: EX_1, answer: "Parent answer" }),
     ]);
     const btwEvents = projected.filter((event) => event.type === "btw");
     expect(btwEvents).toHaveLength(1);
     expect(btwEvents[0]).toMatchObject({
-      exId: "ex-1",
+      exId: EX_1,
       quote: "Parent answer",
       reply_id: uuid("00000000-0000-4000-8000-000000000103"),
       blockOffset: 0,
       context: "Parent answer.",
       exchanges: [
         {
-          exchange_id: "btw-1",
+          exchange_id: BTW_1,
           query: "First BTW",
           answer: "First BTW answer",
         },
         {
-          exchange_id: "btw-2",
+          exchange_id: BTW_2,
           query: "Second BTW",
           answer: "Second BTW answer",
         },
@@ -148,7 +153,7 @@ describe("session projection", () => {
     const events: StoredSessionEvent[] = [
       meta,
       node({
-        exchange_id: "ex-1",
+        exchange_id: EX_1,
         question: "Pending question",
         status: "pending",
         messages: [],
@@ -160,7 +165,7 @@ describe("session projection", () => {
 
     const projected = projectSession(events);
     expect(projected.filter((event) => event.type === "exchange")).toEqual([
-      expect.objectContaining({ exId: "ex-1", answer: "", thinking: [] }),
+      expect.objectContaining({ exId: EX_1, answer: "", thinking: [] }),
     ]);
   });
 });

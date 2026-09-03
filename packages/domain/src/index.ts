@@ -29,11 +29,6 @@ export const SessionId = Schema.String.pipe(
 );
 export type SessionId = typeof SessionId.Type;
 
-export const ExchangeId = Schema.String.pipe(
-  Schema.check(Schema.isPattern(/^[A-Za-z0-9][A-Za-z0-9._-]*$/)),
-);
-export type ExchangeId = typeof ExchangeId.Type;
-
 export const RawSourcePath = Schema.String.pipe(
   Schema.check(
     Schema.isPattern(
@@ -751,7 +746,7 @@ export const ThinkingBlock = Schema.Struct({
 export type ThinkingBlock = typeof ThinkingBlock.Type;
 
 export const BtwExchange = Schema.Struct({
-  exchange_id: ExchangeId,
+  exchange_id: Uuid,
   query: Schema.String,
   thinking: Schema.optionalKey(Schema.Array(ThinkingBlock)),
   answer: Schema.optionalKey(Schema.String),
@@ -839,7 +834,7 @@ export const BtwData = Schema.Struct({
   quote: Schema.String,
   blockOffset: Schema.Number.pipe(Schema.withDecodingDefaultTypeKey(Effect.succeed(-1))),
   context: Schema.String.pipe(Schema.withDecodingDefaultTypeKey(Effect.succeed(""))),
-  exchangeId: ExchangeId,
+  exchangeId: Uuid,
 });
 export type BtwData = typeof BtwData.Type;
 
@@ -1168,19 +1163,19 @@ export const CreateReplyRequest = Schema.Union([
   Schema.Struct({
     ...CreateReplyFields,
     kind: Schema.Literal("exchange"),
-    exchange_id: ExchangeId,
+    exchange_id: Uuid,
     session_id: SessionId,
   }),
   Schema.Struct({
     ...CreateReplyFields,
     kind: Schema.Literal("exchange"),
-    exchange_id: ExchangeId,
+    exchange_id: Uuid,
     create: CreateReplySession,
   }),
   Schema.Struct({
     ...CreateReplyFields,
     kind: Schema.Literal("btw"),
-    exchange_id: ExchangeId,
+    exchange_id: Uuid,
     session_id: SessionId,
     btw: BtwData,
   }),
@@ -1860,7 +1855,7 @@ export const SessionsApiGroup = HttpApiGroup.make("sessions").add(
       params: {
         vault_id: Uuid,
         session_id: SessionId,
-        exchange_id: ExchangeId,
+        exchange_id: Uuid,
       },
       success: CreatedPromoteExchangeResponse,
       error: [BadRequestResponse, ForbiddenResponse, NotFoundResponse, ValidationResponse] as const,

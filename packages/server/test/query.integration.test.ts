@@ -59,6 +59,31 @@ const id = {
   source: "00000000-0000-4000-8000-000000020501",
 } as const;
 
+const EX_DURABLE = "00000000-0000-4000-8000-000000000301";
+const EX_ACCEPTED_ONCE = "00000000-0000-4000-8000-000000000302";
+const EX_ANCHORED = "00000000-0000-4000-8000-000000000303";
+const EX_CANONICAL_FIRST = "00000000-0000-4000-8000-000000000304";
+const EX_CANONICAL_FOLLOW_UP = "00000000-0000-4000-8000-000000000305";
+const EX_CANONICAL_BTW_1 = "00000000-0000-4000-8000-000000000306";
+const EX_GUARD = "00000000-0000-4000-8000-000000000307";
+const EX_FIRST = "00000000-0000-4000-8000-000000000308";
+const EX_SECOND = "00000000-0000-4000-8000-000000000309";
+const EX_FAILED = "00000000-0000-4000-8000-00000000030a";
+const EX_RETRY = "00000000-0000-4000-8000-00000000030b";
+const EX_VERBATIM_1 = "00000000-0000-4000-8000-00000000030c";
+const EX_VERBATIM_2 = "00000000-0000-4000-8000-00000000030d";
+const EX_VERBATIM_3 = "00000000-0000-4000-8000-00000000030e";
+const EX_BRANCH_PARENT = "00000000-0000-4000-8000-00000000030f";
+const EX_BRANCH_BTW_1 = "00000000-0000-4000-8000-000000000310";
+const EX_BRANCH_BTW_2 = "00000000-0000-4000-8000-000000000311";
+const EX_BRANCH_FOLLOW_UP = "00000000-0000-4000-8000-000000000312";
+const EX_ORIGIN_ROOT = "00000000-0000-4000-8000-000000000313";
+const EX_ORIGIN_DOC = "00000000-0000-4000-8000-000000000314";
+const EX_ORIGIN_THIRD = "00000000-0000-4000-8000-000000000315";
+const EX_CHAIN_1 = "00000000-0000-4000-8000-000000000316";
+const EX_CHAIN_2 = "00000000-0000-4000-8000-000000000317";
+const EX_CHAIN_3 = "00000000-0000-4000-8000-000000000318";
+
 type TestServices =
   | AppConfig
   | Database
@@ -651,7 +676,7 @@ describe("query stream", () => {
 
     const created = await api(repliesPath, {
       kind: "exchange",
-      exchange_id: "ex-durable",
+      exchange_id: EX_DURABLE,
       create: {
         idempotency_key: "reply-session-idempotency",
         origin: { doc_path: "wiki/alpha.md", origin_scope: "vault", anchor: null, paragraph: null, paragraph_index: null },
@@ -670,7 +695,7 @@ describe("query stream", () => {
       submittedEvents.some(
         (event) =>
           event.type === "reply" &&
-          event.exchange_id === "ex-durable" &&
+          event.exchange_id === EX_DURABLE &&
           event.status === "pending" &&
           event.answer === "" &&
           event.reply_id === identifiers.reply_id,
@@ -706,7 +731,7 @@ describe("query stream", () => {
     expect(replyEvents).toHaveLength(2);
     expect(replyEvents.at(-1)).toMatchObject({
       type: "reply",
-      exchange_id: "ex-durable",
+      exchange_id: EX_DURABLE,
       reply_id: identifiers.reply_id,
       status: "completed",
       answer: "Durable answer.",
@@ -720,7 +745,7 @@ describe("query stream", () => {
       events: readonly Record<string, unknown>[];
     };
     expect(replayBody.events.filter((event) => event.type === "exchange")).toEqual([
-      expect.objectContaining({ exId: "ex-durable", answer: "Durable answer." }),
+      expect.objectContaining({ exId: EX_DURABLE, answer: "Durable answer." }),
     ]);
 
     const markdown = await readFile(
@@ -751,7 +776,7 @@ describe("query stream", () => {
     const payload = {
       reply_id: replyId,
       kind: "exchange" as const,
-      exchange_id: "ex-accepted-once",
+      exchange_id: EX_ACCEPTED_ONCE,
       create: { idempotency_key: "accepted-once-session" },
       question: "Accept this once",
       mode: "query" as const,
@@ -798,7 +823,7 @@ describe("query stream", () => {
 
     const created = await api(repliesPath, {
       kind: "exchange",
-      exchange_id: "ex-anchored",
+      exchange_id: EX_ANCHORED,
       create: {
         idempotency_key: "anchored-session-key",
         origin_scope: "personal",
@@ -843,13 +868,13 @@ describe("query stream", () => {
     const pendingNode = events.find(
       (event): event is ReplyNode =>
         event.type === "reply" &&
-        event.exchange_id === "ex-anchored" &&
+        event.exchange_id === EX_ANCHORED &&
         event.status === "pending",
     );
     const completedNode = events.find(
       (event): event is ReplyNode =>
         event.type === "reply" &&
-        event.exchange_id === "ex-anchored" &&
+        event.exchange_id === EX_ANCHORED &&
         event.status === "completed",
     );
     expect(pendingNode).toMatchObject({
@@ -878,7 +903,7 @@ describe("query stream", () => {
 
     const first = await api(repliesPath, {
       kind: "exchange",
-      exchange_id: "ex-canonical-first",
+      exchange_id: EX_CANONICAL_FIRST,
       create: { idempotency_key: "canonical-session-key" },
       question: "First question",
       mode: "query",
@@ -892,7 +917,7 @@ describe("query stream", () => {
 
     const followUp = await api(repliesPath, {
       kind: "exchange",
-      exchange_id: "ex-canonical-follow-up",
+      exchange_id: EX_CANONICAL_FOLLOW_UP,
       session_id: firstIds.session_id,
       question: "Follow-up question",
       mode: "query",
@@ -903,13 +928,13 @@ describe("query stream", () => {
 
     const btw = await api(repliesPath, {
       kind: "btw",
-      exchange_id: "ex-canonical-btw-1",
+      exchange_id: EX_CANONICAL_BTW_1,
       session_id: firstIds.session_id,
       btw: {
         quote: "First answer",
         blockOffset: 0,
         context: "First answer.",
-        exchangeId: "ex-canonical-first",
+        exchangeId: EX_CANONICAL_FIRST,
       },
       question: "Why this answer?",
       mode: "btw",
@@ -928,17 +953,17 @@ describe("query stream", () => {
         .filter((event) => event.type === "exchange")
         .map((event) => ({ id: event.exId, answer: event.answer })),
     ).toEqual([
-      { id: "ex-canonical-first", answer: "First answer." },
-      { id: "ex-canonical-follow-up", answer: "Follow-up answer." },
+      { id: EX_CANONICAL_FIRST, answer: "First answer." },
+      { id: EX_CANONICAL_FOLLOW_UP, answer: "Follow-up answer." },
     ]);
     const btwEvents = replayBody.events.filter((event) => event.type === "btw");
     expect(btwEvents.at(-1)).toMatchObject({
-      exId: "ex-canonical-first",
+      exId: EX_CANONICAL_FIRST,
       reply_id: btwIds.reply_id,
       context: "First answer.",
       exchanges: [
         {
-          exchange_id: "ex-canonical-btw-1",
+          exchange_id: EX_CANONICAL_BTW_1,
           query: "Why this answer?",
           answer: "BTW answer.",
         },
@@ -970,7 +995,7 @@ describe("query stream", () => {
     await startHarness({ language });
     const first = await api(repliesPath, {
       kind: "exchange",
-      exchange_id: "ex-guard",
+      exchange_id: EX_GUARD,
       create: { idempotency_key: "guard-session-key" },
       question: "First question",
       mode: "query",
@@ -1029,8 +1054,8 @@ describe("query stream", () => {
       return identifiers;
     };
 
-    const first = await createExchange("ex-first", "First question");
-    const second = await createExchange("ex-second", "Second question");
+    const first = await createExchange(EX_FIRST, "First question");
+    const second = await createExchange(EX_SECOND, "Second question");
     expect(second.session_id).toBe(first.session_id);
 
     const replay = await getWithToken(`/vaults/${id.vault}/sessions/${first.session_id}`);
@@ -1052,7 +1077,7 @@ describe("query stream", () => {
 
     const created = await api(repliesPath, {
       kind: "exchange",
-      exchange_id: "ex-failed",
+      exchange_id: EX_FAILED,
       create: { idempotency_key: "failed-session-key" },
       question: "Fail this answer",
       mode: "query",
@@ -1070,7 +1095,7 @@ describe("query stream", () => {
     const events = await readSessionEvents(identifiers.session_id);
     expect(events.filter((event) => event.type === "reply")).toEqual([
       expect.objectContaining({
-        exchange_id: "ex-failed",
+        exchange_id: EX_FAILED,
         reply_id: identifiers.reply_id,
         status: "pending",
         answer: "",
@@ -1096,7 +1121,7 @@ describe("query stream", () => {
 
     const created = await api(repliesPath, {
       kind: "exchange",
-      exchange_id: "ex-retry",
+      exchange_id: EX_RETRY,
       create: {
         idempotency_key: "retry-session-key",
         origin_scope: "vault",
@@ -1155,14 +1180,14 @@ describe("query stream", () => {
     expect(events).toHaveLength(3);
     expect(events.at(-2)).toMatchObject({
       type: "reply",
-      exchange_id: "ex-retry",
+      exchange_id: EX_RETRY,
       reply_id: second.reply_id,
       status: "pending",
       answer: "",
     });
     expect(events.at(-1)).toMatchObject({
       type: "reply",
-      exchange_id: "ex-retry",
+      exchange_id: EX_RETRY,
       reply_id: second.reply_id,
       status: "completed",
       answer: "Complete answer.",
@@ -1424,9 +1449,9 @@ describe("query stream", () => {
       return ids;
     };
 
-    const firstIds = await submit("ex-verbatim-1", "First question", null);
-    await submit("ex-verbatim-2", "Second question", firstIds.session_id);
-    await submit("ex-verbatim-3", "Third question", firstIds.session_id);
+    const firstIds = await submit(EX_VERBATIM_1, "First question", null);
+    await submit(EX_VERBATIM_2, "Second question", firstIds.session_id);
+    await submit(EX_VERBATIM_3, "Third question", firstIds.session_id);
 
     expect(language.streamCalls).toHaveLength(5);
     const firstTurnToolContent = language.streamCalls[1]!.messages.find(
@@ -1533,7 +1558,7 @@ describe("query stream", () => {
 
     const root = await api(repliesPath, {
       kind: "exchange",
-      exchange_id: "ex-branch-parent",
+      exchange_id: EX_BRANCH_PARENT,
       create: { idempotency_key: "branch-session-key" },
       question: "Parent question",
       mode: "query",
@@ -1552,7 +1577,7 @@ describe("query stream", () => {
           quote: "answer",
           blockOffset: 0,
           context: "Parent answer.",
-          exchangeId: "ex-branch-parent",
+          exchangeId: EX_BRANCH_PARENT,
         },
         question,
         mode: "btw",
@@ -1563,12 +1588,12 @@ describe("query stream", () => {
       expect(replySnapshots(tail.text).at(-1)).toMatchObject({ status: "completed" });
       return ids.reply_id;
     };
-    const firstBtwReplyId = await sendBtw("ex-branch-btw-1", "First BTW");
-    const secondBtwReplyId = await sendBtw("ex-branch-btw-2", "Second BTW");
+    const firstBtwReplyId = await sendBtw(EX_BRANCH_BTW_1, "First BTW");
+    const secondBtwReplyId = await sendBtw(EX_BRANCH_BTW_2, "Second BTW");
 
     const follow = await api(repliesPath, {
       kind: "exchange",
-      exchange_id: "ex-branch-follow-up",
+      exchange_id: EX_BRANCH_FOLLOW_UP,
       session_id: rootIds.session_id,
       question: "Main follow-up",
       mode: "query",
@@ -1631,19 +1656,19 @@ describe("query stream", () => {
     const btwEvents = sessionBody.events.filter((event) => event.type === "btw");
     expect(btwEvents).toHaveLength(1);
     expect(btwEvents[0]).toMatchObject({
-      exId: "ex-branch-parent",
+      exId: EX_BRANCH_PARENT,
       quote: "answer",
       blockOffset: 0,
       context: "Parent answer.",
       reply_id: secondBtwReplyId,
       exchanges: [
         expect.objectContaining({
-          exchange_id: "ex-branch-btw-1",
+          exchange_id: EX_BRANCH_BTW_1,
           query: "First BTW",
           answer: "First BTW answer.",
         }),
         expect.objectContaining({
-          exchange_id: "ex-branch-btw-2",
+          exchange_id: EX_BRANCH_BTW_2,
           query: "Second BTW",
           answer: "Second BTW answer.",
         }),
@@ -1693,7 +1718,7 @@ describe("query stream", () => {
 
     const root = await api(repliesPath, {
       kind: "exchange",
-      exchange_id: "ex-origin-root",
+      exchange_id: EX_ORIGIN_ROOT,
       create: {
         idempotency_key: "origin-inherit-session-key",
         origin_scope: "vault",
@@ -1739,8 +1764,8 @@ describe("query stream", () => {
       const tail = await tailReply(ids.reply_id);
       expect(replySnapshots(tail.text).at(-1)).toMatchObject({ status: "completed" });
     };
-    await submit("ex-origin-doc", "Doc follow-up");
-    await submit("ex-origin-third", "Third doc follow-up", "raw/texts/source.md");
+    await submit(EX_ORIGIN_DOC, "Doc follow-up");
+    await submit(EX_ORIGIN_THIRD, "Third doc follow-up", "raw/texts/source.md");
 
     expect(language.streamCalls).toHaveLength(3);
     const rootHits = originReadHits(language.streamCalls[0]!.messages);
@@ -1796,7 +1821,7 @@ describe("query stream", () => {
 
     const root = await api(repliesPath, {
       kind: "exchange",
-      exchange_id: "ex-chain-1",
+      exchange_id: EX_CHAIN_1,
       create: { idempotency_key: "chain-session-key" },
       question: "First question",
       mode: "query",
@@ -1808,7 +1833,7 @@ describe("query stream", () => {
 
     const failed = await api(repliesPath, {
       kind: "exchange",
-      exchange_id: "ex-chain-2",
+      exchange_id: EX_CHAIN_2,
       session_id: rootIds.session_id,
       question: "Second question",
       mode: "query",
@@ -1820,7 +1845,7 @@ describe("query stream", () => {
 
     const third = await api(repliesPath, {
       kind: "exchange",
-      exchange_id: "ex-chain-3",
+      exchange_id: EX_CHAIN_3,
       session_id: rootIds.session_id,
       question: "Third question",
       mode: "query",
@@ -1850,9 +1875,9 @@ describe("query stream", () => {
     const exchangeEvents = sessionBody.events.filter((event) => event.type === "exchange");
     expect(exchangeEvents).toHaveLength(3);
     expect(exchangeEvents.map((event) => event.exId)).toEqual([
-      "ex-chain-1",
-      "ex-chain-2",
-      "ex-chain-3",
+      EX_CHAIN_1,
+      EX_CHAIN_2,
+      EX_CHAIN_3,
     ]);
     expect(exchangeEvents.map((event) => event.answer)).toEqual(["A.", "", "C."]);
   });

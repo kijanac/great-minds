@@ -3,8 +3,6 @@ import {
   BadRequest,
   Forbidden,
   NotFound,
-  type ExchangeId,
-  ExchangeId as ExchangeIdSchema,
   IsoDateTime,
   type OriginSessionDetail,
   type PageParams,
@@ -45,7 +43,7 @@ import { ClockService } from "./clock.ts";
 export const ReplyNodeStatus = Schema.Literals(["pending", "completed"] as const);
 
 export const StoredBtwAnchor = Schema.Struct({
-  exchange_id: ExchangeIdSchema,
+  exchange_id: UuidSchema,
   quote: Schema.String,
   block_offset: Schema.Number,
   context: Schema.String,
@@ -56,7 +54,7 @@ export const ReplyNode = Schema.Struct({
   type: Schema.Literal("reply"),
   reply_id: UuidSchema,
   parent_reply_id: Schema.NullOr(UuidSchema),
-  exchange_id: ExchangeIdSchema,
+  exchange_id: UuidSchema,
   btw: Schema.optionalKey(StoredBtwAnchor),
   question: Schema.String,
   status: ReplyNodeStatus,
@@ -105,7 +103,7 @@ const latestMetaSuffix = (events: readonly StoredSessionEvent[]) => {
 };
 
 export const currentNodes = (events: readonly StoredSessionEvent[]): readonly ReplyNode[] => {
-  const latest = new Map<ExchangeId, ReplyNode>();
+  const latest = new Map<Uuid, ReplyNode>();
   for (const event of events) {
     if (event.type === "reply") {
       latest.set(event.exchange_id, event);
@@ -275,7 +273,7 @@ type SessionCreate = {
 
 type PendingReply = {
   readonly replyId: Uuid;
-  readonly exchangeId: ExchangeId;
+  readonly exchangeId: Uuid;
   readonly btw?: StoredBtwAnchor;
   readonly question: string;
 };
@@ -569,7 +567,7 @@ export const SessionsServiceLive = Layer.effect(
         yield* rebuildMarkdown(vaultId, sessionId);
       });
 
-    const hasNodeForExchange = (events: readonly StoredSessionEvent[], exchangeId: ExchangeId) =>
+    const hasNodeForExchange = (events: readonly StoredSessionEvent[], exchangeId: Uuid) =>
       events.some(
         (event) => event.type === "reply" && event.exchange_id === exchangeId,
       );

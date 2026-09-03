@@ -213,11 +213,17 @@ const runDb = <A>(effect: Effect.Effect<A, unknown, TestServices>) =>
 
 const decodeUuid = Schema.decodeUnknownSync(UuidSchema);
 
+const EX_PROMOTE = decodeUuid("00000000-0000-4000-8000-000000000401");
+const EX_PROPOSAL = decodeUuid("00000000-0000-4000-8000-000000000402");
+const EX_EMPTY = decodeUuid("00000000-0000-4000-8000-000000000403");
+const EX_MISSING = decodeUuid("00000000-0000-4000-8000-000000000404");
+const EX_ANY = decodeUuid("00000000-0000-4000-8000-000000000405");
+
 const createSessionForTest = (
   userId: Uuid,
   idempotencyKey: string,
   exchange: {
-    readonly id: string;
+    readonly id: Uuid;
     readonly query: string;
     readonly answer: string;
     readonly thinking?: readonly unknown[];
@@ -2578,7 +2584,7 @@ describe("M3.1 write endpoint integration", () => {
       id.alice as Uuid,
       "promote-key",
       {
-        id: "ex-promote",
+        id: EX_PROMOTE,
         query: "What should be promoted?",
         thinking: [],
         answer: "Promoted answer body.",
@@ -2593,7 +2599,7 @@ describe("M3.1 write endpoint integration", () => {
     );
     currentState().clock.set(new Date("2026-07-10T12:01:00.000Z"));
     const editorSessionId = await createSessionForTest(id.bob as Uuid, "editor-promote-key", {
-      id: "ex-proposal",
+      id: EX_PROPOSAL,
       query: "What should editors propose?",
       thinking: [],
       answer: "Proposal answer body.",
@@ -2601,12 +2607,12 @@ describe("M3.1 write endpoint integration", () => {
 
     const ownerSourceId = sourceIdForKey(
       id.vault as Uuid,
-      `session:${sessionId}:ex-promote`,
+      `session:${sessionId}:${EX_PROMOTE}`,
     );
-    const ownerSourcePath = `raw/sessions/ex-promote-${ownerSourceId}.md`;
+    const ownerSourcePath = `raw/sessions/${EX_PROMOTE}-${ownerSourceId}.md`;
     const ownerPromote = await api(
       "POST",
-      `/vaults/${id.vault}/sessions/${sessionId}/exchanges/ex-promote/promote`,
+      `/vaults/${id.vault}/sessions/${sessionId}/exchanges/${EX_PROMOTE}/promote`,
       aliceToken,
     );
     expect(ownerPromote.status).toBe(201);
@@ -2619,7 +2625,7 @@ describe("M3.1 write endpoint integration", () => {
     });
     const promotedMarkdown = await readVaultFile(id.vault, ownerSourcePath);
     expect(promotedMarkdown).toBe(
-      `---\nsource_id: ${ownerSourceId}\nsource_type: session\norigin: session-exchange\nsession_id: 019f4be6-1e00-7607-8809-0a0b0c0d0e0f\nexchange_id: ex-promote\nsession_query: What should be promoted?\nsource_doc_path: raw/books/capital.md\nsource_anchor: anchor quote\nsource_paragraph_index: 4\n---\nPromoted answer body. ^p0\n`,
+      `---\nsource_id: ${ownerSourceId}\nsource_type: session\norigin: session-exchange\nsession_id: 019f4be6-1e00-7607-8809-0a0b0c0d0e0f\nexchange_id: ${EX_PROMOTE}\nsession_query: What should be promoted?\nsource_doc_path: raw/books/capital.md\nsource_anchor: anchor quote\nsource_paragraph_index: 4\n---\nPromoted answer body. ^p0\n`,
     );
     const promotedRows = await runDb(
       Effect.gen(function* () {
@@ -2641,7 +2647,7 @@ describe("M3.1 write endpoint integration", () => {
       sourceType: "session",
       origin: "session-exchange",
       provenanceSessionId: sessionId,
-      provenanceExchangeId: "ex-promote",
+      provenanceExchangeId: EX_PROMOTE,
       provenanceSessionQuery: "What should be promoted?",
       provenanceSourceDocPath: "raw/books/capital.md",
       provenanceSourceAnchor: "anchor quote",
@@ -2651,7 +2657,7 @@ describe("M3.1 write endpoint integration", () => {
 
     const ownerReplay = await api(
       "POST",
-      `/vaults/${id.vault}/sessions/${sessionId}/exchanges/ex-promote/promote`,
+      `/vaults/${id.vault}/sessions/${sessionId}/exchanges/${EX_PROMOTE}/promote`,
       aliceToken,
     );
     expect(ownerReplay.status).toBe(201);
@@ -2664,12 +2670,12 @@ describe("M3.1 write endpoint integration", () => {
 
     const editorSourceId = sourceIdForKey(
       id.vault as Uuid,
-      `session:${editorSessionId}:ex-proposal`,
+      `session:${editorSessionId}:${EX_PROPOSAL}`,
     );
-    const editorSourcePath = `raw/sessions/ex-proposal-${editorSourceId}.md`;
+    const editorSourcePath = `raw/sessions/${EX_PROPOSAL}-${editorSourceId}.md`;
     const editorPromote = await api(
       "POST",
-      `/vaults/${id.vault}/sessions/${editorSessionId}/exchanges/ex-proposal/promote`,
+      `/vaults/${id.vault}/sessions/${editorSessionId}/exchanges/${EX_PROPOSAL}/promote`,
       bobToken,
     );
     expect(editorPromote.status).toBe(201);
@@ -2703,13 +2709,13 @@ describe("M3.1 write endpoint integration", () => {
       "utf8",
     );
     expect(staged).toContain("source_type: session");
-    expect(staged).toContain("exchange_id: ex-proposal");
+    expect(staged).toContain(`exchange_id: ${EX_PROPOSAL}`);
     expect(staged).toContain("Proposal answer body. ^p0");
     expect(await countTable(compileIntents)).toBe(1);
 
     const editorReplay = await api(
       "POST",
-      `/vaults/${id.vault}/sessions/${editorSessionId}/exchanges/ex-proposal/promote`,
+      `/vaults/${id.vault}/sessions/${editorSessionId}/exchanges/${EX_PROPOSAL}/promote`,
       bobToken,
     );
     expect(editorReplay.status).toBe(201);
@@ -2722,25 +2728,25 @@ describe("M3.1 write endpoint integration", () => {
 
     const viewerDenied = await api(
       "POST",
-      `/vaults/${id.vault}/sessions/${editorSessionId}/exchanges/ex-proposal/promote`,
+      `/vaults/${id.vault}/sessions/${editorSessionId}/exchanges/${EX_PROPOSAL}/promote`,
       carolToken,
     );
     expect(viewerDenied.status).toBe(403);
     const nonMemberDenied = await api(
       "POST",
-      `/vaults/${id.vault}/sessions/${editorSessionId}/exchanges/ex-proposal/promote`,
+      `/vaults/${id.vault}/sessions/${editorSessionId}/exchanges/${EX_PROPOSAL}/promote`,
       malloryToken,
     );
     expect(nonMemberDenied.status).toBe(403);
     const unauthenticated = await api(
       "POST",
-      `/vaults/${id.vault}/sessions/${editorSessionId}/exchanges/ex-proposal/promote`,
+      `/vaults/${id.vault}/sessions/${editorSessionId}/exchanges/${EX_PROPOSAL}/promote`,
     );
     expect(unauthenticated.status).toBe(401);
 
     const wrongExchange = await api(
       "POST",
-      `/vaults/${id.vault}/sessions/${sessionId}/exchanges/ex-missing/promote`,
+      `/vaults/${id.vault}/sessions/${sessionId}/exchanges/${EX_MISSING}/promote`,
       aliceToken,
     );
     expect(wrongExchange.status).toBe(404);
@@ -2748,7 +2754,7 @@ describe("M3.1 write endpoint integration", () => {
 
     const missingSession = await api(
       "POST",
-      `/vaults/${id.vault}/sessions/s-missing/exchanges/ex-any/promote`,
+      `/vaults/${id.vault}/sessions/s-missing/exchanges/${EX_ANY}/promote`,
       aliceToken,
     );
     expect(missingSession.status).toBe(404);
@@ -2757,7 +2763,7 @@ describe("M3.1 write endpoint integration", () => {
     await writeVaultFile(id.vault, "sessions/s-empty.jsonl", "");
     const emptySession = await api(
       "POST",
-      `/vaults/${id.vault}/sessions/s-empty/exchanges/ex-any/promote`,
+      `/vaults/${id.vault}/sessions/s-empty/exchanges/${EX_ANY}/promote`,
       aliceToken,
     );
     expect(emptySession.status).toBe(404);
@@ -2767,7 +2773,7 @@ describe("M3.1 write endpoint integration", () => {
       id.alice as Uuid,
       "empty-answer-key",
       {
-        id: "ex-empty",
+        id: EX_EMPTY,
         query: "Empty answer",
         thinking: [],
         answer: "  ",
@@ -2775,7 +2781,7 @@ describe("M3.1 write endpoint integration", () => {
     );
     const emptyAnswer = await api(
       "POST",
-      `/vaults/${id.vault}/sessions/${emptyAnswerSessionId}/exchanges/ex-empty/promote`,
+      `/vaults/${id.vault}/sessions/${emptyAnswerSessionId}/exchanges/${EX_EMPTY}/promote`,
       aliceToken,
     );
     expect(emptyAnswer.status).toBe(400);

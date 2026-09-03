@@ -73,7 +73,7 @@ export async function promoteExchange(
       params: {
         vault_id: selectedVault(),
         session_id: parseSessionId(sessionId),
-        exchange_id: exchangeId,
+        exchange_id: uuid(exchangeId),
       },
     }),
   );

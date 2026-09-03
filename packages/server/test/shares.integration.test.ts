@@ -39,6 +39,9 @@ const id = {
   vault: "00000000-0000-4000-8000-000000010101",
 } as const;
 
+const EX_ANN_1 = "00000000-0000-4000-8000-000000000801";
+const EX_ANN_2 = "00000000-0000-4000-8000-000000000802";
+
 type TestServices =
   | AppConfig
   | Database
@@ -293,7 +296,7 @@ const createSession = (idempotencyKey: string, query: string, answer: string) =>
         idempotencyKey,
         pending: {
           replyId,
-          exchangeId: `ex-${idempotencyKey}`,
+          exchangeId: decodeUuid(randomUUID()),
           question: query,
         },
       });
@@ -595,7 +598,7 @@ describe("share links", () => {
               type: "reply",
               reply_id: "00000000-0000-4000-8000-000000000711",
               parent_reply_id: null,
-              exchange_id: "ex-ann-1",
+              exchange_id: EX_ANN_1,
               question: "What does the quote mean?",
               status: "completed",
               messages: [
@@ -610,7 +613,7 @@ describe("share links", () => {
               type: "reply",
               reply_id: "00000000-0000-4000-8000-000000000712",
               parent_reply_id: "00000000-0000-4000-8000-000000000711",
-              exchange_id: "ex-ann-2",
+              exchange_id: EX_ANN_2,
               question: "How should organizers use it?",
               status: "completed",
               messages: [

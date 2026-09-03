@@ -4,7 +4,6 @@ import { writeFile } from "node:fs/promises";
 import { Database, sessions } from "@great-minds/database";
 import {
   composeAnchoredQuestion,
-  ExchangeId,
   type SessionId,
   SessionOrigin,
   ThinkingBlock,
@@ -28,7 +27,7 @@ import { UserDocumentsServiceLive } from "../src/user-documents.ts";
 import { VaultAccessServiceLive } from "../src/vaults.ts";
 
 const SeedExchange = Schema.Struct({
-  id: Schema.String,
+  id: Uuid,
   query: Schema.String,
   thinking: Schema.Array(ThinkingBlock).pipe(
     Schema.withDecodingDefaultTypeKey(Effect.succeed([])),
@@ -48,7 +47,7 @@ const SeedBtw = Schema.Struct({
   quote: Schema.String,
   blockOffset: Schema.Number.pipe(Schema.withDecodingDefaultTypeKey(Effect.succeed(-1))),
   context: Schema.String.pipe(Schema.withDecodingDefaultTypeKey(Effect.succeed(""))),
-  exchangeId: Schema.String,
+  exchangeId: Uuid,
   exchanges: Schema.Array(SeedBtwTurn),
 });
 
@@ -68,7 +67,6 @@ const SeedSpec = Schema.Struct({
 });
 const decodeSeedSpec = Schema.decodeUnknownSync(SeedSpec);
 const decodeUuid = Schema.decodeUnknownSync(Uuid);
-const decodeExchangeId = Schema.decodeUnknownSync(ExchangeId);
 
 const newUuid = () => decodeUuid(randomUUID());
 
@@ -170,7 +168,7 @@ const seeded = await runtime.runPromise(
         ...(item.origin === undefined ? {} : { origin: item.origin }),
         pending: {
           replyId: rootReplyId,
-          exchangeId: decodeExchangeId(item.exchange.id),
+          exchangeId: item.exchange.id,
           question: item.exchange.query,
         },
       });
@@ -190,7 +188,7 @@ const seeded = await runtime.runPromise(
         const replyId = newUuid();
         yield* service.appendPending(spec.user_id, spec.vault_id, sessionId, {
           replyId,
-          exchangeId: decodeExchangeId(exchange.id),
+          exchangeId: exchange.id,
           question: exchange.query,
         });
         yield* complete(sessionId, replyId, exchange.query, exchange);
@@ -204,10 +202,10 @@ const seeded = await runtime.runPromise(
           const replyId = newUuid();
           yield* service.appendPending(spec.user_id, spec.vault_id, sessionId, {
             replyId,
-            exchangeId: decodeExchangeId(`btw-${randomUUID()}`),
+            exchangeId: newUuid(),
             question: turn.query,
             btw: {
-              exchange_id: decodeExchangeId(btw.exchangeId),
+              exchange_id: btw.exchangeId,
               quote: btw.quote,
               block_offset: btw.blockOffset,
               context: btw.context,

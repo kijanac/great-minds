@@ -153,7 +153,7 @@ export class DocThreads {
     // A draft whose first create failed (no session yet) retries as a fresh
     // first turn; anything with a session follows up on it.
     const isFirst = priorExchanges.length === 0 || target.sessionId === null;
-    const turnId = genId("ex");
+    const turnId = crypto.randomUUID();
 
     const patchThread = (patch: Partial<DocThread>): void => {
       this.threads = this.threads.map((thread) =>
