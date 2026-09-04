@@ -21,9 +21,9 @@ import {
   vaults,
   wikiArticles,
 } from "@great-minds/database";
-import type { Uuid } from "@great-minds/domain";
+import { Uuid } from "@great-minds/domain";
 import { eq, sql } from "drizzle-orm";
-import { Effect, Layer, Option, Redacted } from "effect";
+import { Effect, Layer, Option, Redacted, Schema } from "effect";
 import { afterAll, beforeEach, describe, expect, it } from "vitest";
 
 import {
@@ -54,20 +54,22 @@ import { RandomBytesLive } from "../src/random.ts";
 import { SourceDocumentsServiceLive } from "../src/source-documents.ts";
 import { ContentStorage, StorageFileMissing } from "../src/storage.ts";
 
+const uuid = Schema.decodeUnknownSync(Uuid);
+
 const id = {
-  user: "20000000-0000-4000-8000-000000000001" as Uuid,
-  vault: "20000000-0000-4000-8000-000000000002" as Uuid,
-  run: "20000000-0000-4000-8000-000000000003" as Uuid,
-  source: "20000000-0000-4000-8000-000000000004" as Uuid,
-  sourceB: "20000000-0000-4000-8000-000000000013" as Uuid,
-  ideaA: "20000000-0000-4000-8000-000000000005" as Uuid,
-  ideaB: "20000000-0000-4000-8000-000000000006" as Uuid,
-  ideaC: "20000000-0000-4000-8000-000000000007" as Uuid,
-  topicA: "20000000-0000-4000-8000-000000000008" as Uuid,
-  topicB: "20000000-0000-4000-8000-000000000009" as Uuid,
-  topicC: "20000000-0000-4000-8000-000000000010" as Uuid,
-  articleA: "20000000-0000-4000-8000-000000000011" as Uuid,
-  articleB: "20000000-0000-4000-8000-000000000012" as Uuid,
+  user: uuid("20000000-0000-4000-8000-000000000001"),
+  vault: uuid("20000000-0000-4000-8000-000000000002"),
+  run: uuid("20000000-0000-4000-8000-000000000003"),
+  source: uuid("20000000-0000-4000-8000-000000000004"),
+  sourceB: uuid("20000000-0000-4000-8000-000000000013"),
+  ideaA: uuid("20000000-0000-4000-8000-000000000005"),
+  ideaB: uuid("20000000-0000-4000-8000-000000000006"),
+  ideaC: uuid("20000000-0000-4000-8000-000000000007"),
+  topicA: uuid("20000000-0000-4000-8000-000000000008"),
+  topicB: uuid("20000000-0000-4000-8000-000000000009"),
+  topicC: uuid("20000000-0000-4000-8000-000000000010"),
+  articleA: uuid("20000000-0000-4000-8000-000000000011"),
+  articleB: uuid("20000000-0000-4000-8000-000000000012"),
 } as const;
 
 const databaseUrl = () => {
@@ -1105,7 +1107,7 @@ const fullCard = (ideas: readonly unknown[]) => ({
           .insert(topics)
           .values(
             validated.map((topic) => ({
-              topicId: topic.topicId as Uuid,
+              topicId: topic.topicId,
               vaultId: id.vault,
               slug: topic.slug,
               title: topic.title,
@@ -1150,7 +1152,7 @@ const fullCard = (ideas: readonly unknown[]) => ({
         yield* db.query((d) => d
           .insert(topics)
           .values({
-            topicId: topic.topicId as Uuid,
+            topicId: topic.topicId,
             vaultId: id.vault,
             slug: topic.slug,
             title: topic.title,
@@ -1237,7 +1239,7 @@ const fullCard = (ideas: readonly unknown[]) => ({
         yield* db.query((d) => d
           .insert(topics)
           .values({
-            topicId: topic.topicId as Uuid,
+            topicId: topic.topicId,
             vaultId: id.vault,
             slug: topic.slug,
             title: topic.title,
@@ -1349,7 +1351,7 @@ const fullCard = (ideas: readonly unknown[]) => ({
           .insert(topics)
           .values(
             validated.map((topic) => ({
-              topicId: topic.topicId as Uuid,
+              topicId: topic.topicId,
               vaultId: id.vault,
               slug: topic.slug,
               title: topic.title,
@@ -1408,7 +1410,8 @@ const fullCard = (ideas: readonly unknown[]) => ({
     files.set("raw/docs/source.md", "# Source\n\nBody\n");
     const ideaIds = Array.from(
       { length: count },
-      (_v, index) => `20000000-0000-4000-8000-0000000001${String(index).padStart(2, "0")}` as Uuid,
+      (_v, index) =>
+        uuid(`20000000-0000-4000-8000-0000000001${String(index).padStart(2, "0")}`),
     );
     await run(
       Effect.gen(function* () {

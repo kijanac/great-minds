@@ -1,4 +1,4 @@
-import { Uuid } from "@great-minds/domain";
+import { SessionId, Uuid } from "@great-minds/domain";
 import { Schema } from "effect";
 import { describe, expect, it } from "vitest";
 
@@ -10,6 +10,7 @@ import {
 } from "../src/sessions.ts";
 
 const uuid = (value: string) => Schema.decodeUnknownSync(Uuid)(value);
+const sessionId = (value: string) => Schema.decodeUnknownSync(SessionId)(value);
 
 const EX_1 = uuid("00000000-0000-4000-8000-000000000301");
 const EX_2 = uuid("00000000-0000-4000-8000-000000000302");
@@ -20,7 +21,7 @@ const ts = "2026-07-23T12:00:00.000Z";
 
 const meta: StoredSessionEvent = {
   type: "meta",
-  id: "session-1",
+  id: sessionId("session-1"),
   query: "First question",
   ts,
   user_id: uuid("00000000-0000-4000-8000-000000000001"),

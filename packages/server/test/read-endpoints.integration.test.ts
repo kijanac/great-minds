@@ -18,9 +18,9 @@ import {
   vaults,
   wikiArticles,
 } from "@great-minds/database";
-import type { Uuid } from "@great-minds/domain";
+import { SessionId, Uuid } from "@great-minds/domain";
 import { sql } from "drizzle-orm";
-import { Effect, Layer, Option, Redacted } from "effect";
+import { Effect, Layer, Option, Redacted, Schema } from "effect";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 
 import { makeAppLayer } from "../src/app-layer.ts";
@@ -33,38 +33,40 @@ import { startServer } from "../src/server.ts";
 import { TokenService } from "../src/tokens.ts";
 
 const initialTime = new Date("2026-07-09T12:00:00.000Z");
+const uuid = Schema.decodeUnknownSync(Uuid);
+const sessionId = Schema.decodeUnknownSync(SessionId);
 
 const id = {
-  alice: "00000000-0000-4000-8000-000000000001",
-  bob: "00000000-0000-4000-8000-000000000002",
-  mallory: "00000000-0000-4000-8000-000000000003",
-  vaultAlpha: "00000000-0000-4000-8000-000000000101",
-  vaultBeta: "00000000-0000-4000-8000-000000000102",
-  unknownVault: "00000000-0000-4000-8000-000000000199",
-  runAlpha: "00000000-0000-4000-8000-000000000201",
-  topicAlpha: "00000000-0000-4000-8000-000000000301",
-  topicBeta: "00000000-0000-4000-8000-000000000302",
-  topicGamma: "00000000-0000-4000-8000-000000000303",
-  topicIndex: "00000000-0000-4000-8000-000000000304",
-  topicArchived: "00000000-0000-4000-8000-000000000305",
-  topicOtherVault: "00000000-0000-4000-8000-000000000306",
-  articleAlpha: "00000000-0000-4000-8000-000000000401",
-  articleBeta: "00000000-0000-4000-8000-000000000402",
-  articleGamma: "00000000-0000-4000-8000-000000000403",
-  articleIndex: "00000000-0000-4000-8000-000000000404",
-  articleArchived: "00000000-0000-4000-8000-000000000405",
-  articleOtherVault: "00000000-0000-4000-8000-000000000406",
-  sourceBook: "00000000-0000-4000-8000-000000000501",
-  sourceArticle: "00000000-0000-4000-8000-000000000502",
-  sourceSpeech: "00000000-0000-4000-8000-000000000503",
-  sourceOtherVault: "00000000-0000-4000-8000-000000000504",
-  sourceEncoded: "00000000-0000-4000-8000-000000000505",
-  apiKeyAlice: "00000000-0000-4000-8000-000000000601",
-  sessionAliceOlder: "s-1",
-  sessionAliceMain: "s-2",
-  sessionBob: "s-bob",
-  sessionNoMarkdown: "s-no-md",
-  sessionMalformed: "s-malformed",
+  alice: uuid("00000000-0000-4000-8000-000000000001"),
+  bob: uuid("00000000-0000-4000-8000-000000000002"),
+  mallory: uuid("00000000-0000-4000-8000-000000000003"),
+  vaultAlpha: uuid("00000000-0000-4000-8000-000000000101"),
+  vaultBeta: uuid("00000000-0000-4000-8000-000000000102"),
+  unknownVault: uuid("00000000-0000-4000-8000-000000000199"),
+  runAlpha: uuid("00000000-0000-4000-8000-000000000201"),
+  topicAlpha: uuid("00000000-0000-4000-8000-000000000301"),
+  topicBeta: uuid("00000000-0000-4000-8000-000000000302"),
+  topicGamma: uuid("00000000-0000-4000-8000-000000000303"),
+  topicIndex: uuid("00000000-0000-4000-8000-000000000304"),
+  topicArchived: uuid("00000000-0000-4000-8000-000000000305"),
+  topicOtherVault: uuid("00000000-0000-4000-8000-000000000306"),
+  articleAlpha: uuid("00000000-0000-4000-8000-000000000401"),
+  articleBeta: uuid("00000000-0000-4000-8000-000000000402"),
+  articleGamma: uuid("00000000-0000-4000-8000-000000000403"),
+  articleIndex: uuid("00000000-0000-4000-8000-000000000404"),
+  articleArchived: uuid("00000000-0000-4000-8000-000000000405"),
+  articleOtherVault: uuid("00000000-0000-4000-8000-000000000406"),
+  sourceBook: uuid("00000000-0000-4000-8000-000000000501"),
+  sourceArticle: uuid("00000000-0000-4000-8000-000000000502"),
+  sourceSpeech: uuid("00000000-0000-4000-8000-000000000503"),
+  sourceOtherVault: uuid("00000000-0000-4000-8000-000000000504"),
+  sourceEncoded: uuid("00000000-0000-4000-8000-000000000505"),
+  apiKeyAlice: uuid("00000000-0000-4000-8000-000000000601"),
+  sessionAliceOlder: sessionId("s-1"),
+  sessionAliceMain: sessionId("s-2"),
+  sessionBob: sessionId("s-bob"),
+  sessionNoMarkdown: sessionId("s-no-md"),
+  sessionMalformed: sessionId("s-malformed"),
 } as const;
 
 const EX_STALE = "00000000-0000-4000-8000-000000000801";
@@ -257,11 +259,11 @@ const replyNode = (
   ts,
 });
 
-const issueToken = (userId: string) =>
+const issueToken = (userId: Uuid) =>
   runDb(
     Effect.gen(function* () {
       const tokens = yield* TokenService;
-      return yield* tokens.issueAccessToken(userId as Uuid, initialTime);
+      return yield* tokens.issueAccessToken(userId, initialTime);
     }),
   );
 
@@ -306,25 +308,25 @@ const seedFixtures = async (): Promise<Fixture> => {
         .insert(vaultMemberships)
         .values([
           {
-            id: "00000000-0000-4000-8000-000000000701",
+            id: uuid("00000000-0000-4000-8000-000000000701"),
             vaultId: id.vaultAlpha,
             userId: id.alice,
             role: "OWNER",
           },
           {
-            id: "00000000-0000-4000-8000-000000000702",
+            id: uuid("00000000-0000-4000-8000-000000000702"),
             vaultId: id.vaultAlpha,
             userId: id.bob,
             role: "EDITOR",
           },
           {
-            id: "00000000-0000-4000-8000-000000000703",
+            id: uuid("00000000-0000-4000-8000-000000000703"),
             vaultId: id.vaultBeta,
             userId: id.bob,
             role: "OWNER",
           },
           {
-            id: "00000000-0000-4000-8000-000000000704",
+            id: uuid("00000000-0000-4000-8000-000000000704"),
             vaultId: id.vaultBeta,
             userId: id.alice,
             role: "VIEWER",
@@ -1712,7 +1714,7 @@ describe("read-only HTTP integration", () => {
           .insert(sessions)
           .values([
             {
-              id: "s-origin-anchored",
+              id: sessionId("s-origin-anchored"),
               vaultId: id.vaultAlpha,
               userId: id.alice,
               query: "What does the anchored claim mean?",
@@ -1727,7 +1729,7 @@ describe("read-only HTTP integration", () => {
               updatedAt: new Date("2026-07-10T08:10:00.000Z"),
             },
             {
-              id: "s-origin-plain",
+              id: sessionId("s-origin-plain"),
               vaultId: id.vaultAlpha,
               userId: id.alice,
               query: "Doc-initiated conversation",
@@ -1742,7 +1744,7 @@ describe("read-only HTTP integration", () => {
               updatedAt: new Date("2026-07-10T09:05:00.000Z"),
             },
             {
-              id: "s-origin-bob",
+              id: sessionId("s-origin-bob"),
               vaultId: id.vaultAlpha,
               userId: id.bob,
               query: "Bob's anchored thread",
@@ -1766,7 +1768,7 @@ describe("read-only HTTP integration", () => {
       jsonl([
         {
           type: "meta",
-          id: "s-origin-anchored",
+          id: sessionId("s-origin-anchored"),
           query: "What does the anchored claim mean?",
           ts: "2026-07-10T08:00:00.000Z",
           user_id: id.alice,
@@ -1793,7 +1795,7 @@ describe("read-only HTTP integration", () => {
       jsonl([
         {
           type: "meta",
-          id: "s-origin-plain",
+          id: sessionId("s-origin-plain"),
           query: "Doc-initiated conversation",
           ts: "2026-07-10T09:00:00.000Z",
           user_id: id.alice,
@@ -1820,7 +1822,7 @@ describe("read-only HTTP integration", () => {
       jsonl([
         {
           type: "meta",
-          id: "s-origin-bob",
+          id: sessionId("s-origin-bob"),
           query: "Bob's anchored thread",
           ts: "2026-07-10T10:00:00.000Z",
           user_id: id.bob,
@@ -1855,7 +1857,7 @@ describe("read-only HTTP integration", () => {
       "s-origin-plain",
     ]);
     expect(asRecord(details[0]?.session)).toMatchObject({
-      id: "s-origin-anchored",
+      id: sessionId("s-origin-anchored"),
       user_id: id.alice,
       created_at: "2026-07-10T08:00:00.000Z",
       origin: {

@@ -78,9 +78,9 @@ const wikiSlug = (filePath: string) => filePath.replace(/^wiki\//, "").replace(/
 
 const wikiArticle = (row: typeof wikiArticles.$inferSelect): WikiArticle => ({
   kind: "wiki",
-  id: row.id as Uuid,
-  vault_id: row.vaultId as Uuid,
-  topic_id: row.topicId as Uuid,
+  id: row.id,
+  vault_id: row.vaultId,
+  topic_id: row.topicId,
   file_path: row.filePath,
   body_hash: row.bodyHash,
   title: row.title,
@@ -93,8 +93,8 @@ const wikiArticle = (row: typeof wikiArticles.$inferSelect): WikiArticle => ({
 
 const sourceDocument = (row: typeof sourceDocuments.$inferSelect): SourceDocument => ({
   kind: "source",
-  id: row.id as Uuid,
-  vault_id: row.vaultId as Uuid,
+  id: row.id,
+  vault_id: row.vaultId,
   file_path: row.filePath,
   body_hash: row.bodyHash,
   source_type: row.sourceType,
@@ -102,7 +102,7 @@ const sourceDocument = (row: typeof sourceDocuments.$inferSelect): SourceDocumen
   url: row.url,
   canonical_url: row.canonicalUrl,
   origin: row.origin,
-  provenance_session_id: row.provenanceSessionId as Uuid | null,
+  provenance_session_id: row.provenanceSessionId,
   provenance_exchange_id: row.provenanceExchangeId,
   provenance_session_query: row.provenanceSessionQuery,
   provenance_source_doc_path: row.provenanceSourceDocPath,
@@ -230,7 +230,7 @@ export const DocumentsServiceLive = Layer.effect(
         if (topic === undefined || topic.articleStatus !== "archived") {
           return undefined;
         }
-        const article = yield* getWikiByTopic(vaultId, topic.topicId as Uuid);
+        const article = yield* getWikiByTopic(vaultId, topic.topicId);
         if (article === undefined) {
           return undefined;
         }

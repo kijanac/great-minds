@@ -17,8 +17,7 @@ import {
   type QuerySourceData,
   QuerySourceData as QuerySourceDataSchema,
   type QueryStreamPayload,
-  type Uuid,
-  Uuid as UuidSchema,
+  Uuid,
 } from "@great-minds/domain";
 import { and, asc, desc, eq, gte, ilike, lte, ne, or, sql, type SQL } from "drizzle-orm";
 import { Cause, Context, Effect, Layer, Schema, Stream } from "effect";
@@ -92,8 +91,8 @@ const QueryTraceSchema = Schema.Struct({
 });
 
 export const QueryExecutionState = Schema.Struct({
-  userId: UuidSchema,
-  vaultId: UuidSchema,
+  userId: Uuid,
+  vaultId: Uuid,
   question: Schema.String,
   vaultLabel: Schema.String,
   mode: Schema.Literals(["query", "btw"] as const),
@@ -617,7 +616,7 @@ export const QueryServiceLive = Layer.effect(
             .where(and(eq(wikiArticles.vaultId, vaultId), eq(wikiArticles.filePath, path)))
             .limit(1));
           const row = first(rows);
-          return { document_id: (row?.id as Uuid | undefined) ?? null, title: row?.title ?? null };
+          return { document_id: row?.id ?? null, title: row?.title ?? null };
         }
         const rows = yield* db.query((d) => d
           .select({ id: sourceDocuments.id, title: sourceDocuments.title })
@@ -625,7 +624,7 @@ export const QueryServiceLive = Layer.effect(
           .where(and(eq(sourceDocuments.vaultId, vaultId), eq(sourceDocuments.filePath, path)))
           .limit(1));
         const row = first(rows);
-        return { document_id: (row?.id as Uuid | undefined) ?? null, title: row?.title ?? null };
+        return { document_id: row?.id ?? null, title: row?.title ?? null };
       });
 
     const buildIdentity = (vaultId: Uuid, label: string, vaultConfig: VaultConfigFile) =>

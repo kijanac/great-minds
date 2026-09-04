@@ -16,9 +16,9 @@ import {
   vaults,
   wikiArticles,
 } from "@great-minds/database";
-import type { Uuid } from "@great-minds/domain";
+import { Uuid } from "@great-minds/domain";
 import { eq } from "drizzle-orm";
-import { Cause, Channel, Effect, Exit, Layer, Option, Redacted, Stream } from "effect";
+import { Cause, Channel, Effect, Exit, Layer, Option, Redacted, Schema, Stream } from "effect";
 import * as Sse from "effect/unstable/encoding/Sse";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
@@ -32,18 +32,19 @@ import { jobSseHeartbeatChunk, startServer } from "../src/server.ts";
 import { TokenService } from "../src/tokens.ts";
 
 const now = new Date("2026-07-12T12:00:00.000Z");
+const uuid = Schema.decodeUnknownSync(Uuid);
 const ids = {
-  alice: "00000000-0000-4000-8000-000000060001",
-  bob: "00000000-0000-4000-8000-000000060002",
-  vault: "00000000-0000-4000-8000-000000060101",
-  otherVault: "00000000-0000-4000-8000-000000060102",
-  run: "00000000-0000-4000-8000-000000060201",
-  secondRun: "00000000-0000-4000-8000-000000060202",
-  missingRun: "00000000-0000-4000-8000-000000060299",
-  topicAlpha: "00000000-0000-4000-8000-000000060301",
-  topicBeta: "00000000-0000-4000-8000-000000060302",
-  articleAlpha: "00000000-0000-4000-8000-000000060401",
-  articleBeta: "00000000-0000-4000-8000-000000060402",
+  alice: uuid("00000000-0000-4000-8000-000000060001"),
+  bob: uuid("00000000-0000-4000-8000-000000060002"),
+  vault: uuid("00000000-0000-4000-8000-000000060101"),
+  otherVault: uuid("00000000-0000-4000-8000-000000060102"),
+  run: uuid("00000000-0000-4000-8000-000000060201"),
+  secondRun: uuid("00000000-0000-4000-8000-000000060202"),
+  missingRun: uuid("00000000-0000-4000-8000-000000060299"),
+  topicAlpha: uuid("00000000-0000-4000-8000-000000060301"),
+  topicBeta: uuid("00000000-0000-4000-8000-000000060302"),
+  articleAlpha: uuid("00000000-0000-4000-8000-000000060401"),
+  articleBeta: uuid("00000000-0000-4000-8000-000000060402"),
 } as const;
 
 type Services = AppConfig | Database | ClockService | StructuredLogger | TokenService;
@@ -153,14 +154,14 @@ const seed = () =>
         .insert(vaultMemberships)
         .values([
           {
-            id: "00000000-0000-4000-8000-000000060501",
+            id: uuid("00000000-0000-4000-8000-000000060501"),
             vaultId: ids.vault,
             userId: ids.alice,
             role: "OWNER",
             createdAt: now,
           },
           {
-            id: "00000000-0000-4000-8000-000000060502",
+            id: uuid("00000000-0000-4000-8000-000000060502"),
             vaultId: ids.otherVault,
             userId: ids.bob,
             role: "OWNER",
@@ -272,8 +273,8 @@ beforeEach(async () => {
   state = { started, dataDir, aliceToken: "", bobToken: "" };
   await seed();
   const [aliceToken, bobToken] = await Promise.all([
-    run(Effect.flatMap(TokenService, (tokens) => tokens.issueAccessToken(ids.alice as Uuid, now))),
-    run(Effect.flatMap(TokenService, (tokens) => tokens.issueAccessToken(ids.bob as Uuid, now))),
+    run(Effect.flatMap(TokenService, (tokens) => tokens.issueAccessToken(ids.alice, now))),
+    run(Effect.flatMap(TokenService, (tokens) => tokens.issueAccessToken(ids.bob, now))),
   ]);
   state = { started, dataDir, aliceToken, bobToken };
 });

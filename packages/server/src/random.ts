@@ -1,5 +1,6 @@
 import { randomBytes } from "node:crypto";
 
+import { Uuid } from "@great-minds/domain";
 import { Context, Effect, Layer } from "effect";
 
 type RandomBytesServiceShape = {
@@ -45,7 +46,7 @@ export const formatUuid7 = (timestampMillis: number, random: Uint8Array) => {
   bytes[5] = timestamp & 0xff;
   bytes[6] = (bytes[6] & 0x0f) | 0x70;
   bytes[8] = (bytes[8] & 0x3f) | 0x80;
-  return formatUuid(bytes);
+  return Uuid.make(formatUuid(bytes), { disableChecks: true });
 };
 
 export const makeTestRandomBytes = (seed = 0) => {

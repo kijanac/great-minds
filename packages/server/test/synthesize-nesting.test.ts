@@ -1,3 +1,5 @@
+import { Uuid } from "@great-minds/domain";
+import { Schema } from "effect";
 import { describe, expect, it } from "vitest";
 
 import {
@@ -6,8 +8,12 @@ import {
   type LocalTopic,
 } from "../src/compile-llm-core.ts";
 
-const topic = (id: string, ideas: readonly string[]): LocalTopic => ({
-  localTopicId: id,
+const uuid = Schema.decodeSync(Uuid);
+const idFor = (label: string) =>
+  uuid(`00000000-0000-4000-8000-${Buffer.from(label).toString("hex").padStart(12, "0")}`);
+
+const topic = (id: string, ideas: readonly Uuid[]): LocalTopic => ({
+  localTopicId: idFor(id),
   chunkIdx: 0,
   slug: id,
   title: id,
@@ -16,7 +22,7 @@ const topic = (id: string, ideas: readonly string[]): LocalTopic => ({
 });
 
 const ideas = (prefix: string, count: number, start = 1) =>
-  Array.from({ length: count }, (_v, index) => `${prefix}${start + index}`);
+  Array.from({ length: count }, (_v, index) => idFor(`${prefix}${start + index}`));
 
 const covered = (topics: readonly LocalTopic[]) =>
   new Set(topics.flatMap((entry) => [...entry.subsumedIdeaIds]));
@@ -36,7 +42,7 @@ describe("findNestingViolations", () => {
 
   it("treats 4-of-5 containment as nested and equal-size twins as premerge territory", () => {
     const umbrella = topic("u", ideas("x", 20));
-    const nearFacet = topic("f", [...ideas("x", 4), "z1"]);
+    const nearFacet = topic("f", [...ideas("x", 4), idFor("z1")]);
     expect(findNestingViolations([umbrella, nearFacet])).toEqual([{ umbrella: 0, facets: [1] }]);
     const twinA = topic("t1", ideas("x", 6));
     const twinB = topic("t2", ideas("x", 6));
@@ -61,17 +67,17 @@ describe("applyNestingFloor", () => {
     const facetB = topic("fb", ideas("x", 12, 9));
     const input = [umbrella, facetA, facetB];
     const result = applyNestingFloor(input, findNestingViolations(input));
-    expect(result.map((entry) => entry.localTopicId)).toEqual(["fa", "fb"]);
+    expect(result.map((entry) => entry.localTopicId)).toEqual(["fa", "fb"].map(idFor));
     expect(covered(result)).toEqual(covered(input));
   });
 
   it("drops a tiny residue only when its ideas survive elsewhere", () => {
     const coveredUmbrella = topic("u1", ideas("x", 12));
     const coveringFacet = topic("f1", ideas("x", 10));
-    const lateral = topic("l1", ["x11", "x12", "z1", "z2", "z3", "z4"]);
+    const lateral = topic("l1", ["x11", "x12", "z1", "z2", "z3", "z4"].map(idFor));
     const droppable = [coveredUmbrella, coveringFacet, lateral];
     const dropped = applyNestingFloor(droppable, findNestingViolations(droppable));
-    expect(dropped.map((entry) => entry.localTopicId)).toEqual(["f1", "l1"]);
+    expect(dropped.map((entry) => entry.localTopicId)).toEqual(["f1", "l1"].map(idFor));
     expect(covered(dropped)).toEqual(covered(droppable));
 
     const orphanUmbrella = topic("u2", ideas("y", 12));
@@ -80,8 +86,8 @@ describe("applyNestingFloor", () => {
       [orphanUmbrella, orphanFacet],
       findNestingViolations([orphanUmbrella, orphanFacet]),
     );
-    expect(kept.map((entry) => entry.localTopicId)).toEqual(["u2", "f2"]);
-    expect(kept[0].subsumedIdeaIds).toEqual(["y11", "y12"]);
+    expect(kept.map((entry) => entry.localTopicId)).toEqual(["u2", "f2"].map(idFor));
+    expect(kept[0].subsumedIdeaIds).toEqual(["y11", "y12"].map(idFor));
     expect(covered(kept)).toEqual(covered([orphanUmbrella, orphanFacet]));
   });
 
@@ -91,7 +97,7 @@ describe("applyNestingFloor", () => {
     const leaf = topic("l", ideas("x", 10));
     const input = [grand, middle, leaf];
     const result = applyNestingFloor(input, findNestingViolations(input));
-    expect(result.map((entry) => entry.localTopicId)).toEqual(["g", "m", "l"]);
+    expect(result.map((entry) => entry.localTopicId)).toEqual(["g", "m", "l"].map(idFor));
     expect(result[0].subsumedIdeaIds).toEqual(ideas("x", 20, 21).toSorted());
     expect(result[1].subsumedIdeaIds).toEqual(ideas("x", 10, 11).toSorted());
     expect(result[2].subsumedIdeaIds).toEqual(ideas("x", 10).toSorted());

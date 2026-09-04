@@ -12,7 +12,7 @@ import {
   topics,
   wikiArticles,
 } from "@great-minds/database";
-import type { Uuid } from "@great-minds/domain";
+import { Uuid } from "@great-minds/domain";
 import { and, asc, eq, inArray, like, notInArray, sql } from "drizzle-orm";
 import { Context, Effect, Layer } from "effect";
 
@@ -181,7 +181,7 @@ export const CompilePhasesLive = Layer.effect(
               file.etag !== null &&
               hasMetadata
             ) {
-              sourceId = document.id as Uuid;
+              sourceId = document.id;
             } else {
               const content = yield* storage.readText(vaultOwner(vaultId), file.path);
               contentByPath.set(file.path, content);
@@ -241,7 +241,7 @@ export const CompilePhasesLive = Layer.effect(
           if (filename.startsWith("_")) continue;
           const document = documentsByPath.get(file.path);
           if (scope === "raw" && document !== undefined && file.etag !== null) {
-            etags.push({ id: document.id as Uuid, path: file.path, etag: file.etag });
+            etags.push({ id: document.id, path: file.path, etag: file.etag });
           }
           const hasMetadata = existingHashes.has(`${file.path}\u0000-1`);
           if (
@@ -408,7 +408,7 @@ export const CompilePhasesLive = Layer.effect(
           .select({ filePath: wikiArticles.filePath })
           .from(wikiArticles)
           .where(
-            and(eq(wikiArticles.vaultId, vaultId), eq(wikiArticles.topicId, topic.topicId as Uuid)),
+            and(eq(wikiArticles.vaultId, vaultId), eq(wikiArticles.topicId, topic.topicId)),
           ));
         const previousPath = previousRows[0]?.filePath;
         const content = serializeFrontmatter(
@@ -424,9 +424,9 @@ export const CompilePhasesLive = Layer.effect(
         yield* db.query((d) => d
           .insert(wikiArticles)
           .values({
-            id: crypto.randomUUID(),
+            id: Uuid.make(crypto.randomUUID(), { disableChecks: true }),
             vaultId,
-            topicId: topic.topicId as Uuid,
+            topicId: topic.topicId,
             filePath: path,
             fileHash: fileContentHash(content),
             bodyHash: bodyContentHash(output.body),
@@ -461,7 +461,7 @@ export const CompilePhasesLive = Layer.effect(
             renderedFromHash: topicContentHash(topic),
             updatedAt: sql`now()`,
           })
-          .where(eq(topics.topicId, topic.topicId as Uuid)));
+          .where(eq(topics.topicId, topic.topicId)));
       });
 
     const applyArchiveTransitions = (vaultId: Uuid, transitions: readonly ArchiveTransition[]) =>
@@ -565,13 +565,13 @@ export const CompilePhasesLive = Layer.effect(
             .where(
               inArray(
                 topicMembership.topicId,
-                validated.map((topic) => topic.topicId as Uuid),
+                validated.map((topic) => topic.topicId),
               ),
             ));
           const memberships = validated.flatMap((topic) =>
             topic.subsumedIdeaIds.map((ideaId) => ({
-              topicId: topic.topicId as Uuid,
-              ideaId: ideaId as Uuid,
+              topicId: topic.topicId,
+              ideaId,
             })),
           );
           if (memberships.length > 0) {
@@ -591,13 +591,13 @@ export const CompilePhasesLive = Layer.effect(
                 ),
               ));
           }
-          const slugToId = new Map(validated.map((topic) => [topic.slug, topic.topicId as Uuid]));
+          const slugToId = new Map(validated.map((topic) => [topic.slug, topic.topicId]));
           const links = validated.flatMap((topic) =>
             topic.linkTargets.flatMap((slug) => {
               const target = slugToId.get(slug);
               return target === undefined || target === topic.topicId
                 ? []
-                : [{ sourceTopicId: topic.topicId as Uuid, targetTopicId: target }];
+                : [{ sourceTopicId: topic.topicId, targetTopicId: target }];
             }),
           );
           if (links.length > 0) yield* db.query((d) => d.insert(topicLinks).values(links));
@@ -616,21 +616,21 @@ export const CompilePhasesLive = Layer.effect(
               for (const ideaId of leftIds) if (rightIds.has(ideaId)) shared += 1;
               if (shared === 0) continue;
               const jaccard = shared / (leftIds.size + rightIds.size - shared);
-              related.get(left.topicId)!.push({ id: right.topicId as Uuid, shared, jaccard });
-              related.get(right.topicId)!.push({ id: left.topicId as Uuid, shared, jaccard });
+              related.get(left.topicId)!.push({ id: right.topicId, shared, jaccard });
+              related.get(right.topicId)!.push({ id: left.topicId, shared, jaccard });
             }
           }
           for (const topic of validated) {
             yield* db.query((d) => d
               .delete(topicRelated)
-              .where(eq(topicRelated.topicId, topic.topicId as Uuid)));
+              .where(eq(topicRelated.topicId, topic.topicId)));
             const rows = (related.get(topic.topicId) ?? [])
               .toSorted(
                 (left, right) => right.jaccard - left.jaccard || compareText(left.id, right.id),
               )
               .slice(0, config.compileDeriveRelatedLimit)
               .map((row) => ({
-                topicId: topic.topicId as Uuid,
+                topicId: topic.topicId,
                 relatedTopicId: row.id,
                 sharedIdeas: row.shared,
                 jaccard: row.jaccard,
@@ -698,7 +698,7 @@ export const CompilePhasesLive = Layer.effect(
             const source = articleByTopic.get(topic.topicId);
             if (source === undefined)
               throw new Error(`Rendered topic ${topic.topicId} has no wiki article`);
-            sourceIds.push(source.id as Uuid);
+            sourceIds.push(source.id);
             walked += 1;
             for (const path of extractWikiLinkTargets(content.success)) {
               const slug = path.slice(path.lastIndexOf("/") + 1, -3);
@@ -709,8 +709,8 @@ export const CompilePhasesLive = Layer.effect(
                 throw new Error(`Rendered topic ${target.topicId} has no wiki article`);
               }
               edges.push({
-                sourceArticleId: source.id as Uuid,
-                targetArticleId: targetArticle.id as Uuid,
+                sourceArticleId: source.id,
+                targetArticleId: targetArticle.id,
               });
             }
             yield* pipeline.updateProgress(

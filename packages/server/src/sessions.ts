@@ -10,8 +10,7 @@ import {
   type SessionBtwEvent,
   type SessionEvent,
   type SessionExchangeEvent,
-  type SessionId,
-  SessionId as SessionIdSchema,
+  SessionId,
   type SessionMetaEvent,
   SessionMetaEvent as SessionMetaEventSchema,
   type SessionOrigin,
@@ -21,8 +20,7 @@ import {
   type SessionResponse,
   type ThinkingSource,
   ThinkingSource as ThinkingSourceSchema,
-  type Uuid,
-  Uuid as UuidSchema,
+  Uuid,
 } from "@great-minds/domain";
 import { and, asc, desc, eq, sql } from "drizzle-orm";
 import { Context, Effect, Layer, Schema } from "effect";
@@ -43,7 +41,7 @@ import { ClockService } from "./clock.ts";
 export const ReplyNodeStatus = Schema.Literals(["pending", "completed"] as const);
 
 export const StoredBtwAnchor = Schema.Struct({
-  exchange_id: UuidSchema,
+  exchange_id: Uuid,
   quote: Schema.String,
   block_offset: Schema.Number,
   context: Schema.String,
@@ -52,9 +50,9 @@ export type StoredBtwAnchor = typeof StoredBtwAnchor.Type;
 
 export const ReplyNode = Schema.Struct({
   type: Schema.Literal("reply"),
-  reply_id: UuidSchema,
-  parent_reply_id: Schema.NullOr(UuidSchema),
-  exchange_id: UuidSchema,
+  reply_id: Uuid,
+  parent_reply_id: Schema.NullOr(Uuid),
+  exchange_id: Uuid,
   btw: Schema.optionalKey(StoredBtwAnchor),
   question: Schema.String,
   status: ReplyNodeStatus,
@@ -68,14 +66,13 @@ export type ReplyNode = typeof ReplyNode.Type;
 export const StoredSessionEvent = Schema.Union([SessionMetaEventSchema, ReplyNode]);
 export type StoredSessionEvent = typeof StoredSessionEvent.Type;
 
-const decodeSessionId = Schema.decodeUnknownSync(SessionIdSchema);
 const decodeSessionOrigin = Schema.decodeUnknownSync(Schema.NullOr(SessionOriginSchema));
 const decodeMetaEvent = Schema.decodeUnknownEffect(SessionMetaEventSchema);
 const decodeReplyNode = Schema.decodeUnknownEffect(ReplyNode);
 
 const dateIso = (value: Date) => value.toISOString();
 
-const sessionPath = (sessionId: string, extension: "jsonl" | "md") =>
+const sessionPath = (sessionId: SessionId, extension: "jsonl" | "md") =>
   `sessions/${sessionId}.${extension}`;
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
@@ -149,7 +146,7 @@ const sessionOverview = (
   query: row.query,
   created_at: dateIso(row.createdAt),
   updated_at: dateIso(row.updatedAt),
-  user_id: row.userId as Uuid,
+  user_id: row.userId,
   origin: normalizeOrigin(decodeSessionOrigin(row.origin)),
   origin_title: originTitle,
 });
@@ -380,7 +377,7 @@ export const SessionsServiceLive = Layer.effect(
         return row?.title ?? null;
       });
 
-    const decodeEventLine = (sessionId: string, lineNumber: number, data: unknown) =>
+    const decodeEventLine = (sessionId: SessionId, lineNumber: number, data: unknown) =>
       Effect.gen(function* () {
         const eventType = isRecord(data) && typeof data.type === "string" ? data.type : null;
         const decoded =
@@ -413,7 +410,7 @@ export const SessionsServiceLive = Layer.effect(
       });
 
     const parseEvents = (
-      sessionId: string,
+      sessionId: SessionId,
       content: string,
       options: { readonly isolateLatestMeta: boolean },
     ) =>
@@ -474,19 +471,19 @@ export const SessionsServiceLive = Layer.effect(
       Effect.gen(function* () {
         const now = yield* clock.now;
         const bytes = yield* randomBytes.bytes(16);
-        return decodeSessionId(formatUuid7(now.getTime(), bytes));
+        return SessionId.make(formatUuid7(now.getTime(), bytes), { disableChecks: true });
       });
 
     const nowIso = () => Effect.map(clock.now, (now) => now.toISOString());
 
-    const appendEvent = (vaultId: Uuid, sessionId: string, event: StoredSessionEvent) =>
+    const appendEvent = (vaultId: Uuid, sessionId: SessionId, event: StoredSessionEvent) =>
       storage.appendText(
         vaultOwner(vaultId),
         sessionPath(sessionId, "jsonl"),
         `${JSON.stringify(event)}\n`,
       );
 
-    const loadAllEvents = (vaultId: Uuid, sessionId: string) =>
+    const loadAllEvents = (vaultId: Uuid, sessionId: SessionId) =>
       Effect.gen(function* () {
         const result = yield* Effect.result(
           storage.readText(vaultOwner(vaultId), sessionPath(sessionId, "jsonl")),
@@ -497,7 +494,7 @@ export const SessionsServiceLive = Layer.effect(
         return yield* parseEvents(sessionId, result.success, { isolateLatestMeta: false });
       });
 
-    const rebuildMarkdown = (vaultId: Uuid, sessionId: string) =>
+    const rebuildMarkdown = (vaultId: Uuid, sessionId: SessionId) =>
       Effect.gen(function* () {
         const events = yield* loadAllEvents(vaultId, sessionId).pipe(
           Effect.catchTag("NotFound", (error) => Effect.die(error)),
@@ -557,7 +554,7 @@ export const SessionsServiceLive = Layer.effect(
       ts,
     });
 
-    const appendNode = (vaultId: Uuid, sessionId: string, node: ReplyNode) =>
+    const appendNode = (vaultId: Uuid, sessionId: SessionId, node: ReplyNode) =>
       Effect.gen(function* () {
         yield* appendEvent(vaultId, sessionId, node);
         yield* db.query((d) => d
@@ -599,7 +596,7 @@ export const SessionsServiceLive = Layer.effect(
             .limit(1));
           const existing = existingRows[0]?.id;
           if (existing !== undefined) {
-            const events = yield* loadAllEvents(vaultId, decodeSessionId(existing)).pipe(
+            const events = yield* loadAllEvents(vaultId, existing).pipe(
               Effect.catchTag("NotFound", () =>
                 logger
                   .error("session_create_replay_missing_jsonl", {
@@ -625,7 +622,7 @@ export const SessionsServiceLive = Layer.effect(
                 pendingNode(ts, input.pending, parentReplyIdFor(currentNodes(events), input.pending.btw)),
               );
             }
-            return decodeSessionId(existing);
+            return existing;
           }
 
           const sessionId = yield* newSessionId();
@@ -858,7 +855,7 @@ export const SessionsServiceLive = Layer.effect(
           const details: OriginSessionDetail[] = [];
           for (const row of rows) {
             const result = yield* Effect.result(
-              readText(vaultId, row.id as SessionId, "jsonl", "Session not found").pipe(
+              readText(vaultId, row.id, "jsonl", "Session not found").pipe(
                 Effect.flatMap((content) =>
                   parseEvents(row.id, content, { isolateLatestMeta: true }),
                 ),

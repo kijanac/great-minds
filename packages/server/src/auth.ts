@@ -1,8 +1,8 @@
 import { randomUUID } from "node:crypto";
 
 import { apiKeys, authCodes, Database, refreshTokens, users } from "@great-minds/database";
-import { Email, NotFound, Unauthorized } from "@great-minds/domain";
-import type { ApiKey, ApiKeyWithSecret, AuthContext, TokenPair, Uuid } from "@great-minds/domain";
+import { Email, NotFound, Unauthorized, Uuid } from "@great-minds/domain";
+import type { ApiKey, ApiKeyWithSecret, AuthContext, TokenPair } from "@great-minds/domain";
 import { and, desc, eq, gt } from "drizzle-orm";
 import { Context, Effect, Layer, Result, Schema } from "effect";
 
@@ -36,8 +36,6 @@ export class AuthService extends Context.Service<AuthService, AuthServiceShape>(
 const normalizeEmail = (email: Email): Email =>
   Schema.decodeUnknownSync(Email)(email.trim().toLowerCase());
 
-const asUuid = (value: string): Uuid => value as Uuid;
-
 const asEmail = (value: string): Email => value as Email;
 
 const addMinutes = (date: Date, minutes: number) => new Date(date.getTime() + minutes * 60 * 1000);
@@ -51,7 +49,7 @@ const tokenPair = (accessToken: string, refreshToken: string): TokenPair => ({
 });
 
 const apiKeyResponse = (row: ApiKeyRow): ApiKey => ({
-  id: asUuid(row.id),
+  id: row.id,
   label: row.label,
   created_at: row.createdAt.toISOString(),
   revoked: row.revoked,
@@ -97,7 +95,7 @@ export const AuthServiceLive = Layer.effect(
               const accessToken = yield* tokens.issueAccessToken(userId, now);
               const refreshToken = yield* generateRefreshToken;
               yield* tx.insert(refreshTokens).values({
-                id: randomUUID(),
+                id: Uuid.make(randomUUID(), { disableChecks: true }),
                 userId,
                 tokenHash: sha256Hex(refreshToken),
                 expiresAt: addDays(now, config.jwtRefreshExpiryDays),
@@ -125,7 +123,7 @@ export const AuthServiceLive = Layer.effect(
                   .set({ used: true })
                   .where(and(eq(authCodes.email, email), eq(authCodes.used, false)));
                 yield* tx.insert(authCodes).values({
-                  id: randomUUID(),
+                  id: Uuid.make(randomUUID(), { disableChecks: true }),
                   email,
                   codeHash: sha256Hex(code),
                   expiresAt: addMinutes(now, config.authCodeExpiryMinutes),
@@ -170,7 +168,7 @@ export const AuthServiceLive = Layer.effect(
                 const created = yield* tx
                   .insert(users)
                   .values({
-                    id: randomUUID(),
+                    id: Uuid.make(randomUUID(), { disableChecks: true }),
                     email,
                   })
                   .onConflictDoNothing({ target: users.email })
@@ -182,7 +180,7 @@ export const AuthServiceLive = Layer.effect(
                     : firstUser(
                         yield* tx.select().from(users).where(eq(users.email, email)).limit(1),
                       );
-                return asUuid(user.id);
+                return user.id;
               }),
             );
           const pair = yield* issueTokenPair(result);
@@ -216,10 +214,10 @@ export const AuthServiceLive = Layer.effect(
                   .update(refreshTokens)
                   .set({ revoked: true })
                   .where(eq(refreshTokens.id, match.id));
-                const accessToken = yield* tokens.issueAccessToken(asUuid(match.userId), now);
+                const accessToken = yield* tokens.issueAccessToken(match.userId, now);
                 const nextRefreshToken = yield* generateRefreshToken;
                 yield* tx.insert(refreshTokens).values({
-                  id: randomUUID(),
+                  id: Uuid.make(randomUUID(), { disableChecks: true }),
                   userId: match.userId,
                   tokenHash: sha256Hex(nextRefreshToken),
                   expiresAt: addDays(now, config.jwtRefreshExpiryDays),
@@ -243,7 +241,7 @@ export const AuthServiceLive = Layer.effect(
             const user = userRows[0];
             if (user !== undefined) {
               return {
-                user_id: asUuid(user.id),
+                user_id: user.id,
                 email: asEmail(user.email),
                 credential_kind: "jwt",
               };
@@ -254,7 +252,7 @@ export const AuthServiceLive = Layer.effect(
           const apiKeyUser = apiKeyRows[0];
           if (apiKeyUser !== undefined) {
             return {
-              user_id: asUuid(apiKeyUser.id),
+              user_id: apiKeyUser.id,
               email: asEmail(apiKeyUser.email),
               credential_kind: "api_key",
             };
@@ -267,7 +265,7 @@ export const AuthServiceLive = Layer.effect(
           const rows = yield* db.query((d) => d
             .insert(apiKeys)
             .values({
-              id: randomUUID(),
+              id: Uuid.make(randomUUID(), { disableChecks: true }),
               userId,
               keyHash: sha256Hex(rawKey),
               label,

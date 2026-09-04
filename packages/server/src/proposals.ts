@@ -13,7 +13,7 @@ import {
   type ProposalPage,
   type ProposalStatus,
   type ProposalUpdate,
-  type Uuid,
+  Uuid,
 } from "@great-minds/domain";
 import { and, desc, eq, sql } from "drizzle-orm";
 import { Context, Effect, Layer } from "effect";
@@ -107,8 +107,8 @@ const statusToDb = (status: ProposalStatus): DbProposal["status"] => {
 };
 
 const proposalOverview = (row: DbProposal): ProposalOverview => ({
-  id: row.id as Uuid,
-  vault_id: row.vaultId as Uuid,
+  id: row.id,
+  vault_id: row.vaultId,
   status: statusFromDb(row.status),
   title: row.title,
   content_type: row.contentType,
@@ -117,10 +117,10 @@ const proposalOverview = (row: DbProposal): ProposalOverview => ({
 
 const proposalResponse = (row: DbProposal): Proposal => ({
   ...proposalOverview(row),
-  user_id: row.userId as Uuid,
+  user_id: row.userId,
   author: row.author,
   dest_path: row.destPath,
-  source_id: row.sourceId as Uuid,
+  source_id: row.sourceId,
 });
 
 const proposalStagingPath = (proposalId: Uuid) => `${proposalId}.md`;
@@ -170,7 +170,7 @@ export const ProposalsServiceLive = Layer.effect(
       },
     ) =>
       Effect.gen(function* () {
-        const proposalId = data.id ?? (randomUUID() as Uuid);
+        const proposalId = data.id ?? Uuid.make(randomUUID(), { disableChecks: true });
         const rows = yield* db.query((d) => d
           .insert(sourceProposals)
           .values({
@@ -232,8 +232,8 @@ export const ProposalsServiceLive = Layer.effect(
             return yield* new BadRequest({ detail: "content required" });
           }
           const contentType = input.content_type?.trim() || "user_suggestion";
-          const proposalId = randomUUID() as Uuid;
-          const sourceId = randomUUID() as Uuid;
+          const proposalId = Uuid.make(randomUUID(), { disableChecks: true });
+          const sourceId = Uuid.make(randomUUID(), { disableChecks: true });
           return yield* insertProposal(vaultId, userId, {
             id: proposalId,
             sourceId,
@@ -333,18 +333,18 @@ export const ProposalsServiceLive = Layer.effect(
           }
           if (input.status === "approved") {
             if (proposal.contentType === SOURCE_DELETION_CONTENT_TYPE) {
-              yield* sourceDocuments.deleteSource(vaultId, proposal.sourceId as Uuid);
-              yield* proposalStorage.deletePath(proposalStagingPath(proposal.id as Uuid));
+              yield* sourceDocuments.deleteSource(vaultId, proposal.sourceId);
+              yield* proposalStorage.deletePath(proposalStagingPath(proposal.id));
             } else {
               const rendered = yield* proposalStorage
-                .readText(proposalStagingPath(proposal.id as Uuid))
+                .readText(proposalStagingPath(proposal.id))
                 .pipe(Effect.orDie);
               yield* vaultStorage.writeText(vaultOwner(vaultId), proposal.destPath, rendered);
               yield* sourceDocuments.index(vaultId, proposal.destPath, rendered, null);
               yield* ensureCompileIntent(vaultId);
             }
           } else {
-            yield* proposalStorage.deletePath(proposalStagingPath(proposal.id as Uuid));
+            yield* proposalStorage.deletePath(proposalStagingPath(proposal.id));
           }
           const rows = yield* db.query((d) => d
             .update(sourceProposals)

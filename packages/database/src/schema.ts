@@ -1,4 +1,5 @@
 import { sql } from "drizzle-orm";
+import type { SessionId, Uuid } from "@great-minds/domain";
 import {
   bigint,
   boolean,
@@ -23,6 +24,8 @@ import {
 } from "drizzle-orm/pg-core";
 
 const timestamptz = (name: string) => timestamp(name, { withTimezone: true });
+const uuidColumn = (name: string) => uuid(name).$type<Uuid>();
+const sessionIdColumn = (name: string) => text(name).$type<SessionId>();
 
 export const tsvector = customType<{ data: string; driverData: string }>({
   dataType() {
@@ -51,7 +54,7 @@ export const fileIngestFileStatus = pgEnum("file_ingest_file_status", [
 export const authCodes = pgTable(
   "auth_codes",
   {
-    id: uuid("id").primaryKey(),
+    id: uuidColumn("id").primaryKey(),
     email: varchar("email", { length: 320 }).notNull(),
     codeHash: varchar("code_hash", { length: 64 }).notNull(),
     expiresAt: timestamptz("expires_at").notNull(),
@@ -64,7 +67,7 @@ export const authCodes = pgTable(
 export const users = pgTable(
   "users",
   {
-    id: uuid("id").primaryKey(),
+    id: uuidColumn("id").primaryKey(),
     email: varchar("email", { length: 320 }).notNull(),
     createdAt: timestamptz("created_at").defaultNow().notNull(),
   },
@@ -74,8 +77,8 @@ export const users = pgTable(
 export const apiKeys = pgTable(
   "api_keys",
   {
-    id: uuid("id").primaryKey(),
-    userId: uuid("user_id").notNull(),
+    id: uuidColumn("id").primaryKey(),
+    userId: uuidColumn("user_id").notNull(),
     keyHash: varchar("key_hash", { length: 64 }).notNull(),
     label: text("label").notNull(),
     revoked: boolean("revoked").notNull(),
@@ -94,8 +97,8 @@ export const apiKeys = pgTable(
 export const refreshTokens = pgTable(
   "refresh_tokens",
   {
-    id: uuid("id").primaryKey(),
-    userId: uuid("user_id").notNull(),
+    id: uuidColumn("id").primaryKey(),
+    userId: uuidColumn("user_id").notNull(),
     tokenHash: varchar("token_hash", { length: 64 }).notNull(),
     expiresAt: timestamptz("expires_at").notNull(),
     revoked: boolean("revoked").notNull(),
@@ -114,8 +117,8 @@ export const refreshTokens = pgTable(
 export const webauthnCredentials = pgTable(
   "webauthn_credentials",
   {
-    id: uuid("id").primaryKey(),
-    userId: uuid("user_id").notNull(),
+    id: uuidColumn("id").primaryKey(),
+    userId: uuidColumn("user_id").notNull(),
     credentialId: text("credential_id").notNull(),
     publicKey: text("public_key").notNull(),
     signCount: bigint("sign_count", { mode: "number" }).default(0).notNull(),
@@ -142,7 +145,7 @@ export const webauthnChallenges = pgTable(
   {
     challenge: text("challenge").primaryKey(),
     kind: text("kind").notNull(),
-    userId: uuid("user_id"),
+    userId: uuidColumn("user_id"),
     expiresAt: timestamptz("expires_at").notNull(),
   },
   (table) => [
@@ -158,9 +161,9 @@ export const webauthnChallenges = pgTable(
 export const vaults = pgTable(
   "vaults",
   {
-    id: uuid("id").primaryKey(),
+    id: uuidColumn("id").primaryKey(),
     name: varchar("name", { length: 255 }).notNull(),
-    ownerId: uuid("owner_id").notNull(),
+    ownerId: uuidColumn("owner_id").notNull(),
     createdAt: timestamptz("created_at").defaultNow().notNull(),
   },
   (table) => [
@@ -175,8 +178,8 @@ export const vaults = pgTable(
 export const compileCacheEntries = pgTable(
   "compile_cache_entries",
   {
-    id: uuid("id").defaultRandom().primaryKey(),
-    vaultId: uuid("vault_id").notNull(),
+    id: uuidColumn("id").defaultRandom().primaryKey(),
+    vaultId: uuidColumn("vault_id").notNull(),
     phase: text("phase").notNull(),
     cacheKey: text("cache_key").notNull(),
     value: jsonb("value").notNull(),
@@ -200,17 +203,17 @@ export const compileCacheEntries = pgTable(
 export const llmCostEvents = pgTable(
   "llm_cost_events",
   {
-    id: uuid("id").defaultRandom().primaryKey(),
+    id: uuidColumn("id").defaultRandom().primaryKey(),
     createdAt: timestamptz("created_at").defaultNow().notNull(),
-    userId: uuid("user_id"),
-    vaultId: uuid("vault_id"),
+    userId: uuidColumn("user_id"),
+    vaultId: uuidColumn("vault_id"),
     eventType: text("event_type").notNull(),
     costUsd: numeric("cost_usd", { precision: 12, scale: 6 }).notNull(),
     correlationId: text("correlation_id"),
     phase: text("phase"),
     model: text("model"),
     promptHash: text("prompt_hash"),
-    runId: uuid("run_id"),
+    runId: uuidColumn("run_id"),
     promptTokens: integer("prompt_tokens"),
     completionTokens: integer("completion_tokens"),
     generationId: text("generation_id"),
@@ -241,9 +244,9 @@ export const prompts = pgTable("prompts", {
 export const vaultMemberships = pgTable(
   "vault_memberships",
   {
-    id: uuid("id").primaryKey(),
-    vaultId: uuid("vault_id").notNull(),
-    userId: uuid("user_id").notNull(),
+    id: uuidColumn("id").primaryKey(),
+    vaultId: uuidColumn("vault_id").notNull(),
+    userId: uuidColumn("user_id").notNull(),
     role: memberRole("role").notNull(),
     createdAt: timestamptz("created_at").defaultNow().notNull(),
   },
@@ -265,8 +268,8 @@ export const vaultMemberships = pgTable(
 export const pipelineRuns = pgTable(
   "pipeline_runs",
   {
-    id: uuid("id").primaryKey(),
-    vaultId: uuid("vault_id").notNull(),
+    id: uuidColumn("id").primaryKey(),
+    vaultId: uuidColumn("vault_id").notNull(),
     trigger: text("trigger").notNull(),
     status: text("status").notNull(),
     currentPhase: text("current_phase").notNull(),
@@ -275,10 +278,10 @@ export const pipelineRuns = pgTable(
       .default(sql`'[]'::jsonb`)
       .notNull(),
     error: text("error"),
-    ingestTaskId: uuid("ingest_task_id"),
-    compileIntentId: uuid("compile_intent_id"),
-    compileTaskId: uuid("compile_task_id"),
-    activeTaskId: uuid("active_task_id"),
+    ingestTaskId: uuidColumn("ingest_task_id"),
+    compileIntentId: uuidColumn("compile_intent_id"),
+    compileTaskId: uuidColumn("compile_task_id"),
+    activeTaskId: uuidColumn("active_task_id"),
     activeTaskType: text("active_task_type"),
     createdAt: timestamptz("created_at").defaultNow().notNull(),
     updatedAt: timestamptz("updated_at").defaultNow().notNull(),
@@ -298,8 +301,8 @@ export const pipelineRuns = pgTable(
 export const fileIngestBatches = pgTable(
   "file_ingest_batches",
   {
-    id: uuid("id").primaryKey(),
-    createdBy: uuid("created_by").notNull(),
+    id: uuidColumn("id").primaryKey(),
+    createdBy: uuidColumn("created_by").notNull(),
     status: fileIngestBatchStatus("status").notNull(),
     error: text("error"),
     expiresAt: timestamptz("expires_at").notNull(),
@@ -326,7 +329,7 @@ export const fileIngestBatches = pgTable(
 export const fileIngestFiles = pgTable(
   "file_ingest_files",
   {
-    batchId: uuid("batch_id").notNull(),
+    batchId: uuidColumn("batch_id").notNull(),
     hash: varchar("hash", { length: 64 }).notNull(),
     position: integer("position").notNull(),
     name: text("name").notNull(),
@@ -358,12 +361,12 @@ export const fileIngestFiles = pgTable(
 export const urlIngestRequests = pgTable(
   "url_ingest_requests",
   {
-    id: uuid("id").primaryKey(),
-    createdBy: uuid("created_by").notNull(),
+    id: uuidColumn("id").primaryKey(),
+    createdBy: uuidColumn("created_by").notNull(),
     canonicalUrl: text("canonical_url").notNull(),
     origin: text("origin"),
     dispatchedAt: timestamptz("dispatched_at"),
-    dispatchedTaskId: uuid("dispatched_task_id"),
+    dispatchedTaskId: uuidColumn("dispatched_task_id"),
     createdAt: timestamptz("created_at").defaultNow().notNull(),
     updatedAt: timestamptz("updated_at").defaultNow().notNull(),
   },
@@ -387,12 +390,12 @@ export const urlIngestRequests = pgTable(
 export const compileIntents = pgTable(
   "compile_intents",
   {
-    id: uuid("id").defaultRandom().primaryKey(),
-    vaultId: uuid("vault_id").notNull(),
-    pipelineRunId: uuid("pipeline_run_id"),
+    id: uuidColumn("id").defaultRandom().primaryKey(),
+    vaultId: uuidColumn("vault_id").notNull(),
+    pipelineRunId: uuidColumn("pipeline_run_id"),
     createdAt: timestamptz("created_at").defaultNow().notNull(),
     dispatchedAt: timestamptz("dispatched_at"),
-    dispatchedTaskId: uuid("dispatched_task_id"),
+    dispatchedTaskId: uuidColumn("dispatched_task_id"),
     satisfiedAt: timestamptz("satisfied_at"),
   },
   (table) => [
@@ -419,8 +422,8 @@ export const compileIntents = pgTable(
 export const searchIndex = pgTable(
   "search_index",
   {
-    id: uuid("id").defaultRandom().primaryKey(),
-    vaultId: uuid("vault_id").notNull(),
+    id: uuidColumn("id").defaultRandom().primaryKey(),
+    vaultId: uuidColumn("vault_id").notNull(),
     path: text("path").notNull(),
     chunkIndex: integer("chunk_index").notNull(),
     heading: text("heading").notNull(),
@@ -450,9 +453,9 @@ export const searchIndex = pgTable(
 export const sessions = pgTable(
   "sessions",
   {
-    id: text("id").notNull(),
-    vaultId: uuid("vault_id").notNull(),
-    userId: uuid("user_id").notNull(),
+    id: sessionIdColumn("id").notNull(),
+    vaultId: uuidColumn("vault_id").notNull(),
+    userId: uuidColumn("user_id").notNull(),
     query: text("query").notNull(),
     origin: jsonb("origin"),
     createdAt: timestamptz("created_at").notNull(),
@@ -484,10 +487,10 @@ export const sessions = pgTable(
 export const replies = pgTable(
   "replies",
   {
-    id: uuid("id").primaryKey(),
-    vaultId: uuid("vault_id").notNull(),
-    userId: uuid("user_id").notNull(),
-    sessionId: text("session_id"),
+    id: uuidColumn("id").primaryKey(),
+    vaultId: uuidColumn("vault_id").notNull(),
+    userId: uuidColumn("user_id").notNull(),
+    sessionId: sessionIdColumn("session_id"),
     kind: text("kind").notNull(),
     status: text("status").notNull(),
     answer: text("answer").default("").notNull(),
@@ -498,7 +501,7 @@ export const replies = pgTable(
     version: integer("version").default(0).notNull(),
     request: jsonb("request").notNull(),
     dispatchedAt: timestamptz("dispatched_at"),
-    dispatchedTaskId: uuid("dispatched_task_id"),
+    dispatchedTaskId: uuidColumn("dispatched_task_id"),
     generationCursor: integer("generation_cursor").default(0).notNull(),
     activeGenerationStep: integer("active_generation_step"),
     activeGenerationKind: text("active_generation_kind"),
@@ -540,8 +543,8 @@ export const replies = pgTable(
 export const sourceDocuments = pgTable(
   "source_documents",
   {
-    id: uuid("id").primaryKey(),
-    vaultId: uuid("vault_id").notNull(),
+    id: uuidColumn("id").primaryKey(),
+    vaultId: uuidColumn("vault_id").notNull(),
     filePath: text("file_path").notNull(),
     fileHash: text("file_hash").notNull(),
     bodyHash: text("body_hash").notNull(),
@@ -551,7 +554,7 @@ export const sourceDocuments = pgTable(
     url: text("url"),
     canonicalUrl: text("canonical_url"),
     origin: text("origin"),
-    provenanceSessionId: uuid("provenance_session_id"),
+    provenanceSessionId: uuid("provenance_session_id").$type<SessionId>(),
     provenanceExchangeId: text("provenance_exchange_id"),
     provenanceSessionQuery: text("provenance_session_query"),
     provenanceSourceDocPath: text("provenance_source_doc_path"),
@@ -595,8 +598,8 @@ export const sourceDocuments = pgTable(
 export const sourceDeletionOutbox = pgTable(
   "source_deletion_outbox",
   {
-    sourceId: uuid("source_id").primaryKey(),
-    vaultId: uuid("vault_id").notNull(),
+    sourceId: uuidColumn("source_id").primaryKey(),
+    vaultId: uuidColumn("vault_id").notNull(),
     filePath: text("file_path").notNull(),
     attemptCount: integer("attempt_count").default(0).notNull(),
     lastAttemptAt: timestamptz("last_attempt_at"),
@@ -619,8 +622,8 @@ export const sourceDeletionOutbox = pgTable(
 export const userDocuments = pgTable(
   "user_documents",
   {
-    id: uuid("id").primaryKey(),
-    userId: uuid("user_id").notNull(),
+    id: uuidColumn("id").primaryKey(),
+    userId: uuidColumn("user_id").notNull(),
     filePath: text("file_path").notNull(),
     fileHash: text("file_hash").notNull(),
     bodyHash: text("body_hash").notNull(),
@@ -646,11 +649,11 @@ export const userDocuments = pgTable(
 export const shares = pgTable(
   "shares",
   {
-    id: uuid("id").primaryKey(),
+    id: uuidColumn("id").primaryKey(),
     token: text("token").notNull(),
     subjectKind: text("subject_kind").notNull(),
-    subjectId: uuid("subject_id").notNull(),
-    createdBy: uuid("created_by").notNull(),
+    subjectId: uuidColumn("subject_id").notNull(),
+    createdBy: uuidColumn("created_by").notNull(),
     includeAnnotations: boolean("include_annotations").default(false).notNull(),
     createdAt: timestamptz("created_at").defaultNow().notNull(),
     expiresAt: timestamptz("expires_at"),
@@ -669,15 +672,15 @@ export const shares = pgTable(
 export const sourceProposals = pgTable(
   "source_proposals",
   {
-    id: uuid("id").primaryKey(),
-    vaultId: uuid("vault_id").notNull(),
-    userId: uuid("user_id").notNull(),
+    id: uuidColumn("id").primaryKey(),
+    vaultId: uuidColumn("vault_id").notNull(),
+    userId: uuidColumn("user_id").notNull(),
     status: proposalStatus("status").notNull(),
     contentType: varchar("content_type", { length: 50 }).notNull(),
     title: text("title"),
     author: text("author"),
     destPath: text("dest_path").notNull(),
-    sourceId: uuid("source_id").notNull(),
+    sourceId: uuidColumn("source_id").notNull(),
     createdAt: timestamptz("created_at").defaultNow().notNull(),
   },
   (table) => [
@@ -699,9 +702,9 @@ export const sourceProposals = pgTable(
 export const ideas = pgTable(
   "ideas",
   {
-    ideaId: uuid("idea_id").primaryKey(),
-    vaultId: uuid("vault_id").notNull(),
-    documentId: uuid("document_id").notNull(),
+    ideaId: uuidColumn("idea_id").primaryKey(),
+    vaultId: uuidColumn("vault_id").notNull(),
+    documentId: uuidColumn("document_id").notNull(),
     kind: text("kind").notNull(),
     label: text("label").notNull(),
     description: text("description").notNull(),
@@ -728,7 +731,7 @@ export const ideas = pgTable(
 export const anchors = pgTable(
   "anchors",
   {
-    ideaId: uuid("idea_id").notNull(),
+    ideaId: uuidColumn("idea_id").notNull(),
     position: integer("position").notNull(),
     claim: text("claim").notNull(),
     quote: text("quote").notNull(),
@@ -747,16 +750,16 @@ export const anchors = pgTable(
 export const topics = pgTable(
   "topics",
   {
-    topicId: uuid("topic_id").primaryKey(),
-    vaultId: uuid("vault_id").notNull(),
+    topicId: uuidColumn("topic_id").primaryKey(),
+    vaultId: uuidColumn("vault_id").notNull(),
     slug: text("slug").notNull(),
     title: text("title").notNull(),
     description: text("description").notNull(),
     articleStatus: text("article_status").default("no_article").notNull(),
     compiledFromHash: text("compiled_from_hash"),
     renderedFromHash: text("rendered_from_hash"),
-    supersedes: uuid("supersedes"),
-    supersededBy: uuid("superseded_by"),
+    supersedes: uuidColumn("supersedes"),
+    supersededBy: uuidColumn("superseded_by"),
     createdAt: timestamptz("created_at").defaultNow().notNull(),
     updatedAt: timestamptz("updated_at").defaultNow().notNull(),
   },
@@ -778,8 +781,8 @@ export const topics = pgTable(
 export const topicMembership = pgTable(
   "topic_membership",
   {
-    topicId: uuid("topic_id").notNull(),
-    ideaId: uuid("idea_id").notNull(),
+    topicId: uuidColumn("topic_id").notNull(),
+    ideaId: uuidColumn("idea_id").notNull(),
   },
   (table) => [
     foreignKey({
@@ -794,8 +797,8 @@ export const topicMembership = pgTable(
 export const topicLinks = pgTable(
   "topic_links",
   {
-    sourceTopicId: uuid("source_topic_id").notNull(),
-    targetTopicId: uuid("target_topic_id").notNull(),
+    sourceTopicId: uuidColumn("source_topic_id").notNull(),
+    targetTopicId: uuidColumn("target_topic_id").notNull(),
   },
   (table) => [
     foreignKey({
@@ -815,8 +818,8 @@ export const topicLinks = pgTable(
 export const topicRelated = pgTable(
   "topic_related",
   {
-    topicId: uuid("topic_id").notNull(),
-    relatedTopicId: uuid("related_topic_id").notNull(),
+    topicId: uuidColumn("topic_id").notNull(),
+    relatedTopicId: uuidColumn("related_topic_id").notNull(),
     sharedIdeas: integer("shared_ideas").notNull(),
     jaccard: doublePrecision("jaccard").notNull(),
   },
@@ -838,9 +841,9 @@ export const topicRelated = pgTable(
 export const wikiArticles = pgTable(
   "wiki_articles",
   {
-    id: uuid("id").primaryKey(),
-    vaultId: uuid("vault_id").notNull(),
-    topicId: uuid("topic_id").notNull(),
+    id: uuidColumn("id").primaryKey(),
+    vaultId: uuidColumn("vault_id").notNull(),
+    topicId: uuidColumn("topic_id").notNull(),
     filePath: text("file_path").notNull(),
     fileHash: text("file_hash").notNull(),
     bodyHash: text("body_hash").notNull(),
@@ -848,7 +851,7 @@ export const wikiArticles = pgTable(
     precis: text("precis").notNull(),
     createdAt: timestamptz("created_at").defaultNow().notNull(),
     updatedAt: timestamptz("updated_at").defaultNow().notNull(),
-    renderRunId: uuid("render_run_id"),
+    renderRunId: uuidColumn("render_run_id"),
     archived: boolean("archived").default(false).notNull(),
     tags: text("tags")
       .array()
@@ -882,8 +885,8 @@ export const wikiArticles = pgTable(
 export const backlinks = pgTable(
   "backlinks",
   {
-    sourceArticleId: uuid("source_article_id").notNull(),
-    targetArticleId: uuid("target_article_id").notNull(),
+    sourceArticleId: uuidColumn("source_article_id").notNull(),
+    targetArticleId: uuidColumn("target_article_id").notNull(),
   },
   (table) => [
     foreignKey({

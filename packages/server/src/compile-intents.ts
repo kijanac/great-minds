@@ -1,5 +1,5 @@
 import { compileIntents, Database, pipelineRuns } from "@great-minds/database";
-import type { Uuid } from "@great-minds/domain";
+import { Uuid } from "@great-minds/domain";
 import { and, asc, eq, inArray, isNotNull, isNull, or, sql } from "drizzle-orm";
 import { Cause, Context, Effect, Layer, Schema } from "effect";
 import * as Activity from "effect/unstable/workflow/Activity";
@@ -25,9 +25,9 @@ import { workflowExecutionId } from "./workflow-engine.ts";
 
 export const CompileWorkflow = Workflow.make("CompileTask", {
   payload: {
-    intentId: Schema.String,
-    vaultId: Schema.String,
-    pipelineRunId: Schema.String,
+    intentId: Uuid,
+    vaultId: Uuid,
+    pipelineRunId: Uuid,
   },
   idempotencyKey: ({ intentId }) => intentId,
   success: Schema.Void,
@@ -67,7 +67,7 @@ export const CompileWorkflowLive = Layer.unwrap(
       // the next phase boundary.
       execute: Effect.gen(function* () {
         const pipeline = yield* PipelineRunsService;
-        if (!(yield* pipeline.isActive(payload.pipelineRunId as Uuid))) {
+        if (!(yield* pipeline.isActive(payload.pipelineRunId))) {
           return yield* Effect.interrupt;
         }
         return yield* execute;
@@ -91,7 +91,7 @@ export const CompileWorkflowLive = Layer.unwrap(
               error_message: failure.message,
             });
             yield* pipeline.failPreservingProgress(
-              payload.pipelineRunId as Uuid,
+              payload.pipelineRunId,
               formatted,
             );
             return yield* Effect.fail(failure);
@@ -102,8 +102,8 @@ export const CompileWorkflowLive = Layer.unwrap(
 
   const phases = Effect.gen(function* () {
     const service = yield* CompilePhases;
-    const vaultId = payload.vaultId as Uuid;
-    const runId = payload.pipelineRunId as Uuid;
+    const vaultId = payload.vaultId;
+    const runId = payload.pipelineRunId;
     yield* runPhase("ingest", Schema.Void, service.ingest(vaultId, runId));
     yield* runPhase("extract", Schema.Void, service.extract(vaultId, runId));
     const validated = yield* runPhase(
@@ -252,7 +252,7 @@ export const CompileIntentReconcilerLive = Layer.effect(
             if (active.length > 0) {
               continue;
             }
-            const runId = (intent.pipelineRunId ?? intent.id) as Uuid;
+            const runId = intent.pipelineRunId ?? intent.id;
             if (intent.pipelineRunId === null) {
               yield* tx
                 .insert(pipelineRuns)
@@ -273,8 +273,8 @@ export const CompileIntentReconcilerLive = Layer.effect(
                 .where(eq(compileIntents.id, intent.id));
             }
             dispatches.push({
-              intentId: intent.id as Uuid,
-              vaultId: intent.vaultId as Uuid,
+              intentId: intent.id,
+              vaultId: intent.vaultId,
               pipelineRunId: runId,
             });
           }

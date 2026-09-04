@@ -12,7 +12,7 @@ import {
   NotFound,
   type OwnershipTransfer,
   type PageParams,
-  type Uuid,
+  Uuid,
   type Vault,
   type VaultConfig,
   type VaultConfigUpdate,
@@ -159,6 +159,7 @@ const VaultConfigYaml = Schema.Struct({
 });
 
 const decodeVaultConfigYaml = Schema.decodeUnknownEffect(VaultConfigYaml);
+const uuidOf = Schema.decodeSync(Uuid);
 
 const parseVaultConfig = (content: string) =>
   Effect.gen(function* () {
@@ -175,8 +176,6 @@ const parseVaultConfig = (content: string) =>
           : defaultVaultConfig.kinds,
     } satisfies VaultConfig;
   });
-
-const asUuid = (value: string): Uuid => value as Uuid;
 
 const asEmail = (value: string): Email => value as Email;
 
@@ -205,23 +204,23 @@ const roleToDb = (role: MemberRole | InvitedMemberRole): DbMemberRole => {
 };
 
 const vaultResponse = (row: {
-  readonly id: string;
+  readonly id: Uuid;
   readonly name: string;
-  readonly ownerId: string;
+  readonly ownerId: Uuid;
   readonly createdAt: Date;
 }) => ({
-  id: asUuid(row.id),
+  id: row.id,
   name: row.name,
-  owner_id: asUuid(row.ownerId),
+  owner_id: row.ownerId,
   created_at: row.createdAt.toISOString(),
 });
 
 const memberResponse = (row: {
-  readonly userId: string;
+  readonly userId: Uuid;
   readonly email: string;
   readonly role: DbMemberRole;
 }): MemberWithEmail => ({
-  user_id: asUuid(row.userId),
+  user_id: row.userId,
   email: asEmail(row.email),
   role: roleFromDb(row.role),
 });
@@ -318,7 +317,7 @@ export const VaultsServiceLive = Layer.effect(
     // Session shares reference sessions polymorphically (subject_kind/subject_id),
     // so the vault cascade never reaches them; reference shares are user-scoped
     // and survive vault deletion.
-    const deleteVaultRows = (vaultIds: readonly string[]) =>
+    const deleteVaultRows = (vaultIds: readonly Uuid[]) =>
       db.transaction((tx) =>
         Effect.gen(function* () {
           const sessionRows = yield* tx
@@ -331,7 +330,7 @@ export const VaultsServiceLive = Layer.effect(
               .where(
                 and(
                   eq(shares.subjectKind, "session"),
-                  inArray(shares.subjectId, sessionRows.map((row) => row.id)),
+                  inArray(shares.subjectId, sessionRows.map((row) => uuidOf(row.id))),
                 ),
               );
           }
@@ -378,7 +377,7 @@ export const VaultsServiceLive = Layer.effect(
         const email = normalizeEmail(emailInput);
         const inserted = yield* db.query((d) => d
           .insert(users)
-          .values({ id: randomUUID(), email })
+          .values({ id: Uuid.make(randomUUID(), { disableChecks: true }), email })
           .onConflictDoNothing({ target: users.email })
           .returning());
         const row =
@@ -399,7 +398,7 @@ export const VaultsServiceLive = Layer.effect(
       },
     ) =>
       Effect.gen(function* () {
-        const vaultId = asUuid(randomUUID());
+        const vaultId = Uuid.make(randomUUID(), { disableChecks: true });
         yield* ensureConfig(vaultId);
         if (input.thematic_hint !== undefined || input.kinds !== undefined) {
           const update: VaultConfigUpdate =
@@ -423,7 +422,7 @@ export const VaultsServiceLive = Layer.effect(
                 })
                 .returning();
               yield* tx.insert(vaultMemberships).values({
-                id: randomUUID(),
+                id: Uuid.make(randomUUID(), { disableChecks: true }),
                 vaultId,
                 userId,
                 role: "OWNER",
@@ -471,8 +470,8 @@ export const VaultsServiceLive = Layer.effect(
           // Storage first: a failed wipe leaves the vault intact and retryable,
           // never orphaned files with no DB handle.
           for (const vault of owned) {
-            yield* storage.clear(vaultOwner(asUuid(vault.id)));
-            yield* stagedStorage.clearStagedVault(asUuid(vault.id));
+            yield* storage.clear(vaultOwner(vault.id));
+            yield* stagedStorage.clearStagedVault(vault.id);
           }
           yield* deleteVaultRows(owned.map((vault) => vault.id));
         }),
@@ -584,7 +583,7 @@ export const VaultsServiceLive = Layer.effect(
           yield* db.query((d) => d
             .insert(vaultMemberships)
             .values({
-              id: randomUUID(),
+              id: Uuid.make(randomUUID(), { disableChecks: true }),
               vaultId,
               userId: target.id,
               role: roleToDb(role),
@@ -614,7 +613,7 @@ export const VaultsServiceLive = Layer.effect(
               ),
             );
           return {
-            user_id: asUuid(target.id),
+            user_id: target.id,
             email: asEmail(target.email),
             role,
           };
@@ -646,7 +645,7 @@ export const VaultsServiceLive = Layer.effect(
             return yield* new NotFound({ detail: "User is not a member of this vault" });
           }
           return {
-            user_id: asUuid(target.id),
+            user_id: target.id,
             email: asEmail(target.email),
             role: roleFromDb(row.role),
           };

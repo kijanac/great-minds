@@ -1,4 +1,4 @@
-import type { Uuid } from "@great-minds/domain";
+import { Uuid } from "@great-minds/domain";
 import { Schema } from "effect";
 
 import { contentHash } from "./crypto.ts";
@@ -52,11 +52,11 @@ export class CompilePhaseFailed extends Schema.TaggedError<CompilePhaseFailed>()
 export const CompileWorkflowError = Schema.Union([CompilePhaseNotPorted, CompilePhaseFailed]);
 
 export const ValidatedTopic = Schema.Struct({
-  topicId: Schema.String,
+  topicId: Uuid,
   slug: Schema.String,
   title: Schema.String,
   description: Schema.String,
-  subsumedIdeaIds: Schema.Array(Schema.String),
+  subsumedIdeaIds: Schema.Array(Uuid),
   linkTargets: Schema.Array(Schema.String),
 });
 export type ValidatedTopic = typeof ValidatedTopic.Type;
@@ -142,18 +142,18 @@ export const phaseFailure = (phase: CompilePhase, cause: unknown) => {
 };
 
 export type TopicComposition = {
-  readonly topicId: string;
+  readonly topicId: Uuid;
   readonly slug: string;
-  readonly ideaIds: readonly string[];
+  readonly ideaIds: readonly Uuid[];
 };
 
 export type CompositionResolution = {
   /** canonical index → prior topicId whose identity it carries forward */
-  readonly carries: ReadonlyMap<number, string>;
+  readonly carries: ReadonlyMap<number, Uuid>;
   /** prior topicId → successor canonical index (null = retire), resolved mechanically */
-  readonly archived: ReadonlyMap<string, number | null>;
+  readonly archived: ReadonlyMap<Uuid, number | null>;
   /** prior topicIds left for LLM adjudication */
-  readonly residue: readonly string[];
+  readonly residue: readonly Uuid[];
 };
 
 // Containment thresholds: a prior topic tracks into the canonical holding a
@@ -168,7 +168,7 @@ export const COMPOSITION_CARRY_REVERSE = 0.5;
 
 export const resolveCompositionIdentity = (
   priorTopics: readonly TopicComposition[],
-  canonicals: readonly { readonly slug: string; readonly ideaIds: readonly string[] }[],
+  canonicals: readonly { readonly slug: string; readonly ideaIds: readonly Uuid[] }[],
 ): CompositionResolution => {
   const canonicalSets = canonicals.map((canonical) => new Set(canonical.ideaIds));
   const universe = new Set(canonicals.flatMap((canonical) => canonical.ideaIds));
@@ -181,9 +181,9 @@ export const resolveCompositionIdentity = (
     if (slugCounts.get(canonical.slug) === 1) canonicalBySlug.set(canonical.slug, index);
   });
 
-  const carries = new Map<number, string>();
-  const archived = new Map<string, number | null>();
-  const residue: string[] = [];
+  const carries = new Map<number, Uuid>();
+  const archived = new Map<Uuid, number | null>();
+  const residue: Uuid[] = [];
   const byId = (left: TopicComposition, right: TopicComposition) =>
     left.topicId < right.topicId ? -1 : 1;
 

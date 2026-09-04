@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 
-import { BadRequest, Uuid as UuidSchema, type Uuid } from "@great-minds/domain";
+import { BadRequest, Uuid } from "@great-minds/domain";
 import { Effect, Schema } from "effect";
 
 import { parseFrontmatter, serializeFrontmatter } from "./markdown.ts";
@@ -11,7 +11,7 @@ export type CanonicalSourceUrl = string & {
   readonly [CanonicalSourceUrlBrand]: true;
 };
 
-const decodeUuid = Schema.decodeUnknownSync(UuidSchema);
+const decodeUuid = Schema.decodeUnknownSync(Uuid);
 
 export const parseCanonicalSourceUrl = (
   rawUrl: string,
@@ -43,7 +43,10 @@ export const sourceIdForKey = (vaultId: Uuid, key: string): Uuid => {
   bytes[6] = (bytes[6]! & 0x0f) | 0x50;
   bytes[8] = (bytes[8]! & 0x3f) | 0x80;
   const hex = bytes.toString("hex");
-  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}` as Uuid;
+  return Uuid.make(
+    `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`,
+    { disableChecks: true },
+  );
 };
 
 export const sourceIdentityFromFrontmatter = (

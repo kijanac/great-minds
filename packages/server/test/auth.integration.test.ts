@@ -11,9 +11,9 @@ import {
   webauthnChallenges,
   webauthnCredentials,
 } from "@great-minds/database";
-import type { TokenPair } from "@great-minds/domain";
+import { type TokenPair, Uuid } from "@great-minds/domain";
 import { and, desc, eq, ne } from "drizzle-orm";
-import { Effect, Layer, Option, Redacted } from "effect";
+import { Effect, Layer, Option, Redacted, Schema } from "effect";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 
 import { ClockService, makeTestClock } from "../src/clock.ts";
@@ -180,6 +180,7 @@ const asString = (value: unknown, label: string) => {
   }
   return value;
 };
+const uuid = Schema.decodeUnknownSync(Uuid);
 
 const asArray = (value: unknown) => {
   if (!Array.isArray(value)) {
@@ -287,7 +288,7 @@ const userByEmail = (email: string) =>
     }),
   );
 
-const ownedVaults = (userId: string) =>
+const ownedVaults = (userId: Uuid) =>
   runDb(
     Effect.gen(function* () {
       const db = yield* Database;
@@ -698,8 +699,8 @@ describe("auth HTTP integration", () => {
     const otherPair = await signIn("passkey-other@example.com");
     const owner = await userByEmail("passkey-owner@example.com");
     const other = await userByEmail("passkey-other@example.com");
-    const ownerCredentialId = randomUUID();
-    const otherCredentialId = randomUUID();
+    const ownerCredentialId = uuid(randomUUID());
+    const otherCredentialId = uuid(randomUUID());
     await runDb(
       Effect.gen(function* () {
         const db = yield* Database;
@@ -785,7 +786,7 @@ describe("auth HTTP integration", () => {
     );
     expect(firstCreate.status).toBe(201);
     const firstKey = asRecord(firstCreate.body);
-    const firstKeyId = asString(firstKey.id, "first id");
+    const firstKeyId = uuid(firstKey.id);
     expect(asString(firstKey.raw_key, "first raw key").startsWith("gm_")).toBe(true);
 
     const secondCreate = await api(
@@ -882,7 +883,7 @@ describe("auth HTTP integration", () => {
         yield* db.query((d) => d
           .insert(vaultMemberships)
           .values({
-            id: randomUUID(),
+            id: uuid(randomUUID()),
             vaultId: survivorVault.id,
             userId: deleteUser.id,
             role: "VIEWER",

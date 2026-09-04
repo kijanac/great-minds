@@ -17,9 +17,9 @@ import {
   vaults,
   wikiArticles,
 } from "@great-minds/database";
-import type { Uuid } from "@great-minds/domain";
+import { Uuid } from "@great-minds/domain";
 import { eq, sql } from "drizzle-orm";
-import { Effect, Layer, Option, Redacted } from "effect";
+import { Effect, Layer, Option, Redacted, Schema } from "effect";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { makeAppLayer } from "../src/app-layer.ts";
@@ -47,16 +47,17 @@ import {
 } from "./query-stubs.ts";
 
 const initialTime = new Date("2026-07-10T12:00:00.000Z");
+const uuid = Schema.decodeUnknownSync(Uuid);
 
 const id = {
-  alice: "00000000-0000-4000-8000-000000020001",
-  bob: "00000000-0000-4000-8000-000000020002",
-  vault: "00000000-0000-4000-8000-000000020101",
-  topicAlpha: "00000000-0000-4000-8000-000000020301",
-  topicBeta: "00000000-0000-4000-8000-000000020302",
-  articleAlpha: "00000000-0000-4000-8000-000000020401",
-  articleBeta: "00000000-0000-4000-8000-000000020402",
-  source: "00000000-0000-4000-8000-000000020501",
+  alice: uuid("00000000-0000-4000-8000-000000020001"),
+  bob: uuid("00000000-0000-4000-8000-000000020002"),
+  vault: uuid("00000000-0000-4000-8000-000000020101"),
+  topicAlpha: uuid("00000000-0000-4000-8000-000000020301"),
+  topicBeta: uuid("00000000-0000-4000-8000-000000020302"),
+  articleAlpha: uuid("00000000-0000-4000-8000-000000020401"),
+  articleBeta: uuid("00000000-0000-4000-8000-000000020402"),
+  source: uuid("00000000-0000-4000-8000-000000020501"),
 } as const;
 
 const EX_DURABLE = "00000000-0000-4000-8000-000000000301";
@@ -201,15 +202,15 @@ const writeUserFile = async (userId: string, path: string, content: string) => {
   await writeFile(fullPath, content, "utf8");
 };
 
-const issueToken = (userId: string) =>
+const issueToken = (userId: Uuid) =>
   runDb(
     Effect.gen(function* () {
       const tokens = yield* TokenService;
-      return yield* tokens.issueAccessToken(userId as Uuid, initialTime);
+      return yield* tokens.issueAccessToken(userId, initialTime);
     }),
   );
 
-const insertUser = (userId: string, email: string) =>
+const insertUser = (userId: Uuid, email: string) =>
   runDb(
     Effect.gen(function* () {
       const db = yield* Database;
@@ -299,7 +300,7 @@ const seedFixtures = async (webSearch: boolean) => {
       yield* db.query((d) => d
         .insert(vaultMemberships)
         .values({
-          id: "00000000-0000-4000-8000-000000020701",
+          id: uuid("00000000-0000-4000-8000-000000020701"),
           vaultId: id.vault,
           userId: id.alice,
           role: "OWNER",
@@ -713,7 +714,7 @@ describe("query stream", () => {
         return yield* db.query((d) => d
           .select()
           .from(replies)
-          .where(eq(replies.id, identifiers.reply_id)))
+          .where(eq(replies.id, uuid(identifiers.reply_id))))
           .pipe(Effect.orDie);
       }),
     );
@@ -1210,7 +1211,7 @@ describe("query stream", () => {
       ],
     });
     await startHarness({ language });
-    const replyId = "00000000-0000-4000-8000-000000020901";
+    const replyId = uuid("00000000-0000-4000-8000-000000020901");
 
     await runDb(
       Effect.gen(function* () {
@@ -1354,7 +1355,7 @@ describe("query stream", () => {
           events: yield* db.query((d) => d.select().from(llmCostEvents)).pipe(Effect.orDie),
           prompts: yield* db.query((d) =>
             d.select().from(prompts).where(eq(prompts.hash, systemPromptHash))).pipe(Effect.orDie),
-          reply: yield* db.query((d) => d.select().from(replies).where(eq(replies.id, replyId)))
+          reply: yield* db.query((d) => d.select().from(replies).where(eq(replies.id, uuid(replyId))))
             .pipe(Effect.orDie),
         };
       }),

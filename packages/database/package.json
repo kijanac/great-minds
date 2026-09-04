@@ -21,6 +21,7 @@
   },
   "dependencies": {
     "@effect/sql-pg": "4.0.0-rc.112",
+    "@great-minds/domain": "workspace:*",
     "drizzle-orm": "1.0.0-rc.5-169397b",
     "effect": "4.0.0-rc.112"
   }

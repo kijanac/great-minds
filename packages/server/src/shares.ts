@@ -8,7 +8,7 @@ import {
   type SharedAnnotation,
   type SharedShareDetail,
   type SessionExchangeEvent,
-  type SessionId,
+  SessionId,
   SessionOrigin as SessionOriginSchema,
   type Uuid,
 } from "@great-minds/domain";
@@ -36,11 +36,11 @@ export class SharesService extends Context.Service<SharesService, SharesServiceS
 ) {}
 
 const shareOverview = (row: ShareRow): ShareOverview => ({
-  id: row.id as Uuid,
+  id: row.id,
   token: row.token,
   subject_kind: row.subjectKind as ShareSubjectKind,
-  subject_id: row.subjectId as Uuid,
-  created_by: row.createdBy as Uuid,
+  subject_id: row.subjectId,
+  created_by: row.createdBy,
   include_annotations: row.includeAnnotations,
   created_at: row.createdAt.toISOString(),
   expires_at: row.expiresAt?.toISOString() ?? null,
@@ -48,6 +48,7 @@ const shareOverview = (row: ShareRow): ShareOverview => ({
 });
 
 const decodeSessionOrigin = Schema.decodeUnknownSync(Schema.NullOr(SessionOriginSchema));
+const sessionIdOf = Schema.decodeSync(SessionId);
 
 export const SharesServiceLive = Layer.effect(
   SharesService,
@@ -73,7 +74,7 @@ export const SharesServiceLive = Layer.effect(
         return Buffer.from(bytes).toString("base64url");
       });
 
-    const findSessionByOwner = (userId: Uuid, sessionId: string) =>
+    const findSessionByOwner = (userId: Uuid, sessionId: SessionId) =>
       db.query((d) => d
         .select()
         .from(sessions)
@@ -102,7 +103,7 @@ export const SharesServiceLive = Layer.effect(
             continue;
           }
           const events = yield* Effect.result(
-            sessionsService.readSession(userId, row.vaultId as Uuid, row.id as SessionId),
+            sessionsService.readSession(userId, row.vaultId, row.id),
           );
           if (events._tag === "Failure") {
             yield* logger.warn("share_annotation_skipped", {
@@ -131,12 +132,12 @@ export const SharesServiceLive = Layer.effect(
       create: (userId, input) =>
         Effect.gen(function* () {
           if (input.subject_kind === "session") {
-            const session = yield* findSessionByOwner(userId, input.subject_id);
+            const session = yield* findSessionByOwner(userId, sessionIdOf(input.subject_id));
             if (session === undefined) {
               return yield* new NotFound({ detail: "Session not found" });
             }
             yield* sessionsService
-              .readSession(userId, session.vaultId as Uuid, session.id as SessionId)
+              .readSession(userId, session.vaultId, session.id)
               .pipe(
                 Effect.catchTag("Forbidden", () =>
                   Effect.fail(new NotFound({ detail: "Session not found" })),
@@ -239,12 +240,12 @@ export const SharesServiceLive = Layer.effect(
           }
 
           if (row.subjectKind === "session") {
-            const session = yield* findSessionByOwner(row.createdBy as Uuid, row.subjectId);
+            const session = yield* findSessionByOwner(row.createdBy, sessionIdOf(row.subjectId));
             if (session === undefined) {
               return yield* new NotFound({ detail: "Share not found" });
             }
             const markdown = yield* sessionsService
-              .readMarkdown(row.createdBy as Uuid, session.vaultId as Uuid, session.id as SessionId)
+              .readMarkdown(row.createdBy, session.vaultId, session.id)
               .pipe(
                 Effect.catchTag("Forbidden", () =>
                   Effect.fail(new NotFound({ detail: "Share not found" })),
@@ -268,7 +269,7 @@ export const SharesServiceLive = Layer.effect(
           if (reference === undefined) {
             return yield* new NotFound({ detail: "Share not found" });
           }
-          const { content } = yield* documents.readUserText(row.createdBy as Uuid, reference.filePath).pipe(
+          const { content } = yield* documents.readUserText(row.createdBy, reference.filePath).pipe(
             Effect.catchTag("BadRequest", (error) => Effect.die(error)),
             Effect.catchTag("NotFound", () =>
               Effect.fail(new NotFound({ detail: "Share not found" })),
@@ -283,7 +284,7 @@ export const SharesServiceLive = Layer.effect(
             author: reference.author,
             published: reference.published,
             annotations: row.includeAnnotations
-              ? yield* loadAnnotations(row.createdBy as Uuid, reference.filePath)
+              ? yield* loadAnnotations(row.createdBy, reference.filePath)
               : [],
             created_at: reference.createdAt.toISOString(),
           };

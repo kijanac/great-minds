@@ -2,6 +2,7 @@ import * as PgClient from "@effect/sql-pg/PgClient";
 import { createSelectSchema } from "drizzle-orm/effect-schema";
 import * as PgDrizzle from "drizzle-orm/effect-postgres";
 import { eq, sql } from "drizzle-orm";
+import { Uuid } from "@great-minds/domain";
 import { Config, Effect, Layer, Redacted, Schema } from "effect";
 
 import { searchIndex, users, vaults } from "./schema.ts";
@@ -38,8 +39,8 @@ const vectorLiteral = (embedding: readonly number[]) => `[${embedding.join(",")}
 
 const program = Effect.gen(function* () {
   const db = yield* PgDrizzle.makeWithDefaults();
-  const ownerId = crypto.randomUUID();
-  const vaultId = crypto.randomUUID();
+  const ownerId = Uuid.make(crypto.randomUUID(), { disableChecks: true });
+  const vaultId = Uuid.make(crypto.randomUUID(), { disableChecks: true });
   const query = vector1024([1, 0, 0]);
   const rows = [
     { path: "synthetic/near.md", embedding: vector1024([0.99, 0.01, 0]) },

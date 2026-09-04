@@ -1,13 +1,10 @@
-import { SessionId, type Uuid } from "@great-minds/domain";
-import { Schema } from "effect";
+import { type SessionId, type Uuid } from "@great-minds/domain";
 
 import { createReply, retryReply, streamReply } from "$lib/api/replies";
 import { listSessionsByOrigin, type OriginScope, type SessionEvent } from "$lib/api/sessions";
 import { newUuid } from "$lib/ids";
 import type { DocThread, Exchange, SelectionInfo } from "$lib/types";
 import { genId, isAbortError } from "$lib/utils";
-
-const decodeSessionId = Schema.decodeSync(SessionId);
 
 /**
  * Persistent annotation threads anchored to a document. Loads every session
@@ -59,7 +56,7 @@ export class DocThreads {
       const details = await listSessionsByOrigin(this.originPath, controller.signal);
       this.threads = details.map((detail) => {
         const origin = detail.session.origin;
-        const sessionId = decodeSessionId(detail.session.id);
+        const sessionId = detail.session.id;
         const anchored = origin?.anchor !== null && origin?.anchor !== undefined;
         return {
           id: `thread:${detail.session.id}`,

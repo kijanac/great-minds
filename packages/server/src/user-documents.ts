@@ -11,7 +11,7 @@ import {
   type ReferenceOverview,
   type ReferencePage,
   type ReferenceUpdate,
-  type Uuid,
+  Uuid,
 } from "@great-minds/domain";
 import { and, desc, eq, sql } from "drizzle-orm";
 import { Context, Effect, Layer } from "effect";
@@ -62,7 +62,7 @@ export class UserDocumentsService extends Context.Service<
 >()("@great-minds/server/UserDocumentsService") {}
 
 const referenceOverview = (row: UserDocumentRow): ReferenceOverview => ({
-  id: row.id as Uuid,
+  id: row.id,
   file_path: row.filePath,
   title: row.title,
   url: row.url,
@@ -162,7 +162,7 @@ export const UserDocumentsServiceLive = Layer.effect(
           const rows = yield* db.query((d) => d
             .insert(userDocuments)
             .values({
-              id: randomUUID(),
+              id: Uuid.make(randomUUID(), { disableChecks: true }),
               userId,
               filePath,
               fileHash: fileContentHash(content),

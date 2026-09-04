@@ -8,7 +8,7 @@ import {
   topicMembership,
   topics,
 } from "@great-minds/database";
-import { isUuid, type Uuid } from "@great-minds/domain";
+import { isUuid, Uuid } from "@great-minds/domain";
 import { and, asc, eq, inArray, sql } from "drizzle-orm";
 import { Effect, Fiber, Schema, Semaphore } from "effect";
 
@@ -97,8 +97,8 @@ type Anchor = {
 };
 
 type Idea = {
-  readonly ideaId: string;
-  readonly documentId: string;
+  readonly ideaId: Uuid;
+  readonly documentId: Uuid;
   readonly kind: string;
   readonly label: string;
   readonly description: string;
@@ -106,7 +106,7 @@ type Idea = {
 };
 
 type SourceCard = {
-  readonly documentId: string;
+  readonly documentId: Uuid;
   readonly title: string;
   readonly precis: string;
   readonly author: string | null;
@@ -118,12 +118,12 @@ type SourceCard = {
 };
 
 export type LocalTopic = {
-  readonly localTopicId: string;
+  readonly localTopicId: Uuid;
   readonly chunkIdx: number;
   readonly slug: string;
   readonly title: string;
   readonly description: string;
-  readonly subsumedIdeaIds: readonly string[];
+  readonly subsumedIdeaIds: readonly Uuid[];
 };
 
 type RegistryTopic = {
@@ -137,7 +137,7 @@ type CanonicalDraft = {
   readonly slug: string;
   readonly title: string;
   readonly description: string;
-  readonly mergedLocalTopicIds: readonly string[];
+  readonly mergedLocalTopicIds: readonly Uuid[];
   readonly linkTargets: readonly string[];
 };
 
@@ -254,8 +254,8 @@ const CachedAnchor = Schema.Struct({
 });
 
 const CachedIdea = Schema.Struct({
-  idea_id: Schema.String,
-  document_id: Schema.String,
+  idea_id: Uuid,
+  document_id: Uuid,
   kind: Schema.String,
   label: Schema.String,
   description: Schema.String,
@@ -263,7 +263,7 @@ const CachedIdea = Schema.Struct({
 });
 
 const CachedSourceCard = Schema.Struct({
-  document_id: Schema.String,
+  document_id: Uuid,
   title: Schema.String,
   precis: Schema.String,
   author: Schema.optionalKey(Schema.NullOr(Schema.String)),
@@ -278,12 +278,12 @@ const decodeExtractCacheRow = decodeOr(
 );
 
 const CachedLocalTopic = Schema.Struct({
-  local_topic_id: Schema.String,
+  local_topic_id: Uuid,
   chunk_idx: Schema.Int,
   slug: Schema.String,
   title: Schema.String,
   description: Schema.String,
-  subsumed_idea_ids: Schema.Array(Schema.String),
+  subsumed_idea_ids: Schema.Array(Uuid),
 });
 const decodeSynthesizeCacheRow = decodeOr(
   Schema.decodeUnknownSync(Schema.Struct({ local_topics: Schema.Array(CachedLocalTopic) })),
@@ -291,7 +291,7 @@ const decodeSynthesizeCacheRow = decodeOr(
 
 const decodePartitionCacheRow = decodeOr(
   Schema.decodeUnknownSync(
-    Schema.Struct({ chunks: Schema.Array(Schema.Array(Schema.String)) }),
+    Schema.Struct({ chunks: Schema.Array(Schema.Array(Uuid)) }),
   ),
 );
 
@@ -450,12 +450,8 @@ export const decodeCompileJsonCompletion = (model: string, completion: ModelComp
 };
 
 const toSourceCard = (source: typeof CachedSourceCard.Type): SourceCard | undefined => {
-  if (!isUuid(source.document_id)) return undefined;
   const parsedIdeas: Idea[] = [];
   for (const idea of source.ideas) {
-    if (!isUuid(idea.idea_id) || !isUuid(idea.document_id)) {
-      return undefined;
-    }
     parsedIdeas.push({
       ideaId: idea.idea_id,
       documentId: idea.document_id,
@@ -716,7 +712,7 @@ export const makeCompileLlmCore = (options: CompileLlmCoreOptions) => {
                   }
                   return {
                     kind: "cached",
-                    documentId: document.id as Uuid,
+                    documentId: document.id,
                     card: cachedCard,
                   } as const;
                 }
@@ -747,7 +743,7 @@ export const makeCompileLlmCore = (options: CompileLlmCoreOptions) => {
                 );
                 return {
                   kind: "fresh",
-                  documentId: document.id as Uuid,
+                  documentId: document.id,
                   card,
                   cacheKey,
                 } as const;
@@ -803,7 +799,7 @@ export const makeCompileLlmCore = (options: CompileLlmCoreOptions) => {
       const embeddingInputs = outcomes.flatMap((outcome) => {
         if (outcome.kind === "failed") return [];
         return outcome.card.ideas
-          .filter((idea) => outcome.kind === "fresh" || !existing.has(idea.ideaId as Uuid))
+          .filter((idea) => outcome.kind === "fresh" || !existing.has(idea.ideaId))
           .map((idea) => ({ documentId: outcome.documentId, idea }));
       });
 
@@ -858,7 +854,7 @@ export const makeCompileLlmCore = (options: CompileLlmCoreOptions) => {
           return embedding === undefined || embedding.length === 0 ? [] : [{ input, embedding }];
         });
         const ideaRows = paired.map(({ input: { documentId, idea }, embedding }) => ({
-          ideaId: idea.ideaId as Uuid,
+          ideaId: idea.ideaId,
           vaultId,
           documentId,
           kind: idea.kind,
@@ -899,7 +895,7 @@ export const makeCompileLlmCore = (options: CompileLlmCoreOptions) => {
           ));
         const anchorRows = paired.flatMap(({ input: { idea } }) =>
           idea.anchors.map((anchor, position) => ({
-            ideaId: idea.ideaId as Uuid,
+            ideaId: idea.ideaId,
             position,
             claim: anchor.claim,
             quote: anchor.quote,
@@ -1036,10 +1032,10 @@ export const normalizePythonWhitespace = (value: string) =>
 
 const validateExtractOutput = (
   data: typeof ExtractResponse.Type,
-  documentId: string,
+  documentId: Uuid,
   allowedKinds: readonly string[],
   body: string,
-  mintUuid7: Effect.Effect<string>,
+  mintUuid7: Effect.Effect<Uuid>,
 ) =>
   Effect.gen(function* () {
     const paragraphBodies = markdownParagraphs(body).map((paragraph) => ({
@@ -1121,7 +1117,7 @@ type AbstractOptions = {
   readonly jsonCall: JsonCall;
   readonly getCache: CacheGetter;
   readonly putCache: CachePutter;
-  readonly mintUuid7: Effect.Effect<string>;
+  readonly mintUuid7: Effect.Effect<Uuid>;
   readonly archiveTransitions: (
     vaultId: Uuid,
     transitions: readonly ArchiveTransition[],
@@ -1129,8 +1125,8 @@ type AbstractOptions = {
 };
 
 type IdeaContext = {
-  readonly ideaId: string;
-  readonly documentId: string;
+  readonly ideaId: Uuid;
+  readonly documentId: Uuid;
   readonly kind: string;
   readonly label: string;
   readonly description: string;
@@ -1274,7 +1270,7 @@ const estimateTokens = (idea: IdeaContext) => {
 
 const partitionIdeas = (options: AbstractOptions, contexts: readonly IdeaContext[]) =>
   Effect.gen(function* () {
-    if (contexts.length === 0) return [] as readonly (readonly string[])[];
+    if (contexts.length === 0) return [] as readonly (readonly Uuid[])[];
     const ids = contexts.map((idea) => idea.ideaId).toSorted();
     const cacheKey = partitionCacheKey(ids, options.config.compilePartitionTargetTokens);
     const cached = decodePartitionCacheRow(
@@ -1306,7 +1302,12 @@ const partitionIdeas = (options: AbstractOptions, contexts: readonly IdeaContext
         options.config.compilePartitionTargetTokens * options.config.compilePartitionMaxFactor,
       ),
     );
-    const result = chunks.map((chunk) => chunk.map((row) => contexts[row]?.ideaId ?? ""));
+    const ideaAt = (row: number) => {
+      const idea = contexts[row];
+      if (idea === undefined) throw new Error(`Partition index ${row} is out of range`);
+      return idea.ideaId;
+    };
+    const result = chunks.map((chunk) => chunk.map(ideaAt));
     yield* options.putCache(options.vaultId, "partition", cacheKey, {
       chunks: result,
       k_initial: k,
@@ -1662,7 +1663,7 @@ const rebalanceChunks = (
 const synthesizeTopics = (
   options: AbstractOptions,
   contexts: readonly IdeaContext[],
-  chunks: readonly (readonly string[])[],
+  chunks: readonly (readonly Uuid[])[],
 ) =>
   Effect.gen(function* () {
     const promptTemplate = yield* loadPrompt(options.storage, options.vaultId, "synthesize");
@@ -1792,7 +1793,7 @@ const synthesisIdeaBlock = (ideasInChunk: readonly IdeaContext[]) => {
     byDocument.set(idea.documentId, group);
   }
   const lines: string[] = [];
-  const tags = new Map<string, string>();
+  const tags = new Map<string, Uuid>();
   let counter = 0;
   for (const documentId of [...byDocument.keys()].toSorted()) {
     const group = byDocument.get(documentId) ?? [];
@@ -1827,8 +1828,8 @@ const normalizeSlug = (slug: string) =>
 const parseSynthesisResponse = (
   data: typeof SynthesisResponse.Type,
   chunkIdx: number,
-  tags: ReadonlyMap<string, string>,
-  mintUuid7: Effect.Effect<string>,
+  tags: ReadonlyMap<string, Uuid>,
+  mintUuid7: Effect.Effect<Uuid>,
 ) =>
   Effect.gen(function* () {
     const out: LocalTopic[] = [];
@@ -1899,7 +1900,7 @@ export const applyNestingFloor = (
   violations: readonly NestingViolation[],
 ): readonly LocalTopic[] => {
   const originalSets = topics.map((topic) => new Set(topic.subsumedIdeaIds));
-  const residues = new Map<number, Set<string>>();
+  const residues = new Map<number, Set<Uuid>>();
   for (const violation of violations) {
     const original = originalSets[violation.umbrella];
     if (original === undefined) continue;
@@ -1910,7 +1911,7 @@ export const applyNestingFloor = (
     residues.set(violation.umbrella, residue);
   }
   const finalSet = (index: number) =>
-    residues.get(index) ?? originalSets[index] ?? new Set<string>();
+    residues.get(index) ?? originalSets[index] ?? new Set<Uuid>();
   const out: LocalTopic[] = [];
   topics.forEach((topic, index) => {
     const ids = finalSet(index);
@@ -1977,7 +1978,7 @@ type ChunkGranularityInput = {
   readonly chunkIdx: number;
   readonly topics: readonly LocalTopic[];
   readonly ideaBlock: string;
-  readonly tags: ReadonlyMap<string, string>;
+  readonly tags: ReadonlyMap<string, Uuid>;
   readonly contexts: readonly IdeaContext[];
   readonly revisePrompt: string;
   readonly revisePromptHash: string;
@@ -2439,7 +2440,7 @@ const canonicalizeTopics = (
     }
 
     const titleToSlug = new Map(registry.map((topic) => [topic.title, topic.slug]));
-    const members = new Map<string, string[]>();
+    const members = new Map<string, Uuid[]>();
     for (const topic of ordered) {
       const slug = assignment.get(topic.localTopicId);
       if (slug === undefined) continue;
@@ -2507,7 +2508,7 @@ const validateTopics = (
         ),
       ].toSorted(),
     );
-    const activeIds = active.map((topic) => topic.topicId as Uuid);
+    const activeIds = active.map((topic) => topic.topicId);
     const membershipRows =
       activeIds.length === 0
         ? []
@@ -2517,7 +2518,7 @@ const validateTopics = (
               .from(topicMembership)
               .where(inArray(topicMembership.topicId, activeIds)),
           );
-    const priorIdeaIds = new Map<string, string[]>();
+    const priorIdeaIds = new Map<Uuid, Uuid[]>();
     for (const row of membershipRows) {
       const list = priorIdeaIds.get(row.topicId) ?? [];
       list.push(row.ideaId);
@@ -2683,18 +2684,18 @@ const validateTopics = (
         d
           .update(topics)
           .set({ slug: `~${topic.topicId}` })
-          .where(eq(topics.topicId, topic.topicId as Uuid)),
+          .where(eq(topics.topicId, topic.topicId)),
       );
     }
     const activeById = new Map(active.map((topic) => [topic.topicId, topic]));
     const successorId = (index: number | null) =>
-      index === null ? null : ((validated[index]?.topicId as Uuid | undefined) ?? null);
+      index === null ? null : (validated[index]?.topicId ?? null);
     const transitions: ArchiveTransition[] = [];
     for (const [topicId, index] of resolution.archived) {
       const candidate = activeById.get(topicId);
       if (candidate === undefined) continue;
       transitions.push({
-        topicId: topicId as Uuid,
+        topicId,
         slug: candidate.slug,
         supersededBy: successorId(index),
       });
@@ -2702,7 +2703,7 @@ const validateTopics = (
     for (const candidate of archiveCandidates) {
       const successorIndex = supersessions.get(candidate.topicId);
       transitions.push({
-        topicId: candidate.topicId as Uuid,
+        topicId: candidate.topicId,
         slug: candidate.slug,
         supersededBy: successorIndex === undefined ? null : successorId(successorIndex),
       });
@@ -2713,7 +2714,7 @@ const validateTopics = (
         d
           .insert(topics)
           .values({
-            topicId: topic.topicId as Uuid,
+            topicId: topic.topicId,
             vaultId: options.vaultId,
             slug: topic.slug,
             title: topic.title,
@@ -2765,8 +2766,8 @@ type RenderOptions = {
 };
 
 type RenderIdea = {
-  readonly ideaId: string;
-  readonly documentId: string;
+  readonly ideaId: Uuid;
+  readonly documentId: Uuid;
   readonly kind: string;
   readonly label: string;
   readonly description: string;
@@ -2854,12 +2855,7 @@ const runRender = (options: RenderOptions) =>
                   description: ideas.description,
                 })
                 .from(ideas)
-                .where(
-                  inArray(
-                    ideas.ideaId,
-                    neededIds.map((id) => id as Uuid),
-                  ),
-                ),
+                .where(inArray(ideas.ideaId, neededIds)),
             );
       const anchorRows =
         neededIds.length === 0
@@ -2868,12 +2864,7 @@ const runRender = (options: RenderOptions) =>
               d
                 .select()
                 .from(anchors)
-                .where(
-                  inArray(
-                    anchors.ideaId,
-                    neededIds.map((id) => id as Uuid),
-                  ),
-                )
+                .where(inArray(anchors.ideaId, neededIds))
                 .orderBy(asc(anchors.ideaId), asc(anchors.position)),
             );
       const anchorsByIdea = new Map<string, Anchor[]>();

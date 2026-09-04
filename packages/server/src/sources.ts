@@ -46,7 +46,7 @@ const decodeDerivedExtras = Schema.decodeUnknownSync(DerivedExtras);
 const sourceSummary = (
   row: typeof sourceDocuments.$inferSelect
 ): SourceDocumentSummary => ({
-  id: row.id as Uuid,
+  id: row.id,
   file_path: row.filePath,
   source_type: row.sourceType,
   title: row.title,
@@ -157,7 +157,7 @@ export const SourcesServiceLive = Layer.effect(
             return yield* new NotFound({ detail: "Source not found" });
           }
           return yield* proposals.createSourceDeletionRequest(vaultId, userId, {
-            id: source.id as Uuid,
+            id: source.id,
             filePath: source.filePath,
             title: source.title
           });

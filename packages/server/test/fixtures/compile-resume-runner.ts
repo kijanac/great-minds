@@ -1,8 +1,8 @@
 import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
-import type { Uuid } from "@great-minds/domain";
-import { Effect, Layer } from "effect";
+import { Uuid } from "@great-minds/domain";
+import { Effect, Layer, Schema } from "effect";
 
 import { AppConfigLive } from "../../src/config.ts";
 import { ClockLive } from "../../src/clock.ts";
@@ -23,19 +23,22 @@ import {
 import { WorkflowEngineLive } from "../../src/workflow-engine.ts";
 
 const mode = process.argv[2] as "pause" | "resume" | "cancel" | undefined;
-const intentId = process.argv[3] as Uuid | undefined;
-const vaultId = process.argv[4] as Uuid | undefined;
-const runId = process.argv[5] as Uuid | undefined;
+const intentIdInput = process.argv[3];
+const vaultIdInput = process.argv[4];
+const runIdInput = process.argv[5];
 const markerDir = process.argv[6];
 if (
   mode === undefined ||
-  intentId === undefined ||
-  vaultId === undefined ||
-  runId === undefined ||
+  intentIdInput === undefined ||
+  vaultIdInput === undefined ||
+  runIdInput === undefined ||
   markerDir === undefined
 ) {
   throw new Error("mode, intent id, vault id, run id, and marker directory are required");
 }
+const intentId = Schema.decodeUnknownSync(Uuid)(intentIdInput);
+const vaultId = Schema.decodeUnknownSync(Uuid)(vaultIdInput);
+const runId = Schema.decodeUnknownSync(Uuid)(runIdInput);
 
 const marker = (name: string, options?: { flag: "wx" }) =>
   Effect.tryPromise(() => writeFile(join(markerDir, name), name, options)).pipe(Effect.orDie);

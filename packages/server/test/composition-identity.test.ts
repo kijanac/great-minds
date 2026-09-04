@@ -1,55 +1,63 @@
+import { Uuid } from "@great-minds/domain";
+import { Schema } from "effect";
 import { describe, expect, it } from "vitest";
 
 import { resolveCompositionIdentity } from "../src/compile-contract.ts";
 
+const uuid = Schema.decodeSync(Uuid);
+const T1 = uuid("00000000-0000-4000-8000-000000000001");
+const T2 = uuid("00000000-0000-4000-8000-000000000002");
+
 const ideas = (prefix: string, count: number) =>
-  Array.from({ length: count }, (_value, index) => `${prefix}${index}`);
+  Array.from({ length: count }, (_value, index) =>
+    uuid(`00000000-0000-4000-8000-00000000${prefix}${String(index).padStart(3, "0")}`),
+  );
 
 describe("resolveCompositionIdentity", () => {
   it("carries identity on an exact slug match even without membership rows", () => {
     const resolution = resolveCompositionIdentity(
-      [{ topicId: "t1", slug: "stable", ideaIds: [] }],
+      [{ topicId: T1, slug: "stable", ideaIds: [] }],
       [{ slug: "stable", ideaIds: ideas("a", 4) }],
     );
-    expect(resolution.carries.get(0)).toBe("t1");
+    expect(resolution.carries.get(0)).toBe(T1);
     expect(resolution.archived.size).toBe(0);
     expect(resolution.residue).toEqual([]);
   });
 
   it("skips slug matching when the slug collides between canonicals", () => {
     const resolution = resolveCompositionIdentity(
-      [{ topicId: "t1", slug: "dup", ideaIds: [] }],
+      [{ topicId: T1, slug: "dup", ideaIds: [] }],
       [
         { slug: "dup", ideaIds: ideas("a", 4) },
         { slug: "dup", ideaIds: ideas("b", 4) },
       ],
     );
     expect(resolution.carries.size).toBe(0);
-    expect(resolution.residue).toEqual(["t1"]);
+    expect(resolution.residue).toEqual([T1]);
   });
 
   it("carries a renamed topic whose composition survives intact", () => {
     const resolution = resolveCompositionIdentity(
-      [{ topicId: "t1", slug: "old-name", ideaIds: ideas("a", 6) }],
+      [{ topicId: T1, slug: "old-name", ideaIds: ideas("a", 6) }],
       [{ slug: "new-name", ideaIds: ideas("a", 6) }],
     );
-    expect(resolution.carries.get(0)).toBe("t1");
+    expect(resolution.carries.get(0)).toBe(T1);
     expect(resolution.archived.size).toBe(0);
     expect(resolution.residue).toEqual([]);
   });
 
   it("archives an absorbed topic with its successor instead of carrying", () => {
     const resolution = resolveCompositionIdentity(
-      [{ topicId: "t1", slug: "small", ideaIds: ideas("a", 3) }],
+      [{ topicId: T1, slug: "small", ideaIds: ideas("a", 3) }],
       [{ slug: "umbrella", ideaIds: [...ideas("a", 3), ...ideas("b", 5)] }],
     );
     expect(resolution.carries.size).toBe(0);
-    expect(resolution.archived.get("t1")).toBe(0);
+    expect(resolution.archived.get(T1)).toBe(0);
     expect(resolution.residue).toEqual([]);
   });
 
   it("tracks a split into its dominant piece", () => {
-    const prior = { topicId: "t1", slug: "wide", ideaIds: ideas("a", 10) };
+    const prior = { topicId: T1, slug: "wide", ideaIds: ideas("a", 10) };
     const resolution = resolveCompositionIdentity(
       [prior],
       [
@@ -57,14 +65,14 @@ describe("resolveCompositionIdentity", () => {
         { slug: "minor", ideaIds: ideas("a", 10).slice(7) },
       ],
     );
-    expect(resolution.archived.get("t1")).toBe(0);
+    expect(resolution.archived.get(T1)).toBe(0);
     expect(resolution.residue).toEqual([]);
   });
 
   it("sends an ambiguous split to the residue", () => {
     const [half, rest] = [ideas("a", 10).slice(0, 5), ideas("a", 10).slice(5)];
     const resolution = resolveCompositionIdentity(
-      [{ topicId: "t1", slug: "wide", ideaIds: ideas("a", 10) }],
+      [{ topicId: T1, slug: "wide", ideaIds: ideas("a", 10) }],
       [
         { slug: "left", ideaIds: [...half, ...ideas("b", 6)] },
         { slug: "right", ideaIds: [...rest, ...ideas("c", 6)] },
@@ -72,19 +80,19 @@ describe("resolveCompositionIdentity", () => {
     );
     expect(resolution.carries.size).toBe(0);
     expect(resolution.archived.size).toBe(0);
-    expect(resolution.residue).toEqual(["t1"]);
+    expect(resolution.residue).toEqual([T1]);
   });
 
   it("lets the dominant prior carry a merge and archives the rest into it", () => {
     const resolution = resolveCompositionIdentity(
       [
-        { topicId: "t1", slug: "big", ideaIds: ideas("a", 6) },
-        { topicId: "t2", slug: "small", ideaIds: ideas("b", 3) },
+        { topicId: T1, slug: "big", ideaIds: ideas("a", 6) },
+        { topicId: T2, slug: "small", ideaIds: ideas("b", 3) },
       ],
       [{ slug: "merged", ideaIds: [...ideas("a", 6), ...ideas("b", 3)] }],
     );
-    expect(resolution.carries.get(0)).toBe("t1");
-    expect(resolution.archived.get("t2")).toBe(0);
+    expect(resolution.carries.get(0)).toBe(T1);
+    expect(resolution.archived.get(T2)).toBe(0);
     expect(resolution.residue).toEqual([]);
   });
 
@@ -92,31 +100,31 @@ describe("resolveCompositionIdentity", () => {
     const universe = ideas("a", 10);
     const resolution = resolveCompositionIdentity(
       [
-        { topicId: "t2", slug: "late", ideaIds: universe.slice(4) },
-        { topicId: "t1", slug: "early", ideaIds: universe.slice(0, 6) },
+        { topicId: T2, slug: "late", ideaIds: universe.slice(4) },
+        { topicId: T1, slug: "early", ideaIds: universe.slice(0, 6) },
       ],
       [{ slug: "merged", ideaIds: universe }],
     );
-    expect(resolution.carries.get(0)).toBe("t1");
-    expect(resolution.archived.get("t2")).toBe(0);
+    expect(resolution.carries.get(0)).toBe(T1);
+    expect(resolution.archived.get(T2)).toBe(0);
   });
 
   it("leaves priors with too few surviving ideas to the residue", () => {
     const resolution = resolveCompositionIdentity(
       [
-        { topicId: "t1", slug: "thin", ideaIds: ideas("a", 2) },
-        { topicId: "t2", slug: "vanished", ideaIds: ideas("z", 8) },
+        { topicId: T1, slug: "thin", ideaIds: ideas("a", 2) },
+        { topicId: T2, slug: "vanished", ideaIds: ideas("e", 8) },
       ],
       [{ slug: "unrelated", ideaIds: [...ideas("a", 2), ...ideas("b", 6)] }],
     );
-    expect(resolution.residue.toSorted()).toEqual(["t1", "t2"]);
+    expect(resolution.residue.toSorted()).toEqual([T1, T2]);
   });
 
   it("handles an empty canonical set by leaving every prior to the residue", () => {
     const resolution = resolveCompositionIdentity(
-      [{ topicId: "t1", slug: "any", ideaIds: ideas("a", 5) }],
+      [{ topicId: T1, slug: "any", ideaIds: ideas("a", 5) }],
       [],
     );
-    expect(resolution.residue).toEqual(["t1"]);
+    expect(resolution.residue).toEqual([T1]);
   });
 });

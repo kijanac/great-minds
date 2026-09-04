@@ -755,10 +755,10 @@ export type BtwExchange = typeof BtwExchange.Type;
 
 export const SessionMetaEvent = Schema.Struct({
   type: Schema.Literal("meta"),
-  id: Schema.String,
+  id: SessionId,
   query: Schema.String,
   ts: IsoDateTime,
-  user_id: Schema.String,
+  user_id: Uuid,
   origin: Schema.NullOr(SessionOrigin),
 });
 export type SessionMetaEvent = typeof SessionMetaEvent.Type;
@@ -790,7 +790,7 @@ export const SessionEvent = Schema.Union([SessionMetaEvent, SessionExchangeEvent
 export type SessionEvent = typeof SessionEvent.Type;
 
 export const SessionOverview = Schema.Struct({
-  id: Schema.String,
+  id: SessionId,
   query: Schema.String,
   created_at: IsoDateTime,
   updated_at: IsoDateTime,
@@ -806,7 +806,7 @@ export const SessionPage = pageOf(SessionOverview);
 export type SessionPage = typeof SessionPage.Type;
 
 export const SessionResponse = Schema.Struct({
-  id: Schema.String,
+  id: SessionId,
   events: Schema.Array(SessionEvent),
   // Resolved at read time from the origin document's current title; never
   // stored on the session row (titles change). Null when unresolvable.
@@ -858,7 +858,7 @@ export const SourceDocument = Schema.Struct({
   url: Schema.NullOr(Schema.String),
   canonical_url: Schema.NullOr(Schema.String),
   origin: Schema.NullOr(Schema.String),
-  provenance_session_id: Schema.NullOr(Uuid),
+  provenance_session_id: Schema.NullOr(SessionId),
   provenance_exchange_id: Schema.NullOr(Schema.String),
   provenance_session_query: Schema.NullOr(Schema.String),
   provenance_source_doc_path: Schema.NullOr(Schema.String),

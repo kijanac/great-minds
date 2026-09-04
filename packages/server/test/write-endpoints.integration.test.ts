@@ -30,9 +30,9 @@ import {
   wikiArticles,
 } from "@great-minds/database";
 import {
-  Uuid as UuidSchema,
+  SessionId,
   type SessionOrigin,
-  type Uuid,
+  Uuid,
 } from "@great-minds/domain";
 import { and, eq, isNull, sql } from "drizzle-orm";
 import { Effect, Layer, Option, Redacted, Schema } from "effect";
@@ -55,38 +55,40 @@ import { TokenService } from "../src/tokens.ts";
 import { UrlIngestService } from "../src/url-ingest.ts";
 
 const initialTime = new Date("2026-07-10T12:00:00.000Z");
+const decodeUuid = Schema.decodeUnknownSync(Uuid);
+const decodeSessionId = Schema.decodeUnknownSync(SessionId);
 
 const id = {
-  alice: "00000000-0000-4000-8000-000000010001",
-  bob: "00000000-0000-4000-8000-000000010002",
-  carol: "00000000-0000-4000-8000-000000010003",
-  mallory: "00000000-0000-4000-8000-000000010004",
-  vault: "00000000-0000-4000-8000-000000010101",
-  source: "00000000-0000-4000-8000-000000010501",
-  conflictingProposal: "00000000-0000-4000-8000-000000010601",
-  topic: "00000000-0000-4000-8000-000000010301",
-  ideaOne: "00000000-0000-4000-8000-000000010701",
-  ideaTwo: "00000000-0000-4000-8000-000000010702",
-  run: "00000000-0000-4000-8000-000000010801",
-  cache: "00000000-0000-4000-8000-000000011001",
-  cost: "00000000-0000-4000-8000-000000011101",
-  session: "00000000-0000-4000-8000-000000011201",
-  sessionShare: "00000000-0000-4000-8000-000000011301",
-  referenceShare: "00000000-0000-4000-8000-000000011302",
-  reference: "00000000-0000-4000-8000-000000011401",
-  m32SourceA: "00000000-0000-4000-8000-000000013001",
-  m32SourceB: "00000000-0000-4000-8000-000000013002",
-  m32StagedRun: "00000000-0000-4000-8000-000000013101",
-  m32StagedRunOther: "00000000-0000-4000-8000-000000013108",
-  m32UrlRun: "00000000-0000-4000-8000-000000013102",
-  m32UrlFailRun: "00000000-0000-4000-8000-000000013103",
-  m32UrlPdfRun: "00000000-0000-4000-8000-000000013104",
-  m32UrlCollisionA: "00000000-0000-4000-8000-000000013105",
-  m32UrlCollisionB: "00000000-0000-4000-8000-000000013106",
-  m32UrlReplayRun: "00000000-0000-4000-8000-000000013107",
-  m32UrlRetryRun: "00000000-0000-4000-8000-000000013108",
-  m32UrlReconcileRun: "00000000-0000-4000-8000-000000013109",
-  m32UrlSlowRun: "00000000-0000-4000-8000-000000013110",
+  alice: decodeUuid("00000000-0000-4000-8000-000000010001"),
+  bob: decodeUuid("00000000-0000-4000-8000-000000010002"),
+  carol: decodeUuid("00000000-0000-4000-8000-000000010003"),
+  mallory: decodeUuid("00000000-0000-4000-8000-000000010004"),
+  vault: decodeUuid("00000000-0000-4000-8000-000000010101"),
+  source: decodeUuid("00000000-0000-4000-8000-000000010501"),
+  conflictingProposal: decodeUuid("00000000-0000-4000-8000-000000010601"),
+  topic: decodeUuid("00000000-0000-4000-8000-000000010301"),
+  ideaOne: decodeUuid("00000000-0000-4000-8000-000000010701"),
+  ideaTwo: decodeUuid("00000000-0000-4000-8000-000000010702"),
+  run: decodeUuid("00000000-0000-4000-8000-000000010801"),
+  cache: decodeUuid("00000000-0000-4000-8000-000000011001"),
+  cost: decodeUuid("00000000-0000-4000-8000-000000011101"),
+  session: decodeSessionId("00000000-0000-4000-8000-000000011201"),
+  sessionShare: decodeUuid("00000000-0000-4000-8000-000000011301"),
+  referenceShare: decodeUuid("00000000-0000-4000-8000-000000011302"),
+  reference: decodeUuid("00000000-0000-4000-8000-000000011401"),
+  m32SourceA: decodeUuid("00000000-0000-4000-8000-000000013001"),
+  m32SourceB: decodeUuid("00000000-0000-4000-8000-000000013002"),
+  m32StagedRun: decodeUuid("00000000-0000-4000-8000-000000013101"),
+  m32StagedRunOther: decodeUuid("00000000-0000-4000-8000-000000013108"),
+  m32UrlRun: decodeUuid("00000000-0000-4000-8000-000000013102"),
+  m32UrlFailRun: decodeUuid("00000000-0000-4000-8000-000000013103"),
+  m32UrlPdfRun: decodeUuid("00000000-0000-4000-8000-000000013104"),
+  m32UrlCollisionA: decodeUuid("00000000-0000-4000-8000-000000013105"),
+  m32UrlCollisionB: decodeUuid("00000000-0000-4000-8000-000000013106"),
+  m32UrlReplayRun: decodeUuid("00000000-0000-4000-8000-000000013107"),
+  m32UrlRetryRun: decodeUuid("00000000-0000-4000-8000-000000013108"),
+  m32UrlReconcileRun: decodeUuid("00000000-0000-4000-8000-000000013109"),
+  m32UrlSlowRun: decodeUuid("00000000-0000-4000-8000-000000013110"),
 } as const;
 
 type TestServices =
@@ -211,8 +213,6 @@ const buildTestState = async () => {
 const runDb = <A>(effect: Effect.Effect<A, unknown, TestServices>) =>
   currentState().started.runtime.runPromise(effect);
 
-const decodeUuid = Schema.decodeUnknownSync(UuidSchema);
-
 const EX_PROMOTE = decodeUuid("00000000-0000-4000-8000-000000000401");
 const EX_PROPOSAL = decodeUuid("00000000-0000-4000-8000-000000000402");
 const EX_EMPTY = decodeUuid("00000000-0000-4000-8000-000000000403");
@@ -234,7 +234,7 @@ const createSessionForTest = (
     Effect.gen(function* () {
       const sessions = yield* SessionsService;
       const replyId = decodeUuid(randomUUID());
-      const sessionId = yield* sessions.createSession(userId, id.vault as Uuid, {
+      const sessionId = yield* sessions.createSession(userId, id.vault, {
         idempotencyKey,
         ...(origin === undefined ? {} : { origin }),
         pending: {
@@ -243,7 +243,7 @@ const createSessionForTest = (
           question: exchange.query,
         },
       });
-      yield* sessions.completeReply(userId, id.vault as Uuid, sessionId, replyId, {
+      yield* sessions.completeReply(userId, id.vault, sessionId, replyId, {
         messages: [
           { role: "user", content: exchange.query },
           { role: "assistant", content: exchange.answer },
@@ -300,11 +300,11 @@ const userFileExists = (userId: string, path: string) =>
 const proposalFileExists = (proposalId: string) =>
   fileExists(join(currentState().storageRoot, "proposals", `${proposalId}.md`));
 
-const issueToken = (userId: string) =>
+const issueToken = (userId: Uuid) =>
   runDb(
     Effect.gen(function* () {
       const tokens = yield* TokenService;
-      return yield* tokens.issueAccessToken(userId as Uuid, initialTime);
+      return yield* tokens.issueAccessToken(userId, initialTime);
     }),
   );
 
@@ -334,19 +334,19 @@ const seedBase = async (): Promise<Fixture> => {
         .insert(vaultMemberships)
         .values([
           {
-            id: "00000000-0000-4000-8000-000000012001",
+            id: decodeUuid("00000000-0000-4000-8000-000000012001"),
             vaultId: id.vault,
             userId: id.alice,
             role: "OWNER",
           },
           {
-            id: "00000000-0000-4000-8000-000000012002",
+            id: decodeUuid("00000000-0000-4000-8000-000000012002"),
             vaultId: id.vault,
             userId: id.bob,
             role: "EDITOR",
           },
           {
-            id: "00000000-0000-4000-8000-000000012003",
+            id: decodeUuid("00000000-0000-4000-8000-000000012003"),
             vaultId: id.vault,
             userId: id.carol,
             role: "VIEWER",
@@ -520,7 +520,7 @@ const withLocalHttpServer = async <A>(
 };
 
 const waitForPipelineRun = async (
-  runId: string,
+  runId: Uuid,
   predicate: (row: typeof pipelineRuns.$inferSelect) => boolean,
   timeoutMs: number = 10_000,
 ) => {
@@ -1074,7 +1074,7 @@ describe("M3.1 write endpoint integration", () => {
     });
     expect(raw.status).toBe(201);
     const rawResult = asRecord(raw.body);
-    const rawId = String(rawResult.id);
+    const rawId = decodeUuid(rawResult.id);
     const rawPath = String(rawResult.file_path);
     expect(rawPath).toBe(`raw/docs/raw-direct-${rawId}.md`);
     const rawText = await readVaultFile(id.vault, rawPath);
@@ -1270,7 +1270,7 @@ describe("M3.1 write endpoint integration", () => {
     });
 
     const sourceIds = inputs.map((input) =>
-      sourceIdForKey(id.vault as Uuid, `upload:${input.hash}`),
+      sourceIdForKey(id.vault, `upload:${input.hash}`),
     );
     expect(new Set(sourceIds).size).toBe(3);
     const sourcePaths = sourceIds.map((sourceId) => `raw/docs/${sourceId}.md`);
@@ -2047,7 +2047,7 @@ describe("M3.1 write endpoint integration", () => {
             yield* db.query((d) => d
               .insert(sessions)
               .values({
-                id: "s-rename-origin",
+                id: decodeSessionId("s-rename-origin"),
                 vaultId: id.vault,
                 userId: id.alice,
                 query: "Anchored session on the reference",
@@ -2070,7 +2070,7 @@ describe("M3.1 write endpoint integration", () => {
           jsonl([
             {
               type: "meta",
-              id: "s-rename-origin",
+              id: decodeSessionId("s-rename-origin"),
               query: "Anchored session on the reference",
               ts: "2026-07-11T09:00:00.000Z",
               user_id: id.alice,
@@ -2100,7 +2100,7 @@ describe("M3.1 write endpoint integration", () => {
         );
         expect(before.status).toBe(200);
         expect(asRecord(asRecord(asArray(before.body)[0]).session)).toMatchObject({
-          id: "s-rename-origin",
+          id: decodeSessionId("s-rename-origin"),
           origin_title: "Origin Title Article",
         });
 
@@ -2119,7 +2119,7 @@ describe("M3.1 write endpoint integration", () => {
         );
         expect(after.status).toBe(200);
         expect(asRecord(asRecord(asArray(after.body)[0]).session)).toMatchObject({
-          id: "s-rename-origin",
+          id: decodeSessionId("s-rename-origin"),
           origin_title: "Renamed Origin Article",
         });
       },
@@ -2144,7 +2144,7 @@ describe("M3.1 write endpoint integration", () => {
         const referenceId = String(createdReference.id);
         const referencePath = String(createdReference.file_path);
         const personalBefore = await readUserFile(id.alice, referencePath);
-        const sourceId = sourceIdForKey(id.vault as Uuid, `reference:${referenceId}`);
+        const sourceId = sourceIdForKey(id.vault, `reference:${referenceId}`);
         const sourcePath = `raw/docs/promoted-${sourceId}.md`;
 
         const promoted = await api(
@@ -2330,7 +2330,7 @@ describe("M3.1 write endpoint integration", () => {
         );
 
         const canonicalUrl = `${origin}/ok`;
-        const sourceId = sourceIdForKey(id.vault as Uuid, `url:${canonicalUrl}`);
+        const sourceId = sourceIdForKey(id.vault, `url:${canonicalUrl}`);
         const sourcePath = `raw/docs/ok-${sourceId}.md`;
         const markdown = await readVaultFile(id.vault, sourcePath);
         expect(markdown).toBe(
@@ -2389,8 +2389,8 @@ describe("M3.1 write endpoint integration", () => {
 
         const alphaUrl = `${origin}/one/report`;
         const betaUrl = `${origin}/two/report?version=2`;
-        const alphaId = sourceIdForKey(id.vault as Uuid, `url:${alphaUrl}`);
-        const betaId = sourceIdForKey(id.vault as Uuid, `url:${betaUrl}`);
+        const alphaId = sourceIdForKey(id.vault, `url:${alphaUrl}`);
+        const betaId = sourceIdForKey(id.vault, `url:${betaUrl}`);
         const alphaPath = `raw/docs/report-${alphaId}.md`;
         const betaPath = `raw/docs/report-${betaId}.md`;
         const alpha = await api("POST", `/vaults/${id.vault}/jobs/url`, aliceToken, {
@@ -2559,7 +2559,7 @@ describe("M3.1 write endpoint integration", () => {
           (row) => row.phaseStatus === "completed",
         );
         const reconciledSourceId = sourceIdForKey(
-          id.vault as Uuid,
+          id.vault,
           `url:${reconciledUrl}`,
         );
         expect(
@@ -2581,7 +2581,7 @@ describe("M3.1 write endpoint integration", () => {
   it("promotes exchanges through owner ingest and editor proposals with corrected 404s", async () => {
     const { aliceToken, bobToken, carolToken, malloryToken } = currentFixture();
     const sessionId = await createSessionForTest(
-      id.alice as Uuid,
+      id.alice,
       "promote-key",
       {
         id: EX_PROMOTE,
@@ -2598,7 +2598,7 @@ describe("M3.1 write endpoint integration", () => {
       },
     );
     currentState().clock.set(new Date("2026-07-10T12:01:00.000Z"));
-    const editorSessionId = await createSessionForTest(id.bob as Uuid, "editor-promote-key", {
+    const editorSessionId = await createSessionForTest(id.bob, "editor-promote-key", {
       id: EX_PROPOSAL,
       query: "What should editors propose?",
       thinking: [],
@@ -2606,7 +2606,7 @@ describe("M3.1 write endpoint integration", () => {
     });
 
     const ownerSourceId = sourceIdForKey(
-      id.vault as Uuid,
+      id.vault,
       `session:${sessionId}:${EX_PROMOTE}`,
     );
     const ownerSourcePath = `raw/sessions/${EX_PROMOTE}-${ownerSourceId}.md`;
@@ -2669,7 +2669,7 @@ describe("M3.1 write endpoint integration", () => {
     });
 
     const editorSourceId = sourceIdForKey(
-      id.vault as Uuid,
+      id.vault,
       `session:${editorSessionId}:${EX_PROPOSAL}`,
     );
     const editorSourcePath = `raw/sessions/${EX_PROPOSAL}-${editorSourceId}.md`;
@@ -2685,7 +2685,7 @@ describe("M3.1 write endpoint integration", () => {
       path: editorSourcePath,
       title: null,
     });
-    const proposalId = String(editorBody.proposal_id);
+    const proposalId = decodeUuid(editorBody.proposal_id);
     const proposalRows = await runDb(
       Effect.gen(function* () {
         const db = yield* Database;
@@ -2770,7 +2770,7 @@ describe("M3.1 write endpoint integration", () => {
     expect(emptySession.body).toMatchObject({ detail: "Session not found" });
 
     const emptyAnswerSessionId = await createSessionForTest(
-      id.alice as Uuid,
+      id.alice,
       "empty-answer-key",
       {
         id: EX_EMPTY,
@@ -2854,7 +2854,7 @@ describe("M3.1 write endpoint integration", () => {
               id: id.sessionShare,
               token: "session-share-token",
               subjectKind: "session",
-              subjectId: id.session,
+              subjectId: decodeUuid(id.session),
               createdBy: id.alice,
             },
             {

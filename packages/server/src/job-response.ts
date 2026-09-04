@@ -1,9 +1,9 @@
 import { pipelineRuns } from "@great-minds/database";
-import type { JobResponse, Uuid } from "@great-minds/domain";
+import type { JobResponse } from "@great-minds/domain";
 
 export const jobResponse = (row: typeof pipelineRuns.$inferSelect): JobResponse => ({
-  id: row.id as Uuid,
-  vault_id: row.vaultId as Uuid,
+  id: row.id,
+  vault_id: row.vaultId,
   trigger: row.trigger as JobResponse["trigger"],
   status: row.status as JobResponse["status"],
   current_phase: row.currentPhase,

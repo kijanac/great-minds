@@ -1,20 +1,21 @@
 import { appendFile } from "node:fs/promises";
 
 import { Database, replies } from "@great-minds/database";
-import type { Uuid } from "@great-minds/domain";
+import { Uuid } from "@great-minds/domain";
 import { eq } from "drizzle-orm";
-import { Effect, Layer } from "effect";
+import { Effect, Layer, Schema } from "effect";
 
 import { makeAppLayer } from "../../src/app-layer.ts";
 import { LanguageModel, type StreamChatInput } from "../../src/llm.ts";
 import { RepliesService } from "../../src/replies.ts";
 
 const mode = process.argv[2] as "pause" | "resume" | undefined;
-const replyId = process.argv[3] as Uuid | undefined;
+const replyIdInput = process.argv[3];
 const markerPath = process.argv[4];
-if (mode === undefined || replyId === undefined || markerPath === undefined) {
+if (mode === undefined || replyIdInput === undefined || markerPath === undefined) {
   throw new Error("mode, reply id, and marker path are required");
 }
+const replyId = Schema.decodeUnknownSync(Uuid)(replyIdInput);
 
 const LanguageLive = Layer.succeed(LanguageModel, {
   hasApiKey: true,

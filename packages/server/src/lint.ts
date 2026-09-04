@@ -108,7 +108,7 @@ export const LintServiceLive = Layer.effect(
               updated_at: row.updatedAt.toISOString(),
               slug: wikiSlug(row.filePath),
             })),
-            dirty_topics: dirty.map((row) => row.topicId as Uuid),
+            dirty_topics: dirty.map((row) => row.topicId),
             unmentioned_links: unmentioned.map((row) => ({
               source_slug: row.sourceSlug,
               source_title: row.sourceTitle,

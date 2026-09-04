@@ -27,8 +27,8 @@ import { workflowExecutionId } from "./workflow-engine.ts";
 const terminalStatuses = new Set(["completed", "failed", "cancelled"]);
 
 const progressSnapshot = (row: typeof pipelineRuns.$inferSelect): JobProgressSnapshot => ({
-  id: row.id as Uuid,
-  vault_id: row.vaultId as Uuid,
+  id: row.id,
+  vault_id: row.vaultId,
   trigger: row.trigger as JobProgressSnapshot["trigger"],
   job_status: row.status as JobProgressSnapshot["job_status"],
   phase: row.currentPhase,
@@ -133,7 +133,7 @@ export const JobsServiceLive = Layer.effect(
               throw new Error("compile intent upsert returned no row");
             }
 
-            const runId = (intent.pipelineRunId ?? jobId) as Uuid;
+            const runId = intent.pipelineRunId ?? jobId;
             if (intent.pipelineRunId === null) {
               yield* tx
                 .update(compileIntents)
@@ -188,7 +188,7 @@ export const JobsServiceLive = Layer.effect(
           const run = rows[0];
           if (run === undefined) return;
           if (run.compileIntentId !== null) {
-            yield* cancelCompileWorkflow(run.compileIntentId as Uuid).pipe(
+            yield* cancelCompileWorkflow(run.compileIntentId).pipe(
               Effect.provideService(WorkflowEngine.WorkflowEngine, workflowEngine),
               Effect.provideService(PipelineRunsService, pipeline),
             );

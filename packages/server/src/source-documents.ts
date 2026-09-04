@@ -6,9 +6,9 @@ import {
   sourceDocuments,
   topicMembership,
 } from "@great-minds/database";
-import { type FileFingerprint, type Uuid } from "@great-minds/domain";
+import { SessionId, type FileFingerprint, type Uuid } from "@great-minds/domain";
 import { and, asc, eq, inArray, isNull, sql } from "drizzle-orm";
-import { Cause, Context, Effect, Exit, Layer } from "effect";
+import { Cause, Context, Effect, Exit, Layer, Schema } from "effect";
 
 import { backgroundLoop } from "./background-loop.ts";
 import { bodyContentHash, fileContentHash } from "./crypto.ts";
@@ -90,6 +90,7 @@ const sourceRow = (
 ) => {
   const parsed = parseFrontmatter(content);
   const identity = sourceIdentityFromFrontmatter(parsed.frontmatter);
+  const provenanceSessionId = stringField(parsed.frontmatter, "session_id");
   return {
     id: identity.sourceId,
     vaultId,
@@ -101,7 +102,10 @@ const sourceRow = (
     url: stringField(parsed.frontmatter, "url"),
     canonicalUrl: identity.canonicalUrl,
     origin: stringField(parsed.frontmatter, "origin"),
-    provenanceSessionId: stringField(parsed.frontmatter, "session_id") as Uuid | null,
+    provenanceSessionId:
+      provenanceSessionId === null
+        ? null
+        : Schema.decodeUnknownSync(SessionId)(provenanceSessionId),
     provenanceExchangeId: stringField(parsed.frontmatter, "exchange_id"),
     provenanceSessionQuery: stringField(parsed.frontmatter, "session_query"),
     provenanceSourceDocPath: stringField(parsed.frontmatter, "source_doc_path"),
@@ -219,7 +223,7 @@ export const SourceDocumentsServiceLive = Layer.effect(
         if (row === undefined) {
           throw new Error("source document upsert returned no row");
         }
-        return row.id as Uuid;
+        return row.id;
       });
 
     return {
@@ -238,7 +242,7 @@ export const SourceDocumentsServiceLive = Layer.effect(
               `Source identity mismatch at ${filePath}: registered ${registeredId}, stored ${candidate.id}`,
             );
           }
-          const existing = yield* getById(vaultId, candidate.id as Uuid);
+          const existing = yield* getById(vaultId, candidate.id);
           const clientHash = existing?.clientHash ?? null;
           return yield* index(vaultId, filePath, content, clientHash as FileFingerprint | null);
         }),

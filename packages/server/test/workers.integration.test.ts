@@ -13,9 +13,9 @@ import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
 import * as PgClient from "@effect/sql-pg/PgClient";
-import type { FileFingerprint, Uuid } from "@great-minds/domain";
+import { Uuid, type FileFingerprint } from "@great-minds/domain";
 import { eq, inArray, sql } from "drizzle-orm";
-import { Effect, Layer, Option, Redacted } from "effect";
+import { Effect, Layer, Option, Redacted, Schema } from "effect";
 import type * as WorkflowEngine from "effect/unstable/workflow/WorkflowEngine";
 import { beforeEach, describe, expect, it } from "vitest";
 
@@ -61,26 +61,28 @@ import {
 import { VaultAccessServiceLive } from "../src/vaults.ts";
 import { WorkflowEngineLive } from "../src/workflow-engine.ts";
 
+const uuid = Schema.decodeUnknownSync(Uuid);
+
 const id = {
-  user: "10000000-0000-4000-8000-000000000001" as Uuid,
-  vault: "10000000-0000-4000-8000-000000000002" as Uuid,
-  ingestRun: "10000000-0000-4000-8000-000000000003" as Uuid,
-  compileIntent: "10000000-0000-4000-8000-000000000004" as Uuid,
-  dedupeRun: "10000000-0000-4000-8000-000000000005" as Uuid,
-  isolationRun: "10000000-0000-4000-8000-000000000006" as Uuid,
-  queuedRun: "10000000-0000-4000-8000-000000000007" as Uuid,
-  queuedIntent: "10000000-0000-4000-8000-000000000008" as Uuid,
-  terminalRun: "10000000-0000-4000-8000-000000000009" as Uuid,
-  terminalIntent: "10000000-0000-4000-8000-000000000010" as Uuid,
-  zombieRun: "10000000-0000-4000-8000-000000000011" as Uuid,
-  resumeRun: "10000000-0000-4000-8000-000000000012" as Uuid,
-  renderFailureIntent: "10000000-0000-4000-8000-000000000013" as Uuid,
-  renderFailureRun: "10000000-0000-4000-8000-000000000014" as Uuid,
-  cancelIngestRun: "10000000-0000-4000-8000-000000000016" as Uuid,
-  stagedFailureRun: "10000000-0000-4000-8000-000000000018" as Uuid,
-  replayDecisionRun: "10000000-0000-4000-8000-000000000021" as Uuid,
-  maskedCompileRun: "10000000-0000-4000-8000-000000000019" as Uuid,
-  maskedCompileIntent: "10000000-0000-4000-8000-000000000020" as Uuid,
+  user: uuid("10000000-0000-4000-8000-000000000001"),
+  vault: uuid("10000000-0000-4000-8000-000000000002"),
+  ingestRun: uuid("10000000-0000-4000-8000-000000000003"),
+  compileIntent: uuid("10000000-0000-4000-8000-000000000004"),
+  dedupeRun: uuid("10000000-0000-4000-8000-000000000005"),
+  isolationRun: uuid("10000000-0000-4000-8000-000000000006"),
+  queuedRun: uuid("10000000-0000-4000-8000-000000000007"),
+  queuedIntent: uuid("10000000-0000-4000-8000-000000000008"),
+  terminalRun: uuid("10000000-0000-4000-8000-000000000009"),
+  terminalIntent: uuid("10000000-0000-4000-8000-000000000010"),
+  zombieRun: uuid("10000000-0000-4000-8000-000000000011"),
+  resumeRun: uuid("10000000-0000-4000-8000-000000000012"),
+  renderFailureIntent: uuid("10000000-0000-4000-8000-000000000013"),
+  renderFailureRun: uuid("10000000-0000-4000-8000-000000000014"),
+  cancelIngestRun: uuid("10000000-0000-4000-8000-000000000016"),
+  stagedFailureRun: uuid("10000000-0000-4000-8000-000000000018"),
+  replayDecisionRun: uuid("10000000-0000-4000-8000-000000000021"),
+  maskedCompileRun: uuid("10000000-0000-4000-8000-000000000019"),
+  maskedCompileIntent: uuid("10000000-0000-4000-8000-000000000020"),
 } as const;
 
 const resumeRunnerPath = fileURLToPath(
@@ -350,7 +352,7 @@ const RenderFailurePhasesLive = Layer.effect(
       abstract: () =>
         Effect.succeed([
           {
-            topicId: "10000000-0000-4000-8000-000000000015",
+            topicId: uuid("10000000-0000-4000-8000-000000000015"),
             slug: "render-failure",
             title: "Render failure",
             description: "Pins the last emitted render progress snapshot.",
@@ -498,7 +500,7 @@ const seed = () =>
       yield* db.query((d) => d
         .insert(vaultMemberships)
         .values({
-          id: "10000000-0000-4000-8000-000000000017",
+          id: uuid("10000000-0000-4000-8000-000000000017"),
           vaultId: id.vault,
           userId: id.user,
           role: "OWNER",

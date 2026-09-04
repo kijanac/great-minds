@@ -21,6 +21,7 @@ import {
   PasskeyAuthenticationOptions,
   PasskeyRegistrationOptions,
   Unauthorized,
+  Uuid,
   Validation,
 } from "@great-minds/domain";
 import type {
@@ -29,7 +30,6 @@ import type {
   PasskeyAuthentication,
   PasskeyRegistration,
   TokenPair,
-  Uuid,
 } from "@great-minds/domain";
 import { and, desc, eq, isNull, lte } from "drizzle-orm";
 import { Context, Effect, Layer, Schema } from "effect";
@@ -67,15 +67,13 @@ const CHALLENGE_EXPIRY_MINUTES = 2;
 
 const addMinutes = (date: Date, minutes: number) => new Date(date.getTime() + minutes * 60 * 1000);
 
-const asUuid = (value: string): Uuid => value as Uuid;
-
 const jsonProtocolValue = (value: unknown): unknown => JSON.parse(JSON.stringify(value)) as unknown;
 
 const transportsFromDatabase = (transports: readonly string[]) =>
   Schema.decodeUnknownSync(Schema.Array(AuthenticatorTransport))(transports);
 
 const passkeyResponse = (row: CredentialRow): Passkey => ({
-  id: asUuid(row.id),
+  id: row.id,
   name: row.name,
   created_at: row.createdAt.toISOString(),
   last_used_at: row.lastUsedAt?.toISOString() ?? null,
@@ -243,7 +241,7 @@ export const PasskeysServiceLive = Layer.effect(
           const rows = yield* db.query((d) => d
             .insert(webauthnCredentials)
             .values({
-              id: randomUUID(),
+              id: Uuid.make(randomUUID(), { disableChecks: true }),
               userId,
               credentialId: credential.id,
               publicKey: isoBase64URL.fromBuffer(credential.publicKey),
@@ -322,7 +320,7 @@ export const PasskeysServiceLive = Layer.effect(
               lastUsedAt: now,
             })
             .where(eq(webauthnCredentials.id, credential.id)));
-          return yield* auth.issueTokenPair(asUuid(credential.userId));
+          return yield* auth.issueTokenPair(credential.userId);
         }),
       list: (userId) =>
         db.query((d) =>

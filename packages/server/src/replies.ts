@@ -19,9 +19,7 @@ import {
   type ReplySseEvent,
   ServiceUnavailable,
   type SessionId,
-  SessionId as SessionIdSchema,
-  type Uuid,
-  Uuid as UuidSchema,
+  Uuid,
 } from "@great-minds/domain";
 import { and, asc, eq, isNull, sql } from "drizzle-orm";
 import { Cause, Context, Effect, Layer, Option, Schema, Stream } from "effect";
@@ -51,8 +49,6 @@ const flushIntervalMs = 125;
 
 const decodeCreateReply = Schema.decodeUnknownEffect(CreateReplyRequestSchema);
 const decodeReplySnapshot = Schema.decodeUnknownSync(ReplySnapshotSchema);
-const decodeSessionId = Schema.decodeUnknownSync(SessionIdSchema);
-const decodeUuid = Schema.decodeUnknownSync(UuidSchema);
 
 const ReplyStepControl = Schema.Struct({
   cursor: Schema.Number,
@@ -197,7 +193,7 @@ const sourceRef = (data: QuerySourceData, thinking: string, pending = false): Re
 };
 
 export const ReplyWorkflow = Workflow.make("ReplyGeneration", {
-  payload: { replyId: UuidSchema },
+  payload: { replyId: Uuid },
   idempotencyKey: ({ replyId }) => replyId,
   success: Schema.Void,
 });
@@ -401,15 +397,15 @@ export const RepliesServiceLive = Layer.effect(
     });
 
     const readCheckpoint = (row: typeof replies.$inferSelect) =>
-      storage.readText(vaultOwner(decodeUuid(row.vaultId)), checkpointPath(decodeUuid(row.id))).pipe(
+      storage.readText(vaultOwner(row.vaultId), checkpointPath(row.id)).pipe(
         Effect.map((content) => decodeReplyCheckpoint(JSON.parse(content))),
         Effect.catchTag("StorageFileMissing", () => Effect.succeed(undefined)),
       );
 
     const writeCheckpoint = (row: typeof replies.$inferSelect, checkpoint: ReplyCheckpoint) =>
       storage.writeText(
-        vaultOwner(decodeUuid(row.vaultId)),
-        checkpointPath(decodeUuid(row.id)),
+        vaultOwner(row.vaultId),
+        checkpointPath(row.id),
         JSON.stringify(checkpoint),
       );
 
@@ -567,7 +563,7 @@ export const RepliesServiceLive = Layer.effect(
           );
         }
         if (row.activeGenerationStep !== null) {
-          yield* failRunningReply(decodeUuid(row.id), ambiguousReplyError);
+          yield* failRunningReply(row.id, ambiguousReplyError);
           return failedControl(expectedCursor, ambiguousReplyError);
         }
         const claimed = yield* db.query((d) => d
@@ -627,9 +623,9 @@ export const RepliesServiceLive = Layer.effect(
             throw new Error(`Reply ${row.id} is missing its session`);
           }
           transcript = yield* sessions.readTranscript(
-            decodeUuid(row.vaultId),
-            decodeSessionId(row.sessionId),
-            decodeUuid(row.id),
+            row.vaultId,
+            row.sessionId,
+            row.id,
           );
         }
         const vaultRows = yield* db.query((d) => d
@@ -644,8 +640,8 @@ export const RepliesServiceLive = Layer.effect(
         }
         const prechecked: QueryPrecheckedContext = { vaultLabel: vault.name };
         const queryState = yield* query.prepareExecution(
-          decodeUuid(row.userId),
-          decodeUuid(row.vaultId),
+          row.userId,
+          row.vaultId,
           queryRequest(input, transcript.threadRoot),
           prechecked,
           transcript.prior,
@@ -845,9 +841,9 @@ export const RepliesServiceLive = Layer.effect(
                 );
               }
               yield* sessions.completeReply(
-                decodeUuid(row.userId),
-                decodeUuid(row.vaultId),
-                decodeSessionId(row.sessionId),
+                row.userId,
+                row.vaultId,
+                row.sessionId,
                 replyId,
                 {
                   messages: checkpoint.query.messages.slice(checkpoint.query.turnStart),
@@ -909,8 +905,8 @@ export const RepliesServiceLive = Layer.effect(
           });
         }
         return {
-          reply_id: decodeUuid(row.id),
-          session_id: row.sessionId === null ? null : decodeSessionId(row.sessionId),
+          reply_id: row.id,
+          session_id: row.sessionId,
         };
       });
 
@@ -1030,7 +1026,7 @@ export const RepliesServiceLive = Layer.effect(
             reply_id: nextReplyId,
           };
           const sessionId =
-            previous.sessionId === null ? undefined : decodeSessionId(previous.sessionId);
+            previous.sessionId === null ? undefined : previous.sessionId;
           return yield* acceptReply(userId, vaultId, input, sessionId);
         }),
       stream: (userId, vaultId, replyId) =>
@@ -1080,7 +1076,7 @@ export const RepliesServiceLive = Layer.effect(
             .limit(100));
           yield* Effect.forEach(
             rows,
-            (row) => dispatchBestEffort(row.id as Uuid),
+            (row) => dispatchBestEffort(row.id),
             { concurrency: config.pipelineConcurrency },
           );
           return rows.length;

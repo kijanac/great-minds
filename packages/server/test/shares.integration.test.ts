@@ -13,10 +13,7 @@ import {
   vaultMemberships,
   vaults,
 } from "@great-minds/database";
-import {
-  Uuid as UuidSchema,
-  type Uuid,
-} from "@great-minds/domain";
+import { SessionId, Uuid } from "@great-minds/domain";
 import { eq } from "drizzle-orm";
 import { Effect, Layer, Option, Redacted, Schema } from "effect";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
@@ -32,15 +29,17 @@ import { SessionsService } from "../src/sessions.ts";
 import { TokenService } from "../src/tokens.ts";
 
 const initialTime = new Date("2026-07-10T12:00:00.000Z");
+const decodeUuid = Schema.decodeUnknownSync(Uuid);
+const decodeSessionId = Schema.decodeUnknownSync(SessionId);
 
 const id = {
-  alice: "00000000-0000-4000-8000-000000010001",
-  bob: "00000000-0000-4000-8000-000000010002",
-  vault: "00000000-0000-4000-8000-000000010101",
+  alice: decodeUuid("00000000-0000-4000-8000-000000010001"),
+  bob: decodeUuid("00000000-0000-4000-8000-000000010002"),
+  vault: decodeUuid("00000000-0000-4000-8000-000000010101"),
 } as const;
 
-const EX_ANN_1 = "00000000-0000-4000-8000-000000000801";
-const EX_ANN_2 = "00000000-0000-4000-8000-000000000802";
+const EX_ANN_1 = decodeUuid("00000000-0000-4000-8000-000000000801");
+const EX_ANN_2 = decodeUuid("00000000-0000-4000-8000-000000000802");
 
 type TestServices =
   | AppConfig
@@ -168,11 +167,11 @@ const resetDatabase = () =>
     }),
   );
 
-const issueToken = (userId: string) =>
+const issueToken = (userId: Uuid) =>
   runDb(
     Effect.gen(function* () {
       const tokens = yield* TokenService;
-      return yield* tokens.issueAccessToken(userId as Uuid, initialTime);
+      return yield* tokens.issueAccessToken(userId, initialTime);
     }),
   );
 
@@ -200,13 +199,13 @@ const seedBase = async (): Promise<Fixture> => {
         .insert(vaultMemberships)
         .values([
           {
-            id: "00000000-0000-4000-8000-000000012001",
+            id: decodeUuid("00000000-0000-4000-8000-000000012001"),
             vaultId: id.vault,
             userId: id.alice,
             role: "OWNER",
           },
           {
-            id: "00000000-0000-4000-8000-000000012002",
+            id: decodeUuid("00000000-0000-4000-8000-000000012002"),
             vaultId: id.vault,
             userId: id.bob,
             role: "EDITOR",
@@ -285,14 +284,12 @@ const writeVaultFile = async (vaultId: string, path: string, content: string) =>
 const jsonl = (events: readonly unknown[]) =>
   events.map((event) => JSON.stringify(event)).join("\n");
 
-const decodeUuid = Schema.decodeUnknownSync(UuidSchema);
-
 const createSession = (idempotencyKey: string, query: string, answer: string) =>
   runDb(
     Effect.gen(function* () {
       const sessions = yield* SessionsService;
       const replyId = decodeUuid(randomUUID());
-      const sessionId = yield* sessions.createSession(id.alice as Uuid, id.vault as Uuid, {
+      const sessionId = yield* sessions.createSession(id.alice, id.vault, {
         idempotencyKey,
         pending: {
           replyId,
@@ -300,7 +297,7 @@ const createSession = (idempotencyKey: string, query: string, answer: string) =>
           question: query,
         },
       });
-      yield* sessions.completeReply(id.alice as Uuid, id.vault as Uuid, sessionId, replyId, {
+      yield* sessions.completeReply(id.alice, id.vault, sessionId, replyId, {
         messages: [
           { role: "user", content: query },
           { role: "assistant", content: answer },
@@ -391,7 +388,7 @@ describe("share links", () => {
           url: `${origin}/article`,
         });
         expect(reference.status).toBe(201);
-        const referenceId = String(asRecord(reference.body).id);
+        const referenceId = decodeUuid(asRecord(reference.body).id);
 
         const annotated = await api("POST", "/shares", aliceToken, {
           subject_kind: "reference",
@@ -551,7 +548,7 @@ describe("share links", () => {
           url: `${origin}/article`,
         });
         expect(reference.status).toBe(201);
-        const referenceId = String(asRecord(reference.body).id);
+        const referenceId = decodeUuid(asRecord(reference.body).id);
 
         await runDb(
           Effect.gen(function* () {
@@ -559,7 +556,7 @@ describe("share links", () => {
             yield* db.query((d) => d
               .insert(sessions)
               .values({
-                id: "s-annotated",
+                id: decodeSessionId("s-annotated"),
                 vaultId: id.vault,
                 userId: id.alice,
                 query: "What does the quote mean?",
@@ -830,7 +827,7 @@ describe("share links", () => {
       subject_kind: "session",
       subject_id: sessionId,
     });
-    const shareId = String(asRecord(asRecord(share.body).share).id);
+    const shareId = decodeUuid(asRecord(asRecord(share.body).share).id);
 
     const nonOwner = await api("DELETE", `/shares/${shareId}`, bobToken);
     expect(nonOwner.status).toBe(404);

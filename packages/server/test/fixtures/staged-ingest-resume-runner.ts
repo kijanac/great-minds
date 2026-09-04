@@ -1,4 +1,4 @@
-import { FileFingerprint, type Uuid } from "@great-minds/domain";
+import { FileFingerprint, Uuid } from "@great-minds/domain";
 import { Effect, Layer, Option, Redacted, Schema } from "effect";
 import * as Activity from "effect/unstable/workflow/Activity";
 
@@ -17,18 +17,20 @@ import { ContentStorage, StagedStorage } from "../../src/storage.ts";
 import { WorkflowEngineLive } from "../../src/workflow-engine.ts";
 
 const mode = process.argv[2];
-const vaultId = process.argv[3] as Uuid | undefined;
-const pipelineRunId = process.argv[4] as Uuid | undefined;
+const vaultIdInput = process.argv[3];
+const pipelineRunIdInput = process.argv[4];
 const hashInput = process.argv[5];
 
 if (
   (mode !== "pause" && mode !== "resume") ||
-  vaultId === undefined ||
-  pipelineRunId === undefined ||
+  vaultIdInput === undefined ||
+  pipelineRunIdInput === undefined ||
   hashInput === undefined
 ) {
   throw new Error("mode, vault id, pipeline run id, and hash are required");
 }
+const vaultId = Schema.decodeUnknownSync(Uuid)(vaultIdInput);
+const pipelineRunId = Schema.decodeUnknownSync(Uuid)(pipelineRunIdInput);
 const hash = Schema.decodeUnknownSync(FileFingerprint)(hashInput);
 
 const databaseUrl = process.env.DATABASE_URL;

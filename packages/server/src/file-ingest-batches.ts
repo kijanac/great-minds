@@ -202,7 +202,7 @@ export const FileIngestBatchesLive = Layer.effect(
             const row = rows[0];
             return row === undefined
               ? undefined
-              : ({ ...row, id: row.id as Uuid, vaultId: row.vaultId as Uuid, createdBy: row.createdBy as Uuid } satisfies BatchRecord);
+              : ({ ...row, id: row.id, vaultId: row.vaultId, createdBy: row.createdBy } satisfies BatchRecord);
           }),
         );
 
@@ -533,7 +533,7 @@ export const FileIngestBatchesLive = Layer.effect(
             ),
           ));
         yield* pipeline.updateProgress(
-          row.id as Uuid,
+          row.id,
           "source_ingest",
           "failed",
           progressSteps(STAGED_FILE_INGEST_STEP_LABELS, "prepare_sources", {
@@ -542,7 +542,7 @@ export const FileIngestBatchesLive = Layer.effect(
           }),
           UPLOAD_EXPIRED_ERROR,
         );
-        yield* stagedStorage.clearStagedBatch(row.vaultId as Uuid, row.id as Uuid).pipe(
+        yield* stagedStorage.clearStagedBatch(row.vaultId, row.id).pipe(
           Effect.catchCause((cause) =>
             logger.warn("file_ingest.expiry_cleanup_failed", {
               vault_id: row.vaultId,
@@ -573,7 +573,7 @@ export const FileIngestBatchesLive = Layer.effect(
         rows,
         (row) =>
           Effect.gen(function* () {
-            const batch = yield* loadBatch(row.id as Uuid);
+            const batch = yield* loadBatch(row.id);
             if (batch === undefined || batch.status !== "processing") return;
             const files = yield* loadFiles(batch.id);
             yield* dispatch(batch, files);

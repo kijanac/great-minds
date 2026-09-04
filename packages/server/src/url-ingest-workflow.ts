@@ -71,7 +71,7 @@ export const UrlIngestWorkflowLive = UrlIngestWorkflow.toLayer((payload) =>
       );
       const canonicalUrl = yield* parseCanonicalSourceUrl(request.canonicalUrl).pipe(Effect.orDie);
       yield* ingest.ingestUrl(
-        request.vaultId as Uuid,
+        request.vaultId,
         canonicalUrl,
         request.origin ?? undefined,
         runId,

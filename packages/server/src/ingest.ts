@@ -14,7 +14,7 @@ import {
   type UserSuggestion,
   type UserSuggestionIntent,
   type UserSuggestionResult,
-  type Uuid,
+  Uuid,
 } from "@great-minds/domain";
 import { eq, sql } from "drizzle-orm";
 import { Context, Effect, Layer } from "effect";
@@ -190,7 +190,7 @@ export const IngestServiceLive = Layer.effect(
             .set({ compileIntentId: intent.id, updatedAt: sql`now()` })
             .where(eq(pipelineRuns.id, pipelineRunId)));
         }
-        return intent.id as Uuid;
+        return intent.id;
       });
 
     const writeAndIndex = (
@@ -245,7 +245,7 @@ export const IngestServiceLive = Layer.effect(
       ingestRaw: (userId, vaultId, input) =>
         Effect.gen(function* () {
           yield* access.requireOwner(userId, vaultId);
-          const sourceId = randomUUID() as Uuid;
+          const sourceId = Uuid.make(randomUUID(), { disableChecks: true });
           return yield* writeAndIndex(
             vaultId,
             sourceId,
@@ -285,7 +285,7 @@ export const IngestServiceLive = Layer.effect(
             return yield* new BadRequest({ detail: "body is empty" });
           }
           const now = yield* clock.now;
-          const sourceId = randomUUID() as Uuid;
+          const sourceId = Uuid.make(randomUUID(), { disableChecks: true });
           const dest = userSuggestionDest(now, input.intent, input.anchored_to, sourceId);
           const frontmatter = {
             sourceType: "user",
