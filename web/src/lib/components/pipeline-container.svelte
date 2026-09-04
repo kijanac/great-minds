@@ -1,6 +1,7 @@
 <script lang="ts">
   import { beforeNavigate, goto, replaceState } from "$app/navigation";
   import { page } from "$app/state";
+  import type { Uuid } from "@great-minds/domain";
   import ArrowLeft from "@lucide/svelte/icons/arrow-left";
   import { createQuery, useQueryClient } from "@tanstack/svelte-query";
   import { onDestroy, tick } from "svelte";
@@ -35,22 +36,25 @@
   import { Button } from "$lib/components/ui/button";
   import { useJobSSE } from "$lib/hooks/use-job-sse.svelte";
   import { activeVault, useVaults } from "$lib/hooks/use-vault.svelte";
+  import { newUuid } from "$lib/ids";
 
   interface FileUploadState {
     uploadFiles?: readonly HashedFile[];
     batch?: FileIngestBatch;
   }
 
+  let { routeJobId = null }: { routeJobId?: Uuid | null } = $props();
+
   const queryClient = useQueryClient();
   const vaults = useVaults();
-  const uploadingBatchIds = new SvelteSet<string>();
-  let resolvedJobId = $state<string | null>(null);
+  const uploadingBatchIds = new SvelteSet<Uuid>();
+  let resolvedJobId = $state<Uuid | null>(null);
   let noJobFound = $state(false);
   let resolveError = $state<string | null>(null);
   let uploadFailures = $state<UploadFailure[]>([]);
   let fileBatch = $state<FileIngestBatch | null>(null);
   let routeContextResolved = $state(false);
-  let resolvedRouteId = $state<string | null>(null);
+  let resolvedRouteId = $state<Uuid | null>(null);
   let availableFiles = $state<readonly HashedFile[]>([]);
   let resolverStarted = $state(false);
   let showCompletion = $state(false);
@@ -64,9 +68,6 @@
     componentActive = false;
   });
 
-  const routeJobId = $derived(
-    typeof page.params.jobId === "string" ? page.params.jobId : null,
-  );
   const jobId = $derived(routeJobId ?? resolvedJobId);
   const urlParam = $derived(page.url.searchParams.get("url"));
   const fileUpload = $derived(page.state as FileUploadState);
@@ -337,7 +338,7 @@
 
   async function retry() {
     if (!canManage || !jobVaultId || !jobId) return;
-    const nextId = crypto.randomUUID();
+    const nextId = newUuid();
     const job =
       progress.trigger === "url" && progress.backendPhase === "source_ingest"
         ? await retryUrlJob(jobId, nextId, jobVaultId)

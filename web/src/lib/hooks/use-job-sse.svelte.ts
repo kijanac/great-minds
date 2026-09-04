@@ -1,4 +1,4 @@
-import type { JobProgressSnapshot, PipelineProgressStep } from "@great-minds/domain";
+import type { JobProgressSnapshot, PipelineProgressStep, Uuid } from "@great-minds/domain";
 import { useQueryClient } from "@tanstack/svelte-query";
 
 import { errorMessage } from "$lib/api/errors";
@@ -135,8 +135,8 @@ function applyEvent(previous: StageProgress[], event: PipelineEvent): StageProgr
 }
 
 export function useJobSSE(
-  jobId: () => string | null,
-  jobVaultId: () => string | null = () => activeVault.id,
+  jobId: () => Uuid | null,
+  jobVaultId: () => Uuid | null = () => activeVault.id,
 ) {
   const queryClient = useQueryClient();
   let stages = $state<StageProgress[]>(emptyStages());
@@ -146,7 +146,7 @@ export function useJobSSE(
   let trigger = $state<JobProgressSnapshot["trigger"] | undefined>(undefined);
   let backendPhase = $state("");
 
-  function invalidateActivePipeline(vaultId: string) {
+  function invalidateActivePipeline(vaultId: Uuid) {
     void queryClient.invalidateQueries({
       queryKey: ["vault", vaultId, "active-job"],
     });
@@ -156,8 +156,8 @@ export function useJobSSE(
     const id = jobId();
     const vaultId = jobVaultId();
     if (!id || !vaultId) return;
-    const vaultKey: string = vaultId;
-    const jobKey: string = id;
+    const vaultKey = vaultId;
+    const jobKey = id;
 
     overallDone = false;
     overallError = null;

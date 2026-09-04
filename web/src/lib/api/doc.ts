@@ -1,18 +1,16 @@
 import {
-  Uuid,
   type Chunk,
   type DocResponse,
   type LinkedArticles,
   type ReferenceOverview,
   type SourceDocument,
+  type Uuid,
   type WikiArticle,
   type WikiArticleOverview,
 } from "@great-minds/domain";
-import { Schema } from "effect";
-
-import { getVaultId } from "../vault-selection";
 
 import { api, run } from "./app";
+import { selectedVault } from "./selected-vault";
 
 export type { Chunk, DocResponse, LinkedArticles, SourceDocument, WikiArticle };
 
@@ -29,14 +27,6 @@ export type DocumentResponse =
       archived: false;
       superseded_by: null;
     };
-
-const uuid = Schema.decodeSync(Uuid);
-
-function selectedVault(): Uuid {
-  const id = getVaultId();
-  if (id === null) throw new Error("No vault selected");
-  return uuid(id);
-}
 
 export type ArticleMeta = {
   readonly title: string | null;
@@ -94,19 +84,16 @@ export function articleMeta(article: Article): ArticleMeta {
   };
 }
 
-export async function readDocument(path: string, signal?: AbortSignal): Promise<DocResponse> {
+export function readDocument(path: string, signal?: AbortSignal): Promise<DocResponse> {
   return run(
     api.documents.resolveDocument({ params: { vault_id: selectedVault() }, query: { path } }),
     { signal },
   );
 }
 
-export async function readSourceDocument(
-  sourceId: string,
-  signal?: AbortSignal,
-): Promise<DocResponse> {
+export function readSourceDocument(sourceId: Uuid, signal?: AbortSignal): Promise<DocResponse> {
   return run(
-    api.sources.readSource({ params: { vault_id: selectedVault(), source_id: uuid(sourceId) } }),
+    api.sources.readSource({ params: { vault_id: selectedVault(), source_id: sourceId } }),
     { signal },
   );
 }
@@ -124,7 +111,7 @@ export async function readPersonalDocument(
   };
 }
 
-export async function fetchChunks(
+export function fetchChunks(
   path: string,
   start: number,
   end: number,
@@ -139,7 +126,7 @@ export async function fetchChunks(
   );
 }
 
-export async function fetchLinks(path: string, signal?: AbortSignal): Promise<LinkedArticles> {
+export function fetchLinks(path: string, signal?: AbortSignal): Promise<LinkedArticles> {
   return run(api.documents.readLinks({ params: { vault_id: selectedVault() }, query: { path } }), {
     signal,
   });

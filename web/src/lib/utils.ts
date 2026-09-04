@@ -1,6 +1,8 @@
 import { clsx, type ClassValue } from "clsx";
 import { twMerge } from "tailwind-merge";
 
+import { newUuid } from "$lib/ids";
+
 export type {
   WithElementRef,
   WithoutChild,
@@ -17,7 +19,7 @@ export function isAbortError(error: unknown): error is Error {
 }
 
 export function genId(prefix: string) {
-  return `${prefix}-${crypto.randomUUID()}`;
+  return `${prefix}-${newUuid()}`;
 }
 
 export function slugToTitle(slug: string): string {

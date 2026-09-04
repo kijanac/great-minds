@@ -1,4 +1,5 @@
 <script lang="ts">
+  import type { Uuid } from "@great-minds/domain";
   import { tick } from "svelte";
 
   import { findQuoteRange } from "$lib/anchor";
@@ -40,13 +41,13 @@
     onToggleThread,
   }: {
     text: string;
-    exchangeId: string;
+    exchangeId: Uuid;
     btws: ThreadLike[];
     streaming: boolean;
     panelDocked?: boolean;
     onSelection?: (info: SelectionInfo) => void;
     onBtwReply?: (btwId: string, text: string) => void;
-    onBtwRetry?: (btwId: string, turnId: string) => void;
+    onBtwRetry?: (btwId: string, turnId: Uuid) => void;
     onBtwDismiss?: (btwId: string) => void;
     onBtwOpenSession?: (btwId: string) => void;
     onLinkClick?: (event: MouseEvent) => void;

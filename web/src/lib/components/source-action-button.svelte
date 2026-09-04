@@ -1,4 +1,5 @@
 <script lang="ts">
+  import type { Uuid } from "@great-minds/domain";
   import FileX from "@lucide/svelte/icons/file-x";
   import Trash2 from "@lucide/svelte/icons/trash-2";
 
@@ -17,8 +18,8 @@
     item: SourceDocumentSummary;
     role: string | null;
     busy?: boolean;
-    onDeleteSource: (sourceId: string) => Promise<void>;
-    onRequestDeletion: (sourceId: string) => Promise<void>;
+    onDeleteSource: (sourceId: Uuid) => Promise<void>;
+    onRequestDeletion: (sourceId: Uuid) => Promise<void>;
   } = $props();
 
   let open = $state(false);

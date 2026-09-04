@@ -1,4 +1,5 @@
 import { browser } from "$app/environment";
+import type { SessionId, Uuid } from "@great-minds/domain";
 
 import {
   createReply,
@@ -8,12 +9,13 @@ import {
   type ReplySnapshot,
 } from "$lib/api/replies";
 import type { BtwThread, Exchange, Phase, SelectionInfo } from "$lib/types";
+import { newUuid } from "$lib/ids";
 import { genId, isAbortError } from "$lib/utils";
 
 type MainReplyPayload = Extract<CreateReplyPayload, { kind: "exchange" }>;
 
 type MainReplyAttempt = {
-  exchangeId: string;
+  exchangeId: Uuid;
   payload: MainReplyPayload;
 };
 
@@ -21,24 +23,24 @@ type SubmissionState = { status: "ready" } | { status: "failed"; attempt: MainRe
 
 export interface SessionOptions {
   initialExchanges?: Exchange[];
-  sessionId?: string;
+  sessionId?: SessionId;
   originPath?: string;
   initialQuery?: string;
-  onSessionCreated?: (sessionId: string) => void;
+  onSessionCreated?: (sessionId: SessionId) => void;
 }
 
 export class Session {
   phase = $state<Phase>("idle");
   thread = $state<Exchange[]>([]);
-  sessionId = $state<string | null>(null);
+  sessionId = $state<SessionId | null>(null);
   chips = $state<string[]>([]);
   followUpDraft = $state("");
   submission = $state<SubmissionState>({ status: "ready" });
   popover = $state<SelectionInfo | null>(null);
 
   #originPath: string | undefined;
-  #onSessionCreated: ((sessionId: string) => void) | undefined;
-  #idempotencyKey: string | null = null;
+  #onSessionCreated: ((sessionId: SessionId) => void) | undefined;
+  #idempotencyKey: Uuid | null = null;
   #abortController: AbortController | null = null;
   #btwControllers = new Set<AbortController>();
   #destroyed = false;
@@ -69,7 +71,7 @@ export class Session {
     this.#btwControllers.clear();
   };
 
-  #updateExchange = (id: string, patch: Partial<Exchange>): void => {
+  #updateExchange = (id: Uuid, patch: Partial<Exchange>): void => {
     this.thread = this.thread.map((exchange) =>
       exchange.id === id ? { ...exchange, ...patch } : exchange,
     );
@@ -79,8 +81,8 @@ export class Session {
     snapshot.sources.length > 0 || alwaysBlock ? [{ sources: snapshot.sources }] : [];
 
   #tailExchange = async (
-    exchangeId: string,
-    replyId: string,
+    exchangeId: Uuid,
+    replyId: Uuid,
     controller: AbortController,
   ): Promise<void> => {
     try {
@@ -107,7 +109,7 @@ export class Session {
     }
   };
 
-  #updateBtwReply = (replyId: string, patch: Partial<Exchange>): void => {
+  #updateBtwReply = (replyId: Uuid, patch: Partial<Exchange>): void => {
     this.thread = this.thread.map((exchange) => ({
       ...exchange,
       btws: exchange.btws.map((btw) => ({
@@ -119,7 +121,7 @@ export class Session {
     }));
   };
 
-  #updateBtwTurn = (btwId: string, turnId: string, patch: Partial<Exchange>): void => {
+  #updateBtwTurn = (btwId: string, turnId: Uuid, patch: Partial<Exchange>): void => {
     this.thread = this.thread.map((exchange) => ({
       ...exchange,
       btws: exchange.btws.map((btw) =>
@@ -135,7 +137,7 @@ export class Session {
     }));
   };
 
-  #tailBtwReply = async (replyId: string, controller: AbortController): Promise<void> => {
+  #tailBtwReply = async (replyId: Uuid, controller: AbortController): Promise<void> => {
     try {
       for await (const snapshot of streamReply(replyId, controller.signal)) {
         this.#updateBtwReply(replyId, {
@@ -175,12 +177,12 @@ export class Session {
   };
 
   #makeMainReplyAttempt = (question: string): MainReplyAttempt => {
-    const exchangeId = crypto.randomUUID();
-    const replyId = crypto.randomUUID();
+    const exchangeId = newUuid();
+    const replyId = newUuid();
     const firstExchange = this.sessionId === null;
     const originForQuery = firstExchange ? this.#originPath : undefined;
     const existingSessionId = this.sessionId;
-    this.#idempotencyKey ??= crypto.randomUUID();
+    this.#idempotencyKey ??= newUuid();
 
     const payload: MainReplyPayload = existingSessionId
       ? {
@@ -190,6 +192,7 @@ export class Session {
           session_id: existingSessionId,
           question,
           origin_path: originForQuery,
+          origin_scope: "vault",
           mode: "query",
         }
       : {
@@ -198,6 +201,7 @@ export class Session {
           exchange_id: exchangeId,
           create: {
             idempotency_key: this.#idempotencyKey,
+            origin_scope: "vault",
             ...(this.#originPath
               ? {
                   origin: {
@@ -212,6 +216,7 @@ export class Session {
           },
           question,
           origin_path: originForQuery,
+          origin_scope: "vault",
           mode: "query",
         };
     return { exchangeId, payload };
@@ -267,7 +272,7 @@ export class Session {
     void this.#runExchange(question);
   };
 
-  retryExchange = (exchangeId: string): void => {
+  retryExchange = (exchangeId: Uuid): void => {
     if (this.phase !== "done") return;
     const index = this.thread.findIndex((exchange) => exchange.id === exchangeId);
     const previous = this.thread[index];
@@ -293,7 +298,7 @@ export class Session {
 
     void (async () => {
       try {
-        const created = await retryReply(previous.replyId!, crypto.randomUUID(), controller.signal);
+        const created = await retryReply(previous.replyId!, newUuid(), controller.signal);
         this.#updateExchange(exchangeId, { replyId: created.reply_id });
         await this.#tailExchange(exchangeId, created.reply_id, controller);
       } catch (error) {
@@ -364,13 +369,10 @@ export class Session {
 
   replyBtw = (btwId: string, userText: string): void => {
     const target = this.thread.flatMap((exchange) => exchange.btws).find((btw) => btw.id === btwId);
-    const anchor = target?.anchor ?? {
-      blockOffset: -1,
-      quote: "",
-      context: "",
-    };
-    const ownerExchangeId = target?.exchangeId ?? "";
-    const turnId = crypto.randomUUID();
+    if (!target) return;
+    const anchor = target.anchor;
+    const ownerExchangeId = target.exchangeId;
+    const turnId = newUuid();
 
     const patchBtwExchanges = (mutate: (exchanges: Exchange[]) => Exchange[]): void => {
       this.thread = this.thread.map((exchange) =>
@@ -413,7 +415,7 @@ export class Session {
         }
         const created = await createReply(
           {
-            reply_id: crypto.randomUUID(),
+            reply_id: newUuid(),
             kind: "btw",
             exchange_id: turnId,
             session_id: this.sessionId,
@@ -424,6 +426,7 @@ export class Session {
               exchangeId: ownerExchangeId,
             },
             question: userText,
+            origin_scope: "vault",
             mode: "btw",
           },
           controller.signal,
@@ -440,7 +443,7 @@ export class Session {
     })();
   };
 
-  retryBtw = (btwId: string, turnId: string): void => {
+  retryBtw = (btwId: string, turnId: Uuid): void => {
     const btw = this.thread
       .flatMap((exchange) => exchange.btws)
       .find((candidate) => candidate.id === btwId);
@@ -467,7 +470,7 @@ export class Session {
 
     void (async () => {
       try {
-        const created = await retryReply(previous.replyId!, crypto.randomUUID(), controller.signal);
+        const created = await retryReply(previous.replyId!, newUuid(), controller.signal);
         this.#updateBtwTurn(btwId, turnId, { replyId: created.reply_id });
         await this.#tailBtwReply(created.reply_id, controller);
       } catch (error) {

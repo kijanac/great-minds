@@ -1,4 +1,6 @@
 <script lang="ts">
+  import type { Uuid } from "@great-minds/domain";
+
   import LibraryFilterChips from "$lib/components/library-filter-chips.svelte";
   import ReadingRoomShelf from "$lib/components/reading-room-shelf.svelte";
   import VaultLibraryShelf from "$lib/components/vault-library-shelf.svelte";
@@ -23,7 +25,7 @@
     loading: boolean;
     actionNotice: string | null;
     actionError: string | null;
-    actionId: string | null;
+    actionId: Uuid | null;
     role: string | null;
     articles: {
       hasNextPage: boolean;
@@ -58,8 +60,8 @@
     openSource: (source: SourceDocumentSummary) => void;
     openReference: (reference: ReferenceOverview) => void;
     openExternal: (url: string) => Promise<void>;
-    deleteSource: (sourceId: string) => Promise<void>;
-    requestDeletion: (sourceId: string) => Promise<void>;
+    deleteSource: (sourceId: Uuid) => Promise<void>;
+    requestDeletion: (sourceId: Uuid) => Promise<void>;
   };
 
   let {

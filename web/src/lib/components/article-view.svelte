@@ -1,4 +1,6 @@
 <script lang="ts">
+  import type { Uuid } from "@great-minds/domain";
+
   import type { Article, DocumentScope, LinkItem } from "$lib/api/doc";
   import AnswerBlock from "$lib/components/answer-block.svelte";
   import DocHeader from "$lib/components/doc-header.svelte";
@@ -50,10 +52,10 @@
     onToggleThread?: (threadId: string) => void;
     onOpenSession?: (threadId: string) => void;
     onThreadJump?: (threadId: string) => void;
-    documentId: string;
+    documentId: Uuid;
     onSelection: (info: SelectionInfo) => void;
     onBtwReply: (btwId: string, text: string) => void;
-    onBtwRetry?: (btwId: string, turnId: string) => void;
+    onBtwRetry?: (btwId: string, turnId: Uuid) => void;
     onBtwDismiss?: (btwId: string) => void;
   } = $props();
 </script>

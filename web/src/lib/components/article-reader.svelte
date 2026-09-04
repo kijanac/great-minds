@@ -1,6 +1,7 @@
 <script lang="ts">
   import { goto } from "$app/navigation";
   import { page } from "$app/state";
+  import type { Uuid } from "@great-minds/domain";
   import { createQuery } from "@tanstack/svelte-query";
   import { onDestroy, tick, untrack } from "svelte";
 
@@ -45,7 +46,7 @@
     scope,
   }: {
     path?: string | null;
-    sourceId?: string | null;
+    sourceId?: Uuid | null;
     scope: DocumentScope;
   } = $props();
 
@@ -372,7 +373,7 @@
         onToggleThread={docThreads.toggleExpanded}
         onOpenSession={docThreads.openSession}
         onThreadJump={docThreads.jumpTo}
-        documentId={resolvedPath}
+        documentId={document.id}
         onSelection={(info) => (popover = info)}
         onBtwReply={docThreads.replyThread}
         onBtwRetry={docThreads.retryThread}

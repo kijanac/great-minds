@@ -4,9 +4,11 @@
 
   import { resolveShare } from "$lib/api/shares";
   import AnswerBlock from "$lib/components/answer-block.svelte";
+  import { newUuid } from "$lib/ids";
   import type { ThreadLike } from "$lib/types";
 
   const token = $derived(page.params.token);
+  const shareExchangeId = newUuid();
 
   const query = createQuery(() => ({
     queryKey: ["public", "share", token],
@@ -44,8 +46,8 @@
             quote: annotation.anchor.quote,
             context: annotation.anchor.context ?? "",
           },
-          exchanges: annotation.exchanges.map((exchange, turnIndex) => ({
-            id: `ann:${index}:${turnIndex}`,
+          exchanges: annotation.exchanges.map((exchange) => ({
+            id: shareExchangeId,
             query: exchange.query,
             thinking: [],
             answer: exchange.answer,
@@ -134,7 +136,7 @@
     </header>
     <AnswerBlock
       text={share.markdown}
-      exchangeId={`share:${token}`}
+      exchangeId={shareExchangeId}
       btws={threads}
       streaming={false}
       variant="article"

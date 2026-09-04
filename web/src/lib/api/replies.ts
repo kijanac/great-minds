@@ -1,33 +1,24 @@
 import {
-  CreateReplyRequest,
   ReplySnapshot,
-  Uuid,
+  type CreateReplyRequest,
   type CreateReplyResponse,
+  type Uuid,
 } from "@great-minds/domain";
 import { Filter, Option, Schema, Stream } from "effect";
 import type * as Sse from "effect/unstable/encoding/Sse";
 
-import { getVaultId } from "../vault-selection";
-
 import { api, run, stream } from "./app";
+import { selectedVault } from "./selected-vault";
 import { followUntil } from "./sse";
 
-export type CreateReplyPayload = typeof CreateReplyRequest.Encoded;
+export type CreateReplyPayload = CreateReplyRequest;
 export type { CreateReplyResponse, ReplySnapshot };
 
 type ReplyEvent =
   | { readonly _tag: "Snapshot"; readonly snapshot: ReplySnapshot }
   | { readonly _tag: "Done" };
 
-const uuid = Schema.decodeSync(Uuid);
-const decodeCreate = Schema.decodeSync(Schema.fromJsonString(CreateReplyRequest));
 const snapshotFromJson = Schema.decodeOption(Schema.fromJsonString(ReplySnapshot));
-
-function selectedVault(): Uuid {
-  const id = getVaultId();
-  if (id === null) throw new Error("No vault selected");
-  return uuid(id);
-}
 
 const createReplyRequest = (payload: CreateReplyRequest) => {
   const params = { vault_id: selectedVault() };
@@ -47,18 +38,18 @@ export function createReply(
   payload: CreateReplyPayload,
   signal?: AbortSignal,
 ): Promise<CreateReplyResponse> {
-  return run(createReplyRequest(decodeCreate(JSON.stringify(payload))), { signal });
+  return run(createReplyRequest(payload), { signal });
 }
 
 export function retryReply(
-  replyId: string,
-  nextReplyId: string,
+  replyId: Uuid,
+  nextReplyId: Uuid,
   signal?: AbortSignal,
 ): Promise<CreateReplyResponse> {
   return run(
     api.replies.retryReply({
-      params: { vault_id: selectedVault(), reply_id: uuid(replyId) },
-      payload: { reply_id: uuid(nextReplyId) },
+      params: { vault_id: selectedVault(), reply_id: replyId },
+      payload: { reply_id: nextReplyId },
     }),
     { signal },
   );
@@ -76,9 +67,9 @@ const isTerminal = (event: ReplyEvent) =>
 const snapshotOf = (event: ReplyEvent) =>
   event._tag === "Snapshot" ? Option.some(event.snapshot) : Option.none();
 
-export function streamReply(replyId: string, signal?: AbortSignal): AsyncIterable<ReplySnapshot> {
+export function streamReply(replyId: Uuid, signal?: AbortSignal): AsyncIterable<ReplySnapshot> {
   const events = Stream.unwrap(
-    api.replies.streamReply({ params: { vault_id: selectedVault(), reply_id: uuid(replyId) } }),
+    api.replies.streamReply({ params: { vault_id: selectedVault(), reply_id: replyId } }),
   ).pipe(Stream.filterMap(Filter.fromPredicateOption(toReplyEvent)));
   const snapshots = followUntil(events, isTerminal).pipe(
     Stream.filterMap(Filter.fromPredicateOption(snapshotOf)),

@@ -765,7 +765,7 @@ export type SessionMetaEvent = typeof SessionMetaEvent.Type;
 
 export const SessionExchangeEvent = Schema.Struct({
   type: Schema.Literal("exchange"),
-  exId: Schema.String,
+  exId: Uuid,
   reply_id: Schema.optionalKey(Uuid),
   query: Schema.String,
   thinking: Schema.optionalKey(Schema.Array(ThinkingBlock)),
@@ -776,7 +776,7 @@ export type SessionExchangeEvent = typeof SessionExchangeEvent.Type;
 
 export const SessionBtwEvent = Schema.Struct({
   type: Schema.Literal("btw"),
-  exId: Schema.String,
+  exId: Uuid,
   reply_id: Schema.optionalKey(Uuid),
   quote: Schema.String,
   blockOffset: Schema.optionalKey(Schema.Number),

@@ -1,7 +1,9 @@
 <script lang="ts">
   import { goto } from "$app/navigation";
   import { page } from "$app/state";
+  import { Uuid } from "@great-minds/domain";
   import { createQuery, useQueryClient } from "@tanstack/svelte-query";
+  import { Option, Schema } from "effect";
 
   import {
     deleteVault,
@@ -33,7 +35,12 @@
     SELECT_ITEM_CLASS,
   } from "$lib/control-styles";
 
-  const vaultId = $derived(page.params.id ?? "");
+  const decodeVaultId = Schema.decodeOption(Uuid);
+  const vaultId = $derived(
+    page.params.id === undefined
+      ? null
+      : Option.getOrNull(decodeVaultId(page.params.id)),
+  );
   const queryClient = useQueryClient();
 
   let email = $state("");
@@ -47,17 +54,17 @@
 
   const vault = createQuery(() => ({
     queryKey: ["vault", vaultId, "detail"],
-    queryFn: () => getVaultDetail(vaultId),
+    queryFn: () => getVaultDetail(vaultId!),
     enabled: !!vaultId,
   }));
   const members = createQuery(() => ({
     queryKey: ["vault", vaultId, "members"],
-    queryFn: () => listMembers(vaultId),
+    queryFn: () => listMembers(vaultId!),
     enabled: !!vaultId,
   }));
   const config = createQuery(() => ({
     queryKey: ["vault", vaultId, "config"],
-    queryFn: () => getVaultConfig(vaultId),
+    queryFn: () => getVaultConfig(vaultId!),
     enabled: !!vaultId,
   }));
   const isOwner = $derived(
@@ -84,7 +91,7 @@
     if (!address || invitePending) return;
     invitePending = true;
     try {
-      await inviteMember(vaultId, address, inviteRole);
+      await inviteMember(vaultId!, address, inviteRole);
       email = "";
       await refreshMembers();
     } finally {
@@ -95,7 +102,7 @@
   async function saveConfig(data: VaultConfigFormSubmit) {
     savePending = true;
     try {
-      await updateVaultConfig(vaultId, {
+      await updateVaultConfig(vaultId!, {
         thematic_hint: data.thematic_hint,
       });
       await queryClient.invalidateQueries({
@@ -106,18 +113,18 @@
     }
   }
 
-  async function remove(memberId: string) {
-    await removeMember(vaultId, memberId);
+  async function remove(memberId: Uuid) {
+    await removeMember(vaultId!, memberId);
     await refreshMembers();
   }
 
-  async function changeRole(memberId: string, role: string) {
-    await updateMemberRole(vaultId, memberId, role);
+  async function changeRole(memberId: Uuid, role: string) {
+    await updateMemberRole(vaultId!, memberId, role);
     await refreshMembers();
   }
 
-  async function transfer(memberId: string) {
-    await transferOwnership(vaultId, memberId);
+  async function transfer(memberId: Uuid) {
+    await transferOwnership(vaultId!, memberId);
     await refreshMembers();
   }
 
@@ -126,7 +133,7 @@
     deleting = true;
     deleteError = null;
     try {
-      await deleteVault(vaultId);
+      await deleteVault(vaultId!);
       deleteOpen = false;
       confirmation = "";
       await goto("/", { replaceState: true });
@@ -148,7 +155,7 @@
 
   <div class="min-h-0 flex-1 overflow-y-auto">
     <main class="mx-auto max-w-[740px] px-4 pt-8 pb-20 md:px-10">
-      {#if loading || !vault.data}
+      {#if vaultId && (loading || !vault.data)}
         <div class="space-y-6">
           <div class="space-y-2">
             <Skeleton class="h-9 w-48 bg-ink-raised" />
@@ -160,7 +167,7 @@
             <Skeleton class="h-10 w-5/6 bg-ink-raised" />
           </div>
         </div>
-      {:else}
+      {:else if vaultId && vault.data}
         <h1 class="mb-1 font-serif text-[length:var(--text-heading)] text-warm">
           {vault.data.name}
         </h1>
@@ -244,7 +251,7 @@
           </section>
         {/if}
 
-        <ProposalsSection {vaultId} {isOwner} />
+        <ProposalsSection vaultId={vaultId!} {isOwner} />
         {#if isOwner}
           <section class="mt-16 border-t border-ink-border pt-8">
             <h2

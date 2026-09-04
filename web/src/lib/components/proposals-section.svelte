@@ -1,4 +1,5 @@
 <script lang="ts">
+  import type { Uuid } from "@great-minds/domain";
   import Check from "@lucide/svelte/icons/check";
   import X from "@lucide/svelte/icons/x";
   import {
@@ -31,7 +32,7 @@
     vaultId,
     isOwner,
   }: {
-    vaultId: string;
+    vaultId: Uuid;
     isOwner: boolean;
   } = $props();
 
@@ -78,7 +79,7 @@
       proposalId,
       nextStatus,
     }: {
-      proposalId: string;
+      proposalId: Uuid;
       nextStatus: "approved" | "rejected";
     }) => reviewProposal(vaultId, proposalId, nextStatus),
     onSuccess: async () => {

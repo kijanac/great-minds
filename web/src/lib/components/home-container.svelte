@@ -1,5 +1,6 @@
 <script lang="ts">
   import { goto } from "$app/navigation";
+  import type { SessionId } from "@great-minds/domain";
 
   import HomeContent from "$lib/components/home-content.svelte";
   import { ErrorState, LoadingState } from "$lib/components/ui/feedback";
@@ -11,7 +12,7 @@
     initialQuery,
     origin,
   }: {
-    sessionId?: string;
+    sessionId?: SessionId;
     initialQuery?: string;
     origin?: string;
   } = $props();

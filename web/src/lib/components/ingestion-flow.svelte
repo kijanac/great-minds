@@ -1,5 +1,6 @@
 <script lang="ts">
   import { beforeNavigate, goto } from "$app/navigation";
+  import type { Uuid } from "@great-minds/domain";
   import { onMount } from "svelte";
   import { cubicOut } from "svelte/easing";
   import { fade, slide } from "svelte/transition";
@@ -12,6 +13,7 @@
   } from "$lib/api/ingest";
   import { Button } from "$lib/components/ui/button";
   import { Input } from "$lib/components/ui/input";
+  import { newUuid } from "$lib/ids";
   import type { DroppedFile } from "$lib/types";
 
   const SUPPORTED_UPLOAD_EXTS = new Set([
@@ -35,7 +37,7 @@
   const HASH_CONCURRENCY = 4;
 
   interface FileBase {
-    id: string;
+    id: Uuid;
     file: File;
     path: string;
     ext: string;
@@ -202,7 +204,7 @@
   function initialIngestable(dropped: DroppedFile[]): IngestableFile[] {
     return dropped.map(({ file, path }) => {
       const ext = extOf(file.name);
-      const base = { id: crypto.randomUUID(), file, path, ext };
+      const base = { id: newUuid(), file, path, ext };
       return supportsUpload(file, ext)
         ? { ...base, status: "checking", selected: true }
         : { ...base, status: "unsupported", selected: false };
@@ -263,7 +265,7 @@
 
   function applyHash(
     current: IngestableFile[],
-    id: string,
+    id: Uuid,
     hash: string,
   ): IngestableFile[] {
     const duplicate = current.some(
@@ -382,7 +384,7 @@
     if (trimmed) void goto(`/pipeline?url=${encodeURIComponent(trimmed)}`);
   }
 
-  function toggleSelected(id: string) {
+  function toggleSelected(id: Uuid) {
     files = files.map((file) =>
       file.id === id && isSelectableFile(file)
         ? { ...file, selected: !file.selected }

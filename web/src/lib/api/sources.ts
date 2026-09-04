@@ -1,28 +1,18 @@
-import {
+import type {
+  FacetCount,
+  Proposal,
+  SourceDocumentPage,
+  SourceDocumentSummary,
   Uuid,
-  type FacetCount,
-  type Proposal,
-  type SourceDocumentPage,
-  type SourceDocumentSummary,
 } from "@great-minds/domain";
-import { Schema } from "effect";
-
-import { getVaultId } from "../vault-selection";
 
 import { api, run } from "./app";
+import { selectedVault } from "./selected-vault";
 
 export type { SourceDocumentPage, SourceDocumentSummary };
 export type SourceTypeFacet = FacetCount;
 
-const uuid = Schema.decodeSync(Uuid);
-
-function selectedVault(): Uuid {
-  const id = getVaultId();
-  if (id === null) throw new Error("No vault selected");
-  return uuid(id);
-}
-
-export async function fetchSourceDocuments(params: {
+export function fetchSourceDocuments(params: {
   source_type?: string;
   search?: string;
   tag?: string;
@@ -39,18 +29,18 @@ export async function fetchSourceDocuments(params: {
   return run(api.sources.listSources({ params: { vault_id: selectedVault() }, query }));
 }
 
-export async function deleteSourceDocument(sourceId: string): Promise<void> {
+export function deleteSourceDocument(sourceId: Uuid): Promise<void> {
   return run(
     api.sources.deleteSource({
-      params: { vault_id: selectedVault(), source_id: uuid(sourceId) },
+      params: { vault_id: selectedVault(), source_id: sourceId },
     }),
   );
 }
 
-export async function requestSourceDeletion(sourceId: string): Promise<Proposal> {
+export function requestSourceDeletion(sourceId: Uuid): Promise<Proposal> {
   return run(
     api.sources.requestSourceDeletion({
-      params: { vault_id: selectedVault(), source_id: uuid(sourceId) },
+      params: { vault_id: selectedVault(), source_id: sourceId },
     }),
   );
 }

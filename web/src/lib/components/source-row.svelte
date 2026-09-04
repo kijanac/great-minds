@@ -1,4 +1,6 @@
 <script lang="ts">
+  import type { Uuid } from "@great-minds/domain";
+
   import SourceActionButton from "$lib/components/source-action-button.svelte";
   import type { ReferenceOverview } from "$lib/api/references";
   import type { SourceDocumentSummary } from "$lib/types";
@@ -16,8 +18,8 @@
     role?: string | null;
     busy?: boolean;
     onOpen: () => void;
-    onDeleteSource?: (sourceId: string) => Promise<void>;
-    onRequestDeletion?: (sourceId: string) => Promise<void>;
+    onDeleteSource?: (sourceId: Uuid) => Promise<void>;
+    onRequestDeletion?: (sourceId: Uuid) => Promise<void>;
   } = $props();
 
   const author = $derived("author" in source ? source.author : null);

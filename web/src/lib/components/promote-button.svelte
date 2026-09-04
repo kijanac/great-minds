@@ -1,5 +1,9 @@
 <script lang="ts">
-  import type { PromoteExchangeResponse } from "@great-minds/domain";
+  import type {
+    PromoteExchangeResponse,
+    SessionId,
+    Uuid,
+  } from "@great-minds/domain";
 
   import { errorMessage } from "$lib/api/errors";
   import { promoteExchange } from "$lib/api/sessions";
@@ -15,8 +19,8 @@
     sessionId,
     exchangeId,
   }: {
-    sessionId: string;
-    exchangeId: string;
+    sessionId: SessionId;
+    exchangeId: Uuid;
   } = $props();
 
   let state = $state<State>({ kind: "idle" });

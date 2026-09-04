@@ -1,21 +1,11 @@
-import { Uuid, type WikiArticleOverview, type WikiArticlePage } from "@great-minds/domain";
-import { Schema } from "effect";
-
-import { getVaultId } from "../vault-selection";
+import type { Uuid, WikiArticleOverview, WikiArticlePage } from "@great-minds/domain";
 
 import { api, run } from "./app";
+import { selectedVault } from "./selected-vault";
 
 export type { WikiArticleOverview, WikiArticlePage };
 
-const uuid = Schema.decodeSync(Uuid);
-
-function selectedVault(vaultId?: string): Uuid {
-  const id = vaultId ?? getVaultId();
-  if (id === null) throw new Error("No vault selected");
-  return uuid(id);
-}
-
-export async function fetchWikiArticles(params: {
+export function fetchWikiArticles(params: {
   contains?: string;
   tag?: string;
   limit: number;
@@ -30,15 +20,15 @@ export async function fetchWikiArticles(params: {
   return run(api.wiki.listWikiArticles({ params: { vault_id: selectedVault() }, query }));
 }
 
-export async function fetchArticlesByRun(
-  runId: string,
+export function fetchArticlesByRun(
+  runId: Uuid,
   limit: number = 8,
-  vaultId?: string,
+  vaultId?: Uuid,
 ): Promise<WikiArticlePage> {
   return run(
     api.wiki.listWikiArticles({
       params: { vault_id: selectedVault(vaultId) },
-      query: { run: uuid(runId), limit, offset: 0 },
+      query: { run: runId, limit, offset: 0 },
     }),
   );
 }

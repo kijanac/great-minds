@@ -1,30 +1,24 @@
 import {
   FileFingerprint,
-  Uuid,
   type FileIngestBatch,
+  type Uuid,
   type UserSuggestionIntent,
   type UserSuggestionResult,
 } from "@great-minds/domain";
 import { Effect, Schema } from "effect";
 import { HttpBody, HttpClientRequest } from "effect/unstable/http";
 
-import { getVaultId } from "../vault-selection";
+import { newUuid } from "../ids";
 
 import { api, externalHttp, http, run } from "./app";
 import { errorMessage } from "./errors";
 import { withApiErrors } from "./runtime";
+import { selectedVault } from "./selected-vault";
 
 export type { FileIngestBatch, UserSuggestionIntent, UserSuggestionResult };
 
-const uuid = Schema.decodeSync(Uuid);
 const fingerprint = Schema.decodeSync(FileFingerprint);
 const PUT_CONCURRENCY = 4;
-
-function selectedVault(): Uuid {
-  const id = getVaultId();
-  if (id === null) throw new Error("No vault selected");
-  return uuid(id);
-}
 
 export type FileIngestPhase = "uploading" | "processing" | "error";
 
@@ -37,7 +31,7 @@ export interface FileIngestProgress {
   phase: FileIngestPhase;
   uploaded: number;
   total: number;
-  id?: string;
+  id?: Uuid;
   batch?: FileIngestBatch;
   error?: string;
   failures?: UploadFailure[];
@@ -93,26 +87,26 @@ const manifestFor = (hashedFiles: readonly HashedFile[]) =>
 
 export function createFileIngestBatch(
   hashedFiles: readonly HashedFile[],
-  batchId: string = crypto.randomUUID(),
+  batchId: Uuid = newUuid(),
 ): Promise<FileIngestBatch> {
   return run(
     api.ingest.createFileIngest({
       params: { vault_id: selectedVault() },
-      payload: { batch_id: uuid(batchId), files: manifestFor(hashedFiles) },
+      payload: { batch_id: batchId, files: manifestFor(hashedFiles) },
     }),
   );
 }
 
-export function getFileIngestBatch(batchId: string): Promise<FileIngestBatch | null> {
+export function getFileIngestBatch(batchId: Uuid): Promise<FileIngestBatch | null> {
   return run(
     api.ingest
-      .getFileIngest({ params: { batch_id: uuid(batchId) } })
+      .getFileIngest({ params: { batch_id: batchId } })
       .pipe(Effect.catchTag("NotFound", () => Effect.succeed(null))),
   );
 }
 
-export function resumeFileIngestBatch(batchId: string): Promise<FileIngestBatch> {
-  return run(api.ingest.resumeFileIngest({ params: { batch_id: uuid(batchId) } }));
+export function resumeFileIngestBatch(batchId: Uuid): Promise<FileIngestBatch> {
+  return run(api.ingest.resumeFileIngest({ params: { batch_id: batchId } }));
 }
 
 const uploadViaApi = (batchId: Uuid, file: File, hash: FileFingerprint) => {

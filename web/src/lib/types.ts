@@ -1,4 +1,4 @@
-import type { ReplySource } from "@great-minds/domain";
+import type { ReplySource, SessionId, Uuid } from "@great-minds/domain";
 import type { UnmentionedLink } from "$lib/api/lint";
 import type { SessionSummary } from "$lib/api/sessions";
 import type { SourceDocumentSummary, SourceTypeFacet } from "$lib/api/sources";
@@ -19,12 +19,12 @@ export interface ThinkingBlock {
 }
 
 export interface Exchange {
-  id: string;
+  id: Uuid;
   query: string;
   thinking: readonly ThinkingBlock[];
   answer: string;
   btws: BtwThread[];
-  replyId?: string;
+  replyId?: Uuid;
   error?: string | null;
   // In-flight while the server-owned reply is running.
   streaming: boolean;
@@ -42,7 +42,7 @@ export interface TextAnchor {
 
 export interface BtwThread {
   id: string;
-  exchangeId: string;
+  exchangeId: Uuid;
   anchor: TextAnchor;
   // The last turn carries streaming: true while it's in flight.
   exchanges: Exchange[];
@@ -55,7 +55,7 @@ export interface ThreadLike {
   id: string;
   anchor: TextAnchor;
   exchanges: Exchange[];
-  sessionId?: string | null;
+  sessionId?: SessionId | null;
   draft?: boolean;
   createdAt?: string | null;
 }
@@ -63,7 +63,7 @@ export interface ThreadLike {
 // A doc-born session as surfaced by the reader: an anchored note thread or a
 // doc-initiated conversation (anchored=false, no span in the body).
 export interface DocThread extends ThreadLike {
-  sessionId: string | null;
+  sessionId: SessionId | null;
   draft: boolean;
   anchored: boolean;
   createdAt: string | null;
@@ -72,7 +72,7 @@ export interface DocThread extends ThreadLike {
 export interface SelectionInfo extends TextAnchor {
   x: number;
   y: number;
-  exchangeId: string;
+  exchangeId: Uuid;
 }
 
 export type Phase = "idle" | "searching" | "streaming" | "done";

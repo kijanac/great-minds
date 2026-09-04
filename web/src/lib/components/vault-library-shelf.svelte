@@ -1,4 +1,6 @@
 <script lang="ts">
+  import type { Uuid } from "@great-minds/domain";
+
   import ArticleRow from "$lib/components/article-row.svelte";
   import SourceRow from "$lib/components/source-row.svelte";
   import { Button } from "$lib/components/ui/button";
@@ -23,7 +25,7 @@
       loading: boolean;
       actionNotice: string | null;
       actionError: string | null;
-      actionId: string | null;
+      actionId: Uuid | null;
       role: string | null;
       articles: {
         hasNextPage: boolean;
@@ -38,8 +40,8 @@
     };
     onOpenArticle: (article: WikiArticleOverview) => void;
     onOpenSource: (source: SourceDocumentSummary) => void;
-    onDeleteSource: (sourceId: string) => Promise<void>;
-    onRequestDeletion: (sourceId: string) => Promise<void>;
+    onDeleteSource: (sourceId: Uuid) => Promise<void>;
+    onRequestDeletion: (sourceId: Uuid) => Promise<void>;
   } = $props();
 
   // The synthesis pin is a presentation-layer match on the active tag; it is

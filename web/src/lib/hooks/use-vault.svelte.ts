@@ -1,11 +1,12 @@
 import { browser } from "$app/environment";
+import type { Uuid } from "@great-minds/domain";
 import { createMutation, createQuery, useQueryClient } from "@tanstack/svelte-query";
 
 import { createVault, fetchVaults, type CreateVaultInput } from "$lib/api/vaults";
 import { getVaultId, storeVaultId } from "$lib/vault-selection";
 
 class ActiveVaultSelection {
-  id = $state<string | null>(null);
+  id = $state<Uuid | null>(null);
   #initialized = false;
 
   #sync = () => {
@@ -51,7 +52,7 @@ export function useCreateVault() {
   }));
 }
 
-export function switchVault(vaultId: string): void {
+export function switchVault(vaultId: Uuid): void {
   if (vaultId === getVaultId()) return;
   storeVaultId(vaultId);
 }

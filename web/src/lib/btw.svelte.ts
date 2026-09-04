@@ -1,7 +1,13 @@
+import { SessionId, type Uuid } from "@great-minds/domain";
+import { Schema } from "effect";
+
 import { createReply, retryReply, streamReply } from "$lib/api/replies";
 import { listSessionsByOrigin, type OriginScope, type SessionEvent } from "$lib/api/sessions";
+import { newUuid } from "$lib/ids";
 import type { DocThread, Exchange, SelectionInfo } from "$lib/types";
 import { genId, isAbortError } from "$lib/utils";
+
+const decodeSessionId = Schema.decodeSync(SessionId);
 
 /**
  * Persistent annotation threads anchored to a document. Loads every session
@@ -29,7 +35,7 @@ export class DocThreads {
   constructor(
     private readonly originPath: string,
     private readonly originScope: OriginScope,
-    private readonly onOpenSession: (sessionId: string) => void,
+    private readonly onOpenSession: (sessionId: SessionId) => void,
   ) {
     void this.load();
   }
@@ -53,10 +59,11 @@ export class DocThreads {
       const details = await listSessionsByOrigin(this.originPath, controller.signal);
       this.threads = details.map((detail) => {
         const origin = detail.session.origin;
+        const sessionId = decodeSessionId(detail.session.id);
         const anchored = origin?.anchor !== null && origin?.anchor !== undefined;
         return {
           id: `thread:${detail.session.id}`,
-          sessionId: detail.session.id,
+          sessionId,
           draft: false,
           anchored,
           anchor: {
@@ -153,7 +160,7 @@ export class DocThreads {
     // A draft whose first create failed (no session yet) retries as a fresh
     // first turn; anything with a session follows up on it.
     const isFirst = priorExchanges.length === 0 || target.sessionId === null;
-    const turnId = crypto.randomUUID();
+    const turnId = newUuid();
 
     const patchThread = (patch: Partial<DocThread>): void => {
       this.threads = this.threads.map((thread) =>
@@ -199,11 +206,11 @@ export class DocThreads {
         const created = isFirst
           ? await createReply(
               {
-                reply_id: crypto.randomUUID(),
+                reply_id: newUuid(),
                 kind: "exchange",
                 exchange_id: turnId,
                 create: {
-                  idempotency_key: crypto.randomUUID(),
+                  idempotency_key: newUuid(),
                   origin_scope: this.originScope,
                   origin: {
                     doc_path: this.originPath,
@@ -216,17 +223,19 @@ export class DocThreads {
                 // The server composes the passage/highlight prompt; the
                 // session stores this clean text.
                 question: userText,
+                origin_scope: this.originScope,
                 mode: "btw",
               },
               controller.signal,
             )
           : await createReply(
               {
-                reply_id: crypto.randomUUID(),
+                reply_id: newUuid(),
                 kind: "exchange",
                 exchange_id: turnId,
                 session_id: target.sessionId!,
                 question: userText,
+                origin_scope: this.originScope,
                 mode: "btw",
               },
               controller.signal,
@@ -255,7 +264,7 @@ export class DocThreads {
     })();
   };
 
-  retryThread = (threadId: string, turnId: string): void => {
+  retryThread = (threadId: string, turnId: Uuid): void => {
     const target = this.#findThread(threadId);
     const index = target?.exchanges.findIndex((turn) => turn.id === turnId) ?? -1;
     const previous = index >= 0 ? target?.exchanges[index] : undefined;
@@ -288,7 +297,7 @@ export class DocThreads {
 
     void (async () => {
       try {
-        const created = await retryReply(previous.replyId!, crypto.randomUUID(), controller.signal);
+        const created = await retryReply(previous.replyId!, newUuid(), controller.signal);
         patchTurn({ replyId: created.reply_id });
         for await (const snapshot of streamReply(created.reply_id, controller.signal)) {
           patchTurn({

@@ -2,13 +2,13 @@ import {
   Email,
   InvitedMemberRole,
   MemberRole,
-  Uuid,
   type MemberWithEmail,
   type Vault,
   type VaultConfig,
   type VaultConfigUpdate,
   type VaultCreate,
   type VaultDetail,
+  type Uuid,
 } from "@great-minds/domain";
 import { Effect, Schema } from "effect";
 
@@ -19,7 +19,6 @@ export type Membership = MemberWithEmail;
 export type VaultOverview = Vault;
 export type CreateVaultInput = VaultCreate;
 
-const uuid = Schema.decodeSync(Uuid);
 const email = Schema.decodeSync(Email);
 const firstPage = { limit: 50, offset: 0 } as const;
 
@@ -38,80 +37,73 @@ export async function fetchVaults(): Promise<readonly VaultOverview[]> {
   return page.items;
 }
 
-export async function createVault(input: CreateVaultInput): Promise<VaultOverview> {
+export function createVault(input: CreateVaultInput): Promise<VaultOverview> {
   return run(api.vaults.createVault({ payload: input }));
 }
 
-export async function getVaultDetail(vaultId: string): Promise<VaultDetail> {
-  return run(api.vaults.getVault({ params: { vault_id: uuid(vaultId) } }));
+export function getVaultDetail(vaultId: Uuid): Promise<VaultDetail> {
+  return run(api.vaults.getVault({ params: { vault_id: vaultId } }));
 }
 
-export async function listMembers(vaultId: string): Promise<readonly Membership[]> {
+export async function listMembers(vaultId: Uuid): Promise<readonly Membership[]> {
   const page = await run(
-    api.vaults.listVaultMembers({ params: { vault_id: uuid(vaultId) }, query: firstPage }),
+    api.vaults.listVaultMembers({ params: { vault_id: vaultId }, query: firstPage }),
   );
   return page.items;
 }
 
-export async function inviteMember(
-  vaultId: string,
+export function inviteMember(
+  vaultId: Uuid,
   address: string,
   role: string = "editor",
 ): Promise<Membership> {
   return run(
     api.vaults.inviteVaultMember({
-      params: { vault_id: uuid(vaultId) },
+      params: { vault_id: vaultId },
       payload: { email: email(address), role: invitedRole(role) },
     }),
   );
 }
 
-export async function updateMemberRole(
-  vaultId: string,
-  userId: string,
-  role: string,
-): Promise<Membership> {
+export function updateMemberRole(vaultId: Uuid, userId: Uuid, role: string): Promise<Membership> {
   return run(
     api.vaults.updateVaultMember({
-      params: { vault_id: uuid(vaultId), member_user_id: uuid(userId) },
+      params: { vault_id: vaultId, member_user_id: userId },
       payload: { role: memberRole(role) },
     }),
   );
 }
 
-export async function removeMember(vaultId: string, userId: string): Promise<void> {
+export function removeMember(vaultId: Uuid, userId: Uuid): Promise<void> {
   return run(
     api.vaults.removeVaultMember({
-      params: { vault_id: uuid(vaultId), member_user_id: uuid(userId) },
+      params: { vault_id: vaultId, member_user_id: userId },
     }),
   );
 }
 
-export async function transferOwnership(vaultId: string, newOwnerUserId: string): Promise<void> {
+export function transferOwnership(vaultId: Uuid, newOwnerUserId: Uuid): Promise<void> {
   return run(
     api.vaults.transferVaultOwnership({
-      params: { vault_id: uuid(vaultId) },
-      payload: { new_owner_user_id: uuid(newOwnerUserId) },
+      params: { vault_id: vaultId },
+      payload: { new_owner_user_id: newOwnerUserId },
     }),
   );
 }
 
-export async function deleteVault(vaultId: string): Promise<void> {
-  return run(api.vaults.deleteVault({ params: { vault_id: uuid(vaultId) } }));
+export function deleteVault(vaultId: Uuid): Promise<void> {
+  return run(api.vaults.deleteVault({ params: { vault_id: vaultId } }));
 }
 
-export async function getVaultConfig(vaultId: string): Promise<VaultConfig> {
-  return run(api.vaults.getVaultConfig({ params: { vault_id: uuid(vaultId) } }));
+export function getVaultConfig(vaultId: Uuid): Promise<VaultConfig> {
+  return run(api.vaults.getVaultConfig({ params: { vault_id: vaultId } }));
 }
 
-export async function updateVaultConfig(
-  vaultId: string,
-  patch: VaultConfigUpdate,
-): Promise<VaultConfig> {
-  return run(api.vaults.updateVaultConfig({ params: { vault_id: uuid(vaultId) }, payload: patch }));
+export function updateVaultConfig(vaultId: Uuid, patch: VaultConfigUpdate): Promise<VaultConfig> {
+  return run(api.vaults.updateVaultConfig({ params: { vault_id: vaultId }, payload: patch }));
 }
 
-export async function draftThematicHint(description: string): Promise<string> {
+export function draftThematicHint(description: string): Promise<string> {
   return run(
     api.vaults
       .draftVaultHint({ payload: { description } })

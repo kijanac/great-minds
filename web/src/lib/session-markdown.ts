@@ -1,3 +1,5 @@
+import type { SessionId } from "@great-minds/domain";
+
 import { loadSessionMarkdown } from "$lib/api/sessions";
 import type { Exchange } from "$lib/types";
 
@@ -11,7 +13,7 @@ function slugify(text: string): string {
 
 /** Download the server-rendered `sessions/{id}.md` as a file. */
 export async function downloadSessionMarkdown(
-  sessionId: string,
+  sessionId: SessionId,
   thread: Exchange[],
 ): Promise<void> {
   const markdown = await loadSessionMarkdown(sessionId);

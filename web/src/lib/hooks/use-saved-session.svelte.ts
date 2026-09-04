@@ -1,3 +1,4 @@
+import type { SessionId } from "@great-minds/domain";
 import { createQuery } from "@tanstack/svelte-query";
 
 import { loadSession, type SessionEvent, type SessionOrigin } from "$lib/api/sessions";
@@ -82,7 +83,7 @@ function replayEvents(events: readonly SessionEvent[], originTitle: string | nul
   return { exchanges, origin: meta?.origin ?? null, originTitle };
 }
 
-export function useSavedSession(sessionId: () => string | null) {
+export function useSavedSession(sessionId: () => SessionId | null) {
   return createQuery(() => ({
     queryKey: ["vault", activeVault.id, "session", sessionId()],
     queryFn: async () => {

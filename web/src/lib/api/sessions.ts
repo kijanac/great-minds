@@ -1,6 +1,4 @@
 import {
-  SessionId,
-  Uuid,
   type OriginScope,
   type OriginSessionDetail,
   type PromoteExchangeResponse,
@@ -9,33 +7,25 @@ import {
   type SessionOverview,
   type SessionPage,
   type SessionResponse,
+  type SessionId,
+  type Uuid,
 } from "@great-minds/domain";
-import { Schema } from "effect";
-
-import { getVaultId } from "$lib/vault-selection";
 
 import { api, run } from "./app";
+import { selectedVault } from "./selected-vault";
 
 export type { OriginScope, SessionEvent, SessionOrigin };
 export type SessionSummary = SessionOverview;
 
-const uuid = Schema.decodeSync(Uuid);
-const parseSessionId = Schema.decodeSync(SessionId);
 const firstPage = { limit: 50, offset: 0 } as const;
 
-function selectedVault(): Uuid {
-  const id = getVaultId();
-  if (id === null) throw new Error("No vault selected");
-  return uuid(id);
-}
-
-export async function listSessions(
+export function listSessions(
   params: { limit: number; offset: number } = firstPage,
 ): Promise<SessionPage> {
   return run(api.sessions.listSessions({ params: { vault_id: selectedVault() }, query: params }));
 }
 
-export async function listSessionsByOrigin(
+export function listSessionsByOrigin(
   docPath: string,
   signal?: AbortSignal,
 ): Promise<readonly OriginSessionDetail[]> {
@@ -48,32 +38,32 @@ export async function listSessionsByOrigin(
   );
 }
 
-export async function loadSession(sessionId: string): Promise<SessionResponse> {
+export function loadSession(sessionId: SessionId): Promise<SessionResponse> {
   return run(
     api.sessions.readSession({
-      params: { vault_id: selectedVault(), session_id: parseSessionId(sessionId) },
+      params: { vault_id: selectedVault(), session_id: sessionId },
     }),
   );
 }
 
-export async function loadSessionMarkdown(sessionId: string): Promise<string> {
+export function loadSessionMarkdown(sessionId: SessionId): Promise<string> {
   return run(
     api.sessions.readSessionMarkdown({
-      params: { vault_id: selectedVault(), session_id: parseSessionId(sessionId) },
+      params: { vault_id: selectedVault(), session_id: sessionId },
     }),
   );
 }
 
-export async function promoteExchange(
-  sessionId: string,
-  exchangeId: string,
+export function promoteExchange(
+  sessionId: SessionId,
+  exchangeId: Uuid,
 ): Promise<PromoteExchangeResponse> {
   return run(
     api.sessions.promoteSessionExchange({
       params: {
         vault_id: selectedVault(),
-        session_id: parseSessionId(sessionId),
-        exchange_id: uuid(exchangeId),
+        session_id: sessionId,
+        exchange_id: exchangeId,
       },
     }),
   );

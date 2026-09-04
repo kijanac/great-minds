@@ -1,4 +1,5 @@
 <script lang="ts">
+  import type { Uuid } from "@great-minds/domain";
   import ChevronDown from "@lucide/svelte/icons/chevron-down";
   import ChevronRight from "@lucide/svelte/icons/chevron-right";
   import CornerUpRight from "@lucide/svelte/icons/corner-up-right";
@@ -25,7 +26,7 @@
   }: {
     btw: ThreadLike;
     onReply?: (btwId: string, text: string) => void;
-    onRetry?: (btwId: string, turnId: string) => void;
+    onRetry?: (btwId: string, turnId: Uuid) => void;
     onDismiss?: (btwId: string) => void;
     onOpenSession?: (btwId: string) => void;
     readOnly?: boolean;

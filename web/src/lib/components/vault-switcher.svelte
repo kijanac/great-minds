@@ -1,5 +1,6 @@
 <script lang="ts">
   import { goto } from "$app/navigation";
+  import type { Uuid } from "@great-minds/domain";
   import ArrowLeftRight from "@lucide/svelte/icons/arrow-left-right";
   import Check from "@lucide/svelte/icons/check";
   import Plus from "@lucide/svelte/icons/plus";
@@ -25,7 +26,7 @@
     void goto("/vaults/new");
   }
 
-  function chooseVault(vaultId: string) {
+  function chooseVault(vaultId: Uuid) {
     if (vaultId !== activeVault.id) {
       switchVault(vaultId);
       void goto("/");

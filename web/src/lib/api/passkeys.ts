@@ -4,7 +4,7 @@ import { Schema } from "effect";
 
 import { api, run } from "./app";
 
-export async function registerPasskey(
+export function registerPasskey(
   name: string,
   response: RegistrationResponseJSON,
 ): Promise<Passkey> {

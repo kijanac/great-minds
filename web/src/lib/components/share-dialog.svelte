@@ -3,8 +3,12 @@
   import Copy from "@lucide/svelte/icons/copy";
   import type { Snippet } from "svelte";
 
-  import { type ShareOverview, Uuid } from "@great-minds/domain";
-  import { Schema } from "effect";
+  import {
+    isUuid,
+    type SessionId,
+    type ShareOverview,
+    type Uuid,
+  } from "@great-minds/domain";
 
   import { api, run } from "$lib/api/app";
   import { errorMessage } from "$lib/api/errors";
@@ -18,11 +22,9 @@
     trigger,
   }: {
     subjectKind: "session" | "reference";
-    subjectId: string;
+    subjectId: SessionId | Uuid;
     trigger?: Snippet<[{ props: Record<string, unknown> }]>;
   } = $props();
-
-  const uuid = Schema.decodeSync(Uuid);
 
   let open = $state(false);
   let loading = $state(false);
@@ -67,12 +69,17 @@
   async function create() {
     creating = true;
     error = null;
+    if (!isUuid(subjectId)) {
+      creating = false;
+      error = "This session cannot be shared.";
+      return;
+    }
     try {
       const result = await run(
         api.shares.createShare({
           payload: {
             subject_kind: subjectKind,
-            subject_id: uuid(subjectId),
+            subject_id: subjectId,
             include_annotations: includeAnnotations,
           },
         }),

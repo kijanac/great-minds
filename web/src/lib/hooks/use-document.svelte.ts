@@ -1,3 +1,4 @@
+import type { Uuid } from "@great-minds/domain";
 import { createQuery } from "@tanstack/svelte-query";
 
 import { fetchLinks, readDocument, readPersonalDocument, readSourceDocument } from "$lib/api/doc";
@@ -11,7 +12,7 @@ export function useDocument(path: () => string | null) {
   }));
 }
 
-export function useSourceDocument(sourceId: () => string | null) {
+export function useSourceDocument(sourceId: () => Uuid | null) {
   return createQuery(() => ({
     queryKey: ["vault", activeVault.id, "source", sourceId()],
     queryFn: ({ signal }) => readSourceDocument(sourceId()!, signal),

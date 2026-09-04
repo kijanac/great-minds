@@ -1,5 +1,6 @@
 <script lang="ts">
   import { goto, replaceState } from "$app/navigation";
+  import type { SessionId } from "@great-minds/domain";
   import Download from "@lucide/svelte/icons/download";
   import FileText from "@lucide/svelte/icons/file-text";
   import Home from "@lucide/svelte/icons/home";
@@ -41,7 +42,7 @@
     sessionOrigin = null,
     originTitle = null,
   }: {
-    sessionId?: string;
+    sessionId?: SessionId;
     initialExchanges?: Exchange[];
     initialQuery?: string;
     origin?: string;
@@ -123,7 +124,7 @@
     };
   });
 
-  function handleSessionCreated(id: string) {
+  function handleSessionCreated(id: SessionId) {
     replaceState(`/sessions/${id}`, {});
     void sessions.refetch();
   }

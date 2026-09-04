@@ -1,5 +1,6 @@
 import { goto } from "$app/navigation";
 import { page } from "$app/state";
+import type { Uuid } from "@great-minds/domain";
 import { createInfiniteQuery, createQuery, useQueryClient } from "@tanstack/svelte-query";
 import { untrack } from "svelte";
 
@@ -23,11 +24,11 @@ export const LIBRARY_READING_ROOM = "reading-room";
 
 export function useLibrary(
   selectedCard: () => SourceRef | null,
-  onSourceDeleted: (sourceId: string) => void,
+  onSourceDeleted: (sourceId: Uuid) => void,
 ) {
   const queryClient = useQueryClient();
   let search = $state(page.url.searchParams.get("q") ?? "");
-  let actionId = $state<string | null>(null);
+  let actionId = $state<Uuid | null>(null);
   let actionError = $state<string | null>(null);
   let actionNotice = $state<string | null>(null);
 
@@ -168,7 +169,7 @@ export function useLibrary(
     });
   }
 
-  async function deleteSource(sourceId: string) {
+  async function deleteSource(sourceId: Uuid) {
     actionId = sourceId;
     actionError = null;
     actionNotice = null;
@@ -192,7 +193,7 @@ export function useLibrary(
     }
   }
 
-  async function requestDeletion(sourceId: string) {
+  async function requestDeletion(sourceId: Uuid) {
     actionId = sourceId;
     actionError = null;
     actionNotice = null;

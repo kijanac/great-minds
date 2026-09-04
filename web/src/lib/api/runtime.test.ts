@@ -1,11 +1,11 @@
 import { Forbidden, Unauthorized, Uuid } from "@great-minds/domain";
-import { Effect, Layer, Schema, Stream } from "effect";
+import { Effect, Layer, Stream } from "effect";
 import { describe, expect, it } from "vitest";
 
 import { ApiError, makeApi } from "./runtime";
 import { TokenStore, type StoredTokens } from "./token-store";
 
-const vaultId = Schema.decodeSync(Uuid)("018f6a2e-0000-7000-8000-000000000001");
+const vaultId = Uuid.make("018f6a2e-0000-7000-8000-000000000001", { disableChecks: true });
 const baseUrl = "http://test.local/api";
 
 interface RecordedRequest {
