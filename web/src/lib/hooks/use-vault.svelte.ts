@@ -2,7 +2,7 @@ import { browser } from "$app/environment";
 import type { Uuid } from "@great-minds/domain";
 import { createMutation, createQuery, useQueryClient } from "@tanstack/svelte-query";
 
-import { createVault, fetchVaults, type CreateVaultInput } from "$lib/api/vaults";
+import { createVault, fetchVaults, getVaultDetail, type CreateVaultInput } from "$lib/api/vaults";
 import { getVaultId, storeVaultId } from "$lib/vault-selection";
 
 class ActiveVaultSelection {
@@ -36,6 +36,17 @@ export function useVaults() {
     queryKey: ["vaults"],
     queryFn: fetchVaults,
   }));
+}
+
+export function useVaultDetail(vaultId: () => Uuid | null, enabled: () => boolean = () => true) {
+  return createQuery(() => {
+    const id = vaultId();
+    return {
+      queryKey: ["vault", id, "detail"],
+      queryFn: () => getVaultDetail(id!),
+      enabled: id !== null && enabled(),
+    };
+  });
 }
 
 export function useCreateVault() {

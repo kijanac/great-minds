@@ -25,7 +25,7 @@
   );
   const createdLabel = $derived(
     share
-      ? new Date(share.created_at).toLocaleDateString("en-US", {
+      ? share.created_at.toLocaleDateString("en-US", {
           month: "short",
           day: "numeric",
           year: "numeric",

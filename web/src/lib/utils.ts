@@ -29,20 +29,18 @@ export function slugToTitle(slug: string): string {
     .join(" ");
 }
 
-export function formatShortDate(iso: string | null): string {
-  if (!iso) return "";
-  const d = new Date(iso);
-  return d.toLocaleDateString("en-US", { month: "short", day: "numeric" });
+export function formatShortDate(date: Date | null): string {
+  if (date === null) return "";
+  return date.toLocaleDateString("en-US", { month: "short", day: "numeric" });
 }
 
-export function formatRelativeDate(iso: string): string {
-  const d = new Date(iso);
+export function formatRelativeDate(date: Date): string {
   const now = new Date();
-  const diffDays = Math.floor((now.getTime() - d.getTime()) / (1000 * 60 * 60 * 24));
+  const diffDays = Math.floor((now.getTime() - date.getTime()) / (1000 * 60 * 60 * 24));
   if (diffDays === 0) return "today";
   if (diffDays === 1) return "yesterday";
   if (diffDays < 7) return `${diffDays}d ago`;
-  return d.toLocaleDateString("en-US", { month: "short", day: "numeric" });
+  return date.toLocaleDateString("en-US", { month: "short", day: "numeric" });
 }
 
 // Fallback used only when no LLM-generated title is available. Include

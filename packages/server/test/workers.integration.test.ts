@@ -280,7 +280,7 @@ const BaseLive = Layer.mergeAll(
 );
 const PipelineLive = PipelineRunsServiceLive.pipe(Layer.provideMerge(BaseLive));
 const VaultAccessLive = VaultAccessServiceLive.pipe(Layer.provideMerge(BaseLive));
-const EmbeddingsLive = Layer.succeed(EmbeddingsService, { embed: async () => [] });
+const EmbeddingsLive = Layer.succeed(EmbeddingsService, { embed: () => Effect.succeed([]) });
 const LanguageModelLive = Layer.succeed(LanguageModel, {
   hasApiKey: true,
   streamChat: async function* () {},

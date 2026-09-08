@@ -75,8 +75,8 @@ const transportsFromDatabase = (transports: readonly string[]) =>
 const passkeyResponse = (row: CredentialRow): Passkey => ({
   id: row.id,
   name: row.name,
-  created_at: row.createdAt.toISOString(),
-  last_used_at: row.lastUsedAt?.toISOString() ?? null,
+  created_at: row.createdAt,
+  last_used_at: row.lastUsedAt,
   transports: transportsFromDatabase(row.transports),
 });
 

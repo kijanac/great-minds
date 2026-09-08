@@ -2,7 +2,6 @@
   import { goto } from "$app/navigation";
   import { page } from "$app/state";
   import type { Uuid } from "@great-minds/domain";
-  import { createQuery } from "@tanstack/svelte-query";
   import { onDestroy, tick, untrack } from "svelte";
 
   import type { DocumentScope } from "$lib/api/doc";
@@ -10,7 +9,6 @@
     postUserSuggestion,
     type UserSuggestionResult,
   } from "$lib/api/ingest";
-  import { getVaultDetail } from "$lib/api/vaults";
   import { auth } from "$lib/auth.svelte";
   import { DocThreads } from "$lib/btw.svelte";
   import ArticleChrome from "$lib/components/article-chrome.svelte";
@@ -25,7 +23,11 @@
   import { Button } from "$lib/components/ui/button";
   import { Skeleton } from "$lib/components/ui/skeleton";
   import { useReferencePromotion } from "$lib/hooks/use-reference-promotion.svelte";
-  import { activeVault, useVaults } from "$lib/hooks/use-vault.svelte";
+  import {
+    activeVault,
+    useVaultDetail,
+    useVaults,
+  } from "$lib/hooks/use-vault.svelte";
   import {
     useArticleLinks,
     useDocument,
@@ -88,11 +90,10 @@
       ? resolvedPath.slice("wiki/".length, -".md".length)
       : null,
   );
-  const vaultDetail = createQuery(() => ({
-    queryKey: ["vault", activeVault.id, "detail"],
-    queryFn: () => getVaultDetail(activeVault.id!),
-    enabled: wikiSlug !== null && !!activeVault.id,
-  }));
+  const vaultDetail = useVaultDetail(
+    () => activeVault.id,
+    () => wikiSlug !== null,
+  );
   const suggestionMode = $derived<UserSuggestionResult["mode"] | null>(
     vaultDetail.data?.role === "owner"
       ? "ingested"

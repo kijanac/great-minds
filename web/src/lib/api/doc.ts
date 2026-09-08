@@ -42,29 +42,15 @@ export type ArticleMeta = {
 };
 
 export function articleMeta(article: Article): ArticleMeta {
-  if (article.kind === "wiki") {
+  if (article.kind !== "source") {
     return {
       title: article.title,
       author: null,
       published_date: null,
-      url: null,
-      origin: null,
+      url: article.kind === "reference" ? article.url : null,
+      origin: article.kind === "reference" ? article.origin : null,
       genre: null,
-      precis: article.precis || null,
-      source_type: null,
-      tags: [],
-      derived_extras: {},
-    };
-  }
-  if (article.kind === "reference") {
-    return {
-      title: article.title,
-      author: null,
-      published_date: null,
-      url: article.url,
-      origin: article.origin,
-      genre: null,
-      precis: null,
+      precis: article.kind === "wiki" ? article.precis || null : null,
       source_type: null,
       tags: [],
       derived_extras: {},

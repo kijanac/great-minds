@@ -1,7 +1,7 @@
 import { type Database, prompts } from "@great-minds/database";
-import { Context, Data, Effect, Layer, Option, Redacted, Schedule, Schema } from "effect";
+import { Context, Data, Effect, Layer, Schedule, Schema } from "effect";
 
-import { AppConfig } from "./config.ts";
+import { AppConfig, optionalRedactedValue } from "./config.ts";
 
 export const recordPrompt = (db: Database["Service"], hash: string, content: string) =>
   db.query((d) => d.insert(prompts).values({ hash, content }).onConflictDoNothing());
@@ -27,12 +27,6 @@ const GenerationCost = Schema.Struct({
 });
 const decodeGenerationCost = Schema.decodeUnknownEffect(GenerationCost);
 
-const optionalRedactedValue = (value: Option.Option<Redacted.Redacted<string>>) =>
-  Option.match(value, {
-    onNone: () => undefined,
-    onSome: Redacted.value,
-  });
-
 export const CostLookupLive = Layer.effect(
   CostLookupService,
   Effect.map(AppConfig, (config) => {
@@ -45,31 +39,28 @@ export const CostLookupLive = Layer.effect(
         const url = `${config.openRouterApiUrl.replace(/\/$/, "")}/generation?id=${encodeURIComponent(
           generationId,
         )}`;
-        return Effect.tryPromise({
-          try: () =>
-            fetch(url, {
+        return Effect.gen(function* () {
+          const response = yield* Effect.tryPromise({
+            try: (signal) => fetch(url, {
               method: "GET",
-              headers: {
-                authorization: `Bearer ${apiKey}`,
-              },
+              headers: { authorization: `Bearer ${apiKey}` },
+              signal,
             }),
-          catch: (error) => error,
+            catch: (error) => error,
+          });
+          if (response.ok) {
+            const json = yield* Effect.tryPromise({
+              try: () => response.json(),
+              catch: (error) => error,
+            });
+            const body = yield* decodeGenerationCost(json);
+            return body.data.total_cost;
+          }
+          if (retryableStatuses.has(response.status)) {
+            return yield* new RetryableGenerationStatus({ status: response.status });
+          }
+          return null;
         }).pipe(
-          Effect.flatMap((response) => {
-            if (response.ok) {
-              return Effect.tryPromise({
-                try: () => response.json(),
-                catch: (error) => error,
-              }).pipe(
-                Effect.flatMap(decodeGenerationCost),
-                Effect.map((body) => body.data.total_cost),
-              );
-            }
-            if (retryableStatuses.has(response.status)) {
-              return Effect.fail(new RetryableGenerationStatus({ status: response.status }));
-            }
-            return Effect.succeed(null);
-          }),
           Effect.retry({
             schedule: Schedule.exponential("100 millis"),
             times: 4,

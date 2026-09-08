@@ -105,7 +105,7 @@ export const LintServiceLive = Layer.effect(
               file_path: row.filePath,
               title: row.title,
               precis: row.precis,
-              updated_at: row.updatedAt.toISOString(),
+              updated_at: row.updatedAt,
               slug: wikiSlug(row.filePath),
             })),
             dirty_topics: dirty.map((row) => row.topicId),

@@ -1,6 +1,6 @@
-import { Context, Effect, Layer, Option, Redacted, Schema } from "effect";
+import { Context, Effect, Layer, Schema } from "effect";
 
-import { AppConfig } from "./config.ts";
+import { AppConfig, optionalRedactedValue } from "./config.ts";
 
 export type LlmTextContentPart = {
   readonly type: "text";
@@ -156,12 +156,6 @@ export const stripJsonFence = (raw: string) =>
 const streamChunkTimeoutMs = 30_000;
 const rateLimitRetries = 6;
 const maxRateLimitBackoffMs = 60_000;
-
-const optionalRedactedValue = (value: Option.Option<Redacted.Redacted<string>>) =>
-  Option.match(value, {
-    onNone: () => undefined,
-    onSome: Redacted.value,
-  });
 
 const openRouterHeaders = (apiKey: string) => ({
   authorization: `Bearer ${apiKey}`,

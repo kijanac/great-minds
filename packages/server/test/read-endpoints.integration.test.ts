@@ -349,7 +349,7 @@ const seedFixtures = async (): Promise<Fixture> => {
         .values({
           id: id.runAlpha,
           vaultId: id.vaultAlpha,
-          trigger: "test",
+          trigger: "manual",
           status: "completed",
           currentPhase: "render",
           phaseStatus: "completed",

@@ -57,7 +57,7 @@ export interface ThreadLike {
   exchanges: Exchange[];
   sessionId?: SessionId | null;
   draft?: boolean;
-  createdAt?: string | null;
+  createdAt?: Date | null;
 }
 
 // A doc-born session as surfaced by the reader: an anchored note thread or a
@@ -66,7 +66,7 @@ export interface DocThread extends ThreadLike {
   sessionId: SessionId | null;
   draft: boolean;
   anchored: boolean;
-  createdAt: string | null;
+  createdAt: Date | null;
 }
 
 export interface SelectionInfo extends TextAnchor {

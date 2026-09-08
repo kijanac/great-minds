@@ -58,7 +58,7 @@ const vaultDetail = {
   id: vaultId,
   name: "Research",
   owner_id: vaultId,
-  created_at: "2026-08-28T00:00:00Z",
+  created_at: new Date("2026-08-28T00:00:00Z"),
   role: "owner",
   member_count: 1,
   article_count: 3,

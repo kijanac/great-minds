@@ -3,6 +3,7 @@ import { type SessionId, type Uuid } from "@great-minds/domain";
 import { createReply, retryReply, streamReply } from "$lib/api/replies";
 import { listSessionsByOrigin, type OriginScope, type SessionEvent } from "$lib/api/sessions";
 import { newUuid } from "$lib/ids";
+import { replyTurn } from "$lib/reply-turn";
 import type { DocThread, Exchange, SelectionInfo } from "$lib/types";
 import { genId, isAbortError } from "$lib/utils";
 
@@ -242,12 +243,7 @@ export class DocThreads {
           patchThread({ sessionId: created.session_id });
         }
         for await (const snapshot of streamReply(created.reply_id, controller.signal)) {
-          patchTurn({
-            thinking: snapshot.sources.length > 0 ? [{ sources: snapshot.sources }] : [],
-            answer: snapshot.answer,
-            streaming: snapshot.status === "running",
-            error: snapshot.error,
-          });
+          patchTurn(replyTurn(snapshot));
         }
         settleDraft();
       } catch (error) {
@@ -297,12 +293,7 @@ export class DocThreads {
         const created = await retryReply(previous.replyId!, newUuid(), controller.signal);
         patchTurn({ replyId: created.reply_id });
         for await (const snapshot of streamReply(created.reply_id, controller.signal)) {
-          patchTurn({
-            thinking: snapshot.sources.length > 0 ? [{ sources: snapshot.sources }] : [],
-            answer: snapshot.answer,
-            streaming: snapshot.status === "running",
-            error: snapshot.error,
-          });
+          patchTurn(replyTurn(snapshot));
         }
       } catch (error) {
         if (isAbortError(error) || controller.signal.aborted) return;

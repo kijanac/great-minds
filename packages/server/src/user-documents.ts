@@ -69,8 +69,8 @@ const referenceOverview = (row: UserDocumentRow): ReferenceOverview => ({
   origin: row.origin,
   author: row.author,
   published: row.published,
-  created_at: row.createdAt.toISOString(),
-  updated_at: row.updatedAt.toISOString(),
+  created_at: row.createdAt,
+  updated_at: row.updatedAt,
 });
 
 export const safeReferencePath = (path: string) => {

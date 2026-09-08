@@ -51,7 +51,7 @@ const tokenPair = (accessToken: string, refreshToken: string): TokenPair => ({
 const apiKeyResponse = (row: ApiKeyRow): ApiKey => ({
   id: row.id,
   label: row.label,
-  created_at: row.createdAt.toISOString(),
+  created_at: row.createdAt,
   revoked: row.revoked,
 });
 

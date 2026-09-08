@@ -29,7 +29,7 @@ import {
 import { makeCompileLlmCore } from "./compile-llm-core.ts";
 import { AppConfig } from "./config.ts";
 import { bodyContentHash, contentHash, fileContentHash } from "./crypto.ts";
-import { embedBatch, EmbeddingsService, isTimeoutError, vectorLiteral } from "./embeddings.ts";
+import { EmbeddingsService, isTimeoutError, vectorLiteral } from "./embeddings.ts";
 import { errorDetails } from "./error-details.ts";
 import { LanguageModel } from "./llm.ts";
 import { StructuredLogger } from "./logging.ts";
@@ -301,7 +301,7 @@ export const CompilePhasesLive = Layer.effect(
         for (let offset = 0; offset < changed.length; offset += 50) {
           const batch = changed.slice(offset, offset + 50);
           const embedded = yield* Effect.result(
-            embedBatch(embeddings, batch.map((chunk) => chunk.body)),
+            embeddings.embed(batch.map((chunk) => chunk.body)),
           );
           if (embedded._tag === "Failure") {
             if (!isTimeoutError(embedded.failure)) return yield* Effect.fail(embedded.failure);

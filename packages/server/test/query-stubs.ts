@@ -130,7 +130,7 @@ export const makeEmbeddings = (vectors: ReadonlyMap<string, readonly number[]>) 
   return {
     calls,
     layer: Layer.succeed(EmbeddingsService, {
-      embed: async (texts: readonly string[]) => {
+      embed: (texts: readonly string[]) => Effect.sync(() => {
         calls.push([...texts]);
         return texts.map((text) => {
           const vector = vectors.get(text);
@@ -139,7 +139,7 @@ export const makeEmbeddings = (vectors: ReadonlyMap<string, readonly number[]>) 
           }
           return vector;
         });
-      },
+      }),
     }),
   };
 };
@@ -150,10 +150,10 @@ export const makeParallelSearch = (results: readonly ParallelSearchResult[] = []
     calls,
     layer: Layer.succeed(ParallelSearchService, {
       hasApiKey: true,
-      search: async (input: { question: string; query: string }) => {
+      search: (input: { question: string; query: string }) => Effect.sync(() => {
         calls.push(input);
         return results;
-      },
+      }),
     }),
   };
 };
@@ -161,7 +161,5 @@ export const makeParallelSearch = (results: readonly ParallelSearchResult[] = []
 export const makeDisabledParallelSearch = () =>
   Layer.succeed(ParallelSearchService, {
     hasApiKey: false,
-    search: async () => {
-      throw new Error("Parallel should not be called");
-    },
+    search: () => Effect.die(new Error("Parallel should not be called")),
   });

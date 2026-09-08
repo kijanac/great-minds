@@ -13,8 +13,8 @@
     onOpen: (id: string) => void;
   } = $props();
 
-  function formatDate(iso: string): string {
-    return new Date(iso).toLocaleDateString("en-US", {
+  function formatDate(date: Date): string {
+    return date.toLocaleDateString("en-US", {
       month: "short",
       day: "numeric",
       year: "numeric",

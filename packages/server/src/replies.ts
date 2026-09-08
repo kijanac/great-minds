@@ -30,6 +30,7 @@ import * as WorkflowEngine from "effect/unstable/workflow/WorkflowEngine";
 import { backgroundLoop } from "./background-loop.ts";
 import { AppConfig } from "./config.ts";
 import { StructuredLogger } from "./logging.ts";
+import { pollingSse } from "./polling-sse.ts";
 import {
   QueryExecutionState,
   type QueryPrecheckedContext,
@@ -48,7 +49,9 @@ const ambiguousReplyError =
 const flushIntervalMs = 125;
 
 const decodeCreateReply = Schema.decodeUnknownEffect(CreateReplyRequestSchema);
-const decodeReplySnapshot = Schema.decodeUnknownSync(ReplySnapshotSchema);
+const decodeReplyKind = Schema.decodeUnknownSync(ReplySnapshotSchema.fields.kind);
+const decodeReplyStatus = Schema.decodeUnknownSync(ReplySnapshotSchema.fields.status);
+const encodeReplySnapshot = Schema.encodeSync(Schema.fromJsonString(ReplySnapshotSchema));
 
 const ReplyStepControl = Schema.Struct({
   cursor: Schema.Number,
@@ -90,16 +93,6 @@ type ReplyCheckpoint = typeof ReplyCheckpoint.Type;
 const decodeReplyCheckpoint = Schema.decodeUnknownSync(ReplyCheckpoint);
 const decodeReplySources = Schema.decodeUnknownSync(Schema.Array(ReplySourceSchema));
 const checkpointPath = (replyId: Uuid) => `operations/replies/${replyId}.json`;
-
-const sse = (event: string, data: unknown): ReplySseEvent => ({
-  event,
-  data: typeof data === "string" ? data : JSON.stringify(data),
-});
-
-const replySseStream = <A>(events: AsyncIterable<A>) =>
-  Stream.fromAsyncIterable(events, (cause) => cause).pipe(
-    Stream.catch((cause) => Stream.fromEffect(Effect.die(cause))),
-  );
 
 const modelQuestion = (input: CreateReplyRequest, threadRoot: boolean): string => {
   if (
@@ -293,19 +286,18 @@ export const RepliesServiceLive = Layer.effect(
           : Effect.void,
       ));
 
-    const snapshot = (row: typeof replies.$inferSelect): ReplySnapshot =>
-      decodeReplySnapshot({
-        reply_id: row.id,
-        session_id: row.sessionId,
-        kind: row.kind,
-        status: row.status,
-        answer: row.answer,
-        sources: row.sources,
-        error: row.error,
-        version: row.version,
-        created_at: row.createdAt.toISOString(),
-        updated_at: row.updatedAt.toISOString(),
-      });
+    const snapshot = (row: typeof replies.$inferSelect): ReplySnapshot => ({
+      reply_id: row.id,
+      session_id: row.sessionId,
+      kind: decodeReplyKind(row.kind),
+      status: decodeReplyStatus(row.status),
+      answer: row.answer,
+      sources: decodeReplySources(row.sources),
+      error: row.error,
+      version: row.version,
+      created_at: row.createdAt,
+      updated_at: row.updatedAt,
+    });
 
     const updateSnapshot = (
       replyId: Uuid,
@@ -1037,30 +1029,14 @@ export const RepliesServiceLive = Layer.effect(
             return yield* new NotFound({ detail: "Reply not found" });
           }
 
-          async function* events() {
-            yield sse("connected", { id: replyId });
-            let previousVersion = -1;
-            let heartbeatAt = Date.now() + 30_000;
-            while (true) {
-              const row = await Effect.runPromise(readReply(vaultId, replyId));
-              if (row !== undefined && row.version !== previousVersion) {
-                previousVersion = row.version;
-                const current = snapshot(row);
-                yield sse("message", current);
-                if (terminalStatuses.has(current.status)) {
-                  yield sse("done", { id: replyId });
-                  return;
-                }
-              }
-              if (Date.now() >= heartbeatAt) {
-                yield sse("message", "");
-                heartbeatAt = Date.now() + 30_000;
-              }
-              await new Promise((resolve) => setTimeout(resolve, pollIntervalMs));
-            }
-          }
-
-          return replySseStream(events());
+          return pollingSse(replyId, readReply(vaultId, replyId), (row) => {
+            const current = snapshot(row);
+            return {
+              version: row.version,
+              data: encodeReplySnapshot(current),
+              terminal: terminalStatuses.has(current.status),
+            };
+          }, pollIntervalMs);
         }),
       prepareStep,
       modelStep,

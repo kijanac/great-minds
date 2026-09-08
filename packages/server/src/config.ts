@@ -50,6 +50,12 @@ export type AppConfigShape = {
 
 export const DEFAULT_RENDER_MODEL = "qwen/qwen3.6-plus";
 
+export const optionalRedactedValue = (value: Option.Option<Redacted.Redacted<string>>) =>
+  Option.match(value, {
+    onNone: () => undefined,
+    onSome: Redacted.value,
+  });
+
 export class AppConfig extends Context.Service<AppConfig, AppConfigShape>()(
   "@great-minds/server/AppConfig",
 ) {}

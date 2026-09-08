@@ -11,6 +11,7 @@ import { and, asc, desc, eq, ilike, ne, or, sql, type SQL } from "drizzle-orm";
 import { Context, Effect, Layer } from "effect";
 
 import { pageEnvelope, oneTotal } from "./pagination.ts";
+import { wikiOverview } from "./document-metadata.ts";
 import { VaultAccessService } from "./vaults.ts";
 
 type WikiServiceShape = {
@@ -32,20 +33,13 @@ export class WikiService extends Context.Service<WikiService, WikiServiceShape>(
 
 const WIKI_INDEX_PATH = "wiki/_index.md";
 
-const slugFromWikiPath = (filePath: string) => {
+const articleOverview = (row: typeof wikiArticles.$inferSelect): WikiArticleOverview => {
+  const filePath = row.filePath;
   if (!filePath.startsWith("wiki/") || !filePath.endsWith(".md")) {
     throw new Error(`invalid wiki article path: ${filePath}`);
   }
-  return filePath.slice("wiki/".length, -".md".length);
+  return wikiOverview(row);
 };
-
-const articleOverview = (row: typeof wikiArticles.$inferSelect): WikiArticleOverview => ({
-  file_path: row.filePath,
-  title: row.title,
-  precis: row.precis,
-  updated_at: row.updatedAt.toISOString(),
-  slug: slugFromWikiPath(row.filePath)
-});
 
 const liveArticleConditions = (vaultId: Uuid, query?: WikiListQuery) => {
   const conditions: SQL[] = [

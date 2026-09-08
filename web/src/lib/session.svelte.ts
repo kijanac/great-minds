@@ -1,15 +1,10 @@
 import { browser } from "$app/environment";
 import type { SessionId, Uuid } from "@great-minds/domain";
 
-import {
-  createReply,
-  retryReply,
-  streamReply,
-  type CreateReplyPayload,
-  type ReplySnapshot,
-} from "$lib/api/replies";
+import { createReply, retryReply, streamReply, type CreateReplyPayload } from "$lib/api/replies";
 import type { BtwThread, Exchange, Phase, SelectionInfo } from "$lib/types";
 import { newUuid } from "$lib/ids";
+import { replyTurn } from "$lib/reply-turn";
 import { genId, isAbortError } from "$lib/utils";
 
 type MainReplyPayload = Extract<CreateReplyPayload, { kind: "exchange" }>;
@@ -77,9 +72,6 @@ export class Session {
     );
   };
 
-  #snapshotThinking = (snapshot: ReplySnapshot, alwaysBlock: boolean) =>
-    snapshot.sources.length > 0 || alwaysBlock ? [{ sources: snapshot.sources }] : [];
-
   #tailExchange = async (
     exchangeId: Uuid,
     replyId: Uuid,
@@ -94,10 +86,7 @@ export class Session {
               : "searching"
             : "done";
         this.#updateExchange(exchangeId, {
-          answer: snapshot.answer,
-          thinking: this.#snapshotThinking(snapshot, true),
-          streaming: snapshot.status === "running",
-          error: snapshot.error,
+          ...replyTurn(snapshot, true),
           replyId,
         });
       }
@@ -140,12 +129,7 @@ export class Session {
   #tailBtwReply = async (replyId: Uuid, controller: AbortController): Promise<void> => {
     try {
       for await (const snapshot of streamReply(replyId, controller.signal)) {
-        this.#updateBtwReply(replyId, {
-          answer: snapshot.answer,
-          thinking: this.#snapshotThinking(snapshot, false),
-          streaming: snapshot.status === "running",
-          error: snapshot.error,
-        });
+        this.#updateBtwReply(replyId, replyTurn(snapshot));
       }
     } catch (error) {
       if (isAbortError(error) || controller.signal.aborted) return;

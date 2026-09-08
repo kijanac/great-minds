@@ -1,17 +1,27 @@
 import { pipelineRuns } from "@great-minds/database";
-import type { JobResponse } from "@great-minds/domain";
+import { JobResponse } from "@great-minds/domain";
+import { Schema } from "effect";
 
-export const jobResponse = (row: typeof pipelineRuns.$inferSelect): JobResponse => ({
-  id: row.id,
-  vault_id: row.vaultId,
-  trigger: row.trigger as JobResponse["trigger"],
-  status: row.status as JobResponse["status"],
-  current_phase: row.currentPhase,
-  phase_status: row.phaseStatus,
-  progress_steps: row.progressSteps as JobResponse["progress_steps"],
-  error: row.error,
-  created_at: row.createdAt.toISOString(),
-  updated_at: row.updatedAt.toISOString(),
-  completed_at: row.completedAt?.toISOString() ?? null,
-  stream_url: `/jobs/${row.id}/stream`,
-});
+export const jobState = Schema.decodeUnknownSync(Schema.Struct({
+  trigger: JobResponse.fields.trigger,
+  status: JobResponse.fields.status,
+  progressSteps: JobResponse.fields.progress_steps,
+}));
+
+export const jobResponse = (row: typeof pipelineRuns.$inferSelect): JobResponse => {
+  const state = jobState(row);
+  return {
+    id: row.id,
+    vault_id: row.vaultId,
+    trigger: state.trigger,
+    status: state.status,
+    current_phase: row.currentPhase,
+    phase_status: row.phaseStatus,
+    progress_steps: state.progressSteps,
+    error: row.error,
+    created_at: row.createdAt,
+    updated_at: row.updatedAt,
+    completed_at: row.completedAt,
+    stream_url: `/jobs/${row.id}/stream`,
+  };
+};

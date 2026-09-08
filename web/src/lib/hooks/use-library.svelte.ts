@@ -11,10 +11,9 @@ import {
   fetchSourceDocuments,
   requestSourceDeletion,
 } from "$lib/api/sources";
-import { getVaultDetail } from "$lib/api/vaults";
 import { fetchWikiArticles } from "$lib/api/wiki";
 import { usePanelContent } from "$lib/hooks/use-panel-content.svelte";
-import { activeVault } from "$lib/hooks/use-vault.svelte";
+import { activeVault, useVaultDetail } from "$lib/hooks/use-vault.svelte";
 import type { SourceRef } from "$lib/types";
 
 const PAGE_SIZE = 50;
@@ -109,11 +108,7 @@ export function useLibrary(
       !!activeVault.id && activeType !== LIBRARY_ARTICLES && activeType !== LIBRARY_READING_ROOM,
   }));
 
-  const role = createQuery(() => ({
-    queryKey: ["vault", activeVault.id, "detail"],
-    queryFn: () => getVaultDetail(activeVault.id!),
-    enabled: !!activeVault.id,
-  }));
+  const role = useVaultDetail(() => activeVault.id);
 
   const panel = usePanelContent(selectedCard);
 

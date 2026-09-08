@@ -2192,12 +2192,12 @@ describe("query stream", () => {
     expect(secondRound).toContainEqual({
       role: "tool",
       tool_call_id: "tc-list",
-      content: "Invalid list_articles sort: bogus (expected recent, alpha, or central)",
+      content: expect.stringContaining('"sort"'),
     });
     expect(secondRound).toContainEqual({
       role: "tool",
       tool_call_id: "tc-expand",
-      content: "Tool argument start must be an integer",
+      content: expect.stringContaining('"start"'),
     });
   });
 

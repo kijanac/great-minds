@@ -142,7 +142,7 @@ const batchResponse = (
   created_by: batch.createdBy,
   status: batch.status,
   error: batch.error,
-  expires_at: batch.expiresAt.toISOString(),
+  expires_at: batch.expiresAt,
   files: files.map((file) => ({
     name: file.name,
     size: file.size,

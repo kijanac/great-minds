@@ -2800,7 +2800,7 @@ describe("M3.1 write endpoint integration", () => {
           .values({
             id: id.run,
             vaultId: id.vault,
-            trigger: "test",
+            trigger: "manual",
             status: "completed",
             currentPhase: "render",
             phaseStatus: "completed",

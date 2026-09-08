@@ -45,7 +45,7 @@ import {
   promptContentHash,
 } from "../src/crypto.ts";
 import { DrizzleLive } from "../src/db.ts";
-import { EmbeddingsService } from "../src/embeddings.ts";
+import { EmbeddingBatchFailed, EmbeddingsService } from "../src/embeddings.ts";
 import { LanguageModel, type CompleteInput, type ModelCompletion } from "../src/llm.ts";
 import { StructuredLogger } from "../src/logging.ts";
 import { parseFrontmatter } from "../src/markdown.ts";
@@ -173,7 +173,10 @@ const SourceDocumentsLive = SourceDocumentsServiceLive.pipe(
   Layer.provideMerge(BaseLive),
 );
 const EmbeddingsLive = Layer.succeed(EmbeddingsService, {
-  embed: (texts) => embed(texts),
+  embed: (texts) => Effect.tryPromise({
+    try: () => embed(texts),
+    catch: (error) => new EmbeddingBatchFailed(error),
+  }),
 });
 const LanguageModelLive = Layer.succeed(LanguageModel, {
   hasApiKey: true,

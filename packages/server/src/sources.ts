@@ -6,13 +6,13 @@ import {
   NotFound,
   type Proposal,
   type SourceDocumentPage,
-  type SourceDocumentSummary,
   type SourceListQuery,
   type Uuid
 } from "@great-minds/domain";
 import { and, desc, eq, ilike, or, sql, type SQL } from "drizzle-orm";
-import { Context, Effect, Layer, Schema } from "effect";
+import { Context, Effect, Layer } from "effect";
 
+import { sourceSummary } from "./document-metadata.ts";
 import { pageEnvelope, oneTotal } from "./pagination.ts";
 import { ProposalsService } from "./proposals.ts";
 import { SourceDocumentsService } from "./source-documents.ts";
@@ -39,27 +39,6 @@ type SourcesServiceShape = {
 export class SourcesService extends Context.Service<SourcesService, SourcesServiceShape>()(
   "@great-minds/server/SourcesService"
 ) {}
-
-const DerivedExtras = Schema.Record(Schema.String, Schema.Unknown);
-const decodeDerivedExtras = Schema.decodeUnknownSync(DerivedExtras);
-
-const sourceSummary = (
-  row: typeof sourceDocuments.$inferSelect
-): SourceDocumentSummary => ({
-  id: row.id,
-  file_path: row.filePath,
-  source_type: row.sourceType,
-  title: row.title,
-  author: row.author,
-  published_date: row.publishedDate,
-  url: row.url,
-  origin: row.origin,
-  genre: row.genre,
-  precis: row.precis,
-  tags: row.tags,
-  derived_extras: decodeDerivedExtras(row.derivedExtras),
-  updated_at: row.updatedAt.toISOString()
-});
 
 const tagCondition = (tag: string) =>
   sql`exists (select 1 from unnest(${sourceDocuments.tags}) as tag_value where lower(tag_value) = lower(${tag}))`;

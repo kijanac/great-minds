@@ -37,7 +37,7 @@ function replayEvents(events: readonly SessionEvent[], originTitle: string | nul
     } else if (event.type === "btw") {
       const key = `${event.exId}\0${event.quote}`;
       const existing = latestBtw.get(key);
-      if (!existing || event.ts >= existing.ts) latestBtw.set(key, event);
+      if (!existing || event.ts.getTime() >= existing.ts.getTime()) latestBtw.set(key, event);
     }
   }
 

@@ -27,7 +27,7 @@ import {
   type ValidatedTopic,
 } from "./compile-contract.ts";
 import { contentHash, promptContentHash } from "./crypto.ts";
-import { embedBatch, type EmbeddingsService, isTimeoutError, vectorLiteral } from "./embeddings.ts";
+import { type EmbeddingsService, isTimeoutError, vectorLiteral } from "./embeddings.ts";
 import { errorDetails as describeError } from "./error-details.ts";
 import { type LanguageModel, type LlmMessage, type ModelCompletion, stripJsonFence } from "./llm.ts";
 import { recordPrompt } from "./llm-costs.ts";
@@ -831,8 +831,7 @@ export const makeCompileLlmCore = (options: CompileLlmCoreOptions) => {
       for (let offset = 0; offset < embeddingInputs.length; offset += 50) {
         const batch = embeddingInputs.slice(offset, offset + 50);
         const embedded = yield* Effect.result(
-          embedBatch(
-            embeddings,
+          embeddings.embed(
             batch.map(({ idea }) => `${idea.label}. ${idea.description}`.trim()),
           ),
         );

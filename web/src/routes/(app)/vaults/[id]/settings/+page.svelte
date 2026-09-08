@@ -8,7 +8,6 @@
   import {
     deleteVault,
     getVaultConfig,
-    getVaultDetail,
     inviteMember,
     listMembers,
     removeMember,
@@ -17,6 +16,7 @@
     updateVaultConfig,
   } from "$lib/api/vaults";
   import { auth } from "$lib/auth.svelte";
+  import { useVaultDetail } from "$lib/hooks/use-vault.svelte";
   import MemberRow from "$lib/components/member-row.svelte";
   import PageHeader from "$lib/components/page-header.svelte";
   import ProposalsSection from "$lib/components/proposals-section.svelte";
@@ -52,11 +52,7 @@
   let confirmation = $state("");
   let deleteError = $state<string | null>(null);
 
-  const vault = createQuery(() => ({
-    queryKey: ["vault", vaultId, "detail"],
-    queryFn: () => getVaultDetail(vaultId!),
-    enabled: !!vaultId,
-  }));
+  const vault = useVaultDetail(() => vaultId);
   const members = createQuery(() => ({
     queryKey: ["vault", vaultId, "members"],
     queryFn: () => listMembers(vaultId!),

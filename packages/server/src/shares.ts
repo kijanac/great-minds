@@ -42,9 +42,9 @@ const shareOverview = (row: ShareRow): ShareOverview => ({
   subject_id: row.subjectId,
   created_by: row.createdBy,
   include_annotations: row.includeAnnotations,
-  created_at: row.createdAt.toISOString(),
-  expires_at: row.expiresAt?.toISOString() ?? null,
-  revoked_at: row.revokedAt?.toISOString() ?? null,
+  created_at: row.createdAt,
+  expires_at: row.expiresAt,
+  revoked_at: row.revokedAt,
 });
 
 const decodeSessionOrigin = Schema.decodeUnknownSync(Schema.NullOr(SessionOriginSchema));
@@ -122,7 +122,7 @@ export const SharesServiceLive = Layer.effect(
             exchanges: events.success.events
               .filter((event): event is SessionExchangeEvent => event.type === "exchange")
               .map((event) => ({ query: event.query, answer: event.answer ?? "" })),
-            created_at: row.createdAt.toISOString(),
+            created_at: row.createdAt,
           });
         }
         return annotations;
@@ -197,7 +197,7 @@ export const SharesServiceLive = Layer.effect(
               subjectId: input.subject_id,
               createdBy: userId,
               includeAnnotations: input.include_annotations ?? true,
-              expiresAt: input.expires_at === undefined ? null : new Date(input.expires_at),
+              expiresAt: input.expires_at ?? null,
             })
             .returning())
             .pipe(Effect.orDie);
@@ -255,7 +255,7 @@ export const SharesServiceLive = Layer.effect(
               subject_kind: "session" as const,
               title: session.query,
               markdown,
-              created_at: session.createdAt.toISOString(),
+              created_at: session.createdAt,
             };
           }
 
@@ -286,7 +286,7 @@ export const SharesServiceLive = Layer.effect(
             annotations: row.includeAnnotations
               ? yield* loadAnnotations(row.createdBy, reference.filePath)
               : [],
-            created_at: reference.createdAt.toISOString(),
+            created_at: reference.createdAt,
           };
         }),
     } satisfies SharesServiceShape;

@@ -212,7 +212,7 @@ const vaultResponse = (row: {
   id: row.id,
   name: row.name,
   owner_id: row.ownerId,
-  created_at: row.createdAt.toISOString(),
+  created_at: row.createdAt,
 });
 
 const memberResponse = (row: {

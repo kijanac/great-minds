@@ -17,7 +17,7 @@ const EX_2 = uuid("00000000-0000-4000-8000-000000000302");
 const BTW_1 = uuid("00000000-0000-4000-8000-000000000303");
 const BTW_2 = uuid("00000000-0000-4000-8000-000000000304");
 
-const ts = "2026-07-23T12:00:00.000Z";
+const ts = new Date("2026-07-23T12:00:00.000Z");
 
 const meta: StoredSessionEvent = {
   type: "meta",

@@ -21,13 +21,13 @@ import {
   type SourceDocument,
   type Uuid,
   type WikiArticle,
-  type WikiArticleOverview,
 } from "@great-minds/domain";
 import { alias } from "drizzle-orm/pg-core";
 import { and, asc, desc, eq, gte, lte, sql } from "drizzle-orm";
-import { Context, Effect, Layer, Schema } from "effect";
+import { Context, Effect, Layer } from "effect";
 
 import { ContentStorage, vaultOwner } from "./storage.ts";
+import { sourceSummary, wikiOverview, wikiSlug } from "./document-metadata.ts";
 import { VaultAccessService } from "./vaults.ts";
 
 const MAX_CHUNK_SPAN = 100;
@@ -69,13 +69,6 @@ export class DocumentsService extends Context.Service<DocumentsService, Document
   "@great-minds/server/DocumentsService",
 ) {}
 
-const DerivedExtras = Schema.Record(Schema.String, Schema.Unknown);
-const decodeDerivedExtras = Schema.decodeUnknownSync(DerivedExtras);
-
-const dateIso = (value: Date | null) => value?.toISOString() ?? null;
-
-const wikiSlug = (filePath: string) => filePath.replace(/^wiki\//, "").replace(/\.md$/, "");
-
 const wikiArticle = (row: typeof wikiArticles.$inferSelect): WikiArticle => ({
   kind: "wiki",
   id: row.id,
@@ -86,22 +79,18 @@ const wikiArticle = (row: typeof wikiArticles.$inferSelect): WikiArticle => ({
   title: row.title,
   precis: row.precis,
   tags: row.tags,
-  created_at: dateIso(row.createdAt),
-  updated_at: dateIso(row.updatedAt),
+  created_at: row.createdAt,
+  updated_at: row.updatedAt,
   slug: wikiSlug(row.filePath),
 });
 
 const sourceDocument = (row: typeof sourceDocuments.$inferSelect): SourceDocument => ({
+  ...sourceSummary(row),
   kind: "source",
-  id: row.id,
   vault_id: row.vaultId,
-  file_path: row.filePath,
   body_hash: row.bodyHash,
-  source_type: row.sourceType,
   etag: row.etag,
-  url: row.url,
   canonical_url: row.canonicalUrl,
-  origin: row.origin,
   provenance_session_id: row.provenanceSessionId,
   provenance_exchange_id: row.provenanceExchangeId,
   provenance_session_query: row.provenanceSessionQuery,
@@ -111,28 +100,7 @@ const sourceDocument = (row: typeof sourceDocuments.$inferSelect): SourceDocumen
   provenance_anchored_to: row.provenanceAnchoredTo,
   provenance_anchored_section: row.provenanceAnchoredSection,
   provenance_intent: row.provenanceIntent,
-  title: row.title,
-  precis: row.precis,
-  author: row.author,
-  published_date: row.publishedDate,
-  genre: row.genre,
-  tags: row.tags,
-  derived_extras: decodeDerivedExtras(row.derivedExtras),
-  created_at: dateIso(row.createdAt),
-  updated_at: dateIso(row.updatedAt),
-});
-
-const wikiOverview = (row: {
-  readonly filePath: string;
-  readonly title: string;
-  readonly precis: string;
-  readonly updatedAt: Date | null;
-}): WikiArticleOverview => ({
-  file_path: row.filePath,
-  title: row.title,
-  precis: row.precis,
-  updated_at: dateIso(row.updatedAt),
-  slug: wikiSlug(row.filePath),
+  created_at: row.createdAt,
 });
 
 const stripFrontmatter = (content: string) => {

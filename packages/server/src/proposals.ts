@@ -112,7 +112,7 @@ const proposalOverview = (row: DbProposal): ProposalOverview => ({
   status: statusFromDb(row.status),
   title: row.title,
   content_type: row.contentType,
-  created_at: row.createdAt.toISOString(),
+  created_at: row.createdAt,
 });
 
 const proposalResponse = (row: DbProposal): Proposal => ({

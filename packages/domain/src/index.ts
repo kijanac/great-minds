@@ -45,7 +45,7 @@ export const FileFingerprint = Schema.String.pipe(
 );
 export type FileFingerprint = typeof FileFingerprint.Type;
 
-export const IsoDateTime = Schema.String;
+export const IsoDateTime = Schema.DateFromString;
 export type IsoDateTime = typeof IsoDateTime.Type;
 
 export const RequestCodeInput = Schema.Struct({

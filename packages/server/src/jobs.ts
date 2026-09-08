@@ -5,20 +5,22 @@ import {
   type JobListQuery,
   type JobPage,
   type JobProgressSnapshot,
+  JobProgressSnapshot as JobProgressSnapshotSchema,
   type JobResponse,
   type JobSseEvent,
   type Uuid,
 } from "@great-minds/domain";
 import { and, count, desc, eq, inArray, sql, type SQL } from "drizzle-orm";
-import { Context, Effect, Layer, Option, Stream } from "effect";
+import { Context, Effect, Layer, Option, Schema, Stream } from "effect";
 import * as WorkflowEngine from "effect/unstable/workflow/WorkflowEngine";
 
 import { cancelCompileWorkflow } from "./compile-intents.ts";
 import { AppConfig } from "./config.ts";
 import { FileIngestBatches } from "./file-ingest-batches.ts";
-import { jobResponse } from "./job-response.ts";
+import { jobResponse, jobState } from "./job-response.ts";
 import { pageEnvelope, oneTotal } from "./pagination.ts";
 import { PipelineRunsService } from "./pipeline-runs.ts";
+import { pollingSse } from "./polling-sse.ts";
 import { StagedFileIngestWorkflow } from "./staged-file-ingest-workflow.ts";
 import { UrlIngestWorkflow } from "./url-ingest-workflow.ts";
 import { VaultAccessService } from "./vaults.ts";
@@ -26,28 +28,23 @@ import { workflowExecutionId } from "./workflow-engine.ts";
 
 const terminalStatuses = new Set(["completed", "failed", "cancelled"]);
 
-const progressSnapshot = (row: typeof pipelineRuns.$inferSelect): JobProgressSnapshot => ({
-  id: row.id,
-  vault_id: row.vaultId,
-  trigger: row.trigger as JobProgressSnapshot["trigger"],
-  job_status: row.status as JobProgressSnapshot["job_status"],
-  phase: row.currentPhase,
-  phase_status: row.phaseStatus,
-  steps: row.progressSteps as JobProgressSnapshot["steps"],
-  ...(row.error === null || row.error.length === 0 ? {} : { error: row.error }),
-  updated_at: row.updatedAt.toISOString(),
-  completed_at: row.completedAt?.toISOString() ?? null,
-});
+const progressSnapshot = (row: typeof pipelineRuns.$inferSelect): JobProgressSnapshot => {
+  const state = jobState(row);
+  return {
+    id: row.id,
+    vault_id: row.vaultId,
+    trigger: state.trigger,
+    job_status: state.status,
+    phase: row.currentPhase,
+    phase_status: row.phaseStatus,
+    steps: state.progressSteps,
+    ...(row.error === null || row.error.length === 0 ? {} : { error: row.error }),
+    updated_at: row.updatedAt,
+    completed_at: row.completedAt,
+  };
+};
 
-const sse = (event: string, data: unknown): JobSseEvent => ({
-  event,
-  data: typeof data === "string" ? data : JSON.stringify(data),
-});
-
-export const jobSseStream = <A>(events: AsyncIterable<A>) =>
-  Stream.fromAsyncIterable(events, (cause) => cause).pipe(
-    Stream.catch((cause) => Stream.fromEffect(Effect.die(cause))),
-  );
+const encodeProgressSnapshot = Schema.encodeSync(Schema.fromJsonString(JobProgressSnapshotSchema));
 
 type JobsServiceShape = {
   readonly requestCompile: (
@@ -247,38 +244,11 @@ export const JobsServiceLive = Layer.effect(
           const initial = yield* readRun(vaultId, jobId);
           if (initial === undefined) return yield* new NotFound({ detail: "Job not found" });
 
-          async function* events() {
-            yield sse("connected", { id: jobId });
-            let previous = "";
-            let heartbeatAt = Date.now() + 30_000;
-            while (true) {
-              const row = await Effect.runPromise(readRun(vaultId, jobId));
-              if (row !== undefined) {
-                const snapshot = progressSnapshot(row);
-                const encoded = JSON.stringify(snapshot);
-                if (encoded !== previous) {
-                  previous = encoded;
-                  yield sse("message", encoded);
-                  if (terminalStatuses.has(snapshot.job_status)) {
-                    yield sse("done", { id: jobId });
-                    return;
-                  }
-                }
-              }
-              if (Date.now() >= heartbeatAt) {
-                // The HTTP adapter rewrites this empty message frame to an SSE comment.
-                yield sse("message", "");
-                heartbeatAt = Date.now() + 30_000;
-              }
-              await new Promise((resolve) => setTimeout(resolve, pollIntervalMs));
-            }
-          }
-
-          // The polling state machine stays in one async generator so snapshot dedup,
-          // terminal closure, and the independent heartbeat deadline remain atomic.
-          // Its captured DB service needs no environment, but runPromise is outside the
-          // server runtime's supervision; an Effect-native stream is a later cleanup.
-          return jobSseStream(events());
+          return pollingSse(jobId, readRun(vaultId, jobId), (row) => {
+            const snapshot = progressSnapshot(row);
+            const data = encodeProgressSnapshot(snapshot);
+            return { version: data, data, terminal: terminalStatuses.has(snapshot.job_status) };
+          }, pollIntervalMs);
         }),
     } satisfies JobsServiceShape;
   }),

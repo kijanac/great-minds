@@ -1,6 +1,6 @@
-import { Context, Effect, Layer, Option, Redacted, Schema } from "effect";
+import { Context, Effect, Layer, Schema } from "effect";
 
-import { AppConfig } from "./config.ts";
+import { AppConfig, optionalRedactedValue } from "./config.ts";
 
 export type ParallelSearchResult = {
   readonly title: string;
@@ -15,7 +15,9 @@ type ParallelSearchInput = {
 
 type ParallelSearchShape = {
   readonly hasApiKey: boolean;
-  readonly search: (input: ParallelSearchInput) => Promise<readonly ParallelSearchResult[]>;
+  readonly search: (
+    input: ParallelSearchInput,
+  ) => Effect.Effect<readonly ParallelSearchResult[], unknown>;
 };
 
 export class ParallelSearchService extends Context.Service<
@@ -29,12 +31,6 @@ export class ParallelSearchError extends Error {
     this.name = "ParallelSearchError";
   }
 }
-
-const optionalRedactedValue = (value: Option.Option<Redacted.Redacted<string>>) =>
-  Option.match(value, {
-    onNone: () => undefined,
-    onSome: Redacted.value,
-  });
 
 const ParallelSearchResponse = Schema.Struct({
   results: Schema.Array(
@@ -53,40 +49,43 @@ export const ParallelSearchLive = Layer.effect(
     const apiKey = optionalRedactedValue(config.parallelApiKey);
     return {
       hasApiKey: apiKey !== undefined,
-      search: async ({ question, query }) => {
-        if (apiKey === undefined) {
-          throw new ParallelSearchError("Parallel API key is not configured");
-        }
-        const objective =
-          "Find concrete facts — events, dates, figures, named people and " +
-          "organizations, and what people concretely said or did — relevant " +
-          `to this question: ${question}`;
-        const response = await fetch(config.parallelSearchUrl, {
-          method: "POST",
-          headers: {
-            "x-api-key": apiKey,
-            "parallel-beta": "search-extract-2025-10-10",
-            "content-type": "application/json",
-          },
-          body: JSON.stringify({
-            objective,
-            search_queries: [query],
-            max_results: 5,
-            max_chars_per_result: 1500,
-          }),
-          signal: AbortSignal.timeout(20_000),
-        });
-        if (!response.ok) {
-          throw new ParallelSearchError(`Parallel search returned ${response.status}`);
-        }
-        const body = decodeParallelSearchResponse(await response.json());
-        return body.results.map((result) => ({
-          title:
-            result.title !== undefined && result.title.length > 0 ? result.title : result.url,
-          url: result.url,
-          excerpts: result.excerpts,
-        }));
-      },
+      search: ({ question, query }) => Effect.tryPromise({
+        try: async (signal) => {
+          if (apiKey === undefined) {
+            throw new ParallelSearchError("Parallel API key is not configured");
+          }
+          const objective =
+            "Find concrete facts — events, dates, figures, named people and " +
+            "organizations, and what people concretely said or did — relevant " +
+            `to this question: ${question}`;
+          const response = await fetch(config.parallelSearchUrl, {
+            method: "POST",
+            headers: {
+              "x-api-key": apiKey,
+              "parallel-beta": "search-extract-2025-10-10",
+              "content-type": "application/json",
+            },
+            body: JSON.stringify({
+              objective,
+              search_queries: [query],
+              max_results: 5,
+              max_chars_per_result: 1500,
+            }),
+            signal: AbortSignal.any([signal, AbortSignal.timeout(20_000)]),
+          });
+          if (!response.ok) {
+            throw new ParallelSearchError(`Parallel search returned ${response.status}`);
+          }
+          const body = decodeParallelSearchResponse(await response.json());
+          return body.results.map((result) => ({
+            title:
+              result.title !== undefined && result.title.length > 0 ? result.title : result.url,
+            url: result.url,
+            excerpts: result.excerpts,
+          }));
+        },
+        catch: (error) => error,
+      }),
     } satisfies ParallelSearchShape;
   }),
 );

@@ -1,5 +1,5 @@
 import { sql } from "drizzle-orm";
-import type { SessionId, Uuid } from "@great-minds/domain";
+import type { JobResponse, PipelineProgressStep, SessionId, Uuid } from "@great-minds/domain";
 import {
   bigint,
   boolean,
@@ -270,11 +270,12 @@ export const pipelineRuns = pgTable(
   {
     id: uuidColumn("id").primaryKey(),
     vaultId: uuidColumn("vault_id").notNull(),
-    trigger: text("trigger").notNull(),
-    status: text("status").notNull(),
+    trigger: text("trigger").$type<JobResponse["trigger"]>().notNull(),
+    status: text("status").$type<JobResponse["status"]>().notNull(),
     currentPhase: text("current_phase").notNull(),
     phaseStatus: text("phase_status").notNull(),
     progressSteps: jsonb("progress_steps")
+      .$type<readonly PipelineProgressStep[]>()
       .default(sql`'[]'::jsonb`)
       .notNull(),
     error: text("error"),

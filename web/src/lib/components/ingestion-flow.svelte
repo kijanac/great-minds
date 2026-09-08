@@ -1,6 +1,7 @@
 <script lang="ts">
   import { beforeNavigate, goto } from "$app/navigation";
   import type { Uuid } from "@great-minds/domain";
+  import { Effect } from "effect";
   import { onMount } from "svelte";
   import { cubicOut } from "svelte/easing";
   import { fade, slide } from "svelte/transition";
@@ -11,6 +12,7 @@
     hashFile,
     type HashedFile,
   } from "$lib/api/ingest";
+  import { run } from "$lib/api/app";
   import { Button } from "$lib/components/ui/button";
   import { Input } from "$lib/components/ui/input";
   import { newUuid } from "$lib/ids";
@@ -286,38 +288,33 @@
   async function runHashingPipeline(initial: IngestableFile[]) {
     hashRunId += 1;
     const runId = hashRunId;
-    let cursor = 0;
 
-    async function worker() {
-      while (true) {
-        const index = cursor++;
-        if (index >= initial.length) return;
-        const item = initial[index];
-        if (item.status !== "checking") continue;
-        try {
-          const hash = await hashFile(item.file);
-          if (hashRunId !== runId) return;
-          files = applyHash(files, item.id, hash);
-        } catch (error) {
-          if (hashRunId !== runId) return;
-          files = files.map((file) =>
-            file.id === item.id && file.status === "checking"
-              ? {
-                  ...file,
-                  status: "error",
-                  selected: false,
-                  error: error instanceof Error ? error.message : "hash failed",
-                }
-              : file,
-          );
-        }
-      }
-    }
-
-    await Promise.all(
-      Array.from(
-        { length: Math.min(HASH_CONCURRENCY, initial.length) },
-        worker,
+    await run(
+      Effect.forEach(
+        initial,
+        (item) =>
+          Effect.promise(async () => {
+            if (hashRunId !== runId || item.status !== "checking") return;
+            try {
+              const hash = await hashFile(item.file);
+              if (hashRunId !== runId) return;
+              files = applyHash(files, item.id, hash);
+            } catch (error) {
+              if (hashRunId !== runId) return;
+              files = files.map((file) =>
+                file.id === item.id && file.status === "checking"
+                  ? {
+                      ...file,
+                      status: "error",
+                      selected: false,
+                      error:
+                        error instanceof Error ? error.message : "hash failed",
+                    }
+                  : file,
+              );
+            }
+          }),
+        { concurrency: HASH_CONCURRENCY, discard: true },
       ),
     );
     if (hashRunId !== runId) return;

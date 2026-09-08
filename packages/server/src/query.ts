@@ -20,7 +20,7 @@ import {
   Uuid,
 } from "@great-minds/domain";
 import { and, asc, desc, eq, gte, ilike, lte, ne, or, sql, type SQL } from "drizzle-orm";
-import { Cause, Context, Effect, Layer, Schema, Stream } from "effect";
+import { Cause, Context, Effect, Layer, Option, Schema, Stream } from "effect";
 
 import { AppConfig } from "./config.ts";
 import { readVaultConfig, type VaultConfigFile } from "./vault-config.ts";
@@ -120,6 +120,49 @@ export const QueryPreparedToolCall = Schema.Struct({
   pendingSource: Schema.optionalKey(QuerySourceDataSchema),
 });
 export type QueryPreparedToolCall = typeof QueryPreparedToolCall.Type;
+
+const ToolInteger = Schema.Union([Schema.Int, Schema.NumberFromString.pipe(Schema.check(Schema.isInt()))]);
+
+const QueryTool = Schema.Union([
+  Schema.Struct({
+    name: Schema.Literals(["read_document", "linked_articles"]),
+    args: Schema.Struct({ path: Schema.NonEmptyString }),
+  }),
+  Schema.Struct({
+    name: Schema.Literal("expand_context"),
+    args: Schema.Struct({ path: Schema.NonEmptyString, start: ToolInteger, end: ToolInteger }),
+  }),
+  Schema.Struct({
+    name: Schema.Literals(["search_content", "web_search"]),
+    args: Schema.Struct({ query: Schema.NonEmptyString }),
+  }),
+  Schema.Struct({
+    name: Schema.Literal("search_in_document"),
+    args: Schema.Struct({ path: Schema.NonEmptyString, query: Schema.NonEmptyString }),
+  }),
+  Schema.Struct({
+    name: Schema.Literal("query_documents"),
+    args: Schema.Struct({
+      tags: Schema.optionalKey(Schema.Array(Schema.String)),
+      author: Schema.optionalKey(Schema.String),
+      genre: Schema.optionalKey(Schema.String),
+      date_gte: Schema.optionalKey(Schema.String),
+      date_lte: Schema.optionalKey(Schema.String),
+      limit: Schema.optionalKey(Schema.Int),
+    }),
+  }),
+  Schema.Struct({
+    name: Schema.Literal("list_articles"),
+    args: Schema.Struct({
+      contains: Schema.optionalKey(Schema.String),
+      sort: Schema.optionalKey(Schema.Literals(["recent", "alpha", "central"])),
+      page: Schema.optionalKey(ToolInteger),
+    }),
+  }),
+]);
+type QueryTool = typeof QueryTool.Type;
+const decodeQueryTool = Schema.decodeUnknownEffect(QueryTool);
+const previewQueryTool = Schema.decodeUnknownOption(QueryTool);
 
 type QueryModelAttemptResult =
   | { readonly kind: "retryable"; readonly state: QueryExecutionState }
@@ -533,56 +576,17 @@ const contextFromExecution = (state: QueryExecutionState): QueryContext => ({
   ...(state.selectedModel === null ? {} : { selectedModel: state.selectedModel }),
 });
 
-const asStringArg = (args: Record<string, unknown>, key: string) => {
-  const value = args[key];
-  if (typeof value !== "string" || value.length === 0) {
-    throw new ToolMiss(`Tool argument ${key} must be a non-empty string`);
-  }
-  return value;
-};
-
-const asIntArg = (args: Record<string, unknown>, key: string) => {
-  const value = args[key];
-  if (typeof value === "number" && Number.isFinite(value)) {
-    return Math.trunc(value);
-  }
-  if (typeof value === "string" && /^[-+]?\d+$/.test(value.trim())) {
-    return Number.parseInt(value, 10);
-  }
-  throw new ToolMiss(`Tool argument ${key} must be an integer`);
-};
-
 const asObjectArgs = (json: string, toolName: string) => {
-  let parsed: unknown;
   try {
-    parsed = JSON.parse(json) as unknown;
-  } catch {
-    throw new MalformedToolArgs(toolName);
-  }
-  if (Array.isArray(parsed)) {
-    throw new MalformedToolArgs(toolName);
-  }
-  try {
-    return decodeToolArgs(parsed);
+    return decodeToolArgs(json);
   } catch {
     throw new MalformedToolArgs(toolName);
   }
 };
 
-const previewSourceEvent = (
-  name: string,
-  args: Record<string, unknown>,
-  build: (name: string, args: Record<string, unknown>) => QuerySourceData | undefined,
-) => {
-  try {
-    return build(name, args);
-  } catch (error) {
-    if (error instanceof ToolMiss) return undefined;
-    throw error;
-  }
-};
-
-const decodeToolArgs = Schema.decodeUnknownSync(Schema.Record(Schema.String, Schema.Unknown));
+const decodeToolArgs = Schema.decodeUnknownSync(
+  Schema.fromJsonString(Schema.Record(Schema.String, Schema.Unknown)),
+);
 
 const truthyEntries = (args: Record<string, unknown>) =>
   Object.entries(args).filter(([, value]) => Boolean(value));
@@ -701,27 +705,24 @@ export const QueryServiceLive = Layer.effect(
 
     const sourceEvent = (
       context: QueryContext,
-      name: string,
-      args: Record<string, unknown>,
+      tool: QueryTool,
     ): Effect.Effect<QuerySourceData | undefined> =>
       Effect.gen(function* () {
-        const source = pendingSourceEvent(name, args);
+        const source = pendingSourceEvent(tool);
         if (source === undefined) return undefined;
-        if (name === "read_document" || name === "expand_context") {
-          const path = asStringArg(args, "path");
+        if (tool.name === "read_document" || tool.name === "expand_context") {
+          const path = tool.args.path;
           if (path.startsWith("wiki/")) {
             context.trace.articlesRead.push(path);
           } else {
             context.trace.sourcesRead.push(path);
           }
-        } else if (name === "search_content") {
-          context.trace.searches.push(asStringArg(args, "query"));
-        } else if (name === "web_search") {
-          context.trace.searches.push(`web: ${asStringArg(args, "query")}`);
-        } else if (name === "search_in_document") {
-          const query = asStringArg(args, "query");
-          const path = asStringArg(args, "path");
-          context.trace.searches.push(`${query} · in ${path}`);
+        } else if (tool.name === "search_content") {
+          context.trace.searches.push(tool.args.query);
+        } else if (tool.name === "web_search") {
+          context.trace.searches.push(`web: ${tool.args.query}`);
+        } else if (tool.name === "search_in_document") {
+          context.trace.searches.push(`${tool.args.query} · in ${tool.args.path}`);
         }
         if (source.type === "article" || source.type === "raw") {
           return { ...source, ...(yield* documentForPath(context.vaultId, source.path)) };
@@ -735,56 +736,48 @@ export const QueryServiceLive = Layer.effect(
         return source;
       });
 
-    const pendingSourceEvent = (
-      name: string,
-      args: Record<string, unknown>,
-    ): QuerySourceData | undefined => {
-      if (name === "read_document" || name === "expand_context") {
-        const path = asStringArg(args, "path");
+    const pendingSourceEvent = (tool: QueryTool): QuerySourceData | undefined => {
+      if (tool.name === "read_document" || tool.name === "expand_context") {
+        const path = tool.args.path;
         const type = path.startsWith("wiki/") ? "article" : "raw";
-        if (name === "expand_context") {
+        if (tool.name === "expand_context") {
           return {
             type,
             document_id: null,
             path,
             title: null,
-            start: asIntArg(args, "start"),
-            end: asIntArg(args, "end"),
+            start: tool.args.start,
+            end: tool.args.end,
           };
         }
         return { type, document_id: null, path, title: null };
       }
-      if (name === "search_content") {
-        return { type: "search", query: asStringArg(args, "query"), scope: "kb", title: null };
+      if (tool.name === "search_content") {
+        return { type: "search", query: tool.args.query, scope: "kb", title: null };
       }
-      if (name === "web_search") {
-        return { type: "search", query: asStringArg(args, "query"), scope: "web", title: null };
+      if (tool.name === "web_search") {
+        return { type: "search", query: tool.args.query, scope: "web", title: null };
       }
-      if (name === "search_in_document") {
+      if (tool.name === "search_in_document") {
         return {
           type: "search",
-          query: asStringArg(args, "query"),
+          query: tool.args.query,
           scope: "kb",
-          path: asStringArg(args, "path"),
+          path: tool.args.path,
           title: null,
         };
       }
-      if (name === "query_documents") {
-        return { type: "query", filters: Object.fromEntries(truthyEntries(args)) };
+      if (tool.name === "query_documents") {
+        return { type: "query", filters: Object.fromEntries(truthyEntries(tool.args)) };
       }
-      if (name === "list_articles") {
-        const filters = Object.fromEntries(
-          ["contains", "sort"].flatMap((key) => {
-            const value = args[key];
-            return value ? [[key, value]] : [];
-          }),
-        );
+      if (tool.name === "list_articles") {
+        const filters = Object.fromEntries(truthyEntries({ contains: tool.args.contains, sort: tool.args.sort }));
         return { type: "query", filters };
       }
-      if (name === "linked_articles") {
+      if (tool.name === "linked_articles") {
         return {
           type: "links",
-          path: asStringArg(args, "path"),
+          path: tool.args.path,
           title: null,
         };
       }
@@ -836,7 +829,7 @@ export const QueryServiceLive = Layer.effect(
           Effect.mapError(() => new ToolMiss(`Document not found: ${path}`)),
         );
         const source = emitSource
-          ? yield* sourceEvent(context, "read_document", { path })
+          ? yield* sourceEvent(context, { name: "read_document", args: { path } })
           : undefined;
         if (scope === "personal" || content.length <= readWholeLimit) {
           return {
@@ -892,10 +885,7 @@ export const QueryServiceLive = Layer.effect(
           vectorConditions.push(eq(searchIndex.path, path));
         }
         const rank = sql<number>`ts_rank(${searchIndex.tsv}, ${tsquery})`;
-        const embedded = yield* Effect.tryPromise({
-          try: () => embeddings.embed([query]),
-          catch: (error) => error,
-        });
+        const embedded = yield* embeddings.embed([query]);
         const queryEmbedding = embedded[0];
         if (queryEmbedding === undefined) {
           return [];
@@ -987,7 +977,7 @@ export const QueryServiceLive = Layer.effect(
     const searchContentTool = (context: QueryContext, query: string) =>
       Effect.gen(function* () {
         const results = yield* searchRows(context.vaultId, query);
-        const source = yield* sourceEvent(context, "search_content", { query });
+        const source = yield* sourceEvent(context, { name: "search_content", args: { query } });
         if (results.length === 0) {
           return { content: `No results found for: ${query}`, source } satisfies ToolResult;
         }
@@ -1006,7 +996,7 @@ export const QueryServiceLive = Layer.effect(
     const searchInDocumentTool = (context: QueryContext, path: string, query: string) =>
       Effect.gen(function* () {
         const results = yield* searchRows(context.vaultId, query, path);
-        const source = yield* sourceEvent(context, "search_in_document", { path, query });
+        const source = yield* sourceEvent(context, { name: "search_in_document", args: { path, query } });
         if (results.length === 0) {
           return {
             content: `No passages in ${path} match '${query}'. Check the path (from list_articles or a search_content hit), or use search_content to search the whole knowledge base.`,
@@ -1032,8 +1022,8 @@ export const QueryServiceLive = Layer.effect(
       rawEnd: number,
     ) =>
       Effect.gen(function* () {
-        let start = Math.trunc(rawStart);
-        let end = Math.trunc(rawEnd);
+        let start = rawStart;
+        let end = rawEnd;
         if (end < start) {
           [start, end] = [end, start];
         }
@@ -1069,10 +1059,9 @@ export const QueryServiceLive = Layer.effect(
           content:
             `# ${path} [${context.vaultLabel}] (chunks ${chunks[0].chunkIndex}–${chunks[chunks.length - 1].chunkIndex})\n\n` +
             sections.join("\n\n"),
-          source: yield* sourceEvent(context, "expand_context", {
-            path,
-            start: rawStart,
-            end: rawEnd,
+          source: yield* sourceEvent(context, {
+            name: "expand_context",
+            args: { path, start: rawStart, end: rawEnd },
           }),
         } satisfies ToolResult;
       });
@@ -1133,16 +1122,17 @@ export const QueryServiceLive = Layer.effect(
             `# Links for ${path} [${context.vaultLabel}]\n\n` +
             `Outgoing (this article cites):\n${formatLinks(outgoing)}\n\n` +
             `Incoming (articles that cite this):\n${formatLinks(incoming)}`,
-          source: yield* sourceEvent(context, "linked_articles", { path }),
+          source: yield* sourceEvent(context, { name: "linked_articles", args: { path } }),
         } satisfies ToolResult;
       });
 
-    const queryDocumentsToolRun = (context: QueryContext, args: Record<string, unknown>) =>
+    const queryDocumentsToolRun = (
+      context: QueryContext,
+      args: Extract<QueryTool, { name: "query_documents" }>["args"],
+    ) =>
       Effect.gen(function* () {
         const conditions: SQL[] = [eq(sourceDocuments.vaultId, context.vaultId)];
-        const tags = Array.isArray(args.tags)
-          ? args.tags.filter((tag): tag is string => typeof tag === "string" && tag.length > 0)
-          : [];
+        const tags = args.tags ?? [];
         if (tags.length > 0) {
           conditions.push(
             sql`${sourceDocuments.tags} @> ARRAY[${sql.join(
@@ -1151,29 +1141,26 @@ export const QueryServiceLive = Layer.effect(
             )}]::text[]`,
           );
         }
-        if (typeof args.author === "string" && args.author.length > 0) {
+        if (args.author) {
           conditions.push(ilike(sourceDocuments.author, `%${args.author}%`));
         }
-        if (typeof args.genre === "string" && args.genre.length > 0) {
+        if (args.genre) {
           conditions.push(eq(sourceDocuments.genre, args.genre));
         }
-        if (typeof args.date_gte === "string" && args.date_gte.length > 0) {
+        if (args.date_gte) {
           conditions.push(gte(sourceDocuments.publishedDate, args.date_gte));
         }
-        if (typeof args.date_lte === "string" && args.date_lte.length > 0) {
+        if (args.date_lte) {
           conditions.push(lte(sourceDocuments.publishedDate, args.date_lte));
         }
-        const limit =
-          typeof args.limit === "number" && Number.isFinite(args.limit)
-            ? Math.max(1, Math.min(50, Math.trunc(args.limit)))
-            : 20;
+        const limit = Math.max(1, Math.min(50, args.limit ?? 20));
         const rows = yield* db.query((d) => d
           .select()
           .from(sourceDocuments)
           .where(and(...conditions))
           .orderBy(desc(sourceDocuments.updatedAt))
           .limit(limit));
-        const source = yield* sourceEvent(context, "query_documents", args);
+        const source = yield* sourceEvent(context, { name: "query_documents", args });
         if (rows.length === 0) {
           const filters = Object.fromEntries(
             Object.entries({
@@ -1212,24 +1199,19 @@ export const QueryServiceLive = Layer.effect(
         } satisfies ToolResult;
       });
 
-    const listArticlesToolRun = (context: QueryContext, args: Record<string, unknown>) =>
+    const listArticlesToolRun = (
+      context: QueryContext,
+      args: Extract<QueryTool, { name: "list_articles" }>["args"],
+    ) =>
       Effect.gen(function* () {
-        const contains =
-          typeof args.contains === "string" && args.contains.length > 0 ? args.contains : undefined;
-        const sort = args.sort ?? "central";
-        if (sort !== "recent" && sort !== "alpha" && sort !== "central") {
-          throw new ToolMiss(
-            `Invalid list_articles sort: ${String(sort)} (expected recent, alpha, or central)`,
-          );
-        }
-        const page =
-          args.page === undefined || args.page === null ? 1 : Math.max(1, asIntArg(args, "page"));
+        const { contains, sort = "central" } = args;
+        const page = Math.max(1, args.page ?? 1);
         const conditions: SQL[] = [
           eq(wikiArticles.vaultId, context.vaultId),
           eq(wikiArticles.archived, false),
           ne(wikiArticles.filePath, "wiki/_index.md"),
         ];
-        if (contains !== undefined) {
+        if (contains) {
           const pattern = `%${contains}%`;
           conditions.push(
             or(ilike(wikiArticles.title, pattern), ilike(wikiArticles.precis, pattern)) as SQL,
@@ -1263,18 +1245,18 @@ export const QueryServiceLive = Layer.effect(
                 : query.orderBy(desc(inboundCount), asc(sql`lower(${wikiArticles.title})`));
           return ordered.limit(articlesPerPage).offset(offset);
         });
-        const source = yield* sourceEvent(context, "list_articles", args);
+        const source = yield* sourceEvent(context, { name: "list_articles", args });
         if (rows.length === 0) {
           return {
             content:
-              contains !== undefined
+              contains
                 ? `No article titles or precis contain '${contains}'. Try search_content for topical matches — it searches article bodies and raw sources too.`
                 : "No wiki articles have been compiled yet.",
             source,
           } satisfies ToolResult;
         }
         const hi = offset + rows.length;
-        const scope = contains === undefined ? "" : ` matching '${contains}'`;
+        const scope = contains ? ` matching '${contains}'` : "";
         const lines = rows.map((row) => `- ${row.title} — ${row.filePath}\n  ${row.precis}`);
         const more =
           hi < total ? `\n\nMore available — call list_articles(page=${page + 1}) to continue.` : "";
@@ -1381,12 +1363,9 @@ export const QueryServiceLive = Layer.effect(
 
     const webSearchToolRun = (context: QueryContext, query: string) =>
       Effect.gen(function* () {
-        const source = yield* sourceEvent(context, "web_search", { query });
+        const source = yield* sourceEvent(context, { name: "web_search", args: { query } });
         return yield* Effect.gen(function* () {
-          const results = yield* Effect.tryPromise({
-            try: () => parallel.search({ question: context.question, query }),
-            catch: (error) => error,
-          });
+          const results = yield* parallel.search({ question: context.question, query });
           if (results.length === 0) {
             return { content: `No web results for '${query}'.`, source } satisfies ToolResult;
           }
@@ -1433,40 +1412,27 @@ export const QueryServiceLive = Layer.effect(
 
     const dispatchTool = (
       context: QueryContext,
-      name: string,
-      args: Record<string, unknown>,
-    ): Effect.Effect<ToolResult, unknown> =>
-      Effect.suspend(() => {
-        switch (name) {
-          case "read_document":
-            return readDocumentTool(context, asStringArg(args, "path"), "vault");
-          case "expand_context":
-            return expandContextTool(
-              context,
-              asStringArg(args, "path"),
-              asIntArg(args, "start"),
-              asIntArg(args, "end"),
-            );
-          case "linked_articles":
-            return linkedArticlesTool(context, asStringArg(args, "path"));
-          case "search_content":
-            return searchContentTool(context, asStringArg(args, "query"));
-          case "search_in_document":
-            return searchInDocumentTool(
-              context,
-              asStringArg(args, "path"),
-              asStringArg(args, "query"),
-            );
-          case "query_documents":
-            return queryDocumentsToolRun(context, args);
-          case "list_articles":
-            return listArticlesToolRun(context, args);
-          case "web_search":
-            return webSearchToolRun(context, asStringArg(args, "query"));
-          default:
-            return Effect.succeed({ content: `Unknown tool: ${name}` });
-        }
-      });
+      tool: QueryTool,
+    ): Effect.Effect<ToolResult, unknown> => {
+      switch (tool.name) {
+        case "read_document":
+          return readDocumentTool(context, tool.args.path, "vault");
+        case "expand_context":
+          return expandContextTool(context, tool.args.path, tool.args.start, tool.args.end);
+        case "linked_articles":
+          return linkedArticlesTool(context, tool.args.path);
+        case "search_content":
+          return searchContentTool(context, tool.args.query);
+        case "search_in_document":
+          return searchInDocumentTool(context, tool.args.path, tool.args.query);
+        case "query_documents":
+          return queryDocumentsToolRun(context, tool.args);
+        case "list_articles":
+          return listArticlesToolRun(context, tool.args);
+        case "web_search":
+          return webSearchToolRun(context, tool.args.query);
+      }
+    };
 
     const runModelRound = (
       context: QueryContext,
@@ -1549,7 +1515,8 @@ export const QueryServiceLive = Layer.effect(
             try {
               for (const toolCall of rawToolCalls) {
                 const args = asObjectArgs(toolCall.arguments, toolCall.name);
-                const pendingSource = previewSourceEvent(toolCall.name, args, pendingSourceEvent);
+                const tool = previewQueryTool({ name: toolCall.name, args });
+                const pendingSource = Option.isSome(tool) ? pendingSourceEvent(tool.value) : undefined;
                 toolCalls.push({
                   ...toolCall,
                   args,
@@ -1657,7 +1624,12 @@ export const QueryServiceLive = Layer.effect(
         const context = contextFromExecution(input);
         const messages = cloneMessages(input.messages);
         context.trace.toolCalls += 1;
-        const result = yield* dispatchTool(context, toolCall.name, toolCall.args).pipe(
+        const result = yield* Effect.gen(function* () {
+          const tool = yield* decodeQueryTool(toolCall).pipe(
+            Effect.mapError((error) => new ToolMiss(error.message)),
+          );
+          return yield* dispatchTool(context, tool);
+        }).pipe(
           Effect.catchCause((cause) => {
             const error = causeError(cause);
             if (error instanceof ToolMiss) {

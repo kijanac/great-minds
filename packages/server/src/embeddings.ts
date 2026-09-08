@@ -1,16 +1,16 @@
 import { Buffer } from "node:buffer";
 
-import { Context, Effect, Layer, Option, Redacted, Schema } from "effect";
+import { Context, Effect, Layer, Schedule, Schema } from "effect";
 
-import { AppConfig } from "./config.ts";
+import { AppConfig, optionalRedactedValue } from "./config.ts";
 import { ModelProviderError } from "./llm.ts";
 
 const embeddingDimensions = 1024;
 const embeddingTimeoutMs = 300_000;
-const maxEmbeddingRetries = 3;
+const embeddingRetry = { schedule: Schedule.exponential("2 seconds"), times: 2 } as const;
 
 type EmbeddingsShape = {
-  readonly embed: (texts: readonly string[]) => Promise<readonly (readonly number[])[]>;
+  readonly embed: (texts: readonly string[]) => Effect.Effect<readonly (readonly number[])[], EmbeddingBatchFailed>;
 };
 
 export class EmbeddingsService extends Context.Service<EmbeddingsService, EmbeddingsShape>()(
@@ -35,20 +35,6 @@ export const isTimeoutError = (error: unknown): boolean => {
 };
 
 export const vectorLiteral = (embedding: readonly number[]) => `[${embedding.join(",")}]`;
-
-export const embedBatch = (embeddings: EmbeddingsShape, texts: readonly string[]) =>
-  Effect.tryPromise({
-    try: () => embeddings.embed(texts),
-    catch: (error) => new EmbeddingBatchFailed(error),
-  });
-
-const optionalRedactedValue = (value: Option.Option<Redacted.Redacted<string>>) =>
-  Option.match(value, {
-    onNone: () => undefined,
-    onSome: Redacted.value,
-  });
-
-const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 const truncateAndNormalize = (embedding: readonly number[]) => {
   const truncated = embedding.slice(0, embeddingDimensions);
@@ -142,12 +128,12 @@ export const EmbeddingsLive = Layer.effect(
   Effect.map(AppConfig, (config) => {
     const apiKey = optionalRedactedValue(config.openRouterApiKey);
     return {
-      embed: async (texts) => {
+      embed: (texts) => {
         if (apiKey === undefined) {
-          throw new ModelProviderError("OpenRouter API key is not configured");
+          return Effect.fail(new EmbeddingBatchFailed(new ModelProviderError("OpenRouter API key is not configured")));
         }
-        for (let attempt = 1; attempt <= maxEmbeddingRetries; attempt += 1) {
-          try {
+        return Effect.tryPromise({
+          try: async (signal) => {
             const response = await fetch(`${config.openRouterApiUrl.replace(/\/$/, "")}/embeddings`, {
               method: "POST",
               headers: {
@@ -155,20 +141,15 @@ export const EmbeddingsLive = Layer.effect(
                 "content-type": "application/json",
               },
               body: JSON.stringify(embeddingRequestBody(texts, config.embeddingModel)),
-              signal: AbortSignal.timeout(embeddingTimeoutMs),
+              signal: AbortSignal.any([signal, AbortSignal.timeout(embeddingTimeoutMs)]),
             });
             if (!response.ok) {
               throw new ModelProviderError(`embedding provider returned ${response.status}`);
             }
             return parseEmbeddingResponse(await response.json(), texts.length);
-          } catch (error) {
-            if (attempt === maxEmbeddingRetries) {
-              throw error;
-            }
-            await sleep(2 ** attempt * 1000);
-          }
-        }
-        throw new Error("embedding retry loop exited without resolution");
+          },
+          catch: (error) => new EmbeddingBatchFailed(error),
+        }).pipe(Effect.retry(embeddingRetry));
       },
     } satisfies EmbeddingsShape;
   }),

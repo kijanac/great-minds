@@ -69,8 +69,7 @@ export type StoredSessionEvent = typeof StoredSessionEvent.Type;
 const decodeSessionOrigin = Schema.decodeUnknownSync(Schema.NullOr(SessionOriginSchema));
 const decodeMetaEvent = Schema.decodeUnknownEffect(SessionMetaEventSchema);
 const decodeReplyNode = Schema.decodeUnknownEffect(ReplyNode);
-
-const dateIso = (value: Date) => value.toISOString();
+const encodeStoredEvent = Schema.encodeSync(StoredSessionEvent);
 
 const sessionPath = (sessionId: SessionId, extension: "jsonl" | "md") =>
   `sessions/${sessionId}.${extension}`;
@@ -144,8 +143,8 @@ const sessionOverview = (
 ): SessionOverview => ({
   id: row.id,
   query: row.query,
-  created_at: dateIso(row.createdAt),
-  updated_at: dateIso(row.updatedAt),
+  created_at: row.createdAt,
+  updated_at: row.updatedAt,
   user_id: row.userId,
   origin: normalizeOrigin(decodeSessionOrigin(row.origin)),
   origin_title: originTitle,
@@ -220,7 +219,7 @@ export const renderSessionMarkdown = (events: readonly SessionEvent[]) => {
     } else if (event.type === "btw") {
       const key = `${event.exId}\0${event.quote}`;
       const existing = latestBtw.get(key);
-      if (existing === undefined || event.ts >= existing.ts) {
+      if (existing === undefined || event.ts.getTime() >= existing.ts.getTime()) {
         latestBtw.set(key, event);
       }
     }
@@ -474,13 +473,11 @@ export const SessionsServiceLive = Layer.effect(
         return SessionId.make(formatUuid7(now.getTime(), bytes), { disableChecks: true });
       });
 
-    const nowIso = () => Effect.map(clock.now, (now) => now.toISOString());
-
     const appendEvent = (vaultId: Uuid, sessionId: SessionId, event: StoredSessionEvent) =>
       storage.appendText(
         vaultOwner(vaultId),
         sessionPath(sessionId, "jsonl"),
-        `${JSON.stringify(event)}\n`,
+        `${JSON.stringify(encodeStoredEvent(event))}\n`,
       );
 
     const loadAllEvents = (vaultId: Uuid, sessionId: SessionId) =>
@@ -523,7 +520,7 @@ export const SessionsServiceLive = Layer.effect(
       });
 
     const pendingNode = (
-      ts: string,
+      ts: Date,
       pending: PendingReply,
       parentReplyId: Uuid | null,
     ): ReplyNode => ({
@@ -540,7 +537,7 @@ export const SessionsServiceLive = Layer.effect(
       ts,
     });
 
-    const completedNodeFrom = (ts: string, pending: ReplyNode, completed: CompletedReply): ReplyNode => ({
+    const completedNodeFrom = (ts: Date, pending: ReplyNode, completed: CompletedReply): ReplyNode => ({
       type: "reply",
       reply_id: pending.reply_id,
       parent_reply_id: pending.parent_reply_id,
@@ -559,7 +556,7 @@ export const SessionsServiceLive = Layer.effect(
         yield* appendEvent(vaultId, sessionId, node);
         yield* db.query((d) => d
           .update(sessions)
-          .set({ updatedAt: new Date(node.ts) })
+          .set({ updatedAt: node.ts })
           .where(and(eq(sessions.vaultId, vaultId), eq(sessions.id, sessionId))));
         yield* rebuildMarkdown(vaultId, sessionId);
       });
@@ -615,7 +612,7 @@ export const SessionsServiceLive = Layer.effect(
               ),
             );
             if (!hasNodeForExchange(events, input.pending.exchangeId)) {
-              const ts = yield* nowIso();
+              const ts = yield* clock.now;
               yield* appendNode(
                 vaultId,
                 existing,
@@ -626,8 +623,8 @@ export const SessionsServiceLive = Layer.effect(
           }
 
           const sessionId = yield* newSessionId();
-          const metaTs = yield* nowIso();
-          const nodeTs = yield* nowIso();
+          const metaTs = yield* clock.now;
+          const nodeTs = yield* clock.now;
           const origin = normalizeOrigin(input.origin);
           const meta: SessionMetaEvent = {
             type: "meta",
@@ -648,8 +645,8 @@ export const SessionsServiceLive = Layer.effect(
               userId,
               query: meta.query,
               origin,
-              createdAt: new Date(metaTs),
-              updatedAt: new Date(nodeTs),
+              createdAt: metaTs,
+              updatedAt: nodeTs,
               idempotencyKey: input.idempotencyKey,
             })
             .onConflictDoUpdate({
@@ -658,8 +655,8 @@ export const SessionsServiceLive = Layer.effect(
                 userId,
                 query: meta.query,
                 origin,
-                createdAt: new Date(metaTs),
-                updatedAt: new Date(nodeTs),
+                createdAt: metaTs,
+                updatedAt: nodeTs,
               },
             }));
           yield* rebuildMarkdown(vaultId, sessionId);
@@ -670,7 +667,7 @@ export const SessionsServiceLive = Layer.effect(
           yield* access.requireMember(userId, vaultId);
           yield* requireSessionOwner(userId, vaultId, sessionId);
           const events = yield* loadAllEvents(vaultId, sessionId);
-          const ts = yield* nowIso();
+          const ts = yield* clock.now;
           yield* appendNode(
             vaultId,
             sessionId,
@@ -691,7 +688,7 @@ export const SessionsServiceLive = Layer.effect(
           if (pending.status === "completed") {
             return;
           }
-          const ts = yield* nowIso();
+          const ts = yield* clock.now;
           yield* appendNode(vaultId, sessionId, completedNodeFrom(ts, pending, completed));
         }),
       readTranscript: (vaultId, sessionId, replyId) =>
