@@ -7,11 +7,9 @@ import { newUuid } from "$lib/ids";
 import { replyTurn } from "$lib/reply-turn";
 import { genId, isAbortError } from "$lib/utils";
 
-type MainReplyPayload = Extract<CreateReplyPayload, { kind: "exchange" }>;
-
 type MainReplyAttempt = {
   exchangeId: Uuid;
-  payload: MainReplyPayload;
+  payload: CreateReplyPayload;
 };
 
 type SubmissionState = { status: "ready" } | { status: "failed"; attempt: MainReplyAttempt };
@@ -162,47 +160,35 @@ export class Session {
 
   #makeMainReplyAttempt = (question: string): MainReplyAttempt => {
     const exchangeId = newUuid();
-    const replyId = newUuid();
-    const firstExchange = this.sessionId === null;
-    const originForQuery = firstExchange ? this.#originPath : undefined;
-    const existingSessionId = this.sessionId;
     this.#idempotencyKey ??= newUuid();
 
-    const payload: MainReplyPayload = existingSessionId
-      ? {
-          reply_id: replyId,
-          kind: "exchange",
-          exchange_id: exchangeId,
-          session_id: existingSessionId,
-          question,
-          origin_path: originForQuery,
-          origin_scope: "vault",
-          mode: "query",
-        }
-      : {
-          reply_id: replyId,
-          kind: "exchange",
-          exchange_id: exchangeId,
-          create: {
-            idempotency_key: this.#idempotencyKey,
-            origin_scope: "vault",
-            ...(this.#originPath
-              ? {
-                  origin: {
-                    doc_path: this.#originPath,
-                    origin_scope: "vault" as const,
-                    anchor: null,
-                    paragraph: null,
-                    paragraph_index: null,
-                  },
-                }
-              : {}),
-          },
-          question,
-          origin_path: originForQuery,
-          origin_scope: "vault",
-          mode: "query",
-        };
+    const payload: CreateReplyPayload = {
+      reply_id: newUuid(),
+      exchange_id: exchangeId,
+      question,
+      origin_path: this.sessionId === null ? this.#originPath : undefined,
+      origin_scope: "vault",
+      mode: "query",
+      session:
+        this.sessionId !== null
+          ? { kind: "existing", id: this.sessionId }
+          : {
+              kind: "new",
+              idempotency_key: this.#idempotencyKey,
+              origin_scope: "vault",
+              ...(this.#originPath
+                ? {
+                    origin: {
+                      doc_path: this.#originPath,
+                      origin_scope: "vault" as const,
+                      anchor: null,
+                      paragraph: null,
+                      paragraph_index: null,
+                    },
+                  }
+                : {}),
+            },
+    };
     return { exchangeId, payload };
   };
 
@@ -243,7 +229,7 @@ export class Session {
     }
 
     this.#updateExchange(attempt.exchangeId, { replyId: created.reply_id });
-    if (this.sessionId === null && created.session_id !== null) {
+    if (this.sessionId === null) {
       this.sessionId = created.session_id;
       this.#onSessionCreated?.(created.session_id);
     }
@@ -400,14 +386,16 @@ export class Session {
         const created = await createReply(
           {
             reply_id: newUuid(),
-            kind: "btw",
             exchange_id: turnId,
-            session_id: this.sessionId,
-            btw: {
-              quote: anchor.quote,
-              blockOffset: anchor.blockOffset,
-              context: anchor.context,
-              exchangeId: ownerExchangeId,
+            session: {
+              kind: "existing",
+              id: this.sessionId,
+              btw: {
+                quote: anchor.quote,
+                blockOffset: anchor.blockOffset,
+                context: anchor.context,
+                exchangeId: ownerExchangeId,
+              },
             },
             question: userText,
             origin_scope: "vault",

@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -93,8 +93,16 @@ describe("reply workflow restart recovery", () => {
     const vaultId = crypto.randomUUID();
     const membershipId = crypto.randomUUID();
     const replyId = crypto.randomUUID();
+    const exchangeId = crypto.randomUUID();
+    const sessionId = crypto.randomUUID();
     const storageRoot = await mkdtemp(join(tmpdir(), "gm-reply-resume-"));
     const markerPath = join(storageRoot, "provider-calls.txt");
+    const sessionDirectory = join(storageRoot, "vaults", vaultId, "sessions");
+    await mkdir(sessionDirectory, { recursive: true });
+    await writeFile(join(sessionDirectory, `${sessionId}.jsonl`), [
+      { type: "meta", id: sessionId, user_id: userId, query: "Will this provider call repeat?", origin: null, ts: new Date().toISOString() },
+      { type: "reply", reply_id: replyId, parent_reply_id: null, exchange_id: exchangeId, question: "Will this provider call repeat?", status: "pending", messages: [], sources: [], answer: "", ts: new Date().toISOString() },
+    ].map((event) => `${JSON.stringify(event)}\n`).join(""));
 
     await runSql(
       Effect.gen(function* () {
@@ -102,17 +110,20 @@ describe("reply workflow restart recovery", () => {
         yield* sql`INSERT INTO users (id, email) VALUES (${userId}::uuid, ${`${userId}@example.com`})`;
         yield* sql`INSERT INTO vaults (id, name, owner_id) VALUES (${vaultId}::uuid, 'Reply resume', ${userId}::uuid)`;
         yield* sql`INSERT INTO vault_memberships (id, vault_id, user_id, role) VALUES (${membershipId}::uuid, ${vaultId}::uuid, ${userId}::uuid, 'OWNER')`;
+        yield* sql`INSERT INTO sessions (id, vault_id, user_id, query, created_at, updated_at) VALUES (${sessionId}, ${vaultId}::uuid, ${userId}::uuid, 'Will this provider call repeat?', now(), now())`;
         yield* sql`
-          INSERT INTO replies (id, vault_id, user_id, kind, status, request)
+          INSERT INTO replies (id, vault_id, user_id, session_id, kind, status, request)
           VALUES (
             ${replyId}::uuid,
             ${vaultId}::uuid,
             ${userId}::uuid,
-            'ephemeral',
+            ${sessionId},
+            'exchange',
             'running',
             ${JSON.stringify({
               reply_id: replyId,
-              kind: "ephemeral",
+              exchange_id: exchangeId,
+              session: { kind: "existing", id: sessionId },
               question: "Will this provider call repeat?",
               mode: "query",
             })}::jsonb

@@ -2084,82 +2084,64 @@ All replies endpoints require authentication.
 
 Auth: required.
 
-Creates a reply. The request is a union with a `kind` discriminator. The
-server accepts the reply immediately (`202`) and starts processing it in the
-background; results are delivered over the reply's event stream.
+Creates a reply in a new or existing session. The server accepts the reply
+immediately (`202`) and starts processing it in the background; results are
+delivered over the reply's event stream. Conversation history and highlighted
+passage context come from the saved session and its reply branches.
 
 Path parameters: `vault_id` (`Uuid`).
 
-Common fields shared by every variant:
+Request fields:
 
 | Field | Type | Required | Description |
 | --- | --- | --- | --- |
-| `kind` | `"exchange"` \| `"btw"` \| `"ephemeral"` | yes | Discriminator selecting the variant below. |
 | `reply_id` | `Uuid` | yes | Client-chosen id for the reply. Used for idempotency: submitting the same `reply_id` with an identical request returns the existing reply (with its `session_id`) instead of creating a new one. Submitting the same `reply_id` with a different request returns `409 Conflict`. |
+| `exchange_id` | `Uuid` | yes | Client-chosen id for the question within the conversation. A retry retains this id and uses a new `reply_id`. |
+| `session` | object | yes | New-session details or an existing session destination, described below. |
 | `question` | string | yes | The question to answer. |
 | `mode` | `"query"` \| `"btw"` | no | Query mode. `"query"` answers against the knowledge base; `"btw"` answers in the shorter aside style used for questions asked about a passage. Defaults to `"query"`. |
 | `model` | string | no | The model to use for this reply. When omitted, the vault default is used. |
 | `origin_path` | string | no | Path of the document the question is about. |
 | `origin_scope` | `"vault"` \| `"personal"` | no | Whether the origin document is vault content or the user's personal documents. Defaults to `"vault"`. |
-| `history` | array | no | Client-assembled prior turns, each `{role: "user" \| "assistant", content: string}`. Supplied as context for this reply. Defaults to `[]`. |
 | `extra_instructions` | string | no | Additional instructions for how to answer. |
 
-**Variant 1 - `kind: "exchange"` with an existing session**:
+**New session — `session.kind: "new"`**:
 
 | Field | Type | Required | Description |
 | --- | --- | --- | --- |
-| `exchange_id` | `ExchangeId` | yes | Client-chosen id for this turn within the session. |
-| `session_id` | `SessionId` | yes | Session to append the exchange to. |
+| `kind` | `"new"` | yes | Create or reuse a session by idempotency key. |
+| `idempotency_key` | string | yes | Sessions with the same key for the same user and vault are reused. |
+| `origin_scope` | `"vault"` \| `"personal"` | no | Scope of the session's origin document. Defaults to `"vault"`. |
+| `origin` | `SessionOrigin` | no | Origin document and optional highlighted passage, saved with the session. |
 
-**Variant 2 - `kind: "exchange"` creating a new session**:
-
-| Field | Type | Required | Description |
-| --- | --- | --- | --- |
-| `exchange_id` | `ExchangeId` | yes | Client-chosen id for this turn. |
-| `create` | object | yes | Session creation: `idempotency_key` (string; sessions with the same key for the same user and vault are reused), `origin_scope` (`"vault"` \| `"personal"`, default `"vault"`), and `origin` (a `SessionOrigin`, optional, describing the origin document). |
-
-**Variant 3 - `kind: "btw"`**:
+**Existing session — `session.kind: "existing"`**:
 
 | Field | Type | Required | Description |
 | --- | --- | --- | --- |
-| `session_id` | `SessionId` | yes | Session to append the BTW to. |
-| `btw` | object | yes | BTW data: `quote` (string), `blockOffset` (number, default `-1`), `context` (string, default `""`), `exchangeId` (`ExchangeId`), and `exchanges` (non-empty array of `BtwExchange` entries: `query`, `thinking` (array, optional), `answer` (string, optional)). |
+| `kind` | `"existing"` | yes | Append to a saved session. |
+| `id` | `SessionId` | yes | Destination session. |
+| `btw` | object | no | Branch anchor: `quote` (string), `blockOffset` (number, default `-1`), `context` (string, default `""`), and `exchangeId` (`Uuid`, identifying the answer being discussed). Omit for the main conversation. |
 
-**Variant 4 - `kind: "ephemeral"`**:
-
-A standalone question with no session. No additional fields beyond the
-common set. The resulting reply has `session_id: null`.
+`mode` selects the answer style independently of session placement. A question
+highlighted in a document starts a session with an origin and `mode: "btw"`;
+a question about an answer uses an existing session with a `btw` anchor.
 
 Response: `202 Accepted` with a `CreateReplyResponse`:
 
 | Field | Type | Description |
 | --- | --- | --- |
 | `reply_id` | `Uuid` | The reply id (echoes the submitted `reply_id`). |
-| `session_id` | `SessionId` or `null` | The session the reply belongs to. `null` for ephemeral replies. |
-
-Example (ephemeral):
-
-```json
-{
-  "kind": "ephemeral",
-  "reply_id": "3fa85f64-5717-4562-b3fc-2c963f66afa6",
-  "question": "Summarize the vault's stance on labor theory",
-  "mode": "query",
-  "history": [],
-  "origin_path": "wiki/value.md",
-  "origin_scope": "vault"
-}
-```
+| `session_id` | `SessionId` | The session the reply belongs to. |
 
 Example (new session):
 
 ```json
 {
-  "kind": "exchange",
   "reply_id": "9b1deb4d-3b7d-4bad-9bdd-2b0d7b3dcb6d",
-  "exchange_id": "turn_1",
+  "exchange_id": "0f8fad5b-d9cb-469f-a165-70867728950e",
   "question": "What does this document argue?",
-  "create": {
+  "session": {
+    "kind": "new",
     "idempotency_key": "session-for-capital",
     "origin_scope": "vault",
     "origin": {
@@ -2177,15 +2159,10 @@ Example (append to a session):
 
 ```json
 {
-  "kind": "exchange",
   "reply_id": "1f0fad5b-d9cb-469f-a165-70867728950e",
-  "exchange_id": "turn_2",
-  "session_id": "session_42",
-  "question": "And the falling rate of profit?",
-  "history": [
-    { "role": "user", "content": "What does this document argue?" },
-    { "role": "assistant", "content": "It argues..." }
-  ]
+  "exchange_id": "7c9e6679-7425-40de-944b-e07fc1f90ae7",
+  "session": { "kind": "existing", "id": "session_42" },
+  "question": "And the falling rate of profit?"
 }
 ```
 
@@ -2197,8 +2174,9 @@ Errors: `409 Conflict` (reply id already used by a different request),
 Auth: required.
 
 Retries a failed reply. Only replies in the `failed` status can be retried,
-and the retry must use a new `reply_id`. The retried reply re-runs with the
-original request (including session membership).
+and the retry must use a new `reply_id`. The retry keeps the original question,
+options, exchange ID, session, and parent reply. Highlighted passage context
+comes from the saved conversation, even when the failed reply created it.
 
 Path parameters: `vault_id` (`Uuid`), `reply_id` (`Uuid`) - the failed reply.
 
@@ -2241,8 +2219,8 @@ The `message` payload is a `ReplySnapshot`:
 | Field | Type | Description |
 | --- | --- | --- |
 | `reply_id` | `Uuid` | Reply id. |
-| `session_id` | `SessionId` or `null` | Session the reply belongs to; `null` for ephemeral replies. |
-| `kind` | `"exchange"` \| `"btw"` \| `"ephemeral"` | Reply kind. |
+| `session_id` | `SessionId` | Session the reply belongs to. |
+| `kind` | `"exchange"` \| `"btw"` | Whether the reply belongs to the main conversation or an answer branch. |
 | `status` | `"running"` \| `"completed"` \| `"failed"` | Reply status. |
 | `answer` | string | The answer text (may be partial while running). |
 | `sources` | array | `ReplySource` entries: the `ThinkingSource` fields plus an optional `pending` boolean. |
@@ -2256,8 +2234,8 @@ Example message:
 ```json
 {
   "reply_id": "3fa85f64-5717-4562-b3fc-2c963f66afa6",
-  "session_id": null,
-  "kind": "ephemeral",
+  "session_id": "session_42",
+  "kind": "exchange",
   "status": "completed",
   "answer": "The labor theory of value holds that...",
   "sources": [
@@ -2464,18 +2442,18 @@ curl -sS -X POST "$BASE/v1/vaults/$VAULT/replies" \
   -H "Authorization: Bearer $API_KEY" \
   -H "Content-Type: application/json" \
   -d '{
-    "kind": "ephemeral",
     "reply_id": "3fa85f64-5717-4562-b3fc-2c963f66afa6",
+    "exchange_id": "0f8fad5b-d9cb-469f-a165-70867728950e",
+    "session": { "kind": "new", "idempotency_key": "vault-summary" },
     "question": "Summarize the vault",
-    "mode": "query",
-    "history": []
+    "mode": "query"
   }'
 ```
 
 Response (`202 Accepted`):
 
 ```json
-{ "reply_id": "3fa85f64-5717-4562-b3fc-2c963f66afa6", "session_id": null }
+{ "reply_id": "3fa85f64-5717-4562-b3fc-2c963f66afa6", "session_id": "session_42" }
 ```
 
 Generate a fresh UUID for `reply_id` on every new question; the server is
@@ -2498,7 +2476,7 @@ event: connected
 data: {"id":"3fa85f64-5717-4562-b3fc-2c963f66afa6"}
 
 event: message
-data: {"reply_id":"3fa85f64-5717-4562-b3fc-2c963f66afa6","session_id":null,"kind":"ephemeral","status":"running","answer":"","sources":[],"error":null,"version":1,"created_at":"...","updated_at":"..."}
+data: {"reply_id":"3fa85f64-5717-4562-b3fc-2c963f66afa6","session_id":"session_42","kind":"exchange","status":"running","answer":"","sources":[],"error":null,"version":1,"created_at":"...","updated_at":"..."}
 
 : heartbeat
 

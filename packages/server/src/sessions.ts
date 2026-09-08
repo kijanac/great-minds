@@ -1,6 +1,7 @@
 import { Database, sessions, userDocuments } from "@great-minds/database";
 import {
   BadRequest,
+  composeAnchoredQuestion,
   Forbidden,
   NotFound,
   IsoDateTime,
@@ -266,7 +267,7 @@ type CompletedReply = {
 
 export type ReplyTranscript = {
   readonly prior: readonly LlmMessage[];
-  readonly threadRoot: boolean;
+  readonly question: string;
 };
 
 type SessionsServiceShape = {
@@ -651,11 +652,15 @@ export const SessionsServiceLive = Layer.effect(
           yield* access.requireMember(userId, vaultId);
           yield* requireSessionOwner(userId, vaultId, sessionId);
           const events = yield* loadAllEvents(vaultId, sessionId);
+          const nodes = currentNodes(events);
+          const previous = nodes.find((node) => node.exchange_id === pending.exchangeId);
           const ts = yield* clock.now;
           yield* appendNode(
             vaultId,
             sessionId,
-            pendingNode(ts, pending, parentReplyIdFor(currentNodes(events), pending.btw)),
+            pendingNode(ts, pending, previous === undefined
+              ? parentReplyIdFor(nodes, pending.btw)
+              : previous.parent_reply_id),
           );
         }),
       completeReply: (userId, vaultId, sessionId, replyId, completed) =>
@@ -677,7 +682,8 @@ export const SessionsServiceLive = Layer.effect(
         }),
       readTranscript: (vaultId, sessionId, replyId) =>
         Effect.gen(function* () {
-          const byReplyId = nodesByReplyId(yield* loadAllEvents(vaultId, sessionId));
+          const events = yield* loadAllEvents(vaultId, sessionId);
+          const byReplyId = nodesByReplyId(events);
           const pending = byReplyId.get(replyId);
           if (pending === undefined) {
             return yield* Effect.die(
@@ -697,11 +703,21 @@ export const SessionsServiceLive = Layer.effect(
             current = parent;
           }
           const parent = chain.at(-1);
+          const threadRoot = parent === undefined || !sameThread(pending.btw)(parent);
+          const origin = findMeta(events)?.origin;
+          const question = threadRoot && pending.btw !== undefined
+            ? composeAnchoredQuestion(pending.btw, pending.question)
+            : parent === undefined && origin?.anchor !== null && origin?.anchor !== undefined
+              ? composeAnchoredQuestion(
+                  { quote: origin.anchor, context: origin.paragraph },
+                  pending.question,
+                )
+              : pending.question;
           return {
             prior: chain.flatMap((node) =>
               node === parent ? node.messages : stubToolResults(node.messages),
             ),
-            threadRoot: parent === undefined || !sameThread(pending.btw)(parent),
+            question,
           };
         }),
       promoteExchange: (userId, vaultId, sessionId, exchangeId) =>

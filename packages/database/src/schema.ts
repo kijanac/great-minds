@@ -491,7 +491,7 @@ export const replies = pgTable(
     id: uuidColumn("id").primaryKey(),
     vaultId: uuidColumn("vault_id").notNull(),
     userId: uuidColumn("user_id").notNull(),
-    sessionId: sessionIdColumn("session_id"),
+    sessionId: sessionIdColumn("session_id").notNull(),
     kind: text("kind").$type<ReplySnapshot["kind"]>().notNull(),
     status: text("status").$type<ReplySnapshot["status"]>().notNull(),
     answer: text("answer").default("").notNull(),
@@ -533,7 +533,7 @@ export const replies = pgTable(
     index("ix_replies_pending_dispatch")
       .on(table.createdAt)
       .where(sql`${table.status} = 'running' AND ${table.dispatchedAt} IS NULL`),
-    check("replies_kind_check", sql`${table.kind} IN ('exchange', 'btw', 'ephemeral')`),
+    check("replies_kind_check", sql`${table.kind} IN ('exchange', 'btw')`),
     check("replies_status_check", sql`${table.status} IN ('running', 'completed', 'failed')`),
     check(
       "replies_active_generation_check",

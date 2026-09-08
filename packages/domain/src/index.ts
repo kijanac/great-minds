@@ -1133,12 +1133,8 @@ export const ReplySource = Schema.Struct({
 });
 export type ReplySource = typeof ReplySource.Type;
 
-const CreateReplyFields = {
-  ...QueryRequest.fields,
-  reply_id: Uuid,
-};
-
 const CreateReplySession = Schema.Struct({
+  kind: Schema.Literal("new"),
   idempotency_key: Schema.String,
   origin_scope: OriginScope.pipe(
     Schema.withDecodingDefaultTypeKey(Effect.succeed("vault" as const)),
@@ -1146,36 +1142,24 @@ const CreateReplySession = Schema.Struct({
   origin: Schema.optionalKey(SessionOrigin),
 });
 
-export const CreateReplyRequest = Schema.Union([
-  Schema.Struct({
-    ...CreateReplyFields,
-    kind: Schema.Literal("exchange"),
-    exchange_id: Uuid,
-    session_id: SessionId,
-  }),
-  Schema.Struct({
-    ...CreateReplyFields,
-    kind: Schema.Literal("exchange"),
-    exchange_id: Uuid,
-    create: CreateReplySession,
-  }),
-  Schema.Struct({
-    ...CreateReplyFields,
-    kind: Schema.Literal("btw"),
-    exchange_id: Uuid,
-    session_id: SessionId,
-    btw: BtwData,
-  }),
-  Schema.Struct({
-    ...CreateReplyFields,
-    kind: Schema.Literal("ephemeral"),
-  }),
-]);
+export const CreateReplyRequest = Schema.Struct({
+  ...QueryRequest.fields,
+  reply_id: Uuid,
+  exchange_id: Uuid,
+  session: Schema.Union([
+    CreateReplySession,
+    Schema.Struct({
+      kind: Schema.Literal("existing"),
+      id: SessionId,
+      btw: Schema.optionalKey(BtwData),
+    }),
+  ]),
+});
 export type CreateReplyRequest = typeof CreateReplyRequest.Type;
 
 export const CreateReplyResponse = Schema.Struct({
   reply_id: Uuid,
-  session_id: Schema.NullOr(SessionId),
+  session_id: SessionId,
 });
 export type CreateReplyResponse = typeof CreateReplyResponse.Type;
 
@@ -1186,8 +1170,8 @@ export type RetryReplyRequest = typeof RetryReplyRequest.Type;
 
 export const ReplySnapshot = Schema.Struct({
   reply_id: Uuid,
-  session_id: Schema.NullOr(SessionId),
-  kind: Schema.Literals(["exchange", "btw", "ephemeral"] as const),
+  session_id: SessionId,
+  kind: Schema.Literals(["exchange", "btw"] as const),
   status: Schema.Literals(["running", "completed", "failed"] as const),
   answer: Schema.String,
   sources: Schema.Array(ReplySource),

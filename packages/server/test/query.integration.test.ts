@@ -31,7 +31,7 @@ import { type LlmAssistantToolCall, type LlmMessage } from "../src/llm.ts";
 import { makeTestMailer } from "../src/mailer.ts";
 import { RepliesService } from "../src/replies.ts";
 import { startServer } from "../src/server.ts";
-import type { ReplyNode, StoredSessionEvent } from "../src/sessions.ts";
+import { SessionsService, type ReplyNode, type StoredSessionEvent } from "../src/sessions.ts";
 import { TokenService } from "../src/tokens.ts";
 import {
   finishPart,
@@ -90,6 +90,7 @@ type TestServices =
   | Database
   | ClockService
   | RepliesService
+  | SessionsService
   | StructuredLogger
   | TokenService;
 
@@ -477,8 +478,9 @@ const replySnapshots = (text: string): ReplySnapshot[] =>
 
 const runReply = async (body: Record<string, unknown>) => {
   const created = await api(repliesPath, {
-    kind: "ephemeral",
     mode: "query",
+    exchange_id: crypto.randomUUID(),
+    session: { kind: "new", idempotency_key: crypto.randomUUID() },
     ...body,
   });
   if (created.response.status !== 202) {
@@ -624,7 +626,12 @@ describe("query stream", () => {
     const bobToken = await issueToken(id.bob);
     const nonMember = await apiWithToken(
       repliesPath,
-      { kind: "ephemeral", mode: "query", question: "No access" },
+      {
+        mode: "query",
+        question: "No access",
+        exchange_id: crypto.randomUUID(),
+        session: { kind: "new", idempotency_key: crypto.randomUUID() },
+      },
       bobToken,
     );
     expect(nonMember.response.status).toBe(403);
@@ -634,9 +641,10 @@ describe("query stream", () => {
     });
 
     const unknown = await api("/vaults/00000000-0000-4000-8000-000000029999/replies", {
-      kind: "ephemeral",
       mode: "query",
       question: "Missing",
+      exchange_id: crypto.randomUUID(),
+      session: { kind: "new", idempotency_key: crypto.randomUUID() },
     });
     expect(unknown.response.status).toBe(404);
     expect(unknown.response.headers.get("content-type") ?? "").not.toContain("text/event-stream");
@@ -652,9 +660,10 @@ describe("query stream", () => {
       configOverrides: { openRouterApiKey: Option.none() },
     });
     const noKey = await api(repliesPath, {
-      kind: "ephemeral",
       mode: "query",
       question: "No key",
+      exchange_id: crypto.randomUUID(),
+      session: { kind: "new", idempotency_key: crypto.randomUUID() },
     });
     expect(noKey.response.status).toBe(503);
     expect(noKey.response.headers.get("content-type") ?? "").not.toContain("text/event-stream");
@@ -662,6 +671,26 @@ describe("query stream", () => {
       detail: "LLM service not configured (OPENROUTER_API_KEY missing)",
     });
     expect(noKeyLanguage.streamCalls).toHaveLength(0);
+  });
+
+  it("rejects missing or malformed session destinations before generating a reply", async () => {
+    const language = makeScriptedLanguageModel({ streams: [] });
+    await startHarness({ language });
+    for (const destination of [
+      {},
+      { kind: "ephemeral" },
+      { session: { kind: "existing" } },
+      { session: { kind: "new" } },
+      { session: { kind: "existing", id: "session-1", btw: { quote: "incomplete anchor" } } },
+    ]) {
+      const result = await api(repliesPath, {
+        exchange_id: crypto.randomUUID(),
+        question: "Why?",
+        ...destination,
+      });
+      expect(result.response.status).toBe(422);
+    }
+    expect(language.streamCalls).toHaveLength(0);
   });
 
   it("persists pending and final exchange events while the reply tail reaches completed", async () => {
@@ -676,14 +705,20 @@ describe("query stream", () => {
     await startHarness({ language });
 
     const created = await api(repliesPath, {
-      kind: "exchange",
       exchange_id: EX_DURABLE,
-      create: {
-        idempotency_key: "reply-session-idempotency",
-        origin: { doc_path: "wiki/alpha.md", origin_scope: "vault", anchor: null, paragraph: null, paragraph_index: null },
-      },
       question: "Persist this answer",
       mode: "query",
+      session: {
+        kind: "new",
+        idempotency_key: "reply-session-idempotency",
+        origin: {
+          doc_path: "wiki/alpha.md",
+          origin_scope: "vault",
+          anchor: null,
+          paragraph: null,
+          paragraph_index: null,
+        },
+      },
     });
     expect(created.response.status).toBe(202);
     const identifiers = JSON.parse(created.text) as {
@@ -776,11 +811,10 @@ describe("query stream", () => {
     const replyId = crypto.randomUUID();
     const payload = {
       reply_id: replyId,
-      kind: "exchange" as const,
       exchange_id: EX_ACCEPTED_ONCE,
-      create: { idempotency_key: "accepted-once-session" },
       question: "Accept this once",
       mode: "query" as const,
+      session: { kind: "new", idempotency_key: "accepted-once-session" },
     };
     const first = await api(repliesPath, payload);
     const replayed = await api(repliesPath, payload);
@@ -818,14 +852,19 @@ describe("query stream", () => {
 
   it("composes the anchored passage prompt for doc-born sessions while storing the clean question", async () => {
     const language = makeScriptedLanguageModel({
-      streams: [{ kind: "parts", parts: [tokenPart("Anchored answer."), finishPart("stop")] }],
+      streams: [
+        { kind: "parts", parts: [tokenPart("Anchored answer."), finishPart("stop")] },
+        { kind: "parts", parts: [tokenPart("Follow-up answer."), finishPart("stop")] },
+      ],
     });
     await startHarness({ language });
 
     const created = await api(repliesPath, {
-      kind: "exchange",
       exchange_id: EX_ANCHORED,
-      create: {
+      question: "What does this claim imply?",
+      mode: "btw",
+      session: {
+        kind: "new",
         idempotency_key: "anchored-session-key",
         origin_scope: "personal",
         origin: {
@@ -835,8 +874,6 @@ describe("query stream", () => {
           paragraph_index: 2,
         },
       },
-      question: "What does this claim imply?",
-      mode: "btw",
     });
     expect(created.response.status).toBe(202);
     const identifiers = JSON.parse(created.text) as {
@@ -890,6 +927,18 @@ describe("query stream", () => {
       content:
         'Passage:\n> The surrounding passage.\n\nHighlighted: "the highlighted claim"\n\nWhat does this claim imply?',
     });
+    const followUp = await runReply({
+      question: "What follows?",
+      mode: "btw",
+      session: { kind: "existing", id: identifiers.session_id },
+    });
+    expect(followUp.snapshots.at(-1)).toMatchObject({ status: "completed" });
+    expect(language.streamCalls[1]?.messages
+      .filter((message) => message.role === "user")
+      .map((message) => message.content)).toEqual([
+        'Passage:\n> The surrounding passage.\n\nHighlighted: "the highlighted claim"\n\nWhat does this claim imply?',
+        "What follows?",
+      ]);
   });
 
   it("persists follow-up exchanges and BTW threads through canonical replies", async () => {
@@ -903,11 +952,10 @@ describe("query stream", () => {
     await startHarness({ language });
 
     const first = await api(repliesPath, {
-      kind: "exchange",
       exchange_id: EX_CANONICAL_FIRST,
-      create: { idempotency_key: "canonical-session-key" },
       question: "First question",
       mode: "query",
+      session: { kind: "new", idempotency_key: "canonical-session-key" },
     });
     expect(first.response.status).toBe(202);
     const firstIds = JSON.parse(first.text) as {
@@ -917,28 +965,29 @@ describe("query stream", () => {
     await tailReply(firstIds.reply_id);
 
     const followUp = await api(repliesPath, {
-      kind: "exchange",
       exchange_id: EX_CANONICAL_FOLLOW_UP,
-      session_id: firstIds.session_id,
       question: "Follow-up question",
       mode: "query",
+      session: { kind: "existing", id: firstIds.session_id },
     });
     expect(followUp.response.status).toBe(202);
     const followUpIds = JSON.parse(followUp.text) as { reply_id: string };
     await tailReply(followUpIds.reply_id);
 
     const btw = await api(repliesPath, {
-      kind: "btw",
       exchange_id: EX_CANONICAL_BTW_1,
-      session_id: firstIds.session_id,
-      btw: {
-        quote: "First answer",
-        blockOffset: 0,
-        context: "First answer.",
-        exchangeId: EX_CANONICAL_FIRST,
-      },
       question: "Why this answer?",
       mode: "btw",
+      session: {
+        kind: "existing",
+        id: firstIds.session_id,
+        btw: {
+          quote: "First answer",
+          blockOffset: 0,
+          context: "First answer.",
+          exchangeId: EX_CANONICAL_FIRST,
+        },
+      },
     });
     expect(btw.response.status).toBe(202);
     const btwIds = JSON.parse(btw.text) as { reply_id: string };
@@ -995,36 +1044,36 @@ describe("query stream", () => {
     });
     await startHarness({ language });
     const first = await api(repliesPath, {
-      kind: "exchange",
       exchange_id: EX_GUARD,
-      create: { idempotency_key: "guard-session-key" },
       question: "First question",
       mode: "query",
+      session: { kind: "new", idempotency_key: "guard-session-key" },
     });
     expect(first.response.status).toBe(202);
     const { session_id } = JSON.parse(first.text) as { session_id: string };
 
     const btwTraversal = await api(repliesPath, {
-      kind: "btw",
       exchange_id: "../../wiki/index",
-      session_id,
-      btw: {
-        quote: "First",
-        blockOffset: 0,
-        context: "First answer.",
-        exchangeId: "../../wiki/index",
-      },
       question: "Why?",
       mode: "query",
+      session: {
+        kind: "existing",
+        id: session_id,
+        btw: {
+          quote: "First",
+          blockOffset: 0,
+          context: "First answer.",
+          exchangeId: "../../wiki/index",
+        },
+      },
     });
     expect(btwTraversal.response.status).toBe(422);
 
     const traversal = await api(repliesPath, {
-      kind: "exchange",
       exchange_id: "../../wiki/index",
-      session_id,
       question: "Second question",
       mode: "query",
+      session: { kind: "existing", id: session_id },
     });
     expect(traversal.response.status).toBe(422);
   });
@@ -1040,11 +1089,10 @@ describe("query stream", () => {
 
     const createExchange = async (exchangeId: string, question: string) => {
       const created = await api(repliesPath, {
-        kind: "exchange",
         exchange_id: exchangeId,
-        create: { idempotency_key: "same-session-key" },
         question,
         mode: "query",
+        session: { kind: "new", idempotency_key: "same-session-key" },
       });
       expect(created.response.status).toBe(202);
       const identifiers = JSON.parse(created.text) as {
@@ -1077,11 +1125,10 @@ describe("query stream", () => {
     await startHarness({ language });
 
     const created = await api(repliesPath, {
-      kind: "exchange",
       exchange_id: EX_FAILED,
-      create: { idempotency_key: "failed-session-key" },
       question: "Fail this answer",
       mode: "query",
+      session: { kind: "new", idempotency_key: "failed-session-key" },
     });
     const identifiers = JSON.parse(created.text) as {
       reply_id: string;
@@ -1104,13 +1151,17 @@ describe("query stream", () => {
     ]);
   });
 
-  it("retries a failed reply in place from its persisted request", async () => {
+  it.each(["query", "btw"])("retries a failed document reply in place with an existing session in %s mode", async (mode) => {
     const language = makeScriptedLanguageModel({
       streams: [
         {
           kind: "parts",
           parts: [tokenPart("Incomplete answer.")],
           errorAfterParts: new Error("provider secret"),
+        },
+        {
+          kind: "parts",
+          parts: [tokenPart("A later answer."), finishPart("stop", "later-answer")],
         },
         {
           kind: "parts",
@@ -1121,9 +1172,11 @@ describe("query stream", () => {
     await startHarness({ language });
 
     const created = await api(repliesPath, {
-      kind: "exchange",
       exchange_id: EX_RETRY,
-      create: {
+      question: "Try this answer",
+      mode,
+      session: {
+        kind: "new",
         idempotency_key: "retry-session-key",
         origin_scope: "vault",
         origin: {
@@ -1134,8 +1187,6 @@ describe("query stream", () => {
           paragraph_index: 3,
         },
       },
-      question: "Try this answer",
-      mode: "query",
     });
     expect(created.response.status).toBe(202);
     const first = JSON.parse(created.text) as {
@@ -1147,6 +1198,12 @@ describe("query stream", () => {
       status: "failed",
       answer: "Incomplete answer.",
     });
+
+    const later = await runReply({
+      question: "A later question",
+      session: { kind: "existing", id: first.session_id },
+    });
+    expect(later.snapshots.at(-1)).toMatchObject({ status: "completed" });
 
     const retryId = crypto.randomUUID();
     const retried = await retryReply(first.reply_id, retryId);
@@ -1168,21 +1225,33 @@ describe("query stream", () => {
       error: null,
     });
     expect(
-      language.streamCalls[1]?.messages.find((message) => message.role === "user"),
+      language.streamCalls[2]?.messages.find((message) => message.role === "user"),
     ).toMatchObject({
       role: "user",
       content:
         'Passage:\n> The surrounding passage.\n\nHighlighted: "The highlighted claim."\n\nTry this answer',
     });
+    expect(JSON.stringify(language.streamCalls[2]?.messages)).not.toContain("A later question");
+    const retriedRows = await runDb(Effect.gen(function* () {
+      const db = yield* Database;
+      return yield* db.query((d) => d.select().from(replies).where(eq(replies.id, uuid(retryId))));
+    }));
+    expect(retriedRows[0]?.request).toMatchObject({
+      exchange_id: EX_RETRY,
+      session: { kind: "existing", id: first.session_id },
+      mode,
+    });
+    expect(JSON.stringify(retriedRows[0]?.request)).not.toContain("The highlighted claim.");
 
     const events = (await readSessionEvents(first.session_id)).filter(
       (event) => event.type === "reply",
     );
-    expect(events).toHaveLength(3);
+    expect(events).toHaveLength(5);
     expect(events.at(-2)).toMatchObject({
       type: "reply",
       exchange_id: EX_RETRY,
       reply_id: second.reply_id,
+      parent_reply_id: null,
       status: "pending",
       answer: "",
     });
@@ -1201,6 +1270,67 @@ describe("query stream", () => {
     });
   });
 
+  it("retries a failed answer BTW with its saved branch context", async () => {
+    const language = makeScriptedLanguageModel({
+      streams: [
+        { kind: "parts", parts: [tokenPart("Parent answer."), finishPart("stop")] },
+        { kind: "parts", parts: [tokenPart("Partial BTW.")], errorAfterParts: new Error("provider failure") },
+        { kind: "parts", parts: [tokenPart("Complete BTW."), finishPart("stop")] },
+      ],
+    });
+    await startHarness({ language });
+    const parent = await api(repliesPath, {
+      exchange_id: EX_BRANCH_PARENT,
+      question: "Parent question",
+      session: { kind: "new", idempotency_key: "retry-btw-session" },
+    });
+    expect(parent.response.status).toBe(202);
+    const parentIds = JSON.parse(parent.text) as { reply_id: string; session_id: string };
+    await tailReply(parentIds.reply_id);
+    const branch = await api(repliesPath, {
+      exchange_id: EX_BRANCH_BTW_1,
+      question: "Why this answer?",
+      mode: "btw",
+      session: {
+        kind: "existing",
+        id: parentIds.session_id,
+        btw: {
+          quote: "answer",
+          context: "Parent answer.",
+          blockOffset: 0,
+          exchangeId: EX_BRANCH_PARENT,
+        },
+      },
+    });
+    expect(branch.response.status).toBe(202);
+    const branchIds = JSON.parse(branch.text) as { reply_id: string };
+    const failed = await tailReply(branchIds.reply_id);
+    expect(replySnapshots(failed.text).at(-1)).toMatchObject({ status: "failed" });
+    const retried = await retryReply(branchIds.reply_id);
+    expect(retried.response.status).toBe(202);
+    const retryIds = JSON.parse(retried.text) as { reply_id: string; session_id: string };
+    expect(retryIds.session_id).toBe(parentIds.session_id);
+    const completed = await tailReply(retryIds.reply_id);
+    expect(replySnapshots(completed.text).at(-1)).toMatchObject({
+      kind: "btw",
+      status: "completed",
+      answer: "Complete BTW.",
+    });
+    expect(language.streamCalls[2]?.messages
+      .filter((message) => message.role === "user")
+      .map((message) => message.content)).toEqual([
+        "Parent question",
+        'Passage:\n> Parent answer.\n\nHighlighted: "answer"\n\nWhy this answer?',
+      ]);
+    const events = await readSessionEvents(parentIds.session_id);
+    expect(events.at(-1)).toMatchObject({
+      reply_id: retryIds.reply_id,
+      parent_reply_id: parentIds.reply_id,
+      exchange_id: EX_BRANCH_BTW_1,
+      btw: { exchange_id: EX_BRANCH_PARENT, quote: "answer", context: "Parent answer." },
+    });
+  });
+
   it("resumes a persisted running reply instead of failing it as a restart zombie", async () => {
     const language = makeScriptedLanguageModel({
       streams: [
@@ -1212,25 +1342,33 @@ describe("query stream", () => {
     });
     await startHarness({ language });
     const replyId = uuid("00000000-0000-4000-8000-000000020901");
+    const exchangeId = uuid(crypto.randomUUID());
 
     await runDb(
       Effect.gen(function* () {
         const db = yield* Database;
+        const sessions = yield* SessionsService;
+        const sessionId = yield* sessions.createSession(id.alice, id.vault, {
+          idempotencyKey: "recovered-reply",
+          pending: { replyId, exchangeId, question: "resume after restart" },
+        });
         yield* db.query((d) => d
           .insert(replies)
           .values({
             id: replyId,
             vaultId: id.vault,
             userId: id.alice,
-            kind: "ephemeral",
+            sessionId,
+            kind: "exchange",
             status: "running",
             answer: "partial",
             sources: [],
             request: {
               reply_id: replyId,
-              kind: "ephemeral",
               question: "resume after restart",
               mode: "query",
+              exchange_id: exchangeId,
+              session: { kind: "existing", id: sessionId },
             },
             createdAt: initialTime,
             updatedAt: initialTime,
@@ -1425,24 +1563,14 @@ describe("query stream", () => {
       question: string,
       sessionId: string | null,
     ) => {
-      const created = await api(
-        repliesPath,
-        sessionId === null
-          ? {
-              kind: "exchange",
-              exchange_id: exchangeId,
-              create: { idempotency_key: "verbatim-session-key" },
-              question,
-              mode: "query",
-            }
-          : {
-              kind: "exchange",
-              exchange_id: exchangeId,
-              session_id: sessionId,
-              question,
-              mode: "query",
-            },
-      );
+      const created = await api(repliesPath, {
+        exchange_id: exchangeId,
+        question,
+        mode: "query",
+        session: sessionId === null
+          ? { kind: "new", idempotency_key: "verbatim-session-key" }
+          : { kind: "existing", id: sessionId },
+      });
       expect(created.response.status).toBe(202);
       const ids = JSON.parse(created.text) as { reply_id: string; session_id: string };
       const tail = await tailReply(ids.reply_id);
@@ -1558,11 +1686,10 @@ describe("query stream", () => {
     await startHarness({ language });
 
     const root = await api(repliesPath, {
-      kind: "exchange",
       exchange_id: EX_BRANCH_PARENT,
-      create: { idempotency_key: "branch-session-key" },
       question: "Parent question",
       mode: "query",
+      session: { kind: "new", idempotency_key: "branch-session-key" },
     });
     expect(root.response.status).toBe(202);
     const rootIds = JSON.parse(root.text) as { reply_id: string; session_id: string };
@@ -1571,17 +1698,19 @@ describe("query stream", () => {
 
     const sendBtw = async (exchangeId: string, question: string) => {
       const created = await api(repliesPath, {
-        kind: "btw",
         exchange_id: exchangeId,
-        session_id: rootIds.session_id,
-        btw: {
-          quote: "answer",
-          blockOffset: 0,
-          context: "Parent answer.",
-          exchangeId: EX_BRANCH_PARENT,
-        },
         question,
         mode: "btw",
+        session: {
+          kind: "existing",
+          id: rootIds.session_id,
+          btw: {
+            quote: "answer",
+            blockOffset: 0,
+            context: "Parent answer.",
+            exchangeId: EX_BRANCH_PARENT,
+          },
+        },
       });
       expect(created.response.status).toBe(202);
       const ids = JSON.parse(created.text) as { reply_id: string };
@@ -1593,11 +1722,10 @@ describe("query stream", () => {
     const secondBtwReplyId = await sendBtw(EX_BRANCH_BTW_2, "Second BTW");
 
     const follow = await api(repliesPath, {
-      kind: "exchange",
       exchange_id: EX_BRANCH_FOLLOW_UP,
-      session_id: rootIds.session_id,
       question: "Main follow-up",
       mode: "query",
+      session: { kind: "existing", id: rootIds.session_id },
     });
     expect(follow.response.status).toBe(202);
     const followIds = JSON.parse(follow.text) as { reply_id: string };
@@ -1718,9 +1846,12 @@ describe("query stream", () => {
     );
 
     const root = await api(repliesPath, {
-      kind: "exchange",
       exchange_id: EX_ORIGIN_ROOT,
-      create: {
+      origin_path: "raw/texts/source.md",
+      question: "First doc BTW",
+      mode: "btw",
+      session: {
+        kind: "new",
         idempotency_key: "origin-inherit-session-key",
         origin_scope: "vault",
         origin: {
@@ -1731,9 +1862,6 @@ describe("query stream", () => {
           paragraph_index: 0,
         },
       },
-      origin_path: "raw/texts/source.md",
-      question: "First doc BTW",
-      mode: "btw",
     });
     expect(root.response.status).toBe(202);
     const rootIds = JSON.parse(root.text) as { reply_id: string; session_id: string };
@@ -1741,25 +1869,13 @@ describe("query stream", () => {
     expect(replySnapshots(rootTail.text).at(-1)).toMatchObject({ status: "completed" });
 
     const submit = async (exchangeId: string, question: string, originPath?: string) => {
-      const created = await api(
-        repliesPath,
-        originPath === undefined
-          ? {
-              kind: "exchange",
-              exchange_id: exchangeId,
-              session_id: rootIds.session_id,
-              question,
-              mode: "btw",
-            }
-          : {
-              kind: "exchange",
-              exchange_id: exchangeId,
-              session_id: rootIds.session_id,
-              origin_path: originPath,
-              question,
-              mode: "btw",
-            },
-      );
+      const created = await api(repliesPath, {
+        exchange_id: exchangeId,
+        question,
+        mode: "btw",
+        session: { kind: "existing", id: rootIds.session_id },
+        origin_path: originPath,
+      });
       expect(created.response.status).toBe(202);
       const ids = JSON.parse(created.text) as { reply_id: string };
       const tail = await tailReply(ids.reply_id);
@@ -1821,11 +1937,10 @@ describe("query stream", () => {
     await startHarness({ language });
 
     const root = await api(repliesPath, {
-      kind: "exchange",
       exchange_id: EX_CHAIN_1,
-      create: { idempotency_key: "chain-session-key" },
       question: "First question",
       mode: "query",
+      session: { kind: "new", idempotency_key: "chain-session-key" },
     });
     expect(root.response.status).toBe(202);
     const rootIds = JSON.parse(root.text) as { reply_id: string; session_id: string };
@@ -1833,11 +1948,10 @@ describe("query stream", () => {
     expect(replySnapshots(rootTail.text).at(-1)).toMatchObject({ status: "completed" });
 
     const failed = await api(repliesPath, {
-      kind: "exchange",
       exchange_id: EX_CHAIN_2,
-      session_id: rootIds.session_id,
       question: "Second question",
       mode: "query",
+      session: { kind: "existing", id: rootIds.session_id },
     });
     expect(failed.response.status).toBe(202);
     const failedIds = JSON.parse(failed.text) as { reply_id: string };
@@ -1845,11 +1959,10 @@ describe("query stream", () => {
     expect(replySnapshots(failedTail.text).at(-1)).toMatchObject({ status: "failed" });
 
     const third = await api(repliesPath, {
-      kind: "exchange",
       exchange_id: EX_CHAIN_3,
-      session_id: rootIds.session_id,
       question: "Third question",
       mode: "query",
+      session: { kind: "existing", id: rootIds.session_id },
     });
     expect(third.response.status).toBe(202);
     const thirdIds = JSON.parse(third.text) as { reply_id: string };

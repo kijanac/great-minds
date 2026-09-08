@@ -29,6 +29,14 @@ Engine replay resumes the same operation and idempotency key. A completed reply 
 
 A user-requested retry creates a new operation ID. Retrying a failed research reply uses a new browser-minted reply ID with the persisted request and the same visible session position; repeating that acceptance is safe. Retrying a failed URL run copies its persisted canonical URL into a new URL-ingest run; it does not start a generic vault compile.
 
+Reply requests nest session placement under `session`: new-session details or an existing session ID with an optional BTW anchor. Accepted replies always belong to a session. Retry resolves the request to that existing session and retains the exchange ID and original parent reply. The saved session origin supplies a document thread's first question context; a saved BTW anchor supplies an answer branch's first question context. Follow-ups inherit that context through the recorded messages. Prompt construction therefore does not depend on whether an HTTP request created a session.
+
+## Reply request migration
+
+Deploy the nested request contract with the API and browser together. Stop old API/workflow processes before applying `20260908155003_session_reply_requests`; it rewrites saved requests, requires a session ID, and removes the ephemeral reply kind. Generation checkpoints keep their existing format, so accepted work can resume after the new processes start.
+
+The migration stops transactionally if any historical reply has a null session ID or the ephemeral kind. Before rollout, inspect `SELECT kind, status, count(*) FROM replies WHERE session_id IS NULL OR kind = 'ephemeral' GROUP BY kind, status`. Any matching records need an explicit retention or conversion decision before rollout. The migration preserves those records and does not invent conversations for them.
+
 ## Work that remains outside workflows
 
 Ordinary reads and single-database CRUD do not need workflow overhead. Local/R2 lifecycle cleanup—including the source-deletion outbox—remains an idempotent maintenance loop. Browser-only review, hashing, and exact-byte reselection remain client/transport concerns.

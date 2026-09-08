@@ -20,25 +20,13 @@ type ReplyEvent =
 
 const snapshotFromJson = Schema.decodeOption(Schema.fromJsonString(ReplySnapshot));
 
-const createReplyRequest = (payload: CreateReplyRequest) => {
-  const params = { vault_id: selectedVault() };
-  switch (payload.kind) {
-    case "btw":
-      return api.replies.createReply({ params, payload });
-    case "ephemeral":
-      return api.replies.createReply({ params, payload });
-    case "exchange":
-      return "session_id" in payload
-        ? api.replies.createReply({ params, payload })
-        : api.replies.createReply({ params, payload });
-  }
-};
-
 export function createReply(
   payload: CreateReplyPayload,
   signal?: AbortSignal,
 ): Promise<CreateReplyResponse> {
-  return run(createReplyRequest(payload), { signal });
+  return run(api.replies.createReply({ params: { vault_id: selectedVault() }, payload }), {
+    signal,
+  });
 }
 
 export function retryReply(

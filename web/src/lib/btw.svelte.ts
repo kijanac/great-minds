@@ -152,10 +152,6 @@ export class DocThreads {
     const target = this.#findThread(threadId);
     if (!target) return;
     const anchor = target.anchor;
-    const priorExchanges = target.exchanges;
-    // A draft whose first create failed (no session yet) retries as a fresh
-    // first turn; anything with a session follows up on it.
-    const isFirst = priorExchanges.length === 0 || target.sessionId === null;
     const turnId = newUuid();
 
     const patchThread = (patch: Partial<DocThread>): void => {
@@ -199,45 +195,33 @@ export class DocThreads {
 
     void (async () => {
       try {
-        const created = isFirst
-          ? await createReply(
-              {
-                reply_id: newUuid(),
-                kind: "exchange",
-                exchange_id: turnId,
-                create: {
-                  idempotency_key: newUuid(),
-                  origin_scope: this.originScope,
-                  origin: {
-                    doc_path: this.originPath,
+        const created = await createReply(
+          {
+            reply_id: newUuid(),
+            exchange_id: turnId,
+            question: userText,
+            origin_scope: this.originScope,
+            mode: "btw",
+            session:
+              target.sessionId === null
+                ? {
+                    kind: "new",
+                    idempotency_key: newUuid(),
                     origin_scope: this.originScope,
-                    anchor: anchor.quote,
-                    paragraph: anchor.context,
-                    paragraph_index: anchor.blockOffset,
-                  },
-                },
-                // The server composes the passage/highlight prompt; the
-                // session stores this clean text.
-                question: userText,
-                origin_scope: this.originScope,
-                mode: "btw",
-              },
-              controller.signal,
-            )
-          : await createReply(
-              {
-                reply_id: newUuid(),
-                kind: "exchange",
-                exchange_id: turnId,
-                session_id: target.sessionId!,
-                question: userText,
-                origin_scope: this.originScope,
-                mode: "btw",
-              },
-              controller.signal,
-            );
+                    origin: {
+                      doc_path: this.originPath,
+                      origin_scope: this.originScope,
+                      anchor: anchor.quote,
+                      paragraph: anchor.context,
+                      paragraph_index: anchor.blockOffset,
+                    },
+                  }
+                : { kind: "existing", id: target.sessionId },
+          },
+          controller.signal,
+        );
         patchTurn({ replyId: created.reply_id });
-        if (target.sessionId === null && created.session_id !== null) {
+        if (target.sessionId === null) {
           patchThread({ sessionId: created.session_id });
         }
         for await (const snapshot of streamReply(created.reply_id, controller.signal)) {
