@@ -75,11 +75,11 @@ type ToolCallState = {
 };
 
 const QueryTraceSchema = Schema.Struct({
-  articlesRead: Schema.Array(Schema.String),
-  sourcesRead: Schema.Array(Schema.String),
-  searches: Schema.Array(Schema.String),
-  llmRounds: Schema.Number,
-  toolCalls: Schema.Number,
+  articlesRead: Schema.mutable(Schema.Array(Schema.String)),
+  sourcesRead: Schema.mutable(Schema.Array(Schema.String)),
+  searches: Schema.mutable(Schema.Array(Schema.String)),
+  llmRounds: Schema.mutableKey(Schema.Number),
+  toolCalls: Schema.mutableKey(Schema.Number),
 });
 
 export const QueryExecutionState = Schema.Struct({
@@ -90,14 +90,14 @@ export const QueryExecutionState = Schema.Struct({
   mode: Schema.Literals(["query", "btw"] as const),
   correlationId: Schema.String,
   tools: Schema.Array(LlmToolDefinitionSchema),
-  messages: Schema.Array(LlmMessageSchema),
+  messages: Schema.mutable(Schema.Array(LlmMessageSchema)),
   turnStart: Schema.Number,
   webSearchEnabled: Schema.Boolean,
   trace: QueryTraceSchema,
-  fallbackGenerationIds: Schema.Array(Schema.String),
+  fallbackGenerationIds: Schema.mutable(Schema.Array(Schema.String)),
   systemPromptHash: Schema.String,
-  costUsd: Schema.Number,
-  selectedModel: Schema.NullOr(Schema.String),
+  costUsd: Schema.mutableKey(Schema.Number),
+  selectedModel: Schema.mutableKey(Schema.NullOr(Schema.String)),
   models: Schema.Array(Schema.String),
   modelIndex: Schema.Number,
   startedAt: Schema.Number,
@@ -223,31 +223,6 @@ type ModelRoundState = {
   readonly toolCalls: Map<number, ToolCallState>;
 };
 
-type Trace = {
-  readonly articlesRead: string[];
-  readonly sourcesRead: string[];
-  readonly searches: string[];
-  llmRounds: number;
-  toolCalls: number;
-};
-
-type QueryContext = {
-  readonly userId: Uuid;
-  readonly vaultId: Uuid;
-  readonly question: string;
-  readonly vaultLabel: string;
-  readonly mode: "query" | "btw";
-  readonly correlationId: string;
-  readonly tools: readonly LlmToolDefinition[];
-  readonly turnStart: number;
-  readonly webSearchEnabled: boolean;
-  readonly trace: Trace;
-  readonly fallbackGenerationIds: string[];
-  readonly systemPromptHash: string;
-  costUsd: number;
-  selectedModel?: string;
-};
-
 export type QueryPrecheckedContext = {
   readonly vaultLabel: string;
 };
@@ -286,14 +261,6 @@ const searchArmMultiplier = 2;
 
 const first = <A>(values: readonly A[]) => values[0];
 
-
-const emptyTrace = (): Trace => ({
-  articlesRead: [],
-  sourcesRead: [],
-  searches: [],
-  llmRounds: 0,
-  toolCalls: 0,
-});
 
 const logErrorFields = (error: unknown) => {
   if (error instanceof Error) {
@@ -457,62 +424,6 @@ const queryDocumentsTool = (tags: readonly string[]): LlmToolDefinition => ({
   },
 });
 
-const executionState = (
-  context: QueryContext,
-  messages: readonly LlmMessage[],
-  models: readonly string[],
-  modelIndex: number,
-  startedAt: number,
-): QueryExecutionState => ({
-  userId: context.userId,
-  vaultId: context.vaultId,
-  question: context.question,
-  vaultLabel: context.vaultLabel,
-  mode: context.mode,
-  correlationId: context.correlationId,
-  tools: context.tools,
-  messages: [...messages],
-  turnStart: context.turnStart,
-  webSearchEnabled: context.webSearchEnabled,
-  trace: {
-    articlesRead: [...context.trace.articlesRead],
-    sourcesRead: [...context.trace.sourcesRead],
-    searches: [...context.trace.searches],
-    llmRounds: context.trace.llmRounds,
-    toolCalls: context.trace.toolCalls,
-  },
-  fallbackGenerationIds: [...context.fallbackGenerationIds],
-  systemPromptHash: context.systemPromptHash,
-  costUsd: context.costUsd,
-  selectedModel: context.selectedModel ?? null,
-  models,
-  modelIndex,
-  startedAt,
-});
-
-const contextFromExecution = (state: QueryExecutionState): QueryContext => ({
-  userId: state.userId,
-  vaultId: state.vaultId,
-  question: state.question,
-  vaultLabel: state.vaultLabel,
-  mode: state.mode,
-  correlationId: state.correlationId,
-  tools: state.tools,
-  turnStart: state.turnStart,
-  webSearchEnabled: state.webSearchEnabled,
-  trace: {
-    articlesRead: [...state.trace.articlesRead],
-    sourcesRead: [...state.trace.sourcesRead],
-    searches: [...state.trace.searches],
-    llmRounds: state.trace.llmRounds,
-    toolCalls: state.trace.toolCalls,
-  },
-  fallbackGenerationIds: [...state.fallbackGenerationIds],
-  systemPromptHash: state.systemPromptHash,
-  costUsd: state.costUsd,
-  ...(state.selectedModel === null ? {} : { selectedModel: state.selectedModel }),
-});
-
 const asObjectArgs = (json: string, toolName: string) => {
   try {
     return decodeToolArgs(json);
@@ -641,7 +552,7 @@ export const QueryServiceLive = Layer.effect(
       });
 
     const sourceEvent = (
-      context: QueryContext,
+      context: QueryExecutionState,
       tool: QueryTool,
     ): Effect.Effect<QuerySourceData | undefined> =>
       Effect.gen(function* () {
@@ -752,7 +663,7 @@ export const QueryServiceLive = Layer.effect(
       });
 
     const readDocumentTool = (
-      context: QueryContext,
+      context: QueryExecutionState,
       path: string,
       scope: OriginScope,
       emitSource = true,
@@ -911,7 +822,7 @@ export const QueryServiceLive = Layer.effect(
           });
       });
 
-    const searchContentTool = (context: QueryContext, query: string) =>
+    const searchContentTool = (context: QueryExecutionState, query: string) =>
       Effect.gen(function* () {
         const results = yield* searchRows(context.vaultId, query);
         const source = yield* sourceEvent(context, { name: "search_content", args: { query } });
@@ -930,7 +841,7 @@ export const QueryServiceLive = Layer.effect(
         } satisfies ToolResult;
       });
 
-    const searchInDocumentTool = (context: QueryContext, path: string, query: string) =>
+    const searchInDocumentTool = (context: QueryExecutionState, path: string, query: string) =>
       Effect.gen(function* () {
         const results = yield* searchRows(context.vaultId, query, path);
         const source = yield* sourceEvent(context, { name: "search_in_document", args: { path, query } });
@@ -953,7 +864,7 @@ export const QueryServiceLive = Layer.effect(
       });
 
     const expandContextTool = (
-      context: QueryContext,
+      context: QueryExecutionState,
       path: string,
       rawStart: number,
       rawEnd: number,
@@ -1003,7 +914,7 @@ export const QueryServiceLive = Layer.effect(
         } satisfies ToolResult;
       });
 
-    const linkedArticlesTool = (context: QueryContext, path: string) =>
+    const linkedArticlesTool = (context: QueryExecutionState, path: string) =>
       Effect.gen(function* () {
         if (!path.startsWith("wiki/")) {
           return yield* Effect.fail(
@@ -1064,7 +975,7 @@ export const QueryServiceLive = Layer.effect(
       });
 
     const queryDocumentsToolRun = (
-      context: QueryContext,
+      context: QueryExecutionState,
       args: Extract<QueryTool, { name: "query_documents" }>["args"],
     ) =>
       Effect.gen(function* () {
@@ -1137,7 +1048,7 @@ export const QueryServiceLive = Layer.effect(
       });
 
     const listArticlesToolRun = (
-      context: QueryContext,
+      context: QueryExecutionState,
       args: Extract<QueryTool, { name: "list_articles" }>["args"],
     ) =>
       Effect.gen(function* () {
@@ -1206,7 +1117,7 @@ export const QueryServiceLive = Layer.effect(
         } satisfies ToolResult;
       });
 
-    const addUsageCost = (context: QueryContext, usage: { readonly cost?: number } | undefined) => {
+    const addUsageCost = (context: QueryExecutionState, usage: { readonly cost?: number } | undefined) => {
       if (usage?.cost === undefined) {
         return false;
       }
@@ -1222,7 +1133,7 @@ export const QueryServiceLive = Layer.effect(
     const errorSafely = (event: string, fields: SafeLogFields) =>
       logger.error(event, fields).pipe(Effect.catchCause(() => Effect.void));
 
-    const addFallbackGenerationCosts = (context: QueryContext) =>
+    const addFallbackGenerationCosts = (context: QueryExecutionState) =>
       Effect.forEach(
         context.fallbackGenerationIds,
         (generationId) =>
@@ -1245,14 +1156,14 @@ export const QueryServiceLive = Layer.effect(
         { discard: true },
       );
 
-    const addGenerationCostFallback = (context: QueryContext, generationId: string | undefined) => {
+    const addGenerationCostFallback = (context: QueryExecutionState, generationId: string | undefined) => {
       if (generationId !== undefined) {
         context.fallbackGenerationIds.push(generationId);
       }
     };
 
     const extractWebFacts = (
-      context: QueryContext,
+      context: QueryExecutionState,
       query: string,
       results: readonly ParallelSearchResult[],
     ) =>
@@ -1298,7 +1209,7 @@ export const QueryServiceLive = Layer.effect(
         ),
       );
 
-    const webSearchToolRun = (context: QueryContext, query: string) =>
+    const webSearchToolRun = (context: QueryExecutionState, query: string) =>
       Effect.gen(function* () {
         const source = yield* sourceEvent(context, { name: "web_search", args: { query } });
         return yield* Effect.gen(function* () {
@@ -1348,7 +1259,7 @@ export const QueryServiceLive = Layer.effect(
       });
 
     const dispatchTool = (
-      context: QueryContext,
+      context: QueryExecutionState,
       tool: QueryTool,
     ): Effect.Effect<ToolResult, unknown> => {
       switch (tool.name) {
@@ -1372,7 +1283,7 @@ export const QueryServiceLive = Layer.effect(
     };
 
     const runModelRound = (
-      context: QueryContext,
+      context: QueryExecutionState,
       model: string,
       messages: LlmMessage[],
       emit: (payload: QueryStreamPayload) => Effect.Effect<void>,
@@ -1425,7 +1336,7 @@ export const QueryServiceLive = Layer.effect(
       emit: (payload: QueryStreamPayload) => Effect.Effect<void>,
     ): Effect.Effect<QueryModelAttemptResult, unknown> =>
       Effect.gen(function* () {
-        const context = contextFromExecution(input);
+        const context = input;
         const model = input.models[input.modelIndex];
         if (model === undefined) {
           return {
@@ -1434,7 +1345,7 @@ export const QueryServiceLive = Layer.effect(
             error: sanitizedStreamError,
           } satisfies QueryModelAttemptResult;
         }
-        const messages = [...input.messages];
+        const messages = context.messages;
         context.selectedModel = model;
         context.trace.llmRounds += 1;
         yield* logger.info("query.stream_tool_round_start", {
@@ -1464,13 +1375,7 @@ export const QueryServiceLive = Layer.effect(
               if (error instanceof MalformedToolArgs) {
                 return {
                   kind: "failed",
-                  state: executionState(
-                    context,
-                    messages,
-                    input.models,
-                    input.modelIndex,
-                    input.startedAt,
-                  ),
+                  state: context,
                   error: error.message,
                 } satisfies QueryModelAttemptResult;
               }
@@ -1487,13 +1392,7 @@ export const QueryServiceLive = Layer.effect(
             });
             return {
               kind: "tool_calls",
-              state: executionState(
-                context,
-                messages,
-                input.models,
-                input.modelIndex,
-                input.startedAt,
-              ),
+              state: context,
               toolCalls,
             } satisfies QueryModelAttemptResult;
           }
@@ -1502,13 +1401,7 @@ export const QueryServiceLive = Layer.effect(
           }
           return {
             kind: "done",
-            state: executionState(
-              context,
-              messages,
-              input.models,
-              input.modelIndex,
-              input.startedAt,
-            ),
+            state: context,
           } satisfies QueryModelAttemptResult;
         }).pipe(
           Effect.catchCause((cause) => {
@@ -1516,13 +1409,7 @@ export const QueryServiceLive = Layer.effect(
               return Effect.failCause(cause);
             }
             const error = causeError(cause);
-            const nextState = executionState(
-              context,
-              messages,
-              input.models,
-              input.modelIndex,
-              input.startedAt,
-            );
+            const nextState = context;
             if (isRetryableModelError(error)) {
               return warnSafely("query.stream_retryable", {
                 correlation_id: context.correlationId,
@@ -1558,8 +1445,8 @@ export const QueryServiceLive = Layer.effect(
 
     const executeTool = (input: QueryExecutionState, toolCall: QueryPreparedToolCall) =>
       Effect.gen(function* () {
-        const context = contextFromExecution(input);
-        const messages = [...input.messages];
+        const context = input;
+        const messages = context.messages;
         context.trace.toolCalls += 1;
         const result = yield* Effect.gen(function* () {
           const tool = yield* decodeQueryTool(toolCall).pipe(
@@ -1588,19 +1475,13 @@ export const QueryServiceLive = Layer.effect(
           content: result.content,
         });
         return {
-          state: executionState(
-            context,
-            messages,
-            input.models,
-            input.modelIndex,
-            input.startedAt,
-          ),
+          state: context,
           ...(result.source === undefined ? {} : { source: result.source }),
         } satisfies QueryToolExecutionResult;
       });
 
     const buildOriginMessages = (
-      context: QueryContext,
+      context: QueryExecutionState,
       originPath: string,
       originScope: OriginScope,
     ) =>
@@ -1640,6 +1521,7 @@ export const QueryServiceLive = Layer.effect(
       vaultId: Uuid,
       input: QueryRequest,
       correlationId: string,
+      startedAt: number,
       prechecked: QueryPrecheckedContext,
       prior: readonly LlmMessage[],
     ) =>
@@ -1664,7 +1546,8 @@ export const QueryServiceLive = Layer.effect(
         );
         const systemPromptHash = promptContentHash(systemPrompt);
         yield* recordPrompt(db, systemPromptHash, systemPrompt);
-        const context: QueryContext = {
+        const requestedModel = input.model || appConfig.queryModel;
+        const context: QueryExecutionState = {
           userId,
           vaultId,
           question: input.question,
@@ -1674,12 +1557,26 @@ export const QueryServiceLive = Layer.effect(
           tools,
           turnStart: 1 + prior.length,
           webSearchEnabled,
-          trace: emptyTrace(),
+          trace: {
+            articlesRead: [],
+            sourcesRead: [],
+            searches: [],
+            llmRounds: 0,
+            toolCalls: 0,
+          },
           fallbackGenerationIds: [],
           systemPromptHash,
           costUsd: 0,
+          selectedModel: null,
+          models: [
+            requestedModel,
+            ...appConfig.queryFallbackModels.filter((model) => model !== requestedModel),
+          ],
+          modelIndex: 0,
+          startedAt,
+          messages: [{ role: "system", content: systemPrompt }],
         };
-        const messages: LlmMessage[] = [{ role: "system", content: systemPrompt }];
+        const messages = context.messages;
         if (
           prior.length === 0 &&
           input.origin_path !== undefined &&
@@ -1691,18 +1588,12 @@ export const QueryServiceLive = Layer.effect(
         }
         messages.push(...prior);
         messages.push({ role: "user", content: input.question });
-        return { context, messages };
+        return context;
       });
 
-    const finalize = (
-      context: QueryContext | undefined,
-      startedAt: number,
-      correlationId: string,
-      userId: Uuid,
-      vaultId: Uuid,
-    ) =>
+    const finalize = (context: QueryExecutionState) =>
       Effect.gen(function* () {
-        if (context !== undefined && context.costUsd > 0) {
+        if (context.costUsd > 0) {
           yield* db.query((d) => d
             .insert(llmCostEvents)
             .values({
@@ -1727,19 +1618,19 @@ export const QueryServiceLive = Layer.effect(
             );
         }
         yield* logger.info("query.stream_finalize", {
-          correlation_id: context?.correlationId ?? correlationId,
-          user_id: context?.userId ?? userId,
-          vault_id: context?.vaultId ?? vaultId,
-          mode: context?.mode,
-          model: context?.selectedModel,
-          web_search: context?.webSearchEnabled,
-          articles_read: context?.trace.articlesRead.length ?? 0,
-          sources_read: context?.trace.sourcesRead.length ?? 0,
-          searches: context?.trace.searches.length ?? 0,
-          llm_rounds: context?.trace.llmRounds ?? 0,
-          tool_calls: context?.trace.toolCalls ?? 0,
-          cost_usd: Number((context?.costUsd ?? 0).toFixed(6)),
-          duration_ms: Date.now() - startedAt,
+          correlation_id: context.correlationId,
+          user_id: context.userId,
+          vault_id: context.vaultId,
+          mode: context.mode,
+          model: context.selectedModel,
+          web_search: context.webSearchEnabled,
+          articles_read: context.trace.articlesRead.length,
+          sources_read: context.trace.sourcesRead.length,
+          searches: context.trace.searches.length,
+          llm_rounds: context.trace.llmRounds,
+          tool_calls: context.trace.toolCalls,
+          cost_usd: Number(context.costUsd.toFixed(6)),
+          duration_ms: Date.now() - context.startedAt,
         });
       });
 
@@ -1754,11 +1645,12 @@ export const QueryServiceLive = Layer.effect(
         const startedAt = Date.now();
         const correlationId = `q-${randomUUID()}`;
         return yield* Effect.gen(function* () {
-          const { context, messages } = yield* setupContext(
+          const context = yield* setupContext(
             userId,
             vaultId,
             input,
             correlationId,
+            startedAt,
             prechecked,
             prior,
           );
@@ -1770,15 +1662,7 @@ export const QueryServiceLive = Layer.effect(
             question_length: input.question.length,
             web_search: context.webSearchEnabled,
           });
-          const requestedModel =
-            input.model !== undefined && input.model.length > 0
-              ? input.model
-              : appConfig.queryModel;
-          const models = [
-            requestedModel,
-            ...appConfig.queryFallbackModels.filter((model) => model !== requestedModel),
-          ];
-          return executionState(context, messages, models, 0, startedAt);
+          return context;
         }).pipe(
           Effect.catchCause((cause) =>
             isInterruptOnly(cause)
@@ -1799,15 +1683,8 @@ export const QueryServiceLive = Layer.effect(
       runTool: executeTool,
       finalizeExecution: (state) =>
         Effect.gen(function* () {
-          const context = contextFromExecution(state);
-          yield* addFallbackGenerationCosts(context);
-          yield* finalize(
-            context,
-            state.startedAt,
-            state.correlationId,
-            state.userId,
-            state.vaultId,
-          );
+          yield* addFallbackGenerationCosts(state);
+          yield* finalize(state);
         }).pipe(
           Effect.catchCause((cause) =>
             isInterruptOnly(cause)
