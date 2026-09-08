@@ -1,5 +1,5 @@
 import { sql } from "drizzle-orm";
-import type { JobResponse, PipelineProgressStep, SessionId, Uuid } from "@great-minds/domain";
+import type { JobResponse, PipelineProgressStep, ReplySnapshot, SessionId, Uuid } from "@great-minds/domain";
 import {
   bigint,
   boolean,
@@ -492,10 +492,11 @@ export const replies = pgTable(
     vaultId: uuidColumn("vault_id").notNull(),
     userId: uuidColumn("user_id").notNull(),
     sessionId: sessionIdColumn("session_id"),
-    kind: text("kind").notNull(),
-    status: text("status").notNull(),
+    kind: text("kind").$type<ReplySnapshot["kind"]>().notNull(),
+    status: text("status").$type<ReplySnapshot["status"]>().notNull(),
     answer: text("answer").default("").notNull(),
     sources: jsonb("sources")
+      .$type<ReplySnapshot["sources"]>()
       .default(sql`'[]'::jsonb`)
       .notNull(),
     error: text("error"),

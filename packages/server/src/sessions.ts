@@ -77,24 +77,8 @@ const sessionPath = (sessionId: SessionId, extension: "jsonl" | "md") =>
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
 
-const normalizeOrigin = (origin: SessionOrigin | null | undefined): SessionOrigin | null =>
-  origin === undefined || origin === null
-    ? null
-    : {
-        doc_path: origin.doc_path,
-        origin_scope: origin.origin_scope,
-        anchor: origin.anchor,
-        paragraph: origin.paragraph,
-        paragraph_index: origin.paragraph_index,
-      };
-
 const latestMetaSuffix = (events: readonly StoredSessionEvent[]) => {
-  let latestMetaIndex = -1;
-  for (const [index, event] of events.entries()) {
-    if (event.type === "meta") {
-      latestMetaIndex = index;
-    }
-  }
+  const latestMetaIndex = events.findLastIndex((event) => event.type === "meta");
   return latestMetaIndex <= 0 ? events : events.slice(latestMetaIndex);
 };
 
@@ -146,7 +130,7 @@ const sessionOverview = (
   created_at: row.createdAt,
   updated_at: row.updatedAt,
   user_id: row.userId,
-  origin: normalizeOrigin(decodeSessionOrigin(row.origin)),
+  origin: decodeSessionOrigin(row.origin),
   origin_title: originTitle,
 });
 
@@ -625,7 +609,7 @@ export const SessionsServiceLive = Layer.effect(
           const sessionId = yield* newSessionId();
           const metaTs = yield* clock.now;
           const nodeTs = yield* clock.now;
-          const origin = normalizeOrigin(input.origin);
+          const origin = input.origin ?? null;
           const meta: SessionMetaEvent = {
             type: "meta",
             id: sessionId,
@@ -768,7 +752,7 @@ export const SessionsServiceLive = Layer.effect(
           if ((exchange.answer ?? "").trim().length === 0) {
             return yield* new BadRequest({ detail: "Exchange has no answer yet" });
           }
-          const sessionOrigin = normalizeOrigin(findMeta(events)?.origin);
+          const sessionOrigin = findMeta(events)?.origin ?? null;
 
           if (scope.role === "owner") {
             const result = yield* ingest.ingestSessionExchange(
@@ -829,7 +813,7 @@ export const SessionsServiceLive = Layer.effect(
             const originTitle = yield* originTitleFor(
               userId,
               vaultId,
-              normalizeOrigin(decodeSessionOrigin(row.origin)),
+              decodeSessionOrigin(row.origin),
             );
             overviews.push(sessionOverview(row, originTitle));
           }
@@ -869,7 +853,7 @@ export const SessionsServiceLive = Layer.effect(
             const originTitle = yield* originTitleFor(
               userId,
               vaultId,
-              normalizeOrigin(decodeSessionOrigin(row.origin)),
+              decodeSessionOrigin(row.origin),
             );
             details.push({
               session: sessionOverview(row, originTitle),
@@ -885,11 +869,7 @@ export const SessionsServiceLive = Layer.effect(
           const content = yield* readText(vaultId, sessionId, "jsonl", "Session not found");
           const events = yield* parseEvents(sessionId, content, { isolateLatestMeta: true });
           const projected = projectSession(events);
-          const origin = normalizeOrigin(
-            projected.find(
-              (event): event is SessionMetaEvent => event.type === "meta",
-            )?.origin,
-          );
+          const origin = projected.find((event) => event.type === "meta")?.origin ?? null;
           return {
             id: sessionId,
             events: projected,

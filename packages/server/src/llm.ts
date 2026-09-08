@@ -2,55 +2,29 @@ import { Context, Effect, Layer, Schema } from "effect";
 
 import { AppConfig, optionalRedactedValue } from "./config.ts";
 
-export type LlmTextContentPart = {
-  readonly type: "text";
-  readonly text: string;
-  readonly cache_control?: { readonly type: "ephemeral" };
-};
-
-export type LlmTextMessage = {
-  readonly role: "system" | "user" | "assistant";
-  readonly content: string | null | readonly LlmTextContentPart[];
-  readonly tool_calls?: readonly LlmAssistantToolCall[];
-};
-
-export type LlmToolMessage = {
-  readonly role: "tool";
-  readonly tool_call_id: string;
-  readonly content: string;
-};
-
-export type LlmMessage = LlmTextMessage | LlmToolMessage;
-
-export type LlmToolDefinition = {
-  readonly type: "function";
-  readonly function: {
-    readonly name: string;
-    readonly description: string;
-    readonly parameters: Record<string, unknown>;
-  };
-};
-
-export type LlmAssistantToolCall = {
-  readonly id: string;
-  readonly type: "function";
-  readonly function: {
-    readonly name: string;
-    readonly arguments: string;
-  };
-};
+export const LlmToolDefinitionSchema = Schema.Struct({
+  type: Schema.Literal("function"),
+  function: Schema.Struct({
+    name: Schema.String,
+    description: Schema.String,
+    parameters: Schema.Record(Schema.String, Schema.Unknown),
+  }),
+});
+export type LlmToolDefinition = typeof LlmToolDefinitionSchema.Type;
 
 export const LlmTextContentPartSchema = Schema.Struct({
   type: Schema.Literal("text"),
   text: Schema.String,
   cache_control: Schema.optionalKey(Schema.Struct({ type: Schema.Literal("ephemeral") })),
 });
+export type LlmTextContentPart = typeof LlmTextContentPartSchema.Type;
 
 export const LlmAssistantToolCallSchema = Schema.Struct({
   id: Schema.String,
   type: Schema.Literal("function"),
   function: Schema.Struct({ name: Schema.String, arguments: Schema.String }),
 });
+export type LlmAssistantToolCall = typeof LlmAssistantToolCallSchema.Type;
 
 export const LlmMessageSchema = Schema.Union([
   Schema.Struct({
@@ -68,6 +42,9 @@ export const LlmMessageSchema = Schema.Union([
     content: Schema.String,
   }),
 ]);
+export type LlmMessage = typeof LlmMessageSchema.Type;
+export type LlmToolMessage = Extract<LlmMessage, { role: "tool" }>;
+export type LlmTextMessage = Exclude<LlmMessage, LlmToolMessage>;
 
 export type LlmToolCallDelta = {
   readonly index: number;
@@ -290,11 +267,7 @@ const postChat = async (apiUrl: string, apiKey: string, body: unknown) => {
 };
 
 const retryAfterMs = (headers: Headers) => {
-  const header = headers.get("retry-after") ?? headers.get("Retry-After");
-  if (header === null || header.length === 0) {
-    return undefined;
-  }
-  const seconds = Number.parseFloat(header);
+  const seconds = Number.parseFloat(headers.get("retry-after") ?? "");
   return Number.isFinite(seconds) ? Math.max(0, seconds * 1000) : undefined;
 };
 

@@ -17,7 +17,7 @@ import * as WorkflowEngine from "effect/unstable/workflow/WorkflowEngine";
 import { cancelCompileWorkflow } from "./compile-intents.ts";
 import { AppConfig } from "./config.ts";
 import { FileIngestBatches } from "./file-ingest-batches.ts";
-import { jobResponse, jobState } from "./job-response.ts";
+import { jobResponse } from "./job-response.ts";
 import { pageEnvelope, oneTotal } from "./pagination.ts";
 import { PipelineRunsService } from "./pipeline-runs.ts";
 import { pollingSse } from "./polling-sse.ts";
@@ -28,21 +28,18 @@ import { workflowExecutionId } from "./workflow-engine.ts";
 
 const terminalStatuses = new Set(["completed", "failed", "cancelled"]);
 
-const progressSnapshot = (row: typeof pipelineRuns.$inferSelect): JobProgressSnapshot => {
-  const state = jobState(row);
-  return {
-    id: row.id,
-    vault_id: row.vaultId,
-    trigger: state.trigger,
-    job_status: state.status,
-    phase: row.currentPhase,
-    phase_status: row.phaseStatus,
-    steps: state.progressSteps,
-    ...(row.error === null || row.error.length === 0 ? {} : { error: row.error }),
-    updated_at: row.updatedAt,
-    completed_at: row.completedAt,
-  };
-};
+const progressSnapshot = (row: typeof pipelineRuns.$inferSelect): JobProgressSnapshot => ({
+  id: row.id,
+  vault_id: row.vaultId,
+  trigger: row.trigger,
+  job_status: row.status,
+  phase: row.currentPhase,
+  phase_status: row.phaseStatus,
+  steps: row.progressSteps,
+  ...(row.error ? { error: row.error } : {}),
+  updated_at: row.updatedAt,
+  completed_at: row.completedAt,
+});
 
 const encodeProgressSnapshot = Schema.encodeSync(Schema.fromJsonString(JobProgressSnapshotSchema));
 

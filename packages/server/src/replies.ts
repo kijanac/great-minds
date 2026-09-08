@@ -49,8 +49,6 @@ const ambiguousReplyError =
 const flushIntervalMs = 125;
 
 const decodeCreateReply = Schema.decodeUnknownEffect(CreateReplyRequestSchema);
-const decodeReplyKind = Schema.decodeUnknownSync(ReplySnapshotSchema.fields.kind);
-const decodeReplyStatus = Schema.decodeUnknownSync(ReplySnapshotSchema.fields.status);
 const encodeReplySnapshot = Schema.encodeSync(Schema.fromJsonString(ReplySnapshotSchema));
 
 const ReplyStepControl = Schema.Struct({
@@ -91,7 +89,6 @@ const ReplyCheckpoint = Schema.Struct({
 type ReplyCheckpoint = typeof ReplyCheckpoint.Type;
 
 const decodeReplyCheckpoint = Schema.decodeUnknownSync(ReplyCheckpoint);
-const decodeReplySources = Schema.decodeUnknownSync(Schema.Array(ReplySourceSchema));
 const checkpointPath = (replyId: Uuid) => `operations/replies/${replyId}.json`;
 
 const modelQuestion = (input: CreateReplyRequest, threadRoot: boolean): string => {
@@ -289,10 +286,10 @@ export const RepliesServiceLive = Layer.effect(
     const snapshot = (row: typeof replies.$inferSelect): ReplySnapshot => ({
       reply_id: row.id,
       session_id: row.sessionId,
-      kind: decodeReplyKind(row.kind),
-      status: decodeReplyStatus(row.status),
+      kind: row.kind,
+      status: row.status,
       answer: row.answer,
-      sources: decodeReplySources(row.sources),
+      sources: row.sources,
       error: row.error,
       version: row.version,
       created_at: row.createdAt,
@@ -499,7 +496,7 @@ export const RepliesServiceLive = Layer.effect(
       Effect.gen(function* () {
         const row = yield* readReplyById(replyId);
         if (row === undefined || row.status !== "running") return;
-        const sources = decodeReplySources(row.sources).filter((source) => source.pending !== true);
+        const sources = row.sources.filter((source) => source.pending !== true);
         yield* markFailed(replyId, error, row.answer, sources);
       });
 
@@ -822,7 +819,7 @@ export const RepliesServiceLive = Layer.effect(
         if (row.status === "running") {
           const accumulator =
             checkpoint === undefined
-              ? { answer: row.answer, sources: decodeReplySources(row.sources) }
+              ? { answer: row.answer, sources: row.sources }
               : checkpoint.accumulator;
           const settledSources = accumulator.sources.filter((source) => source.pending !== true);
           if (outcome === "done") {

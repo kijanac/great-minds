@@ -31,6 +31,7 @@ import {
   isRetryableModelError,
   LanguageModel,
   LlmMessageSchema,
+  LlmToolDefinitionSchema,
   type LlmMessage,
   type LlmToolDefinition,
   stripJsonFence,
@@ -73,15 +74,6 @@ type ToolCallState = {
   readonly arguments: string;
 };
 
-const LlmToolDefinitionSchema = Schema.Struct({
-  type: Schema.Literal("function"),
-  function: Schema.Struct({
-    name: Schema.String,
-    description: Schema.String,
-    parameters: Schema.Record(Schema.String, Schema.Unknown),
-  }),
-});
-
 const QueryTraceSchema = Schema.Struct({
   articlesRead: Schema.Array(Schema.String),
   sourcesRead: Schema.Array(Schema.String),
@@ -121,44 +113,90 @@ export const QueryPreparedToolCall = Schema.Struct({
 });
 export type QueryPreparedToolCall = typeof QueryPreparedToolCall.Type;
 
-const ToolInteger = Schema.Union([Schema.Int, Schema.NumberFromString.pipe(Schema.check(Schema.isInt()))]);
+const ToolInteger = Schema.Union([Schema.Int, Schema.NumberFromString]).pipe(
+  Schema.decodeTo(Schema.Int),
+);
+
+const toolArgs = {
+  read_document: Schema.Struct({
+    path: Schema.NonEmptyString.annotate({
+      description:
+        "Document path, e.g. wiki/capitalism.md or raw/texts/lenin/works/1893/market/02.md",
+    }),
+  }),
+  expand_context: Schema.Struct({
+    path: Schema.NonEmptyString.annotate({
+      description:
+        "Document path from a search result or outline, e.g. raw/texts/lenin/works/1916/imperialism/03.md",
+    }),
+    start: ToolInteger.annotate({ description: "First chunk index to read (inclusive)" }),
+    end: ToolInteger.annotate({ description: "Last chunk index to read (inclusive)" }),
+  }),
+  linked_articles: Schema.Struct({
+    path: Schema.NonEmptyString.annotate({
+      description:
+        "Wiki article path, e.g. wiki/imperialism.md (from a search hit or another article's links)",
+    }),
+  }),
+  search_content: Schema.Struct({
+    query: Schema.NonEmptyString.annotate({ description: "Search term or phrase" }),
+  }),
+  list_articles: Schema.Struct({
+    contains: Schema.optionalKey(
+      Schema.String.annotate({
+        description:
+          "Literal substring to match in an article's title/precis (not semantic — use search_content for meaning-based discovery)",
+      }),
+    ),
+    sort: Schema.optionalKey(
+      Schema.Literals(["central", "recent", "alpha"]).annotate({
+        description:
+          "central = most-linked first (best for orientation), recent = newest first, alpha = A–Z. Default central.",
+      }),
+    ),
+    page: Schema.optionalKey(
+      ToolInteger.annotate({ description: "1-based page number (default 1)" }),
+    ),
+  }),
+  search_in_document: Schema.Struct({
+    path: Schema.NonEmptyString.annotate({
+      description:
+        "Document path to search within, e.g. raw/texts/lenin/works/1916/imperialism/03.md",
+    }),
+    query: Schema.NonEmptyString.annotate({ description: "Search term or phrase" }),
+  }),
+  web_search: Schema.Struct({
+    query: Schema.NonEmptyString.annotate({ description: "Web search query" }),
+  }),
+  query_documents: Schema.Struct({
+    tags: Schema.optionalKey(
+      Schema.Array(Schema.String).annotate({ description: "Filter by tags (all must match)" }),
+    ),
+    author: Schema.optionalKey(
+      Schema.String.annotate({ description: "Filter by author name (partial match)" }),
+    ),
+    genre: Schema.optionalKey(
+      Schema.String.annotate({ description: "Filter by genre (e.g. theoretical, polemical)" }),
+    ),
+    date_gte: Schema.optionalKey(
+      Schema.String.annotate({ description: "Published on or after this date/year" }),
+    ),
+    date_lte: Schema.optionalKey(
+      Schema.String.annotate({ description: "Published on or before this date/year" }),
+    ),
+    limit: Schema.optionalKey(Schema.Int.annotate({ description: "Max results (default 20)" })),
+  }),
+};
 
 const QueryTool = Schema.Union([
-  Schema.Struct({
-    name: Schema.Literals(["read_document", "linked_articles"]),
-    args: Schema.Struct({ path: Schema.NonEmptyString }),
-  }),
-  Schema.Struct({
-    name: Schema.Literal("expand_context"),
-    args: Schema.Struct({ path: Schema.NonEmptyString, start: ToolInteger, end: ToolInteger }),
-  }),
-  Schema.Struct({
-    name: Schema.Literals(["search_content", "web_search"]),
-    args: Schema.Struct({ query: Schema.NonEmptyString }),
-  }),
-  Schema.Struct({
-    name: Schema.Literal("search_in_document"),
-    args: Schema.Struct({ path: Schema.NonEmptyString, query: Schema.NonEmptyString }),
-  }),
-  Schema.Struct({
-    name: Schema.Literal("query_documents"),
-    args: Schema.Struct({
-      tags: Schema.optionalKey(Schema.Array(Schema.String)),
-      author: Schema.optionalKey(Schema.String),
-      genre: Schema.optionalKey(Schema.String),
-      date_gte: Schema.optionalKey(Schema.String),
-      date_lte: Schema.optionalKey(Schema.String),
-      limit: Schema.optionalKey(Schema.Int),
-    }),
-  }),
-  Schema.Struct({
-    name: Schema.Literal("list_articles"),
-    args: Schema.Struct({
-      contains: Schema.optionalKey(Schema.String),
-      sort: Schema.optionalKey(Schema.Literals(["recent", "alpha", "central"])),
-      page: Schema.optionalKey(ToolInteger),
-    }),
-  }),
+  Schema.Struct({ name: Schema.Literal("read_document"), args: toolArgs.read_document }),
+  Schema.Struct({ name: Schema.Literal("expand_context"), args: toolArgs.expand_context }),
+  Schema.Struct({ name: Schema.Literal("linked_articles"), args: toolArgs.linked_articles }),
+  Schema.Struct({ name: Schema.Literal("search_content"), args: toolArgs.search_content }),
+  Schema.Struct({ name: Schema.Literal("list_articles"), args: toolArgs.list_articles }),
+  Schema.Struct({ name: Schema.Literal("search_in_document"), args: toolArgs.search_in_document }),
+  Schema.Struct({ name: Schema.Literal("web_search"), args: toolArgs.web_search }),
+  Schema.Struct({ name: Schema.Literal("query_documents"), args: toolArgs.query_documents }),
 ]);
 type QueryTool = typeof QueryTool.Type;
 const decodeQueryTool = Schema.decodeUnknownEffect(QueryTool);
@@ -201,7 +239,6 @@ type QueryContext = {
   readonly mode: "query" | "btw";
   readonly correlationId: string;
   readonly tools: readonly LlmToolDefinition[];
-  readonly baseMessages: readonly LlmMessage[];
   readonly turnStart: number;
   readonly webSearchEnabled: boolean;
   readonly trace: Trace;
@@ -349,17 +386,7 @@ const baseTools: readonly LlmToolDefinition[] = [
       name: "read_document",
       description:
         "Use to read a document you already have the `path` for. A small document is returned in full; a LARGE document returns only a section OUTLINE, not its text. If you have a query and the document is large, do NOT use this to read it — use search_in_document(path, query) to jump to the relevant passages. Read an outlined section with expand_context(path, start, end).",
-      parameters: {
-        type: "object",
-        properties: {
-          path: {
-            type: "string",
-            description:
-              "Document path, e.g. wiki/capitalism.md or raw/texts/lenin/works/1893/market/02.md",
-          },
-        },
-        required: ["path"],
-      },
+      parameters: Schema.toJsonSchemaDocument(Schema.toType(toolArgs.read_document)).schema,
     },
   },
   {
@@ -368,19 +395,7 @@ const baseTools: readonly LlmToolDefinition[] = [
       name: "expand_context",
       description:
         "Use to fetch a specific `start`-`end` chunk range you ALREADY obtained from a search hit or a read_document outline. Do NOT use it to explore a document — guessing a range (e.g. chunks 1-10) wastes turns; run search_in_document(path, query) first and expand only the chunks it returns.",
-      parameters: {
-        type: "object",
-        properties: {
-          path: {
-            type: "string",
-            description:
-              "Document path from a search result or outline, e.g. raw/texts/lenin/works/1916/imperialism/03.md",
-          },
-          start: { type: "integer", description: "First chunk index to read (inclusive)" },
-          end: { type: "integer", description: "Last chunk index to read (inclusive)" },
-        },
-        required: ["path", "start", "end"],
-      },
+      parameters: Schema.toJsonSchemaDocument(Schema.toType(toolArgs.expand_context)).schema,
     },
   },
   {
@@ -389,17 +404,7 @@ const baseTools: readonly LlmToolDefinition[] = [
       name: "linked_articles",
       description:
         "Use when you have a wiki article `path` and want its neighbors in the citation graph — outgoing and incoming links — to follow related articles without reading their bodies. Returns linked titles + paths only. Do NOT use it to find passages or do topical search (use search_content / search_in_document). Pass a wiki article path, e.g. wiki/imperialism.md.",
-      parameters: {
-        type: "object",
-        properties: {
-          path: {
-            type: "string",
-            description:
-              "Wiki article path, e.g. wiki/imperialism.md (from a search hit or another article's links)",
-          },
-        },
-        required: ["path"],
-      },
+      parameters: Schema.toJsonSchemaDocument(Schema.toType(toolArgs.linked_articles)).schema,
     },
   },
   {
@@ -408,13 +413,7 @@ const baseTools: readonly LlmToolDefinition[] = [
       name: "search_content",
       description:
         "Use FIRST only when you don't yet know which document holds the answer — hybrid search across the WHOLE knowledge base (all raw sources + all wiki articles), matching title, precis, author, and body text. Returns ranked excerpts each with a `path` and `chunk_index`. Once you have a specific path, do NOT search here again — use search_in_document to search inside it, or read_document to read it.",
-      parameters: {
-        type: "object",
-        properties: {
-          query: { type: "string", description: "Search term or phrase" },
-        },
-        required: ["query"],
-      },
+      parameters: Schema.toJsonSchemaDocument(Schema.toType(toolArgs.search_content)).schema,
     },
   },
   {
@@ -423,23 +422,7 @@ const baseTools: readonly LlmToolDefinition[] = [
       name: "list_articles",
       description:
         "Use to BROWSE the wiki article index — the synthesized encyclopedia — by title and path, most-linked first (sort=central). Reach for it FIRST to orient on a concept, person, work, or '-ism', or to find a known article's real path before reading it. Returns titles + paths only, no body text. `contains` is a literal title/precis substring filter — for topical or fuzzy discovery use search_content instead.",
-      parameters: {
-        type: "object",
-        properties: {
-          contains: {
-            type: "string",
-            description:
-              "Literal substring to match in an article's title/precis (not semantic — use search_content for meaning-based discovery)",
-          },
-          sort: {
-            type: "string",
-            enum: ["central", "recent", "alpha"],
-            description:
-              "central = most-linked first (best for orientation), recent = newest first, alpha = A–Z. Default central.",
-          },
-          page: { type: "integer", description: "1-based page number (default 1)" },
-        },
-      },
+      parameters: Schema.toJsonSchemaDocument(Schema.toType(toolArgs.list_articles)).schema,
     },
   },
   {
@@ -448,18 +431,7 @@ const baseTools: readonly LlmToolDefinition[] = [
       name: "search_in_document",
       description:
         "Use when you HAVE a document `path` and want the passages of THAT document relevant to a query — hybrid search scoped to one document. ALWAYS prefer this over read_document + expand_context for any document large enough to return an outline: it finds the relevant chunks instead of making you guess a range. Returns matching chunks with indexes for expand_context(path, start, end).",
-      parameters: {
-        type: "object",
-        properties: {
-          path: {
-            type: "string",
-            description:
-              "Document path to search within, e.g. raw/texts/lenin/works/1916/imperialism/03.md",
-          },
-          query: { type: "string", description: "Search term or phrase" },
-        },
-        required: ["path", "query"],
-      },
+      parameters: Schema.toJsonSchemaDocument(Schema.toType(toolArgs.search_in_document)).schema,
     },
   },
 ];
@@ -470,13 +442,7 @@ const webSearchTool: LlmToolDefinition = {
     name: "web_search",
     description:
       "Search the open web for facts the knowledge base does not contain — recent events, dates, figures, names. Use ONLY after the knowledge base has come up empty on a factual point; the knowledge base remains the source for analysis and interpretation. Results are EXTERNAL: cite them as [title](url) and make clear they are from the web, not the knowledge base.",
-    parameters: {
-      type: "object",
-      properties: {
-        query: { type: "string", description: "Web search query" },
-      },
-      required: ["query"],
-    },
+    parameters: Schema.toJsonSchemaDocument(Schema.toType(toolArgs.web_search)).schema,
   },
 };
 
@@ -487,37 +453,9 @@ const queryDocumentsTool = (tags: readonly string[]): LlmToolDefinition => ({
     description:
       "Use when the question names a STRUCTURED attribute of raw sources — a tag, author, genre, or date/date-range (e.g. 'sources by X', 'everything tagged Y', 'written after Z'). Filters by metadata, not text content. Do NOT use it for topical/conceptual questions (use search_content), and do NOT use it for wiki articles (use list_articles). " +
       (tags.length > 0 ? `Available tags: ${tags.join(", ")}.` : "No tags yet."),
-    parameters: {
-      type: "object",
-      properties: {
-        tags: {
-          type: "array",
-          items: { type: "string" },
-          description: "Filter by tags (all must match)",
-        },
-        author: { type: "string", description: "Filter by author name (partial match)" },
-        genre: { type: "string", description: "Filter by genre (e.g. theoretical, polemical)" },
-        date_gte: { type: "string", description: "Published on or after this date/year" },
-        date_lte: { type: "string", description: "Published on or before this date/year" },
-        limit: { type: "integer", description: "Max results (default 20)" },
-      },
-    },
+    parameters: Schema.toJsonSchemaDocument(Schema.toType(toolArgs.query_documents)).schema,
   },
 });
-
-const cloneMessages = (messages: readonly LlmMessage[]): LlmMessage[] =>
-  messages.map((message) => {
-    if (message.role === "tool") {
-      return { ...message };
-    }
-    return {
-      ...message,
-      tool_calls: message.tool_calls?.map((toolCall) => ({
-        ...toolCall,
-        function: { ...toolCall.function },
-      })),
-    };
-  });
 
 const executionState = (
   context: QueryContext,
@@ -532,8 +470,8 @@ const executionState = (
   vaultLabel: context.vaultLabel,
   mode: context.mode,
   correlationId: context.correlationId,
-  tools: [...context.tools],
-  messages: cloneMessages(messages),
+  tools: context.tools,
+  messages: [...messages],
   turnStart: context.turnStart,
   webSearchEnabled: context.webSearchEnabled,
   trace: {
@@ -547,7 +485,7 @@ const executionState = (
   systemPromptHash: context.systemPromptHash,
   costUsd: context.costUsd,
   selectedModel: context.selectedModel ?? null,
-  models: [...models],
+  models,
   modelIndex,
   startedAt,
 });
@@ -559,8 +497,7 @@ const contextFromExecution = (state: QueryExecutionState): QueryContext => ({
   vaultLabel: state.vaultLabel,
   mode: state.mode,
   correlationId: state.correlationId,
-  tools: [...state.tools],
-  baseMessages: cloneMessages(state.messages),
+  tools: state.tools,
   turnStart: state.turnStart,
   webSearchEnabled: state.webSearchEnabled,
   trace: {
@@ -1497,7 +1434,7 @@ export const QueryServiceLive = Layer.effect(
             error: sanitizedStreamError,
           } satisfies QueryModelAttemptResult;
         }
-        const messages = cloneMessages(input.messages);
+        const messages = [...input.messages];
         context.selectedModel = model;
         context.trace.llmRounds += 1;
         yield* logger.info("query.stream_tool_round_start", {
@@ -1622,7 +1559,7 @@ export const QueryServiceLive = Layer.effect(
     const executeTool = (input: QueryExecutionState, toolCall: QueryPreparedToolCall) =>
       Effect.gen(function* () {
         const context = contextFromExecution(input);
-        const messages = cloneMessages(input.messages);
+        const messages = [...input.messages];
         context.trace.toolCalls += 1;
         const result = yield* Effect.gen(function* () {
           const tool = yield* decodeQueryTool(toolCall).pipe(
@@ -1735,7 +1672,6 @@ export const QueryServiceLive = Layer.effect(
           mode: input.mode,
           correlationId,
           tools,
-          baseMessages: [],
           turnStart: 1 + prior.length,
           webSearchEnabled,
           trace: emptyTrace(),
@@ -1755,10 +1691,7 @@ export const QueryServiceLive = Layer.effect(
         }
         messages.push(...prior);
         messages.push({ role: "user", content: input.question });
-        return {
-          ...context,
-          baseMessages: messages,
-        } satisfies QueryContext;
+        return { context, messages };
       });
 
     const finalize = (
@@ -1821,7 +1754,7 @@ export const QueryServiceLive = Layer.effect(
         const startedAt = Date.now();
         const correlationId = `q-${randomUUID()}`;
         return yield* Effect.gen(function* () {
-          const context = yield* setupContext(
+          const { context, messages } = yield* setupContext(
             userId,
             vaultId,
             input,
@@ -1845,7 +1778,7 @@ export const QueryServiceLive = Layer.effect(
             requestedModel,
             ...appConfig.queryFallbackModels.filter((model) => model !== requestedModel),
           ];
-          return executionState(context, context.baseMessages, models, 0, startedAt);
+          return executionState(context, messages, models, 0, startedAt);
         }).pipe(
           Effect.catchCause((cause) =>
             isInterruptOnly(cause)
