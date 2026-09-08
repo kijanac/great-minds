@@ -22,7 +22,7 @@ import {
   Uuid,
 } from "@great-minds/domain";
 import { and, asc, eq, isNull, sql } from "drizzle-orm";
-import { Cause, Context, Effect, Layer, Option, Schema, Stream } from "effect";
+import { Cause, Context, Effect, Layer, Option, Schema, SchemaGetter, Stream } from "effect";
 import * as Activity from "effect/unstable/workflow/Activity";
 import * as Workflow from "effect/unstable/workflow/Workflow";
 import * as WorkflowEngine from "effect/unstable/workflow/WorkflowEngine";
@@ -59,23 +59,22 @@ const ReplyStepControl = Schema.Struct({
 type ReplyStepControl = typeof ReplyStepControl.Type;
 
 const ReplyAccumulator = Schema.Struct({
-  answer: Schema.String,
-  sources: Schema.Array(ReplySourceSchema),
+  answer: Schema.mutableKey(Schema.String),
+  sources: Schema.mutable(Schema.Array(ReplySourceSchema)),
   pendingCalls: Schema.Array(
     Schema.Struct({ callId: Schema.String, index: Schema.NullOr(Schema.Number) }),
-  ),
-  clearOnNextToken: Schema.Boolean,
-  replacementSlot: Schema.NullOr(Schema.Number),
+  ).pipe(Schema.decodeTo(Schema.instanceOf(Map<string, number | null>), {
+    decode: SchemaGetter.transform((entries) =>
+      new Map(entries.map(({ callId, index }) => [callId, index])),
+    ),
+    encode: SchemaGetter.transform((entries) =>
+      [...entries].map(([callId, index]) => ({ callId, index })),
+    ),
+  })),
+  clearOnNextToken: Schema.mutableKey(Schema.Boolean),
+  replacementSlot: Schema.mutableKey(Schema.NullOr(Schema.Number)),
 });
 type ReplyAccumulator = typeof ReplyAccumulator.Type;
-
-type MutableReplyAccumulator = {
-  answer: string;
-  sources: ReplySource[];
-  pendingCalls: Map<string, number | null>;
-  clearOnNextToken: boolean;
-  replacementSlot?: number;
-};
 
 const ReplyCheckpoint = Schema.Struct({
   version: Schema.Literal(1),
@@ -88,7 +87,8 @@ const ReplyCheckpoint = Schema.Struct({
 });
 type ReplyCheckpoint = typeof ReplyCheckpoint.Type;
 
-const decodeReplyCheckpoint = Schema.decodeUnknownSync(ReplyCheckpoint);
+const decodeReplyCheckpoint = Schema.decodeUnknownSync(Schema.fromJsonString(ReplyCheckpoint));
+const encodeReplyCheckpoint = Schema.encodeSync(Schema.fromJsonString(ReplyCheckpoint));
 const checkpointPath = (replyId: Uuid) => `operations/replies/${replyId}.json`;
 
 const modelQuestion = (input: CreateReplyRequest, threadRoot: boolean): string => {
@@ -124,62 +124,31 @@ const queryRequest = (input: CreateReplyRequest, threadRoot: boolean): QueryRequ
 });
 
 const sourceRef = (data: QuerySourceData, thinking: string, pending = false): ReplySource => {
+  const source: ReplySource = {
+    label: data.type === "search"
+      ? data.query
+      : data.type === "query"
+        ? Object.entries(data.filters)
+            .map(([key, value]) => `${key}: ${String(value)}`)
+            .join(", ") || "filtered sources"
+        : data.path,
+    type: data.type,
+    document_id: data.type === "article" || data.type === "raw" ? data.document_id : null,
+    title: data.type === "query" ? null : data.title,
+    scope: data.type === "search" ? data.scope : null,
+    path: data.type === "search" ? data.path ?? null : null,
+    thinking: thinking.length === 0 ? null : thinking,
+    ...(pending ? { pending: true } : {}),
+  };
   if (data.type === "article" || data.type === "raw") {
     const isExpand = data.start !== undefined && data.end !== undefined;
     return {
-      label: data.path,
-      type: data.type,
-      document_id: data.document_id,
-      title: data.title,
-      scope: null,
-      path: null,
-      thinking: thinking.length === 0 ? null : thinking,
+      ...source,
       ranges: isExpand ? [{ start: data.start, end: data.end }] : [],
       full: !isExpand,
-      pending: pending || undefined,
     };
   }
-  if (data.type === "search") {
-    return {
-      label: data.query,
-      type: "search",
-      document_id: null,
-      scope: data.scope,
-      path: data.path ?? null,
-      title: data.title,
-      thinking: thinking.length === 0 ? null : thinking,
-      pending: pending || undefined,
-    };
-  }
-  if (data.type === "links") {
-    return {
-      label: data.path,
-      type: "links",
-      document_id: null,
-      title: data.title,
-      scope: null,
-      path: null,
-      thinking: thinking.length === 0 ? null : thinking,
-      pending: pending || undefined,
-    };
-  }
-  if (data.type === "query") {
-    const summary =
-      Object.entries(data.filters)
-        .map(([key, value]) => `${key}: ${String(value)}`)
-        .join(", ") || "filtered sources";
-    return {
-      label: summary,
-      type: "query",
-      document_id: null,
-      title: null,
-      scope: null,
-      path: null,
-      thinking: thinking.length === 0 ? null : thinking,
-      pending: pending || undefined,
-    };
-  }
-  throw new Error(`Unsupported query source: ${data.type}`);
+  return source;
 };
 
 export const ReplyWorkflow = Workflow.make("ReplyGeneration", {
@@ -305,7 +274,7 @@ export const RepliesServiceLive = Layer.effect(
         .update(replies)
         .set({
           answer,
-          sources: [...sources],
+          sources,
           version: sql`${replies.version} + 1`,
           updatedAt: sql`now()`,
         })
@@ -324,7 +293,7 @@ export const RepliesServiceLive = Layer.effect(
           status: "failed",
           error,
           ...(answer === undefined ? {} : { answer }),
-          ...(sources === undefined ? {} : { sources: [...sources] }),
+          ...(sources === undefined ? {} : { sources }),
           version: sql`${replies.version} + 1`,
           activeGenerationStep: null,
           activeGenerationKind: null,
@@ -340,7 +309,7 @@ export const RepliesServiceLive = Layer.effect(
         .set({
           status: "completed",
           answer,
-          sources: [...sources],
+          sources,
           error: null,
           version: sql`${replies.version} + 1`,
           activeGenerationStep: null,
@@ -369,25 +338,9 @@ export const RepliesServiceLive = Layer.effect(
       error: null,
     });
 
-    const mutableAccumulator = (value: ReplyAccumulator): MutableReplyAccumulator => ({
-      answer: value.answer,
-      sources: [...value.sources],
-      pendingCalls: new Map(value.pendingCalls.map((entry) => [entry.callId, entry.index])),
-      clearOnNextToken: value.clearOnNextToken,
-      ...(value.replacementSlot === null ? {} : { replacementSlot: value.replacementSlot }),
-    });
-
-    const persistedAccumulator = (value: MutableReplyAccumulator): ReplyAccumulator => ({
-      answer: value.answer,
-      sources: [...value.sources],
-      pendingCalls: [...value.pendingCalls].map(([callId, index]) => ({ callId, index })),
-      clearOnNextToken: value.clearOnNextToken,
-      replacementSlot: value.replacementSlot ?? null,
-    });
-
     const readCheckpoint = (row: typeof replies.$inferSelect) =>
       storage.readText(vaultOwner(row.vaultId), checkpointPath(row.id)).pipe(
-        Effect.map((content) => decodeReplyCheckpoint(JSON.parse(content))),
+        Effect.map(decodeReplyCheckpoint),
         Effect.catchTag("StorageFileMissing", () => Effect.succeed(undefined)),
       );
 
@@ -395,10 +348,10 @@ export const RepliesServiceLive = Layer.effect(
       storage.writeText(
         vaultOwner(row.vaultId),
         checkpointPath(row.id),
-        JSON.stringify(checkpoint),
+        encodeReplyCheckpoint(checkpoint),
       );
 
-    const removeSource = (accumulator: MutableReplyAccumulator, index: number) => {
+    const removeSource = (accumulator: ReplyAccumulator, index: number) => {
       accumulator.sources.splice(index, 1);
       for (const [callId, pendingIndex] of accumulator.pendingCalls) {
         if (pendingIndex !== null && pendingIndex > index) {
@@ -408,7 +361,7 @@ export const RepliesServiceLive = Layer.effect(
     };
 
     const addPendingSource = (
-      accumulator: MutableReplyAccumulator,
+      accumulator: ReplyAccumulator,
       callId: string,
       data: QuerySourceData,
     ) => {
@@ -428,7 +381,7 @@ export const RepliesServiceLive = Layer.effect(
       }
     };
 
-    const settlePendingSource = (accumulator: MutableReplyAccumulator, callId: string) => {
+    const settlePendingSource = (accumulator: ReplyAccumulator, callId: string) => {
       const pendingIndex = accumulator.pendingCalls.get(callId);
       accumulator.pendingCalls.delete(callId);
       if (pendingIndex !== undefined && pendingIndex !== null) {
@@ -437,13 +390,13 @@ export const RepliesServiceLive = Layer.effect(
     };
 
     const addResolvedSource = (
-      accumulator: MutableReplyAccumulator,
+      accumulator: ReplyAccumulator,
       data: QuerySourceData,
     ) => {
       const pendingIndex = accumulator.replacementSlot;
-      accumulator.replacementSlot = undefined;
+      accumulator.replacementSlot = null;
       if (data.type === "article" || data.type === "raw") {
-        if (pendingIndex !== undefined) {
+        if (pendingIndex !== null) {
           removeSource(accumulator, pendingIndex);
         }
         const isExpand = data.start !== undefined && data.end !== undefined;
@@ -473,7 +426,7 @@ export const RepliesServiceLive = Layer.effect(
             index !== pendingIndex && source.type === "links" && source.label === data.path,
         );
         if (existingIndex >= 0) {
-          if (pendingIndex !== undefined) {
+          if (pendingIndex !== null) {
             removeSource(accumulator, pendingIndex);
           }
           return;
@@ -481,7 +434,7 @@ export const RepliesServiceLive = Layer.effect(
       }
 
       const resolved = sourceRef(data, accumulator.answer);
-      if (pendingIndex === undefined) {
+      if (pendingIndex === null) {
         accumulator.sources.push(resolved);
       } else {
         accumulator.sources.splice(pendingIndex, 1, resolved);
@@ -489,7 +442,7 @@ export const RepliesServiceLive = Layer.effect(
       accumulator.clearOnNextToken = true;
     };
 
-    const flushAccumulator = (replyId: Uuid, accumulator: MutableReplyAccumulator) =>
+    const flushAccumulator = (replyId: Uuid, accumulator: ReplyAccumulator) =>
       updateSnapshot(replyId, accumulator.answer, accumulator.sources);
 
     const failRunningReply = (replyId: Uuid, error: string) =>
@@ -643,7 +596,7 @@ export const RepliesServiceLive = Layer.effect(
           accumulator: {
             answer: "",
             sources: [],
-            pendingCalls: [],
+            pendingCalls: new Map(),
             clearOnNextToken: false,
             replacementSlot: null,
           },
@@ -678,16 +631,16 @@ export const RepliesServiceLive = Layer.effect(
         );
         if (claimed !== undefined) return claimed;
 
-        const accumulator = mutableAccumulator(checkpoint.accumulator);
+        const accumulator = checkpoint.accumulator;
         let lastFlushAt = 0;
         const outcome = yield* query.modelAttempt(checkpoint.query, (event) =>
           Effect.gen(function* () {
             if (event.event !== "token") {
               throw new Error(`Model attempt emitted unexpected ${event.event} event`);
             }
-            if (accumulator.replacementSlot !== undefined) {
+            if (accumulator.replacementSlot !== null) {
               removeSource(accumulator, accumulator.replacementSlot);
-              accumulator.replacementSlot = undefined;
+              accumulator.replacementSlot = null;
             }
             if (accumulator.clearOnNextToken) {
               accumulator.answer = "";
@@ -735,7 +688,7 @@ export const RepliesServiceLive = Layer.effect(
           version: 1,
           cursor: expectedCursor + 1,
           query: outcome.state,
-          accumulator: persistedAccumulator(accumulator),
+          accumulator,
           pendingTools,
           nextToolIndex: 0,
           lastControl: control,
@@ -768,16 +721,16 @@ export const RepliesServiceLive = Layer.effect(
         );
         if (claimed !== undefined) return claimed;
 
-        const accumulator = mutableAccumulator(checkpoint.accumulator);
+        const accumulator = checkpoint.accumulator;
         const result = yield* query.runTool(checkpoint.query, toolCall);
         if (toolCall.pendingSource !== undefined) {
           settlePendingSource(accumulator, toolCall.id);
         }
         if (result.source !== undefined) {
           addResolvedSource(accumulator, result.source);
-        } else if (accumulator.replacementSlot !== undefined) {
+        } else if (accumulator.replacementSlot !== null) {
           removeSource(accumulator, accumulator.replacementSlot);
-          accumulator.replacementSlot = undefined;
+          accumulator.replacementSlot = null;
         }
         yield* flushAccumulator(replyId, accumulator);
 
@@ -795,7 +748,7 @@ export const RepliesServiceLive = Layer.effect(
           version: 1,
           cursor: expectedCursor + 1,
           query: result.state,
-          accumulator: persistedAccumulator(accumulator),
+          accumulator,
           pendingTools: remaining > 0 ? checkpoint.pendingTools : [],
           nextToolIndex: remaining > 0 ? nextToolIndex : 0,
           lastControl: control,

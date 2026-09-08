@@ -137,7 +137,7 @@ const sessionOverview = (
 const thinkingBlocksFor = (sources: readonly ThinkingSource[]) =>
   sources.length === 0
     ? []
-    : [{ sources: sources.map((source) => ({ ...source })) }];
+    : [{ sources }];
 
 const exchangeEventFromNode = (node: ReplyNode): SessionExchangeEvent => ({
   type: "exchange",
