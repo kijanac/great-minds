@@ -21,11 +21,11 @@ function replayEvents(events: readonly SessionEvent[], originTitle: string | nul
       const exchange: Exchange = {
         id: event.exId,
         query: event.query,
-        thinking: (event.thinking ?? []).map((block) => ({ sources: block.sources ?? [] })),
-        answer: event.answer ?? "",
+        thinking: event.thinking,
+        answer: event.answer,
         btws: [],
         replyId: event.reply_id,
-        streaming: (event.answer ?? "").length === 0 && event.reply_id !== undefined,
+        streaming: event.answer.length === 0 && event.reply_id !== undefined,
       };
       const existingIndex = exchangeIndexes.get(event.exId);
       if (existingIndex === undefined) {
@@ -54,17 +54,15 @@ function replayEvents(events: readonly SessionEvent[], originTitle: string | nul
       exchanges: event.exchanges.map((exchange, index) => ({
         id: exchange.exchange_id,
         query: exchange.query,
-        thinking: (exchange.thinking ?? []).map((block) => ({
-          sources: block.sources ?? [],
-        })),
-        answer: exchange.answer ?? "",
+        thinking: exchange.thinking,
+        answer: exchange.answer,
         btws: [],
         ...(index === event.exchanges.length - 1 && event.reply_id !== undefined
           ? { replyId: event.reply_id }
           : {}),
         streaming:
           index === event.exchanges.length - 1 &&
-          (exchange.answer ?? "").length === 0 &&
+          exchange.answer.length === 0 &&
           event.reply_id !== undefined,
       })),
     };

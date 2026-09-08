@@ -223,21 +223,21 @@ export const renderSessionMarkdown = (events: readonly SessionEvent[]) => {
     }
     parts.push(`# ${exchange.query}\n\n`);
 
-    for (const block of exchange.thinking ?? []) {
-      for (const source of block.sources ?? []) {
+    for (const block of exchange.thinking) {
+      for (const source of block.sources) {
         parts.push(`> \`${source.label}\`\n`);
       }
       parts.push(">\n");
     }
 
-    parts.push(`${exchange.answer ?? ""}\n`);
+    parts.push(`${exchange.answer}\n`);
 
     for (const btw of btwsByExchange.get(exchange.exId) ?? []) {
       const short = btw.quote.length > 60 ? `${btw.quote.slice(0, 60)}...` : btw.quote;
       parts.push(`\n> **BTW** re: "${short}"\n>\n`);
       for (const inner of btw.exchanges) {
         parts.push(`> *${inner.query}*\n>\n`);
-        parts.push(`> ${inner.answer ?? ""}\n>\n`);
+        parts.push(`> ${inner.answer}\n>\n`);
       }
     }
   }
@@ -749,7 +749,7 @@ export const SessionsServiceLive = Layer.effect(
           if (exchange === undefined) {
             return yield* new NotFound({ detail: "Exchange not found in session" });
           }
-          if ((exchange.answer ?? "").trim().length === 0) {
+          if (exchange.answer.trim().length === 0) {
             return yield* new BadRequest({ detail: "Exchange has no answer yet" });
           }
           const sessionOrigin = findMeta(events)?.origin ?? null;

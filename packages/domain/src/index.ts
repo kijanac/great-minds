@@ -741,15 +741,19 @@ export const ThinkingSource = Schema.Struct({
 export type ThinkingSource = typeof ThinkingSource.Type;
 
 export const ThinkingBlock = Schema.Struct({
-  sources: Schema.optionalKey(Schema.Array(ThinkingSource)),
+  sources: Schema.Array(ThinkingSource).pipe(
+    Schema.withDecodingDefaultTypeKey(Effect.succeed([])),
+  ),
 });
 export type ThinkingBlock = typeof ThinkingBlock.Type;
 
 export const BtwExchange = Schema.Struct({
   exchange_id: Uuid,
   query: Schema.String,
-  thinking: Schema.optionalKey(Schema.Array(ThinkingBlock)),
-  answer: Schema.optionalKey(Schema.String),
+  thinking: Schema.Array(ThinkingBlock).pipe(
+    Schema.withDecodingDefaultTypeKey(Effect.succeed([])),
+  ),
+  answer: Schema.String.pipe(Schema.withDecodingDefaultTypeKey(Effect.succeed(""))),
 });
 export type BtwExchange = typeof BtwExchange.Type;
 
@@ -768,8 +772,10 @@ export const SessionExchangeEvent = Schema.Struct({
   exId: Uuid,
   reply_id: Schema.optionalKey(Uuid),
   query: Schema.String,
-  thinking: Schema.optionalKey(Schema.Array(ThinkingBlock)),
-  answer: Schema.optionalKey(Schema.String),
+  thinking: Schema.Array(ThinkingBlock).pipe(
+    Schema.withDecodingDefaultTypeKey(Effect.succeed([])),
+  ),
+  answer: Schema.String.pipe(Schema.withDecodingDefaultTypeKey(Effect.succeed(""))),
   ts: IsoDateTime,
 });
 export type SessionExchangeEvent = typeof SessionExchangeEvent.Type;
@@ -1120,25 +1126,6 @@ export const QuerySourceData = Schema.Union([
   QuerySourceLinks,
 ]);
 export type QuerySourceData = typeof QuerySourceData.Type;
-
-export const QueryStreamPayload = Schema.Union([
-  Schema.Struct({ event: Schema.Literal("token"), data: Schema.Struct({ text: Schema.String }) }),
-  Schema.Struct({
-    event: Schema.Literal("source_pending"),
-    data: Schema.Struct({ call_id: Schema.String, source: QuerySourceData }),
-  }),
-  Schema.Struct({
-    event: Schema.Literal("source_settled"),
-    data: Schema.Struct({ call_id: Schema.String }),
-  }),
-  Schema.Struct({ event: Schema.Literal("source"), data: QuerySourceData }),
-  Schema.Struct({ event: Schema.Literal("done"), data: Schema.Struct({}) }),
-  Schema.Struct({
-    event: Schema.Literal("error"),
-    data: Schema.Struct({ message: Schema.String }),
-  }),
-]);
-export type QueryStreamPayload = typeof QueryStreamPayload.Type;
 
 export const ReplySource = Schema.Struct({
   ...ThinkingSource.fields,

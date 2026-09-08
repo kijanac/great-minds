@@ -189,4 +189,4 @@ export const buildSessionExchangeDocument = (
   sessionId: string,
   exchange: SessionExchangeEvent,
   sessionOrigin: SessionOrigin | null,
-) => buildDocument(exchange.answer ?? "", sessionExchangeDocumentInput(sessionId, exchange, sessionOrigin));
+) => buildDocument(exchange.answer, sessionExchangeDocumentInput(sessionId, exchange, sessionOrigin));

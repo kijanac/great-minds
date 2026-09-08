@@ -633,11 +633,8 @@ export const RepliesServiceLive = Layer.effect(
 
         const accumulator = checkpoint.accumulator;
         let lastFlushAt = 0;
-        const outcome = yield* query.modelAttempt(checkpoint.query, (event) =>
+        const outcome = yield* query.modelAttempt(checkpoint.query, (text) =>
           Effect.gen(function* () {
-            if (event.event !== "token") {
-              throw new Error(`Model attempt emitted unexpected ${event.event} event`);
-            }
             if (accumulator.replacementSlot !== null) {
               removeSource(accumulator, accumulator.replacementSlot);
               accumulator.replacementSlot = null;
@@ -646,7 +643,7 @@ export const RepliesServiceLive = Layer.effect(
               accumulator.answer = "";
               accumulator.clearOnNextToken = false;
             }
-            accumulator.answer += event.data.text;
+            accumulator.answer += text;
             if (Date.now() - lastFlushAt >= flushIntervalMs) {
               yield* flushAccumulator(replyId, accumulator);
               lastFlushAt = Date.now();

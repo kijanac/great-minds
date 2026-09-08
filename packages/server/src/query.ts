@@ -16,7 +16,6 @@ import {
   type QueryRequest,
   type QuerySourceData,
   QuerySourceData as QuerySourceDataSchema,
-  type QueryStreamPayload,
   Uuid,
 } from "@great-minds/domain";
 import { and, asc, desc, eq, gte, ilike, lte, ne, or, sql, type SQL } from "drizzle-orm";
@@ -51,7 +50,7 @@ type QueryServiceShape = {
   ) => Effect.Effect<QueryExecutionState, unknown>;
   readonly modelAttempt: (
     state: QueryExecutionState,
-    emit: (payload: QueryStreamPayload) => Effect.Effect<void>,
+    onToken: (text: string) => Effect.Effect<void>,
   ) => Effect.Effect<QueryModelAttemptResult, unknown>;
   readonly runTool: (
     state: QueryExecutionState,
@@ -1285,8 +1284,7 @@ export const QueryServiceLive = Layer.effect(
     const runModelRound = (
       context: QueryExecutionState,
       model: string,
-      messages: LlmMessage[],
-      emit: (payload: QueryStreamPayload) => Effect.Effect<void>,
+      onToken: (text: string) => Effect.Effect<void>,
     ) =>
       Effect.gen(function* () {
         const state: ModelRoundState = {
@@ -1297,7 +1295,7 @@ export const QueryServiceLive = Layer.effect(
         yield* Stream.fromAsyncIterable(
           languageModel.streamChat({
             model,
-            messages,
+            messages: context.messages,
             tools: context.tools,
             temperature: 0.3,
           }),
@@ -1306,7 +1304,7 @@ export const QueryServiceLive = Layer.effect(
           Stream.runForEach((part) => {
             if (part.type === "token") {
               state.content += part.text;
-              return emit({ event: "token", data: { text: part.text } });
+              return onToken(part.text);
             }
             if (part.type === "tool_call_delta") {
               const current = state.toolCalls.get(part.delta.index) ?? {
@@ -1333,7 +1331,7 @@ export const QueryServiceLive = Layer.effect(
 
     const executeModelAttempt = (
       input: QueryExecutionState,
-      emit: (payload: QueryStreamPayload) => Effect.Effect<void>,
+      onToken: (text: string) => Effect.Effect<void>,
     ): Effect.Effect<QueryModelAttemptResult, unknown> =>
       Effect.gen(function* () {
         const context = input;
@@ -1354,7 +1352,7 @@ export const QueryServiceLive = Layer.effect(
           round: context.trace.llmRounds,
         });
         return yield* Effect.gen(function* () {
-          const roundState = yield* runModelRound(context, model, messages, emit);
+          const roundState = yield* runModelRound(context, model, onToken);
           if (roundState.finishReason === "tool_calls" && roundState.toolCalls.size > 0) {
             const rawToolCalls = [...roundState.toolCalls.entries()]
               .sort(([left], [right]) => left - right)

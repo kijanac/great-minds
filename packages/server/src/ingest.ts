@@ -331,7 +331,7 @@ export const IngestServiceLive = Layer.effect(
           vaultId,
           sourceId,
           buildDocument(
-            exchange.answer ?? "",
+            exchange.answer,
             sessionExchangeDocumentInput(sessionId, exchange, sessionOrigin),
           ),
           sessionExchangePath(exchange.exId, sourceId),

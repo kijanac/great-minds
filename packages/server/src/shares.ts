@@ -121,7 +121,7 @@ export const SharesServiceLive = Layer.effect(
             },
             exchanges: events.success.events
               .filter((event): event is SessionExchangeEvent => event.type === "exchange")
-              .map((event) => ({ query: event.query, answer: event.answer ?? "" })),
+              .map((event) => ({ query: event.query, answer: event.answer })),
             created_at: row.createdAt,
           });
         }
