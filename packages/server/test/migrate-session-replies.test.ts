@@ -64,6 +64,19 @@ const legacyBtw = {
 };
 
 describe("convertLegacySession", () => {
+  it("preserves historical source references that predate document identities", () => {
+    const source = { label: "A source", type: "raw", title: "Original title", scope: null, path: null,
+      thinking: null, ranges: [{ start: 2, end: 4 }], full: false };
+    const events = convertLegacySession([legacyMeta, {
+      ...legacyExchange("old-turn", "Question", "Answer", "00000000-0000-4000-8000-000000000101"),
+      thinking: [{ sources: [source] }],
+    }, { ...legacyBtw, exId: "old-turn", exchanges: [{ query: "Follow-up", answer: "Answer", thinking: [{ sources: [source] }] }] }],
+    () => uuid("00000000-0000-4000-8000-000000000501"));
+    const nodes = events.filter((event) => event.type === "reply");
+    expect(nodes).toHaveLength(2);
+    for (const node of nodes) expect(node.sources).toEqual([{ ...source, document_id: null }]);
+  });
+
   it("converts legacy meta/exchange/btw events into reply nodes", () => {
     let counter = 0;
     // Record every id minted by the conversion, in mint order, so the expected

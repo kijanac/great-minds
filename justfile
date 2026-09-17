@@ -45,7 +45,7 @@ types-packages:
 
 # Run focused browser-library tests without external services
 test-web:
-    pnpm --prefix web exec vitest run --config vite.config.ts src/lib/api/runtime.test.ts src/lib/btw.test.ts
+    pnpm --prefix web exec vitest run --config vite.config.ts src/lib/api/runtime.test.ts src/lib/btw.test.ts src/lib/anchor-marks.test.ts
 
 # Run TypeScript package integration tests against scratch Postgres
 test-packages:

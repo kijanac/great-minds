@@ -1,3 +1,4 @@
+import { uniqueQuoteSpan } from "$lib/anchor";
 import type { HastNode } from "$lib/markdown-plugins";
 
 export interface AnchorMark {
@@ -6,7 +7,7 @@ export interface AnchorMark {
   quote: string;
 }
 
-export type AnchorMissReason = "no-block" | "quote-not-found";
+export type AnchorMissReason = "no-block" | "quote-unresolved";
 
 export interface AnchorMiss {
   threadId: string;
@@ -38,21 +39,6 @@ function findBlock(tree: HastNode, blockOffset: number): HastNode | null {
     }
   }
   return null;
-}
-
-/** Map a quote match back to text nodes via cumulative offsets.
- *
- * Returns the half-open [start, end) span in the block's concatenated text.
- * The concatenation is the same normalization the DOM-side `findQuoteRange`
- * applies (plain textContent join, first occurrence), so both paths agree on
- * what counts as "located".
- */
-function findQuoteSpan(block: HastNode, quote: string): { start: number; end: number } | null {
-  if (!quote) return null;
-  const full = collectText(block);
-  const idx = full.indexOf(quote);
-  if (idx < 0) return null;
-  return { start: idx, end: idx + quote.length };
 }
 
 function collectText(block: HastNode): string {
@@ -144,13 +130,13 @@ export function wrapAnchors(tree: HastNode, anchors: AnchorMark[]): WrapAnchorsR
       });
       continue;
     }
-    const span = findQuoteSpan(block, anchor.quote);
+    const span = uniqueQuoteSpan(collectText(block), anchor.quote);
     if (!span) {
       misses.push({
         threadId: anchor.threadId,
         blockOffset: anchor.blockOffset,
         quote: anchor.quote,
-        reason: "quote-not-found",
+        reason: "quote-unresolved",
       });
       continue;
     }

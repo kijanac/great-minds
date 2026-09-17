@@ -1,7 +1,13 @@
-// Build a Range over the first occurrence of `quote` within `container`'s text.
-// The containing block is already pinned exactly by its source offset, so the
-// quote only has to be located within that one block — where it's reliably
-// unique — and we don't need fuzzy context matching.
+export function uniqueQuoteSpan(
+  text: string,
+  quote: string,
+): { start: number; end: number } | null {
+  if (!quote) return null;
+  const start = text.indexOf(quote);
+  if (start < 0 || start !== text.lastIndexOf(quote)) return null;
+  return { start, end: start + quote.length };
+}
+
 function rangeFromOffsets(container: Node, start: number, end: number): Range | null {
   const walker = document.createTreeWalker(container, NodeFilter.SHOW_TEXT);
   let count = 0;
@@ -32,9 +38,6 @@ function rangeFromOffsets(container: Node, start: number, end: number): Range | 
 }
 
 export function findQuoteRange(container: Node, quote: string): Range | null {
-  if (!quote) return null;
-  const text = container.textContent ?? "";
-  const idx = text.indexOf(quote);
-  if (idx < 0) return null;
-  return rangeFromOffsets(container, idx, idx + quote.length);
+  const span = uniqueQuoteSpan(container.textContent ?? "", quote);
+  return span === null ? null : rangeFromOffsets(container, span.start, span.end);
 }

@@ -128,7 +128,7 @@
   const marginDots = $derived.by<MarginDot[]>(() => {
     const missedBlocks = new Set(
       anchorMisses
-        .filter((miss) => miss.reason === "quote-not-found")
+        .filter((miss) => miss.reason === "quote-unresolved")
         .map((miss) => miss.blockOffset),
     );
     const seen = new Set<number>();

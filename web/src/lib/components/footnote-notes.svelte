@@ -247,7 +247,7 @@
           data-margin-dot={dot.id}
           title={dotLabel}
           aria-hidden="true"
-          class={`pointer-events-auto absolute left-[calc(100%+0.85rem)] -translate-y-1/2 rounded-full p-1 text-[11px] leading-none text-btw ${dot.id in dotPositions ? "opacity-100" : "opacity-0"}`}
+          class={`pointer-events-auto absolute left-full -translate-y-1/2 rounded-full p-1 text-[11px] leading-none text-btw md:left-[calc(100%+0.85rem)] ${dot.id in dotPositions ? "opacity-100" : "opacity-0"}`}
           style:top={`${dotPositions[dot.id] ?? 0}px`}
         >
           ●

@@ -6,6 +6,7 @@ import {
   composeAnchoredQuestion,
   CreateReplyRequest,
   IsoDateTime,
+  ReplySource,
   type ConversationKind,
   SessionId,
   ThinkingBlock as ThinkingBlockSchema,
@@ -45,9 +46,17 @@ type StoredSessionEvent = typeof StoredSessionEvent.Type;
 const decodeReplyNode = Schema.decodeUnknownSync(LegacyReplyNode);
 const encodeStoredEvent = Schema.encodeSync(ConversationEvent);
 
+export const LegacyReplySource = Schema.Struct({
+  ...ReplySource.fields,
+  document_id: ReplySource.fields.document_id.pipe(Schema.withDecodingDefaultTypeKey(Effect.succeed(null))),
+});
+const LegacyThinkingBlock = Schema.Struct({
+  sources: Schema.Array(LegacyReplySource).pipe(Schema.withDecodingDefaultTypeKey(Effect.succeed([]))),
+});
+
 const LegacyBtwExchange = Schema.Struct({
   query: Schema.String,
-  thinking: Schema.optionalKey(Schema.Array(ThinkingBlockSchema)),
+  thinking: Schema.optionalKey(Schema.Array(LegacyThinkingBlock)),
   answer: Schema.optionalKey(Schema.String),
 });
 
@@ -56,7 +65,7 @@ const LegacyExchangeEvent = Schema.Struct({
   exId: Schema.String,
   reply_id: Schema.optionalKey(Uuid),
   query: Schema.String,
-  thinking: Schema.optionalKey(Schema.Array(ThinkingBlockSchema)),
+  thinking: Schema.optionalKey(Schema.Array(LegacyThinkingBlock)),
   answer: Schema.optionalKey(Schema.String),
   ts: IsoDateTime,
 });
@@ -332,7 +341,7 @@ const main = async () => {
         original: string;
         markdown: string | null;
         conversions: readonly ConversationConversion[];
-        updates: { id: Uuid; sessionId: SessionId; request: typeof CreateReplyRequest.Type }[];
+        updates: { id: Uuid; sessionId: SessionId; request: typeof CreateReplyRequest.Type; sources: readonly (typeof ReplySource.Type)[] }[];
       }[] = [];
       const decodeRequest = Schema.decodeUnknownSync(CreateReplyRequest);
       for (const row of rows) {
@@ -379,6 +388,7 @@ const main = async () => {
           updates.push({
             id: reply.id,
             sessionId: target.conversation.id,
+            sources: Schema.decodeUnknownSync(Schema.Array(LegacyReplySource))(reply.sources),
             request: decodeRequest({
               ...reply.request,
               reply_id: reply.id,
@@ -444,7 +454,7 @@ const main = async () => {
             yield* tx.update(sessions).set({ origin: conversation.origin }).where(and(eq(sessions.id, conversation.id), eq(sessions.vaultId, plan.row.vaultId)));
           }
           for (const update of plan.updates) {
-            yield* tx.update(replies).set({ sessionId: update.sessionId, kind: "exchange", request: update.request }).where(eq(replies.id, update.id));
+            yield* tx.update(replies).set({ sessionId: update.sessionId, kind: "exchange", request: update.request, sources: [...update.sources] }).where(eq(replies.id, update.id));
           }
         }
       }));
