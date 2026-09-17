@@ -6,6 +6,7 @@
   import { ErrorState, LoadingState } from "$lib/components/ui/feedback";
   import { useSavedSession } from "$lib/hooks/use-saved-session.svelte";
   import { useVaults } from "$lib/hooks/use-vault.svelte";
+  import { sessionOriginHref } from "$lib/session-origin";
 
   let {
     sessionId,
@@ -25,6 +26,16 @@
       void goto("/vaults/new", { replaceState: true });
     }
   });
+
+  $effect(() => {
+    const data = saved.data;
+    const origin = data?.events.find((event) => event.type === "meta")?.origin;
+    if (sessionId && data?.kind === "btw" && origin) {
+      void goto(sessionOriginHref(origin, sessionId), {
+        replaceState: true,
+      });
+    }
+  });
 </script>
 
 {#if vaults.error}
@@ -41,13 +52,10 @@
   />
 {:else if sessionId && saved.isLoading}
   <LoadingState label="Loading session…" />
+{:else if saved.data?.kind === "btw"}
+  <LoadingState label="Opening BTW…" />
 {:else}
-  <HomeContent
-    {sessionId}
-    initialExchanges={saved.data?.exchanges ?? undefined}
-    sessionOrigin={saved.data?.origin ?? null}
-    originTitle={saved.data?.originTitle ?? null}
-    {initialQuery}
-    {origin}
-  />
+  {#key sessionId ?? "new"}
+    <HomeContent saved={saved.data} {initialQuery} {origin} />
+  {/key}
 {/if}

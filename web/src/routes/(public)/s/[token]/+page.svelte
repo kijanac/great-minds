@@ -38,9 +38,8 @@
     share?.subject_kind === "reference"
       ? share.annotations.map((annotation, index) => ({
           id: `ann:${index}`,
-          sessionId: null,
+          conversation: null,
           draft: false,
-          anchored: true,
           anchor: {
             blockOffset: annotation.anchor.block_offset ?? -1,
             quote: annotation.anchor.quote,

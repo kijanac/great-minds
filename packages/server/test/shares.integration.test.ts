@@ -561,6 +561,7 @@ describe("share links", () => {
                 userId: id.alice,
                 query: "What does the quote mean?",
                 origin: {
+                  kind: "document",
                   doc_path: "refs/article.md",
                   origin_scope: "personal",
                   anchor: "Annotated first paragraph with enough words to extract.",
@@ -584,6 +585,7 @@ describe("share links", () => {
               ts: "2026-07-11T09:00:00.000Z",
               user_id: id.alice,
               origin: {
+                kind: "document",
                 doc_path: "refs/article.md",
                 origin_scope: "personal",
                 anchor: "Annotated first paragraph with enough words to extract.",

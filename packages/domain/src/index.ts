@@ -692,7 +692,8 @@ export type SourceListQuery = typeof SourceListQuery.Type;
 export const OriginScope = Schema.Literals(["vault", "personal"] as const);
 export type OriginScope = typeof OriginScope.Type;
 
-export const SessionOrigin = Schema.Struct({
+export const DocumentSessionOrigin = Schema.Struct({
+  kind: Schema.Literal("document"),
   doc_path: Schema.String,
   origin_scope: OriginScope.pipe(
     Schema.withDecodingDefaultTypeKey(Effect.succeed("vault" as const)),
@@ -701,7 +702,19 @@ export const SessionOrigin = Schema.Struct({
   paragraph: Schema.NullOr(Schema.String),
   paragraph_index: Schema.NullOr(Schema.Number),
 });
+export const AnswerSessionOrigin = Schema.Struct({
+  kind: Schema.Literal("answer"),
+  session_id: SessionId,
+  exchange_id: Uuid,
+  anchor: Schema.String,
+  paragraph: Schema.String,
+  paragraph_index: Schema.Number,
+});
+export const SessionOrigin = Schema.Union([DocumentSessionOrigin, AnswerSessionOrigin]);
 export type SessionOrigin = typeof SessionOrigin.Type;
+
+export const ConversationKind = Schema.Literals(["session", "btw"] as const);
+export type ConversationKind = typeof ConversationKind.Type;
 
 export const composeAnchoredQuestion = (
   anchor: { readonly quote: string | null; readonly context: string | null },
@@ -747,16 +760,6 @@ export const ThinkingBlock = Schema.Struct({
 });
 export type ThinkingBlock = typeof ThinkingBlock.Type;
 
-export const BtwExchange = Schema.Struct({
-  exchange_id: Uuid,
-  query: Schema.String,
-  thinking: Schema.Array(ThinkingBlock).pipe(
-    Schema.withDecodingDefaultTypeKey(Effect.succeed([])),
-  ),
-  answer: Schema.String.pipe(Schema.withDecodingDefaultTypeKey(Effect.succeed(""))),
-});
-export type BtwExchange = typeof BtwExchange.Type;
-
 export const SessionMetaEvent = Schema.Struct({
   type: Schema.Literal("meta"),
   id: SessionId,
@@ -780,23 +783,12 @@ export const SessionExchangeEvent = Schema.Struct({
 });
 export type SessionExchangeEvent = typeof SessionExchangeEvent.Type;
 
-export const SessionBtwEvent = Schema.Struct({
-  type: Schema.Literal("btw"),
-  exId: Uuid,
-  reply_id: Schema.optionalKey(Uuid),
-  quote: Schema.String,
-  blockOffset: Schema.optionalKey(Schema.Number),
-  context: Schema.optionalKey(Schema.String),
-  exchanges: Schema.Array(BtwExchange),
-  ts: IsoDateTime,
-});
-export type SessionBtwEvent = typeof SessionBtwEvent.Type;
-
-export const SessionEvent = Schema.Union([SessionMetaEvent, SessionExchangeEvent, SessionBtwEvent]);
+export const SessionEvent = Schema.Union([SessionMetaEvent, SessionExchangeEvent]);
 export type SessionEvent = typeof SessionEvent.Type;
 
 export const SessionOverview = Schema.Struct({
   id: SessionId,
+  kind: ConversationKind,
   query: Schema.String,
   created_at: IsoDateTime,
   updated_at: IsoDateTime,
@@ -811,20 +803,20 @@ export type SessionOverview = typeof SessionOverview.Type;
 export const SessionPage = pageOf(SessionOverview);
 export type SessionPage = typeof SessionPage.Type;
 
-export const SessionResponse = Schema.Struct({
-  id: SessionId,
-  events: Schema.Array(SessionEvent),
-  // Resolved at read time from the origin document's current title; never
-  // stored on the session row (titles change). Null when unresolvable.
-  origin_title: Schema.NullOr(Schema.String),
-});
-export type SessionResponse = typeof SessionResponse.Type;
-
 export const OriginSessionDetail = Schema.Struct({
   session: SessionOverview,
   events: Schema.Array(SessionEvent),
 });
 export type OriginSessionDetail = typeof OriginSessionDetail.Type;
+
+export const SessionResponse = Schema.Struct({
+  id: SessionId,
+  kind: ConversationKind,
+  events: Schema.Array(SessionEvent),
+  origin_title: Schema.NullOr(Schema.String),
+  threads: Schema.Array(OriginSessionDetail),
+});
+export type SessionResponse = typeof SessionResponse.Type;
 
 export const OriginSessionsQuery = Schema.Struct({
   doc_path: Schema.String,
@@ -835,14 +827,6 @@ export const SessionMarkdown = Schema.String.pipe(
   HttpApiSchema.asText({ contentType: "text/markdown" }),
 );
 export type SessionMarkdown = typeof SessionMarkdown.Type;
-
-export const BtwData = Schema.Struct({
-  quote: Schema.String,
-  blockOffset: Schema.Number.pipe(Schema.withDecodingDefaultTypeKey(Effect.succeed(-1))),
-  context: Schema.String.pipe(Schema.withDecodingDefaultTypeKey(Effect.succeed(""))),
-  exchangeId: Uuid,
-});
-export type BtwData = typeof BtwData.Type;
 
 export const PromoteExchangeResponse = Schema.Struct({
   mode: Schema.Literals(["ingested", "proposed"] as const),
@@ -1136,6 +1120,9 @@ export type ReplySource = typeof ReplySource.Type;
 const CreateReplySession = Schema.Struct({
   kind: Schema.Literal("new"),
   idempotency_key: Schema.String,
+  conversation_kind: ConversationKind.pipe(
+    Schema.withDecodingDefaultTypeKey(Effect.succeed("session" as const)),
+  ),
   origin_scope: OriginScope.pipe(
     Schema.withDecodingDefaultTypeKey(Effect.succeed("vault" as const)),
   ),
@@ -1151,7 +1138,6 @@ export const CreateReplyRequest = Schema.Struct({
     Schema.Struct({
       kind: Schema.Literal("existing"),
       id: SessionId,
-      btw: Schema.optionalKey(BtwData),
     }),
   ]),
 });
@@ -1284,6 +1270,7 @@ const ReferenceDocumentErrors = [
   ValidationResponse,
 ] as const;
 const CreateReplyErrors = [
+  BadRequestResponse,
   ConflictResponse,
   ForbiddenResponse,
   NotFoundResponse,
@@ -1819,6 +1806,11 @@ export const DocumentsApiGroup = HttpApiGroup.make("documents").add(
 );
 
 export const SessionsApiGroup = HttpApiGroup.make("sessions").add(
+  HttpApiEndpoint.post("continueAsSession", "/vaults/:vault_id/sessions/:session_id/continue", {
+    params: { vault_id: Uuid, session_id: SessionId },
+    success: Schema.Void,
+    error: ForbiddenNotFoundValidationErrors,
+  }).middleware(AuthMiddleware),
   HttpApiEndpoint.post(
     "promoteSessionExchange",
     "/vaults/:vault_id/sessions/:session_id/exchanges/:exchange_id/promote",

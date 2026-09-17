@@ -1,50 +1,74 @@
 <script lang="ts">
   import { browser } from "$app/environment";
   import { goto } from "$app/navigation";
+  import { page } from "$app/state";
+  import { tick } from "svelte";
   import CornerUpRight from "@lucide/svelte/icons/corner-up-right";
 
-  import type { SessionOrigin } from "$lib/api/sessions";
   import AnswerBlock from "$lib/components/answer-block.svelte";
   import FollowUpBar from "$lib/components/follow-up-bar.svelte";
   import PromoteButton from "$lib/components/promote-button.svelte";
   import ReplyInterrupted from "$lib/components/reply-interrupted.svelte";
   import SelectionPopover from "$lib/components/selection-popover.svelte";
   import ThinkingSection from "$lib/components/thinking-section.svelte";
+  import SessionPassage from "$lib/components/session-passage.svelte";
   import { Badge } from "$lib/components/ui/badge";
   import { Button } from "$lib/components/ui/button";
   import { Separator } from "$lib/components/ui/separator";
   import type { Session } from "$lib/session.svelte";
+  import { sessionOriginHref } from "$lib/session-origin";
   import type { SourceRef } from "$lib/types";
   import { docDisplayName } from "$lib/utils";
 
   let {
     session,
-    origin = null,
-    originTitle = null,
     activeCard,
     panelDocked = false,
     onCardClick,
     onLinkClick,
   }: {
     session: Session;
-    origin?: SessionOrigin | null;
-    originTitle?: string | null;
     activeCard: string | null;
     panelDocked?: boolean;
     onCardClick: (source: SourceRef) => void;
     onLinkClick?: (event: MouseEvent) => void;
   } = $props();
 
-  const originDocPath = $derived(origin?.doc_path ?? null);
+  const origin = $derived(session.origin);
+  const originDocPath = $derived(
+    origin?.kind === "document" ? origin.doc_path : null,
+  );
   const originHref = $derived(
-    originDocPath
-      ? `${origin!.origin_scope === "personal" ? "/refs/" : "/doc/"}${originDocPath}`
+    origin && session.sessionId
+      ? sessionOriginHref(origin, session.sessionId)
       : null,
   );
 
   let hintDismissed = $state(
     browser && localStorage.getItem("onboarding-hint-seen") === "true",
   );
+
+  let focusedThread: string | null = null;
+  $effect(() => {
+    const target = page.url.searchParams.get("thread");
+    if (!target || focusedThread === target) return;
+    const thread = session.thread
+      .flatMap((exchange) => exchange.btws)
+      .find((btw) => btw.conversation?.id === target);
+    if (!thread) return;
+    focusedThread = target;
+    void tick().then(() => {
+      const mark = document.querySelector<HTMLElement>(
+        `mark[data-thread-id="${CSS.escape(thread.id)}"]`,
+      );
+      const element = mark ?? document.getElementById(`thread-${target}`);
+      element?.scrollIntoView({ block: "center" });
+      if (element) {
+        element.tabIndex = -1;
+        element.focus({ preventScroll: true });
+      }
+    });
+  });
   const showHint = $derived(
     !hintDismissed &&
       session.phase === "done" &&
@@ -104,75 +128,75 @@
           class="inline-flex items-center gap-2 rounded-sm border border-ink-border bg-ink-raised px-3 py-1.5 font-mono text-[length:var(--text-chrome)] tracking-[0.08em] text-warm-faint transition-colors hover:border-gold-dim hover:text-warm"
         >
           <CornerUpRight size={12} class="text-gold-muted" />
-          from {originTitle ?? docDisplayName(originDocPath ?? "")}
+          from {session.originTitle ??
+            (origin?.kind === "answer"
+              ? "parent session"
+              : docDisplayName(originDocPath ?? ""))}
         </button>
         {#if origin?.anchor}
-          <blockquote
-            class="mt-4 border-l-2 border-gold-dim pl-4 font-serif text-[length:var(--text-small)] leading-[1.7] text-warm-faint italic"
-          >
-            ❝ …{origin.anchor.length > 160
-              ? `${origin.anchor.slice(0, 160)}…`
-              : origin.anchor}… ❞
-          </blockquote>
+          <SessionPassage quote={origin.anchor} context={origin.paragraph} />
         {/if}
       </div>
     {/if}
 
-    {#each session.thread as exchange, index (exchange.id)}
-      <div>
-        {#if index > 0}
-          <Separator class="my-8 bg-ink-subtle" />
-        {/if}
+    <div style:view-transition-name="session-discussion">
+      {#each session.thread as exchange, index (exchange.id)}
+        <div>
+          {#if index > 0}
+            <Separator class="my-8 bg-ink-subtle" />
+          {/if}
 
-        <div class="mb-[18px] flex items-center justify-between gap-3">
-          <span
-            class="text-[length:var(--text-small)] text-muted-foreground italic"
-          >
-            “{exchange.query}”
-          </span>
-          {#if session.sessionId && exchange.answer && !exchange.streaming && !exchange.error}
-            <span class="print:hidden">
-              <PromoteButton
-                sessionId={session.sessionId}
-                exchangeId={exchange.id}
-              />
+          <div class="mb-[18px] flex items-center justify-between gap-3">
+            <span
+              class="text-[length:var(--text-small)] text-muted-foreground italic"
+            >
+              “{exchange.query}”
             </span>
+            {#if session.sessionId && exchange.answer && !exchange.streaming && !exchange.error}
+              <span class="print:hidden">
+                <PromoteButton
+                  sessionId={session.sessionId}
+                  exchangeId={exchange.id}
+                />
+              </span>
+            {/if}
+          </div>
+
+          <div class="print:hidden">
+            <ThinkingSection
+              blocks={exchange.thinking}
+              streaming={exchange.streaming && !exchange.answer}
+              {onCardClick}
+              {activeCard}
+            />
+          </div>
+
+          {#if exchange.answer}
+            <AnswerBlock
+              text={exchange.answer}
+              exchangeId={exchange.id}
+              btws={exchange.btws}
+              streaming={exchange.streaming}
+              {panelDocked}
+              onSelection={session.handleSelection}
+              onBtwReply={session.replyBtw}
+              onBtwRetry={session.retryBtw}
+              onBtwDismiss={session.dismissBtw}
+              onBtwOpenSession={session.openBtwSession}
+            />
+          {/if}
+
+          {#if exchange.error || (!exchange.answer && !exchange.streaming)}
+            <ReplyInterrupted
+              partial={exchange.answer.length > 0}
+              onRetry={index === session.thread.length - 1 && exchange.replyId
+                ? () => session.retryExchange(exchange.id)
+                : undefined}
+            />
           {/if}
         </div>
-
-        <div class="print:hidden">
-          <ThinkingSection
-            blocks={exchange.thinking}
-            streaming={exchange.streaming && !exchange.answer}
-            {onCardClick}
-            {activeCard}
-          />
-        </div>
-
-        {#if exchange.answer}
-          <AnswerBlock
-            text={exchange.answer}
-            exchangeId={exchange.id}
-            btws={exchange.btws}
-            streaming={exchange.streaming}
-            {panelDocked}
-            onSelection={session.handleSelection}
-            onBtwReply={session.replyBtw}
-            onBtwRetry={session.retryBtw}
-            onBtwDismiss={session.dismissBtw}
-          />
-        {/if}
-
-        {#if exchange.error || (!exchange.answer && !exchange.streaming)}
-          <ReplyInterrupted
-            partial={exchange.answer.length > 0}
-            onRetry={index === session.thread.length - 1 && exchange.replyId
-              ? () => session.retryExchange(exchange.id)
-              : undefined}
-          />
-        {/if}
-      </div>
-    {/each}
+      {/each}
+    </div>
   </div>
 </div>
 

@@ -727,6 +727,13 @@ const DocumentsHandlersLive = HttpApiBuilder.group(MountedGreatMindsApi, "docume
 
 const SessionsHandlersLive = HttpApiBuilder.group(MountedGreatMindsApi, "sessions", (handlers) =>
   handlers
+    .handle("continueAsSession", ({ params }) =>
+      Effect.gen(function* () {
+        const sessions = yield* SessionsService;
+        const current = yield* CurrentAuth;
+        return yield* sessions.continueAsSession(current.user_id, params.vault_id, params.session_id);
+      }),
+    )
     .handle("promoteSessionExchange", ({ params }) =>
       Effect.gen(function* () {
         const sessions = yield* SessionsService;

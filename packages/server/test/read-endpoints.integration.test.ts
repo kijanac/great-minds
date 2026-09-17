@@ -64,6 +64,7 @@ const id = {
   apiKeyAlice: uuid("00000000-0000-4000-8000-000000000601"),
   sessionAliceOlder: sessionId("s-1"),
   sessionAliceMain: sessionId("s-2"),
+  sessionAliceBtw: sessionId("s-alice-btw"),
   sessionBob: sessionId("s-bob"),
   sessionNoMarkdown: sessionId("s-no-md"),
   sessionMalformed: sessionId("s-malformed"),
@@ -233,19 +234,12 @@ const replyNode = (
     readonly parentReplyId?: string | null;
     readonly messages?: readonly unknown[];
     readonly sources?: readonly unknown[];
-    readonly btw?: {
-      readonly exchange_id: string;
-      readonly quote: string;
-      readonly block_offset: number;
-      readonly context: string;
-    };
   } = {},
 ) => ({
   type: "reply",
   reply_id: replyId,
   parent_reply_id: extra.parentReplyId ?? null,
   exchange_id: exchangeId,
-  ...(extra.btw === undefined ? {} : { btw: extra.btw }),
   question,
   status: "completed",
   messages:
@@ -632,6 +626,7 @@ const seedFixtures = async (): Promise<Fixture> => {
             userId: id.alice,
             query: "How should study circles use source material?",
             origin: {
+              kind: "document",
               doc_path: "wiki/alpha-practice.md",
               anchor: "alpha-anchor",
               paragraph: "Alpha paragraph",
@@ -642,31 +637,43 @@ const seedFixtures = async (): Promise<Fixture> => {
             idempotencyKey: "alice-main-key",
           },
           {
+            id: id.sessionAliceBtw,
+            vaultId: id.vaultAlpha,
+            userId: id.alice,
+            kind: "btw",
+            query: "Why this passage?",
+            origin: { kind: "answer", session_id: id.sessionAliceMain, exchange_id: EX_1, anchor: "concrete passage", paragraph_index: 0, paragraph: "Start with a concrete passage" },
+            createdAt: new Date("2026-07-07T09:20:00.000Z"),
+            updatedAt: new Date("2026-07-07T09:21:00.000Z"),
+          },
+          {
             id: id.sessionBob,
             vaultId: id.vaultAlpha,
             userId: id.bob,
             query: "What should editors review first?",
-            origin: { doc_path: "raw/books/capital.md", origin_scope: "vault", anchor: null, paragraph: null, paragraph_index: null },
+            origin: { kind: "document", doc_path: "raw/books/capital.md", origin_scope: "vault", anchor: null, paragraph: null, paragraph_index: null },
             createdAt: new Date("2026-07-08T10:00:00.000Z"),
             updatedAt: new Date("2026-07-08T10:15:00.000Z"),
             idempotencyKey: "bob-main-key",
           },
           {
             id: id.sessionNoMarkdown,
+            kind: "btw",
             vaultId: id.vaultAlpha,
             userId: id.alice,
             query: "Missing markdown sidecar",
-            origin: { doc_path: "refs/test-fixture.md", origin_scope: "vault", anchor: "missing-sidecar", paragraph: null, paragraph_index: null },
+            origin: { kind: "document", doc_path: "refs/test-fixture.md", origin_scope: "vault", anchor: "missing-sidecar", paragraph: null, paragraph_index: null },
             createdAt: new Date("2026-07-09T10:00:00.000Z"),
             updatedAt: new Date("2026-07-09T10:00:00.000Z"),
             idempotencyKey: "missing-sidecar-key",
           },
           {
             id: id.sessionMalformed,
+            kind: "btw",
             vaultId: id.vaultAlpha,
             userId: id.alice,
             query: "Malformed event handling",
-            origin: { doc_path: "refs/test-fixture.md", origin_scope: "vault", anchor: "malformed-events", paragraph: null, paragraph_index: null },
+            origin: { kind: "document", doc_path: "refs/test-fixture.md", origin_scope: "vault", anchor: "malformed-events", paragraph: null, paragraph_index: null },
             createdAt: new Date("2026-07-09T11:00:00.000Z"),
             updatedAt: new Date("2026-07-09T11:04:00.000Z"),
             idempotencyKey: "malformed-events-key",
@@ -754,6 +761,7 @@ const seedFixtures = async (): Promise<Fixture> => {
         ts: "2026-07-07T09:00:00.000Z",
         user_id: id.alice,
         origin: {
+          kind: "document",
           doc_path: "wiki/alpha-practice.md",
           anchor: "alpha-anchor",
           paragraph: "Alpha paragraph",
@@ -821,49 +829,6 @@ const seedFixtures = async (): Promise<Fixture> => {
         },
       ),
       replyNode(
-        "00000000-0000-4000-8000-000000000103",
-        EX_1_BTW_1,
-        "Why this passage?",
-        "It gives the group something specific to test.",
-        "2026-07-07T09:20:00.000Z",
-        {
-          parentReplyId: "00000000-0000-4000-8000-000000000102",
-          btw: {
-            exchange_id: EX_1,
-            quote: "concrete passage",
-            block_offset: 0,
-            context: "Start with a concrete passage",
-          },
-          sources: [
-            {
-              label: "Linked articles",
-              type: "links",
-              document_id: null,
-              title: null,
-              scope: null,
-              path: null,
-              thinking: null,
-            },
-          ],
-        },
-      ),
-      replyNode(
-        "00000000-0000-4000-8000-000000000104",
-        EX_1_BTW_2,
-        "How do we avoid over-reading it?",
-        "Keep claims proportional to the evidence.",
-        "2026-07-07T09:21:00.000Z",
-        {
-          parentReplyId: "00000000-0000-4000-8000-000000000103",
-          btw: {
-            exchange_id: EX_1,
-            quote: "concrete passage",
-            block_offset: 0,
-            context: "Start with a concrete passage",
-          },
-        },
-      ),
-      replyNode(
         "00000000-0000-4000-8000-000000000105",
         EX_2,
         "What should the facilitator write down?",
@@ -877,6 +842,15 @@ const seedFixtures = async (): Promise<Fixture> => {
     `sessions/${id.sessionAliceMain}.md`,
     "# Stored Session Markdown\n\nThis came from the sidecar.\n",
   );
+  await writeVaultFile(id.vaultAlpha, `sessions/${id.sessionAliceBtw}.jsonl`, jsonl([
+    {
+      type: "meta", id: id.sessionAliceBtw, user_id: id.alice, query: "Why this passage?", ts: "2026-07-07T09:20:00.000Z",
+      origin: { kind: "answer", session_id: id.sessionAliceMain, exchange_id: EX_1, anchor: "concrete passage", paragraph_index: 0, paragraph: "Start with a concrete passage" },
+      context: { session_id: id.sessionAliceMain, reply_id: "00000000-0000-4000-8000-000000000102" },
+    },
+    replyNode("00000000-0000-4000-8000-000000000103", EX_1_BTW_1, "Why this passage?", "It gives the group something specific to test.", "2026-07-07T09:20:00.000Z"),
+    replyNode("00000000-0000-4000-8000-000000000104", EX_1_BTW_2, "How do we avoid over-reading it?", "Keep claims proportional to the evidence.", "2026-07-07T09:21:00.000Z", { parentReplyId: "00000000-0000-4000-8000-000000000103" }),
+  ]));
   await writeVaultFile(
     id.vaultAlpha,
     `sessions/${id.sessionBob}.jsonl`,
@@ -887,7 +861,7 @@ const seedFixtures = async (): Promise<Fixture> => {
         query: "What should editors review first?",
         ts: "2026-07-08T10:00:00.000Z",
         user_id: id.bob,
-        origin: { doc_path: "raw/books/capital.md", origin_scope: "vault", anchor: null, paragraph: null, paragraph_index: null },
+        origin: { kind: "document", doc_path: "raw/books/capital.md", origin_scope: "vault", anchor: null, paragraph: null, paragraph_index: null },
       },
       {
         type: "exchange",
@@ -1647,11 +1621,9 @@ describe("read-only HTTP integration", () => {
     expect(listed.status).toBe(200);
     const page = asPage(listed.body);
     const sessions = itemRecords(page);
-    // The anchored thread (sessionAliceMain) lives with its document and is
-    // excluded from the main list; unanchored and origin-less sessions stay.
-    expect(page.pagination).toEqual({ limit: 50, offset: 0, total: 1 });
-    expect(sessions.map((session) => session.id)).toEqual([id.sessionAliceOlder]);
-    expect(sessions[0]).toMatchObject({
+    expect(page.pagination).toEqual({ limit: 50, offset: 0, total: 2 });
+    expect(sessions.map((session) => session.id)).toEqual([id.sessionAliceMain, id.sessionAliceOlder]);
+    expect(sessions[1]).toMatchObject({
       id: id.sessionAliceOlder,
       query: "Earlier organizing question",
       user_id: id.alice,
@@ -1666,13 +1638,13 @@ describe("read-only HTTP integration", () => {
       aliceToken,
     );
     expect(secondPage.status).toBe(200);
-    expect(itemRecords(asPage(secondPage.body)).map((session) => session.id)).toEqual([]);
+    expect(itemRecords(asPage(secondPage.body)).map((session) => session.id)).toEqual([id.sessionAliceOlder]);
 
     const zero = await api("GET", `/vaults/${id.vaultAlpha}/sessions?limit=0`, aliceToken);
     expect(zero.status).toBe(200);
     expect(asPage(zero.body)).toEqual({
       items: [],
-      pagination: { limit: 0, offset: 0, total: 1 },
+      pagination: { limit: 0, offset: 0, total: 2 },
     });
 
     const bobList = await api("GET", `/vaults/${id.vaultAlpha}/sessions`, bobToken);
@@ -1684,7 +1656,7 @@ describe("read-only HTTP integration", () => {
     expect(pastEnd.status).toBe(200);
     expect(asPage(pastEnd.body)).toEqual({
       items: [],
-      pagination: { limit: 50, offset: 99, total: 1 },
+      pagination: { limit: 50, offset: 99, total: 2 },
     });
 
     const overCap = await api("GET", `/vaults/${id.vaultAlpha}/sessions?limit=201`, aliceToken);
@@ -1704,7 +1676,7 @@ describe("read-only HTTP integration", () => {
     });
   });
 
-  it("serves origin threads by-origin with events while the main list excludes anchored ones", async () => {
+  it("serves document BTWs at their origin while the main list uses conversation kind", async () => {
     const { aliceToken, bobToken, malloryToken } = currentFixture();
     const docPath = "refs/article.md";
     await runDb(
@@ -1715,10 +1687,12 @@ describe("read-only HTTP integration", () => {
           .values([
             {
               id: sessionId("s-origin-anchored"),
+              kind: "btw",
               vaultId: id.vaultAlpha,
               userId: id.alice,
               query: "What does the anchored claim mean?",
               origin: {
+                kind: "document",
                 doc_path: docPath,
                 origin_scope: "personal",
                 anchor: "anchored claim",
@@ -1734,6 +1708,7 @@ describe("read-only HTTP integration", () => {
               userId: id.alice,
               query: "Doc-initiated conversation",
               origin: {
+                kind: "document",
                 doc_path: docPath,
                 origin_scope: "personal",
                 anchor: null,
@@ -1745,10 +1720,12 @@ describe("read-only HTTP integration", () => {
             },
             {
               id: sessionId("s-origin-bob"),
+              kind: "btw",
               vaultId: id.vaultAlpha,
               userId: id.bob,
               query: "Bob's anchored thread",
               origin: {
+                kind: "document",
                 doc_path: docPath,
                 origin_scope: "personal",
                 anchor: "bob claim",
@@ -1773,6 +1750,7 @@ describe("read-only HTTP integration", () => {
           ts: "2026-07-10T08:00:00.000Z",
           user_id: id.alice,
           origin: {
+            kind: "document",
             doc_path: docPath,
             origin_scope: "personal",
             anchor: "anchored claim",
@@ -1800,6 +1778,7 @@ describe("read-only HTTP integration", () => {
           ts: "2026-07-10T09:00:00.000Z",
           user_id: id.alice,
           origin: {
+            kind: "document",
             doc_path: docPath,
             origin_scope: "personal",
             anchor: null,
@@ -1827,6 +1806,7 @@ describe("read-only HTTP integration", () => {
           ts: "2026-07-10T10:00:00.000Z",
           user_id: id.bob,
           origin: {
+            kind: "document",
             doc_path: docPath,
             origin_scope: "personal",
             anchor: "bob claim",
@@ -1861,6 +1841,7 @@ describe("read-only HTTP integration", () => {
       user_id: id.alice,
       created_at: "2026-07-10T08:00:00.000Z",
       origin: {
+        kind: "document",
         doc_path: docPath,
         origin_scope: "personal",
         anchor: "anchored claim",
@@ -1907,6 +1888,22 @@ describe("read-only HTTP integration", () => {
     expect(nonMember.status).toBe(403);
   });
 
+  it("only lets the owner continue a BTW as the same session", async () => {
+    const { aliceToken, bobToken, malloryToken } = currentFixture();
+    const path = `/vaults/${id.vaultAlpha}/sessions/${id.sessionAliceBtw}`;
+    const before = await api("GET", path, aliceToken);
+    expect(asRecord(before.body).kind).toBe("btw");
+    expect((await api("POST", `${path}/continue`, bobToken)).status).toBe(404);
+    expect((await api("POST", `${path}/continue`, malloryToken)).status).toBe(403);
+    expect((await api("POST", `${path}/continue`)).status).toBe(401);
+    expect((await api("POST", `${path}/continue`, aliceToken)).status).toBe(200);
+    expect((await api("POST", `${path}/continue`, aliceToken)).status).toBe(200);
+    const after = await api("GET", path, aliceToken);
+    expect(after.body).toEqual({ ...asRecord(before.body), kind: "session" });
+    const listed = await api("GET", `/vaults/${id.vaultAlpha}/sessions`, aliceToken);
+    expect(asArray(asRecord(listed.body).items).map((item) => asRecord(item).id)).toContain(id.sessionAliceBtw);
+  });
+
   it("rejects markdown reads of another member's session", async () => {
     const { bobToken } = currentFixture();
     const markdown = await api(
@@ -1929,13 +1926,14 @@ describe("read-only HTTP integration", () => {
     const body = asRecord(replay.body);
     expect(body.id).toBe(id.sessionAliceMain);
     const events = asArray(body.events).map(asRecord);
-    expect(events.map((event) => event.type)).toEqual(["meta", "exchange", "exchange", "btw"]);
+    expect(events.map((event) => event.type)).toEqual(["meta", "exchange", "exchange"]);
     expect(events.map((event) => event.exId).filter(Boolean)).not.toContain(EX_STALE);
     expect(events[0]).toMatchObject({
       type: "meta",
       query: "How should study circles use source material?",
       user_id: id.alice,
       origin: {
+        kind: "document",
         doc_path: "wiki/alpha-practice.md",
         anchor: "alpha-anchor",
         paragraph: "Alpha paragraph",
@@ -1958,15 +1956,10 @@ describe("read-only HTTP integration", () => {
       thinking: null,
       scope: null,
     });
-    const btw = events[3] ?? {};
-    expect(btw).toMatchObject({
-      type: "btw",
-      exId: EX_1,
-      quote: "concrete passage",
-      blockOffset: 0,
-      context: "Start with a concrete passage",
-    });
-    expect(asArray(btw.exchanges)).toHaveLength(2);
+    const threads = asArray(body.threads).map(asRecord);
+    expect(threads).toHaveLength(1);
+    expect(threads[0]?.session).toMatchObject({ id: id.sessionAliceBtw, kind: "btw", origin: { kind: "answer", exchange_id: EX_1, anchor: "concrete passage" } });
+    expect(asArray(threads[0]?.events).map(asRecord).filter((event) => event.type === "exchange")).toHaveLength(2);
 
     // Sessions are personal: a vault member cannot read another member's session.
     const memberReadsOwnerSession = await api(

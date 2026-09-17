@@ -17,7 +17,7 @@ import {
   vaults,
   wikiArticles,
 } from "@great-minds/database";
-import { Uuid } from "@great-minds/domain";
+import { type OriginSessionDetail, Uuid } from "@great-minds/domain";
 import { eq, sql } from "drizzle-orm";
 import { Effect, Layer, Option, Redacted, Schema } from "effect";
 import { afterEach, describe, expect, it } from "vitest";
@@ -681,7 +681,7 @@ describe("query stream", () => {
       { kind: "ephemeral" },
       { session: { kind: "existing" } },
       { session: { kind: "new" } },
-      { session: { kind: "existing", id: "session-1", btw: { quote: "incomplete anchor" } } },
+      { session: { kind: "new", idempotency_key: "incomplete-anchor", conversation_kind: "btw", origin: { kind: "answer", anchor: "incomplete anchor" } } },
     ]) {
       const result = await api(repliesPath, {
         exchange_id: crypto.randomUUID(),
@@ -712,6 +712,7 @@ describe("query stream", () => {
         kind: "new",
         idempotency_key: "reply-session-idempotency",
         origin: {
+          kind: "document",
           doc_path: "wiki/alpha.md",
           origin_scope: "vault",
           anchor: null,
@@ -866,9 +867,12 @@ describe("query stream", () => {
       session: {
         kind: "new",
         idempotency_key: "anchored-session-key",
+        conversation_kind: "btw",
         origin_scope: "personal",
         origin: {
+          kind: "document",
           doc_path: "refs/article.md",
+          origin_scope: "personal",
           anchor: "the highlighted claim",
           paragraph: "The surrounding passage.",
           paragraph_index: 2,
@@ -896,6 +900,7 @@ describe("query stream", () => {
       type: "meta",
       query: "What does this claim imply?",
       origin: {
+        kind: "document",
         doc_path: "refs/article.md",
         origin_scope: "personal",
         anchor: "the highlighted claim",
@@ -979,24 +984,29 @@ describe("query stream", () => {
       question: "Why this answer?",
       mode: "btw",
       session: {
-        kind: "existing",
-        id: firstIds.session_id,
-        btw: {
-          quote: "First answer",
-          blockOffset: 0,
-          context: "First answer.",
-          exchangeId: EX_CANONICAL_FIRST,
+        kind: "new",
+        conversation_kind: "btw",
+        idempotency_key: "canonical-btw",
+        origin: {
+          kind: "answer",
+          session_id: firstIds.session_id,
+          anchor: "First answer",
+          paragraph_index: 0,
+          paragraph: "First answer.",
+          exchange_id: EX_CANONICAL_FIRST,
         },
       },
     });
     expect(btw.response.status).toBe(202);
-    const btwIds = JSON.parse(btw.text) as { reply_id: string };
+    const btwIds = JSON.parse(btw.text) as { reply_id: string; session_id: string };
+    expect(btwIds.session_id).not.toBe(firstIds.session_id);
     await tailReply(btwIds.reply_id);
 
     const replay = await getWithToken(`/vaults/${id.vault}/sessions/${firstIds.session_id}`);
     expect(replay.status).toBe(200);
     const replayBody = (await replay.json()) as {
       events: readonly Record<string, unknown>[];
+      threads: readonly OriginSessionDetail[];
     };
     expect(
       replayBody.events
@@ -1006,19 +1016,15 @@ describe("query stream", () => {
       { id: EX_CANONICAL_FIRST, answer: "First answer." },
       { id: EX_CANONICAL_FOLLOW_UP, answer: "Follow-up answer." },
     ]);
-    const btwEvents = replayBody.events.filter((event) => event.type === "btw");
-    expect(btwEvents.at(-1)).toMatchObject({
-      exId: EX_CANONICAL_FIRST,
-      reply_id: btwIds.reply_id,
-      context: "First answer.",
-      exchanges: [
-        {
-          exchange_id: EX_CANONICAL_BTW_1,
-          query: "Why this answer?",
-          answer: "BTW answer.",
-        },
-      ],
+    expect(replayBody.threads[0]?.session).toMatchObject({
+      id: btwIds.session_id,
+      kind: "btw",
+      origin: { kind: "answer", exchange_id: EX_CANONICAL_FIRST, paragraph: "First answer." },
     });
+    expect(replayBody.threads[0]?.events).toContainEqual(expect.objectContaining({ exId: EX_CANONICAL_BTW_1, query: "Why this answer?", answer: "BTW answer." }));
+    expect(language.streamCalls[2]?.messages.filter((message) => message.role === "user").map((message) => message.content)).toEqual([
+      "First question", "Follow-up question", 'Passage:\n> First answer.\n\nHighlighted: "First answer"\n\nWhy this answer?',
+    ]);
 
     const markdown = await readFile(
       join(
@@ -1032,8 +1038,7 @@ describe("query stream", () => {
     );
     expect(markdown).toContain("# First question");
     expect(markdown).toContain("First answer.");
-    expect(markdown).toContain('> **BTW** re: "First answer"');
-    expect(markdown).toContain("> BTW answer.");
+    expect(markdown).not.toContain("BTW answer.");
     expect(markdown).toContain("# Follow-up question");
     expect(markdown).toContain("Follow-up answer.");
   });
@@ -1057,13 +1062,16 @@ describe("query stream", () => {
       question: "Why?",
       mode: "query",
       session: {
-        kind: "existing",
-        id: session_id,
-        btw: {
-          quote: "First",
-          blockOffset: 0,
-          context: "First answer.",
-          exchangeId: "../../wiki/index",
+        kind: "new",
+        conversation_kind: "btw",
+        idempotency_key: "invalid-btw-anchor",
+        origin: {
+          kind: "answer",
+          session_id,
+          anchor: "First",
+          paragraph_index: 0,
+          paragraph: "First answer.",
+          exchange_id: "../../wiki/index",
         },
       },
     });
@@ -1180,6 +1188,7 @@ describe("query stream", () => {
         idempotency_key: "retry-session-key",
         origin_scope: "vault",
         origin: {
+          kind: "document",
           doc_path: "raw/texts/source.md",
           origin_scope: "vault",
           anchor: "The highlighted claim.",
@@ -1292,27 +1301,30 @@ describe("query stream", () => {
       question: "Why this answer?",
       mode: "btw",
       session: {
-        kind: "existing",
-        id: parentIds.session_id,
-        btw: {
-          quote: "answer",
-          context: "Parent answer.",
-          blockOffset: 0,
-          exchangeId: EX_BRANCH_PARENT,
+        kind: "new",
+        conversation_kind: "btw",
+        idempotency_key: "retry-answer-btw",
+        origin: {
+          kind: "answer",
+          session_id: parentIds.session_id,
+          anchor: "answer",
+          paragraph: "Parent answer.",
+          paragraph_index: 0,
+          exchange_id: EX_BRANCH_PARENT,
         },
       },
     });
     expect(branch.response.status).toBe(202);
-    const branchIds = JSON.parse(branch.text) as { reply_id: string };
+    const branchIds = JSON.parse(branch.text) as { reply_id: string; session_id: string };
     const failed = await tailReply(branchIds.reply_id);
     expect(replySnapshots(failed.text).at(-1)).toMatchObject({ status: "failed" });
     const retried = await retryReply(branchIds.reply_id);
     expect(retried.response.status).toBe(202);
     const retryIds = JSON.parse(retried.text) as { reply_id: string; session_id: string };
-    expect(retryIds.session_id).toBe(parentIds.session_id);
+    expect(retryIds.session_id).toBe(branchIds.session_id);
     const completed = await tailReply(retryIds.reply_id);
     expect(replySnapshots(completed.text).at(-1)).toMatchObject({
-      kind: "btw",
+      kind: "exchange",
       status: "completed",
       answer: "Complete BTW.",
     });
@@ -1322,12 +1334,15 @@ describe("query stream", () => {
         "Parent question",
         'Passage:\n> Parent answer.\n\nHighlighted: "answer"\n\nWhy this answer?',
       ]);
-    const events = await readSessionEvents(parentIds.session_id);
+    const events = await readSessionEvents(branchIds.session_id);
     expect(events.at(-1)).toMatchObject({
       reply_id: retryIds.reply_id,
-      parent_reply_id: parentIds.reply_id,
+      parent_reply_id: null,
       exchange_id: EX_BRANCH_BTW_1,
-      btw: { exchange_id: EX_BRANCH_PARENT, quote: "answer", context: "Parent answer." },
+    });
+    expect(events[0]).toMatchObject({
+      context: { session_id: parentIds.session_id, reply_id: parentIds.reply_id },
+      origin: { kind: "answer", exchange_id: EX_BRANCH_PARENT, anchor: "answer" },
     });
   });
 
@@ -1662,7 +1677,7 @@ describe("query stream", () => {
     expect(third[10]).toEqual({ role: "assistant", content: "Third." });
   });
 
-  it("branches BTW threads off the main line", async () => {
+  it("keeps a BTW's inherited context fixed and promotes the same conversation", async () => {
     const language = makeScriptedLanguageModel({
       streams: [
         {
@@ -1675,12 +1690,13 @@ describe("query stream", () => {
         },
         {
           kind: "parts",
-          parts: [tokenPart("Second BTW answer."), finishPart("stop", "branch-btw-2")],
+          parts: [tokenPart("Main answer."), finishPart("stop", "branch-main")],
         },
         {
           kind: "parts",
-          parts: [tokenPart("Main answer."), finishPart("stop", "branch-main")],
+          parts: [tokenPart("Second BTW answer."), finishPart("stop", "branch-btw-2")],
         },
+        { kind: "parts", parts: [tokenPart("Promoted answer."), finishPart("stop")] },
       ],
     });
     await startHarness({ language });
@@ -1696,30 +1712,34 @@ describe("query stream", () => {
     const rootTail = await tailReply(rootIds.reply_id);
     expect(replySnapshots(rootTail.text).at(-1)).toMatchObject({ status: "completed" });
 
+    let btwSessionId: string | null = null;
     const sendBtw = async (exchangeId: string, question: string) => {
       const created = await api(repliesPath, {
         exchange_id: exchangeId,
         question,
         mode: "btw",
-        session: {
-          kind: "existing",
-          id: rootIds.session_id,
-          btw: {
-            quote: "answer",
-            blockOffset: 0,
-            context: "Parent answer.",
-            exchangeId: EX_BRANCH_PARENT,
+        session: btwSessionId === null ? {
+          kind: "new",
+          conversation_kind: "btw",
+          idempotency_key: "branch-btw-key",
+          origin: {
+            kind: "answer",
+            session_id: rootIds.session_id,
+            anchor: "answer",
+            paragraph_index: 0,
+            paragraph: "Parent answer.",
+            exchange_id: EX_BRANCH_PARENT,
           },
-        },
+        } : { kind: "existing", id: btwSessionId },
       });
       expect(created.response.status).toBe(202);
-      const ids = JSON.parse(created.text) as { reply_id: string };
+      const ids = JSON.parse(created.text) as { reply_id: string; session_id: string };
+      btwSessionId = ids.session_id;
       const tail = await tailReply(ids.reply_id);
       expect(replySnapshots(tail.text).at(-1)).toMatchObject({ status: "completed" });
       return ids.reply_id;
     };
     const firstBtwReplyId = await sendBtw(EX_BRANCH_BTW_1, "First BTW");
-    const secondBtwReplyId = await sendBtw(EX_BRANCH_BTW_2, "Second BTW");
 
     const follow = await api(repliesPath, {
       exchange_id: EX_BRANCH_FOLLOW_UP,
@@ -1731,6 +1751,7 @@ describe("query stream", () => {
     const followIds = JSON.parse(follow.text) as { reply_id: string };
     const followTail = await tailReply(followIds.reply_id);
     expect(replySnapshots(followTail.text).at(-1)).toMatchObject({ status: "completed" });
+    const secondBtwReplyId = await sendBtw(EX_BRANCH_BTW_2, "Second BTW");
 
     expect(language.streamCalls).toHaveLength(4);
     const btwContext = [
@@ -1749,7 +1770,7 @@ describe("query stream", () => {
     expect(firstBtw.slice(1, 4)).toEqual(btwContext);
     expect(firstBtw[4]).toEqual({ role: "assistant", content: "First BTW answer." });
 
-    const secondBtw = language.streamCalls[2]!.messages;
+    const secondBtw = language.streamCalls[3]!.messages;
     expect(secondBtw).toHaveLength(7);
     expect(secondBtw.slice(1, 4)).toEqual(btwContext);
     expect(secondBtw[4]).toEqual({
@@ -1764,7 +1785,7 @@ describe("query stream", () => {
     });
     expect(secondBtw[6]).toEqual({ role: "assistant", content: "Second BTW answer." });
 
-    const main = language.streamCalls[3]!.messages;
+    const main = language.streamCalls[2]!.messages;
     expect(main.filter((message) => message.role === "user").map((message) => message.content)).toEqual(
       ["Parent question", "Main follow-up"],
     );
@@ -1778,31 +1799,30 @@ describe("query stream", () => {
     expect(sessionResponse.status).toBe(200);
     const sessionBody = (await sessionResponse.json()) as {
       events: readonly Record<string, unknown>[];
+      threads: readonly OriginSessionDetail[];
     };
     const exchangeEvents = sessionBody.events.filter((event) => event.type === "exchange");
     expect(exchangeEvents).toHaveLength(2);
     expect(exchangeEvents.map((event) => event.query)).toEqual(["Parent question", "Main follow-up"]);
-    const btwEvents = sessionBody.events.filter((event) => event.type === "btw");
-    expect(btwEvents).toHaveLength(1);
-    expect(btwEvents[0]).toMatchObject({
-      exId: EX_BRANCH_PARENT,
-      quote: "answer",
-      blockOffset: 0,
-      context: "Parent answer.",
-      reply_id: secondBtwReplyId,
-      exchanges: [
+    expect(sessionBody.threads).toHaveLength(1);
+    expect(sessionBody.threads[0]?.session).toMatchObject({
+      id: btwSessionId,
+      kind: "btw",
+      origin: { kind: "answer", exchange_id: EX_BRANCH_PARENT, anchor: "answer", paragraph_index: 0, paragraph: "Parent answer." },
+    });
+    expect(sessionBody.threads[0]?.events.filter((event) => event.type === "exchange")).toEqual([
         expect.objectContaining({
-          exchange_id: EX_BRANCH_BTW_1,
+          exId: EX_BRANCH_BTW_1,
           query: "First BTW",
           answer: "First BTW answer.",
         }),
         expect.objectContaining({
-          exchange_id: EX_BRANCH_BTW_2,
+          exId: EX_BRANCH_BTW_2,
+          reply_id: secondBtwReplyId,
           query: "Second BTW",
           answer: "Second BTW answer.",
         }),
-      ],
-    });
+      ]);
     expect(firstBtwReplyId).not.toBe(secondBtwReplyId);
 
     const markdown = await readFile(
@@ -1815,10 +1835,38 @@ describe("query stream", () => {
       ),
       "utf8",
     );
-    expect(markdown).toContain("> *First BTW*");
-    expect(markdown).toContain("> First BTW answer.");
-    expect(markdown).toContain("> *Second BTW*");
-    expect(markdown).toContain("> Second BTW answer.");
+    expect(markdown).not.toContain("First BTW");
+    const before = await readSessionEvents(btwSessionId!);
+    const nested = await api(repliesPath, {
+      exchange_id: crypto.randomUUID(),
+      question: "Nested question",
+      session: {
+        kind: "new", conversation_kind: "btw", idempotency_key: "nested-btw",
+        origin: { kind: "answer", session_id: btwSessionId, exchange_id: EX_BRANCH_BTW_1, anchor: "answer", paragraph: "First BTW answer.", paragraph_index: 0 },
+      },
+    });
+    expect(nested.response.status).toBe(400);
+    expect(language.streamCalls).toHaveLength(4);
+    const hidden = await getWithToken(`/vaults/${id.vault}/sessions`);
+    expect(JSON.stringify(await hidden.json())).not.toContain(btwSessionId);
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const promoted = await api(`/vaults/${id.vault}/sessions/${btwSessionId}/continue`, {});
+      expect(promoted.response.ok).toBe(true);
+    }
+    expect(await readSessionEvents(btwSessionId!)).toEqual(before);
+    const visible = await getWithToken(`/vaults/${id.vault}/sessions`);
+    expect(JSON.stringify(await visible.json())).toContain(btwSessionId);
+    const continuation = await api(repliesPath, {
+      exchange_id: crypto.randomUUID(), question: "Continue the thought",
+      session: { kind: "existing", id: btwSessionId },
+    });
+    expect(continuation.response.status).toBe(202);
+    await tailReply((JSON.parse(continuation.text) as { reply_id: string }).reply_id);
+    const promotedMessages = language.streamCalls[4]!.messages;
+    expect(String(promotedMessages[0]?.content)).not.toContain("This is a BTW");
+    expect(promotedMessages.filter((message) => message.role === "user").map((message) => message.content)).toEqual([
+      "Parent question", 'Passage:\n> Parent answer.\n\nHighlighted: "answer"\n\nFirst BTW', "Second BTW", "Continue the thought",
+    ]);
   });
 
   it("inherits the origin read from the root turn", async () => {
@@ -1855,6 +1903,7 @@ describe("query stream", () => {
         idempotency_key: "origin-inherit-session-key",
         origin_scope: "vault",
         origin: {
+          kind: "document",
           doc_path: "raw/texts/source.md",
           origin_scope: "vault",
           anchor: "quote",

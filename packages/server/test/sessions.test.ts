@@ -83,26 +83,14 @@ describe("session projection", () => {
     expect(markdown.indexOf("# First question")).toBeLessThan(markdown.indexOf("# Second question"));
   });
 
-  it("projects a BTW thread of two turns into one btw event", () => {
+  it("projects a BTW's own turns without displaying its inherited conversation", () => {
     const events: StoredSessionEvent[] = [
-      meta,
-      node({
-        exchange_id: EX_1,
-        question: "Parent question",
-        answer: "Parent answer",
-        reply_id: uuid("00000000-0000-4000-8000-000000000101"),
-      }),
+      { ...meta, context: { session_id: sessionId("parent-session"), reply_id: uuid("00000000-0000-4000-8000-000000000101") } },
       node({
         exchange_id: BTW_1,
         question: "First BTW",
         answer: "First BTW answer",
-        parent_reply_id: uuid("00000000-0000-4000-8000-000000000101"),
-        btw: {
-          exchange_id: EX_1,
-          quote: "Parent answer",
-          block_offset: 0,
-          context: "Parent answer.",
-        },
+        parent_reply_id: null,
         reply_id: uuid("00000000-0000-4000-8000-000000000102"),
       }),
       node({
@@ -110,44 +98,19 @@ describe("session projection", () => {
         question: "Second BTW",
         answer: "Second BTW answer",
         parent_reply_id: uuid("00000000-0000-4000-8000-000000000102"),
-        btw: {
-          exchange_id: EX_1,
-          quote: "Parent answer",
-          block_offset: 0,
-          context: "Parent answer.",
-        },
         reply_id: uuid("00000000-0000-4000-8000-000000000103"),
       }),
     ];
 
     const projected = projectSession(events);
     expect(projected.filter((event) => event.type === "exchange")).toEqual([
-      expect.objectContaining({ exId: EX_1, answer: "Parent answer" }),
+      expect.objectContaining({ exId: BTW_1, answer: "First BTW answer" }),
+      expect.objectContaining({ exId: BTW_2, answer: "Second BTW answer" }),
     ]);
-    const btwEvents = projected.filter((event) => event.type === "btw");
-    expect(btwEvents).toHaveLength(1);
-    expect(btwEvents[0]).toMatchObject({
-      exId: EX_1,
-      quote: "Parent answer",
-      reply_id: uuid("00000000-0000-4000-8000-000000000103"),
-      blockOffset: 0,
-      context: "Parent answer.",
-      exchanges: [
-        {
-          exchange_id: BTW_1,
-          query: "First BTW",
-          answer: "First BTW answer",
-        },
-        {
-          exchange_id: BTW_2,
-          query: "Second BTW",
-          answer: "Second BTW answer",
-        },
-      ],
-    });
     const markdown = renderSessionMarkdown(projected);
-    expect(markdown).toContain("> First BTW");
-    expect(markdown).toContain("> Second BTW");
+    expect(markdown).toContain("# First BTW");
+    expect(markdown).toContain("# Second BTW");
+    expect(markdown).not.toContain("Parent answer");
   });
 
   it("projects a pending node with an empty answer and no thinking", () => {

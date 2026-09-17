@@ -1,339 +1,189 @@
-import { type SessionId, type Uuid } from "@great-minds/domain";
+import { browser } from "$app/environment";
+import type { OriginSessionDetail, SessionId, SessionOrigin, Uuid } from "@great-minds/domain";
 
-import { createReply, retryReply, streamReply } from "$lib/api/replies";
-import { listSessionsByOrigin, type OriginScope, type SessionEvent } from "$lib/api/sessions";
+import {
+  createReply,
+  retryReply,
+  streamReply,
+  type CreateReplyPayload,
+  type CreateReplyResponse,
+} from "$lib/api/replies";
+import { selectedVault } from "$lib/api/selected-vault";
+import { continueAsSession } from "$lib/api/sessions";
 import { newUuid } from "$lib/ids";
+import { queryClient } from "$lib/query-client";
 import { replyTurn } from "$lib/reply-turn";
-import type { DocThread, Exchange, SelectionInfo } from "$lib/types";
+import { replayExchanges } from "$lib/session-events";
+import type { Exchange, ThreadLike } from "$lib/types";
 import { genId, isAbortError } from "$lib/utils";
 
-/**
- * Persistent annotation threads anchored to a document. Loads every session
- * the caller owns for this doc (anchored note threads plus doc-initiated
- * conversations) via by-origin, and owns the local draft flow: a highlight
- * creates a draft thread locally (no server call) that becomes a real session
- * the moment its first reply is created.
- */
-export class DocThreads {
-  threads = $state<DocThread[]>([]);
-  loading = $state(false);
+export class Btw implements ThreadLike {
+  conversation = $state<ThreadLike["conversation"]>(null);
+  exchanges = $state<Exchange[]>([]);
+  promoting = $state(false);
   error = $state<string | null>(null);
-  // Thread ids whose anchor block is present in the rendered document body.
-  // Only these offer a jump affordance from the header panel; the body guard
-  // skips inline rendering for unresolvable anchors, so jumping would be a
-  // no-op. Refreshed from the DOM whenever the body (re)mounts.
-  jumpable = $state<Set<string>>(new Set());
-  // Thread ids currently expanded inline in the reader. Owned here so both the
-  // doc-header chip (jump to mark) and the body rendering share one signal.
-  expanded = $state<Set<string>>(new Set());
 
-  #controllers = new Set<AbortController>();
-  #loaded = false;
+  readonly id: string;
+  readonly anchor: ThreadLike["anchor"];
+  readonly createdAt: Date | null;
+
+  #controller = new AbortController();
+  #attempt: CreateReplyPayload | null = null;
 
   constructor(
-    private readonly originPath: string,
-    private readonly originScope: OriginScope,
-    private readonly onOpenSession: (sessionId: SessionId) => void,
+    private readonly origin: SessionOrigin,
+    private readonly onOpenSession?: (sessionId: SessionId) => void,
+    saved?: OriginSessionDetail,
   ) {
-    void this.load();
+    this.id = saved ? `thread:${saved.session.id}` : genId("btw");
+    this.anchor = {
+      blockOffset: origin.paragraph_index ?? -1,
+      quote: origin.anchor ?? "",
+      context: origin.paragraph ?? "",
+    };
+    this.createdAt = saved?.session.created_at ?? null;
+    this.conversation = saved?.session ?? null;
+    this.exchanges = saved ? replayExchanges(saved.events) : [];
+    if (browser) {
+      queueMicrotask(() => {
+        const pending = this.exchanges.at(-1);
+        if (
+          !this.#controller.signal.aborted &&
+          this.conversation?.kind === "btw" &&
+          pending?.streaming &&
+          pending.replyId
+        ) {
+          void this.#tail(pending.id, pending.replyId);
+        }
+      });
+    }
+  }
+
+  get draft(): boolean {
+    return this.conversation === null;
+  }
+
+  get #busy(): boolean {
+    return (
+      this.#controller.signal.aborted ||
+      this.promoting ||
+      this.exchanges.some((turn) => turn.streaming)
+    );
   }
 
   destroy = (): void => {
-    for (const controller of this.#controllers) controller.abort();
-    this.#controllers.clear();
-    this.threads = [];
-    this.expanded = new Set();
-    this.error = null;
-    this.#loaded = false;
+    this.#controller.abort();
+    this.#attempt = null;
   };
 
-  load = async (): Promise<void> => {
-    if (this.#loaded) return;
-    this.#loaded = true;
-    this.loading = true;
-    const controller = new AbortController();
-    this.#controllers.add(controller);
+  #patchTurn = (turnId: Uuid, patch: Partial<Exchange>): void => {
+    this.exchanges = this.exchanges.map((turn) =>
+      turn.id === turnId ? { ...turn, ...patch } : turn,
+    );
+  };
+
+  #tail = async (turnId: Uuid, replyId: Uuid): Promise<void> => {
     try {
-      const details = await listSessionsByOrigin(this.originPath, controller.signal);
-      this.threads = details.map((detail) => {
-        const origin = detail.session.origin;
-        const sessionId = detail.session.id;
-        const anchored = origin?.anchor !== null && origin?.anchor !== undefined;
-        return {
-          id: `thread:${detail.session.id}`,
-          sessionId,
-          draft: false,
-          anchored,
-          anchor: {
-            blockOffset: origin?.paragraph_index ?? -1,
-            quote: origin?.anchor ?? "",
-            context: origin?.paragraph ?? "",
-          },
-          exchanges: detail.events
-            .filter(
-              (event): event is Extract<SessionEvent, { type: "exchange" }> =>
-                event.type === "exchange",
-            )
-            .map((event) => ({
-              id: event.exId,
-              query: event.query,
-              thinking: event.thinking,
-              answer: event.answer,
-              btws: [],
-              replyId: event.reply_id,
-              streaming: false,
-            })),
-          createdAt: detail.session.created_at,
-        };
-      });
-      this.error = null;
-      this.refreshJumpable();
+      for await (const snapshot of streamReply(replyId, this.#controller.signal)) {
+        this.#patchTurn(turnId, replyTurn(snapshot));
+      }
     } catch (error) {
-      if (isAbortError(error)) return;
-      console.error("Failed to load doc threads:", error);
-      this.error = "failed to load notes";
-    } finally {
-      this.loading = false;
-      this.#controllers.delete(controller);
-    }
-  };
-
-  /** Re-check which anchors resolve to a rendered mark (or, for in-flight
-   * drafts, a rendered block) in the document. Persisted threads whose quote
-   * could not be located render a pure gutter dot instead and lose the jump
-   * affordance. */
-  refreshJumpable = (): void => {
-    const next = new Set<string>();
-    for (const thread of this.threads) {
-      if (thread.anchor.blockOffset < 0) continue;
-      const mark = window.document.querySelector<HTMLElement>(
-        `mark[data-thread-id="${CSS.escape(thread.id)}"]`,
-      );
-      if (mark !== null) {
-        next.add(thread.id);
-        continue;
-      }
-      if (!thread.draft) continue;
-      const block = window.document.querySelector<HTMLElement>(
-        `[data-block-offset="${CSS.escape(String(thread.anchor.blockOffset))}"]`,
-      );
-      if (block !== null) next.add(thread.id);
-    }
-    this.jumpable = next;
-  };
-
-  #findThread = (threadId: string): DocThread | undefined =>
-    this.threads.find((thread) => thread.id === threadId);
-
-  /** Highlight → local draft. No server call until the first question lands. */
-  startThread = (info: SelectionInfo): void => {
-    const id = genId("note");
-    this.threads = [
-      ...this.threads,
-      {
-        id,
-        sessionId: null,
-        draft: true,
-        anchored: true,
-        anchor: {
-          blockOffset: info.blockOffset,
-          quote: info.quote,
-          context: info.context,
-        },
-        exchanges: [],
-        createdAt: null,
-      },
-    ];
-    this.expanded = new Set([...this.expanded, id]);
-    this.refreshJumpable();
-  };
-
-  replyThread = (threadId: string, userText: string): void => {
-    const target = this.#findThread(threadId);
-    if (!target) return;
-    const anchor = target.anchor;
-    const turnId = newUuid();
-
-    const patchThread = (patch: Partial<DocThread>): void => {
-      this.threads = this.threads.map((thread) =>
-        thread.id === threadId ? { ...thread, ...patch } : thread,
-      );
-    };
-    const patchExchanges = (mutate: (exchanges: Exchange[]) => Exchange[]): void =>
-      patchThread({
-        exchanges: mutate(this.threads.find((thread) => thread.id === threadId)?.exchanges ?? []),
+      if (isAbortError(error) || this.#controller.signal.aborted) return;
+      this.#patchTurn(turnId, {
+        streaming: false,
+        error: "Couldn't reconnect to this BTW. Try again.",
       });
-    const patchTurn = (patch: Partial<Exchange>): void =>
-      patchExchanges((exchanges) =>
-        exchanges.map((exchange) =>
-          exchange.id === turnId ? { ...exchange, ...patch } : exchange,
-        ),
-      );
-
-    patchExchanges((exchanges) => [
-      ...exchanges,
-      {
-        id: turnId,
-        query: userText,
-        thinking: [],
-        answer: "",
-        btws: [],
-        streaming: true,
-      },
-    ]);
-
-    const controller = new AbortController();
-    this.#controllers.add(controller);
-
-    // The draft survives until the reply settles: once the server owns the
-    // session the thread is persistent, even if the stream then fails.
-    const settleDraft = (): void => {
-      if (this.#findThread(threadId)?.sessionId) {
-        patchThread({ draft: false });
-      }
-    };
-
-    void (async () => {
-      try {
-        const created = await createReply(
-          {
-            reply_id: newUuid(),
-            exchange_id: turnId,
-            question: userText,
-            origin_scope: this.originScope,
-            mode: "btw",
-            session:
-              target.sessionId === null
-                ? {
-                    kind: "new",
-                    idempotency_key: newUuid(),
-                    origin_scope: this.originScope,
-                    origin: {
-                      doc_path: this.originPath,
-                      origin_scope: this.originScope,
-                      anchor: anchor.quote,
-                      paragraph: anchor.context,
-                      paragraph_index: anchor.blockOffset,
-                    },
-                  }
-                : { kind: "existing", id: target.sessionId },
-          },
-          controller.signal,
-        );
-        patchTurn({ replyId: created.reply_id });
-        if (target.sessionId === null) {
-          patchThread({ sessionId: created.session_id });
-        }
-        for await (const snapshot of streamReply(created.reply_id, controller.signal)) {
-          patchTurn(replyTurn(snapshot));
-        }
-        settleDraft();
-      } catch (error) {
-        if (isAbortError(error)) return;
-        console.error("Doc thread reply failed:", error);
-        patchTurn({ streaming: false });
-        settleDraft();
-      } finally {
-        this.#controllers.delete(controller);
-      }
-    })();
+    }
   };
 
-  retryThread = (threadId: string, turnId: Uuid): void => {
-    const target = this.#findThread(threadId);
-    const index = target?.exchanges.findIndex((turn) => turn.id === turnId) ?? -1;
-    const previous = index >= 0 ? target?.exchanges[index] : undefined;
-    if (
-      target === undefined ||
-      previous === undefined ||
-      index !== target.exchanges.length - 1 ||
-      previous.streaming ||
-      previous.replyId === undefined
-    ) {
+  #runReply = async (
+    previous: Exchange,
+    request: () => Promise<CreateReplyResponse>,
+  ): Promise<void> => {
+    this.#patchTurn(previous.id, { thinking: [], answer: "", streaming: true, error: null });
+    try {
+      const created = await request();
+      if (this.#controller.signal.aborted) return;
+      this.conversation ??= { id: created.session_id, kind: "btw", query: previous.query };
+      this.#attempt = null;
+      this.#patchTurn(previous.id, { replyId: created.reply_id });
+      await this.#tail(previous.id, created.reply_id);
+    } catch (error) {
+      if (isAbortError(error) || this.#controller.signal.aborted) return;
+      this.#patchTurn(previous.id, {
+        ...previous,
+        streaming: false,
+        error: "Couldn't send this BTW. Try again.",
+      });
+    }
+  };
+
+  reply = (question: string): void => {
+    if (this.#busy || this.conversation?.kind === "session") return;
+    const turn: Exchange = {
+      id: newUuid(),
+      query: question,
+      thinking: [],
+      answer: "",
+      btws: [],
+      streaming: false,
+    };
+    const scope = this.origin.kind === "document" ? this.origin.origin_scope : "vault";
+    const payload: CreateReplyPayload = {
+      reply_id: newUuid(),
+      exchange_id: turn.id,
+      question,
+      origin_scope: scope,
+      mode: "btw",
+      session: this.conversation
+        ? { kind: "existing", id: this.conversation.id }
+        : {
+            kind: "new",
+            conversation_kind: "btw",
+            idempotency_key: this.id,
+            origin_scope: scope,
+            origin: this.origin,
+          },
+    };
+    this.#attempt = payload;
+    this.exchanges = [...this.exchanges, turn];
+    void this.#runReply(turn, () => createReply(payload, this.#controller.signal));
+  };
+
+  retry = (turnId: Uuid): void => {
+    const previous = this.exchanges.at(-1);
+    if (this.#busy || this.conversation?.kind === "session" || previous?.id !== turnId) return;
+    const replyId = previous.replyId;
+    const attempt = this.#attempt;
+    if (replyId) {
+      void this.#runReply(previous, () => retryReply(replyId, newUuid(), this.#controller.signal));
+    } else if (attempt) {
+      void this.#runReply(previous, () => createReply(attempt, this.#controller.signal));
+    }
+  };
+
+  openSession = async (): Promise<void> => {
+    const conversation = this.conversation;
+    if (!conversation || this.#controller.signal.aborted || this.promoting) return;
+    if (conversation.kind === "session") {
+      this.onOpenSession?.(conversation.id);
       return;
     }
-
-    const patchTurn = (patch: Partial<Exchange>): void => {
-      this.threads = this.threads.map((thread) =>
-        thread.id !== threadId
-          ? thread
-          : {
-              ...thread,
-              exchanges: thread.exchanges.map((turn) =>
-                turn.id === turnId ? { ...turn, ...patch } : turn,
-              ),
-            },
-      );
-    };
-
-    patchTurn({ thinking: [], answer: "", streaming: true, error: null });
-    const controller = new AbortController();
-    this.#controllers.add(controller);
-
-    void (async () => {
-      try {
-        const created = await retryReply(previous.replyId!, newUuid(), controller.signal);
-        patchTurn({ replyId: created.reply_id });
-        for await (const snapshot of streamReply(created.reply_id, controller.signal)) {
-          patchTurn(replyTurn(snapshot));
-        }
-      } catch (error) {
-        if (isAbortError(error) || controller.signal.aborted) return;
-        console.error("Doc thread reply retry failed:", error);
-        this.threads = this.threads.map((thread) =>
-          thread.id !== threadId
-            ? thread
-            : {
-                ...thread,
-                exchanges: thread.exchanges.map((turn) => (turn.id === turnId ? previous : turn)),
-              },
-        );
-      } finally {
-        this.#controllers.delete(controller);
-      }
-    })();
-  };
-
-  dismissEmpty = (threadId: string): void => {
-    const target = this.#findThread(threadId);
-    if (!target?.draft || target.exchanges.length > 0) return;
-    this.threads = this.threads.filter((thread) => thread.id !== threadId);
-    const next = new Set(this.expanded);
-    next.delete(threadId);
-    this.expanded = next;
-  };
-
-  toggleExpanded = (threadId: string): void => {
-    const next = new Set(this.expanded);
-    if (next.has(threadId)) next.delete(threadId);
-    else next.add(threadId);
-    this.expanded = next;
-  };
-
-  openSession = (threadId: string): void => {
-    const target = this.#findThread(threadId);
-    if (target?.sessionId) this.onOpenSession(target.sessionId);
-  };
-
-  /** Expand a thread and scroll its anchor mark into view (chip "jump").
-   * Drafts have no mark yet — fall back to scrolling their block (the
-   * painted highlight). */
-  jumpTo = (threadId: string): void => {
-    const target = this.#findThread(threadId);
-    if (!target) return;
-    this.expanded = new Set([...this.expanded, threadId]);
-    requestAnimationFrame(() => {
-      const mark = window.document.querySelector<HTMLElement>(
-        `mark[data-thread-id="${CSS.escape(threadId)}"]`,
-      );
-      if (mark) {
-        mark.scrollIntoView({ block: "start" });
-        return;
-      }
-      const block = window.document.querySelector<HTMLElement>(
-        `[data-block-offset="${target.anchor.blockOffset}"]`,
-      );
-      block?.scrollIntoView({ block: "start" });
-    });
+    if (this.#busy) return;
+    this.promoting = true;
+    this.error = null;
+    try {
+      const vaultId = selectedVault();
+      await continueAsSession(conversation.id);
+      if (this.#controller.signal.aborted) return;
+      this.conversation = { ...conversation, kind: "session" };
+      await queryClient.invalidateQueries({ queryKey: ["vault", vaultId, "sessions"] });
+      if (!this.#controller.signal.aborted) this.onOpenSession?.(conversation.id);
+    } catch (error) {
+      if (isAbortError(error) || this.#controller.signal.aborted) return;
+      this.error = "Couldn't continue as a session. Try again.";
+    } finally {
+      this.promoting = false;
+    }
   };
 }

@@ -56,22 +56,23 @@
   const title = $derived(
     titleOverride === undefined ? document.title : titleOverride,
   );
-  const isAnchored = (thread: ThreadLike): boolean =>
-    (thread as { anchored?: boolean }).anchored ?? true;
-  const notes = $derived(threads.filter(isAnchored));
-  // Drafts (no session yet) render in the margin but are excluded from the
-  // chip counts until the session exists.
-  const savedNotes = $derived(
-    notes.filter(
-      (note) => (note as { sessionId?: string | null }).sessionId != null,
-    ),
+  const notes = $derived(
+    threads.filter((thread) => thread.conversation?.kind === "btw"),
   );
   const conversations = $derived(
-    threads.filter((thread) => !isAnchored(thread)),
+    threads.flatMap((thread) =>
+      thread.conversation?.kind === "session"
+        ? [
+            {
+              id: thread.id,
+              query: thread.conversation.query,
+              createdAt: thread.createdAt,
+            },
+          ]
+        : [],
+    ),
   );
-  const showThreadsChip = $derived(
-    savedNotes.length + conversations.length > 0,
-  );
+  const showThreadsChip = $derived(notes.length + conversations.length > 0);
   const shortQuote = (quote: string) =>
     quote.length > 44 ? `${quote.slice(0, 44)}...` : quote;
   const metadata = $derived(articleMeta(document));
@@ -287,10 +288,8 @@
       >
         <span class="text-gold-muted">⊹</span>
         <span>
-          {savedNotes.length} note{savedNotes.length === 1 ? "" : "s"} ·
-          {conversations.length} conversation{conversations.length === 1
-            ? ""
-            : "s"}
+          {notes.length} BTW{notes.length === 1 ? "" : "s"} ·
+          {conversations.length} session{conversations.length === 1 ? "" : "s"}
         </span>
         {#if threadsOpen}
           <ChevronDown size={11} />
@@ -304,7 +303,7 @@
             <p
               class="font-mono text-[length:var(--text-chrome)] tracking-[0.1em] text-gold-muted uppercase"
             >
-              notes
+              BTWs
             </p>
             {#each notes as note (note.id)}
               {@const jumpable =
@@ -327,7 +326,7 @@
                   {note.exchanges.length} turn{note.exchanges.length === 1
                     ? ""
                     : "s"} ·
-                  {formatShortDate(note.createdAt ?? null)}
+                  {formatShortDate(note.createdAt)}
                 </span>
                 {#if jumpable}
                   <span
@@ -343,7 +342,7 @@
             <p
               class="font-mono text-[length:var(--text-chrome)] tracking-[0.1em] text-gold-muted uppercase"
             >
-              conversations
+              sessions
             </p>
             {#each conversations as conversation (conversation.id)}
               <button
@@ -358,14 +357,12 @@
                 <span
                   class="min-w-0 flex-1 truncate font-serif text-[length:var(--text-small)] text-warm-dim italic transition-colors group-hover:text-warm"
                 >
-                  “{shortQuote(
-                    conversation.exchanges[0]?.query ?? "untitled conversation",
-                  )}”
+                  “{shortQuote(conversation.query)}”
                 </span>
                 <span
                   class="shrink-0 font-mono text-[length:var(--text-chrome)] text-warm-ghost lowercase"
                 >
-                  {formatShortDate(conversation.createdAt ?? null)}
+                  {formatShortDate(conversation.createdAt)}
                 </span>
                 <span
                   class="shrink-0 font-mono text-[length:var(--text-chrome)] tracking-[0.1em] text-gold-muted uppercase transition-colors group-hover:text-gold"

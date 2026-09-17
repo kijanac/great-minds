@@ -159,7 +159,7 @@ type RepliesServiceShape = {
     userId: Uuid,
     vaultId: Uuid,
     input: CreateReplyRequest,
-  ) => Effect.Effect<CreateReplyResponse, Conflict | Forbidden | NotFound | ServiceUnavailable>;
+  ) => Effect.Effect<CreateReplyResponse, BadRequest | Conflict | Forbidden | NotFound | ServiceUnavailable>;
   readonly retry: (
     userId: Uuid,
     vaultId: Uuid,
@@ -552,7 +552,7 @@ export const RepliesServiceLive = Layer.effect(
         const queryState = yield* query.prepareExecution(
           row.userId,
           row.vaultId,
-          queryRequest(input, transcript.question),
+          { ...queryRequest(input, transcript.question), mode: transcript.mode },
           prechecked,
           transcript.prior,
         );
@@ -842,31 +842,20 @@ export const RepliesServiceLive = Layer.effect(
           });
         }
 
-        const btw = input.session.kind === "existing" ? input.session.btw : undefined;
         const pending = {
           replyId: input.reply_id,
           exchangeId: input.exchange_id,
           question: input.question,
-          ...(btw === undefined ? {} : {
-            btw: {
-              exchange_id: btw.exchangeId,
-              quote: btw.quote,
-              block_offset: btw.blockOffset,
-              context: btw.context,
-            },
-          }),
         };
         let sessionId: SessionId;
         if (input.session.kind === "new") {
           sessionId = yield* sessions.createSession(userId, vaultId, {
             idempotencyKey: input.session.idempotency_key,
+            kind: input.session.conversation_kind,
             ...(input.session.origin === undefined
               ? {}
               : {
-                  origin: {
-                    ...input.session.origin,
-                    origin_scope: input.session.origin_scope,
-                  },
+                  origin: input.session.origin,
                 }),
             pending,
           });
@@ -883,7 +872,7 @@ export const RepliesServiceLive = Layer.effect(
             vaultId,
             userId,
             sessionId,
-            kind: btw === undefined ? "exchange" : "btw",
+            kind: "exchange",
             status: "running",
             answer: "",
             sources: [],

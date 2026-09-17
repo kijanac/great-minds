@@ -165,6 +165,7 @@ const seeded = await runtime.runPromise(
       const rootReplyId = newUuid();
       const sessionId = yield* service.createSession(spec.user_id, spec.vault_id, {
         idempotencyKey: item.idempotency_key,
+        kind: item.origin?.anchor ? "btw" : "session",
         ...(item.origin === undefined ? {} : { origin: item.origin }),
         pending: {
           replyId: rootReplyId,
@@ -198,21 +199,33 @@ const seeded = await runtime.runPromise(
         latestBtws.set(`${btw.exchangeId}\0${btw.quote}`, btw);
       }
       for (const btw of latestBtws.values()) {
+        let btwId: SessionId | null = null;
         for (const [index, turn] of btw.exchanges.entries()) {
           const replyId = newUuid();
-          yield* service.appendPending(spec.user_id, spec.vault_id, sessionId, {
+          const pending = {
             replyId,
             exchangeId: newUuid(),
             question: turn.query,
-            btw: {
-              exchange_id: btw.exchangeId,
-              quote: btw.quote,
-              block_offset: btw.blockOffset,
-              context: btw.context,
-            },
-          });
+          };
+          if (btwId === null) {
+            btwId = yield* service.createSession(spec.user_id, spec.vault_id, {
+              idempotencyKey: `${item.idempotency_key}:btw:${btw.exchangeId}:${btw.quote}`,
+              kind: "btw",
+              origin: {
+                kind: "answer",
+                session_id: sessionId,
+                exchange_id: btw.exchangeId,
+                anchor: btw.quote,
+                paragraph_index: btw.blockOffset,
+                paragraph: btw.context,
+              },
+              pending,
+            });
+          } else {
+            yield* service.appendPending(spec.user_id, spec.vault_id, btwId, pending);
+          }
           yield* complete(
-            sessionId,
+            btwId,
             replyId,
             index === 0
               ? composeAnchoredQuestion({ quote: btw.quote, context: btw.context }, turn.query)

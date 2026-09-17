@@ -46,6 +46,14 @@ export function loadSession(sessionId: SessionId): Promise<SessionResponse> {
   );
 }
 
+export function continueAsSession(sessionId: SessionId): Promise<void> {
+  return run(
+    api.sessions.continueAsSession({
+      params: { vault_id: selectedVault(), session_id: sessionId },
+    }),
+  );
+}
+
 export function loadSessionMarkdown(sessionId: SessionId): Promise<string> {
   return run(
     api.sessions.readSessionMarkdown({

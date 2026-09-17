@@ -10,7 +10,7 @@
     type UserSuggestionResult,
   } from "$lib/api/ingest";
   import { auth } from "$lib/auth.svelte";
-  import { DocThreads } from "$lib/btw.svelte";
+  import { DocThreads } from "$lib/doc-threads.svelte";
   import ArticleChrome from "$lib/components/article-chrome.svelte";
   import ArticlePanel from "$lib/components/article-panel.svelte";
   import ArticleView from "$lib/components/article-view.svelte";
@@ -141,6 +141,26 @@
   }
 
   const handleLinkClick = createLinkInterceptor(openRawCitation);
+
+  let focusedThread: string | null = null;
+  $effect(() => {
+    const target = page.url.searchParams.get("thread");
+    const threads = docThreads;
+    if (
+      !target ||
+      body === null ||
+      !threads ||
+      threads.loading ||
+      focusedThread === target
+    )
+      return;
+    const thread = threads.threads.find(
+      (item) => item.conversation?.id === target,
+    );
+    if (!thread) return;
+    focusedThread = target;
+    void tick().then(() => threads.jumpTo(thread.id));
+  });
 
   onDestroy(() => docThreads?.destroy());
 

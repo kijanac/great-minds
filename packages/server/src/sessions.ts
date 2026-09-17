@@ -2,17 +2,16 @@ import { Database, sessions, userDocuments } from "@great-minds/database";
 import {
   BadRequest,
   composeAnchoredQuestion,
+  type ConversationKind,
   Forbidden,
   NotFound,
   IsoDateTime,
   type OriginSessionDetail,
   type PageParams,
   type PromoteExchangeResponse,
-  type SessionBtwEvent,
   type SessionEvent,
   type SessionExchangeEvent,
   SessionId,
-  type SessionMetaEvent,
   SessionMetaEvent as SessionMetaEventSchema,
   type SessionOrigin,
   SessionOrigin as SessionOriginSchema,
@@ -41,20 +40,20 @@ import { ClockService } from "./clock.ts";
 
 export const ReplyNodeStatus = Schema.Literals(["pending", "completed"] as const);
 
-export const StoredBtwAnchor = Schema.Struct({
-  exchange_id: Uuid,
-  quote: Schema.String,
-  block_offset: Schema.Number,
-  context: Schema.String,
+export const StoredSessionMeta = Schema.Struct({
+  ...SessionMetaEventSchema.fields,
+  context: Schema.optionalKey(Schema.Struct({
+    session_id: SessionId,
+    reply_id: Uuid,
+  })),
 });
-export type StoredBtwAnchor = typeof StoredBtwAnchor.Type;
+export type StoredSessionMeta = typeof StoredSessionMeta.Type;
 
 export const ReplyNode = Schema.Struct({
   type: Schema.Literal("reply"),
   reply_id: Uuid,
   parent_reply_id: Schema.NullOr(Uuid),
   exchange_id: Uuid,
-  btw: Schema.optionalKey(StoredBtwAnchor),
   question: Schema.String,
   status: ReplyNodeStatus,
   messages: Schema.Array(LlmMessageSchema),
@@ -64,11 +63,11 @@ export const ReplyNode = Schema.Struct({
 });
 export type ReplyNode = typeof ReplyNode.Type;
 
-export const StoredSessionEvent = Schema.Union([SessionMetaEventSchema, ReplyNode]);
+export const StoredSessionEvent = Schema.Union([StoredSessionMeta, ReplyNode]);
 export type StoredSessionEvent = typeof StoredSessionEvent.Type;
 
 const decodeSessionOrigin = Schema.decodeUnknownSync(Schema.NullOr(SessionOriginSchema));
-const decodeMetaEvent = Schema.decodeUnknownEffect(SessionMetaEventSchema);
+const decodeMetaEvent = Schema.decodeUnknownEffect(StoredSessionMeta);
 const decodeReplyNode = Schema.decodeUnknownEffect(ReplyNode);
 const encodeStoredEvent = Schema.encodeSync(StoredSessionEvent);
 
@@ -93,24 +92,8 @@ export const currentNodes = (events: readonly StoredSessionEvent[]): readonly Re
   return [...latest.values()];
 };
 
-const sameThread = (btw: StoredBtwAnchor | undefined) => (node: ReplyNode) =>
-  btw === undefined
-    ? node.btw === undefined
-    : node.btw !== undefined &&
-      node.btw.exchange_id === btw.exchange_id &&
-      node.btw.quote === btw.quote;
-
-const lastCompletedReplyId = (
-  nodes: readonly ReplyNode[],
-  inThread: (node: ReplyNode) => boolean,
-): Uuid | null =>
-  nodes.findLast((node) => node.status === "completed" && inThread(node))?.reply_id ?? null;
-
-export const parentReplyIdFor = (
-  nodes: readonly ReplyNode[],
-  btw: StoredBtwAnchor | undefined,
-): Uuid | null =>
-  lastCompletedReplyId(nodes, sameThread(btw)) ?? lastCompletedReplyId(nodes, sameThread(undefined));
+export const parentReplyIdFor = (nodes: readonly ReplyNode[]): Uuid | null =>
+  nodes.findLast((node) => node.status === "completed")?.reply_id ?? null;
 
 const stubToolResults = (messages: readonly LlmMessage[]): readonly LlmMessage[] =>
   messages.map((message) =>
@@ -127,6 +110,7 @@ const sessionOverview = (
   originTitle: string | null,
 ): SessionOverview => ({
   id: row.id,
+  kind: row.kind,
   query: row.query,
   created_at: row.createdAt,
   updated_at: row.updatedAt,
@@ -150,72 +134,13 @@ const exchangeEventFromNode = (node: ReplyNode): SessionExchangeEvent => ({
   ts: node.ts,
 });
 
-const btwTurnFromNode = (node: ReplyNode) => ({
-  exchange_id: node.exchange_id,
-  query: node.question,
-  thinking: thinkingBlocksFor(node.sources),
-  answer: node.answer,
-});
-
-const btwEventFromNode = (node: ReplyNode, anchor: StoredBtwAnchor): SessionBtwEvent => ({
-  type: "btw",
-  exId: anchor.exchange_id,
-  reply_id: node.reply_id,
-  quote: anchor.quote,
-  blockOffset: anchor.block_offset,
-  context: anchor.context,
-  exchanges: [btwTurnFromNode(node)],
-  ts: node.ts,
-});
-
 export const projectSession = (events: readonly StoredSessionEvent[]): SessionEvent[] => {
-  const metas = events.filter((event): event is SessionMetaEvent => event.type === "meta");
-  const exchanges: SessionExchangeEvent[] = [];
-  const threads = new Map<string, SessionBtwEvent>();
-  for (const node of currentNodes(events)) {
-    if (node.btw === undefined) {
-      exchanges.push(exchangeEventFromNode(node));
-      continue;
-    }
-    const key = `${node.btw.exchange_id}\0${node.btw.quote}`;
-    const existing = threads.get(key);
-    threads.set(
-      key,
-      existing === undefined
-        ? btwEventFromNode(node, node.btw)
-        : {
-            ...existing,
-            reply_id: node.reply_id,
-            exchanges: [...existing.exchanges, btwTurnFromNode(node)],
-            ts: node.ts,
-          },
-    );
-  }
-  return [...metas, ...exchanges, ...threads.values()];
+  const metas = events.filter((event) => event.type === "meta");
+  return [...metas, ...currentNodes(events).map(exchangeEventFromNode)];
 };
 
 export const renderSessionMarkdown = (events: readonly SessionEvent[]) => {
-  const exchanges: SessionExchangeEvent[] = [];
-  const latestBtw = new Map<string, SessionBtwEvent>();
-
-  for (const event of events) {
-    if (event.type === "exchange") {
-      exchanges.push(event);
-    } else if (event.type === "btw") {
-      const key = `${event.exId}\0${event.quote}`;
-      const existing = latestBtw.get(key);
-      if (existing === undefined || event.ts.getTime() >= existing.ts.getTime()) {
-        latestBtw.set(key, event);
-      }
-    }
-  }
-
-  const btwsByExchange = new Map<string, SessionBtwEvent[]>();
-  for (const btw of latestBtw.values()) {
-    const existing = btwsByExchange.get(btw.exId) ?? [];
-    existing.push(btw);
-    btwsByExchange.set(btw.exId, existing);
-  }
+  const exchanges = events.filter((event) => event.type === "exchange");
 
   const parts: string[] = [];
   for (const [index, exchange] of exchanges.entries()) {
@@ -233,14 +158,6 @@ export const renderSessionMarkdown = (events: readonly SessionEvent[]) => {
 
     parts.push(`${exchange.answer}\n`);
 
-    for (const btw of btwsByExchange.get(exchange.exId) ?? []) {
-      const short = btw.quote.length > 60 ? `${btw.quote.slice(0, 60)}...` : btw.quote;
-      parts.push(`\n> **BTW** re: "${short}"\n>\n`);
-      for (const inner of btw.exchanges) {
-        parts.push(`> *${inner.query}*\n>\n`);
-        parts.push(`> ${inner.answer}\n>\n`);
-      }
-    }
   }
 
   return `${parts.join("").replace(/\s+$/u, "")}\n`;
@@ -248,6 +165,7 @@ export const renderSessionMarkdown = (events: readonly SessionEvent[]) => {
 
 type SessionCreate = {
   readonly idempotencyKey: string;
+  readonly kind?: ConversationKind;
   readonly origin?: SessionOrigin;
   readonly pending: PendingReply;
 };
@@ -255,7 +173,6 @@ type SessionCreate = {
 type PendingReply = {
   readonly replyId: Uuid;
   readonly exchangeId: Uuid;
-  readonly btw?: StoredBtwAnchor;
   readonly question: string;
 };
 
@@ -268,6 +185,7 @@ type CompletedReply = {
 export type ReplyTranscript = {
   readonly prior: readonly LlmMessage[];
   readonly question: string;
+  readonly mode: "query" | "btw";
 };
 
 type SessionsServiceShape = {
@@ -275,7 +193,12 @@ type SessionsServiceShape = {
     userId: Uuid,
     vaultId: Uuid,
     input: SessionCreate,
-  ) => Effect.Effect<SessionId, Forbidden>;
+  ) => Effect.Effect<SessionId, BadRequest | Forbidden | NotFound>;
+  readonly continueAsSession: (
+    userId: Uuid,
+    vaultId: Uuid,
+    sessionId: SessionId,
+  ) => Effect.Effect<void, Forbidden | NotFound>;
   readonly appendPending: (
     userId: Uuid,
     vaultId: Uuid,
@@ -343,6 +266,14 @@ export const SessionsServiceLive = Layer.effect(
       Effect.gen(function* () {
         if (origin === null) {
           return null;
+        }
+        if (origin.kind === "answer") {
+          const rows = yield* db.query((d) => d
+            .select({ query: sessions.query })
+            .from(sessions)
+            .where(and(eq(sessions.vaultId, vaultId), eq(sessions.id, origin.session_id)))
+            .limit(1));
+          return rows[0]?.query ?? null;
         }
         if (origin.origin_scope === "personal") {
           const rows = yield* db.query((d) => d
@@ -489,12 +420,12 @@ export const SessionsServiceLive = Layer.effect(
       });
 
     const findMeta = (events: readonly StoredSessionEvent[]) =>
-      events.find((event): event is SessionMetaEvent => event.type === "meta");
+      events.find((event): event is StoredSessionMeta => event.type === "meta");
 
     const requireSessionOwner = (userId: Uuid, vaultId: Uuid, sessionId: SessionId) =>
       Effect.gen(function* () {
         const rows = yield* db.query((d) => d
-          .select({ userId: sessions.userId })
+          .select()
           .from(sessions)
           .where(and(eq(sessions.vaultId, vaultId), eq(sessions.id, sessionId)))
           .limit(1));
@@ -502,6 +433,7 @@ export const SessionsServiceLive = Layer.effect(
         if (row === undefined || row.userId !== userId) {
           return yield* new NotFound({ detail: "Session not found" });
         }
+        return row;
       });
 
     const pendingNode = (
@@ -513,7 +445,6 @@ export const SessionsServiceLive = Layer.effect(
       reply_id: pending.replyId,
       parent_reply_id: parentReplyId,
       exchange_id: pending.exchangeId,
-      ...(pending.btw === undefined ? {} : { btw: pending.btw }),
       question: pending.question,
       status: "pending",
       messages: [],
@@ -527,7 +458,6 @@ export const SessionsServiceLive = Layer.effect(
       reply_id: pending.reply_id,
       parent_reply_id: pending.parent_reply_id,
       exchange_id: pending.exchange_id,
-      ...(pending.btw === undefined ? {} : { btw: pending.btw }),
       question: pending.question,
       status: "completed",
       messages: [...completed.messages],
@@ -560,6 +490,40 @@ export const SessionsServiceLive = Layer.effect(
       }
       return byReplyId;
     };
+
+    const replyChain = (
+      vaultId: Uuid,
+      sessionId: SessionId,
+      replyId: Uuid,
+    ): Effect.Effect<readonly ReplyNode[], NotFound> =>
+      Effect.gen(function* () {
+        const events = yield* loadAllEvents(vaultId, sessionId);
+        const byReplyId = nodesByReplyId(events);
+        const chain: ReplyNode[] = [];
+        let currentId: Uuid | null = replyId;
+        while (currentId !== null) {
+          const node = byReplyId.get(currentId);
+          if (node === undefined) {
+            return yield* Effect.die(new Error(`Reply ${currentId} is missing from ${sessionId}`));
+          }
+          chain.unshift(node);
+          currentId = node.parent_reply_id;
+        }
+        const context = findMeta(events)?.context;
+        if (context !== undefined) {
+          const inherited = yield* replyChain(vaultId, context.session_id, context.reply_id);
+          return [...inherited, ...chain];
+        }
+        return chain;
+      });
+
+    const sessionDetail = (row: typeof sessions.$inferSelect) =>
+      Effect.gen(function* () {
+        const content = yield* readText(row.vaultId, row.id, "jsonl", "Session not found");
+        const events = yield* parseEvents(row.id, content, { isolateLatestMeta: true });
+        const originTitle = yield* originTitleFor(row.userId, row.vaultId, decodeSessionOrigin(row.origin));
+        return { session: sessionOverview(row, originTitle), events: projectSession(events) };
+      });
 
     return {
       createSession: (userId, vaultId, input) =>
@@ -601,23 +565,45 @@ export const SessionsServiceLive = Layer.effect(
               yield* appendNode(
                 vaultId,
                 existing,
-                pendingNode(ts, input.pending, parentReplyIdFor(currentNodes(events), input.pending.btw)),
+                pendingNode(ts, input.pending, parentReplyIdFor(currentNodes(events))),
               );
             }
             return existing;
           }
 
+          const origin = input.origin ?? null;
+          const kind = input.kind ?? "session";
+          if (kind === "btw" && !origin?.anchor) {
+            return yield* new BadRequest({ detail: "A BTW needs a selected passage" });
+          }
+          let context: StoredSessionMeta["context"];
+          if (origin?.kind === "answer") {
+            const parent = yield* requireSessionOwner(userId, vaultId, origin.session_id);
+            if (parent.kind !== "session") {
+              return yield* new BadRequest({ detail: "Nested BTWs aren't supported" });
+            }
+            const events = yield* loadAllEvents(vaultId, origin.session_id);
+            const nodes = currentNodes(events);
+            const anchor = nodes.find((node) => node.exchange_id === origin.exchange_id);
+            if (anchor === undefined || anchor.status !== "completed") {
+              return yield* new BadRequest({ detail: "Select a completed answer to start a BTW" });
+            }
+            const parentReplyId = parentReplyIdFor(nodes);
+            if (parentReplyId !== null) {
+              context = { session_id: origin.session_id, reply_id: parentReplyId };
+            }
+          }
           const sessionId = yield* newSessionId();
           const metaTs = yield* clock.now;
           const nodeTs = yield* clock.now;
-          const origin = input.origin ?? null;
-          const meta: SessionMetaEvent = {
+          const meta: StoredSessionMeta = {
             type: "meta",
             id: sessionId,
             query: input.pending.question,
             ts: metaTs,
             user_id: userId,
             origin,
+            ...(context === undefined ? {} : { context }),
           };
           const node = pendingNode(nodeTs, input.pending, null);
           yield* appendEvent(vaultId, sessionId, meta);
@@ -630,6 +616,7 @@ export const SessionsServiceLive = Layer.effect(
               userId,
               query: meta.query,
               origin,
+              kind,
               createdAt: metaTs,
               updatedAt: nodeTs,
               idempotencyKey: input.idempotencyKey,
@@ -647,6 +634,16 @@ export const SessionsServiceLive = Layer.effect(
           yield* rebuildMarkdown(vaultId, sessionId);
           return sessionId;
         }),
+      continueAsSession: (userId, vaultId, sessionId) =>
+        Effect.gen(function* () {
+          yield* access.requireMember(userId, vaultId);
+          yield* requireSessionOwner(userId, vaultId, sessionId);
+          const now = yield* clock.now;
+          yield* db.query((d) => d
+            .update(sessions)
+            .set({ kind: "session", updatedAt: now })
+            .where(and(eq(sessions.vaultId, vaultId), eq(sessions.id, sessionId), eq(sessions.kind, "btw"))));
+        }),
       appendPending: (userId, vaultId, sessionId, pending) =>
         Effect.gen(function* () {
           yield* access.requireMember(userId, vaultId);
@@ -659,7 +656,7 @@ export const SessionsServiceLive = Layer.effect(
             vaultId,
             sessionId,
             pendingNode(ts, pending, previous === undefined
-              ? parentReplyIdFor(nodes, pending.btw)
+              ? parentReplyIdFor(nodes)
               : previous.parent_reply_id),
           );
         }),
@@ -682,6 +679,14 @@ export const SessionsServiceLive = Layer.effect(
         }),
       readTranscript: (vaultId, sessionId, replyId) =>
         Effect.gen(function* () {
+          const rows = yield* db.query((d) => d
+            .select({ kind: sessions.kind })
+            .from(sessions)
+            .where(and(eq(sessions.vaultId, vaultId), eq(sessions.id, sessionId)))
+            .limit(1));
+          if (rows[0] === undefined) {
+            return yield* new NotFound({ detail: "Session not found" });
+          }
           const events = yield* loadAllEvents(vaultId, sessionId);
           const byReplyId = nodesByReplyId(events);
           const pending = byReplyId.get(replyId);
@@ -690,30 +695,17 @@ export const SessionsServiceLive = Layer.effect(
               new Error(`Reply ${replyId} has no pending node in session ${sessionId}`),
             );
           }
-          const chain: ReplyNode[] = [];
-          let current = pending;
-          while (current.parent_reply_id !== null) {
-            const parent = byReplyId.get(current.parent_reply_id);
-            if (parent === undefined) {
-              return yield* Effect.die(
-                new Error(`Reply ${current.reply_id} parent ${current.parent_reply_id} is missing`),
-              );
-            }
-            chain.unshift(parent);
-            current = parent;
-          }
+          const chain = (yield* replyChain(vaultId, sessionId, replyId)).slice(0, -1);
           const parent = chain.at(-1);
-          const threadRoot = parent === undefined || !sameThread(pending.btw)(parent);
           const origin = findMeta(events)?.origin;
-          const question = threadRoot && pending.btw !== undefined
-            ? composeAnchoredQuestion(pending.btw, pending.question)
-            : parent === undefined && origin?.anchor !== null && origin?.anchor !== undefined
+          const question = pending.parent_reply_id === null && origin?.anchor !== null && origin?.anchor !== undefined
               ? composeAnchoredQuestion(
                   { quote: origin.anchor, context: origin.paragraph },
                   pending.question,
                 )
               : pending.question;
           return {
+            mode: rows[0].kind === "btw" ? "btw" : "query",
             prior: chain.flatMap((node) =>
               node === parent ? node.messages : stubToolResults(node.messages),
             ),
@@ -811,7 +803,7 @@ export const SessionsServiceLive = Layer.effect(
           const where = and(
             eq(sessions.vaultId, vaultId),
             eq(sessions.userId, userId),
-            sql`${sessions.origin}->>'anchor' IS NULL`,
+            eq(sessions.kind, "session"),
           );
           const countRows = yield* db.query((d) => d
             .select({ total: sql<number>`count(*)::int` })
@@ -881,15 +873,25 @@ export const SessionsServiceLive = Layer.effect(
       readSession: (userId, vaultId, sessionId) =>
         Effect.gen(function* () {
           yield* access.requireMember(userId, vaultId);
-          yield* requireSessionOwner(userId, vaultId, sessionId);
-          const content = yield* readText(vaultId, sessionId, "jsonl", "Session not found");
-          const events = yield* parseEvents(sessionId, content, { isolateLatestMeta: true });
-          const projected = projectSession(events);
-          const origin = projected.find((event) => event.type === "meta")?.origin ?? null;
+          const row = yield* requireSessionOwner(userId, vaultId, sessionId);
+          const detail = yield* sessionDetail(row);
+          const children = yield* db.query((d) => d
+            .select()
+            .from(sessions)
+            .where(and(
+              eq(sessions.vaultId, vaultId),
+              eq(sessions.userId, userId),
+              sql`${sessions.origin}->>'kind' = 'answer'`,
+              sql`${sessions.origin}->>'session_id' = ${sessionId}`,
+            ))
+            .orderBy(asc(sessions.createdAt)));
+          const threads = yield* Effect.forEach(children, sessionDetail, { concurrency: 4 });
           return {
             id: sessionId,
-            events: projected,
-            origin_title: yield* originTitleFor(userId, vaultId, origin),
+            kind: row.kind,
+            events: detail.events,
+            origin_title: detail.session.origin_title,
+            threads,
           };
         }),
       readMarkdown: (userId, vaultId, sessionId) =>

@@ -1,11 +1,13 @@
 import { browser } from "$app/environment";
-import type { SessionId, Uuid } from "@great-minds/domain";
+import type { SessionId, SessionOrigin, SessionResponse, Uuid } from "@great-minds/domain";
 
 import { createReply, retryReply, streamReply, type CreateReplyPayload } from "$lib/api/replies";
-import type { BtwThread, Exchange, Phase, SelectionInfo } from "$lib/types";
+import { Btw } from "$lib/btw.svelte";
+import type { Exchange, Phase, SelectionInfo } from "$lib/types";
 import { newUuid } from "$lib/ids";
 import { replyTurn } from "$lib/reply-turn";
-import { genId, isAbortError } from "$lib/utils";
+import { replayExchanges } from "$lib/session-events";
+import { isAbortError } from "$lib/utils";
 
 type MainReplyAttempt = {
   exchangeId: Uuid;
@@ -15,11 +17,11 @@ type MainReplyAttempt = {
 type SubmissionState = { status: "ready" } | { status: "failed"; attempt: MainReplyAttempt };
 
 export interface SessionOptions {
-  initialExchanges?: Exchange[];
-  sessionId?: SessionId;
+  saved?: SessionResponse;
   originPath?: string;
   initialQuery?: string;
   onSessionCreated?: (sessionId: SessionId) => void;
+  onOpenSession?: (sessionId: SessionId) => void;
 }
 
 export class Session {
@@ -30,25 +32,46 @@ export class Session {
   followUpDraft = $state("");
   submission = $state<SubmissionState>({ status: "ready" });
   popover = $state<SelectionInfo | null>(null);
+  readonly origin: SessionOrigin | null;
+  readonly originTitle: string | null;
 
-  #originPath: string | undefined;
   #onSessionCreated: ((sessionId: SessionId) => void) | undefined;
+  #onOpenSession: ((sessionId: SessionId) => void) | undefined;
   #idempotencyKey: Uuid | null = null;
   #abortController: AbortController | null = null;
-  #btwControllers = new Set<AbortController>();
   #destroyed = false;
 
   constructor(options: SessionOptions = {}) {
-    this.phase = options.initialExchanges?.length ? "done" : "idle";
-    this.thread = options.initialExchanges ?? [];
-    this.sessionId = options.sessionId ?? null;
-    this.#originPath = options.originPath;
+    this.thread = replayExchanges(options.saved?.events ?? []);
+    this.phase = this.thread.length ? "done" : "idle";
+    this.sessionId = options.saved?.id ?? null;
+    this.origin = options.saved
+      ? (options.saved.events.find((event) => event.type === "meta")?.origin ?? null)
+      : options.originPath
+        ? {
+            kind: "document",
+            doc_path: options.originPath,
+            origin_scope: "vault",
+            anchor: null,
+            paragraph: null,
+            paragraph_index: null,
+          }
+        : null;
+    this.originTitle = options.saved?.origin_title ?? null;
     this.#onSessionCreated = options.onSessionCreated;
+    this.#onOpenSession = options.onOpenSession;
+    for (const detail of options.saved?.threads ?? []) {
+      const origin = detail.session.origin;
+      if (origin?.kind !== "answer") continue;
+      this.thread
+        .find((exchange) => exchange.id === origin.exchange_id)
+        ?.btws.push(new Btw(origin, this.#onOpenSession, detail));
+    }
 
     if (browser) {
       queueMicrotask(() => {
         if (this.#destroyed) return;
-        if (options.initialQuery) {
+        if (!options.saved && options.initialQuery) {
           void this.#runExchange(options.initialQuery);
         } else {
           this.#resumePendingReplies();
@@ -60,8 +83,9 @@ export class Session {
   destroy = (): void => {
     this.#destroyed = true;
     this.#abortController?.abort();
-    for (const controller of this.#btwControllers) controller.abort();
-    this.#btwControllers.clear();
+    for (const exchange of this.thread) {
+      for (const btw of exchange.btws) btw.destroy();
+    }
   };
 
   #updateExchange = (id: Uuid, patch: Partial<Exchange>): void => {
@@ -96,48 +120,6 @@ export class Session {
     }
   };
 
-  #updateBtwReply = (replyId: Uuid, patch: Partial<Exchange>): void => {
-    this.thread = this.thread.map((exchange) => ({
-      ...exchange,
-      btws: exchange.btws.map((btw) => ({
-        ...btw,
-        exchanges: btw.exchanges.map((turn) =>
-          turn.replyId === replyId ? { ...turn, ...patch } : turn,
-        ),
-      })),
-    }));
-  };
-
-  #updateBtwTurn = (btwId: string, turnId: Uuid, patch: Partial<Exchange>): void => {
-    this.thread = this.thread.map((exchange) => ({
-      ...exchange,
-      btws: exchange.btws.map((btw) =>
-        btw.id !== btwId
-          ? btw
-          : {
-              ...btw,
-              exchanges: btw.exchanges.map((turn) =>
-                turn.id === turnId ? { ...turn, ...patch } : turn,
-              ),
-            },
-      ),
-    }));
-  };
-
-  #tailBtwReply = async (replyId: Uuid, controller: AbortController): Promise<void> => {
-    try {
-      for await (const snapshot of streamReply(replyId, controller.signal)) {
-        this.#updateBtwReply(replyId, replyTurn(snapshot));
-      }
-    } catch (error) {
-      if (isAbortError(error) || controller.signal.aborted) return;
-      console.error("Failed to resume BTW reply:", error);
-      this.#updateBtwReply(replyId, { streaming: false });
-    } finally {
-      this.#btwControllers.delete(controller);
-    }
-  };
-
   #resumePendingReplies = (): void => {
     const pendingExchange = this.thread.find(
       (exchange) => exchange.replyId !== undefined && exchange.answer.length === 0,
@@ -147,14 +129,6 @@ export class Session {
       const controller = new AbortController();
       this.#abortController = controller;
       void this.#tailExchange(pendingExchange.id, pendingExchange.replyId, controller);
-    }
-
-    for (const btw of this.thread.flatMap((exchange) => exchange.btws)) {
-      const turn = btw.exchanges.at(-1);
-      if (turn?.replyId === undefined || turn.answer.length > 0) continue;
-      const controller = new AbortController();
-      this.#btwControllers.add(controller);
-      void this.#tailBtwReply(turn.replyId, controller);
     }
   };
 
@@ -166,7 +140,10 @@ export class Session {
       reply_id: newUuid(),
       exchange_id: exchangeId,
       question,
-      origin_path: this.sessionId === null ? this.#originPath : undefined,
+      origin_path:
+        this.sessionId === null && this.origin?.kind === "document"
+          ? this.origin.doc_path
+          : undefined,
       origin_scope: "vault",
       mode: "query",
       session:
@@ -174,19 +151,10 @@ export class Session {
           ? { kind: "existing", id: this.sessionId }
           : {
               kind: "new",
+              conversation_kind: "session",
               idempotency_key: this.#idempotencyKey,
               origin_scope: "vault",
-              ...(this.#originPath
-                ? {
-                    origin: {
-                      doc_path: this.#originPath,
-                      origin_scope: "vault" as const,
-                      anchor: null,
-                      paragraph: null,
-                      paragraph_index: null,
-                    },
-                  }
-                : {}),
+              ...(this.origin ? { origin: this.origin } : {}),
             },
     };
     return { exchangeId, payload };
@@ -319,163 +287,51 @@ export class Session {
   };
 
   startBtw = (info: SelectionInfo): void => {
-    const btw: BtwThread = {
-      id: genId("btw"),
-      exchangeId: info.exchangeId,
-      anchor: {
-        blockOffset: info.blockOffset,
-        quote: info.quote,
-        context: info.context,
-      },
-      exchanges: [],
-    };
-
-    this.thread = this.thread.map((exchange) =>
-      exchange.id === info.exchangeId ? { ...exchange, btws: [...exchange.btws, btw] } : exchange,
+    if (!this.sessionId) return;
+    const exchange = this.thread.find((item) => item.id === info.exchangeId);
+    if (!exchange) return;
+    exchange.btws.push(
+      new Btw(
+        {
+          kind: "answer",
+          session_id: this.sessionId,
+          exchange_id: info.exchangeId,
+          anchor: info.quote,
+          paragraph_index: info.blockOffset,
+          paragraph: info.context,
+        },
+        this.#onOpenSession,
+      ),
     );
     this.popover = null;
     window.getSelection()?.removeAllRanges();
   };
 
+  #findBtw = (btwId: string): Btw | undefined =>
+    this.thread.flatMap((exchange) => exchange.btws).find((btw) => btw.id === btwId);
+
   replyBtw = (btwId: string, userText: string): void => {
-    const target = this.thread.flatMap((exchange) => exchange.btws).find((btw) => btw.id === btwId);
-    if (!target) return;
-    const anchor = target.anchor;
-    const ownerExchangeId = target.exchangeId;
-    const turnId = newUuid();
-
-    const patchBtwExchanges = (mutate: (exchanges: Exchange[]) => Exchange[]): void => {
-      this.thread = this.thread.map((exchange) =>
-        exchange.id !== ownerExchangeId
-          ? exchange
-          : {
-              ...exchange,
-              btws: exchange.btws.map((btw) =>
-                btw.id === btwId ? { ...btw, exchanges: mutate(btw.exchanges) } : btw,
-              ),
-            },
-      );
-    };
-    const patchTurn = (patch: Partial<Exchange>): void =>
-      patchBtwExchanges((exchanges) =>
-        exchanges.map((exchange) =>
-          exchange.id === turnId ? { ...exchange, ...patch } : exchange,
-        ),
-      );
-
-    patchBtwExchanges((exchanges) => [
-      ...exchanges,
-      {
-        id: turnId,
-        query: userText,
-        thinking: [],
-        answer: "",
-        btws: [],
-        streaming: true,
-      },
-    ]);
-
-    const controller = new AbortController();
-    this.#btwControllers.add(controller);
-
-    void (async () => {
-      try {
-        if (!this.sessionId) {
-          throw new Error("Cannot persist BTW without a session");
-        }
-        const created = await createReply(
-          {
-            reply_id: newUuid(),
-            exchange_id: turnId,
-            session: {
-              kind: "existing",
-              id: this.sessionId,
-              btw: {
-                quote: anchor.quote,
-                blockOffset: anchor.blockOffset,
-                context: anchor.context,
-                exchangeId: ownerExchangeId,
-              },
-            },
-            question: userText,
-            origin_scope: "vault",
-            mode: "btw",
-          },
-          controller.signal,
-        );
-        patchTurn({ replyId: created.reply_id });
-        await this.#tailBtwReply(created.reply_id, controller);
-      } catch (error) {
-        if (isAbortError(error)) return;
-        console.error("BTW reply failed:", error);
-        patchTurn({ streaming: false });
-      } finally {
-        this.#btwControllers.delete(controller);
-      }
-    })();
+    this.#findBtw(btwId)?.reply(userText);
   };
 
   retryBtw = (btwId: string, turnId: Uuid): void => {
-    const btw = this.thread
-      .flatMap((exchange) => exchange.btws)
-      .find((candidate) => candidate.id === btwId);
-    const index = btw?.exchanges.findIndex((turn) => turn.id === turnId) ?? -1;
-    const previous = index >= 0 ? btw?.exchanges[index] : undefined;
-    if (
-      btw === undefined ||
-      previous === undefined ||
-      index !== btw.exchanges.length - 1 ||
-      previous.streaming ||
-      previous.replyId === undefined
-    ) {
-      return;
-    }
-
-    this.#updateBtwTurn(btwId, turnId, {
-      thinking: [],
-      answer: "",
-      streaming: true,
-      error: null,
-    });
-    const controller = new AbortController();
-    this.#btwControllers.add(controller);
-
-    void (async () => {
-      try {
-        const created = await retryReply(previous.replyId!, newUuid(), controller.signal);
-        this.#updateBtwTurn(btwId, turnId, { replyId: created.reply_id });
-        await this.#tailBtwReply(created.reply_id, controller);
-      } catch (error) {
-        if (isAbortError(error) || controller.signal.aborted) return;
-        console.error("BTW reply retry failed:", error);
-        this.thread = this.thread.map((exchange) => ({
-          ...exchange,
-          btws: exchange.btws.map((candidate) =>
-            candidate.id !== btwId
-              ? candidate
-              : {
-                  ...candidate,
-                  exchanges: candidate.exchanges.map((turn) =>
-                    turn.id === turnId ? previous : turn,
-                  ),
-                },
-          ),
-        }));
-      } finally {
-        this.#btwControllers.delete(controller);
-      }
-    })();
+    this.#findBtw(btwId)?.retry(turnId);
   };
 
   dismissBtw = (btwId: string): void => {
     this.thread = this.thread.map((exchange) => {
       const target = exchange.btws.find((btw) => btw.id === btwId);
       if (!target || target.exchanges.length > 0) return exchange;
+      target.destroy();
       return {
         ...exchange,
         btws: exchange.btws.filter((btw) => btw.id !== btwId),
       };
     });
+  };
+
+  openBtwSession = (btwId: string): void => {
+    void this.#findBtw(btwId)?.openSession();
   };
 
   handleSelection = (info: SelectionInfo | null): void => {

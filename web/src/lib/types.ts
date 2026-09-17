@@ -1,8 +1,9 @@
-import type { ReplySource, SessionId, Uuid } from "@great-minds/domain";
+import type { ReplySource, Uuid } from "@great-minds/domain";
 import type { UnmentionedLink } from "$lib/api/lint";
 import type { SessionSummary } from "$lib/api/sessions";
 import type { SourceDocumentSummary, SourceTypeFacet } from "$lib/api/sources";
 import type { WikiArticleOverview } from "$lib/api/wiki";
+import type { Btw } from "$lib/btw.svelte";
 
 export type SourceRef = ReplySource;
 
@@ -23,7 +24,7 @@ export interface Exchange {
   query: string;
   thinking: readonly ThinkingBlock[];
   answer: string;
-  btws: BtwThread[];
+  btws: Btw[];
   replyId?: Uuid;
   error?: string | null;
   // In-flight while the server-owned reply is running.
@@ -40,32 +41,14 @@ export interface TextAnchor {
   context: string;
 }
 
-export interface BtwThread {
-  id: string;
-  exchangeId: Uuid;
-  anchor: TextAnchor;
-  // The last turn carries streaming: true while it's in flight.
-  exchanges: Exchange[];
-}
-
-// A renderable annotation thread. Doc-born sessions (persistent) carry
-// sessionId/draft/anchored/createdAt; session-scoped BTW threads carry only
-// the base fields (optionals stay undefined).
 export interface ThreadLike {
   id: string;
+  conversation: Pick<SessionSummary, "id" | "kind" | "query"> | null;
+  error?: string | null;
+  promoting?: boolean;
   anchor: TextAnchor;
   exchanges: Exchange[];
-  sessionId?: SessionId | null;
-  draft?: boolean;
-  createdAt?: Date | null;
-}
-
-// A doc-born session as surfaced by the reader: an anchored note thread or a
-// doc-initiated conversation (anchored=false, no span in the body).
-export interface DocThread extends ThreadLike {
-  sessionId: SessionId | null;
   draft: boolean;
-  anchored: boolean;
   createdAt: Date | null;
 }
 

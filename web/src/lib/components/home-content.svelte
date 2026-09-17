@@ -1,6 +1,6 @@
 <script lang="ts">
   import { goto, replaceState } from "$app/navigation";
-  import type { SessionId } from "@great-minds/domain";
+  import type { SessionId, SessionResponse } from "@great-minds/domain";
   import Download from "@lucide/svelte/icons/download";
   import FileText from "@lucide/svelte/icons/file-text";
   import Home from "@lucide/svelte/icons/home";
@@ -31,23 +31,16 @@
   import { MENU_ITEM_CLASS, POPOVER_SURFACE_CLASS } from "$lib/control-styles";
   import { downloadSessionMarkdown } from "$lib/session-markdown";
   import { Session } from "$lib/session.svelte";
-  import type { SessionOrigin } from "$lib/api/sessions";
-  import type { Exchange, SourceRef } from "$lib/types";
+  import type { SourceRef } from "$lib/types";
 
   let {
-    sessionId,
-    initialExchanges,
+    saved,
     initialQuery,
     origin,
-    sessionOrigin = null,
-    originTitle = null,
   }: {
-    sessionId?: SessionId;
-    initialExchanges?: Exchange[];
+    saved?: SessionResponse;
     initialQuery?: string;
     origin?: string;
-    sessionOrigin?: SessionOrigin | null;
-    originTitle?: string | null;
   } = $props();
 
   const sessions = useSessions();
@@ -56,31 +49,21 @@
   const counts = useVaultCounts();
   const activeJob = useActiveJob();
   const initial = untrack(() => ({
-    sessionId,
-    initialExchanges,
+    saved,
     initialQuery,
     origin,
   }));
   let selectedCard = $state<SourceRef | null>(null);
-  let query = $state(
-    initial.initialQuery ?? initial.initialExchanges?.[0]?.query ?? "",
-  );
 
-  const session = new Session(
-    initial.initialExchanges
-      ? {
-          initialExchanges: initial.initialExchanges,
-          sessionId: initial.sessionId!,
-        }
-      : initial.initialQuery || initial.origin
-        ? {
-            initialQuery: initial.initialQuery,
-            originPath: initial.origin,
-            onSessionCreated: handleSessionCreated,
-          }
-        : { onSessionCreated: handleSessionCreated },
-  );
+  const session = new Session({
+    saved: initial.saved,
+    initialQuery: initial.initialQuery,
+    originPath: initial.origin,
+    onOpenSession: (id) => void goto(`/sessions/${id}`),
+    onSessionCreated: handleSessionCreated,
+  });
   onDestroy(session.destroy);
+  let query = $state(initial.initialQuery ?? session.thread[0]?.query ?? "");
 
   const [send, receive] = crossfade({
     duration: 280,
@@ -91,21 +74,6 @@
   );
 
   const isActive = $derived(session.phase !== "idle");
-  // The opened session's origin: from the loaded session, or — while a
-  // doc-initiated conversation is still being created — from the `origin`
-  // path the reader handed us.
-  const viewOrigin = $derived<SessionOrigin | null>(
-    sessionOrigin ??
-      (initial.origin
-        ? {
-            doc_path: initial.origin,
-            origin_scope: "vault",
-            anchor: null,
-            paragraph: null,
-            paragraph_index: null,
-          }
-        : null),
-  );
   const panelQuery = usePanelContent(() => selectedCard);
   const handleLinkClick = createLinkInterceptor((citation) => {
     selectedCard = {
@@ -319,8 +287,6 @@
           >
             <SessionThread
               {session}
-              origin={viewOrigin}
-              {originTitle}
               activeCard={selectedCard?.label ?? null}
               panelDocked={!!selectedCard}
               onCardClick={toggleCard}

@@ -2052,6 +2052,7 @@ describe("M3.1 write endpoint integration", () => {
                 userId: id.alice,
                 query: "Anchored session on the reference",
                 origin: {
+                  kind: "document",
                   doc_path: "refs/article.md",
                   origin_scope: "personal",
                   anchor: "Origin title first paragraph with enough detail for article extraction.",
@@ -2075,6 +2076,7 @@ describe("M3.1 write endpoint integration", () => {
               ts: "2026-07-11T09:00:00.000Z",
               user_id: id.alice,
               origin: {
+                kind: "document",
                 doc_path: "refs/article.md",
                 origin_scope: "personal",
                 anchor: "Origin title first paragraph with enough detail for article extraction.",
@@ -2591,6 +2593,7 @@ describe("M3.1 write endpoint integration", () => {
       },
       {
         doc_path: "raw/books/capital.md",
+        kind: "document",
         origin_scope: "vault",
         anchor: "anchor quote",
         paragraph: "Full paragraph",

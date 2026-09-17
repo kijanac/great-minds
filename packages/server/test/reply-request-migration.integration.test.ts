@@ -1,8 +1,7 @@
 import { readFile } from "node:fs/promises";
 
 import * as PgClient from "@effect/sql-pg/PgClient";
-import { CreateReplyRequest } from "@great-minds/domain";
-import { Cause, Effect, Redacted, Schema } from "effect";
+import { Cause, Effect, Redacted } from "effect";
 import { describe, expect, it } from "vitest";
 
 const migration = await readFile(new URL(
@@ -15,7 +14,6 @@ if (databaseUrl === undefined) throw new Error("DATABASE_URL is required for int
 const SqlLive = PgClient.layer({ url: Redacted.make(databaseUrl) });
 const runSql = <A>(effect: Effect.Effect<A, unknown, PgClient.PgClient>) =>
   Effect.runPromise(effect.pipe(Effect.provide(SqlLive)));
-const decodeRequest = Schema.decodeUnknownSync(CreateReplyRequest);
 
 const migrate = Effect.gen(function* () {
   const sql = yield* PgClient.PgClient;
@@ -97,8 +95,8 @@ describe("reply request migration", () => {
         yield* migrate;
         const rows = yield* sql<{ request: unknown }>`SELECT request FROM replies`;
         expect(rows).toHaveLength(cases.length);
-        expect(rows.map((row) => decodeRequest(row.request))).toEqual(
-          expect.arrayContaining(cases.map((entry) => decodeRequest(entry.after))),
+        expect(rows.map((row) => row.request)).toEqual(
+          expect.arrayContaining(cases.map((entry) => entry.after)),
         );
         for (const [kind, destination] of [["exchange", null], ["ephemeral", sessionId]]) {
           const invalid = yield* Effect.exit(sql.withTransaction(

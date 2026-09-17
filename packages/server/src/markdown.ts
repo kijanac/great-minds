@@ -175,7 +175,7 @@ export const sessionExchangeDocumentInput = (
   sessionId,
   exchangeId: exchange.exId,
   sessionQuery: exchange.query,
-  sourceDocPath: sessionOrigin?.doc_path ?? null,
+  sourceDocPath: sessionOrigin?.kind === "document" ? sessionOrigin.doc_path : null,
   sourceAnchor:
     sessionOrigin?.anchor !== undefined &&
     sessionOrigin.anchor !== null &&

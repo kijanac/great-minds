@@ -459,6 +459,7 @@ export const sessions = pgTable(
     userId: uuidColumn("user_id").notNull(),
     query: text("query").notNull(),
     origin: jsonb("origin"),
+    kind: text("kind").$type<"session" | "btw">().default("session").notNull(),
     createdAt: timestamptz("created_at").notNull(),
     updatedAt: timestamptz("updated_at").notNull(),
     idempotencyKey: text("idempotency_key"),
@@ -482,6 +483,11 @@ export const sessions = pgTable(
     index("ix_sessions_origin_doc_path")
       .using("btree", sql`(${table.origin}->>'doc_path')`)
       .where(sql`${table.origin} IS NOT NULL`),
+    index("ix_sessions_origin_session_id")
+      .using("btree", sql`(${table.origin}->>'session_id')`)
+      .where(sql`${table.origin}->>'kind' = 'answer'`),
+    check("sessions_kind_check", sql`${table.kind} IN ('session', 'btw')`),
+    check("sessions_btw_origin_check", sql`${table.kind} != 'btw' OR ${table.origin}->>'anchor' IS NOT NULL`),
   ],
 );
 
