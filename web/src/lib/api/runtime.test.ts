@@ -1,5 +1,6 @@
 import { Forbidden, Unauthorized, Uuid } from "@great-minds/domain";
 import { Effect, Layer, Stream } from "effect";
+import { HttpClientRequest } from "effect/unstable/http";
 import { describe, expect, it } from "vitest";
 
 import { ApiError, makeApi } from "./runtime";
@@ -73,6 +74,46 @@ const tokenPair = (suffix: string) => ({
 const unauthorized = () => json(401, { _tag: "Unauthorized", detail: "Token expired" });
 
 describe("makeApi", () => {
+  it("keeps API, refresh, stream, and upload requests within their CORS header contracts", async () => {
+    const sent: Request[] = [];
+    const fetchImpl: typeof fetch = async (input, init) => {
+      const request = new Request(input, init);
+      sent.push(request);
+      if (request.url.endsWith("/auth/refresh")) return json(200, tokenPair("2"));
+      if (request.url.startsWith("https://uploads.test/")) return new Response(null);
+      if (request.headers.get("authorization") !== "Bearer access-2") return unauthorized();
+      if (request.url.endsWith("/stream")) return sseResponse(['data: {"n":1}\n\n']);
+      return json(200, vaultDetail);
+    };
+    const tokens = memoryTokens({ access: "access-1", refresh: "refresh-1" });
+    const { api, http, externalHttp, run, stream } = makeApi({
+      baseUrl,
+      fetch: fetchImpl,
+      tokens: tokens.layer,
+    });
+
+    await run(api.vaults.getVault({ params: { vault_id: vaultId } }));
+    await run(http.get(`/vaults/${vaultId}`));
+    await collect(
+      stream(Stream.unwrap(api.jobs.streamJob({ params: { vault_id: vaultId, job_id: vaultId } }))),
+    );
+    await run(
+      externalHttp.execute(
+        HttpClientRequest.put("https://uploads.test/file").pipe(
+          HttpClientRequest.bodyText("upload"),
+        ),
+      ),
+    );
+
+    expect(sent).toHaveLength(6);
+    for (const request of sent) {
+      const allowed = request.url.startsWith("https://uploads.test/")
+        ? ["content-type", "content-length"]
+        : ["accept", "authorization", "content-type"];
+      expect([...request.headers.keys()].filter((name) => !allowed.includes(name))).toEqual([]);
+    }
+  });
+
   it("attaches the stored bearer token and decodes the contract response", async () => {
     const { fetchImpl, requests } = fetchResponding(() => json(200, vaultDetail));
     const tokens = memoryTokens({ access: "access-1", refresh: "refresh-1" });

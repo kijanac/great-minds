@@ -95,6 +95,7 @@ export const makeApi = (options: ApiOptions) => {
   const transport = Layer.mergeAll(
     FetchHttpClient.layer,
     Layer.succeed(FetchHttpClient.Fetch, options.fetch),
+    Layer.succeed(HttpClient.TracerPropagationEnabled, false),
     options.tokens,
   );
   const services = makeAuthMiddlewareClient(options.baseUrl).pipe(Layer.provideMerge(transport));
