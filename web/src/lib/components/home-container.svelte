@@ -22,7 +22,7 @@
   const saved = useSavedSession(() => sessionId ?? null);
 
   $effect(() => {
-    if (!vaults.isLoading && !sessionId && (vaults.data?.length ?? 0) === 0) {
+    if (vaults.isSuccess && !sessionId && vaults.data.length === 0) {
       void goto("/vaults/new", { replaceState: true });
     }
   });
@@ -43,7 +43,7 @@
     message="Couldn't load your vaults."
     onRetry={() => void vaults.refetch()}
   />
-{:else if vaults.isLoading}
+{:else if vaults.isPending}
   <LoadingState label="Loading…" />
 {:else if sessionId && saved.error}
   <ErrorState

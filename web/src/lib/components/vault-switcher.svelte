@@ -35,7 +35,7 @@
   }
 </script>
 
-{#if !vaults.isLoading}
+{#if vaults.isSuccess}
   {#if isEmpty}
     <Button
       variant="ghost"

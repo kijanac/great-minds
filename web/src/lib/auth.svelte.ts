@@ -1,7 +1,7 @@
 import { browser } from "$app/environment";
 import { decodeJwt } from "jose";
 
-import { ensureVaultId, logout } from "$lib/api/auth";
+import { logout } from "$lib/api/auth";
 import { queryClient } from "$lib/query-client";
 
 function isTokenValid(token: string | null): boolean {
@@ -40,10 +40,6 @@ class AuthState {
     this.isAuthenticated = authenticated;
     this.userId = authenticated ? getUserIdFromToken() : null;
     this.ready = true;
-
-    if (authenticated) {
-      void ensureVaultId();
-    }
   };
 
   initialize(): () => void {

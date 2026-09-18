@@ -3,7 +3,8 @@ import type { Uuid } from "@great-minds/domain";
 import { createMutation, createQuery, useQueryClient } from "@tanstack/svelte-query";
 
 import { createVault, fetchVaults, getVaultDetail, type CreateVaultInput } from "$lib/api/vaults";
-import { getVaultId, storeVaultId } from "$lib/vault-selection";
+import { auth } from "$lib/auth.svelte";
+import { clearVaultId, getVaultId, storeVaultId } from "$lib/vault-selection";
 
 class ActiveVaultSelection {
   id = $state<Uuid | null>(null);
@@ -32,10 +33,21 @@ class ActiveVaultSelection {
 export const activeVault = new ActiveVaultSelection();
 
 export function useVaults() {
-  return createQuery(() => ({
-    queryKey: ["vaults"],
+  const vaults = createQuery(() => ({
+    queryKey: ["vaults", auth.userId],
     queryFn: fetchVaults,
+    enabled: auth.isAuthenticated,
   }));
+
+  $effect(() => {
+    if (!auth.isAuthenticated || !vaults.isSuccess) return;
+    if (vaults.data.some((vault) => vault.id === activeVault.id)) return;
+    const first = vaults.data[0];
+    if (first) storeVaultId(first.id);
+    else if (activeVault.id !== null) clearVaultId();
+  });
+
+  return vaults;
 }
 
 export function useVaultDetail(vaultId: () => Uuid | null, enabled: () => boolean = () => true) {
@@ -52,13 +64,10 @@ export function useVaultDetail(vaultId: () => Uuid | null, enabled: () => boolea
 export function useCreateVault() {
   const queryClient = useQueryClient();
   return createMutation(() => ({
-    mutationFn: async (input: CreateVaultInput) => {
-      const vault = await createVault(input);
-      storeVaultId(vault.id);
-      return vault;
-    },
-    onSuccess: async () => {
+    mutationFn: (input: CreateVaultInput) => createVault(input),
+    onSuccess: async (vault) => {
       await queryClient.invalidateQueries({ queryKey: ["vaults"] });
+      storeVaultId(vault.id);
     },
   }));
 }

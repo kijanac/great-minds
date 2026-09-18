@@ -7,6 +7,7 @@
   import PageHeader from "$lib/components/page-header.svelte";
   import PasskeysSection from "$lib/components/passkeys-section.svelte";
   import { Button } from "$lib/components/ui/button";
+  import { ErrorState } from "$lib/components/ui/feedback";
   import { Skeleton } from "$lib/components/ui/skeleton";
   import { activeVault, useVaults } from "$lib/hooks/use-vault.svelte";
   import { formatShortDate } from "$lib/utils";
@@ -41,11 +42,16 @@
           </Button>
         </div>
 
-        {#if vaults.isLoading}
+        {#if vaults.isPending}
           <div class="space-y-1">
             <Skeleton class="h-10 w-full bg-ink-raised" />
             <Skeleton class="h-10 w-full bg-ink-raised" />
           </div>
+        {:else if vaults.isError}
+          <ErrorState
+            message="Couldn't load your vaults."
+            onRetry={() => void vaults.refetch()}
+          />
         {:else if list.length === 0}
           <p
             class="font-mono text-[length:var(--text-chrome)] tracking-[0.06em] text-warm-ghost"

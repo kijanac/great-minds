@@ -3,8 +3,11 @@
   import { goto } from "$app/navigation";
 
   import { auth } from "$lib/auth.svelte";
+  import { useVaults } from "$lib/hooks/use-vault.svelte";
 
   let { children } = $props();
+
+  useVaults();
 
   $effect(() => {
     if (browser && auth.ready && !auth.isAuthenticated) {
