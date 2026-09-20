@@ -1,4 +1,11 @@
-import { SessionId, Uuid, type OriginSessionDetail, type SessionOrigin } from "@great-minds/domain";
+import {
+  CreateReplyRequest,
+  SessionId,
+  Uuid,
+  type OriginSessionDetail,
+  type SessionOrigin,
+} from "@great-minds/domain";
+import { Schema } from "effect";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { createReply, retryReply, streamReply, type ReplySnapshot } from "$lib/api/replies";
@@ -98,10 +105,10 @@ const makeBtw = (origin: SessionOrigin, detail?: OriginSessionDetail, onOpen = v
 
 beforeEach(() => {
   vi.resetAllMocks();
-  vi.mocked(createReply).mockImplementation(async (payload) => ({
-    session_id: sessionId,
-    reply_id: payload.reply_id,
-  }));
+  vi.mocked(createReply).mockImplementation(async (payload) => {
+    Schema.encodeSync(CreateReplyRequest)(payload);
+    return { session_id: sessionId, reply_id: payload.reply_id };
+  });
   vi.mocked(retryReply).mockResolvedValue({ session_id: sessionId, reply_id: nextReplyId });
   vi.mocked(streamReply).mockImplementation(async function* () {
     yield snapshot("Completed answer");
@@ -267,6 +274,20 @@ it("opens a saved session with its origin and reconnects an attached BTW without
   expect(session.originTitle).toBe("Original document");
   expect(session.thread[0].answer).toBe("Parent answer");
   expect(session.thread[0].btws[0].conversation?.id).toBe(childId);
+});
+
+it("encodes an ordinary session's first question and follow-up without an origin path", async () => {
+  const session = new Session();
+  threads.push(session);
+  session.submitQuery("Start here");
+  await vi.waitFor(() => expect(session.thread[0]?.answer).toBe("Completed answer"));
+  expect(vi.mocked(createReply).mock.calls[0][0]).not.toHaveProperty("origin_path");
+  session.submitQuery("Follow up");
+  await vi.waitFor(() => expect(session.thread[1]?.answer).toBe("Completed answer"));
+  expect(vi.mocked(createReply).mock.calls[1][0].session).toEqual({
+    kind: "existing",
+    id: sessionId,
+  });
 });
 
 it("creates a document session using its displayed origin and sends subsequent turns to that session", async () => {

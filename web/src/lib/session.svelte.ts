@@ -140,10 +140,9 @@ export class Session {
       reply_id: newUuid(),
       exchange_id: exchangeId,
       question,
-      origin_path:
-        this.sessionId === null && this.origin?.kind === "document"
-          ? this.origin.doc_path
-          : undefined,
+      ...(this.sessionId === null && this.origin?.kind === "document"
+        ? { origin_path: this.origin.doc_path }
+        : {}),
       origin_scope: "vault",
       mode: "query",
       session:
