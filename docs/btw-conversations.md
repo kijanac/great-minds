@@ -6,6 +6,10 @@ An answer BTW inherits the latest completed main conversation when its first que
 
 Continue as a session changes the conversation kind in place. Its ID, history, original passage, and inherited context remain intact. The session list then includes it, and its origin renders a link to the session. Direct links to an unpromoted BTW return to its origin. The API checks ownership and treats repeated promotion requests as successful.
 
+The continued session opens with the surrounding passage visible and the original selection highlighted, followed by the existing conversation. Inline BTWs and sessions share the thread surface and message presentation; the session has one composer and no context disclosure or continuation button. Return to passage links back to the original highlight. Collapsed BTWs leave their passage highlights in the reading flow, and those highlights support keyboard activation.
+
+Margin placement is deferred for a separate prototype: an open BTW beside its passage on wide screens, inline placement on narrow screens, and deliberate coexistence with footnotes. The current implementation keeps threads inline.
+
 ## Migration
 
 The SQL migration `20260917175636_btw_conversations` adds the explicit kind, classifies existing anchored conversations as BTWs, and tags existing document origins. The accompanying `packages/server/scripts/migrate-session-replies.ts` converts historical JSONL and saved reply requests together, splitting embedded answer BTWs into their own conversations with deterministic IDs. Original passage data is preserved. For legacy BTW snapshots, the first observed snapshot time determines inherited context; subsequent snapshots do not advance it. Existing reply nodes retain their explicit parent relationship.

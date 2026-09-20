@@ -17,6 +17,7 @@
   import { clearAnchorHighlights, setAnchorHighlights } from "$lib/highlight";
   import { parseMarkdown } from "$lib/markdown";
   import type { HastNode } from "$lib/markdown-plugins";
+  import { passageMark } from "$lib/passage-navigation";
   import { splitStreamingMarkdown } from "$lib/streaming-markdown";
   import type { SelectionInfo, ThreadLike } from "$lib/types";
 
@@ -156,15 +157,31 @@
       ? expandedThreads.has(btwId)
       : (localExpanded[btwId] ?? false);
 
-  const toggleThread = (btwId: string): void => {
+  const toggleThread = (btwId: string, keyboard = false): void => {
+    const closing = isOpen(btwId);
     if (expandedThreads) {
       onToggleThread?.(btwId);
-      return;
+    } else {
+      localExpanded = {
+        ...localExpanded,
+        [btwId]: !closing,
+      };
     }
-    localExpanded = {
-      ...localExpanded,
-      [btwId]: !(localExpanded[btwId] ?? false),
-    };
+    void tick().then(() => {
+      if (closing) {
+        const trigger = root && passageMark(btwId, root);
+        trigger?.focus({ preventScroll: true });
+      } else if (keyboard) {
+        const thread = root?.querySelector<HTMLElement>(
+          `[data-btw-id="${CSS.escape(btwId)}"]`,
+        );
+        const control =
+          thread?.querySelector<HTMLElement>("textarea:not(:disabled)") ??
+          thread?.querySelector<HTMLElement>("a, button");
+        control?.focus({ preventScroll: true });
+        control?.scrollIntoView({ block: "nearest" });
+      }
+    });
   };
 
   // Locally-managed threads (session BTWs, share page) open on arrival unless
@@ -183,7 +200,7 @@
 
   $effect(() => {
     const currentRoot = root;
-    const currentBtws = btws;
+    const currentBtws = btws.filter((btw) => btw.draft && btw.anchor.quote);
     const currentText = text;
     if (!currentRoot) return;
 
@@ -195,7 +212,6 @@
       for (const btw of currentBtws) {
         // The painted path is transient decoration for in-flight drafts only;
         // persisted anchors are real <mark> elements in the settled tree.
-        if (!btw.draft || !btw.anchor.quote) continue;
         const block = currentRoot.querySelector<HTMLElement>(
           `[data-block-offset="${btw.anchor.blockOffset}"]`,
         );
@@ -209,6 +225,23 @@
       cancelled = true;
       clearAnchorHighlights(exchangeId);
     };
+  });
+
+  $effect(() => {
+    void (streaming ? stableTree : fullTree);
+    const currentRoot = root;
+    const states = bodyThreads.map((btw) => ({
+      id: btw.id,
+      open: isOpen(btw.id),
+    }));
+    void tick().then(() => {
+      for (const state of states) {
+        const trigger = currentRoot?.querySelector(
+          `mark[data-thread-id="${CSS.escape(state.id)}"][role="button"]`,
+        );
+        trigger?.setAttribute("aria-expanded", String(state.open));
+      }
+    });
   });
 
   // Settled trees carry real marks for persisted anchors; the miss report
@@ -239,6 +272,20 @@
     const threadId = mark.getAttribute("data-thread-id");
     if (!threadId) return;
     toggleThread(threadId);
+  }
+
+  function handleBodyKeydown(event: KeyboardEvent): void {
+    if (event.key !== "Enter" && event.key !== " ") return;
+    const target = event.target;
+    if (
+      !(target instanceof HTMLElement) ||
+      !target.matches('mark[data-thread-id][role="button"]')
+    )
+      return;
+    const threadId = target.getAttribute("data-thread-id");
+    if (!threadId) return;
+    event.preventDefault();
+    toggleThread(threadId, true);
   }
 
   // Hover highlights every segment of the hovered thread: a quote crossing
@@ -275,10 +322,12 @@
     const over = (event: MouseEvent) => handleBodyHover(event, true);
     const out = (event: MouseEvent) => handleBodyHover(event, false);
     currentRoot.addEventListener("click", handleBodyClick);
+    currentRoot.addEventListener("keydown", handleBodyKeydown);
     currentRoot.addEventListener("mouseover", over);
     currentRoot.addEventListener("mouseout", out);
     return () => {
       currentRoot.removeEventListener("click", handleBodyClick);
+      currentRoot.removeEventListener("keydown", handleBodyKeydown);
       currentRoot.removeEventListener("mouseover", over);
       currentRoot.removeEventListener("mouseout", out);
     };
@@ -297,6 +346,27 @@
   }
 
   function handleSelect(event: MouseEvent, offset: number): void {
+    event.stopPropagation();
+    showSelection(event.currentTarget as HTMLElement, offset);
+  }
+
+  function handleKeyboardSelection(event: KeyboardEvent): void {
+    if (
+      event.key !== "Shift" &&
+      !(event.shiftKey && /^(Arrow|Home|End)/.test(event.key))
+    )
+      return;
+    const selection = window.getSelection();
+    const node = selection?.rangeCount
+      ? selection.getRangeAt(0).commonAncestorContainer
+      : null;
+    const element = node instanceof Element ? node : node?.parentElement;
+    const block = element?.closest<HTMLElement>("[data-block-offset]");
+    if (!block || !root?.contains(block)) return;
+    showSelection(block, Number(block.dataset.blockOffset));
+  }
+
+  function showSelection(element: HTMLElement, offset: number): void {
     if (streaming || !onSelection) return;
     const selection = window.getSelection();
     if (!selection || selection.isCollapsed || selection.rangeCount === 0)
@@ -304,9 +374,7 @@
     const quote = selection.toString().trim();
     if (quote.length < 5) return;
     const range = selection.getRangeAt(0);
-    const element = event.currentTarget as HTMLElement;
     if (!element.contains(range.commonAncestorContainer)) return;
-    event.stopPropagation();
     const rect = range.getBoundingClientRect();
     onSelection({
       blockOffset: offset,
@@ -318,6 +386,8 @@
     });
   }
 </script>
+
+<svelte:window onkeyup={handleKeyboardSelection} />
 
 <FootnoteNotes
   bind:root
@@ -395,9 +465,7 @@
             <BtwThread
               {btw}
               open={isOpen(btw.id)}
-              onOpenChange={onToggleThread
-                ? () => onToggleThread(btw.id)
-                : () => toggleThread(btw.id)}
+              onOpenChange={() => toggleThread(btw.id)}
               hideWhenClosed
               {readOnly}
               onReply={onBtwReply}

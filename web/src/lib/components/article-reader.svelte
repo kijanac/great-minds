@@ -411,6 +411,7 @@
     {#if popover}
       <SelectionPopover
         info={popover}
+        onDismiss={() => (popover = null)}
         onBtw={startBtw}
         onSuggest={suggestionMode ? startSuggestion : undefined}
       />

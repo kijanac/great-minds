@@ -149,7 +149,9 @@
               <Home size={14} />
             </Button>
             <div class="min-w-0 flex-1">
-              <SearchBar bind:query phase={session.phase} onSubmit={submit} />
+              {#if !session.origin?.anchor}
+                <SearchBar bind:query phase={session.phase} onSubmit={submit} />
+              {/if}
             </div>
             {#if session.sessionId}
               <ShareDialog subjectKind="session" subjectId={session.sessionId}>

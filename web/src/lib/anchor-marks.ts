@@ -21,9 +21,6 @@ export interface WrapAnchorsResult {
   misses: AnchorMiss[];
 }
 
-// The mark class styled in index.css via the --btw token; hover + cursor
-// come from the same rule. Only this class is added to the tree; the
-// `data-thread-id` attribute is what the delegated click handler keys on.
 const MARK_CLASS = "btw-anchor-mark";
 
 /** Find the top-level block carrying the given source offset.
@@ -58,18 +55,28 @@ function collectText(block: HastNode): string {
  * its own <mark> sharing `data-thread-id`. Works in one pass with a running
  * cursor; text content is unchanged, so sequential quote searches still
  * resolve against the same offsets (overlapping quotes nest marks). */
-function applyWrap(block: HastNode, threadId: string, start: number, end: number): void {
-  const mark = (value: string): HastNode => ({
-    type: "element",
-    tagName: "mark",
-    properties: {
-      className: [MARK_CLASS],
-      dataThreadId: threadId,
-    },
-    children: [{ type: "text", value }],
-  });
+function applyWrap(block: HastNode, anchor: AnchorMark, start: number, end: number): void {
+  let hasTrigger = false;
+  const mark = (value: string, inLink: boolean): HastNode => {
+    const trigger = !inLink && !hasTrigger;
+    hasTrigger ||= trigger;
+    return {
+      type: "element",
+      tagName: "mark",
+      properties: {
+        className: [MARK_CLASS],
+        dataThreadId: anchor.threadId,
+        ...(trigger ? { tabIndex: 0, role: "button", ariaLabel: `BTW: ${anchor.quote}` } : {}),
+      },
+      children: [{ type: "text", value }],
+    };
+  };
 
-  const rewrite = (node: HastNode, cursor: number): { out: HastNode[]; cursor: number } => {
+  const rewrite = (
+    node: HastNode,
+    cursor: number,
+    inLink: boolean,
+  ): { out: HastNode[]; cursor: number } => {
     if (node.type === "text") {
       const value = node.value ?? "";
       const len = value.length;
@@ -82,7 +89,7 @@ function applyWrap(block: HastNode, threadId: string, start: number, end: number
       const e = Math.min(nodeEnd, end) - nodeStart;
       const out: HastNode[] = [];
       if (s > 0) out.push({ type: "text", value: value.slice(0, s) });
-      out.push(mark(value.slice(s, e)));
+      out.push(mark(value.slice(s, e), inLink));
       if (e < len) out.push({ type: "text", value: value.slice(e) });
       return { out, cursor: nodeEnd };
     }
@@ -91,7 +98,7 @@ function applyWrap(block: HastNode, threadId: string, start: number, end: number
     const out: HastNode[] = [];
     let c = cursor;
     for (const child of node.children ?? []) {
-      const result = rewrite(child, c);
+      const result = rewrite(child, c, inLink || node.tagName === "a");
       out.push(...result.out);
       c = result.cursor;
     }
@@ -102,7 +109,7 @@ function applyWrap(block: HastNode, threadId: string, start: number, end: number
   const out: HastNode[] = [];
   let cursor = 0;
   for (const child of block.children ?? []) {
-    const result = rewrite(child, cursor);
+    const result = rewrite(child, cursor, false);
     out.push(...result.out);
     cursor = result.cursor;
   }
@@ -140,7 +147,7 @@ export function wrapAnchors(tree: HastNode, anchors: AnchorMark[]): WrapAnchorsR
       });
       continue;
     }
-    applyWrap(block, anchor.threadId, span.start, span.end);
+    applyWrap(block, anchor, span.start, span.end);
   }
   return { tree, misses };
 }

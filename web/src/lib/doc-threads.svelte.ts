@@ -2,6 +2,7 @@ import type { SessionId, Uuid } from "@great-minds/domain";
 
 import { listSessionsByOrigin, type OriginScope } from "$lib/api/sessions";
 import { Btw } from "$lib/btw.svelte";
+import { passageMark, revealPassage } from "$lib/passage-navigation";
 import type { SelectionInfo } from "$lib/types";
 import { isAbortError } from "$lib/utils";
 
@@ -54,9 +55,7 @@ export class DocThreads {
     const next = new Set<string>();
     for (const thread of this.threads) {
       if (thread.anchor.blockOffset < 0) continue;
-      const mark = window.document.querySelector<HTMLElement>(
-        `mark[data-thread-id="${CSS.escape(thread.id)}"]`,
-      );
+      const mark = passageMark(thread.id);
       if (mark !== null) {
         next.add(thread.id);
         continue;
@@ -127,19 +126,15 @@ export class DocThreads {
     if (!target) return;
     this.expanded = new Set([...this.expanded, threadId]);
     requestAnimationFrame(() => {
-      const mark = window.document.querySelector<HTMLElement>(
-        `mark[data-thread-id="${CSS.escape(threadId)}"]`,
-      );
+      const mark = passageMark(threadId);
       if (mark) {
-        mark.scrollIntoView({ block: "start" });
-        mark.tabIndex = -1;
-        mark.focus({ preventScroll: true });
+        revealPassage(mark);
         return;
       }
       const block = window.document.querySelector<HTMLElement>(
         `[data-block-offset="${target.anchor.blockOffset}"]`,
       );
-      block?.scrollIntoView({ block: "start" });
+      if (block) revealPassage(block);
     });
   };
 }

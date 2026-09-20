@@ -7,16 +7,49 @@
     onFollowUp,
     onBtw,
     onSuggest,
+    onDismiss,
   }: {
     info: SelectionInfo;
     onFollowUp?: () => void;
     onBtw: () => void;
     onSuggest?: () => void;
+    onDismiss: () => void;
   } = $props();
+
+  let root: HTMLDivElement | null = $state(null);
+  let returnFocus: HTMLElement | null = null;
+  let entered = false;
+
+  function handleKeydown(event: KeyboardEvent) {
+    if (event.key === "Escape") {
+      event.preventDefault();
+      if (root?.contains(document.activeElement))
+        returnFocus?.focus({ preventScroll: true });
+      onDismiss();
+    } else if (
+      event.key === "Tab" &&
+      !event.shiftKey &&
+      !entered &&
+      !root?.contains(document.activeElement)
+    ) {
+      event.preventDefault();
+      entered = true;
+      returnFocus =
+        document.activeElement instanceof HTMLElement
+          ? document.activeElement
+          : null;
+      root?.querySelector("button")?.focus({ preventScroll: true });
+    }
+  }
 </script>
 
+<svelte:window onkeydown={handleKeydown} />
+
 <div
+  bind:this={root}
   data-popover
+  role="group"
+  aria-label="Actions for selected passage"
   class="fixed z-[300] -mt-1.5 flex -translate-x-1/2 -translate-y-full animate-[pop-in_0.14s_ease_forwards] overflow-hidden rounded-sm border border-gold-dim bg-popover shadow-[0_6px_24px_rgba(80,60,30,0.18)] dark:shadow-[0_6px_24px_rgba(0,0,0,0.7)]"
   style:left={`${info.x}px`}
   style:top={`${info.y}px`}
