@@ -76,7 +76,7 @@
           <p
             class="mb-6 font-mono text-[length:var(--text-chrome)] tracking-[0.06em] text-warm-ghost"
           >
-            sessions are created when you ask a question from home
+            Ask a question from home, or continue a BTW as a session.
           </p>
           <Button
             variant="ghost"

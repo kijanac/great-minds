@@ -372,16 +372,14 @@
     if (!selection || selection.isCollapsed || selection.rangeCount === 0)
       return;
     const quote = selection.toString().trim();
-    if (quote.length < 5) return;
+    if (!quote) return;
     const range = selection.getRangeAt(0);
     if (!element.contains(range.commonAncestorContainer)) return;
-    const rect = range.getBoundingClientRect();
     onSelection({
       blockOffset: offset,
       quote,
       context: element.textContent ?? "",
-      x: rect.left + rect.width / 2,
-      y: rect.top - 6,
+      rect: range.getBoundingClientRect(),
       exchangeId,
     });
   }

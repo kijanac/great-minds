@@ -378,17 +378,6 @@
 }
 
 /* Animations */
-@keyframes card-in {
-  from {
-    opacity: 0;
-    transform: translateY(4px);
-  }
-  to {
-    opacity: 1;
-    transform: none;
-  }
-}
-
 @keyframes slide-up {
   from {
     opacity: 0;
@@ -414,11 +403,11 @@
 @keyframes pop-in {
   from {
     opacity: 0;
-    transform: translate(-50%, -88%);
+    transform: translateY(4px);
   }
   to {
     opacity: 1;
-    transform: translate(-50%, -100%);
+    transform: none;
   }
 }
 
