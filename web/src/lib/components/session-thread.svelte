@@ -42,12 +42,12 @@
   let following = false;
   let previousScrollTop = 0;
 
-  function followBottom() {
+  function followBottom(behavior: ScrollBehavior = "instant") {
     viewport?.scrollTo({
       top: viewport.scrollHeight,
       behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches
         ? "instant"
-        : "smooth",
+        : behavior,
     });
   }
 
@@ -68,13 +68,13 @@
     if (session.thread.at(-1)?.id === previous) return;
     await tick();
     following = true;
-    followBottom();
+    followBottom("smooth");
   }
 
   $effect(() => {
     if (!content) return;
     const observer = new ResizeObserver(() => {
-      if (following && session.phase !== "done") followBottom();
+      if (following && session.phase === "streaming") followBottom();
     });
     observer.observe(content);
     return () => observer.disconnect();
