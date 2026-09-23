@@ -284,9 +284,7 @@ const EmbeddingsLive = Layer.succeed(EmbeddingsService, { embed: () => Effect.su
 const LanguageModelLive = Layer.succeed(LanguageModel, {
   hasApiKey: true,
   streamChat: async function* () {},
-  complete: async () => {
-    throw new Error("unexpected compile LLM call");
-  },
+  complete: () => Effect.fail(new Error("unexpected compile LLM call")),
 });
 const SourceDocumentsLive = SourceDocumentsServiceLive.pipe(
   Layer.provideMerge(StorageLive),

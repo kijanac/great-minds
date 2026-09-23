@@ -774,6 +774,7 @@ export const SessionExchangeEvent = Schema.Struct({
   type: Schema.Literal("exchange"),
   exId: Uuid,
   reply_id: Schema.optionalKey(Uuid),
+  stopped: Schema.optionalKey(Schema.Boolean),
   query: Schema.String,
   thinking: Schema.Array(ThinkingBlock).pipe(
     Schema.withDecodingDefaultTypeKey(Effect.succeed([])),
@@ -1158,7 +1159,7 @@ export const ReplySnapshot = Schema.Struct({
   reply_id: Uuid,
   session_id: SessionId,
   kind: Schema.Literals(["exchange", "btw"] as const),
-  status: Schema.Literals(["running", "completed", "failed"] as const),
+  status: Schema.Literals(["running", "completed", "failed", "stopped"] as const),
   answer: Schema.String,
   sources: Schema.Array(ReplySource),
   error: Schema.NullOr(Schema.String),
@@ -1878,6 +1879,16 @@ export const RepliesApiGroup = HttpApiGroup.make("replies")
       payload: RetryReplyRequest,
       success: AcceptedReplyResponse,
       error: RetryReplyErrors,
+    }).middleware(AuthMiddleware),
+  )
+  .add(
+    HttpApiEndpoint.post("stopReply", "/vaults/:vault_id/replies/:reply_id/stop", {
+      params: {
+        vault_id: Uuid,
+        reply_id: Uuid,
+      },
+      success: HttpApiSchema.NoContent,
+      error: ForbiddenNotFoundValidationErrors,
     }).middleware(AuthMiddleware),
   )
   .add(

@@ -801,6 +801,13 @@ const RepliesHandlersLive = HttpApiBuilder.group(MountedGreatMindsApi, "replies"
         );
       }),
     )
+    .handle("stopReply", ({ params }) =>
+      Effect.gen(function* () {
+        const replies = yield* RepliesService;
+        const current = yield* CurrentAuth;
+        yield* replies.stop(current.user_id, params.vault_id, params.reply_id);
+      }),
+    )
     .handle("streamReply", ({ params }) =>
       Effect.gen(function* () {
         const replies = yield* RepliesService;

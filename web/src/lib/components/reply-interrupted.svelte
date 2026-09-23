@@ -1,9 +1,11 @@
 <script lang="ts">
   let {
     partial = false,
+    stopped = false,
     onRetry,
   }: {
     partial?: boolean;
+    stopped?: boolean;
     onRetry?: () => void;
   } = $props();
 </script>
@@ -13,9 +15,11 @@
   class="mt-3 mb-2 flex flex-wrap items-baseline gap-x-3 gap-y-1 font-mono text-[length:var(--text-chrome)] leading-relaxed tracking-[0.04em] text-warm-faint"
 >
   <span>
-    {partial
-      ? "Answer interrupted. This response may be incomplete."
-      : "Couldn’t generate an answer."}
+    {stopped
+      ? "Response stopped."
+      : partial
+        ? "Answer interrupted. This response may be incomplete."
+        : "Couldn’t generate an answer."}
   </span>
   {#if onRetry}
     <button

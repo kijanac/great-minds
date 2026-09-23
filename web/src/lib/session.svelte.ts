@@ -1,7 +1,13 @@
 import { browser } from "$app/environment";
 import type { SessionId, SessionOrigin, SessionResponse, Uuid } from "@great-minds/domain";
 
-import { createReply, retryReply, streamReply, type CreateReplyPayload } from "$lib/api/replies";
+import {
+  createReply,
+  retryReply,
+  stopReply,
+  streamReply,
+  type CreateReplyPayload,
+} from "$lib/api/replies";
 import { Btw } from "$lib/btw.svelte";
 import type { Exchange, Phase, SelectionInfo } from "$lib/types";
 import { newUuid } from "$lib/ids";
@@ -31,6 +37,8 @@ export class Session {
   chips = $state<string[]>([]);
   followUpDraft = $state("");
   submission = $state<SubmissionState>({ status: "ready" });
+  stopping = $state(false);
+  stopFailed = $state(false);
   popover = $state<SelectionInfo | null>(null);
   readonly origin: SessionOrigin | null;
   readonly originTitle: string | null;
@@ -39,6 +47,7 @@ export class Session {
   #onOpenSession: ((sessionId: SessionId) => void) | undefined;
   #idempotencyKey: Uuid | null = null;
   #abortController: AbortController | null = null;
+  #activeReplyId = $state<Uuid | null>(null);
   #destroyed = false;
 
   constructor(options: SessionOptions = {}) {
@@ -101,6 +110,7 @@ export class Session {
   ): Promise<void> => {
     try {
       for await (const snapshot of streamReply(replyId, controller.signal)) {
+        if (controller.signal.aborted) return;
         this.phase =
           snapshot.status === "running"
             ? snapshot.answer.length > 0
@@ -111,23 +121,31 @@ export class Session {
           ...replyTurn(snapshot, true),
           replyId,
         });
+        if (snapshot.status !== "running") {
+          this.#activeReplyId = null;
+          this.stopping = false;
+          this.stopFailed = false;
+        }
       }
     } catch (error) {
       if (isAbortError(error) || controller.signal.aborted) return;
       console.error("Failed to resume reply:", error);
       this.#updateExchange(exchangeId, { streaming: false });
       this.phase = "done";
+      this.#activeReplyId = null;
+      this.stopping = false;
     }
   };
 
   #resumePendingReplies = (): void => {
     const pendingExchange = this.thread.find(
-      (exchange) => exchange.replyId !== undefined && exchange.answer.length === 0,
+      (exchange) => exchange.replyId !== undefined && exchange.streaming,
     );
     if (pendingExchange?.replyId) {
       this.phase = "searching";
       const controller = new AbortController();
       this.#abortController = controller;
+      this.#activeReplyId = pendingExchange.replyId;
       void this.#tailExchange(pendingExchange.id, pendingExchange.replyId, controller);
     }
   };
@@ -160,6 +178,7 @@ export class Session {
   };
 
   #runExchange = async (question: string): Promise<boolean> => {
+    this.stopFailed = false;
     const attempt =
       this.submission.status === "failed" && this.submission.attempt.payload.question === question
         ? this.submission.attempt
@@ -196,6 +215,7 @@ export class Session {
     }
 
     this.#updateExchange(attempt.exchangeId, { replyId: created.reply_id });
+    this.#activeReplyId = created.reply_id;
     if (this.sessionId === null) {
       this.sessionId = created.session_id;
       this.#onSessionCreated?.(created.session_id);
@@ -228,7 +248,9 @@ export class Session {
       answer: "",
       streaming: true,
       error: null,
+      stopped: false,
     });
+    this.stopFailed = false;
     this.#abortController?.abort();
     const controller = new AbortController();
     this.#abortController = controller;
@@ -237,6 +259,7 @@ export class Session {
       try {
         const created = await retryReply(previous.replyId!, newUuid(), controller.signal);
         this.#updateExchange(exchangeId, { replyId: created.reply_id });
+        this.#activeReplyId = created.reply_id;
         await this.#tailExchange(exchangeId, created.reply_id, controller);
       } catch (error) {
         if (isAbortError(error) || controller.signal.aborted) return;
@@ -267,6 +290,24 @@ export class Session {
         this.chips = this.chips.slice(selectedChips.length);
       }
     })();
+  };
+
+  get canStop(): boolean {
+    return this.#activeReplyId !== null && !this.stopping;
+  }
+
+  stop = async (): Promise<void> => {
+    const replyId = this.#activeReplyId;
+    if (replyId === null || this.stopping) return;
+    this.stopping = true;
+    this.stopFailed = false;
+    try {
+      await stopReply(replyId, this.#abortController?.signal);
+    } catch (error) {
+      if (isAbortError(error) || this.#destroyed || this.#activeReplyId !== replyId) return;
+      this.stopping = false;
+      this.stopFailed = true;
+    }
   };
 
   clearSubmissionFailure = (): void => {

@@ -43,6 +43,12 @@ export function retryReply(
   );
 }
 
+export function stopReply(replyId: Uuid, signal?: AbortSignal): Promise<void> {
+  return run(api.replies.stopReply({ params: { vault_id: selectedVault(), reply_id: replyId } }), {
+    signal,
+  });
+}
+
 const toReplyEvent = (event: Sse.EventEncoded): Option.Option<ReplyEvent> => {
   if (event.event === "done") return Option.some({ _tag: "Done" });
   if (event.event !== "message" || event.data.length === 0) return Option.none();

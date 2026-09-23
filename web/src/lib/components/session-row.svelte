@@ -25,27 +25,27 @@
 <Button
   variant="ghost"
   onclick={() => onOpen(session.id)}
-  class="group h-auto w-full flex-col items-start justify-start gap-1.5 rounded-sm px-3 py-3 hover:bg-ink-raised"
+  class="group h-auto w-full min-w-0 flex-col items-start justify-start gap-1.5 rounded-sm px-3 py-3 text-left whitespace-normal hover:bg-ink-raised"
 >
   <span
-    class="w-full truncate text-left font-serif text-[length:var(--text-body)] text-warm-dim italic transition-colors group-hover:text-warm"
+    class="w-full font-serif text-[length:var(--text-body)] leading-relaxed text-warm-dim transition-colors [overflow-wrap:anywhere] group-hover:text-warm"
   >
     {session.query}
   </span>
   <span
-    class="flex items-center gap-3 font-mono text-[length:var(--text-chrome)] text-muted-foreground"
+    class="flex w-full min-w-0 flex-wrap items-baseline gap-x-3 gap-y-1 font-mono text-[length:var(--text-chrome)] text-muted-foreground"
   >
     {#if session.origin}
       <span
-        class="inline-flex items-center gap-1 text-warm-ghost transition-colors group-hover:text-warm-faint"
+        class="inline-flex min-w-0 items-baseline gap-1 text-warm-ghost transition-colors [overflow-wrap:anywhere] group-hover:text-warm-faint"
       >
-        <CornerUpRight size={10} class="text-gold-muted" />
+        <CornerUpRight size={10} class="shrink-0 text-gold-muted" />
         from {session.origin_title ??
           (session.origin.kind === "document"
             ? docDisplayName(session.origin.doc_path)
             : "parent session")}
       </span>
     {/if}
-    {formatDate(session.updated_at)}
+    <span class="shrink-0">{formatDate(session.updated_at)}</span>
   </span>
 </Button>

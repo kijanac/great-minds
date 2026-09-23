@@ -27,6 +27,7 @@ export interface Exchange {
   btws: Btw[];
   replyId?: Uuid;
   error?: string | null;
+  stopped?: boolean;
   // In-flight while the server-owned reply is running.
   streaming: boolean;
 }

@@ -37,6 +37,56 @@
   } = $props();
 
   const origin = $derived(session.origin);
+  let viewport: HTMLDivElement | undefined = $state();
+  let content: HTMLDivElement | undefined = $state();
+  let following = false;
+  let previousScrollTop = 0;
+
+  function followBottom() {
+    viewport?.scrollTo({
+      top: viewport.scrollHeight,
+      behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches
+        ? "instant"
+        : "smooth",
+    });
+  }
+
+  function handleScroll() {
+    if (!viewport) return;
+    const bottom = viewport.scrollHeight - viewport.clientHeight;
+    if (viewport.scrollTop < Math.min(previousScrollTop, bottom)) {
+      following = false;
+    } else if (bottom - viewport.scrollTop < 32 && session.phase !== "done") {
+      following = true;
+    }
+    previousScrollTop = viewport.scrollTop;
+  }
+
+  async function submitFollowUp() {
+    const previous = session.thread.at(-1)?.id;
+    session.submitFollowUp();
+    if (session.thread.at(-1)?.id === previous) return;
+    await tick();
+    following = true;
+    followBottom();
+  }
+
+  $effect(() => {
+    if (!content) return;
+    const observer = new ResizeObserver(() => {
+      if (following && session.phase !== "done") followBottom();
+    });
+    observer.observe(content);
+    return () => observer.disconnect();
+  });
+
+  $effect(() => {
+    if (session.phase !== "done") return;
+    void tick().then(() => {
+      if (following) followBottom();
+      following = false;
+    });
+  });
   const originDocPath = $derived(
     origin?.kind === "document" ? origin.doc_path : null,
   );
@@ -111,11 +161,17 @@
 </script>
 
 <div
+  bind:this={viewport}
   class="min-h-0 flex-1 overflow-y-auto"
+  onscroll={handleScroll}
   onclick={onLinkClick}
   role={onLinkClick ? "presentation" : undefined}
 >
-  <div id="session-print" class="mx-auto max-w-[740px] px-4 pt-7 pb-5 md:px-10">
+  <div
+    bind:this={content}
+    id="session-print"
+    class="mx-auto max-w-[740px] px-4 pt-7 pb-5 md:px-10"
+  >
     {#if originHref}
       <div class="mb-6">
         <a
@@ -183,10 +239,13 @@
               />
             {/if}
 
-            {#if exchange.error || (!exchange.answer && !exchange.streaming)}
+            {#if exchange.stopped || exchange.error || (!exchange.answer && !exchange.streaming)}
               <ReplyInterrupted
                 partial={exchange.answer.length > 0}
-                onRetry={index === session.thread.length - 1 && exchange.replyId
+                stopped={exchange.stopped}
+                onRetry={!exchange.stopped &&
+                index === session.thread.length - 1 &&
+                exchange.replyId
                   ? () => session.retryExchange(exchange.id)
                   : undefined}
               />
@@ -228,14 +287,18 @@
   </div>
 {/if}
 
-{#if session.phase === "done"}
+{#if session.phase !== "idle"}
   <FollowUpBar
     bind:value={session.followUpDraft}
     chips={session.chips}
+    disabled={session.phase !== "done"}
     submissionFailed={session.submission.status === "failed"}
+    stopping={session.stopping}
+    stopFailed={session.stopFailed}
+    onStop={session.canStop ? session.stop : undefined}
     onValueChange={session.clearSubmissionFailure}
     onRemoveChip={session.removeChip}
-    onSubmit={session.submitFollowUp}
+    onSubmit={submitFollowUp}
   />
 {/if}
 

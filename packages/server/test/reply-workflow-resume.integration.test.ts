@@ -88,7 +88,7 @@ const waitForExit = (child: ReturnType<typeof startRunner>, timeoutMs = 20_000) 
   });
 
 describe("reply workflow restart recovery", () => {
-  it("fails an ambiguous provider turn after SIGKILL without calling the provider twice", async () => {
+  it.each([false, true])("recovers a killed provider turn with stop requested=%s without calling it twice", async (stopRequested) => {
     const userId = crypto.randomUUID();
     const vaultId = crypto.randomUUID();
     const membershipId = crypto.randomUUID();
@@ -136,13 +136,19 @@ describe("reply workflow restart recovery", () => {
       const first = startRunner("pause", replyId, markerPath, storageRoot);
       const started = await waitForOutput(first, "REPLY active cursor=0");
       expect(started).toContain("REPLY provider called mode=pause");
+      if (stopRequested) {
+        await runSql(Effect.gen(function* () {
+          const sql = yield* PgClient.PgClient;
+          yield* sql`UPDATE replies SET stop_requested = true WHERE id = ${replyId}::uuid`;
+        }));
+      }
       first.kill("SIGKILL");
       await new Promise<void>((resolve) => first.once("exit", () => resolve()));
 
       const second = startRunner("resume", replyId, markerPath, storageRoot);
       const resumed = await waitForExit(second);
       expect(resumed.code).toBe(0);
-      expect(resumed.output).toContain("REPLY terminal status=failed cursor=0");
+      expect(resumed.output).toContain(`REPLY terminal status=${stopRequested ? "stopped" : "failed"} cursor=0`);
       expect(resumed.output).not.toContain("REPLY provider called mode=resume");
       expect((await readFile(markerPath, "utf8")).trim().split("\n")).toEqual(["pause"]);
 
@@ -163,13 +169,18 @@ describe("reply workflow restart recovery", () => {
       );
       expect(rows).toEqual([
         {
-          status: "failed",
-          error:
+          status: stopRequested ? "stopped" : "failed",
+          error: stopRequested ? null :
             "Reply interrupted before an external response could be saved. It was not retried automatically.",
           generation_cursor: 0,
           active_generation_step: null,
         },
       ]);
+      if (stopRequested) {
+        const events = (await readFile(join(sessionDirectory, `${sessionId}.jsonl`), "utf8"))
+          .trim().split("\n").map((line) => JSON.parse(line));
+        expect(events.at(-1)).toMatchObject({ status: "stopped", answer: "partial" });
+      }
     } finally {
       await runSql(
         Effect.gen(function* () {

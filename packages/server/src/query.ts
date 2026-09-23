@@ -1171,21 +1171,17 @@ export const QueryServiceLive = Layer.effect(
           const content = result.excerpts.join(" ");
           return `[${index + 1}] ${result.title}\n${result.url}\n${content}`;
         });
-        const completion = yield* Effect.tryPromise({
-          try: () =>
-            languageModel.complete({
-              model: appConfig.extractModel,
-              temperature: 0,
-              responseFormat: "json_object",
-              messages: [
-                { role: "system", content: webFactExtractionPrompt },
-                {
-                  role: "user",
-                  content: `USER QUESTION: ${context.question}\n\nWEB RESULTS:\n\n${numbered.join("\n\n")}`,
-                },
-              ],
-            }),
-          catch: (error) => error,
+        const completion = yield* languageModel.complete({
+          model: appConfig.extractModel,
+          temperature: 0,
+          responseFormat: "json_object",
+          messages: [
+            { role: "system", content: webFactExtractionPrompt },
+            {
+              role: "user",
+              content: `USER QUESTION: ${context.question}\n\nWEB RESULTS:\n\n${numbered.join("\n\n")}`,
+            },
+          ],
         });
         addUsageCost(context, completion.usage);
         const parsed = decodeWebFactExtraction(
@@ -1706,16 +1702,14 @@ export const QueryServiceLive = Layer.effect(
           if (trimmed.length === 0) {
             return yield* new BadRequest({ detail: "description required" });
           }
-          const completion = yield* Effect.promise(() =>
-            languageModel.complete({
-              model: appConfig.queryModel,
-              temperature: 0.4,
-              messages: [
-                { role: "system", content: draftHintSystem },
-                { role: "user", content: trimmed },
-              ],
-            }),
-          );
+          const completion = yield* languageModel.complete({
+            model: appConfig.queryModel,
+            temperature: 0.4,
+            messages: [
+              { role: "system", content: draftHintSystem },
+              { role: "user", content: trimmed },
+            ],
+          }).pipe(Effect.orDie);
           return { thematic_hint: completion.text } satisfies DraftHintResponse;
         }),
     } satisfies QueryServiceShape;

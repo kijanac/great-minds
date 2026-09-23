@@ -181,7 +181,7 @@ const EmbeddingsLive = Layer.succeed(EmbeddingsService, {
 const LanguageModelLive = Layer.succeed(LanguageModel, {
   hasApiKey: true,
   streamChat: async function* () {},
-  complete: (input) => complete(input),
+  complete: (input) => Effect.tryPromise({ try: () => complete(input), catch: (error) => error }),
 });
 const LoggerLive = Layer.succeed(StructuredLogger, {
   info: (event, fields) => Effect.sync(() => logEvents.push({ event, fields })),

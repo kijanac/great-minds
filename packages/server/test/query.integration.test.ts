@@ -20,14 +20,15 @@ import {
 import { type OriginSessionDetail, Uuid } from "@great-minds/domain";
 import { eq, sql } from "drizzle-orm";
 import { Effect, Layer, Option, Redacted, Schema } from "effect";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { makeAppLayer } from "../src/app-layer.ts";
 import { ClockService, makeTestClock } from "../src/clock.ts";
 import { AppConfig, type AppConfigShape } from "../src/config.ts";
 import { promptContentHash } from "../src/crypto.ts";
 import { StructuredLogger, StructuredLoggerLive } from "../src/logging.ts";
-import { type LlmAssistantToolCall, type LlmMessage } from "../src/llm.ts";
+import { type LlmAssistantToolCall, type LlmMessage, type ModelStreamPart } from "../src/llm.ts";
+import { ParallelSearchService } from "../src/parallel.ts";
 import { makeTestMailer } from "../src/mailer.ts";
 import { RepliesService } from "../src/replies.ts";
 import { startServer } from "../src/server.ts";
@@ -455,7 +456,7 @@ const apiWithToken = async (path: string, body: unknown, token: string) => {
 
 type ReplySnapshot = {
   readonly reply_id: string;
-  readonly status: "running" | "completed" | "failed";
+  readonly status: "running" | "completed" | "failed" | "stopped";
   readonly answer: string;
   readonly sources: readonly Record<string, unknown>[];
   readonly error: string | null;
@@ -574,6 +575,168 @@ afterEach(async () => {
 });
 
 describe("query stream", () => {
+  it("persists a stop before preparation without starting a model request", async () => {
+    const language = makeScriptedLanguageModel({ streams: [] });
+    await startHarness({ language });
+    const replyId = uuid(crypto.randomUUID());
+    const exchangeId = uuid(crypto.randomUUID());
+    const sessionId = await runDb(Effect.gen(function* () {
+      const service = yield* SessionsService;
+      const db = yield* Database;
+      const sessionId = yield* service.createSession(id.alice, id.vault, {
+        idempotencyKey: crypto.randomUUID(),
+        pending: { replyId, exchangeId, question: "Stop before work starts" },
+      });
+      yield* db.query((d) => d.insert(replies).values({
+        id: replyId, userId: id.alice, vaultId: id.vault, sessionId,
+        kind: "exchange", status: "running", dispatchedAt: initialTime,
+        request: { reply_id: replyId, exchange_id: exchangeId, question: "Stop before work starts", mode: "query", session: { kind: "existing", id: sessionId } },
+      }));
+      return sessionId;
+    }));
+    expect((await api(`${repliesPath}/${replyId}/stop`, {})).response.status).toBe(204);
+    await runDb(Effect.gen(function* () {
+      const service = yield* RepliesService;
+      expect(yield* service.prepareStep(replyId)).toMatchObject({ outcome: "stopped" });
+      yield* service.finalizeStep(replyId, "stopped", null);
+    }));
+    expect(replySnapshots((await tailReply(replyId)).text).at(-1)).toMatchObject({ status: "stopped", answer: "", error: null });
+    expect((await readSessionEvents(sessionId)).at(-1)).toMatchObject({
+      status: "stopped", messages: [{ role: "user", content: "Stop before work starts" }],
+    });
+    expect(language.streamCalls).toHaveLength(0);
+  });
+
+  it.each(["Partial answer.", ""])("stops a pending model response with %j, saves it, and follows up in the same conversation", async (answer) => {
+    let close!: (result: IteratorResult<ModelStreamPart>) => void;
+    const closed = new Promise<IteratorResult<ModelStreamPart>>((resolve) => { close = resolve; });
+    let sent = false;
+    const language = makeScriptedLanguageModel({ streams: [
+      { kind: "stream", stream: {
+        [Symbol.asyncIterator]: () => ({
+          next: () => {
+            if (!sent && answer) {
+              sent = true;
+              return Promise.resolve({ done: false as const, value: tokenPart(answer) });
+            }
+            return closed;
+          },
+          return: () => {
+            close({ done: true, value: undefined });
+            return closed;
+          },
+        }),
+      } },
+      { kind: "parts", parts: [tokenPart("A follow-up answer."), finishPart("stop")] },
+    ] });
+    await startHarness({ language });
+    const created = await api(repliesPath, {
+      exchange_id: crypto.randomUUID(), question: "A question to stop", mode: "query",
+      session: { kind: "new", idempotency_key: crypto.randomUUID() },
+    });
+    const ids = JSON.parse(created.text) as { reply_id: string; session_id: string };
+    await vi.waitFor(async () => {
+      const rows = await runDb(Effect.flatMap(Database, (db) => db.query((d) => d.select().from(replies)
+        .where(eq(replies.id, uuid(ids.reply_id))))));
+      expect(rows[0].answer).toBe(answer);
+      expect(language.streamCalls).toHaveLength(1);
+    }, { timeout: 10_000 });
+    const stopped = await api(`${repliesPath}/${ids.reply_id}/stop`, {});
+    expect(stopped.response.status).toBe(204);
+    const tail = await tailReply(ids.reply_id);
+    expect(replySnapshots(tail.text).at(-1)).toMatchObject({ status: "stopped", answer, error: null });
+    expect(await closed).toEqual({ done: true, value: undefined });
+    expect((await api(`${repliesPath}/${ids.reply_id}/stop`, {})).response.status).toBe(204);
+    const nodes = (await readSessionEvents(ids.session_id)).filter((event) => event.type === "reply");
+    expect(nodes).toHaveLength(2);
+    expect(nodes.at(-1)).toMatchObject({ status: "stopped", answer });
+    const reloaded = await getWithToken(`/vaults/${id.vault}/sessions/${ids.session_id}`);
+    expect(await reloaded.json()).toMatchObject({ events: expect.arrayContaining([
+      expect.objectContaining({ type: "exchange", answer, stopped: true }),
+    ]) });
+    const followUp = await runReply({ question: "Continue from there", session: { kind: "existing", id: ids.session_id } });
+    expect(followUp.snapshots.at(-1)?.status).toBe("completed");
+    expect(language.streamCalls).toHaveLength(2);
+    expect(language.streamCalls[1].messages).toEqual(expect.arrayContaining([
+      { role: "user", content: "A question to stop" },
+      ...(answer ? [{ role: "assistant", content: answer }] : []),
+      { role: "user", content: "Continue from there" },
+    ]));
+    expect((await readSessionEvents(ids.session_id)).filter((event) => event.type === "reply").at(-1))
+      .toMatchObject({ parent_reply_id: ids.reply_id });
+  });
+
+  it.each(["search", "extraction"])("stops active web %s and preserves a valid transcript for the next model call", async (stage) => {
+    let toolStarted = false;
+    let toolStopped = false;
+    const pending = Effect.sync(() => { toolStarted = true; }).pipe(
+      Effect.andThen(Effect.never),
+      Effect.onInterrupt(() => Effect.sync(() => { toolStopped = true; })),
+    );
+    const language = makeScriptedLanguageModel({ streams: [
+      { kind: "parts", parts: [
+        tokenPart("Looking for sources."),
+        toolCallPart(0, "read-first", "read_document", { path: "wiki/alpha.md" }),
+        toolCallPart(1, "search-pending", "web_search", { query: "capital" }),
+        finishPart("tool_calls"),
+      ] },
+      { kind: "parts", parts: [tokenPart("Continuing after the stop."), finishPart("stop")] },
+    ], completions: [pending] });
+    await startHarness({ language, parallelLayer: Layer.succeed(ParallelSearchService, {
+      hasApiKey: true,
+      search: () => stage === "search" ? pending : Effect.succeed([
+        { title: "External result", url: "https://example.test/result", excerpts: ["A fact about capital."] },
+      ]),
+    }) });
+    await writeVaultFile(id.vault, "config.yaml", "name: Query Vault\nweb_search: true\n");
+    const created = await api(repliesPath, {
+      exchange_id: crypto.randomUUID(), question: "Research capital", mode: "query",
+      session: { kind: "new", idempotency_key: crypto.randomUUID() },
+    });
+    const ids = JSON.parse(created.text) as { reply_id: string; session_id: string };
+    await vi.waitFor(() => expect(toolStarted).toBe(true), { timeout: 10_000 });
+    expect((await api(`${repliesPath}/${ids.reply_id}/stop`, {})).response.status).toBe(204);
+    expect(replySnapshots((await tailReply(ids.reply_id)).text).at(-1)).toMatchObject({ status: "stopped" });
+    expect(toolStopped).toBe(true);
+    expect(language.completeCalls).toHaveLength(stage === "extraction" ? 1 : 0);
+    const node = (await readSessionEvents(ids.session_id)).filter((event) => event.type === "reply").at(-1)!;
+    expect(node.sources).toEqual(expect.not.arrayContaining([expect.objectContaining({ pending: true })]));
+    expect(node.messages).toEqual(expect.arrayContaining([
+      expect.objectContaining({ role: "tool", tool_call_id: "read-first", content: expect.stringContaining("Alpha article body") }),
+      { role: "tool", tool_call_id: "search-pending", content: "Tool call cancelled because the user stopped the response." },
+    ]));
+    const followUp = await runReply({ question: "Use what you have", session: { kind: "existing", id: ids.session_id } });
+    expect(followUp.snapshots.at(-1)?.status).toBe("completed");
+    expect(language.streamCalls).toHaveLength(2);
+    expect(language.streamCalls[1].messages).toEqual(expect.arrayContaining([...node.messages]));
+  });
+
+  it("keeps completed replies unchanged and restricts stopping to the reply owner", async () => {
+    const language = makeScriptedLanguageModel({ streams: [
+      { kind: "parts", parts: [tokenPart("Finished."), finishPart("stop")] },
+    ] });
+    await startHarness({ language });
+    const result = await runReply({ question: "A short question" });
+    const replyId = result.snapshots.at(-1)!.reply_id;
+    expect((await api(`${repliesPath}/${replyId}/stop`, {})).response.status).toBe(204);
+    expect(replySnapshots((await tailReply(replyId)).text).at(-1)).toMatchObject({ status: "completed", answer: "Finished." });
+    await runDb(Effect.gen(function* () {
+      const db = yield* Database;
+      const service = yield* RepliesService;
+      yield* db.query((d) => d.update(replies).set({ status: "running", stopRequested: true })
+        .where(eq(replies.id, uuid(replyId))));
+      yield* service.finalizeStep(uuid(replyId), "stopped", null);
+    }));
+    expect(replySnapshots((await tailReply(replyId)).text).at(-1)).toMatchObject({ status: "completed", answer: "Finished." });
+    expect((await api(`${repliesPath}/${crypto.randomUUID()}/stop`, {})).response.status).toBe(404);
+    await insertUser(id.bob, "stop-bob@example.com");
+    await runDb(Effect.flatMap(Database, (db) => db.query((d) => d.insert(vaultMemberships)
+      .values({ id: uuid(crypto.randomUUID()), vaultId: id.vault, userId: id.bob, role: "VIEWER" }))));
+    const forbidden = await apiWithToken(`${repliesPath}/${replyId}/stop`, {}, await issueToken(id.bob));
+    expect(forbidden.response.status).toBe(404);
+    expect(language.streamCalls).toHaveLength(1);
+  });
+
   it("builds personal origin context from user storage and degrades missing refs", async () => {
     const language = makeScriptedLanguageModel({
       streams: [

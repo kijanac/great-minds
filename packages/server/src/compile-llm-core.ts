@@ -576,16 +576,12 @@ export const makeCompileLlmCore = (options: CompileLlmCoreOptions) => {
     Effect.gen(function* () {
       const totalAttempts = (input.maxParseRetries ?? 1) + 1;
       for (let attempt = 1; attempt <= totalAttempts; attempt += 1) {
-        const completion = yield* Effect.tryPromise({
-          try: () =>
-            languageModel.complete({
-              model: input.model,
-              messages: input.messages,
-              temperature: input.temperature,
-              responseFormat: input.responseFormat,
-              requestProfile: "compile",
-            }),
-          catch: (error) => error,
+        const completion = yield* languageModel.complete({
+          model: input.model,
+          messages: input.messages,
+          temperature: input.temperature,
+          responseFormat: input.responseFormat,
+          requestProfile: "compile",
         });
         yield* db.query((d) => d
           .insert(llmCostEvents)

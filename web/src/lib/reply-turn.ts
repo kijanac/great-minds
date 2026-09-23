@@ -5,5 +5,6 @@ export const replyTurn = (snapshot: ReplySnapshot, alwaysShowThinking = false) =
   thinking:
     snapshot.sources.length > 0 || alwaysShowThinking ? [{ sources: snapshot.sources }] : [],
   streaming: snapshot.status === "running",
+  stopped: snapshot.status === "stopped",
   error: snapshot.error,
 });

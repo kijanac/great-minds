@@ -500,6 +500,7 @@ export const replies = pgTable(
     sessionId: sessionIdColumn("session_id").notNull(),
     kind: text("kind").$type<ReplySnapshot["kind"]>().notNull(),
     status: text("status").$type<ReplySnapshot["status"]>().notNull(),
+    stopRequested: boolean("stop_requested").default(false).notNull(),
     answer: text("answer").default("").notNull(),
     sources: jsonb("sources")
       .$type<ReplySnapshot["sources"]>()
@@ -540,7 +541,7 @@ export const replies = pgTable(
       .on(table.createdAt)
       .where(sql`${table.status} = 'running' AND ${table.dispatchedAt} IS NULL`),
     check("replies_kind_check", sql`${table.kind} IN ('exchange', 'btw')`),
-    check("replies_status_check", sql`${table.status} IN ('running', 'completed', 'failed')`),
+    check("replies_status_check", sql`${table.status} IN ('running', 'completed', 'failed', 'stopped')`),
     check(
       "replies_active_generation_check",
       sql`(${table.activeGenerationStep} IS NULL AND ${table.activeGenerationKind} IS NULL AND ${table.activeGenerationKey} IS NULL) OR (${table.activeGenerationStep} IS NOT NULL AND ${table.activeGenerationKind} IN ('model', 'tool') AND ${table.activeGenerationKey} IS NOT NULL)`,

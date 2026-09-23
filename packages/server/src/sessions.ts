@@ -38,7 +38,7 @@ import { ContentStorage, vaultOwner } from "./storage.ts";
 import { VaultAccessService } from "./vaults.ts";
 import { ClockService } from "./clock.ts";
 
-export const ReplyNodeStatus = Schema.Literals(["pending", "completed"] as const);
+export const ReplyNodeStatus = Schema.Literals(["pending", "completed", "stopped"] as const);
 
 export const StoredSessionMeta = Schema.Struct({
   ...SessionMetaEventSchema.fields,
@@ -93,7 +93,7 @@ export const currentNodes = (events: readonly StoredSessionEvent[]): readonly Re
 };
 
 export const parentReplyIdFor = (nodes: readonly ReplyNode[]): Uuid | null =>
-  nodes.findLast((node) => node.status === "completed")?.reply_id ?? null;
+  nodes.findLast((node) => node.status !== "pending")?.reply_id ?? null;
 
 const stubToolResults = (messages: readonly LlmMessage[]): readonly LlmMessage[] =>
   messages.map((message) =>
@@ -128,6 +128,7 @@ const exchangeEventFromNode = (node: ReplyNode): SessionExchangeEvent => ({
   type: "exchange",
   exId: node.exchange_id,
   reply_id: node.reply_id,
+  ...(node.status === "stopped" ? { stopped: true } : {}),
   query: node.question,
   thinking: thinkingBlocksFor(node.sources),
   answer: node.answer,
@@ -177,6 +178,7 @@ type PendingReply = {
 };
 
 type CompletedReply = {
+  readonly stopped?: boolean;
   readonly messages: readonly LlmMessage[];
   readonly sources: readonly ThinkingSource[];
   readonly answer: string;
@@ -211,7 +213,7 @@ type SessionsServiceShape = {
     sessionId: SessionId,
     replyId: Uuid,
     completed: CompletedReply,
-  ) => Effect.Effect<void, Forbidden | NotFound>;
+  ) => Effect.Effect<CompletedReply, Forbidden | NotFound>;
   readonly readTranscript: (
     vaultId: Uuid,
     sessionId: SessionId,
@@ -459,7 +461,7 @@ export const SessionsServiceLive = Layer.effect(
       parent_reply_id: pending.parent_reply_id,
       exchange_id: pending.exchange_id,
       question: pending.question,
-      status: "completed",
+      status: completed.stopped ? "stopped" : "completed",
       messages: [...completed.messages],
       sources: [...completed.sources],
       answer: completed.answer,
@@ -585,7 +587,7 @@ export const SessionsServiceLive = Layer.effect(
             const events = yield* loadAllEvents(vaultId, origin.session_id);
             const nodes = currentNodes(events);
             const anchor = nodes.find((node) => node.exchange_id === origin.exchange_id);
-            if (anchor === undefined || anchor.status !== "completed") {
+            if (anchor === undefined || anchor.status === "pending") {
               return yield* new BadRequest({ detail: "Select a completed answer to start a BTW" });
             }
             const parentReplyId = parentReplyIdFor(nodes);
@@ -671,11 +673,17 @@ export const SessionsServiceLive = Layer.effect(
               new Error(`Reply ${replyId} has no pending node in session ${sessionId}`),
             );
           }
-          if (pending.status === "completed") {
-            return;
+          if (pending.status !== "pending") {
+            return {
+              messages: pending.messages,
+              sources: pending.sources,
+              answer: pending.answer,
+              stopped: pending.status === "stopped",
+            };
           }
           const ts = yield* clock.now;
           yield* appendNode(vaultId, sessionId, completedNodeFrom(ts, pending, completed));
+          return completed;
         }),
       readTranscript: (vaultId, sessionId, replyId) =>
         Effect.gen(function* () {

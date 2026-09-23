@@ -1,0 +1,2 @@
+ALTER TABLE "replies" ADD COLUMN "stop_requested" boolean DEFAULT false NOT NULL;--> statement-breakpoint
+ALTER TABLE "replies" DROP CONSTRAINT "replies_status_check", ADD CONSTRAINT "replies_status_check" CHECK ("status" IN ('running', 'completed', 'failed', 'stopped'));

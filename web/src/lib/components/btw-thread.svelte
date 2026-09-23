@@ -41,11 +41,6 @@
 
   let input = $state("");
   let inputElement: HTMLTextAreaElement | null = $state(null);
-  const shortAnchor = $derived(
-    btw.anchor.quote.length > 58
-      ? `${btw.anchor.quote.slice(0, 58)}...`
-      : btw.anchor.quote,
-  );
   const isStreaming = $derived(
     btw.exchanges.some((exchange) => exchange.streaming),
   );
@@ -84,20 +79,22 @@
     <div
       id={`thread-${btw.conversation.id}`}
       data-btw-id={btw.id}
-      class="my-3 border-y border-ink-border py-3"
+      class="my-3 flex items-start gap-3 border-b border-ink-border pb-3"
     >
-      <p
-        class="mb-1 font-mono text-[length:var(--text-chrome)] tracking-[0.08em] text-warm-ghost"
-      >
-        Continued as a session
-      </p>
-      <a
-        href={`/sessions/${btw.conversation.id}`}
-        class="inline-flex items-center gap-2 text-left font-serif text-[length:var(--text-small)] text-gold hover:text-warm"
-      >
-        {btw.conversation.query}
-        <CornerUpRight size={13} class="shrink-0" />
-      </a>
+      <CornerUpRight size={14} class="mt-0.5 shrink-0 text-gold-muted" />
+      <div class="min-w-0">
+        <p
+          class="mb-1 font-mono text-[length:var(--text-chrome)] tracking-[0.08em] text-warm-faint"
+        >
+          Continued as a session
+        </p>
+        <a
+          href={`/sessions/${btw.conversation.id}`}
+          class="font-serif text-[length:var(--text-small)] text-gold underline-offset-4 [overflow-wrap:anywhere] hover:text-warm hover:underline"
+        >
+          {btw.conversation.query}
+        </a>
+      </div>
     </div>
   {:else}
     <Collapsible.Root
@@ -105,7 +102,7 @@
       data-btw-id={btw.id}
       {open}
       {onOpenChange}
-      class="my-[10px] mb-3"
+      class="my-3"
     >
       <ThreadSurface>
         <Collapsible.Trigger>
@@ -121,17 +118,15 @@
                 btw
               </span>
               <span
-                class="min-w-0 flex-1 truncate text-[length:var(--text-caption)] text-muted-foreground italic"
+                class="min-w-0 truncate text-[length:var(--text-caption)] text-warm-faint italic"
               >
-                ❝ {shortAnchor} ❞
+                “{btw.anchor.quote}”
               </span>
-              <span
-                class="shrink-0 font-mono text-[length:var(--text-chrome)] text-interactive-dim"
-              >
+              <span class="shrink-0 text-gold-muted">
                 {#if open}
-                  <ChevronDown size={10} />
+                  <ChevronDown size={12} />
                 {:else}
-                  <ChevronRight size={10} />
+                  <ChevronRight size={12} />
                 {/if}
               </span>
             </button>
@@ -171,7 +166,7 @@
                 {:else}
                   {#if exchange.answer}
                     <div
-                      class="mb-[9px] text-[length:var(--text-small)] leading-[1.72] text-warm-faint"
+                      class="mb-3 text-[length:var(--text-small)] leading-[1.85] text-warm-dim"
                     >
                       <MarkdownView source={exchange.answer} variant="btw" />
                       {#if exchange.streaming}
@@ -182,10 +177,12 @@
                     </div>
                   {/if}
 
-                  {#if exchange.error || !exchange.answer}
+                  {#if exchange.stopped || exchange.error || !exchange.answer}
                     <ReplyInterrupted
+                      stopped={exchange.stopped}
                       partial={exchange.answer.length > 0}
-                      onRetry={!readOnly &&
+                      onRetry={!exchange.stopped &&
+                      !readOnly &&
                       index === btw.exchanges.length - 1 &&
                       (exchange.replyId || exchange.error) &&
                       onRetry

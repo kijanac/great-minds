@@ -15,6 +15,10 @@ import { ParallelSearchService, type ParallelSearchResult } from "../src/paralle
 
 type StreamScript =
   | {
+      readonly kind: "stream";
+      readonly stream: AsyncIterable<ModelStreamPart>;
+    }
+  | {
       readonly kind: "parts";
       readonly parts: readonly ModelStreamPart[];
       readonly errorAfterParts?: unknown;
@@ -24,7 +28,7 @@ type StreamScript =
       readonly error: unknown;
     };
 
-type CompleteScript = ModelCompletion | ((input: CompleteInput) => ModelCompletion);
+type CompleteScript = ModelCompletion | Effect.Effect<ModelCompletion, unknown>;
 
 export const retryableModelError = (message = "rate limited") => new RetryableModelError(message);
 
@@ -80,7 +84,8 @@ export const makeScriptedLanguageModel = (options: {
     streamChat: (input: StreamChatInput) => {
       streamCalls.push(input);
       const script = streamScripts.shift();
-      async function* run() {
+      if (script?.kind === "stream") return script.stream;
+      const run = async function* () {
         if (script === undefined) {
           throw new Error("No scripted stream response");
         }
@@ -93,17 +98,17 @@ export const makeScriptedLanguageModel = (options: {
         if (script.errorAfterParts !== undefined) {
           throw script.errorAfterParts;
         }
-      }
+      };
       return run();
     },
-    complete: async (input: CompleteInput) => {
+    complete: (input: CompleteInput) => Effect.suspend(() => {
       completeCalls.push(input);
       const script = completionScripts.shift();
       if (script === undefined) {
-        throw new Error("No scripted completion response");
+        return Effect.fail(new Error("No scripted completion response"));
       }
-      return typeof script === "function" ? script(input) : script;
-    },
+      return Effect.isEffect(script) ? script : Effect.succeed(script);
+    }),
   };
   return {
     streamCalls,

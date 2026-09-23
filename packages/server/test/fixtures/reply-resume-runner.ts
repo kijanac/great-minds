@@ -31,9 +31,7 @@ const LanguageLive = Layer.succeed(LanguageModel, {
     }
     return stream();
   },
-  complete: async () => {
-    throw new Error("complete unexpectedly called");
-  },
+  complete: () => Effect.fail(new Error("complete unexpectedly called")),
 });
 
 const MainLive = makeAppLayer({ languageModel: LanguageLive });
@@ -63,7 +61,8 @@ const program = Effect.gen(function* () {
       (candidate) =>
         candidate.dispatchedAt !== null &&
         candidate.activeGenerationKind === "model" &&
-        candidate.activeGenerationStep === 0,
+        candidate.activeGenerationStep === 0 &&
+        candidate.answer === "partial",
     );
     console.log(`REPLY active cursor=${row.generationCursor}`);
     return yield* Effect.never;

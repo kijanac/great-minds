@@ -1,4 +1,4 @@
-import { Context, Effect, Layer, Schema } from "effect";
+import { Context, Duration, Effect, Layer, Schedule, Schema } from "effect";
 
 import { AppConfig, optionalRedactedValue } from "./config.ts";
 
@@ -101,7 +101,7 @@ export type ModelCompletion = {
 type LanguageModelShape = {
   readonly hasApiKey: boolean;
   readonly streamChat: (input: StreamChatInput) => AsyncIterable<ModelStreamPart>;
-  readonly complete: (input: CompleteInput) => Promise<ModelCompletion>;
+  readonly complete: (input: CompleteInput) => Effect.Effect<ModelCompletion, unknown>;
 };
 
 export class LanguageModel extends Context.Service<LanguageModel, LanguageModelShape>()(
@@ -248,11 +248,12 @@ const safeResponseText = async (response: Response) => {
   }
 };
 
-const postChat = async (apiUrl: string, apiKey: string, body: unknown) => {
+const postChat = async (apiUrl: string, apiKey: string, body: unknown, signal?: AbortSignal) => {
   const response = await fetch(`${apiUrl.replace(/\/$/, "")}/chat/completions`, {
     method: "POST",
     headers: openRouterHeaders(apiKey),
     body: JSON.stringify(body),
+    signal,
   });
   if (response.status === 429) {
     throw new RetryableModelError("model provider rate limited request", {
@@ -269,27 +270,6 @@ const postChat = async (apiUrl: string, apiKey: string, body: unknown) => {
 const retryAfterMs = (headers: Headers) => {
   const seconds = Number.parseFloat(headers.get("retry-after") ?? "");
   return Number.isFinite(seconds) ? Math.max(0, seconds * 1000) : undefined;
-};
-
-const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
-
-const postChatWithRateLimitRetry = async (apiUrl: string, apiKey: string, body: unknown) => {
-  let rateLimitAttempts = 0;
-  while (true) {
-    try {
-      return await postChat(apiUrl, apiKey, body);
-    } catch (error) {
-      if (!(error instanceof RetryableModelError)) {
-        throw error;
-      }
-      rateLimitAttempts += 1;
-      if (rateLimitAttempts > rateLimitRetries) {
-        throw error;
-      }
-      const fallbackMs = Math.min(maxRateLimitBackoffMs, 2 ** rateLimitAttempts * 1000);
-      await sleep(error.retryAfterMs ?? fallbackMs);
-    }
-  }
 };
 
 export const completionRequestBody = (input: CompleteInput) => {
@@ -406,6 +386,7 @@ export const LanguageModelLive = Layer.effect(
     return {
       hasApiKey: apiKey !== undefined,
       streamChat: (input) => {
+        const controller = new AbortController();
         async function* run() {
           const key = requireApiKey();
           const response = await postChat(config.openRouterApiUrl, key, {
@@ -420,27 +401,49 @@ export const LanguageModelLive = Layer.effect(
               allow_fallbacks: true,
               sort: "throughput",
             },
-          });
+          }, controller.signal);
           yield* parseOpenRouterStream(response);
         }
-        return run();
-      },
-      complete: async (input) => {
-        const key = requireApiKey();
-        const response = await postChatWithRateLimitRetry(
-          config.openRouterApiUrl,
-          key,
-          completionRequestBody(input),
-        );
-        const completion = decodeWireCompletion(await response.json());
-        const first = completion.choices?.[0];
+        const iterator = run();
         return {
-          text: first?.message?.content ?? "",
-          finishReason: first?.finish_reason ?? null,
-          generationId: completion.id ?? undefined,
-          usage: usageFrom(completion.usage),
+          [Symbol.asyncIterator]: () => ({
+            next: () => iterator.next(),
+            return: () => {
+              controller.abort();
+              return iterator.return();
+            },
+          }),
         };
       },
+      complete: (input) => Effect.tryPromise({
+        try: async (signal) => {
+          const response = await postChat(
+            config.openRouterApiUrl,
+            requireApiKey(),
+            completionRequestBody(input),
+            signal,
+          );
+          const completion = decodeWireCompletion(await response.json());
+          const first = completion.choices?.[0];
+          return {
+            text: first?.message?.content ?? "",
+            finishReason: first?.finish_reason ?? null,
+            generationId: completion.id ?? undefined,
+            usage: usageFrom(completion.usage),
+          };
+        },
+        catch: (error) => error,
+      }).pipe(Effect.retry({
+        times: rateLimitRetries,
+        while: isRetryableModelError,
+        schedule: Schedule.exponential("2 seconds").pipe(
+          Schedule.modifyDelay(({ input, duration }) => Effect.succeed(
+            input instanceof RetryableModelError && input.retryAfterMs !== undefined
+              ? input.retryAfterMs
+              : Math.min(maxRateLimitBackoffMs, Duration.toMillis(duration)),
+          )),
+        ),
+      })),
     } satisfies LanguageModelShape;
   }),
 );

@@ -8,7 +8,13 @@ import {
 import { Schema } from "effect";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { createReply, retryReply, streamReply, type ReplySnapshot } from "$lib/api/replies";
+import {
+  createReply,
+  retryReply,
+  stopReply,
+  streamReply,
+  type ReplySnapshot,
+} from "$lib/api/replies";
 import { continueAsSession } from "$lib/api/sessions";
 import { Btw } from "$lib/btw.svelte";
 import { queryClient } from "$lib/query-client";
@@ -18,6 +24,7 @@ vi.mock("$app/environment", () => ({ browser: true }));
 vi.mock("$lib/api/replies", () => ({
   createReply: vi.fn(),
   retryReply: vi.fn(),
+  stopReply: vi.fn(),
   streamReply: vi.fn(),
 }));
 vi.mock("$lib/api/sessions", () => ({ continueAsSession: vi.fn() }));
@@ -289,6 +296,92 @@ it("encodes an ordinary session's first question and follow-up without an origin
     id: sessionId,
   });
 });
+
+it("waits for Stop confirmation, retains the partial answer, and permits another follow-up", async () => {
+  const terminal = Promise.withResolvers<void>();
+  vi.mocked(streamReply).mockImplementationOnce(async function* () {
+    yield snapshot("Partial answer", "running");
+    await terminal.promise;
+    yield snapshot("Partial answer", "stopped");
+  });
+  const session = new Session();
+  threads.push(session);
+  session.submitQuery("A long answer");
+  expect(session.canStop).toBe(false);
+  await vi.waitFor(() => expect(session.canStop).toBe(true));
+  const activeReply = session.thread[0].replyId;
+  await Promise.all([session.stop(), session.stop()]);
+  expect(stopReply).toHaveBeenCalledExactlyOnceWith(activeReply, expect.any(AbortSignal));
+  expect(session.stopping).toBe(true);
+  expect(session.phase).toBe("streaming");
+  expect(session.thread[0].answer).toBe("Partial answer");
+  terminal.resolve();
+  await vi.waitFor(() => expect(session.phase).toBe("done"));
+  expect(session.stopping).toBe(false);
+  expect(session.thread[0]).toMatchObject({
+    stopped: true,
+    answer: "Partial answer",
+    error: null,
+    streaming: false,
+  });
+  session.followUpDraft = "Continue";
+  session.submitFollowUp();
+  await vi.waitFor(() => expect(session.thread[1]?.answer).toBe("Completed answer"));
+});
+
+it("keeps a failed stop retryable while the answer continues streaming", async () => {
+  const terminal = Promise.withResolvers<void>();
+  vi.mocked(streamReply).mockImplementationOnce(async function* () {
+    yield snapshot("Partial answer", "running");
+    await terminal.promise;
+    yield snapshot("Finished answer", "completed");
+  });
+  vi.mocked(stopReply).mockRejectedValueOnce(new Error("offline"));
+  const session = new Session();
+  threads.push(session);
+  session.submitQuery("Question");
+  await vi.waitFor(() => expect(session.canStop).toBe(true));
+  await session.stop();
+  expect(session.stopFailed).toBe(true);
+  expect(session.canStop).toBe(true);
+  expect(session.phase).toBe("streaming");
+  terminal.resolve();
+  await vi.waitFor(() => expect(session.phase).toBe("done"));
+  expect(session.stopFailed).toBe(false);
+  expect(session.canStop).toBe(false);
+});
+
+it.each(["", "Partial answer"])(
+  "reloads a deliberately stopped session with %j without resuming or resubmitting it",
+  async (answer) => {
+    const session = new Session({
+      saved: {
+        id: sessionId,
+        kind: "session",
+        origin_title: null,
+        threads: [],
+        events: [
+          {
+            type: "exchange",
+            exId: exchangeId,
+            reply_id: replyId,
+            query: "Question",
+            answer,
+            thinking: [],
+            stopped: true,
+            ts: now,
+          },
+        ],
+      },
+    });
+    threads.push(session);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(session.phase).toBe("done");
+    expect(session.thread[0]).toMatchObject({ stopped: true, streaming: false, answer });
+    expect(streamReply).not.toHaveBeenCalled();
+    expect(createReply).not.toHaveBeenCalled();
+  },
+);
 
 it("creates a document session using its displayed origin and sends subsequent turns to that session", async () => {
   const onCreated = vi.fn();
