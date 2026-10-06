@@ -1,0 +1,22 @@
+name: gm_product_verification
+
+services:
+  db:
+    image: pgvector/pgvector:pg18
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: great_minds
+      POSTGRES_PASSWORD: great_minds
+      POSTGRES_DB: gm_product_verification
+    ports:
+      - "127.0.0.1:55435:5432"
+    volumes:
+      - verification_pgdata:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U great_minds -d gm_product_verification"]
+      interval: 2s
+      timeout: 3s
+      retries: 20
+
+volumes:
+  verification_pgdata:
