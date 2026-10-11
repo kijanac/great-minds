@@ -191,7 +191,7 @@ Concrete new evidence includes concurrent idempotent Continue (P01), accept-befo
 
 ### Bounded read evidence and deliberate scope reduction
 
-The follow-up pass verifies 291 server storage/workflow/API tests, 44 query tests (one live smoke skipped), and 47 web tests: **382 distinct passes across 23 files**, not additions to the earlier totals. The [integration guide](../conversation-workflow-integration.md#verified-bounded-read-checkpoint) gives the run boundaries. Read tests use storage callbacks to advance receipts or revoke access during I/O; client tests exercise identity/version fences and render the actual status component.
+The follow-up pass verifies 291 server storage/workflow/API tests, 44 query tests (one live smoke skipped), and 48 web tests: **383 distinct passes across 23 files**, not additions to the earlier totals. The [integration guide](../conversation-workflow-integration.md#verified-bounded-read-checkpoint) gives the run boundaries. Read tests use storage callbacks to advance receipts or revoke access during I/O; client tests exercise identity/version fences and render the actual status component.
 
 | Original targets | Implemented evidence or explicit remaining limit |
 | --- | --- |

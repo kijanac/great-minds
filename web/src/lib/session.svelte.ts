@@ -151,6 +151,7 @@ export class Session {
   reconnect = (): void => {
     if (this.#destroyed) return;
     this.#abortController?.abort();
+    this.stopping = false;
     this.connectionError = null;
     this.#resumePendingReplies();
   };

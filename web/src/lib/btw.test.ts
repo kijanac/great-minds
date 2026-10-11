@@ -645,6 +645,43 @@ it.each(["session", "btw"] as const)(
   },
 );
 
+it("allows another stop when reconnecting aborts an unconfirmed stop request", async () => {
+  const resumed = Promise.withResolvers<void>();
+  const finish = Promise.withResolvers<void>();
+  vi.mocked(streamReply).mockImplementationOnce(async function* (id) {
+    yield snapshot("Partial", "running", id);
+    throw new Error("Disconnected");
+  });
+  vi.mocked(streamReply).mockImplementationOnce(async function* (id) {
+    yield snapshot("Partial", "running", id);
+    resumed.resolve();
+    await finish.promise;
+    yield snapshot("Saved", "stopped", id);
+  });
+  vi.mocked(stopReply).mockImplementationOnce(
+    (_id, signal) =>
+      new Promise<void>((_resolve, reject) => {
+        if (!signal) throw new Error("Expected stop request signal");
+        signal.addEventListener("abort", () => reject(new DOMException("Aborted", "AbortError")), {
+          once: true,
+        });
+      }),
+  );
+  const view = makeSavedView("session", saved(origins[0]));
+  if (!(view instanceof Session)) throw new Error("Expected session");
+  await vi.waitFor(() => expect(view.connectionError).toBeTruthy());
+  const stopping = view.stop();
+  expect(view.stopping).toBe(true);
+  view.reconnect();
+  await resumed.promise;
+  await stopping;
+  expect(view.canStop).toBe(true);
+  expect(createReply).not.toHaveBeenCalled();
+  expect(retryReply).not.toHaveBeenCalled();
+  finish.resolve();
+  await vi.waitFor(() => expect(view.activity).toBeNull());
+});
+
 it("does not dismiss an unavailable saved answer note as an empty draft", () => {
   const parent = saved(origins[0], "completed", "Parent answer");
   const child = saved(origins[2], "completed");
