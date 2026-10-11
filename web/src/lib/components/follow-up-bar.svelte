@@ -14,6 +14,7 @@
     submissionFailed = false,
     stopping = false,
     stopFailed = false,
+    finalizing = false,
     onStop,
     onValueChange,
     onRemoveChip,
@@ -25,6 +26,7 @@
     submissionFailed?: boolean;
     stopping?: boolean;
     stopFailed?: boolean;
+    finalizing?: boolean;
     onStop?: () => void;
     onValueChange?: () => void;
     onRemoveChip: (index: number) => void;
@@ -35,9 +37,11 @@
   const actionLabel = $derived(
     !disabled
       ? "Send follow-up"
-      : stopping
-        ? "Stopping response"
-        : "Stop generating",
+      : finalizing
+        ? "Saving response"
+        : stopping
+          ? "Stopping response"
+          : "Stop generating",
   );
 
   function submit() {

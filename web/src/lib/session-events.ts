@@ -12,7 +12,7 @@ export const replayExchanges = (events: readonly SessionEvent[]): Exchange[] =>
       answer: event.answer,
       btws: [],
       replyId: event.reply_id,
-      stopped: event.status === "stopped",
+      status: event.status,
+      version: event.version,
       error: event.error,
-      streaming: event.status === "running",
     }));

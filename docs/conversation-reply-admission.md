@@ -181,8 +181,10 @@ proof by themselves that workflow wiring or process recovery works. Subsequent
 covers native readers/writers, mode ordering, provider/tool invocation counts,
 private disclosure, and actual process death.
 
-The full authorized snapshot/active overlay, typed unavailable states,
-deterministic offline conversion, and coordinated deployment rehearsal remain
-release work under the wider
-[contract](future-ideas/conversation-history-contract-and-migration.md). No
-production data or migration has been changed by this implementation work.
+The existing session reader now adds committed progress, separate operation
+readiness, unavailable children, and receipt/access checks. The wider snapshot
+proposal is explicitly reduced in the
+[contract](future-ideas/conversation-history-contract-and-migration.md#7-shared-read-contract),
+not a requirement for another service layer. Deterministic offline conversion,
+backup/restore proof, and coordinated deployment rehearsal remain release work.
+No production data or migration has been changed by this implementation work.

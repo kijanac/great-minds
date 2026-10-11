@@ -6,9 +6,9 @@ import {
   Conflict,
   Forbidden,
   NotFound,
+  isReplyPending,
   type QueryRequest,
   type QuerySourceData,
-  type ReplySnapshot,
   ReplySnapshot as ReplySnapshotSchema,
   type ReplySource,
   ReplySource as ReplySourceSchema,
@@ -29,6 +29,7 @@ import {
   ReplyAdmission,
   type ReplyAdmissionError,
 } from "./conversation-history/admission.ts";
+import { replySnapshot } from "./conversation-history/presentation.ts";
 import type { GenerationMetadata } from "./conversation-history/schema.ts";
 import { ReplySettlement, type ReplySettlementResult } from "./conversation-history/settlement.ts";
 import type { LlmMessage } from "./llm.ts";
@@ -289,19 +290,6 @@ export const RepliesServiceLive = Layer.effect(
         yield* settlement.restoreRecorded(replyId).pipe(Effect.orDie);
         return yield* readReplyById(replyId);
       });
-
-    const snapshot = (row: ReplyRow): ReplySnapshot => ({
-      reply_id: row.id,
-      session_id: row.sessionId,
-      kind: row.kind,
-      status: row.status === "admitting" || row.status === "settling" ? "running" : row.status,
-      answer: row.answer,
-      sources: row.sources,
-      error: row.error,
-      version: row.version,
-      created_at: row.createdAt,
-      updated_at: row.updatedAt,
-    });
 
     const updateSnapshot = (replyId: Uuid, answer: string, sources: readonly ReplySource[]) =>
       db
@@ -939,13 +927,15 @@ export const RepliesServiceLive = Layer.effect(
             return yield* new NotFound({ detail: "Reply not found" });
           return pollingSse(
             replyId,
-            readReply(vaultId, replyId),
+            readReply(vaultId, replyId).pipe(
+              Effect.map((row) => (row?.userId === userId ? row : undefined)),
+            ),
             (row) => {
-              const current = snapshot(row);
+              const current = replySnapshot(row);
               return {
                 version: row.version,
                 data: encodeReplySnapshot(current),
-                terminal: terminalStatuses.has(current.status),
+                terminal: !isReplyPending(current.status),
               };
             },
             pollIntervalMs,

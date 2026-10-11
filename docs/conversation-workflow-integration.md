@@ -4,7 +4,7 @@
 
 This implementation connects [admission](conversation-reply-admission.md), [settlement](conversation-reply-settlement.md), and [conditional history storage](conversation-history-storage.md) to the application's reply workflow. Native writers, the required private readers, public disclosure selection, API schemas, and browser hydration change together.
 
-**This is an integration checkpoint, not a deployment-ready migration.** No production database, bucket, or deployment has been changed. Do not deploy the new schema, workers, API, or browser independently. Existing histories and saved requests need deterministic offline conversion; duplicate live operations need explicit resolution. The full authorized snapshot contract, migration rehearsal, backup/restore proof, and deployment fencing remain release gates in the [contract](future-ideas/conversation-history-contract-and-migration.md) and [acceptance matrix](future-ideas/conversation-history-acceptance-matrix.md).
+**This is an integration checkpoint, not a deployment-ready migration.** No production database, bucket, or deployment has been changed. Do not deploy the new schema, workers, API, or browser independently. Existing histories and saved requests need deterministic offline conversion; duplicate live operations need explicit resolution. Migration rehearsal, backup/restore proof, and deployment fencing remain release gates. The [contract](future-ideas/conversation-history-contract-and-migration.md#7-shared-read-contract) and [acceptance matrix](future-ideas/conversation-history-acceptance-matrix.md#9-release-gates-and-next-executable-slice) now explicitly narrow the earlier comprehensive snapshot proposal to the bounded read implemented here; they do not require another generic framework.
 
 ## Authority stays divided by fact
 
@@ -79,25 +79,28 @@ Each scan page is bounded by configured pipeline concurrency. A pass captures a 
 
 `src/sessions.ts` no longer decodes or writes legacy session records. It reads receipt-verified native histories and follows the frozen context chain across owned conversations. The immediate usable parent's tool results remain intact; older tool results retain the existing execution-context reduction. Missing retained context, missing acknowledged history, and cycles are not silently omitted.
 
-`conversation-history/presentation.ts` projects selected attempts without exposing retained provider messages or generation internals. Exchange events now require reply identity, explicit status, and error; a historical unknown timestamp stays null. Browser hydration uses status rather than answer length. Completed-empty, failed-empty, failed-partial, and deliberately stopped responses do not automatically reconnect or regenerate as if pending.
+`conversation-history/presentation.ts` projects selected attempts without exposing retained provider messages or generation internals. Exchange events now require reply identity, explicit status, error, and a nullable within-attempt observation version; a historical unknown timestamp stays null. Browser hydration uses status rather than answer length. Completed-empty, failed-empty, failed-partial, and deliberately stopped responses do not automatically reconnect or regenerate as if pending.
 
 Private Markdown is rendered from history, with explicit running/stopped/failed labels. Editing or deleting an old `.md` sidecar has no authority. Root history corruption returns 503 rather than a salvaged prefix or an empty successful transcript.
 
-Private session reads, by-origin reads, retry/stop, and reply streams retain owner/membership boundaries. Reply streams reject another vault member's private reply and recheck membership before emitting events, including after a stream has opened.
+Private session reads, by-origin reads, retry/stop, and reply streams retain owner/membership boundaries. Multi-part private reads recheck ownership and membership for the captured root/child IDs after history I/O; access loss fails the request. Reply streams reject another vault member's private reply, filter each observed row by owner, and recheck membership before emitting events, including after a stream has opened.
 
 Public sharing uses a separate publication selection: only selected completed/stopped exchanges. Session bearer shares remain root-only, and reference annotations remain limited to their existing query/answer surface. Failed partials, inherited/raw model context, and generation internals are not added to public output. Promotion remains an explicit owner/editor command for completed/stopped nonempty answers, with the existing deterministic source/proposal identity and idempotent replay.
 
-### What this reader is not yet
+### Bounded read correctness, without a new framework
 
-This is not the full `ConversationSnapshot` in the contract. In particular:
+The existing session service returns selected content plus `activity: null | { reply_id, status }`. It checks the current session receipt/app revision around each history read and observes the active operation under the session lock, without object I/O inside the transaction.
 
-- There is no immutable interval capture with all history/app/access revisions and structural rechecks.
-- Active progress still arrives through reply SSE. Private history responses do not yet contain the full same-attempt active overlay.
-- Internal admitting/settling still appear as running in the compatibility reply snapshot; queued/generating/finalizing/readiness are not separately exposed.
-- A missing/corrupt authorized child currently fails the read instead of retaining that child as a typed unavailable entry.
-- Missing operations and DB/history inconsistencies still need the richer unavailable/readiness contract; current tests do not close all R gates.
+- Pending content includes the same attempt's committed answer, visible sources, and DB version. Reload no longer drops progress until the next stream event.
+- Recorded terminal content wins over stale running progress. An unfinished operation remains separately settling; reads do not repair the DB or trigger generation.
+- Missing/terminal operation state behind unsettled history is an inconsistency, not a fabricated pending answer. A reserved admission in an existing readable history can supply its exact saved question with admitting activity. A new admission without acknowledged readable history still returns unavailable.
+- An unreadable authorized child remains an unavailable entry with its saved identity/metadata and a reload link. It is not an empty editable note; an unavailable root remains an error.
+- SSE exposes admitting/running/settling and the three terminal operation statuses. The browser rejects another attempt's updates and nonincreasing versions, preserves hydrated terminal content, and derives readiness instead of keeping independently mutable streaming/stopped/phase flags.
+- Stream disconnection retains pending identity and partial text. Reconnect observes the same reply; only a confirmed failed attempt uses generation retry. Completed-empty answers have an explicit label; finalizing disables new work.
 
-The snapshot, publication compiler, and isolated PDF work remain separate. No new print flags or interactive-component PDF renderer are introduced.
+This is a bounded multi-part read, not a global atomic capture. Root and children are observed separately; the selected child set and all app/history revisions are not recaptured after the last child. SSE still reads the DB operation projection and relies on the native writer's history-before-terminal ordering, rather than reading canonical files on every poll. These limits are explicit, not declarations that the former full snapshot gates passed.
+
+Exported capture vectors/timestamps, all-attempt/provenance APIs, queued-versus-generating substates, and generalized dependency diagnostics are deferred. The next implementation is one-off offline conversion and an isolated restore/cutover rehearsal with stopped writers, not online dual-writing or a migration platform. The publication compiler and isolated PDF work follow; no new print flags are introduced here.
 
 ## Tooling and verification
 
@@ -114,14 +117,15 @@ pnpm test:history-settlement packages/server/test/read-endpoints.integration.tes
   packages/server/test/shares.integration.test.ts
 pnpm run typecheck
 pnpm --filter web check
-(cd web && pnpm exec vitest run src/lib/btw.test.ts src/lib/anchor-marks.test.ts)
+(cd web && pnpm exec vitest run src/lib/btw.test.ts src/lib/anchor-marks.test.ts \
+  src/lib/reply-turn.test.ts src/lib/conversation-status.test.ts)
 ```
 
 The runner owns its container, database, volumes, and loopback port; overrides ambient database URLs; clears provider keys; and disables live smoke tests. Native API/process fixtures verify the explicit test URL and server-side database purpose marker before booting mutating services. Historical SQL tests use temporary old-format tables within the guarded database.
 
-### Verified checkpoint
+### Verified workflow checkpoint
 
-On 2026-10-11, the final server regressions passed in two independently owned disposable runs:
+At `b488ebe` on 2026-10-11, the server regressions passed in two independently owned disposable runs:
 
 - **279 tests across 18 files**: history/storage, 51 admission cases, 40 settlement/restoration cases, private read/write/share regressions, six native process-restart cases, and historical migration/recovery fixtures.
 - **44 query tests across one file**, with the live-provider smoke test skipped: model/tool loops, branch/context retention, stop/retry, frozen mode, finite reconciliation, ownership/revocation, failed-partial disclosure, and cost behavior.
@@ -132,5 +136,15 @@ That is **350 distinct passing tests across 21 files**, not one all-in-one run. 
 The full query run took 465 seconds including provisioning and cleanup and continued to report roughly 15-second delays in query cases with `No healthy runners available` warnings. Their production significance and cause remain unverified; no production timeout was changed. Earlier failed fixture/typecheck attempts and the process-harness shutdown timeout are not counted as successful runs.
 
 The six native process cases cover admission saved before DB confirmation with/without stop, provider death with/without stop, death during frozen-result publication, and publication failure after workflow completion followed by restart. They check native history and positive model/tool invocation ledgers. The process harness waits for workflow completion before graceful scope disposal; terminal DB state alone is not proof that workflow cleanup has completed.
+
+### Verified bounded read checkpoint
+
+The subsequent read-correctness pass was verified separately on 2026-10-11:
+
+- **291 tests / 18 server files**: the storage/workflow/API/recovery group above plus 12 read regressions, including receipt advancement during I/O, revocation/ownership races, pending-operation inconsistencies, reserved admission, committed progress, canonical terminal precedence, and unavailable children/by-origin notes.
+- **44 query tests / one file**, with one live-provider smoke skipped.
+- **47 web tests / four files**: model hydration/reconnection, earlier-turn retry readiness, saved unavailable-note retention, attempt/version merging, anchors, and actual Svelte status markup for completed-empty, saving, unavailable, and disconnected notes.
+
+That is **382 distinct passes / 23 files** across the separate runs. It is not 382 additional tests beyond the earlier checkpoint. Root typecheck and Svelte check passed with zero Svelte errors/warnings. Both owned database projects removed their containers, networks, and volumes. The query run took 67 seconds including cleanup this time; the cause of the earlier longer delays remains unestablished, and no production timeout was changed.
 
 These are controlled PostgreSQL/local-filesystem/process-crash and fake-provider/fake-R2 tests. They do not establish live provider/R2 behavior, universal power-loss guarantees, native data migration, or a safe production rollback after new-format writes.

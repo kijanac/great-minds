@@ -1,4 +1,5 @@
-import type { SessionEvent, SessionExchangeEvent } from "@great-minds/domain";
+import type { replies } from "@great-minds/database";
+import type { ReplySnapshot, SessionEvent, SessionExchangeEvent } from "@great-minds/domain";
 import type { ConversationHistory } from "./history.ts";
 
 export const projectSession = (history: ConversationHistory): readonly SessionEvent[] => [
@@ -21,6 +22,7 @@ export const projectSession = (history: ConversationHistory): readonly SessionEv
         type: "exchange",
         exId: turn.exchange_id,
         reply_id: accepted.reply_id,
+        version: null,
         status: settlement?.outcome.status ?? "running",
         error: settlement?.outcome.status === "failed" ? settlement.outcome.message : null,
         query: accepted.question,
@@ -31,6 +33,19 @@ export const projectSession = (history: ConversationHistory): readonly SessionEv
     ];
   }),
 ];
+
+export const replySnapshot = (row: typeof replies.$inferSelect): ReplySnapshot => ({
+  reply_id: row.id,
+  session_id: row.sessionId,
+  kind: row.kind,
+  status: row.status,
+  answer: row.answer,
+  sources: row.sources,
+  error: row.error,
+  version: row.version,
+  created_at: row.createdAt,
+  updated_at: row.updatedAt,
+});
 
 export const publicationExchanges = (
   events: readonly SessionEvent[],

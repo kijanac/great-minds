@@ -70,7 +70,7 @@ These notes collect a thread of design work around reducing Great Minds' exposur
 
 - [Conversation history: acceptance-test matrix](./conversation-history-acceptance-matrix.md)
   - Format, prompting, crash/reconciliation, hydration, disclosure, migration, and later publication gates mapped to existing or proposed tests.
-  - Existing baseline results are separated from target-contract tests that still need implementation.
+  - Existing baseline and implemented evidence are separated from original targets. The bounded read pass explicitly defers comprehensive capture envelopes and other unnecessary surfaces; offline conversion and restore/cutover rehearsal remain required.
 
 ## Common framing
 

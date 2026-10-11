@@ -1965,14 +1965,16 @@ Query parameters:
 | --- | --- | --- | --- |
 | `doc_path` | string | yes | The origin document path. |
 
-Response: `200` with an array of `OriginSessionDetail`:
+Response: `200` with an array of `OriginSessionDetail`, discriminated by `availability`:
 
-| Field | Type | Description |
+| Variant | Fields | Description |
 | --- | --- | --- |
-| `session` | `SessionOverview` | The session. |
-| `events` | array of `SessionEvent` | The session's events (shape below). |
+| `"available"` | `session: SessionOverview`, `events: SessionEvent[]`, `activity: SessionActivity \| null` | Authorized recorded content plus the current operation observation. |
+| `"unavailable"` | `session: SessionOverview`, `detail: string` | The owned note remains identifiable, but its content could not be read consistently. There is no fabricated empty `events` array. |
 
-Errors: `403 Forbidden`, `503 ServiceUnavailable`, `422 Validation`.
+Access is rechecked before returning the captured conversations. Missing or corrupt authorized note content yields the unavailable variant; loss of ownership or membership fails the request instead of disclosing that note.
+
+Errors: `403 Forbidden`, `404 NotFound`, `503 ServiceUnavailable`, `422 Validation`.
 
 #### GET /v1/vaults/:vault_id/sessions/:session_id
 
@@ -1988,9 +1990,14 @@ Response: `200` with a `SessionResponse`:
 | --- | --- | --- |
 | `id` | `SessionId` | Session id. |
 | `kind` | `"session"` \| `"btw"` | Current placement projection. |
-| `events` | array of `SessionEvent` | Opening metadata and selected exchanges in acceptance order. |
+| `events` | array of `SessionEvent` | Opening metadata and selected exchanges in acceptance order, including same-attempt committed progress. |
+| `activity` | `SessionActivity` or `null` | Live operation readiness; null when no operation remains pending. |
 | `threads` | array of `OriginSessionDetail` | Owned direct answer-origin conversations. |
 | `origin_title` | string or `null` | Current origin title (as in `SessionOverview`). |
+
+`SessionActivity` contains `reply_id: Uuid` and `status: "admitting" | "running" | "settling"`. A recorded terminal answer can coexist with `activity.status: "settling"` while the operation projection catches up. Follow-up remains blocked until activity clears; do not infer readiness from answer length or terminal content alone.
+
+The reader checks the current receipt and application revision around each history read, then rechecks ownership and membership for the returned root/child IDs. Root corruption, missing operations behind pending history, or an acknowledged tail absent from the captured file produce `503`, not invented content or read-triggered repair. This is a bounded multi-part read, not a global atomic snapshot or a guarantee that no child was added after enumeration. An initial admission without acknowledged readable history remains unavailable until admission completes.
 
 `SessionEvent` is a union discriminated by `type`:
 
@@ -2016,7 +2023,8 @@ Response: `200` with a `SessionResponse`:
 | `error` | string or `null` | Recorded failure detail, otherwise null. |
 | `query` | string | The question. |
 | `thinking` | array | Visible `ThinkingBlock` entries. |
-| `answer` | string | Recorded answer, including a labelled private failed partial. |
+| `answer` | string | Recorded answer, including a labelled private failed partial, or the same live attempt's committed partial. |
+| `version` | number or `null` | DB observation version for the active attempt; null for history-only content. Compare only within the same `reply_id`. |
 | `ts` | ISO 8601 or `null` | Recorded timestamp; unknown historical time remains null. |
 
 BTWs are separate conversations in `threads`, not embedded `type: "btw"` events.
@@ -2220,7 +2228,7 @@ The `message` payload is a `ReplySnapshot`:
 | `reply_id` | `Uuid` | Reply id. |
 | `session_id` | `SessionId` | Session the reply belongs to. |
 | `kind` | `"exchange"` | Every reply belongs to its own conversation. |
-| `status` | `"running"` \| `"completed"` \| `"stopped"` \| `"failed"` | Reply status. Internal admitting/settling remain nonterminal running in this compatibility snapshot. |
+| `status` | `"admitting"` \| `"running"` \| `"settling"` \| `"completed"` \| `"stopped"` \| `"failed"` | Operation status. Admitting and settling are nonterminal; settling does not permit another generation or a late stop. |
 | `answer` | string | The answer text (may be partial while running). |
 | `sources` | array | `ReplySource` entries: the `ThinkingSource` fields plus an optional `pending` boolean. |
 | `error` | string or `null` | Error detail when failed. |
@@ -2256,6 +2264,8 @@ Example message:
   "updated_at": "2025-06-01T12:34:58.789Z"
 }
 ```
+
+The stream observes the DB operation projection. Native writers project terminal state only after canonical history publication; the stream does not reread history on every poll. If a private session response already supplied recorded terminal content, retain that content over a lagging stream projection and show finalizing until terminal operation confirmation. Ignore nonincreasing versions within the same reply ID and observations for a different selected reply. A connection ending without terminal confirmation is a connection failure: reconnect the same reply, not the generation retry endpoint.
 
 Keepalives: as with job streams, when the reply state has not changed for 30
 seconds the server emits a keepalive frame that appears on the wire as an SSE

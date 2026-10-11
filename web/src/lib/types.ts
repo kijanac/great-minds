@@ -1,4 +1,4 @@
-import type { ReplySource, Uuid } from "@great-minds/domain";
+import type { ReplySource, SessionExchangeEvent, Uuid } from "@great-minds/domain";
 import type { UnmentionedLink } from "$lib/api/lint";
 import type { SessionSummary } from "$lib/api/sessions";
 import type { SourceDocumentSummary, SourceTypeFacet } from "$lib/api/sources";
@@ -27,9 +27,8 @@ export interface Exchange {
   btws: Btw[];
   replyId?: Uuid;
   error?: string | null;
-  stopped?: boolean;
-  // In-flight while the server-owned reply is running.
-  streaming: boolean;
+  status: SessionExchangeEvent["status"];
+  version: number | null;
 }
 
 // Where a BTW is anchored: the source offset of its block (exact, stable,
@@ -47,6 +46,10 @@ export interface ThreadLike {
   conversation: Pick<SessionSummary, "id" | "kind" | "query"> | null;
   error?: string | null;
   promoting?: boolean;
+  busy?: boolean;
+  finalizing?: boolean;
+  unavailable?: string | null;
+  connectionError?: string | null;
   anchor: TextAnchor;
   exchanges: Exchange[];
   draft: boolean;
@@ -58,7 +61,7 @@ export interface SelectionInfo extends TextAnchor {
   exchangeId: Uuid;
 }
 
-export type Phase = "idle" | "searching" | "streaming" | "done";
+export type Phase = "idle" | "searching" | "streaming" | "finalizing" | "done";
 
 export interface DroppedFile {
   file: File;

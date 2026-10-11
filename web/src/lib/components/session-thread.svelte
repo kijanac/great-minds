@@ -205,7 +205,7 @@
 
           <ThreadTurn query={exchange.query}>
             {#snippet actions()}
-              {#if session.sessionId && exchange.answer && !exchange.streaming && !exchange.error}
+              {#if session.sessionId && exchange.answer && (exchange.status === "completed" || exchange.status === "stopped")}
                 <span class="print:hidden">
                   <PromoteButton
                     sessionId={session.sessionId}
@@ -218,7 +218,9 @@
             <div class="print:hidden">
               <ThinkingSection
                 blocks={exchange.thinking}
-                streaming={exchange.streaming && !exchange.answer}
+                streaming={exchange.status === "running" &&
+                  session.phase !== "finalizing" &&
+                  !exchange.answer}
                 {onCardClick}
                 {activeCard}
               />
@@ -229,7 +231,8 @@
                 text={exchange.answer}
                 exchangeId={exchange.id}
                 btws={exchange.btws}
-                streaming={exchange.streaming}
+                streaming={exchange.status === "running" &&
+                  session.phase !== "finalizing"}
                 {panelDocked}
                 onSelection={session.handleSelection}
                 onBtwReply={session.replyBtw}
@@ -239,16 +242,21 @@
               />
             {/if}
 
-            {#if exchange.stopped || exchange.error || (!exchange.answer && !exchange.streaming)}
+            {#if exchange.status === "stopped" || exchange.status === "failed"}
               <ReplyInterrupted
                 partial={exchange.answer.length > 0}
-                stopped={exchange.stopped}
-                onRetry={!exchange.stopped &&
+                stopped={exchange.status === "stopped"}
+                onRetry={exchange.status === "failed" &&
+                session.phase === "done" &&
                 index === session.thread.length - 1 &&
                 exchange.replyId
                   ? () => session.retryExchange(exchange.id)
                   : undefined}
               />
+            {:else if exchange.status === "completed" && !exchange.answer}
+              <p class="text-[length:var(--text-small)] text-warm-faint">
+                The response completed without an answer.
+              </p>
             {/if}
           </ThreadTurn>
         </div>
@@ -287,6 +295,28 @@
   </div>
 {/if}
 
+{#if session.connectionError || session.phase === "finalizing" || session.activity?.status === "admitting"}
+  <div
+    role="status"
+    class="shrink-0 px-4 py-3 font-mono text-[length:var(--text-chrome)] text-warm-faint md:px-10"
+  >
+    <div class="mx-auto flex max-w-[740px] flex-wrap items-baseline gap-3">
+      {#if session.connectionError}
+        <span>{session.connectionError}</span>
+        <Button
+          variant="link"
+          class="h-auto p-0 font-mono text-[length:var(--text-chrome)] text-gold"
+          onclick={session.reconnect}>Reconnect</Button
+        >
+      {:else}
+        {session.activity?.status === "admitting"
+          ? "Saving question…"
+          : "Saving response… You can follow up when it is saved."}
+      {/if}
+    </div>
+  </div>
+{/if}
+
 {#if session.phase !== "idle"}
   <FollowUpBar
     bind:value={session.followUpDraft}
@@ -295,6 +325,7 @@
     submissionFailed={session.submission.status === "failed"}
     stopping={session.stopping}
     stopFailed={session.stopFailed}
+    finalizing={session.phase === "finalizing"}
     onStop={session.canStop ? session.stop : undefined}
     onValueChange={session.clearSubmissionFailure}
     onRemoveChip={session.removeChip}

@@ -4,6 +4,7 @@ import {
   Uuid,
   type OriginSessionDetail,
   type SessionOrigin,
+  type SessionExchangeEvent,
 } from "@great-minds/domain";
 import { Schema } from "effect";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -65,9 +66,11 @@ const origins: SessionOrigin[] = [
 
 const saved = (
   origin: SessionOrigin,
-  status: ReplySnapshot["status"] = "running",
+  status: SessionExchangeEvent["status"] = "running",
   answer = "",
-): OriginSessionDetail => ({
+): Extract<OriginSessionDetail, { availability: "available" }> => ({
+  availability: "available",
+  activity: status === "running" ? { reply_id: replyId, status: "running" } : null,
   session: {
     id: sessionId,
     kind: "btw",
@@ -83,6 +86,7 @@ const saved = (
       type: "exchange",
       exId: exchangeId,
       reply_id: replyId,
+      version: status === "running" ? 0 : null,
       query: "Replayed question",
       status,
       error: status === "failed" ? "Saved failure" : null,
@@ -93,18 +97,21 @@ const saved = (
   ],
 });
 
+let nextVersion = 0;
 const snapshot = (
   answer: string,
   status: ReplySnapshot["status"] = "completed",
+  id = replyId,
+  version = ++nextVersion,
 ): ReplySnapshot => ({
-  reply_id: replyId,
+  reply_id: id,
   session_id: sessionId,
   kind: "exchange",
   status,
   answer,
   sources: [],
   error: null,
-  version: 1,
+  version,
   created_at: now,
   updated_at: now,
 });
@@ -118,13 +125,14 @@ const makeBtw = (origin: SessionOrigin, detail?: OriginSessionDetail, onOpen = v
 
 beforeEach(() => {
   vi.resetAllMocks();
+  nextVersion = 0;
   vi.mocked(createReply).mockImplementation(async (payload) => {
     Schema.encodeSync(CreateReplyRequest)(payload);
     return { session_id: sessionId, reply_id: payload.reply_id };
   });
   vi.mocked(retryReply).mockResolvedValue({ session_id: sessionId, reply_id: nextReplyId });
-  vi.mocked(streamReply).mockImplementation(async function* () {
-    yield snapshot("Completed answer");
+  vi.mocked(streamReply).mockImplementation(async function* (id) {
+    yield snapshot("Completed answer", "completed", id);
   });
 });
 
@@ -158,40 +166,48 @@ describe.each(origins)("BTW from $kind", (origin) => {
     expect(btw.conversation?.query).toBe("First question");
   });
 
-  it("reconnects a saved reply, keeps partial text when retrying fails, and retains an accepted retry after a stream failure", async () => {
+  it("reconnects an interrupted stream without retrying generation, then permits retry after confirmed failure", async () => {
     vi.mocked(streamReply).mockImplementationOnce(async function* () {
       yield snapshot("Partial answer", "running");
       throw new Error("connection lost");
     });
     const btw = makeBtw(origin, saved(origin));
-    await vi.waitFor(() => expect(btw.exchanges[0].error).toBeTruthy());
+    await vi.waitFor(() => expect(btw.connectionError).toBeTruthy());
     expect(createReply).not.toHaveBeenCalled();
     expect(streamReply).toHaveBeenCalledWith(replyId, expect.any(AbortSignal));
+    btw.reply("Do not create a replacement");
+    expect(createReply).not.toHaveBeenCalled();
+    vi.mocked(streamReply).mockImplementationOnce(async function* (id) {
+      yield { ...snapshot("Partial answer", "failed", id), error: "Saved failure" };
+    });
+    btw.retry(exchangeId);
+    await vi.waitFor(() => expect(btw.exchanges[0].status).toBe("failed"));
+    expect(retryReply).not.toHaveBeenCalled();
 
     vi.mocked(retryReply).mockRejectedValueOnce(new Error("offline"));
     btw.retry(exchangeId);
-    await vi.waitFor(() => expect(btw.exchanges[0].streaming).toBe(false));
+    await vi.waitFor(() => expect(btw.exchanges[0].status).toBe("failed"));
     expect(btw.exchanges[0]).toMatchObject({ answer: "Partial answer", replyId });
 
-    vi.mocked(streamReply).mockImplementationOnce(async function* () {
-      yield snapshot("New partial answer", "running");
+    vi.mocked(streamReply).mockImplementationOnce(async function* (id) {
+      yield snapshot("New partial answer", "running", id);
       throw new Error("connection lost again");
     });
     btw.retry(exchangeId);
-    await vi.waitFor(() => expect(btw.exchanges[0].error).toBeTruthy());
+    await vi.waitFor(() => expect(btw.connectionError).toBeTruthy());
     expect(btw.exchanges[0]).toMatchObject({
       answer: "New partial answer",
       replyId: nextReplyId,
-      streaming: false,
+      status: "running",
     });
     expect(btw.conversation?.query).toBe("Canonical question");
   });
 });
 
-it("promotes once, retains the canonical title without a transcript, and becomes a link", async () => {
-  const detail = saved(origins[0]);
+it("continues once, retains the canonical title with an empty completed answer, and becomes a link", async () => {
+  const detail = saved(origins[0], "completed");
   const onOpen = vi.fn();
-  const btw = makeBtw(origins[0], { ...detail, events: [] }, onOpen);
+  const btw = makeBtw(origins[0], detail, onOpen);
   const promotion = Promise.withResolvers<void>();
   vi.mocked(continueAsSession).mockReturnValue(promotion.promise);
   const pending = btw.openSession();
@@ -257,11 +273,15 @@ it("aborts only the disposed thread and keeps another thread streaming", async (
 it("opens a saved session with its origin and reconnects an attached BTW without resubmitting", async () => {
   const detail = saved(origins[2]);
   const childId = SessionId.make("00000000-0000-4000-8000-000000000005");
+  vi.mocked(streamReply).mockImplementationOnce(async function* (id) {
+    yield { ...snapshot("Completed answer", "completed", id), session_id: childId };
+  });
   const session = new Session({
     saved: {
       id: sessionId,
       kind: "session",
       origin_title: "Original document",
+      activity: null,
       events: [
         {
           type: "meta",
@@ -306,10 +326,10 @@ it("encodes an ordinary session's first question and follow-up without an origin
 
 it("waits for Stop confirmation, retains the partial answer, and permits another follow-up", async () => {
   const terminal = Promise.withResolvers<void>();
-  vi.mocked(streamReply).mockImplementationOnce(async function* () {
-    yield snapshot("Partial answer", "running");
+  vi.mocked(streamReply).mockImplementationOnce(async function* (id) {
+    yield snapshot("Partial answer", "running", id);
     await terminal.promise;
-    yield snapshot("Partial answer", "stopped");
+    yield snapshot("Partial answer", "stopped", id);
   });
   const session = new Session();
   threads.push(session);
@@ -326,10 +346,9 @@ it("waits for Stop confirmation, retains the partial answer, and permits another
   await vi.waitFor(() => expect(session.phase).toBe("done"));
   expect(session.stopping).toBe(false);
   expect(session.thread[0]).toMatchObject({
-    stopped: true,
+    status: "stopped",
     answer: "Partial answer",
     error: null,
-    streaming: false,
   });
   session.followUpDraft = "Continue";
   session.submitFollowUp();
@@ -338,10 +357,10 @@ it("waits for Stop confirmation, retains the partial answer, and permits another
 
 it("keeps a failed stop retryable while the answer continues streaming", async () => {
   const terminal = Promise.withResolvers<void>();
-  vi.mocked(streamReply).mockImplementationOnce(async function* () {
-    yield snapshot("Partial answer", "running");
+  vi.mocked(streamReply).mockImplementationOnce(async function* (id) {
+    yield snapshot("Partial answer", "running", id);
     await terminal.promise;
-    yield snapshot("Finished answer", "completed");
+    yield snapshot("Finished answer", "completed", id);
   });
   vi.mocked(stopReply).mockRejectedValueOnce(new Error("offline"));
   const session = new Session();
@@ -367,11 +386,13 @@ it.each(["", "Partial answer"])(
         kind: "session",
         origin_title: null,
         threads: [],
+        activity: null,
         events: [
           {
             type: "exchange",
             exId: exchangeId,
             reply_id: replyId,
+            version: null,
             query: "Question",
             answer,
             thinking: [],
@@ -385,7 +406,7 @@ it.each(["", "Partial answer"])(
     threads.push(session);
     await new Promise((resolve) => setTimeout(resolve, 0));
     expect(session.phase).toBe("done");
-    expect(session.thread[0]).toMatchObject({ stopped: true, streaming: false, answer });
+    expect(session.thread[0]).toMatchObject({ status: "stopped", answer });
     expect(streamReply).not.toHaveBeenCalled();
     expect(createReply).not.toHaveBeenCalled();
   },
@@ -404,6 +425,7 @@ it.each([
       kind: "session",
       origin_title: null,
       threads: [],
+      activity: detail.activity,
       events: detail.events,
     },
   });
@@ -411,8 +433,7 @@ it.each([
   await Promise.resolve();
   const expected = {
     answer,
-    streaming: false,
-    stopped: false,
+    status,
     error: status === "failed" ? "Saved failure" : null,
   };
   expect(btw.exchanges[0]).toMatchObject(expected);
@@ -451,4 +472,201 @@ it("creates a document session using its displayed origin and sends subsequent t
     id: sessionId,
   });
   expect(onCreated).toHaveBeenCalledTimes(1);
+});
+
+const makeSavedView = (
+  kind: "session" | "btw",
+  detail: Extract<OriginSessionDetail, { availability: "available" }>,
+) => {
+  if (kind === "btw") return makeBtw(origins[0], detail);
+  const session = new Session({
+    saved: {
+      id: sessionId,
+      kind: "session",
+      origin_title: null,
+      threads: [],
+      events: detail.events,
+      activity: detail.activity,
+    },
+  });
+  threads.push(session);
+  return session;
+};
+const viewTurns = (view: Session | Btw) => (view instanceof Session ? view.thread : view.exchanges);
+
+it.each(["session", "btw"] as const)(
+  "keeps %s finalizing after reload and preserves recorded content until the operation is terminal",
+  async (kind) => {
+    const observed = Promise.withResolvers<void>();
+    const finish = Promise.withResolvers<void>();
+    const detail = saved(origins[0], "completed", "Recorded answer");
+    const view = makeSavedView(kind, {
+      ...detail,
+      activity: { reply_id: replyId, status: "settling" },
+      events: detail.events.map((event) =>
+        event.type === "exchange" ? { ...event, version: 5 } : event,
+      ),
+    });
+    vi.mocked(streamReply).mockImplementationOnce(async function* (id) {
+      yield snapshot("Stale running partial", "running", id, 6);
+      observed.resolve();
+      await finish.promise;
+      yield snapshot("Stale terminal cache", "completed", id, 7);
+    });
+    await observed.promise;
+    expect(viewTurns(view)[0]).toMatchObject({
+      answer: "Recorded answer",
+      status: "completed",
+      version: 6,
+    });
+    if (view instanceof Session) {
+      expect(view.phase).toBe("finalizing");
+      expect(view.canStop).toBe(false);
+      view.submitQuery("Must wait");
+    } else {
+      expect(view.finalizing).toBe(true);
+      view.reply("Must wait");
+    }
+    expect(createReply).not.toHaveBeenCalled();
+    expect(retryReply).not.toHaveBeenCalled();
+    finish.resolve();
+    await vi.waitFor(() => expect(view.activity).toBeNull());
+    expect(viewTurns(view)[0].answer).toBe("Recorded answer");
+  },
+);
+
+it.each(["session", "btw"] as const)(
+  "uses the hydrated %s version and ignores another reply's higher version",
+  async (kind) => {
+    const observed = Promise.withResolvers<void>();
+    const finish = Promise.withResolvers<void>();
+    const detail = saved(origins[0], "running", "Hydrated partial");
+    vi.mocked(streamReply).mockImplementationOnce(async function* (id) {
+      yield snapshot("Older partial", "running", id, 4);
+      yield snapshot("Wrong attempt", "running", nextReplyId, 999);
+      observed.resolve();
+      await finish.promise;
+      yield snapshot("Finished", "completed", id, 6);
+    });
+    const view = makeSavedView(kind, {
+      ...detail,
+      events: detail.events.map((event) =>
+        event.type === "exchange" ? { ...event, version: 5 } : event,
+      ),
+    });
+    await observed.promise;
+    expect(viewTurns(view)[0]).toMatchObject({ answer: "Hydrated partial", version: 5 });
+    finish.resolve();
+    await vi.waitFor(() => expect(viewTurns(view)[0].answer).toBe("Finished"));
+    expect(createReply).not.toHaveBeenCalled();
+  },
+);
+
+it("does not offer a new main reply after losing updates and reconnects the same operation", async () => {
+  vi.mocked(streamReply).mockImplementationOnce(async function* (id) {
+    yield snapshot("Partial", "running", id);
+    throw new Error("Disconnected");
+  });
+  const view = makeSavedView("session", saved(origins[0]));
+  if (!(view instanceof Session)) throw new Error("Expected session");
+  await vi.waitFor(() => expect(view.connectionError).toBeTruthy());
+  expect(view.phase).toBe("streaming");
+  view.submitQuery("Must not generate again");
+  view.retryExchange(exchangeId);
+  expect(createReply).not.toHaveBeenCalled();
+  expect(retryReply).not.toHaveBeenCalled();
+  view.reconnect();
+  await vi.waitFor(() => expect(view.phase).toBe("done"));
+  expect(vi.mocked(streamReply).mock.calls.map(([id]) => id)).toEqual([replyId, replyId]);
+  expect(view.connectionError).toBeNull();
+});
+
+it("retains unavailable note identity without treating missing content as an editable empty thread", async () => {
+  const detail = saved(origins[0], "completed");
+  const view = makeBtw(origins[0], {
+    availability: "unavailable",
+    session: detail.session,
+    detail: "This conversation is unavailable. Reload to try again.",
+  });
+  await Promise.resolve();
+  expect(view.conversation?.id).toBe(sessionId);
+  expect(view.unavailable).toBeTruthy();
+  expect(view.draft).toBe(false);
+  expect(view.busy).toBe(true);
+  view.reply("Do not replace missing history");
+  await view.openSession();
+  expect(streamReply).not.toHaveBeenCalled();
+  expect(createReply).not.toHaveBeenCalled();
+  expect(continueAsSession).not.toHaveBeenCalled();
+});
+
+it.each(["session", "btw"] as const)(
+  "keeps %s busy and reconnects its active retry even when it is not the last exchange",
+  async (kind) => {
+    const detail = saved(origins[0], "running", "Retry partial");
+    const event = detail.events[0];
+    if (event.type !== "exchange") throw new Error("Expected exchange");
+    vi.mocked(streamReply).mockImplementationOnce(async function* (id) {
+      yield snapshot("Retry partial", "running", id);
+      throw new Error("Disconnected");
+    });
+    const view = makeSavedView(kind, {
+      ...detail,
+      events: [
+        ...detail.events,
+        {
+          ...event,
+          exId: Uuid.make("00000000-0000-4000-8000-000000000005"),
+          reply_id: nextReplyId,
+          status: "completed",
+          answer: "Later exchange",
+          version: null,
+        },
+      ],
+    });
+    await vi.waitFor(() => expect(view.connectionError).toBeTruthy());
+    if (view instanceof Session) {
+      expect(view.phase).toBe("streaming");
+      view.submitQuery("Must wait");
+      view.reconnect();
+    } else {
+      expect(view.busy).toBe(true);
+      view.reply("Must wait");
+      view.retry(view.exchanges[1].id);
+    }
+    await vi.waitFor(() => expect(view.activity).toBeNull());
+    expect(vi.mocked(streamReply).mock.calls.map(([id]) => id)).toEqual([replyId, replyId]);
+    expect(viewTurns(view).map((turn) => turn.answer)).toEqual([
+      "Completed answer",
+      "Later exchange",
+    ]);
+    expect(createReply).not.toHaveBeenCalled();
+    expect(retryReply).not.toHaveBeenCalled();
+  },
+);
+
+it("does not dismiss an unavailable saved answer note as an empty draft", () => {
+  const parent = saved(origins[0], "completed", "Parent answer");
+  const child = saved(origins[2], "completed");
+  const view = new Session({
+    saved: {
+      id: sessionId,
+      kind: "session",
+      origin_title: null,
+      activity: null,
+      events: parent.events,
+      threads: [
+        {
+          availability: "unavailable",
+          detail: "History unavailable",
+          session: { ...child.session, id: SessionId.make("saved-child") },
+        },
+      ],
+    },
+  });
+  threads.push(view);
+  const note = view.thread[0].btws[0];
+  expect(note.unavailable).toBeTruthy();
+  view.dismissBtw(note.id);
+  expect(view.thread[0].btws).toHaveLength(1);
 });

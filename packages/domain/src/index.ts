@@ -763,6 +763,27 @@ export const ThinkingBlock = Schema.Struct({
 });
 export type ThinkingBlock = typeof ThinkingBlock.Type;
 
+export const ReplyStatus = Schema.Literals([
+  "admitting",
+  "running",
+  "settling",
+  "completed",
+  "failed",
+  "stopped",
+]);
+export type ReplyStatus = typeof ReplyStatus.Type;
+
+export const isReplyPending = (
+  status: ReplyStatus,
+): status is "admitting" | "running" | "settling" =>
+  status === "admitting" || status === "running" || status === "settling";
+
+export const SessionActivity = Schema.Struct({
+  reply_id: Uuid,
+  status: Schema.Literals(["admitting", "running", "settling"]),
+});
+export type SessionActivity = typeof SessionActivity.Type;
+
 export const SessionMetaEvent = Schema.Struct({
   type: Schema.Literal("meta"),
   id: SessionId,
@@ -777,6 +798,7 @@ export const SessionExchangeEvent = Schema.Struct({
   type: Schema.Literal("exchange"),
   exId: Uuid,
   reply_id: Uuid,
+  version: Schema.NullOr(Schema.Number),
   status: Schema.Literals(["running", "completed", "stopped", "failed"]),
   error: Schema.NullOr(Schema.String),
   query: Schema.String,
@@ -806,16 +828,30 @@ export type SessionOverview = typeof SessionOverview.Type;
 export const SessionPage = pageOf(SessionOverview);
 export type SessionPage = typeof SessionPage.Type;
 
-export const OriginSessionDetail = Schema.Struct({
-  session: SessionOverview,
+export const SessionContent = Schema.Struct({
   events: Schema.Array(SessionEvent),
+  activity: Schema.NullOr(SessionActivity),
 });
+export type SessionContent = typeof SessionContent.Type;
+
+export const OriginSessionDetail = Schema.Union([
+  Schema.Struct({
+    availability: Schema.Literal("available"),
+    session: SessionOverview,
+    ...SessionContent.fields,
+  }),
+  Schema.Struct({
+    availability: Schema.Literal("unavailable"),
+    session: SessionOverview,
+    detail: Schema.String,
+  }),
+]);
 export type OriginSessionDetail = typeof OriginSessionDetail.Type;
 
 export const SessionResponse = Schema.Struct({
   id: SessionId,
   kind: ConversationKind,
-  events: Schema.Array(SessionEvent),
+  ...SessionContent.fields,
   origin_title: Schema.NullOr(Schema.String),
   threads: Schema.Array(OriginSessionDetail),
 });
@@ -1165,7 +1201,7 @@ export const ReplySnapshot = Schema.Struct({
   reply_id: Uuid,
   session_id: SessionId,
   kind: Schema.Literals(["exchange", "btw"] as const),
-  status: Schema.Literals(["running", "completed", "failed", "stopped"] as const),
+  status: ReplyStatus,
   answer: Schema.String,
   sources: Schema.Array(ReplySource),
   error: Schema.NullOr(Schema.String),

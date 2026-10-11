@@ -51,7 +51,8 @@
             thinking: [],
             answer: exchange.answer,
             btws: [],
-            streaming: false,
+            status: "completed",
+            version: null,
           })),
           createdAt: annotation.created_at,
         }))

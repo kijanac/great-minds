@@ -6,7 +6,7 @@
 
 > **Authority clarified after implementation review.** The user prefers JSONL as the authoritative session-content store, the DB for other metadata/app state, and a possible derived Markdown presentation mirror. This supports continuing the history foundation, not moving canonical transcripts into the DB. Whole-application durability and interrupted-work recovery still require the DB and necessary checkpoint/files together; equivalent continuation after losing those stores is not a requirement. Preserve existing session display, visible tool activity, and normal follow-up context.
 
-> **Implementation checkpoint:** The storage foundation and database-backed admission/settlement coordinators are now [connected to the native workflow and required consumers](../conversation-workflow-integration.md). Placement/default/revision are separate app state; acceptance freezes mode; preparation, stop/progress fencing, settlement, reconciliation, private history/Markdown, public selection, and browser hydration use the native contract. Controlled process tests include explicit provider/tool invocation ledgers. This is not a completed Stage 2 release: full authorized snapshots/active overlays, unavailable-state diagnostics, deterministic legacy-to-native conversion, and deployment rehearsal remain outstanding. See [storage](../conversation-history-storage.md), [admission](../conversation-reply-admission.md), [settlement](../conversation-reply-settlement.md), and the companion matrix. No production data has been converted, and the migrations must not deploy ahead of coordinated data/API/web/worker cutover.
+> **Implementation checkpoint:** The storage foundation and database-backed admission/settlement coordinators are now [connected to the native workflow and required consumers](../conversation-workflow-integration.md). Placement/default/revision are separate app state; acceptance freezes mode; preparation, stop/progress fencing, settlement, reconciliation, private history/Markdown, public selection, and browser hydration use the native contract. Controlled process tests include explicit provider/tool invocation ledgers. The bounded read-correctness pass adds same-attempt progress, separate operation readiness, receipt/access checks, unavailable child entries, and guarded browser merging. The former comprehensive `ConversationSnapshot` proposal is deliberately reduced as specified in §7; it is not another required framework. This is not a completed Stage 2 release: deterministic legacy-to-native conversion, backup/restore proof, and deployment rehearsal remain outstanding. See [storage](../conversation-history-storage.md), [admission](../conversation-reply-admission.md), [settlement](../conversation-reply-settlement.md), and the companion matrix. No production data has been converted, and the migrations must not deploy ahead of coordinated data/API/web/worker cutover.
 
 ## 1. Decisions this draft makes
 
@@ -287,66 +287,56 @@ The pure history reducer validates additions, detects idempotent replay/conflict
 - Readers see complete old or complete new objects. They do not modify torn/corrupt files to make them readable.
 - Keep physical-durability claims backend-specific. Tests of process crashes or fake R2 CAS do not prove host-power-loss guarantees.
 
-These primitives now exist in standalone history/storage modules, but they are not yet wired into `ContentStorage` or live session/reply writing. They do not retroactively protect legacy writers. Integration must replace/fence conversation-history writes without replacing every unrelated storage call in the project.
+These primitives now serve native conversation writes through `HistoryStore`; unrelated `ContentStorage` operations remain separate. They do not retroactively protect legacy writers. Cutover must replace/fence those writers without replacing every unrelated storage call in the project.
 
 ## 7. Shared read contract
 
 ### 7.1 Product shape
 
-Define one authorized `ConversationSnapshot` loader plus a pure projector. The API returns product fields, not raw history events or internal LLM/tool messages.
+After the implementation review, keep the existing authorized `SessionsService` and pure history projector. Do not add a generic snapshot service or replace every consumer DTO. The implemented private response is:
 
 ```text
-ConversationSnapshot
-  schema_version: 1
-  captured_at
-  capture:
-    kind: interval
-    inputs: history byte revisions + app revisions + reply observation versions
-    membership: exact authorized root/direct-thread IDs selected for this capture
-  conversation:
-    id, created_at, origin, origin_title (resolved now, labelled as such)
-    app_state: placement, reply_mode, revision
-    turns[]:
-      exchange_id
-      selected_reply_id
-      attempts[]:
-        reply_id, previous_attempt_id, parent_reply_id, question
-        accepted_at
-        state (discriminated union below)
-  threads[]:
-    conversation ID and its own content snapshot, or explicit unreadable state
-    anchor resolution: resolved | orphaned | unavailable
-  integrity: complete | incomplete + typed diagnostics
+SessionContent
+  events: opening metadata + selected exchange events
+    reply_id, explicit content status, nullable observation version
+    question, answer, visible thinking/sources, error, historical time
+  activity: null | { reply_id, status: admitting | running | settling }
+
+SessionResponse
+  id, kind, origin_title, SessionContent
+  threads: OriginSessionDetail[]
+
+OriginSessionDetail
+  available: session overview + SessionContent
+  unavailable: session overview + detail
 ```
 
-Attempt state is a union, not booleans inferred from answer length:
+Content outcome and operation readiness are different facts. Recorded terminal text stays terminal even while `activity` says settling; the UI disables new work until the operation clears. Pending content uses the same attempt's committed DB progress and a within-attempt version. Missing content is not an empty answer, and an empty completed answer is not a running or failed reply.
 
-- `running`: committed live answer/sources, reply observation version, and phase `queued | generating | finalizing`. `finalizing` means the operation is settling but history is not committed yet; no falsely terminal outcome is supplied.
-- `settled`: history outcome/answer/sources/provenance and history sequence; separate operation readiness `ready | reconciling`. A stale running DB cache cannot overwrite it.
-- `unavailable`: reason such as `missing_operation` or `unreadable_dependency`, with any safe recorded facts. This is a read diagnostic, **not** a new generation status.
+Root corruption or inconsistent pending history is a read error. An authorized unreadable child keeps its identity/metadata and an unavailable explanation. Raw retained provider messages and generation internals are not exposed by this DTO.
 
-A content-only reader can omit app state through an explicitly different import/export context; the live authorized API must not fabricate missing app-owned fields. Root corruption is a read error, not a healthy empty conversation. An unreadable authorized child remains represented by its identity and a diagnostic rather than vanishing.
+The earlier schema-version/capture-time envelope, exported revision vectors, all-attempt API, queued-versus-generating substates, per-attempt provenance UI, and generalized dependency/anchor diagnostics are deferred. None is necessary merely to retain a saved answer, prevent duplicate generation after disconnection, or perform offline conversion.
 
 ### 7.2 Capture algorithm and honesty
 
-1. In a DB read transaction, authorize the root and enumerate the caller's directly attached conversations plus app-state revisions and active operation observations. Preserve the exact selected IDs. By-origin loading uses the same authorization and projector.
-2. Read each selected history object as one version. Record its bytes hash and last sequence. No recursive traversal of every linked conversation for publication; load context dependencies separately only when the consumer needs them and is authorized.
-3. Project settled content from history. Overlay active observations only on the **same reply ID** with no settlement. Validate identity and dependencies; a child referencing a parent attempt outside the captured history cannot be silently retargeted.
-4. A DB terminal cache without a matching history settlement, or a known history receipt beyond the file's tail, is an inconsistent input, not an alternative authority. An admission descriptor explains a known pending admission; expose this as a typed `pending_history_admission` diagnostic rather than pretending the accepted attempt is already in history. An otherwise missing operation/history is diagnosed rather than inferred as streaming.
-5. Recheck selected catalog membership/app revisions and access before returning. Progress versions can advance after their observation; this is an interval capture, not a global atomic cut. Recheck only facts needed for membership, app state, identity, and authorization, not every token.
-6. If structural inputs changed or a required terminal/dependency cannot be reconciled, return an explicit retryable capture conflict. The caller can refresh. Do not spin until an active conversation becomes quiet, silently omit a child, or retry generation.
+1. Authorize the owned conversation and read its native history outside a database transaction.
+2. Lock/recheck its owned session row, current receipt and app revision, then observe the live operation. No object-store I/O occurs under that transaction.
+3. Project recorded content. Overlay progress only on the **same reply ID** without a settlement. If history is terminal but the operation is pending, preserve history and expose settling readiness.
+4. Pending history without the matching live operation, or a receipt beyond the captured file's acknowledged prefix, is unavailable. A valid stored admission can supply a pending question in an existing readable history with `activity: admitting`; this does not assert that its attempt was recorded. An initial admission without acknowledged readable history still returns unavailable.
+5. Read direct owned children through the same content boundary. Keep unreadable authorized children as unavailable entries. Before returning, recheck ownership and membership for all captured root/child IDs; access loss fails the response. By-origin loading uses the same child representation and final access check.
+6. Return inconsistencies as retryable read errors; do not repair, generate, spin until idle, or silently salvage a corrupt prefix. Context construction separately follows the exact frozen parent chain and fails closed when necessary context is missing.
 
-A successfully returned capture is immutable and internally interpretable, but does not claim all DB/R2 facts existed simultaneously. Publication policy decides whether a clearly labelled partial/incomplete capture may be rendered. Unsupported/corrupt root history must not produce a normal complete export.
+This is a bounded multi-part read, not a global atomic cut. Root/children may be observed at different times; the child set is selected once, and app/history revisions are not all rechecked after the final child. Complete child-set interval capture and a publication-specific immutable input envelope are deferred to an actual consumer that needs them. Ordinary reads do not claim those guarantees. Publication still must explicitly select and label content; an unreadable root cannot become a normal complete export.
 
 ### 7.3 Hydration and SSE
 
-- Replace `SessionResponse.events`/`OriginSessionDetail.events` and `replayExchanges` status inference. Both session and BTW hydration use the same attempt projection.
-- SSE uses the same product attempt-state union and reply identity. Keep the durable stream version for operation observations; terminal history identity has its own revision/sequence, not a fake comparable integer from another store.
-- For one reply ID, settled history dominates any running observation. Among running observations, larger DB version wins. Across different reply IDs, acceptance order/selected identity controls which turn is current; a numerically larger version from an older attempt cannot win.
-- Emit stream completion only for settled history. If publication is delayed, expose finalizing/storage trouble rather than closing with DB-only success/failure.
-- Apply the same owner/membership guard to private snapshots and reply streams. Current `RepliesService.stream` checks vault membership but does not compare `row.userId` with the caller, unlike session reads/stop/retry. Aligning that guard is an explicit privacy correction to cover in tests, not a claim that the baseline already enforces it.
-- Command eligibility is checked server-side against operation state, not inferred from a settled-content badge. A history-committed but unreconciled operation may briefly show settled text with controls disabled.
-- Importing the reader into orchestration is fine; importing `RepliesService` into its own session dependency is not. Use narrow DB/history repositories below both services.
+- Keep `events`, but require explicit selected reply identity/content status and a nullable DB observation version. Both session and BTW hydration use the same pure projection and stream merge.
+- SSE reports operation status, including admitting and settling. It reads the DB projection, not history on every poll. Native settlement writes terminal DB state only after canonical publication; no terminal stream completion is emitted for admitting/settling.
+- For one reply ID, hydrated terminal history dominates stream content even if the operation projection lags. Among pending observations, larger versions win; ignore nonincreasing versions and another reply's updates. No history sequence is presented as a comparable DB version.
+- Connection failure is not reply failure. Retain partial text and the pending identity, offer reconnection to that operation, and require a recorded failed attempt for generation retry. A completed-empty answer receives its own label.
+- Private reads and reply streams enforce ownership and membership. Reads recheck captured IDs; streams filter each row by owner and recheck membership before emission.
+- Server command eligibility still uses operation state. A history-committed but unreconciled operation may display terminal content with follow-up/stop disabled. Browser phase is derived rather than independently mutated.
+- Do not import `RepliesService` into its session dependency. The existing session service reads typed DB/history data; both services share the small pure operation mapper.
 
 ### 7.4 Disclosure and source promotion
 
@@ -376,7 +366,7 @@ A one-time offline converter reads an immutable inventory of:
 
 A live dry-run is useful for estimates/exceptions but is not a consistent cutover backup. The final export occurs after writers are quiesced. Include all users' relevant conversation histories, not only visible standalone sessions. Protect the inventory/backups like production plaintext; reports need IDs/hashes/reasons, not copied answers, tokens, or prompts.
 
-Retain old decoders as self-contained migration/recovery code. `migrate-session-replies.ts` and `recover-sessionless-replies.ts` currently import live session schemas/projectors; detach that dependency before replacing them. Do not assume all production objects already match main's format merely because main only writes it.
+Retain old decoders as self-contained migration/recovery code. `migrate-session-replies.ts` and `recover-sessionless-replies.ts` now use the detached legacy schemas/projector, but neither is the native converter. Do not assume all production objects already match main's format merely because main only writes it.
 
 ### 8.2 Conversion rules
 
@@ -437,7 +427,7 @@ A production execution needs explicit operator approval and a dedicated environm
 | 2A (this deliverable) | Contract, migration decision table, test matrix | This document and its companion; no runtime changes |
 | 2B.1 | Strict format parser/reducer, identity/conflict tests, history CAS capability | `packages/server/src/conversation-history/{schema,history,store}.ts`; `storage/{object-store,r2-object-store,local-conditional-object-store}.ts`; standalone conformance/process-crash suites |
 | 2B.2 | App state/mode freeze, single-live-reply enforcement, acceptance descriptor, unified settlement/reconciler | `packages/database/src/schema.ts` + migration; `sessions.ts`, `replies.ts`, `query.ts`; keep Effect workflow engine |
-| 2B.3 | Pure snapshot projection and authorized loader, explicit reply/SSE state | `packages/domain/src/index.ts`, narrow reader below session/reply orchestration, `server.ts` |
+| 2B.3 | Bounded authorized read, same-attempt progress, separate readiness and unavailable children | Existing `SessionsService`, pure presentation/operation mapper, domain schemas; no new snapshot framework |
 | 2C.1 | Migrate all consumers and remove old interpretations | `web/src/lib/{api/sessions,api/replies,session-events,reply-turn,types,session.svelte,btw.svelte,doc-threads.svelte}` plus saved-session hooks, origin navigation and affected components |
 | 2C.2 | Preserve share/promotion policies and historical tooling | `shares.ts`, `markdown.ts`, `ingest.ts`, session promotion; migration/recovery scripts |
 | 2C.3 | Converter, rehearsal, coordinated deployment and data migration | New offline history migration script; integration/recovery tests; operator runbook above |
@@ -462,7 +452,7 @@ These are repository observations at `fe332ba`, not production incidents:
 
 ## 11. Completion criteria
 
-Stage 2 is ready to ship only when the [acceptance matrix](./conversation-history-acceptance-matrix.md) gates pass, including:
+Stage 2 is ready to ship only when the retained safety and migration gates in the [acceptance matrix](./conversation-history-acceptance-matrix.md#9-release-gates-and-next-executable-slice) have evidence. Section 7 and the matrix explicitly reduce the former comprehensive snapshot scope; those deferred surfaces are not silently counted as passing. Required guarantees include:
 
 - All three outcomes commit history before terminal publication; no failure bypass remains.
 - Format and CAS tests cover duplicate/conflicting settlement, concurrent updates and unknown write acknowledgment.

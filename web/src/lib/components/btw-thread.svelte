@@ -42,7 +42,9 @@
   let input = $state("");
   let inputElement: HTMLTextAreaElement | null = $state(null);
   const isStreaming = $derived(
-    btw.exchanges.some((exchange) => exchange.streaming),
+    !!btw.busy ||
+      !!btw.promoting ||
+      btw.exchanges.some((exchange) => exchange.status === "running"),
   );
   let focusedDraft = false;
   let wasStreaming = false;
@@ -157,11 +159,15 @@
                   </div>
                 {/if}
 
-                {#if exchange.streaming && !exchange.answer}
+                {#if exchange.status === "running" && !exchange.answer}
                   <div
                     class="mb-[9px] animate-[pulse-fade_1.6s_ease-in-out_infinite] text-[length:var(--text-small)] leading-[1.72] text-warm-faint"
                   >
-                    {sources.length > 0 ? "reading..." : "thinking..."}
+                    {btw.finalizing
+                      ? "saving response…"
+                      : sources.length > 0
+                        ? "reading..."
+                        : "thinking..."}
                   </div>
                 {:else}
                   {#if exchange.answer}
@@ -169,7 +175,7 @@
                       class="mb-3 text-[length:var(--text-small)] leading-[1.85] text-warm-dim"
                     >
                       <MarkdownView source={exchange.answer} variant="btw" />
-                      {#if exchange.streaming}
+                      {#if exchange.status === "running" && !btw.finalizing}
                         <span
                           class="ml-px inline-block h-2.5 w-px animate-[blink_1s_step-end_infinite] bg-gold-muted align-middle"
                         ></span>
@@ -177,11 +183,12 @@
                     </div>
                   {/if}
 
-                  {#if exchange.stopped || exchange.error || !exchange.answer}
+                  {#if exchange.status === "stopped" || exchange.status === "failed"}
                     <ReplyInterrupted
-                      stopped={exchange.stopped}
+                      stopped={exchange.status === "stopped"}
                       partial={exchange.answer.length > 0}
-                      onRetry={!exchange.stopped &&
+                      onRetry={exchange.status === "failed" &&
+                      !isStreaming &&
                       !readOnly &&
                       index === btw.exchanges.length - 1 &&
                       (exchange.replyId || exchange.error) &&
@@ -189,12 +196,53 @@
                         ? () => onRetry(btw.id, exchange.id)
                         : undefined}
                     />
+                  {:else if exchange.status === "completed" && !exchange.answer}
+                    <p class="text-[length:var(--text-small)] text-warm-faint">
+                      The response completed without an answer.
+                    </p>
                   {/if}
                 {/if}
               </ThreadTurn>
             </div>
           {/each}
 
+          {#if btw.unavailable}
+            <p
+              role="status"
+              class="mt-3 text-[length:var(--text-small)] text-warm-faint"
+            >
+              {btw.unavailable}
+              {#if btw.conversation}
+                <a
+                  class="text-gold underline underline-offset-4"
+                  href={`/sessions/${btw.conversation.id}`}
+                  >Try loading this note again</a
+                >
+              {/if}
+            </p>
+          {:else if btw.connectionError}
+            <p
+              role="status"
+              class="mt-3 text-[length:var(--text-small)] text-warm-faint"
+            >
+              {btw.connectionError}
+            </p>
+            {@const pending = btw.exchanges.at(-1)}
+            {#if pending && onRetry && !readOnly}
+              <Button
+                variant="link"
+                class="h-auto p-0 font-mono text-[length:var(--text-chrome)] text-gold"
+                onclick={() => onRetry?.(btw.id, pending.id)}>Reconnect</Button
+              >
+            {/if}
+          {:else if btw.finalizing}
+            <p
+              role="status"
+              class="mt-3 font-mono text-[length:var(--text-chrome)] text-warm-faint"
+            >
+              Saving response…
+            </p>
+          {/if}
           {#if btw.error}
             <p
               role="status"
@@ -203,7 +251,7 @@
               {btw.error}
             </p>
           {/if}
-          {#if !readOnly}
+          {#if !readOnly && !btw.unavailable}
             <form
               class="mt-3"
               onsubmit={(event) => {

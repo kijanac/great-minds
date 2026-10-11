@@ -109,6 +109,7 @@ export const projectSession = (events: readonly StoredSessionEvent[]): SessionEv
     type: "exchange" as const,
     exId: node.exchange_id,
     reply_id: node.reply_id,
+    version: null,
     status: node.status === "pending" ? ("running" as const) : node.status,
     error: null,
     query: node.question,

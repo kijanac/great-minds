@@ -1,5 +1,6 @@
 import {
   ReplySnapshot,
+  isReplyPending,
   type CreateReplyRequest,
   type CreateReplyResponse,
   type Uuid,
@@ -56,7 +57,7 @@ const toReplyEvent = (event: Sse.EventEncoded): Option.Option<ReplyEvent> => {
 };
 
 const isTerminal = (event: ReplyEvent) =>
-  event._tag === "Done" || event.snapshot.status !== "running";
+  event._tag === "Done" || !isReplyPending(event.snapshot.status);
 
 const snapshotOf = (event: ReplyEvent) =>
   event._tag === "Snapshot" ? Option.some(event.snapshot) : Option.none();
@@ -67,7 +68,6 @@ export function streamReply(replyId: Uuid, signal?: AbortSignal): AsyncIterable<
   ).pipe(Stream.filterMap(Filter.fromPredicateOption(toReplyEvent)));
   const snapshots = followUntil(events, isTerminal).pipe(
     Stream.filterMap(Filter.fromPredicateOption(snapshotOf)),
-    Stream.changesWith((previous, next) => previous.version === next.version),
   );
   return stream(snapshots, signal);
 }

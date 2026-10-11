@@ -519,7 +519,7 @@ export const replies = pgTable(
     userId: uuidColumn("user_id").notNull(),
     sessionId: sessionIdColumn("session_id").notNull(),
     kind: text("kind").$type<ReplySnapshot["kind"]>().notNull(),
-    status: text("status").$type<ReplySnapshot["status"] | "admitting" | "settling">().notNull(),
+    status: text("status").$type<ReplySnapshot["status"]>().notNull(),
     stopRequested: boolean("stop_requested").default(false).notNull(),
     answer: text("answer").default("").notNull(),
     sources: jsonb("sources")

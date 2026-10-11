@@ -1,5 +1,11 @@
 import { browser } from "$app/environment";
-import type { SessionId, SessionOrigin, SessionResponse, Uuid } from "@great-minds/domain";
+import type {
+  SessionActivity,
+  SessionId,
+  SessionOrigin,
+  SessionResponse,
+  Uuid,
+} from "@great-minds/domain";
 
 import {
   createReply,
@@ -11,7 +17,7 @@ import {
 import { Btw } from "$lib/btw.svelte";
 import type { Exchange, Phase, SelectionInfo } from "$lib/types";
 import { newUuid } from "$lib/ids";
-import { replyTurn } from "$lib/reply-turn";
+import { applyReplySnapshot, replyActivity } from "$lib/reply-turn";
 import { replayExchanges } from "$lib/session-events";
 import { isAbortError } from "$lib/utils";
 
@@ -31,7 +37,8 @@ export interface SessionOptions {
 }
 
 export class Session {
-  phase = $state<Phase>("idle");
+  activity = $state<SessionActivity | null>(null);
+  connectionError = $state<string | null>(null);
   thread = $state<Exchange[]>([]);
   sessionId = $state<SessionId | null>(null);
   chips = $state<string[]>([]);
@@ -47,12 +54,11 @@ export class Session {
   #onOpenSession: ((sessionId: SessionId) => void) | undefined;
   #idempotencyKey: Uuid | null = null;
   #abortController: AbortController | null = null;
-  #activeReplyId = $state<Uuid | null>(null);
   #destroyed = false;
 
   constructor(options: SessionOptions = {}) {
     this.thread = replayExchanges(options.saved?.events ?? []);
-    this.phase = this.thread.length ? "done" : "idle";
+    this.activity = options.saved?.activity ?? null;
     this.sessionId = options.saved?.id ?? null;
     this.origin = options.saved
       ? (options.saved.events.find((event) => event.type === "meta")?.origin ?? null)
@@ -89,6 +95,16 @@ export class Session {
     }
   }
 
+  get phase(): Phase {
+    const pending = this.activity
+      ? this.thread.find((exchange) => exchange.replyId === this.activity?.reply_id)
+      : this.thread.find((exchange) => exchange.status === "running");
+    if (this.activity?.status === "settling" || (this.activity && pending?.status !== "running"))
+      return "finalizing";
+    if (pending?.status === "running") return pending.answer.length > 0 ? "streaming" : "searching";
+    return this.thread.length > 0 ? "done" : "idle";
+  }
+
   destroy = (): void => {
     this.#destroyed = true;
     this.#abortController?.abort();
@@ -110,19 +126,14 @@ export class Session {
   ): Promise<void> => {
     try {
       for await (const snapshot of streamReply(replyId, controller.signal)) {
-        if (controller.signal.aborted) return;
-        this.phase =
-          snapshot.status === "running"
-            ? snapshot.answer.length > 0
-              ? "streaming"
-              : "searching"
-            : "done";
-        this.#updateExchange(exchangeId, {
-          ...replyTurn(snapshot, true),
-          replyId,
-        });
-        if (snapshot.status !== "running") {
-          this.#activeReplyId = null;
+        if (controller.signal.aborted || snapshot.session_id !== this.sessionId) return;
+        const current = this.thread.find((exchange) => exchange.id === exchangeId);
+        if (current?.replyId !== replyId) return;
+        const updated = applyReplySnapshot(current, snapshot, true);
+        if (updated === null) continue;
+        this.#updateExchange(exchangeId, updated);
+        this.activity = replyActivity(snapshot, updated);
+        if (this.activity === null || this.activity.status === "settling") {
           this.stopping = false;
           this.stopFailed = false;
         }
@@ -130,22 +141,27 @@ export class Session {
     } catch (error) {
       if (isAbortError(error) || controller.signal.aborted) return;
       console.error("Failed to resume reply:", error);
-      this.#updateExchange(exchangeId, { streaming: false });
-      this.phase = "done";
-      this.#activeReplyId = null;
+    }
+    if (!controller.signal.aborted && this.activity?.reply_id === replyId) {
+      this.connectionError = "Live updates are unavailable. Reconnect to check this response.";
       this.stopping = false;
     }
   };
 
+  reconnect = (): void => {
+    if (this.#destroyed) return;
+    this.#abortController?.abort();
+    this.connectionError = null;
+    this.#resumePendingReplies();
+  };
+
   #resumePendingReplies = (): void => {
     const pendingExchange = this.thread.find(
-      (exchange) => exchange.replyId !== undefined && exchange.streaming,
+      (exchange) => exchange.replyId === this.activity?.reply_id,
     );
     if (pendingExchange?.replyId) {
-      this.phase = "searching";
       const controller = new AbortController();
       this.#abortController = controller;
-      this.#activeReplyId = pendingExchange.replyId;
       void this.#tailExchange(pendingExchange.id, pendingExchange.replyId, controller);
     }
   };
@@ -183,7 +199,7 @@ export class Session {
         ? this.submission.attempt
         : this.#makeMainReplyAttempt(question);
     this.submission = { status: "ready" };
-    this.phase = "searching";
+    this.connectionError = null;
     this.thread = [
       ...this.thread,
       {
@@ -192,7 +208,8 @@ export class Session {
         thinking: [],
         answer: "",
         btws: [],
-        streaming: true,
+        status: "running",
+        version: null,
       },
     ];
 
@@ -206,15 +223,15 @@ export class Session {
     } catch (error) {
       const remaining = this.thread.filter((exchange) => exchange.id !== attempt.exchangeId);
       this.thread = remaining;
-      this.phase = remaining.length > 0 ? "done" : "idle";
       if (isAbortError(error) || controller.signal.aborted) return false;
       console.error("Query failed:", error);
       this.submission = { status: "failed", attempt };
       return false;
     }
 
+    if (controller.signal.aborted) return false;
     this.#updateExchange(attempt.exchangeId, { replyId: created.reply_id });
-    this.#activeReplyId = created.reply_id;
+    this.activity = { reply_id: created.reply_id, status: "running" };
     if (this.sessionId === null) {
       this.sessionId = created.session_id;
       this.#onSessionCreated?.(created.session_id);
@@ -235,20 +252,20 @@ export class Session {
     if (
       previous === undefined ||
       index !== this.thread.length - 1 ||
-      previous.streaming ||
+      previous.status !== "failed" ||
       previous.replyId === undefined
     ) {
       return;
     }
 
-    this.phase = "searching";
     this.#updateExchange(exchangeId, {
       thinking: [],
       answer: "",
-      streaming: true,
+      status: "running",
+      version: null,
       error: null,
-      stopped: false,
     });
+    this.connectionError = null;
     this.stopFailed = false;
     this.#abortController?.abort();
     const controller = new AbortController();
@@ -258,7 +275,7 @@ export class Session {
       try {
         const created = await retryReply(previous.replyId!, newUuid(), controller.signal);
         this.#updateExchange(exchangeId, { replyId: created.reply_id });
-        this.#activeReplyId = created.reply_id;
+        this.activity = { reply_id: created.reply_id, status: "running" };
         await this.#tailExchange(exchangeId, created.reply_id, controller);
       } catch (error) {
         if (isAbortError(error) || controller.signal.aborted) return;
@@ -266,7 +283,6 @@ export class Session {
         this.thread = this.thread.map((exchange) =>
           exchange.id === exchangeId ? previous : exchange,
         );
-        this.phase = "done";
       }
     })();
   };
@@ -292,18 +308,18 @@ export class Session {
   };
 
   get canStop(): boolean {
-    return this.#activeReplyId !== null && !this.stopping;
+    return this.activity !== null && this.activity.status !== "settling" && !this.stopping;
   }
 
   stop = async (): Promise<void> => {
-    const replyId = this.#activeReplyId;
-    if (replyId === null || this.stopping) return;
+    const replyId = this.activity?.reply_id;
+    if (replyId === undefined || !this.canStop) return;
     this.stopping = true;
     this.stopFailed = false;
     try {
       await stopReply(replyId, this.#abortController?.signal);
     } catch (error) {
-      if (isAbortError(error) || this.#destroyed || this.#activeReplyId !== replyId) return;
+      if (isAbortError(error) || this.#destroyed || this.activity?.reply_id !== replyId) return;
       this.stopping = false;
       this.stopFailed = true;
     }
@@ -328,7 +344,12 @@ export class Session {
   startBtw = (info: SelectionInfo): void => {
     if (!this.sessionId) return;
     const exchange = this.thread.find((item) => item.id === info.exchangeId);
-    if (!exchange) return;
+    if (
+      !exchange ||
+      (exchange.status !== "completed" && exchange.status !== "stopped") ||
+      this.activity?.reply_id === exchange.replyId
+    )
+      return;
     exchange.btws.push(
       new Btw(
         {
@@ -360,7 +381,7 @@ export class Session {
   dismissBtw = (btwId: string): void => {
     this.thread = this.thread.map((exchange) => {
       const target = exchange.btws.find((btw) => btw.id === btwId);
-      if (!target || target.exchanges.length > 0) return exchange;
+      if (!target?.draft || target.exchanges.length > 0) return exchange;
       target.destroy();
       return {
         ...exchange,

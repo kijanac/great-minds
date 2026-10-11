@@ -26,7 +26,7 @@ import {
 } from "@great-minds/domain";
 import { and, eq, sql } from "drizzle-orm";
 import { Effect, Layer, Option, Redacted, Result, Schema, Stream } from "effect";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, assert, describe, expect, it, vi } from "vitest";
 import * as WorkflowEngine from "effect/unstable/workflow/WorkflowEngine";
 
 import { makeAppLayer } from "../src/app-layer.ts";
@@ -1580,7 +1580,8 @@ describe("query stream", () => {
       kind: "btw",
       origin: { kind: "answer", exchange_id: EX_CANONICAL_FIRST, paragraph: "First answer." },
     });
-    expect(replayBody.threads[0]?.events).toContainEqual(
+    assert(replayBody.threads[0]?.availability === "available");
+    expect(replayBody.threads[0].events).toContainEqual(
       expect.objectContaining({
         exId: EX_CANONICAL_BTW_1,
         query: "Why this answer?",
@@ -2432,7 +2433,8 @@ describe("query stream", () => {
         paragraph: "Parent answer.",
       },
     });
-    expect(sessionBody.threads[0]?.events.filter((event) => event.type === "exchange")).toEqual([
+    assert(sessionBody.threads[0]?.availability === "available");
+    expect(sessionBody.threads[0].events.filter((event) => event.type === "exchange")).toEqual([
       expect.objectContaining({
         exId: EX_BRANCH_BTW_1,
         query: "First BTW",
