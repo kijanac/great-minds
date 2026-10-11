@@ -134,7 +134,6 @@ export class Btw implements ThreadLike {
       exchange_id: turn.id,
       question,
       origin_scope: scope,
-      mode: "btw",
       session: this.conversation
         ? { kind: "existing", id: this.conversation.id }
         : {

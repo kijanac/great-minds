@@ -66,7 +66,7 @@ These notes collect a thread of design work around reducing Great Minds' exposur
 - [Conversation history: Stage 2A contract and migration](./conversation-history-contract-and-migration.md)
   - Concrete implementation draft against `main` at `fe332ba`: versioned JSONL records, app-state separation, per-attempt provenance, admission/settlement protocol, and shared reads.
   - Field-level migration rules, conditional-write requirements, maintenance cutover/rollback boundaries, and code ownership.
-  - Preserves current BTW/standalone UX without promising full workspace recovery from one transcript. No runtime or production migration has been executed.
+  - Preserves current BTW/standalone UX without promising full workspace recovery from one transcript. [Native workflow integration](../conversation-workflow-integration.md) is implemented and tested separately; no production migration has been executed.
 
 - [Conversation history: acceptance-test matrix](./conversation-history-acceptance-matrix.md)
   - Format, prompting, crash/reconciliation, hydration, disclosure, migration, and later publication gates mapped to existing or proposed tests.

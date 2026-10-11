@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 
@@ -19,11 +19,16 @@ import {
   wikiArticles,
 } from "@great-minds/database";
 import { SessionId, Uuid } from "@great-minds/domain";
-import { sql } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import { Effect, Layer, Option, Redacted, Schema } from "effect";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 
 import { makeAppLayer } from "../src/app-layer.ts";
+import {
+  ConversationTurnFixture,
+  savedConversation,
+  type SavedConversationServices,
+} from "./fixtures/saved-conversation.ts";
 import { ClockService, makeTestClock } from "../src/clock.ts";
 import { AppConfig, type AppConfigShape } from "../src/config.ts";
 import { sha256Hex } from "../src/crypto.ts";
@@ -31,6 +36,10 @@ import { StructuredLogger, StructuredLoggerLive } from "../src/logging.ts";
 import { makeTestMailer } from "../src/mailer.ts";
 import { startServer } from "../src/server.ts";
 import { TokenService } from "../src/tokens.ts";
+import {
+  replyHistoryTestDatabaseUrl,
+  runHistoryDatabase,
+} from "./fixtures/reply-history-database.ts";
 
 const initialTime = new Date("2026-07-09T12:00:00.000Z");
 const uuid = Schema.decodeUnknownSync(Uuid);
@@ -76,14 +85,18 @@ const EX_1_BTW_1 = "00000000-0000-4000-8000-000000000803";
 const EX_1_BTW_2 = "00000000-0000-4000-8000-000000000804";
 const EX_2 = "00000000-0000-4000-8000-000000000805";
 const EX_GOOD = "00000000-0000-4000-8000-000000000806";
-const EX_AFTER_INVALID = "00000000-0000-4000-8000-000000000807";
-const EX_AFTER_BAD_JSON = "00000000-0000-4000-8000-000000000808";
 const EX_ORIGIN_A = "00000000-0000-4000-8000-000000000809";
 const EX_ORIGIN_P = "00000000-0000-4000-8000-00000000080a";
 
 const aliceApiKey = "gm_alice_read_key";
 
-type TestServices = AppConfig | Database | ClockService | StructuredLogger | TokenService;
+type TestServices =
+  | AppConfig
+  | Database
+  | ClockService
+  | StructuredLogger
+  | TokenService
+  | SavedConversationServices;
 
 type TestState = {
   readonly started: Awaited<ReturnType<typeof startServer>>;
@@ -130,13 +143,7 @@ const currentFixture = () => {
   return fixture;
 };
 
-const databaseUrl = () => {
-  const value = process.env.DATABASE_URL;
-  if (value === undefined || value.length === 0) {
-    throw new Error("DATABASE_URL is required for integration tests");
-  }
-  return value;
-};
+const databaseUrl = () => replyHistoryTestDatabaseUrl;
 
 const testConfig = (url: string, dataDir: string): AppConfigShape => ({
   databaseUrl: Redacted.make(url),
@@ -211,8 +218,10 @@ const resetDatabase = () =>
 
 const resetStorage = async () => {
   const root = currentState().storageRoot;
-  await rm(root, { recursive: true, force: true });
-  await mkdir(root, { recursive: true });
+  for (const entry of await readdir(root)) {
+    if (entry !== ".conversation-history.lock")
+      await rm(join(root, entry), { recursive: true, force: true });
+  }
 };
 
 const writeVaultFile = async (vaultId: string, path: string, content: string) => {
@@ -221,8 +230,20 @@ const writeVaultFile = async (vaultId: string, path: string, content: string) =>
   await writeFile(fullPath, content, "utf8");
 };
 
-const jsonl = (events: readonly unknown[]) =>
-  events.map((event) => JSON.stringify(event)).join("\n");
+const writeSessionFixture = (
+  vaultId: Uuid,
+  path: string,
+  turns: readonly [ConversationTurnFixture, ...ConversationTurnFixture[]],
+  context: { readonly session_id: SessionId; readonly reply_id: Uuid } | null = null,
+) =>
+  runDb(
+    savedConversation(
+      vaultId,
+      sessionId(path.slice("sessions/".length, -".jsonl".length)),
+      turns,
+      context,
+    ),
+  );
 
 const replyNode = (
   replyId: string,
@@ -235,23 +256,20 @@ const replyNode = (
     readonly messages?: readonly unknown[];
     readonly sources?: readonly unknown[];
   } = {},
-) => ({
-  type: "reply",
-  reply_id: replyId,
-  parent_reply_id: extra.parentReplyId ?? null,
-  exchange_id: exchangeId,
-  question,
-  status: "completed",
-  messages:
-    extra.messages ??
-    [
+) =>
+  Schema.decodeUnknownSync(ConversationTurnFixture)({
+    replyId,
+    exchangeId,
+    question,
+    answer,
+    timestamp: ts,
+    parentReplyId: extra.parentReplyId ?? null,
+    messages: extra.messages ?? [
       { role: "user", content: question },
       { role: "assistant", content: answer },
     ],
-  sources: extra.sources ?? [],
-  answer,
-  ts,
-});
+    sources: extra.sources ?? [],
+  });
 
 const issueToken = (userId: Uuid) =>
   runDb(
@@ -265,420 +283,467 @@ const seedFixtures = async (): Promise<Fixture> => {
   await runDb(
     Effect.gen(function* () {
       const db = yield* Database;
-      yield* db.query((d) => d
-        .insert(users)
-        .values([
-          {
-            id: id.alice,
-            email: "alice@example.com",
-            createdAt: new Date("2026-07-01T00:00:00.000Z"),
-          },
-          { id: id.bob, email: "bob@example.com", createdAt: new Date("2026-07-01T00:01:00.000Z") },
-          {
-            id: id.mallory,
-            email: "mallory@example.com",
-            createdAt: new Date("2026-07-01T00:02:00.000Z"),
-          },
-        ]))
-        .pipe(Effect.orDie);
-      yield* db.query((d) => d
-        .insert(vaults)
-        .values([
-          {
-            id: id.vaultAlpha,
-            name: "Alpha Vault",
-            ownerId: id.alice,
-            createdAt: new Date("2026-07-02T00:00:00.000Z"),
-          },
-          {
-            id: id.vaultBeta,
-            name: "Beta Vault",
-            ownerId: id.bob,
-            createdAt: new Date("2026-07-03T00:00:00.000Z"),
-          },
-        ]))
-        .pipe(Effect.orDie);
-      yield* db.query((d) => d
-        .insert(vaultMemberships)
-        .values([
-          {
-            id: uuid("00000000-0000-4000-8000-000000000701"),
-            vaultId: id.vaultAlpha,
-            userId: id.alice,
-            role: "OWNER",
-          },
-          {
-            id: uuid("00000000-0000-4000-8000-000000000702"),
-            vaultId: id.vaultAlpha,
-            userId: id.bob,
-            role: "EDITOR",
-          },
-          {
-            id: uuid("00000000-0000-4000-8000-000000000703"),
-            vaultId: id.vaultBeta,
-            userId: id.bob,
-            role: "OWNER",
-          },
-          {
-            id: uuid("00000000-0000-4000-8000-000000000704"),
-            vaultId: id.vaultBeta,
-            userId: id.alice,
-            role: "VIEWER",
-          },
-        ]))
-        .pipe(Effect.orDie);
-      yield* db.query((d) => d
-        .insert(apiKeys)
-        .values({
-          id: id.apiKeyAlice,
-          userId: id.alice,
-          keyHash: sha256Hex(aliceApiKey),
-          label: "read automation",
-          revoked: false,
-          createdAt: new Date("2026-07-04T00:00:00.000Z"),
-        }))
-        .pipe(Effect.orDie);
-      yield* db.query((d) => d
-        .insert(pipelineRuns)
-        .values({
-          id: id.runAlpha,
-          vaultId: id.vaultAlpha,
-          trigger: "manual",
-          status: "completed",
-          currentPhase: "render",
-          phaseStatus: "completed",
-          progressSteps: [],
-          createdAt: new Date("2026-07-05T00:00:00.000Z"),
-          updatedAt: new Date("2026-07-05T01:00:00.000Z"),
-        }))
-        .pipe(Effect.orDie);
-      yield* db.query((d) => d
-        .insert(topics)
-        .values([
-          {
-            topicId: id.topicAlpha,
-            vaultId: id.vaultAlpha,
-            slug: "alpha-practice",
-            title: "alpha Practice",
-            description: "Alpha",
-          },
-          {
-            topicId: id.topicBeta,
-            vaultId: id.vaultAlpha,
-            slug: "beta-theory",
-            title: "Beta Theory",
-            description: "Beta",
-          },
-          {
-            topicId: id.topicGamma,
-            vaultId: id.vaultAlpha,
-            slug: "gamma-lines",
-            title: "gamma Lines",
-            description: "Gamma",
-          },
-          {
-            topicId: id.topicIndex,
-            vaultId: id.vaultAlpha,
-            slug: "_index",
-            title: "Index",
-            description: "Index",
-          },
-          {
-            topicId: id.topicArchived,
-            vaultId: id.vaultAlpha,
-            slug: "archived-essay",
-            title: "Archived Essay",
-            description: "Archived",
-            articleStatus: "archived",
-            supersededBy: id.topicBeta,
-          },
-          {
-            topicId: id.topicOtherVault,
-            vaultId: id.vaultBeta,
-            slug: "other-vault",
-            title: "Other Vault",
-            description: "Other",
-          },
-        ]))
-        .pipe(Effect.orDie);
-      yield* db.query((d) => d
-        .insert(wikiArticles)
-        .values([
-          {
-            id: id.articleAlpha,
-            vaultId: id.vaultAlpha,
-            topicId: id.topicAlpha,
-            filePath: "wiki/alpha-practice.md",
-            fileHash: "hash-alpha",
-            bodyHash: "body-alpha",
-            title: "alpha Practice",
-            precis: "Alpha precis",
-            updatedAt: new Date("2026-07-09T10:00:00.000Z"),
-            renderRunId: id.runAlpha,
-            tags: ["practice"],
-          },
-          {
-            id: id.articleBeta,
-            vaultId: id.vaultAlpha,
-            topicId: id.topicBeta,
-            filePath: "wiki/beta-theory.md",
-            fileHash: "hash-beta",
-            bodyHash: "body-beta",
-            title: "Beta Theory",
-            precis: "Beta precis",
-            updatedAt: new Date("2026-07-09T12:00:00.000Z"),
-            tags: ["theory"],
-          },
-          {
-            id: id.articleGamma,
-            vaultId: id.vaultAlpha,
-            topicId: id.topicGamma,
-            filePath: "wiki/gamma-lines.md",
-            fileHash: "hash-gamma",
-            bodyHash: "body-gamma",
-            title: "gamma Lines",
-            precis: "Gamma precis",
-            updatedAt: new Date("2026-07-08T12:00:00.000Z"),
-            renderRunId: id.runAlpha,
-            tags: ["lines"],
-          },
-          {
-            id: id.articleIndex,
-            vaultId: id.vaultAlpha,
-            topicId: id.topicIndex,
-            filePath: "wiki/_index.md",
-            fileHash: "hash-index",
-            bodyHash: "body-index",
-            title: "Index",
-            precis: "Index precis",
-            updatedAt: new Date("2026-07-10T12:00:00.000Z"),
-            tags: [],
-          },
-          {
-            id: id.articleArchived,
-            vaultId: id.vaultAlpha,
-            topicId: id.topicArchived,
-            filePath: "archive/archived-essay.md",
-            fileHash: "hash-archived",
-            bodyHash: "body-archived",
-            title: "Archived Essay",
-            precis: "Archived precis",
-            updatedAt: new Date("2026-07-11T12:00:00.000Z"),
-            archived: true,
-            tags: ["archive"],
-          },
-          {
-            id: id.articleOtherVault,
-            vaultId: id.vaultBeta,
-            topicId: id.topicOtherVault,
-            filePath: "wiki/other-vault.md",
-            fileHash: "hash-other",
-            bodyHash: "body-other",
-            title: "Other Vault",
-            precis: "Other precis",
-            updatedAt: new Date("2026-07-09T13:00:00.000Z"),
-            tags: [],
-          },
-        ]))
-        .pipe(Effect.orDie);
-      yield* db.query((d) => d
-        .insert(sourceDocuments)
-        .values([
-          {
-            id: id.sourceBook,
-            vaultId: id.vaultAlpha,
-            filePath: "raw/books/capital.md",
-            fileHash: "source-hash-book",
-            bodyHash: "source-body-book",
-            sourceType: "book",
-            title: "Capital Volume",
-            author: "Karl Marx",
-            publishedDate: "1867",
-            url: "https://example.test/capital",
-            origin: "Marx Archive",
-            genre: "critique",
-            precis: "A critique of political economy",
-            tags: ["economics"],
-            derivedExtras: { tradition: "marxist" },
-            updatedAt: new Date("2026-07-09T11:00:00.000Z"),
-          },
-          {
-            id: id.sourceArticle,
-            vaultId: id.vaultAlpha,
-            filePath: "raw/articles/organization.md",
-            fileHash: "source-hash-article",
-            bodyHash: "source-body-article",
-            sourceType: "article",
-            title: "On Organization",
-            author: "V. I. Lenin",
-            genre: "essay",
-            tags: ["party"],
-            derivedExtras: {},
-            updatedAt: new Date("2026-07-09T09:00:00.000Z"),
-          },
-          {
-            id: id.sourceSpeech,
-            vaultId: id.vaultAlpha,
-            filePath: "raw/speeches/mass-strike.md",
-            fileHash: "source-hash-speech",
-            bodyHash: "source-body-speech",
-            sourceType: "speech",
-            precis: "Mentions Marx only in precis, not searchable fields",
-            author: "Rosa Luxemburg",
-            tags: [],
-            derivedExtras: {},
-            updatedAt: new Date("2026-07-09T08:00:00.000Z"),
-          },
-          {
-            id: id.sourceEncoded,
-            vaultId: id.vaultAlpha,
-            filePath: "raw/books/encoded title.md",
-            fileHash: "source-hash-encoded",
-            bodyHash: "source-body-encoded",
-            sourceType: "book",
-            title: "Encoded Title",
-            author: "Path Writer",
-            tags: [],
-            derivedExtras: {},
-            updatedAt: new Date("2026-07-09T06:00:00.000Z"),
-          },
-          {
-            id: id.sourceOtherVault,
-            vaultId: id.vaultBeta,
-            filePath: "raw/books/beta.md",
-            fileHash: "source-hash-beta",
-            bodyHash: "source-body-beta",
-            sourceType: "book",
-            title: "Beta Source",
-            author: "Other Author",
-            tags: [],
-            derivedExtras: {},
-            updatedAt: new Date("2026-07-09T07:00:00.000Z"),
-          },
-        ]))
-        .pipe(Effect.orDie);
-      yield* db.query((d) => d
-        .insert(topicRelated)
-        .values([
-          { topicId: id.topicAlpha, relatedTopicId: id.topicBeta, sharedIdeas: 3, jaccard: 0.5 },
-          { topicId: id.topicAlpha, relatedTopicId: id.topicGamma, sharedIdeas: 1, jaccard: 0.4 },
-          {
-            topicId: id.topicAlpha,
-            relatedTopicId: id.topicArchived,
-            sharedIdeas: 4,
-            jaccard: 0.9,
-          },
-        ]))
-        .pipe(Effect.orDie);
-      yield* db.query((d) => d
-        .insert(backlinks)
-        .values([
-          {
-            sourceArticleId: id.articleAlpha,
-            targetArticleId: id.articleBeta,
-          },
-          {
-            sourceArticleId: id.articleGamma,
-            targetArticleId: id.articleAlpha,
-          },
-          {
-            sourceArticleId: id.articleAlpha,
-            targetArticleId: id.articleArchived,
-          },
-          {
-            sourceArticleId: id.articleArchived,
-            targetArticleId: id.articleAlpha,
-          },
-        ]))
-        .pipe(Effect.orDie);
-      yield* db.query((d) => d
-        .insert(searchIndex)
-        .values(
-          Array.from({ length: 106 }, (_, offset) => {
-            const index = offset - 1;
-            return {
-              vaultId: id.vaultAlpha,
-              path: "raw/books/capital.md",
-              chunkIndex: index,
-              heading: index === -1 ? "Metadata" : index < 2 ? "Opening" : "Later",
-              body: index === -1 ? "Synthetic metadata row" : `Capital chunk ${index}`,
-              contentHash: `chunk-hash-${index}`,
-              tsv: sql`to_tsvector('english', ${index === -1 ? "Synthetic metadata row" : `Capital chunk ${index}`})`,
-            };
-          }),
-        ))
-        .pipe(Effect.orDie);
-      yield* db.query((d) => d
-        .insert(sessions)
-        .values([
-          {
-            id: id.sessionAliceOlder,
-            vaultId: id.vaultAlpha,
-            userId: id.alice,
-            query: "Earlier organizing question",
-            origin: null,
-            createdAt: new Date("2026-07-06T08:00:00.000Z"),
-            updatedAt: new Date("2026-07-06T08:05:00.000Z"),
-          },
-          {
-            id: id.sessionAliceMain,
-            vaultId: id.vaultAlpha,
-            userId: id.alice,
-            query: "How should study circles use source material?",
-            origin: {
-              kind: "document",
-              doc_path: "wiki/alpha-practice.md",
-              anchor: "alpha-anchor",
-              paragraph: "Alpha paragraph",
-              paragraph_index: 2,
+      yield* db
+        .query((d) =>
+          d.insert(users).values([
+            {
+              id: id.alice,
+              email: "alice@example.com",
+              createdAt: new Date("2026-07-01T00:00:00.000Z"),
             },
-            createdAt: new Date("2026-07-07T09:00:00.000Z"),
-            updatedAt: new Date("2026-07-07T09:45:00.000Z"),
-            idempotencyKey: "alice-main-key",
-          },
-          {
-            id: id.sessionAliceBtw,
-            vaultId: id.vaultAlpha,
+            {
+              id: id.bob,
+              email: "bob@example.com",
+              createdAt: new Date("2026-07-01T00:01:00.000Z"),
+            },
+            {
+              id: id.mallory,
+              email: "mallory@example.com",
+              createdAt: new Date("2026-07-01T00:02:00.000Z"),
+            },
+          ]),
+        )
+        .pipe(Effect.orDie);
+      yield* db
+        .query((d) =>
+          d.insert(vaults).values([
+            {
+              id: id.vaultAlpha,
+              name: "Alpha Vault",
+              ownerId: id.alice,
+              createdAt: new Date("2026-07-02T00:00:00.000Z"),
+            },
+            {
+              id: id.vaultBeta,
+              name: "Beta Vault",
+              ownerId: id.bob,
+              createdAt: new Date("2026-07-03T00:00:00.000Z"),
+            },
+          ]),
+        )
+        .pipe(Effect.orDie);
+      yield* db
+        .query((d) =>
+          d.insert(vaultMemberships).values([
+            {
+              id: uuid("00000000-0000-4000-8000-000000000701"),
+              vaultId: id.vaultAlpha,
+              userId: id.alice,
+              role: "OWNER",
+            },
+            {
+              id: uuid("00000000-0000-4000-8000-000000000702"),
+              vaultId: id.vaultAlpha,
+              userId: id.bob,
+              role: "EDITOR",
+            },
+            {
+              id: uuid("00000000-0000-4000-8000-000000000703"),
+              vaultId: id.vaultBeta,
+              userId: id.bob,
+              role: "OWNER",
+            },
+            {
+              id: uuid("00000000-0000-4000-8000-000000000704"),
+              vaultId: id.vaultBeta,
+              userId: id.alice,
+              role: "VIEWER",
+            },
+          ]),
+        )
+        .pipe(Effect.orDie);
+      yield* db
+        .query((d) =>
+          d.insert(apiKeys).values({
+            id: id.apiKeyAlice,
             userId: id.alice,
-            kind: "btw",
-            query: "Why this passage?",
-            origin: { kind: "answer", session_id: id.sessionAliceMain, exchange_id: EX_1, anchor: "concrete passage", paragraph_index: 0, paragraph: "Start with a concrete passage" },
-            createdAt: new Date("2026-07-07T09:20:00.000Z"),
-            updatedAt: new Date("2026-07-07T09:21:00.000Z"),
-          },
-          {
-            id: id.sessionBob,
+            keyHash: sha256Hex(aliceApiKey),
+            label: "read automation",
+            revoked: false,
+            createdAt: new Date("2026-07-04T00:00:00.000Z"),
+          }),
+        )
+        .pipe(Effect.orDie);
+      yield* db
+        .query((d) =>
+          d.insert(pipelineRuns).values({
+            id: id.runAlpha,
             vaultId: id.vaultAlpha,
-            userId: id.bob,
-            query: "What should editors review first?",
-            origin: { kind: "document", doc_path: "raw/books/capital.md", origin_scope: "vault", anchor: null, paragraph: null, paragraph_index: null },
-            createdAt: new Date("2026-07-08T10:00:00.000Z"),
-            updatedAt: new Date("2026-07-08T10:15:00.000Z"),
-            idempotencyKey: "bob-main-key",
-          },
-          {
-            id: id.sessionNoMarkdown,
-            kind: "btw",
-            vaultId: id.vaultAlpha,
-            userId: id.alice,
-            query: "Missing markdown sidecar",
-            origin: { kind: "document", doc_path: "refs/test-fixture.md", origin_scope: "vault", anchor: "missing-sidecar", paragraph: null, paragraph_index: null },
-            createdAt: new Date("2026-07-09T10:00:00.000Z"),
-            updatedAt: new Date("2026-07-09T10:00:00.000Z"),
-            idempotencyKey: "missing-sidecar-key",
-          },
-          {
-            id: id.sessionMalformed,
-            kind: "btw",
-            vaultId: id.vaultAlpha,
-            userId: id.alice,
-            query: "Malformed event handling",
-            origin: { kind: "document", doc_path: "refs/test-fixture.md", origin_scope: "vault", anchor: "malformed-events", paragraph: null, paragraph_index: null },
-            createdAt: new Date("2026-07-09T11:00:00.000Z"),
-            updatedAt: new Date("2026-07-09T11:04:00.000Z"),
-            idempotencyKey: "malformed-events-key",
-          },
-        ]))
+            trigger: "manual",
+            status: "completed",
+            currentPhase: "render",
+            phaseStatus: "completed",
+            progressSteps: [],
+            createdAt: new Date("2026-07-05T00:00:00.000Z"),
+            updatedAt: new Date("2026-07-05T01:00:00.000Z"),
+          }),
+        )
+        .pipe(Effect.orDie);
+      yield* db
+        .query((d) =>
+          d.insert(topics).values([
+            {
+              topicId: id.topicAlpha,
+              vaultId: id.vaultAlpha,
+              slug: "alpha-practice",
+              title: "alpha Practice",
+              description: "Alpha",
+            },
+            {
+              topicId: id.topicBeta,
+              vaultId: id.vaultAlpha,
+              slug: "beta-theory",
+              title: "Beta Theory",
+              description: "Beta",
+            },
+            {
+              topicId: id.topicGamma,
+              vaultId: id.vaultAlpha,
+              slug: "gamma-lines",
+              title: "gamma Lines",
+              description: "Gamma",
+            },
+            {
+              topicId: id.topicIndex,
+              vaultId: id.vaultAlpha,
+              slug: "_index",
+              title: "Index",
+              description: "Index",
+            },
+            {
+              topicId: id.topicArchived,
+              vaultId: id.vaultAlpha,
+              slug: "archived-essay",
+              title: "Archived Essay",
+              description: "Archived",
+              articleStatus: "archived",
+              supersededBy: id.topicBeta,
+            },
+            {
+              topicId: id.topicOtherVault,
+              vaultId: id.vaultBeta,
+              slug: "other-vault",
+              title: "Other Vault",
+              description: "Other",
+            },
+          ]),
+        )
+        .pipe(Effect.orDie);
+      yield* db
+        .query((d) =>
+          d.insert(wikiArticles).values([
+            {
+              id: id.articleAlpha,
+              vaultId: id.vaultAlpha,
+              topicId: id.topicAlpha,
+              filePath: "wiki/alpha-practice.md",
+              fileHash: "hash-alpha",
+              bodyHash: "body-alpha",
+              title: "alpha Practice",
+              precis: "Alpha precis",
+              updatedAt: new Date("2026-07-09T10:00:00.000Z"),
+              renderRunId: id.runAlpha,
+              tags: ["practice"],
+            },
+            {
+              id: id.articleBeta,
+              vaultId: id.vaultAlpha,
+              topicId: id.topicBeta,
+              filePath: "wiki/beta-theory.md",
+              fileHash: "hash-beta",
+              bodyHash: "body-beta",
+              title: "Beta Theory",
+              precis: "Beta precis",
+              updatedAt: new Date("2026-07-09T12:00:00.000Z"),
+              tags: ["theory"],
+            },
+            {
+              id: id.articleGamma,
+              vaultId: id.vaultAlpha,
+              topicId: id.topicGamma,
+              filePath: "wiki/gamma-lines.md",
+              fileHash: "hash-gamma",
+              bodyHash: "body-gamma",
+              title: "gamma Lines",
+              precis: "Gamma precis",
+              updatedAt: new Date("2026-07-08T12:00:00.000Z"),
+              renderRunId: id.runAlpha,
+              tags: ["lines"],
+            },
+            {
+              id: id.articleIndex,
+              vaultId: id.vaultAlpha,
+              topicId: id.topicIndex,
+              filePath: "wiki/_index.md",
+              fileHash: "hash-index",
+              bodyHash: "body-index",
+              title: "Index",
+              precis: "Index precis",
+              updatedAt: new Date("2026-07-10T12:00:00.000Z"),
+              tags: [],
+            },
+            {
+              id: id.articleArchived,
+              vaultId: id.vaultAlpha,
+              topicId: id.topicArchived,
+              filePath: "archive/archived-essay.md",
+              fileHash: "hash-archived",
+              bodyHash: "body-archived",
+              title: "Archived Essay",
+              precis: "Archived precis",
+              updatedAt: new Date("2026-07-11T12:00:00.000Z"),
+              archived: true,
+              tags: ["archive"],
+            },
+            {
+              id: id.articleOtherVault,
+              vaultId: id.vaultBeta,
+              topicId: id.topicOtherVault,
+              filePath: "wiki/other-vault.md",
+              fileHash: "hash-other",
+              bodyHash: "body-other",
+              title: "Other Vault",
+              precis: "Other precis",
+              updatedAt: new Date("2026-07-09T13:00:00.000Z"),
+              tags: [],
+            },
+          ]),
+        )
+        .pipe(Effect.orDie);
+      yield* db
+        .query((d) =>
+          d.insert(sourceDocuments).values([
+            {
+              id: id.sourceBook,
+              vaultId: id.vaultAlpha,
+              filePath: "raw/books/capital.md",
+              fileHash: "source-hash-book",
+              bodyHash: "source-body-book",
+              sourceType: "book",
+              title: "Capital Volume",
+              author: "Karl Marx",
+              publishedDate: "1867",
+              url: "https://example.test/capital",
+              origin: "Marx Archive",
+              genre: "critique",
+              precis: "A critique of political economy",
+              tags: ["economics"],
+              derivedExtras: { tradition: "marxist" },
+              updatedAt: new Date("2026-07-09T11:00:00.000Z"),
+            },
+            {
+              id: id.sourceArticle,
+              vaultId: id.vaultAlpha,
+              filePath: "raw/articles/organization.md",
+              fileHash: "source-hash-article",
+              bodyHash: "source-body-article",
+              sourceType: "article",
+              title: "On Organization",
+              author: "V. I. Lenin",
+              genre: "essay",
+              tags: ["party"],
+              derivedExtras: {},
+              updatedAt: new Date("2026-07-09T09:00:00.000Z"),
+            },
+            {
+              id: id.sourceSpeech,
+              vaultId: id.vaultAlpha,
+              filePath: "raw/speeches/mass-strike.md",
+              fileHash: "source-hash-speech",
+              bodyHash: "source-body-speech",
+              sourceType: "speech",
+              precis: "Mentions Marx only in precis, not searchable fields",
+              author: "Rosa Luxemburg",
+              tags: [],
+              derivedExtras: {},
+              updatedAt: new Date("2026-07-09T08:00:00.000Z"),
+            },
+            {
+              id: id.sourceEncoded,
+              vaultId: id.vaultAlpha,
+              filePath: "raw/books/encoded title.md",
+              fileHash: "source-hash-encoded",
+              bodyHash: "source-body-encoded",
+              sourceType: "book",
+              title: "Encoded Title",
+              author: "Path Writer",
+              tags: [],
+              derivedExtras: {},
+              updatedAt: new Date("2026-07-09T06:00:00.000Z"),
+            },
+            {
+              id: id.sourceOtherVault,
+              vaultId: id.vaultBeta,
+              filePath: "raw/books/beta.md",
+              fileHash: "source-hash-beta",
+              bodyHash: "source-body-beta",
+              sourceType: "book",
+              title: "Beta Source",
+              author: "Other Author",
+              tags: [],
+              derivedExtras: {},
+              updatedAt: new Date("2026-07-09T07:00:00.000Z"),
+            },
+          ]),
+        )
+        .pipe(Effect.orDie);
+      yield* db
+        .query((d) =>
+          d.insert(topicRelated).values([
+            { topicId: id.topicAlpha, relatedTopicId: id.topicBeta, sharedIdeas: 3, jaccard: 0.5 },
+            { topicId: id.topicAlpha, relatedTopicId: id.topicGamma, sharedIdeas: 1, jaccard: 0.4 },
+            {
+              topicId: id.topicAlpha,
+              relatedTopicId: id.topicArchived,
+              sharedIdeas: 4,
+              jaccard: 0.9,
+            },
+          ]),
+        )
+        .pipe(Effect.orDie);
+      yield* db
+        .query((d) =>
+          d.insert(backlinks).values([
+            {
+              sourceArticleId: id.articleAlpha,
+              targetArticleId: id.articleBeta,
+            },
+            {
+              sourceArticleId: id.articleGamma,
+              targetArticleId: id.articleAlpha,
+            },
+            {
+              sourceArticleId: id.articleAlpha,
+              targetArticleId: id.articleArchived,
+            },
+            {
+              sourceArticleId: id.articleArchived,
+              targetArticleId: id.articleAlpha,
+            },
+          ]),
+        )
+        .pipe(Effect.orDie);
+      yield* db
+        .query((d) =>
+          d.insert(searchIndex).values(
+            Array.from({ length: 106 }, (_, offset) => {
+              const index = offset - 1;
+              return {
+                vaultId: id.vaultAlpha,
+                path: "raw/books/capital.md",
+                chunkIndex: index,
+                heading: index === -1 ? "Metadata" : index < 2 ? "Opening" : "Later",
+                body: index === -1 ? "Synthetic metadata row" : `Capital chunk ${index}`,
+                contentHash: `chunk-hash-${index}`,
+                tsv: sql`to_tsvector('english', ${index === -1 ? "Synthetic metadata row" : `Capital chunk ${index}`})`,
+              };
+            }),
+          ),
+        )
+        .pipe(Effect.orDie);
+      yield* db
+        .query((d) =>
+          d.insert(sessions).values([
+            {
+              id: id.sessionAliceOlder,
+              vaultId: id.vaultAlpha,
+              userId: id.alice,
+              query: "Earlier organizing question",
+              origin: null,
+              createdAt: new Date("2026-07-06T08:00:00.000Z"),
+              updatedAt: new Date("2026-07-06T08:05:00.000Z"),
+            },
+            {
+              id: id.sessionAliceMain,
+              vaultId: id.vaultAlpha,
+              userId: id.alice,
+              query: "How should study circles use source material?",
+              origin: {
+                kind: "document",
+                doc_path: "wiki/alpha-practice.md",
+                anchor: "alpha-anchor",
+                paragraph: "Alpha paragraph",
+                paragraph_index: 2,
+              },
+              createdAt: new Date("2026-07-07T09:00:00.000Z"),
+              updatedAt: new Date("2026-07-07T09:45:00.000Z"),
+              idempotencyKey: "alice-main-key",
+            },
+            {
+              id: id.sessionAliceBtw,
+              vaultId: id.vaultAlpha,
+              userId: id.alice,
+              placement: "inline",
+              replyMode: "btw",
+              query: "Why this passage?",
+              origin: {
+                kind: "answer",
+                session_id: id.sessionAliceMain,
+                exchange_id: EX_1,
+                anchor: "concrete passage",
+                paragraph_index: 0,
+                paragraph: "Start with a concrete passage",
+              },
+              createdAt: new Date("2026-07-07T09:20:00.000Z"),
+              updatedAt: new Date("2026-07-07T09:21:00.000Z"),
+            },
+            {
+              id: id.sessionBob,
+              vaultId: id.vaultAlpha,
+              userId: id.bob,
+              query: "What should editors review first?",
+              origin: {
+                kind: "document",
+                doc_path: "raw/books/capital.md",
+                origin_scope: "vault",
+                anchor: null,
+                paragraph: null,
+                paragraph_index: null,
+              },
+              createdAt: new Date("2026-07-08T10:00:00.000Z"),
+              updatedAt: new Date("2026-07-08T10:15:00.000Z"),
+              idempotencyKey: "bob-main-key",
+            },
+            {
+              id: id.sessionNoMarkdown,
+              placement: "inline",
+              replyMode: "btw",
+              vaultId: id.vaultAlpha,
+              userId: id.alice,
+              query: "Missing markdown sidecar",
+              origin: {
+                kind: "document",
+                doc_path: "refs/test-fixture.md",
+                origin_scope: "vault",
+                anchor: "missing-sidecar",
+                paragraph: null,
+                paragraph_index: null,
+              },
+              createdAt: new Date("2026-07-09T10:00:00.000Z"),
+              updatedAt: new Date("2026-07-09T10:00:00.000Z"),
+              idempotencyKey: "missing-sidecar-key",
+            },
+            {
+              id: id.sessionMalformed,
+              placement: "inline",
+              replyMode: "btw",
+              vaultId: id.vaultAlpha,
+              userId: id.alice,
+              query: "Malformed event handling",
+              origin: {
+                kind: "document",
+                doc_path: "refs/test-fixture.md",
+                origin_scope: "vault",
+                anchor: "malformed-events",
+                paragraph: null,
+                paragraph_index: null,
+              },
+              createdAt: new Date("2026-07-09T11:00:00.000Z"),
+              updatedAt: new Date("2026-07-09T11:04:00.000Z"),
+              idempotencyKey: "malformed-events-key",
+            },
+          ]),
+        )
         .pipe(Effect.orDie);
     }),
   );
@@ -713,231 +778,145 @@ const seedFixtures = async (): Promise<Fixture> => {
     "raw/books/encoded title.md",
     "---\ntitle: Encoded Title\n---\nEncoded path body.",
   );
-  await writeVaultFile(
-    id.vaultAlpha,
-    `sessions/${id.sessionAliceOlder}.jsonl`,
-    jsonl([
+  await writeSessionFixture(id.vaultAlpha, `sessions/${id.sessionAliceOlder}.jsonl`, [
+    replyNode(
+      "00000000-0000-4000-8000-000000000111",
+      "00000000-0000-4000-8000-000000000211",
+      "Earlier organizing question",
+      "Earlier answer.",
+      "2026-07-06T08:05:00.000Z",
+    ),
+  ]);
+  await writeSessionFixture(id.vaultAlpha, `sessions/${id.sessionAliceMain}.jsonl`, [
+    replyNode(
+      "00000000-0000-4000-8000-000000000102",
+      EX_1,
+      "How should study circles use source material?",
+      "Start with a concrete passage, then ask what claim it supports.",
+      "2026-07-07T09:10:00.000Z",
       {
-        type: "meta",
-        id: id.sessionAliceOlder,
-        query: "Earlier organizing question",
-        ts: "2026-07-06T08:00:00.000Z",
-        user_id: id.alice,
-        origin: null,
+        sources: [
+          {
+            label: "Alpha Practice",
+            type: "article",
+            document_id: id.articleAlpha,
+            title: null,
+            scope: null,
+            path: null,
+            thinking: "Use the article as a shared reference point.",
+            ranges: [{ start: 0, end: 2 }],
+            full: false,
+          },
+          {
+            label: "Capital Volume",
+            type: "raw",
+            document_id: id.sourceBook,
+            title: null,
+            scope: null,
+            path: null,
+            thinking: "Raw source grounds the discussion.",
+            ranges: [{ start: 3, end: 4 }],
+            full: true,
+          },
+          {
+            label: "Search: pedagogy",
+            type: "search",
+            document_id: null,
+            title: null,
+            scope: null,
+            path: null,
+            thinking: null,
+          },
+          {
+            label: "Prior query",
+            type: "query",
+            document_id: null,
+            title: null,
+            scope: null,
+            path: null,
+            thinking: "Compare against previous framing.",
+          },
+          {
+            label: "Linked articles",
+            type: "links",
+            document_id: null,
+            title: null,
+            scope: null,
+            path: null,
+            thinking: "Trace adjacent topics.",
+          },
+        ],
       },
-      {
-        type: "exchange",
-        exId: "ex-old",
-        query: "Earlier organizing question",
-        thinking: [],
-        answer: "Earlier answer.",
-        ts: "2026-07-06T08:05:00.000Z",
-      },
-    ]),
-  );
-  await writeVaultFile(
-    id.vaultAlpha,
-    `sessions/${id.sessionAliceMain}.jsonl`,
-    jsonl([
-      {
-        type: "meta",
-        id: id.sessionAliceMain,
-        query: "Stale pre-reload question",
-        ts: "2026-07-01T08:00:00.000Z",
-        user_id: id.alice,
-        origin: null,
-      },
-      replyNode(
-        "00000000-0000-4000-8000-000000000101",
-        EX_STALE,
-        "Stale pre-reload question",
-        "This belongs to an older client-reused id.",
-        "2026-07-01T08:01:00.000Z",
-      ),
-      {
-        type: "meta",
-        id: id.sessionAliceMain,
-        query: "How should study circles use source material?",
-        ts: "2026-07-07T09:00:00.000Z",
-        user_id: id.alice,
-        origin: {
-          kind: "document",
-          doc_path: "wiki/alpha-practice.md",
-          anchor: "alpha-anchor",
-          paragraph: "Alpha paragraph",
-          paragraph_index: 2,
-        },
-      },
-      replyNode(
-        "00000000-0000-4000-8000-000000000102",
-        EX_1,
-        "How should study circles use source material?",
-        "Start with a concrete passage, then ask what claim it supports.",
-        "2026-07-07T09:10:00.000Z",
-        {
-          sources: [
-            {
-              label: "Alpha Practice",
-              type: "article",
-              document_id: id.articleAlpha,
-              title: null,
-              scope: null,
-              path: null,
-              thinking: "Use the article as a shared reference point.",
-              ranges: [{ start: 0, end: 2 }],
-              full: false,
-            },
-            {
-              label: "Capital Volume",
-              type: "raw",
-              document_id: id.sourceBook,
-              title: null,
-              scope: null,
-              path: null,
-              thinking: "Raw source grounds the discussion.",
-              ranges: [{ start: 3, end: 4 }],
-              full: true,
-            },
-            {
-              label: "Search: pedagogy",
-              type: "search",
-              document_id: null,
-              title: null,
-              scope: null,
-              path: null,
-              thinking: null,
-            },
-            {
-              label: "Prior query",
-              type: "query",
-              document_id: null,
-              title: null,
-              scope: null,
-              path: null,
-              thinking: "Compare against previous framing.",
-            },
-            {
-              label: "Linked articles",
-              type: "links",
-              document_id: null,
-              title: null,
-              scope: null,
-              path: null,
-              thinking: "Trace adjacent topics.",
-            },
-          ],
-        },
-      ),
-      replyNode(
-        "00000000-0000-4000-8000-000000000105",
-        EX_2,
-        "What should the facilitator write down?",
-        "Record the passage, the claim, and unresolved questions.",
-        "2026-07-07T09:45:00.000Z",
-      ),
-    ]),
-  );
+    ),
+    replyNode(
+      "00000000-0000-4000-8000-000000000105",
+      EX_2,
+      "What should the facilitator write down?",
+      "Record the passage, the claim, and unresolved questions.",
+      "2026-07-07T09:45:00.000Z",
+      { parentReplyId: "00000000-0000-4000-8000-000000000102" },
+    ),
+  ]);
   await writeVaultFile(
     id.vaultAlpha,
     `sessions/${id.sessionAliceMain}.md`,
     "# Stored Session Markdown\n\nThis came from the sidecar.\n",
   );
-  await writeVaultFile(id.vaultAlpha, `sessions/${id.sessionAliceBtw}.jsonl`, jsonl([
-    {
-      type: "meta", id: id.sessionAliceBtw, user_id: id.alice, query: "Why this passage?", ts: "2026-07-07T09:20:00.000Z",
-      origin: { kind: "answer", session_id: id.sessionAliceMain, exchange_id: EX_1, anchor: "concrete passage", paragraph_index: 0, paragraph: "Start with a concrete passage" },
-      context: { session_id: id.sessionAliceMain, reply_id: "00000000-0000-4000-8000-000000000102" },
-    },
-    replyNode("00000000-0000-4000-8000-000000000103", EX_1_BTW_1, "Why this passage?", "It gives the group something specific to test.", "2026-07-07T09:20:00.000Z"),
-    replyNode("00000000-0000-4000-8000-000000000104", EX_1_BTW_2, "How do we avoid over-reading it?", "Keep claims proportional to the evidence.", "2026-07-07T09:21:00.000Z", { parentReplyId: "00000000-0000-4000-8000-000000000103" }),
-  ]));
-  await writeVaultFile(
+  await writeSessionFixture(
     id.vaultAlpha,
-    `sessions/${id.sessionBob}.jsonl`,
-    jsonl([
-      {
-        type: "meta",
-        id: id.sessionBob,
-        query: "What should editors review first?",
-        ts: "2026-07-08T10:00:00.000Z",
-        user_id: id.bob,
-        origin: { kind: "document", doc_path: "raw/books/capital.md", origin_scope: "vault", anchor: null, paragraph: null, paragraph_index: null },
-      },
-      {
-        type: "exchange",
-        exId: "ex-bob",
-        query: "What should editors review first?",
-        thinking: [],
-        answer: "Start with sources that already have provenance.",
-        ts: "2026-07-08T10:15:00.000Z",
-      },
-    ]),
-  );
-  await writeVaultFile(
-    id.vaultAlpha,
-    `sessions/${id.sessionNoMarkdown}.jsonl`,
-    jsonl([
-      {
-        type: "meta",
-        id: id.sessionNoMarkdown,
-        query: "Missing markdown sidecar",
-        ts: "2026-07-09T10:00:00.000Z",
-        user_id: id.alice,
-        origin: null,
-      },
-    ]),
-  );
-  await writeVaultFile(
-    id.vaultAlpha,
-    `sessions/${id.sessionMalformed}.jsonl`,
-    `${jsonl([
-      {
-        type: "meta",
-        id: id.sessionMalformed,
-        query: "Malformed event handling",
-        ts: "2026-07-09T11:00:00.000Z",
-        user_id: id.alice,
-        origin: null,
-      },
+    `sessions/${id.sessionAliceBtw}.jsonl`,
+    [
       replyNode(
-        "00000000-0000-4000-8000-000000000201",
-        EX_GOOD,
-        "Malformed event handling",
-        "The first event is valid.",
-        "2026-07-09T11:01:00.000Z",
+        "00000000-0000-4000-8000-000000000103",
+        EX_1_BTW_1,
+        "Why this passage?",
+        "It gives the group something specific to test.",
+        "2026-07-07T09:20:00.000Z",
       ),
-      { type: "unknown", ts: "2026-07-09T11:02:00.000Z" },
-      {
-        type: "reply",
-        reply_id: "00000000-0000-4000-8000-000000000202",
-        parent_reply_id: null,
-        question: "Missing exId should be skipped.",
-        status: "completed",
-        messages: [
-          { role: "user", content: "Missing exId should be skipped." },
-          { role: "assistant", content: "This event is invalid." },
-        ],
-        sources: [],
-        answer: "This event is invalid.",
-        ts: "2026-07-09T11:03:00.000Z",
-      },
       replyNode(
-        "00000000-0000-4000-8000-000000000203",
-        EX_AFTER_INVALID,
-        "Does parsing continue after invalid typed events?",
-        "Yes, invalid typed events are skipped.",
-        "2026-07-09T11:04:00.000Z",
+        "00000000-0000-4000-8000-000000000104",
+        EX_1_BTW_2,
+        "How do we avoid over-reading it?",
+        "Keep claims proportional to the evidence.",
+        "2026-07-07T09:21:00.000Z",
+        { parentReplyId: "00000000-0000-4000-8000-000000000103" },
       ),
-    ])}\n{not valid json}\n${JSON.stringify(
-      replyNode(
-        "00000000-0000-4000-8000-000000000204",
-        EX_AFTER_BAD_JSON,
-        "This tail is truncated.",
-        "This must not appear.",
-        "2026-07-09T11:05:00.000Z",
-      ),
-    )}\n`,
+    ],
+    { session_id: id.sessionAliceMain, reply_id: uuid("00000000-0000-4000-8000-000000000102") },
   );
+  await writeSessionFixture(id.vaultAlpha, `sessions/${id.sessionBob}.jsonl`, [
+    replyNode(
+      "00000000-0000-4000-8000-000000000112",
+      "00000000-0000-4000-8000-000000000212",
+      "What should editors review first?",
+      "Start with sources that already have provenance.",
+      "2026-07-08T10:15:00.000Z",
+    ),
+  ]);
+  await writeSessionFixture(id.vaultAlpha, `sessions/${id.sessionNoMarkdown}.jsonl`, [
+    replyNode(
+      "00000000-0000-4000-8000-000000000113",
+      "00000000-0000-4000-8000-000000000213",
+      "Missing markdown sidecar",
+      "Derived without a sidecar.",
+      "2026-07-09T10:00:00.000Z",
+    ),
+  ]);
+  await writeSessionFixture(id.vaultAlpha, `sessions/${id.sessionMalformed}.jsonl`, [
+    replyNode(
+      "00000000-0000-4000-8000-000000000201",
+      EX_GOOD,
+      "Malformed event handling",
+      "The first event is valid.",
+      "2026-07-09T11:01:00.000Z",
+    ),
+  ]);
+  const malformedPath = `sessions/${id.sessionMalformed}.jsonl`;
+  const prefix = await readFile(
+    join(currentState().storageRoot, "vaults", id.vaultAlpha, malformedPath),
+    "utf8",
+  );
+  await writeVaultFile(id.vaultAlpha, malformedPath, `${prefix}{not valid json}\n`);
 
   return {
     aliceToken: await issueToken(id.alice),
@@ -1009,6 +988,7 @@ const asArray = (value: unknown) => {
 
 describe("read-only HTTP integration", () => {
   beforeAll(async () => {
+    await runHistoryDatabase(Effect.void);
     state = await buildTestState();
   });
 
@@ -1430,7 +1410,11 @@ describe("read-only HTTP integration", () => {
       detail: "Document on disk lacks a registry row: wiki/orphan-on-disk.md",
     });
 
-    const invalid = await api("GET", `/vaults/${id.vaultAlpha}/doc?path=wiki/%5Cbad.md`, aliceToken);
+    const invalid = await api(
+      "GET",
+      `/vaults/${id.vaultAlpha}/doc?path=wiki/%5Cbad.md`,
+      aliceToken,
+    );
     expect(invalid.status).toBe(400);
 
     const nonMember = await api(
@@ -1440,7 +1424,10 @@ describe("read-only HTTP integration", () => {
     );
     expect(nonMember.status).toBe(403);
 
-    const unauthenticated = await api("GET", `/vaults/${id.vaultAlpha}/doc?path=wiki/alpha-practice.md`);
+    const unauthenticated = await api(
+      "GET",
+      `/vaults/${id.vaultAlpha}/doc?path=wiki/alpha-practice.md`,
+    );
     expect(unauthenticated.status).toBe(401);
   });
 
@@ -1622,7 +1609,10 @@ describe("read-only HTTP integration", () => {
     const page = asPage(listed.body);
     const sessions = itemRecords(page);
     expect(page.pagination).toEqual({ limit: 50, offset: 0, total: 2 });
-    expect(sessions.map((session) => session.id)).toEqual([id.sessionAliceMain, id.sessionAliceOlder]);
+    expect(sessions.map((session) => session.id)).toEqual([
+      id.sessionAliceMain,
+      id.sessionAliceOlder,
+    ]);
     expect(sessions[1]).toMatchObject({
       id: id.sessionAliceOlder,
       query: "Earlier organizing question",
@@ -1638,7 +1628,9 @@ describe("read-only HTTP integration", () => {
       aliceToken,
     );
     expect(secondPage.status).toBe(200);
-    expect(itemRecords(asPage(secondPage.body)).map((session) => session.id)).toEqual([id.sessionAliceOlder]);
+    expect(itemRecords(asPage(secondPage.body)).map((session) => session.id)).toEqual([
+      id.sessionAliceOlder,
+    ]);
 
     const zero = await api("GET", `/vaults/${id.vaultAlpha}/sessions?limit=0`, aliceToken);
     expect(zero.status).toBe(200);
@@ -1682,140 +1674,93 @@ describe("read-only HTTP integration", () => {
     await runDb(
       Effect.gen(function* () {
         const db = yield* Database;
-        yield* db.query((d) => d
-          .insert(sessions)
-          .values([
-            {
-              id: sessionId("s-origin-anchored"),
-              kind: "btw",
-              vaultId: id.vaultAlpha,
-              userId: id.alice,
-              query: "What does the anchored claim mean?",
-              origin: {
-                kind: "document",
-                doc_path: docPath,
-                origin_scope: "personal",
-                anchor: "anchored claim",
-                paragraph: "The anchored paragraph.",
-                paragraph_index: 1,
+        yield* db
+          .query((d) =>
+            d.insert(sessions).values([
+              {
+                id: sessionId("s-origin-anchored"),
+                placement: "inline",
+                replyMode: "btw",
+                vaultId: id.vaultAlpha,
+                userId: id.alice,
+                query: "What does the anchored claim mean?",
+                origin: {
+                  kind: "document",
+                  doc_path: docPath,
+                  origin_scope: "personal",
+                  anchor: "anchored claim",
+                  paragraph: "The anchored paragraph.",
+                  paragraph_index: 1,
+                },
+                createdAt: new Date("2026-07-10T08:00:00.000Z"),
+                updatedAt: new Date("2026-07-10T08:10:00.000Z"),
               },
-              createdAt: new Date("2026-07-10T08:00:00.000Z"),
-              updatedAt: new Date("2026-07-10T08:10:00.000Z"),
-            },
-            {
-              id: sessionId("s-origin-plain"),
-              vaultId: id.vaultAlpha,
-              userId: id.alice,
-              query: "Doc-initiated conversation",
-              origin: {
-                kind: "document",
-                doc_path: docPath,
-                origin_scope: "personal",
-                anchor: null,
-                paragraph: null,
-                paragraph_index: null,
+              {
+                id: sessionId("s-origin-plain"),
+                vaultId: id.vaultAlpha,
+                userId: id.alice,
+                query: "Doc-initiated conversation",
+                origin: {
+                  kind: "document",
+                  doc_path: docPath,
+                  origin_scope: "personal",
+                  anchor: null,
+                  paragraph: null,
+                  paragraph_index: null,
+                },
+                createdAt: new Date("2026-07-10T09:00:00.000Z"),
+                updatedAt: new Date("2026-07-10T09:05:00.000Z"),
               },
-              createdAt: new Date("2026-07-10T09:00:00.000Z"),
-              updatedAt: new Date("2026-07-10T09:05:00.000Z"),
-            },
-            {
-              id: sessionId("s-origin-bob"),
-              kind: "btw",
-              vaultId: id.vaultAlpha,
-              userId: id.bob,
-              query: "Bob's anchored thread",
-              origin: {
-                kind: "document",
-                doc_path: docPath,
-                origin_scope: "personal",
-                anchor: "bob claim",
-                paragraph: null,
-                paragraph_index: null,
+              {
+                id: sessionId("s-origin-bob"),
+                placement: "inline",
+                replyMode: "btw",
+                vaultId: id.vaultAlpha,
+                userId: id.bob,
+                query: "Bob's anchored thread",
+                origin: {
+                  kind: "document",
+                  doc_path: docPath,
+                  origin_scope: "personal",
+                  anchor: "bob claim",
+                  paragraph: null,
+                  paragraph_index: null,
+                },
+                createdAt: new Date("2026-07-10T10:00:00.000Z"),
+                updatedAt: new Date("2026-07-10T10:05:00.000Z"),
               },
-              createdAt: new Date("2026-07-10T10:00:00.000Z"),
-              updatedAt: new Date("2026-07-10T10:05:00.000Z"),
-            },
-          ]))
+            ]),
+          )
           .pipe(Effect.orDie);
       }),
     );
-    await writeVaultFile(
-      id.vaultAlpha,
-      "sessions/s-origin-anchored.jsonl",
-      jsonl([
-        {
-          type: "meta",
-          id: sessionId("s-origin-anchored"),
-          query: "What does the anchored claim mean?",
-          ts: "2026-07-10T08:00:00.000Z",
-          user_id: id.alice,
-          origin: {
-            kind: "document",
-            doc_path: docPath,
-            origin_scope: "personal",
-            anchor: "anchored claim",
-            paragraph: "The anchored paragraph.",
-            paragraph_index: 1,
-          },
-        },
-        replyNode(
-          "00000000-0000-4000-8000-000000000301",
-          EX_ORIGIN_A,
-          "What does the anchored claim mean?",
-          "It anchors the discussion.",
-          "2026-07-10T08:10:00.000Z",
-        ),
-      ]),
-    );
-    await writeVaultFile(
-      id.vaultAlpha,
-      "sessions/s-origin-plain.jsonl",
-      jsonl([
-        {
-          type: "meta",
-          id: sessionId("s-origin-plain"),
-          query: "Doc-initiated conversation",
-          ts: "2026-07-10T09:00:00.000Z",
-          user_id: id.alice,
-          origin: {
-            kind: "document",
-            doc_path: docPath,
-            origin_scope: "personal",
-            anchor: null,
-            paragraph: null,
-            paragraph_index: null,
-          },
-        },
-        replyNode(
-          "00000000-0000-4000-8000-000000000302",
-          EX_ORIGIN_P,
-          "Doc-initiated conversation",
-          "Plain conversation answer.",
-          "2026-07-10T09:05:00.000Z",
-        ),
-      ]),
-    );
-    await writeVaultFile(
-      id.vaultAlpha,
-      "sessions/s-origin-bob.jsonl",
-      jsonl([
-        {
-          type: "meta",
-          id: sessionId("s-origin-bob"),
-          query: "Bob's anchored thread",
-          ts: "2026-07-10T10:00:00.000Z",
-          user_id: id.bob,
-          origin: {
-            kind: "document",
-            doc_path: docPath,
-            origin_scope: "personal",
-            anchor: "bob claim",
-            paragraph: null,
-            paragraph_index: null,
-          },
-        },
-      ]),
-    );
+    await writeSessionFixture(id.vaultAlpha, "sessions/s-origin-anchored.jsonl", [
+      replyNode(
+        "00000000-0000-4000-8000-000000000301",
+        EX_ORIGIN_A,
+        "What does the anchored claim mean?",
+        "It anchors the discussion.",
+        "2026-07-10T08:10:00.000Z",
+      ),
+    ]);
+    await writeSessionFixture(id.vaultAlpha, "sessions/s-origin-plain.jsonl", [
+      replyNode(
+        "00000000-0000-4000-8000-000000000302",
+        EX_ORIGIN_P,
+        "Doc-initiated conversation",
+        "Plain conversation answer.",
+        "2026-07-10T09:05:00.000Z",
+      ),
+    ]);
+    await writeSessionFixture(id.vaultAlpha, "sessions/s-origin-bob.jsonl", [
+      replyNode(
+        "00000000-0000-4000-8000-000000000303",
+        "00000000-0000-4000-8000-000000000304",
+        "Bob's anchored thread",
+        "Private to Bob.",
+        "2026-07-10T10:05:00.000Z",
+      ),
+    ]);
 
     // The main list keeps unanchored origin sessions but drops anchored threads.
     const listed = await api("GET", `/vaults/${id.vaultAlpha}/sessions`, aliceToken);
@@ -1868,9 +1813,9 @@ describe("read-only HTTP integration", () => {
       bobToken,
     );
     expect(bobOrigin.status).toBe(200);
-    expect(
-      asArray(bobOrigin.body).map((detail) => asRecord(asRecord(detail).session).id),
-    ).toEqual(["s-origin-bob"]);
+    expect(asArray(bobOrigin.body).map((detail) => asRecord(asRecord(detail).session).id)).toEqual([
+      "s-origin-bob",
+    ]);
 
     const otherPath = await api(
       "GET",
@@ -1896,12 +1841,35 @@ describe("read-only HTTP integration", () => {
     expect((await api("POST", `${path}/continue`, bobToken)).status).toBe(404);
     expect((await api("POST", `${path}/continue`, malloryToken)).status).toBe(403);
     expect((await api("POST", `${path}/continue`)).status).toBe(401);
-    expect((await api("POST", `${path}/continue`, aliceToken)).status).toBe(200);
-    expect((await api("POST", `${path}/continue`, aliceToken)).status).toBe(200);
+    const historyPath = join(
+      currentState().storageRoot,
+      "vaults",
+      id.vaultAlpha,
+      "sessions",
+      `${id.sessionAliceBtw}.jsonl`,
+    );
+    const historyBefore = await readFile(historyPath);
+    const continued = await Promise.all([
+      api("POST", `${path}/continue`, aliceToken),
+      api("POST", `${path}/continue`, aliceToken),
+    ]);
+    expect(continued.map((response) => response.status)).toEqual([200, 200]);
+    expect(await readFile(historyPath)).toEqual(historyBefore);
+    const metadata = await runDb(
+      Effect.gen(function* () {
+        const db = yield* Database;
+        return yield* db.query((d) =>
+          d.select().from(sessions).where(eq(sessions.id, id.sessionAliceBtw)),
+        );
+      }),
+    );
+    expect(metadata[0]).toMatchObject({ placement: "standalone", replyMode: "query", revision: 1 });
     const after = await api("GET", path, aliceToken);
     expect(after.body).toEqual({ ...asRecord(before.body), kind: "session" });
     const listed = await api("GET", `/vaults/${id.vaultAlpha}/sessions`, aliceToken);
-    expect(asArray(asRecord(listed.body).items).map((item) => asRecord(item).id)).toContain(id.sessionAliceBtw);
+    expect(asArray(asRecord(listed.body).items).map((item) => asRecord(item).id)).toContain(
+      id.sessionAliceBtw,
+    );
   });
 
   it("rejects markdown reads of another member's session", async () => {
@@ -1958,8 +1926,16 @@ describe("read-only HTTP integration", () => {
     });
     const threads = asArray(body.threads).map(asRecord);
     expect(threads).toHaveLength(1);
-    expect(threads[0]?.session).toMatchObject({ id: id.sessionAliceBtw, kind: "btw", origin: { kind: "answer", exchange_id: EX_1, anchor: "concrete passage" } });
-    expect(asArray(threads[0]?.events).map(asRecord).filter((event) => event.type === "exchange")).toHaveLength(2);
+    expect(threads[0]?.session).toMatchObject({
+      id: id.sessionAliceBtw,
+      kind: "btw",
+      origin: { kind: "answer", exchange_id: EX_1, anchor: "concrete passage" },
+    });
+    expect(
+      asArray(threads[0]?.events)
+        .map(asRecord)
+        .filter((event) => event.type === "exchange"),
+    ).toHaveLength(2);
 
     // Sessions are personal: a vault member cannot read another member's session.
     const memberReadsOwnerSession = await api(
@@ -2007,21 +1983,17 @@ describe("read-only HTTP integration", () => {
     expect(unauthenticated.status).toBe(401);
   });
 
-  it("skips invalid typed session events and truncates at malformed JSON", async () => {
+  it("fails closed on malformed history instead of returning a salvaged prefix", async () => {
     const { aliceToken } = currentFixture();
     const replay = await api(
       "GET",
       `/vaults/${id.vaultAlpha}/sessions/${id.sessionMalformed}`,
       aliceToken,
     );
-    expect(replay.status).toBe(200);
-    const events = asArray(asRecord(replay.body).events).map(asRecord);
-    expect(events.map((event) => event.type)).toEqual(["meta", "exchange", "exchange"]);
-    expect(events.map((event) => event.exId).filter(Boolean)).toEqual([
-      EX_GOOD,
-      EX_AFTER_INVALID,
-    ]);
-    expect(events.map((event) => event.exId).filter(Boolean)).not.toContain(EX_AFTER_BAD_JSON);
+    expect(replay.status).toBe(503);
+    expect(replay.body).toMatchObject({
+      detail: "Conversation history is unavailable; no content has been discarded",
+    });
 
     await writeVaultFile(id.vaultAlpha, "sessions/s-empty.jsonl", "");
     const emptyReplay = await api("GET", `/vaults/${id.vaultAlpha}/sessions/s-empty`, aliceToken);
@@ -2037,7 +2009,7 @@ describe("read-only HTTP integration", () => {
     expect(crossVault.body).toMatchObject({ detail: "Session not found" });
   });
 
-  it("serves pre-rendered session markdown with decided 404 for missing sidecars", async () => {
+  it("derives Markdown from history, ignoring edited or missing sidecars", async () => {
     const { aliceToken, malloryToken } = currentFixture();
     const response = await rawApi(
       "GET",
@@ -2046,17 +2018,18 @@ describe("read-only HTTP integration", () => {
     );
     expect(response.status).toBe(200);
     expect(response.headers.get("content-type")).toContain("text/markdown");
-    expect(await response.text()).toBe(
-      "# Stored Session Markdown\n\nThis came from the sidecar.\n",
-    );
+    const markdown = await response.text();
+    expect(markdown).toContain("# How should study circles use source material?");
+    expect(markdown).toContain("Record the passage, the claim, and unresolved questions.");
+    expect(markdown).not.toContain("This came from the sidecar.");
 
-    const missingSidecar = await api(
+    const missingSidecar = await rawApi(
       "GET",
       `/vaults/${id.vaultAlpha}/sessions/${id.sessionNoMarkdown}/markdown`,
       aliceToken,
     );
-    expect(missingSidecar.status).toBe(404);
-    expect(missingSidecar.body).toMatchObject({ detail: "Session markdown not found" });
+    expect(missingSidecar.status).toBe(200);
+    expect(await missingSidecar.text()).toContain("Derived without a sidecar.");
 
     const nonMember = await api(
       "GET",

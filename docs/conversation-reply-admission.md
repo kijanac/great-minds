@@ -2,15 +2,16 @@
 
 This is the native admission component of Stage 2B.2. It works with the
 [history store](conversation-history-storage.md) and
-[settlement coordinator](conversation-reply-settlement.md), but is **not yet
-connected to the live reply workflow**. It does not switch the running application
-to the new history format.
+[settlement coordinator](conversation-reply-settlement.md). The
+[workflow integration](conversation-workflow-integration.md) now connects it to
+the application's create/retry, preparation, dispatch, and reconciliation paths.
+This describes the repository implementation, not a deployed production cutover.
 
 **Do not deploy this migration independently of the coordinated writer cutover.**
-The existing live acceptance path still writes legacy history before inserting its
-reply row. Adding the one-live-reply constraint does not make that old path safe:
-it must be replaced, not left to discover conflicts after writing. Existing live
-operations must also be inventoried and resolved before installing the unique
+The previous acceptance path wrote legacy history before inserting its reply row.
+Adding the one-live-reply constraint does not make an old process safe: old writers
+must be stopped and fenced, not left to discover conflicts after writing. Existing
+live operations must also be inventoried and resolved before installing the unique
 index. The migration deliberately fails rather than choosing which duplicate
 operation to discard.
 
@@ -76,14 +77,13 @@ A partial unique index on `(vault_id, session_id)` prevents multiple
 provides the normal conflict path; the index is the database backstop. Separate
 conversations can reserve concurrently.
 
-Mode is frozen while holding that same session lock. This component currently
-reads the existing application default from `sessions.kind`; it does **not**
-infer historical generation mode from it. The planned replacement with separate
-placement, reply-default, and revision columns remains outstanding. The existing
-continue update takes the same PostgreSQL row lock, so a later continue cannot
-change an already reserved mode. Client `mode` remains in the old command shape
-for now but does not override the session default. Removing that misleading
-request field belongs to the coordinated API cutover.
+Mode is frozen from `sessions.replyMode` while holding that same session lock.
+Placement, future reply default, and revision now have separate app-state columns;
+none is used to infer historical generation provenance. Continue takes the same
+PostgreSQL row lock and atomically changes placement/default, so a later continue
+cannot change an already reserved mode. The public create command no longer
+accepts a `mode` field in its declared contract. Preparation uses the saved
+accepted mode, while explicit retry chooses the default at its new acceptance.
 
 ## Context and retry selection
 
@@ -139,9 +139,9 @@ The recovery obligations are deliberately small:
 | Admission DB acknowledgement is lost | Reply already `running` | No repeated transition/version increment |
 
 A stop flag already committed on an admitting row survives admission. Settlement
-will not freeze a result until admission is confirmed. Wiring the actual stop,
-dispatch, producer, and reconciliation paths to these transitions is still
-required.
+will not freeze a result until admission is confirmed. The workflow now uses
+these transitions for stop, dispatch, producer fencing, and reconciliation; see
+the integration guide for the tested boundaries and outstanding release gates.
 
 ## Verification and remaining integration
 
@@ -157,7 +157,7 @@ disposable database name, and server-side purpose marker before mutation. The
 runner provisions and tears down its own PostgreSQL/pgvector project and disables
 live providers.
 
-Verification checkpoint: **210 tests passed across 12 files**, including **51
+Admission component checkpoint (`77b417e`): **210 tests passed across 12 files**, including **51
 admission cases**, 34 settlement cases, and 125 history/storage/existing session
 regressions. The runner applied the staged migrations only to its disposable DB
 and removed its container, network, and volumes after the run. Root type checking
@@ -176,19 +176,13 @@ disposable containers and networks were removed.
 The admission suite exercises real PostgreSQL transactions and local conditional
 history with injected storage/DB failures and controlled concurrency. It checks
 mode ordering with real session locks, not sleeps. These are component tests, not
-proof that the live workflow, provider invocation counts, clients, or recovery
-scheduler have been converted.
+proof by themselves that workflow wiring or process recovery works. Subsequent
+[integration evidence](conversation-workflow-integration.md#tooling-and-verification)
+covers native readers/writers, mode ordering, provider/tool invocation counts,
+private disclosure, and actual process death.
 
-Remaining Stage 2B.2 work includes:
-
-1. Separate placement/default/revision app state and the coordinated command shape.
-2. Replace live acceptance and dispatch with admission-before-generation.
-3. Route every live terminal outcome through the settlement coordinator.
-4. Reconcile unadmitted and settling obligations independently of workflow liveness.
-5. Fence actual progress/stop/generation producers and test workflow crash windows
-   with explicit provider/tool invocation counts.
-
-Authorized snapshots, private SSE ownership, frontend hydration, explicit public
-projections, and offline conversion/cutover remain later parts of the wider
+The full authorized snapshot/active overlay, typed unavailable states,
+deterministic offline conversion, and coordinated deployment rehearsal remain
+release work under the wider
 [contract](future-ideas/conversation-history-contract-and-migration.md). No
-production data or migration has been changed by this component work.
+production data or migration has been changed by this implementation work.

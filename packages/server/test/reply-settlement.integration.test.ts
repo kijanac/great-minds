@@ -10,7 +10,7 @@ import {
 } from "../src/conversation-history/settlement.ts";
 import type { HistoryStoreShape } from "../src/conversation-history/store.ts";
 import { ObjectVersionConflict, storageBackendError } from "../src/storage/object-store.ts";
-import { attempt, timestamp, uuid } from "./fixtures/conversation-history.ts";
+import { attempt, settlement, timestamp, uuid } from "./fixtures/conversation-history.ts";
 import { failure } from "./fixtures/history-storage.ts";
 import { completion, withSettlement } from "./fixtures/reply-settlement.ts";
 
@@ -73,6 +73,125 @@ describe("durable reply settlement", () => {
         }),
       ),
   );
+
+  it.each(["completed", "stopped", "failed"] as const)(
+    "restores recorded %s without overwriting history or honoring a later stop",
+    (status) =>
+      withSettlement((f) =>
+        Effect.gen(function* () {
+          yield* f.finalizer.begin(
+            f.replyId,
+            status === "completed" ? completion() : interruption(status),
+          );
+          yield* f.finalizer.publish(f.replyId);
+          const original = yield* f.reply();
+          const bytes = yield* f.objects.getVersioned(f.key);
+          yield* f.db.query((d) =>
+            d
+              .update(replies)
+              .set({
+                status: "running",
+                answer: "Stale projection",
+                sources: [],
+                stopRequested: true,
+              })
+              .where(eq(replies.id, f.replyId)),
+          );
+          yield* f.finalizer.restoreRecorded(f.replyId);
+          const restored = yield* f.reply();
+          expect(restored).toMatchObject({
+            status,
+            answer: original.answer,
+            sources: original.sources,
+            error: original.error,
+            settlement: null,
+            activeGenerationStep: null,
+            version: original.version + 1,
+          });
+          yield* f.finalizer.restoreRecorded(f.replyId);
+          expect(yield* f.reply()).toEqual(restored);
+          expect(yield* f.objects.getVersioned(f.key)).toEqual(bytes);
+        }),
+      ),
+  );
+
+  it("acknowledges an already-recorded terminal result rather than freezing another result", () =>
+    withSettlement((f) =>
+      Effect.gen(function* () {
+        const payload = settlement({ reply_id: f.replyId });
+        const saved = yield* f.histories.commit(f.address, [payload], f.admission.history.revision);
+        yield* f.finalizer.restoreRecorded(f.replyId);
+        expect(yield* f.reply()).toMatchObject({
+          status: "completed",
+          answer: payload.answer,
+          version: 1,
+        });
+        expect(yield* f.session()).toMatchObject({
+          historySeq: saved.history.revision.last_seq,
+          historySha256: saved.history.revision.sha256,
+        });
+        expect(yield* f.finalizer.begin(f.replyId, interruption("stopped"))).toBe(false);
+      }),
+    ));
+
+  it("leaves an admitted but unsettled operation unchanged", () =>
+    withSettlement((f) =>
+      Effect.gen(function* () {
+        const original = yield* f.reply();
+        yield* f.finalizer.restoreRecorded(f.replyId);
+        expect(yield* f.reply()).toEqual(original);
+      }),
+    ));
+
+  it("refuses a stale restoration read after another receipt has advanced", () =>
+    withSettlement((f) =>
+      Effect.gen(function* () {
+        const recorded = yield* f.histories.commit(
+          f.address,
+          [settlement({ reply_id: f.replyId })],
+          f.admission.history.revision,
+        );
+        const newer = [
+          attempt({ reply_id: uuid(41), exchange_id: uuid(42), parent_reply_id: f.replyId }),
+          settlement({ reply_id: uuid(41) }),
+        ];
+        const histories = {
+          ...f.histories,
+          read: (address, receipt) =>
+            Effect.gen(function* () {
+              const original = yield* f.histories.read(address, receipt);
+              const next = yield* f.histories
+                .commit(address, newer, recorded.history.revision)
+                .pipe(Effect.orDie);
+              yield* f.db.query((d) =>
+                d
+                  .update(sessions)
+                  .set({
+                    historySeq: next.history.revision.last_seq,
+                    historySha256: next.history.revision.sha256,
+                  })
+                  .where(
+                    and(eq(sessions.id, f.address.session_id), eq(sessions.vaultId, f.vaultId)),
+                  ),
+              );
+              return original;
+            }),
+        } satisfies HistoryStoreShape;
+        const original = yield* f.reply();
+        expect(
+          failure(
+            yield* Effect.exit(
+              makeReplySettlement(f.db, histories, f.clock).restoreRecorded(f.replyId),
+            ),
+          ),
+        ).toMatchObject({ _tag: "HistoryInvalid", reason: "history_receipt" });
+        expect(yield* f.reply()).toEqual(original);
+        expect((yield* f.session()).historySeq).toBe(5);
+        yield* f.finalizer.restoreRecorded(f.replyId);
+        expect((yield* f.reply()).status).toBe("completed");
+        expect((yield* f.session()).historySeq).toBe(5);
+      }),
+    ));
 
   it("retains an external-outcome-unknown failure and committed partial output", () =>
     withSettlement((f) =>

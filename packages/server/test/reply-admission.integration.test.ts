@@ -497,24 +497,24 @@ describe("durable reply admission", () => {
       }),
     ));
 
-  it("freezes the session default rather than the client mode and keeps it through continuation", () =>
+  it("freezes the reply default and keeps it through continuation", () =>
     withAdmission((f) =>
       Effect.gen(function* () {
         const input = btwCommand();
-        expect(input.mode).toBe("query");
+        expect(input).not.toHaveProperty("mode");
         const response = yield* f.admission.reserve(f.userId, f.vaultId, input);
         const original = yield* f.reply(input.reply_id);
         expect(decodeRequest(original.request).mode).toBe("btw");
         yield* f.db.query((client) =>
           client
             .update(sessions)
-            .set({ kind: "session" })
+            .set({ placement: "standalone", replyMode: "query" })
             .where(and(eq(sessions.id, response.session_id), eq(sessions.vaultId, f.vaultId))),
         );
         yield* f.admission.admit(input.reply_id);
         expect((yield* f.reply(input.reply_id)).request).toEqual(original.request);
         yield* f.finalize(input.reply_id);
-        const next = followUp(response.session_id, { mode: "btw" });
+        const next = followUp(response.session_id);
         yield* f.admission.reserve(f.userId, f.vaultId, next);
         expect(decodeRequest((yield* f.reply(next.reply_id)).request).mode).toBe("query");
       }),
@@ -541,7 +541,7 @@ describe("durable reply admission", () => {
               yield* Deferred.await(release);
               yield* tx
                 .update(sessions)
-                .set({ kind: "session" })
+                .set({ placement: "standalone", replyMode: "query" })
                 .where(and(eq(sessions.id, response.session_id), eq(sessions.vaultId, f.vaultId)));
             }),
           ),
@@ -823,7 +823,7 @@ describe("durable reply admission", () => {
         yield* f.db.query((client) =>
           client
             .update(sessions)
-            .set({ kind: "session" })
+            .set({ placement: "standalone", replyMode: "query" })
             .where(and(eq(sessions.id, parent.session_id), eq(sessions.vaultId, f.vaultId))),
         );
         expect(

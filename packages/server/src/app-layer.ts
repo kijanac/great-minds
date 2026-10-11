@@ -1,5 +1,6 @@
 import { Database } from "@great-minds/database";
 import { Layer } from "effect";
+import type { WorkflowEngine } from "effect/unstable/workflow/WorkflowEngine";
 
 import { AuthService, AuthServiceLive } from "./auth.ts";
 import {
@@ -12,6 +13,9 @@ import { CompilePhasesLive } from "./compile-phases.ts";
 import { AppConfigLive } from "./config.ts";
 import type { AppConfig } from "./config.ts";
 import { CostsService, CostsServiceLive } from "./costs.ts";
+import { ReplyAdmission, ReplyAdmissionLive } from "./conversation-history/admission.ts";
+import { ReplySettlement, ReplySettlementLive } from "./conversation-history/settlement.ts";
+import { HistoryStore } from "./conversation-history/store.ts";
 import { DrizzleLive } from "./db.ts";
 import { DocumentsService, DocumentsServiceLive } from "./documents.ts";
 import { EmbeddingsLive, EmbeddingsService } from "./embeddings.ts";
@@ -49,6 +53,7 @@ import { StagedFileIngestWorkflowLive } from "./staged-file-ingest-workflow.ts";
 import { SourcesService, SourcesServiceLive } from "./sources.ts";
 import {
   ContentStorage,
+  HistoryStoreLive,
   ProposalStorage,
   StagedStorage,
   StagedUploadGateway,
@@ -74,6 +79,7 @@ import { UrlIngestWorkflowLive } from "./url-ingest-workflow.ts";
 import { WorkflowEngineLive } from "./workflow-engine.ts";
 
 export type AppLayerServices =
+  | WorkflowEngine
   | AppConfig
   | Database
   | ClockService
@@ -102,6 +108,9 @@ export type AppLayerServices =
   | ParallelSearchService
   | QueryService
   | RepliesService
+  | ReplyAdmission
+  | ReplySettlement
+  | HistoryStore
   | ContentStorage
   | StagedStorage
   | StagedUploadGateway
@@ -112,6 +121,7 @@ export type AppLayerServices =
 
 export type AppLayerOverrides = {
   readonly config?: Layer.Layer<AppConfig>;
+  readonly histories?: Layer.Layer<HistoryStore>;
   readonly clock?: Layer.Layer<ClockService>;
   readonly mailer?: Layer.Layer<Mailer>;
   readonly logger?: Layer.Layer<StructuredLogger>;
@@ -134,6 +144,14 @@ export const makeAppLayers = (overrides: AppLayerOverrides = {}) => {
 
   const VaultAccessLive = VaultAccessServiceLive.pipe(Layer.provideMerge(BaseLive));
   const StorageLive = StorageServicesLive.pipe(Layer.provideMerge(BaseLive));
+  const HistoriesLive = (overrides.histories ?? HistoryStoreLive).pipe(
+    Layer.provideMerge(StorageLive),
+  );
+  const ReplyLifecycleLive = Layer.mergeAll(ReplyAdmissionLive, ReplySettlementLive).pipe(
+    Layer.provideMerge(HistoriesLive),
+    Layer.provideMerge(VaultAccessLive),
+    Layer.provideMerge(BaseLive),
+  );
   const LanguageModelLiveLayer = (overrides.languageModel ?? LanguageModelLive).pipe(
     Layer.provideMerge(BaseLive),
   );
@@ -178,6 +196,7 @@ export const makeAppLayers = (overrides: AppLayerOverrides = {}) => {
     Layer.provideMerge(BaseLive),
   );
   const SessionsLive = SessionsServiceLive.pipe(
+    Layer.provideMerge(HistoriesLive),
     Layer.provideMerge(VaultAccessLive),
     Layer.provideMerge(StorageLive),
     Layer.provideMerge(IngestLive),
@@ -196,6 +215,7 @@ export const makeAppLayers = (overrides: AppLayerOverrides = {}) => {
   );
   const WorkflowEngineBaseLive = WorkflowEngineLive.pipe(Layer.provideMerge(BaseLive));
   const RepliesLive = RepliesServiceLive.pipe(
+    Layer.provideMerge(ReplyLifecycleLive),
     Layer.provideMerge(SessionsLive),
     Layer.provideMerge(QueryLive),
     Layer.provideMerge(VaultAccessLive),
@@ -329,10 +349,7 @@ export const makeAppLayers = (overrides: AppLayerOverrides = {}) => {
       Layer.provideMerge(UrlIngestLive),
       Layer.provideMerge(BaseLive),
     ),
-    ReplyReconcilerLoopLive.pipe(
-      Layer.provideMerge(RepliesLive),
-      Layer.provideMerge(BaseLive),
-    ),
+    ReplyReconcilerLoopLive.pipe(Layer.provideMerge(RepliesLive), Layer.provideMerge(BaseLive)),
     SourceDeletionReconcilerLoopLive.pipe(
       Layer.provideMerge(SourceDocumentsLive),
       Layer.provideMerge(BaseLive),

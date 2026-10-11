@@ -1,18 +1,21 @@
+import { mkdir } from "node:fs/promises";
 import { posix, resolve } from "node:path";
 
-import type {
-  FileFingerprint,
-  FileIngestUploadTarget,
-  Uuid,
-} from "@great-minds/domain";
+import type { FileFingerprint, FileIngestUploadTarget, Uuid } from "@great-minds/domain";
 import { Cause, Context, Effect, Layer, Schema } from "effect";
 
 import { backgroundLoop } from "./background-loop.ts";
 import { ClockService } from "./clock.ts";
 import { AppConfig } from "./config.ts";
 import { StructuredLogger } from "./logging.ts";
+import { HistoryStore, makeHistoryStore } from "./conversation-history/store.ts";
+import { openLocalConditionalObjectStore } from "./storage/local-conditional-object-store.ts";
 import { makeLocalObjectStore, pruneLocalStaging } from "./storage/local-object-store.ts";
-import { type ObjectStore, StorageBackendError } from "./storage/object-store.ts";
+import {
+  type ObjectStore,
+  StorageBackendError,
+  storageBackendError,
+} from "./storage/object-store.ts";
 import {
   ensureR2Bucket,
   makeR2ObjectStoreBackend,
@@ -45,7 +48,10 @@ type ContentStorageShape = {
     owner: StorageOwner,
     scope: "raw" | "wiki",
   ) => Effect.Effect<readonly { readonly path: string; readonly etag: string | null }[]>;
-  readonly readText: (owner: StorageOwner, path: string) => Effect.Effect<string, StorageFileMissing>;
+  readonly readText: (
+    owner: StorageOwner,
+    path: string,
+  ) => Effect.Effect<string, StorageFileMissing>;
   readonly writeText: (owner: StorageOwner, path: string, content: string) => Effect.Effect<void>;
   readonly appendText: (owner: StorageOwner, path: string, content: string) => Effect.Effect<void>;
   readonly exists: (owner: StorageOwner, path: string) => Effect.Effect<boolean>;
@@ -91,20 +97,19 @@ type StagedUploadGatewayShape = {
     batchId: Uuid,
     files: readonly StagedUploadDescriptor[],
   ) => Effect.Effect<readonly FileIngestUploadTarget[], StorageBackendError>;
-} &
-  (
-    | {
-        readonly kind: "api";
-        readonly receive: (
-          vaultId: Uuid,
-          batchId: Uuid,
-          hash: FileFingerprint,
-          bytes: Uint8Array,
-          contentType: string,
-        ) => Effect.Effect<void, StorageBackendError>;
-      }
-    | { readonly kind: "presigned" }
-  );
+} & (
+  | {
+      readonly kind: "api";
+      readonly receive: (
+        vaultId: Uuid,
+        batchId: Uuid,
+        hash: FileFingerprint,
+        bytes: Uint8Array,
+        contentType: string,
+      ) => Effect.Effect<void, StorageBackendError>;
+    }
+  | { readonly kind: "presigned" }
+);
 
 export class ContentStorage extends Context.Service<ContentStorage, ContentStorageShape>()(
   "@great-minds/server/ContentStorage",
@@ -153,16 +158,14 @@ const scopedKey = (prefix: string, path: string) => {
   return `${prefix}${normalized}`;
 };
 
-const stagedPrefix = (vaultId: Uuid, batchId: Uuid) =>
-  `${STAGING_DIR}/${vaultId}/${batchId}/`;
+const stagedPrefix = (vaultId: Uuid, batchId: Uuid) => `${STAGING_DIR}/${vaultId}/${batchId}/`;
 
 const stagedKey = (vaultId: Uuid, batchId: Uuid, hash: FileFingerprint) =>
   `${stagedPrefix(vaultId, batchId)}${hash}`;
 
 const fileMissing = (path: string) => new StorageFileMissing({ path });
 
-const contentTypeFor = (path: string) =>
-  path.endsWith(".md") ? "text/markdown" : "text/plain";
+const contentTypeFor = (path: string) => (path.endsWith(".md") ? "text/markdown" : "text/plain");
 
 const readText = (objects: ObjectStore, prefix: string, path: string) =>
   objects.get(scopedKey(prefix, path)).pipe(
@@ -196,6 +199,21 @@ const StorageBackendLive = Layer.effect(
   }),
 );
 
+export const HistoryStoreLive = Layer.effect(
+  HistoryStore,
+  Effect.gen(function* () {
+    const backend = yield* StorageBackend;
+    if (backend.kind === "r2") return makeHistoryStore(backend.objects);
+    yield* Effect.tryPromise({
+      try: () => mkdir(backend.directory, { recursive: true }),
+      catch: (error) => storageBackendError("prepare", backend.directory, error),
+    }).pipe(Effect.orDie);
+    return makeHistoryStore(
+      yield* openLocalConditionalObjectStore(backend.directory).pipe(Effect.orDie),
+    );
+  }),
+);
+
 export const ContentStorageLive = Layer.effect(
   ContentStorage,
   Effect.gen(function* () {
@@ -221,10 +239,8 @@ export const ContentStorageLive = Layer.effect(
         );
       },
       readText: (owner, path) => readText(objects, ownerPrefix(owner), path),
-      writeText: (owner, path, content) =>
-        writeText(objects, ownerPrefix(owner), path, content),
-      appendText: (owner, path, content) =>
-        appendText(objects, ownerPrefix(owner), path, content),
+      writeText: (owner, path, content) => writeText(objects, ownerPrefix(owner), path, content),
+      appendText: (owner, path, content) => appendText(objects, ownerPrefix(owner), path, content),
       exists: (owner, path) =>
         objects.exists(scopedKey(ownerPrefix(owner), path)).pipe(Effect.orDie),
       deletePath: (owner, path) =>
@@ -253,14 +269,12 @@ export const StagedStorageLive = Layer.effect(
     return {
       readStagedBytes: (vaultId, batchId, hash) => {
         const path = stagedKey(vaultId, batchId, hash);
-        return objects.get(path).pipe(
-          Effect.catchTag("ObjectMissing", () => Effect.fail(fileMissing(path))),
-        );
+        return objects
+          .get(path)
+          .pipe(Effect.catchTag("ObjectMissing", () => Effect.fail(fileMissing(path))));
       },
-      stagedExists: (vaultId, batchId, hash) =>
-        objects.exists(stagedKey(vaultId, batchId, hash)),
-      deleteStaged: (vaultId, batchId, hash) =>
-        objects.remove(stagedKey(vaultId, batchId, hash)),
+      stagedExists: (vaultId, batchId, hash) => objects.exists(stagedKey(vaultId, batchId, hash)),
+      deleteStaged: (vaultId, batchId, hash) => objects.remove(stagedKey(vaultId, batchId, hash)),
       clearStagedBatch: (vaultId, batchId) =>
         objects.removePrefix(stagedPrefix(vaultId, batchId)).pipe(Effect.orDie),
       clearStagedVault: (vaultId) =>
@@ -276,9 +290,7 @@ export const StagedUploadGatewayLive = Layer.effect(
       return {
         kind: "api",
         prepare: (_vaultId, _batchId, files) =>
-          Effect.succeed(
-            files.map((file) => ({ hash: file.hash, transport: "api" as const })),
-          ),
+          Effect.succeed(files.map((file) => ({ hash: file.hash, transport: "api" as const }))),
         receive: (vaultId, batchId, hash, bytes, contentType) =>
           backend.objects.put(stagedKey(vaultId, batchId, hash), bytes, { contentType }),
       };
@@ -288,15 +300,13 @@ export const StagedUploadGatewayLive = Layer.effect(
       prepare: (vaultId, batchId, files) =>
         Effect.forEach(files, (file) => {
           const path = stagedKey(vaultId, batchId, file.hash);
-          return backend
-            .prepareUpload(path, file.contentType, file.contentLength)
-            .pipe(
-              Effect.map((url) => ({
-                hash: file.hash,
-                transport: "presigned" as const,
-                url,
-              })),
-            );
+          return backend.prepareUpload(path, file.contentType, file.contentLength).pipe(
+            Effect.map((url) => ({
+              hash: file.hash,
+              transport: "presigned" as const,
+              url,
+            })),
+          );
         }),
     };
   }),
@@ -344,7 +354,6 @@ export const StorageMaintenanceLoopLive = StorageMaintenanceFromBackendLive;
 export const ensureStorageReady = (config: AppConfig["Service"]) =>
   config.storageBackend === "r2"
     ? ensureR2Bucket(config)
-    : pruneLocalStaging(
-        config.dataDir,
-        Date.now() - LOCAL_STAGED_UPLOAD_EXPIRES_MS,
-      ).pipe(Effect.orDie);
+    : pruneLocalStaging(config.dataDir, Date.now() - LOCAL_STAGED_UPLOAD_EXPIRES_MS).pipe(
+        Effect.orDie,
+      );

@@ -63,7 +63,11 @@ const origins: SessionOrigin[] = [
   },
 ];
 
-const saved = (origin: SessionOrigin, answer = ""): OriginSessionDetail => ({
+const saved = (
+  origin: SessionOrigin,
+  status: ReplySnapshot["status"] = "running",
+  answer = "",
+): OriginSessionDetail => ({
   session: {
     id: sessionId,
     kind: "btw",
@@ -80,6 +84,8 @@ const saved = (origin: SessionOrigin, answer = ""): OriginSessionDetail => ({
       exId: exchangeId,
       reply_id: replyId,
       query: "Replayed question",
+      status,
+      error: status === "failed" ? "Saved failure" : null,
       thinking: [],
       answer,
       ts: now,
@@ -213,7 +219,7 @@ it("promotes once, retains the canonical title without a transcript, and becomes
 
 it("keeps a failed promotion editable and ignores navigation after its owner is destroyed", async () => {
   const onOpen = vi.fn();
-  const btw = makeBtw(origins[0], saved(origins[0], "Answer"), onOpen);
+  const btw = makeBtw(origins[0], saved(origins[0], "completed", "Answer"), onOpen);
   vi.mocked(continueAsSession).mockRejectedValueOnce(new Error("offline"));
   await btw.openSession();
   expect(btw.conversation?.kind).toBe("btw");
@@ -265,7 +271,7 @@ it("opens a saved session with its origin and reconnects an attached BTW without
           user_id: exchangeId,
           origin: origins[0],
         },
-        ...saved(origins[0], "Parent answer").events,
+        ...saved(origins[0], "completed", "Parent answer").events,
       ],
       threads: [{ ...detail, session: { ...detail.session, id: childId } }],
     },
@@ -289,6 +295,7 @@ it("encodes an ordinary session's first question and follow-up without an origin
   session.submitQuery("Start here");
   await vi.waitFor(() => expect(session.thread[0]?.answer).toBe("Completed answer"));
   expect(vi.mocked(createReply).mock.calls[0][0]).not.toHaveProperty("origin_path");
+  expect(vi.mocked(createReply).mock.calls[0][0]).not.toHaveProperty("mode");
   session.submitQuery("Follow up");
   await vi.waitFor(() => expect(session.thread[1]?.answer).toBe("Completed answer"));
   expect(vi.mocked(createReply).mock.calls[1][0].session).toEqual({
@@ -368,7 +375,8 @@ it.each(["", "Partial answer"])(
             query: "Question",
             answer,
             thinking: [],
-            stopped: true,
+            status: "stopped",
+            error: null,
             ts: now,
           },
         ],
@@ -382,6 +390,36 @@ it.each(["", "Partial answer"])(
     expect(createReply).not.toHaveBeenCalled();
   },
 );
+
+it.each([
+  ["completed", ""],
+  ["failed", ""],
+  ["failed", "Private partial answer"],
+] as const)("reloads %s with %j without silently regenerating it", async (status, answer) => {
+  const detail = saved(origins[0], status, answer);
+  const btw = makeBtw(origins[0], detail);
+  const session = new Session({
+    saved: {
+      id: sessionId,
+      kind: "session",
+      origin_title: null,
+      threads: [],
+      events: detail.events,
+    },
+  });
+  threads.push(session);
+  await Promise.resolve();
+  const expected = {
+    answer,
+    streaming: false,
+    stopped: false,
+    error: status === "failed" ? "Saved failure" : null,
+  };
+  expect(btw.exchanges[0]).toMatchObject(expected);
+  expect(session.thread[0]).toMatchObject(expected);
+  expect(streamReply).not.toHaveBeenCalled();
+  expect(createReply).not.toHaveBeenCalled();
+});
 
 it("creates a document session using its displayed origin and sends subsequent turns to that session", async () => {
   const onCreated = vi.fn();

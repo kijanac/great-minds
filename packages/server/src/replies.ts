@@ -1,10 +1,7 @@
-import { isDeepStrictEqual } from "node:util";
-
-import { Database, replies, sessions as sessionsTable, vaults } from "@great-minds/database";
+import { Database, replies, vaults } from "@great-minds/database";
 import {
   BadRequest,
   type CreateReplyRequest,
-  CreateReplyRequest as CreateReplyRequestSchema,
   type CreateReplyResponse,
   Conflict,
   Forbidden,
@@ -17,10 +14,9 @@ import {
   ReplySource as ReplySourceSchema,
   type ReplySseEvent,
   ServiceUnavailable,
-  type SessionId,
   Uuid,
 } from "@great-minds/domain";
-import { and, asc, eq, isNull, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gt, inArray, isNull, lt, lte, or, sql } from "drizzle-orm";
 import { Cause, Context, Effect, Layer, Option, Schema, SchemaGetter, Stream } from "effect";
 import * as Activity from "effect/unstable/workflow/Activity";
 import * as Workflow from "effect/unstable/workflow/Workflow";
@@ -28,8 +24,15 @@ import * as WorkflowEngine from "effect/unstable/workflow/WorkflowEngine";
 
 import { backgroundLoop } from "./background-loop.ts";
 import { AppConfig } from "./config.ts";
+import {
+  acceptedRequestFor,
+  ReplyAdmission,
+  type ReplyAdmissionError,
+} from "./conversation-history/admission.ts";
+import type { GenerationMetadata } from "./conversation-history/schema.ts";
+import { ReplySettlement, type ReplySettlementResult } from "./conversation-history/settlement.ts";
+import type { LlmMessage } from "./llm.ts";
 import { StructuredLogger } from "./logging.ts";
-import { stoppedMessages } from "./conversation-history/settlement.ts";
 import { pollingSse } from "./polling-sse.ts";
 import {
   QueryExecutionState,
@@ -47,13 +50,14 @@ const sanitizedReplyError = "Something went wrong while answering. Try again in 
 const ambiguousReplyError =
   "Reply interrupted before an external response could be saved. It was not retried automatically.";
 const flushIntervalMs = 125;
-
-const decodeCreateReply = Schema.decodeUnknownEffect(CreateReplyRequestSchema);
 const encodeReplySnapshot = Schema.encodeSync(Schema.fromJsonString(ReplySnapshotSchema));
+
+type ReplyRow = typeof replies.$inferSelect;
+type ReplyRequestError = BadRequest | Conflict | Forbidden | NotFound | ServiceUnavailable;
 
 const ReplyStepControl = Schema.Struct({
   cursor: Schema.Number,
-  outcome: Schema.Literals(["ready", "retryable", "tool_calls", "done", "failed", "stopped"] as const),
+  outcome: Schema.Literals(["ready", "retryable", "tool_calls", "done", "failed", "stopped"]),
   error: Schema.NullOr(Schema.String),
 });
 type ReplyStepControl = typeof ReplyStepControl.Type;
@@ -63,14 +67,16 @@ const ReplyAccumulator = Schema.Struct({
   sources: Schema.mutable(Schema.Array(ReplySourceSchema)),
   pendingCalls: Schema.Array(
     Schema.Struct({ callId: Schema.String, index: Schema.NullOr(Schema.Number) }),
-  ).pipe(Schema.decodeTo(Schema.instanceOf(Map<string, number | null>), {
-    decode: SchemaGetter.transform((entries) =>
-      new Map(entries.map(({ callId, index }) => [callId, index])),
-    ),
-    encode: SchemaGetter.transform((entries) =>
-      [...entries].map(([callId, index]) => ({ callId, index })),
-    ),
-  })),
+  ).pipe(
+    Schema.decodeTo(Schema.instanceOf(Map<string, number | null>), {
+      decode: SchemaGetter.transform(
+        (entries) => new Map(entries.map(({ callId, index }) => [callId, index])),
+      ),
+      encode: SchemaGetter.transform((entries) =>
+        [...entries].map(([callId, index]) => ({ callId, index })),
+      ),
+    }),
+  ),
   clearOnNextToken: Schema.mutableKey(Schema.Boolean),
   replacementSlot: Schema.mutableKey(Schema.NullOr(Schema.Number)),
 });
@@ -90,10 +96,38 @@ type ReplyCheckpoint = typeof ReplyCheckpoint.Type;
 const decodeReplyCheckpoint = Schema.decodeUnknownSync(Schema.fromJsonString(ReplyCheckpoint));
 const encodeReplyCheckpoint = Schema.encodeSync(Schema.fromJsonString(ReplyCheckpoint));
 const checkpointPath = (replyId: Uuid) => `operations/replies/${replyId}.json`;
+const isInterruption = (cause: Cause.Cause<unknown>) =>
+  cause.reasons.length > 0 && cause.reasons.every(Cause.isInterruptReason);
+const terminalControl = (control: ReplyStepControl) =>
+  control.outcome === "done" || control.outcome === "failed" || control.outcome === "stopped";
+const readyControl = (cursor: number): ReplyStepControl => ({
+  cursor,
+  outcome: "ready",
+  error: null,
+});
+const failedControl = (cursor: number, error: string): ReplyStepControl => ({
+  cursor,
+  outcome: "failed",
+  error,
+});
+const doneControl = (cursor: number): ReplyStepControl => ({
+  cursor,
+  outcome: "done",
+  error: null,
+});
+const stoppedControl = (cursor: number): ReplyStepControl => ({
+  cursor,
+  outcome: "stopped",
+  error: null,
+});
 
-const queryRequest = (input: CreateReplyRequest, question: string): QueryRequest => ({
+const queryRequest = (
+  input: CreateReplyRequest,
+  question: string,
+  mode: QueryRequest["mode"],
+): QueryRequest => ({
   question,
-  mode: input.mode,
+  mode,
   ...(input.model === undefined ? {} : { model: input.model }),
   ...(input.origin_path === undefined ? {} : { origin_path: input.origin_path }),
   origin_scope: input.origin_scope,
@@ -104,18 +138,19 @@ const queryRequest = (input: CreateReplyRequest, question: string): QueryRequest
 
 const sourceRef = (data: QuerySourceData, thinking: string, pending = false): ReplySource => {
   const source: ReplySource = {
-    label: data.type === "search"
-      ? data.query
-      : data.type === "query"
-        ? Object.entries(data.filters)
-            .map(([key, value]) => `${key}: ${String(value)}`)
-            .join(", ") || "filtered sources"
-        : data.path,
+    label:
+      data.type === "search"
+        ? data.query
+        : data.type === "query"
+          ? Object.entries(data.filters)
+              .map(([key, value]) => `${key}: ${String(value)}`)
+              .join(", ") || "filtered sources"
+          : data.path,
     type: data.type,
     document_id: data.type === "article" || data.type === "raw" ? data.document_id : null,
     title: data.type === "query" ? null : data.title,
     scope: data.type === "search" ? data.scope : null,
-    path: data.type === "search" ? data.path ?? null : null,
+    path: data.type === "search" ? (data.path ?? null) : null,
     thinking: thinking.length === 0 ? null : thinking,
     ...(pending ? { pending: true } : {}),
   };
@@ -130,29 +165,56 @@ const sourceRef = (data: QuerySourceData, thinking: string, pending = false): Re
   return source;
 };
 
+const requestError = (error: ReplyAdmissionError): ReplyRequestError => {
+  switch (error._tag) {
+    case "BadRequest":
+    case "Conflict":
+    case "Forbidden":
+    case "NotFound":
+    case "ServiceUnavailable":
+      return error;
+    case "ObjectVersionConflict":
+      return new Conflict({
+        detail: "Conversation changed while accepting the reply; submit the same request again",
+      });
+    case "HistoryConflict":
+      return new Conflict({ detail: "Conversation history requires reconciliation" });
+    default:
+      return new ServiceUnavailable({
+        detail:
+          "Reply admission is unfinished; retry the same request rather than starting another reply",
+      });
+  }
+};
+
 export const ReplyWorkflow = Workflow.make("ReplyGeneration", {
   payload: { replyId: Uuid },
   idempotencyKey: ({ replyId }) => replyId,
   success: Schema.Void,
 });
 
-const dispatchReply = (
-  replyId: Uuid,
-  workflowEngine: WorkflowEngine.WorkflowEngine["Service"],
-) =>
+const dispatchReply = (replyId: Uuid, workflowEngine: WorkflowEngine.WorkflowEngine["Service"]) =>
   Effect.gen(function* () {
     const db = yield* Database;
+    const rows = yield* db.query((d) =>
+      d.select({ status: replies.status }).from(replies).where(eq(replies.id, replyId)),
+    );
+    if (rows[0]?.status !== "running") return;
     yield* ReplyWorkflow.execute({ replyId }, { discard: true }).pipe(
       Effect.provideService(WorkflowEngine.WorkflowEngine, workflowEngine),
     );
-    yield* db.query((d) => d
-      .update(replies)
-      .set({
-        dispatchedAt: sql`coalesce(${replies.dispatchedAt}, now())`,
-        dispatchedTaskId: replyId,
-        updatedAt: sql`now()`,
-      })
-      .where(eq(replies.id, replyId)));
+    yield* db.query((d) =>
+      d
+        .update(replies)
+        .set({
+          dispatchedAt: sql`coalesce(${replies.dispatchedAt}, now())`,
+          dispatchedTaskId: replyId,
+          updatedAt: sql`now()`,
+        })
+        .where(
+          and(eq(replies.id, replyId), eq(replies.status, "running"), isNull(replies.dispatchedAt)),
+        ),
+    );
   });
 
 type RepliesServiceShape = {
@@ -165,16 +227,13 @@ type RepliesServiceShape = {
     userId: Uuid,
     vaultId: Uuid,
     input: CreateReplyRequest,
-  ) => Effect.Effect<CreateReplyResponse, BadRequest | Conflict | Forbidden | NotFound | ServiceUnavailable>;
+  ) => Effect.Effect<CreateReplyResponse, ReplyRequestError>;
   readonly retry: (
     userId: Uuid,
     vaultId: Uuid,
     replyId: Uuid,
     nextReplyId: Uuid,
-  ) => Effect.Effect<
-    CreateReplyResponse,
-    BadRequest | Conflict | Forbidden | NotFound | ServiceUnavailable
-  >;
+  ) => Effect.Effect<CreateReplyResponse, ReplyRequestError>;
   readonly stream: (
     userId: Uuid,
     vaultId: Uuid,
@@ -204,39 +263,34 @@ export const RepliesServiceLive = Layer.effect(
     const logger = yield* StructuredLogger;
     const query = yield* QueryService;
     const sessions = yield* SessionsService;
+    const admission = yield* ReplyAdmission;
+    const settlement = yield* ReplySettlement;
     const storage = yield* ContentStorage;
     const workflowEngine = yield* WorkflowEngine.WorkflowEngine;
     const pollIntervalMs = Option.isSome(config.goldensClock) ? 1 : 100;
 
     const readReply = (vaultId: Uuid, replyId: Uuid) =>
-      db.query((d) => d
-        .select()
-        .from(replies)
-        .where(and(eq(replies.id, replyId), eq(replies.vaultId, vaultId)))
-        .limit(1))
+      db
+        .query((d) =>
+          d
+            .select()
+            .from(replies)
+            .where(and(eq(replies.id, replyId), eq(replies.vaultId, vaultId)))
+            .limit(1),
+        )
         .pipe(Effect.map((rows) => rows[0]));
-
     const readReplyById = (replyId: Uuid) =>
-      db.query((d) => d
-        .select()
-        .from(replies)
-        .where(eq(replies.id, replyId))
-        .limit(1))
+      db
+        .query((d) => d.select().from(replies).where(eq(replies.id, replyId)).limit(1))
         .pipe(Effect.map((rows) => rows[0]));
 
-    const requireSession = (vaultId: Uuid, sessionId: SessionId) =>
-      db.query((d) => d
-        .select({ id: sessionsTable.id })
-        .from(sessionsTable)
-        .where(and(eq(sessionsTable.vaultId, vaultId), eq(sessionsTable.id, sessionId)))
-        .limit(1))
-        .pipe(Effect.flatMap((rows) =>
-        rows[0] === undefined
-          ? Effect.fail(new NotFound({ detail: "Session not found" }))
-          : Effect.void,
-      ));
+    const readGenerationReply = (replyId: Uuid) =>
+      Effect.gen(function* () {
+        yield* settlement.restoreRecorded(replyId).pipe(Effect.orDie);
+        return yield* readReplyById(replyId);
+      });
 
-    const snapshot = (row: typeof replies.$inferSelect): ReplySnapshot => ({
+    const snapshot = (row: ReplyRow): ReplySnapshot => ({
       reply_id: row.id,
       session_id: row.sessionId,
       kind: row.kind,
@@ -249,98 +303,56 @@ export const RepliesServiceLive = Layer.effect(
       updated_at: row.updatedAt,
     });
 
-    const updateSnapshot = (
-      replyId: Uuid,
-      answer: string,
-      sources: readonly ReplySource[],
-    ) =>
-      db.query((d) => d
-        .update(replies)
-        .set({
-          answer,
-          sources,
-          version: sql`${replies.version} + 1`,
-          updatedAt: sql`now()`,
-        })
-        .where(and(eq(replies.id, replyId), eq(replies.status, "running"))))
+    const updateSnapshot = (replyId: Uuid, answer: string, sources: readonly ReplySource[]) =>
+      db
+        .query((d) =>
+          d
+            .update(replies)
+            .set({ answer, sources, version: sql`${replies.version} + 1`, updatedAt: sql`now()` })
+            .where(and(eq(replies.id, replyId), eq(replies.status, "running"))),
+        )
         .pipe(Effect.asVoid);
-
-    const markFailed = (
-      replyId: Uuid,
-      error: string,
-      answer?: string,
-      sources?: readonly ReplySource[],
-    ) =>
-      db.query((d) => d
-        .update(replies)
-        .set({
-          status: "failed",
-          error,
-          ...(answer === undefined ? {} : { answer }),
-          ...(sources === undefined ? {} : { sources }),
-          version: sql`${replies.version} + 1`,
-          activeGenerationStep: null,
-          activeGenerationKind: null,
-          activeGenerationKey: null,
-          updatedAt: sql`now()`,
-        })
-        .where(and(eq(replies.id, replyId), eq(replies.status, "running"))))
-        .pipe(Effect.asVoid);
-
-    const readyControl = (cursor: number): ReplyStepControl => ({
-      cursor,
-      outcome: "ready",
-      error: null,
-    });
-
-    const failedControl = (cursor: number, error: string): ReplyStepControl => ({
-      cursor,
-      outcome: "failed",
-      error,
-    });
-
-    const doneControl = (cursor: number): ReplyStepControl => ({
-      cursor,
-      outcome: "done",
-      error: null,
-    });
-
-    const stoppedControl = (cursor: number): ReplyStepControl => ({
-      cursor,
-      outcome: "stopped",
-      error: null,
-    });
 
     const untilStopped = <A, E>(replyId: Uuid, work: Effect.Effect<A, E>) =>
       Effect.raceFirst(
         work.pipe(Effect.map(Option.some)),
         Effect.gen(function* () {
-          while (!(yield* readReplyById(replyId))?.stopRequested) {
+          while (true) {
+            const row = yield* readReplyById(replyId);
+            if (row === undefined || row.status !== "running" || row.stopRequested)
+              return Option.none<A>();
             yield* Effect.sleep("100 millis");
           }
-          return Option.none<A>();
         }),
       );
 
-    const readCheckpoint = (row: typeof replies.$inferSelect) =>
+    const readCheckpoint = (row: ReplyRow) =>
       storage.readText(vaultOwner(row.vaultId), checkpointPath(row.id)).pipe(
         Effect.map(decodeReplyCheckpoint),
         Effect.catchTag("StorageFileMissing", () => Effect.succeed(undefined)),
       );
-
-    const writeCheckpoint = (row: typeof replies.$inferSelect, checkpoint: ReplyCheckpoint) =>
+    const writeCheckpoint = (row: ReplyRow, checkpoint: ReplyCheckpoint) =>
       storage.writeText(
         vaultOwner(row.vaultId),
         checkpointPath(row.id),
         encodeReplyCheckpoint(checkpoint),
       );
+    const recoverCheckpoint = (row: ReplyRow) =>
+      readCheckpoint(row).pipe(
+        Effect.catchCause((cause) =>
+          isInterruption(cause)
+            ? Effect.interrupt
+            : logger
+                .warn("reply_checkpoint_unavailable", { reply_id: row.id })
+                .pipe(Effect.as(undefined)),
+        ),
+      );
 
     const removeSource = (accumulator: ReplyAccumulator, index: number) => {
       accumulator.sources.splice(index, 1);
       for (const [callId, pendingIndex] of accumulator.pendingCalls) {
-        if (pendingIndex !== null && pendingIndex > index) {
+        if (pendingIndex !== null && pendingIndex > index)
           accumulator.pendingCalls.set(callId, pendingIndex - 1);
-        }
       }
     };
 
@@ -353,8 +365,7 @@ export const RepliesServiceLive = Layer.effect(
         (data.type === "article" || data.type === "raw") &&
         accumulator.sources.some(
           (source) =>
-            source.label === data.path &&
-            (source.type === "article" || source.type === "raw"),
+            source.label === data.path && (source.type === "article" || source.type === "raw"),
         )
       ) {
         accumulator.pendingCalls.set(callId, null);
@@ -368,27 +379,20 @@ export const RepliesServiceLive = Layer.effect(
     const settlePendingSource = (accumulator: ReplyAccumulator, callId: string) => {
       const pendingIndex = accumulator.pendingCalls.get(callId);
       accumulator.pendingCalls.delete(callId);
-      if (pendingIndex !== undefined && pendingIndex !== null) {
+      if (pendingIndex !== undefined && pendingIndex !== null)
         accumulator.replacementSlot = pendingIndex;
-      }
     };
 
-    const addResolvedSource = (
-      accumulator: ReplyAccumulator,
-      data: QuerySourceData,
-    ) => {
+    const addResolvedSource = (accumulator: ReplyAccumulator, data: QuerySourceData) => {
       const pendingIndex = accumulator.replacementSlot;
       accumulator.replacementSlot = null;
       if (data.type === "article" || data.type === "raw") {
-        if (pendingIndex !== null) {
-          removeSource(accumulator, pendingIndex);
-        }
+        if (pendingIndex !== null) removeSource(accumulator, pendingIndex);
         const isExpand = data.start !== undefined && data.end !== undefined;
         const range = isExpand ? { start: data.start, end: data.end } : null;
         const index = accumulator.sources.findIndex(
           (source) =>
-            source.label === data.path &&
-            (source.type === "article" || source.type === "raw"),
+            source.label === data.path && (source.type === "article" || source.type === "raw"),
         );
         if (index >= 0) {
           const previous = accumulator.sources[index];
@@ -397,83 +401,144 @@ export const RepliesServiceLive = Layer.effect(
             ranges: range ? [...(previous.ranges ?? []), range] : previous.ranges,
             full: previous.full || !isExpand,
           };
-        } else {
-          accumulator.sources.push(sourceRef(data, accumulator.answer));
-        }
+        } else accumulator.sources.push(sourceRef(data, accumulator.answer));
         accumulator.clearOnNextToken = true;
         return;
       }
-
       if (data.type === "links") {
         const existingIndex = accumulator.sources.findIndex(
           (source, index) =>
             index !== pendingIndex && source.type === "links" && source.label === data.path,
         );
         if (existingIndex >= 0) {
-          if (pendingIndex !== null) {
-            removeSource(accumulator, pendingIndex);
-          }
+          if (pendingIndex !== null) removeSource(accumulator, pendingIndex);
           return;
         }
       }
-
       const resolved = sourceRef(data, accumulator.answer);
-      if (pendingIndex === null) {
-        accumulator.sources.push(resolved);
-      } else {
-        accumulator.sources.splice(pendingIndex, 1, resolved);
-      }
+      if (pendingIndex === null) accumulator.sources.push(resolved);
+      else accumulator.sources.splice(pendingIndex, 1, resolved);
       accumulator.clearOnNextToken = true;
     };
 
     const flushAccumulator = (replyId: Uuid, accumulator: ReplyAccumulator) =>
       updateSnapshot(replyId, accumulator.answer, accumulator.sources);
 
-    const failRunningReply = (replyId: Uuid, error: string) =>
+    const freezeOutcome = (
+      row: ReplyRow,
+      checkpoint: ReplyCheckpoint | undefined,
+      outcome: "done" | "failed" | "stopped",
+      error: string | null,
+    ) =>
       Effect.gen(function* () {
-        const row = yield* readReplyById(replyId);
-        if (row === undefined || row.status !== "running") return;
-        const sources = row.sources.filter((source) => source.pending !== true);
-        yield* markFailed(replyId, error, row.answer, sources);
+        const generation: GenerationMetadata | null =
+          checkpoint === undefined
+            ? null
+            : {
+                mode: checkpoint.query.mode,
+                system_prompt_hash: {
+                  scheme: "gm-prompt-v1",
+                  value: checkpoint.query.systemPromptHash,
+                },
+                requested_model: checkpoint.query.models[0],
+                ...(checkpoint.query.selectedModel === null
+                  ? {}
+                  : { last_model: checkpoint.query.selectedModel }),
+              };
+        const messages: readonly LlmMessage[] | null =
+          checkpoint === undefined
+            ? yield* sessions
+                .readReplyQuestion(row.userId, row.vaultId, row.sessionId, row.id)
+                .pipe(
+                  Effect.map((question) => [{ role: "user" as const, content: question }]),
+                  Effect.catchTag("Forbidden", () => Effect.succeed(null)),
+                )
+            : checkpoint.query.messages.slice(checkpoint.query.turnStart);
+        let result: ReplySettlementResult;
+        if (row.stopRequested || outcome === "stopped") {
+          result = { status: "stopped", context_messages: messages, generation };
+        } else if (outcome === "failed") {
+          result = {
+            status: "failed",
+            code: error === ambiguousReplyError ? "external_outcome_unknown" : "generation_failed",
+            message: error ?? sanitizedReplyError,
+            context_messages: messages,
+            generation,
+          };
+        } else {
+          if (checkpoint === undefined || generation === null || messages === null) {
+            return yield* Effect.die(
+              new Error(`Reply ${row.id} finished without its generation result`),
+            );
+          }
+          result = {
+            status: "completed",
+            answer: checkpoint.accumulator.answer,
+            sources: checkpoint.accumulator.sources
+              .filter((source) => source.pending !== true)
+              .map(({ pending: _pending, ...source }) => source),
+            context_messages: messages,
+            generation,
+          };
+        }
+        yield* settlement.begin(row.id, result);
+      }).pipe(Effect.orDie);
+
+    const freezeStopped = (row: ReplyRow) =>
+      Effect.gen(function* () {
+        yield* freezeOutcome(row, yield* recoverCheckpoint(row), "stopped", null);
+        return stoppedControl(row.generationCursor);
       });
 
-    const stepFailure = (replyId: Uuid, cursor: number, cause: Cause.Cause<unknown>) => {
-      if (cause.reasons.length > 0 && cause.reasons.every(Cause.isInterruptReason)) {
-        return Effect.interrupt;
-      }
-      return logger
-        .error("reply_generation_step_failed", {
+    const stepFailure = (replyId: Uuid, cursor: number, cause: Cause.Cause<unknown>) =>
+      Effect.gen(function* () {
+        if (isInterruption(cause)) return yield* Effect.interrupt;
+        yield* logger.error("reply_generation_step_failed", {
           reply_id: replyId,
           generation_cursor: cursor,
-          error_message: Cause.pretty(cause),
-        })
-        .pipe(
-          Effect.as(failedControl(cursor, sanitizedReplyError)),
-        );
-    };
+        });
+        const row = yield* readGenerationReply(replyId);
+        if (row === undefined || row.status !== "running") return doneControl(cursor);
+        const checkpoint = yield* recoverCheckpoint(row);
+        const control = checkpoint?.lastControl;
+        if (
+          control !== undefined &&
+          (control.outcome === "done" ||
+            control.outcome === "failed" ||
+            control.outcome === "stopped")
+        ) {
+          yield* freezeOutcome(row, checkpoint, control.outcome, control.error);
+          return control;
+        }
+        const error = row.activeGenerationStep === null ? sanitizedReplyError : ambiguousReplyError;
+        yield* freezeOutcome(row, checkpoint, "failed", error);
+        return failedControl(cursor, error);
+      });
 
     const recoverCompletedStep = (
-      row: typeof replies.$inferSelect,
+      row: ReplyRow,
       checkpoint: ReplyCheckpoint,
       expectedCursor: number,
     ) =>
       Effect.gen(function* () {
         if (checkpoint.cursor <= expectedCursor) return undefined;
-        yield* db.query((d) => d
-          .update(replies)
-          .set({
-            generationCursor: checkpoint.cursor,
-            activeGenerationStep: null,
-            activeGenerationKind: null,
-            activeGenerationKey: null,
-            updatedAt: sql`now()`,
-          })
-          .where(eq(replies.id, row.id)));
+        yield* db.query((d) =>
+          d
+            .update(replies)
+            .set({
+              generationCursor: checkpoint.cursor,
+              activeGenerationStep: null,
+              activeGenerationKind: null,
+              activeGenerationKey: null,
+              updatedAt: sql`now()`,
+            })
+            .where(and(eq(replies.id, row.id), eq(replies.status, "running"))),
+        );
         return checkpoint.lastControl;
       });
 
     const claimExternalStep = (
-      row: typeof replies.$inferSelect,
+      row: ReplyRow,
       checkpoint: ReplyCheckpoint,
       expectedCursor: number,
       kind: "model" | "tool",
@@ -487,76 +552,93 @@ export const RepliesServiceLive = Layer.effect(
             `Reply ${row.id} cursor mismatch: workflow=${expectedCursor}, database=${row.generationCursor}, checkpoint=${checkpoint.cursor}`,
           );
         }
-        if (row.activeGenerationStep !== null) {
+        if (row.activeGenerationStep !== null)
           return failedControl(expectedCursor, ambiguousReplyError);
-        }
-        const claimed = yield* db.query((d) => d
-          .update(replies)
-          .set({
-            activeGenerationStep: expectedCursor,
-            activeGenerationKind: kind,
-            activeGenerationKey: key,
-            updatedAt: sql`now()`,
-          })
-          .where(and(
-            eq(replies.id, row.id),
-            eq(replies.status, "running"),
-            eq(replies.generationCursor, expectedCursor),
-            isNull(replies.activeGenerationStep),
-          ))
-          .returning({ id: replies.id }));
+        const claimed = yield* db.query((d) =>
+          d
+            .update(replies)
+            .set({
+              activeGenerationStep: expectedCursor,
+              activeGenerationKind: kind,
+              activeGenerationKey: key,
+              updatedAt: sql`now()`,
+            })
+            .where(
+              and(
+                eq(replies.id, row.id),
+                eq(replies.status, "running"),
+                eq(replies.stopRequested, false),
+                eq(replies.generationCursor, expectedCursor),
+                isNull(replies.activeGenerationStep),
+              ),
+            )
+            .returning({ id: replies.id }),
+        );
         if (claimed.length !== 1) {
+          const current = yield* readReplyById(row.id);
+          if (current === undefined || current.status !== "running")
+            return doneControl(expectedCursor);
+          if (current.stopRequested) return stoppedControl(expectedCursor);
           throw new Error(`Reply ${row.id} generation step ${expectedCursor} was not claimable`);
         }
         return undefined;
       });
 
-    const commitExternalStep = (
-      row: typeof replies.$inferSelect,
-      checkpoint: ReplyCheckpoint,
-    ) =>
+    const commitExternalStep = (row: ReplyRow, checkpoint: ReplyCheckpoint) =>
       Effect.gen(function* () {
         yield* writeCheckpoint(row, checkpoint);
-        yield* db.query((d) => d
-          .update(replies)
-          .set({
-            generationCursor: checkpoint.cursor,
-            activeGenerationStep: null,
-            activeGenerationKind: null,
-            activeGenerationKey: null,
-            updatedAt: sql`now()`,
-          })
-          .where(eq(replies.id, row.id)));
+        yield* db.query((d) =>
+          d
+            .update(replies)
+            .set({
+              generationCursor: checkpoint.cursor,
+              activeGenerationStep: null,
+              activeGenerationKind: null,
+              activeGenerationKey: null,
+              updatedAt: sql`now()`,
+            })
+            .where(and(eq(replies.id, row.id), eq(replies.status, "running"))),
+        );
+      });
+
+    const freezeControl = (row: ReplyRow, checkpoint: ReplyCheckpoint, control: ReplyStepControl) =>
+      Effect.gen(function* () {
+        if (
+          control.outcome === "done" ||
+          control.outcome === "failed" ||
+          control.outcome === "stopped"
+        ) {
+          yield* freezeOutcome(row, checkpoint, control.outcome, control.error);
+        }
+        return control;
       });
 
     const prepareStep = (replyId: Uuid) =>
       Effect.gen(function* () {
-        const row = yield* readReplyById(replyId);
-        if (row === undefined) return failedControl(0, sanitizedReplyError);
-        if (row.stopRequested) return stoppedControl(row.generationCursor);
+        const row = yield* readGenerationReply(replyId);
+        if (row === undefined) return doneControl(0);
+        if (row.status !== "running") return doneControl(row.generationCursor);
+        if (row.stopRequested) return yield* freezeStopped(row);
         const existing = yield* readCheckpoint(row);
-        if (existing !== undefined) return existing.lastControl;
-        if (row.status !== "running") {
-          return row.status === "completed"
-            ? doneControl(row.generationCursor)
-            : failedControl(row.generationCursor, row.error ?? sanitizedReplyError);
-        }
-        const input = yield* decodeCreateReply(row.request).pipe(Effect.orDie);
-        const transcript = yield* sessions.readTranscript(row.vaultId, row.sessionId, row.id);
-        const vaultRows = yield* db.query((d) => d
-          .select({ name: vaults.name })
-          .from(vaults)
-          .where(eq(vaults.id, row.vaultId))
-          .limit(1));
+        if (existing !== undefined)
+          return yield* freezeControl(row, existing, existing.lastControl);
+        const accepted = yield* acceptedRequestFor(row);
+        const transcript = yield* sessions.readTranscript(
+          row.userId,
+          row.vaultId,
+          row.sessionId,
+          row.id,
+        );
+        const vaultRows = yield* db.query((d) =>
+          d.select({ name: vaults.name }).from(vaults).where(eq(vaults.id, row.vaultId)).limit(1),
+        );
         const vault = vaultRows[0];
-        if (vault === undefined) {
-          return failedControl(row.generationCursor, sanitizedReplyError);
-        }
+        if (vault === undefined) throw new Error(`Reply ${row.id} has no vault`);
         const prechecked: QueryPrecheckedContext = { vaultLabel: vault.name };
         const queryState = yield* query.prepareExecution(
           row.userId,
           row.vaultId,
-          { ...queryRequest(input, transcript.question), mode: transcript.mode },
+          queryRequest(accepted.command, transcript.question, accepted.mode),
           prechecked,
           transcript.prior,
         );
@@ -583,18 +665,15 @@ export const RepliesServiceLive = Layer.effect(
 
     const modelStep = (replyId: Uuid, expectedCursor: number) =>
       Effect.gen(function* () {
-        const row = yield* readReplyById(replyId);
-        if (row === undefined) return failedControl(expectedCursor, sanitizedReplyError);
-        if (row.stopRequested) return stoppedControl(row.generationCursor);
+        const row = yield* readGenerationReply(replyId);
+        if (row === undefined) return doneControl(expectedCursor);
+        if (row.status !== "running") return doneControl(row.generationCursor);
+        if (row.stopRequested) return yield* freezeStopped(row);
         const checkpoint = yield* readCheckpoint(row);
-        if (checkpoint === undefined) {
+        if (checkpoint === undefined)
           throw new Error(`Reply ${replyId} has no generation checkpoint`);
-        }
-        if (row.status !== "running") {
-          return row.status === "completed"
-            ? doneControl(row.generationCursor)
-            : failedControl(row.generationCursor, row.error ?? sanitizedReplyError);
-        }
+        if (terminalControl(checkpoint.lastControl))
+          return yield* freezeControl(row, checkpoint, checkpoint.lastControl);
         const claimed = yield* claimExternalStep(
           row,
           checkpoint,
@@ -602,29 +681,32 @@ export const RepliesServiceLive = Layer.effect(
           "model",
           `${checkpoint.query.modelIndex}:${checkpoint.query.trace.llmRounds + 1}`,
         );
-        if (claimed !== undefined) return claimed;
-
+        if (claimed !== undefined) return yield* freezeControl(row, checkpoint, claimed);
         const accumulator = checkpoint.accumulator;
         let lastFlushAt = 0;
-        const attempt = yield* untilStopped(replyId, query.modelAttempt(checkpoint.query, (text) =>
-          Effect.gen(function* () {
-            if (accumulator.replacementSlot !== null) {
-              removeSource(accumulator, accumulator.replacementSlot);
-              accumulator.replacementSlot = null;
-            }
-            if (accumulator.clearOnNextToken) {
-              accumulator.answer = "";
-              accumulator.clearOnNextToken = false;
-            }
-            accumulator.answer += text;
-            if (Date.now() - lastFlushAt >= flushIntervalMs) {
-              yield* flushAccumulator(replyId, accumulator);
-              lastFlushAt = Date.now();
-            }
-          }),
-        ));
+        const attempt = yield* untilStopped(
+          replyId,
+          query.modelAttempt(checkpoint.query, (text) =>
+            Effect.gen(function* () {
+              if (accumulator.replacementSlot !== null) {
+                removeSource(accumulator, accumulator.replacementSlot);
+                accumulator.replacementSlot = null;
+              }
+              if (accumulator.clearOnNextToken) {
+                accumulator.answer = "";
+                accumulator.clearOnNextToken = false;
+              }
+              accumulator.answer += text;
+              if (Date.now() - lastFlushAt >= flushIntervalMs) {
+                yield* flushAccumulator(replyId, accumulator);
+                lastFlushAt = Date.now();
+              }
+            }),
+          ),
+        );
         if (Option.isNone(attempt)) {
           yield* flushAccumulator(replyId, accumulator);
+          yield* freezeOutcome(row, checkpoint, "stopped", null);
           return stoppedControl(expectedCursor);
         }
         const outcome = attempt.value;
@@ -632,32 +714,16 @@ export const RepliesServiceLive = Layer.effect(
         let pendingTools: readonly QueryPreparedToolCallType[] = [];
         if (outcome.kind === "tool_calls") {
           for (const toolCall of outcome.toolCalls) {
-            if (toolCall.pendingSource !== undefined) {
+            if (toolCall.pendingSource !== undefined)
               addPendingSource(accumulator, toolCall.id, toolCall.pendingSource);
-            }
           }
           pendingTools = outcome.toolCalls;
-          control = {
-            cursor: expectedCursor + 1,
-            outcome: "tool_calls",
-            error: null,
-          };
+          control = { cursor: expectedCursor + 1, outcome: "tool_calls", error: null };
         } else if (outcome.kind === "retryable") {
           accumulator.clearOnNextToken = true;
-          control = {
-            cursor: expectedCursor + 1,
-            outcome: "retryable",
-            error: null,
-          };
-        } else if (outcome.kind === "done") {
-          control = {
-            cursor: expectedCursor + 1,
-            outcome: "done",
-            error: null,
-          };
-        } else {
-          control = failedControl(expectedCursor + 1, outcome.error);
-        }
+          control = { cursor: expectedCursor + 1, outcome: "retryable", error: null };
+        } else if (outcome.kind === "done") control = doneControl(expectedCursor + 1);
+        else control = failedControl(expectedCursor + 1, outcome.error);
         yield* flushAccumulator(replyId, accumulator);
         const nextCheckpoint: ReplyCheckpoint = {
           version: 1,
@@ -668,26 +734,37 @@ export const RepliesServiceLive = Layer.effect(
           nextToolIndex: 0,
           lastControl: control,
         };
-        yield* commitExternalStep(row, nextCheckpoint);
+        if (control.outcome === "done" || control.outcome === "failed") {
+          yield* freezeOutcome(row, nextCheckpoint, control.outcome, control.error);
+          const saved = yield* writeCheckpoint(row, nextCheckpoint).pipe(
+            Effect.as(true),
+            Effect.catchCause((cause) =>
+              isInterruption(cause)
+                ? Effect.interrupt
+                : logger
+                    .warn("reply_terminal_checkpoint_unavailable", { reply_id: row.id })
+                    .pipe(Effect.as(false)),
+            ),
+          );
+          if (!saved) yield* query.finalizeExecution(nextCheckpoint.query);
+        } else yield* commitExternalStep(row, nextCheckpoint);
         return control;
       }).pipe(Effect.catchCause((cause) => stepFailure(replyId, expectedCursor, cause)));
 
     const toolStep = (replyId: Uuid, expectedCursor: number) =>
       Effect.gen(function* () {
-        const row = yield* readReplyById(replyId);
-        if (row === undefined) return failedControl(expectedCursor, sanitizedReplyError);
-        if (row.stopRequested) return stoppedControl(row.generationCursor);
+        const row = yield* readGenerationReply(replyId);
+        if (row === undefined) return doneControl(expectedCursor);
+        if (row.status !== "running") return doneControl(row.generationCursor);
+        if (row.stopRequested) return yield* freezeStopped(row);
         const checkpoint = yield* readCheckpoint(row);
-        if (checkpoint === undefined) {
+        if (checkpoint === undefined)
           throw new Error(`Reply ${replyId} has no generation checkpoint`);
-        }
-        if (row.status !== "running") {
-          return failedControl(row.generationCursor, row.error ?? sanitizedReplyError);
-        }
+        if (terminalControl(checkpoint.lastControl))
+          return yield* freezeControl(row, checkpoint, checkpoint.lastControl);
         const toolCall = checkpoint.pendingTools[checkpoint.nextToolIndex];
-        if (toolCall === undefined) {
+        if (toolCall === undefined)
           throw new Error(`Reply ${replyId} has no pending tool at ${checkpoint.nextToolIndex}`);
-        }
         const claimed = yield* claimExternalStep(
           row,
           checkpoint,
@@ -695,32 +772,26 @@ export const RepliesServiceLive = Layer.effect(
           "tool",
           toolCall.id,
         );
-        if (claimed !== undefined) return claimed;
-
+        if (claimed !== undefined) return yield* freezeControl(row, checkpoint, claimed);
         const accumulator = checkpoint.accumulator;
         const attempt = yield* untilStopped(replyId, query.runTool(checkpoint.query, toolCall));
-        if (Option.isNone(attempt)) return stoppedControl(expectedCursor);
-        const result = attempt.value;
-        if (toolCall.pendingSource !== undefined) {
-          settlePendingSource(accumulator, toolCall.id);
+        if (Option.isNone(attempt)) {
+          yield* freezeOutcome(row, checkpoint, "stopped", null);
+          return stoppedControl(expectedCursor);
         }
-        if (result.source !== undefined) {
-          addResolvedSource(accumulator, result.source);
-        } else if (accumulator.replacementSlot !== null) {
+        const result = attempt.value;
+        if (toolCall.pendingSource !== undefined) settlePendingSource(accumulator, toolCall.id);
+        if (result.source !== undefined) addResolvedSource(accumulator, result.source);
+        else if (accumulator.replacementSlot !== null) {
           removeSource(accumulator, accumulator.replacementSlot);
           accumulator.replacementSlot = null;
         }
         yield* flushAccumulator(replyId, accumulator);
-
         const nextToolIndex = checkpoint.nextToolIndex + 1;
         const remaining = checkpoint.pendingTools.length - nextToolIndex;
         const control: ReplyStepControl =
           remaining > 0
-            ? {
-                cursor: expectedCursor + 1,
-                outcome: "tool_calls",
-                error: null,
-              }
+            ? { cursor: expectedCursor + 1, outcome: "tool_calls", error: null }
             : readyControl(expectedCursor + 1);
         const nextCheckpoint: ReplyCheckpoint = {
           version: 1,
@@ -735,229 +806,157 @@ export const RepliesServiceLive = Layer.effect(
         return control;
       }).pipe(Effect.catchCause((cause) => stepFailure(replyId, expectedCursor, cause)));
 
+    const publishBestEffort = (replyId: Uuid) =>
+      settlement.publish(replyId).pipe(
+        Effect.asVoid,
+        Effect.catchCause((cause) =>
+          isInterruption(cause)
+            ? Effect.interrupt
+            : logger.warn("reply_settlement_deferred", { reply_id: replyId }),
+        ),
+      );
+
     const finalizeStep = (
       replyId: Uuid,
       outcome: "done" | "failed" | "stopped",
       error: string | null,
     ) =>
       Effect.gen(function* () {
-        const initial = yield* readReplyById(replyId);
-        if (initial === undefined) return;
-        const checkpoint = yield* readCheckpoint(initial);
+        const row = yield* readGenerationReply(replyId);
+        if (row === undefined || row.status === "admitting") return;
+        if (row.status === "running")
+          yield* freezeOutcome(row, yield* recoverCheckpoint(row), outcome, error);
+        yield* publishBestEffort(replyId);
+        const checkpoint = yield* recoverCheckpoint(row);
         if (checkpoint !== undefined) yield* query.finalizeExecution(checkpoint.query);
-        yield* db.transaction((tx) => Effect.gen(function* () {
-          const [row] = yield* tx.select().from(replies)
-            .where(eq(replies.id, replyId)).limit(1).for("update");
-          if (row === undefined || row.status !== "running") return;
-          const stopped = row.stopRequested;
-          const accumulator = stopped || checkpoint === undefined ? row : checkpoint.accumulator;
-          let sources: readonly ReplySource[] = accumulator.sources.filter((source) => source.pending !== true);
-          let answer = accumulator.answer;
-          let status: "stopped" | "completed" | "failed" = "failed";
-          if (stopped || outcome === "done") {
-            if (!stopped && checkpoint === undefined) {
-              return yield* Effect.die(new Error(`Reply ${replyId} finished without a checkpoint transcript`));
-            }
-            const messages = checkpoint === undefined
-              ? [{ role: "user" as const, content: (yield* sessions.readTranscript(row.vaultId, row.sessionId, replyId)).question }]
-              : checkpoint.query.messages.slice(checkpoint.query.turnStart);
-            const saved = yield* sessions.completeReply(row.userId, row.vaultId, row.sessionId, replyId, {
-              stopped,
-              messages: stopped ? stoppedMessages(messages, accumulator.answer) : messages,
-              sources,
-              answer: accumulator.answer,
-            });
-            status = saved.stopped ? "stopped" : "completed";
-            answer = saved.answer;
-            sources = saved.sources;
-          }
-          yield* tx.update(replies).set({
-            status,
-            answer,
-            sources,
-            error: status === "failed" ? error ?? sanitizedReplyError : null,
-            version: sql`${replies.version} + 1`,
-            activeGenerationStep: null,
-            activeGenerationKind: null,
-            activeGenerationKey: null,
-            updatedAt: sql`now()`,
-          }).where(eq(replies.id, replyId));
-        }));
       }).pipe(
-        Effect.catchCause((cause) => {
-          if (cause.reasons.length > 0 && cause.reasons.every(Cause.isInterruptReason)) {
-            return Effect.interrupt;
-          }
-          return logger
-            .error("reply_generation_finalize_failed", {
-              reply_id: replyId,
-              error_message: Cause.pretty(cause),
-            })
-            .pipe(Effect.andThen(failRunningReply(replyId, sanitizedReplyError)));
-        }),
+        Effect.catchCause((cause) =>
+          isInterruption(cause)
+            ? Effect.interrupt
+            : logger.warn("reply_finalization_deferred", { reply_id: replyId }),
+        ),
       );
 
     const dispatchBestEffort = (replyId: Uuid) =>
       dispatchReply(replyId, workflowEngine).pipe(
         Effect.provideService(Database, db),
         Effect.catchCause((cause) =>
-          logger.warn("reply_dispatch_deferred", {
-            reply_id: replyId,
-            error_message: Cause.pretty(cause),
-          }),
+          isInterruption(cause)
+            ? Effect.interrupt
+            : logger.warn("reply_dispatch_deferred", { reply_id: replyId }),
         ),
       );
 
-    const acceptedResponseFor = (
-      row: typeof replies.$inferSelect,
-      userId: Uuid,
-      vaultId: Uuid,
-      input: CreateReplyRequest,
-    ) =>
+    const acceptAndDispatch = (accept: Effect.Effect<CreateReplyResponse, ReplyAdmissionError>) =>
       Effect.gen(function* () {
-        const storedInput = yield* decodeCreateReply(row.request).pipe(Effect.orDie);
-        if (
-          row.userId !== userId ||
-          row.vaultId !== vaultId ||
-          !isDeepStrictEqual(storedInput, input)
-        ) {
-          return yield* new Conflict({
-            detail: "Reply id already belongs to another request",
-          });
-        }
-        return {
-          reply_id: row.id,
-          session_id: row.sessionId,
-        };
+        const response = yield* accept.pipe(Effect.mapError(requestError));
+        yield* dispatchBestEffort(response.reply_id);
+        return response;
       });
 
-    const acceptReply = (
-      userId: Uuid,
-      vaultId: Uuid,
-      input: CreateReplyRequest,
-    ) =>
+    const reconcileReply = (initial: ReplyRow) =>
       Effect.gen(function* () {
-        const vaultRows = yield* db.query((d) => d
-          .select({ id: vaults.id })
-          .from(vaults)
-          .where(eq(vaults.id, vaultId))
-          .limit(1));
-        if (vaultRows[0] === undefined) {
-          return yield* new NotFound({ detail: "Vault not found" });
-        }
-        yield* access.requireMember(userId, vaultId);
-
-        const replyId = input.reply_id;
-        const accepted = yield* readReplyById(replyId);
-        if (accepted !== undefined) {
-          return yield* acceptedResponseFor(accepted, userId, vaultId, input);
-        }
-        if (Option.isNone(config.openRouterApiKey)) {
-          return yield* new ServiceUnavailable({
-            detail: "LLM service not configured (OPENROUTER_API_KEY missing)",
-          });
-        }
-
-        const pending = {
-          replyId: input.reply_id,
-          exchangeId: input.exchange_id,
-          question: input.question,
-        };
-        let sessionId: SessionId;
-        if (input.session.kind === "new") {
-          sessionId = yield* sessions.createSession(userId, vaultId, {
-            idempotencyKey: input.session.idempotency_key,
-            kind: input.session.conversation_kind,
-            ...(input.session.origin === undefined
-              ? {}
-              : {
-                  origin: input.session.origin,
-                }),
-            pending,
-          });
+        const row = yield* readGenerationReply(initial.id);
+        if (row === undefined || terminalStatuses.has(row.status)) return;
+        if (row.status === "admitting") {
+          yield* admission.admit(row.id);
+          yield* dispatchBestEffort(row.id);
+        } else if (row.status === "settling") {
+          yield* publishBestEffort(row.id);
+        } else if (row.dispatchedAt === null) {
+          yield* dispatchBestEffort(row.id);
         } else {
-          sessionId = input.session.id;
-          yield* requireSession(vaultId, sessionId);
-          yield* sessions.appendPending(userId, vaultId, sessionId, pending);
-        }
-
-        const inserted = yield* db.query((d) => d
-          .insert(replies)
-          .values({
-            id: replyId,
-            vaultId,
-            userId,
-            sessionId,
-            kind: "exchange",
-            status: "running",
-            answer: "",
-            sources: [],
-            request: input,
-          })
-          .onConflictDoNothing({ target: replies.id })
-          .returning({ id: replies.id }));
-        if (inserted.length === 0) {
-          const concurrent = yield* readReplyById(replyId);
-          if (concurrent === undefined) {
-            throw new Error(`Reply ${replyId} conflicted but could not be read`);
+          const executionId = yield* ReplyWorkflow.executionId({ replyId: row.id });
+          const state = yield* ReplyWorkflow.poll(executionId).pipe(
+            Effect.provideService(WorkflowEngine.WorkflowEngine, workflowEngine),
+          );
+          if (Option.isNone(state)) {
+            yield* dispatchBestEffort(row.id);
+          } else if (state.value._tag === "Suspended") {
+            yield* ReplyWorkflow.resume(executionId).pipe(
+              Effect.provideService(WorkflowEngine.WorkflowEngine, workflowEngine),
+            );
+          } else {
+            const checkpoint = yield* recoverCheckpoint(row);
+            const control = checkpoint?.lastControl;
+            if (
+              control !== undefined &&
+              (control.outcome === "done" ||
+                control.outcome === "failed" ||
+                control.outcome === "stopped")
+            ) {
+              yield* freezeOutcome(row, checkpoint, control.outcome, control.error);
+            } else {
+              yield* freezeOutcome(
+                row,
+                checkpoint,
+                "failed",
+                row.activeGenerationStep === null ? sanitizedReplyError : ambiguousReplyError,
+              );
+            }
+            yield* publishBestEffort(row.id);
           }
-          return yield* acceptedResponseFor(concurrent, userId, vaultId, input);
         }
-        yield* dispatchBestEffort(replyId);
-        return { reply_id: replyId, session_id: sessionId };
-      });
+      }).pipe(
+        Effect.catchCause((cause) =>
+          isInterruption(cause)
+            ? Effect.interrupt
+            : logger.warn("reply_reconciliation_deferred", { reply_id: initial.id }),
+        ),
+      );
+
+    type ReconciliationPosition = { readonly createdAt: Date; readonly id: Uuid };
+    let reconciliationScan: {
+      readonly after: ReconciliationPosition | null;
+      readonly through: ReconciliationPosition;
+    } | null = null;
 
     return {
-      create: (userId, vaultId, input) => acceptReply(userId, vaultId, input),
-      stop: (userId, vaultId, replyId) => Effect.gen(function* () {
-        yield* access.requireMember(userId, vaultId);
-        const row = yield* readReply(vaultId, replyId);
-        if (row === undefined || row.userId !== userId) {
-          return yield* new NotFound({ detail: "Reply not found" });
-        }
-        yield* db.query((d) => d.update(replies)
-          .set({ stopRequested: true, updatedAt: sql`now()` })
-          .where(and(eq(replies.id, replyId), eq(replies.status, "running"))));
-      }),
+      create: (userId, vaultId, input) =>
+        acceptAndDispatch(admission.accept(userId, vaultId, input)),
       retry: (userId, vaultId, replyId, nextReplyId) =>
+        acceptAndDispatch(admission.retry(userId, vaultId, replyId, nextReplyId)),
+      stop: (userId, vaultId, replyId) =>
         Effect.gen(function* () {
           yield* access.requireMember(userId, vaultId);
-          const previous = yield* readReply(vaultId, replyId);
-          if (previous === undefined || previous.userId !== userId) {
+          const row = yield* readReply(vaultId, replyId);
+          if (row === undefined || row.userId !== userId)
             return yield* new NotFound({ detail: "Reply not found" });
-          }
-          if (previous.status !== "failed") {
-            return yield* new BadRequest({ detail: "Only failed replies can be retried" });
-          }
-          if (nextReplyId === replyId) {
-            return yield* new BadRequest({ detail: "Retry requires a new reply id" });
-          }
-          const previousInput = yield* decodeCreateReply(previous.request).pipe(Effect.orDie);
-          const input: CreateReplyRequest = {
-            ...previousInput,
-            reply_id: nextReplyId,
-            session: previousInput.session.kind === "existing"
-              ? previousInput.session
-              : { kind: "existing", id: previous.sessionId },
-          };
-          return yield* acceptReply(userId, vaultId, input);
+          yield* db.query((d) =>
+            d
+              .update(replies)
+              .set({ stopRequested: true, updatedAt: sql`now()` })
+              .where(
+                and(eq(replies.id, replyId), inArray(replies.status, ["admitting", "running"])),
+              ),
+          );
         }),
       stream: (userId, vaultId, replyId) =>
         Effect.gen(function* () {
           yield* access.requireMember(userId, vaultId);
           const initial = yield* readReply(vaultId, replyId);
-          if (initial === undefined) {
+          if (initial === undefined || initial.userId !== userId)
             return yield* new NotFound({ detail: "Reply not found" });
-          }
-
-          return pollingSse(replyId, readReply(vaultId, replyId), (row) => {
-            const current = snapshot(row);
-            return {
-              version: row.version,
-              data: encodeReplySnapshot(current),
-              terminal: terminalStatuses.has(current.status),
-            };
-          }, pollIntervalMs);
+          return pollingSse(
+            replyId,
+            readReply(vaultId, replyId),
+            (row) => {
+              const current = snapshot(row);
+              return {
+                version: row.version,
+                data: encodeReplySnapshot(current),
+                terminal: terminalStatuses.has(current.status),
+              };
+            },
+            pollIntervalMs,
+          ).pipe(
+            Stream.takeWhileEffect(() =>
+              access.requireMember(userId, vaultId).pipe(
+                Effect.as(true),
+                Effect.catchTag("Forbidden", () => Effect.succeed(false)),
+              ),
+            ),
+          );
         }),
       prepareStep,
       modelStep,
@@ -965,17 +964,45 @@ export const RepliesServiceLive = Layer.effect(
       finalizeStep,
       reconcileOnce: () =>
         Effect.gen(function* () {
-          const rows = yield* db.query((d) => d
-            .select({ id: replies.id })
-            .from(replies)
-            .where(and(eq(replies.status, "running"), isNull(replies.dispatchedAt)))
-            .orderBy(asc(replies.createdAt))
-            .limit(100));
-          yield* Effect.forEach(
-            rows,
-            (row) => dispatchBestEffort(row.id),
-            { concurrency: config.pipelineConcurrency },
+          const pending = inArray(replies.status, ["admitting", "running", "settling"]);
+          let scan = reconciliationScan;
+          if (scan === null) {
+            const [through] = yield* db.query((d) =>
+              d
+                .select({ createdAt: replies.createdAt, id: replies.id })
+                .from(replies)
+                .where(pending)
+                .orderBy(desc(replies.createdAt), desc(replies.id))
+                .limit(1),
+            );
+            if (through === undefined) return 0;
+            scan = { after: null, through };
+          }
+          const after =
+            scan.after === null
+              ? undefined
+              : or(
+                  gt(replies.createdAt, scan.after.createdAt),
+                  and(eq(replies.createdAt, scan.after.createdAt), gt(replies.id, scan.after.id)),
+                );
+          const through = or(
+            lt(replies.createdAt, scan.through.createdAt),
+            and(eq(replies.createdAt, scan.through.createdAt), lte(replies.id, scan.through.id)),
           );
+          const rows = yield* db.query((d) =>
+            d
+              .select()
+              .from(replies)
+              .where(and(pending, after, through))
+              .orderBy(asc(replies.createdAt), asc(replies.id))
+              .limit(config.pipelineConcurrency),
+          );
+          const last = rows.at(-1);
+          reconciliationScan =
+            last === undefined || last.id === scan.through.id
+              ? null
+              : { after: { createdAt: last.createdAt, id: last.id }, through: scan.through };
+          yield* Effect.forEach(rows, reconcileReply, { concurrency: config.pipelineConcurrency });
           return rows.length;
         }),
     } satisfies RepliesServiceShape;
@@ -990,38 +1017,41 @@ export const ReplyWorkflowLive = ReplyWorkflow.toLayer((payload) =>
       success: ReplyStepControl,
       execute: service.prepareStep(payload.replyId),
     });
-
-    while (control.outcome !== "done" && control.outcome !== "failed" && control.outcome !== "stopped") {
-      if (control.outcome === "tool_calls") {
-        const cursor = control.cursor;
-        control = yield* Activity.make({
-          name: `reply-tool-turn-${cursor}`,
-          success: ReplyStepControl,
-          execute: service.toolStep(payload.replyId, cursor),
-        });
-      } else {
-        const cursor = control.cursor;
-        control = yield* Activity.make({
-          name: `reply-model-turn-${cursor}`,
-          success: ReplyStepControl,
-          execute: service.modelStep(payload.replyId, cursor),
-        });
-      }
+    while (!terminalControl(control)) {
+      const cursor = control.cursor;
+      control =
+        control.outcome === "tool_calls"
+          ? yield* Activity.make({
+              name: `reply-tool-turn-${cursor}`,
+              success: ReplyStepControl,
+              execute: service.toolStep(payload.replyId, cursor),
+            })
+          : yield* Activity.make({
+              name: `reply-model-turn-${cursor}`,
+              success: ReplyStepControl,
+              execute: service.modelStep(payload.replyId, cursor),
+            });
     }
-
-    yield* Activity.make({
-      name: "reply-finalize",
-      success: Schema.Void,
-      execute: service.finalizeStep(payload.replyId, control.outcome, control.error),
-    });
+    if (
+      control.outcome === "done" ||
+      control.outcome === "failed" ||
+      control.outcome === "stopped"
+    ) {
+      yield* Activity.make({
+        name: "reply-finalize",
+        success: Schema.Void,
+        execute: service.finalizeStep(payload.replyId, control.outcome, control.error),
+      });
+    }
   }),
 );
 
 export const ReplyReconcilerLoopLive = Layer.effectDiscard(
-  Effect.flatMap(RepliesService, (replies) =>
+  Effect.flatMap(RepliesService, (service) =>
     backgroundLoop({
       failureEvent: "reply_reconciler_tick_failed",
       interval: "5 seconds",
-      tick: replies.reconcileOnce(),
-    })),
+      tick: service.reconcileOnce(),
+    }),
+  ),
 );

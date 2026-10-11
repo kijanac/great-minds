@@ -31,9 +31,7 @@ export type SessionId = typeof SessionId.Type;
 
 export const RawSourcePath = Schema.String.pipe(
   Schema.check(
-    Schema.isPattern(
-      /^raw\/(?:[A-Za-z0-9_-][A-Za-z0-9._-]*\/)+[A-Za-z0-9_-][A-Za-z0-9._-]*\.md$/,
-    ),
+    Schema.isPattern(/^raw\/(?:[A-Za-z0-9_-][A-Za-z0-9._-]*\/)+[A-Za-z0-9_-][A-Za-z0-9._-]*\.md$/),
   ),
   Schema.brand("RawSourcePath"),
 );
@@ -163,7 +161,9 @@ export const PasskeyRegistrationOptions = Schema.Struct({
     ),
   ),
   timeout: Schema.optionalKey(Schema.Number),
-  excludeCredentials: Schema.optionalKey(Schema.mutable(Schema.Array(PublicKeyCredentialDescriptor))),
+  excludeCredentials: Schema.optionalKey(
+    Schema.mutable(Schema.Array(PublicKeyCredentialDescriptor)),
+  ),
   authenticatorSelection: Schema.optionalKey(
     Schema.Struct({
       authenticatorAttachment: Schema.optionalKey(AuthenticatorAttachment),
@@ -177,20 +177,23 @@ export const PasskeyRegistrationOptions = Schema.Struct({
     }),
   ),
   hints: Schema.optionalKey(
-    Schema.mutable(Schema.Array(Schema.Literals(["hybrid", "security-key", "client-device"] as const))),
+    Schema.mutable(
+      Schema.Array(Schema.Literals(["hybrid", "security-key", "client-device"] as const)),
+    ),
   ),
   attestation: Schema.optionalKey(Schema.Literals(["direct", "enterprise", "none"] as const)),
   attestationFormats: Schema.optionalKey(
-    Schema.mutable(Schema.Array(
-      Schema.Literals([
-        "fido-u2f",
-        "packed",
-        "android-safetynet",
-        "android-key",
-        "tpm",
-        "apple",
-        "none",
-      ] as const),
+    Schema.mutable(
+      Schema.Array(
+        Schema.Literals([
+          "fido-u2f",
+          "packed",
+          "android-safetynet",
+          "android-key",
+          "tpm",
+          "apple",
+          "none",
+        ] as const),
       ),
     ),
   ),
@@ -207,7 +210,9 @@ export const PasskeyAuthenticationOptions = Schema.Struct({
     Schema.Literals(["discouraged", "preferred", "required"] as const),
   ),
   hints: Schema.optionalKey(
-    Schema.mutable(Schema.Array(Schema.Literals(["hybrid", "security-key", "client-device"] as const))),
+    Schema.mutable(
+      Schema.Array(Schema.Literals(["hybrid", "security-key", "client-device"] as const)),
+    ),
   ),
   extensions: Schema.optionalKey(ClientExtensionInputs),
 });
@@ -754,9 +759,7 @@ export const ThinkingSource = Schema.Struct({
 export type ThinkingSource = typeof ThinkingSource.Type;
 
 export const ThinkingBlock = Schema.Struct({
-  sources: Schema.Array(ThinkingSource).pipe(
-    Schema.withDecodingDefaultTypeKey(Effect.succeed([])),
-  ),
+  sources: Schema.Array(ThinkingSource).pipe(Schema.withDecodingDefaultTypeKey(Effect.succeed([]))),
 });
 export type ThinkingBlock = typeof ThinkingBlock.Type;
 
@@ -773,14 +776,13 @@ export type SessionMetaEvent = typeof SessionMetaEvent.Type;
 export const SessionExchangeEvent = Schema.Struct({
   type: Schema.Literal("exchange"),
   exId: Uuid,
-  reply_id: Schema.optionalKey(Uuid),
-  stopped: Schema.optionalKey(Schema.Boolean),
+  reply_id: Uuid,
+  status: Schema.Literals(["running", "completed", "stopped", "failed"]),
+  error: Schema.NullOr(Schema.String),
   query: Schema.String,
-  thinking: Schema.Array(ThinkingBlock).pipe(
-    Schema.withDecodingDefaultTypeKey(Effect.succeed([])),
-  ),
+  thinking: Schema.Array(ThinkingBlock).pipe(Schema.withDecodingDefaultTypeKey(Effect.succeed([]))),
   answer: Schema.String.pipe(Schema.withDecodingDefaultTypeKey(Effect.succeed(""))),
-  ts: IsoDateTime,
+  ts: Schema.NullOr(IsoDateTime),
 });
 export type SessionExchangeEvent = typeof SessionExchangeEvent.Type;
 
@@ -1131,7 +1133,11 @@ const CreateReplySession = Schema.Struct({
 });
 
 export const CreateReplyRequest = Schema.Struct({
-  ...QueryRequest.fields,
+  question: QueryRequest.fields.question,
+  model: QueryRequest.fields.model,
+  origin_path: QueryRequest.fields.origin_path,
+  origin_scope: QueryRequest.fields.origin_scope,
+  extra_instructions: QueryRequest.fields.extra_instructions,
   reply_id: Uuid,
   exchange_id: Uuid,
   session: Schema.Union([
@@ -1265,11 +1271,7 @@ const DocumentErrors = [
   NotFoundResponse,
   ValidationResponse,
 ] as const;
-const ReferenceDocumentErrors = [
-  BadRequestResponse,
-  NotFoundResponse,
-  ValidationResponse,
-] as const;
+const ReferenceDocumentErrors = [BadRequestResponse, NotFoundResponse, ValidationResponse] as const;
 const CreateReplyErrors = [
   BadRequestResponse,
   ConflictResponse,
@@ -1308,9 +1310,7 @@ const CreatedVault = Vault.pipe(HttpApiSchema.status("Created"));
 const CreatedMember = MemberWithEmail.pipe(HttpApiSchema.status("Created"));
 const CreatedProposal = Proposal.pipe(HttpApiSchema.status("Created"));
 const CreatedIngestedDocument = IngestedDocument.pipe(HttpApiSchema.status("Created"));
-const CreatedUserSuggestionResult = UserSuggestionResult.pipe(
-  HttpApiSchema.status("Created"),
-);
+const CreatedUserSuggestionResult = UserSuggestionResult.pipe(HttpApiSchema.status("Created"));
 const CreatedFileIngestBatch = FileIngestBatch.pipe(HttpApiSchema.status("Created"));
 const CreatedJobResponse = JobResponse.pipe(HttpApiSchema.status("Created"));
 const CreatedReferenceDetail = ReferenceDetail.pipe(HttpApiSchema.status("Created"));
@@ -1626,12 +1626,7 @@ export const IngestApiGroup = HttpApiGroup.make("ingest").add(
     },
     payload: ReferencePromote,
     success: CreatedIngestedDocument,
-    error: [
-      BadRequestResponse,
-      ForbiddenResponse,
-      NotFoundResponse,
-      ValidationResponse,
-    ] as const,
+    error: [BadRequestResponse, ForbiddenResponse, NotFoundResponse, ValidationResponse] as const,
   }).middleware(AuthMiddleware),
   HttpApiEndpoint.post("ingestUserSuggestion", "/vaults/:vault_id/ingest/user-suggestion", {
     params: {
@@ -1641,30 +1636,21 @@ export const IngestApiGroup = HttpApiGroup.make("ingest").add(
     success: CreatedUserSuggestionResult,
     error: [BadRequestResponse, ForbiddenResponse, ValidationResponse] as const,
   }).middleware(AuthMiddleware),
-  HttpApiEndpoint.post(
-    "checkFileIngestDupes",
-    "/vaults/:vault_id/file-ingests/check-dupes",
-    {
-      params: {
-        vault_id: Uuid,
-      },
-      payload: CheckDupesRequest,
-      success: CheckDupesResponse,
-      error: ForbiddenValidationErrors,
+  HttpApiEndpoint.post("checkFileIngestDupes", "/vaults/:vault_id/file-ingests/check-dupes", {
+    params: {
+      vault_id: Uuid,
     },
-  ).middleware(AuthMiddleware),
+    payload: CheckDupesRequest,
+    success: CheckDupesResponse,
+    error: ForbiddenValidationErrors,
+  }).middleware(AuthMiddleware),
   HttpApiEndpoint.post("createFileIngest", "/vaults/:vault_id/file-ingests", {
     params: {
       vault_id: Uuid,
     },
     payload: FileIngestBatchCreate,
     success: CreatedFileIngestBatch,
-    error: [
-      BadRequestResponse,
-      ForbiddenResponse,
-      ConflictResponse,
-      ValidationResponse,
-    ] as const,
+    error: [BadRequestResponse, ForbiddenResponse, ConflictResponse, ValidationResponse] as const,
   }).middleware(AuthMiddleware),
   HttpApiEndpoint.get("getFileIngest", "/file-ingests/:batch_id", {
     params: {
@@ -1714,12 +1700,7 @@ export const JobsApiGroup = HttpApiGroup.make("jobs").add(
     params: { vault_id: Uuid, job_id: Uuid },
     payload: CompileRequest,
     success: CreatedJobResponse,
-    error: [
-      BadRequestResponse,
-      ForbiddenResponse,
-      NotFoundResponse,
-      ValidationResponse,
-    ] as const,
+    error: [BadRequestResponse, ForbiddenResponse, NotFoundResponse, ValidationResponse] as const,
   }).middleware(AuthMiddleware),
   HttpApiEndpoint.get("listJobs", "/vaults/:vault_id/jobs", {
     params: { vault_id: Uuid },
@@ -1822,7 +1803,13 @@ export const SessionsApiGroup = HttpApiGroup.make("sessions").add(
         exchange_id: Uuid,
       },
       success: CreatedPromoteExchangeResponse,
-      error: [BadRequestResponse, ForbiddenResponse, NotFoundResponse, ValidationResponse] as const,
+      error: [
+        BadRequestResponse,
+        ForbiddenResponse,
+        NotFoundResponse,
+        ServiceUnavailableResponse,
+        ValidationResponse,
+      ] as const,
     },
   ).middleware(AuthMiddleware),
   HttpApiEndpoint.get("listSessions", "/vaults/:vault_id/sessions", {
@@ -1839,7 +1826,7 @@ export const SessionsApiGroup = HttpApiGroup.make("sessions").add(
     },
     query: OriginSessionsQuery,
     success: Schema.Array(OriginSessionDetail),
-    error: ForbiddenValidationErrors,
+    error: [...ForbiddenNotFoundValidationErrors, ServiceUnavailableResponse],
   }).middleware(AuthMiddleware),
   HttpApiEndpoint.get("readSession", "/vaults/:vault_id/sessions/:session_id", {
     params: {
@@ -1847,7 +1834,7 @@ export const SessionsApiGroup = HttpApiGroup.make("sessions").add(
       session_id: SessionId,
     },
     success: SessionResponse,
-    error: ForbiddenNotFoundValidationErrors,
+    error: [...ForbiddenNotFoundValidationErrors, ServiceUnavailableResponse],
   }).middleware(AuthMiddleware),
   HttpApiEndpoint.get("readSessionMarkdown", "/vaults/:vault_id/sessions/:session_id/markdown", {
     params: {
@@ -1855,7 +1842,7 @@ export const SessionsApiGroup = HttpApiGroup.make("sessions").add(
       session_id: SessionId,
     },
     success: SessionMarkdown,
-    error: ForbiddenNotFoundValidationErrors,
+    error: [...ForbiddenNotFoundValidationErrors, ServiceUnavailableResponse],
   }).middleware(AuthMiddleware),
 );
 
@@ -1906,7 +1893,7 @@ export const SharesApiGroup = HttpApiGroup.make("shares").add(
   HttpApiEndpoint.post("createShare", "/shares", {
     payload: ShareCreate,
     success: CreatedShare,
-    error: ForbiddenNotFoundValidationErrors,
+    error: [...ForbiddenNotFoundValidationErrors, ServiceUnavailableResponse],
   }).middleware(AuthMiddleware),
   HttpApiEndpoint.get("listShares", "/shares", {
     success: Shares,
@@ -1927,7 +1914,7 @@ export const PublicApiGroup = HttpApiGroup.make("public").add(
       token: Schema.String,
     },
     success: SharedShareDetail,
-    error: NotFoundValidationErrors,
+    error: [...NotFoundValidationErrors, ServiceUnavailableResponse],
   }),
 );
 

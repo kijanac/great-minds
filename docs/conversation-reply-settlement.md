@@ -4,7 +4,7 @@
 
 This is the first database-backed component of Stage 2B.2, built on the [history storage foundation](conversation-history-storage.md). It implements the result-freezing and publication boundary in `packages/server/src/conversation-history/settlement.ts`.
 
-It is **not yet the live reply workflow**. A separate [admission coordinator](conversation-reply-admission.md) now implements reservation, frozen mode, receipt-confirmed admission, and a one-live-operation constraint. Neither coordinator is connected to live acceptance, terminal workflow routing, or reconciliation. The admission migration must not deploy independently of that writer cutover. Existing session readers/writers remain on the legacy format. This component must not be pointed at legacy files as a conversion mechanism.
+The [workflow integration](conversation-workflow-integration.md) now connects this coordinator and [admission](conversation-reply-admission.md) to native acceptance, terminal outcomes, reconciliation, and required readers. This is repository implementation, not a production deployment. The migrations must not deploy independently of coordinated data/API/web/worker conversion. This component must not be pointed at legacy files as a conversion mechanism.
 
 The [history contract](future-ideas/conversation-history-contract-and-migration.md) and [acceptance matrix](future-ideas/conversation-history-acceptance-matrix.md) remain the coordinated-cutover specification. Neither the schema migration nor these tests authorize a production data migration.
 
@@ -51,7 +51,7 @@ A subsequent `begin` does not replace an already frozen result, even if its call
 
 `begin` returns `true` when a pending frozen result exists and `false` for a missing, unadmitted, or already terminal reply. An invalid pending payload or absent history receipt is an explicit error, not a repaired state.
 
-Generation and progress writes must require `status = 'running'`. A stop may be recorded while admitting or running, but must not change an already frozen result. Component tests exercise database predicates and retention of a pre-admission stop; wiring the actual stop/progress producers remains workflow-integration work.
+Generation and progress writes must require `status = 'running'`. A stop may be recorded while admitting or running, but must not change an already frozen result. The workflow now uses these predicates for actual stop/progress/claim paths. Component tests cover lock ordering and the pre-admission stop, while native workflow tests exercise provider/tool cancellation and later stop attempts against a frozen result.
 
 ## Publication boundary
 
@@ -73,6 +73,12 @@ A lost storage acknowledgement is recovered by semantic replay: the exact saved 
 
 `publish` returns `true` only when it completes the terminal DB transition. It returns `false` when there is no longer a pending settlement. Its caller is responsible for terminal client publication and durable scheduling of remaining obligations.
 
+## Recorded-result restoration
+
+`restoreRecorded(replyId)` handles a stale running DB projection when a receipt-verified settlement is already in history. It reads outside the transaction, locks session then reply, rechecks the newest receipt, and projects that recorded outcome without writing history. A later stop does not replace a recorded completion. A stale snapshot cannot regress a newer receipt. Repeating restoration after the reply is terminal is a no-op.
+
+The workflow uses this preflight before generation and recovery. It does not turn a conflicting already-frozen settlement into a silent first-wins success, and ordinary private reads do not invoke it.
+
 ## Tests and safe reproduction
 
 ```sh
@@ -91,13 +97,8 @@ Settlement checkpoint (`dd6b808`), before the subsequent admission work: **159 t
 
 These are coordinator-level tests, including recreation of the coordinator after failures. They are not an end-to-end native-workflow restart test, a provider/tool invocation-count proof for the new workflow, live R2 verification, or a power-loss guarantee. The existing process-death storage tests cover the separate local replacement protocol.
 
-## Remaining Stage 2B.2 work
+## Integration and remaining release gates
 
-- Connect durable acceptance/admission to the live API and dispatcher; reconcile its saved obligations.
-- Activate the one-live-operation constraint with that writer cutover, not ahead of it.
-- Separate application placement/default/revision and make preparation use the frozen accepted mode.
-- Route completed, stopped, ordinary failed, and ambiguous-call outcomes from the live workflow through this coordinator.
-- Fence all generation/progress paths and reconcile settling records even after workflow completion or death.
-- Verify the integrated fault paths with explicit model/tool invocation counts.
+The [native workflow integration](conversation-workflow-integration.md) adds recorded-result restoration tests and actual model/tool process-restart evidence, including publication after the workflow has completed. It also switches the required private readers and public sharing/promotion selection, removes the client mode override, and hydrates explicit terminal status.
 
-Authorized snapshots/SSE, frontend state handling, explicit sharing/promotion projections, detached legacy conversion, and deployment fencing remain later cutover work. The current reply DTO still presents internal `admitting` and `settling` rows as nonterminal `running`; this is not the final client-facing finalization contract.
+The full authorized snapshot/active overlay, typed unavailable/readiness states, deterministic native conversion, and deployment fencing remain cutover work. The current reply DTO still presents internal `admitting` and `settling` rows as nonterminal `running`; this is not the final client-facing finalization contract. Historical component counts above are not a claim that all acceptance-matrix gates pass.

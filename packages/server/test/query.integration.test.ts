@@ -17,10 +17,17 @@ import {
   vaults,
   wikiArticles,
 } from "@great-minds/database";
-import { type OriginSessionDetail, Uuid } from "@great-minds/domain";
-import { eq, sql } from "drizzle-orm";
-import { Effect, Layer, Option, Redacted, Schema } from "effect";
+import {
+  CreateReplyRequest,
+  type OriginSessionDetail,
+  SessionId,
+  ShareCreateResult,
+  Uuid,
+} from "@great-minds/domain";
+import { and, eq, sql } from "drizzle-orm";
+import { Effect, Layer, Option, Redacted, Result, Schema, Stream } from "effect";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import * as WorkflowEngine from "effect/unstable/workflow/WorkflowEngine";
 
 import { makeAppLayer } from "../src/app-layer.ts";
 import { ClockService, makeTestClock } from "../src/clock.ts";
@@ -30,9 +37,23 @@ import { StructuredLogger, StructuredLoggerLive } from "../src/logging.ts";
 import { type LlmAssistantToolCall, type LlmMessage, type ModelStreamPart } from "../src/llm.ts";
 import { ParallelSearchService } from "../src/parallel.ts";
 import { makeTestMailer } from "../src/mailer.ts";
-import { RepliesService } from "../src/replies.ts";
+import { RepliesService, ReplyWorkflow } from "../src/replies.ts";
 import { startServer } from "../src/server.ts";
-import { SessionsService, type ReplyNode, type StoredSessionEvent } from "../src/sessions.ts";
+import { SessionsService } from "../src/sessions.ts";
+import { ReplyAdmission } from "../src/conversation-history/admission.ts";
+import { parseHistory } from "../src/conversation-history/history.ts";
+import {
+  HistoryStore,
+  makeHistoryStore,
+  type HistoryStoreShape,
+} from "../src/conversation-history/store.ts";
+import { openLocalConditionalObjectStore } from "../src/storage/local-conditional-object-store.ts";
+import { storageBackendError } from "../src/storage/object-store.ts";
+import {
+  replyHistoryTestDatabaseUrl,
+  runHistoryDatabase,
+} from "./fixtures/reply-history-database.ts";
+import type { HistoryAttempt, HistorySettlement } from "../src/conversation-history/schema.ts";
 import { TokenService } from "../src/tokens.ts";
 import {
   finishPart,
@@ -91,9 +112,11 @@ type TestServices =
   | Database
   | ClockService
   | RepliesService
+  | ReplyAdmission
   | SessionsService
   | StructuredLogger
-  | TokenService;
+  | TokenService
+  | WorkflowEngine.WorkflowEngine;
 
 type TestState = {
   readonly started: Awaited<ReturnType<typeof startServer>>;
@@ -107,6 +130,7 @@ type HarnessOptions = {
   readonly costs?: ReturnType<typeof makeCostLookup>;
   readonly parallel?: ReturnType<typeof makeParallelSearch>;
   readonly parallelLayer?: ReturnType<typeof makeDisabledParallelSearch>;
+  readonly historyStore?: (histories: HistoryStoreShape) => HistoryStoreShape;
   readonly configOverrides?: Partial<
     Pick<AppConfigShape, "openRouterApiKey" | "queryModel" | "queryFallbackModels">
   >;
@@ -121,13 +145,7 @@ const currentState = () => {
   return state;
 };
 
-const databaseUrl = () => {
-  const value = process.env.DATABASE_URL;
-  if (value === undefined || value.length === 0) {
-    throw new Error("DATABASE_URL is required for integration tests");
-  }
-  return value;
-};
+const databaseUrl = () => replyHistoryTestDatabaseUrl;
 
 const testConfig = (
   url: string,
@@ -216,14 +234,14 @@ const insertUser = (userId: Uuid, email: string) =>
   runDb(
     Effect.gen(function* () {
       const db = yield* Database;
-      yield* db.query((d) => d
-        .insert(users)
-        .values({ id: userId, email, createdAt: initialTime }))
+      yield* db
+        .query((d) => d.insert(users).values({ id: userId, email, createdAt: initialTime }))
         .pipe(Effect.orDie);
     }),
   );
 
 const startHarness = async (options: HarnessOptions) => {
+  await runHistoryDatabase(Effect.void);
   const clock = makeTestClock(initialTime);
   const storageRoot = await mkdtemp(join(tmpdir(), "great-minds-query-storage-"));
   const configLayer = Layer.succeed(
@@ -239,6 +257,7 @@ const startHarness = async (options: HarnessOptions) => {
         ["value", vector1024([1, 0, 0])],
       ]),
     );
+  const decorateHistory = options.historyStore;
   const appLayer = makeAppLayer({
     config: configLayer,
     clock: clock.layer,
@@ -249,6 +268,19 @@ const startHarness = async (options: HarnessOptions) => {
     costLookup: costs.layer,
     parallelSearch:
       options.parallel?.layer ?? options.parallelLayer ?? makeDisabledParallelSearch(),
+    ...(decorateHistory === undefined
+      ? {}
+      : {
+          histories: Layer.effect(
+            HistoryStore,
+            Effect.gen(function* () {
+              const store = makeHistoryStore(
+                yield* openLocalConditionalObjectStore(storageRoot).pipe(Effect.orDie),
+              );
+              return decorateHistory(store);
+            }),
+          ),
+        }),
   });
   const started = await startServer({ layer: appLayer, host: "127.0.0.1", port: 0 });
   state = { started, storageRoot, token: "" };
@@ -259,6 +291,7 @@ const startHarness = async (options: HarnessOptions) => {
 };
 
 const startLiveHarness = async () => {
+  await runHistoryDatabase(Effect.void);
   const key = process.env.OPENROUTER_API_KEY;
   if (key === undefined || key.length === 0) {
     throw new Error("OPENROUTER_API_KEY is required when RUN_LIVE_LLM_SMOKE=1");
@@ -291,125 +324,140 @@ const seedFixtures = async (webSearch: boolean) => {
   await runDb(
     Effect.gen(function* () {
       const db = yield* Database;
-      yield* db.query((d) => d
-        .insert(users)
-        .values({ id: id.alice, email: "alice-query@example.com", createdAt: initialTime }))
+      yield* db
+        .query((d) =>
+          d
+            .insert(users)
+            .values({ id: id.alice, email: "alice-query@example.com", createdAt: initialTime }),
+        )
         .pipe(Effect.orDie);
-      yield* db.query((d) => d
-        .insert(vaults)
-        .values({ id: id.vault, name: "Query Vault", ownerId: id.alice, createdAt: initialTime }))
+      yield* db
+        .query((d) =>
+          d.insert(vaults).values({
+            id: id.vault,
+            name: "Query Vault",
+            ownerId: id.alice,
+            createdAt: initialTime,
+          }),
+        )
         .pipe(Effect.orDie);
-      yield* db.query((d) => d
-        .insert(vaultMemberships)
-        .values({
-          id: uuid("00000000-0000-4000-8000-000000020701"),
-          vaultId: id.vault,
-          userId: id.alice,
-          role: "OWNER",
-        }))
+      yield* db
+        .query((d) =>
+          d.insert(vaultMemberships).values({
+            id: uuid("00000000-0000-4000-8000-000000020701"),
+            vaultId: id.vault,
+            userId: id.alice,
+            role: "OWNER",
+          }),
+        )
         .pipe(Effect.orDie);
-      yield* db.query((d) => d
-        .insert(topics)
-        .values([
-          {
-            topicId: id.topicAlpha,
-            vaultId: id.vault,
-            slug: "alpha",
-            title: "Alpha",
-            description: "Alpha topic",
-            articleStatus: "rendered",
-          },
-          {
-            topicId: id.topicBeta,
-            vaultId: id.vault,
-            slug: "beta",
-            title: "Beta",
-            description: "Beta topic",
-            articleStatus: "rendered",
-          },
-        ]))
+      yield* db
+        .query((d) =>
+          d.insert(topics).values([
+            {
+              topicId: id.topicAlpha,
+              vaultId: id.vault,
+              slug: "alpha",
+              title: "Alpha",
+              description: "Alpha topic",
+              articleStatus: "rendered",
+            },
+            {
+              topicId: id.topicBeta,
+              vaultId: id.vault,
+              slug: "beta",
+              title: "Beta",
+              description: "Beta topic",
+              articleStatus: "rendered",
+            },
+          ]),
+        )
         .pipe(Effect.orDie);
-      yield* db.query((d) => d
-        .insert(wikiArticles)
-        .values([
-          {
-            id: id.articleAlpha,
-            vaultId: id.vault,
-            topicId: id.topicAlpha,
-            filePath: "wiki/alpha.md",
-            fileHash: "wiki-alpha-file",
-            bodyHash: "wiki-alpha-body",
-            title: "Alpha",
-            precis: "Alpha precis about capital and value.",
-            tags: ["theory"],
-          },
-          {
-            id: id.articleBeta,
-            vaultId: id.vault,
-            topicId: id.topicBeta,
-            filePath: "wiki/beta.md",
-            fileHash: "wiki-beta-file",
-            bodyHash: "wiki-beta-body",
-            title: "Beta",
-            precis: "Beta precis.",
-            tags: [],
-          },
-        ]))
+      yield* db
+        .query((d) =>
+          d.insert(wikiArticles).values([
+            {
+              id: id.articleAlpha,
+              vaultId: id.vault,
+              topicId: id.topicAlpha,
+              filePath: "wiki/alpha.md",
+              fileHash: "wiki-alpha-file",
+              bodyHash: "wiki-alpha-body",
+              title: "Alpha",
+              precis: "Alpha precis about capital and value.",
+              tags: ["theory"],
+            },
+            {
+              id: id.articleBeta,
+              vaultId: id.vault,
+              topicId: id.topicBeta,
+              filePath: "wiki/beta.md",
+              fileHash: "wiki-beta-file",
+              bodyHash: "wiki-beta-body",
+              title: "Beta",
+              precis: "Beta precis.",
+              tags: [],
+            },
+          ]),
+        )
         .pipe(Effect.orDie);
-      yield* db.query((d) => d
-        .insert(backlinks)
-        .values([
-          { sourceArticleId: id.articleAlpha, targetArticleId: id.articleBeta },
-          { sourceArticleId: id.articleBeta, targetArticleId: id.articleAlpha },
-        ]))
+      yield* db
+        .query((d) =>
+          d.insert(backlinks).values([
+            { sourceArticleId: id.articleAlpha, targetArticleId: id.articleBeta },
+            { sourceArticleId: id.articleBeta, targetArticleId: id.articleAlpha },
+          ]),
+        )
         .pipe(Effect.orDie);
-      yield* db.query((d) => d
-        .insert(sourceDocuments)
-        .values({
-          id: id.source,
-          vaultId: id.vault,
-          filePath: "raw/texts/source.md",
-          fileHash: "source-file",
-          bodyHash: "source-body",
-          sourceType: "document",
-          title: "Raw Source",
-          author: "Lenin",
-          publishedDate: "1916",
-          genre: "theoretical",
-          tags: ["theory", "capital"],
-        }))
+      yield* db
+        .query((d) =>
+          d.insert(sourceDocuments).values({
+            id: id.source,
+            vaultId: id.vault,
+            filePath: "raw/texts/source.md",
+            fileHash: "source-file",
+            bodyHash: "source-body",
+            sourceType: "document",
+            title: "Raw Source",
+            author: "Lenin",
+            publishedDate: "1916",
+            genre: "theoretical",
+            tags: ["theory", "capital"],
+          }),
+        )
         .pipe(Effect.orDie);
-      yield* db.query((d) => d
-        .insert(searchIndex)
-        .values([
-          {
-            vaultId: id.vault,
-            path: "wiki/alpha.md",
-            chunkIndex: 0,
-            heading: "Alpha heading",
-            body: "Capital appears in the alpha article.",
-            contentHash: "alpha-0",
-            tsv: sql`to_tsvector('english', 'Capital appears in the alpha article.')`,
-          },
-          {
-            vaultId: id.vault,
-            path: "raw/texts/source.md",
-            chunkIndex: 0,
-            heading: "Raw heading",
-            body: "Value appears in the raw source.",
-            contentHash: "raw-0",
-            tsv: sql`to_tsvector('english', 'Value appears in the raw source.')`,
-          },
-          {
-            vaultId: id.vault,
-            path: "raw/texts/source.md",
-            chunkIndex: 1,
-            heading: "Raw heading",
-            body: "More value context appears here.",
-            contentHash: "raw-1",
-            tsv: sql`to_tsvector('english', 'More value context appears here.')`,
-          },
-        ]))
+      yield* db
+        .query((d) =>
+          d.insert(searchIndex).values([
+            {
+              vaultId: id.vault,
+              path: "wiki/alpha.md",
+              chunkIndex: 0,
+              heading: "Alpha heading",
+              body: "Capital appears in the alpha article.",
+              contentHash: "alpha-0",
+              tsv: sql`to_tsvector('english', 'Capital appears in the alpha article.')`,
+            },
+            {
+              vaultId: id.vault,
+              path: "raw/texts/source.md",
+              chunkIndex: 0,
+              heading: "Raw heading",
+              body: "Value appears in the raw source.",
+              contentHash: "raw-0",
+              tsv: sql`to_tsvector('english', 'Value appears in the raw source.')`,
+            },
+            {
+              vaultId: id.vault,
+              path: "raw/texts/source.md",
+              chunkIndex: 1,
+              heading: "Raw heading",
+              body: "More value context appears here.",
+              contentHash: "raw-1",
+              tsv: sql`to_tsvector('english', 'More value context appears here.')`,
+            },
+          ]),
+        )
         .pipe(Effect.orDie);
     }),
   );
@@ -436,10 +484,7 @@ const api = async (path: string, body: unknown) => {
 
 const apiWithToken = async (path: string, body: unknown, token: string) => {
   const payload =
-    path.endsWith("/replies") &&
-    typeof body === "object" &&
-    body !== null &&
-    !Array.isArray(body)
+    path.endsWith("/replies") && typeof body === "object" && body !== null && !Array.isArray(body)
       ? { reply_id: crypto.randomUUID(), ...body }
       : body;
   const response = await fetch(`${currentState().started.url}/v1${path}`, {
@@ -467,19 +512,19 @@ const replySnapshots = (text: string): ReplySnapshot[] =>
   text.split("\n\n").flatMap((block) => {
     const lines = block.split("\n");
     const event =
-      lines.find((line) => line.startsWith("event:"))?.slice(6).trimStart() ?? "message";
+      lines
+        .find((line) => line.startsWith("event:"))
+        ?.slice(6)
+        .trimStart() ?? "message";
     const data = lines
       .filter((line) => line.startsWith("data:"))
       .map((line) => line.slice(5).trimStart())
       .join("\n");
-    return event === "message" && data.length > 0
-      ? [JSON.parse(data) as ReplySnapshot]
-      : [];
+    return event === "message" && data.length > 0 ? [JSON.parse(data) as ReplySnapshot] : [];
   });
 
 const runReply = async (body: Record<string, unknown>) => {
   const created = await api(repliesPath, {
-    mode: "query",
     exchange_id: crypto.randomUUID(),
     session: { kind: "new", idempotency_key: crypto.randomUUID() },
     ...body,
@@ -527,10 +572,9 @@ const readSessionEvents = async (sessionId: string) => {
     join(currentState().storageRoot, "vaults", id.vault, "sessions", `${sessionId}.jsonl`),
     "utf8",
   );
-  return content
-    .trim()
-    .split("\n")
-    .map((line) => JSON.parse(line) as StoredSessionEvent);
+  const parsed = parseHistory(SessionId.make(sessionId), new TextEncoder().encode(content));
+  if (Result.isFailure(parsed)) throw parsed.failure;
+  return parsed.success.records;
 };
 
 const getWithToken = (path: string) =>
@@ -580,160 +624,529 @@ describe("query stream", () => {
     await startHarness({ language });
     const replyId = uuid(crypto.randomUUID());
     const exchangeId = uuid(crypto.randomUUID());
-    const sessionId = await runDb(Effect.gen(function* () {
-      const service = yield* SessionsService;
-      const db = yield* Database;
-      const sessionId = yield* service.createSession(id.alice, id.vault, {
-        idempotencyKey: crypto.randomUUID(),
-        pending: { replyId, exchangeId, question: "Stop before work starts" },
-      });
-      yield* db.query((d) => d.insert(replies).values({
-        id: replyId, userId: id.alice, vaultId: id.vault, sessionId,
-        kind: "exchange", status: "running", dispatchedAt: initialTime,
-        request: { reply_id: replyId, exchange_id: exchangeId, question: "Stop before work starts", mode: "query", session: { kind: "existing", id: sessionId } },
-      }));
-      return sessionId;
-    }));
+    const sessionId = await runDb(
+      Effect.gen(function* () {
+        const admission = yield* ReplyAdmission;
+        const response = yield* admission.accept(
+          id.alice,
+          id.vault,
+          Schema.decodeUnknownSync(CreateReplyRequest)({
+            reply_id: replyId,
+            exchange_id: exchangeId,
+            question: "Stop before work starts",
+            session: { kind: "new", idempotency_key: crypto.randomUUID() },
+          }),
+        );
+        return response.session_id;
+      }),
+    );
     expect((await api(`${repliesPath}/${replyId}/stop`, {})).response.status).toBe(204);
-    await runDb(Effect.gen(function* () {
-      const service = yield* RepliesService;
-      expect(yield* service.prepareStep(replyId)).toMatchObject({ outcome: "stopped" });
-      yield* service.finalizeStep(replyId, "stopped", null);
-    }));
-    expect(replySnapshots((await tailReply(replyId)).text).at(-1)).toMatchObject({ status: "stopped", answer: "", error: null });
+    await runDb(
+      Effect.gen(function* () {
+        const service = yield* RepliesService;
+        expect(yield* service.prepareStep(replyId)).toMatchObject({ outcome: "stopped" });
+        yield* service.finalizeStep(replyId, "stopped", null);
+      }),
+    );
+    expect(replySnapshots((await tailReply(replyId)).text).at(-1)).toMatchObject({
+      status: "stopped",
+      answer: "",
+      error: null,
+    });
     expect((await readSessionEvents(sessionId)).at(-1)).toMatchObject({
-      status: "stopped", messages: [{ role: "user", content: "Stop before work starts" }],
+      outcome: { status: "stopped" },
+      context_messages: [{ role: "user", content: "Stop before work starts" }],
     });
     expect(language.streamCalls).toHaveLength(0);
   });
 
-  it.each(["Partial answer.", ""])("stops a pending model response with %j, saves it, and follows up in the same conversation", async (answer) => {
-    let close!: (result: IteratorResult<ModelStreamPart>) => void;
-    const closed = new Promise<IteratorResult<ModelStreamPart>>((resolve) => { close = resolve; });
-    let sent = false;
-    const language = makeScriptedLanguageModel({ streams: [
-      { kind: "stream", stream: {
-        [Symbol.asyncIterator]: () => ({
-          next: () => {
-            if (!sent && answer) {
-              sent = true;
-              return Promise.resolve({ done: false as const, value: tokenPart(answer) });
-            }
-            return closed;
+  it.each(["Partial answer.", ""])(
+    "stops a pending model response with %j, saves it, and follows up in the same conversation",
+    async (answer) => {
+      let close!: (result: IteratorResult<ModelStreamPart>) => void;
+      const closed = new Promise<IteratorResult<ModelStreamPart>>((resolve) => {
+        close = resolve;
+      });
+      let sent = false;
+      const language = makeScriptedLanguageModel({
+        streams: [
+          {
+            kind: "stream",
+            stream: {
+              [Symbol.asyncIterator]: () => ({
+                next: () => {
+                  if (!sent && answer) {
+                    sent = true;
+                    return Promise.resolve({ done: false as const, value: tokenPart(answer) });
+                  }
+                  return closed;
+                },
+                return: () => {
+                  close({ done: true, value: undefined });
+                  return closed;
+                },
+              }),
+            },
           },
-          return: () => {
-            close({ done: true, value: undefined });
-            return closed;
-          },
-        }),
-      } },
-      { kind: "parts", parts: [tokenPart("A follow-up answer."), finishPart("stop")] },
-    ] });
-    await startHarness({ language });
-    const created = await api(repliesPath, {
-      exchange_id: crypto.randomUUID(), question: "A question to stop", mode: "query",
-      session: { kind: "new", idempotency_key: crypto.randomUUID() },
-    });
-    const ids = JSON.parse(created.text) as { reply_id: string; session_id: string };
-    await vi.waitFor(async () => {
-      const rows = await runDb(Effect.flatMap(Database, (db) => db.query((d) => d.select().from(replies)
-        .where(eq(replies.id, uuid(ids.reply_id))))));
-      expect(rows[0].answer).toBe(answer);
-      expect(language.streamCalls).toHaveLength(1);
-    }, { timeout: 10_000 });
-    const stopped = await api(`${repliesPath}/${ids.reply_id}/stop`, {});
-    expect(stopped.response.status).toBe(204);
-    const tail = await tailReply(ids.reply_id);
-    expect(replySnapshots(tail.text).at(-1)).toMatchObject({ status: "stopped", answer, error: null });
-    expect(await closed).toEqual({ done: true, value: undefined });
-    expect((await api(`${repliesPath}/${ids.reply_id}/stop`, {})).response.status).toBe(204);
-    const nodes = (await readSessionEvents(ids.session_id)).filter((event) => event.type === "reply");
-    expect(nodes).toHaveLength(2);
-    expect(nodes.at(-1)).toMatchObject({ status: "stopped", answer });
-    const reloaded = await getWithToken(`/vaults/${id.vault}/sessions/${ids.session_id}`);
-    expect(await reloaded.json()).toMatchObject({ events: expect.arrayContaining([
-      expect.objectContaining({ type: "exchange", answer, stopped: true }),
-    ]) });
-    const followUp = await runReply({ question: "Continue from there", session: { kind: "existing", id: ids.session_id } });
-    expect(followUp.snapshots.at(-1)?.status).toBe("completed");
-    expect(language.streamCalls).toHaveLength(2);
-    expect(language.streamCalls[1].messages).toEqual(expect.arrayContaining([
-      { role: "user", content: "A question to stop" },
-      ...(answer ? [{ role: "assistant", content: answer }] : []),
-      { role: "user", content: "Continue from there" },
-    ]));
-    expect((await readSessionEvents(ids.session_id)).filter((event) => event.type === "reply").at(-1))
-      .toMatchObject({ parent_reply_id: ids.reply_id });
-  });
+          { kind: "parts", parts: [tokenPart("A follow-up answer."), finishPart("stop")] },
+        ],
+      });
+      await startHarness({ language });
+      const created = await api(repliesPath, {
+        exchange_id: crypto.randomUUID(),
+        question: "A question to stop",
+        session: { kind: "new", idempotency_key: crypto.randomUUID() },
+      });
+      const ids = JSON.parse(created.text) as { reply_id: string; session_id: string };
+      await vi.waitFor(
+        async () => {
+          const rows = await runDb(
+            Effect.flatMap(Database, (db) =>
+              db.query((d) =>
+                d
+                  .select()
+                  .from(replies)
+                  .where(eq(replies.id, uuid(ids.reply_id))),
+              ),
+            ),
+          );
+          expect(rows[0].answer).toBe(answer);
+          expect(language.streamCalls).toHaveLength(1);
+        },
+        { timeout: 10_000 },
+      );
+      const stopped = await api(`${repliesPath}/${ids.reply_id}/stop`, {});
+      expect(stopped.response.status).toBe(204);
+      const tail = await tailReply(ids.reply_id);
+      expect(replySnapshots(tail.text).at(-1)).toMatchObject({
+        status: "stopped",
+        answer,
+        error: null,
+      });
+      expect(await closed).toEqual({ done: true, value: undefined });
+      expect((await api(`${repliesPath}/${ids.reply_id}/stop`, {})).response.status).toBe(204);
+      const nodes = (await readSessionEvents(ids.session_id)).filter(
+        (event) => event.type === "settlement",
+      );
+      expect(nodes).toHaveLength(1);
+      expect(nodes.at(-1)).toMatchObject({ outcome: { status: "stopped" }, answer });
+      const reloaded = await getWithToken(`/vaults/${id.vault}/sessions/${ids.session_id}`);
+      expect(await reloaded.json()).toMatchObject({
+        events: expect.arrayContaining([
+          expect.objectContaining({ type: "exchange", answer, status: "stopped" }),
+        ]),
+      });
+      const followUp = await runReply({
+        question: "Continue from there",
+        session: { kind: "existing", id: ids.session_id },
+      });
+      expect(followUp.snapshots.at(-1)?.status).toBe("completed");
+      expect(language.streamCalls).toHaveLength(2);
+      expect(language.streamCalls[1].messages).toEqual(
+        expect.arrayContaining([
+          { role: "user", content: "A question to stop" },
+          ...(answer ? [{ role: "assistant", content: answer }] : []),
+          { role: "user", content: "Continue from there" },
+        ]),
+      );
+      expect(
+        (await readSessionEvents(ids.session_id))
+          .filter((event) => event.type === "attempt")
+          .at(-1),
+      ).toMatchObject({ parent_reply_id: ids.reply_id });
+    },
+  );
 
-  it.each(["search", "extraction"])("stops active web %s and preserves a valid transcript for the next model call", async (stage) => {
-    let toolStarted = false;
-    let toolStopped = false;
-    const pending = Effect.sync(() => { toolStarted = true; }).pipe(
-      Effect.andThen(Effect.never),
-      Effect.onInterrupt(() => Effect.sync(() => { toolStopped = true; })),
-    );
-    const language = makeScriptedLanguageModel({ streams: [
-      { kind: "parts", parts: [
-        tokenPart("Looking for sources."),
-        toolCallPart(0, "read-first", "read_document", { path: "wiki/alpha.md" }),
-        toolCallPart(1, "search-pending", "web_search", { query: "capital" }),
-        finishPart("tool_calls"),
-      ] },
-      { kind: "parts", parts: [tokenPart("Continuing after the stop."), finishPart("stop")] },
-    ], completions: [pending] });
-    await startHarness({ language, parallelLayer: Layer.succeed(ParallelSearchService, {
-      hasApiKey: true,
-      search: () => stage === "search" ? pending : Effect.succeed([
-        { title: "External result", url: "https://example.test/result", excerpts: ["A fact about capital."] },
-      ]),
-    }) });
-    await writeVaultFile(id.vault, "config.yaml", "name: Query Vault\nweb_search: true\n");
-    const created = await api(repliesPath, {
-      exchange_id: crypto.randomUUID(), question: "Research capital", mode: "query",
-      session: { kind: "new", idempotency_key: crypto.randomUUID() },
-    });
-    const ids = JSON.parse(created.text) as { reply_id: string; session_id: string };
-    await vi.waitFor(() => expect(toolStarted).toBe(true), { timeout: 10_000 });
-    expect((await api(`${repliesPath}/${ids.reply_id}/stop`, {})).response.status).toBe(204);
-    expect(replySnapshots((await tailReply(ids.reply_id)).text).at(-1)).toMatchObject({ status: "stopped" });
-    expect(toolStopped).toBe(true);
-    expect(language.completeCalls).toHaveLength(stage === "extraction" ? 1 : 0);
-    const node = (await readSessionEvents(ids.session_id)).filter((event) => event.type === "reply").at(-1)!;
-    expect(node.sources).toEqual(expect.not.arrayContaining([expect.objectContaining({ pending: true })]));
-    expect(node.messages).toEqual(expect.arrayContaining([
-      expect.objectContaining({ role: "tool", tool_call_id: "read-first", content: expect.stringContaining("Alpha article body") }),
-      { role: "tool", tool_call_id: "search-pending", content: "Tool call cancelled because the user stopped the response." },
-    ]));
-    const followUp = await runReply({ question: "Use what you have", session: { kind: "existing", id: ids.session_id } });
-    expect(followUp.snapshots.at(-1)?.status).toBe("completed");
-    expect(language.streamCalls).toHaveLength(2);
-    expect(language.streamCalls[1].messages).toEqual(expect.arrayContaining([...node.messages]));
-  });
+  it.each(["search", "extraction"])(
+    "stops active web %s and preserves a valid transcript for the next model call",
+    async (stage) => {
+      let toolStarted = false;
+      let toolStopped = false;
+      const pending = Effect.sync(() => {
+        toolStarted = true;
+      }).pipe(
+        Effect.andThen(Effect.never),
+        Effect.onInterrupt(() =>
+          Effect.sync(() => {
+            toolStopped = true;
+          }),
+        ),
+      );
+      const language = makeScriptedLanguageModel({
+        streams: [
+          {
+            kind: "parts",
+            parts: [
+              tokenPart("Looking for sources."),
+              toolCallPart(0, "read-first", "read_document", { path: "wiki/alpha.md" }),
+              toolCallPart(1, "search-pending", "web_search", { query: "capital" }),
+              finishPart("tool_calls"),
+            ],
+          },
+          { kind: "parts", parts: [tokenPart("Continuing after the stop."), finishPart("stop")] },
+        ],
+        completions: [pending],
+      });
+      await startHarness({
+        language,
+        parallelLayer: Layer.succeed(ParallelSearchService, {
+          hasApiKey: true,
+          search: () =>
+            stage === "search"
+              ? pending
+              : Effect.succeed([
+                  {
+                    title: "External result",
+                    url: "https://example.test/result",
+                    excerpts: ["A fact about capital."],
+                  },
+                ]),
+        }),
+      });
+      await writeVaultFile(id.vault, "config.yaml", "name: Query Vault\nweb_search: true\n");
+      const created = await api(repliesPath, {
+        exchange_id: crypto.randomUUID(),
+        question: "Research capital",
+        session: { kind: "new", idempotency_key: crypto.randomUUID() },
+      });
+      const ids = JSON.parse(created.text) as { reply_id: string; session_id: string };
+      await vi.waitFor(() => expect(toolStarted).toBe(true), { timeout: 10_000 });
+      expect((await api(`${repliesPath}/${ids.reply_id}/stop`, {})).response.status).toBe(204);
+      expect(replySnapshots((await tailReply(ids.reply_id)).text).at(-1)).toMatchObject({
+        status: "stopped",
+      });
+      expect(toolStopped).toBe(true);
+      expect(language.completeCalls).toHaveLength(stage === "extraction" ? 1 : 0);
+      const node = (await readSessionEvents(ids.session_id))
+        .filter((event) => event.type === "settlement")
+        .at(-1)!;
+      expect(node.sources).toEqual(
+        expect.not.arrayContaining([expect.objectContaining({ pending: true })]),
+      );
+      expect(node.context_messages).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            role: "tool",
+            tool_call_id: "read-first",
+            content: expect.stringContaining("Alpha article body"),
+          }),
+          {
+            role: "tool",
+            tool_call_id: "search-pending",
+            content: "Tool call cancelled because the user stopped the response.",
+          },
+        ]),
+      );
+      const followUp = await runReply({
+        question: "Use what you have",
+        session: { kind: "existing", id: ids.session_id },
+      });
+      expect(followUp.snapshots.at(-1)?.status).toBe("completed");
+      expect(language.streamCalls).toHaveLength(2);
+      expect(language.streamCalls[1].messages).toEqual(
+        expect.arrayContaining([...node.context_messages!]),
+      );
+    },
+  );
 
   it("keeps completed replies unchanged and restricts stopping to the reply owner", async () => {
-    const language = makeScriptedLanguageModel({ streams: [
-      { kind: "parts", parts: [tokenPart("Finished."), finishPart("stop")] },
-    ] });
+    const language = makeScriptedLanguageModel({
+      streams: [{ kind: "parts", parts: [tokenPart("Finished."), finishPart("stop")] }],
+    });
     await startHarness({ language });
     const result = await runReply({ question: "A short question" });
     const replyId = result.snapshots.at(-1)!.reply_id;
     expect((await api(`${repliesPath}/${replyId}/stop`, {})).response.status).toBe(204);
-    expect(replySnapshots((await tailReply(replyId)).text).at(-1)).toMatchObject({ status: "completed", answer: "Finished." });
-    await runDb(Effect.gen(function* () {
-      const db = yield* Database;
-      const service = yield* RepliesService;
-      yield* db.query((d) => d.update(replies).set({ status: "running", stopRequested: true })
-        .where(eq(replies.id, uuid(replyId))));
-      yield* service.finalizeStep(uuid(replyId), "stopped", null);
-    }));
-    expect(replySnapshots((await tailReply(replyId)).text).at(-1)).toMatchObject({ status: "completed", answer: "Finished." });
+    expect(replySnapshots((await tailReply(replyId)).text).at(-1)).toMatchObject({
+      status: "completed",
+      answer: "Finished.",
+    });
+    await runDb(
+      Effect.gen(function* () {
+        const db = yield* Database;
+        const service = yield* RepliesService;
+        yield* db.query((d) =>
+          d
+            .update(replies)
+            .set({ status: "running", stopRequested: true })
+            .where(eq(replies.id, uuid(replyId))),
+        );
+        yield* service.finalizeStep(uuid(replyId), "stopped", null);
+      }),
+    );
+    expect(replySnapshots((await tailReply(replyId)).text).at(-1)).toMatchObject({
+      status: "completed",
+      answer: "Finished.",
+    });
     expect((await api(`${repliesPath}/${crypto.randomUUID()}/stop`, {})).response.status).toBe(404);
     await insertUser(id.bob, "stop-bob@example.com");
-    await runDb(Effect.flatMap(Database, (db) => db.query((d) => d.insert(vaultMemberships)
-      .values({ id: uuid(crypto.randomUUID()), vaultId: id.vault, userId: id.bob, role: "VIEWER" }))));
-    const forbidden = await apiWithToken(`${repliesPath}/${replyId}/stop`, {}, await issueToken(id.bob));
+    await runDb(
+      Effect.flatMap(Database, (db) =>
+        db.query((d) =>
+          d.insert(vaultMemberships).values({
+            id: uuid(crypto.randomUUID()),
+            vaultId: id.vault,
+            userId: id.bob,
+            role: "VIEWER",
+          }),
+        ),
+      ),
+    );
+    const bobToken = await issueToken(id.bob);
+    const forbidden = await apiWithToken(`${repliesPath}/${replyId}/stop`, {}, bobToken);
     expect(forbidden.response.status).toBe(404);
+    const privateStream = await fetch(
+      `${currentState().started.url}/v1${repliesPath}/${replyId}/stream`,
+      {
+        headers: { authorization: `Bearer ${bobToken}` },
+      },
+    );
+    expect(privateStream.status).toBe(404);
+    expect(await privateStream.text()).not.toContain("Finished.");
+    expect(language.streamCalls).toHaveLength(1);
+  });
+
+  it("stops an authorized private stream before sending progress after membership is revoked", async () => {
+    const language = makeScriptedLanguageModel({ streams: [] });
+    await startHarness({ language });
+    const events = await runDb(
+      Effect.gen(function* () {
+        const admission = yield* ReplyAdmission;
+        const service = yield* RepliesService;
+        const db = yield* Database;
+        const accepted = yield* admission.accept(
+          id.alice,
+          id.vault,
+          Schema.decodeUnknownSync(CreateReplyRequest)({
+            reply_id: crypto.randomUUID(),
+            exchange_id: crypto.randomUUID(),
+            question: "Private progress",
+            session: { kind: "new", idempotency_key: "revoke-private-stream" },
+          }),
+        );
+        yield* db.query((d) =>
+          d
+            .update(replies)
+            .set({ answer: "Progress must stay private" })
+            .where(eq(replies.id, accepted.reply_id)),
+        );
+        const stream = yield* service.stream(id.alice, id.vault, accepted.reply_id);
+        return yield* Stream.runCollect(
+          stream.pipe(
+            Stream.tap((event) =>
+              event.event === "connected"
+                ? db.query((d) =>
+                    d
+                      .delete(vaultMemberships)
+                      .where(
+                        and(
+                          eq(vaultMemberships.userId, id.alice),
+                          eq(vaultMemberships.vaultId, id.vault),
+                        ),
+                      ),
+                  )
+                : Effect.void,
+            ),
+          ),
+        );
+      }),
+    );
+    expect(events.map((event) => event.event)).toEqual(["connected"]);
+    expect(JSON.stringify(events)).not.toContain("Progress must stay private");
+    expect(language.streamCalls).toHaveLength(0);
+  });
+
+  it("prepares an accepted BTW after continuation without changing its frozen mode", async () => {
+    const language = makeScriptedLanguageModel({
+      streams: [
+        { kind: "parts", parts: [tokenPart("Brief answer."), finishPart("stop")] },
+        { kind: "parts", parts: [tokenPart("Further answer."), finishPart("stop")] },
+      ],
+    });
+    await startHarness({ language });
+    const input = Schema.decodeUnknownSync(CreateReplyRequest)({
+      reply_id: crypto.randomUUID(),
+      exchange_id: crypto.randomUUID(),
+      question: "Why this passage?",
+      session: {
+        kind: "new",
+        conversation_kind: "btw",
+        idempotency_key: "continue-before-prepare",
+        origin: {
+          kind: "document",
+          doc_path: "wiki/alpha.md",
+          origin_scope: "vault",
+          anchor: "Alpha",
+          paragraph: "Alpha article body.",
+          paragraph_index: 0,
+        },
+      },
+    });
+    const accepted = await runDb(
+      Effect.flatMap(ReplyAdmission, (service) => service.accept(id.alice, id.vault, input)),
+    );
+    expect(language.streamCalls).toHaveLength(0);
+    expect(
+      (await api(`/vaults/${id.vault}/sessions/${accepted.session_id}/continue`, {})).response
+        .status,
+    ).toBe(200);
+    expect((await api(repliesPath, input)).response.status).toBe(202);
+    expect(replySnapshots((await tailReply(accepted.reply_id)).text).at(-1)?.status).toBe(
+      "completed",
+    );
+    expect(String(language.streamCalls[0].messages[0].content)).toContain("This is a BTW");
+    const next = await runReply({
+      question: "Take this further",
+      session: { kind: "existing", id: accepted.session_id },
+    });
+    expect(next.snapshots.at(-1)?.status).toBe("completed");
+    expect(String(language.streamCalls[1].messages[0].content)).not.toContain("This is a BTW");
+    const records = await readSessionEvents(accepted.session_id);
+    expect(
+      records
+        .filter((record) => record.type === "settlement")
+        .map((record) => record.generation?.mode),
+    ).toEqual(["btw", "query"]);
+    expect(language.streamCalls).toHaveLength(2);
+  });
+
+  it("redispatches a marked operation when its workflow is absent without generating twice", async () => {
+    const language = makeScriptedLanguageModel({
+      streams: [{ kind: "parts", parts: [tokenPart("Reconciled once."), finishPart("stop")] }],
+    });
+    await startHarness({ language });
+    const input = Schema.decodeUnknownSync(CreateReplyRequest)({
+      reply_id: crypto.randomUUID(),
+      exchange_id: crypto.randomUUID(),
+      question: "Recover missing dispatch",
+      session: { kind: "new", idempotency_key: "missing-dispatch" },
+    });
+    const accepted = await runDb(
+      Effect.gen(function* () {
+        const admission = yield* ReplyAdmission;
+        const db = yield* Database;
+        const result = yield* admission.accept(id.alice, id.vault, input);
+        yield* db.query((d) =>
+          d
+            .update(replies)
+            .set({ dispatchedAt: initialTime, dispatchedTaskId: result.reply_id })
+            .where(eq(replies.id, result.reply_id)),
+        );
+        const service = yield* RepliesService;
+        yield* Effect.all([service.reconcileOnce(), service.reconcileOnce()], { concurrency: 2 });
+        return result;
+      }),
+    );
+    expect(replySnapshots((await tailReply(accepted.reply_id)).text).at(-1)).toMatchObject({
+      status: "completed",
+      answer: "Reconciled once.",
+    });
+    expect(language.streamCalls).toHaveLength(1);
+  });
+
+  it("revisits older obligations even while newer conversations are admitted", async () => {
+    let blocked = false;
+    const observed: SessionId[] = [];
+    const language = makeScriptedLanguageModel({ streams: [] });
+    await startHarness({
+      language,
+      historyStore: (histories) => ({
+        ...histories,
+        read: (address, receipt) => {
+          if (!blocked) return histories.read(address, receipt);
+          observed.push(address.session_id);
+          return Effect.fail(
+            storageBackendError("read", address.session_id, new Error("Injected outage")),
+          );
+        },
+      }),
+    });
+    const accept = (suffix: string) =>
+      runDb(
+        Effect.flatMap(ReplyAdmission, (service) =>
+          service.accept(
+            id.alice,
+            id.vault,
+            Schema.decodeUnknownSync(CreateReplyRequest)({
+              reply_id: `00000000-0000-4000-8000-00000000900${suffix}`,
+              exchange_id: crypto.randomUUID(),
+              question: "Still owed",
+              session: { kind: "new", idempotency_key: `fair-scan-${suffix}` },
+            }),
+          ),
+        ),
+      );
+    const first = await accept("1");
+    const second = await accept("2");
+    blocked = true;
+    await runDb(Effect.flatMap(RepliesService, (service) => service.reconcileOnce()));
+    blocked = false;
+    await accept("3");
+    blocked = true;
+    await runDb(Effect.flatMap(RepliesService, (service) => service.reconcileOnce()));
+    await runDb(Effect.flatMap(RepliesService, (service) => service.reconcileOnce()));
+    expect(observed).toEqual([first.session_id, second.session_id, first.session_id]);
+    expect(language.streamCalls).toHaveLength(0);
+  });
+
+  it("settles failed preparation after history recovery without silently generating a response", async () => {
+    let unavailable = false;
+    const language = makeScriptedLanguageModel({
+      streams: [
+        { kind: "parts", parts: [tokenPart("Recovered after storage."), finishPart("stop")] },
+      ],
+    });
+    await startHarness({
+      language,
+      historyStore: (histories) => ({
+        ...histories,
+        read: (address, receipt) =>
+          unavailable
+            ? Effect.fail(
+                storageBackendError("read", address.session_id, new Error("Injected read outage")),
+              )
+            : histories.read(address, receipt),
+      }),
+    });
+    const input = Schema.decodeUnknownSync(CreateReplyRequest)({
+      reply_id: crypto.randomUUID(),
+      exchange_id: crypto.randomUUID(),
+      question: "Wait for history",
+      session: { kind: "new", idempotency_key: "suspended-preparation" },
+    });
+    const accepted = await runDb(
+      Effect.flatMap(ReplyAdmission, (service) => service.accept(id.alice, id.vault, input)),
+    );
+    unavailable = true;
+    expect((await api(repliesPath, input)).response.status).toBe(202);
+    await vi.waitFor(
+      async () => {
+        const state = await runDb(
+          Effect.gen(function* () {
+            return yield* ReplyWorkflow.poll(
+              yield* ReplyWorkflow.executionId({ replyId: accepted.reply_id }),
+            );
+          }),
+        );
+        expect(Option.isSome(state) ? state.value._tag : null).toBe("Complete");
+      },
+      { timeout: 10_000 },
+    );
+    expect(language.streamCalls).toHaveLength(0);
+    unavailable = false;
+    await runDb(Effect.flatMap(RepliesService, (service) => service.reconcileOnce()));
+    expect(replySnapshots((await tailReply(accepted.reply_id)).text).at(-1)).toMatchObject({
+      status: "failed",
+      answer: "",
+    });
+    expect(language.streamCalls).toHaveLength(0);
+    const retried = await retryReply(accepted.reply_id);
+    expect(retried.response.status).toBe(202);
+    const retryId = Schema.decodeUnknownSync(Uuid)(JSON.parse(retried.text).reply_id);
+    expect(replySnapshots((await tailReply(retryId)).text).at(-1)).toMatchObject({
+      status: "completed",
+      answer: "Recovered after storage.",
+    });
     expect(language.streamCalls).toHaveLength(1);
   });
 
@@ -757,7 +1170,6 @@ describe("query stream", () => {
     );
 
     const stored = await runReply({
-      mode: "btw",
       question: "What does the reference say?",
       origin_path: "refs/personal.md",
       origin_scope: "personal",
@@ -769,7 +1181,6 @@ describe("query stream", () => {
     expect(storedMessages).not.toContain("This vault file must not");
 
     const missing = await runReply({
-      mode: "btw",
       question: "What does the missing reference say?",
       origin_path: "refs/bogus.md",
       origin_scope: "personal",
@@ -790,7 +1201,6 @@ describe("query stream", () => {
     const nonMember = await apiWithToken(
       repliesPath,
       {
-        mode: "query",
         question: "No access",
         exchange_id: crypto.randomUUID(),
         session: { kind: "new", idempotency_key: crypto.randomUUID() },
@@ -804,7 +1214,6 @@ describe("query stream", () => {
     });
 
     const unknown = await api("/vaults/00000000-0000-4000-8000-000000029999/replies", {
-      mode: "query",
       question: "Missing",
       exchange_id: crypto.randomUUID(),
       session: { kind: "new", idempotency_key: crypto.randomUUID() },
@@ -823,7 +1232,6 @@ describe("query stream", () => {
       configOverrides: { openRouterApiKey: Option.none() },
     });
     const noKey = await api(repliesPath, {
-      mode: "query",
       question: "No key",
       exchange_id: crypto.randomUUID(),
       session: { kind: "new", idempotency_key: crypto.randomUUID() },
@@ -844,7 +1252,14 @@ describe("query stream", () => {
       { kind: "ephemeral" },
       { session: { kind: "existing" } },
       { session: { kind: "new" } },
-      { session: { kind: "new", idempotency_key: "incomplete-anchor", conversation_kind: "btw", origin: { kind: "answer", anchor: "incomplete anchor" } } },
+      {
+        session: {
+          kind: "new",
+          idempotency_key: "incomplete-anchor",
+          conversation_kind: "btw",
+          origin: { kind: "answer", anchor: "incomplete anchor" },
+        },
+      },
     ]) {
       const result = await api(repliesPath, {
         exchange_id: crypto.randomUUID(),
@@ -870,7 +1285,6 @@ describe("query stream", () => {
     const created = await api(repliesPath, {
       exchange_id: EX_DURABLE,
       question: "Persist this answer",
-      mode: "query",
       session: {
         kind: "new",
         idempotency_key: "reply-session-idempotency",
@@ -894,10 +1308,8 @@ describe("query stream", () => {
     expect(
       submittedEvents.some(
         (event) =>
-          event.type === "reply" &&
+          event.type === "attempt" &&
           event.exchange_id === EX_DURABLE &&
-          event.status === "pending" &&
-          event.answer === "" &&
           event.reply_id === identifiers.reply_id,
       ),
     ).toBe(true);
@@ -910,16 +1322,19 @@ describe("query stream", () => {
     const replyRows = await runDb(
       Effect.gen(function* () {
         const db = yield* Database;
-        return yield* db.query((d) => d
-          .select()
-          .from(replies)
-          .where(eq(replies.id, uuid(identifiers.reply_id))))
+        return yield* db
+          .query((d) =>
+            d
+              .select()
+              .from(replies)
+              .where(eq(replies.id, uuid(identifiers.reply_id))),
+          )
           .pipe(Effect.orDie);
       }),
     );
     expect(replyRows[0]).toMatchObject({
       dispatchedTaskId: identifiers.reply_id,
-      generationCursor: 1,
+      generationCursor: 0,
       activeGenerationStep: null,
       activeGenerationKind: null,
       activeGenerationKey: null,
@@ -927,19 +1342,16 @@ describe("query stream", () => {
     expect(replyRows[0]?.dispatchedAt).not.toBeNull();
 
     const completedEvents = await readSessionEvents(identifiers.session_id);
-    const replyEvents = completedEvents.filter((event) => event.type === "reply");
-    expect(replyEvents).toHaveLength(2);
+    const replyEvents = completedEvents.filter((event) => event.type === "settlement");
+    expect(replyEvents).toHaveLength(1);
     expect(replyEvents.at(-1)).toMatchObject({
-      type: "reply",
-      exchange_id: EX_DURABLE,
+      type: "settlement",
       reply_id: identifiers.reply_id,
-      status: "completed",
+      outcome: { status: "completed" },
       answer: "Durable answer.",
     });
 
-    const replay = await getWithToken(
-      `/vaults/${id.vault}/sessions/${identifiers.session_id}`,
-    );
+    const replay = await getWithToken(`/vaults/${id.vault}/sessions/${identifiers.session_id}`);
     expect(replay.status).toBe(200);
     const replayBody = (await replay.json()) as {
       events: readonly Record<string, unknown>[];
@@ -948,16 +1360,9 @@ describe("query stream", () => {
       expect.objectContaining({ exId: EX_DURABLE, answer: "Durable answer." }),
     ]);
 
-    const markdown = await readFile(
-      join(
-        currentState().storageRoot,
-        "vaults",
-        id.vault,
-        "sessions",
-        `${identifiers.session_id}.md`,
-      ),
-      "utf8",
-    );
+    const markdown = await (
+      await getWithToken(`/vaults/${id.vault}/sessions/${identifiers.session_id}/markdown`)
+    ).text();
     expect(markdown.match(/^# Persist this answer$/gmu)).toHaveLength(1);
   });
 
@@ -977,7 +1382,6 @@ describe("query stream", () => {
       reply_id: replyId,
       exchange_id: EX_ACCEPTED_ONCE,
       question: "Accept this once",
-      mode: "query" as const,
       session: { kind: "new", idempotency_key: "accepted-once-session" },
     };
     const first = await api(repliesPath, payload);
@@ -1007,11 +1411,11 @@ describe("query stream", () => {
     expect(language.streamCalls).toHaveLength(1);
 
     const events = (await readSessionEvents(identifiers.session_id)).filter(
-      (event) => event.type === "reply",
+      (event) => event.type !== "conversation",
     );
     expect(events).toHaveLength(2);
     expect(events.map((event) => event.reply_id)).toEqual([replyId, replyId]);
-    expect(events.map((event) => event.status)).toEqual(["pending", "completed"]);
+    expect(events.map((event) => event.type)).toEqual(["attempt", "settlement"]);
   });
 
   it("composes the anchored passage prompt for doc-born sessions while storing the clean question", async () => {
@@ -1026,7 +1430,6 @@ describe("query stream", () => {
     const created = await api(repliesPath, {
       exchange_id: EX_ANCHORED,
       question: "What does this claim imply?",
-      mode: "btw",
       session: {
         kind: "new",
         idempotency_key: "anchored-session-key",
@@ -1055,13 +1458,12 @@ describe("query stream", () => {
     const messages = language.streamCalls[0]?.messages ?? [];
     const lastUser = [...messages].reverse().find((message) => message.role === "user");
     expect(lastUser?.content).toBe(
-      "Passage:\n> The surrounding passage.\n\nHighlighted: \"the highlighted claim\"\n\nWhat does this claim imply?",
+      'Passage:\n> The surrounding passage.\n\nHighlighted: "the highlighted claim"\n\nWhat does this claim imply?',
     );
 
     const events = await readSessionEvents(identifiers.session_id);
     expect(events[0]).toMatchObject({
-      type: "meta",
-      query: "What does this claim imply?",
+      type: "conversation",
       origin: {
         kind: "document",
         doc_path: "refs/article.md",
@@ -1072,41 +1474,38 @@ describe("query stream", () => {
       },
     });
     const pendingNode = events.find(
-      (event): event is ReplyNode =>
-        event.type === "reply" &&
-        event.exchange_id === EX_ANCHORED &&
-        event.status === "pending",
+      (event): event is HistoryAttempt =>
+        event.type === "attempt" && event.exchange_id === EX_ANCHORED,
     );
     const completedNode = events.find(
-      (event): event is ReplyNode =>
-        event.type === "reply" &&
-        event.exchange_id === EX_ANCHORED &&
-        event.status === "completed",
+      (event): event is HistorySettlement =>
+        event.type === "settlement" && event.reply_id === pendingNode?.reply_id,
     );
     expect(pendingNode).toMatchObject({
       question: "What does this claim imply?",
     });
     expect(completedNode).toMatchObject({
-      question: "What does this claim imply?",
       answer: "Anchored answer.",
+      outcome: { status: "completed" },
     });
-    expect(completedNode?.messages?.[0]).toMatchObject({
+    expect(completedNode?.context_messages?.[0]).toMatchObject({
       role: "user",
       content:
         'Passage:\n> The surrounding passage.\n\nHighlighted: "the highlighted claim"\n\nWhat does this claim imply?',
     });
     const followUp = await runReply({
       question: "What follows?",
-      mode: "btw",
       session: { kind: "existing", id: identifiers.session_id },
     });
     expect(followUp.snapshots.at(-1)).toMatchObject({ status: "completed" });
-    expect(language.streamCalls[1]?.messages
-      .filter((message) => message.role === "user")
-      .map((message) => message.content)).toEqual([
-        'Passage:\n> The surrounding passage.\n\nHighlighted: "the highlighted claim"\n\nWhat does this claim imply?',
-        "What follows?",
-      ]);
+    expect(
+      language.streamCalls[1]?.messages
+        .filter((message) => message.role === "user")
+        .map((message) => message.content),
+    ).toEqual([
+      'Passage:\n> The surrounding passage.\n\nHighlighted: "the highlighted claim"\n\nWhat does this claim imply?',
+      "What follows?",
+    ]);
   });
 
   it("persists follow-up exchanges and BTW threads through canonical replies", async () => {
@@ -1122,7 +1521,6 @@ describe("query stream", () => {
     const first = await api(repliesPath, {
       exchange_id: EX_CANONICAL_FIRST,
       question: "First question",
-      mode: "query",
       session: { kind: "new", idempotency_key: "canonical-session-key" },
     });
     expect(first.response.status).toBe(202);
@@ -1135,7 +1533,6 @@ describe("query stream", () => {
     const followUp = await api(repliesPath, {
       exchange_id: EX_CANONICAL_FOLLOW_UP,
       question: "Follow-up question",
-      mode: "query",
       session: { kind: "existing", id: firstIds.session_id },
     });
     expect(followUp.response.status).toBe(202);
@@ -1145,7 +1542,6 @@ describe("query stream", () => {
     const btw = await api(repliesPath, {
       exchange_id: EX_CANONICAL_BTW_1,
       question: "Why this answer?",
-      mode: "btw",
       session: {
         kind: "new",
         conversation_kind: "btw",
@@ -1184,21 +1580,26 @@ describe("query stream", () => {
       kind: "btw",
       origin: { kind: "answer", exchange_id: EX_CANONICAL_FIRST, paragraph: "First answer." },
     });
-    expect(replayBody.threads[0]?.events).toContainEqual(expect.objectContaining({ exId: EX_CANONICAL_BTW_1, query: "Why this answer?", answer: "BTW answer." }));
-    expect(language.streamCalls[2]?.messages.filter((message) => message.role === "user").map((message) => message.content)).toEqual([
-      "First question", "Follow-up question", 'Passage:\n> First answer.\n\nHighlighted: "First answer"\n\nWhy this answer?',
+    expect(replayBody.threads[0]?.events).toContainEqual(
+      expect.objectContaining({
+        exId: EX_CANONICAL_BTW_1,
+        query: "Why this answer?",
+        answer: "BTW answer.",
+      }),
+    );
+    expect(
+      language.streamCalls[2]?.messages
+        .filter((message) => message.role === "user")
+        .map((message) => message.content),
+    ).toEqual([
+      "First question",
+      "Follow-up question",
+      'Passage:\n> First answer.\n\nHighlighted: "First answer"\n\nWhy this answer?',
     ]);
 
-    const markdown = await readFile(
-      join(
-        currentState().storageRoot,
-        "vaults",
-        id.vault,
-        "sessions",
-        `${firstIds.session_id}.md`,
-      ),
-      "utf8",
-    );
+    const markdown = await (
+      await getWithToken(`/vaults/${id.vault}/sessions/${firstIds.session_id}/markdown`)
+    ).text();
     expect(markdown).toContain("# First question");
     expect(markdown).toContain("First answer.");
     expect(markdown).not.toContain("BTW answer.");
@@ -1214,7 +1615,6 @@ describe("query stream", () => {
     const first = await api(repliesPath, {
       exchange_id: EX_GUARD,
       question: "First question",
-      mode: "query",
       session: { kind: "new", idempotency_key: "guard-session-key" },
     });
     expect(first.response.status).toBe(202);
@@ -1223,7 +1623,6 @@ describe("query stream", () => {
     const btwTraversal = await api(repliesPath, {
       exchange_id: "../../wiki/index",
       question: "Why?",
-      mode: "query",
       session: {
         kind: "new",
         conversation_kind: "btw",
@@ -1243,7 +1642,6 @@ describe("query stream", () => {
     const traversal = await api(repliesPath, {
       exchange_id: "../../wiki/index",
       question: "Second question",
-      mode: "query",
       session: { kind: "existing", id: session_id },
     });
     expect(traversal.response.status).toBe(422);
@@ -1262,7 +1660,6 @@ describe("query stream", () => {
       const created = await api(repliesPath, {
         exchange_id: exchangeId,
         question,
-        mode: "query",
         session: { kind: "new", idempotency_key: "same-session-key" },
       });
       expect(created.response.status).toBe(202);
@@ -1283,22 +1680,26 @@ describe("query stream", () => {
       events: readonly Record<string, unknown>[];
     };
     expect(
-      replayBody.events
-        .filter((event) => event.type === "exchange")
-        .map((event) => event.answer),
+      replayBody.events.filter((event) => event.type === "exchange").map((event) => event.answer),
     ).toEqual(["First", "Second"]);
   });
 
-  it("leaves the pending session event when generation fails", async () => {
+  it("records a failed settlement privately without making its partial answer shareable or promotable", async () => {
+    const partial = "Private partial must not be shared.";
     const language = makeScriptedLanguageModel({
-      streams: [{ kind: "throw", error: new Error("provider secret") }],
+      streams: [
+        {
+          kind: "parts",
+          parts: [tokenPart(partial)],
+          errorAfterParts: new Error("provider secret"),
+        },
+      ],
     });
     await startHarness({ language });
 
     const created = await api(repliesPath, {
       exchange_id: EX_FAILED,
       question: "Fail this answer",
-      mode: "query",
       session: { kind: "new", idempotency_key: "failed-session-key" },
     });
     const identifiers = JSON.parse(created.text) as {
@@ -1312,141 +1713,190 @@ describe("query stream", () => {
     });
 
     const events = await readSessionEvents(identifiers.session_id);
-    expect(events.filter((event) => event.type === "reply")).toEqual([
+    expect(events.filter((event) => event.type === "attempt")).toEqual([
+      expect.objectContaining({ exchange_id: EX_FAILED, reply_id: identifiers.reply_id }),
+    ]);
+    expect(events.filter((event) => event.type === "settlement")).toEqual([
       expect.objectContaining({
-        exchange_id: EX_FAILED,
         reply_id: identifiers.reply_id,
-        status: "pending",
-        answer: "",
+        outcome: {
+          status: "failed",
+          code: "generation_failed",
+          message: "Something went wrong while answering. Try again in a minute.",
+        },
+        answer: partial,
       }),
     ]);
-  });
-
-  it.each(["query", "btw"])("retries a failed document reply in place with an existing session in %s mode", async (mode) => {
-    const language = makeScriptedLanguageModel({
-      streams: [
-        {
-          kind: "parts",
-          parts: [tokenPart("Incomplete answer.")],
-          errorAfterParts: new Error("provider secret"),
-        },
-        {
-          kind: "parts",
-          parts: [tokenPart("A later answer."), finishPart("stop", "later-answer")],
-        },
-        {
-          kind: "parts",
-          parts: [tokenPart("Complete answer."), finishPart("stop", "retry-complete")],
-        },
-      ],
-    });
-    await startHarness({ language });
-
-    const created = await api(repliesPath, {
-      exchange_id: EX_RETRY,
-      question: "Try this answer",
-      mode,
-      session: {
-        kind: "new",
-        idempotency_key: "retry-session-key",
-        origin_scope: "vault",
-        origin: {
-          kind: "document",
-          doc_path: "raw/texts/source.md",
-          origin_scope: "vault",
-          anchor: "The highlighted claim.",
-          paragraph: "The surrounding passage.",
-          paragraph_index: 3,
-        },
-      },
-    });
-    expect(created.response.status).toBe(202);
-    const first = JSON.parse(created.text) as {
-      reply_id: string;
-      session_id: string;
-    };
-    const failed = await tailReply(first.reply_id);
-    expect(replySnapshots(failed.text).at(-1)).toMatchObject({
-      status: "failed",
-      answer: "Incomplete answer.",
-    });
-
-    const later = await runReply({
-      question: "A later question",
-      session: { kind: "existing", id: first.session_id },
-    });
-    expect(later.snapshots.at(-1)).toMatchObject({ status: "completed" });
-
-    const retryId = crypto.randomUUID();
-    const retried = await retryReply(first.reply_id, retryId);
-    const retryReplay = await retryReply(first.reply_id, retryId);
-    expect(retried.response.status).toBe(202);
-    expect(retryReplay.response.status).toBe(202);
-    expect(JSON.parse(retryReplay.text)).toEqual(JSON.parse(retried.text));
-    const second = JSON.parse(retried.text) as {
-      reply_id: string;
-      session_id: string;
-    };
-    expect(second.reply_id).toBe(retryId);
-    expect(second.session_id).toBe(first.session_id);
-
-    const completed = await tailReply(second.reply_id);
-    expect(replySnapshots(completed.text).at(-1)).toMatchObject({
-      status: "completed",
-      answer: "Complete answer.",
-      error: null,
-    });
-    expect(
-      language.streamCalls[2]?.messages.find((message) => message.role === "user"),
-    ).toMatchObject({
-      role: "user",
-      content:
-        'Passage:\n> The surrounding passage.\n\nHighlighted: "The highlighted claim."\n\nTry this answer',
-    });
-    expect(JSON.stringify(language.streamCalls[2]?.messages)).not.toContain("A later question");
-    const retriedRows = await runDb(Effect.gen(function* () {
-      const db = yield* Database;
-      return yield* db.query((d) => d.select().from(replies).where(eq(replies.id, uuid(retryId))));
-    }));
-    expect(retriedRows[0]?.request).toMatchObject({
-      exchange_id: EX_RETRY,
-      session: { kind: "existing", id: first.session_id },
-      mode,
-    });
-    expect(JSON.stringify(retriedRows[0]?.request)).not.toContain("The highlighted claim.");
-
-    const events = (await readSessionEvents(first.session_id)).filter(
-      (event) => event.type === "reply",
+    const privateRead = await getWithToken(
+      `/vaults/${id.vault}/sessions/${identifiers.session_id}`,
     );
-    expect(events).toHaveLength(5);
-    expect(events.at(-2)).toMatchObject({
-      type: "reply",
-      exchange_id: EX_RETRY,
-      reply_id: second.reply_id,
-      parent_reply_id: null,
-      status: "pending",
-      answer: "",
+    const privateBody = await privateRead.text();
+    expect(privateBody).toContain(partial);
+    expect(privateBody).toContain('"status":"failed"');
+    expect(privateBody).not.toContain("context_messages");
+    expect(privateBody).not.toContain("system_prompt_hash");
+    const promotion = await api(
+      `/vaults/${id.vault}/sessions/${identifiers.session_id}/exchanges/${EX_FAILED}/promote`,
+      {},
+    );
+    expect(promotion.response.status).toBe(400);
+    expect(JSON.parse(promotion.text)).toMatchObject({
+      detail: "Only completed or stopped answers can be promoted",
     });
-    expect(events.at(-1)).toMatchObject({
-      type: "reply",
-      exchange_id: EX_RETRY,
-      reply_id: second.reply_id,
-      status: "completed",
-      answer: "Complete answer.",
+    const shareResponse = await api("/shares", {
+      subject_kind: "session",
+      subject_id: identifiers.session_id,
     });
-
-    const retryCompleted = await retryReply(second.reply_id);
-    expect(retryCompleted.response.status).toBe(400);
-    expect(JSON.parse(retryCompleted.text)).toMatchObject({
-      detail: "Only failed replies can be retried",
-    });
+    expect(shareResponse.response.status).toBe(201);
+    const shared = Schema.decodeUnknownSync(ShareCreateResult)(JSON.parse(shareResponse.text));
+    const publicRead = await fetch(
+      `${currentState().started.url}/v1/public/shares/${shared.share.token}`,
+    );
+    expect(publicRead.status).toBe(200);
+    const publicBody = await publicRead.text();
+    expect(publicBody).not.toContain(partial);
+    expect(publicBody).not.toContain("context_messages");
+    expect(publicBody).not.toContain("system_prompt_hash");
+    expect(language.streamCalls).toHaveLength(1);
   });
+
+  it.each(["query", "btw"])(
+    "retries a failed document reply in place with an existing session in %s mode",
+    async (mode) => {
+      const language = makeScriptedLanguageModel({
+        streams: [
+          {
+            kind: "parts",
+            parts: [tokenPart("Incomplete answer.")],
+            errorAfterParts: new Error("provider secret"),
+          },
+          {
+            kind: "parts",
+            parts: [tokenPart("A later answer."), finishPart("stop", "later-answer")],
+          },
+          {
+            kind: "parts",
+            parts: [tokenPart("Complete answer."), finishPart("stop", "retry-complete")],
+          },
+        ],
+      });
+      await startHarness({ language });
+
+      const created = await api(repliesPath, {
+        exchange_id: EX_RETRY,
+        question: "Try this answer",
+        mode,
+        session: {
+          kind: "new",
+          idempotency_key: "retry-session-key",
+          conversation_kind: mode === "btw" ? "btw" : "session",
+          origin_scope: "vault",
+          origin: {
+            kind: "document",
+            doc_path: "raw/texts/source.md",
+            origin_scope: "vault",
+            anchor: "The highlighted claim.",
+            paragraph: "The surrounding passage.",
+            paragraph_index: 3,
+          },
+        },
+      });
+      expect(created.response.status).toBe(202);
+      const first = JSON.parse(created.text) as {
+        reply_id: string;
+        session_id: string;
+      };
+      const failed = await tailReply(first.reply_id);
+      expect(replySnapshots(failed.text).at(-1)).toMatchObject({
+        status: "failed",
+        answer: "Incomplete answer.",
+      });
+
+      const later = await runReply({
+        question: "A later question",
+        session: { kind: "existing", id: first.session_id },
+      });
+      expect(later.snapshots.at(-1)).toMatchObject({ status: "completed" });
+
+      const retryId = crypto.randomUUID();
+      const retried = await retryReply(first.reply_id, retryId);
+      const retryReplay = await retryReply(first.reply_id, retryId);
+      expect(retried.response.status).toBe(202);
+      expect(retryReplay.response.status).toBe(202);
+      expect(JSON.parse(retryReplay.text)).toEqual(JSON.parse(retried.text));
+      const second = JSON.parse(retried.text) as {
+        reply_id: string;
+        session_id: string;
+      };
+      expect(second.reply_id).toBe(retryId);
+      expect(second.session_id).toBe(first.session_id);
+
+      const completed = await tailReply(second.reply_id);
+      expect(replySnapshots(completed.text).at(-1)).toMatchObject({
+        status: "completed",
+        answer: "Complete answer.",
+        error: null,
+      });
+      expect(
+        language.streamCalls[2]?.messages.find((message) => message.role === "user"),
+      ).toMatchObject({
+        role: "user",
+        content:
+          'Passage:\n> The surrounding passage.\n\nHighlighted: "The highlighted claim."\n\nTry this answer',
+      });
+      expect(JSON.stringify(language.streamCalls[2]?.messages)).not.toContain("A later question");
+      const retriedRows = await runDb(
+        Effect.gen(function* () {
+          const db = yield* Database;
+          return yield* db.query((d) =>
+            d
+              .select()
+              .from(replies)
+              .where(eq(replies.id, uuid(retryId))),
+          );
+        }),
+      );
+      expect(retriedRows[0]?.request).toMatchObject({
+        command: { exchange_id: EX_RETRY, session: { kind: "existing", id: first.session_id } },
+        mode,
+      });
+      expect(JSON.stringify(retriedRows[0]?.request)).not.toContain("The highlighted claim.");
+
+      const events = (await readSessionEvents(first.session_id)).filter(
+        (event) => event.type !== "conversation",
+      );
+      expect(events).toHaveLength(6);
+      expect(events.at(-2)).toMatchObject({
+        type: "attempt",
+        exchange_id: EX_RETRY,
+        reply_id: second.reply_id,
+        parent_reply_id: null,
+        previous_attempt_id: first.reply_id,
+      });
+      expect(events.at(-1)).toMatchObject({
+        type: "settlement",
+        reply_id: second.reply_id,
+        outcome: { status: "completed" },
+        answer: "Complete answer.",
+      });
+
+      const retryCompleted = await retryReply(second.reply_id);
+      expect(retryCompleted.response.status).toBe(400);
+      expect(JSON.parse(retryCompleted.text)).toMatchObject({
+        detail: "Only failed replies can be retried",
+      });
+    },
+  );
 
   it("retries a failed answer BTW with its saved branch context", async () => {
     const language = makeScriptedLanguageModel({
       streams: [
         { kind: "parts", parts: [tokenPart("Parent answer."), finishPart("stop")] },
-        { kind: "parts", parts: [tokenPart("Partial BTW.")], errorAfterParts: new Error("provider failure") },
+        {
+          kind: "parts",
+          parts: [tokenPart("Partial BTW.")],
+          errorAfterParts: new Error("provider failure"),
+        },
         { kind: "parts", parts: [tokenPart("Complete BTW."), finishPart("stop")] },
       ],
     });
@@ -1462,7 +1912,6 @@ describe("query stream", () => {
     const branch = await api(repliesPath, {
       exchange_id: EX_BRANCH_BTW_1,
       question: "Why this answer?",
-      mode: "btw",
       session: {
         kind: "new",
         conversation_kind: "btw",
@@ -1491,14 +1940,17 @@ describe("query stream", () => {
       status: "completed",
       answer: "Complete BTW.",
     });
-    expect(language.streamCalls[2]?.messages
-      .filter((message) => message.role === "user")
-      .map((message) => message.content)).toEqual([
-        "Parent question",
-        'Passage:\n> Parent answer.\n\nHighlighted: "answer"\n\nWhy this answer?',
-      ]);
+    expect(
+      language.streamCalls[2]?.messages
+        .filter((message) => message.role === "user")
+        .map((message) => message.content),
+    ).toEqual([
+      "Parent question",
+      'Passage:\n> Parent answer.\n\nHighlighted: "answer"\n\nWhy this answer?',
+    ]);
     const events = await readSessionEvents(branchIds.session_id);
-    expect(events.at(-1)).toMatchObject({
+    expect(events.at(-2)).toMatchObject({
+      type: "attempt",
       reply_id: retryIds.reply_id,
       parent_reply_id: null,
       exchange_id: EX_BRANCH_BTW_1,
@@ -1525,33 +1977,20 @@ describe("query stream", () => {
     await runDb(
       Effect.gen(function* () {
         const db = yield* Database;
-        const sessions = yield* SessionsService;
-        const sessionId = yield* sessions.createSession(id.alice, id.vault, {
-          idempotencyKey: "recovered-reply",
-          pending: { replyId, exchangeId, question: "resume after restart" },
-        });
-        yield* db.query((d) => d
-          .insert(replies)
-          .values({
-            id: replyId,
-            vaultId: id.vault,
-            userId: id.alice,
-            sessionId,
-            kind: "exchange",
-            status: "running",
-            answer: "partial",
-            sources: [],
-            request: {
-              reply_id: replyId,
-              question: "resume after restart",
-              mode: "query",
-              exchange_id: exchangeId,
-              session: { kind: "existing", id: sessionId },
-            },
-            createdAt: initialTime,
-            updatedAt: initialTime,
-          }))
-          .pipe(Effect.orDie);
+        const admission = yield* ReplyAdmission;
+        yield* admission.accept(
+          id.alice,
+          id.vault,
+          Schema.decodeUnknownSync(CreateReplyRequest)({
+            reply_id: replyId,
+            exchange_id: exchangeId,
+            question: "resume after restart",
+            session: { kind: "new", idempotency_key: "recovered-reply" },
+          }),
+        );
+        yield* db.query((d) =>
+          d.update(replies).set({ answer: "partial" }).where(eq(replies.id, replyId)),
+        );
         const service = yield* RepliesService;
         expect(yield* service.reconcileOnce()).toBe(1);
       }),
@@ -1562,7 +2001,9 @@ describe("query stream", () => {
     const rows = await runDb(
       Effect.gen(function* () {
         const db = yield* Database;
-        return yield* db.query((d) => d.select().from(replies).where(eq(replies.id, replyId))).pipe(Effect.orDie);
+        return yield* db
+          .query((d) => d.select().from(replies).where(eq(replies.id, replyId)))
+          .pipe(Effect.orDie);
       }),
     );
     expect(rows[0]).toMatchObject({
@@ -1669,9 +2110,16 @@ describe("query stream", () => {
         const db = yield* Database;
         return {
           events: yield* db.query((d) => d.select().from(llmCostEvents)).pipe(Effect.orDie),
-          prompts: yield* db.query((d) =>
-            d.select().from(prompts).where(eq(prompts.hash, systemPromptHash))).pipe(Effect.orDie),
-          reply: yield* db.query((d) => d.select().from(replies).where(eq(replies.id, uuid(replyId))))
+          prompts: yield* db
+            .query((d) => d.select().from(prompts).where(eq(prompts.hash, systemPromptHash)))
+            .pipe(Effect.orDie),
+          reply: yield* db
+            .query((d) =>
+              d
+                .select()
+                .from(replies)
+                .where(eq(replies.id, uuid(replyId))),
+            )
             .pipe(Effect.orDie),
         };
       }),
@@ -1688,14 +2136,21 @@ describe("query stream", () => {
     ]);
     expect(recorded.reply[0]).toMatchObject({
       status: "completed",
-      generationCursor: 11,
+      generationCursor: 10,
       activeGenerationStep: null,
       activeGenerationKind: null,
       activeGenerationKey: null,
     });
     const checkpoint = JSON.parse(
       await readFile(
-        join(currentState().storageRoot, "vaults", id.vault, "operations", "replies", `${replyId}.json`),
+        join(
+          currentState().storageRoot,
+          "vaults",
+          id.vault,
+          "operations",
+          "replies",
+          `${replyId}.json`,
+        ),
         "utf8",
       ),
     ) as { readonly query: { readonly turnStart: number } };
@@ -1705,8 +2160,7 @@ describe("query stream", () => {
   });
 
   it("replays the previous turn's tool results verbatim and stubs older ones", async () => {
-    const stubToolResult =
-      "(tool result omitted from context; call the tool again if you need it)";
+    const stubToolResult = "(tool result omitted from context; call the tool again if you need it)";
     const language = makeScriptedLanguageModel({
       streams: [
         {
@@ -1736,18 +2190,14 @@ describe("query stream", () => {
     });
     await startHarness({ language });
 
-    const submit = async (
-      exchangeId: string,
-      question: string,
-      sessionId: string | null,
-    ) => {
+    const submit = async (exchangeId: string, question: string, sessionId: string | null) => {
       const created = await api(repliesPath, {
         exchange_id: exchangeId,
         question,
-        mode: "query",
-        session: sessionId === null
-          ? { kind: "new", idempotency_key: "verbatim-session-key" }
-          : { kind: "existing", id: sessionId },
+        session:
+          sessionId === null
+            ? { kind: "new", idempotency_key: "verbatim-session-key" }
+            : { kind: "existing", id: sessionId },
       });
       expect(created.response.status).toBe(202);
       const ids = JSON.parse(created.text) as { reply_id: string; session_id: string };
@@ -1867,7 +2317,6 @@ describe("query stream", () => {
     const root = await api(repliesPath, {
       exchange_id: EX_BRANCH_PARENT,
       question: "Parent question",
-      mode: "query",
       session: { kind: "new", idempotency_key: "branch-session-key" },
     });
     expect(root.response.status).toBe(202);
@@ -1880,20 +2329,22 @@ describe("query stream", () => {
       const created = await api(repliesPath, {
         exchange_id: exchangeId,
         question,
-        mode: "btw",
-        session: btwSessionId === null ? {
-          kind: "new",
-          conversation_kind: "btw",
-          idempotency_key: "branch-btw-key",
-          origin: {
-            kind: "answer",
-            session_id: rootIds.session_id,
-            anchor: "answer",
-            paragraph_index: 0,
-            paragraph: "Parent answer.",
-            exchange_id: EX_BRANCH_PARENT,
-          },
-        } : { kind: "existing", id: btwSessionId },
+        session:
+          btwSessionId === null
+            ? {
+                kind: "new",
+                conversation_kind: "btw",
+                idempotency_key: "branch-btw-key",
+                origin: {
+                  kind: "answer",
+                  session_id: rootIds.session_id,
+                  anchor: "answer",
+                  paragraph_index: 0,
+                  paragraph: "Parent answer.",
+                  exchange_id: EX_BRANCH_PARENT,
+                },
+              }
+            : { kind: "existing", id: btwSessionId },
       });
       expect(created.response.status).toBe(202);
       const ids = JSON.parse(created.text) as { reply_id: string; session_id: string };
@@ -1907,7 +2358,6 @@ describe("query stream", () => {
     const follow = await api(repliesPath, {
       exchange_id: EX_BRANCH_FOLLOW_UP,
       question: "Main follow-up",
-      mode: "query",
       session: { kind: "existing", id: rootIds.session_id },
     });
     expect(follow.response.status).toBe(202);
@@ -1949,9 +2399,9 @@ describe("query stream", () => {
     expect(secondBtw[6]).toEqual({ role: "assistant", content: "Second BTW answer." });
 
     const main = language.streamCalls[2]!.messages;
-    expect(main.filter((message) => message.role === "user").map((message) => message.content)).toEqual(
-      ["Parent question", "Main follow-up"],
-    );
+    expect(
+      main.filter((message) => message.role === "user").map((message) => message.content),
+    ).toEqual(["Parent question", "Main follow-up"]);
     expect(JSON.stringify(main)).not.toContain("Passage");
     expect(JSON.stringify(main)).not.toContain("Highlighted");
     expect(JSON.stringify(main)).not.toContain("Second BTW");
@@ -1966,46 +2416,57 @@ describe("query stream", () => {
     };
     const exchangeEvents = sessionBody.events.filter((event) => event.type === "exchange");
     expect(exchangeEvents).toHaveLength(2);
-    expect(exchangeEvents.map((event) => event.query)).toEqual(["Parent question", "Main follow-up"]);
+    expect(exchangeEvents.map((event) => event.query)).toEqual([
+      "Parent question",
+      "Main follow-up",
+    ]);
     expect(sessionBody.threads).toHaveLength(1);
     expect(sessionBody.threads[0]?.session).toMatchObject({
       id: btwSessionId,
       kind: "btw",
-      origin: { kind: "answer", exchange_id: EX_BRANCH_PARENT, anchor: "answer", paragraph_index: 0, paragraph: "Parent answer." },
+      origin: {
+        kind: "answer",
+        exchange_id: EX_BRANCH_PARENT,
+        anchor: "answer",
+        paragraph_index: 0,
+        paragraph: "Parent answer.",
+      },
     });
     expect(sessionBody.threads[0]?.events.filter((event) => event.type === "exchange")).toEqual([
-        expect.objectContaining({
-          exId: EX_BRANCH_BTW_1,
-          query: "First BTW",
-          answer: "First BTW answer.",
-        }),
-        expect.objectContaining({
-          exId: EX_BRANCH_BTW_2,
-          reply_id: secondBtwReplyId,
-          query: "Second BTW",
-          answer: "Second BTW answer.",
-        }),
-      ]);
+      expect.objectContaining({
+        exId: EX_BRANCH_BTW_1,
+        query: "First BTW",
+        answer: "First BTW answer.",
+      }),
+      expect.objectContaining({
+        exId: EX_BRANCH_BTW_2,
+        reply_id: secondBtwReplyId,
+        query: "Second BTW",
+        answer: "Second BTW answer.",
+      }),
+    ]);
     expect(firstBtwReplyId).not.toBe(secondBtwReplyId);
 
-    const markdown = await readFile(
-      join(
-        currentState().storageRoot,
-        "vaults",
-        id.vault,
-        "sessions",
-        `${rootIds.session_id}.md`,
-      ),
-      "utf8",
-    );
+    const markdown = await (
+      await getWithToken(`/vaults/${id.vault}/sessions/${rootIds.session_id}/markdown`)
+    ).text();
     expect(markdown).not.toContain("First BTW");
     const before = await readSessionEvents(btwSessionId!);
     const nested = await api(repliesPath, {
       exchange_id: crypto.randomUUID(),
       question: "Nested question",
       session: {
-        kind: "new", conversation_kind: "btw", idempotency_key: "nested-btw",
-        origin: { kind: "answer", session_id: btwSessionId, exchange_id: EX_BRANCH_BTW_1, anchor: "answer", paragraph: "First BTW answer.", paragraph_index: 0 },
+        kind: "new",
+        conversation_kind: "btw",
+        idempotency_key: "nested-btw",
+        origin: {
+          kind: "answer",
+          session_id: btwSessionId,
+          exchange_id: EX_BRANCH_BTW_1,
+          anchor: "answer",
+          paragraph: "First BTW answer.",
+          paragraph_index: 0,
+        },
       },
     });
     expect(nested.response.status).toBe(400);
@@ -2020,15 +2481,23 @@ describe("query stream", () => {
     const visible = await getWithToken(`/vaults/${id.vault}/sessions`);
     expect(JSON.stringify(await visible.json())).toContain(btwSessionId);
     const continuation = await api(repliesPath, {
-      exchange_id: crypto.randomUUID(), question: "Continue the thought",
+      exchange_id: crypto.randomUUID(),
+      question: "Continue the thought",
       session: { kind: "existing", id: btwSessionId },
     });
     expect(continuation.response.status).toBe(202);
     await tailReply((JSON.parse(continuation.text) as { reply_id: string }).reply_id);
     const promotedMessages = language.streamCalls[4]!.messages;
     expect(String(promotedMessages[0]?.content)).not.toContain("This is a BTW");
-    expect(promotedMessages.filter((message) => message.role === "user").map((message) => message.content)).toEqual([
-      "Parent question", 'Passage:\n> Parent answer.\n\nHighlighted: "answer"\n\nFirst BTW', "Second BTW", "Continue the thought",
+    expect(
+      promotedMessages
+        .filter((message) => message.role === "user")
+        .map((message) => message.content),
+    ).toEqual([
+      "Parent question",
+      'Passage:\n> Parent answer.\n\nHighlighted: "answer"\n\nFirst BTW',
+      "Second BTW",
+      "Continue the thought",
     ]);
   });
 
@@ -2060,7 +2529,6 @@ describe("query stream", () => {
       exchange_id: EX_ORIGIN_ROOT,
       origin_path: "raw/texts/source.md",
       question: "First doc BTW",
-      mode: "btw",
       session: {
         kind: "new",
         idempotency_key: "origin-inherit-session-key",
@@ -2084,7 +2552,6 @@ describe("query stream", () => {
       const created = await api(repliesPath, {
         exchange_id: exchangeId,
         question,
-        mode: "btw",
         session: { kind: "existing", id: rootIds.session_id },
         origin_path: originPath,
       });
@@ -2151,7 +2618,6 @@ describe("query stream", () => {
     const root = await api(repliesPath, {
       exchange_id: EX_CHAIN_1,
       question: "First question",
-      mode: "query",
       session: { kind: "new", idempotency_key: "chain-session-key" },
     });
     expect(root.response.status).toBe(202);
@@ -2162,7 +2628,6 @@ describe("query stream", () => {
     const failed = await api(repliesPath, {
       exchange_id: EX_CHAIN_2,
       question: "Second question",
-      mode: "query",
       session: { kind: "existing", id: rootIds.session_id },
     });
     expect(failed.response.status).toBe(202);
@@ -2173,7 +2638,6 @@ describe("query stream", () => {
     const third = await api(repliesPath, {
       exchange_id: EX_CHAIN_3,
       question: "Third question",
-      mode: "query",
       session: { kind: "existing", id: rootIds.session_id },
     });
     expect(third.response.status).toBe(202);
@@ -2200,11 +2664,7 @@ describe("query stream", () => {
     };
     const exchangeEvents = sessionBody.events.filter((event) => event.type === "exchange");
     expect(exchangeEvents).toHaveLength(3);
-    expect(exchangeEvents.map((event) => event.exId)).toEqual([
-      EX_CHAIN_1,
-      EX_CHAIN_2,
-      EX_CHAIN_3,
-    ]);
+    expect(exchangeEvents.map((event) => event.exId)).toEqual([EX_CHAIN_1, EX_CHAIN_2, EX_CHAIN_3]);
     expect(exchangeEvents.map((event) => event.answer)).toEqual(["A.", "", "C."]);
   });
 
@@ -2245,38 +2705,39 @@ describe("query stream", () => {
       Effect.gen(function* () {
         const db = yield* Database;
         yield* db.query((d) => d.delete(searchIndex)).pipe(Effect.orDie);
-        yield* db.query((d) => d
-          .insert(searchIndex)
-          .values([
-            {
-              vaultId: id.vault,
-              path: "raw/texts/semantic.md",
-              chunkIndex: 0,
-              heading: "Semantic",
-              body: "Assemblies coordinate strike committees through recallable delegates.",
-              contentHash: "semantic-0",
-              tsv: sql`to_tsvector('english', 'Assemblies coordinate strike committees through recallable delegates.')`,
-              embedding: vector1024([1, 0, 0]),
-            },
-            {
-              vaultId: id.vault,
-              path: "raw/texts/bm25-first.md",
-              chunkIndex: 0,
-              heading: "Lexical",
-              body: "dual power dual power dual power",
-              contentHash: "bm25-0",
-              tsv: sql`to_tsvector('english', 'dual power dual power dual power')`,
-            },
-            {
-              vaultId: id.vault,
-              path: "raw/texts/bm25-second.md",
-              chunkIndex: 0,
-              heading: "Lexical",
-              body: "dual power",
-              contentHash: "bm25-1",
-              tsv: sql`to_tsvector('english', 'dual power')`,
-            },
-          ]))
+        yield* db
+          .query((d) =>
+            d.insert(searchIndex).values([
+              {
+                vaultId: id.vault,
+                path: "raw/texts/semantic.md",
+                chunkIndex: 0,
+                heading: "Semantic",
+                body: "Assemblies coordinate strike committees through recallable delegates.",
+                contentHash: "semantic-0",
+                tsv: sql`to_tsvector('english', 'Assemblies coordinate strike committees through recallable delegates.')`,
+                embedding: vector1024([1, 0, 0]),
+              },
+              {
+                vaultId: id.vault,
+                path: "raw/texts/bm25-first.md",
+                chunkIndex: 0,
+                heading: "Lexical",
+                body: "dual power dual power dual power",
+                contentHash: "bm25-0",
+                tsv: sql`to_tsvector('english', 'dual power dual power dual power')`,
+              },
+              {
+                vaultId: id.vault,
+                path: "raw/texts/bm25-second.md",
+                chunkIndex: 0,
+                heading: "Lexical",
+                body: "dual power",
+                contentHash: "bm25-1",
+                tsv: sql`to_tsvector('english', 'dual power')`,
+              },
+            ]),
+          )
           .pipe(Effect.orDie);
       }),
     );

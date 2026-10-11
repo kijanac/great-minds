@@ -1,6 +1,6 @@
 # Durable operations
 
-Great Minds commits durable product state before work that must survive the originating request or process. Multi-step operations then use Effect workflows with idempotent activities. A single idempotent cleanup side effect may instead use a persisted outbox and maintenance reconciler. Product tables are the user-visible source of truth and dispatch outbox; Effect's `cluster_*` journal is execution machinery, not a replacement for product state.
+Great Minds commits durable product state before work that must survive the originating request or process. Multi-step operations then use Effect workflows with idempotent activities. A single idempotent cleanup side effect may instead use a persisted outbox and maintenance reconciler. Product tables own operation state and dispatch obligations; recorded conversation content is owned by native JSONL. Effect's `cluster_*` journal is execution machinery, not a replacement for either. The [native conversation integration](conversation-workflow-integration.md) is not yet a production cutover and must be deployed only with verified data/API/web/worker migration.
 
 ## Managed operations
 
@@ -9,7 +9,7 @@ Great Minds commits durable product state before work that must survive the orig
 | staged file ingest | `file_ingest_batches`, `file_ingest_files`, `pipeline_runs` | `StagedFileIngest` | pipeline run / batch ID |
 | vault compile | `compile_intents`, `pipeline_runs` | `CompileTask` | compile intent ID |
 | URL ingest | `url_ingest_requests`, `pipeline_runs` | `UrlIngest` | pipeline run ID |
-| research reply | `replies` (`request`, status, snapshots, dispatch metadata, generation cursor/claim) | `ReplyGeneration` | reply ID |
+| research reply | `replies` (accepted request, status, progress, exact pending settlement, dispatch/cursor/claim), session history receipt | `ReplyGeneration` plus admission/settlement reconciler | reply ID |
 | source deletion | `source_deletion_outbox` | maintenance reconciler | source ID |
 
 Every workflow acceptance path commits enough input to redispatch work before it asks the workflow engine to execute. Startup/periodic reconcilers enqueue accepted rows whose dispatch acknowledgement was lost. Repeated execution is safe because workflow idempotency keys are stable and activities use deterministic storage keys or guarded upserts.
@@ -18,8 +18,9 @@ Every workflow acceptance path commits enough input to redispatch work before it
 
 - Browser file transfer is not a workflow activity. The durable batch exists first; workflow execution begins only after every expected object has a trusted receipt.
 - URL ingest has no browser-byte boundary. The API returns its persisted run immediately, while fetch, conversion, source persistence, and compile intent creation continue in `UrlIngest`.
-- Reply generation uses the browser-minted reply ID as both acceptance idempotency key and workflow key. `POST /replies` is the only session-write boundary: accepting a reply creates or appends the pending session event, and finalization appends its settled value; `/sessions` is reserved for reads, export, and promotion. The API persists the complete request before dispatch; replaying the same ID and request returns the original acceptance, while mismatched reuse conflicts. Reply snapshots remain the SSE/read model. `ReplyGeneration` journals a compact cursor after separate prepare, model-attempt, tool-call, and finalize activities; the full model transcript and tool outputs live temporarily at `operations/replies/{replyId}.json` in vault object storage and are removed before terminal state is committed.
-- Cancellation first commits terminal product state, then interrupts the workflow. Activities guard before side effects because interruption is cooperative.
+- Reply generation uses the browser-minted reply ID as acceptance and workflow key. Create/retry reserves the exact request and mode, saves the native history attempt, and confirms the session receipt before dispatch. Settlement freezes the exact result before publishing JSONL and terminal DB projection. Replaying the same command retains identity; incompatible reuse conflicts. Session endpoints read/project content, change placement/default through Continue, and perform explicit promotion; they do not maintain a second transcript writer.
+- `ReplyGeneration` journals compact prepare/model/tool/finalize decisions. Prepared context and execution state remain at `operations/replies/{replyId}.json`; settled context/tool activity is retained in canonical history for follow-ups. Terminal checkpoints are not currently garbage-collected. The earlier claim that they were removed before terminal state was incorrect.
+- Compile cancellation commits terminal product state before workflow interruption. Reply Stop instead commits intent while admitting/running; freeze arbitrates that intent, and a later Stop cannot overwrite a frozen result. Activities guard before side effects because interruption is cooperative.
 - Source deletion atomically records the source ID, vault, and storage path while removing the database graph. The object delete is idempotent and runs best-effort immediately; a startup/periodic reconciler repeats any unfinished cleanup. Storage failure therefore leaves an operator-visible outbox row rather than failing or resurrecting the user-visible deletion. Deletion deliberately creates no compile intent.
 - Large source bodies, uploads, provider transcripts, and tool outputs stay in object storage. Workflow payloads and journal results contain identifiers, cursors, and compact decisions rather than response bodies.
 
@@ -29,9 +30,14 @@ Engine replay resumes the same operation and idempotency key. A completed reply 
 
 A user-requested retry creates a new operation ID. Retrying a failed research reply uses a new browser-minted reply ID with the persisted request and the same visible session position; repeating that acceptance is safe. Retrying a failed URL run copies its persisted canonical URL into a new URL-ingest run; it does not start a generic vault compile.
 
-Reply requests nest session placement under `session`: new-session details or an existing session ID with an optional BTW anchor. Accepted replies always belong to a session. Retry resolves the request to that existing session and retains the exchange ID and original parent reply. The saved session origin supplies a document thread's first question context; a saved BTW anchor supplies an answer branch's first question context. Follow-ups inherit that context through the recorded messages. Prompt construction therefore does not depend on whether an HTTP request created a session.
+Reply requests nest new-session details or an existing session ID under `session`. A new BTW is its own conversation with a document/answer origin, not an optional branch embedded in an existing-session command. Accepted replies always belong to a session. Retry retains the exchange ID and original context parent, but freezes the current future-reply default. The public command no longer controls mode. Saved origin/annotation/cutoff and retained messages supply follow-up context independently of whether the current HTTP request creates a session.
 
-## Reply request migration
+Admission and frozen settlement obligations are reconciled independently of workflow liveness. An absent workflow can be redispatched under the same key; a completed workflow cannot cause another provider call merely to finish publication. Scans use bounded pages and a captured high-water position to revisit old obligations even as new replies arrive.
+
+## Historical reply request migration
+
+The following describes the older nested-request migration, not the native history cutover. Existing historical tools retain their pre-native schemas under `scripts/lib/legacy-session-history.ts`. Native history conversion, exception review, backups, and deployment fencing remain required separately.
+
 
 Deploy the nested request contract with the API and browser together. Stop old API/workflow processes before applying `20260908155003_session_reply_requests`; it rewrites saved requests, requires a session ID, and removes the ephemeral reply kind. Generation checkpoints keep their existing format, so accepted work can resume after the new processes start.
 

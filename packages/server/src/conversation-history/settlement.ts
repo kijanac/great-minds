@@ -1,15 +1,15 @@
 import { isDeepStrictEqual } from "node:util";
 
-import { type Database, type TransactionClient, replies, sessions } from "@great-minds/database";
+import { Database, type TransactionClient, replies, sessions } from "@great-minds/database";
 import type { ThinkingSource, Uuid } from "@great-minds/domain";
 import { and, eq, sql } from "drizzle-orm";
-import { Data, Effect, Result, Schema } from "effect";
+import { Context, Data, Effect, Layer, Result, Schema } from "effect";
 
-import type { ClockService } from "../clock.ts";
+import { ClockService } from "../clock.ts";
 import type { LlmMessage } from "../llm.ts";
-import { type HistoryRevision, verifyHistoryReceipt } from "./history.ts";
+import { type ConversationHistory, type HistoryRevision, verifyHistoryReceipt } from "./history.ts";
 import { type GenerationMetadata, HistorySettlementWrite, HistoryTimestamp } from "./schema.ts";
-import type { HistoryCommitError, HistoryStoreShape } from "./store.ts";
+import { type HistoryCommitError, HistoryStore, type HistoryStoreShape } from "./store.ts";
 
 export type ReplySettlementResult =
   | {
@@ -38,6 +38,9 @@ export class ReplySettlementInvalid extends Data.TaggedError("ReplySettlementInv
 }> {}
 
 export interface ReplySettlementShape {
+  readonly restoreRecorded: (
+    replyId: Uuid,
+  ) => Effect.Effect<void, ReplySettlementInvalid | HistoryCommitError>;
   readonly begin: (
     replyId: Uuid,
     result: ReplySettlementResult,
@@ -46,6 +49,20 @@ export interface ReplySettlementShape {
     replyId: Uuid,
   ) => Effect.Effect<boolean, ReplySettlementInvalid | HistoryCommitError>;
 }
+
+export class ReplySettlement extends Context.Service<ReplySettlement, ReplySettlementShape>()(
+  "@great-minds/server/ReplySettlement",
+) {}
+
+export const ReplySettlementLive = Layer.effect(
+  ReplySettlement,
+  Effect.gen(function* () {
+    const db = yield* Database;
+    const histories = yield* HistoryStore;
+    const clock = yield* ClockService;
+    return makeReplySettlement(db, histories, clock);
+  }),
+);
 
 const NativeSettlement = Schema.Struct({
   ...HistorySettlementWrite.fields,
@@ -145,6 +162,85 @@ export const makeReplySettlement = (
   histories: HistoryStoreShape,
   clock: ClockService["Service"],
 ) => {
+  const readOperation = (replyId: Uuid) =>
+    db
+      .query((client) =>
+        client
+          .select({ reply: replies, session: sessions })
+          .from(replies)
+          .innerJoin(
+            sessions,
+            and(eq(sessions.id, replies.sessionId), eq(sessions.vaultId, replies.vaultId)),
+          )
+          .where(eq(replies.id, replyId))
+          .limit(1),
+      )
+      .pipe(Effect.map((rows) => rows[0]));
+
+  const projectRecorded = (
+    tx: TransactionClient,
+    locked: { readonly session: typeof sessions.$inferSelect; readonly reply: ReplyRow },
+    history: ConversationHistory,
+    payload: HistorySettlementWrite,
+  ) =>
+    Effect.gen(function* () {
+      const previousReceipt = yield* receiptFor(locked.session, locked.reply.id);
+      const verified = verifyHistoryReceipt(history, previousReceipt);
+      if (Result.isFailure(verified)) return yield* verified.failure;
+      const row = locked.reply;
+      const now = yield* clock.now;
+      yield* tx
+        .update(sessions)
+        .set({
+          historySeq: history.revision.last_seq,
+          historySha256: history.revision.sha256,
+          updatedAt:
+            payload.settled_at === null
+              ? sql`${sessions.updatedAt}`
+              : sql`greatest(${sessions.updatedAt}, ${new Date(payload.settled_at)})`,
+        })
+        .where(and(eq(sessions.id, row.sessionId), eq(sessions.vaultId, row.vaultId)));
+      yield* tx
+        .update(replies)
+        .set({
+          status: payload.outcome.status,
+          answer: payload.answer,
+          sources: payload.sources,
+          error: payload.outcome.status === "failed" ? payload.outcome.message : null,
+          settlement: null,
+          activeGenerationStep: null,
+          activeGenerationKind: null,
+          activeGenerationKey: null,
+          version: sql`${replies.version} + 1`,
+          updatedAt: now,
+        })
+        .where(eq(replies.id, row.id));
+    });
+
+  const restoreRecorded = (replyId: Uuid) =>
+    Effect.gen(function* () {
+      const initial = yield* readOperation(replyId);
+      if (initial === undefined || initial.reply.status !== "running") return;
+      const receipt = yield* receiptFor(initial.session, replyId);
+      const file = yield* histories.read(
+        { vault_id: initial.reply.vaultId, session_id: initial.reply.sessionId },
+        receipt,
+      );
+      if (file === null)
+        return yield* new ReplySettlementInvalid({ reply_id: replyId, reason: "history_receipt" });
+      const recorded = file.history.records.find(
+        (record) => record.type === "settlement" && record.reply_id === replyId,
+      );
+      if (recorded === undefined || recorded.type !== "settlement") return;
+      yield* db.transaction((tx) =>
+        Effect.gen(function* () {
+          const locked = yield* lockConversationReply(tx, initial.reply);
+          if (locked === null || locked.reply.status !== "running") return;
+          yield* projectRecorded(tx, locked, file.history, recorded);
+        }),
+      );
+    });
+
   const begin = (replyId: Uuid, result: ReplySettlementResult) =>
     Effect.gen(function* () {
       const [identity] = yield* db.query((client) =>
@@ -210,17 +306,7 @@ export const makeReplySettlement = (
 
   const publish = (replyId: Uuid) =>
     Effect.gen(function* () {
-      const [initial] = yield* db.query((client) =>
-        client
-          .select({ reply: replies, session: sessions })
-          .from(replies)
-          .innerJoin(
-            sessions,
-            and(eq(sessions.id, replies.sessionId), eq(sessions.vaultId, replies.vaultId)),
-          )
-          .where(eq(replies.id, replyId))
-          .limit(1),
-      );
+      const initial = yield* readOperation(replyId);
       if (initial === undefined || initial.reply.status !== "settling") return false;
       const payload = yield* settlementFor(initial.reply);
       const receipt = yield* receiptFor(initial.session, replyId);
@@ -237,7 +323,7 @@ export const makeReplySettlement = (
         Effect.gen(function* () {
           const locked = yield* lockConversationReply(tx, initial.reply);
           if (locked === null || locked.reply.status !== "settling") return false;
-          const { session, reply: row } = locked;
+          const { reply: row } = locked;
           const frozen = yield* settlementFor(row);
           if (!isDeepStrictEqual(frozen, payload)) {
             return yield* new ReplySettlementInvalid({
@@ -245,38 +331,11 @@ export const makeReplySettlement = (
               reason: "settlement_payload",
             });
           }
-          const previousReceipt = yield* receiptFor(session, replyId);
-          const verified = verifyHistoryReceipt(committed.history, previousReceipt);
-          if (Result.isFailure(verified)) return yield* verified.failure;
-          const nextReceipt = committed.history.revision;
-          const now = yield* clock.now;
-          yield* tx
-            .update(sessions)
-            .set({
-              historySeq: nextReceipt.last_seq,
-              historySha256: nextReceipt.sha256,
-              updatedAt: sql`greatest(${sessions.updatedAt}, ${new Date(payload.settled_at)})`,
-            })
-            .where(and(eq(sessions.id, row.sessionId), eq(sessions.vaultId, row.vaultId)));
-          yield* tx
-            .update(replies)
-            .set({
-              status: payload.outcome.status,
-              answer: payload.answer,
-              sources: payload.sources,
-              error: payload.outcome.status === "failed" ? payload.outcome.message : null,
-              settlement: null,
-              activeGenerationStep: null,
-              activeGenerationKind: null,
-              activeGenerationKey: null,
-              version: sql`${replies.version} + 1`,
-              updatedAt: now,
-            })
-            .where(eq(replies.id, row.id));
+          yield* projectRecorded(tx, locked, committed.history, payload);
           return true;
         }),
       );
     });
 
-  return { begin, publish } satisfies ReplySettlementShape;
+  return { begin, publish, restoreRecorded } satisfies ReplySettlementShape;
 };

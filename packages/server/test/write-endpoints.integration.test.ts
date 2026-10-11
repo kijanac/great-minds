@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { access, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { access, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { createServer, type RequestListener, type Server as NodeServer } from "node:http";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -29,16 +29,16 @@ import {
   vaults,
   wikiArticles,
 } from "@great-minds/database";
-import {
-  SessionId,
-  type SessionOrigin,
-  Uuid,
-} from "@great-minds/domain";
+import { CreateReplyRequest, SessionId, type SessionOrigin, Uuid } from "@great-minds/domain";
 import { and, eq, isNull, sql } from "drizzle-orm";
 import { Effect, Layer, Option, Redacted, Schema } from "effect";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 
 import { makeAppLayer } from "../src/app-layer.ts";
+import {
+  seedConversationReply,
+  type ConversationSeedServices,
+} from "../scripts/lib/seed-conversation.ts";
 import { ClockService, makeTestClock } from "../src/clock.ts";
 import { AppConfig, type AppConfigShape } from "../src/config.ts";
 import { bodyContentHash, fileContentHash, rawFileHash } from "../src/crypto.ts";
@@ -53,6 +53,11 @@ import { SourceDocumentsService } from "../src/source-documents.ts";
 import { sourceIdForKey } from "../src/source-identity.ts";
 import { TokenService } from "../src/tokens.ts";
 import { UrlIngestService } from "../src/url-ingest.ts";
+import { ConversationTurnFixture, savedConversation } from "./fixtures/saved-conversation.ts";
+import {
+  replyHistoryTestDatabaseUrl,
+  runHistoryDatabase,
+} from "./fixtures/reply-history-database.ts";
 
 const initialTime = new Date("2026-07-10T12:00:00.000Z");
 const decodeUuid = Schema.decodeUnknownSync(Uuid);
@@ -92,6 +97,7 @@ const id = {
 } as const;
 
 type TestServices =
+  | ConversationSeedServices
   | AppConfig
   | Database
   | ClockService
@@ -140,13 +146,7 @@ const currentFixture = () => {
   return fixture;
 };
 
-const databaseUrl = () => {
-  const value = process.env.DATABASE_URL;
-  if (value === undefined || value.length === 0) {
-    throw new Error("DATABASE_URL is required for integration tests");
-  }
-  return value;
-};
+const databaseUrl = () => replyHistoryTestDatabaseUrl;
 
 const testConfig = (url: string, dataDir: string): AppConfigShape => ({
   databaseUrl: Redacted.make(url),
@@ -232,26 +232,22 @@ const createSessionForTest = (
 ) =>
   runDb(
     Effect.gen(function* () {
-      const sessions = yield* SessionsService;
-      const replyId = decodeUuid(randomUUID());
-      const sessionId = yield* sessions.createSession(userId, id.vault, {
-        idempotencyKey,
-        ...(origin === undefined ? {} : { origin }),
-        pending: {
-          replyId,
-          exchangeId: exchange.id,
+      const response = yield* seedConversationReply(
+        userId,
+        id.vault,
+        Schema.decodeUnknownSync(CreateReplyRequest)({
+          reply_id: randomUUID(),
+          exchange_id: exchange.id,
           question: exchange.query,
-        },
-      });
-      yield* sessions.completeReply(userId, id.vault, sessionId, replyId, {
-        messages: [
-          { role: "user", content: exchange.query },
-          { role: "assistant", content: exchange.answer },
-        ],
-        sources: [],
-        answer: exchange.answer,
-      });
-      return sessionId;
+          session: {
+            kind: "new",
+            idempotency_key: idempotencyKey,
+            ...(origin === undefined ? {} : { origin }),
+          },
+        }),
+        { answer: exchange.answer },
+      );
+      return response.session_id;
     }),
   );
 
@@ -266,8 +262,10 @@ const resetDatabase = () =>
 
 const resetStorage = async () => {
   const root = currentState().storageRoot;
-  await rm(root, { recursive: true, force: true });
-  await mkdir(root, { recursive: true });
+  for (const entry of await readdir(root)) {
+    if (entry !== ".conversation-history.lock")
+      await rm(join(root, entry), { recursive: true, force: true });
+  }
 };
 
 const writeVaultFile = async (vaultId: string, path: string, content: string) => {
@@ -312,46 +310,49 @@ const seedBase = async (): Promise<Fixture> => {
   await runDb(
     Effect.gen(function* () {
       const db = yield* Database;
-      yield* db.query((d) => d
-        .insert(users)
-        .values([
-          { id: id.alice, email: "alice@example.com", createdAt: initialTime },
-          { id: id.bob, email: "bob@example.com", createdAt: initialTime },
-          { id: id.carol, email: "carol@example.com", createdAt: initialTime },
-          { id: id.mallory, email: "mallory@example.com", createdAt: initialTime },
-        ]))
+      yield* db
+        .query((d) =>
+          d.insert(users).values([
+            { id: id.alice, email: "alice@example.com", createdAt: initialTime },
+            { id: id.bob, email: "bob@example.com", createdAt: initialTime },
+            { id: id.carol, email: "carol@example.com", createdAt: initialTime },
+            { id: id.mallory, email: "mallory@example.com", createdAt: initialTime },
+          ]),
+        )
         .pipe(Effect.orDie);
-      yield* db.query((d) => d
-        .insert(vaults)
-        .values({
-          id: id.vault,
-          name: "Alpha Vault",
-          ownerId: id.alice,
-          createdAt: initialTime,
-        }))
+      yield* db
+        .query((d) =>
+          d.insert(vaults).values({
+            id: id.vault,
+            name: "Alpha Vault",
+            ownerId: id.alice,
+            createdAt: initialTime,
+          }),
+        )
         .pipe(Effect.orDie);
-      yield* db.query((d) => d
-        .insert(vaultMemberships)
-        .values([
-          {
-            id: decodeUuid("00000000-0000-4000-8000-000000012001"),
-            vaultId: id.vault,
-            userId: id.alice,
-            role: "OWNER",
-          },
-          {
-            id: decodeUuid("00000000-0000-4000-8000-000000012002"),
-            vaultId: id.vault,
-            userId: id.bob,
-            role: "EDITOR",
-          },
-          {
-            id: decodeUuid("00000000-0000-4000-8000-000000012003"),
-            vaultId: id.vault,
-            userId: id.carol,
-            role: "VIEWER",
-          },
-        ]))
+      yield* db
+        .query((d) =>
+          d.insert(vaultMemberships).values([
+            {
+              id: decodeUuid("00000000-0000-4000-8000-000000012001"),
+              vaultId: id.vault,
+              userId: id.alice,
+              role: "OWNER",
+            },
+            {
+              id: decodeUuid("00000000-0000-4000-8000-000000012002"),
+              vaultId: id.vault,
+              userId: id.bob,
+              role: "EDITOR",
+            },
+            {
+              id: decodeUuid("00000000-0000-4000-8000-000000012003"),
+              vaultId: id.vault,
+              userId: id.carol,
+              role: "VIEWER",
+            },
+          ]),
+        )
         .pipe(Effect.orDie);
     }),
   );
@@ -372,69 +373,74 @@ const seedSourceGraph = async () => {
   await runDb(
     Effect.gen(function* () {
       const db = yield* Database;
-      yield* db.query((d) => d
-        .insert(sourceDocuments)
-        .values({
-          id: id.source,
-          vaultId: id.vault,
-          filePath: "raw/books/capital.md",
-          fileHash: "file-hash",
-          bodyHash: "body-hash",
-          sourceType: "book",
-          title: "Capital",
-          tags: [],
-          derivedExtras: {},
-        }))
-        .pipe(Effect.orDie);
-      yield* db.query((d) => d
-        .insert(topics)
-        .values({
-          topicId: id.topic,
-          vaultId: id.vault,
-          slug: "capital",
-          title: "Capital",
-          description: "Capital",
-        }))
-        .pipe(Effect.orDie);
-      yield* db.query((d) => d
-        .insert(ideas)
-        .values([
-          {
-            ideaId: id.ideaOne,
+      yield* db
+        .query((d) =>
+          d.insert(sourceDocuments).values({
+            id: id.source,
             vaultId: id.vault,
-            documentId: id.source,
-            kind: "concept",
-            label: "value",
-            description: "Value",
-          },
-          {
-            ideaId: id.ideaTwo,
+            filePath: "raw/books/capital.md",
+            fileHash: "file-hash",
+            bodyHash: "body-hash",
+            sourceType: "book",
+            title: "Capital",
+            tags: [],
+            derivedExtras: {},
+          }),
+        )
+        .pipe(Effect.orDie);
+      yield* db
+        .query((d) =>
+          d.insert(topics).values({
+            topicId: id.topic,
             vaultId: id.vault,
-            documentId: id.source,
-            kind: "concept",
-            label: "labor",
-            description: "Labor",
-          },
-        ]))
+            slug: "capital",
+            title: "Capital",
+            description: "Capital",
+          }),
+        )
         .pipe(Effect.orDie);
-      yield* db.query((d) => d
-        .insert(topicMembership)
-        .values([
-          { topicId: id.topic, ideaId: id.ideaOne },
-          { topicId: id.topic, ideaId: id.ideaTwo },
-        ]))
+      yield* db
+        .query((d) =>
+          d.insert(ideas).values([
+            {
+              ideaId: id.ideaOne,
+              vaultId: id.vault,
+              documentId: id.source,
+              kind: "concept",
+              label: "value",
+              description: "Value",
+            },
+            {
+              ideaId: id.ideaTwo,
+              vaultId: id.vault,
+              documentId: id.source,
+              kind: "concept",
+              label: "labor",
+              description: "Labor",
+            },
+          ]),
+        )
         .pipe(Effect.orDie);
-      yield* db.query((d) => d
-        .insert(searchIndex)
-        .values({
-          vaultId: id.vault,
-          path: "raw/books/capital.md",
-          chunkIndex: 0,
-          heading: "Capital",
-          body: "Capital body",
-          contentHash: "chunk-hash",
-          tsv: sql`to_tsvector('english', 'Capital body')`,
-        }))
+      yield* db
+        .query((d) =>
+          d.insert(topicMembership).values([
+            { topicId: id.topic, ideaId: id.ideaOne },
+            { topicId: id.topic, ideaId: id.ideaTwo },
+          ]),
+        )
+        .pipe(Effect.orDie);
+      yield* db
+        .query((d) =>
+          d.insert(searchIndex).values({
+            vaultId: id.vault,
+            path: "raw/books/capital.md",
+            chunkIndex: 0,
+            heading: "Capital",
+            body: "Capital body",
+            contentHash: "chunk-hash",
+            tsv: sql`to_tsvector('english', 'Capital body')`,
+          }),
+        )
         .pipe(Effect.orDie);
     }),
   );
@@ -529,10 +535,8 @@ const waitForPipelineRun = async (
     const rows = await runDb(
       Effect.gen(function* () {
         const db = yield* Database;
-        return yield* db.query((d) => d
-          .select()
-          .from(pipelineRuns)
-          .where(eq(pipelineRuns.id, runId)))
+        return yield* db
+          .query((d) => d.select().from(pipelineRuns).where(eq(pipelineRuns.id, runId)))
           .pipe(Effect.orDie);
       }),
     );
@@ -557,16 +561,12 @@ const asArray = (value: unknown): Array<Record<string, unknown>> => {
   return value.map(asRecord);
 };
 
-const jsonl = (events: readonly unknown[]) =>
-  events.map((event) => JSON.stringify(event)).join("\n");
-
 const countTable = <A>(table: A) =>
   runDb(
     Effect.gen(function* () {
       const db = yield* Database;
-      const rows = yield* db.query((d) => d
-        .select({ total: sql<number>`count(*)::int` })
-        .from(table as never))
+      const rows = yield* db
+        .query((d) => d.select({ total: sql<number>`count(*)::int` }).from(table as never))
         .pipe(Effect.orDie);
       return rows[0]?.total ?? 0;
     }),
@@ -588,6 +588,7 @@ const waitFor = async <A>(
 
 describe("M3.1 write endpoint integration", () => {
   beforeAll(async () => {
+    await runHistoryDatabase(Effect.void);
     state = await buildTestState();
   });
 
@@ -678,10 +679,15 @@ describe("M3.1 write endpoint integration", () => {
     const bobMemberships = await runDb(
       Effect.gen(function* () {
         const db = yield* Database;
-        return yield* db.query((d) => d
-          .select({ role: vaultMemberships.role })
-          .from(vaultMemberships)
-          .where(and(eq(vaultMemberships.vaultId, id.vault), eq(vaultMemberships.userId, id.bob))))
+        return yield* db
+          .query((d) =>
+            d
+              .select({ role: vaultMemberships.role })
+              .from(vaultMemberships)
+              .where(
+                and(eq(vaultMemberships.vaultId, id.vault), eq(vaultMemberships.userId, id.bob)),
+              ),
+          )
           .pipe(Effect.orDie);
       }),
     );
@@ -732,10 +738,13 @@ describe("M3.1 write endpoint integration", () => {
     const roles = await runDb(
       Effect.gen(function* () {
         const db = yield* Database;
-        return yield* db.query((d) => d
-          .select({ userId: vaultMemberships.userId, role: vaultMemberships.role })
-          .from(vaultMemberships)
-          .where(eq(vaultMemberships.vaultId, id.vault)))
+        return yield* db
+          .query((d) =>
+            d
+              .select({ userId: vaultMemberships.userId, role: vaultMemberships.role })
+              .from(vaultMemberships)
+              .where(eq(vaultMemberships.vaultId, id.vault)),
+          )
           .pipe(Effect.orDie);
       }),
     );
@@ -845,14 +854,19 @@ describe("M3.1 write endpoint integration", () => {
     const pendingIntents = await runDb(
       Effect.gen(function* () {
         const db = yield* Database;
-        return yield* db.query((d) => d
-          .select({
-            id: compileIntents.id,
-            pipelineRunId: compileIntents.pipelineRunId,
-            dispatchedAt: compileIntents.dispatchedAt,
-          })
-          .from(compileIntents)
-          .where(and(eq(compileIntents.vaultId, id.vault), isNull(compileIntents.dispatchedAt))))
+        return yield* db
+          .query((d) =>
+            d
+              .select({
+                id: compileIntents.id,
+                pipelineRunId: compileIntents.pipelineRunId,
+                dispatchedAt: compileIntents.dispatchedAt,
+              })
+              .from(compileIntents)
+              .where(
+                and(eq(compileIntents.vaultId, id.vault), isNull(compileIntents.dispatchedAt)),
+              ),
+          )
           .pipe(Effect.orDie);
       }),
     );
@@ -901,18 +915,19 @@ describe("M3.1 write endpoint integration", () => {
     await runDb(
       Effect.gen(function* () {
         const db = yield* Database;
-        yield* db.query((d) => d
-          .insert(sourceProposals)
-          .values({
-            id: id.conflictingProposal,
-            vaultId: id.vault,
-            userId: id.bob,
-            status: "PENDING",
-            contentType: "user_suggestion",
-            title: "Conflicting proposal",
-            destPath: "raw/books/capital.md",
-            sourceId: id.source,
-          }))
+        yield* db
+          .query((d) =>
+            d.insert(sourceProposals).values({
+              id: id.conflictingProposal,
+              vaultId: id.vault,
+              userId: id.bob,
+              status: "PENDING",
+              contentType: "user_suggestion",
+              title: "Conflicting proposal",
+              destPath: "raw/books/capital.md",
+              sourceId: id.source,
+            }),
+          )
           .pipe(Effect.orDie);
       }),
     );
@@ -922,13 +937,16 @@ describe("M3.1 write endpoint integration", () => {
       bobToken,
     );
     expect(conflict.status).toBe(409);
-    expect(conflict.body).toMatchObject({ detail: "A pending proposal already targets this source" });
+    expect(conflict.body).toMatchObject({
+      detail: "A pending proposal already targets this source",
+    });
     await runDb(
       Effect.gen(function* () {
         const db = yield* Database;
-        yield* db.query((d) => d
-          .delete(sourceProposals)
-          .where(eq(sourceProposals.id, id.conflictingProposal)))
+        yield* db
+          .query((d) =>
+            d.delete(sourceProposals).where(eq(sourceProposals.id, id.conflictingProposal)),
+          )
           .pipe(Effect.orDie);
       }),
     );
@@ -984,10 +1002,13 @@ describe("M3.1 write endpoint integration", () => {
     const deletionRows = await runDb(
       Effect.gen(function* () {
         const db = yield* Database;
-        return yield* db.query((d) => d
-          .select()
-          .from(sourceDeletionOutbox)
-          .where(eq(sourceDeletionOutbox.sourceId, id.source)))
+        return yield* db
+          .query((d) =>
+            d
+              .select()
+              .from(sourceDeletionOutbox)
+              .where(eq(sourceDeletionOutbox.sourceId, id.source)),
+          )
           .pipe(Effect.orDie);
       }),
     );
@@ -1006,20 +1027,11 @@ describe("M3.1 write endpoint integration", () => {
   it("commits source deletion and retries idempotent storage cleanup from its outbox", async () => {
     const { aliceToken } = currentFixture();
     await seedSourceGraph();
-    const sourcePath = join(
-      currentState().storageRoot,
-      "vaults",
-      id.vault,
-      "raw/books/capital.md",
-    );
+    const sourcePath = join(currentState().storageRoot, "vaults", id.vault, "raw/books/capital.md");
     await rm(sourcePath);
     await mkdir(sourcePath);
 
-    const deleted = await api(
-      "DELETE",
-      `/vaults/${id.vault}/raw/sources/${id.source}`,
-      aliceToken,
-    );
+    const deleted = await api("DELETE", `/vaults/${id.vault}/raw/sources/${id.source}`, aliceToken);
     expect(deleted.status).toBe(204);
     expect(await countTable(sourceDocuments)).toBe(0);
     expect(await countTable(ideas)).toBe(0);
@@ -1030,10 +1042,13 @@ describe("M3.1 write endpoint integration", () => {
     const pending = await runDb(
       Effect.gen(function* () {
         const db = yield* Database;
-        return yield* db.query((d) => d
-          .select()
-          .from(sourceDeletionOutbox)
-          .where(eq(sourceDeletionOutbox.sourceId, id.source)))
+        return yield* db
+          .query((d) =>
+            d
+              .select()
+              .from(sourceDeletionOutbox)
+              .where(eq(sourceDeletionOutbox.sourceId, id.source)),
+          )
           .pipe(Effect.orDie);
       }),
     );
@@ -1052,10 +1067,13 @@ describe("M3.1 write endpoint integration", () => {
     const completed = await runDb(
       Effect.gen(function* () {
         const db = yield* Database;
-        return yield* db.query((d) => d
-          .select()
-          .from(sourceDeletionOutbox)
-          .where(eq(sourceDeletionOutbox.sourceId, id.source)))
+        return yield* db
+          .query((d) =>
+            d
+              .select()
+              .from(sourceDeletionOutbox)
+              .where(eq(sourceDeletionOutbox.sourceId, id.source)),
+          )
           .pipe(Effect.orDie);
       }),
     );
@@ -1085,15 +1103,13 @@ describe("M3.1 write endpoint integration", () => {
     const rawRows = await runDb(
       Effect.gen(function* () {
         const db = yield* Database;
-        return yield* db.query((d) => d
-          .select()
-          .from(sourceDocuments)
-          .where(
-            and(
-              eq(sourceDocuments.vaultId, id.vault),
-              eq(sourceDocuments.id, rawId),
-            ),
-          ))
+        return yield* db
+          .query((d) =>
+            d
+              .select()
+              .from(sourceDocuments)
+              .where(and(eq(sourceDocuments.vaultId, id.vault), eq(sourceDocuments.id, rawId))),
+          )
           .pipe(Effect.orDie);
       }),
     );
@@ -1107,19 +1123,13 @@ describe("M3.1 write endpoint integration", () => {
       bodyHash: bodyContentHash("# Raw Title\n\nRaw body paragraph. ^p0\n"),
       clientHash: null,
     });
-    const readById = await api(
-      "GET",
-      `/vaults/${id.vault}/raw/sources/${rawId}`,
-      aliceToken,
-    );
+    const readById = await api("GET", `/vaults/${id.vault}/raw/sources/${rawId}`, aliceToken);
     expect(readById.status).toBe(200);
     expect(asRecord(asRecord(readById.body).article)).toMatchObject({
       id: rawId,
       file_path: rawPath,
     });
-    expect(asRecord(readById.body).body).toBe(
-      "# Raw Title\n\nRaw body paragraph. ^p0\n",
-    );
+    expect(asRecord(readById.body).body).toBe("# Raw Title\n\nRaw body paragraph. ^p0\n");
     expect(await countTable(compileIntents)).toBe(1);
 
     const editorDenied = await api("POST", `/vaults/${id.vault}/ingest`, bobToken, {
@@ -1158,31 +1168,25 @@ describe("M3.1 write endpoint integration", () => {
       mimetype: input.type,
     }));
 
-    const viewerPrepare = await api(
-      "POST",
-      `/vaults/${id.vault}/file-ingests`,
-      carolToken,
-      { batch_id: id.m32StagedRun, files: manifest },
-    );
+    const viewerPrepare = await api("POST", `/vaults/${id.vault}/file-ingests`, carolToken, {
+      batch_id: id.m32StagedRun,
+      files: manifest,
+    });
     expect(viewerPrepare.status).toBe(403);
 
-    const duplicateManifest = await api(
-      "POST",
-      `/vaults/${id.vault}/file-ingests`,
-      aliceToken,
-      { batch_id: id.m32StagedRun, files: [manifest[0], manifest[0]] },
-    );
+    const duplicateManifest = await api("POST", `/vaults/${id.vault}/file-ingests`, aliceToken, {
+      batch_id: id.m32StagedRun,
+      files: [manifest[0], manifest[0]],
+    });
     expect(duplicateManifest.status).toBe(400);
     expect(duplicateManifest.body).toMatchObject({
       detail: "duplicate file hashes are not allowed",
     });
 
-    const prepared = await api(
-      "POST",
-      `/vaults/${id.vault}/file-ingests`,
-      aliceToken,
-      { batch_id: id.m32StagedRun, files: manifest },
-    );
+    const prepared = await api("POST", `/vaults/${id.vault}/file-ingests`, aliceToken, {
+      batch_id: id.m32StagedRun,
+      files: manifest,
+    });
     expect(prepared.status).toBe(201);
     expect(asRecord(prepared.body)).toMatchObject({
       id: id.m32StagedRun,
@@ -1226,22 +1230,12 @@ describe("M3.1 write endpoint integration", () => {
       expect(uploaded.status).toBe(204);
       expect(
         await fileExists(
-          join(
-            currentState().storageRoot,
-            "staging",
-            id.vault,
-            id.m32StagedRun,
-            input.hash,
-          ),
+          join(currentState().storageRoot, "staging", id.vault, id.m32StagedRun, input.hash),
         ),
       ).toBe(true);
     }
 
-    const processed = await api(
-      "POST",
-      `/file-ingests/${id.m32StagedRun}/commit`,
-      aliceToken,
-    );
+    const processed = await api("POST", `/file-ingests/${id.m32StagedRun}/commit`, aliceToken);
     expect(processed.status).toBe(200);
     expect(asRecord(processed.body)).toMatchObject({
       id: id.m32StagedRun,
@@ -1254,10 +1248,10 @@ describe("M3.1 write endpoint integration", () => {
         runDb(
           Effect.gen(function* () {
             const db = yield* Database;
-            return (yield* db.query((d) => d
-              .select()
-              .from(pipelineRuns)
-              .where(eq(pipelineRuns.id, id.m32StagedRun)))
+            return (yield* db
+              .query((d) =>
+                d.select().from(pipelineRuns).where(eq(pipelineRuns.id, id.m32StagedRun)),
+              )
               .pipe(Effect.orDie))[0];
           }),
         ),
@@ -1269,17 +1263,11 @@ describe("M3.1 write endpoint integration", () => {
       status: "running",
     });
 
-    const sourceIds = inputs.map((input) =>
-      sourceIdForKey(id.vault, `upload:${input.hash}`),
-    );
+    const sourceIds = inputs.map((input) => sourceIdForKey(id.vault, `upload:${input.hash}`));
     expect(new Set(sourceIds).size).toBe(3);
     const sourcePaths = sourceIds.map((sourceId) => `raw/docs/${sourceId}.md`);
-    expect(await readVaultFile(id.vault, sourcePaths[0]!)).toContain(
-      "Alpha upload body. ^p0",
-    );
-    expect(await readVaultFile(id.vault, sourcePaths[1]!)).toContain(
-      "Beta upload body. ^p0",
-    );
+    expect(await readVaultFile(id.vault, sourcePaths[0]!)).toContain("Alpha upload body. ^p0");
+    expect(await readVaultFile(id.vault, sourcePaths[1]!)).toContain("Beta upload body. ^p0");
     expect(await readVaultFile(id.vault, sourcePaths[2]!)).toContain(
       "# HTML Upload\n\nConverted upload paragraph. ^p0",
     );
@@ -1288,23 +1276,23 @@ describe("M3.1 write endpoint integration", () => {
       Effect.gen(function* () {
         const db = yield* Database;
         return {
-          sources: yield* db.query((d) => d
-            .select({ id: sourceDocuments.id, clientHash: sourceDocuments.clientHash })
-            .from(sourceDocuments))
+          sources: yield* db
+            .query((d) =>
+              d
+                .select({ id: sourceDocuments.id, clientHash: sourceDocuments.clientHash })
+                .from(sourceDocuments),
+            )
             .pipe(Effect.orDie),
-          intents: yield* db.query((d) => d
-            .select()
-            .from(compileIntents))
+          intents: yield* db.query((d) => d.select().from(compileIntents)).pipe(Effect.orDie),
+          batches: yield* db
+            .query((d) =>
+              d.select().from(fileIngestBatches).where(eq(fileIngestBatches.id, id.m32StagedRun)),
+            )
             .pipe(Effect.orDie),
-          batches: yield* db.query((d) => d
-            .select()
-            .from(fileIngestBatches)
-            .where(eq(fileIngestBatches.id, id.m32StagedRun)))
-            .pipe(Effect.orDie),
-          batchFiles: yield* db.query((d) => d
-            .select()
-            .from(fileIngestFiles)
-            .where(eq(fileIngestFiles.batchId, id.m32StagedRun)))
+          batchFiles: yield* db
+            .query((d) =>
+              d.select().from(fileIngestFiles).where(eq(fileIngestFiles.batchId, id.m32StagedRun)),
+            )
             .pipe(Effect.orDie),
         };
       }),
@@ -1322,30 +1310,19 @@ describe("M3.1 write endpoint integration", () => {
       status: "completed",
     });
     expect(rows.batchFiles).toHaveLength(inputs.length);
-    expect(new Set(rows.batchFiles.map((file) => file.status))).toEqual(
-      new Set(["completed"]),
-    );
+    expect(new Set(rows.batchFiles.map((file) => file.status))).toEqual(new Set(["completed"]));
 
     for (const input of inputs) {
       expect(
         await fileExists(
-          join(
-            currentState().storageRoot,
-            "staging",
-            id.vault,
-            id.m32StagedRun,
-            input.hash,
-          ),
+          join(currentState().storageRoot, "staging", id.vault, id.m32StagedRun, input.hash),
         ),
       ).toBe(false);
     }
 
-    const dupes = await api(
-      "POST",
-      `/vaults/${id.vault}/file-ingests/check-dupes`,
-      aliceToken,
-      { client_hashes: inputs.map((input) => input.hash) },
-    );
+    const dupes = await api("POST", `/vaults/${id.vault}/file-ingests/check-dupes`, aliceToken, {
+      client_hashes: inputs.map((input) => input.hash),
+    });
     expect(dupes.status).toBe(200);
     expect(new Set(asRecord(dupes.body).existing as string[])).toEqual(
       new Set(inputs.map((input) => input.hash)),
@@ -1366,28 +1343,18 @@ describe("M3.1 write endpoint integration", () => {
     ];
 
     for (const batchId of [id.m32StagedRun, id.m32StagedRunOther]) {
-      const created = await api(
-        "POST",
-        `/vaults/${id.vault}/file-ingests`,
-        aliceToken,
-        { batch_id: batchId, files: manifest },
-      );
+      const created = await api("POST", `/vaults/${id.vault}/file-ingests`, aliceToken, {
+        batch_id: batchId,
+        files: manifest,
+      });
       expect(created.status).toBe(201);
       const form = new FormData();
       form.append("file", new Blob([bytes], { type: "text/markdown" }), "shared.md");
-      const uploaded = await uploadApi(
-        `/file-ingests/${batchId}/files/${hash}`,
-        aliceToken,
-        form,
-      );
+      const uploaded = await uploadApi(`/file-ingests/${batchId}/files/${hash}`, aliceToken, form);
       expect(uploaded.status).toBe(204);
     }
 
-    const resumed = await api(
-      "POST",
-      `/file-ingests/${id.m32StagedRun}/resume`,
-      aliceToken,
-    );
+    const resumed = await api("POST", `/file-ingests/${id.m32StagedRun}/resume`, aliceToken);
     expect(resumed.status).toBe(200);
     expect(asArray(asRecord(resumed.body).files)[0]).toMatchObject({
       name: "shared.md",
@@ -1403,49 +1370,32 @@ describe("M3.1 write endpoint integration", () => {
     expect(cancelled.status).toBe(204);
     expect(
       await fileExists(
-        join(
-          currentState().storageRoot,
-          "staging",
-          id.vault,
-          id.m32StagedRun,
-          hash,
-        ),
+        join(currentState().storageRoot, "staging", id.vault, id.m32StagedRun, hash),
       ),
     ).toBe(false);
     expect(
       await fileExists(
-        join(
-          currentState().storageRoot,
-          "staging",
-          id.vault,
-          id.m32StagedRunOther,
-          hash,
-        ),
+        join(currentState().storageRoot, "staging", id.vault, id.m32StagedRunOther, hash),
       ),
     ).toBe(true);
 
-    const cancelledBatch = await api(
-      "GET",
-      `/file-ingests/${id.m32StagedRun}`,
-      aliceToken,
-    );
+    const cancelledBatch = await api("GET", `/file-ingests/${id.m32StagedRun}`, aliceToken);
     expect(asRecord(cancelledBatch.body).status).toBe("cancelled");
 
-    const committed = await api(
-      "POST",
-      `/file-ingests/${id.m32StagedRunOther}/commit`,
-      aliceToken,
-    );
+    const committed = await api("POST", `/file-ingests/${id.m32StagedRunOther}/commit`, aliceToken);
     expect(committed.status).toBe(200);
     const completed = await waitFor(
       () =>
         runDb(
           Effect.gen(function* () {
             const db = yield* Database;
-            return (yield* db.query((d) => d
-              .select()
-              .from(fileIngestBatches)
-              .where(eq(fileIngestBatches.id, id.m32StagedRunOther)))
+            return (yield* db
+              .query((d) =>
+                d
+                  .select()
+                  .from(fileIngestBatches)
+                  .where(eq(fileIngestBatches.id, id.m32StagedRunOther)),
+              )
               .pipe(Effect.orDie))[0];
           }),
         ),
@@ -1490,12 +1440,18 @@ describe("M3.1 write endpoint integration", () => {
       const proposalRows = await runDb(
         Effect.gen(function* () {
           const db = yield* Database;
-          return yield* db.query((d) => d
-            .select()
-            .from(sourceProposals)
-            .where(
-              and(eq(sourceProposals.vaultId, id.vault), eq(sourceProposals.destPath, editorPath)),
-            ))
+          return yield* db
+            .query((d) =>
+              d
+                .select()
+                .from(sourceProposals)
+                .where(
+                  and(
+                    eq(sourceProposals.vaultId, id.vault),
+                    eq(sourceProposals.destPath, editorPath),
+                  ),
+                ),
+            )
             .pipe(Effect.orDie);
         }),
       );
@@ -1538,42 +1494,40 @@ describe("M3.1 write endpoint integration", () => {
     await runDb(
       Effect.gen(function* () {
         const db = yield* Database;
-        yield* db.query((d) => d
-          .insert(sourceDocuments)
-          .values([
-            {
-              id: id.m32SourceA,
-              vaultId: id.vault,
-              filePath: "raw/docs/a.md",
-              fileHash: "file-a",
-              bodyHash: "body-a",
-              clientHash: hashA,
-              sourceType: "document",
-              tags: [],
-              derivedExtras: {},
-            },
-            {
-              id: id.m32SourceB,
-              vaultId: id.vault,
-              filePath: "raw/docs/b.md",
-              fileHash: "file-b",
-              bodyHash: "body-b",
-              clientHash: hashA,
-              sourceType: "document",
-              tags: [],
-              derivedExtras: {},
-            },
-          ]))
+        yield* db
+          .query((d) =>
+            d.insert(sourceDocuments).values([
+              {
+                id: id.m32SourceA,
+                vaultId: id.vault,
+                filePath: "raw/docs/a.md",
+                fileHash: "file-a",
+                bodyHash: "body-a",
+                clientHash: hashA,
+                sourceType: "document",
+                tags: [],
+                derivedExtras: {},
+              },
+              {
+                id: id.m32SourceB,
+                vaultId: id.vault,
+                filePath: "raw/docs/b.md",
+                fileHash: "file-b",
+                bodyHash: "body-b",
+                clientHash: hashA,
+                sourceType: "document",
+                tags: [],
+                derivedExtras: {},
+              },
+            ]),
+          )
           .pipe(Effect.orDie);
       }),
     );
 
-    const dupes = await api(
-      "POST",
-      `/vaults/${id.vault}/file-ingests/check-dupes`,
-      aliceToken,
-      { client_hashes: [hashA, hashB] },
-    );
+    const dupes = await api("POST", `/vaults/${id.vault}/file-ingests/check-dupes`, aliceToken, {
+      client_hashes: [hashA, hashB],
+    });
     expect(dupes.status).toBe(200);
     expect(asRecord(dupes.body).existing).toEqual([hashA, hashA]);
 
@@ -1585,39 +1539,31 @@ describe("M3.1 write endpoint integration", () => {
     );
     expect(editorDupes.status).toBe(403);
 
-    const knownDuplicate = await api(
-      "POST",
-      `/vaults/${id.vault}/file-ingests`,
-      aliceToken,
-      {
-        batch_id: id.m32StagedRunOther,
-        files: [{ name: "known.md", size: 10, hash: hashA, mimetype: "text/markdown" }],
-      },
-    );
+    const knownDuplicate = await api("POST", `/vaults/${id.vault}/file-ingests`, aliceToken, {
+      batch_id: id.m32StagedRunOther,
+      files: [{ name: "known.md", size: 10, hash: hashA, mimetype: "text/markdown" }],
+    });
     expect(knownDuplicate.status).toBe(201);
     const knownFile = await runDb(
       Effect.gen(function* () {
         const db = yield* Database;
-        return (yield* db.query((d) => d
-          .select()
-          .from(fileIngestFiles)
-          .where(eq(fileIngestFiles.batchId, id.m32StagedRunOther)))
+        return (yield* db
+          .query((d) =>
+            d
+              .select()
+              .from(fileIngestFiles)
+              .where(eq(fileIngestFiles.batchId, id.m32StagedRunOther)),
+          )
           .pipe(Effect.orDie))[0];
       }),
     );
     expect(knownFile?.needsCompile).toBe(false);
-    await api(
-      "POST",
-      `/vaults/${id.vault}/compile/${id.m32StagedRunOther}/cancel`,
-      aliceToken,
-    );
+    await api("POST", `/vaults/${id.vault}/compile/${id.m32StagedRunOther}/cancel`, aliceToken);
 
-    const emptyCreate = await api(
-      "POST",
-      `/vaults/${id.vault}/file-ingests`,
-      aliceToken,
-      { batch_id: id.m32StagedRun, files: [] },
-    );
+    const emptyCreate = await api("POST", `/vaults/${id.vault}/file-ingests`, aliceToken, {
+      batch_id: id.m32StagedRun,
+      files: [],
+    });
     expect(emptyCreate.status).toBe(400);
     expect(emptyCreate.body).toMatchObject({ detail: "no files provided" });
 
@@ -1627,15 +1573,11 @@ describe("M3.1 write endpoint integration", () => {
         yield* db.query((d) => d.delete(sourceDocuments)).pipe(Effect.orDie);
       }),
     );
-    const manifest = [
-      { name: "a.md", size: 10, hash: hashA, mimetype: "text/markdown" },
-    ];
-    const created = await api(
-      "POST",
-      `/vaults/${id.vault}/file-ingests`,
-      aliceToken,
-      { batch_id: id.m32StagedRun, files: manifest },
-    );
+    const manifest = [{ name: "a.md", size: 10, hash: hashA, mimetype: "text/markdown" }];
+    const created = await api("POST", `/vaults/${id.vault}/file-ingests`, aliceToken, {
+      batch_id: id.m32StagedRun,
+      files: manifest,
+    });
     expect(created.status).toBe(201);
     expect(asRecord(created.body)).toMatchObject({
       id: id.m32StagedRun,
@@ -1644,41 +1586,26 @@ describe("M3.1 write endpoint integration", () => {
       status: "uploading",
     });
 
-    const replayed = await api(
-      "POST",
-      `/vaults/${id.vault}/file-ingests`,
-      aliceToken,
-      { batch_id: id.m32StagedRun, files: manifest },
-    );
+    const replayed = await api("POST", `/vaults/${id.vault}/file-ingests`, aliceToken, {
+      batch_id: id.m32StagedRun,
+      files: manifest,
+    });
     expect(replayed.status).toBe(201);
     expect(asRecord(replayed.body).id).toBe(id.m32StagedRun);
 
-    const conflicting = await api(
-      "POST",
-      `/vaults/${id.vault}/file-ingests`,
-      aliceToken,
-      {
-        batch_id: id.m32StagedRun,
-        files: [{ ...manifest[0], name: "different.md" }],
-      },
-    );
+    const conflicting = await api("POST", `/vaults/${id.vault}/file-ingests`, aliceToken, {
+      batch_id: id.m32StagedRun,
+      files: [{ ...manifest[0], name: "different.md" }],
+    });
     expect(conflicting.status).toBe(409);
     expect(conflicting.body).toMatchObject({
       detail: "Batch ID is bound to a different manifest",
     });
 
-    const visibleToMember = await api(
-      "GET",
-      `/file-ingests/${id.m32StagedRun}`,
-      bobToken,
-    );
+    const visibleToMember = await api("GET", `/file-ingests/${id.m32StagedRun}`, bobToken);
     expect(visibleToMember.status).toBe(200);
     expect(asRecord(visibleToMember.body).targets).toEqual([]);
-    const editorResume = await api(
-      "POST",
-      `/file-ingests/${id.m32StagedRun}/resume`,
-      bobToken,
-    );
+    const editorResume = await api("POST", `/file-ingests/${id.m32StagedRun}/resume`, bobToken);
     expect(editorResume.status).toBe(403);
 
     const prematureCommit = await api(
@@ -1693,20 +1620,18 @@ describe("M3.1 write endpoint integration", () => {
       Effect.gen(function* () {
         const db = yield* Database;
         return {
-          runs: yield* db.query((d) => d
-            .select()
-            .from(pipelineRuns)
-            .where(eq(pipelineRuns.id, id.m32StagedRun)))
+          runs: yield* db
+            .query((d) => d.select().from(pipelineRuns).where(eq(pipelineRuns.id, id.m32StagedRun)))
             .pipe(Effect.orDie),
-          batches: yield* db.query((d) => d
-            .select()
-            .from(fileIngestBatches)
-            .where(eq(fileIngestBatches.id, id.m32StagedRun)))
+          batches: yield* db
+            .query((d) =>
+              d.select().from(fileIngestBatches).where(eq(fileIngestBatches.id, id.m32StagedRun)),
+            )
             .pipe(Effect.orDie),
-          files: yield* db.query((d) => d
-            .select()
-            .from(fileIngestFiles)
-            .where(eq(fileIngestFiles.batchId, id.m32StagedRun)))
+          files: yield* db
+            .query((d) =>
+              d.select().from(fileIngestFiles).where(eq(fileIngestFiles.batchId, id.m32StagedRun)),
+            )
             .pipe(Effect.orDie),
         };
       }),
@@ -1732,22 +1657,17 @@ describe("M3.1 write endpoint integration", () => {
   it("expires abandoned durable file-ingest batches", async () => {
     const { aliceToken } = currentFixture();
     const hash = "c".repeat(64);
-    const created = await api(
-      "POST",
-      `/vaults/${id.vault}/file-ingests`,
-      aliceToken,
-      {
-        batch_id: id.m32StagedRun,
-        files: [
-          {
-            name: "abandoned.md",
-            size: 12,
-            hash,
-            mimetype: "text/markdown",
-          },
-        ],
-      },
-    );
+    const created = await api("POST", `/vaults/${id.vault}/file-ingests`, aliceToken, {
+      batch_id: id.m32StagedRun,
+      files: [
+        {
+          name: "abandoned.md",
+          size: 12,
+          hash,
+          mimetype: "text/markdown",
+        },
+      ],
+    });
     expect(created.status).toBe(201);
 
     currentState().clock.set(new Date(initialTime.getTime() + 25 * 60 * 60 * 1000));
@@ -1763,20 +1683,18 @@ describe("M3.1 write endpoint integration", () => {
       Effect.gen(function* () {
         const db = yield* Database;
         return {
-          batch: (yield* db.query((d) => d
-            .select()
-            .from(fileIngestBatches)
-            .where(eq(fileIngestBatches.id, id.m32StagedRun)))
+          batch: (yield* db
+            .query((d) =>
+              d.select().from(fileIngestBatches).where(eq(fileIngestBatches.id, id.m32StagedRun)),
+            )
             .pipe(Effect.orDie))[0],
-          file: (yield* db.query((d) => d
-            .select()
-            .from(fileIngestFiles)
-            .where(eq(fileIngestFiles.batchId, id.m32StagedRun)))
+          file: (yield* db
+            .query((d) =>
+              d.select().from(fileIngestFiles).where(eq(fileIngestFiles.batchId, id.m32StagedRun)),
+            )
             .pipe(Effect.orDie))[0],
-          run: (yield* db.query((d) => d
-            .select()
-            .from(pipelineRuns)
-            .where(eq(pipelineRuns.id, id.m32StagedRun)))
+          run: (yield* db
+            .query((d) => d.select().from(pipelineRuns).where(eq(pipelineRuns.id, id.m32StagedRun)))
             .pipe(Effect.orDie))[0],
         };
       }),
@@ -1798,7 +1716,7 @@ describe("M3.1 write endpoint integration", () => {
           articleRequests += 1;
           response.writeHead(200, { "content-type": "text/html; charset=utf-8" });
           response.end(
-            "<html><head><title>Personal Article</title><meta name=\"author\" content=\"Ada Lovelace\"><meta property=\"article:published_time\" content=\"2024-03-01\"></head><body><article><p>First personal paragraph with enough detail for article extraction.</p><p>Second personal paragraph stays outside every vault corpus.</p><p>Third personal paragraph supports a BTW question.</p></article></body></html>",
+            '<html><head><title>Personal Article</title><meta name="author" content="Ada Lovelace"><meta property="article:published_time" content="2024-03-01"></head><body><article><p>First personal paragraph with enough detail for article extraction.</p><p>Second personal paragraph stays outside every vault corpus.</p><p>Third personal paragraph supports a BTW question.</p></article></body></html>',
           );
           return;
         }
@@ -1842,10 +1760,10 @@ describe("M3.1 write endpoint integration", () => {
         const storedRows = await runDb(
           Effect.gen(function* () {
             const db = yield* Database;
-            return yield* db.query((d) => d
-              .select()
-              .from(userDocuments)
-              .where(eq(userDocuments.userId, id.alice)))
+            return yield* db
+              .query((d) =>
+                d.select().from(userDocuments).where(eq(userDocuments.userId, id.alice)),
+              )
               .pipe(Effect.orDie);
           }),
         );
@@ -1900,9 +1818,7 @@ describe("M3.1 write endpoint integration", () => {
           url: `${origin}/missing`,
         });
         expect(missingCreated.status).toBe(201);
-        await rm(
-          join(currentState().storageRoot, "users", id.alice, "refs", "missing.md"),
-        );
+        await rm(join(currentState().storageRoot, "users", id.alice, "refs", "missing.md"));
         const missingFile = await api("GET", "/me/refs/doc?path=refs/missing.md", aliceToken);
         expect(missingFile.status).toBe(404);
 
@@ -1950,12 +1866,9 @@ describe("M3.1 write endpoint integration", () => {
         expect(asRecord(created.body).title).toBe("Renamable Article");
         const contentBefore = await readUserFile(id.alice, "refs/article.md");
 
-        const renamed = await api(
-          "PATCH",
-          `/me/refs/${asRecord(created.body).id}`,
-          aliceToken,
-          { title: "  Cleaned Up Title  " },
-        );
+        const renamed = await api("PATCH", `/me/refs/${asRecord(created.body).id}`, aliceToken, {
+          title: "  Cleaned Up Title  ",
+        });
         expect(renamed.status).toBe(200);
         expect(asRecord(renamed.body)).toMatchObject({
           file_path: "refs/article.md",
@@ -1967,10 +1880,10 @@ describe("M3.1 write endpoint integration", () => {
         const storedRows = await runDb(
           Effect.gen(function* () {
             const db = yield* Database;
-            return yield* db.query((d) => d
-              .select()
-              .from(userDocuments)
-              .where(eq(userDocuments.userId, id.alice)))
+            return yield* db
+              .query((d) =>
+                d.select().from(userDocuments).where(eq(userDocuments.userId, id.alice)),
+              )
               .pipe(Effect.orDie);
           }),
         );
@@ -1980,12 +1893,9 @@ describe("M3.1 write endpoint integration", () => {
           title: "Cleaned Up Title",
         });
 
-        const cleared = await api(
-          "PATCH",
-          `/me/refs/${asRecord(created.body).id}`,
-          aliceToken,
-          { title: "   " },
-        );
+        const cleared = await api("PATCH", `/me/refs/${asRecord(created.body).id}`, aliceToken, {
+          title: "   ",
+        });
         expect(cleared.status).toBe(200);
         expect(asRecord(cleared.body).title).toBeNull();
 
@@ -1998,21 +1908,15 @@ describe("M3.1 write endpoint integration", () => {
         expect(explicitNull.status).toBe(200);
         expect(asRecord(explicitNull.body).title).toBeNull();
 
-        const otherUser = await api(
-          "PATCH",
-          `/me/refs/${asRecord(created.body).id}`,
-          bobToken,
-          { title: "Sneaky" },
-        );
+        const otherUser = await api("PATCH", `/me/refs/${asRecord(created.body).id}`, bobToken, {
+          title: "Sneaky",
+        });
         expect(otherUser.status).toBe(404);
 
-        const traversal = await api(
-          "PATCH",
-          "/me/refs/not-a-reference-id",
-          aliceToken,
-          { title: "X" },
-        );
-        expect(traversal.status).toBe( 422);
+        const traversal = await api("PATCH", "/me/refs/not-a-reference-id", aliceToken, {
+          title: "X",
+        });
+        expect(traversal.status).toBe(422);
 
         const missing = await api(
           "PATCH",
@@ -2044,54 +1948,39 @@ describe("M3.1 write endpoint integration", () => {
         await runDb(
           Effect.gen(function* () {
             const db = yield* Database;
-            yield* db.query((d) => d
-              .insert(sessions)
-              .values({
-                id: decodeSessionId("s-rename-origin"),
-                vaultId: id.vault,
-                userId: id.alice,
-                query: "Anchored session on the reference",
-                origin: {
-                  kind: "document",
-                  doc_path: "refs/article.md",
-                  origin_scope: "personal",
-                  anchor: "Origin title first paragraph with enough detail for article extraction.",
-                  paragraph: "Origin title first paragraph with enough detail for article extraction.",
-                  paragraph_index: 0,
-                },
-                createdAt: new Date("2026-07-11T09:00:00.000Z"),
-                updatedAt: new Date("2026-07-11T09:05:00.000Z"),
-              }))
+            yield* db
+              .query((d) =>
+                d.insert(sessions).values({
+                  id: decodeSessionId("s-rename-origin"),
+                  vaultId: id.vault,
+                  userId: id.alice,
+                  query: "Anchored session on the reference",
+                  origin: {
+                    kind: "document",
+                    doc_path: "refs/article.md",
+                    origin_scope: "personal",
+                    anchor:
+                      "Origin title first paragraph with enough detail for article extraction.",
+                    paragraph:
+                      "Origin title first paragraph with enough detail for article extraction.",
+                    paragraph_index: 0,
+                  },
+                  createdAt: new Date("2026-07-11T09:00:00.000Z"),
+                  updatedAt: new Date("2026-07-11T09:05:00.000Z"),
+                }),
+              )
               .pipe(Effect.orDie);
           }),
         );
-        await writeVaultFile(
-          id.vault,
-          "sessions/s-rename-origin.jsonl",
-          jsonl([
-            {
-              type: "meta",
-              id: decodeSessionId("s-rename-origin"),
-              query: "Anchored session on the reference",
-              ts: "2026-07-11T09:00:00.000Z",
-              user_id: id.alice,
-              origin: {
-                kind: "document",
-                doc_path: "refs/article.md",
-                origin_scope: "personal",
-                anchor: "Origin title first paragraph with enough detail for article extraction.",
-                paragraph: "Origin title first paragraph with enough detail for article extraction.",
-                paragraph_index: 0,
-              },
-            },
-            {
-              type: "exchange",
-              exId: "ex-rename-origin",
-              query: "Anchored session on the reference",
-              thinking: [],
+        await runDb(
+          savedConversation(id.vault, decodeSessionId("s-rename-origin"), [
+            Schema.decodeUnknownSync(ConversationTurnFixture)({
+              replyId: randomUUID(),
+              exchangeId: randomUUID(),
+              question: "Anchored session on the reference",
               answer: "Anchored answer.",
-              ts: "2026-07-11T09:05:00.000Z",
-            },
+              timestamp: "2026-07-11T09:05:00.000Z",
+            }),
           ]),
         );
 
@@ -2106,12 +1995,9 @@ describe("M3.1 write endpoint integration", () => {
           origin_title: "Origin Title Article",
         });
 
-        const renamed = await api(
-          "PATCH",
-          `/me/refs/${asRecord(created.body).id}`,
-          aliceToken,
-          { title: "Renamed Origin Article" },
-        );
+        const renamed = await api("PATCH", `/me/refs/${asRecord(created.body).id}`, aliceToken, {
+          title: "Renamed Origin Article",
+        });
         expect(renamed.status).toBe(200);
 
         const after = await api(
@@ -2149,12 +2035,9 @@ describe("M3.1 write endpoint integration", () => {
         const sourceId = sourceIdForKey(id.vault, `reference:${referenceId}`);
         const sourcePath = `raw/docs/promoted-${sourceId}.md`;
 
-        const promoted = await api(
-          "POST",
-          `/vaults/${id.vault}/ingest/reference`,
-          aliceToken,
-          { path: referencePath },
-        );
+        const promoted = await api("POST", `/vaults/${id.vault}/ingest/reference`, aliceToken, {
+          path: referencePath,
+        });
         expect(promoted.status).toBe(201);
         expect(promoted.body).toEqual({ id: sourceId, file_path: sourcePath });
         const promotedText = await readVaultFile(id.vault, sourcePath);
@@ -2163,15 +2046,15 @@ describe("M3.1 write endpoint integration", () => {
         const rows = await runDb(
           Effect.gen(function* () {
             const db = yield* Database;
-            return yield* db.query((d) => d
-              .select()
-              .from(sourceDocuments)
-              .where(
-                and(
-                  eq(sourceDocuments.vaultId, id.vault),
-                  eq(sourceDocuments.id, sourceId),
-                ),
-              ))
+            return yield* db
+              .query((d) =>
+                d
+                  .select()
+                  .from(sourceDocuments)
+                  .where(
+                    and(eq(sourceDocuments.vaultId, id.vault), eq(sourceDocuments.id, sourceId)),
+                  ),
+              )
               .pipe(Effect.orDie);
           }),
         );
@@ -2185,12 +2068,9 @@ describe("M3.1 write endpoint integration", () => {
         expect(await countTable(userDocuments)).toBe(1);
         expect(await readUserFile(id.alice, referencePath)).toBe(personalBefore);
 
-        const repeated = await api(
-          "POST",
-          `/vaults/${id.vault}/ingest/reference`,
-          aliceToken,
-          { path: referencePath },
-        );
+        const repeated = await api("POST", `/vaults/${id.vault}/ingest/reference`, aliceToken, {
+          path: referencePath,
+        });
         expect(repeated.status).toBe(200);
         expect(repeated.body).toEqual(promoted.body);
         expect(await countTable(sourceDocuments)).toBe(1);
@@ -2200,20 +2080,14 @@ describe("M3.1 write endpoint integration", () => {
           url: `${origin}/outsider`,
         });
         expect(outsider.status).toBe(201);
-        const forbidden = await api(
-          "POST",
-          `/vaults/${id.vault}/ingest/reference`,
-          malloryToken,
-          { path: String(asRecord(outsider.body).file_path) },
-        );
+        const forbidden = await api("POST", `/vaults/${id.vault}/ingest/reference`, malloryToken, {
+          path: String(asRecord(outsider.body).file_path),
+        });
         expect(forbidden.status).toBe(403);
 
-        const missing = await api(
-          "POST",
-          `/vaults/${id.vault}/ingest/reference`,
-          aliceToken,
-          { path: "refs/unknown.md" },
-        );
+        const missing = await api("POST", `/vaults/${id.vault}/ingest/reference`, aliceToken, {
+          path: "refs/unknown.md",
+        });
         expect(missing.status).toBe(404);
       },
     );
@@ -2284,10 +2158,13 @@ describe("M3.1 write endpoint integration", () => {
         const acceptedRows = await runDb(
           Effect.gen(function* () {
             const db = yield* Database;
-            return yield* db.query((d) => d
-              .select()
-              .from(urlIngestRequests)
-              .where(eq(urlIngestRequests.id, id.m32UrlSlowRun)))
+            return yield* db
+              .query((d) =>
+                d
+                  .select()
+                  .from(urlIngestRequests)
+                  .where(eq(urlIngestRequests.id, id.m32UrlSlowRun)),
+              )
               .pipe(Effect.orDie);
           }),
         );
@@ -2305,10 +2182,13 @@ describe("M3.1 write endpoint integration", () => {
         await runDb(
           Effect.gen(function* () {
             const db = yield* Database;
-            yield* db.query((d) => d
-              .update(compileIntents)
-              .set({ dispatchedAt: sql`now()`, satisfiedAt: sql`now()` })
-              .where(eq(compileIntents.pipelineRunId, id.m32UrlSlowRun)))
+            yield* db
+              .query((d) =>
+                d
+                  .update(compileIntents)
+                  .set({ dispatchedAt: sql`now()`, satisfiedAt: sql`now()` })
+                  .where(eq(compileIntents.pipelineRunId, id.m32UrlSlowRun)),
+              )
               .pipe(Effect.orDie);
           }),
         );
@@ -2342,25 +2222,26 @@ describe("M3.1 write endpoint integration", () => {
         const successRows = await runDb(
           Effect.gen(function* () {
             const db = yield* Database;
-            const sourceRows = yield* db.query((d) => d
-              .select()
-              .from(sourceDocuments)
-              .where(eq(sourceDocuments.id, sourceId)))
+            const sourceRows = yield* db
+              .query((d) =>
+                d.select().from(sourceDocuments).where(eq(sourceDocuments.id, sourceId)),
+              )
               .pipe(Effect.orDie);
-            const intentRows = yield* db.query((d) => d
-              .select()
-              .from(compileIntents)
-              .where(eq(compileIntents.pipelineRunId, id.m32UrlRun)))
+            const intentRows = yield* db
+              .query((d) =>
+                d
+                  .select()
+                  .from(compileIntents)
+                  .where(eq(compileIntents.pipelineRunId, id.m32UrlRun)),
+              )
               .pipe(Effect.orDie);
-            const runRows = yield* db.query((d) => d
-              .select()
-              .from(pipelineRuns)
-              .where(eq(pipelineRuns.id, id.m32UrlRun)))
+            const runRows = yield* db
+              .query((d) => d.select().from(pipelineRuns).where(eq(pipelineRuns.id, id.m32UrlRun)))
               .pipe(Effect.orDie);
-            const requestRows = yield* db.query((d) => d
-              .select()
-              .from(urlIngestRequests)
-              .where(eq(urlIngestRequests.id, id.m32UrlRun)))
+            const requestRows = yield* db
+              .query((d) =>
+                d.select().from(urlIngestRequests).where(eq(urlIngestRequests.id, id.m32UrlRun)),
+              )
               .pipe(Effect.orDie);
             return { sourceRows, intentRows, runRows, requestRows };
           }),
@@ -2424,10 +2305,10 @@ describe("M3.1 write endpoint integration", () => {
         const collisionRows = await runDb(
           Effect.gen(function* () {
             const db = yield* Database;
-            return yield* db.query((d) => d
-              .select()
-              .from(sourceDocuments)
-              .where(eq(sourceDocuments.vaultId, id.vault)))
+            return yield* db
+              .query((d) =>
+                d.select().from(sourceDocuments).where(eq(sourceDocuments.vaultId, id.vault)),
+              )
               .pipe(Effect.orDie);
           }),
         );
@@ -2448,10 +2329,10 @@ describe("M3.1 write endpoint integration", () => {
         const failedRuns = await runDb(
           Effect.gen(function* () {
             const db = yield* Database;
-            return yield* db.query((d) => d
-              .select()
-              .from(pipelineRuns)
-              .where(eq(pipelineRuns.id, id.m32UrlFailRun)))
+            return yield* db
+              .query((d) =>
+                d.select().from(pipelineRuns).where(eq(pipelineRuns.id, id.m32UrlFailRun)),
+              )
               .pipe(Effect.orDie);
           }),
         );
@@ -2472,25 +2353,31 @@ describe("M3.1 write endpoint integration", () => {
         const pdfRows = await runDb(
           Effect.gen(function* () {
             const db = yield* Database;
-            const runRows = yield* db.query((d) => d
-              .select()
-              .from(pipelineRuns)
-              .where(eq(pipelineRuns.id, id.m32UrlPdfRun)))
+            const runRows = yield* db
+              .query((d) =>
+                d.select().from(pipelineRuns).where(eq(pipelineRuns.id, id.m32UrlPdfRun)),
+              )
               .pipe(Effect.orDie);
-            const sourceRows = yield* db.query((d) => d
-              .select()
-              .from(sourceDocuments)
-              .where(
-                and(
-                  eq(sourceDocuments.vaultId, id.vault),
-                  eq(sourceDocuments.canonicalUrl, `${origin}/pdf`),
-                ),
-              ))
+            const sourceRows = yield* db
+              .query((d) =>
+                d
+                  .select()
+                  .from(sourceDocuments)
+                  .where(
+                    and(
+                      eq(sourceDocuments.vaultId, id.vault),
+                      eq(sourceDocuments.canonicalUrl, `${origin}/pdf`),
+                    ),
+                  ),
+              )
               .pipe(Effect.orDie);
-            const intentRows = yield* db.query((d) => d
-              .select()
-              .from(compileIntents)
-              .where(eq(compileIntents.pipelineRunId, id.m32UrlPdfRun)))
+            const intentRows = yield* db
+              .query((d) =>
+                d
+                  .select()
+                  .from(compileIntents)
+                  .where(eq(compileIntents.pipelineRunId, id.m32UrlPdfRun)),
+              )
               .pipe(Effect.orDie);
             return { runRows, sourceRows, intentRows };
           }),
@@ -2529,46 +2416,39 @@ describe("M3.1 write endpoint integration", () => {
         await runDb(
           Effect.gen(function* () {
             const db = yield* Database;
-            yield* db.query((d) => d
-              .insert(pipelineRuns)
-              .values({
-                id: id.m32UrlReconcileRun,
-                vaultId: id.vault,
-                trigger: "url",
-                status: "pending",
-                currentPhase: "source_ingest",
-                phaseStatus: "started",
-                progressSteps: [],
-                ingestTaskId: id.m32UrlReconcileRun,
-                activeTaskId: id.m32UrlReconcileRun,
-                activeTaskType: "url_ingest",
-              }))
+            yield* db
+              .query((d) =>
+                d.insert(pipelineRuns).values({
+                  id: id.m32UrlReconcileRun,
+                  vaultId: id.vault,
+                  trigger: "url",
+                  status: "pending",
+                  currentPhase: "source_ingest",
+                  phaseStatus: "started",
+                  progressSteps: [],
+                  ingestTaskId: id.m32UrlReconcileRun,
+                  activeTaskId: id.m32UrlReconcileRun,
+                  activeTaskType: "url_ingest",
+                }),
+              )
               .pipe(Effect.orDie);
-            yield* db.query((d) => d
-              .insert(urlIngestRequests)
-              .values({
-                id: id.m32UrlReconcileRun,
-                createdBy: id.alice,
-                canonicalUrl: reconciledUrl,
-              }))
+            yield* db
+              .query((d) =>
+                d.insert(urlIngestRequests).values({
+                  id: id.m32UrlReconcileRun,
+                  createdBy: id.alice,
+                  canonicalUrl: reconciledUrl,
+                }),
+              )
               .pipe(Effect.orDie);
             const urlIngest = yield* UrlIngestService;
             expect(yield* urlIngest.reconcileOnce()).toBe(1);
           }),
         );
-        await waitForPipelineRun(
-          id.m32UrlReconcileRun,
-          (row) => row.phaseStatus === "completed",
-        );
-        const reconciledSourceId = sourceIdForKey(
-          id.vault,
-          `url:${reconciledUrl}`,
-        );
+        await waitForPipelineRun(id.m32UrlReconcileRun, (row) => row.phaseStatus === "completed");
+        const reconciledSourceId = sourceIdForKey(id.vault, `url:${reconciledUrl}`);
         expect(
-          await readVaultFile(
-            id.vault,
-            `raw/docs/reconcile-${reconciledSourceId}.md`,
-          ),
+          await readVaultFile(id.vault, `raw/docs/reconcile-${reconciledSourceId}.md`),
         ).toContain("Recovered URL operation body.");
 
         const denied = await api("POST", `/vaults/${id.vault}/jobs/url`, malloryToken, {
@@ -2608,10 +2488,7 @@ describe("M3.1 write endpoint integration", () => {
       answer: "Proposal answer body.",
     });
 
-    const ownerSourceId = sourceIdForKey(
-      id.vault,
-      `session:${sessionId}:${EX_PROMOTE}`,
-    );
+    const ownerSourceId = sourceIdForKey(id.vault, `session:${sessionId}:${EX_PROMOTE}`);
     const ownerSourcePath = `raw/sessions/${EX_PROMOTE}-${ownerSourceId}.md`;
     const ownerPromote = await api(
       "POST",
@@ -2633,15 +2510,15 @@ describe("M3.1 write endpoint integration", () => {
     const promotedRows = await runDb(
       Effect.gen(function* () {
         const db = yield* Database;
-        return yield* db.query((d) => d
-          .select()
-          .from(sourceDocuments)
-          .where(
-            and(
-              eq(sourceDocuments.vaultId, id.vault),
-              eq(sourceDocuments.id, ownerSourceId),
-            ),
-          ))
+        return yield* db
+          .query((d) =>
+            d
+              .select()
+              .from(sourceDocuments)
+              .where(
+                and(eq(sourceDocuments.vaultId, id.vault), eq(sourceDocuments.id, ownerSourceId)),
+              ),
+          )
           .pipe(Effect.orDie);
       }),
     );
@@ -2671,10 +2548,7 @@ describe("M3.1 write endpoint integration", () => {
       document_id: promotedRows[0]?.id,
     });
 
-    const editorSourceId = sourceIdForKey(
-      id.vault,
-      `session:${editorSessionId}:${EX_PROPOSAL}`,
-    );
+    const editorSourceId = sourceIdForKey(id.vault, `session:${editorSessionId}:${EX_PROPOSAL}`);
     const editorSourcePath = `raw/sessions/${EX_PROPOSAL}-${editorSourceId}.md`;
     const editorPromote = await api(
       "POST",
@@ -2692,10 +2566,15 @@ describe("M3.1 write endpoint integration", () => {
     const proposalRows = await runDb(
       Effect.gen(function* () {
         const db = yield* Database;
-        return yield* db.query((d) => d
-          .select()
-          .from(sourceProposals)
-          .where(and(eq(sourceProposals.vaultId, id.vault), eq(sourceProposals.id, proposalId))))
+        return yield* db
+          .query((d) =>
+            d
+              .select()
+              .from(sourceProposals)
+              .where(
+                and(eq(sourceProposals.vaultId, id.vault), eq(sourceProposals.id, proposalId)),
+              ),
+          )
           .pipe(Effect.orDie);
       }),
     );
@@ -2772,16 +2651,12 @@ describe("M3.1 write endpoint integration", () => {
     expect(emptySession.status).toBe(404);
     expect(emptySession.body).toMatchObject({ detail: "Session not found" });
 
-    const emptyAnswerSessionId = await createSessionForTest(
-      id.alice,
-      "empty-answer-key",
-      {
-        id: EX_EMPTY,
-        query: "Empty answer",
-        thinking: [],
-        answer: "  ",
-      },
-    );
+    const emptyAnswerSessionId = await createSessionForTest(id.alice, "empty-answer-key", {
+      id: EX_EMPTY,
+      query: "Empty answer",
+      thinking: [],
+      answer: "  ",
+    });
     const emptyAnswer = await api(
       "POST",
       `/vaults/${id.vault}/sessions/${emptyAnswerSessionId}/exchanges/${EX_EMPTY}/promote`,
@@ -2798,76 +2673,89 @@ describe("M3.1 write endpoint integration", () => {
     await runDb(
       Effect.gen(function* () {
         const db = yield* Database;
-        yield* db.query((d) => d
-          .insert(pipelineRuns)
-          .values({
-            id: id.run,
-            vaultId: id.vault,
-            trigger: "manual",
-            status: "completed",
-            currentPhase: "render",
-            phaseStatus: "completed",
-            progressSteps: [],
-          }))
+        yield* db
+          .query((d) =>
+            d.insert(pipelineRuns).values({
+              id: id.run,
+              vaultId: id.vault,
+              trigger: "manual",
+              status: "completed",
+              currentPhase: "render",
+              phaseStatus: "completed",
+              progressSteps: [],
+            }),
+          )
           .pipe(Effect.orDie);
-        yield* db.query((d) => d
-          .insert(compileIntents)
-          .values({ vaultId: id.vault, pipelineRunId: id.run }))
+        yield* db
+          .query((d) =>
+            d.insert(compileIntents).values({ vaultId: id.vault, pipelineRunId: id.run }),
+          )
           .pipe(Effect.orDie);
-        yield* db.query((d) => d
-          .insert(compileCacheEntries)
-          .values({ id: id.cache, vaultId: id.vault, phase: "extract", cacheKey: "k", value: {} }))
+        yield* db
+          .query((d) =>
+            d.insert(compileCacheEntries).values({
+              id: id.cache,
+              vaultId: id.vault,
+              phase: "extract",
+              cacheKey: "k",
+              value: {},
+            }),
+          )
           .pipe(Effect.orDie);
-        yield* db.query((d) => d
-          .insert(llmCostEvents)
-          .values({
-            id: id.cost,
-            userId: id.alice,
-            vaultId: id.vault,
-            eventType: "query.stream",
-            costUsd: "0.010000",
-          }))
+        yield* db
+          .query((d) =>
+            d.insert(llmCostEvents).values({
+              id: id.cost,
+              userId: id.alice,
+              vaultId: id.vault,
+              eventType: "query.stream",
+              costUsd: "0.010000",
+            }),
+          )
           .pipe(Effect.orDie);
-        yield* db.query((d) => d
-          .insert(sessions)
-          .values({
-            id: id.session,
-            vaultId: id.vault,
-            userId: id.alice,
-            query: "What is capital?",
-            createdAt: initialTime,
-            updatedAt: initialTime,
-          }))
+        yield* db
+          .query((d) =>
+            d.insert(sessions).values({
+              id: id.session,
+              vaultId: id.vault,
+              userId: id.alice,
+              query: "What is capital?",
+              createdAt: initialTime,
+              updatedAt: initialTime,
+            }),
+          )
           .pipe(Effect.orDie);
-        yield* db.query((d) => d
-          .insert(userDocuments)
-          .values({
-            id: id.reference,
-            userId: id.alice,
-            filePath: "references/kept.md",
-            fileHash: "file-hash",
-            bodyHash: "body-hash",
-            title: "Kept reference",
-          }))
+        yield* db
+          .query((d) =>
+            d.insert(userDocuments).values({
+              id: id.reference,
+              userId: id.alice,
+              filePath: "references/kept.md",
+              fileHash: "file-hash",
+              bodyHash: "body-hash",
+              title: "Kept reference",
+            }),
+          )
           .pipe(Effect.orDie);
-        yield* db.query((d) => d
-          .insert(shares)
-          .values([
-            {
-              id: id.sessionShare,
-              token: "session-share-token",
-              subjectKind: "session",
-              subjectId: decodeUuid(id.session),
-              createdBy: id.alice,
-            },
-            {
-              id: id.referenceShare,
-              token: "reference-share-token",
-              subjectKind: "reference",
-              subjectId: id.reference,
-              createdBy: id.alice,
-            },
-          ]))
+        yield* db
+          .query((d) =>
+            d.insert(shares).values([
+              {
+                id: id.sessionShare,
+                token: "session-share-token",
+                subjectKind: "session",
+                subjectId: decodeUuid(id.session),
+                createdBy: id.alice,
+              },
+              {
+                id: id.referenceShare,
+                token: "reference-share-token",
+                subjectKind: "reference",
+                subjectId: id.reference,
+                createdBy: id.alice,
+              },
+            ]),
+          )
           .pipe(Effect.orDie);
       }),
     );

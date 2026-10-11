@@ -10,6 +10,7 @@ import {
 } from "@great-minds/database";
 import {
   BadRequest,
+  FileFingerprint,
   ServiceUnavailable,
   type DraftHintResponse,
   type OriginScope,
@@ -94,10 +95,10 @@ export const QueryExecutionState = Schema.Struct({
   webSearchEnabled: Schema.Boolean,
   trace: QueryTraceSchema,
   fallbackGenerationIds: Schema.mutable(Schema.Array(Schema.String)),
-  systemPromptHash: Schema.String,
+  systemPromptHash: FileFingerprint,
   costUsd: Schema.mutableKey(Schema.Number),
   selectedModel: Schema.mutableKey(Schema.NullOr(Schema.String)),
-  models: Schema.Array(Schema.String),
+  models: Schema.NonEmptyArray(Schema.NonEmptyString),
   modelIndex: Schema.Number,
   startedAt: Schema.Number,
 });
@@ -259,7 +260,6 @@ const maxSearchResults = 20;
 const searchArmMultiplier = 2;
 
 const first = <A>(values: readonly A[]) => values[0];
-
 
 const logErrorFields = (error: unknown) => {
   if (error instanceof Error) {
@@ -438,7 +438,6 @@ const decodeToolArgs = Schema.decodeUnknownSync(
 const truthyEntries = (args: Record<string, unknown>) =>
   Object.entries(args).filter(([, value]) => Boolean(value));
 
-
 const WebFactExtraction = Schema.Struct({
   results: Schema.Array(
     Schema.Struct({ index: Schema.Number, facts: Schema.Array(Schema.String) }),
@@ -461,19 +460,23 @@ export const QueryServiceLive = Layer.effect(
     const documentForPath = (vaultId: Uuid, path: string) =>
       Effect.gen(function* () {
         if (path.startsWith("wiki/")) {
-          const rows = yield* db.query((d) => d
-            .select({ id: wikiArticles.id, title: wikiArticles.title })
-            .from(wikiArticles)
-            .where(and(eq(wikiArticles.vaultId, vaultId), eq(wikiArticles.filePath, path)))
-            .limit(1));
+          const rows = yield* db.query((d) =>
+            d
+              .select({ id: wikiArticles.id, title: wikiArticles.title })
+              .from(wikiArticles)
+              .where(and(eq(wikiArticles.vaultId, vaultId), eq(wikiArticles.filePath, path)))
+              .limit(1),
+          );
           const row = first(rows);
           return { document_id: row?.id ?? null, title: row?.title ?? null };
         }
-        const rows = yield* db.query((d) => d
-          .select({ id: sourceDocuments.id, title: sourceDocuments.title })
-          .from(sourceDocuments)
-          .where(and(eq(sourceDocuments.vaultId, vaultId), eq(sourceDocuments.filePath, path)))
-          .limit(1));
+        const rows = yield* db.query((d) =>
+          d
+            .select({ id: sourceDocuments.id, title: sourceDocuments.title })
+            .from(sourceDocuments)
+            .where(and(eq(sourceDocuments.vaultId, vaultId), eq(sourceDocuments.filePath, path)))
+            .limit(1),
+        );
         const row = first(rows);
         return { document_id: row?.id ?? null, title: row?.title ?? null };
       });
@@ -482,20 +485,24 @@ export const QueryServiceLive = Layer.effect(
       Effect.gen(function* () {
         const [wikiCountRows, rawCountRows] = yield* Effect.all(
           [
-            db.query((d) => d
-              .select({ count: sql<number>`count(*)::int` })
-              .from(wikiArticles)
-              .where(
-                and(
-                  eq(wikiArticles.vaultId, vaultId),
-                  eq(wikiArticles.archived, false),
-                  ne(wikiArticles.filePath, "wiki/_index.md"),
+            db.query((d) =>
+              d
+                .select({ count: sql<number>`count(*)::int` })
+                .from(wikiArticles)
+                .where(
+                  and(
+                    eq(wikiArticles.vaultId, vaultId),
+                    eq(wikiArticles.archived, false),
+                    ne(wikiArticles.filePath, "wiki/_index.md"),
+                  ),
                 ),
-              )),
-            db.query((d) => d
-              .select({ count: sql<number>`count(*)::int` })
-              .from(sourceDocuments)
-              .where(eq(sourceDocuments.vaultId, vaultId))),
+            ),
+            db.query((d) =>
+              d
+                .select({ count: sql<number>`count(*)::int` })
+                .from(sourceDocuments)
+                .where(eq(sourceDocuments.vaultId, vaultId)),
+            ),
           ],
           { concurrency: "unbounded" },
         );
@@ -511,11 +518,14 @@ export const QueryServiceLive = Layer.effect(
       });
 
     const distinctTags = (vaultId: Uuid) =>
-      db.query((d) => d
-        .selectDistinct({ tag: sql<string>`unnest(${sourceDocuments.tags})`.as("tag") })
-        .from(sourceDocuments)
-        .where(eq(sourceDocuments.vaultId, vaultId))
-        .orderBy(asc(sql`tag`)))
+      db
+        .query((d) =>
+          d
+            .selectDistinct({ tag: sql<string>`unnest(${sourceDocuments.tags})`.as("tag") })
+            .from(sourceDocuments)
+            .where(eq(sourceDocuments.vaultId, vaultId))
+            .orderBy(asc(sql`tag`)),
+        )
         .pipe(Effect.map((rows) => rows.map((row) => row.tag).filter((tag) => tag.length > 0)));
 
     const buildSystemPrompt = (
@@ -530,9 +540,7 @@ export const QueryServiceLive = Layer.effect(
           [
             buildIdentity(vaultId, label, vaultConfig),
             loadPrompt(storage, vaultId, "query"),
-            input.mode === "btw"
-              ? loadPrompt(storage, vaultId, "query_btw")
-              : Effect.succeed(null),
+            input.mode === "btw" ? loadPrompt(storage, vaultId, "query_btw") : Effect.succeed(null),
           ],
           { concurrency: "unbounded" },
         );
@@ -618,7 +626,9 @@ export const QueryServiceLive = Layer.effect(
         return { type: "query", filters: Object.fromEntries(truthyEntries(tool.args)) };
       }
       if (tool.name === "list_articles") {
-        const filters = Object.fromEntries(truthyEntries({ contains: tool.args.contains, sort: tool.args.sort }));
+        const filters = Object.fromEntries(
+          truthyEntries({ contains: tool.args.contains, sort: tool.args.sort }),
+        );
         return { type: "query", filters };
       }
       if (tool.name === "linked_articles") {
@@ -633,14 +643,16 @@ export const QueryServiceLive = Layer.effect(
 
     const sectionOutline = (vaultId: Uuid, path: string) =>
       Effect.gen(function* () {
-        const chunks = yield* db.query((d) => d
-          .select({
-            chunkIndex: searchIndex.chunkIndex,
-            heading: searchIndex.heading,
-          })
-          .from(searchIndex)
-          .where(and(eq(searchIndex.vaultId, vaultId), eq(searchIndex.path, path)))
-          .orderBy(asc(searchIndex.chunkIndex)));
+        const chunks = yield* db.query((d) =>
+          d
+            .select({
+              chunkIndex: searchIndex.chunkIndex,
+              heading: searchIndex.heading,
+            })
+            .from(searchIndex)
+            .where(and(eq(searchIndex.vaultId, vaultId), eq(searchIndex.path, path)))
+            .orderBy(asc(searchIndex.chunkIndex)),
+        );
         const sections: { start: number; end: number; heading: string }[] = [];
         for (const chunk of chunks) {
           const last = sections[sections.length - 1];
@@ -740,32 +752,36 @@ export const QueryServiceLive = Layer.effect(
         const distance = sql<number>`${searchIndex.embedding} <=> ${vectorLiteral(queryEmbedding)}::vector`;
         const [bm25Rows, vectorRows] = yield* Effect.all(
           [
-            db.query((d) => d
-              .select({
-                vaultId: searchIndex.vaultId,
-                path: searchIndex.path,
-                chunkIndex: searchIndex.chunkIndex,
-                heading: searchIndex.heading,
-                body: searchIndex.body,
-                score: rank,
-              })
-              .from(searchIndex)
-              .where(and(...bm25Conditions))
-              .orderBy(desc(rank))
-              .limit(armLimit)),
-            db.query((d) => d
-              .select({
-                vaultId: searchIndex.vaultId,
-                path: searchIndex.path,
-                chunkIndex: searchIndex.chunkIndex,
-                heading: searchIndex.heading,
-                body: searchIndex.body,
-                score: sql<number>`1 - (${distance})`,
-              })
-              .from(searchIndex)
-              .where(and(...vectorConditions))
-              .orderBy(distance)
-              .limit(armLimit)),
+            db.query((d) =>
+              d
+                .select({
+                  vaultId: searchIndex.vaultId,
+                  path: searchIndex.path,
+                  chunkIndex: searchIndex.chunkIndex,
+                  heading: searchIndex.heading,
+                  body: searchIndex.body,
+                  score: rank,
+                })
+                .from(searchIndex)
+                .where(and(...bm25Conditions))
+                .orderBy(desc(rank))
+                .limit(armLimit),
+            ),
+            db.query((d) =>
+              d
+                .select({
+                  vaultId: searchIndex.vaultId,
+                  path: searchIndex.path,
+                  chunkIndex: searchIndex.chunkIndex,
+                  heading: searchIndex.heading,
+                  body: searchIndex.body,
+                  score: sql<number>`1 - (${distance})`,
+                })
+                .from(searchIndex)
+                .where(and(...vectorConditions))
+                .orderBy(distance)
+                .limit(armLimit),
+            ),
           ],
           { concurrency: "unbounded" },
         );
@@ -843,7 +859,10 @@ export const QueryServiceLive = Layer.effect(
     const searchInDocumentTool = (context: QueryExecutionState, path: string, query: string) =>
       Effect.gen(function* () {
         const results = yield* searchRows(context.vaultId, query, path);
-        const source = yield* sourceEvent(context, { name: "search_in_document", args: { path, query } });
+        const source = yield* sourceEvent(context, {
+          name: "search_in_document",
+          args: { path, query },
+        });
         if (results.length === 0) {
           return {
             content: `No passages in ${path} match '${query}'. Check the path (from list_articles or a search_content hit), or use search_content to search the whole knowledge base.`,
@@ -875,22 +894,24 @@ export const QueryServiceLive = Layer.effect(
           [start, end] = [end, start];
         }
         end = Math.min(end, start + maxRangeChunks - 1);
-        const chunks = yield* db.query((d) => d
-          .select({
-            chunkIndex: searchIndex.chunkIndex,
-            heading: searchIndex.heading,
-            body: searchIndex.body,
-          })
-          .from(searchIndex)
-          .where(
-            and(
-              eq(searchIndex.vaultId, context.vaultId),
-              eq(searchIndex.path, path),
-              gte(searchIndex.chunkIndex, Math.max(0, start)),
-              lte(searchIndex.chunkIndex, end),
-            ),
-          )
-          .orderBy(asc(searchIndex.chunkIndex)));
+        const chunks = yield* db.query((d) =>
+          d
+            .select({
+              chunkIndex: searchIndex.chunkIndex,
+              heading: searchIndex.heading,
+              body: searchIndex.body,
+            })
+            .from(searchIndex)
+            .where(
+              and(
+                eq(searchIndex.vaultId, context.vaultId),
+                eq(searchIndex.path, path),
+                gte(searchIndex.chunkIndex, Math.max(0, start)),
+                lte(searchIndex.chunkIndex, end),
+              ),
+            )
+            .orderBy(asc(searchIndex.chunkIndex)),
+        );
         if (chunks.length === 0) {
           return yield* Effect.fail(
             new ToolMiss(
@@ -922,45 +943,51 @@ export const QueryServiceLive = Layer.effect(
             ),
           );
         }
-        const sourceRows = yield* db.query((d) => d
-          .select({ id: wikiArticles.id })
-          .from(wikiArticles)
-          .where(
-            and(
-              eq(wikiArticles.vaultId, context.vaultId),
-              eq(wikiArticles.filePath, path),
-              eq(wikiArticles.archived, false),
-            ),
-          )
-          .limit(1));
+        const sourceRows = yield* db.query((d) =>
+          d
+            .select({ id: wikiArticles.id })
+            .from(wikiArticles)
+            .where(
+              and(
+                eq(wikiArticles.vaultId, context.vaultId),
+                eq(wikiArticles.filePath, path),
+                eq(wikiArticles.archived, false),
+              ),
+            )
+            .limit(1),
+        );
         const source = first(sourceRows);
         if (source === undefined) {
           return yield* Effect.fail(new ToolMiss(`Article not found: ${path}`));
         }
-        const outgoing = yield* db.query((d) => d
-          .select({ filePath: wikiArticles.filePath, title: wikiArticles.title })
-          .from(backlinks)
-          .innerJoin(wikiArticles, eq(wikiArticles.id, backlinks.targetArticleId))
-          .where(
-            and(
-              eq(backlinks.sourceArticleId, source.id),
-              eq(wikiArticles.vaultId, context.vaultId),
-              eq(wikiArticles.archived, false),
-            ),
-          )
-          .orderBy(asc(sql`lower(${wikiArticles.title})`)));
-        const incoming = yield* db.query((d) => d
-          .select({ filePath: wikiArticles.filePath, title: wikiArticles.title })
-          .from(backlinks)
-          .innerJoin(wikiArticles, eq(wikiArticles.id, backlinks.sourceArticleId))
-          .where(
-            and(
-              eq(backlinks.targetArticleId, source.id),
-              eq(wikiArticles.vaultId, context.vaultId),
-              eq(wikiArticles.archived, false),
-            ),
-          )
-          .orderBy(asc(sql`lower(${wikiArticles.title})`)));
+        const outgoing = yield* db.query((d) =>
+          d
+            .select({ filePath: wikiArticles.filePath, title: wikiArticles.title })
+            .from(backlinks)
+            .innerJoin(wikiArticles, eq(wikiArticles.id, backlinks.targetArticleId))
+            .where(
+              and(
+                eq(backlinks.sourceArticleId, source.id),
+                eq(wikiArticles.vaultId, context.vaultId),
+                eq(wikiArticles.archived, false),
+              ),
+            )
+            .orderBy(asc(sql`lower(${wikiArticles.title})`)),
+        );
+        const incoming = yield* db.query((d) =>
+          d
+            .select({ filePath: wikiArticles.filePath, title: wikiArticles.title })
+            .from(backlinks)
+            .innerJoin(wikiArticles, eq(wikiArticles.id, backlinks.sourceArticleId))
+            .where(
+              and(
+                eq(backlinks.targetArticleId, source.id),
+                eq(wikiArticles.vaultId, context.vaultId),
+                eq(wikiArticles.archived, false),
+              ),
+            )
+            .orderBy(asc(sql`lower(${wikiArticles.title})`)),
+        );
         const formatLinks = (
           rows: readonly { readonly title: string; readonly filePath: string }[],
         ) => rows.map((row) => `- [${row.title}](${row.filePath})`).join("\n") || "none";
@@ -1001,12 +1028,14 @@ export const QueryServiceLive = Layer.effect(
           conditions.push(lte(sourceDocuments.publishedDate, args.date_lte));
         }
         const limit = Math.max(1, Math.min(50, args.limit ?? 20));
-        const rows = yield* db.query((d) => d
-          .select()
-          .from(sourceDocuments)
-          .where(and(...conditions))
-          .orderBy(desc(sourceDocuments.updatedAt))
-          .limit(limit));
+        const rows = yield* db.query((d) =>
+          d
+            .select()
+            .from(sourceDocuments)
+            .where(and(...conditions))
+            .orderBy(desc(sourceDocuments.updatedAt))
+            .limit(limit),
+        );
         const source = yield* sourceEvent(context, { name: "query_documents", args });
         if (rows.length === 0) {
           const filters = Object.fromEntries(
@@ -1064,10 +1093,12 @@ export const QueryServiceLive = Layer.effect(
             or(ilike(wikiArticles.title, pattern), ilike(wikiArticles.precis, pattern)) as SQL,
           );
         }
-        const countRows = yield* db.query((d) => d
-          .select({ count: sql<number>`count(*)::int` })
-          .from(wikiArticles)
-          .where(and(...conditions)));
+        const countRows = yield* db.query((d) =>
+          d
+            .select({ count: sql<number>`count(*)::int` })
+            .from(wikiArticles)
+            .where(and(...conditions)),
+        );
         const total = first(countRows)?.count ?? 0;
         const offset = (page - 1) * articlesPerPage;
         const inboundCount = sql<number>`count(${backlinks.sourceArticleId})`;
@@ -1095,10 +1126,9 @@ export const QueryServiceLive = Layer.effect(
         const source = yield* sourceEvent(context, { name: "list_articles", args });
         if (rows.length === 0) {
           return {
-            content:
-              contains
-                ? `No article titles or precis contain '${contains}'. Try search_content for topical matches — it searches article bodies and raw sources too.`
-                : "No wiki articles have been compiled yet.",
+            content: contains
+              ? `No article titles or precis contain '${contains}'. Try search_content for topical matches — it searches article bodies and raw sources too.`
+              : "No wiki articles have been compiled yet.",
             source,
           } satisfies ToolResult;
         }
@@ -1106,7 +1136,9 @@ export const QueryServiceLive = Layer.effect(
         const scope = contains ? ` matching '${contains}'` : "";
         const lines = rows.map((row) => `- ${row.title} — ${row.filePath}\n  ${row.precis}`);
         const more =
-          hi < total ? `\n\nMore available — call list_articles(page=${page + 1}) to continue.` : "";
+          hi < total
+            ? `\n\nMore available — call list_articles(page=${page + 1}) to continue.`
+            : "";
         return {
           content:
             `Articles ${offset + 1}–${hi} of ${total}${scope} (by ${sort}):\n\n` +
@@ -1116,7 +1148,10 @@ export const QueryServiceLive = Layer.effect(
         } satisfies ToolResult;
       });
 
-    const addUsageCost = (context: QueryExecutionState, usage: { readonly cost?: number } | undefined) => {
+    const addUsageCost = (
+      context: QueryExecutionState,
+      usage: { readonly cost?: number } | undefined,
+    ) => {
       if (usage?.cost === undefined) {
         return false;
       }
@@ -1155,7 +1190,10 @@ export const QueryServiceLive = Layer.effect(
         { discard: true },
       );
 
-    const addGenerationCostFallback = (context: QueryExecutionState, generationId: string | undefined) => {
+    const addGenerationCostFallback = (
+      context: QueryExecutionState,
+      generationId: string | undefined,
+    ) => {
       if (generationId !== undefined) {
         context.fallbackGenerationIds.push(generationId);
       }
@@ -1184,9 +1222,7 @@ export const QueryServiceLive = Layer.effect(
           ],
         });
         addUsageCost(context, completion.usage);
-        const parsed = decodeWebFactExtraction(
-          JSON.parse(stripJsonFence(completion.text)),
-        );
+        const parsed = decodeWebFactExtraction(JSON.parse(stripJsonFence(completion.text)));
         return new Map<number, readonly string[]>(
           parsed.results.map((item) => [item.index, item.facts]),
         );
@@ -1358,7 +1394,9 @@ export const QueryServiceLive = Layer.effect(
               for (const toolCall of rawToolCalls) {
                 const args = asObjectArgs(toolCall.arguments, toolCall.name);
                 const tool = previewQueryTool({ name: toolCall.name, args });
-                const pendingSource = Option.isSome(tool) ? pendingSourceEvent(tool.value) : undefined;
+                const pendingSource = Option.isSome(tool)
+                  ? pendingSourceEvent(tool.value)
+                  : undefined;
                 toolCalls.push({
                   ...toolCall,
                   args,
@@ -1571,11 +1609,7 @@ export const QueryServiceLive = Layer.effect(
           messages: [{ role: "system", content: systemPrompt }],
         };
         const messages = context.messages;
-        if (
-          prior.length === 0 &&
-          input.origin_path !== undefined &&
-          input.origin_path.length > 0
-        ) {
+        if (prior.length === 0 && input.origin_path !== undefined && input.origin_path.length > 0) {
           messages.push(
             ...(yield* buildOriginMessages(context, input.origin_path, input.origin_scope)),
           );
@@ -1588,18 +1622,21 @@ export const QueryServiceLive = Layer.effect(
     const finalize = (context: QueryExecutionState) =>
       Effect.gen(function* () {
         if (context.costUsd > 0) {
-          yield* db.query((d) => d
-            .insert(llmCostEvents)
-            .values({
-              userId: context.userId,
-              vaultId: context.vaultId,
-              eventType: "query.stream",
-              costUsd: context.costUsd.toFixed(6),
-              correlationId: context.correlationId,
-              model: context.selectedModel,
-              promptHash: context.systemPromptHash,
-            })
-            .onConflictDoNothing())
+          yield* db
+            .query((d) =>
+              d
+                .insert(llmCostEvents)
+                .values({
+                  userId: context.userId,
+                  vaultId: context.vaultId,
+                  eventType: "query.stream",
+                  costUsd: context.costUsd.toFixed(6),
+                  correlationId: context.correlationId,
+                  model: context.selectedModel,
+                  promptHash: context.systemPromptHash,
+                })
+                .onConflictDoNothing(),
+            )
             .pipe(
               Effect.catchCause((cause) =>
                 isInterruptOnly(cause)
@@ -1702,14 +1739,16 @@ export const QueryServiceLive = Layer.effect(
           if (trimmed.length === 0) {
             return yield* new BadRequest({ detail: "description required" });
           }
-          const completion = yield* languageModel.complete({
-            model: appConfig.queryModel,
-            temperature: 0.4,
-            messages: [
-              { role: "system", content: draftHintSystem },
-              { role: "user", content: trimmed },
-            ],
-          }).pipe(Effect.orDie);
+          const completion = yield* languageModel
+            .complete({
+              model: appConfig.queryModel,
+              temperature: 0.4,
+              messages: [
+                { role: "system", content: draftHintSystem },
+                { role: "user", content: trimmed },
+              ],
+            })
+            .pipe(Effect.orDie);
           return { thematic_hint: completion.text } satisfies DraftHintResponse;
         }),
     } satisfies QueryServiceShape;

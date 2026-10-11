@@ -2,7 +2,7 @@
 
 ## Scope
 
-This is the Stage 2B.1 storage foundation for the [conversation-history contract](future-ideas/conversation-history-contract-and-migration.md). Database-backed [admission](conversation-reply-admission.md) and [settlement](conversation-reply-settlement.md) coordinators now build on it for Stage 2B.2. They are not yet wired into live session/reply writing, and existing files are not switched to the new format.
+This is the Stage 2B.1 storage foundation for the [conversation-history contract](future-ideas/conversation-history-contract-and-migration.md). Database-backed [admission](conversation-reply-admission.md) and [settlement](conversation-reply-settlement.md) coordinators now build on it for Stage 2B.2. The [workflow integration](conversation-workflow-integration.md) now wires them into native writers and required readers. Existing production files have not been converted; this is not a deployed cutover.
 
 JSONL owns recorded session content, including saved tool activity and the model-facing messages needed by ordinary follow-ups. The database still owns permissions, application choices, and operation coordination; checkpoints retain unfinished execution state. Whole-application recovery requires these stores together. Markdown is derived presentation, not another editable content authority.
 
@@ -21,7 +21,7 @@ vaults/<vault_id>/sessions/<session_id>.jsonl
 - `packages/server/src/storage/r2-object-store.ts` implements that capability using R2 conditional requests.
 - `packages/server/src/storage/local-conditional-object-store.ts` implements it under scoped local writer ownership.
 
-The existing `ObjectStore.append` and live session writer are unchanged. They must not remain competing writers to migrated histories at cutover.
+The unrelated general `ObjectStore.append` behavior is unchanged. The application's legacy session writer has been removed; legacy decoding/writing is confined to offline tools. Old processes and external writers must be stopped or fenced before installing native histories.
 
 ## Commit behavior
 
@@ -68,7 +68,7 @@ The native package loads when the local adapter opens, so an R2-only process doe
 
 Within the owner, a semaphore serializes filesystem operations. Scope closure waits for in-flight I/O before releasing the descriptor. Started filesystem operations are uninterruptible so cancellation cannot release ownership while an asynchronous rename is still pending. Closed adapter handles reject further reads and writes.
 
-This is a cooperative ownership protocol, not a security boundary against other programs running as the filesystem owner. Every writer to these histories must use it. Legacy writers, external editors, and deleting or replacing the lock file can bypass it. Integration must stop/fence old writers rather than claim that this advisory lock already protects current `ContentStorage` calls.
+This is a cooperative ownership protocol, not a security boundary against other programs running as the filesystem owner. Every writer to these histories must use it. Legacy writers, external editors, and deleting or replacing the lock file can bypass it. Cutover must stop/fence old writers rather than claim that this advisory lock protects arbitrary `ContentStorage` calls.
 
 The tested target is a Linux local filesystem. Shared/network filesystems and other platforms are not established by these tests. The root must support exclusive locking, file/directory flushes, and atomic same-directory rename; failures are not ignored.
 
@@ -102,6 +102,6 @@ Focused suites:
 
 These tests use temporary local directories and an in-memory fake R2 bucket, not a database or production storage. Existing session, migration, Markdown, and storage tests remain regression checks; they are not proof that the new protocol is active in the application.
 
-The database-backed coordinators and isolated PostgreSQL fault tests are documented separately in [reply admission](conversation-reply-admission.md) and [reply settlement](conversation-reply-settlement.md). They establish reservation/admission and freezing/publication behavior, not the live workflow cutover. The new one-live-operation migration must not deploy ahead of that cutover.
+The database-backed coordinators and isolated PostgreSQL fault tests are documented separately in [reply admission](conversation-reply-admission.md) and [reply settlement](conversation-reply-settlement.md). They establish reservation/admission and freezing/publication behavior. The [integration guide](conversation-workflow-integration.md) documents native workflow, reader, client, and process-restart evidence separately. The new one-live-operation migration must not deploy ahead of coordinated data and writer cutover.
 
-Next is application integration: use durable admission before dispatch and frozen mode during preparation, separate placement/default/revision, connect all terminal workflow paths to settlement, reconcile unfinished obligations, and fence live producers. Authorized readers, consumer cutover, and verified offline migration follow. Neither the storage tests nor coordinator tests alone establish those release gates.
+Full authorized snapshots, unavailable-state handling, deterministic native conversion, rehearsal, and deployment fencing remain outstanding. Neither storage tests nor coordinator tests alone establish those release gates.

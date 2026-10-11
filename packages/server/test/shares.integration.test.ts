@@ -1,8 +1,8 @@
 import { randomUUID } from "node:crypto";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readdir, rm } from "node:fs/promises";
 import { createServer, type RequestListener, type Server as NodeServer } from "node:http";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { join } from "node:path";
 
 import {
   Database,
@@ -13,7 +13,11 @@ import {
   vaultMemberships,
   vaults,
 } from "@great-minds/database";
-import { SessionId, Uuid } from "@great-minds/domain";
+import { CreateReplyRequest, SessionId, Uuid } from "@great-minds/domain";
+import {
+  seedConversationReply,
+  type ConversationSeedServices,
+} from "../scripts/lib/seed-conversation.ts";
 import { eq } from "drizzle-orm";
 import { Effect, Layer, Option, Redacted, Schema } from "effect";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
@@ -27,6 +31,11 @@ import { makeTestRandomBytes } from "../src/random.ts";
 import { startServer } from "../src/server.ts";
 import { SessionsService } from "../src/sessions.ts";
 import { TokenService } from "../src/tokens.ts";
+import { ConversationTurnFixture, savedConversation } from "./fixtures/saved-conversation.ts";
+import {
+  replyHistoryTestDatabaseUrl,
+  runHistoryDatabase,
+} from "./fixtures/reply-history-database.ts";
 
 const initialTime = new Date("2026-07-10T12:00:00.000Z");
 const decodeUuid = Schema.decodeUnknownSync(Uuid);
@@ -42,6 +51,7 @@ const EX_ANN_1 = decodeUuid("00000000-0000-4000-8000-000000000801");
 const EX_ANN_2 = decodeUuid("00000000-0000-4000-8000-000000000802");
 
 type TestServices =
+  | ConversationSeedServices
   | AppConfig
   | Database
   | ClockService
@@ -86,13 +96,7 @@ const currentFixture = () => {
   return fixture;
 };
 
-const databaseUrl = () => {
-  const value = process.env.DATABASE_URL;
-  if (value === undefined || value.length === 0) {
-    throw new Error("DATABASE_URL is required for integration tests");
-  }
-  return value;
-};
+const databaseUrl = () => replyHistoryTestDatabaseUrl;
 
 const testConfig = (url: string, dataDir: string): AppConfigShape => ({
   databaseUrl: Redacted.make(url),
@@ -179,38 +183,41 @@ const seedBase = async (): Promise<Fixture> => {
   await runDb(
     Effect.gen(function* () {
       const db = yield* Database;
-      yield* db.query((d) => d
-        .insert(users)
-        .values([
-          { id: id.alice, email: "alice@example.com", createdAt: initialTime },
-          { id: id.bob, email: "bob@example.com", createdAt: initialTime },
-        ]))
+      yield* db
+        .query((d) =>
+          d.insert(users).values([
+            { id: id.alice, email: "alice@example.com", createdAt: initialTime },
+            { id: id.bob, email: "bob@example.com", createdAt: initialTime },
+          ]),
+        )
         .pipe(Effect.orDie);
-      yield* db.query((d) => d
-        .insert(vaults)
-        .values({
-          id: id.vault,
-          name: "Alpha Vault",
-          ownerId: id.alice,
-          createdAt: initialTime,
-        }))
+      yield* db
+        .query((d) =>
+          d.insert(vaults).values({
+            id: id.vault,
+            name: "Alpha Vault",
+            ownerId: id.alice,
+            createdAt: initialTime,
+          }),
+        )
         .pipe(Effect.orDie);
-      yield* db.query((d) => d
-        .insert(vaultMemberships)
-        .values([
-          {
-            id: decodeUuid("00000000-0000-4000-8000-000000012001"),
-            vaultId: id.vault,
-            userId: id.alice,
-            role: "OWNER",
-          },
-          {
-            id: decodeUuid("00000000-0000-4000-8000-000000012002"),
-            vaultId: id.vault,
-            userId: id.bob,
-            role: "EDITOR",
-          },
-        ]))
+      yield* db
+        .query((d) =>
+          d.insert(vaultMemberships).values([
+            {
+              id: decodeUuid("00000000-0000-4000-8000-000000012001"),
+              vaultId: id.vault,
+              userId: id.alice,
+              role: "OWNER",
+            },
+            {
+              id: decodeUuid("00000000-0000-4000-8000-000000012002"),
+              vaultId: id.vault,
+              userId: id.bob,
+              role: "EDITOR",
+            },
+          ]),
+        )
         .pipe(Effect.orDie);
     }),
   );
@@ -275,42 +282,27 @@ const asRecord = (value: unknown): Record<string, unknown> => {
   return value as Record<string, unknown>;
 };
 
-const writeVaultFile = async (vaultId: string, path: string, content: string) => {
-  const fullPath = join(currentState().storageRoot, "vaults", vaultId, path);
-  await mkdir(dirname(fullPath), { recursive: true });
-  await writeFile(fullPath, content, "utf8");
-};
-
-const jsonl = (events: readonly unknown[]) =>
-  events.map((event) => JSON.stringify(event)).join("\n");
-
 const createSession = (idempotencyKey: string, query: string, answer: string) =>
   runDb(
     Effect.gen(function* () {
-      const sessions = yield* SessionsService;
-      const replyId = decodeUuid(randomUUID());
-      const sessionId = yield* sessions.createSession(id.alice, id.vault, {
-        idempotencyKey,
-        pending: {
-          replyId,
-          exchangeId: decodeUuid(randomUUID()),
+      const response = yield* seedConversationReply(
+        id.alice,
+        id.vault,
+        Schema.decodeUnknownSync(CreateReplyRequest)({
+          reply_id: randomUUID(),
+          exchange_id: randomUUID(),
           question: query,
-        },
-      });
-      yield* sessions.completeReply(id.alice, id.vault, sessionId, replyId, {
-        messages: [
-          { role: "user", content: query },
-          { role: "assistant", content: answer },
-        ],
-        sources: [],
-        answer,
-      });
-      return sessionId;
+          session: { kind: "new", idempotency_key: idempotencyKey },
+        }),
+        { answer },
+      );
+      return response.session_id;
     }),
   );
 
 describe("share links", () => {
   beforeAll(async () => {
+    await runHistoryDatabase(Effect.void);
     state = await buildTestState();
   });
 
@@ -320,6 +312,10 @@ describe("share links", () => {
     current.random.reset();
     current.mailer.sent.length = 0;
     await resetDatabase();
+    for (const entry of await readdir(current.storageRoot)) {
+      if (entry !== ".conversation-history.lock")
+        await rm(join(current.storageRoot, entry), { recursive: true, force: true });
+    }
     fixture = await seedBase();
   });
 
@@ -380,7 +376,7 @@ describe("share links", () => {
       (_request, response) => {
         response.writeHead(200, { "content-type": "text/html; charset=utf-8" });
         response.end(
-          "<html><head><title>Shared Article</title><meta name=\"author\" content=\"Ada Lovelace\"><meta property=\"article:published_time\" content=\"2024-03-01\"></head><body><article><p>First shared paragraph.</p><p>Second shared paragraph.</p></article></body></html>",
+          '<html><head><title>Shared Article</title><meta name="author" content="Ada Lovelace"><meta property="article:published_time" content="2024-03-01"></head><body><article><p>First shared paragraph.</p><p>Second shared paragraph.</p></article></body></html>',
         );
       },
       async (origin) => {
@@ -422,10 +418,8 @@ describe("share links", () => {
         const referenceRows = await runDb(
           Effect.gen(function* () {
             const db = yield* Database;
-            return yield* db.query((d) => d
-              .select()
-              .from(userDocuments)
-              .where(eq(userDocuments.id, referenceId)))
+            return yield* db
+              .query((d) => d.select().from(userDocuments).where(eq(userDocuments.id, referenceId)))
               .pipe(Effect.orDie);
           }),
         );
@@ -445,10 +439,7 @@ describe("share links", () => {
         const plainShare = asRecord(asRecord(plain.body).share);
         expect(plainShare.token).toBe(annotatedShare.token);
         expect(plainShare.include_annotations).toBe(true);
-        const plainResolved = await api(
-          "GET",
-          `/public/shares/${String(plainShare.token)}`,
-        );
+        const plainResolved = await api("GET", `/public/shares/${String(plainShare.token)}`);
         expect(plainResolved.status).toBe(200);
         const plainMarkdown = String(asRecord(plainResolved.body).markdown);
         expect(plainMarkdown).toContain("First shared paragraph. ^p0");
@@ -465,10 +456,7 @@ describe("share links", () => {
         const strippedShare = asRecord(asRecord(stripped.body).share);
         expect(strippedShare.token).toBe(annotatedShare.token);
         expect(strippedShare.include_annotations).toBe(false);
-        const strippedResolved = await api(
-          "GET",
-          `/public/shares/${String(strippedShare.token)}`,
-        );
+        const strippedResolved = await api("GET", `/public/shares/${String(strippedShare.token)}`);
         expect(strippedResolved.status).toBe(200);
         const strippedMarkdown = String(asRecord(strippedResolved.body).markdown);
         expect(strippedMarkdown).toContain("First shared paragraph.");
@@ -504,12 +492,9 @@ describe("share links", () => {
         expect(before.status).toBe(200);
         expect(asRecord(before.body).title).toBe("Renameable Share");
 
-        const renamed = await api(
-          "PATCH",
-          `/me/refs/${referenceId}`,
-          aliceToken,
-          { title: "Renamed Share Title" },
-        );
+        const renamed = await api("PATCH", `/me/refs/${referenceId}`, aliceToken, {
+          title: "Renamed Share Title",
+        });
         expect(renamed.status).toBe(200);
 
         const after = await api("GET", `/public/shares/${token}`);
@@ -520,12 +505,7 @@ describe("share links", () => {
           origin: new URL(origin).host,
         });
 
-        const cleared = await api(
-          "PATCH",
-          `/me/refs/${referenceId}`,
-          aliceToken,
-          { title: "  " },
-        );
+        const cleared = await api("PATCH", `/me/refs/${referenceId}`, aliceToken, { title: "  " });
         expect(cleared.status).toBe(200);
         const clearedResolve = await api("GET", `/public/shares/${token}`);
         expect(clearedResolve.status).toBe(200);
@@ -553,77 +533,50 @@ describe("share links", () => {
         await runDb(
           Effect.gen(function* () {
             const db = yield* Database;
-            yield* db.query((d) => d
-              .insert(sessions)
-              .values({
-                id: decodeSessionId("s-annotated"),
-                vaultId: id.vault,
-                userId: id.alice,
-                query: "What does the quote mean?",
-                origin: {
-                  kind: "document",
-                  doc_path: "refs/article.md",
-                  origin_scope: "personal",
-                  anchor: "Annotated first paragraph with enough words to extract.",
-                  paragraph: "Annotated first paragraph with enough words to extract.",
-                  paragraph_index: 0,
-                },
-                createdAt: new Date("2026-07-11T09:00:00.000Z"),
-                updatedAt: new Date("2026-07-11T09:05:00.000Z"),
-              }))
+            yield* db
+              .query((d) =>
+                d.insert(sessions).values({
+                  id: decodeSessionId("s-annotated"),
+                  vaultId: id.vault,
+                  userId: id.alice,
+                  query: "What does the quote mean?",
+                  origin: {
+                    kind: "document",
+                    doc_path: "refs/article.md",
+                    origin_scope: "personal",
+                    anchor: "Annotated first paragraph with enough words to extract.",
+                    paragraph: "Annotated first paragraph with enough words to extract.",
+                    paragraph_index: 0,
+                  },
+                  createdAt: new Date("2026-07-11T09:00:00.000Z"),
+                  updatedAt: new Date("2026-07-11T09:05:00.000Z"),
+                }),
+              )
               .pipe(Effect.orDie);
           }),
         );
-        await writeVaultFile(
-          id.vault,
-          "sessions/s-annotated.jsonl",
-          jsonl([
-            {
-              type: "meta",
-              id: "s-annotated",
-              query: "What does the quote mean?",
-              ts: "2026-07-11T09:00:00.000Z",
-              user_id: id.alice,
-              origin: {
-                kind: "document",
-                doc_path: "refs/article.md",
-                origin_scope: "personal",
-                anchor: "Annotated first paragraph with enough words to extract.",
-                paragraph: "Annotated first paragraph with enough words to extract.",
-                paragraph_index: 0,
+        await runDb(
+          savedConversation(
+            id.vault,
+            decodeSessionId("s-annotated"),
+            Schema.decodeUnknownSync(Schema.NonEmptyArray(ConversationTurnFixture))([
+              {
+                replyId: "00000000-0000-4000-8000-000000000711",
+                exchangeId: EX_ANN_1,
+                question: "What does the quote mean?",
+                answer: "The quote anchors the first claim.",
+                timestamp: "2026-07-11T09:05:00.000Z",
               },
-            },
-            {
-              type: "reply",
-              reply_id: "00000000-0000-4000-8000-000000000711",
-              parent_reply_id: null,
-              exchange_id: EX_ANN_1,
-              question: "What does the quote mean?",
-              status: "completed",
-              messages: [
-                { role: "user", content: "What does the quote mean?" },
-                { role: "assistant", content: "The quote anchors the first claim." },
-              ],
-              sources: [],
-              answer: "The quote anchors the first claim.",
-              ts: "2026-07-11T09:05:00.000Z",
-            },
-            {
-              type: "reply",
-              reply_id: "00000000-0000-4000-8000-000000000712",
-              parent_reply_id: "00000000-0000-4000-8000-000000000711",
-              exchange_id: EX_ANN_2,
-              question: "How should organizers use it?",
-              status: "completed",
-              messages: [
-                { role: "user", content: "How should organizers use it?" },
-                { role: "assistant", content: "Use it to open the discussion." },
-              ],
-              sources: [],
-              answer: "Use it to open the discussion.",
-              ts: "2026-07-11T09:06:00.000Z",
-            },
-          ]),
+              {
+                replyId: "00000000-0000-4000-8000-000000000712",
+                exchangeId: EX_ANN_2,
+                parentReplyId: "00000000-0000-4000-8000-000000000711",
+                question: "How should organizers use it?",
+                answer: "Use it to open the discussion.",
+                timestamp: "2026-07-11T09:06:00.000Z",
+              },
+            ]),
+          ),
         );
 
         // Flag omitted at create defaults to include_annotations: true.
@@ -844,10 +797,10 @@ describe("share links", () => {
     const rows = await runDb(
       Effect.gen(function* () {
         const db = yield* Database;
-        return yield* db.query((d) => d
-          .select({ revokedAt: shares.revokedAt })
-          .from(shares)
-          .where(eq(shares.id, shareId)))
+        return yield* db
+          .query((d) =>
+            d.select({ revokedAt: shares.revokedAt }).from(shares).where(eq(shares.id, shareId)),
+          )
           .pipe(Effect.orDie);
       }),
     );

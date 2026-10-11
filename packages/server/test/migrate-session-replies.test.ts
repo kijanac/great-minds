@@ -2,8 +2,11 @@ import { type Uuid, Uuid as UuidSchema } from "@great-minds/domain";
 import { Schema } from "effect";
 import { describe, expect, it } from "vitest";
 
-import { convertLegacySession, splitSessionConversations } from "../scripts/migrate-session-replies.ts";
-import { StoredSessionEvent } from "../src/sessions.ts";
+import {
+  convertLegacySession,
+  splitSessionConversations,
+} from "../scripts/migrate-session-replies.ts";
+import { StoredSessionEvent } from "../scripts/lib/legacy-session-history.ts";
 
 const uuid = (value: string) => Schema.decodeUnknownSync(UuidSchema)(value);
 const encodeStoredEvent = Schema.encodeSync(StoredSessionEvent);
@@ -65,13 +68,36 @@ const legacyBtw = {
 
 describe("convertLegacySession", () => {
   it("preserves historical source references that predate document identities", () => {
-    const source = { label: "A source", type: "raw", title: "Original title", scope: null, path: null,
-      thinking: null, ranges: [{ start: 2, end: 4 }], full: false };
-    const events = convertLegacySession([legacyMeta, {
-      ...legacyExchange("old-turn", "Question", "Answer", "00000000-0000-4000-8000-000000000101"),
-      thinking: [{ sources: [source] }],
-    }, { ...legacyBtw, exId: "old-turn", exchanges: [{ query: "Follow-up", answer: "Answer", thinking: [{ sources: [source] }] }] }],
-    () => uuid("00000000-0000-4000-8000-000000000501"));
+    const source = {
+      label: "A source",
+      type: "raw",
+      title: "Original title",
+      scope: null,
+      path: null,
+      thinking: null,
+      ranges: [{ start: 2, end: 4 }],
+      full: false,
+    };
+    const events = convertLegacySession(
+      [
+        legacyMeta,
+        {
+          ...legacyExchange(
+            "old-turn",
+            "Question",
+            "Answer",
+            "00000000-0000-4000-8000-000000000101",
+          ),
+          thinking: [{ sources: [source] }],
+        },
+        {
+          ...legacyBtw,
+          exId: "old-turn",
+          exchanges: [{ query: "Follow-up", answer: "Answer", thinking: [{ sources: [source] }] }],
+        },
+      ],
+      () => uuid("00000000-0000-4000-8000-000000000501"),
+    );
     const nodes = events.filter((event) => event.type === "reply");
     expect(nodes).toHaveLength(2);
     for (const node of nodes) expect(node.sources).toEqual([{ ...source, document_id: null }]);
@@ -83,9 +109,7 @@ describe("convertLegacySession", () => {
     // output can reference exactly what the mint function produced.
     const mints: Uuid[] = [];
     const mintId = () => {
-      const value = uuid(
-        `00000000-0000-4000-8000-${String(500 + counter++).padStart(12, "0")}`,
-      );
+      const value = uuid(`00000000-0000-4000-8000-${String(500 + counter++).padStart(12, "0")}`);
       mints.push(value);
       return value;
     };
@@ -99,13 +123,7 @@ describe("convertLegacySession", () => {
           "First answer.",
           "00000000-0000-4000-8000-000000000101",
         ),
-        legacyExchange(
-          "ex-2",
-          "Second question",
-          "",
-          "00000000-0000-4000-8000-000000000102",
-          true,
-        ),
+        legacyExchange("ex-2", "Second question", "", "00000000-0000-4000-8000-000000000102", true),
         legacyExchange(
           "ex-2",
           "Second question",
@@ -207,19 +225,42 @@ describe("convertLegacySession", () => {
       ],
       mintId,
     );
-    const replay = convertLegacySession(converted.map((event) => encodeStoredEvent(event)), mintId);
+    const replay = convertLegacySession(
+      converted.map((event) => encodeStoredEvent(event)),
+      mintId,
+    );
     expect(replay).toEqual(converted);
   });
 
   it("uses the first saved BTW snapshot to freeze context, even after later main replies", () => {
     let counter = 800;
-    const converted = convertLegacySession([
-      { ...legacyMeta, origin: null },
-      legacyExchange("ex-1", "First question", "First answer.", "00000000-0000-4000-8000-000000000101"),
-      { ...legacyBtw, exchanges: legacyBtw.exchanges.slice(0, 1), ts: "2026-07-23T12:01:00.000Z" },
-      { ...legacyExchange("ex-2", "Later main question", "Later main answer.", "00000000-0000-4000-8000-000000000102"), ts: "2026-07-23T12:02:00.000Z" },
-      legacyBtw,
-    ], () => uuid(`00000000-0000-4000-8000-${String(counter++).padStart(12, "0")}`));
+    const converted = convertLegacySession(
+      [
+        { ...legacyMeta, origin: null },
+        legacyExchange(
+          "ex-1",
+          "First question",
+          "First answer.",
+          "00000000-0000-4000-8000-000000000101",
+        ),
+        {
+          ...legacyBtw,
+          exchanges: legacyBtw.exchanges.slice(0, 1),
+          ts: "2026-07-23T12:01:00.000Z",
+        },
+        {
+          ...legacyExchange(
+            "ex-2",
+            "Later main question",
+            "Later main answer.",
+            "00000000-0000-4000-8000-000000000102",
+          ),
+          ts: "2026-07-23T12:02:00.000Z",
+        },
+        legacyBtw,
+      ],
+      () => uuid(`00000000-0000-4000-8000-${String(counter++).padStart(12, "0")}`),
+    );
     const thread = converted.filter((event) => event.type === "reply" && event.btw !== undefined);
     expect(thread[0]).toMatchObject({
       parent_reply_id: "00000000-0000-4000-8000-000000000101",
@@ -229,11 +270,19 @@ describe("convertLegacySession", () => {
 
   it("splits answer BTWs into stable identities without losing their transcript or passage", () => {
     let counter = 900;
-    const converted = convertLegacySession([
-      { ...legacyMeta, origin: null },
-      legacyExchange("ex-1", "First question", "First answer.", "00000000-0000-4000-8000-000000000101"),
-      legacyBtw,
-    ], () => uuid(`00000000-0000-4000-8000-${String(counter++).padStart(12, "0")}`));
+    const converted = convertLegacySession(
+      [
+        { ...legacyMeta, origin: null },
+        legacyExchange(
+          "ex-1",
+          "First question",
+          "First answer.",
+          "00000000-0000-4000-8000-000000000101",
+        ),
+        legacyBtw,
+      ],
+      () => uuid(`00000000-0000-4000-8000-${String(counter++).padStart(12, "0")}`),
+    );
     const vaultId = uuid("00000000-0000-4000-8000-000000000001");
     const result = splitSessionConversations(converted, vaultId, "session");
     expect(splitSessionConversations(converted, vaultId, "session")).toEqual(result);
@@ -242,8 +291,11 @@ describe("convertLegacySession", () => {
     expect(parent?.events.map((event) => event.type)).toEqual(["meta", "reply"]);
     expect(child?.kind).toBe("btw");
     expect(child?.origin).toMatchObject({
-      kind: "answer", session_id: legacyMeta.id, anchor: "BTW quote",
-      paragraph: "BTW paragraph", paragraph_index: 2,
+      kind: "answer",
+      session_id: legacyMeta.id,
+      anchor: "BTW quote",
+      paragraph: "BTW paragraph",
+      paragraph_index: 2,
     });
     expect(child?.events[0]).toMatchObject({
       context: { session_id: legacyMeta.id, reply_id: "00000000-0000-4000-8000-000000000101" },
@@ -256,7 +308,15 @@ describe("convertLegacySession", () => {
     expect(ownTurns[1]?.reply_id).toBe(legacyBtw.reply_id);
     expect(ownTurns.every((node) => !("btw" in node))).toBe(true);
     expect(splitSessionConversations(child!.events, vaultId, "btw")).toEqual([child]);
-    expect(() => splitSessionConversations(converted, vaultId, "btw")).toThrow("historical nested BTWs");
-    expect(() => splitSessionConversations(converted.filter((event) => event.type !== "reply" || event.btw !== undefined), vaultId, "session")).toThrow("missing answer anchor");
+    expect(() => splitSessionConversations(converted, vaultId, "btw")).toThrow(
+      "historical nested BTWs",
+    );
+    expect(() =>
+      splitSessionConversations(
+        converted.filter((event) => event.type !== "reply" || event.btw !== undefined),
+        vaultId,
+        "session",
+      ),
+    ).toThrow("missing answer anchor");
   });
 });

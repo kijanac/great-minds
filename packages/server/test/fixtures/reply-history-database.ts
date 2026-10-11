@@ -6,6 +6,8 @@ const databaseUrl = process.env.REPLY_HISTORY_TEST_DATABASE_URL;
 if (databaseUrl === undefined || new URL(databaseUrl).hostname !== "127.0.0.1") {
   throw new Error("Run pnpm test:history-settlement to use a dedicated disposable database");
 }
+export const replyHistoryTestDatabaseUrl = databaseUrl;
+
 const TestDatabase = DatabaseLive.pipe(
   Layer.provideMerge(PgClient.layer({ url: Redacted.make(databaseUrl) })),
 );

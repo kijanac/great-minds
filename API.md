@@ -1888,11 +1888,7 @@ The sessions group is read-oriented. Over HTTP you can:
 - read a session's events,
 - read a session's markdown export.
 
-There is no HTTP endpoint to create or directly modify a session. New
-sessions are created implicitly when you create a reply of kind `exchange`
-with a `create` block (see [Creating replies](#post-v1vaultsvault_idreplies)),
-and exchanges and BTWs are appended to sessions the same way, by creating
-replies with a `session_id`. All sessions endpoints require authentication.
+Conversation content is written through reply create/retry and settlement, not a direct transcript-edit endpoint. New conversations use `session.kind: "new"`; follow-ups use `session.kind: "existing"` (see [Creating replies](#post-v1vaultsvault_idreplies)). Continue changes application placement/default without rewriting content. All session endpoints require authentication and owner-scoped access.
 
 #### POST /v1/vaults/:vault_id/sessions/:session_id/exchanges/:exchange_id/promote
 
@@ -1900,7 +1896,7 @@ Auth: required (vault `editor` or `owner`).
 
 Promotes a session exchange into the vault's content. Owners promote the
 exchange into an ingested source document directly; editors without owner
-role create a proposal instead.
+role create a proposal instead. The caller must own the conversation. Only selected completed/stopped answers with nonempty text are eligible; failed partials and live answers are not promoted. Existing source/proposal replay preserves its stable identity.
 
 Path parameters:
 
@@ -1922,14 +1918,16 @@ Response: `201 Created` with a `PromoteExchangeResponse`:
 | `document_id` | `Uuid` or `null` | Source document id when `mode` is `"ingested"`. |
 | `proposal_id` | `Uuid` or `null` | Proposal id when `mode` is `"proposed"`. |
 
-Errors: `400 BadRequest` (the exchange has no answer yet), `403 Forbidden`,
-`404 NotFound`, `422 Validation`.
+Errors: `400 BadRequest` (not completed/stopped, or no nonempty answer), `403 Forbidden`,
+`404 NotFound`, `503 ServiceUnavailable`, `422 Validation`.
 
 #### GET /v1/vaults/:vault_id/sessions
 
 Auth: required.
 
-Lists sessions, most recently updated first.
+Lists the caller's standalone sessions in this vault, most recently updated first. Inline BTWs remain available through their origin or parent conversation.
+
+The native conversation contract below is implemented in this checkout, not yet deployed through a production data cutover. See [integration and migration boundaries](docs/conversation-workflow-integration.md).
 
 Path parameters: `vault_id` (`Uuid`).
 
@@ -1941,6 +1939,7 @@ Response: `200` with a `SessionPage` (standard page envelope). Each item is a
 | Field | Type | Description |
 | --- | --- | --- |
 | `id` | `SessionId` | Session id. |
+| `kind` | `"session"` \| `"btw"` | Current standalone/inline placement. Not historical generation mode. |
 | `query` | string | The first exchange's question. |
 | `created_at` | ISO 8601 | Creation time. |
 | `updated_at` | ISO 8601 | Last update time. |
@@ -1948,15 +1947,7 @@ Response: `200` with a `SessionPage` (standard page envelope). Each item is a
 | `origin` | `SessionOrigin` or `null` | The document the session originated from, if any. |
 | `origin_title` | string or `null` | The current title of the origin document, resolved at read time; `null` when the origin document cannot be resolved. |
 
-`SessionOrigin`:
-
-| Field | Type | Description |
-| --- | --- | --- |
-| `doc_path` | string | Path of the origin document. |
-| `origin_scope` | `"vault"` \| `"personal"` | Defaults to `"vault"`. |
-| `anchor` | string or `null` | Anchored quote, when the session started from a highlight. |
-| `paragraph` | string or `null` | Anchored paragraph text. |
-| `paragraph_index` | number or `null` | Anchored paragraph index. |
+`SessionOrigin` is a tagged union. A document origin has `kind: "document"`, `doc_path`, `origin_scope` (`"vault"` or `"personal"`), and nullable `anchor`, `paragraph`, and `paragraph_index`. An answer origin has `kind: "answer"`, parent `session_id`, parent `exchange_id`, and the selected `anchor`, `paragraph`, and nonnegative `paragraph_index`. Continue preserves the saved origin.
 
 Errors: `403 Forbidden`, `422 Validation`.
 
@@ -1964,7 +1955,7 @@ Errors: `403 Forbidden`, `422 Validation`.
 
 Auth: required.
 
-Lists sessions that originated from a given document.
+Lists the caller's conversations that originated from a given document, including inline BTWs and continued standalone conversations.
 
 Path parameters: `vault_id` (`Uuid`).
 
@@ -1981,13 +1972,13 @@ Response: `200` with an array of `OriginSessionDetail`:
 | `session` | `SessionOverview` | The session. |
 | `events` | array of `SessionEvent` | The session's events (shape below). |
 
-Errors: `403 Forbidden`, `422 Validation`.
+Errors: `403 Forbidden`, `503 ServiceUnavailable`, `422 Validation`.
 
 #### GET /v1/vaults/:vault_id/sessions/:session_id
 
 Auth: required.
 
-Reads a session and all of its events.
+Reads an owned session's native history projection. It returns the opening metadata and selected attempt for each exchange, plus owned direct answer-origin threads. Retained provider messages and generation internals are not exposed.
 
 Path parameters: `vault_id` (`Uuid`), `session_id` (`SessionId`).
 
@@ -1996,8 +1987,10 @@ Response: `200` with a `SessionResponse`:
 | Field | Type | Description |
 | --- | --- | --- |
 | `id` | `SessionId` | Session id. |
-| `events` | array of `SessionEvent` | All events, in order. |
-| `origin_title` | string or `null` | Current origin document title (as in `SessionOverview`). |
+| `kind` | `"session"` \| `"btw"` | Current placement projection. |
+| `events` | array of `SessionEvent` | Opening metadata and selected exchanges in acceptance order. |
+| `threads` | array of `OriginSessionDetail` | Owned direct answer-origin conversations. |
+| `origin_title` | string or `null` | Current origin title (as in `SessionOverview`). |
 
 `SessionEvent` is a union discriminated by `type`:
 
@@ -2018,26 +2011,17 @@ Response: `200` with a `SessionResponse`:
 | --- | --- | --- |
 | `type` | `"exchange"` | Discriminator. |
 | `exId` | string | Exchange id. |
-| `reply_id` | `Uuid` | The reply that produced this exchange (optional). |
+| `reply_id` | `Uuid` | Required selected attempt identity. |
+| `status` | `"running"` \| `"completed"` \| `"stopped"` \| `"failed"` | Explicit state; an empty answer does not imply running. |
+| `error` | string or `null` | Recorded failure detail, otherwise null. |
 | `query` | string | The question. |
-| `thinking` | array | `ThinkingBlock` entries (optional). |
-| `answer` | string | The answer (optional). |
-| `ts` | ISO 8601 | Timestamp. |
+| `thinking` | array | Visible `ThinkingBlock` entries. |
+| `answer` | string | Recorded answer, including a labelled private failed partial. |
+| `ts` | ISO 8601 or `null` | Recorded timestamp; unknown historical time remains null. |
 
-**`type: "btw"`** - commentary anchored to a quote.
+BTWs are separate conversations in `threads`, not embedded `type: "btw"` events.
 
-| Field | Type | Description |
-| --- | --- | --- |
-| `type` | `"btw"` | Discriminator. |
-| `exId` | string | Exchange id of the BTW. |
-| `reply_id` | `Uuid` | The reply that produced this BTW (optional). |
-| `quote` | string | The quoted passage. |
-| `blockOffset` | number | Offset of the quoted block (optional). |
-| `context` | string | Surrounding context (optional). |
-| `exchanges` | array | Follow-up `BtwExchange` entries: `query` (string), `thinking` (array, optional), `answer` (string, optional). |
-| `ts` | ISO 8601 | Timestamp. |
-
-`ThinkingBlock` (used by exchange events and BTW exchanges):
+`ThinkingBlock`:
 
 | Field | Type | Description |
 | --- | --- | --- |
@@ -2057,18 +2041,28 @@ Response: `200` with a `SessionResponse`:
 | `ranges` | array | `{start, end}` chunk ranges (optional). |
 | `full` | boolean | Whether the full document was used (optional). |
 
-Errors: `403 Forbidden`, `404 NotFound`, `422 Validation`.
+Errors: `403 Forbidden`, `404 NotFound`, `503 ServiceUnavailable` (unavailable or inconsistent history), `422 Validation`.
 
 #### GET /v1/vaults/:vault_id/sessions/:session_id/markdown
 
 Auth: required.
 
-Exports a session as markdown.
+Renders the caller's private session as Markdown from canonical history, not a `.md` sidecar. Running, stopped, and failed responses are labelled explicitly. Child conversations are not automatically included; bearer sharing uses a narrower completed/stopped selection.
 
 Path parameters: `vault_id` (`Uuid`), `session_id` (`SessionId`).
 
 Response: `200` with content type `text/markdown` and the rendered session
 as the body.
+
+Errors: `403 Forbidden`, `404 NotFound`, `503 ServiceUnavailable`, `422 Validation`.
+
+#### POST /v1/vaults/:vault_id/sessions/:session_id/continue
+
+Auth: required; caller must own the conversation and remain a vault member.
+
+Continues an inline BTW as the same standalone session. It atomically changes placement and the future reply default, preserving origin and history. Repeated or concurrent calls are idempotent; already accepted replies retain their frozen mode.
+
+Response: `200` with an empty body.
 
 Errors: `403 Forbidden`, `404 NotFound`, `422 Validation`.
 
@@ -2084,9 +2078,7 @@ All replies endpoints require authentication.
 
 Auth: required.
 
-Creates a reply in a new or existing session. The server accepts the reply
-immediately (`202`) and starts processing it in the background; results are
-delivered over the reply's event stream. Conversation history and highlighted
+Creates a reply in a new or existing session. The server reserves the exact request and confirms its native history admission before returning `202`; generation then runs in the background. Results are delivered over the reply's event stream. Conversation history and highlighted
 passage context come from the saved session and its reply branches.
 
 Path parameters: `vault_id` (`Uuid`).
@@ -2099,7 +2091,6 @@ Request fields:
 | `exchange_id` | `Uuid` | yes | Client-chosen id for the question within the conversation. A retry retains this id and uses a new `reply_id`. |
 | `session` | object | yes | New-session details or an existing session destination, described below. |
 | `question` | string | yes | The question to answer. |
-| `mode` | `"query"` \| `"btw"` | no | Query mode. `"query"` answers against the knowledge base; `"btw"` answers in the shorter aside style used for questions asked about a passage. Defaults to `"query"`. |
 | `model` | string | no | The model to use for this reply. When omitted, the vault default is used. |
 | `origin_path` | string | no | Path of the document the question is about. |
 | `origin_scope` | `"vault"` \| `"personal"` | no | Whether the origin document is vault content or the user's personal documents. Defaults to `"vault"`. |
@@ -2110,7 +2101,8 @@ Request fields:
 | Field | Type | Required | Description |
 | --- | --- | --- | --- |
 | `kind` | `"new"` | yes | Create or reuse a session by idempotency key. |
-| `idempotency_key` | string | yes | Sessions with the same key for the same user and vault are reused. |
+| `idempotency_key` | string | yes | An owned session with the same creation key is reused; another user cannot take it over. |
+| `conversation_kind` | `"session"` \| `"btw"` | no | Initial placement/default choice; defaults to `"session"`. A BTW requires a selected passage origin. |
 | `origin_scope` | `"vault"` \| `"personal"` | no | Scope of the session's origin document. Defaults to `"vault"`. |
 | `origin` | `SessionOrigin` | no | Origin document and optional highlighted passage, saved with the session. |
 
@@ -2120,11 +2112,8 @@ Request fields:
 | --- | --- | --- | --- |
 | `kind` | `"existing"` | yes | Append to a saved session. |
 | `id` | `SessionId` | yes | Destination session. |
-| `btw` | object | no | Branch anchor: `quote` (string), `blockOffset` (number, default `-1`), `context` (string, default `""`), and `exchangeId` (`Uuid`, identifying the answer being discussed). Omit for the main conversation. |
 
-`mode` selects the answer style independently of session placement. A question
-highlighted in a document starts a session with an origin and `mode: "btw"`;
-a question about an answer uses an existing session with a `btw` anchor.
+Answer style is frozen from the conversation's future-reply default at acceptance, not supplied as client `mode`. A new BTW has `conversation_kind: "btw"` and a document/answer origin. Follow-ups target that BTW's own session ID. Continue changes the default for later acceptance without changing earlier attempts.
 
 Response: `202 Accepted` with a `CreateReplyResponse`:
 
@@ -2145,6 +2134,7 @@ Example (new session):
     "idempotency_key": "session-for-capital",
     "origin_scope": "vault",
     "origin": {
+      "kind": "document",
       "doc_path": "raw/books/capital.md",
       "origin_scope": "vault",
       "anchor": null,
@@ -2166,8 +2156,9 @@ Example (append to a session):
 }
 ```
 
-Errors: `409 Conflict` (reply id already used by a different request),
-`403 Forbidden`, `404 NotFound`, `503 ServiceUnavailable`, `422 Validation`.
+Errors: `400 BadRequest`, `409 Conflict` (incompatible identity reuse, a live reply already occupies the conversation, or history needs reconciliation), `403 Forbidden`, `404 NotFound`, `503 ServiceUnavailable`, `422 Validation`.
+
+After an ambiguous acceptance/storage failure, retry the same reply ID and command rather than creating a replacement. No model/tool call may precede confirmed admission.
 
 #### POST /v1/vaults/:vault_id/replies/:reply_id/retry
 
@@ -2176,7 +2167,7 @@ Auth: required.
 Retries a failed reply. Only replies in the `failed` status can be retried,
 and the retry must use a new `reply_id`. The retry keeps the original question,
 options, exchange ID, session, and parent reply. Highlighted passage context
-comes from the saved conversation, even when the failed reply created it.
+comes from the saved conversation, even when the failed reply created it. The new attempt freezes the current future-reply default; it does not copy the failed attempt's old mode.
 
 Path parameters: `vault_id` (`Uuid`), `reply_id` (`Uuid`) - the failed reply.
 
@@ -2192,13 +2183,21 @@ Errors: `400 BadRequest` (reply is not failed, or retry id equals the
 original), `409 Conflict`, `403 Forbidden`, `404 NotFound`,
 `503 ServiceUnavailable`, `422 Validation`.
 
+#### POST /v1/vaults/:vault_id/replies/:reply_id/stop
+
+Auth: required; caller must own the reply and remain a vault member.
+
+Records stop intent while the reply is admitting or running. A stop committed before result freeze wins; a later stop does not replace a frozen or completed result. No request body. Repeated calls are safe.
+
+Response: `204 No Content`. Observe the stream for confirmed stopped/terminal state.
+
+Errors: `403 Forbidden`, `404 NotFound`, `422 Validation`.
+
 #### GET /v1/vaults/:vault_id/replies/:reply_id/stream
 
 Auth: required.
 
-Streams the reply's state as server-sent events. The stream opens
-immediately and stays open until the reply reaches a terminal status
-(`completed` or `failed`).
+Streams the caller's private reply as server-sent events. Another vault member cannot read it. Membership is rechecked before events are emitted. The stream remains open until terminal `completed`, `stopped`, or `failed` state, or ends when access is revoked.
 
 Path parameters: `vault_id` (`Uuid`), `reply_id` (`Uuid`).
 
@@ -2212,7 +2211,7 @@ Events:
 | --- | --- | --- |
 | `connected` | `{"id": "<reply_id>"}` | Sent once when the stream opens. |
 | `message` | JSON `ReplySnapshot` | Sent whenever the reply's state changes. |
-| `done` | `{"id": "<reply_id>"}` | Sent once when the reply reaches `completed` or `failed`; the stream then closes. |
+| `done` | `{"id": "<reply_id>"}` | Sent once after `completed`, `stopped`, or `failed`; the stream then closes. |
 
 The `message` payload is a `ReplySnapshot`:
 
@@ -2220,12 +2219,12 @@ The `message` payload is a `ReplySnapshot`:
 | --- | --- | --- |
 | `reply_id` | `Uuid` | Reply id. |
 | `session_id` | `SessionId` | Session the reply belongs to. |
-| `kind` | `"exchange"` \| `"btw"` | Whether the reply belongs to the main conversation or an answer branch. |
-| `status` | `"running"` \| `"completed"` \| `"failed"` | Reply status. |
+| `kind` | `"exchange"` | Every reply belongs to its own conversation. |
+| `status` | `"running"` \| `"completed"` \| `"stopped"` \| `"failed"` | Reply status. Internal admitting/settling remain nonterminal running in this compatibility snapshot. |
 | `answer` | string | The answer text (may be partial while running). |
 | `sources` | array | `ReplySource` entries: the `ThinkingSource` fields plus an optional `pending` boolean. |
 | `error` | string or `null` | Error detail when failed. |
-| `version` | number | Monotonic revision number of the snapshot. |
+| `version` | number | Monotonic revision within this reply ID; not comparable across retries. |
 | `created_at` | ISO 8601 | Creation time. |
 | `updated_at` | ISO 8601 | Last update time. |
 
@@ -2358,7 +2357,7 @@ Response: `200` with a `SharedShareDetail`, a union discriminated by
 | --- | --- | --- |
 | `subject_kind` | `"session"` | Discriminator. |
 | `title` | string | Session title. |
-| `markdown` | string | Rendered session markdown. |
+| `markdown` | string | Root-only completed/stopped selection. No failed partials, child threads, raw context, or generation internals. |
 | `created_at` | ISO 8601 | Creation time. |
 
 **`subject_kind: "reference"`**:
@@ -2374,8 +2373,10 @@ Response: `200` with a `SharedShareDetail`, a union discriminated by
 | `annotations` | array | `SharedAnnotation` entries: `anchor` (`{quote, context: string or null, block_offset: number or null}`), `exchanges` (array of `{query, answer}`), `created_at`. |
 | `created_at` | ISO 8601 | Creation time. |
 
+Reference annotations use the same completed/stopped selection and retain only their query/answer surface. Private history richness does not widen bearer disclosure.
+
 Errors: `404 NotFound` (unknown, expired, or revoked share),
-`422 Validation`.
+`503 ServiceUnavailable`, `422 Validation`.
 
 ## Integration guide
 
@@ -2445,8 +2446,7 @@ curl -sS -X POST "$BASE/v1/vaults/$VAULT/replies" \
     "reply_id": "3fa85f64-5717-4562-b3fc-2c963f66afa6",
     "exchange_id": "0f8fad5b-d9cb-469f-a165-70867728950e",
     "session": { "kind": "new", "idempotency_key": "vault-summary" },
-    "question": "Summarize the vault",
-    "mode": "query"
+    "question": "Summarize the vault"
   }'
 ```
 
@@ -2652,8 +2652,10 @@ Every error body has the same shape:
 | GET | `/v1/vaults/:vault_id/sessions/by-origin` | required | sessions |
 | GET | `/v1/vaults/:vault_id/sessions/:session_id` | required | sessions |
 | GET | `/v1/vaults/:vault_id/sessions/:session_id/markdown` | required | sessions |
+| POST | `/v1/vaults/:vault_id/sessions/:session_id/continue` | required | sessions |
 | POST | `/v1/vaults/:vault_id/replies` | required | replies |
 | POST | `/v1/vaults/:vault_id/replies/:reply_id/retry` | required | replies |
+| POST | `/v1/vaults/:vault_id/replies/:reply_id/stop` | required | replies |
 | GET | `/v1/vaults/:vault_id/replies/:reply_id/stream` | required | replies |
 | POST | `/v1/shares` | required | shares |
 | GET | `/v1/shares` | required | shares |

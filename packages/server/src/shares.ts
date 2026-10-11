@@ -1,13 +1,13 @@
 import { Database, sessions, shares, userDocuments } from "@great-minds/database";
 import {
   NotFound,
+  ServiceUnavailable,
   type ShareCreate,
   type ShareCreateResult,
   type ShareOverview,
   type ShareSubjectKind,
   type SharedAnnotation,
   type SharedShareDetail,
-  type SessionExchangeEvent,
   SessionId,
   SessionOrigin as SessionOriginSchema,
   type Uuid,
@@ -16,6 +16,7 @@ import { and, asc, desc, eq, isNull, sql } from "drizzle-orm";
 import { Context, Effect, Layer, Schema } from "effect";
 
 import { ClockService } from "./clock.ts";
+import { renderSessionMarkdown } from "./conversation-history/presentation.ts";
 import { StructuredLogger } from "./logging.ts";
 import { parseFrontmatter, stripAnchors } from "./markdown.ts";
 import { RandomBytesService, formatUuid7 } from "./random.ts";
@@ -25,10 +26,15 @@ import { UserDocumentsService } from "./user-documents.ts";
 type ShareRow = typeof shares.$inferSelect;
 
 type SharesServiceShape = {
-  readonly create: (userId: Uuid, input: ShareCreate) => Effect.Effect<ShareCreateResult, NotFound>;
+  readonly create: (
+    userId: Uuid,
+    input: ShareCreate,
+  ) => Effect.Effect<ShareCreateResult, NotFound | ServiceUnavailable>;
   readonly listMine: (userId: Uuid) => Effect.Effect<readonly ShareOverview[]>;
   readonly revoke: (userId: Uuid, shareId: Uuid) => Effect.Effect<void, NotFound>;
-  readonly resolve: (token: string) => Effect.Effect<SharedShareDetail, NotFound>;
+  readonly resolve: (
+    token: string,
+  ) => Effect.Effect<SharedShareDetail, NotFound | ServiceUnavailable>;
 };
 
 export class SharesService extends Context.Service<SharesService, SharesServiceShape>()(
@@ -61,11 +67,8 @@ export const SharesServiceLive = Layer.effect(
     const logger = yield* StructuredLogger;
 
     const getByToken = (token: string) =>
-      db.query((d) => d
-        .select()
-        .from(shares)
-        .where(eq(shares.token, token))
-        .limit(1))
+      db
+        .query((d) => d.select().from(shares).where(eq(shares.token, token)).limit(1))
         .pipe(Effect.map((rows) => rows[0]));
 
     const mintToken = () =>
@@ -75,27 +78,32 @@ export const SharesServiceLive = Layer.effect(
       });
 
     const findSessionByOwner = (userId: Uuid, sessionId: SessionId) =>
-      db.query((d) => d
-        .select()
-        .from(sessions)
-        .where(and(eq(sessions.id, sessionId), eq(sessions.userId, userId)))
-        .limit(1))
+      db
+        .query((d) =>
+          d
+            .select()
+            .from(sessions)
+            .where(and(eq(sessions.id, sessionId), eq(sessions.userId, userId)))
+            .limit(1),
+        )
         .pipe(Effect.map((rows) => rows[0]));
 
     const loadAnnotations = (userId: Uuid, filePath: string) =>
       Effect.gen(function* () {
-        const rows = yield* db.query((d) => d
-          .select()
-          .from(sessions)
-          .where(
-            and(
-              eq(sessions.userId, userId),
-              sql`${sessions.origin}->>'doc_path' = ${filePath}`,
-              sql`${sessions.origin}->>'origin_scope' = 'personal'`,
-              sql`${sessions.origin}->>'anchor' IS NOT NULL`,
-            ),
-          )
-          .orderBy(asc(sessions.createdAt)));
+        const rows = yield* db.query((d) =>
+          d
+            .select()
+            .from(sessions)
+            .where(
+              and(
+                eq(sessions.userId, userId),
+                sql`${sessions.origin}->>'doc_path' = ${filePath}`,
+                sql`${sessions.origin}->>'origin_scope' = 'personal'`,
+                sql`${sessions.origin}->>'anchor' IS NOT NULL`,
+              ),
+            )
+            .orderBy(asc(sessions.createdAt)),
+        );
         const annotations: SharedAnnotation[] = [];
         for (const row of rows) {
           const origin = decodeSessionOrigin(row.origin);
@@ -103,7 +111,7 @@ export const SharesServiceLive = Layer.effect(
             continue;
           }
           const events = yield* Effect.result(
-            sessionsService.readSession(userId, row.vaultId, row.id),
+            sessionsService.readPublication(userId, row.vaultId, row.id),
           );
           if (events._tag === "Failure") {
             yield* logger.warn("share_annotation_skipped", {
@@ -119,9 +127,10 @@ export const SharesServiceLive = Layer.effect(
               context: origin.paragraph,
               block_offset: origin.paragraph_index,
             },
-            exchanges: events.success.events
-              .filter((event): event is SessionExchangeEvent => event.type === "exchange")
-              .map((event) => ({ query: event.query, answer: event.answer })),
+            exchanges: events.success.map((event) => ({
+              query: event.query,
+              answer: event.answer,
+            })),
             created_at: row.createdAt,
           });
         }
@@ -144,11 +153,16 @@ export const SharesServiceLive = Layer.effect(
                 ),
               );
           } else {
-            const rows = yield* db.query((d) => d
-              .select()
-              .from(userDocuments)
-              .where(and(eq(userDocuments.id, input.subject_id), eq(userDocuments.userId, userId)))
-              .limit(1))
+            const rows = yield* db
+              .query((d) =>
+                d
+                  .select()
+                  .from(userDocuments)
+                  .where(
+                    and(eq(userDocuments.id, input.subject_id), eq(userDocuments.userId, userId)),
+                  )
+                  .limit(1),
+              )
               .pipe(Effect.orDie);
             if (rows[0] === undefined) {
               return yield* new NotFound({ detail: "Reference not found" });
@@ -156,26 +170,34 @@ export const SharesServiceLive = Layer.effect(
           }
 
           const now = yield* clock.now;
-          const existing = yield* db.query((d) => d
-            .select()
-            .from(shares)
-            .where(and(
-              eq(shares.createdBy, userId),
-              eq(shares.subjectKind, input.subject_kind),
-              eq(shares.subjectId, input.subject_id),
-              isNull(shares.revokedAt),
-            ))
-            .limit(1))
+          const existing = yield* db
+            .query((d) =>
+              d
+                .select()
+                .from(shares)
+                .where(
+                  and(
+                    eq(shares.createdBy, userId),
+                    eq(shares.subjectKind, input.subject_kind),
+                    eq(shares.subjectId, input.subject_id),
+                    isNull(shares.revokedAt),
+                  ),
+                )
+                .limit(1),
+            )
             .pipe(Effect.orDie);
           const existingRow = existing[0];
           if (existingRow !== undefined) {
             const includeAnnotations = input.include_annotations ?? true;
             if (existingRow.includeAnnotations !== includeAnnotations) {
-              const updated = yield* db.query((d) => d
-                .update(shares)
-                .set({ includeAnnotations })
-                .where(eq(shares.id, existingRow.id))
-                .returning())
+              const updated = yield* db
+                .query((d) =>
+                  d
+                    .update(shares)
+                    .set({ includeAnnotations })
+                    .where(eq(shares.id, existingRow.id))
+                    .returning(),
+                )
                 .pipe(Effect.orDie);
               const updatedRow = updated[0];
               if (updatedRow === undefined) {
@@ -188,18 +210,21 @@ export const SharesServiceLive = Layer.effect(
 
           const idBytes = yield* randomBytes.bytes(16);
           const token = yield* mintToken();
-          const rows = yield* db.query((d) => d
-            .insert(shares)
-            .values({
-              id: formatUuid7(now.getTime(), idBytes),
-              token,
-              subjectKind: input.subject_kind,
-              subjectId: input.subject_id,
-              createdBy: userId,
-              includeAnnotations: input.include_annotations ?? true,
-              expiresAt: input.expires_at ?? null,
-            })
-            .returning())
+          const rows = yield* db
+            .query((d) =>
+              d
+                .insert(shares)
+                .values({
+                  id: formatUuid7(now.getTime(), idBytes),
+                  token,
+                  subjectKind: input.subject_kind,
+                  subjectId: input.subject_id,
+                  createdBy: userId,
+                  includeAnnotations: input.include_annotations ?? true,
+                  expiresAt: input.expires_at ?? null,
+                })
+                .returning(),
+            )
             .pipe(Effect.orDie);
           const row = rows[0];
           if (row === undefined) {
@@ -208,20 +233,26 @@ export const SharesServiceLive = Layer.effect(
           return { share: shareOverview(row), created: true };
         }),
       listMine: (userId) =>
-        db.query((d) => d
-          .select()
-          .from(shares)
-          .where(eq(shares.createdBy, userId))
-          .orderBy(desc(shares.createdAt)))
+        db
+          .query((d) =>
+            d
+              .select()
+              .from(shares)
+              .where(eq(shares.createdBy, userId))
+              .orderBy(desc(shares.createdAt)),
+          )
           .pipe(Effect.map((rows) => rows.map(shareOverview))),
       revoke: (userId, shareId) =>
         Effect.gen(function* () {
           const now = yield* clock.now;
-          const rows = yield* db.query((d) => d
-            .update(shares)
-            .set({ revokedAt: now })
-            .where(and(eq(shares.id, shareId), eq(shares.createdBy, userId)))
-            .returning({ id: shares.id }))
+          const rows = yield* db
+            .query((d) =>
+              d
+                .update(shares)
+                .set({ revokedAt: now })
+                .where(and(eq(shares.id, shareId), eq(shares.createdBy, userId)))
+                .returning({ id: shares.id }),
+            )
             .pipe(Effect.orDie);
           if (rows[0] === undefined) {
             return yield* new NotFound({ detail: "Share not found" });
@@ -245,8 +276,9 @@ export const SharesServiceLive = Layer.effect(
               return yield* new NotFound({ detail: "Share not found" });
             }
             const markdown = yield* sessionsService
-              .readMarkdown(row.createdBy, session.vaultId, session.id)
+              .readPublication(row.createdBy, session.vaultId, session.id)
               .pipe(
+                Effect.map(renderSessionMarkdown),
                 Effect.catchTag("Forbidden", () =>
                   Effect.fail(new NotFound({ detail: "Share not found" })),
                 ),
@@ -259,11 +291,10 @@ export const SharesServiceLive = Layer.effect(
             };
           }
 
-          const rows = yield* db.query((d) => d
-            .select()
-            .from(userDocuments)
-            .where(eq(userDocuments.id, row.subjectId))
-            .limit(1))
+          const rows = yield* db
+            .query((d) =>
+              d.select().from(userDocuments).where(eq(userDocuments.id, row.subjectId)).limit(1),
+            )
             .pipe(Effect.orDie);
           const reference = rows[0];
           if (reference === undefined) {

@@ -1,6 +1,6 @@
 import { isDeepStrictEqual } from "node:util";
 
-import { type Database, replies, sessions, vaults } from "@great-minds/database";
+import { Database, replies, sessions, vaults } from "@great-minds/database";
 import {
   BadRequest,
   Conflict,
@@ -13,11 +13,12 @@ import {
   type Uuid,
 } from "@great-minds/domain";
 import { and, eq, inArray, sql } from "drizzle-orm";
-import { Data, Effect, Result, Schema } from "effect";
+import { Context, Data, Effect, Layer, Option, Result, Schema } from "effect";
 
-import type { ClockService } from "../clock.ts";
-import { formatUuid7, type RandomBytesService } from "../random.ts";
-import type { VaultAccessService } from "../vaults.ts";
+import { ClockService } from "../clock.ts";
+import { AppConfig } from "../config.ts";
+import { formatUuid7, RandomBytesService } from "../random.ts";
+import { VaultAccessService } from "../vaults.ts";
 import {
   type ConversationHistory,
   HistoryInvalid,
@@ -26,7 +27,7 @@ import {
   verifyHistoryReceipt,
 } from "./history.ts";
 import { HistoryAttemptWrite, HistoryHeaderWrite, HistoryTimestamp } from "./schema.ts";
-import type { HistoryCommitError, HistoryStoreShape } from "./store.ts";
+import { type HistoryCommitError, HistoryStore, type HistoryStoreShape } from "./store.ts";
 
 export const AcceptedReplyRequest = Schema.Struct({
   version: Schema.Literal(1),
@@ -72,6 +73,30 @@ export interface ReplyAdmissionShape {
     nextReplyId: Uuid,
   ) => Effect.Effect<CreateReplyResponse, ReplyAdmissionError>;
 }
+
+export class ReplyAdmission extends Context.Service<ReplyAdmission, ReplyAdmissionShape>()(
+  "@great-minds/server/ReplyAdmission",
+) {}
+
+export const ReplyAdmissionLive = Layer.effect(
+  ReplyAdmission,
+  Effect.gen(function* () {
+    const db = yield* Database;
+    const histories = yield* HistoryStore;
+    const clock = yield* ClockService;
+    const random = yield* RandomBytesService;
+    const access = yield* VaultAccessService;
+    const config = yield* AppConfig;
+    return makeReplyAdmission(
+      db,
+      histories,
+      clock,
+      random,
+      access,
+      Option.isSome(config.openRouterApiKey),
+    );
+  }),
+);
 
 type SessionRow = typeof sessions.$inferSelect;
 type ReplyRow = typeof replies.$inferSelect;
@@ -222,7 +247,7 @@ export const makeReplyAdmission = (
         if (parent === undefined || parent.userId !== userId) {
           return yield* new NotFound({ detail: "Session not found" });
         }
-        if (parent.kind !== "session") {
+        if (parent.placement !== "standalone") {
           return yield* new BadRequest({ detail: "Nested BTWs aren't supported" });
         }
         const history = yield* readHistory(parent);
@@ -346,7 +371,8 @@ export const makeReplyAdmission = (
                 userId,
                 query: command.question,
                 origin: target.header.origin,
-                kind: target.session.conversation_kind,
+                placement: target.session.conversation_kind === "btw" ? "inline" : "standalone",
+                replyMode: target.session.conversation_kind === "btw" ? "btw" : "query",
                 createdAt: new Date(target.header.created_at),
                 updatedAt: new Date(target.header.created_at),
                 idempotencyKey: target.session.idempotency_key,
@@ -433,7 +459,7 @@ export const makeReplyAdmission = (
           const request = {
             version: 1,
             command,
-            mode: session.kind === "btw" ? "btw" : "query",
+            mode: session.replyMode,
             header: target.kind === "new" ? target.header : null,
             attempt: {
               type: "attempt",

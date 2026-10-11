@@ -162,7 +162,6 @@ export class Session {
         ? { origin_path: this.origin.doc_path }
         : {}),
       origin_scope: "vault",
-      mode: "query",
       session:
         this.sessionId !== null
           ? { kind: "existing", id: this.sessionId }

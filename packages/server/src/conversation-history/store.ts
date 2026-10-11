@@ -1,5 +1,5 @@
 import type { SessionId, Uuid } from "@great-minds/domain";
-import { Effect, Result } from "effect";
+import { Context, Effect, Result } from "effect";
 
 import type {
   ConditionalObjectStore,
@@ -50,6 +50,10 @@ export interface HistoryStoreShape {
     HistoryCommitError
   >;
 }
+
+export class HistoryStore extends Context.Service<HistoryStore, HistoryStoreShape>()(
+  "@great-minds/server/HistoryStore",
+) {}
 
 const objectKey = (address: HistoryAddress) =>
   `vaults/${address.vault_id}/sessions/${address.session_id}.jsonl`;
