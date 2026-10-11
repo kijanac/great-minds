@@ -27,6 +27,12 @@ export type HistoryFile = {
   readonly version: string;
 };
 
+export type HistoryCommitError =
+  | HistoryInvalid
+  | HistoryConflict
+  | ObjectVersionConflict
+  | StorageBackendError;
+
 export interface HistoryStoreShape {
   readonly read: (
     address: HistoryAddress,
@@ -35,12 +41,13 @@ export interface HistoryStoreShape {
   readonly commit: (
     address: HistoryAddress,
     writes: readonly HistoryWrite[],
+    receipt?: HistoryRevision,
   ) => Effect.Effect<
     {
       readonly history: ConversationHistory;
       readonly written: boolean;
     },
-    HistoryInvalid | HistoryConflict | ObjectVersionConflict | StorageBackendError
+    HistoryCommitError
   >;
 }
 
@@ -72,9 +79,13 @@ export const makeHistoryStore = (objects: ConditionalObjectStore): HistoryStoreS
       return { history: parsed.success, version: object.version };
     });
 
-  const commit = (address: HistoryAddress, writes: readonly HistoryWrite[]) =>
+  const commit = (
+    address: HistoryAddress,
+    writes: readonly HistoryWrite[],
+    receipt?: HistoryRevision,
+  ) =>
     Effect.gen(function* () {
-      const current = yield* read(address);
+      const current = yield* read(address, receipt);
       const planned = planHistoryAppend(address.session_id, current?.history ?? null, writes);
       if (Result.isFailure(planned)) return yield* planned.failure;
       const { history, changed } = planned.success;

@@ -6,7 +6,7 @@
 
 > **Authority clarified after implementation review.** The user prefers JSONL as the authoritative session-content store, the DB for other metadata/app state, and a possible derived Markdown presentation mirror. This supports continuing the history foundation, not moving canonical transcripts into the DB. Whole-application durability and interrupted-work recovery still require the DB and necessary checkpoint/files together; equivalent continuation after losing those stores is not a requirement. Preserve existing session display, visible tool activity, and normal follow-up context.
 
-> **Implementation checkpoint:** Stage 2B.1 now has standalone schemas, a strict parser/reducer, semantic append planning, conditional local/R2 storage, and conformance/process-crash tests. See [storage implementation boundaries](../conversation-history-storage.md) and the companion matrix's validation results. Live session/reply services, DB schema, readers, and persisted production files are not yet converted.
+> **Implementation checkpoint:** Stage 2B.1 has standalone schemas, a strict parser/reducer, semantic append planning, conditional local/R2 storage, and conformance/process-crash tests. Stage 2B.2 now has a database-backed freeze/publication coordinator, its schema migration, and isolated fault tests; it is not yet wired into live terminal workflow paths. See [storage implementation boundaries](../conversation-history-storage.md), [settlement implementation boundaries](../conversation-reply-settlement.md), and the companion matrix. Durable admission, live writers/readers, and production data remain unconverted.
 
 ## 1. Decisions this draft makes
 
@@ -53,7 +53,7 @@ A standalone Markdown export preserves readable questions, answers, outcome labe
 - The natural identity of a record is `header(session_id)`, `attempt(reply_id)`, or `settlement(reply_id)`. No extra event-ID namespace is necessary.
 - Record times describe the event, not a storage revision. Unknown legacy acceptance/settlement times are `null`; migration observation times go in the migration report instead of masquerading as original times.
 - A file revision is `{ last_seq, sha256 }`, with SHA-256 over the exact complete file bytes. Backend ETags are opaque conditional-write tokens, not content hashes or portable revisions.
-- Hashes are integrity/capture identifiers, not signatures, authorization, vault heads, or proof of an atomic DB/object-store snapshot. A standalone syntactically valid prefix cannot prove that no complete tail records were lost; live reads also check known operation/history receipts. Complete-archive recovery needs an inventory, not just independent file self-hashes.
+- Hashes are integrity/capture identifiers, not signatures, authorization, vault heads, or proof of an atomic DB/object-store snapshot. A standalone syntactically valid prefix cannot prove that no complete tail records were lost; live reads and writes also check the known session history receipt. Store that receipt once as session sequence/hash columns, not duplicate JSONB receipts on replies and sessions. Complete-archive recovery needs an inventory, not just independent file self-hashes.
 
 ### 3.2 Record shapes
 

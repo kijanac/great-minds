@@ -237,6 +237,50 @@ for (const backend of backends)
         }),
       ));
 
+    it("refuses to recreate missing acknowledged history during a commit", () =>
+      withObjects(backend, (objects) =>
+        Effect.gen(function* () {
+          const store = makeHistoryStore(objects);
+          const committed = yield* store.commit(address, initial());
+          const missing = { ...address, vault_id: uuid(999) };
+          expect(
+            failure(
+              yield* Effect.exit(store.commit(missing, initial(), committed.history.revision)),
+            ),
+          ).toMatchObject({
+            _tag: "HistoryInvalid",
+            reason: "history_receipt",
+          });
+          expect(yield* store.read(missing)).toBeNull();
+        }),
+      ));
+
+    it("refuses to append over a lost complete tail covered by a known receipt", () =>
+      withObjects(backend, (objects) =>
+        Effect.gen(function* () {
+          const store = makeHistoryStore(objects);
+          const committed = yield* store.commit(address, [...initial(), settlement()]);
+          const current = yield* objects.getVersioned(key);
+          yield* objects.putIfVersion(key, current.version, historyBytes(initial()));
+          const shortened = yield* objects.getVersioned(key);
+          expect(
+            failure(
+              yield* Effect.exit(
+                store.commit(
+                  address,
+                  [attempt({ reply_id: uuid(102), exchange_id: uuid(202) })],
+                  committed.history.revision,
+                ),
+              ),
+            ),
+          ).toMatchObject({
+            _tag: "HistoryInvalid",
+            reason: "history_receipt",
+          });
+          expect(yield* objects.getVersioned(key)).toEqual(shortened);
+        }),
+      ));
+
     it("checks a known receipt even when the file is missing or an otherwise valid older prefix", () =>
       withObjects(backend, (objects) =>
         Effect.gen(function* () {

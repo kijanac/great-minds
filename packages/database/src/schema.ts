@@ -1,5 +1,5 @@
 import { sql } from "drizzle-orm";
-import type { JobResponse, PipelineProgressStep, ReplySnapshot, SessionId, Uuid } from "@great-minds/domain";
+import type { FileFingerprint, JobResponse, PipelineProgressStep, ReplySnapshot, SessionId, Uuid } from "@great-minds/domain";
 import {
   bigint,
   boolean,
@@ -460,6 +460,8 @@ export const sessions = pgTable(
     query: text("query").notNull(),
     origin: jsonb("origin"),
     kind: text("kind").$type<"session" | "btw">().default("session").notNull(),
+    historySeq: bigint("history_seq", { mode: "number" }),
+    historySha256: varchar("history_sha256", { length: 64 }).$type<FileFingerprint>(),
     createdAt: timestamptz("created_at").notNull(),
     updatedAt: timestamptz("updated_at").notNull(),
     idempotencyKey: text("idempotency_key"),
@@ -486,6 +488,10 @@ export const sessions = pgTable(
     index("ix_sessions_origin_session_id")
       .using("btree", sql`(${table.origin}->>'session_id')`)
       .where(sql`${table.origin}->>'kind' = 'answer'`),
+    check(
+      "sessions_history_receipt_check",
+      sql`(${table.historySeq} IS NULL AND ${table.historySha256} IS NULL) OR (${table.historySeq} IS NOT NULL AND ${table.historySha256} IS NOT NULL AND ${table.historySeq} BETWEEN 1 AND ${sql.raw(String(Number.MAX_SAFE_INTEGER))} AND ${table.historySha256} ~ '^[0-9a-f]{64}$')`,
+    ),
     check("sessions_kind_check", sql`${table.kind} IN ('session', 'btw')`),
     check("sessions_btw_origin_check", sql`${table.kind} != 'btw' OR ${table.origin}->>'anchor' IS NOT NULL`),
   ],
@@ -499,7 +505,7 @@ export const replies = pgTable(
     userId: uuidColumn("user_id").notNull(),
     sessionId: sessionIdColumn("session_id").notNull(),
     kind: text("kind").$type<ReplySnapshot["kind"]>().notNull(),
-    status: text("status").$type<ReplySnapshot["status"]>().notNull(),
+    status: text("status").$type<ReplySnapshot["status"] | "settling">().notNull(),
     stopRequested: boolean("stop_requested").default(false).notNull(),
     answer: text("answer").default("").notNull(),
     sources: jsonb("sources")
@@ -509,6 +515,7 @@ export const replies = pgTable(
     error: text("error"),
     version: integer("version").default(0).notNull(),
     request: jsonb("request").notNull(),
+    settlement: jsonb("settlement"),
     dispatchedAt: timestamptz("dispatched_at"),
     dispatchedTaskId: uuidColumn("dispatched_task_id"),
     generationCursor: integer("generation_cursor").default(0).notNull(),
@@ -541,7 +548,11 @@ export const replies = pgTable(
       .on(table.createdAt)
       .where(sql`${table.status} = 'running' AND ${table.dispatchedAt} IS NULL`),
     check("replies_kind_check", sql`${table.kind} IN ('exchange', 'btw')`),
-    check("replies_status_check", sql`${table.status} IN ('running', 'completed', 'failed', 'stopped')`),
+    index("ix_replies_pending_settlement")
+      .on(table.createdAt)
+      .where(sql`${table.status} = 'settling'`),
+    check("replies_status_check", sql`${table.status} IN ('running', 'settling', 'completed', 'failed', 'stopped')`),
+    check("replies_settlement_check", sql`(${table.status} = 'settling') = (${table.settlement} IS NOT NULL)`),
     check(
       "replies_active_generation_check",
       sql`(${table.activeGenerationStep} IS NULL AND ${table.activeGenerationKind} IS NULL AND ${table.activeGenerationKey} IS NULL) OR (${table.activeGenerationStep} IS NOT NULL AND ${table.activeGenerationKind} IN ('model', 'tool') AND ${table.activeGenerationKey} IS NOT NULL)`,

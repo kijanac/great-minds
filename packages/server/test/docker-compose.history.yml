@@ -1,0 +1,18 @@
+services:
+  db:
+    image: pgvector/pgvector:pg18
+    restart: "no"
+    labels:
+      great-minds.test: reply-history-2b2
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: disposable-history-test
+      POSTGRES_DB: gm_reply_history_test
+    command: ["postgres", "-c", "great_minds.test_purpose=reply-history"]
+    ports:
+      - "127.0.0.1::5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U postgres -d gm_reply_history_test"]
+      interval: 2s
+      timeout: 3s
+      retries: 20

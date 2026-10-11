@@ -2,7 +2,7 @@
 
 ## Scope
 
-This is the Stage 2B.1 storage foundation for the [conversation-history contract](future-ideas/conversation-history-contract-and-migration.md). It is not yet wired into live session/reply services and does not switch existing files to the new format.
+This is the Stage 2B.1 storage foundation for the [conversation-history contract](future-ideas/conversation-history-contract-and-migration.md). A [database-backed settlement coordinator](conversation-reply-settlement.md) now builds on it as the first component of Stage 2B.2. Neither is yet wired into live session/reply writing, and existing files are not switched to the new format.
 
 JSONL owns recorded session content, including saved tool activity and the model-facing messages needed by ordinary follow-ups. The database still owns permissions, application choices, and operation coordination; checkpoints retain unfinished execution state. Whole-application recovery requires these stores together. Markdown is derived presentation, not another editable content authority.
 
@@ -26,6 +26,8 @@ The existing `ObjectStore.append` and live session writer are unchanged. They mu
 ## Commit behavior
 
 A commit reads the current whole object, parses it, and compares proposed records by natural identity and content. Equal records are already committed; they consume no sequence number and trigger no object write. Different content for an existing identity is a conflict, not a replacement. New records receive contiguous sequence numbers. The first header and first attempt must be committed together.
+
+A commit may also supply a known history receipt. The store verifies that exact prefix before planning any addition, so a write cannot silently recreate missing acknowledged history or append over a known missing complete tail.
 
 Existing history text is preserved rather than re-encoded. A new batch replaces the whole object only if the backend version still matches the read, or the object is still missing for first creation.
 
@@ -100,4 +102,6 @@ Focused suites:
 
 These tests use temporary local directories and an in-memory fake R2 bucket, not a database or production storage. Existing session, migration, Markdown, and storage tests remain regression checks; they are not proof that the new protocol is active in the application.
 
-Next is application integration: durable acceptance/admission, acceptance-time mode capture, a frozen terminal payload with `settling`, one completed/stopped/failed finalizer, reconciliation, and progress fencing. Authorized readers, consumer cutover, and verified offline migration follow. None of the storage work alone establishes those release gates.
+The new settlement coordinator and its isolated PostgreSQL fault tests are documented separately in [conversation reply settlement](conversation-reply-settlement.md). They establish freezing and publication behavior for all three terminal outcomes, not the live workflow cutover.
+
+Next is application integration: durable acceptance/admission, acceptance-time mode capture, connecting all terminal workflow paths to the coordinator, reconciliation, and progress fencing. Authorized readers, consumer cutover, and verified offline migration follow. Neither the storage tests nor coordinator tests alone establish those release gates.

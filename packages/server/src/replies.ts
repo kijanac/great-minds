@@ -29,7 +29,7 @@ import * as WorkflowEngine from "effect/unstable/workflow/WorkflowEngine";
 import { backgroundLoop } from "./background-loop.ts";
 import { AppConfig } from "./config.ts";
 import { StructuredLogger } from "./logging.ts";
-import type { LlmMessage } from "./llm.ts";
+import { stoppedMessages } from "./conversation-history/settlement.ts";
 import { pollingSse } from "./polling-sse.ts";
 import {
   QueryExecutionState,
@@ -90,27 +90,6 @@ type ReplyCheckpoint = typeof ReplyCheckpoint.Type;
 const decodeReplyCheckpoint = Schema.decodeUnknownSync(Schema.fromJsonString(ReplyCheckpoint));
 const encodeReplyCheckpoint = Schema.encodeSync(Schema.fromJsonString(ReplyCheckpoint));
 const checkpointPath = (replyId: Uuid) => `operations/replies/${replyId}.json`;
-
-const stoppedMessages = (messages: readonly LlmMessage[], answer: string): readonly LlmMessage[] => {
-  const results = new Set(messages.flatMap((message) =>
-    message.role === "tool" ? [message.tool_call_id] : [],
-  ));
-  const pending = messages.flatMap((message) =>
-    message.role === "assistant" ? message.tool_calls ?? [] : [],
-  ).filter((call) => !results.has(call.id));
-  const lastAnswer = messages.findLast((message) => message.role === "assistant");
-  return [
-    ...messages,
-    ...pending.map((call): LlmMessage => ({
-      role: "tool",
-      tool_call_id: call.id,
-      content: "Tool call cancelled because the user stopped the response.",
-    })),
-    ...(answer.length > 0 && lastAnswer?.content !== answer
-      ? [{ role: "assistant" as const, content: answer }]
-      : []),
-  ];
-};
 
 const queryRequest = (input: CreateReplyRequest, question: string): QueryRequest => ({
   question,
@@ -261,7 +240,7 @@ export const RepliesServiceLive = Layer.effect(
       reply_id: row.id,
       session_id: row.sessionId,
       kind: row.kind,
-      status: row.status,
+      status: row.status === "settling" ? "running" : row.status,
       answer: row.answer,
       sources: row.sources,
       error: row.error,

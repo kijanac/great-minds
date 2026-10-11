@@ -27,7 +27,7 @@ const Sequence = Schema.Number.pipe(
   ),
 );
 
-const GenerationMetadata = Schema.Struct({
+export const GenerationMetadata = Schema.Struct({
   mode: Schema.Literals(["btw", "query"]),
   system_prompt_hash: Schema.Struct({
     scheme: Schema.Literal("gm-prompt-v1"),
@@ -36,6 +36,7 @@ const GenerationMetadata = Schema.Struct({
   requested_model: Schema.NonEmptyString,
   last_model: Schema.optionalKey(Schema.NonEmptyString),
 });
+export type GenerationMetadata = typeof GenerationMetadata.Type;
 
 const Outcome = Schema.Union([
   Schema.Struct({ status: Schema.Literal("completed") }),
@@ -96,9 +97,12 @@ export type HistorySettlement = typeof HistorySettlement.Type;
 export const HistoryRecord = Schema.Union([HistoryHeader, HistoryAttempt, HistorySettlement]);
 export type HistoryRecord = typeof HistoryRecord.Type;
 
+export const HistorySettlementWrite = Schema.Struct(settlementFields);
+export type HistorySettlementWrite = typeof HistorySettlementWrite.Type;
+
 export const HistoryWrite = Schema.Union([
   Schema.Struct(headerFields),
   Schema.Struct(attemptFields),
-  Schema.Struct(settlementFields),
+  HistorySettlementWrite,
 ]);
 export type HistoryWrite = typeof HistoryWrite.Type;
