@@ -38,6 +38,26 @@ export type PutObjectOptions = {
   readonly contentType?: string;
 };
 
+export class ObjectVersionConflict extends Data.TaggedError("ObjectVersionConflict")<{
+  readonly key: string;
+}> {}
+
+export type VersionedObject = {
+  readonly bytes: Uint8Array;
+  readonly version: string;
+};
+
+export type ConditionalObjectStore = {
+  readonly getVersioned: (
+    key: string,
+  ) => Effect.Effect<VersionedObject, ObjectMissing | StorageBackendError>;
+  readonly putIfVersion: (
+    key: string,
+    expectedVersion: string | null,
+    bytes: Uint8Array,
+  ) => Effect.Effect<void, ObjectVersionConflict | StorageBackendError>;
+};
+
 export type ObjectStore = {
   readonly get: (
     key: string,

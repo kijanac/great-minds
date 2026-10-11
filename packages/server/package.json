@@ -25,6 +25,7 @@
     "defuddle": "0.19.2",
     "drizzle-orm": "1.0.0-rc.5-169397b",
     "effect": "4.0.0-rc.112",
+    "fs-native-extensions": "1.5.1",
     "ipaddr.js": "2.5.0",
     "jose": "6.2.3",
     "jsdom": "29.1.1",

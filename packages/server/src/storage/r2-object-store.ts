@@ -19,6 +19,8 @@ import { Data, Effect, Option, Redacted, Schedule } from "effect";
 import type { AppConfig } from "../config.ts";
 import {
   ObjectMissing,
+  ObjectVersionConflict,
+  type ConditionalObjectStore,
   type ObjectStore,
   type PutObjectOptions,
   StorageBackendError,
@@ -144,7 +146,7 @@ const concat = (head: Uint8Array, tail: Uint8Array) => {
   return combined;
 };
 
-export const makeObjectStore = (client: S3Client, bucket: string): ObjectStore => {
+export const makeObjectStore = (client: S3Client, bucket: string): ObjectStore & ConditionalObjectStore => {
   const getVersioned = (key: string) =>
     Effect.gen(function* () {
       const response = yield* request(READ_TIMEOUT, (signal) =>
@@ -229,6 +231,21 @@ export const makeObjectStore = (client: S3Client, bucket: string): ObjectStore =
   return {
     get,
     put,
+    getVersioned: (key) => Effect.gen(function* () {
+      const object = yield* getVersioned(key);
+      if (object.etag === undefined || object.etag.length === 0) {
+        return yield* storageBackendError("read", key, new Error("Conditional read requires an ETag"));
+      }
+      return { bytes: object.bytes, version: object.etag };
+    }),
+    putIfVersion: (key, expectedVersion, bytes) =>
+      sendPut(key, bytes, { contentType: "application/x-ndjson" }, expectedVersion === null
+        ? { IfNoneMatch: "*" }
+        : { IfMatch: expectedVersion }).pipe(
+        Effect.mapError((error) => isPreconditionFailed(error)
+          ? new ObjectVersionConflict({ key })
+          : storeFailure("write", key, error)),
+      ),
     append: (key, bytes, options) =>
       appendOnce(key, bytes, options).pipe(
         Effect.retry(APPEND_RETRY),
@@ -288,7 +305,7 @@ export const makeObjectStore = (client: S3Client, bucket: string): ObjectStore =
 };
 
 export type R2ObjectStoreBackend = {
-  readonly objects: ObjectStore;
+  readonly objects: ObjectStore & ConditionalObjectStore;
   readonly prepareUpload: (
     key: string,
     contentType: string,
