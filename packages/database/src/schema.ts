@@ -505,7 +505,7 @@ export const replies = pgTable(
     userId: uuidColumn("user_id").notNull(),
     sessionId: sessionIdColumn("session_id").notNull(),
     kind: text("kind").$type<ReplySnapshot["kind"]>().notNull(),
-    status: text("status").$type<ReplySnapshot["status"] | "settling">().notNull(),
+    status: text("status").$type<ReplySnapshot["status"] | "admitting" | "settling">().notNull(),
     stopRequested: boolean("stop_requested").default(false).notNull(),
     answer: text("answer").default("").notNull(),
     sources: jsonb("sources")
@@ -551,7 +551,13 @@ export const replies = pgTable(
     index("ix_replies_pending_settlement")
       .on(table.createdAt)
       .where(sql`${table.status} = 'settling'`),
-    check("replies_status_check", sql`${table.status} IN ('running', 'settling', 'completed', 'failed', 'stopped')`),
+    index("ix_replies_pending_admission")
+      .on(table.createdAt)
+      .where(sql`${table.status} = 'admitting'`),
+    uniqueIndex("uq_replies_live_session")
+      .on(table.vaultId, table.sessionId)
+      .where(sql`${table.status} IN ('admitting', 'running', 'settling')`),
+    check("replies_status_check", sql`${table.status} IN ('admitting', 'running', 'settling', 'completed', 'failed', 'stopped')`),
     check("replies_settlement_check", sql`(${table.status} = 'settling') = (${table.settlement} IS NOT NULL)`),
     check(
       "replies_active_generation_check",

@@ -2,7 +2,7 @@
 
 ## Scope
 
-This is the Stage 2B.1 storage foundation for the [conversation-history contract](future-ideas/conversation-history-contract-and-migration.md). A [database-backed settlement coordinator](conversation-reply-settlement.md) now builds on it as the first component of Stage 2B.2. Neither is yet wired into live session/reply writing, and existing files are not switched to the new format.
+This is the Stage 2B.1 storage foundation for the [conversation-history contract](future-ideas/conversation-history-contract-and-migration.md). Database-backed [admission](conversation-reply-admission.md) and [settlement](conversation-reply-settlement.md) coordinators now build on it for Stage 2B.2. They are not yet wired into live session/reply writing, and existing files are not switched to the new format.
 
 JSONL owns recorded session content, including saved tool activity and the model-facing messages needed by ordinary follow-ups. The database still owns permissions, application choices, and operation coordination; checkpoints retain unfinished execution state. Whole-application recovery requires these stores together. Markdown is derived presentation, not another editable content authority.
 
@@ -31,7 +31,7 @@ A commit may also supply a known history receipt. The store verifies that exact 
 
 Existing history text is preserved rather than re-encoded. A new batch replaces the whole object only if the backend version still matches the read, or the object is still missing for first creation.
 
-| Result | Meaning | Responsibility of the future operation coordinator |
+| Result | Meaning | Responsibility of the operation coordinator |
 | --- | --- | --- |
 | Success, `written: true` | The backend acknowledged the conditional write | Record the history receipt and finish DB bookkeeping |
 | Success, `written: false` | The exact records are already present | Finish DB bookkeeping without writing duplicate records |
@@ -102,6 +102,6 @@ Focused suites:
 
 These tests use temporary local directories and an in-memory fake R2 bucket, not a database or production storage. Existing session, migration, Markdown, and storage tests remain regression checks; they are not proof that the new protocol is active in the application.
 
-The new settlement coordinator and its isolated PostgreSQL fault tests are documented separately in [conversation reply settlement](conversation-reply-settlement.md). They establish freezing and publication behavior for all three terminal outcomes, not the live workflow cutover.
+The database-backed coordinators and isolated PostgreSQL fault tests are documented separately in [reply admission](conversation-reply-admission.md) and [reply settlement](conversation-reply-settlement.md). They establish reservation/admission and freezing/publication behavior, not the live workflow cutover. The new one-live-operation migration must not deploy ahead of that cutover.
 
-Next is application integration: durable acceptance/admission, acceptance-time mode capture, connecting all terminal workflow paths to the coordinator, reconciliation, and progress fencing. Authorized readers, consumer cutover, and verified offline migration follow. Neither the storage tests nor coordinator tests alone establish those release gates.
+Next is application integration: use durable admission before dispatch and frozen mode during preparation, separate placement/default/revision, connect all terminal workflow paths to settlement, reconcile unfinished obligations, and fence live producers. Authorized readers, consumer cutover, and verified offline migration follow. Neither the storage tests nor coordinator tests alone establish those release gates.

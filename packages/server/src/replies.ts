@@ -240,7 +240,7 @@ export const RepliesServiceLive = Layer.effect(
       reply_id: row.id,
       session_id: row.sessionId,
       kind: row.kind,
-      status: row.status === "settling" ? "running" : row.status,
+      status: row.status === "admitting" || row.status === "settling" ? "running" : row.status,
       answer: row.answer,
       sources: row.sources,
       error: row.error,

@@ -97,12 +97,18 @@ export type HistorySettlement = typeof HistorySettlement.Type;
 export const HistoryRecord = Schema.Union([HistoryHeader, HistoryAttempt, HistorySettlement]);
 export type HistoryRecord = typeof HistoryRecord.Type;
 
+export const HistoryHeaderWrite = Schema.Struct(headerFields);
+export type HistoryHeaderWrite = typeof HistoryHeaderWrite.Type;
+
+export const HistoryAttemptWrite = Schema.Struct(attemptFields);
+export type HistoryAttemptWrite = typeof HistoryAttemptWrite.Type;
+
 export const HistorySettlementWrite = Schema.Struct(settlementFields);
 export type HistorySettlementWrite = typeof HistorySettlementWrite.Type;
 
 export const HistoryWrite = Schema.Union([
-  Schema.Struct(headerFields),
-  Schema.Struct(attemptFields),
+  HistoryHeaderWrite,
+  HistoryAttemptWrite,
   HistorySettlementWrite,
 ]);
 export type HistoryWrite = typeof HistoryWrite.Type;

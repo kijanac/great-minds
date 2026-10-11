@@ -1,0 +1,3 @@
+CREATE INDEX "ix_replies_pending_admission" ON "replies" ("created_at") WHERE "status" = 'admitting';--> statement-breakpoint
+CREATE UNIQUE INDEX "uq_replies_live_session" ON "replies" ("vault_id","session_id") WHERE "status" IN ('admitting', 'running', 'settling');--> statement-breakpoint
+ALTER TABLE "replies" DROP CONSTRAINT "replies_status_check", ADD CONSTRAINT "replies_status_check" CHECK ("status" IN ('admitting', 'running', 'settling', 'completed', 'failed', 'stopped'));

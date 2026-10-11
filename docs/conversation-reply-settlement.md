@@ -4,7 +4,7 @@
 
 This is the first database-backed component of Stage 2B.2, built on the [history storage foundation](conversation-history-storage.md). It implements the result-freezing and publication boundary in `packages/server/src/conversation-history/settlement.ts`.
 
-It is **not yet the live reply workflow**. Durable acceptance, acceptance-time mode capture, the one-live-operation constraint, workflow integration, and reconciliation still need to be connected. Existing session readers/writers remain on the legacy format. This component must not be pointed at legacy files as a conversion mechanism.
+It is **not yet the live reply workflow**. A separate [admission coordinator](conversation-reply-admission.md) now implements reservation, frozen mode, receipt-confirmed admission, and a one-live-operation constraint. Neither coordinator is connected to live acceptance, terminal workflow routing, or reconciliation. The admission migration must not deploy independently of that writer cutover. Existing session readers/writers remain on the legacy format. This component must not be pointed at legacy files as a conversion mechanism.
 
 The [history contract](future-ideas/conversation-history-contract-and-migration.md) and [acceptance matrix](future-ideas/conversation-history-acceptance-matrix.md) remain the coordinated-cutover specification. Neither the schema migration nor these tests authorize a production data migration.
 
@@ -49,9 +49,9 @@ A stop committed before this boundary wins. Stopped and failed results preserve 
 
 A subsequent `begin` does not replace an already frozen result, even if its caller supplies a different outcome or the clock has advanced. This is the operation's outcome-selection boundary, not a rule for resolving conflicting history records. A different payload already saved under the same history identity remains a hard conflict.
 
-`begin` returns `true` when a pending frozen result exists and `false` for a missing or already terminal reply. An invalid pending payload or absent history receipt is an explicit error, not a repaired state.
+`begin` returns `true` when a pending frozen result exists and `false` for a missing, unadmitted, or already terminal reply. An invalid pending payload or absent history receipt is an explicit error, not a repaired state.
 
-Application progress and stop writes must continue to require `status = 'running'`. The component tests exercise that database predicate, but end-to-end producer fencing still belongs to workflow integration.
+Generation and progress writes must require `status = 'running'`. A stop may be recorded while admitting or running, but must not change an already frozen result. Component tests exercise database predicates and retention of a pre-admission stop; wiring the actual stop/progress producers remains workflow-integration work.
 
 ## Publication boundary
 
@@ -79,25 +79,25 @@ A lost storage acknowledgement is recovered by semantic replay: the exact saved 
 pnpm test:history-settlement
 ```
 
-The runner provisions a uniquely named Docker Compose project with PostgreSQL/pgvector, binds a random loopback port, applies migrations only to that new database, and runs the settlement and semantic-store suites. It overrides any ambient `DATABASE_URL`, supplies a separate `REPLY_HISTORY_TEST_DATABASE_URL`, clears provider API keys, and disables the live LLM smoke flag for the child test processes.
+The runner provisions a uniquely named Docker Compose project with PostgreSQL/pgvector, binds a random loopback port, applies migrations only to that new database, and runs the admission, settlement, and semantic-store suites. It overrides any ambient `DATABASE_URL`, supplies a separate `REPLY_HISTORY_TEST_DATABASE_URL`, clears provider API keys, and disables the live LLM smoke flag for the child test processes.
 
 The integration fixture also checks the exact database name and the server-side `great_minds.test_purpose = 'reply-history'` marker before creating test data. Each case uses separate user/vault/reply identities and a temporary local storage root. Cleanup removes that case's user-owned rows and local files. The runner tears down its Docker project and volumes in `finally`; it does not reuse a developer or production database. Its health-check timings follow the existing repository PostgreSQL test fixture in `docker-compose.packages-test.yml`.
 
-Additional Vitest file selectors can be supplied after the command; they replace the two default selectors. The same disposable database is passed to existing integration suites that use `DATABASE_URL`.
+Additional Vitest file selectors can be supplied after the command; they replace the three default selectors. The same disposable database is passed to existing integration suites that use `DATABASE_URL`.
 
 `reply-settlement.integration.test.ts` exercises real PostgreSQL transactions and the local conditional history adapter, with explicit faults at the storage and DB-acknowledgement boundaries. It covers all three outcomes, fixed result/time on redelivery, competing freezes, stop ordering, running-only update fencing, missing metadata, conflicting saved results, lost acknowledgements, rollback, receipt mismatch, and SQL constraints. The history-store suite separately checks that commits cannot recreate missing acknowledged histories or append over a known missing complete tail.
 
-Verification checkpoint: **159 tests passed across 11 files**: 34 new PostgreSQL settlement cases, the five foundation suites (including four added receipt-protected commit cases), and the five existing session/migration/Markdown/storage regression suites. The disposable runner provisioned, migrated, tested, and removed its database and volumes successfully. Full root type checking, targeted lint, and whitespace checks also passed. The existing query and process-resume suites subsequently passed together in a second fresh disposable database: **41 passed, one live-provider smoke skipped**. Two all-suite invocations reached the external 300-second command limit and are not counted as passing runs. The verbose combined run showed query cases continuing to pass but taking roughly 15–17 seconds each after the early cases; the cause of that timing difference remains unverified. No production timeout was changed to accommodate it.
+Settlement checkpoint (`dd6b808`), before the subsequent admission work: **159 tests passed across 11 files**: 34 new PostgreSQL settlement cases, the five foundation suites (including four added receipt-protected commit cases), and the five existing session/migration/Markdown/storage regression suites. The disposable runner provisioned, migrated, tested, and removed its database and volumes successfully. Full root type checking, targeted lint, and whitespace checks also passed. The existing query and process-resume suites subsequently passed together in a second fresh disposable database: **41 passed, one live-provider smoke skipped**. Two all-suite invocations reached the external 300-second command limit and are not counted as passing runs. The verbose combined run showed query cases continuing to pass but taking roughly 15–17 seconds each after the early cases; the cause of that timing difference remains unverified. No production timeout was changed to accommodate it.
 
 These are coordinator-level tests, including recreation of the coordinator after failures. They are not an end-to-end native-workflow restart test, a provider/tool invocation-count proof for the new workflow, live R2 verification, or a power-loss guarantee. The existing process-death storage tests cover the separate local replacement protocol.
 
 ## Remaining Stage 2B.2 work
 
-- Persist and reconcile durable acceptance/admission before dispatch.
-- Enforce one admitting/running/settling operation per conversation, checking idempotent replay before busy rejection.
-- Separate application placement/default/revision and freeze effective reply mode at acceptance.
+- Connect durable acceptance/admission to the live API and dispatcher; reconcile its saved obligations.
+- Activate the one-live-operation constraint with that writer cutover, not ahead of it.
+- Separate application placement/default/revision and make preparation use the frozen accepted mode.
 - Route completed, stopped, ordinary failed, and ambiguous-call outcomes from the live workflow through this coordinator.
 - Fence all generation/progress paths and reconcile settling records even after workflow completion or death.
 - Verify the integrated fault paths with explicit model/tool invocation counts.
 
-Authorized snapshots/SSE, frontend state handling, explicit sharing/promotion projections, detached legacy conversion, and deployment fencing remain later cutover work. The current reply DTO still presents an internal `settling` row as nonterminal `running`; this is not the final client-facing finalization contract.
+Authorized snapshots/SSE, frontend state handling, explicit sharing/promotion projections, detached legacy conversion, and deployment fencing remain later cutover work. The current reply DTO still presents internal `admitting` and `settling` rows as nonterminal `running`; this is not the final client-facing finalization contract.

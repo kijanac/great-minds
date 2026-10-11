@@ -65,6 +65,7 @@ try {
       ...(selectors.length > 0
         ? selectors
         : [
+            "packages/server/test/reply-admission.integration.test.ts",
             "packages/server/test/reply-settlement.integration.test.ts",
             "packages/server/test/conversation-history-store.test.ts",
           ]),
