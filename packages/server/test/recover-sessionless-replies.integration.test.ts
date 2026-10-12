@@ -83,7 +83,6 @@ const makeStorage = () => {
         files.set(key(owner, path), text);
       }),
     listMarkdown: () => Effect.die("Unexpected listMarkdown"),
-    appendText: () => Effect.die("Unexpected appendText"),
     exists: (owner, path) => Effect.sync(() => files.has(key(owner, path))),
     deletePath: () => Effect.die("Unexpected deletePath"),
     clear: () => Effect.die("Unexpected clear"),

@@ -7,13 +7,7 @@ import type {
   Uuid,
 } from "@great-minds/domain";
 
-import {
-  createReply,
-  retryReply,
-  streamReply,
-  type CreateReplyPayload,
-  type CreateReplyResponse,
-} from "$lib/api/replies";
+import { createReply, retryReply, streamReply, type CreateReplyPayload } from "$lib/api/replies";
 import { selectedVault } from "$lib/api/selected-vault";
 import { continueAsSession } from "$lib/api/sessions";
 import { newUuid } from "$lib/ids";
@@ -22,6 +16,10 @@ import { applyReplySnapshot, replyActivity } from "$lib/reply-turn";
 import { replayExchanges } from "$lib/session-events";
 import type { Exchange, ThreadLike } from "$lib/types";
 import { genId, isAbortError } from "$lib/utils";
+
+type BtwSubmission =
+  | { kind: "create"; payload: CreateReplyPayload }
+  | { kind: "retry"; previousReplyId: Uuid; replyId: Uuid };
 
 export class Btw implements ThreadLike {
   conversation = $state<ThreadLike["conversation"]>(null);
@@ -38,7 +36,7 @@ export class Btw implements ThreadLike {
 
   #controller = new AbortController();
   #streamController: AbortController | null = null;
-  #attempt: CreateReplyPayload | null = null;
+  #attempt: BtwSubmission | null = null;
 
   constructor(
     private readonly origin: SessionOrigin,
@@ -124,10 +122,9 @@ export class Btw implements ThreadLike {
       this.connectionError = "Live updates are unavailable. Reconnect to check this response.";
   };
 
-  #runReply = async (
-    previous: Exchange,
-    request: () => Promise<CreateReplyResponse>,
-  ): Promise<void> => {
+  #runReply = async (previous: Exchange): Promise<void> => {
+    const attempt = this.#attempt;
+    if (attempt === null) return;
     this.#patchTurn(previous.id, {
       thinking: [],
       answer: "",
@@ -136,7 +133,9 @@ export class Btw implements ThreadLike {
       error: null,
     });
     try {
-      const created = await request();
+      const created = await (attempt.kind === "create"
+        ? createReply(attempt.payload, this.#controller.signal)
+        : retryReply(attempt.previousReplyId, attempt.replyId, this.#controller.signal));
       if (this.#controller.signal.aborted) return;
       this.conversation ??= { id: created.session_id, kind: "btw", query: previous.query };
       this.#attempt = null;
@@ -180,9 +179,9 @@ export class Btw implements ThreadLike {
             origin: this.origin,
           },
     };
-    this.#attempt = payload;
+    this.#attempt = { kind: "create", payload };
     this.exchanges = [...this.exchanges, turn];
-    void this.#runReply(turn, () => createReply(payload, this.#controller.signal));
+    void this.#runReply(turn);
   };
 
   retry = (turnId: Uuid): void => {
@@ -194,13 +193,10 @@ export class Btw implements ThreadLike {
     }
     const previous = this.exchanges.at(-1);
     if (this.busy || previous?.id !== turnId || previous.status !== "failed") return;
-    const replyId = previous.replyId;
-    const attempt = this.#attempt;
-    if (replyId) {
-      void this.#runReply(previous, () => retryReply(replyId, newUuid(), this.#controller.signal));
-    } else if (attempt) {
-      void this.#runReply(previous, () => createReply(attempt, this.#controller.signal));
+    if (this.#attempt === null && previous.replyId) {
+      this.#attempt = { kind: "retry", previousReplyId: previous.replyId, replyId: newUuid() };
     }
+    void this.#runReply(previous);
   };
 
   openSession = async (): Promise<void> => {

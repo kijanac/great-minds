@@ -51,7 +51,6 @@ export type SettledOrPendingAttempt = {
 
 export type HistoryTurn = {
   readonly exchange_id: Uuid;
-  readonly selected_reply_id: Uuid;
   readonly attempts: readonly SettledOrPendingAttempt[];
 };
 
@@ -108,10 +107,7 @@ const reduceRecords = (
     Uuid,
     { accepted: HistoryAttempt; settlement: HistorySettlement | null }
   >();
-  const turns = new Map<
-    Uuid,
-    { exchange_id: Uuid; selected_reply_id: Uuid; attempts: SettledOrPendingAttempt[] }
-  >();
+  const turns = new Map<Uuid, { exchange_id: Uuid; attempts: SettledOrPendingAttempt[] }>();
   for (const [index, record] of records.entries()) {
     const line = index + 1;
     if (record.seq !== line) return invalid("sequence", line);
@@ -141,11 +137,9 @@ const reduceRecords = (
       if (turn === undefined) {
         turns.set(record.exchange_id, {
           exchange_id: record.exchange_id,
-          selected_reply_id: record.reply_id,
           attempts: [attempt],
         });
       } else {
-        turn.selected_reply_id = record.reply_id;
         turn.attempts.push(attempt);
       }
       continue;

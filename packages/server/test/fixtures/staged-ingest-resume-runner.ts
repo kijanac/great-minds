@@ -93,7 +93,6 @@ const StorageLive = Layer.succeed(ContentStorage, {
   listMarkdown: () => Effect.succeed([]),
   readText: () => Effect.die("unused"),
   writeText: () => Effect.void,
-  appendText: () => Effect.die("unused"),
   exists: () => Effect.succeed(false),
   deletePath: () => Effect.void,
   clear: () => Effect.void,

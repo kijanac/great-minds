@@ -53,6 +53,7 @@ export class Session {
   #onSessionCreated: ((sessionId: SessionId) => void) | undefined;
   #onOpenSession: ((sessionId: SessionId) => void) | undefined;
   #idempotencyKey: Uuid | null = null;
+  #retry: { previousReplyId: Uuid; replyId: Uuid } | null = null;
   #abortController: AbortController | null = null;
   #destroyed = false;
 
@@ -107,6 +108,7 @@ export class Session {
 
   destroy = (): void => {
     this.#destroyed = true;
+    this.#retry = null;
     this.#abortController?.abort();
     for (const exchange of this.thread) {
       for (const btw of exchange.btws) btw.destroy();
@@ -259,6 +261,11 @@ export class Session {
       return;
     }
 
+    const attempt =
+      this.#retry?.previousReplyId === previous.replyId
+        ? this.#retry
+        : { previousReplyId: previous.replyId, replyId: newUuid() };
+    this.#retry = attempt;
     this.#updateExchange(exchangeId, {
       thinking: [],
       answer: "",
@@ -274,7 +281,13 @@ export class Session {
 
     void (async () => {
       try {
-        const created = await retryReply(previous.replyId!, newUuid(), controller.signal);
+        const created = await retryReply(
+          attempt.previousReplyId,
+          attempt.replyId,
+          controller.signal,
+        );
+        if (controller.signal.aborted) return;
+        this.#retry = null;
         this.#updateExchange(exchangeId, { replyId: created.reply_id });
         this.activity = { reply_id: created.reply_id, status: "running" };
         await this.#tailExchange(exchangeId, created.reply_id, controller);

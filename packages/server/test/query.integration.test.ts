@@ -34,7 +34,12 @@ import { ClockService, makeTestClock } from "../src/clock.ts";
 import { AppConfig, type AppConfigShape } from "../src/config.ts";
 import { promptContentHash } from "../src/crypto.ts";
 import { StructuredLogger, StructuredLoggerLive } from "../src/logging.ts";
-import { type LlmAssistantToolCall, type LlmMessage, type ModelStreamPart } from "../src/llm.ts";
+import {
+  parseOpenRouterStream,
+  type LlmAssistantToolCall,
+  type LlmMessage,
+  type ModelStreamPart,
+} from "../src/llm.ts";
 import { ParallelSearchService } from "../src/parallel.ts";
 import { makeTestMailer } from "../src/mailer.ts";
 import { RepliesService, ReplyWorkflow } from "../src/replies.ts";
@@ -55,6 +60,7 @@ import {
 } from "./fixtures/reply-history-database.ts";
 import type { HistoryAttempt, HistorySettlement } from "../src/conversation-history/schema.ts";
 import { TokenService } from "../src/tokens.ts";
+import { stalledModelStream } from "./fixtures/interrupted-model-stream.ts";
 import {
   finishPart,
   makeEmbeddings,
@@ -501,7 +507,8 @@ const apiWithToken = async (path: string, body: unknown, token: string) => {
 
 type ReplySnapshot = {
   readonly reply_id: string;
-  readonly status: "running" | "completed" | "failed" | "stopped";
+  readonly session_id: string;
+  readonly status: "admitting" | "running" | "settling" | "completed" | "failed" | "stopped";
   readonly answer: string;
   readonly sources: readonly Record<string, unknown>[];
   readonly error: string | null;
@@ -2949,6 +2956,63 @@ describe("query stream", () => {
     });
   });
 
+  it("resolves shifted pending slots, missing results and duplicate read/expand/link sources without checkpointing a replacement slot", async () => {
+    const language = makeScriptedLanguageModel({
+      streams: [
+        {
+          kind: "parts",
+          parts: [
+            tokenPart("Looking up sources."),
+            toolCallPart(0, "missing", "read_document", { path: "wiki/missing.md" }),
+            toolCallPart(1, "read", "read_document", { path: "wiki/alpha.md" }),
+            toolCallPart(2, "read-again", "read_document", { path: "wiki/alpha.md" }),
+            toolCallPart(3, "links", "linked_articles", { path: "wiki/alpha.md" }),
+            toolCallPart(4, "links-again", "linked_articles", { path: "wiki/alpha.md" }),
+            toolCallPart(5, "raw", "read_document", { path: "raw/texts/source.md" }),
+            toolCallPart(6, "expand", "expand_context", {
+              path: "raw/texts/source.md",
+              start: 0,
+              end: 1,
+            }),
+            finishPart("tool_calls"),
+          ],
+        },
+        { kind: "parts", parts: [tokenPart("Resolved."), finishPart("stop")] },
+      ],
+    });
+    await startHarness({ language });
+    const { snapshots } = await runReply({ question: "Read and expand these sources" });
+    const terminal = snapshots.at(-1);
+    expect(terminal).toMatchObject({
+      status: "completed",
+      answer: "Resolved.",
+      sources: [
+        { type: "links", label: "wiki/alpha.md" },
+        { type: "article", label: "wiki/alpha.md", full: true },
+        { type: "raw", label: "raw/texts/source.md", full: true, ranges: [{ start: 0, end: 1 }] },
+      ],
+    });
+    expect(terminal?.sources).not.toEqual(
+      expect.arrayContaining([expect.objectContaining({ pending: true })]),
+    );
+    expect(language.streamCalls).toHaveLength(2);
+    const checkpoint = JSON.parse(
+      await readFile(
+        join(
+          currentState().storageRoot,
+          "vaults",
+          id.vault,
+          "operations",
+          "replies",
+          `${terminal?.reply_id}.json`,
+        ),
+        "utf8",
+      ),
+    );
+    expect(checkpoint.accumulator.pendingCalls).toEqual([]);
+    expect(checkpoint.accumulator).not.toHaveProperty("replacementSlot");
+  });
+
   it("returns invalid tool arguments to the model as tool messages instead of failing the reply", async () => {
     const language = makeScriptedLanguageModel({
       streams: [
@@ -3037,6 +3101,91 @@ describe("query stream", () => {
     expect(String(toolMessage?.content)).toContain(
       'No documents match the filters: {"genre":"theor","limit":50}',
     );
+  });
+
+  it.each([
+    { fault: "stall before output", partial: "" },
+    { fault: "stall after output", partial: "Saved partial." },
+    { fault: "missing body", partial: "" },
+  ])(
+    "does not fall back after an accepted provider response: $fault",
+    async ({ fault, partial }) => {
+      const timeout = vi.fn();
+      const language = makeScriptedLanguageModel({
+        streams: [
+          {
+            kind: "stream",
+            stream:
+              fault === "missing body"
+                ? parseOpenRouterStream(new Response(null))
+                : stalledModelStream(partial, timeout),
+          },
+          { kind: "parts", parts: [tokenPart("Explicit retry."), finishPart("stop")] },
+        ],
+      });
+      await startHarness({ language });
+      const { snapshots } = await runReply({ question: "Do not silently repeat this call" });
+      const terminal = snapshots.at(-1);
+      assert(terminal !== undefined);
+      expect(terminal).toMatchObject({ status: "failed", answer: partial });
+      expect(language.streamCalls.map((call) => call.model)).toEqual(["primary/test-model"]);
+      expect(timeout).toHaveBeenCalledTimes(fault === "missing body" ? 0 : 1);
+      const settlements = (await readSessionEvents(terminal.session_id)).filter(
+        (event) => event.type === "settlement",
+      );
+      expect(settlements).toEqual([
+        expect.objectContaining({
+          reply_id: terminal.reply_id,
+          answer: partial,
+          outcome: expect.objectContaining({ status: "failed", code: "generation_failed" }),
+        }),
+      ]);
+      const retried = await retryReply(terminal.reply_id);
+      expect(retried.response.status).toBe(202);
+      const retriedId = JSON.parse(retried.text).reply_id;
+      const tail = await tailReply(retriedId);
+      expect(replySnapshots(tail.text).at(-1)).toMatchObject({
+        status: "completed",
+        answer: "Explicit retry.",
+      });
+      expect(language.streamCalls.map((call) => call.model)).toEqual([
+        "primary/test-model",
+        "primary/test-model",
+      ]);
+    },
+  );
+
+  it("preserves a committed Stop when the accepted provider stream then times out", async () => {
+    const replyId = uuid(crypto.randomUUID());
+    const partial = "Stopped partial.";
+    const timeout = vi.fn();
+    const language = makeScriptedLanguageModel({
+      streams: [
+        {
+          kind: "stream",
+          stream: (async function* () {
+            for await (const part of stalledModelStream(partial, timeout)) {
+              yield part;
+              const stopped = await api(`${repliesPath}/${replyId}/stop`, {});
+              expect(stopped.response.status).toBe(204);
+            }
+          })(),
+        },
+      ],
+    });
+    await startHarness({ language });
+    const { snapshots } = await runReply({
+      reply_id: replyId,
+      question: "Stop before the timeout wins",
+    });
+    const terminal = snapshots.at(-1);
+    assert(terminal !== undefined);
+    expect(terminal).toMatchObject({ status: "stopped", answer: partial, error: null });
+    expect(language.streamCalls).toHaveLength(1);
+    expect(timeout).toHaveBeenCalledTimes(1);
+    expect(
+      (await readSessionEvents(terminal.session_id)).filter((event) => event.type === "settlement"),
+    ).toEqual([expect.objectContaining({ answer: partial, outcome: { status: "stopped" } })]);
   });
 
   it("continues invisibly on retryable primary-model fallback", async () => {

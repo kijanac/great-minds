@@ -682,6 +682,57 @@ it("allows another stop when reconnecting aborts an unconfirmed stop request", a
   await vi.waitFor(() => expect(view.activity).toBeNull());
 });
 
+describe.each(["session", "btw"] as const)("%s retry acknowledgment", (kind) => {
+  it.each(["completed", "failed"] as const)(
+    "redelivers the accepted retry identity even when it has already %s",
+    async (outcome) => {
+      const accepted = new Map<Uuid, Uuid>();
+      let loseAcknowledgment = true;
+      vi.mocked(retryReply).mockImplementation(async (previousId, nextId) => {
+        const existing = accepted.get(previousId);
+        if (existing !== undefined && existing !== nextId)
+          throw new Error("Retry already accepted");
+        accepted.set(previousId, nextId);
+        if (loseAcknowledgment) {
+          loseAcknowledgment = false;
+          throw new Error("Accepted, but the response was lost");
+        }
+        return { session_id: sessionId, reply_id: nextId };
+      });
+      vi.mocked(streamReply).mockImplementation(async function* (id) {
+        yield {
+          ...snapshot("Recorded retry", outcome, id),
+          error: outcome === "failed" ? "Saved failure" : null,
+        };
+      });
+      const view = makeSavedView(kind, saved(origins[0], "failed", "Original partial"));
+      const retry = () =>
+        view instanceof Session ? view.retryExchange(exchangeId) : view.retry(exchangeId);
+      retry();
+      await vi.waitFor(() => expect(viewTurns(view)[0].status).toBe("failed"));
+      expect(viewTurns(view)[0]).toMatchObject({ replyId, answer: "Original partial" });
+      expect(streamReply).not.toHaveBeenCalled();
+      retry();
+      expect(vi.mocked(retryReply).mock.calls[1].slice(0, 2)).toEqual(
+        vi.mocked(retryReply).mock.calls[0].slice(0, 2),
+      );
+      await vi.waitFor(() => expect(viewTurns(view)[0].answer).toBe("Recorded retry"));
+      expect(viewTurns(view)[0].status).toBe(outcome);
+      expect(viewTurns(view)[0].replyId).toBe(accepted.get(replyId));
+      expect(accepted.size).toBe(1);
+      expect(createReply).not.toHaveBeenCalled();
+      if (outcome === "failed") {
+        retry();
+        await vi.waitFor(() => expect(viewTurns(view)[0].status).toBe("failed"));
+        const [previousId, nextId] = vi.mocked(retryReply).mock.calls[2];
+        expect(previousId).toBe(accepted.get(replyId));
+        expect(nextId).not.toBe(previousId);
+        expect(accepted.size).toBe(2);
+      }
+    },
+  );
+});
+
 it("does not dismiss an unavailable saved answer note as an empty draft", () => {
   const parent = saved(origins[0], "completed", "Parent answer");
   const child = saved(origins[2], "completed");

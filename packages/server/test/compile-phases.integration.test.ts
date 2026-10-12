@@ -38,12 +38,7 @@ import { CompilePhases, CompilePhasesLive } from "../src/compile-phases.ts";
 import { AppConfig, type AppConfigShape } from "../src/config.ts";
 import { DEFAULT_RENDER_MODEL } from "../src/config.ts";
 import { ClockLive } from "../src/clock.ts";
-import {
-  bodyContentHash,
-  contentHash,
-  fileContentHash,
-  promptContentHash,
-} from "../src/crypto.ts";
+import { bodyContentHash, contentHash, fileContentHash, promptContentHash } from "../src/crypto.ts";
 import { DrizzleLive } from "../src/db.ts";
 import { EmbeddingBatchFailed, EmbeddingsService } from "../src/embeddings.ts";
 import { LanguageModel, type CompleteInput, type ModelCompletion } from "../src/llm.ts";
@@ -155,7 +150,6 @@ const StorageLive = Layer.succeed(ContentStorage, {
   },
   writeText: (_vaultId, path, content) =>
     Effect.sync(() => files.set(path, content)).pipe(Effect.asVoid),
-  appendText: () => Effect.void,
   exists: (_vaultId, path) => Effect.succeed(files.has(path)),
   deletePath: (_vaultId, path) => Effect.sync(() => files.delete(path)).pipe(Effect.asVoid),
   clear: () => Effect.void,
@@ -173,10 +167,11 @@ const SourceDocumentsLive = SourceDocumentsServiceLive.pipe(
   Layer.provideMerge(BaseLive),
 );
 const EmbeddingsLive = Layer.succeed(EmbeddingsService, {
-  embed: (texts) => Effect.tryPromise({
-    try: () => embed(texts),
-    catch: (error) => new EmbeddingBatchFailed(error),
-  }),
+  embed: (texts) =>
+    Effect.tryPromise({
+      try: () => embed(texts),
+      catch: (error) => new EmbeddingBatchFailed(error),
+    }),
 });
 const LanguageModelLive = Layer.succeed(LanguageModel, {
   hasApiKey: true,
@@ -211,25 +206,26 @@ const seedBase = () =>
     Effect.gen(function* () {
       const db = yield* Database;
       yield* db.query((d) => d.delete(users)).pipe(Effect.orDie);
-      yield* db.query((d) => d
-        .insert(users)
-        .values({ id: id.user, email: "phases@example.com" }))
+      yield* db
+        .query((d) => d.insert(users).values({ id: id.user, email: "phases@example.com" }))
         .pipe(Effect.orDie);
-      yield* db.query((d) => d
-        .insert(vaults)
-        .values({ id: id.vault, name: "Compile Phases", ownerId: id.user }))
+      yield* db
+        .query((d) =>
+          d.insert(vaults).values({ id: id.vault, name: "Compile Phases", ownerId: id.user }),
+        )
         .pipe(Effect.orDie);
-      yield* db.query((d) => d
-        .insert(pipelineRuns)
-        .values({
-          id: id.run,
-          vaultId: id.vault,
-          trigger: "manual",
-          status: "pending",
-          currentPhase: "",
-          phaseStatus: "",
-          progressSteps: [],
-        }))
+      yield* db
+        .query((d) =>
+          d.insert(pipelineRuns).values({
+            id: id.run,
+            vaultId: id.vault,
+            trigger: "manual",
+            status: "pending",
+            currentPhase: "",
+            phaseStatus: "",
+            progressSteps: [],
+          }),
+        )
         .pipe(Effect.orDie);
     }),
   );
@@ -238,29 +234,31 @@ const seedSourceAndIdeas = () =>
   run(
     Effect.gen(function* () {
       const db = yield* Database;
-      yield* db.query((d) => d
-        .insert(sourceDocuments)
-        .values({
-          id: id.source,
-          vaultId: id.vault,
-          filePath: "raw/docs/source.md",
-          fileHash: "file",
-          bodyHash: "body",
-          sourceType: "document",
-        }))
-        .pipe(Effect.orDie);
-      yield* db.query((d) => d
-        .insert(ideas)
-        .values(
-          [id.ideaA, id.ideaB, id.ideaC].map((ideaId, index) => ({
-            ideaId,
+      yield* db
+        .query((d) =>
+          d.insert(sourceDocuments).values({
+            id: id.source,
             vaultId: id.vault,
-            documentId: id.source,
-            kind: "claim",
-            label: `Idea ${index}`,
-            description: `Description ${index}`,
-          })),
-        ))
+            filePath: "raw/docs/source.md",
+            fileHash: "file",
+            bodyHash: "body",
+            sourceType: "document",
+          }),
+        )
+        .pipe(Effect.orDie);
+      yield* db
+        .query((d) =>
+          d.insert(ideas).values(
+            [id.ideaA, id.ideaB, id.ideaC].map((ideaId, index) => ({
+              ideaId,
+              vaultId: id.vault,
+              documentId: id.source,
+              kind: "claim",
+              label: `Idea ${index}`,
+              description: `Description ${index}`,
+            })),
+          ),
+        )
         .pipe(Effect.orDie);
     }),
   );
@@ -274,17 +272,18 @@ const insertSource = (
   run(
     Effect.gen(function* () {
       const db = yield* Database;
-      yield* db.query((d) => d
-        .insert(sourceDocuments)
-        .values({
-          id: documentId,
-          vaultId: id.vault,
-          filePath,
-          fileHash: `file-${bodyHash}`,
-          bodyHash,
-          sourceType: "document",
-          canonicalUrl,
-        }))
+      yield* db
+        .query((d) =>
+          d.insert(sourceDocuments).values({
+            id: documentId,
+            vaultId: id.vault,
+            filePath,
+            fileHash: `file-${bodyHash}`,
+            bodyHash,
+            sourceType: "document",
+            canonicalUrl,
+          }),
+        )
         .pipe(Effect.orDie);
     }),
   );
@@ -307,30 +306,32 @@ const seedCanonicalPath = async (options: {
   await run(
     Effect.gen(function* () {
       const db = yield* Database;
-      yield* db.query((d) => d
-        .insert(sourceDocuments)
-        .values({
-          id: id.source,
-          vaultId: id.vault,
-          filePath: "raw/docs/source.md",
-          fileHash: "file",
-          bodyHash: "body",
-          sourceType: "document",
-          title: "Source",
-          precis: "Precis",
-        }))
+      yield* db
+        .query((d) =>
+          d.insert(sourceDocuments).values({
+            id: id.source,
+            vaultId: id.vault,
+            filePath: "raw/docs/source.md",
+            fileHash: "file",
+            bodyHash: "body",
+            sourceType: "document",
+            title: "Source",
+            precis: "Precis",
+          }),
+        )
         .pipe(Effect.orDie);
-      yield* db.query((d) => d
-        .insert(ideas)
-        .values({
-          ideaId: id.ideaA,
-          vaultId: id.vault,
-          documentId: id.source,
-          kind: "concept",
-          label: "Idea",
-          description: "Description",
-          embedding: [1, ...Array.from({ length: 1023 }, () => 0)],
-        }))
+      yield* db
+        .query((d) =>
+          d.insert(ideas).values({
+            ideaId: id.ideaA,
+            vaultId: id.vault,
+            documentId: id.source,
+            kind: "concept",
+            label: "Idea",
+            description: "Description",
+            embedding: [1, ...Array.from({ length: 1023 }, () => 0)],
+          }),
+        )
         .pipe(Effect.orDie);
     }),
   );
@@ -485,16 +486,16 @@ describe("M4.3a deterministic compile phases", () => {
     );
   });
 
-const fullCard = (ideas: readonly unknown[]) => ({
-  title: "",
-  precis: "",
-  author: null,
-  published_date: null,
-  genre: null,
-  tags: [],
-  derived_extras: {},
-  ideas,
-});
+  const fullCard = (ideas: readonly unknown[]) => ({
+    title: "",
+    precis: "",
+    author: null,
+    published_date: null,
+    genre: null,
+    tags: [],
+    derived_extras: {},
+    ideas,
+  });
 
   it("records per-call extract provenance, prompt content, and the embedding model", async () => {
     const canonicalUrl = "https://example.com/source";
@@ -523,8 +524,9 @@ const fullCard = (ideas: readonly unknown[]) => ({
         const db = yield* Database;
         return {
           events: yield* db.query((d) => d.select().from(llmCostEvents)).pipe(Effect.orDie),
-          prompts: yield* db.query((d) =>
-            d.select().from(prompts).where(eq(prompts.hash, promptHash))).pipe(Effect.orDie),
+          prompts: yield* db
+            .query((d) => d.select().from(prompts).where(eq(prompts.hash, promptHash)))
+            .pipe(Effect.orDie),
           ideas: yield* db.query((d) => d.select().from(ideas)).pipe(Effect.orDie),
         };
       }),
@@ -629,19 +631,20 @@ const fullCard = (ideas: readonly unknown[]) => ({
     await run(
       Effect.gen(function* () {
         const db = yield* Database;
-        yield* db.query((d) => d
-          .insert(compileCacheEntries)
-          .values({
-            vaultId: id.vault,
-            phase: "extract",
-            cacheKey: contentHash(
-              `doc=${id.source}`,
-              "cached-body",
-              `prompt=${promptContentHash(template)}`,
-              `model=${config.extractModel}`,
-            ),
-            value: { source_card: { title: "drifted" } },
-          }))
+        yield* db
+          .query((d) =>
+            d.insert(compileCacheEntries).values({
+              vaultId: id.vault,
+              phase: "extract",
+              cacheKey: contentHash(
+                `doc=${id.source}`,
+                "cached-body",
+                `prompt=${promptContentHash(template)}`,
+                `model=${config.extractModel}`,
+              ),
+              value: { source_card: { title: "drifted" } },
+            }),
+          )
           .pipe(Effect.orDie);
       }),
     );
@@ -785,15 +788,16 @@ const fullCard = (ideas: readonly unknown[]) => ({
     await run(
       Effect.gen(function* () {
         const db = yield* Database;
-        yield* db.query((d) => d
-          .insert(topics)
-          .values({
-            topicId: id.topicB,
-            vaultId: id.vault,
-            slug: "old-topic",
-            title: "Old Topic",
-            description: "Old description",
-          }))
+        yield* db
+          .query((d) =>
+            d.insert(topics).values({
+              topicId: id.topicB,
+              vaultId: id.vault,
+              slug: "old-topic",
+              title: "Old Topic",
+              description: "Old description",
+            }),
+          )
           .pipe(Effect.orDie);
       }),
     );
@@ -817,15 +821,16 @@ const fullCard = (ideas: readonly unknown[]) => ({
     await run(
       Effect.gen(function* () {
         const db = yield* Database;
-        yield* db.query((d) => d
-          .insert(topics)
-          .values({
-            topicId: id.topicB,
-            vaultId: id.vault,
-            slug: "old-topic",
-            title: "Old Topic",
-            description: "Old description",
-          }))
+        yield* db
+          .query((d) =>
+            d.insert(topics).values({
+              topicId: id.topicB,
+              vaultId: id.vault,
+              slug: "old-topic",
+              title: "Old Topic",
+              description: "Old description",
+            }),
+          )
           .pipe(Effect.orDie);
       }),
     );
@@ -840,23 +845,23 @@ const fullCard = (ideas: readonly unknown[]) => ({
   });
 
   it("ingest indexes path-sorted metadata/body chunks and skips an unchanged ETag replay", async () => {
-    const content =
-      `---\nsource_id: ${id.source}\ntitle: Source title\nprecis: Source precis\nauthor: Author\n---\n# Heading\n\nFirst paragraph ^p0\n\nSecond paragraph ^p1\n`;
+    const content = `---\nsource_id: ${id.source}\ntitle: Source title\nprecis: Source precis\nauthor: Author\n---\n# Heading\n\nFirst paragraph ^p0\n\nSecond paragraph ^p1\n`;
     files.set("raw/docs/source.md", content);
     etags.set("raw/docs/source.md", "etag-one");
     await run(
       Effect.gen(function* () {
         const db = yield* Database;
-        yield* db.query((d) => d
-          .insert(sourceDocuments)
-          .values({
-            id: id.source,
-            vaultId: id.vault,
-            filePath: "raw/docs/source.md",
-            fileHash: "file",
-            bodyHash: "body",
-            sourceType: "document",
-          }))
+        yield* db
+          .query((d) =>
+            d.insert(sourceDocuments).values({
+              id: id.source,
+              vaultId: id.vault,
+              filePath: "raw/docs/source.md",
+              fileHash: "file",
+              bodyHash: "body",
+              sourceType: "document",
+            }),
+          )
           .pipe(Effect.orDie);
         const phases = yield* CompilePhases;
         yield* phases.ingest(id.vault, id.run);
@@ -865,16 +870,19 @@ const fullCard = (ideas: readonly unknown[]) => ({
     const rows = await run(
       Effect.gen(function* () {
         const db = yield* Database;
-        return yield* db.query((d) => d
-          .select({
-            path: searchIndex.path,
-            chunkIndex: searchIndex.chunkIndex,
-            heading: searchIndex.heading,
-            body: searchIndex.body,
-            contentHash: searchIndex.contentHash,
-          })
-          .from(searchIndex)
-          .orderBy(searchIndex.chunkIndex))
+        return yield* db
+          .query((d) =>
+            d
+              .select({
+                path: searchIndex.path,
+                chunkIndex: searchIndex.chunkIndex,
+                heading: searchIndex.heading,
+                body: searchIndex.body,
+                contentHash: searchIndex.contentHash,
+              })
+              .from(searchIndex)
+              .orderBy(searchIndex.chunkIndex),
+          )
           .pipe(Effect.orDie);
       }),
     );
@@ -912,17 +920,20 @@ const fullCard = (ideas: readonly unknown[]) => ({
     files.set("raw/docs/source.md", content);
     etags.set("raw/docs/source.md", "etag-one");
     await run(
-      Effect.flatMap(Database, (db) => db.query((d) => d
-        .insert(sourceDocuments)
-        .values({
-          id: id.source,
-          vaultId: id.vault,
-          filePath: "raw/docs/source.md",
-          fileHash: "file",
-          bodyHash: "body",
-          sourceType: "document",
-        }))
-        .pipe(Effect.orDie)),
+      Effect.flatMap(Database, (db) =>
+        db
+          .query((d) =>
+            d.insert(sourceDocuments).values({
+              id: id.source,
+              vaultId: id.vault,
+              filePath: "raw/docs/source.md",
+              fileHash: "file",
+              bodyHash: "body",
+              sourceType: "document",
+            }),
+          )
+          .pipe(Effect.orDie),
+      ),
     );
     embed = async () => {
       throw new DOMException("embedding timed out", "TimeoutError");
@@ -932,19 +943,29 @@ const fullCard = (ideas: readonly unknown[]) => ({
 
     const indexed = () =>
       run(
-        Effect.flatMap(Database, (db) => db.query((d) => d
-          .select({ chunkIndex: searchIndex.chunkIndex })
-          .from(searchIndex)
-          .orderBy(searchIndex.chunkIndex))
-          .pipe(Effect.orDie)),
+        Effect.flatMap(Database, (db) =>
+          db
+            .query((d) =>
+              d
+                .select({ chunkIndex: searchIndex.chunkIndex })
+                .from(searchIndex)
+                .orderBy(searchIndex.chunkIndex),
+            )
+            .pipe(Effect.orDie),
+        ),
       );
     const storedEtag = () =>
       run(
-        Effect.flatMap(Database, (db) => db.query((d) => d
-          .select({ etag: sourceDocuments.etag })
-          .from(sourceDocuments)
-          .where(eq(sourceDocuments.id, id.source)))
-          .pipe(Effect.orDie)),
+        Effect.flatMap(Database, (db) =>
+          db
+            .query((d) =>
+              d
+                .select({ etag: sourceDocuments.etag })
+                .from(sourceDocuments)
+                .where(eq(sourceDocuments.id, id.source)),
+            )
+            .pipe(Effect.orDie),
+        ),
       );
     expect(await indexed()).toEqual([]);
     expect(await storedEtag()).toEqual([{ etag: null }]);
@@ -964,17 +985,20 @@ const fullCard = (ideas: readonly unknown[]) => ({
   it("ingest fails loudly on a non-timeout embedding error", async () => {
     files.set("raw/docs/source.md", `---\nsource_id: ${id.source}\n---\n# Heading\n\nBody\n`);
     await run(
-      Effect.flatMap(Database, (db) => db.query((d) => d
-        .insert(sourceDocuments)
-        .values({
-          id: id.source,
-          vaultId: id.vault,
-          filePath: "raw/docs/source.md",
-          fileHash: "file",
-          bodyHash: "body",
-          sourceType: "document",
-        }))
-        .pipe(Effect.orDie)),
+      Effect.flatMap(Database, (db) =>
+        db
+          .query((d) =>
+            d.insert(sourceDocuments).values({
+              id: id.source,
+              vaultId: id.vault,
+              filePath: "raw/docs/source.md",
+              fileHash: "file",
+              bodyHash: "body",
+              sourceType: "document",
+            }),
+          )
+          .pipe(Effect.orDie),
+      ),
     );
     embed = async () => {
       throw new Error("revoked credential");
@@ -996,45 +1020,48 @@ const fullCard = (ideas: readonly unknown[]) => ({
     const state = await run(
       Effect.gen(function* () {
         const db = yield* Database;
-        yield* db.query((d) => d
-          .insert(sourceDocuments)
-          .values({
-            id: id.source,
-            vaultId: id.vault,
-            filePath: oldPath,
-            fileHash: "old-file-hash",
-            bodyHash: "old-body-hash",
-            clientHash: "a".repeat(64),
-            etag: "etag-original",
-            sourceType: "book",
-            title: "Original title",
-            precis: "Keep this derived precis",
-            tags: ["keep-this-tag"],
-            derivedExtras: { retained: true },
-          }))
+        yield* db
+          .query((d) =>
+            d.insert(sourceDocuments).values({
+              id: id.source,
+              vaultId: id.vault,
+              filePath: oldPath,
+              fileHash: "old-file-hash",
+              bodyHash: "old-body-hash",
+              clientHash: "a".repeat(64),
+              etag: "etag-original",
+              sourceType: "book",
+              title: "Original title",
+              precis: "Keep this derived precis",
+              tags: ["keep-this-tag"],
+              derivedExtras: { retained: true },
+            }),
+          )
           .pipe(Effect.orDie);
-        yield* db.query((d) => d
-          .insert(ideas)
-          .values({
-            ideaId: id.ideaA,
-            vaultId: id.vault,
-            documentId: id.source,
-            kind: "concept",
-            label: "Stable idea",
-            description: "Must retain the source ID relationship",
-          }))
+        yield* db
+          .query((d) =>
+            d.insert(ideas).values({
+              ideaId: id.ideaA,
+              vaultId: id.vault,
+              documentId: id.source,
+              kind: "concept",
+              label: "Stable idea",
+              description: "Must retain the source ID relationship",
+            }),
+          )
           .pipe(Effect.orDie);
-        yield* db.query((d) => d
-          .insert(searchIndex)
-          .values({
-            vaultId: id.vault,
-            path: oldPath,
-            chunkIndex: 0,
-            heading: "Original",
-            body: "Old indexed body",
-            contentHash: "old-chunk-hash",
-            tsv: sql`to_tsvector('english', 'Old indexed body')`,
-          }))
+        yield* db
+          .query((d) =>
+            d.insert(searchIndex).values({
+              vaultId: id.vault,
+              path: oldPath,
+              chunkIndex: 0,
+              heading: "Original",
+              body: "Old indexed body",
+              contentHash: "old-chunk-hash",
+              tsv: sql`to_tsvector('english', 'Old indexed body')`,
+            }),
+          )
           .pipe(Effect.orDie);
 
         const phases = yield* CompilePhases;
@@ -1075,16 +1102,17 @@ const fullCard = (ideas: readonly unknown[]) => ({
     files.set(duplicatePath, content);
     await run(
       Effect.flatMap(Database, (db) =>
-        db.query((d) => d
-          .insert(sourceDocuments)
-          .values({
-            id: id.source,
-            vaultId: id.vault,
-            filePath: originalPath,
-            fileHash: fileContentHash(content),
-            bodyHash: bodyContentHash("# Duplicate identity\n"),
-            sourceType: "document",
-          }))
+        db
+          .query((d) =>
+            d.insert(sourceDocuments).values({
+              id: id.source,
+              vaultId: id.vault,
+              filePath: originalPath,
+              fileHash: fileContentHash(content),
+              bodyHash: bodyContentHash("# Duplicate identity\n"),
+              sourceType: "document",
+            }),
+          )
           .pipe(Effect.orDie),
       ),
     );
@@ -1106,17 +1134,18 @@ const fullCard = (ideas: readonly unknown[]) => ({
     await run(
       Effect.gen(function* () {
         const db = yield* Database;
-        yield* db.query((d) => d
-          .insert(topics)
-          .values(
-            validated.map((topic) => ({
-              topicId: topic.topicId,
-              vaultId: id.vault,
-              slug: topic.slug,
-              title: topic.title,
-              description: topic.description,
-            })),
-          ))
+        yield* db
+          .query((d) =>
+            d.insert(topics).values(
+              validated.map((topic) => ({
+                topicId: topic.topicId,
+                vaultId: id.vault,
+                slug: topic.slug,
+                title: topic.title,
+                description: topic.description,
+              })),
+            ),
+          )
           .pipe(Effect.orDie);
         const phases = yield* CompilePhases;
         yield* phases.derive(id.vault, id.run, validated);
@@ -1152,29 +1181,31 @@ const fullCard = (ideas: readonly unknown[]) => ({
     await run(
       Effect.gen(function* () {
         const db = yield* Database;
-        yield* db.query((d) => d
-          .insert(topics)
-          .values({
-            topicId: topic.topicId,
-            vaultId: id.vault,
-            slug: topic.slug,
-            title: topic.title,
-            description: topic.description,
-            compiledFromHash: "compiled",
-          }))
-          .pipe(Effect.orDie);
-        yield* db.query((d) => d
-          .insert(compileCacheEntries)
-          .values({
-            vaultId: id.vault,
-            phase: "render",
-            cacheKey: renderCacheKey({
-              topic,
-              promptHash: promptContentHash(prompt),
-              model: DEFAULT_RENDER_MODEL,
+        yield* db
+          .query((d) =>
+            d.insert(topics).values({
+              topicId: topic.topicId,
+              vaultId: id.vault,
+              slug: topic.slug,
+              title: topic.title,
+              description: topic.description,
+              compiledFromHash: "compiled",
             }),
-            value: { body: "# Alpha\n\nCached body.", tags: ["Cached Tag", "cached-tag"] },
-          }))
+          )
+          .pipe(Effect.orDie);
+        yield* db
+          .query((d) =>
+            d.insert(compileCacheEntries).values({
+              vaultId: id.vault,
+              phase: "render",
+              cacheKey: renderCacheKey({
+                topic,
+                promptHash: promptContentHash(prompt),
+                model: DEFAULT_RENDER_MODEL,
+              }),
+              value: { body: "# Alpha\n\nCached body.", tags: ["Cached Tag", "cached-tag"] },
+            }),
+          )
           .pipe(Effect.orDie);
         const phases = yield* CompilePhases;
         yield* phases.render(id.vault, id.run, [topic]);
@@ -1189,28 +1220,30 @@ const fullCard = (ideas: readonly unknown[]) => ({
     await run(
       Effect.gen(function* () {
         const db = yield* Database;
-        yield* db.query((d) => d
-          .insert(topics)
-          .values({
-            topicId: id.topicC,
-            vaultId: id.vault,
-            slug: invalid.slug,
-            title: invalid.title,
-            description: invalid.description,
-          }))
-          .pipe(Effect.orDie);
-        yield* db.query((d) => d
-          .insert(compileCacheEntries)
-          .values({
-            vaultId: id.vault,
-            phase: "render",
-            cacheKey: renderCacheKey({
-              topic: invalid,
-              promptHash: promptContentHash(prompt),
-              model: DEFAULT_RENDER_MODEL,
+        yield* db
+          .query((d) =>
+            d.insert(topics).values({
+              topicId: id.topicC,
+              vaultId: id.vault,
+              slug: invalid.slug,
+              title: invalid.title,
+              description: invalid.description,
             }),
-            value: { body: 42, tags: [] },
-          }))
+          )
+          .pipe(Effect.orDie);
+        yield* db
+          .query((d) =>
+            d.insert(compileCacheEntries).values({
+              vaultId: id.vault,
+              phase: "render",
+              cacheKey: renderCacheKey({
+                topic: invalid,
+                promptHash: promptContentHash(prompt),
+                model: DEFAULT_RENDER_MODEL,
+              }),
+              value: { body: 42, tags: [] },
+            }),
+          )
           .pipe(Effect.orDie);
       }),
     );
@@ -1239,22 +1272,27 @@ const fullCard = (ideas: readonly unknown[]) => ({
     const counts = await run(
       Effect.gen(function* () {
         const db = yield* Database;
-        yield* db.query((d) => d
-          .insert(topics)
-          .values({
-            topicId: topic.topicId,
-            vaultId: id.vault,
-            slug: topic.slug,
-            title: topic.title,
-            description: topic.description,
-            compiledFromHash: "compiled",
-          }))
+        yield* db
+          .query((d) =>
+            d.insert(topics).values({
+              topicId: topic.topicId,
+              vaultId: id.vault,
+              slug: topic.slug,
+              title: topic.title,
+              description: topic.description,
+              compiledFromHash: "compiled",
+            }),
+          )
           .pipe(Effect.orDie);
         const phases = yield* CompilePhases;
         yield* phases.render(id.vault, id.run, [topic]);
-        const beforePublish = yield* db.query((d) => d.select().from(llmCostEvents)).pipe(Effect.orDie);
+        const beforePublish = yield* db
+          .query((d) => d.select().from(llmCostEvents))
+          .pipe(Effect.orDie);
         yield* phases.publish(id.vault, id.run, "2026-07-13T12:00:00+00:00");
-        const afterPublish = yield* db.query((d) => d.select().from(llmCostEvents)).pipe(Effect.orDie);
+        const afterPublish = yield* db
+          .query((d) => d.select().from(llmCostEvents))
+          .pipe(Effect.orDie);
         return { beforePublish, afterPublish };
       }),
     );
@@ -1269,45 +1307,47 @@ const fullCard = (ideas: readonly unknown[]) => ({
     await run(
       Effect.gen(function* () {
         const db = yield* Database;
-        yield* db.query((d) => d
-          .insert(topics)
-          .values([
-            {
-              topicId: id.topicA,
-              vaultId: id.vault,
-              slug: "alpha",
-              title: "Alpha",
-              description: "A",
-              articleStatus: "rendered",
-            },
-            {
-              topicId: id.topicB,
-              vaultId: id.vault,
-              slug: "beta",
-              title: "Beta",
-              description: "B",
-            },
-            {
-              topicId: id.topicC,
-              vaultId: id.vault,
-              slug: "no-file",
-              title: "No File",
-              description: "C",
-            },
-          ]))
+        yield* db
+          .query((d) =>
+            d.insert(topics).values([
+              {
+                topicId: id.topicA,
+                vaultId: id.vault,
+                slug: "alpha",
+                title: "Alpha",
+                description: "A",
+                articleStatus: "rendered",
+              },
+              {
+                topicId: id.topicB,
+                vaultId: id.vault,
+                slug: "beta",
+                title: "Beta",
+                description: "B",
+              },
+              {
+                topicId: id.topicC,
+                vaultId: id.vault,
+                slug: "no-file",
+                title: "No File",
+                description: "C",
+              },
+            ]),
+          )
           .pipe(Effect.orDie);
-        yield* db.query((d) => d
-          .insert(wikiArticles)
-          .values({
-            id: id.articleA,
-            vaultId: id.vault,
-            topicId: id.topicA,
-            filePath: "wiki/alpha.md",
-            fileHash: "file",
-            bodyHash: "body",
-            title: "Alpha",
-            precis: "A",
-          }))
+        yield* db
+          .query((d) =>
+            d.insert(wikiArticles).values({
+              id: id.articleA,
+              vaultId: id.vault,
+              topicId: id.topicA,
+              filePath: "wiki/alpha.md",
+              fileHash: "file",
+              bodyHash: "body",
+              title: "Alpha",
+              precis: "A",
+            }),
+          )
           .pipe(Effect.orDie);
         const phases = yield* CompilePhases;
         yield* phases.archiveTransitions(id.vault, [
@@ -1321,14 +1361,17 @@ const fullCard = (ideas: readonly unknown[]) => ({
     const archived = await run(
       Effect.gen(function* () {
         const db = yield* Database;
-        return yield* db.query((d) => d
-          .select({
-            id: topics.topicId,
-            status: topics.articleStatus,
-            successor: topics.supersededBy,
-          })
-          .from(topics)
-          .where(eq(topics.articleStatus, "archived")))
+        return yield* db
+          .query((d) =>
+            d
+              .select({
+                id: topics.topicId,
+                status: topics.articleStatus,
+                successor: topics.supersededBy,
+              })
+              .from(topics)
+              .where(eq(topics.articleStatus, "archived")),
+          )
           .pipe(Effect.orDie);
       }),
     );
@@ -1350,45 +1393,47 @@ const fullCard = (ideas: readonly unknown[]) => ({
     await run(
       Effect.gen(function* () {
         const db = yield* Database;
-        yield* db.query((d) => d
-          .insert(topics)
-          .values(
-            validated.map((topic) => ({
-              topicId: topic.topicId,
-              vaultId: id.vault,
-              slug: topic.slug,
-              title: topic.title,
-              description: topic.description,
-              articleStatus: "rendered",
-              compiledFromHash: "same",
-              renderedFromHash: "same",
-            })),
-          ))
+        yield* db
+          .query((d) =>
+            d.insert(topics).values(
+              validated.map((topic) => ({
+                topicId: topic.topicId,
+                vaultId: id.vault,
+                slug: topic.slug,
+                title: topic.title,
+                description: topic.description,
+                articleStatus: "rendered",
+                compiledFromHash: "same",
+                renderedFromHash: "same",
+              })),
+            ),
+          )
           .pipe(Effect.orDie);
-        yield* db.query((d) => d
-          .insert(wikiArticles)
-          .values([
-            {
-              id: id.articleA,
-              vaultId: id.vault,
-              topicId: id.topicA,
-              filePath: "wiki/alpha.md",
-              fileHash: "a",
-              bodyHash: "a",
-              title: "Alpha",
-              precis: "Alpha description",
-            },
-            {
-              id: id.articleB,
-              vaultId: id.vault,
-              topicId: id.topicB,
-              filePath: "wiki/beta.md",
-              fileHash: "b",
-              bodyHash: "b",
-              title: "Beta",
-              precis: "Beta description",
-            },
-          ]))
+        yield* db
+          .query((d) =>
+            d.insert(wikiArticles).values([
+              {
+                id: id.articleA,
+                vaultId: id.vault,
+                topicId: id.topicA,
+                filePath: "wiki/alpha.md",
+                fileHash: "a",
+                bodyHash: "a",
+                title: "Alpha",
+                precis: "Alpha description",
+              },
+              {
+                id: id.articleB,
+                vaultId: id.vault,
+                topicId: id.topicB,
+                filePath: "wiki/beta.md",
+                fileHash: "b",
+                bodyHash: "b",
+                title: "Beta",
+                precis: "Beta description",
+              },
+            ]),
+          )
           .pipe(Effect.orDie);
         const phases = yield* CompilePhases;
         yield* phases.verify(id.vault, id.run);
@@ -1397,7 +1442,9 @@ const fullCard = (ideas: readonly unknown[]) => ({
       }),
     );
     const edges = await run(
-      Effect.flatMap(Database, (db) => db.query((d) => d.select().from(backlinks)).pipe(Effect.orDie)),
+      Effect.flatMap(Database, (db) =>
+        db.query((d) => d.select().from(backlinks)).pipe(Effect.orDie),
+      ),
     );
     expect(edges).toEqual([{ sourceArticleId: id.articleA, targetArticleId: id.articleB }]);
     expect(files.get("wiki/_index.md")).toBe(
@@ -1411,38 +1458,40 @@ const fullCard = (ideas: readonly unknown[]) => ({
 
   const seedGranularityIdeas = async (count: number) => {
     files.set("raw/docs/source.md", "# Source\n\nBody\n");
-    const ideaIds = Array.from(
-      { length: count },
-      (_v, index) =>
-        uuid(`20000000-0000-4000-8000-0000000001${String(index).padStart(2, "0")}`),
+    const ideaIds = Array.from({ length: count }, (_v, index) =>
+      uuid(`20000000-0000-4000-8000-0000000001${String(index).padStart(2, "0")}`),
     );
     await run(
       Effect.gen(function* () {
         const db = yield* Database;
         yield* db
-          .query((d) => d.insert(sourceDocuments).values({
-            id: id.source,
-            vaultId: id.vault,
-            filePath: "raw/docs/source.md",
-            fileHash: "file",
-            bodyHash: "body",
-            sourceType: "document",
-            title: "Source",
-            precis: "Precis",
-          }))
+          .query((d) =>
+            d.insert(sourceDocuments).values({
+              id: id.source,
+              vaultId: id.vault,
+              filePath: "raw/docs/source.md",
+              fileHash: "file",
+              bodyHash: "body",
+              sourceType: "document",
+              title: "Source",
+              precis: "Precis",
+            }),
+          )
           .pipe(Effect.orDie);
         yield* db
-          .query((d) => d.insert(ideas).values(
-            ideaIds.map((ideaId, index) => ({
-              ideaId,
-              vaultId: id.vault,
-              documentId: id.source,
-              kind: "concept",
-              label: `Idea ${index}`,
-              description: `Description ${index}`,
-              embedding: [1, ...Array.from({ length: 1023 }, () => 0)],
-            })),
-          ))
+          .query((d) =>
+            d.insert(ideas).values(
+              ideaIds.map((ideaId, index) => ({
+                ideaId,
+                vaultId: id.vault,
+                documentId: id.source,
+                kind: "concept",
+                label: `Idea ${index}`,
+                description: `Description ${index}`,
+                embedding: [1, ...Array.from({ length: 1023 }, () => 0)],
+              })),
+            ),
+          )
           .pipe(Effect.orDie);
       }),
     );
@@ -1528,10 +1577,9 @@ const fullCard = (ideas: readonly unknown[]) => ({
     const rows = await run(
       Effect.flatMap(Database, (db) =>
         db
-          .query((d) => d
-            .select()
-            .from(compileCacheEntries)
-            .where(eq(compileCacheEntries.cacheKey, cacheKey)))
+          .query((d) =>
+            d.select().from(compileCacheEntries).where(eq(compileCacheEntries.cacheKey, cacheKey)),
+          )
           .pipe(Effect.orDie),
       ),
     );
@@ -1599,19 +1647,23 @@ const fullCard = (ideas: readonly unknown[]) => ({
       Effect.gen(function* () {
         const db = yield* Database;
         yield* db
-          .query((d) => d.insert(topics).values({
-            topicId: id.topicB,
-            vaultId: id.vault,
-            slug,
-            title: "Prior Topic",
-            description: "Prior description",
-            articleStatus: "rendered",
-          }))
+          .query((d) =>
+            d.insert(topics).values({
+              topicId: id.topicB,
+              vaultId: id.vault,
+              slug,
+              title: "Prior Topic",
+              description: "Prior description",
+              articleStatus: "rendered",
+            }),
+          )
           .pipe(Effect.orDie);
         yield* db
-          .query((d) => d.insert(topicMembership).values(
-            memberIdeaIds.map((ideaId) => ({ topicId: id.topicB, ideaId })),
-          ))
+          .query((d) =>
+            d
+              .insert(topicMembership)
+              .values(memberIdeaIds.map((ideaId) => ({ topicId: id.topicB, ideaId }))),
+          )
           .pipe(Effect.orDie);
       }),
     );

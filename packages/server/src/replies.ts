@@ -79,7 +79,6 @@ const ReplyAccumulator = Schema.Struct({
     }),
   ),
   clearOnNextToken: Schema.mutableKey(Schema.Boolean),
-  replacementSlot: Schema.mutableKey(Schema.NullOr(Schema.Number)),
 });
 type ReplyAccumulator = typeof ReplyAccumulator.Type;
 
@@ -364,16 +363,11 @@ export const RepliesServiceLive = Layer.effect(
       }
     };
 
-    const settlePendingSource = (accumulator: ReplyAccumulator, callId: string) => {
-      const pendingIndex = accumulator.pendingCalls.get(callId);
-      accumulator.pendingCalls.delete(callId);
-      if (pendingIndex !== undefined && pendingIndex !== null)
-        accumulator.replacementSlot = pendingIndex;
-    };
-
-    const addResolvedSource = (accumulator: ReplyAccumulator, data: QuerySourceData) => {
-      const pendingIndex = accumulator.replacementSlot;
-      accumulator.replacementSlot = null;
+    const addResolvedSource = (
+      accumulator: ReplyAccumulator,
+      data: QuerySourceData,
+      pendingIndex: number | null,
+    ) => {
       if (data.type === "article" || data.type === "raw") {
         if (pendingIndex !== null) removeSource(accumulator, pendingIndex);
         const isExpand = data.start !== undefined && data.end !== undefined;
@@ -640,7 +634,6 @@ export const RepliesServiceLive = Layer.effect(
             sources: [],
             pendingCalls: new Map(),
             clearOnNextToken: false,
-            replacementSlot: null,
           },
           pendingTools: [],
           nextToolIndex: 0,
@@ -676,10 +669,6 @@ export const RepliesServiceLive = Layer.effect(
           replyId,
           query.modelAttempt(checkpoint.query, (text) =>
             Effect.gen(function* () {
-              if (accumulator.replacementSlot !== null) {
-                removeSource(accumulator, accumulator.replacementSlot);
-                accumulator.replacementSlot = null;
-              }
               if (accumulator.clearOnNextToken) {
                 accumulator.answer = "";
                 accumulator.clearOnNextToken = false;
@@ -768,12 +757,11 @@ export const RepliesServiceLive = Layer.effect(
           return stoppedControl(expectedCursor);
         }
         const result = attempt.value;
-        if (toolCall.pendingSource !== undefined) settlePendingSource(accumulator, toolCall.id);
-        if (result.source !== undefined) addResolvedSource(accumulator, result.source);
-        else if (accumulator.replacementSlot !== null) {
-          removeSource(accumulator, accumulator.replacementSlot);
-          accumulator.replacementSlot = null;
-        }
+        const pendingIndex = accumulator.pendingCalls.get(toolCall.id) ?? null;
+        accumulator.pendingCalls.delete(toolCall.id);
+        if (result.source !== undefined)
+          addResolvedSource(accumulator, result.source, pendingIndex);
+        else if (pendingIndex !== null) removeSource(accumulator, pendingIndex);
         yield* flushAccumulator(replyId, accumulator);
         const nextToolIndex = checkpoint.nextToolIndex + 1;
         const remaining = checkpoint.pendingTools.length - nextToolIndex;

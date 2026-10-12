@@ -42,7 +42,7 @@ Existing BTW rows backfill to inline/BTW; existing ordinary sessions backfill to
 
 Admission freezes `session.replyMode` under that same lock. Preparation reads the accepted envelope, not today's placement/default. A reply accepted before Continue remains BTW-mode even if it is prepared afterward; the next accepted reply uses query-mode. The public create request no longer has `mode`; the internal query execution request still does.
 
-One unique live-operation slot covers admitting, running, and settling. Retries require a new reply ID, retain the original exchange/question/options/context parent, and choose the current default for the new attempt. Annotation identity and inherited context cutoff remain distinct immutable references.
+One unique live-operation slot covers admitting, running, and settling. Retries require a new reply ID, retain the original exchange/question/options/context parent, and choose the current default for the new attempt. Annotation identity and inherited context cutoff remain distinct immutable references. Session and BTW clients retain the exact previous/new reply-ID pair until acknowledgment, including when an accepted replacement finishes before the lost response is redelivered. Redelivery is not a new generation retry.
 
 ## Generation and settlement
 
@@ -53,6 +53,10 @@ A terminal model result is frozen before best-effort terminal checkpoint bookkee
 Generation steps first check for an already recorded settlement. `restoreRecorded` can repair a stale running DB projection from receipt-verified history without rewriting history or honoring a later stop. The newest locked receipt is rechecked before projection, so a stale read cannot regress it. This is operation recovery, not read-triggered repair.
 
 A saved terminal checkpoint is also handled before claiming another external step. An outstanding model/tool claim without a saved result remains ambiguous: recovery records a failure or committed stop rather than calling the provider/tool again. Absence of generation metadata is not treated as evidence that no call happened.
+
+An accepted provider stream that stalls, or a successful response with no body, does not authorize a fallback-model invocation. These observed stream failures use the existing `generation_failed` settlement and preserve committed partial content; the `external_outcome_unknown` code remains reserved for unresolved external claims during recovery. Explicit retry can start another generation. Confirmed 429 rejection still permits the configured fallback. No provider timeout is changed.
+
+Pending tool/source indices remain in the checkpoint because they cross model/tool steps. The replacement index used to settle one source is local to that tool step, not a separately checkpointed field. Selection similarly follows the last accepted attempt rather than storing another selected-reply ID.
 
 Generation metadata uses the prepared mode, `gm-prompt-v1` digest, first requested model, and known last selected model. That digest is the existing namespaced, length-prefixed prompt hash, not raw SHA-256 of prompt text and not a complete provider-call archive.
 
@@ -99,6 +103,8 @@ The existing session service returns selected content plus `activity: null | { r
 - Stream disconnection retains pending identity and partial text. Reconnect observes the same reply; only a confirmed failed attempt uses generation retry. Completed-empty answers have an explicit label; finalizing disables new work.
 
 This is a bounded multi-part read, not a global atomic capture. Root and children are observed separately; the selected child set and all app/history revisions are not recaptured after the last child. SSE still reads the DB operation projection and relies on the native writer's history-before-terminal ordering, rather than reading canonical files on every poll. These limits are explicit, not declarations that the former full snapshot gates passed.
+
+The reply transport still automatically reopens ordinary disconnected streams. The view-level Reconnect state covers errors that escape that adapter; the model tests mock the adapter. Choosing and testing a single explicit-versus-automatic transport policy remains separate work, not a completed guarantee of this slice.
 
 Exported capture vectors/timestamps, all-attempt/provenance APIs, queued-versus-generating substates, and generalized dependency diagnostics are deferred. The next implementation is one-off offline conversion and an isolated restore/cutover rehearsal with stopped writers, not online dual-writing or a migration platform. The publication compiler and isolated PDF work follow; no new print flags are introduced here.
 
@@ -148,3 +154,17 @@ The subsequent read-correctness pass was verified separately on 2026-10-11:
 That is **383 distinct passes / 23 files** across the separate runs. It is not 383 additional tests beyond the earlier checkpoint. Root typecheck and Svelte check passed with zero Svelte errors/warnings. Both owned database projects removed their containers, networks, and volumes. The query run took 67 seconds including cleanup this time; the cause of the earlier longer delays remains unestablished, and no production timeout was changed.
 
 These are controlled PostgreSQL/local-filesystem/process-crash and fake-provider/fake-R2 tests. They do not establish live provider/R2 behavior, universal power-loss guarantees, native data migration, or a safe production rollback after new-format writes.
+
+### Verified bounded review follow-up
+
+The independent review of `9875f79` led to two correctness fixes and three small deletions: retain generation-retry identity after acknowledgment loss; stop application-level fallback after accepted stream stalls/missing bodies; remove obsolete byte-append storage, the redundant selected-reply field, and the checkpointed source-replacement slot. Dependency inspection and reply dispatch/schema state remain in place. No shared conversation controller or new recovery framework was introduced.
+
+Verification across separate runs:
+
+- **340 server tests / 20 files**, including native admission/settlement, conditional storage, restart and API regressions, exact retry redelivery after the replacement completes or fails, and the affected compile/worker storage doubles.
+- **57 query/parser tests / two files**, with one live-provider smoke skipped. The real stream parser runs through a scripted model layer into the native workflow; invocation counts verify that accepted stalls/missing bodies do not invoke the fallback, committed partials survive, explicit retry can generate, and committed Stop wins. Existing scripted 429 fallback remains covered. Mixed missing/duplicate read, expand, and link results verify pending-source index adjustment and checkpoint simplification.
+- **52 web tests / four files**, including accepted retry acknowledgment loss for Session and BTW and a fresh ID only after another confirmed generation failure.
+
+That is **449 distinct passes / 26 files**, not additional tests on top of the previous 383. A focused rerun passed **14 overlapping query/parser cases** after strengthening the timeout fixture with a positive expiry witness asserted outside the workflow. Root typecheck, Svelte check, formatting/lint, whitespace, and documentation checks passed; Svelte reported zero errors/warnings. All three owned database runs removed their containers, networks, and volumes.
+
+Runtime source relative to `9875f79`: **131 lines added, 214 removed; net 83 fewer lines**, excluding tests, fixtures, scripts, and documentation. Normal formatter output is included. The full query/parser run took 548 seconds including setup/cleanup; the focused rerun took 45 seconds. The cause of variable cluster delays remains unestablished. The test fixture expedites the existing read deadline to inject a stall; production deadlines are unchanged. These tests do not inspect a live provider or establish its internal retry/billing behavior.

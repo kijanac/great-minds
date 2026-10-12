@@ -53,7 +53,6 @@ type ContentStorageShape = {
     path: string,
   ) => Effect.Effect<string, StorageFileMissing>;
   readonly writeText: (owner: StorageOwner, path: string, content: string) => Effect.Effect<void>;
-  readonly appendText: (owner: StorageOwner, path: string, content: string) => Effect.Effect<void>;
   readonly exists: (owner: StorageOwner, path: string) => Effect.Effect<boolean>;
   readonly deletePath: (owner: StorageOwner, path: string) => Effect.Effect<void>;
   readonly clear: (owner: StorageOwner) => Effect.Effect<void>;
@@ -181,13 +180,6 @@ const writeText = (objects: ObjectStore, prefix: string, path: string, content: 
     })
     .pipe(Effect.orDie);
 
-const appendText = (objects: ObjectStore, prefix: string, path: string, content: string) =>
-  objects
-    .append(scopedKey(prefix, path), textEncoder.encode(content), {
-      contentType: contentTypeFor(path),
-    })
-    .pipe(Effect.orDie);
-
 const StorageBackendLive = Layer.effect(
   StorageBackend,
   Effect.map(AppConfig, (config): StorageBackendShape => {
@@ -240,7 +232,6 @@ export const ContentStorageLive = Layer.effect(
       },
       readText: (owner, path) => readText(objects, ownerPrefix(owner), path),
       writeText: (owner, path, content) => writeText(objects, ownerPrefix(owner), path, content),
-      appendText: (owner, path, content) => appendText(objects, ownerPrefix(owner), path, content),
       exists: (owner, path) =>
         objects.exists(scopedKey(ownerPrefix(owner), path)).pipe(Effect.orDie),
       deletePath: (owner, path) =>

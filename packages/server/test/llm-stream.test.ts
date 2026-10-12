@@ -1,6 +1,7 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
-import { parseOpenRouterStream, type ModelStreamPart } from "../src/llm.ts";
+import { ModelProviderError, parseOpenRouterStream, type ModelStreamPart } from "../src/llm.ts";
+import { stalledModelStream } from "./fixtures/interrupted-model-stream.ts";
 
 const sseResponse = (blocks: readonly string[], newline = "\n") =>
   new Response(
@@ -84,6 +85,24 @@ describe("openrouter stream protocol", () => {
       { type: "finish", finishReason: "stop", generationId: "gen-3", usage: undefined },
     ]);
   });
+
+  it("does not classify an accepted response with no body as a safe retry", async () => {
+    await expect(collect(new Response(null))).rejects.toBeInstanceOf(ModelProviderError);
+  });
+
+  it.each(["", "Partial answer"])(
+    "does not classify an accepted stream stall after %j as a safe retry",
+    async (partial) => {
+      const parts: ModelStreamPart[] = [];
+      const timeout = vi.fn();
+      const consume = async () => {
+        for await (const part of stalledModelStream(partial, timeout)) parts.push(part);
+      };
+      await expect(consume()).rejects.toBeInstanceOf(ModelProviderError);
+      expect(timeout).toHaveBeenCalledTimes(1);
+      expect(parts).toEqual(partial.length === 0 ? [] : [{ type: "token", text: partial }]);
+    },
+  );
 
   it("rejects a frame whose declared fields have the wrong shape", async () => {
     await expect(

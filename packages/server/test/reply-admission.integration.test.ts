@@ -708,11 +708,37 @@ describe("durable reply admission", () => {
           )._tag,
         ).toBe("Conflict");
         expect(
-          (yield* f.histories.read(f.address(response.session_id)))!.history.turns[1]
-            .selected_reply_id,
+          (yield* f.histories.read(f.address(response.session_id)))!.history.turns[1].attempts.at(
+            -1,
+          )?.accepted.reply_id,
         ).toBe(retryId);
       }),
     ));
+
+  it.each(["completed", "failed"] as const)(
+    "redelivers an exact retry whose replacement has already %s without changing history",
+    (status) =>
+      withAdmission((f) =>
+        Effect.gen(function* () {
+          const input = command();
+          const response = yield* f.admission.accept(f.userId, f.vaultId, input);
+          yield* failReply(f, input.reply_id);
+          const nextId = Uuid.make(randomUUID());
+          const accepted = yield* f.admission.retry(f.userId, f.vaultId, input.reply_id, nextId);
+          if (status === "completed") yield* f.finalize(nextId);
+          else yield* failReply(f, nextId);
+          const before = (yield* f.histories.read(f.address(response.session_id)))!;
+          expect(yield* f.admission.retry(f.userId, f.vaultId, input.reply_id, nextId)).toEqual(
+            accepted,
+          );
+          expect((yield* f.reply(nextId)).status).toBe(status);
+          expect(yield* f.allReplies()).toHaveLength(2);
+          expect((yield* f.histories.read(f.address(response.session_id)))!.history.jsonl).toBe(
+            before.history.jsonl,
+          );
+        }),
+      ),
+  );
 
   it("does not treat ordinary creation as a retry of an existing exchange", () =>
     withAdmission((f) =>

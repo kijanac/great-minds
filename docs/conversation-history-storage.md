@@ -48,7 +48,7 @@ A history revision is a sequence count plus SHA-256 of exact JSONL bytes. A back
 
 Creation uses `If-None-Match: *`; replacement uses the exact ETag in `If-Match`, including its quotes. Missing or empty ETags are storage errors for versioned reads. HTTP precondition failures become `ObjectVersionConflict`; other request failures remain storage errors.
 
-The existing SDK transport behavior remains in place. The history path does not add the byte-append retry policy. If a response is lost after a successful PUT, a later commit reads the saved records and resolves an equal delivery as a no-op. It does not blindly append again.
+The existing SDK transport behavior remains in place. General content storage uses whole-object read/write; the obsolete byte-append capability and its separate R2 retry loop have been removed. Native history retains its conditional whole-object writes. If a response is lost after a successful PUT, a later commit reads the saved records and resolves an equal delivery as a no-op. It does not blindly append again.
 
 The conformance fixtures exercise the real S3 SDK against a fake HTTP request handler. They test request encoding and error mapping, not a live R2 service or its physical durability.
 

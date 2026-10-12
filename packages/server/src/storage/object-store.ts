@@ -59,15 +59,8 @@ export type ConditionalObjectStore = {
 };
 
 export type ObjectStore = {
-  readonly get: (
-    key: string,
-  ) => Effect.Effect<Uint8Array, ObjectMissing | StorageBackendError>;
+  readonly get: (key: string) => Effect.Effect<Uint8Array, ObjectMissing | StorageBackendError>;
   readonly put: (
-    key: string,
-    bytes: Uint8Array,
-    options?: PutObjectOptions,
-  ) => Effect.Effect<void, StorageBackendError>;
-  readonly append: (
     key: string,
     bytes: Uint8Array,
     options?: PutObjectOptions,

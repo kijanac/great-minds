@@ -7,42 +7,40 @@ import { makeFakeBucket } from "./fixtures/fake-r2-bucket.ts";
 const decode = (bytes: Uint8Array) => new TextDecoder().decode(bytes);
 const encode = (text: string) => new TextEncoder().encode(text);
 
-describe("R2 append", () => {
-  it("creates the object when absent and appends in order", async () => {
+describe("R2 whole-object storage", () => {
+  it("creates and replaces an object without conditional write headers", async () => {
     const bucket = makeFakeBucket();
     const store = makeObjectStore(bucket.client, "bucket");
-    await Effect.runPromise(store.append("sessions/a.jsonl", encode("one\n")));
-    await Effect.runPromise(store.append("sessions/a.jsonl", encode("two\n")));
-    expect(decode(bucket.objects.get("sessions/a.jsonl")!.bytes)).toBe("one\ntwo\n");
+    await Effect.runPromise(store.put("wiki/a.md", encode("one\n")));
+    await Effect.runPromise(store.put("wiki/a.md", encode("Updated 文本\n")));
+    expect(decode(await Effect.runPromise(store.get("wiki/a.md")))).toBe("Updated 文本\n");
+    expect(bucket.requests.filter((request) => request.method === "PUT")).toEqual([
+      { method: "PUT", key: "wiki/a.md", ifMatch: undefined, ifNoneMatch: undefined },
+      { method: "PUT", key: "wiki/a.md", ifMatch: undefined, ifNoneMatch: undefined },
+    ]);
   });
 
-  it("retries on a concurrent write instead of losing it", async () => {
-    let interfered = false;
+  it("does not require an ETag for an ordinary read", async () => {
+    const bucket = makeFakeBucket({ omitEtag: true });
+    bucket.write("wiki/a.md", encode("Readable\n"));
+    const store = makeObjectStore(bucket.client, "bucket");
+    expect(decode(await Effect.runPromise(store.get("wiki/a.md")))).toBe("Readable\n");
+  });
+
+  it("distinguishes a missing object from a failed read", async () => {
     const bucket = makeFakeBucket({
-      beforePut: (key) => {
-        if (interfered) return;
-        interfered = true;
-        bucket.write(key, encode("one\nintruder\n"));
+      beforeGet: (key) => {
+        if (key === "offline") throw new Error("Unavailable");
       },
     });
     const store = makeObjectStore(bucket.client, "bucket");
-    bucket.write("sessions/a.jsonl", encode("one\n"));
-    await Effect.runPromise(store.append("sessions/a.jsonl", encode("two\n")));
-    expect(decode(bucket.objects.get("sessions/a.jsonl")!.bytes)).toBe("one\nintruder\ntwo\n");
-  });
-
-  it("fails with a backend error once the retry budget is exhausted", async () => {
-    const bucket = makeFakeBucket({
-      beforePut: (key) => bucket.write(key, encode("moved\n")),
+    expect(await Effect.runPromise(Effect.result(store.get("missing")))).toMatchObject({
+      _tag: "Failure",
+      failure: { _tag: "ObjectMissing", key: "missing" },
     });
-    const store = makeObjectStore(bucket.client, "bucket");
-    const result = await Effect.runPromise(
-      Effect.result(store.append("sessions/a.jsonl", encode("two\n"))),
-    );
-    expect(result._tag).toBe("Failure");
-    if (result._tag === "Failure") {
-      expect(result.failure._tag).toBe("StorageBackendError");
-      expect(result.failure.errorType).toBe("AppendConflict");
-    }
+    expect(await Effect.runPromise(Effect.result(store.get("offline")))).toMatchObject({
+      _tag: "Failure",
+      failure: { _tag: "StorageBackendError", operation: "read", key: "offline" },
+    });
   });
 });

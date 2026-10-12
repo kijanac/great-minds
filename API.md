@@ -2187,6 +2187,8 @@ Request body (`RetryReplyRequest`):
 
 Response: `202 Accepted` with a `CreateReplyResponse` for the new reply.
 
+If that response is lost, resend the same failed reply ID in the path and the same new reply ID in the body. Exact redelivery returns the accepted replacement even if it has already completed or failed; it does not start another generation. Session and BTW clients retain this pair until acknowledgment. A new ID is required only for a new generation retry, not for redelivery of its acceptance.
+
 Errors: `400 BadRequest` (reply is not failed, or retry id equals the
 original), `409 Conflict`, `403 Forbidden`, `404 NotFound`,
 `503 ServiceUnavailable`, `422 Validation`.

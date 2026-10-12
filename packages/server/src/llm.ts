@@ -29,11 +29,7 @@ export type LlmAssistantToolCall = typeof LlmAssistantToolCallSchema.Type;
 export const LlmMessageSchema = Schema.Union([
   Schema.Struct({
     role: Schema.Literals(["system", "user", "assistant"] as const),
-    content: Schema.Union([
-      Schema.String,
-      Schema.Null,
-      Schema.Array(LlmTextContentPartSchema),
-    ]),
+    content: Schema.Union([Schema.String, Schema.Null, Schema.Array(LlmTextContentPartSchema)]),
     tool_calls: Schema.optionalKey(Schema.Array(LlmAssistantToolCallSchema)),
   }),
   Schema.Struct({
@@ -228,7 +224,7 @@ const readWithTimeout = async <A>(promise: Promise<A>) => {
       promise,
       new Promise<never>((_resolve, reject) => {
         timeout = setTimeout(() => {
-          reject(new RetryableModelError("model stream stalled"));
+          reject(new ModelProviderError("model stream stalled"));
         }, streamChunkTimeoutMs);
       }),
     ]);
@@ -321,7 +317,7 @@ const toolCallDeltas = (
 
 export async function* parseOpenRouterStream(response: Response): AsyncIterable<ModelStreamPart> {
   if (response.body === null) {
-    throw new RetryableModelError("model provider returned no stream body");
+    throw new ModelProviderError("model provider returned no stream body");
   }
   const reader = response.body.getReader();
   const decoder = new TextDecoder();
@@ -389,19 +385,24 @@ export const LanguageModelLive = Layer.effect(
         const controller = new AbortController();
         async function* run() {
           const key = requireApiKey();
-          const response = await postChat(config.openRouterApiUrl, key, {
-            model: input.model,
-            messages: input.messages,
-            tools: input.tools,
-            temperature: input.temperature,
-            stream: true,
-            stream_options: { include_usage: true },
-            usage: { include: true },
-            provider: {
-              allow_fallbacks: true,
-              sort: "throughput",
+          const response = await postChat(
+            config.openRouterApiUrl,
+            key,
+            {
+              model: input.model,
+              messages: input.messages,
+              tools: input.tools,
+              temperature: input.temperature,
+              stream: true,
+              stream_options: { include_usage: true },
+              usage: { include: true },
+              provider: {
+                allow_fallbacks: true,
+                sort: "throughput",
+              },
             },
-          }, controller.signal);
+            controller.signal,
+          );
           yield* parseOpenRouterStream(response);
         }
         const iterator = run();
@@ -415,35 +416,40 @@ export const LanguageModelLive = Layer.effect(
           }),
         };
       },
-      complete: (input) => Effect.tryPromise({
-        try: async (signal) => {
-          const response = await postChat(
-            config.openRouterApiUrl,
-            requireApiKey(),
-            completionRequestBody(input),
-            signal,
-          );
-          const completion = decodeWireCompletion(await response.json());
-          const first = completion.choices?.[0];
-          return {
-            text: first?.message?.content ?? "",
-            finishReason: first?.finish_reason ?? null,
-            generationId: completion.id ?? undefined,
-            usage: usageFrom(completion.usage),
-          };
-        },
-        catch: (error) => error,
-      }).pipe(Effect.retry({
-        times: rateLimitRetries,
-        while: isRetryableModelError,
-        schedule: Schedule.exponential("2 seconds").pipe(
-          Schedule.modifyDelay(({ input, duration }) => Effect.succeed(
-            input instanceof RetryableModelError && input.retryAfterMs !== undefined
-              ? input.retryAfterMs
-              : Math.min(maxRateLimitBackoffMs, Duration.toMillis(duration)),
-          )),
+      complete: (input) =>
+        Effect.tryPromise({
+          try: async (signal) => {
+            const response = await postChat(
+              config.openRouterApiUrl,
+              requireApiKey(),
+              completionRequestBody(input),
+              signal,
+            );
+            const completion = decodeWireCompletion(await response.json());
+            const first = completion.choices?.[0];
+            return {
+              text: first?.message?.content ?? "",
+              finishReason: first?.finish_reason ?? null,
+              generationId: completion.id ?? undefined,
+              usage: usageFrom(completion.usage),
+            };
+          },
+          catch: (error) => error,
+        }).pipe(
+          Effect.retry({
+            times: rateLimitRetries,
+            while: isRetryableModelError,
+            schedule: Schedule.exponential("2 seconds").pipe(
+              Schedule.modifyDelay(({ input, duration }) =>
+                Effect.succeed(
+                  input instanceof RetryableModelError && input.retryAfterMs !== undefined
+                    ? input.retryAfterMs
+                    : Math.min(maxRateLimitBackoffMs, Duration.toMillis(duration)),
+                ),
+              ),
+            ),
+          }),
         ),
-      })),
     } satisfies LanguageModelShape;
   }),
 );

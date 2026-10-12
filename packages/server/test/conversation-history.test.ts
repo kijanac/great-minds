@@ -8,6 +8,7 @@ import {
   planHistoryAppend,
   verifyHistoryReceipt,
 } from "../src/conversation-history/history.ts";
+import { projectSession } from "../src/conversation-history/presentation.ts";
 import { promptContentHash, rawFileHash, sha256Hex } from "../src/crypto.ts";
 import {
   attempt,
@@ -72,7 +73,7 @@ describe("conversation history format", () => {
       settlement({ reply_id: uuid(102) }),
     ]);
     expect(history.turns).toHaveLength(1);
-    expect(history.turns[0].selected_reply_id).toBe(uuid(102));
+    expect(projectSession(history)[1]).toMatchObject({ reply_id: uuid(102), status: "completed" });
     expect(history.turns[0].attempts.map((value) => value.settlement?.outcome.status)).toEqual([
       "failed",
       "completed",
@@ -87,7 +88,7 @@ describe("conversation history format", () => {
       settlement({ reply_id: uuid(102) }),
       failed(),
     ]);
-    expect(history.turns[0].selected_reply_id).toBe(uuid(102));
+    expect(projectSession(history)[1]).toMatchObject({ reply_id: uuid(102), status: "completed" });
   });
 
   it("orders turns by acceptance rather than settlement or timestamp", () => {

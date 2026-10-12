@@ -14,7 +14,7 @@ import {
   S3ServiceException,
 } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
-import { Data, Effect, Option, Redacted, Schedule } from "effect";
+import { Effect, Option, Redacted } from "effect";
 
 import type { AppConfig } from "../config.ts";
 import {
@@ -60,27 +60,15 @@ const isPreconditionFailed = (error: unknown) =>
   error instanceof S3ServiceException &&
   (error.name === "PreconditionFailed" || error.$metadata.httpStatusCode === 412);
 
-class AppendConflict extends Data.TaggedError("AppendConflict")<{ readonly key: string }> {}
-
-const APPEND_RETRY = {
-  schedule: Schedule.exponential("20 millis").pipe(Schedule.jittered),
-  times: 8,
-  while: (error: AppendConflict | StorageBackendError) => error._tag === "AppendConflict",
-};
-
 const storeFailure = (
   operation: "read" | "write" | "delete" | "list" | "exists" | "prepare",
   key: string,
   error: unknown,
-) =>
-  error instanceof StorageBackendError ? error : storageBackendError(operation, key, error);
+) => (error instanceof StorageBackendError ? error : storageBackendError(operation, key, error));
 
 type RequestTimeout = typeof READ_TIMEOUT | typeof WRITE_TIMEOUT | typeof ADMIN_TIMEOUT;
 
-const request = <A>(
-  timeout: RequestTimeout,
-  run: (signal: AbortSignal) => Promise<A>,
-) =>
+const request = <A>(timeout: RequestTimeout, run: (signal: AbortSignal) => Promise<A>) =>
   Effect.tryPromise({ try: run, catch: (error) => error }).pipe(Effect.timeout(timeout));
 
 const objectRequest = <A>(
@@ -119,8 +107,9 @@ const deletePrefix = (client: S3Client, bucket: string, prefix: string) =>
           { abortSignal: signal },
         ),
       );
-      const objects = (page.Contents ?? [])
-        .flatMap((object) => (object.Key === undefined ? [] : [{ Key: object.Key }]));
+      const objects = (page.Contents ?? []).flatMap((object) =>
+        object.Key === undefined ? [] : [{ Key: object.Key }],
+      );
       if (objects.length > 0) {
         yield* objectRequest("delete", prefix, WRITE_TIMEOUT, (signal) =>
           client.send(
@@ -136,17 +125,12 @@ const deletePrefix = (client: S3Client, bucket: string, prefix: string) =>
     } while (continuationToken !== undefined);
   });
 
-type Versioned = { readonly bytes: Uint8Array; readonly etag: string | undefined };
 type PutCondition = { readonly IfMatch: string } | { readonly IfNoneMatch: "*" };
 
-const concat = (head: Uint8Array, tail: Uint8Array) => {
-  const combined = new Uint8Array(head.byteLength + tail.byteLength);
-  combined.set(head);
-  combined.set(tail, head.byteLength);
-  return combined;
-};
-
-export const makeObjectStore = (client: S3Client, bucket: string): ObjectStore & ConditionalObjectStore => {
+export const makeObjectStore = (
+  client: S3Client,
+  bucket: string,
+): ObjectStore & ConditionalObjectStore => {
   const getVersioned = (key: string) =>
     Effect.gen(function* () {
       const response = yield* request(READ_TIMEOUT, (signal) =>
@@ -172,7 +156,7 @@ export const makeObjectStore = (client: S3Client, bucket: string): ObjectStore &
         Effect.timeout(READ_TIMEOUT),
         Effect.mapError((error) => storeFailure("read", key, error)),
       );
-      return { bytes, etag: response.ETag } satisfies Versioned;
+      return { bytes, etag: response.ETag };
     });
 
   const get: ObjectStore["get"] = (key) => getVersioned(key).pipe(Effect.map((v) => v.bytes));
@@ -202,55 +186,32 @@ export const makeObjectStore = (client: S3Client, bucket: string): ObjectStore &
       Effect.mapError((error) => storeFailure("write", key, error)),
     );
 
-  const putConditional = (
-    key: string,
-    bytes: Uint8Array,
-    options: PutObjectOptions | undefined,
-    condition: PutCondition,
-  ) =>
-    sendPut(key, bytes, options, condition).pipe(
-      Effect.mapError((error) =>
-        isPreconditionFailed(error)
-          ? new AppendConflict({ key })
-          : storeFailure("write", key, error),
-      ),
-    );
-
-  const appendOnce = (key: string, bytes: Uint8Array, options: PutObjectOptions | undefined) =>
-    Effect.gen(function* () {
-      const existing = yield* getVersioned(key).pipe(
-        Effect.catchTag("ObjectMissing", () =>
-          Effect.succeed<Versioned>({ bytes: new Uint8Array(), etag: undefined }),
-        ),
-      );
-      const condition =
-        existing.etag === undefined ? { IfNoneMatch: "*" as const } : { IfMatch: existing.etag };
-      yield* putConditional(key, concat(existing.bytes, bytes), options, condition);
-    });
-
   return {
     get,
     put,
-    getVersioned: (key) => Effect.gen(function* () {
-      const object = yield* getVersioned(key);
-      if (object.etag === undefined || object.etag.length === 0) {
-        return yield* storageBackendError("read", key, new Error("Conditional read requires an ETag"));
-      }
-      return { bytes: object.bytes, version: object.etag };
-    }),
+    getVersioned: (key) =>
+      Effect.gen(function* () {
+        const object = yield* getVersioned(key);
+        if (object.etag === undefined || object.etag.length === 0) {
+          return yield* storageBackendError(
+            "read",
+            key,
+            new Error("Conditional read requires an ETag"),
+          );
+        }
+        return { bytes: object.bytes, version: object.etag };
+      }),
     putIfVersion: (key, expectedVersion, bytes) =>
-      sendPut(key, bytes, { contentType: "application/x-ndjson" }, expectedVersion === null
-        ? { IfNoneMatch: "*" }
-        : { IfMatch: expectedVersion }).pipe(
-        Effect.mapError((error) => isPreconditionFailed(error)
-          ? new ObjectVersionConflict({ key })
-          : storeFailure("write", key, error)),
-      ),
-    append: (key, bytes, options) =>
-      appendOnce(key, bytes, options).pipe(
-        Effect.retry(APPEND_RETRY),
-        Effect.catchTag("AppendConflict", (conflict) =>
-          storageBackendError("write", key, conflict),
+      sendPut(
+        key,
+        bytes,
+        { contentType: "application/x-ndjson" },
+        expectedVersion === null ? { IfNoneMatch: "*" } : { IfMatch: expectedVersion },
+      ).pipe(
+        Effect.mapError((error) =>
+          isPreconditionFailed(error)
+            ? new ObjectVersionConflict({ key })
+            : storeFailure("write", key, error),
         ),
       ),
     remove: (key) =>
@@ -313,9 +274,7 @@ export type R2ObjectStoreBackend = {
   ) => Effect.Effect<string, StorageBackendError>;
 };
 
-export const makeR2ObjectStoreBackend = (
-  config: AppConfig["Service"],
-): R2ObjectStoreBackend => {
+export const makeR2ObjectStoreBackend = (config: AppConfig["Service"]): R2ObjectStoreBackend => {
   const client = makeClient(config);
   const bucket = bucketName(config);
   return {

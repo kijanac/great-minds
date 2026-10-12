@@ -1,14 +1,4 @@
-import {
-  access,
-  appendFile,
-  mkdir,
-  readFile,
-  readdir,
-  rm,
-  stat,
-  unlink,
-  writeFile,
-} from "node:fs/promises";
+import { access, mkdir, readFile, readdir, rm, stat, unlink, writeFile } from "node:fs/promises";
 import { isAbsolute, relative, resolve } from "node:path";
 
 import { Effect } from "effect";
@@ -54,19 +44,6 @@ export const makeLocalObjectStore = (directory: string): ObjectStore => {
         });
         yield* Effect.tryPromise({
           try: () => writeFile(path, bytes),
-          catch: (error) => storageBackendError("write", key, error),
-        });
-      });
-    },
-    append: (key, bytes) => {
-      const path = resolveKey(root, key);
-      return Effect.gen(function* () {
-        yield* Effect.tryPromise({
-          try: () => mkdir(resolve(path, ".."), { recursive: true }),
-          catch: (error) => storageBackendError("write", key, error),
-        });
-        yield* Effect.tryPromise({
-          try: () => appendFile(path, bytes),
           catch: (error) => storageBackendError("write", key, error),
         });
       });
